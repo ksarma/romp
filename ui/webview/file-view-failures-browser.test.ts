@@ -100,7 +100,7 @@ const readBar = (page: any): Promise<Bar> => page.evaluate(() => {
   const w = window as any;
   const bar = document.getElementById("fileview-save-err");
   const body = document.querySelector(".fileview-body") as HTMLElement;
-  const edit = (Array.from(document.querySelectorAll("#romp-fileview .fileview-acts button")) as HTMLButtonElement[]).find((x) => x.textContent === "Edit");
+  const edit = (Array.from(document.querySelectorAll("#romp-fileview .fileview-acts button")) as HTMLButtonElement[]).find((x) => x.textContent === "Edit" || x.getAttribute("aria-label") === "Edit");
   const base = {
     bodyScrollTop: body.scrollTop, edit: edit ? edit.hidden : null, rows: body.querySelectorAll(".fileview-md > p, code.hljs .fv-cl").length,
     paints: w.__paints, error: w.__seam.error(), text: w.__seam.text(), bars: document.querySelectorAll("#fileview-save-err, .fileview > .fileview-err").length,
@@ -194,7 +194,7 @@ const seenEmpty = (page: any): Promise<Empty> => page.evaluate(() => {
   const body = document.querySelector(".fileview-body") as HTMLElement;
   const line = body.querySelector(":scope > .fileview-err") as HTMLElement | null;
   const acts = Array.from(document.querySelectorAll("#romp-fileview .fileview-acts button")) as HTMLButtonElement[];
-  const edit = acts.find((x) => x.textContent === "Edit");
+  const edit = acts.find((x) => x.textContent === "Edit" || x.getAttribute("aria-label") === "Edit");
   const outline = document.querySelector("#romp-fileview .fileview-outline-btn") as HTMLButtonElement | null;
   const probe = document.createElement("div"); probe.style.color = "var(--warn)"; document.querySelector(".fileview")!.appendChild(probe);
   const warn = getComputedStyle(probe).color; probe.remove();

@@ -128,7 +128,7 @@ test("with the scrollbar visible, a body that does not scroll reserves nothing: 
       // Edit mode on a long note: the editor (the fallback textarea here: no CodeMirror chunk is served) takes the body's width,
       // its own scrollbar inside it, and no dead strip beyond
       const o2 = await openViewer(browser, mode, width, 600, { docs: { [REPORT]: LONG } });
-      await o2.page.locator("#romp-fileview .fileview-btn", { hasText: /^Edit$/ }).click();
+      await o2.page.locator("#romp-fileview .fileview-btn[aria-label='Edit']").click();
       await o2.page.waitForFunction(() => !!document.querySelector(".fileview-editor, .fileview-cm"), null, { timeout: 10000 }); await frames(o2.page, 3);
       const edit = await o2.page.evaluate(strips);
       assert.equal(edit.scrolls, false, cell + ": the body does not scroll in Edit (the editor does)"); assert.ok(edit.editorScrolls, cell + ": the editor scrolls inside itself");

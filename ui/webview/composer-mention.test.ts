@@ -1,14 +1,13 @@
-// @-mention autocomplete in the composer (the user 2026-09-07): "@ro" offers the live sessions whose
-// names match, and a pick inserts the plain "@name " an agent's mail tools take. The rules live in
-// composer-mention.ts, a pure module, and run for real here: the trigger (an "@" opening a word, never
-// inside an email or a path), the matcher (prefix before substring, case-insensitive, the session being
-// written to left out, twelve rows at most with a count of the rest, federated names by host or by
-// name), the token (relative to the RECIPIENT's kernel: the display name when writing to a local
-// session, the bare name when writing to a remote one), the insertion (refused when the caret no longer
-// ends the token), the keyboard model (Enter picks while the card is open and is not consumed otherwise,
-// so it keeps sending) and the transcript segmenter (the trigger's word rule). The DOM wiring in
-// render.ts has no jsdom harness, so it is pinned at the source level like the other composer tests,
-// and so is the CSS.
+// @-mention autocomplete in the composer: "@ro" lists the live sessions whose names match, and a pick
+// inserts the plain "@name " an agent's mail tools take. The rules live in composer-mention.ts, a pure
+// module, and run for real here: the trigger (an "@" opening a word, never inside an email address or a
+// path), the matcher (a prefix before a substring, case-insensitive, the session being written to left
+// out, twelve rows at most with a count of the rest, remote names by host or by name), the token
+// (relative to the RECIPIENT's kernel: the display name when writing to a local session, the bare name
+// when writing to a remote one), the insertion (refused when the caret no longer ends the token), the
+// keyboard model (Enter picks while the card is open and is not consumed otherwise, so it keeps sending)
+// and the transcript segmenter (the trigger's word rule). The DOM half runs in headless Chromium in
+// composer-mention-pane.test.ts. Synthetic names only (web, api, tests, notes-api, TESTHOST; placeholder ids).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -17,15 +16,11 @@ import { MENTION_MAX_ROWS, insertMention, matchMentions, mentionBareName, mentio
          mentionQuery, mentionSegments, mentionToken, rankMentions } from "./composer-mention";
 import type { MentionCandidate } from "./composer-mention";
 
-const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
-const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
-
 const SELF = "11111111-2222-4333-8444-555555555555";
 const c = (id: string, name: string, extra: Partial<MentionCandidate> = {}): MentionCandidate => ({ id, name, ...extra });
 const ROSTER: MentionCandidate[] = [
   c(SELF, "web", { color: { bg: "#3a7bd5", fg: "#ffffff" } }),
-  c("22222222-3333-4444-8555-666666666666", "api", { emoji: "\u{1F680}", color: { bg: "#d5643a", fg: "#ffffff" } }),
+  c("22222222-3333-4444-8555-666666666666", "api", { color: { bg: "#d5643a", fg: "#ffffff" } }),
   c("33333333-4444-4555-8666-777777777777", "tests"),
   c("44444444-5555-4666-8777-888888888888", "notes-api"),
   c("TESTHOST:55555555-6666-4777-8888-999999999999", "TESTHOST:web"),
@@ -35,7 +30,7 @@ const ROSTER: MentionCandidate[] = [
 // ── the trigger ──
 
 test("an @ opening a word, plus one or more characters, with the caret ending the word, is the query", () => {
-  assert.deepEqual(mentionQuery("@ro", 3), { start: 0, query: "ro" }, "at the start of the box");
+  assert.deepEqual(mentionQuery("@ro", 3), { start: 0, query: "ro" }, "at the start of the composer");
   assert.deepEqual(mentionQuery("ask @ro", 7), { start: 4, query: "ro" }, "after a space");
   assert.deepEqual(mentionQuery("first line\n@a", 13), { start: 11, query: "a" }, "after a newline");
   assert.deepEqual(mentionQuery("ask @ro to look", 7), { start: 4, query: "ro" }, "with text after the word, the caret at its end");
@@ -51,6 +46,7 @@ test("no query: a bare @, an @ inside an email or a path, a space after the word
   assert.equal(mentionQuery("ask @ro@mp", 10), null, "a second @ is not part of a name");
   assert.equal(mentionQuery("", 0), null);
   assert.equal(mentionQuery("@ro", 9), null, "a caret past the end is no caret");
+  assert.equal(mentionQuery("@ro", -1), null);
 });
 
 // ── the matcher ──
@@ -68,10 +64,10 @@ test("a prefix of the name ranks before a substring, case-insensitively, alphabe
 test("the session being written to is left out; the others stay", () => {
   assert.deepEqual(matchMentions("we", ROSTER, SELF).map((x) => x.name), ["TESTHOST:web"], "the local web is the writer's own session");
   assert.deepEqual(matchMentions("we", ROSTER, null).map((x) => x.name), ["web", "TESTHOST:web"],
-    "with no self both webs are offered: same rank, same bare name, the local one first");
+    "with no self both webs are listed: same rank, same bare name, the local one first");
 });
 
-test("a federated session matches by its bare name (rank with the locals) and by its host prefix", () => {
+test("a remote session matches by its bare name (ranked with the locals) and by its host prefix", () => {
   const remote = ROSTER[4];
   assert.equal(mentionBareName(remote), "web");
   assert.equal(mentionBareName(ROSTER[1]), "api", "a local name is its own bare name");
@@ -95,6 +91,11 @@ test("the list stops at twelve rows, best matches first, and the count of the re
   assert.equal(mentionMoreNote(0), null);
   assert.equal(rankMentions("zzz", many, null).length, 0);
   assert.deepEqual(rankMentions("api", ROSTER, SELF), matchMentions("api", ROSTER, SELF), "under the cap the two agree, self excluded in both");
+});
+
+test("a roster entry with no name, or a missing entry, is skipped rather than thrown on", () => {
+  const odd = [c("a", ""), null as unknown as MentionCandidate, c("b", "web")];
+  assert.deepEqual(rankMentions("w", odd, null).map((x) => x.id), ["b"]);
 });
 
 // ── the token and the insertion ──
@@ -131,7 +132,7 @@ test("inserting replaces the typed @query and lands the caret after the space; t
 
 test("an insert is refused, text and caret unchanged, when the caret no longer ends the token (a caret move the card never saw)", () => {
   const at = { start: 4, query: "ro" };
-  // the review's case: Ctrl+A put the caret at 0 with the card still open; the splice repeated the draft
+  // Ctrl+A put the caret at 0 with the card still open; a splice here would repeat the draft
   assert.deepEqual(insertMention("ask @ro", at, 0, "@romp "), { text: "ask @ro", caret: 0 }, "never 'ask @romp ask @ro'");
   assert.deepEqual(insertMention("ask @ro", at, 2, "@romp "), { text: "ask @ro", caret: 2 }, "a caret before the @");
   assert.deepEqual(insertMention("ask @ro", at, 6, "@romp "), { text: "ask @ro", caret: 6 }, "a caret inside the token");
@@ -146,7 +147,7 @@ test("an insert is refused, text and caret unchanged, when the caret no longer e
 
 // ── the keyboard model ──
 
-test("with the card CLOSED no key is consumed, so Enter keeps sending and Escape keeps leaving the box", () => {
+test("with the card CLOSED no key is consumed, so Enter keeps sending and Escape keeps leaving the composer", () => {
   for (const k of ["Enter", "Tab", "Escape", "ArrowUp", "ArrowDown"]) assert.equal(mentionKeyAction(k, false, 0, 3), null, k);
   assert.equal(mentionKeyAction("Enter", true, 0, 0), null, "an open flag with no rows is not a card");
 });
@@ -157,6 +158,7 @@ test("with the card OPEN: arrows move and wrap, Enter and Tab pick the highlight
   assert.deepEqual(mentionKeyAction("ArrowUp", true, 0, 3), { kind: "move", sel: 2 }, "wraps to the bottom");
   assert.deepEqual(mentionKeyAction("Enter", true, 1, 3), { kind: "pick", sel: 1 });
   assert.deepEqual(mentionKeyAction("Tab", true, 1, 3), { kind: "pick", sel: 1 });
+  assert.deepEqual(mentionKeyAction("Enter", true, 7, 3), { kind: "pick", sel: 2 }, "a highlight past the rows picks the last one");
   assert.deepEqual(mentionKeyAction("Escape", true, 1, 3), { kind: "close" });
   assert.equal(mentionKeyAction("a", true, 1, 3), null, "typing narrows through the input handler, not here");
   assert.equal(mentionKeyAction("Enter", true, 1, 3, true), null, "Shift+Enter stays a newline, Cmd+Enter stays stage");
@@ -174,6 +176,7 @@ test("a typed @name that names a live session is a segment with the hit; other w
   assert.deepEqual(mentionSegments("@web @TESTHOST:api", lookup),
     [{ text: "@web", hit: "S-web" }, { text: " " }, { text: "@TESTHOST:api", hit: "S-rapi" }], "two in a row");
   assert.deepEqual(mentionSegments("plain text", lookup), [{ text: "plain text" }]);
+  assert.deepEqual(mentionSegments("", lookup), []);
   for (const s of ["ask @web and @nobody.", "@web, @web!", "x @web", "cc @web@mastodon.example"]) {
     assert.equal(mentionSegments(s, lookup).map((g) => g.text).join(""), s, "the segments concatenate back to the input");
   }
@@ -183,85 +186,22 @@ test("a word with a second @ in it is not a mention, the trigger's rule: @name@h
   const live = new Map([["web", "S-web"]]);
   const lookup = (w: string) => live.get(w) ?? null;
   assert.deepEqual(mentionSegments("cc @web@mastodon.example", lookup), [{ text: "cc @web@mastodon.example" }], "a fediverse-style handle");
-  assert.deepEqual(mentionSegments("@web@web", lookup), [{ text: "@web@web" }], "the probe's case: no chip on the head");
+  assert.deepEqual(mentionSegments("@web@web", lookup), [{ text: "@web@web" }], "no chip on the head");
   assert.deepEqual(mentionSegments("@web@", lookup), [{ text: "@web@" }], "a trailing @");
   assert.deepEqual(mentionSegments("ask @web,@web", lookup), [{ text: "ask @web,@web" }], "punctuation then @ is still one word");
   assert.deepEqual(mentionSegments("@web@x and @web", lookup), [{ text: "@web@x and " }, { text: "@web", hit: "S-web" }], "the clean one after it still chips");
-  assert.equal(mentionQuery("cc @web@mastodon.example", 7), null, "and the trigger offered no card for it either");
+  assert.equal(mentionQuery("cc @web@mastodon.example", 7), null, "and the trigger opened no card for it either");
 });
 
-// ── the DOM wiring (source pins: no jsdom for the chat renderer) ──
-
-test("the card owns the keys while open, ahead of the send path: Enter picks, it never sends", () => {
-  const key = RENDER.indexOf("if (mentionKey(e)) return;");
-  const slash = RENDER.indexOf("if (slashKey(e)) return;");
-  const send = RENDER.indexOf('if (e.key === "Enter" && !e.shiftKey && !isCoarsePointer()) {');
-  assert.ok(slash > 0 && key > slash && send > key, "slash menu, then the mention card, then the composer's own Enter");
-  assert.match(RENDER, /const act = mentionKeyAction\(e\.key, !!mPop, mSel, mItems\.length, e\.shiftKey \|\| e\.ctrlKey \|\| e\.metaKey \|\| e\.altKey\);/);
-  assert.match(RENDER, /if \(!act\) return false;\s*\n\s*e\.preventDefault\(\);/);
-  assert.match(RENDER, /else if \(act\.kind === "pick"\) pickMention\(mItems\[act\.sel\]\);/);
-});
-
-test("Escape closes without inserting and latches for that @ until the token is gone; typing narrows, a space or a miss closes", () => {
-  assert.match(RENDER, /else \{ mDismissedAt = mAt \? mAt\.start : -1; closeMention\(\); \}/);
-  assert.match(RENDER, /followLatch\(ta\.value, ta\.selectionStart\);[^\n]*\n\s*const at = caretMention\(\);\s*\n\s*if \(!at\) \{ closeMention\(\); return; \}/, "the latch holds while its @ does, wherever an edit moved it (composer-mention-pane.test.ts runs it)");
-  assert.match(RENDER, /if \(mDismissedAt === at\.start\) return;/);
-  assert.match(RENDER, /if \(!items\.length\) \{ closeMention\(\); return; \}/);
-  assert.match(RENDER, /updateSlash\(\);[^\n]*\n\s*updateMention\(\);/, "the input handler refreshes the card as the query changes");
-  assert.match(RENDER, /ta\.addEventListener\("blur", \(\) => window\.setTimeout\(closeMention, 120\)\);/);
-});
-
-test("the card is a .ctx-menu above the composer that never takes focus, and the pick is click-safe: ONE mousedown listener on the card, rows keyed by index", () => {
-  assert.match(RENDER, /mPop = el\("div", "ctx-menu mention-pop"\);/);
-  assert.match(RENDER, /mPop\.style\.bottom = \(window\.innerHeight - r\.top \+ 6\) \+ "px";/, "anchored to the composer's top edge, the slash menu's placement");
-  assert.match(RENDER, /mPop\.addEventListener\("mousedown", \(ev\) => \{\s*\n\s*ev\.preventDefault\(\);/, "mousedown keeps the textarea's focus; the listener is on the card, which outlives repaints");
-  assert.match(RENDER, /const i = row \? Number\(row\.dataset\.idx\) : -1;\s*\n\s*if \(i >= 0 && i < mItems\.length\) pickMention\(mItems\[i\]\);/);
-  assert.match(RENDER, /row\.dataset\.idx = String\(i\);/);
-  const block = RENDER.slice(RENDER.indexOf("// ── @-mention autocomplete"), RENDER.indexOf("// ── PROMPT HISTORY"));
-  assert.ok(block.length > 0, "the mention block sits between the slash menu and the prompt history");
-  assert.doesNotMatch(block, /row\.addEventListener\("mousedown"/, "no per-row mousedown: a row rebuilt mid-press would drop the pick");
-  assert.doesNotMatch(block, /row\.addEventListener\("click"/);
-  assert.equal((block.match(/addEventListener\("mousedown"/g) || []).length, 1, "the card's one listener");
-  // the pick fills the text and puts the caret after the token; the draft follows
-  assert.match(RENDER, /const token = mentionToken\(c, activeId\);/, "the token is relative to the recipient's kernel");
-  assert.match(RENDER, /const next = insertMention\(ta\.value, at, caret, token\);\s*\n\s*ta\.value = next\.text;/, "the value assignment is the fallback behind execCommand (composer-mention-pane.test.ts)");
-  assert.match(RENDER, /ta\.setSelectionRange\(next\.caret, next\.caret\);/);
-});
-
-test("each row: the emoji, the name in its identity color, a remote host as the quiet host-prefix; the roster is the live sessions", () => {
-  assert.match(RENDER, /if \(c\.emoji\) \{ const em = el\("span", "mention-emoji"\); em\.textContent = c\.emoji; row\.appendChild\(em\); \}/);
-  assert.match(RENDER, /nm\.replaceChildren\(\.\.\.hostNameNodes\(c\.name, c\.id\)\);/);
-  assert.match(RENDER, /if \(c\.color\?\.bg\) nm\.style\.color = c\.color\.bg;/);
-  assert.match(RENDER, /if \(s\.status\.state === "closed" \|\| isProvisionalId\(id\)\) continue;/, "a closed session cannot take mail");
-  assert.match(RENDER, /rankMentions\(at\.query, mentionRoster\(\), activeId\)/, "the session being written to is the excluded self");
-  assert.match(RENDER, /refreshMentionCard\?\.\(\);/, "renderTabs re-ranks an open card when the roster changes");
-});
-
-test("in the transcript a typed @name that names a live session is a chip in its color with the state as its title; text elsewhere", () => {
-  assert.match(RENDER, /linkifyFileUris\(bubble, imgPaths, ev\.spacePaths, ev\.pathLinks, ev\.pathPins\);[^\n]*\n\s*markMentions\(bubble\);/,
-    "the typed-prompt bubble only, after the path links");
-  assert.match(RENDER, /!n\.parentElement\?\.closest\("code, pre, a, \.mention-chip"\)/, "never inside code, a fenced block, a link or a chip already made");
-  assert.match(RENDER, /const chip = el\("span", "mention-chip"\);/);
-  assert.match(RENDER, /chip\.style\.setProperty\("--chip-bg", s\.color\.bg\); chip\.style\.setProperty\("--chip-fg", s\.color\.fg\);/);
-  assert.match(RENDER, /chip\.title = s\.name \+ " · " \+ \(CHIP_LABEL\[s\.status\.state\] \|\| s\.status\.state\);/, "dressMentionChip: the same dress at render and on every roster change");
-  const fn = RENDER.slice(RENDER.indexOf("function markMentions("), RENDER.indexOf("// Composer: Enter sends the message"));
-  assert.ok(fn.length > 0 && fn.length < 3000, "markMentions is the small function before setupComposer");
-  assert.doesNotMatch(fn, /addEventListener|dataset\.act|href|createElement\("a"\)/, "no link behavior");
-});
-
-test("the CSS: the card rides the menu tokens, the highlighted row wears the row wash, the chip wears the identity color", () => {
-  assert.match(CSS, /\.mention-pop \{ z-index: 120; max-height: 40vh; overflow-y: auto; min-width: 160px; \}/);
-  assert.match(CSS, /\.mention-row\.sel \{ background: var\(--menu-hover\); \}/);
-  assert.match(CSS, /\.mention-chip \{[\s\S]*?background: var\(--chip-bg, rgba\(255, 255, 255, 0\.18\)\); color: var\(--chip-fg, currentColor\);/);
-  assert.doesNotMatch(CSS.slice(CSS.indexOf(".mention-pop {"), CSS.indexOf(".mention-chip {")), /#[0-9a-fA-F]{3,6}\b/, "no hex in the menu rules: tokens only");
-});
-
-test("the guide's chat section says how to name another session: the trigger, the cap, the keys, the two token forms, the Escape rule", () => {
-  assert.match(GUIDE, /\*\*Naming another session\.\*\* Type `@` and the first letters of a session's name/);
-  assert.match(GUIDE, /twelve at most; when\s+more match, the last row says how many/);
-  assert.match(GUIDE, /press \*\*⏎\*\* or \*\*Tab\*\*, or click it/);
-  assert.match(GUIDE, /Writing to a session on this machine, a session on another machine is inserted\s+as `@host:name`/);
-  assert.match(GUIDE, /Writing to a session on another machine,\s+every name is inserted bare/);
-  assert.match(GUIDE, /list the candidates as `host:name`/);
-  assert.match(GUIDE, /\*\*Escape\*\* closes the list\s+without inserting, and it stays closed for that `@` until you delete it/);
+// ── the roster row's emoji (this fork, 4h M1): a session's tab emoji leads its row in the card ──
+test("each card row leads with the session's emoji when it has one: the candidate carries it, the roster hands it over, the row renders it, the sheet sizes it", () => {
+  const UI = path.resolve(process.cwd(), "..", "ui", "webview");   // npm test runs in vscode-extension
+  const MOD = fs.readFileSync(path.join(UI, "composer-mention.ts"), "utf8");
+  const RENDER = fs.readFileSync(path.join(UI, "render.ts"), "utf8");
+  const CSS = fs.readFileSync(path.join(UI, "styles.css"), "utf8");
+  assert.match(MOD, /^\s*emoji\?: string;/m, "the candidate carries the emoji");
+  assert.match(RENDER, /out\.push\(\{ id, name: s\.name, emoji: s\.emoji \?\? tabMeta\.get\(id\)\?\.emoji, color: s\.color \}\);/, "the roster hands the session's own emoji, else its tab's, to the card");
+  assert.match(RENDER, /rows\.push\(\[id, s\.name, s\.color\?\.bg, s\.color\?\.fg, s\.emoji \?\? tabMeta\.get\(id\)\?\.emoji, s\.status\.state\]\);/, "an emoji change re-ranks the card: the roster signature reads it");
+  assert.match(RENDER, /if \(c\.emoji\) \{ const em = el\("span", "mention-emoji"\); em\.textContent = c\.emoji; row\.appendChild\(em\); \}/, "the row renders it before the name");
+  assert.match(CSS, /\n\.mention-emoji \{ flex: 0 0 auto; line-height: 1; \}/, "the sheet keeps the cell at its glyph's size");
 });

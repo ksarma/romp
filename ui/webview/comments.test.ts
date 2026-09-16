@@ -5,8 +5,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { threadsByAnchor, threadBusy, threadStuck, replyOwed, agentCount, findExact, findAnchorRange, sliceRanges, prunePending,
-         type CommentThread } from "./comments";
+import { threadsByAnchor, threadBusy, threadStuck, replyOwed, agentCount, findExact, findAnchorRange, sliceRanges, prunePending, markSkipsParent,
+         newCommentCreate, commentCreateFrame, type CommentThread, type CommentCreate } from "./comments";
 import { compactDisplay } from "./compact";
 
 const th = (over: Partial<CommentThread>): CommentThread => ({
@@ -95,13 +95,24 @@ test("the popover keeps the chat renderer but sheds its transcript-coupled hover
     "no rail time-markers on gutterless popover turns");
 });
 
-test("an unread thread wears a NEW-here dot on its last segment and a shouting rail tick", () => {
+test("an unread thread wears ONE outline box around its whole passage and a shouting rail tick", () => {
   // the user 2026-08-23: the 45% unread tint alone was too subtle — a thread that replied while the
-  // box was closed needs a visible element. One dot per thread (the run's hl-last segment), ringed
-  // in the page bg; the rail tick grows and double-rings. Both clear with the unread flag on open.
-  assert.match(CSS, /mark\.cmt-hl\.unread\.hl-last::after \{\s*\n\s*content: ""; position: absolute; top: -4px; right: -4px; width: 7px; height: 7px;/);
-  assert.match(CSS, /border-radius: 50%; background: var\(--cmt-hl\); box-shadow: 0 0 0 1\.5px var\(--bg\);/);
-  assert.match(CSS, /mark\.cmt-hl \{[^}]*position: relative;/s, "the mark anchors its own dot");
+  // box was closed needs a visible element. That element was a yellow corner dot on the run's last
+  // segment until 2026-09-08 (then the tab strip's dashed needs-you ring on the mark), and since
+  // 2026-09-10 it is ONE outline around the WHOLE highlighted area: the ring was an outline on the
+  // inline mark and painted once per line fragment, a dashed box per line. Since 2026-09-12 the box is
+  // dashed in the needs-you red again (the user wanted the tab strip's idiom back; matching the notch
+  // had made it solid yellow), and a passage of one or two rows wears the per-fragment ring instead —
+  // the painter's call, by row count. The box is a positioned child of the turn that render.ts measures
+  // from the marks (its pins live in comment-outline.test.ts). The rail tick still grows and
+  // double-rings, its halo in the same red. All clear with the unread flag on open.
+  assert.doesNotMatch(CSS, /mark\.cmt-hl\.unread\.hl-last::after/, "the corner dot is gone");
+  assert.doesNotMatch(CSS, /mark\.cmt-hl\.unread \{ outline/, "no outline on the mark by unread alone: it would paint per line fragment");
+  assert.match(CSS, /\.cmt-outline \{ position: absolute; pointer-events: none;[^}]*outline: 1\.5px dashed var\(--st-awaiting-bg\);/s, "one box, the needs-you ring");
+  assert.match(CSS, /mark\.cmt-hl\.unread\.cmt-ring \{ outline: 1\.5px dashed var\(--st-awaiting-bg\); outline-offset: 1px; \}/, "the one- or two-row ring, the same stroke");
+  assert.match(CSS, /\.cmt-tick\.unread \{[^}]*0 0 0 3px var\(--st-awaiting-bg\); \}/s, "the tick's halo agrees by colour");
+  assert.match(UI, /function paintCommentOutlines\(sid: string\): void \{/);
+  assert.doesNotMatch(CSS, /mark\.cmt-hl \{[^}]*position: relative;/s, "nothing left for the mark to anchor");
   assert.match(CSS, /\.cmt-tick\.unread \{ width: 10px; height: 6px; right: 0; opacity: 1;/);
   // the clearing story is the existing machinery, untouched: optimistic on open + kernel watermark
   assert.match(UI, /if \(th\) th\.unread = false;\s*\/\/ optimistic; the kernel's watermark reconciles/);
@@ -167,7 +178,7 @@ test("marks, badges AND every popover button ride the stable document.body deleg
 });
 
 test("highlights re-apply after every render path", () => {
-  assert.match(UI, /m\.type === "session" \|\| m\.type === "chatTail" \|\| m\.type === "chatHead" \|\| m\.type === "chatEpisode"\)\)\s*\n\s*applyCommentMarks\(String\(m\.id\)\)/);
+  assert.match(UI, /m\.type === "session" \|\| m\.type === "chatTail" \|\| m\.type === "chatHead" \|\| m\.type === "chatWindow" \|\| m\.type === "chatTurns" \|\| m\.type === "chatEpisode"\)\)\s*\n\s*applyCommentMarks\(String\(m\.id\)\)/);   // chatTurns: a gap's page (T386 stage 2), where chatMore was   // chatWindow / chatMore: the proto-2 pages rebuild DOM too (T323 stage 4b)
   assert.match(UI, /applyCommentMarks\(activeId\);\s+\/\/ the re-window rebuilt turns/,
                "the scroll re-window path re-anchors too");
   // the syncView wrapper covers renders that run OFF the message handlers (tab switch, prebuild)
@@ -236,19 +247,23 @@ test("promote latches the row before seeding; racing ops refuse through the CAS"
   assert.match(KERNEL, /def _revert\(msg\):/);
 });
 
-test("POST /end and the WS endSession op end a session through one routine, and that routine sweeps its comment threads", () => {
-  // The two doors used to carry twin inline _comment_kill_all sweeps; round 3 of the end-unknown-name
-  // change (2026-09-09) folded them, and the end-on-idle sweep's arm, into _end_and_record: the kill, the
-  // corroboration, the death record, _comment_kill_all and the closed frame. Each door is pinned to the
-  // routine by its own kill attribution, and the routine to the sweep inside its own body (the scan stops
-  // at the next top-level def), so none of the three doors that record a death can grow a second epilogue
-  // that drifts. cancelCreate's _end_pending_sid, the one intentional kill outside the routine, records no
-  // death by design and is not pinned here. The executed twin, both client doors calling the routine once
-  // with one sid and one backend, is tests/test_kernel_headless_ops.py.
-  assert.match(KERNEL, /ended = _end_and_record\(sid, be, time\.time\(\), "endSession WS op", why=why\)/);
-  assert.match(KERNEL, /ended = _end_and_record\(sid, be, time\.time\(\), "\/kill route", why=why\)/);
-  assert.match(KERNEL, /ended = _end_and_record\(sid, Sessions\.backend_for\(sid\), now,\s*\n\s*"end-on-idle \(self-close/);
-  assert.match(KERNEL, /def _end_and_record\(sid, be, now, via, fresh=False, why=None\):(?:(?!\ndef )[\s\S])*?\n    _comment_kill_all\(sid, be\)/);
+test("the /kill route sweeps comment threads like the WS endSession op", () => {
+  assert.match(KERNEL, /_comment_kill_all\(sid, be\)\s+# its comment threads must not outlive it \(the WS endSession twin\)/);
+});
+
+test("the three doors that record a death sweep the session's comment threads: the WS endSession op, the /kill route and the end-on-idle sweep", () => {
+  // Each door is pinned by its own kill attribution to the epilogue that follows it: the kill, the death record,
+  // _comment_kill_all and the closed frame (the WS op then confirms the close at once). The fork's one routine for
+  // the three, _end_and_record, retired at the 2026-09-15 upstream pull-in with the tmux backend whose death
+  // corroboration it carried; the doors are upstream's inline arms again, so each is pinned whole and the sweep is
+  // counted, one call per door and no fourth. cancelCreate's _end_pending_sid, the one intentional kill outside
+  // these doors, records no death by design and is not pinned here. The executed twin (a client door ending one sid
+  // through its backend once) is tests/test_kernel_headless_ops.py.
+  assert.match(KERNEL, /sys\.stderr\.write\("kill: %s via endSession WS op\\n" % sid\)[^\n]*\n\s+be\.kill\(sid\); _record_death\(sid, int\(time\.time\(\)\), "kill"\)[^\n]*\n\s+_comment_kill_all\(sid, be\)[^\n]*\n\s+_send_to_app\("chat", \{"type": "closed", "id": sid\}\)\n\s+_confirm_close_now\(sid\)/, "the WS endSession op");
+  assert.match(KERNEL, /sys\.stderr\.write\("kill: %s via \/kill route\\n" % sid\)[^\n]*\n\s+be\.kill\(sid\)\n\s+_record_death\(sid, int\(time\.time\(\)\), "kill"\)\n\s+_comment_kill_all\(sid, be\)[^\n]*\n\s+_send_to_app\("chat", \{"type": "closed", "id": sid\}\)/, "the /kill route");
+  assert.match(KERNEL, /sys\.stderr\.write\("kill: %s via end-on-idle \(self-close%s\)\\n" % \(sid, ", a comment thread" if thread else ""\)\)\n\s+be = Sessions\.backend_for\(sid\)\n\s+be\.kill\(sid\)\n\s+_record_death\(sid, int\(now\), "kill"\)\n\s+_comment_kill_all\(sid, be\)\n\s+_send_to_app\("chat", \{"type": "closed", "id": sid\}\)/, "the end-on-idle sweep's arm");
+  assert.equal((KERNEL.match(/_comment_kill_all\(sid, be\)/g) || []).length, 3, "one sweep per door, no fourth");
+  assert.doesNotMatch(KERNEL, /_end_and_record/, "the fork's routine is gone with the backend it corroborated");
 });
 
 test("a thread that couldn't start says so — the error note renders in the thread", () => {
@@ -288,8 +303,11 @@ test("the create dialog pre-reads the kernel's default-comment trio and shows it
 test("fast rides the create end to end, resolved dialog > setting > inherit at the kernel", () => {
   // the chip is offered only where the effective model could run fast (no control that only toasts)
   assert.match(UI, /if \(canFast\(create\.model \|\| setDef\("model"\) \|\| st\?\.model \|\| ""\)\) metaRight\.append\(mkSel\("fast"\)\);/);
-  assert.match(UI, /fast: create\.fast \|\| "", color: create\.color \|\| "" \}\);/);
-  assert.match(UI, /fast: c\.fast, color: c\.color \}\);/);   // the in-flight retry keeps the pick (unchanged by the 2026-08-30 eager-all round)
+  // the dialog's picks ride the held create (newCommentCreate reads anchor.fast) and every frame built from it,
+  // the send's and the in-flight retry's alike; the builder is driven directly by the create-identity tests below
+  assert.match(UI, /const held = newCommentCreate\(create, text, nm\)/);
+  assert.match(UI, /vscodeApi\.postMessage\(commentCreateFrame\(held\)\)/);
+  assert.match(UI, /vscodeApi\?\.postMessage\(commentCreateFrame\(c\)\)/);
   assert.match(KERNEL, /def _comment_launch_prefs\(model="", effort="", fast=""\):/);
   assert.match(KERNEL, /model, effort, fast = _comment_launch_prefs\(model, effort, fast\)/);
   assert.match(KERNEL, /fast=str\(msg\.get\("fast"\) or ""\)/);       // the ws op hands it through…
@@ -363,9 +381,9 @@ test("the create dialog names the thread right there: prefilled <session>-commen
   assert.match(UI, /const prefill = defaultCommentName\(sess0\?\.name, sid, \(commentThreads\.get\(sid\) \|\| \[\]\)\.length\);\s*\n\s*nameBox\.dataset\.prefill = prefill;\s*\n\s*nameBox\.value = commentDrafts\.get\(nk\) \|\| prefill;/);
   // the name lives IN the header ("New comment: <name>"), the button says Comment, and the picks ride along
   assert.match(UI, /"New comment:"/);
-  assert.match(UI, /if \(nameBox\) head\.append\(title, nameBox, closeBtn\);/);
+  assert.match(UI, /if \(nameBox\) head\.append\(title, nameBox, maxBtn, closeBtn\);/);   // the maximize button rides between (2026-09-10, comment-pop-size.test.ts)
   assert.match(UI, /send\.setAttribute\("aria-label", create \? "Comment" : "Send"\);/);   // the ➤ carries the word
-  assert.match(UI, /text, name: nm, model: create\.model \|\| "", effort: create\.effort \|\| "",\s*\n\s*fast: create\.fast \|\| "", color: create\.color \|\| ""/);
+  assert.match(UI, /const held = newCommentCreate\(create, text, nm\);\s*\n\s*vscodeApi\.postMessage\(commentCreateFrame\(held\)\);/);   // the anchor's picks ride the held create
   // the comment's own model/effort selectors reuse the statusline's /models-fed choices + menu skin
   assert.match(UI, /const metaRow = el\("div", "statusline cmt-meta-row"\);/);   // the chat statusline dress (2026-08-25 parity)
   assert.match(UI, /META_CHOICES\[kind\]/);
@@ -379,7 +397,7 @@ test("the create dialog names the thread right there: prefilled <session>-commen
 test("the landing pulse fires once per navigation, not once per history-fetch round", () => {
   assert.match(UI, /let flashedAnchor: string \| null = null;/);
   assert.match(UI, /if \(flashKey == null \|\| flashKey !== flashedAnchor\)/);
-  assert.match(UI, /landOn\(target, uuid\);/);
+  assert.match(UI, /landOn\(target, uuid, quoteEl \?\? firstTextAtomBelow\(target\), quote\);/);   // the one landing write, aligned on the words when the frame quotes them (T386)
   assert.match(UI, /if \(anchor\) flashedAnchor = null;/);
 });
 
@@ -429,7 +447,7 @@ test("while the thread is WRITING the passage holds the await-green tint and NOT
 test("the popover renders the thread with the CHAT's own renderer from the branch point", () => {
   assert.match(UI, /renderingSid = th\.tid;/);
   assert.match(UI, /const node = renderEvent\(ev, prev, turnWorkedSecs\(evs, it\.index, thWorking\)\);\s*\n\s*list\.appendChild\(node\);/);   // + the chat's worked footers (the parity bundle, 2026-08-26)
-  assert.match(KERNEL, /def _thread_events\(tsid, cut_uuid, now, tmux\):/);
+  assert.match(KERNEL, /def _thread_events\(tsid, cut_uuid, now, live_map\):/);
   assert.match(KERNEL, /evs = evs\[at \+ 1:\]/, "sliced to AFTER the branch point — the head system card never rides");
   // the thread's own statusline posts the chat's own ops through the SHARED menu, keyed to the
   // thread sid (toggleMetaMenu's opSid — 2026-08-25 parity: one builder, sid-scoped)
@@ -481,6 +499,12 @@ test("the thread's identity rail runs continuous — no holes at the list's flex
   assert.match(CSS, /\.cmt-msgs \{ flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; \}/,
     "the 6px gap the -6px below must stay paired with");
   assert.match(CSS, /\.cmt-msgs \.turn \+ \.turn::before \{ top: -6px; \}/);
+  // the day divider between two turns (T339): the flex gap sits on both sides of it and `.turn + .turn` does not fire
+  // after it, so its own segment spans margin plus gap each side; derived from the gap and the divider's margins
+  const gap = Number(CSS.match(/^\.cmt-msgs \{[^}]*gap: (\d+)px;/m)![1]);
+  const margins = CSS.match(/^\.day-divider \{[^}]*margin: (\d+)px 0 (\d+)px;/m)!;
+  assert.match(CSS, new RegExp("^\\.cmt-msgs \\.day-divider::before \\{ top: -" + (gap + Number(margins[1])) + "px; bottom: -" + (gap + Number(margins[2])) + "px; \\}", "m"),
+    "the popover's divider segment covers the gap above and below");
 });
 
 test("the quoted passage is CONTEXT on the thread's opening message — never an item above the branch divider", () => {
@@ -587,10 +611,12 @@ test("stuck-green regression: a stalled or missing later frame can never park th
 test("the popover renders the chat's display units — thinking hidden, tool runs folded, per the gear", () => {
   const at = UI.indexOf("renderingIntoThread = true;");
   const block = UI.slice(at, at + 2800);   // widened past the T145 relay-note insert
-  assert.ok(block.includes("? compactDisplay(evs.map((e) => e.kind), evs.map((e) => e.kind === \"tool\" ? e.name : undefined))"),
+  // 2026-09-08 (the notice-vocabulary pass): the retry-run fold became the generic noticegroup, fed the same
+  // per-event foldability the chat computes (isFoldableNotice)
+  assert.ok(block.includes("? compactDisplay(evs.map((e) => e.kind), evs.map((e) => e.kind === \"tool\" ? e.name : undefined), evs.map(isFoldableNotice))"),
     "the SAME unit builder the chat uses, gated on the SAME settings.compact");
-  assert.ok(block.includes('const key = it.kind === "toolgroup" ? toolGroupKey(run[0]) : retryGroupKey(run[0]);'),
-    "the chat's group identities — tool runs AND retry runs (T131) — so expands survive refills");
+  assert.ok(block.includes('const key = it.kind === "toolgroup" ? toolGroupKey(run[0]) : noticeGroupKey(run[0]);'),
+    "the chat's group identities — tool runs AND notice runs — so expands survive refills");
   assert.ok(block.includes("? renderToolGroup(run as Extract<ChatEvent, { kind: \"tool\" }>[], prev, key, open)"),
     "the chat's own folded lines");
   assert.ok(block.includes('child.classList.add("tg-child");'), "expanded children wear the chat's classes");
@@ -610,7 +636,7 @@ test("executable, real thinking fixture: the unit stream drops thinking and fold
 test("everything that re-renders the chat's units refills the open popover live", () => {
   assert.match(UI, /function refillOpenCommentPop\(\): void \{/);
   assert.match(UI, /refillOpenCommentPop\(\);   \/\/ the popover renders the same units — its copy of this run must flip too/);
-  assert.match(UI, /onExternalSettingsChange\(\(s\) => \{ settings = s; applyChatScheme\(s\); renderTabs\(\); rerenderAll\(\); refillOpenCommentPop\(\); \}\);/);
+  assert.match(UI, /onExternalSettingsChange\(\(s\) => \{ settings = s; applyChatScheme\(s\); renderTabs\(\); updateStatusline\(\); rerenderAll\(\); refillOpenCommentPop\(\); \}\);/);
 });
 
 // ── T106 (the user 2026-08-26, found by the romp-lab loop's first full pass): three seam fixes ────
@@ -624,13 +650,13 @@ test("a create refused by parse lag holds its mark and retries on the frame even
   // …and the kernel PARKS the lag-refused create and retries it per pusher cycle (the file it is
   // waiting on is its own): a settled session emits no further frames, so the client-side re-post
   // alone starved — the park covers that; the client's frame-keyed belt covers a restart's lost park
-  assert.match(KERNELSRC, /with _create_lock:\s*\n\s+if not any\(_create_key\([^)]*\) == key for pk in _parked_creates\):\s*\n\s+_parked_creates\.append\(\{"sid": sid, "uuid": str\(msg\["uuid"\]\)/,
+  assert.match(KERNELSRC, /with _create_lock:\s*\n\s+if not any\(_parked_key\(pk\) == key for pk in _parked_creates\):\s*\n\s+_parked_creates\.append\(\{"sid": sid, "uuid": str\(msg\["uuid"\]\)/,
     "the park is under the create lock and once per key (upstream #1208; ruling S1 of the 2026-09-10 fold retired the fork's own park wrapper and its second lock)");
   assert.match(KERNELSRC, /def _retry_parked_creates\(\):/);
   assert.match(KERNELSRC, /_retry_parked_creates\(\)   # lag-parked comment creates ride every pusher cycle \(T106\)/);
   assert.match(KERNELSRC, /_PARK_MAX_TRIES = 30/);
   // the client holds the payload at send and re-posts when a session frame proves the parse caught up
-  assert.match(UI, /cmtCreateInFlight\.set\(create\.uuid, \{ sid: create\.sid,/);
+  assert.match(UI, /cmtCreateInFlight\.set\(create\.uuid, held\);/);   // the held create is the stamped one the send posted
   assert.match(UI, /retryCmtCreates\(String\(msg\.id \|\| ""\)\);\s+\/\/ a session frame = the kernel re-parsed/);
   assert.match(UI, /const CMT_CREATE_MAX_TRIES = 12;/);
   // the ack retires the hold; a REAL refusal drops the synth honestly
@@ -653,14 +679,14 @@ test("the pending echo prunes against EVENTS too — a landed user turn never do
 
 test("the parity bundle (2026-08-26): dividers, owner-scoped in-turn controls, the sid stamp", () => {
   // day dividers open new days in the popover exactly as in the chat (same helper, same idiom)
-  assert.match(UI, /const dayOpen = eventEpoch\(evs\[itemFirstEvent\(it\)\]\);[\s\S]{0,300}?if \(dayOpen != null\) \{\s*\n\s*const dv = dayDividerFor\(dayOpen, prev\);/);   // the T145 relay-note insert sits between
+  assert.match(UI, /const anchor = itemAnchor\(it, \(i\) => eventEpoch\(evs\[i\]\)\);\s*\n\s*const dayOpen = eventEpoch\(evs\[anchor\]\);[\s\S]{0,300}?if \(dayOpen != null\) \{\s*\n\s*const dv = dayDividerFor\(dayOpen, walk\);/);   // the T145 relay-note insert sits between; the unit timed by its anchor member, the divider decided against the walk's mark (T339)
   // the popover's list is stamped with the THREAD sid, and in-turn controls resolve their owner
   // from the DOM at click time — queued ✕ and the api-error card act on the thread, never the tab
   assert.match(UI, /list\.dataset\.session = th\.tid;/);
   assert.match(UI, /function owningSidOf\(el0: HTMLElement \| null\): string \| null \{/);
   assert.match(UI, /const sidQ = owningSidOf\(el\) \|\| activeId;/);   // resolved once — the optimistic arm reuses it
   assert.match(UI, /\{ type: "cancelQueued", id: sidQ, md: qmd \}/);
-  assert.match(UI, /\{ type: "dismissDialog", id: owningSidOf\(dismiss\) \}/);
+  assert.match(UI, /const own = owningSidOf\(b\);\s*\n\s*if \(vscodeApi\) vscodeApi\.postMessage\(\{ type: "apiRetry", id: own, manual: true \}\);/);   // the api-error card's delegate handler (2026-09-08), still owner-scoped
 });
 
 test("the thread's running turn offers the chat's stop affordance, owner-scoped to the THREAD (T138)", () => {
@@ -708,4 +734,137 @@ test("a contentless open thread NEVER renders blank — the loader stays past th
   assert.match(body, /const slow = !cmtBootHolds\(th\.tid\);/);
   assert.match(body, /still opening — the thread's session is taking longer than usual…/);
   assert.match(body, /opening the thread…/);
+});
+
+// ── the create's identity: one id per send gesture, the same one on every re-post ─────────────────
+// The kernel remembers each create it completed and answers a repeat of it with the same thread's ack.
+// Keyed on the words (anchor, passage, text) that memo also swallowed a DELIBERATE second comment in the
+// same words on the same passage (review, 2026-09-09). The client stamps the gesture instead: the popover
+// mints a createId at the send and every re-post of that gesture carries it, so a repeat is a frame with
+// an id the kernel has seen and a fresh gesture never is.
+const ANCHOR = { sid: "aaaaaaaa-1111-2222-3333-444444444444", uuid: "a1", exact: "exponential backoff",
+                 model: "", effort: "", fast: "", color: "" };
+
+test("a send gesture mints its own create id; a second gesture in the same words on the same passage gets another", () => {
+  const first = newCommentCreate(ANCHOR, "fix this", "");
+  const second = newCommentCreate(ANCHOR, "fix this", "");
+  assert.ok(first.createId.length > 0, "the gesture is stamped");
+  assert.notEqual(first.createId, second.createId, "two gestures, two ids, whatever their words");
+  assert.equal(first.tries, 0, "the retry count starts at the send");
+});
+
+test("the create frame carries the id, and a re-post of the held create is the same frame", () => {
+  const held = newCommentCreate({ ...ANCHOR, model: "claude-opus-5", effort: "high", fast: "on", color: "#112233" },
+                                "why jitter?", "why-jitter");
+  const sent = commentCreateFrame(held);
+  assert.deepEqual(sent, { type: "commentCreate", id: ANCHOR.sid, uuid: "a1", exact: "exponential backoff",
+                           text: "why jitter?", name: "why-jitter", model: "claude-opus-5", effort: "high",
+                           fast: "on", color: "#112233", createId: held.createId });
+  held.tries++;                                                   // a transient nack armed the retry
+  assert.deepEqual(commentCreateFrame(held), sent, "a retry is the same gesture: the same id, the same words");
+});
+
+test("an anchor with no picks sends empty picks and an empty name for the kernel's default", () => {
+  const held = newCommentCreate({ sid: ANCHOR.sid, uuid: "a1", exact: "exponential backoff" }, "fix this", "");
+  const sent = commentCreateFrame(held);
+  assert.equal(sent.name, "");
+  assert.equal(sent.model, ""); assert.equal(sent.effort, ""); assert.equal(sent.fast, ""); assert.equal(sent.color, "");
+});
+
+test("the popover's send and its frame-keyed retry both post the held create's frame", () => {
+  const send = UI.slice(UI.indexOf("function commentSendFromPop("));
+  const sendBody = send.slice(0, send.indexOf("\nfunction ", 10));
+  assert.match(sendBody, /const held = newCommentCreate\(create, text, nm\)/, "the send mints the gesture's id");
+  assert.match(sendBody, /vscodeApi\.postMessage\(commentCreateFrame\(held\)\)/);
+  assert.match(sendBody, /cmtCreateInFlight\.set\(create\.uuid, held\)/, "the hold IS the stamped create");
+  const retry = UI.slice(UI.indexOf("function retryCmtCreates("));
+  const retryBody = retry.slice(0, retry.indexOf("\nfunction ", 10));
+  assert.match(retryBody, /vscodeApi\?\.postMessage\(commentCreateFrame\(c\)\)/, "the retry re-sends the held frame, id included");
+  assert.doesNotMatch(UI, /type: "commentCreate", id:/, "no hand-built create frame remains");
+});
+
+// ── executed: the frame-keyed retry (retryCmtCreates, lifted from render.ts) re-posts the held create's own frame ──
+function liftRetry(held: CommentCreate[]) {
+  const start = UI.indexOf("function retryCmtCreates(sid: string): void {");
+  assert.ok(start > 0, "the frame-keyed retry lives in retryCmtCreates");
+  const src = UI.slice(start, UI.indexOf("\n}\n", start) + 3).replace("(sid: string): void {", "(sid) {");
+  const boundM = /const CMT_CREATE_MAX_TRIES = (\d+);/.exec(UI);
+  assert.ok(boundM, "the attempt bound is a named constant");
+  const bound = Number(boundM[1]);
+  const posted: ReturnType<typeof commentCreateFrame>[] = [];
+  const dropped: string[] = [];
+  const toasts: string[] = [];
+  const prelude = `
+    const CMT_CREATE_MAX_TRIES = ${bound};
+    const vscodeApi = { postMessage: (m) => posted.push(m) };
+    const dropSynthThread = (sid, u) => dropped.push(u);
+    const warnToast = (t) => toasts.push(t);`;
+  const cmtCreateInFlight = new Map(held.map((c) => [c.uuid, c] as [string, CommentCreate]));
+  const fn = new Function("cmtCreateInFlight", "commentCreateFrame", "posted", "dropped", "toasts", "sid",
+                          prelude + "\n" + src + "\nretryCmtCreates(sid);");
+  return { run: (sid: string) => { fn(cmtCreateInFlight, commentCreateFrame, posted, dropped, toasts, sid); },
+           posted, dropped, toasts, bound };
+}
+
+test("the frame-keyed retry re-posts the held create's own frame: the id minted at the send, on every re-post", () => {
+  const held = newCommentCreate(ANCHOR, "fix this", "fix-this");
+  const stamped = held.createId;
+  held.tries = 1;                                                 // the transient nack armed the retry
+  const other = newCommentCreate({ ...ANCHOR, sid: "bbbbbbbb-1111-2222-3333-444444444444", uuid: "b1" }, "and here", "");
+  other.tries = 1;
+  const { run, posted, dropped, toasts } = liftRetry([held, other]);
+  run(ANCHOR.sid); run(ANCHOR.sid);                               // two session frames for the sid: two re-posts
+  assert.equal(posted.length, 2, "one re-post per frame, for this sid's create alone");
+  assert.deepEqual(posted.map((f) => f.createId), [stamped, stamped],
+                   "a re-post is the same gesture: the kernel answers it with the thread it made, never a twin");
+  assert.deepEqual(posted, [commentCreateFrame(held), commentCreateFrame(held)], "the held frame, whole, each time");
+  assert.equal(held.tries, 3);
+  assert.equal(other.tries, 1, "another session's create waits for its own frame");
+  assert.deepEqual([dropped, toasts], [[], []]);
+});
+
+test("a create the send has not heard back on is not re-posted, and one past the attempt bound is dropped with the toast", () => {
+  const fresh = newCommentCreate(ANCHOR, "fix this", "");           // tries 0: the send's own frame is out
+  const spent = newCommentCreate({ ...ANCHOR, uuid: "a2" }, "and this", "");
+  const lift = liftRetry([fresh, spent]);
+  spent.tries = lift.bound + 1;
+  lift.run(ANCHOR.sid);
+  assert.deepEqual(lift.posted, [], "the retry waits for a transient nack, and gives up past the bound");
+  assert.deepEqual(lift.dropped, ["a2"]);
+  assert.equal(lift.toasts.length, 1);
+});
+
+// ── a thread that became its own session (the user 2026-09-10, with a screenshot) ─────────────────
+
+test("a promoted thread's popup is the quote, one line, and Open the session in the shared button dress", () => {
+  // the kernel ships a promoted thread with no messages or events, so the popup renders no list for it:
+  // an empty list only grew into the box's fixed height (the void under the quote)
+  assert.match(UI, /if \(th && th\.status !== "promoted"\) \{\s*\n(?:\s*\/\/[^\n]*\n)*\s*const list = el\("div", "cmt-msgs"\);/);
+  const start = UI.indexOf("} else if (th) {\n    // a thread that became its own session");
+  assert.ok(start > 0, "the promoted branch of renderCommentPopover");
+  const branch = UI.slice(start, UI.indexOf("document.body.appendChild(pop);", start));
+  assert.match(branch, /const open = el\("button", "cmt-act"\) as HTMLButtonElement;/,
+               "the shared .cmt-act word-button, never the composer's send-glyph square");
+  assert.doesNotMatch(branch, /"cmt-send"/);
+  assert.match(branch, /open\.textContent = "Open the session";/);
+  assert.match(branch, /open\.dataset\.act = "cmtopensession";/);
+  assert.match(branch, /const row = el\("div", "cmt-actions"\);[\s\S]*row\.appendChild\(open\);\s*\n\s*pop\.appendChild\(row\);/, "inside .cmt-actions");
+  assert.match(branch, /const note = el\("div", "cmt-note"\);\s*\n\s*note\.textContent = "The discussion continues there\.";/,
+               "one line saying where the talk went");
+  // and the quote never flexes in this state, whatever size the box is (the .sized rule hands it the free room otherwise)
+  assert.match(CSS, /\.cmt-pop\.sized\[data-status="promoted"\] \.cmt-quote \{ flex: 0 0 auto; min-height: 0; \}/);
+});
+
+// ── the mark never lands between a table's cells (T349, the user 2026-09-11) ──────────────────────
+// The whitespace text between <td>s and <tr>s sits directly under the table's structural elements; an inline <mark>
+// placed there gets its own anonymous cell and the columns shift. The DOM pass asks this before wrapping each slice.
+test("markSkipsParent: a table's structural parents are skipped, every text-bearing parent is wrapped", () => {
+  for (const tag of ["TABLE", "THEAD", "TBODY", "TFOOT", "TR"]) assert.equal(markSkipsParent(tag), true, tag);
+  for (const tag of ["TD", "TH", "P", "LI", "CODE", "STRONG", "EM", "SPAN", "DIV", "CAPTION", "A"]) assert.equal(markSkipsParent(tag), false, tag);
+  assert.equal(markSkipsParent(null), false); assert.equal(markSkipsParent(undefined), false); assert.equal(markSkipsParent(""), false);
+  // a selection across a row: the cells' own text nodes are wrapped, the separators between them are not
+  const nodes = [{ text: "Charlie", parent: "TD" }, { text: "\n", parent: "TR" }, { text: "12", parent: "TD" }, { text: "\n", parent: "TR" }, { text: "done", parent: "TD" }];
+  const r = findExact(nodes.map((n) => n.text).join(""), "Charlie 12 done")!;
+  const wrapped = sliceRanges(nodes.map((n) => n.text.length), r.start, r.end).filter((sl) => !markSkipsParent(nodes[sl.idx].parent)).map((sl) => nodes[sl.idx].text);
+  assert.deepEqual(wrapped, ["Charlie", "12", "done"], "one mark per cell, none in the row itself");
 });

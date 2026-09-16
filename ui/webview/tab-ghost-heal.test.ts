@@ -227,7 +227,7 @@ test("applyTabOrder dismisses kernel-owned omissions BEFORE reconciling, then re
     /reconcileTabOrder\(retainLiveOmitted\(kernelOrder, order, liveSet\), order,\s*\n\s*\(id\) => sessions\.has\(id\) \|\| tabMeta\.has\(id\),\s*\n\s*\(id\) => kernelListed\.has\(id\)\)/);   // the retained order (T258) feeds the reconcile
   // add-only, recorded AFTER the reconcile: dropping entries would hand a late stale `session` frame the
   // never-listed keep and re-mint the ghost
-  assert.match(RENDER, /for \(const id of next\) order\.push\(id\);[\s\S]{0,1300}?for \(const id of kernelOrder\) kernelListed\.add\(id\);/);
+  assert.match(RENDER, /for \(const id of next\) order\.push\(id\);[\s\S]{0,3000}?for \(const id of kernelOrder\) kernelListed\.add\(id\);/);   // the re-ask arm and its comments sit between (about 2400 characters since the cold-boot diet's gates, 2026-09-16)
   const body = RENDER.match(/function dismissSession\(id: string, why: DismissWhy, doomed\?: ReadonlySet<string>\): void \{[\s\S]*?\n\}/);
   assert.ok(body, "dismissSession not found");
   assert.doesNotMatch(body![0], /kernelListed/, "the record outlives the dismiss (add-only set)");
@@ -238,8 +238,8 @@ test("applyTabOrder re-asks for a re-listed id whose session this client lost �
   // tabs-first boot — where the order deliberately lands before any session frame — never asks. It must
   // run before this push's ids are recorded, or every first listing would read as a repeat.
   assert.match(RENDER,
-    /for \(const id of kernelOrder\) \{\s*\n\s*if \(kernelListed\.has\(id\) && !sessions\.has\(id\)\) requestFullSession\(id, \"nobase\"\);[^\n]*\n\s*\}\s*\n\s*for \(const id of kernelOrder\) kernelListed\.add\(id\);/,
-    "the re-ask sits between the order rebuild and the add-only kernelListed record (its reason is nobase, from upstream's NeedFullWhy vocabulary, since the 2026-09-10 fold)");
+    /for \(const id of kernelOrder\) \{\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!\(report && report\.reemit\) && kernelListed\.has\(id\) && !sessions\.has\(id\) && !skeletonTabs\.ids\.has\(id\)\) requestFullSession\(id, \"nobase\"\);[^\n]*\n\s*\}\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!\(report && report\.reemit\)\) for \(const id of kernelOrder\) kernelListed\.add\(id\);/,
+    "the re-ask sits between the order rebuild and the add-only kernelListed record (its reason is nobase, from upstream's NeedFullWhy vocabulary, since the 2026-09-10 fold); neither the ask nor the record reads a federation re-emission (no kernel's fresh word: on a fresh page it runs before the fresh emission of the same push and would make that strip read as a repeat), and the ask skips a listed skeleton (no session entry by design): the cold-boot diet's gates (2026-09-15 and 2026-09-16)");
 });
 
 test("the host-drop prune is wired: closeRemote stamps its frames, the closed HANDLER prunes, dismissSession stays clean", () => {

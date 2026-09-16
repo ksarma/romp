@@ -46,25 +46,26 @@ count_exact() {   # occurrences of one exact command string under one event
 
 @test "install.sh: a same-named hook registered from another path does not stand in for romp's own" {
     # A Stop hook that happens to share romp-wake.sh's name, and a user wrapper whose ARGUMENT is
-    # named like romp-summarize.sh. Neither is romp's hook; both must be left alone and both of
-    # romp's must still be registered.
+    # named like romp-wake.sh. Neither is romp's hook; both must be left alone and both of
+    # romp's must still be registered. (The wrapper once named romp-summarize.sh; that hook retired
+    # 2026-09-11 and install.sh now de-registers the name, so the fixture names a live hook.)
     mkdir -p "$HOME/.claude"
     cat > "$HOME/.claude/settings.json" <<'JSON'
 {
   "hooks": {
     "Stop": [ { "hooks": [ { "type": "command", "command": "/opt/tools/romp-wake.sh" } ] } ],
-    "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "my-wrapper.sh romp-summarize.sh" } ] } ]
+    "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "my-wrapper.sh romp-wake.sh" } ] } ]
   }
 }
 JSON
     run "$ROMP_DIR/install.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *"Stop:romp-wake.sh"* ]]
-    [[ "$output" == *"UserPromptSubmit:romp-summarize.sh"* ]]
+    [[ "$output" == *"UserPromptSubmit:romp-wake.sh"* ]]
     [ "$(count_exact Stop /opt/tools/romp-wake.sh)" = "1" ]
     [ "$(count_exact Stop '~/.claude/hooks/romp-wake.sh')" = "1" ]
-    [ "$(count_exact UserPromptSubmit 'my-wrapper.sh romp-summarize.sh')" = "1" ]
-    [ "$(count_exact UserPromptSubmit '~/.claude/hooks/romp-summarize.sh')" = "1" ]
+    [ "$(count_exact UserPromptSubmit 'my-wrapper.sh romp-wake.sh')" = "1" ]
+    [ "$(count_exact UserPromptSubmit '~/.claude/hooks/romp-wake.sh')" = "1" ]
 
     # The exact string is now present, so a re-run adds nothing and leaves the user's entries as found.
     run "$ROMP_DIR/install.sh"
@@ -72,8 +73,8 @@ JSON
     [[ "$output" == *"already registered"* ]]
     [ "$(count_exact Stop /opt/tools/romp-wake.sh)" = "1" ]
     [ "$(count_exact Stop '~/.claude/hooks/romp-wake.sh')" = "1" ]
-    [ "$(count_exact UserPromptSubmit 'my-wrapper.sh romp-summarize.sh')" = "1" ]
-    [ "$(count_exact UserPromptSubmit '~/.claude/hooks/romp-summarize.sh')" = "1" ]
+    [ "$(count_exact UserPromptSubmit 'my-wrapper.sh romp-wake.sh')" = "1" ]
+    [ "$(count_exact UserPromptSubmit '~/.claude/hooks/romp-wake.sh')" = "1" ]
 }
 
 @test "install.sh: a guard entry in the 'node <path>' form counts as registered, and is left as it was" {

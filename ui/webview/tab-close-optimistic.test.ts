@@ -29,13 +29,12 @@ function model(now = 0) {
   const known = new Set<string>();
   const closing = new Map<string, number>();
   const warned: string[] = [];
-  const failedToasts: string[] = [];        // endFailed's immediate toast — distinct from the backstop's
   const listedEver = new Set<string>();     // applyTabOrder's kernelListed: ids ANY push has carried
   const awaitingFull = new Set<string>();
   const asked: string[] = [];
   let clock = now;
   return {
-    warned, failedToasts, asked,
+    warned, asked,
     tick(ms: number) { clock += ms; },
     session(id: string) { known.add(id); awaitingFull.delete(id); if (!kernelList.includes(id)) kernelList.push(id); },
     // the ✕: post closeTab, record it, drop the session locally (dismissSession)
@@ -65,14 +64,6 @@ function model(now = 0) {
     needFullReply(id: string) {
       if (!asked.includes(id)) throw new Error("no needFull was asked for " + id);
       this.session(id);
-    },
-    // the kernel's TYPED kill-failure reply (2026-08-18, endFailed in render.ts): toast once,
-    // release the suppression NOW — the tab returns immediately (as a placeholder; the re-ask
-    // fills it in), and the deleted entry keeps the 15s backstop silent for this failure.
-    endFailed(id: string) {
-      failedToasts.push(id);
-      closing.delete(id);
-      if (listedEver.has(id) && !known.has(id) && !awaitingFull.has(id)) { awaitingFull.add(id); asked.push(id); }
     },
     // what the strip actually draws: the kernel's ids minus the ones we just closed. An id with no session
     // behind it is the PLACEHOLDER case — the swirl — so it's called out separately.
@@ -122,26 +113,12 @@ test("a close that never takes surfaces an error and lets the tab back ALIVE —
   assert.deepEqual(m.tabs(), ["web", "api"]);
 });
 
-test("a typed endFailed restores the tab the instant the user is told to retry — one toast, no backstop double-report", () => {
-  // The gap this closes (2026-08-18): the kill-fail reply was a bare warn saying "Try again" while
-  // the closer's OWN closingTabs suppression hid the tab to retry on for the full 15s window, after
-  // which the backstop fired a second, contradictory toast for the same failure.
-  const m = model();
-  m.session("web"); m.session("api");
-  m.push(["web", "api"]);                  // both kernel-owned
-  m.close("api");
-  assert.deepEqual(m.tabs(), ["web"], "optimistic close, as ever");
-  m.endFailed("api");                      // the kernel: the kill didn't take
-  assert.deepEqual(m.failedToasts, ["api"], "told once, immediately");
-  assert.deepEqual(m.tabs(), ["web", "api"], "the tab to retry on is back the moment the words land");
-  assert.deepEqual(m.placeholders(), ["api"], "…as the honest transient placeholder");
-  assert.deepEqual(m.asked, ["api"], "…and the re-ask is already healing it — never the dead swirl");
-  m.needFullReply("api");
-  assert.deepEqual(m.placeholders(), [], "alive again");
-  m.tick(CLOSE_ACK_MS * 2);
-  m.push(["web", "api"]);                  // the kernel keeps listing the survivor
-  assert.deepEqual(m.warned, [], "the backstop stays silent — this failure was already reported");
-});
+// RETIRED with the upstream pull-in (2026-09-15, ruling 16): the two cases that pinned a typed `endFailed` frame, the
+// executed "a typed endFailed restores the tab the instant the user is told to retry" case here and the "endFailed is
+// wired" source pins below, went with render.ts's arm and the harness's endFailed method. No kernel sends the frame after
+// the merge: upstream's endSession arm kills the session and broadcasts `closed`, with no failure reply. A kill the kernel
+// never confirms is the CLOSE_ACK_MS backstop's case above, which stands. A typed kill-failure frame on upstream's kill
+// path is a follow-up with its own test.
 
 test("the ack is the kernel DROPPING the id, not the elapsed time", () => {
   const m = model();
@@ -233,13 +210,16 @@ test("closeTabLocally drops the tab, THEN records the close — in that order", 
   // declared beside tabMeta, NOT down by dismissSession: renderTabs reads it and can run before the module
   // finishes evaluating, which would make a `const` down there a temporal-dead-zone throw.
   assert.match(RENDER, /const tabMeta = new Map[\s\S]{0,900}?const closingTabs = new Map<string, number>\(\);/);
-  assert.match(RENDER, /const CLOSE_ACK_MS = 15_000;/);
+  // fifteen seconds by default, read through tab-order.ts readCloseAckMs so a lab can shorten the backstop (the served split
+  // test waits past it in seconds); tab-order.test.ts pins the default and the knob
+  assert.match(RENDER, /const CLOSE_ACK_MS = readCloseAckMs\(\(k\) => \{ try \{ return localStorage\.getItem\(k\); \} catch \{ return null; \} \}\);/);
 });
 
 test("the strip skips a just-closed tab on BOTH passes (order AND the tabMeta placeholder pass)", () => {
   // the tabMeta pass is the one that drew the swirl: an id the kernel still lists with no session behind it
-  assert.match(RENDER, /for \(const id of order\) \{ if \(!seen\.has\(id\) && !closingTabs\.has\(id\)\)/);
-  assert.match(RENDER, /for \(const id of tabMeta\.keys\(\)\) \{ if \(!seen\.has\(id\) && !closingTabs\.has\(id\)\)/);
+  assert.match(RENDER, /for \(const id of order\) \{ if \(!seen\.has\(id\) && stripLists\(id\)\)/);
+  assert.match(RENDER, /for \(const id of tabMeta\.keys\(\)\) \{ if \(!seen\.has\(id\) && stripLists\(id\)\)/);
+  assert.match(RENDER, /function stripLists\(id: string\): boolean \{\s*\n\s*return !closingTabs\.has\(id\) && \(order\.includes\(id\) \|\| tabMeta\.has\(id\)\);/, "the closing set is read through the strip's one membership rule (T357 fix)");
 });
 
 test("every close path is optimistic — the in-page ✕, a dead read-only tab, and the kernel's confirmClose", () => {
@@ -257,22 +237,6 @@ test("ackClosingTabs settles against the kernel's list on every tabOrder push", 
   assert.match(RENDER, /if \(!live\.has\(id\)\) \{ closingTabs\.delete\(id\); continue; \}/, "gone from the kernel = confirmed");
   assert.match(RENDER, /if \(now - ts < CLOSE_ACK_MS\) continue;/, "inside the window a slow kernel is not a failure");
   assert.match(RENDER, /warnToast\(`Couldn't close/);
-});
-
-test("endFailed is wired: kernel sends it typed + sid-bearing, render toasts, releases, re-asks, repaints", () => {
-  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "bin", "romp-kernel"), "utf8");
-  // the kernel's endSession refusal carries the sid (the closer must know WHICH suppression to lift)
-  assert.ok(KERNEL.includes('"type": "endFailed", "id": sid'), "the kill-fail reply is typed and sid-bearing");
-  // render.ts: toast once, release closingTabs BEFORE the re-ask (requestFullSession suppresses
-  // closing ids), then repaint so the tab is back in the same tick. The re-ask names its reason:
-  // requestFullSession takes a `why` (upstream's skeleton tabs), and the End dropped our copy, so the
-  // tab is a placeholder with no base, "nobase". The call may carry a trailing comment.
-  assert.match(RENDER,
-    /m\.type === "endFailed"[\s\S]{0,200}?warnToast\(m\.text\);\s*\n\s*closingTabs\.delete\(m\.id\);\s*\n\s*requestFullSession\(m\.id, "nobase"\);[^\n]*\n\s*renderTabs\(\);/,
-    "the endFailed handler releases the suppression and heals the tab immediately");
-  assert.match(RENDER, /type NeedFullWhy = [^\n]*"nobase"/, "the re-ask's reason is a word of requestFullSession's own vocabulary");
-  // the backstop's comment no longer claims a failed end has no event — the two must stay wired
-  assert.match(RENDER, /typed[\s\S]{0,40}?endFailed/, "CLOSE_ACK_MS's comment names the evented path");
 });
 
 test("dismissSession never touches the suppression — retiring belongs to ack, backstop, and reopen", () => {

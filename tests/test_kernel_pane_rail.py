@@ -43,7 +43,7 @@ class PaneRailTest(unittest.TestCase):
         # "Files" (2026-09-03): the file viewer as its own pane, last in the rail
         self.assertIn("<div class=rail-btn data-pane=files>Files</div>", self.html)
         # Chat before Timeline before Outline(fleet) before Feed before Waiting before Files in the rail (fixed user-chosen order)
-        idxs = [self.html.index("data-pane=" + k) for k in ("chat", "timeline", "fleet", "feed", "waiting", "files")]
+        idxs = [self.html.index("data-pane=%s>" % k) for k in ("chat", "timeline", "fleet", "feed", "waiting", "files")]   # the rail button's literal: T317's CSS rule names data-pane=files] earlier in the page
         self.assertEqual(idxs, sorted(idxs), "rail order must be Chat, Timeline, Outline, Feed, Waiting, Files")
         # the old per-pane strips + the show-fleet swap + the timeline minimize bar are gone
         self.assertNotIn("pane-strip", self.html)
@@ -53,14 +53,15 @@ class PaneRailTest(unittest.TestCase):
         self.assertNotIn("cc-tl", self.html)
 
     def test_four_top_panes_in_fixed_order_then_the_timeline_band(self):
-        # the TOP row is chat | gv-a | fleet | gv-b | feed | gv-c | waiting | gv-d | files; the timeline is the
-        # bottom band (gh + #tl-pane) AFTER the row closes — so the DOM order is row panes first, then the gh
-        # gutter, then #tl-pane. (The fourth column, "Waiting on you", and the fifth, "Files", joined
-        # 2026-09-03 — each far right at the time, after Feed.)
+        # the TOP row is chat | gv-a | fleet (the Outline) | gv-b | feed | gv-c | waiting | gv-d | files; the timeline is
+        # the bottom band (gh + #tl-pane) AFTER the row closes, so the DOM order is row panes first, then the gh
+        # gutter, then #tl-pane. (The fourth column, "Waiting on you", and the fifth, "Files", joined 2026-09-03,
+        # each far right at the time, after Feed.)
         order = ["id=chat-pane", "id=gv-a", "id=fleet-pane", "id=gv-b", "id=feed-pane", "id=gv-c", "id=waiting-pane",
                  "id=gv-d", "id=files-pane", "id=gh", "id=tl-pane"]
         idxs = [self.html.index(tok) for tok in order]
         self.assertEqual(idxs, sorted(idxs), "row panes, then the gh gutter, then the timeline band")
+        self.assertNotIn("id=gv-e", self.html)                   # no 6th-pane gutter
         # the pane rail is the BOTTOM BAR (the user 2026-07-05): LAST child of .col, AFTER the timeline band —
         # no longer the first child of .row. So its markup falls after #tl-pane.
         self.assertGreater(self.html.index("class=pane-rail"), self.html.index("id=tl-pane"),
@@ -77,6 +78,25 @@ class PaneRailTest(unittest.TestCase):
         # default: Chat + Feed + Timeline on, Fleet off (the user 2026-06-25; inlined on <body> for first paint);
         # Waiting on you off too (2026-09-03) — the feature it shows is itself off by default; Files off as
         # well (2026-09-03) — the viewFile relay brings it forward when a click routes there
+        self.assertIn("<body class='po-chat po-feed po-timeline'>", self.html)
+
+    def test_the_optional_panes_are_served_unloaded_and_the_controller_reads_the_gear(self):
+        # The gear's Panes section (the user 2026-09-10): Sessions, the Outline and the Feed can be hidden from
+        # this browser's dashboard altogether, per browser (romp:settings.panes). The markup carries data-src
+        # for those three, the controller copies it to src for a pane this browser shows and hides the rail
+        # button and phone tab of one it does not; the chat (required) and the Files pane (its own rail
+        # toggle) keep src. The behaviour runs under node in tests/test_pane_state_broadcast.py OptionalPanes.
+        for k in ("fleet", "feed", "timeline"):
+            self.assertIn("<iframe id=f-%s data-src=/%s>" % (k, k), self.html)
+        self.assertIn("<iframe id=f-chat class=m-on src=/chat>", self.html)
+        self.assertIn("<iframe id=f-files src=/files>", self.html)
+        self.assertIn(".rail-btn[hidden]{display:none}", self.html, "the controller's hidden must beat .rail-btn's display:flex")
+        self.assertIn("var ALL=KEYS.slice(),OPT=['timeline','fleet','feed'],SK='romp:settings';", self.html)
+        # reconcile(live): the boot call keeps a shown pane's stored rail flag; the storage listener's call brings a
+        # pane the gear just turned on ON SCREEN (the row promises the column back, not its button alone)
+        self.assertIn("function reconcile(live){", self.html)
+        self.assertIn("reconcile(true);apply();", self.html)
+        # the default body class still ships chat+feed+timeline; the controller reconciles before its first apply
         self.assertIn("<body class='po-chat po-feed po-timeline'>", self.html)
 
     def test_gutters_show_only_between_two_visible_panes(self):
@@ -113,14 +133,20 @@ class PaneRailTest(unittest.TestCase):
         self.assertIn("#chat-pane{flex:var(--g-chat,60) 1 0}#fleet-pane{flex:var(--g-fleet,34) 1 0}#feed-pane{flex:var(--g-feed,40) 1 0}#waiting-pane{flex:var(--g-waiting,34) 1 0}#files-pane{flex:var(--g-files,40) 1 0}", self.html)
         self.assertNotIn("--g-timeline", self.html)              # timeline is the fixed-height band, not a row grow
         self.assertIn("var GK='romp-pane-grow'", self.html)
-        self.assertIn("setGrow(key(id),document.getElementById(id).offsetWidth)", self.html)
+        # two passes (2026-09-08): every shown width is READ before any grow is written — a write re-flows the row,
+        # and a read after it came back at a mixed scale, ballooning the first column on a fresh browser's first drag
+        self.assertIn("var px={};PANES.forEach(function(id){if(shown(id))px[id]=document.getElementById(id).offsetWidth;});", self.html)
+        self.assertIn("Object.keys(px).forEach(function(id){setGrow(key(id),px[id]);});", self.html)
         self.assertIn("localStorage.setItem(GK,JSON.stringify(grow))", self.html)
-        # gv-b picks its left neighbour live: fleet when shown, else chat (so it's the chat|feed gutter too)
-        self.assertIn("document.body.classList.contains('po-fleet')?'fleet-pane':'chat-pane'", self.html)
-        # gv-c picks the rightmost shown of feed / fleet / chat
-        self.assertIn("gutter('gv-c',function(){var c=document.body.classList;return c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':'chat-pane';},'waiting-pane');", self.html)
-        # gv-d picks the rightmost shown of waiting / feed / fleet / chat
-        self.assertIn("gutter('gv-d',function(){var c=document.body.classList;return c.contains('po-waiting')?'waiting-pane':c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':'chat-pane';},'files-pane');", self.html)
+        # gv-b picks its left neighbour live: the outline (fleet) when shown, else the RIGHTMOST chat column (so it's the
+        # chat|feed gutter too; lastChat() is the last split column, or #chat-pane when there is no split —
+        # split screen, the user 2026-09-08)
+        self.assertIn("document.body.classList.contains('po-fleet')?'fleet-pane':lastChat()", self.html)
+        self.assertIn("gutter('gv-a',function(){return lastChat();},'fleet-pane')", self.html)
+        # gv-c picks its left neighbour live: feed, else the outline (fleet), else the rightmost chat column; its right side is the Waiting pane (the fork's fifth pane)
+        self.assertIn("gutter('gv-c',function(){var c=document.body.classList;return c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':lastChat();},'waiting-pane');", self.html)
+        # gv-d, the Files pane's gutter, picks the rightmost shown of waiting / feed / fleet / the chat columns
+        self.assertIn("gutter('gv-d',function(){var c=document.body.classList;return c.contains('po-waiting')?'waiting-pane':c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':lastChat();},'files-pane');", self.html)
         self.assertIn("var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane','files-pane'];", self.html)
 
     def test_a_divider_drag_moves_a_ghost_line_and_writes_the_grows_once_on_release(self):
@@ -139,6 +165,19 @@ class PaneRailTest(unittest.TestCase):
                       km._LANDING_JS)
         # no grow write in the move handler
         self.assertNotIn("setGrow(key(L.id),nL);setGrow(key(R.id),sum-nL);}\nfunction up()", km._LANDING_JS)
+
+    def test_the_shell_serves_the_landing_line_of_a_divider_drag(self):
+        # a divider drag moves a line over the row and the panes take their widths once, at release (the drag
+        # itself runs in tests/test_pane_gutter_drag.py); the served shell carries the line's element and its
+        # rule: hidden until a drag shows it, fixed so its left is a viewport coordinate, the gutter's width,
+        # never a hit target (so the gutter under it keeps its :hover at the grab), and above the focus ring
+        # (.pane-focused::after is z-index 6) so a focused pane does not cover it
+        self.assertIn("<div id=gv-ghost></div>", self.html)
+        self.assertIn("#gv-ghost{display:none;position:fixed;width:7px;pointer-events:none;z-index:40;", self.html)
+        # a child of .col right after the row closes (the files pane's close, then the row's) and before the
+        # timeline's gutter: fixed, so a flex item of neither
+        self.assertIn("<iframe id=f-files src=/files></iframe></div></div><div id=gv-ghost></div>", self.html)
+        self.assertLess(self.html.index("<div id=gv-ghost></div>"), self.html.index("<div class=gh id=gh></div>"))
 
     def test_timeline_is_the_rail_toggled_bottom_band(self):
         # the timeline is a full-width BAND below the pane row (the user 2026-06-25), toggled by the rail's
@@ -180,7 +219,7 @@ class PaneRailTest(unittest.TestCase):
         self.assertIn("function driftWord(t){", self.html)
         self.assertIn("down=bb>0?('behind '+bb):''", self.html)   # said in words since 2026-07-30
         self.assertIn("up=ab>0?('ahead '+ab):''", self.html)
-        self.assertIn("var dw=t.outOfDate?(' \\u00b7 '+(t.status==='up'?'':'last known ')+driftWord(t)):''", self.html)
+        self.assertIn("var dw=t.outOfDate?(' \\u00b7 '+(t.status==='up'?'':'last known ')+driftWord(t)):(t.restartPending?' \\u00b7 running older code':'')", self.html)
         self.assertIn("+dw+", self.html, "the per-host tooltip line carries it")
         # the panel row reads the same functions rather than re-deriving the words. Since 2026-07-30 it
         # leads with the BUILD (release + commit) and puts the distance in parentheses after it — a bare
@@ -251,10 +290,15 @@ class ApiHealthCell(unittest.TestCase):
         self.assertLess(i_api, i_acts, "inside .rail-scroll, before the pinned actions")
         self.assertGreater(i_api, self.html.index("<div class=rail-scroll>"))
 
-    def test_the_cell_ships_hidden_with_its_own_label_a_dot_and_the_word(self):
-        tag = ('<div id=rail-api class="ru-w ru-ah" hidden role=button tabindex=0 aria-label="API ok" data-state=ok>'
-               '<span class=ru-name>API</span><i class=ah-dot></i><span class=ah-text>ok</span></div>')
-        self.assertTrue(tag in self.html, "the cell's markup: hidden, a keyboard button, its own label, a dot, the word")
+    def test_the_cell_ships_hidden_as_a_dot_alone(self):
+        # T301 (the user 2026-09-10): no second API word and no "ok"; the dot moves into the spend readout's slot
+        # (.ah-slot, right after the readout's own API label) whenever that readout renders
+        tag = ('<div id=rail-api class="ru-w ru-ah" hidden role=button tabindex=0 aria-label="API health" data-dot=fine>'
+               '<i class=ah-dot></i></div>')
+        self.assertTrue(tag in self.html, "the cell's markup: hidden, a keyboard button, a dot and nothing else")
+        self.assertNotIn(".ah-text", self.html, "no word beside the dot")
+        self.assertIn("<div class=ru-name>API</div><span class=ah-slot></span>", self.html, "the readout's slot for the dot")
+        self.assertIn(".ah-slot{display:contents}", self.html)   # no flex item of its own: a hidden dot costs no gap
         tag = re.search(r"<div id=rail-api[^>]*>", self.html).group(0)
         self.assertNotIn("title", tag, "the rail's no-title rule: the detail is the one hover surface")
         self.assertNotIn("data-keycmd", tag, "no palette command yet")
@@ -266,21 +310,18 @@ class ApiHealthCell(unittest.TestCase):
         self.assertTrue(".ru-w{display:flex;" in self.html, "the author display rule the attribute must beat")
         self.assertTrue("#rail-api[hidden]{display:none}" in self.html, "no author [hidden] rule for #rail-api")
 
-    def test_the_word_wears_the_usage_cell_s_exact_font(self):
-        pct = re.search(r"\.ru-pct\{([^}]*)\}", self.html).group(1)
-        txt = re.search(r"\.ah-text\{([^}]*)\}", self.html).group(1)
-        self.assertEqual(pct, txt, "byte for byte: no new font size on the rail")
-        self.assertIn("#rail-api[data-state=ok] .ah-text{color:#9aa4ad}", self.html, "ok in the label gray")
-        self.assertIn("body.theme-light .ah-text{color:#1F1E1D}", self.html)
-        self.assertIn("body.theme-light #rail-api[data-state=ok] .ah-text{color:#5D574E}", self.html)
-        self.assertIn("#rail-api{cursor:pointer;margin-left:4px}", self.html)
+    def test_the_cell_adds_no_font_size_and_sits_in_the_readout_s_slot(self):
+        self.assertNotIn(".ah-text", self.html, "T301: no word on the rail, so no font rule for one")
+        self.assertIn("#rail-api{cursor:pointer;margin:0 1px;padding:4px 2px}", self.html, "a 15 px hit target around a 7 px dot")
 
-    def test_the_dot_wears_status_hexes_never_the_accent(self):
-        self.assertIn(".ah-dot{width:7px;height:7px;border-radius:50%;background:#9aa4ad;opacity:.55;flex:0 0 auto}", self.html)
-        self.assertIn("#rail-api[data-state=degraded] .ah-dot,.ah-dot[data-state=degraded]{background:#e67e22;opacity:1}", self.html)
-        self.assertIn("#rail-api[data-state=paused] .ah-dot,.ah-dot[data-state=paused]{background:#e5484d;opacity:1}", self.html)
-        for rule in re.findall(r"[^{}]*\.ah-dot[^{}]*\{[^}]*\}", self.html):
-            self.assertNotIn("var(--accent)", rule, "status colors keep their own meaning")
+    def test_the_dot_wears_the_accent_when_fine_and_the_status_tokens_otherwise(self):
+        # T301 (the user 2026-09-10): the fine dot IS the romp accent; errors the blocked red; quiet the label gray;
+        # every colour through a token with a fallback for a var-less harness
+        self.assertIn(".ah-dot{width:7px;height:7px;border-radius:50%;background:var(--dim,#9aa4ad);opacity:.55;flex:0 0 auto}", self.html)
+        self.assertIn("#rail-api[data-dot=fine] .ah-dot,.ah-dot[data-dot=fine]{background:var(--accent,#9cd2ff);opacity:1}", self.html)
+        self.assertIn("#rail-api[data-dot=errors] .ah-dot,.ah-dot[data-dot=errors]{background:var(--st-blocked-bg,#e5484d);opacity:1}", self.html)
+        self.assertIn("#rail-api[data-dot=quiet] .ah-dot,.ah-dot[data-dot=quiet]{background:var(--dim,#9aa4ad);opacity:.55}", self.html)
+        self.assertNotIn("data-state=degraded", self.html, "the machine's words are not colours any more")
 
     def test_the_light_theme_keeps_the_ok_dot_visible_and_the_state_dots_their_colors(self):
         # the dark label gray at .55 blends into the light rail; the light label color keeps the glyph. Scoped to
@@ -288,11 +329,11 @@ class ApiHealthCell(unittest.TestCase):
         # rules (0,2,0), and the card's headline dot would lose its amber and red. The History head shows the signal's
         # quiet states (healthy, unknown) with the same glyph, so the rule names them too (the base gray falls to
         # about 1.6:1 on the white tip)
-        self.assertTrue("body.theme-light #rail-api[data-state=ok] .ah-dot,body.theme-light .ah-dot[data-state=ok],"
-                        "body.theme-light .ah-dot[data-state=healthy],body.theme-light .ah-dot[data-state=unknown]{background:#5D574E}" in self.html,
-                        "the light override names the ok state and the History head's quiet states")
+        # T301: the quiet dot alone needs the light override (fine and errors read on white as they are)
+        self.assertTrue("body.theme-light #rail-api[data-dot=quiet] .ah-dot,body.theme-light .ah-dot[data-dot=quiet]{background:#5D574E}" in self.html,
+                        "the light override names the quiet state, on the rail and in the popup alike")
         self.assertNotIn("body.theme-light .ah-dot{", self.html, "no bare light rule on the dot")
-        self.assertNotIn("body.theme-light .ah-dot[data-state=degraded]", self.html, "the state rules are not restated per theme")
+        self.assertNotIn("body.theme-light .ah-dot[data-dot=errors]", self.html, "the state rules are not restated per theme")
 
     def test_the_shell_socket_carries_the_dashboard_s_wid_minted_before_it_connects(self):
         # the detail's openSession rides the shell socket; with no wid on it the kernel's reveal would fall to the
@@ -340,6 +381,15 @@ class ApiHealthCell(unittest.TestCase):
         self.assertLess(js.index(reader), js.index("function shellWS()"), "bound at load, before the first dial")
         shell_ws = js[js.index("function shellWS()"):]
         self.assertNotIn("__rompShellSend=", shell_ws, "the dial's closure never rebinds it")
+
+    def test_the_shell_socket_routes_a_refused_press_to_the_notification_center(self):
+        # the detail's pause button sends setGlobalRetryPaused on this socket, and a press the kernel refused (the
+        # pause file could not be read; nothing was changed) is answered with a warn frame on the same socket. A
+        # dispatcher without this branch discarded it: the answering frame's moved seq un-acknowledged the button
+        # with no reason anywhere, and the press read as ignored. The chat page toasts its own warn frames already.
+        self.assertIn("else if(m&&m.type==='warn'&&typeof m.text==='string'&&m.text&&window.__rompNotify)"
+                      "window.__rompNotify('warn',m.text);", self.html)
+        self.assertIn("window.__rompNotify=function(kind,text,tgt)", self.html, "the center the branch feeds is on this page")
 
     def test_the_cell_s_script_loads_after_the_usage_script_it_borrows_the_backdrop_from(self):
         self.assertLess(self.html.index("getElementById('rail-usage')"), self.html.index("getElementById('rail-api')"))

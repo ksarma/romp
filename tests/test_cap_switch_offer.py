@@ -28,14 +28,14 @@ ERR = {"text": "API Error 529 overloaded", "status": 529}
 class CapSwitchOffer(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
-        self._saved = (km.jd.STATE, km._tmux_sessions, km._auth_key_present)
+        self._saved = (km.jd.STATE, km._live_map, km._auth_key_present)
         km.jd.STATE = Path(self.td.name)
-        km._tmux_sessions = lambda: {SID: {"authLive": "login", "auth": "key"}}
+        km._live_map = lambda: {SID: {"authLive": "login", "auth": "key"}}
         km._auth_key_present = lambda: True
         self._cap(100, 3600)
 
     def tearDown(self):
-        (km.jd.STATE, km._tmux_sessions, km._auth_key_present) = self._saved
+        (km.jd.STATE, km._live_map, km._auth_key_present) = self._saved
         self.td.cleanup()
 
     def _cap(self, pct, resets_in, bucket="five_hour"):
@@ -48,7 +48,7 @@ class CapSwitchOffer(unittest.TestCase):
         self.assertGreater(v["resetsAt"], time.time())
 
     def test_never_for_a_key_billed_session(self):
-        km._tmux_sessions = lambda: {SID: {"authLive": "key", "auth": "login"}}
+        km._live_map = lambda: {SID: {"authLive": "key", "auth": "login"}}
         self.assertIsNone(km._cap_switch_offer(SID, ERR),
                           "a key-billed error is not a cap death — nothing to offer")
 
@@ -78,8 +78,8 @@ class CapSwitchOffer(unittest.TestCase):
         self.assertEqual(len(sites), 2, "exactly the helper + the parked replay: %r" % sites)
         self.assertTrue(any("return be.set_auth(sid, value)" in l for l in sites))
         self.assertTrue(any("be.set_auth(sid, op[1])" in l for l in sites))
-        self.assertIn('elif t == "setAuth" and msg.get("value") in ("login", "key"):', src,
-                      "the route is a user gesture, and the ONLY door")
+        self.assertIn('elif t == "setAuth" and lg.parse_pick(msg.get("value"))[0]:', src,
+                      "the route is a user gesture, and the ONLY door (T346: 'login' | 'key' | 'login:<id>')")
         self.assertNotIn("set_auth", src[src.index("def _cap_switch_offer"):
                                          src.index("def _judge_limit_view")],
                          "the offer itself never switches anything")

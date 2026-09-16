@@ -193,7 +193,8 @@ test("feed.ts reads the clock only through nowSec(), stamps every age and durati
   const pass = FEED.slice(FEED.indexOf("function livePass(): void {"), FEED.indexOf("const live = liveRefresher("));
   assert.ok(pass.length > 0, "the live pass exists");
   assert.match(pass, /const now = nowSec\(\);/);
-  assert.match(pass, /for \(const card of askEls\.values\(\)\) \{\s*\n\s*const it = \(card as any\)\._it as AskItem \| undefined;\s*\n\s*if \(!it\) continue;\s*\n\s*applyTint\(card, now - it\.t\);/);
+  assert.match(pass, /for \(const card of \[\.\.\.askEls\.values\(\), \.\.\.fsAskEls\.values\(\)\]\) \{[^\n]*\n\s*const it = \(card as any\)\._it as AskItem \| undefined;\s*\n\s*if \(!it\) continue;\s*\n\s*applyTint\(card, now - it\.t\);/,
+    "the pass walks the ask cards and the focused section's copies of them (upstream's T347 loop head: fsAskEls beside askEls)");
   assert.match(pass, /if \(cont && cont\.disabled && \(it\.followupPending \|\| it\.recheck \|\| it\.rejudging\)\) \{\n\s*const ct = contTitle\(true, "a continue", it\.followupAt\);\n\s*if \(cont\.title !== ct\) cont\.title = ct;/);
   assert.match(pass, /for \(const card of groupEls\.values\(\)\) \{\s*\n\s*const g = \(card as any\)\._g as AskGroup \| undefined;\s*\n\s*if \(g\) applyTint\(card, now - g\.t\);/);
   assert.match(pass, /refreshAges\(document\.querySelectorAll<HTMLElement>\("\[data-age-t\]"\), now, relAge, ageTint\);/);

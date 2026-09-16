@@ -14,7 +14,7 @@ import * as path from "node:path";
 
 const PREVIEW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "preview.ts"), "utf8");
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
-const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "path-links.ts"), "utf8");   // the matcher lives here since plans/file-review.md Slice 0
+const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "path-links.ts"), "utf8");   // the matcher, lifted out of render.ts
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 const FEED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.ts"), "utf8");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
@@ -49,9 +49,8 @@ test("a kernel-VERIFIED preview fails LOUDLY: a retry chip holds the figure's sp
     "a retry RESUMES from the bytes already received (kernel /file honors the suffix range)");
   // the render layer feeds the verdict: spacePaths and pathLinks hits are kernel-stat'd paths
   assert.match(RENDER, /const kernelVerified = new Set<string>\(\);/);
-  // the walk (path-links.ts) reports which hits the kernel stat'd; render.ts records exactly those
-  assert.match(LINKS, /verified: !isUri && typeof fixed === "string"/);
-  assert.match(RENDER, /if \(verified\) kernelVerified\.add\(open\);/);
+  assert.match(LINKS, /verified: !isUri && typeof fixed === "string"/, "the walk (path-links.ts) says which hit the kernel fixed…");
+  assert.match(RENDER, /if \(verified\) kernelVerified\.add\(open\);/, "…and the chat feeds that verdict to the figure pass");
   assert.match(CSS, /\.path-full-retry \{ display: inline-flex;/, "visible chrome — the chip has chat-sheet css");
 });
 
@@ -157,7 +156,8 @@ test("a verified relative path is previewable exactly like an absolute one — t
   // AND a bare filename both ride), previewKind is extension-only (relativity-blind), and both the
   // eager and the expanded render hand previewFull the SAME entry previewable carries — pin lookup
   // included, so a relative embed rides its own pin key ((pathPins || {})[p]).
-  assert.match(LINKS, /const open = isUri \? fileUriToPath\(tok\) : \(opts && opts\.resolve \? opts\.resolve\(fixed \?\? tok\) : \(fixed \?\? tok\)\);/);   // the walk is path-links.ts's; its hits' `open` is what render.ts previews (the chat passes no resolve)
+  assert.match(LINKS, /const target = isUri \? fileUriToPath\(tok\) : \(fixed \?\? tok\);\n\s*const open = opts && opts\.resolve \? opts\.resolve\(target\) : target;/);   // the walk's open target (path-links.ts; the chat passes no resolve)…
+  assert.match(RENDER, /for \(const \{ el: link, open, verified, inPre \} of linkifyPathTokens\(root, sid, pathLinks, walkOpts \? \{ \.\.\.FENCE_WALK, \.\.\.walkOpts \} : FENCE_WALK\)\) \{/);   // …is what the chat reads per hit (the fork's walk takes the session and the todo surfaces' options over the chat's fenced-block options; a fenced hit is skipped for the preview, 2026-09-12)
   assert.match(RENDER, /previewable\.push\(open\);/);
   assert.match(PREVIEW, /const ext = path\.slice\(path\.lastIndexOf\("\."\) \+ 1\)\.toLowerCase\(\);/);
   assert.match(RENDER, /previewFull\(p, renderingOwnerSid \?\? activeId, kernelVerified\.has\(p\), \(pathPins \|\| \{\}\)\[p\]\)/);

@@ -1,5 +1,5 @@
 // A settings pick HELD for the session's live work: the words the chat line, its hover and the badge tips
-// use. Pure and string-only, like billing-label.ts, so every case runs as a test (pick-held.test.ts) and the
+// use. Pure and string-only, so every case runs as a test (pick-held.test.ts) and the
 // surfaces cannot drift; the callers own their chrome.
 //
 // The kernel holds a pick (effort, permission mode into bypass, fast mode's first opt-in, billing, env) while
@@ -17,8 +17,8 @@
 // waiting, since the toast has just said the pick is back off; and it says nothing about a badge, since the
 // kernel blanks the fast badge while the refusal's reason stands, so no held mark or tip renders for it
 // (review round 3b, 2026-09-09). The clause that says WHEN a held pick applies is one function (heldUntil), and
-// the surfaces outside this module that name it (billing-label.ts's row and sub-line, render.ts's tooltip
-// rows through heldRowValue) take it from here (review round 4, 2026-09-10).
+// every surface that names it takes it from here (review round 4, 2026-09-10): the Billing row and the tab menu's
+// Billing sub-line through billingHeldRow and billingHeldSub below, render.ts's tooltip rows through heldRowValue.
 
 // `picked` (review round 5, 2026-09-10): the PICKED value of each held kind, by kind ("effort", "mode", "fast",
 // "auth"), since the status fields beside the marker report what the session RUNS; the badge menus check-mark it
@@ -45,6 +45,45 @@ export function heldUntil(h: PickHeld): string {
 // review round 5); a payload without it names the pick by its kind, as every payload did before.
 export function heldRowValue(now: string, kind: string, h: PickHeld, picked?: string): string {
   return `${now} until ${heldUntil(h)}, then ${picked || `the picked ${pickKindName(kind)}`}`;
+}
+
+// The Billing switch is HELD: picked, pending, and waiting for the session's live work rather than applying (the
+// fork's settings-pick hold, 2026-09-10). These three readings lived in the fork's Billing label helper module until
+// the 2026-09-15 upstream pull-in retired it for upstream's inline Billing ladders (T346); the hold is fork-only, so
+// its arm moved here and leads both ladders in render.ts. Typed on the status fields the Billing surfaces read plus
+// the hold's marker.
+export interface BillingHeldFacts { auth?: string; authLive?: string; authPending?: boolean; authAcct?: string; authLabel?: string; pickHeld?: PickHeld | null }
+
+export function billingHeld(st: BillingHeldFacts): boolean {
+  return !!(st.authPending && st.pickHeld && st.pickHeld.surfaces.includes("auth"));
+}
+
+// The plain label for one side, naming the login's account when known; "" for no side at all.
+function billingSide(side: string, acct?: string): string {
+  if (!side) return "";
+  return side === "key" ? "API key" : (acct ? `Login (${acct})` : "Login");
+}
+
+// The tab hover's Billing row while the switch is held: the running side leads when the CLI reported one (the report
+// still describes the running process: the kernel keeps it through the hold and clears it at the arm), the pick is
+// named as what waits, and when it applies is the one clause every held surface shares (heldUntil). The picked side
+// can EQUAL the side the CLI reports (review round 5, 2026-09-10): the kernel compares a billing pick against the side
+// that LAUNCHED, never against the CLI's report, so a key pick on a process that launched plain and found the helper's
+// key is held with authLive already "key"; the row then says the side once and that the reload waits, never "API key
+// until ..., then API key". Not the "(applying, not confirmed yet)" wording of the pending arm that follows this one in
+// render.ts: nothing is applying during a hold (review round 2 retired it for holds). The account beside "Login" is the
+// kernel's authLabel (T346), else the account name an older kernel sends.
+export function billingHeldRow(st: BillingHeldFacts): string {
+  const acct = st.authLabel || st.authAcct;
+  const now = billingSide(st.authLive || "", acct), then = billingSide(st.auth || "", acct), until = heldUntil(st.pickHeld!);
+  if (now && st.authLive === st.auth) return `${then} (the reload waits until ${until})`;
+  return now ? `${now} until ${until}, then ${then}` : `${then} applies when ${until}`;
+}
+
+// The tab menu's Billing item sub-line while the switch is held: the same clause in fewer words, since the switch is
+// one click away and the line is a control's caption.
+export function billingHeldSub(st: BillingHeldFacts): string {
+  return `waiting until ${heldUntil(st.pickHeld!)}`;
 }
 
 // ONE convention for a menu's rows while a pick of its kind is HELD (review round 5, 2026-09-10): the check mark

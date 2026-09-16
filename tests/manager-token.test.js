@@ -36,7 +36,7 @@ function freePort() {
   });
 }
 
-// A real manager in a private world: its own state root (with or without a token file), a no-op tmux,
+// A real manager in a private world: its own state root (with or without a token file),
 // a stand-in kernel that stays up, and no ROMP_SERVE_TOKEN in its environment, so the FILE is the token.
 // `profile`: a kernels.json entry with its own stateDir holding `profile.token` (a second stand-in
 // kernel is spawned for it). `unreadable`: a directory at the token path, a file the manager can neither
@@ -45,8 +45,7 @@ function freePort() {
 async function manager({ token, profile, unreadable, symlink } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-token-'));
   const bin = path.join(dir, 'bin'), state = path.join(dir, 'state');
-  for (const d of [bin, state, path.join(dir, 'tmux')]) fs.mkdirSync(d);
-  fs.writeFileSync(path.join(bin, 'tmux'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  for (const d of [bin, state]) fs.mkdirSync(d);
   if (token) fs.writeFileSync(path.join(state, 'serve-token'), token + '\n', { mode: 0o600 });
   if (unreadable) fs.mkdirSync(path.join(state, 'serve-token'));
   let linkTarget = '';
@@ -67,7 +66,7 @@ async function manager({ token, profile, unreadable, symlink } = {}) {
       JSON.stringify({ kernels: [{ id: profile.id, port: await freePort(), stateDir: profileRoot }] }));
   }
   const env = Object.assign({}, process.env, {
-    PATH: bin, TMUX_TMPDIR: path.join(dir, 'tmux'), ROMP_CLI_SCOPE: '0',
+    PATH: bin, ROMP_CLI_SCOPE: '0',
     ROMP_STATE_DIR: state, ROMP_MANAGER_PORT: String(port), ROMP_SERVE_PORT: String(servePort),
     ROMP_SERVE_BIN: serve, ROMP_SHUTDOWN_GRACE_MS: '500',
   });

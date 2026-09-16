@@ -12,9 +12,12 @@ ROMP_SCRIPT="$BIN/romp"
 setup() {
     # Running this suite INSIDE a romp session inherits the live kernel's port env, which would
     # turn every "unset" case below into an override (same trap tests/romp-service.bats documents).
-    # ROMP_STATE_DIR too: a profiled kernel exports it to its sessions, and pick_python reads it before
+    # ROMP_STATE_DIR too: a kernel exports it to its sessions, and pick_python reads it before
     # XDG_STATE_HOME, so with it inherited the venv cases below would read a LIVE venv's pyvenv.cfg.
+    # The two port spellings stay unset rather than poisoned (their unset case is under test, and the
+    # kernel this suite execs is a stub that never listens); the manager port is poisoned as a floor.
     unset ROMP_SERVE_PORT ROMP_KERNEL_PORT ROMP_STATE_DIR
+    export ROMP_MANAGER_PORT=1
     TEST_DIR="$(mktemp -d)"
     export HOME="$TEST_DIR/home"
     export XDG_STATE_HOME="$HOME/.local/state"
@@ -127,6 +130,338 @@ teardown() { rm -rf "$TEST_DIR"; }
     [ "$(printf '%s\n' "$output" | grep '^SERVEPORT=')" = "SERVEPORT=" ]
 }
 
+# ── the Python floor (issue 1600) ──────────────────────────────────────────────────────────
+@test "romp-serve: refuses to start the kernel on a python below 3.10, naming it and the install command" {
+    # a python that answers the version probe with 3.9 (and would happily exec the stub kernel otherwise)
+    cat > "$TEST_DIR/old-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in
+  *romp-pyver*) echo "romp-pyver 3.9"; exit 0 ;;
+esac
+exec bash "$@"
+OLD
+    chmod +x "$TEST_DIR/old-python"
+    ROMP_PYTHON="$TEST_DIR/old-python" run "$ROMP_SERVE" --port 29999
+    [ "$status" -eq 2 ]                                      # the floor's own code (round two: install.sh tells it from the other refusals)
+    [[ "$output" == *"python 3.9"* ]]
+    [[ "$output" == *"need 3.10 or newer"* ]]
+    [[ "$output" == *"brew install python@3.13"* ]]
+    [[ "$output" != *"PORT="* ]]                             # the stub kernel never ran
+}
+
+@test "romp-serve: --print-python prints the interpreter the kernel would run, floor applied, and starts nothing" {
+    run "$ROMP_SERVE" --print-python
+    [ "$status" -eq 0 ]
+    [ "$output" = "$ROMP_PYTHON" ]                           # the pin, verbatim, as the pick returns it
+    cat > "$TEST_DIR/old-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in *romp-pyver*) echo "romp-pyver 3.8"; exit 0 ;; esac
+exit 0
+OLD
+    chmod +x "$TEST_DIR/old-python"
+    ROMP_PYTHON="$TEST_DIR/old-python" run "$ROMP_SERVE" --print-python
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"python 3.8"* ]]
+    # the usage line names the flag
+    grep -q 'romp-serve \[--port N\] \[--host H\] \[--print-python\]' "$ROMP_SERVE"
+}
+
+@test "romp-serve: the floor reads the LAST line of the probe's output, so a chatty site customization cannot hide a 3.9" {
+    cat > "$TEST_DIR/chatty-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in
+  *romp-pyver*) echo "sitecustomize: hello from a chatty site"; echo "2.7"; echo "romp-pyver 3.9"; exit 0 ;;   # a bare 2.7 in the chatter is not the version
+esac
+exec bash "$@"
+OLD
+    chmod +x "$TEST_DIR/chatty-python"
+    ROMP_PYTHON="$TEST_DIR/chatty-python" run "$ROMP_SERVE" --port 29997
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"python 3.9"* ]]
+    [[ "$output" != *"PORT="* ]]
+}
+
+@test "romp-serve: an interpreter that blocks on its version probe is refused as unresponsive within the bound, not exec'd and not hung" {
+    # round three of issue 1600: the probe is the picked interpreter's FIRST execution and was unbounded, so a blocking one
+    # (a stalled network mount, a site customization reaching for the network) hung install.sh with no output
+    cat > "$TEST_DIR/blocking-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in
+  *-c*) sleep 60 ;;      # blocks on any -c probe (the base's probe program has no sentinel, and must hang too)
+esac
+exec bash "$@"
+OLD
+    chmod +x "$TEST_DIR/blocking-python"
+    # bounded from outside where timeout exists (a regression that hung would be a clean red); the probe's own bound is what is tested
+    local tmo; tmo="$(command -v timeout || true)"
+    ROMP_PYTHON="$TEST_DIR/blocking-python" run ${tmo:+"$tmo" 40} "$ROMP_SERVE" --print-python
+    [ "$status" -eq 1 ]                                      # its own refusal, exit 1: install.sh's pass-through
+    [[ "$output" == *"did not answer its version probe"* ]]
+    [[ "$output" == *"blocking-python"* ]]
+    [[ "$output" != *"PORT="* ]]
+}
+
+@test "romp-serve: an interpreter that ignores TERM is killed a second after the bound (-k) and refused; no watchdog, no clock" {
+    # round four of issue 1600: timeout carried no -k, so a TERM-ignoring interpreter hung past the bound. Round five dropped
+    # the watchdog that stood in for timeout where there is none (its TERM trap ran under set -e and let a blocking
+    # interpreter through): where coreutils timeout is absent the probe is unbounded, as the picker's own runs are.
+    cat > "$TEST_DIR/deaf-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in
+  *-c*) trap '' TERM; exec sleep 60 ;;      # becomes its sleep: the KILL after the ignored TERM leaves no stray child
+esac
+exec bash "$@"
+OLD
+    chmod +x "$TEST_DIR/deaf-python"
+    local tmo; tmo="$(command -v timeout || true)"
+    [ -n "$tmo" ] || skip "the bound needs coreutils timeout"
+    local t0=$SECONDS
+    ROMP_PYTHON="$TEST_DIR/deaf-python" run "$tmo" 40 "$ROMP_SERVE" --print-python
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"did not answer its version probe"* ]]
+    [ $((SECONDS - t0)) -lt 15 ]                             # the bound plus the kill, not the outer bound
+    [[ "$output" != *"Killed"* ]]                             # the KILLed timeout leaves no job-status line in the log
+}
+
+_dead() {   # $1 pid: gone, or a zombie awaiting its reap
+    local st; st="$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' ')"
+    [ -z "$st" ] || [ "${st#Z}" != "$st" ]
+}
+
+@test "romp-serve: a child the blocked interpreter left behind dies at the bound with it (the group is signalled)" {
+    # round five of issue 1600: --foreground handed the signals to the interpreter alone, so a child it had started (a
+    # site customization's helper, a sleep here) outlived the bound, one per probe; plain timeout signals the group
+    cat > "$TEST_DIR/forking-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in
+  *-c*) sleep 60 & echo $! > "$ROMP_TEST_PIDFILE"; wait ;;   # blocks, with a child of its own
+esac
+exec bash "$@"
+OLD
+    chmod +x "$TEST_DIR/forking-python"
+    local tmo; tmo="$(command -v timeout || true)"
+    [ -n "$tmo" ] || skip "the bound needs coreutils timeout"
+    ROMP_TEST_PIDFILE="$TEST_DIR/child.pid" ROMP_PYTHON="$TEST_DIR/forking-python" run "$tmo" 40 "$ROMP_SERVE" --print-python
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"did not answer its version probe"* ]]
+    [ -s "$TEST_DIR/child.pid" ]
+    local child; child="$(cat "$TEST_DIR/child.pid")"
+    if ! _dead "$child"; then kill -KILL "$child" 2>/dev/null; return 1; fi   # the child outlived the bound (killed here so the suite's wake is clean)
+}
+
+@test "romp-serve: a TMPDIR that is not there, or a PATH without mktemp, refuses no good interpreter: the file falls to the system temp dir, or the read to a pipe" {
+    # round five of issue 1600 (round three started it): mktemp ran unguarded under set -e, so a stale TMPDIR (a launchd
+    # agent's /var/folders path across a reboot) refused a good interpreter with mktemp's own message, and a PATH
+    # without mktemp was exit 127
+    cat > "$TEST_DIR/good-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in *romp-pyver*) echo "romp-pyver 3.12"; exit 0 ;; esac
+exec bash "$@"
+OLD
+    chmod +x "$TEST_DIR/good-python"
+    TMPDIR="$TEST_DIR/no-such-tmp" ROMP_PYTHON="$TEST_DIR/good-python" run "$ROMP_SERVE" --print-python
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_DIR/good-python" ]
+    local bare="$TEST_DIR/bare"; mkdir -p "$bare"
+    local t; for t in bash sh cat rm date dirname readlink; do ln -s "$(command -v "$t")" "$bare/$t"; done   # no mktemp, no timeout
+    PATH="$bare" ROMP_PYTHON="$TEST_DIR/good-python" run "$ROMP_SERVE" --print-python
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_DIR/good-python" ]
+    # and the floor still holds through the pipe read
+    cat > "$TEST_DIR/old-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in *romp-pyver*) echo "romp-pyver 3.9"; exit 0 ;; esac
+exec bash "$@"
+OLD
+    chmod +x "$TEST_DIR/old-python"
+    PATH="$bare" ROMP_PYTHON="$TEST_DIR/old-python" run "$ROMP_SERVE" --print-python
+    [ "$status" -eq 2 ]
+}
+
+@test "romp-serve: a PATH without cat still reads the probe file, so the floor refuses a 3.9 (the shell reads the file, not cat)" {
+    # the tidy of the fresh-install set: the probe file's read was the script's only external cat, so a PATH with timeout and
+    # mktemp but no cat read no version and STARTED a 3.9 pin, fail-open and silent
+    cat > "$TEST_DIR/old-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in *romp-pyver*) echo "romp-pyver 3.9"; exit 0 ;; esac
+exec bash "$@"
+OLD
+    chmod +x "$TEST_DIR/old-python"
+    local bare="$TEST_DIR/bare-nocat"; mkdir -p "$bare"
+    local t; for t in bash sh rm mktemp date dirname readlink; do ln -s "$(command -v "$t")" "$bare/$t"; done   # mktemp yes, cat no
+    local tmo; tmo="$(command -v timeout || true)"; [ -n "$tmo" ] && ln -s "$tmo" "$bare/timeout"
+    PATH="$bare" ROMP_PYTHON="$TEST_DIR/old-python" run "$ROMP_SERVE" --print-python
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"python 3.9"* ]]
+}
+
+@test "romp-serve: an interpreter that answers and then unlinks its own stdout (the probe file gone inside the window) is started, not refused in silence" {
+    # round two of the tidy: the $(<file) read runs in the current shell, and its failed redirection exited the script under
+    # set -e before the or-else, with the 2>/dev/null hiding why: --print-python exited 1 and printed nothing. The read is a
+    # plain read now, whose failed redirection is a command failure; the file gone is the no-version leg, the pick printed.
+    [ -r /proc/self/fd/1 ] || skip "the stand-in finds its stdout through /proc (Linux)"
+    cat > "$TEST_DIR/unlinking-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in *romp-pyver*) echo "romp-pyver 3.12"; rm -f "$(readlink /proc/$$/fd/1)"; exit 0 ;; esac   # $$: the script's own stdout, the probe file (a substitution's fd 1 is its pipe)
+exec bash "$@"
+OLD
+    chmod +x "$TEST_DIR/unlinking-python"
+    ROMP_PYTHON="$TEST_DIR/unlinking-python" run "$ROMP_SERVE" --print-python
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_DIR/unlinking-python" ]
+}
+
+@test "romp-serve: a NUL byte ahead of the sentinel does not hide the version: a 3.9 behind a leading NUL is refused" {
+    # the second tidy: read -d '' stops at a NUL, so a site customization writing one before the program's line read as
+    # no version and STARTED the 3.9 (the old cat dropped the NUL with a warning); the chunks between NULs are joined now
+    cat > "$TEST_DIR/nul-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in *romp-pyver*) printf '\0romp-pyver 3.9\n'; exit 0 ;; esac
+exec bash "$@"
+OLD
+    chmod +x "$TEST_DIR/nul-python"
+    ROMP_PYTHON="$TEST_DIR/nul-python" run "$ROMP_SERVE" --print-python
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"python 3.9"* ]]
+}
+
+@test "romp-serve: the NUL join reads a version a few NULs in, and is capped so a NUL-stuffed output cannot slow a launch" {
+    # the third tidy: one read per NUL with no cap (200k NULs added 1.7 s to a launch); ten NULs ahead of the sentinel are
+    # joined as before (a control), and the cap is pinned in the source, since a timing assertion would ride the machine
+    cat > "$TEST_DIR/nuls-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in *romp-pyver*) printf '\0\0\0\0\0\0\0\0\0\0romp-pyver 3.9\n'; exit 0 ;; esac
+exec bash "$@"
+OLD
+    chmod +x "$TEST_DIR/nuls-python"
+    ROMP_PYTHON="$TEST_DIR/nuls-python" run "$ROMP_SERVE" --print-python
+    [ "$status" -eq 2 ]
+    # the cap, executed (the fourth tidy: past it the read took the no-version leg and STARTED a 3.9 the old cat refused;
+    # the fifth: at exactly 64 NULs the sentinel was the 65th chunk and a working interpreter was refused, an off-by-one):
+    # 64 NULs before the sentinel are 65 chunks and the version, refused as 3.9; 65 NULs are a 66th chunk, the output
+    # unread, the interpreter refused as such with exit 1
+    local n
+    for n in 64 65; do
+        { head -c "$n" /dev/zero; printf 'romp-pyver 3.9\n'; } > "$TEST_DIR/nuls-$n.bin"
+        printf '#!/usr/bin/env bash\ncase "$*" in *romp-pyver*) cat "%s"; exit 0 ;; esac\nexec bash "$@"\n' "$TEST_DIR/nuls-$n.bin" > "$TEST_DIR/nuls-$n-python"
+        chmod +x "$TEST_DIR/nuls-$n-python"
+    done
+    ROMP_PYTHON="$TEST_DIR/nuls-64-python" run "$ROMP_SERVE" --print-python
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"python 3.9"* ]]
+    ROMP_PYTHON="$TEST_DIR/nuls-65-python" run "$ROMP_SERVE" --print-python
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the version probe of $TEST_DIR/nuls-65-python printed more than 64 NUL bytes"* ]]   # the refusal names the interpreter
+    [[ "${lines[${#lines[@]}-1]}" != "$TEST_DIR/nuls-65-python" ]]   # and the pick is not printed as the answer: the interpreter is refused
+}
+
+@test "romp-serve: a TERM mid-probe leaves no probe file behind" {
+    # round five of issue 1600: the probe file was removed after the read alone, so a romp-serve stopped during the probe
+    # (a manager restart mid-launch) left one romp-pyver.* per stop in TMPDIR
+    cat > "$TEST_DIR/blocking-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in *-c*) sleep 60 ;; esac
+exec bash "$@"
+OLD
+    chmod +x "$TEST_DIR/blocking-python"
+    local tmp="$TEST_DIR/tmp"; mkdir -p "$tmp"
+    local tmo; tmo="$(command -v timeout || true)"
+    TMPDIR="$tmp" ROMP_PYTHON="$TEST_DIR/blocking-python" ${tmo:+"$tmo" 40} "$ROMP_SERVE" --print-python >/dev/null 2>&1 &
+    local pid=$!
+    sleep 1
+    kill -TERM "$pid" 2>/dev/null || true
+    wait "$pid" || true                       # the trap runs once the foreground probe returns, at the bound at the latest
+    [ -z "$(ls "$tmp"/romp-pyver.* 2>/dev/null)" ]
+}
+
+@test "romp-serve: a helper the interpreter leaves holding its stdout cannot hold the version read; the probe returns at once" {
+    # round four, medium 2: the substitution read until every writer closed the pipe, so a prompt interpreter whose site
+    # customization spawned a helper made the read last the helper's life (8 s here); the version is read from a file
+    cat > "$TEST_DIR/helper-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in
+  *-c*) ( sleep 8 ) & echo "romp-pyver 3.12"; exit 0 ;;   # a child keeps the stdout pipe; the interpreter exits at once (any -c probe: the base's too)
+esac
+exec bash "$@"
+OLD
+    chmod +x "$TEST_DIR/helper-python"
+    local t0=$SECONDS
+    ROMP_PYTHON="$TEST_DIR/helper-python" run "$ROMP_SERVE" --print-python
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_DIR/helper-python" ]
+    [ $((SECONDS - t0)) -lt 5 ]                              # not the helper's 8 seconds
+}
+
+@test "romp-serve: an interpreter that itself exits 124 or 137 from the probe is refused as unresponsive: from the bounded branch the code IS the bound, no clock" {
+    # round five of issue 1600 dropped round four's clock (a SECONDS-grained guess that misread a 124 at about 4 s)
+    command -v timeout >/dev/null 2>&1 || skip "the bounded branch needs coreutils timeout"
+    local code
+    for code in 124 137; do
+        cat > "$TEST_DIR/oddexit-python" << OLD
+#!/usr/bin/env bash
+case "\$*" in *romp-pyver*) exit $code ;; esac
+exec bash "\$@"
+OLD
+        chmod +x "$TEST_DIR/oddexit-python"
+        ROMP_PYTHON="$TEST_DIR/oddexit-python" run "$ROMP_SERVE" --port 29994
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"did not answer its version probe"* ]]
+        [[ "$output" == *"of its own accord reads the same"* ]]
+        [[ "$output" != *"PORT=29994"* ]]
+    done
+}
+
+@test "romp-serve: a line printed AFTER the version, or a CRLF line ending, cannot hide a 3.9" {
+    # round three, low 1: the last-line read let a 3.9 through when an atexit hook printed after it or the output was CRLF
+    cat > "$TEST_DIR/atexit-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in *romp-pyver*) echo "romp-pyver 3.9"; echo "atexit: goodbye from a chatty hook"; exit 0 ;; esac
+exec bash "$@"
+OLD
+    cat > "$TEST_DIR/crlf-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in *romp-pyver*) printf 'romp-pyver 3.9\r\n'; exit 0 ;; esac
+exec bash "$@"
+OLD
+    chmod +x "$TEST_DIR/atexit-python" "$TEST_DIR/crlf-python"
+    ROMP_PYTHON="$TEST_DIR/atexit-python" run "$ROMP_SERVE" --port 29996
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"python 3.9"* ]]
+    [[ "$output" != *"PORT="* ]]
+    ROMP_PYTHON="$TEST_DIR/crlf-python" run "$ROMP_SERVE" --port 29995
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"python 3.9"* ]]
+    [[ "$output" != *"PORT="* ]]
+    # round four, low 2: chatter that is a bare 2.7 before a good 3.12 does not refuse the 3.12 (the sentinel is what is read)
+    cat > "$TEST_DIR/mixed-python" << 'OLD'
+#!/usr/bin/env bash
+case "$*" in *romp-pyver*) echo "2.7"; echo "romp-pyver 3.12"; exit 0 ;; esac
+exec bash "$@"
+OLD
+    chmod +x "$TEST_DIR/mixed-python"
+    ROMP_PYTHON="$TEST_DIR/mixed-python" run "$ROMP_SERVE" --port 29993
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PORT=29993"* ]]
+}
+
+@test "romp-serve: the other refusals keep exit 1, so install.sh can tell them from the floor" {
+    ROMP_SERVE_PORT=29855 ROMP_KERNEL_PORT=29856 run "$ROMP_SERVE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"disagree"* ]]
+    ROMP_KERNEL_BIN="$TEST_DIR/no-such-kernel" run "$ROMP_SERVE" --print-python
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel not found"* ]]
+    ROMP_PYTHON="$TEST_DIR/no-such/python3.12" run "$ROMP_SERVE" --print-python
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not an executable interpreter"* ]]
+}
+
+@test "romp-serve: an interpreter that reports no version is left to the exec as before (the suites' shell stand-in)" {
+    run "$ROMP_SERVE" --port 29998
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PORT=29998"* ]]
+}
+
 @test "romp --serve: removed — rejected as unknown, writes no state" {
     run "$ROMP_SCRIPT" --serve on
     [ "$status" -ne 0 ]
@@ -134,7 +469,7 @@ teardown() { rm -rf "$TEST_DIR"; }
     [ ! -f "$XDG_STATE_HOME/romp/serve-host" ]
 }
 
-# ─── pick_python: the kernel runs on the best python available (Agent SDK needs >= 3.10) ────────
+# ─── pick_python: the ROMP_PYTHON override, and the newest-first fallback for a machine with no venv ─
 # Unit tests over the extracted function. It runs only candidates the tests lay down as fakes, so a
 # bare fake PATH is enough; that PATH has no `timeout`, which is the no-coreutils path, and one test
 # below adds the real one back. The e2e wiring (exec "$PY" "$KERNEL") is covered by every test above
@@ -143,6 +478,8 @@ teardown() { rm -rf "$TEST_DIR"; }
 extract_pick() { sed -n '/^pick_python()/,/^}/p' "$1"; }
 
 @test "pick_python: ROMP_PYTHON override wins verbatim" {
+    # The pin is checked to be an executable interpreter before it is echoed (the cases further down),
+    # so the fixture is an executable stub rather than a path that does not exist.
     mkdir -p "$TEST_DIR/custom"
     printf '#!/bin/sh\n' > "$TEST_DIR/custom/python"; chmod +x "$TEST_DIR/custom/python"
     eval "$(extract_pick "$ROMP_SERVE")"
@@ -182,7 +519,8 @@ extract_pick() { sed -n '/^pick_python()/,/^}/p' "$1"; }
 # A stray `uv python install 3.14` put a python3.14 into ~/.local/bin, and the next kernel respawn
 # ran on it while the venv's compiled extensions were still 3.12's: every SDK session died at
 # import with a message blaming a missing install (2026-09-06). The venv's pyvenv.cfg records the
-# interpreter it was built with, so a box with a venv runs THAT; newest-first is for boxes without one.
+# interpreter it was built with, so a machine with a venv runs THAT; newest-first is for machines
+# without one.
 
 write_venv_cfg() {   # $1 = state root, then the pyvenv.cfg lines
     local root="$1"; shift
@@ -252,7 +590,7 @@ write_venv_cfg() {   # $1 = state root, then the pyvenv.cfg lines
     [[ "$err" == *"$TEST_DIR/brokenpy/python3.12"* ]]
 }
 
-@test "pick_python: no venv means newest-first, silently (a fresh box before romp-sdk-setup)" {
+@test "pick_python: no venv means newest-first, silently (a fresh machine before romp-sdk-setup)" {
     fakebin="$TEST_DIR/fakebin-fresh"; mkdir -p "$fakebin"
     printf '#!/bin/sh\n' > "$fakebin/python3.13"; chmod +x "$fakebin/python3.13"
     printf '#!/bin/sh\n' > "$fakebin/python3.12"; chmod +x "$fakebin/python3.12"
@@ -276,13 +614,13 @@ write_venv_cfg() {   # $1 = state root, then the pyvenv.cfg lines
 @test "pick_python: romp-serve, romp-sdk-setup and romp-codex-setup carry the SAME picker (each venv must match the kernel)" {
     # The kernel imports both venvs' site-packages in-process, so both setup scripts must pick the
     # interpreter romp-serve will run, by the same rules, byte for byte. romp-codex-setup carried an
-    # older copy (no venv-follow, no pin check) until the 2026-09-06 review.
+    # older copy (no venv-follow, no pin check) before this pin covered it.
     [ "$(extract_pick "$ROMP_SERVE" | wc -l)" -gt 20 ]     # armed: an empty extraction would diff clean
     diff <(extract_pick "$ROMP_SERVE") <(extract_pick "$BIN/romp-sdk-setup")
     diff <(extract_pick "$ROMP_SERVE") <(extract_pick "$BIN/romp-codex-setup")
 }
 
-# ─── pick_python: the pin is checked, and the candidates are checked (review of the 2026-09-06 fix) ──
+# ─── pick_python: the pin is checked, and the candidates are checked ──────────────────────────────
 # A fake interpreter that claims one X.Y and one build (the default, or `t` for free-threaded): exits 0
 # for the check naming both, 1 for any other version check, 0 for `-c pass`. The check's text carries
 # the wanted build as `bool('t')` or `bool('')`, so a stub named python3.14 can claim the t build (uv's
@@ -366,6 +704,24 @@ STUB
     [ ! -s "$TEST_DIR/stderr" ]
 }
 
+@test "pick_python: a uv-built venv (home plus version_info, no executable) still names its interpreter" {
+    # uv writes `home =` and `version_info =` (X.Y for one of its managed interpreters, X.Y.Z for a system
+    # python) and no `executable =` line (the stdlib's venv writes `version =`), so the X.Y that gates every
+    # home candidate comes from the version_info key alone; the reader takes the X.Y prefix of either shape,
+    # and this cfg carries the longer one. The `version_info` fake_python matches is in the probe's Python
+    # source, a different thing: every other cfg in this file writes `version =` or no version line, so the
+    # key was read by nothing here.
+    fakebin="$TEST_DIR/fakebin-uv"; mkdir -p "$fakebin"
+    fake_python "$fakebin/python3.14" 3.14
+    fake_python "$TEST_DIR/uvhome/python3.12" 3.12
+    write_venv_cfg "$XDG_STATE_HOME/romp" "home = $TEST_DIR/uvhome" "implementation = CPython" \
+        "uv = 0.8.0" "version_info = 3.12.3" "include-system-site-packages = false"
+    eval "$(extract_pick "$ROMP_SERVE")"
+    out="$(ROMP_PYTHON= PATH="$fakebin" pick_python 2>"$TEST_DIR/stderr")"
+    [ "$out" = "$TEST_DIR/uvhome/python3.12" ]                # the venv's interpreter, not the newest on PATH
+    [ ! -s "$TEST_DIR/stderr" ]                               # and nothing about a gone interpreter
+}
+
 @test "pick_python: the recorded binary itself is checked against the recorded X.Y" {
     fakebin="$TEST_DIR/fakebin-exe"; mkdir -p "$fakebin"
     fake_python "$fakebin/python3.14" 3.14
@@ -416,7 +772,7 @@ STUB
     [[ "$err" == *"romp-sdk-setup"* ]]
 }
 
-@test "pick_python: a cfg with a home but no version line offers no home candidate (a bare python is python2 on many boxes)" {
+@test "pick_python: a cfg with a home but no version line yields no home candidate (a bare python is python2 on many machines)" {
     fakebin="$TEST_DIR/fakebin-py2"; mkdir -p "$fakebin" "$TEST_DIR/py2home"
     fake_python "$fakebin/python3.14" 3.14
     printf '#!/bin/sh\n' > "$TEST_DIR/py2home/python"; chmod +x "$TEST_DIR/py2home/python"   # runs, answers 0
@@ -428,22 +784,22 @@ STUB
 }
 
 @test "pick_python: a recorded interpreter that hangs counts as not runnable (bounded by timeout where coreutils has it)" {
-    command -v timeout >/dev/null 2>&1 || skip "no coreutils timeout on this box"
+    command -v timeout >/dev/null 2>&1 || skip "no coreutils timeout on this machine"
     fakebin="$TEST_DIR/fakebin-hang"; mkdir -p "$fakebin" "$TEST_DIR/tbin" "$TEST_DIR/hang"
     ln -s "$(command -v timeout)" "$TEST_DIR/tbin/timeout"    # the one real tool the picker may use
     fake_python "$fakebin/python3.14" 3.14
-    printf '#!/bin/sh\nexec /bin/sleep 30\n' > "$TEST_DIR/hang/python3.12"; chmod +x "$TEST_DIR/hang/python3.12"
+    # The stub sleeps longer than the picker's bound and then exits 0: unbounded, it would be taken as
+    # the venv's interpreter, so the pick landing on python3.14 IS the proof the bound was applied.
+    printf '#!/bin/sh\nexec /bin/sleep 12\n' > "$TEST_DIR/hang/python3.12"; chmod +x "$TEST_DIR/hang/python3.12"
     write_venv_cfg "$XDG_STATE_HOME/romp" "version = 3.12.4" "executable = $TEST_DIR/hang/python3.12"
     eval "$(extract_pick "$ROMP_SERVE")"
-    local t0=$SECONDS
     out="$(ROMP_PYTHON= PATH="$fakebin:$TEST_DIR/tbin" pick_python 2>"$TEST_DIR/stderr")"
     err="$(cat "$TEST_DIR/stderr")"
-    [ $((SECONDS - t0)) -lt 20 ]                              # bounded: the fake would have slept 30 s
     [ "$out" = "$fakebin/python3.14" ]
     [[ "$err" == *"$TEST_DIR/hang/python3.12"* ]]
 }
 
-# ─── pick_python: the build is part of the match (review round 3) ─────────────────────────────────
+# ─── pick_python: the build is part of the match ──────────────────────────────────────────────────
 # venv names a free-threaded venv's lib directory python3.14t and the kernel keys its match on that tag,
 # so a default-build 3.14 is not "another python 3.14" for such a venv: handed one, the kernel boots and
 # refuses the venv as a mismatch, and every SDK session shows the mismatch card. The picker read the

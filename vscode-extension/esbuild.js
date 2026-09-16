@@ -57,16 +57,18 @@ const webview = {
     "../ui/webview/fleet-pane.css",      // fleet page layout — the kernel reads the same file live
     "../ui/webview/waiting.ts",          // the "Waiting on you" pane (kernel /waiting; the VS Code mirror is a separate change)
     "../ui/webview/waiting-pane.css",    // its page layout — the kernel reads the same file live
-    "../ui/webview/files.ts",            // the "Files" pane: the file viewer as its own column (kernel /files; the VS Code mirror is a separate change)
-    "../ui/webview/files-pane.css",      // its page layout + the viewer's pane-resident variant — the kernel reads the same file live
+    "../ui/webview/files.ts",            // the Files pane: the file viewer as its own column (kernel /files)
+    "../ui/webview/files-pane.css",      // its page layout + the viewer's pane-resident variant; the kernel reads the same file live
     "../ui/webview/timeline-main.ts",    // VS Code timeline view: boot glue + ui/romp-timeline-view.js inlined
     "../ui/webview/timeline-pane.css",   // timeline wrapper styles — the kernel reads the same file live
     "../ui/webview/strip.css",           // the romp strip (VS Code-only bottom rail stand-in)
-    "../ui/webview/gear.css",            // the settings modal (linked by the kernel feed page + VS Code chat/feed)
+    "../ui/webview/gear.css",            // the settings modal (linked by the kernel settings page + VS Code chat/feed)
+    "../ui/webview/settings-page.ts",    // the kernel's /settings page: the gear on a page of its own (the shell's hidden #f-settings iframe)
     "../ui/webview/federation.ts",   // multi-kernel manager: loaded after the shim on chat/feed/fleet pages
     "../ui/webview/age-color-global.ts",   // window.__rompAgeColor for the kernel's inline shell scripts (bell panel)
+    "../ui/webview/api-health-global.ts",   // window.__rompApiHealthMerge: the API-health merge + reading rules for the shell's rail (T301)
     "../ui/webview/palette-main.ts",   // command palette + Cmd/Ctrl+O/P hotkeys for the kernel's shell page
-    "../ui/webview/shell-perf.ts",     // the shell page's performance collector (long animation frames land on the top-level window)
+    "../ui/webview/shell-perf.ts",     // the shell page's performance collector (a pane's long animation frames are reported to the top-level window)
     "../ui/webview/editor-chunk.ts",   // CodeMirror editing substrate — ON-DEMAND (file-view loads it by
                                        // script tag on first edit); nothing else may import it, so the
                                        // main bundles stay byte-stable for people who never edit
@@ -131,6 +133,9 @@ function testBuild() {
     nodePaths: [path.join(__dirname, "node_modules")],
     alias: oneCodeMirror,
     bundle: true,
+    // the compiler stays a runtime require: the writer census (ui/webview/writer-census.ts) parses render.ts with it, and
+    // bundling it would add its whole source to every test file that imports the census
+    external: ["typescript"],
     format: "cjs",
     platform: "node",
     target: "node18",
@@ -204,6 +209,15 @@ async function buildAll(configs) {
   return outputs.map((f) => f.path);
 }
 
+// The messages of an esbuild BuildFailure, each already printed with its code frame, or null for anything
+// else: an fs error, a bug here, or an error object whose `errors` list is empty, which esbuild's API never
+// yields (another library's error that carries an `errors` array). failureSummary and main().catch both read
+// it, so such an error is treated like any other: its message is the line and its stack is printed, rather
+// than read for a first message it has not got.
+function buildErrors(e) {
+  return e && Array.isArray(e.errors) && e.errors.length ? e.errors : null;
+}
+
 // The LAST line on stderr is the one the kernel shows: its in-place rebuild puts the tail of this process's
 // stderr into the notice that tells the person the served UI is stale, and the tail of an esbuild
 // BuildFailure printed whole is its stack through esbuild's own transport (`at Socket.emit`,
@@ -223,7 +237,7 @@ async function buildAll(configs) {
 // kernel's `[-300:]` drops the head instead (src/esbuild-failure-cap.test.ts).
 function failureSummary(e, untouched) {
   const fit = (s) => s.length > 300 ? s.slice(0, 297) + "..." : s;
-  const errors = e && Array.isArray(e.errors) ? e.errors : null;
+  const errors = buildErrors(e);
   if (!errors) return fit("esbuild.js: build failed: " + (e && e.message ? e.message : String(e)));
   const n = errors.length;
   let line = "esbuild.js: build failed with " + n + (n === 1 ? " error" : " errors") +
@@ -279,7 +293,7 @@ if (require.main === module) {
   main().catch((e) => {
     // Not an esbuild BuildFailure (an fs error, a bug here): its stack is the diagnosis, and esbuild
     // printed nothing for it. A BuildFailure's errors are already on stderr with their code frames.
-    if (!(e && Array.isArray(e.errors))) console.error(e);
+    if (!buildErrors(e)) console.error(e);
     console.error(failureSummary(e, tests || watch ? null : "dist/"));
     process.exit(1);
   });

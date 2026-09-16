@@ -35,7 +35,7 @@ class ApplySettings(unittest.TestCase):
     def setUp(self):
         for f in ("judge-model", "index-model", "judge-effort", "index-effort",
                   "distill-model", "distill-effort",
-                  "comment-model", "comment-effort", "comment-fast"):
+                  "comment-model", "comment-effort", "comment-fast", "judge-fast"):
             for name in (f, f + ".gt"):   # the value and its gesture-stamp sidecar (gesture ordering)
                 try:
                     (km.jd.STATE / name).unlink()
@@ -72,6 +72,20 @@ class ApplySettings(unittest.TestCase):
         res = km._apply_judge_settings({"commentModel": "gpt-99", "commentFast": "true"})
         self.assertEqual((res["commentModel"], res["commentFast"]), ("claude-opus-5", "on"),
                          "garbage never reaches the files or `claude --model`")
+
+    def test_judge_fast_applies_and_reports_raw(self):
+        # the judges' Fast mode rides the same cross-kernel door as the judge tiers: "on" | "off", off by default,
+        # answered RAW, a value outside the pair ignored and visible in the ack
+        self.assertEqual(km._apply_judge_settings({})["judgeFast"], "off")
+        res = km._apply_judge_settings({"judgeFast": "on"})
+        self.assertEqual(res["judgeFast"], "on")
+        self.assertEqual((km.jd.STATE / "judge-fast").read_text(), "on")
+        res = km._apply_judge_settings({"judgeFast": "true"})
+        self.assertEqual(res["judgeFast"], "on", "a value outside on|off never reaches the file")
+        self.assertEqual((km.jd.STATE / "judge-fast").read_text(), "on")
+        res = km._apply_judge_settings({"judgeFast": "off"})
+        self.assertEqual(res["judgeFast"], "off")
+        self.assertEqual((km.jd.STATE / "judge-fast").read_text(), "off")
 
     def test_an_older_propagated_value_never_overwrites_a_newer_pick(self):
         # THE REPORTED STOMP (the user 2026-08-30, whose Distilling pick kept resetting): any
@@ -226,7 +240,7 @@ class OneHopNeverALoop(unittest.TestCase):
                      'args=({"commentModel": str(msg["model"]), "gt": _jgt},)',
                      'args=({"commentEffort": str(msg["effort"]), "gt": _jgt},)',
                      'args=({"commentFast": str(msg["fast"]), "gt": _jgt},)',
-                     'args=({"tmuxBackend": _tbv, "gt": _jgt},)'):   # T288
+                     'args=({_ffield: _jfv, "gt": _jgt},)'):    # Fast mode, one field per judge tier
             self.assertIn(frag, self.src, frag)
         self.assertGreaterEqual(self.src.count("if _jgt is not None:"), 11,
                                 "every judge-tier fan-out is gated on the pick actually applying")

@@ -11,19 +11,14 @@ removed (kernel/credentials.py); Claude Code's apiKeyHelper is the one key path 
 test, as they stand since 2026-09-08:
 
   * _judge_auth resolves a call's billing to the JUDGED SESSION's own pick (the registry's `auth`), with
-    the session badge's exact fallback: an explicit 'login' or 'key' pick stands as picked; anything else
-    is the unpicked rule (sdk_backend.unpicked_auth through the kernel's _UNPICKED_AUTH_FN wire, a mirror
-    of it standalone): the key when Claude Code's settings for this process's cwd carry an apiKeyHelper
-    (_key_available: read, never run), else the side the box declares (ROMP_EXPECTED_AUTH) when no gear
-    pick has made it inert, else login.
+    the session picker's exact fallback: an explicit pick wins; otherwise the key when Claude Code's
+    settings for this process's cwd carry an apiKeyHelper (_key_available: read, never run), else login.
   * _judge_env strips ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN and the 1Password
     CLI's own names from EVERY child env. A key-billed call injects nothing back: the child resolves the
     helper itself. A login-billed call gets the claimed login tokens back (_LOGIN_AUTH_ENV_FN, wired by the
     kernel to sdk_backend.startup_auth_env; the environment standalone).
   * _judge_cmd appends `--settings {"apiKeyHelper": ""}` for a login-billed call only: the helper
     outranks the login in the CLI's precedence, so a login-billed call disables it for that one process.
-    The fork's fast-judging opt-in rides the same single-valued flag, so a fast login-billed call carries
-    ONE inline overlay with both keys.
   * A credential-class error envelope LATCHES judge-auth-down for the session (STATE/judge-auth.json);
     the session's next successful call clears it. Both edges are events, no timers.
   * build_feed floors a latched session's focus card to needs-you wearing the "judgeAuth" story, whose
@@ -37,11 +32,12 @@ is stripped; the staged helper is a path that is read and never run.
 """
 import json
 import os
+import shutil
 import tempfile
 import time
 import unittest
-from pathlib import Path
 from romp_load import load_source
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -72,6 +68,86 @@ def _op_names():
     return tuple(jd._cred.OP_ENV_NAMES) + (jd._cred.OP_ENV_PREFIX + "acct",)
 
 
+class TheJudgesFollowTheMachineDefault(unittest.TestCase):
+    """T380 review: _judge_auth resolved an unpicked session as key-when-helper-else-login while the launch honours the
+    machine's explicit default; the judges read the same seed (sdk-defaults.json) so they bill the session's account."""
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        jd._rebind_state(Path(self.tmp))
+        (jd.STATE / "sdk").mkdir(parents=True, exist_ok=True)
+        self.fsid = "11111111-2222-3333-4444-555555555555"
+        (jd.SDKDIR / (self.fsid + ".json")).write_text(json.dumps({"sid": self.fsid, "name": "web"}))   # no pick of its own
+        self._key = jd._key_available
+        self._fn = jd._DEFAULT_AUTH_FN
+        jd._DEFAULT_AUTH_FN = None
+        self._lfn = getattr(jd, "_DEFAULT_LOGIN_FN", None)   # getattr: the red run at the base predates the name
+        jd._DEFAULT_LOGIN_FN = None
+
+    def tearDown(self):
+        jd._key_available = self._key
+        jd._DEFAULT_AUTH_FN = self._fn
+        jd._DEFAULT_LOGIN_FN = self._lfn
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_the_judges_ask_the_one_resolver_the_kernel_wires_so_an_unbillable_default_moves_them_with_the_launch(self):
+        """Round-3 review: a seed re-read here kept billing the login after the machine could no longer bill it (the login
+        logged out, a managed helper appearing) while the launch, the status and the flyout had moved to the key; and an
+        explicit key default with unreadable Claude Code settings made the picker keep the key while the judge said login.
+        The judges now ask SdkBackend.default_auth over the reg, the resolver that applies the availability check."""
+        calls = []
+        # the resolver's verdicts, as the backend would give them for these regs: a logged-out login default → key
+        jd._DEFAULT_AUTH_FN = lambda reg: (calls.append(dict(reg)), "key")[1]
+        jd._key_available = lambda: True
+        self.assertEqual(jd._judge_auth(self.fsid), "key", "the resolver's word, not a seed re-read")
+        self.assertEqual(calls[-1].get("sid"), self.fsid, "asked over the session's own reg")
+        # the fourth shape: an explicit key default with unreadable settings: the resolver keeps the key (cannot tell is
+        # never a fall), while the standalone helper probe would have said no key
+        jd._key_available = lambda: False
+        self.assertEqual(jd._judge_auth(self.fsid), "key", "the resolver decides even when the judge's own helper probe says no")
+        self.assertEqual(jd._judge_auth(""), "key", "a call with no session asks the resolver over an empty reg")
+        self.assertEqual(calls[-1], {}, "…the empty reg")
+        # a session's own pick: the resolver returns it (default_auth reads the reg first); the judge trusts the resolver
+        (jd.SDKDIR / (self.fsid + ".json")).write_text(json.dumps({"sid": self.fsid, "auth": "login"}))
+        jd._DEFAULT_AUTH_FN = lambda reg: reg.get("auth") or "key"
+        self.assertEqual(jd._judge_auth(self.fsid), "login")
+        # a resolver that fails or answers junk never raises inside a judge call: the standalone rule decides
+        jd._DEFAULT_AUTH_FN = lambda reg: (_ for _ in ()).throw(RuntimeError("boom"))
+        self.assertEqual(jd._judge_auth(self.fsid), "login", "the reg's own pick, standalone")
+        jd._DEFAULT_AUTH_FN = lambda reg: "credit-card"
+        (jd.SDKDIR / (self.fsid + ".json")).write_text(json.dumps({"sid": self.fsid}))
+        jd._key_available = lambda: True
+        self.assertEqual(jd._judge_auth(self.fsid), "key", "junk from the resolver: the helper rule")
+
+    def test_an_unpicked_session_following_a_stored_login_default_bills_its_judges_to_that_login(self):
+        """The user 2026-09-14: a stored login set as the machine's default. The resolver says the side (login); the second
+        wired function, default_login, says WHICH; the judge carries "login:<id>" so _judge_cmd names that login's helper.
+        An empty or junk id, or no second function, reads as the machine's own login; a failing one never raises."""
+        jd._DEFAULT_AUTH_FN = lambda reg: "login"
+        self.assertEqual(jd._judge_auth(self.fsid), "login", "no second function wired (an older kernel): the machine's own login")
+        jd._DEFAULT_LOGIN_FN = lambda reg: "0123456789ab"
+        self.assertEqual(jd._judge_auth(self.fsid), "login:0123456789ab")
+        self.assertEqual(jd._judge_auth(""), "login:0123456789ab", "a call with no session follows the default too")
+        jd._DEFAULT_LOGIN_FN = lambda reg: ""
+        self.assertEqual(jd._judge_auth(self.fsid), "login", "the machine's own login")
+        jd._DEFAULT_LOGIN_FN = lambda reg: "not-an-id"
+        self.assertEqual(jd._judge_auth(self.fsid), "login", "junk reads as the machine's own login")
+        jd._DEFAULT_AUTH_FN = lambda reg: "key"
+        jd._DEFAULT_LOGIN_FN = lambda reg: "0123456789ab"
+        self.assertEqual(jd._judge_auth(self.fsid), "key", "the id is read beside a login side only")
+        jd._DEFAULT_AUTH_FN = lambda reg: "login"
+        jd._DEFAULT_LOGIN_FN = lambda reg: (_ for _ in ()).throw(RuntimeError("boom"))
+        jd._key_available = lambda: True
+        self.assertEqual(jd._judge_auth(self.fsid), "key", "a failing second function: the standalone rule, never a raise")
+
+    def test_standalone_the_registry_pick_and_the_helper_rule_stand_in(self):
+        jd._key_available = lambda: True
+        self.assertEqual(jd._judge_auth(self.fsid), "key", "no wiring, no pick: the helper rule")
+        jd._key_available = lambda: False
+        self.assertEqual(jd._judge_auth(self.fsid), "login")
+        (jd.SDKDIR / (self.fsid + ".json")).write_text(json.dumps({"sid": self.fsid, "auth": "key"}))
+        self.assertEqual(jd._judge_auth(self.fsid), "key", "a session's own pick")
+
+
 class _JudgeAuthBase(unittest.TestCase):
     """Clean slate per test: no login wire, no latch file, no ambient credential, no session reg, and
     Claude Code settings that carry NO apiKeyHelper. The settings live in a fresh CLAUDE_CONFIG_DIR per
@@ -87,12 +163,7 @@ class _JudgeAuthBase(unittest.TestCase):
                           if k.startswith("ANTHROPIC_") or k.endswith("_API_KEY") or k.endswith("_TOKEN")}
         self.addCleanup(self._restore_scrubbed)
         self._login_before = jd._LOGIN_AUTH_ENV_FN
-        self._unpicked_before = jd._UNPICKED_AUTH_FN
         jd._LOGIN_AUTH_ENV_FN = None
-        jd._UNPICKED_AUTH_FN = None
-        # the box declaration is part of the unpicked rule now: the tests below declare their own, and a
-        # declared box's shell (this fork's own) must not leak into the undeclared cases
-        self._exp_before = os.environ.pop("ROMP_EXPECTED_AUTH", None)
         jd._auth_cache[:] = [None, {}]
         self.cfg = tempfile.mkdtemp()
         self._cfg_before = os.environ.get("CLAUDE_CONFIG_DIR")
@@ -100,7 +171,7 @@ class _JudgeAuthBase(unittest.TestCase):
         self._managed_before = jd._cred.managed_settings_path
         jd._cred.managed_settings_path = lambda: os.path.join(self.cfg, "no-managed-settings.json")
         jd.SDKDIR.mkdir(parents=True, exist_ok=True)
-        for p in (jd.JUDGE_AUTH, jd.SDKDIR / (SID + ".json"), jd.STATE / "sdk-defaults.json",
+        for p in (jd.JUDGE_AUTH, jd.SDKDIR / (SID + ".json"),
                   jd.STATE / "retry-paused.json", jd.STATE / "usage.json"):
             try:
                 p.unlink()
@@ -115,10 +186,6 @@ class _JudgeAuthBase(unittest.TestCase):
 
     def tearDown(self):
         jd._LOGIN_AUTH_ENV_FN = self._login_before
-        jd._UNPICKED_AUTH_FN = self._unpicked_before
-        os.environ.pop("ROMP_EXPECTED_AUTH", None)
-        if self._exp_before is not None:
-            os.environ["ROMP_EXPECTED_AUTH"] = self._exp_before
         jd._cred.managed_settings_path = self._managed_before
         if self._cfg_before is None:
             os.environ.pop("CLAUDE_CONFIG_DIR", None)
@@ -130,7 +197,7 @@ class _JudgeAuthBase(unittest.TestCase):
         # home, and a leftover judge-auth.json row for the shared synthetic sid floors OTHER files'
         # build_feed cards to needs-you (25 stays-in-Working tests, found 2026-08-12)
         jd._auth_cache[:] = [None, {}]
-        for p in (jd.JUDGE_AUTH, jd.SDKDIR / (SID + ".json"), jd.STATE / "sdk-defaults.json"):
+        for p in (jd.JUDGE_AUTH, jd.SDKDIR / (SID + ".json")):
             try:
                 p.unlink()
             except OSError:
@@ -284,28 +351,24 @@ class JudgeArgvBilling(_JudgeAuthBase):
         self.assertNotIn("--settings", jd._judge_cmd("sonnet", "SYS", None), "the default: no auth argument")
 
     def test_a_fast_login_billed_call_rides_one_overlay_with_both_keys(self):
-        # the fork's fast-judging opt-in (STATE/judge-fast, Opus-only; the user 2026-08-09) and the helper
-        # suppression share the CLI's single-valued --settings: a second flag would replace the first
-        # silently, so a fast login-billed call carries ONE inline JSON with both keys. Fast alone keeps the
-        # static file (tests/test_kernel_judge_model.py pins it); login alone keeps the verbatim string above.
+        # `--settings` takes ONE value. With the triage tier's Fast mode on (STATE/judge-fast "on"), an Opus login-billed call
+        # carries the fastMode opt-in and the helper suppression in one JSON overlay; a login-billed call on a
+        # model that cannot run fast keeps HELPER_OFF byte for byte; a key-billed or unpicked Opus call carries
+        # the opt-in alone, and the helper key never appears in it.
         (jd.STATE / "judge-fast").write_text("on")
         jd._state_cache.clear()
-        self.addCleanup(lambda: ((jd.STATE / "judge-fast").unlink(missing_ok=True), jd._state_cache.clear()))
-        cmd = jd._judge_cmd("opus", "SYS", None, auth="login")
-        self.assertEqual(cmd.count("--settings"), 1, "one overlay, never two flags")
-        both = json.loads(cmd[cmd.index("--settings") + 1])
-        self.assertEqual(both, {"fastMode": True, "apiKeyHelper": ""}, "both keys, neither overlay lost")
-        self.assertEqual(both["apiKeyHelper"], "", "the empty string, the value the CLI takes as unset (null falls through)")
-        # the two single shapes hold beside it: fast alone is the static file (its content IS the opt-in), login
-        # alone is the verbatim inline string, each on one flag
-        cmd = jd._judge_cmd("opus", "SYS", None, auth="key")
-        self.assertEqual(cmd.count("--settings"), 1)
-        self.assertEqual(cmd[cmd.index("--settings") + 1], jd._judge_fast_settings(), "fast alone: the static file")
-        self.assertEqual(json.loads(Path(jd._judge_fast_settings()).read_text()), {"fastMode": True})
-        cmd = jd._judge_cmd("sonnet", "SYS", None, auth="login")
-        self.assertEqual(cmd.count("--settings"), 1)
-        self.assertEqual(cmd[-2:], HELPER_OFF, "login alone on a model fast mode does not cover: the verbatim string")
-        self.assertNotIn("--settings", jd._judge_cmd("sonnet", "SYS", None, auth="key"), "neither applies: no overlay")
+        try:
+            cmd = jd._judge_cmd("opus", "SYS", None, auth="login")
+            self.assertEqual(cmd.count("--settings"), 1, "one overlay, never two --settings")
+            self.assertEqual(json.loads(cmd[-1]), {"fastMode": True, "apiKeyHelper": ""})
+            self.assertEqual(jd._judge_cmd("sonnet", "SYS", None, auth="login")[-2:], HELPER_OFF)
+            for auth in ("key", None):
+                cmd = jd._judge_cmd("opus", "SYS", None, auth=auth)
+                self.assertEqual(cmd.count("--settings"), 1, repr(auth))
+                self.assertEqual(json.loads(cmd[-1]), {"fastMode": True}, repr(auth))
+        finally:
+            (jd.STATE / "judge-fast").unlink()
+            jd._state_cache.clear()
 
 
 class RuntimeJudgeBilling(_JudgeAuthBase):
@@ -445,7 +508,7 @@ class JudgeRunBilling(_JudgeAuthBase):
     """_judge_run end to end with a fake CLI: the envelope drives the latch, the env and argv carry the
     billing. A helper is staged unless a test says otherwise, so the unpicked default is the key."""
 
-    def _run(self, envelope, auth_reg=None, helper=True):
+    def _run(self, envelope, auth_reg=None, helper=True, model="sonnet"):
         if helper:
             self._helper()
         if auth_reg:
@@ -462,7 +525,7 @@ class JudgeRunBilling(_JudgeAuthBase):
         jd.subprocess.run = fake_run
         try:
             with patch.object(jd, "_judge_engine", return_value="claude"):
-                out = jd._judge_run("sonnet", "SYS", "u", judge="planner", tier="triage")
+                out = jd._judge_run(model, "SYS", "u", judge="planner", tier="triage")
         finally:
             jd.subprocess.run = saved
         return out, seen
@@ -512,6 +575,32 @@ class JudgeRunBilling(_JudgeAuthBase):
         self.assertEqual(seen["env"].get("CLAUDE_CODE_OAUTH_TOKEN"), "synthetic-login-token")
         i = seen["cmd"].index("--settings")
         self.assertEqual(seen["cmd"][i:i + 2], HELPER_OFF)
+
+    def test_a_fast_login_pick_on_opus_launches_with_one_overlay_and_logs_the_readback(self):
+        # end to end through _judge_run: the triage tier's Fast mode on, a login pick, an Opus model. The child gets ONE
+        # --settings overlay carrying both keys, the login tokens, no key; the usage row keeps the envelope's
+        # fast_mode_state, the CLI's own word on whether fast engaged.
+        jd._LOGIN_AUTH_ENV_FN = lambda: {"CLAUDE_CODE_OAUTH_TOKEN": "synthetic-login-token"}
+        (jd.STATE / "judge-fast").write_text("on")
+        jd._state_cache.clear()
+        saved_usage = jd.USAGE
+        jd.USAGE = jd.STATE / ("judge-usage-%s.jsonl" % os.getpid())
+        try:
+            with patch.dict(os.environ, {"ANTHROPIC_API_KEY": AMBIENT}):
+                out, seen = self._run({"result": "ok", "usage": {}, "duration_ms": 3, "fast_mode_state": "on"},
+                                      auth_reg="login", model="opus")
+            rows = [json.loads(ln) for ln in jd.USAGE.read_text().splitlines()]
+        finally:
+            jd.USAGE = saved_usage
+            (jd.STATE / "judge-fast").unlink()
+            jd._state_cache.clear()
+        self.assertEqual(out, "ok")
+        self.assertNotIn("ANTHROPIC_API_KEY", seen["env"])
+        self.assertEqual(seen["env"].get("CLAUDE_CODE_OAUTH_TOKEN"), "synthetic-login-token")
+        self.assertEqual(seen["cmd"].count("--settings"), 1)
+        self.assertEqual(json.loads(seen["cmd"][seen["cmd"].index("--settings") + 1]),
+                         {"fastMode": True, "apiKeyHelper": ""})
+        self.assertEqual([(r["model"], r["fast"]) for r in rows], [("opus", "on")])
 
 
 class KeylessKeyBilledCalls(_JudgeAuthBase):
@@ -585,145 +674,6 @@ class RetiredKeyPlumbing(unittest.TestCase):
             self.assertTrue(hasattr(jd._cred, name), name)
 
 
-class UnpickedBillingOnADeclaredBox(_JudgeAuthBase):
-    """The unpicked fallback is the backend's rule (sdk_backend.unpicked_auth, through the kernel's wire or
-    its standalone mirror), not the key test alone (review round 1, 2026-09-09). On a box whose sessions
-    authenticate through Claude Code's apiKeyHelper (ROMP_EXPECTED_AUTH=key, no key of romp's) the judge
-    classified every unpicked call as login-billed while the session's badge, _bills_login and the
-    judge-limit banner said key: the rate-limit gate then read the LOGIN account's windows for a call that
-    bills the key, a limit-shaped envelope minted the never-expiring login-account latch, and a credential
-    error recorded the wrong side. Every cell below runs with no wire (the mirror); the wire case at the end
-    shows the kernel's word standing in for it. Since 2026-09-08 the rule's key input is _key_available (an
-    apiKeyHelper in Claude Code's settings), where it used to be a key romp held."""
-
-    def _defaults(self, **d):
-        (jd.STATE / "sdk-defaults.json").write_text(json.dumps(d))
-
-    def _ok(self):
-        return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps({"result": "ok", "usage": {}, "duration_ms": 3}))
-
-    def test_a_declared_key_box_bills_the_key_for_an_unpicked_session(self):
-        os.environ["ROMP_EXPECTED_AUTH"] = "key"
-        self.assertEqual(jd._judge_auth(SID), "key")          # no reg on disk: unpicked
-        self.assertEqual(jd._judge_auth(None), "key", "a call with no session takes the same default")
-
-    def test_declared_login_and_undeclared_both_read_login(self):
-        os.environ["ROMP_EXPECTED_AUTH"] = "login"
-        self.assertEqual(jd._judge_auth(SID), "login")
-        os.environ.pop("ROMP_EXPECTED_AUTH")
-        self.assertEqual(jd._judge_auth(SID), "login", "the pre-declaration rule, unchanged")
-
-    def test_a_configured_helper_comes_before_the_declaration(self):
-        os.environ["ROMP_EXPECTED_AUTH"] = "login"
-        self._helper()
-        self.assertEqual(jd._judge_auth(SID), "key", "every unpicked session on a helper box launches on the helper's key")
-
-    def test_a_remembered_login_pick_makes_the_declaration_inert(self):
-        os.environ["ROMP_EXPECTED_AUTH"] = "key"
-        self._defaults(auth="login")                          # set_auth's durable trace: the gear pick
-        self.assertEqual(jd._judge_auth(SID), "login")
-
-    def test_a_set_aside_key_pick_lets_the_declaration_speak(self):
-        self._defaults(auth="key")                            # a key pick on a helper-less box: spawn seeds nothing under it
-        os.environ["ROMP_EXPECTED_AUTH"] = "key"
-        self.assertEqual(jd._judge_auth(SID), "key")
-        os.environ.pop("ROMP_EXPECTED_AUTH")
-        self.assertEqual(jd._judge_auth(SID), "login", "undeclared, a set-aside pick reads as unpicked: the login")
-
-    def test_an_explicit_pick_still_wins(self):
-        os.environ["ROMP_EXPECTED_AUTH"] = "key"
-        self._reg("login")
-        self.assertEqual(jd._judge_auth(SID), "login")
-
-    def test_the_kernel_wire_decides_when_up_and_receives_the_judges_key_verdict(self):
-        seen = []
-        jd._UNPICKED_AUTH_FN = lambda key: seen.append(key) or "key"
-        self.assertEqual(jd._judge_auth(SID), "key", "no declaration, no helper: the wire's word stands")
-        self.assertEqual(seen, [False])
-        self._helper()
-        jd._judge_auth(SID)
-        self.assertIs(seen[-1], True, "the judge's own key verdict rides in (_key_available: the settings, read)")
-        self._reg("login")
-        self.assertEqual(jd._judge_auth(SID), "login")
-        self.assertEqual(len(seen), 2, "an explicit pick never reaches the wire")
-
-    def test_the_gate_reads_no_login_window_for_a_declared_key_unpicked_call(self):
-        # the 2026-08-28 scoping: only a LOGIN-billed call is gated on usage.json. An unpicked call on a
-        # declared-key box is key-billed now, so a full login window no longer skips it; the same call with
-        # nothing declared is login-billed and skipped, as before.
-        os.environ["ROMP_EXPECTED_AUTH"] = "key"
-        jd._judge_ctx.fsid = SID
-        with tempfile.TemporaryDirectory() as directory:
-            state = Path(directory)
-            (state / "usage.json").write_text(json.dumps({
-                "five_hour": {"pct": 100, "resets_at": int(time.time()) + 3600}}))
-            with patch.multiple(jd, STATE=state, JUDGE_LIMIT=state / "judge-limit.json",
-                                _limit_cache=[None, {}], _RATE_GATE_LOGGED={}), \
-                    patch.object(jd, "_judge_engine", return_value="claude"), \
-                    patch.object(jd.subprocess, "run", return_value=self._ok()) as run, \
-                    patch("sys.stderr", new_callable=lambda: __import__("io").StringIO()):
-                self.assertEqual(jd._judge_run("sonnet", "SYS", "input", judge="planner"), "ok")
-                run.assert_called_once()
-                self.assertFalse(jd._judge_ctx.paused)
-                self.assertIsNone(jd._limit_down(), "a key-billed call reads no login window")
-                os.environ.pop("ROMP_EXPECTED_AUTH")
-                self.assertEqual(jd._judge_run("sonnet", "SYS", "input", judge="planner"), "")
-                run.assert_called_once()
-                self.assertTrue(jd._judge_ctx.paused, "control: undeclared, the same call is login-billed and gated")
-                self.assertEqual(jd._limit_down()["bucket"], "five_hour")
-
-    def test_a_limit_envelope_on_a_declared_key_unpicked_call_mints_no_login_account_latch(self):
-        # the latch at the limit envelope is LOGIN-billed only: a key-billed 429 is pay-per-token with no
-        # window behind it, and the "account" latch it would mint carries no resets_at (never self-expires)
-        os.environ["ROMP_EXPECTED_AUTH"] = "key"
-        jd._judge_ctx.fsid = SID
-        envelope = SimpleNamespace(returncode=0, stderr="",
-                                   stdout=json.dumps({"is_error": True, "result": "rate_limit_error: too many requests"}))
-        with tempfile.TemporaryDirectory() as directory:
-            state = Path(directory)
-            with patch.multiple(jd, STATE=state, JUDGE_LIMIT=state / "judge-limit.json",
-                                _limit_cache=[None, {}], _RATE_GATE_LOGGED={}), \
-                    patch.object(jd, "_judge_engine", return_value="claude"), \
-                    patch.object(jd.subprocess, "run", return_value=envelope), \
-                    patch("sys.stderr", new_callable=lambda: __import__("io").StringIO()):
-                self.assertEqual(jd._judge_run("sonnet", "SYS", "input", judge="planner"), "")
-                self.assertIsNone(jd._limit_down(), "a key-billed limit envelope mints no login-account latch")
-                self.assertEqual(jd._auth_down_map(), {}, "and a 429 is not a credential failure")
-                os.environ.pop("ROMP_EXPECTED_AUTH")
-                self.assertEqual(jd._judge_run("sonnet", "SYS", "input", judge="planner"), "")
-                self.assertEqual((jd._limit_down() or {}).get("bucket"), "account",
-                                 "control: the login-classified call latches the account banner")
-
-
-class UnpickedMirrorMatchesTheBackend(_JudgeAuthBase):
-    """judge.py loads standalone, so _unpicked_auth's fallback is a COPY of sdk_backend.unpicked_auth, not an
-    import (the _is_auth_error pattern); the two must agree on every cell of key available or not, declaration
-    key/login/unset, remembered pick none/login/key. Runs unwired (the mirror) against the real backend
-    function over the same state dir and environment."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.sb = load_source("romp_sdk_backend_authbill", os.path.join(BIN, "romp_sdk_backend.py"))
-
-    def test_the_mirror_and_the_backend_agree_on_every_cell(self):
-        p = jd.STATE / "sdk-defaults.json"
-        for key in (False, True):
-            for declared in ("", "key", "login"):
-                for pick in ("", "login", "key"):
-                    if declared:
-                        os.environ["ROMP_EXPECTED_AUTH"] = declared
-                    else:
-                        os.environ.pop("ROMP_EXPECTED_AUTH", None)
-                    if pick:
-                        p.write_text(json.dumps({"auth": pick}))
-                    else:
-                        p.unlink(missing_ok=True)
-                    tag = "key=%s declared=%r pick=%r" % (key, declared, pick)
-                    want = "key" if key else ("login" if pick == "login" else (declared or "login"))
-                    self.assertEqual(self.sb.unpicked_auth(jd.STATE, key), want, tag)
-                    self.assertEqual(jd._unpicked_auth(key), want, tag)
-
-
 class KernelWiringAndFloorPins(unittest.TestCase):
     """The kernel side, pinned the way every build_feed behavior is (inspect.getsource)."""
 
@@ -738,22 +688,16 @@ class KernelWiringAndFloorPins(unittest.TestCase):
         for retired in ("_WORK_KEY_FN", "_WORK_KEY_CONFIGURED_FN", "work_api_key"):
             self.assertNotIn(retired, src, retired)
 
-    def test_the_kernel_wires_the_unpicked_billing_rule_over_its_own_state_dir(self):
-        import inspect
-        self.assertIn("jd._UNPICKED_AUTH_FN = lambda key: sbmod.unpicked_auth(jd.STATE, key)",
-                      inspect.getsource(self.km._sdk_locked),
-                      "the judge reads the backend's rule, not a second copy, once the kernel is up")
-
     def test_build_feed_floors_a_latched_session_yielding_to_the_live_floors(self):
         import inspect
-        src = inspect.getsource(self.km.build_feed)
+        src = inspect.getsource(self.km.build_feed) + inspect.getsource(self.km._feed_session_entry)   # T368: the loop body
         self.assertIn("_jauth_map = jd._auth_down_map()", src)
         self.assertIn("jerr and api_top is None and perm_top is None", src)
         self.assertIn('column = ("needs_input" if (api_block or nid == jauth_top or nid == perm_top', src)
 
     def test_the_floored_card_carries_the_judgeAuth_story(self):
         import inspect
-        src = inspect.getsource(self.km.build_feed)
+        src = inspect.getsource(self.km._feed_session_entry)   # T368: build_feed's per-session loop body
         self.assertIn('"state": "judgeAuth"', src)
         # the key-mode copy points at the one key path left (2026-09-08); the login copy is unchanged
         self.assertIn("the API key its judges bill is being refused. Fix the key behind Claude Code's apiKeyHelper "

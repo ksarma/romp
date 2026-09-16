@@ -77,10 +77,11 @@ function open(){var s=sock();s.readyState=1;s.onopen();return s;}
 function redial(){var live=timers.filter(function(t){return t.live&&t.fn.name==="connect";});live[live.length-1].fn();}
 function drop(){sock().readyState=3;sock().onclose();redial();}
 function ready(){window.__rompLocalSend({type:"ready"});}
+function caps(){sock().onmessage({data:JSON.stringify({type:"caps"})});}   // the kernel's caps frame acks the ready (readyAcked; upstream's redial gate since the 2026-09-15 pull-in)
 """ % S1
 
 # the four shapes, as the scenario that drives the first socket to its drop and leaves the redial dialed
-DECLARED = "open();ready();drop();"                                   # the bundle said ready on the socket that died
+DECLARED = "open();ready();caps();drop();"                            # the bundle said ready on the socket that died, and the kernel acked it (readyAcked)
 GATED = "open();drop();"                                              # the socket died before the bundle said ready
 CLOSING = "open();sock().readyState=2;ready();sock().readyState=3;sock().onclose();redial();"   # the ready landed while the socket was closing
 READY_AFTER_CLOSE = "open();sock().readyState=3;sock().onclose();ready();redial();"             # the ready landed after the close, before the redial
@@ -179,12 +180,12 @@ class TheHandlerStampsTheCarryingSocket(_State):
 class TheShimRowCarriesBundleReady(unittest.TestCase):
     def test_declared_the_bundle_had_said_ready(self):
         q, kinds, closes = _shim_close(DECLARED)
-        self.assertTrue(q.endswith("&reconnect=1"), q)
+        self.assertTrue(q.endswith("&reconnect=1&proto=1"), q)   # the redial names the acked ready's wire protocol too (upstream's readyProto)
         self.assertEqual(len(closes), 1)
         self.assertEqual(sorted(closes[0]["data"]), ROW_KEYS)
         self.assertIs(closes[0]["data"]["bundleReady"], True)
         self.assertIs(closes[0]["data"]["everConnected"], True)
-        self.assertEqual(kinds, ["wsclose", "ready"], "the queued row flushes ahead of the re-sent ready")
+        self.assertEqual(kinds, ["wsclose"], "the queued row flushes; the acked ready is not re-sent (the kernel remembers it: upstream's readyAcked gate)")
 
     def test_gated_off_the_bundle_had_not_said_ready(self):
         q, kinds, closes = _shim_close(GATED)
@@ -259,9 +260,9 @@ class ThePairInTheLog(_State):
         c = self._dial(q)
         self.assertIn("wsclose", kinds, "the row rides the redial")
         if c.get("redial"):
-            self.assertEqual(kinds[0], "wsclose", "on a declared redial the shim flushes the queued row ahead of the re-sent ready (a shim fact; the stamp reads the dial record and does not depend on it)")
+            self.assertEqual(kinds[0], "wsclose", "on a declared redial the shim flushes the queued row first (a shim fact; the stamp reads the dial record and does not depend on it)")
         km.Handler._dispatch_ws(None, closes[0], c)
-        rows = self.rows()
+        rows = [r for r in self.rows() if r["what"] == "wsclose"]   # the accept files its own `wsopen` row per socket (upstream's _note_ws_open)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["what"], "wsclose")
         self.assertEqual(rows[0]["wid"], WID)
@@ -296,7 +297,7 @@ class ThePairInTheLog(_State):
         self.assertEqual(c.get("skeletonOrder"), [])
         km.Handler._dispatch_ws(None, {"type": "clientDiag", "surface": "pane-shim", "what": "stale-raise",
                                        "data": {"app": "chat", "why": "reconnect"}}, c)
-        self.assertEqual([(r["what"], r["reconnect"]) for r in self.rows()],
+        self.assertEqual([(r["what"], r["reconnect"]) for r in self.rows() if r["what"] != "wsopen"],   # upstream's accept files a wsopen row per socket
                          [("wsclose", True), ("stale-raise", True)])
 
     def test_a_feed_socket_reads_its_dial_record_too(self):
@@ -313,7 +314,7 @@ class ThePairInTheLog(_State):
         c2 = self._dial(q2, app="feed")
         self.assertIsNone(c2.get("redial"), "a fresh dial leaves no record")
         km.Handler._dispatch_ws(None, closes2[0], c2)
-        self.assertEqual([(r["what"], r["reconnect"]) for r in self.rows()],
+        self.assertEqual([(r["what"], r["reconnect"]) for r in self.rows() if r["what"] != "wsopen"],   # upstream's accept files a wsopen row per socket
                          [("wsclose", True), ("stale-raise", True), ("wsclose", False)])
 
 

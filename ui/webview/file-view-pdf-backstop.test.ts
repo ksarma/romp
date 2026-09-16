@@ -519,7 +519,7 @@ test("source: the constant, exported and the one figure the notice names; armed 
   assert.match(VIEW, /const disarmBackstop = \(\) => \{ clearTimeout\(pdfBackstop\); pdfBackstop = undefined; \};/);
   assert.match(VIEW, /const dropPdf = \(\) => \{ pdfSeq\+\+; disarmBackstop\(\); abortPdfAttempt\(\); if \(pdfHandle\) \{ pdfHandle\.dispose\(\); pdfHandle = null; \} \};/,
     "retiring the attempt disarms it, and aborts it while unsettled (file-view-pdf-lifecycle.test.ts): the panel closing, a reload, both of the viewer's exits");
-  assert.equal((VIEW.match(/setTimeout\(/g) || []).length, 4, "the viewer's timers: the three label restores (Copy path, the URL viewer's Copy URL since the 2026-09-07 fold, and the flash's) and this one deadline: a new timer here needs an event it approximates named, or this rule's failsafe carve-out");
+  assert.equal((VIEW.match(/setTimeout\(/g) || []).length, 5, "the viewer's timers: the three label restores (Copy path, the URL viewer's Copy URL since the 2026-09-07 fold, and the flash's word branch), the flash's glyph branch (T367: a glyph button restores its title and busy dress, a word button its text) and this one deadline: a new timer here needs an event it approximates named, or this rule's failsafe carve-out");
   assert.match(VIEW, /setTimeout\(\(\) => \{ copy\.textContent = "Copy URL"; \}, 1200\)/, "the fourth is a label restore like the other two, the same 1200 ms");
 });
 

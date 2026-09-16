@@ -81,7 +81,7 @@ test("in a browser, the real module: the Edit refusal is a notice above the body
       await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = 1500; });
       await frames(page, 2);
       await page.evaluate(() => { (window as any).__seam.setEditBlocked("Edit is off here while 2 changes are pending in this file."); });
-      await page.locator("#romp-fileview .fileview-btn", { hasText: /^Edit$/ }).click();
+      await page.locator("#romp-fileview .fileview-btn[aria-label='Edit']").click();
       await frames(page, 2);
       let b: Bar = await page.evaluate(readBar);
       assert.ok(b.present, mode + ": the refusal is up");
@@ -91,7 +91,7 @@ test("in a browser, the real module: the Edit refusal is a notice above the body
       assert.ok(b.aboveRow && b.inCard && b.inViewport, mode + ": above the row, in the card, on screen, with the body scrolled to 1500");
       assert.equal(b.bodyScrollTop, 1500, mode + ": the body did not move for it");
       await page.evaluate(() => { (window as any).__seam.setEditBlocked("Edit is off here while 3 changes are pending in this file."); });
-      await page.locator("#romp-fileview .fileview-btn", { hasText: /^Edit$/ }).click();
+      await page.locator("#romp-fileview .fileview-btn[aria-label='Edit']").click();
       await frames(page, 2);
       b = await page.evaluate(readBar);
       assert.equal(b.text, "Edit is off here while 3 changes are pending in this file.", mode + ": one notice at a time: the newer replaced the older");
@@ -272,7 +272,7 @@ test("in a browser, the real module (review round 1): with the changed-on-disk b
     const { page, errors } = await openViewer(browser, "pane", 700, 600);
     await raiseBar(page, LONG2, MT2);
     const heads0: number = await page.evaluate(() => (window as any).__heads);
-    await page.locator("#romp-fileview .fileview-btn", { hasText: /^Edit$/ }).click();
+    await page.locator("#romp-fileview .fileview-btn[aria-label='Edit']").click();
     await page.waitForFunction(() => !!document.querySelector(".fileview-editor, .fileview-cm"), null, { timeout: 5000 });
     await frames(page, 2);
     const inEdit: Disk = await page.evaluate(readDisk);
@@ -294,7 +294,7 @@ test("in a browser, the real module (review round 1): with the changed-on-disk b
 });
 
 // ── the review's round 2: the keyboard across the dashboard's frames ─────────────────────────────────────────────────────
-// A relayed open (a click in the chat or the Waiting pane, with File links open in set to the Files pane) lands in a Files
+// A relayed open (a click in the chat with the Files pane on screen, or in the Waiting pane) lands in a Files
 // iframe that does not hold the page's focus. Round 1 found the landing's `body.focus()` moving the focus into the frame
 // and its window's `focus` event read by the changed-on-disk probe as the reader's return (GET then HEAD on every
 // cross-frame open); `takingKeyboard` now stands the probe aside for the viewer's own call. Round 2 reversed what that

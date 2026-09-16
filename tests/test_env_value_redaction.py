@@ -192,23 +192,21 @@ class RedactionRule(_WithConftest):
         p = "/some/where/deep/enough/to/count"
         self.assertFalse(os.path.exists(p), "by NAME: the path rule below does not apply to a path that is not there")
         env = {"PWD": p, "HOME": p, "XDG_STATE_HOME": p, "PATH": p, "CLAUDE_CONFIG_DIR": p,
-               "TMUX_TMPDIR": p, "ROMP_TESTS_SYSTEM_TMPDIR": p,
+               "ROMP_TESTS_SYSTEM_TMPDIR": p,
                # GitHub Actions: the runner's dirs and the six names setup-python exports the
                # interpreter prefix under, which every stdlib and site-packages frame of a CI
                # traceback quotes
                "GITHUB_WORKSPACE": p, "RUNNER_TEMP": p, "RUNNER_TOOL_CACHE": p, "pythonLocation": p,
                "Python_ROOT_DIR": p, "Python3_ROOT_DIR": p, "LD_LIBRARY_PATH": p, "PKG_CONFIG_PATH": p,
                "XDG_DATA_DIRS": p + os.pathsep + p,
-               # this conftest's own floor: the pre-floor Claude settings dir the live move test reads
+               # conftest's record of the Claude settings dir the run was handed, saved ahead of its floor
                "ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR": p}
         self.assertEqual(self.cf.env_values_to_redact(env), set(), "a traceback quotes these paths")
         env = {"PWD_TOKEN": p, "ANTHROPIC_PWD": p, "MY_SECRET_PATH": p}
         self.assertEqual(self.cf.env_values_to_redact(env), {p}, "a credential-shaped name is never exempt")
         self.assertTrue(self.cf.env_value_qualifies("SOME_TOKEN", p))
-        self.assertFalse(self.cf.env_value_qualifies("TMUX_TMPDIR", p),
-                         "the private tmux socket dir conftest mints is a path a failure may quote")
         self.assertFalse(self.cf.env_value_qualifies("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR", p),
-                         "the pre-floor settings dir is a path the live test's skip reason quotes")
+                         "the pre-floor settings dir is a path a failure report may quote")
 
     def test_pytests_own_bookkeeping_names_are_exempt(self):
         # pytest writes PYTEST_CURRENT_TEST (`<node id> (setup|call|teardown)`) for every phase of
@@ -1120,9 +1118,12 @@ class HookEndToEnd(unittest.TestCase):
         for name in ("CI", "BUILD_NUMBER"):
             child.pop(name, None)
         child.update(env or {})
-        # The copied conftest mints its own private temp root under TMPDIR and removes it at run end;
-        # pointed at `d`, that root and the state dir inside it go with the scratch dir even when the
-        # child is killed before its unconfigure runs (the timeout below).
+        # The copied conftest imports the tests package (which mints the run's private temp root under
+        # TMPDIR and writes its owner marker; the conftest removes the root at run end) and fails loudly
+        # without it, so the checkout goes on the child's PYTHONPATH: `d` holds a copy of the conftest,
+        # not the package. Pointed at `d`, that root and the state dir inside it go with the scratch dir
+        # even when the child is killed before its unconfigure runs (the timeout below).
+        child["PYTHONPATH"] = os.pathsep.join(p for p in (os.path.dirname(HERE), child.get("PYTHONPATH")) if p)
         child["TMPDIR"] = d
         r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", d] + list(args),
                            cwd=d, env=child, capture_output=True, text=True, timeout=180)

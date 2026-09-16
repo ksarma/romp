@@ -210,7 +210,7 @@ test("the chains above are the real DOM: the builders in file-view.ts and file-c
   assert.match(VIEW, /box\.appendChild\(bar\); box\.appendChild\(main\);/);
   assert.match(VIEW, /if \(node\) \{ node\.classList\.add\("fileview-aside"\); main\.appendChild\(node\); \}/, "the panel's root IS the aside");
   // the title bar's buttons, and the Comments toggle inside its .fileview-fc unit
-  assert.match(VIEW, /const dl = el\("button", "fileview-btn"\) as HTMLButtonElement;[\s\S]*?acts\.appendChild\(dl\);/);
+  assert.match(VIEW, /const dl = el\("button", "fileview-btn"\) as HTMLButtonElement;[\s\S]*?fileGroup\.appendChild\(dl\);/);
   assert.match(PANEL, /const unit = el\("span", "fileview-fc"\);/);
   // the dressed buttons: the refusal's Download and the editor's Reload file, both .fileview-btn.fileview-err-dl in a .fileview-err
   // (the pane's paint may be preceded by the Outline popover's closer, a call that makes no node: Slice 6 of plans/markdown-viewer.md, review round 2)

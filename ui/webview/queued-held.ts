@@ -4,19 +4,17 @@
 // state first, the transcript read later. Between them the tail is SHORTER by the card, the browser clamps a
 // reader within that height of the bottom, and the landed card then grows the tail back below them: a card above
 // the bottom, follow mode off, the jump chip shown. So a vanished copy is HELD in place, marked landing, until the
-// atom that carries its identity arrives (the send's one identity on this wire, T252: the queued copy's `sendId` is
-// among the landed record's `sendIds`), and the atom then takes the copy's slot in the same frame. A copy with no id
-// (one the kernel queued itself: mail, a nudge; the tmux route; an older kernel) is held by TEXT for the one push it
-// vanished on, and dropped at the next push that carries the queue if nothing claimed it, never a phantom. A held
-// identified copy is dropped the moment a LATER landing shows the CLI has passed it (the queue is first-in-first-out:
-// had the copy landed, its record would precede that one), or when the kernel lists it queued again (it came back;
-// nothing to hold). Pure and DOM-free so node --test executes it; render.ts owns the per-session memory and the
-// splice. The fields are the wire's (send-pending.ts): upstream's qid/qids were renamed at the 2026-09-09 fold so no
-// translation seam sits between the module and its call site.
+// atom that carries its identity arrives (T252c: the queued copy's `qid` is the landed atom's `qid`, or one of its
+// `qids`), and the atom then takes the copy's slot in the same frame. A copy with no id (an older kernel
+// route, a copy the backend queued itself) is held by TEXT for the one push it vanished on, and dropped at the
+// next push that carries the queue if nothing claimed it — never a phantom. A held identified copy is dropped the
+// moment a LATER landing shows the CLI has passed it (the queue is first-in-first-out: had the copy landed, its
+// record would precede that one), or when the kernel lists it queued again (it came back; nothing to hold).
+// Pure and DOM-free so node --test executes it; render.ts owns the per-session memory and the splice.
 
 export type HeldCopy = {
   md: string;
-  sendId?: string;
+  qid?: string;
   qts?: number;
   romp?: boolean;
   rompSystem?: boolean;
@@ -30,28 +28,39 @@ export type HeldCopy = {
   pushes: number;         // pushes the copy has been held for (an id-less copy is dropped past the first)
 };
 
-export type HeldEvent = { kind: string; uuid?: string; md?: string; sendIds?: string[]; blocks?: string[]; undelivered?: boolean };
-export type HeldQueued = { md?: string; sendId?: string; qts?: number; hiddenByPending?: boolean; optimistic?: boolean; landing?: boolean; romp?: boolean; rompSystem?: boolean; rompAuto?: boolean; followUp?: boolean; goal?: string; fuCtx?: string; imgPaths?: string[] };
+export type HeldEvent = { kind: string; uuid?: string; md?: string; qid?: string; qids?: (string | null)[]; blocks?: string[]; undelivered?: boolean };
+export type HeldQueued = { md?: string; qid?: string; qts?: number; hiddenByPending?: boolean; optimistic?: boolean; landing?: boolean; romp?: boolean; rompSystem?: boolean; rompAuto?: boolean; followUp?: boolean; goal?: string; fuCtx?: string; imgPaths?: string[] };
+
+import { OVERLAY_KINDS } from "./send-pending";   // the kernel's live overlay cards: never an anchor (T389)
 
 const sameText = (a: string, b: string): boolean => a.trim() === b.trim();
 const isEcho = (u?: string): boolean => !!u && u.startsWith("echo:");
 const isOptimistic = (u?: string): boolean => !!u && u.startsWith("optimistic:");
 
 /** Whether a landed user event (a real record, never the kernel's echo nor our own bubble) carries this copy — by
- *  identity when the copy has one, by text otherwise (its md, or one of its blocks). */
-export function landsCopy(e: HeldEvent, c: { md: string; sendId?: string }): boolean {
+ *  identity where the RECORD carries one (the copy's id is the atom's `qid`, or one of its `qids`), by text otherwise (its
+ *  md, or one of its blocks). Identity decides only where the frame shows it, the pending-send rule's reading
+ *  (send-pending.ts landedCopies, T252c): a record the kernel could not pair (no feed ledger on this backend, a copy that
+ *  left the queue by another door) lands by its words; before, an identified held copy met such a record and never
+ *  released, so the landed row and the held card showed the same message twice until a later landing (T389). */
+export function landsCopy(e: HeldEvent, c: { md: string; qid?: string }): boolean {
   if (e.kind !== "user" || isEcho(e.uuid) || isOptimistic(e.uuid)) return false;
-  if (c.sendId) return Array.isArray(e.sendIds) && e.sendIds.includes(c.sendId);
+  const paired = !!e.qid || (Array.isArray(e.qids) && e.qids.length > 0 && e.qids.every((q) => !!q));
+  if (c.qid && paired) return e.qid === c.qid || (Array.isArray(e.qids) && e.qids.includes(c.qid));
   if (typeof e.md === "string" && sameText(e.md, c.md)) return true;
   return Array.isArray(e.blocks) && e.blocks.some((b) => typeof b === "string" && sameText(b, c.md));
 }
 
-/** The uuid of the last KERNEL event that carries one (not our own bubble, not a queued group, not a uuid-less
- *  compacting/clearing marker), or null: the anchor a hold is judged against. */
+/** The uuid of the last KERNEL event that carries one (not our own bubble, not one of the kernel's live overlay cards, not a
+ *  uuid-less compacting/clearing marker), or null: the anchor a hold is judged against. The overlay cards (the queued group,
+ *  the to-do box, the API-error card and the rest, OVERLAY_KINDS: one set with the pending-send rule) sit after every
+ *  transcript event and wear word uuids; anchored on one, a hold read the events after it, which are none, and never saw
+ *  the record that landed its copy, so the landed row and the landing card stood side by side for the rest of the turn
+ *  (T389 review: a to-do card after the transcript). */
 export function lastKernelUuid(events: HeldEvent[]): string | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
-    if (e.kind === "queued" || !e.uuid || isOptimistic(e.uuid)) continue;
+    if (OVERLAY_KINDS.has(e.kind) || !e.uuid || isOptimistic(e.uuid)) continue;
     return e.uuid;
   }
   return null;
@@ -65,7 +74,7 @@ export type HeldMemory = { prev: HeldQueued[]; anchor: string | null; held: Held
 /** What this push knows besides its events: the copies the user cancelled here (the ✕: the kernel will drop
  *  them and nothing lands — never held), and whether the session has SETTLED (not working: a copy the queue no
  *  longer lists on a settled session was cancelled or dropped, since a taken copy starts a turn). */
-export type HeldContext = { cancelled?: (c: { md: string; sendId?: string }) => boolean; settled?: boolean };
+export type HeldContext = { cancelled?: (c: { md: string; qid?: string }) => boolean; settled?: boolean };
 
 /** One push's decision. `prev` = the kernel's queued copies on the previous push (its tail group, our own bubble
  *  and hidden copies excluded); `held` = the copies held so far; `events` = this push's KERNEL events (our
@@ -76,8 +85,8 @@ export function reconcileHeld(mem: HeldMemory, events: HeldEvent[], cur: HeldQue
   const prevCopies = mem.prev.filter((p) => typeof p.md === "string" && !p.optimistic && !p.landing && !p.hiddenByPending);
   // copies are counted per identity, else per TEXT: two identical id-less copies with one taken leave one listed,
   // and the one that left is the one to hold; a key listed MORE than on the previous push has a held copy back
-  const keyOf = (c: { md?: string; sendId?: string }): string => c.sendId || "text:" + (c.md as string).trim();
-  const countBy = (list: { md?: string; sendId?: string }[]): Map<string, number> => {
+  const keyOf = (c: { md?: string; qid?: string }): string => c.qid || "text:" + (c.md as string).trim();
+  const countBy = (list: { md?: string; qid?: string }[]): Map<string, number> => {
     const m = new Map<string, number>();
     for (const c of list) m.set(keyOf(c), (m.get(keyOf(c)) || 0) + 1);
     return m;
@@ -91,7 +100,7 @@ export function reconcileHeld(mem: HeldMemory, events: HeldEvent[], cur: HeldQue
     candidates.push(...carried.slice(relisted));
     const vanished = Math.max(0, (prevN.get(k) || 0) - (curN.get(k) || 0));
     for (const p of prevCopies.filter((c) => keyOf(c) === k).slice(0, vanished))
-      candidates.push({ md: p.md as string, sendId: p.sendId, qts: p.qts, romp: p.romp, rompSystem: p.rompSystem, rompAuto: p.rompAuto,
+      candidates.push({ md: p.md as string, qid: p.qid, qts: p.qts, romp: p.romp, rompSystem: p.rompSystem, rompAuto: p.rompAuto,
                         followUp: p.followUp, goal: p.goal, fuCtx: p.fuCtx, imgPaths: p.imgPaths, since: mem.anchor, pushes: 0 });
   }
   // the landings after each candidate's anchor; a landing that RELEASES a held copy is that copy's, not a "later"
@@ -108,9 +117,9 @@ export function reconcileHeld(mem: HeldMemory, events: HeldEvent[], cur: HeldQue
     if (ctx.cancelled && ctx.cancelled(c)) continue;                   // the user cancelled it here: nothing will land
     const after = afterOf(c);
     if (after.some((e) => landsCopy(e, c))) continue;                   // its atom is here: it takes the slot
-    if (!c.sendId && c.pushes >= 1) continue;                            // id-less: one push by text, then never a phantom
+    if (!c.qid && c.pushes >= 1) continue;                              // id-less: one push by text, then never a phantom
     if (ctx.settled) continue;                                          // a settled session took nothing: cancelled or dropped
-    if (c.sendId && c.since !== null) {                                 // a later landing means the CLI passed it
+    if (c.qid && c.since !== null) {                                    // a later landing means the CLI passed it
       const later = after.some((e) => e.kind === "user" && !isEcho(e.uuid) && !isOptimistic(e.uuid) && !e.undelivered && !releasing.has(e));
       if (anchorGone(c) || later) continue;                             // (its anchor left the window: the same reading)
     }

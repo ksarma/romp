@@ -947,8 +947,8 @@ test("the gear's File comments row reads /defaults.fileComments: the reason for 
   assert.match(sub, /'agent-tooling-absent': '[^']*sessions cannot reply[^']*Run install\.sh on this machine[^']*there is no button for it[^']*'/);
   assert.match(sub, /this machine/, "the local kernel is the machine /defaults answers for");
   assert.doesNotMatch(GEAR, /linkTooling|installTooling|fileCommentsLink|runInstall/, "no WS op to run the link step exists — none is invented");
-  // the row sits beside "File links open in"
-  assert.ok(GEAR.indexOf("<b>File links open in</b>") < GEAR.indexOf("<b>File comments</b>") && GEAR.indexOf("<b>File comments</b>") < GEAR.indexOf("<b>Text scheme</b>"));
+  // the row sits beside "Pictures from the web in files", the Files section's other row
+  assert.ok(GEAR.indexOf("<b>Pictures from the web in files</b>") < GEAR.indexOf("<b>File comments</b>") && GEAR.indexOf("<b>File comments</b>") < GEAR.indexOf("<b>Text scheme</b>"));
 });
 
 test("vocabulary and privacy: the person's words, never the format's; no personal identifiers", () => {

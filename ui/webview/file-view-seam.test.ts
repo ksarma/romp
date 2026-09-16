@@ -399,8 +399,9 @@ async function open(p: string, t: TestContext, sid: string | null = SID, opts?: 
   assert.ok(wrap, "the viewer is up");
   const body = wrap.querySelector(".fileview-body")!;
   const acts = wrap.querySelector(".fileview-acts")!;
-  // captured once, by the labels they wear at open: a click relabels Save to "Saving…" (the acknowledgement)
-  const btn = (label: string) => { const b = acts.querySelectorAll("button").find((x) => x.textContent === label); assert.ok(b, "the " + label + " button"); return b!; };
+  // captured once, by the word they wear at open: a word button's text, a glyph's aria-label (T367 made Edit a glyph with its
+  // word in the title and aria-label; Rendered, Raw, Save and Cancel keep their words); a click relabels Save to "Saving…" (the acknowledgement)
+  const btn = (label: string) => { const b = acts.querySelectorAll("button").find((x) => x.textContent === label || x.getAttribute("aria-label") === label); assert.ok(b, "the " + label + " button"); return b!; };
   const isMd = p.endsWith(".md");
   const b: Btns = { rendered: isMd ? btn("Rendered") : new El("button"), raw: isMd ? btn("Raw") : new El("button"), edit: btn("Edit"), save: btn("Save"), cancel: btn("Cancel") };
   assert.ok(seam, "the probe action was mounted with the ctx");

@@ -35,7 +35,7 @@ test("the kernel verifies with the filesystem, resolved exactly like a click", (
 });
 
 test("linkifyFileUris whole-links a verified span's entire inline-code content", () => {
-  assert.match(RENDER, /function linkifyFileUris\(root: HTMLElement, skipThumbs\?: string\[\], spacePaths\?: string\[\],\s*\n\s*pathLinks\?: Record<string, string>, pathPins\?: Record<string, string>, sid\?: string \| null, delegated = false, walkOpts\?: PathLinkOptions\): void/);
+  assert.match(RENDER, /function linkifyFileUris\(root: HTMLElement, skipThumbs\?: string\[\], spacePaths\?: string\[\],\s*\n\s*pathLinks\?: Record<string, string>, pathPins\?: Record<string, string>, pathPreview\?: Record<string, string>,\s*\n\s*pathPreviewWhy\?: Record<string, string>, sid\?: string \| null, delegated = false, walkOpts\?: PathLinkOptions\): void/);   // upstream's pathPreview/pathPreviewWhy (T351), then the fork's sid, delegated and walkOpts
   // the pass targets inline <code> only, skips anything already linked or fenced
   assert.match(RENDER, /for \(const code of Array\.from\(root\.querySelectorAll\("code"\)\)\) \{\s*\n\s*if \(code\.closest\("a, \.file-uri-link, pre"\)\) continue;/);
   // exact-match against the kernel's verified set, then the whole content becomes one open link
@@ -50,7 +50,7 @@ test("the whole-span pass runs BEFORE the token walk, so the new link is skipped
   // skips anything already inside a .file-uri-link, so the spaced pass must have made its spans first
   const fn = RENDER.slice(RENDER.indexOf("function linkifyFileUris("), RENDER.indexOf("function renderEvent("));
   const spanPass = fn.indexOf('root.querySelectorAll("code")');
-  const walk = fn.indexOf("linkifyPathTokens(root, sid, pathLinks, walkOpts)");   // walkOpts: a todo surface's targetSuffix (Slice 6 of plans/markdown-viewer.md); the transcript passes none
+  const walk = fn.indexOf("linkifyPathTokens(");   // the shared walk (path-links.ts), which skips text already inside a link
   assert.ok(spanPass >= 0 && walk >= 0 && spanPass < walk,
     "code-span links land first; the token walk's closest('.file-uri-link') guard then leaves them alone");
   const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "path-links.ts"), "utf8");
@@ -63,7 +63,7 @@ test("the whole-span pass runs BEFORE the token walk, so the new link is skipped
 });
 
 test("every message render threads its event's spacePaths through", () => {
-  assert.match(RENDER, /linkifyFileUris\(bubble, imgPaths, ev\.spacePaths, ev\.pathLinks, ev\.pathPins\);/);   // user bubble
-  assert.match(RENDER, /linkifyFileUris\(full, imgPaths, ev\.spacePaths, ev\.pathLinks, ev\.pathPins\);/);     // expanded nudge body
-  assert.match(RENDER, /linkifyFileUris\(body, undefined, ev\.spacePaths, ev\.pathLinks, ev\.pathPins\);/);    // assistant reply
+  assert.match(RENDER, /linkifyFileUris\(bubble, imgPaths, ev\.spacePaths, ev\.pathLinks, ev\.pathPins, ev\.pathPreview, ev\.pathPreviewWhy\);/);   // user bubble
+  assert.match(RENDER, /linkifyFileUris\(full, imgPaths, ev\.spacePaths, ev\.pathLinks, ev\.pathPins, ev\.pathPreview, ev\.pathPreviewWhy\);/);     // expanded nudge body
+  assert.match(RENDER, /linkifyFileUris\(body, undefined, ev\.spacePaths, ev\.pathLinks, ev\.pathPins, ev\.pathPreview, ev\.pathPreviewWhy\);/);    // assistant reply
 });

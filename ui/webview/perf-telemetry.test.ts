@@ -19,7 +19,7 @@ import {
   createPerfTelemetry, installPerfTelemetry, perfFrameHandler,
   HIST_EDGES, HIST_BUCKETS, MAX_FRAME_TYPES, MAX_TOP_KEYS, SLOW_FRAME_MS, SLOW_ROWS_PER_MINUTE, FREE_RING, type PerfDeps,
 } from "./perf-telemetry";
-import { FederationManager, perfCollectorFor } from "./federation";
+import { FederationManager } from "./federation";
 
 const PAGE = "http://h:1/feed";
 /** A window stand-in for the install tests: an EventTarget carrying `members` (performance, navigator, location and the
@@ -524,6 +524,40 @@ test("long frames: distinct attribution keys are capped per minute; the overflow
   assert.equal(s.loaf.n, 2);
 });
 
+test("a chat minute with the viewer's paint bracket: fileview:paint with the pass cost, the free sample after it, the long frames the pane sees; no string carries a slash, a query, a path or a session id", () => {
+  // The file viewer times each paint of a shown file's text body through the hosting pane's collector (file-view.ts
+  // perfTimed, run for real in file-view-perf.test.ts); this is the row that pass produces, with the long frame the
+  // browser attributes to the pane's bundle and to an inline image load off the /file route, which carries a path.
+  const SID = "33333333-4444-5555-6666-777777777777";
+  const h = harness({ pageUrl: "http://h:1/chat", observer: FakeObserver as any, supportedEntryTypes: ["long-animation-frame"] });
+  const p = createPerfTelemetry("chat", h.deps);
+  p.timed("fileview:paint", () => { h.clock.t += 180; });   // a large file painted
+  h.runRafs(); h.clock.t += 40; h.runRafs();                // two animation frames later: the free sample
+  FakeObserver.deliver([{ startTime: 1000, duration: 190, blockingDuration: 140, scripts: [
+    { sourceURL: "http://h:1/dist/chat.js?v=1757100000&sid=" + SID, sourceFunctionName: "paintAll", sourceCharPosition: 9000, invoker: "Window.requestAnimationFrame", duration: 150 },
+    { sourceURL: "http://h:1/chat?token=abc&sid=" + SID, sourceFunctionName: "", sourceCharPosition: 4000, invoker: "IMG[src=/file?path=/repo/notes-api/docs/plot.png&sid=" + SID + "].onload", duration: 30 },
+  ] }]);
+  h.clock.wall += 60_000;
+  p.tick();
+  const rows = minuteRows(h.posted);
+  assert.equal(rows.length, 1);
+  const d = rows[0].data;
+  assert.equal(d.app, "chat");
+  assert.deepEqual(d.frames["fileview:paint"], stat(1, 180, 180, 1, 1, hist({ 8: 1 })));    // 128-256 ms
+  assert.deepEqual(d.free, { n: 1, p50: 40, p90: 40, max: 40 });
+  assert.equal(d.loaf.n, 1);
+  assert.deepEqual(d.loaf.top.map((t: any) => t.k), ["chat.js:paintAll@9000", "page:(anonymous)@4000"]);
+  assert.deepEqual(d.loaf.top.map((t: any) => t.inv), ["Window.requestAnimationFrame", "IMG[src].onload"]);
+  assert.equal(slowRows(h.posted).length, 1, "a 180 ms paint is a slow frame too, with the report's attribution");
+  // the privacy contract, over the minute row and the slowframe row: every string is a code identifier (so no
+  // slash, no query), and neither the session id nor a path word the inputs carried appears anywhere, keys included
+  const both = h.posted.map((m) => m.data);
+  assertIdentifiersOnly(both);
+  const text = JSON.stringify(both);
+  assert.ok(!text.includes(SID) && !text.includes("33333333"), "no session id in either row");
+  assert.ok(!text.includes("notes-api") && !text.includes("plot.png"), "no path in either row");
+});
+
 test("longtask fallback: no long-animation-frame support observes longtask, blocking is time over 50 ms, no attribution", () => {
   const h = harness({ observer: FakeObserver as any, supportedEntryTypes: ["longtask", "mark"] });
   const p = createPerfTelemetry("feed", h.deps);
@@ -676,14 +710,14 @@ test("federation installs the page's collector on the Files pane too (app \"file
   g.window = win;
   g.document = new EventTarget();
   try {
-    const f = perfCollectorFor("files");
+    const f = installPerfTelemetry("files");
     assert.ok(f, "the Files pane gets the collector");
     assert.equal(win.__rompPerf, f, "published on the Files page, where the viewer's perfTimed finds it");
     assert.equal((f!.snapshot() as any).app, "files");
     f!.timed("fileview:paint", () => {});
     assert.deepEqual(Object.keys((f!.snapshot() as any).frames), ["fileview:paint"], "the viewer's bracket counts under its type");
     delete win.__rompPerf;
-    const c = perfCollectorFor("timeline");
+    const c = installPerfTelemetry("timeline");
     assert.ok(c, "a page the kernel pushes frames to gets the collector");
     assert.equal(win.__rompPerf, c);
     assert.equal((c!.snapshot() as any).app, "timeline");
@@ -820,11 +854,11 @@ test("installPerfTelemetry: one collector per page on window.__rompPerf, wired t
   }
 });
 
-test("installPerfTelemetry: hidden_pane is the shim's union, the zero-viewport probe OR the pane's published word", () => {
-  // The pane shim's paneHidden() read (kernel.py) and this row agree: a pane that publishes its word
-  // (paint-gate.ts publishPaneHidden, chat-visibility.ts) is reported hidden after a first show in Chromium, where
-  // the probe alone never saw it (a display:none iframe keeps its size there); in Firefox the viewport goes to
-  // zero and the observer does not run, so the probe carries it and a stale word of false must not override it.
+test("installPerfTelemetry: hidden_pane is the pane shim's union, the zero-viewport probe OR the pane's published word", () => {
+  // The pane shim's paneHidden() (kernel.py) and this row agree: a pane that publishes its word (paint-gate.ts
+  // publishPaneHidden, chat-visibility.ts) is reported hidden after a first show in Chromium, where the probe alone
+  // never saw it (a display:none iframe keeps its size there); in Firefox the viewport goes to zero and the observer
+  // does not run, so the probe carries it and a stale word of false must not override it.
   const g: any = globalThis;
   const win = standIn({
     performance: { now: () => 0 },
@@ -843,9 +877,9 @@ test("installPerfTelemetry: hidden_pane is the shim's union, the zero-viewport p
     assert.ok(a);
     assert.equal((a.snapshot() as any).hidden_pane, false, "unset word, a viewport: the probe says shown");
     win.__rompPaneHidden = true;
-    assert.equal((a.snapshot() as any).hidden_pane, true, "the pane's word wins: hidden after a first show, size kept");
+    assert.equal((a.snapshot() as any).hidden_pane, true, "the pane's word: hidden after a first show, size kept");
     win.innerWidth = 0; win.__rompPaneHidden = false;
-    assert.equal((a.snapshot() as any).hidden_pane, true, "a zero viewport says hidden whatever a stale word says (Firefox)");
+    assert.equal((a.snapshot() as any).hidden_pane, true, "a zero viewport says hidden whatever a stale word says");
     delete win.__rompPaneHidden;
     assert.equal((a.snapshot() as any).hidden_pane, true, "unset: the probe's turn (zero viewport)");
     win.innerWidth = 800; win.parent = win;
@@ -873,7 +907,7 @@ test("each pane bundle's one frame listener is installed through listenForFrames
   for (const [file, app] of panes) {
     const src = readUi(file);
     assert.match(src, /import \{ perfFrameHandler \} from "\.\/perf-telemetry";/, file + " imports the wrapper");
-    assert.match(src, /import \{ listenForFrames \} from "\.\/frame-listener";/, file + " imports the helper");
+    assert.match(src, /import \{ listenForFrames(?:, \w+)* \} from "\.\/frame-listener";/, file + " imports the helper");   // the chat also imports the manager-missing check (2026-09-10)
     const installs = src.match(/listenForFrames\(/g) || [];
     assert.equal(installs.length, 1, file + " installs its frame listener once");
     const bare = src.match(/window\.addEventListener\("message", /g) || [];
@@ -896,11 +930,10 @@ test("federation's start() installs the page collector first: before __rompFed, 
   const end = src.indexOf("\n  }\n", at);
   assert.ok(end > at, "start() closes");
   const body = src.slice(at, end);
-  // through perfCollectorFor: the page collector on every kernel page, the Files pane included (its viewer's
-  // fileview:<why> brackets and the long frames it sees; the pane got none until 2026-09-09)
-  assert.match(src, /export function perfCollectorFor\(app: string\): RompPerf \| null \{\n\s*return installPerfTelemetry\(app\);/);
+  // installPerfTelemetry keyed by the app alone: the page collector on every kernel page, the Files pane included
+  // (its viewer's fileview:<why> brackets and the long frames it sees; the pane got none until 2026-09-09)
   assert.ok(!src.includes('app === "files" ? null'), "no pane is excluded any more");
-  const install = body.indexOf("this.perf = perfCollectorFor(this.app);");
+  const install = body.indexOf("this.perf = installPerfTelemetry(this.app);");
   assert.ok(install > 0, "start() installs the collector");
   const app = body.indexOf('this.app = w.__rompApp || "chat";');
   assert.ok(app > 0 && app < install, "the app name is read first: the collector is keyed by it");

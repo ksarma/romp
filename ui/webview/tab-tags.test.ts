@@ -32,7 +32,7 @@ test("executable: the union joins local and remote tags BY NAME — one group, l
   assert.equal(ops.remotes[0].host, "TESTHOST");
 });
 
-test("the Tags row sits with the session controls ABOVE the divider; Browse stays last", () => {
+test("the Tags row opens the second section (where the session belongs); Browse stays last", () => {
   const at = RENDER.indexOf("function showTabMenu");
   const body = RENDER.slice(at, RENDER.indexOf("document.body.appendChild(menu);", at));
   const tagsAt = body.indexOf('l.textContent = "Tags"');
@@ -74,10 +74,11 @@ test("New tag… is an inline input (menu vocabulary, no native prompt) that cre
   assert.match(RENDER, /const existing = unionFor\(\)\.find\(\(g\) => g\.name === name\);/);
 });
 
-test("presentation: one chip per NAME, identity dot, ✕ — and never a host prefix in the flyout", () => {
-  assert.match(RENDER, /lb\.textContent = g\.name; bodyE\.appendChild\(lb\);/);
-  assert.match(RENDER, /lb\.textContent = "\+ " \+ g\.name; bodyE\.appendChild\(lb\);/);
-  assert.match(CSS, /\.ctx-tag-dot \{ flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; \}/);
+test("presentation: one chip per NAME (the shared tag chip, T321), the action rows' identity dot, ✕, and never a host prefix in the flyout", () => {
+  assert.match(RENDER, /const chip = tagChip\(g\.name, g\.color \|\| null, \{ inheritSize: true \}\);\s+\/\/ the one tag chip \(T321\)/, "a row that names a tag IS the tag chip, at the label's size");
+  assert.match(RENDER, /chip\.classList\.add\("ctx-tag-chip"\);\s*\n\s*lb\.appendChild\(chip\); bodyE\.appendChild\(lb\);/, "in the label slot");
+  assert.match(RENDER, /lb\.append\("\+ ", named\(\)\); bodyE\.appendChild\(lb\);/, "the + row names its tag as the chip inside the sentence");
+  assert.doesNotMatch(RENDER + CSS, /ctx-tag-dot/, "no swatch-and-name pair is left in the flyout (T321)");
   const fly = RENDER.slice(RENDER.indexOf("const sub = el(\"div\", \"ctx-menu ctx-sub ctx-sub-tags\");"));
   assert.doesNotMatch(fly.slice(0, 2500), /host-prefix|hostNameNodes/, "kernels are plumbing — no host chrome in the flyout");
 });
@@ -90,10 +91,10 @@ test("one-click MOVE between groups (tab groups, 2026-09-04): 'Move to <name>' a
     "the group THIS COPY sits in (T264b: a session under several tags has a copy per group, and the menu speaks for the right-clicked copy's group) while its tag holds the session; else the one remaining holder; else nothing (round 3 of the tab menu review); only while the strip is sectioned, and never a tag whose create is still in flight");
   assert.match(RENDER, /let copyNow: SectionRef \| undefined = copy \? refOf\(copy\) : undefined;\s*\n\s*const sameSection = \(a: SectionRef, b: SectionRef\) => \(a\.localId !== null && b\.localId !== null \? a\.localId === b\.localId : a\.name === b\.name\);[^\n]*\n\s*const heldCopy = \(held: TagUnion\[\]\): TagUnion \| undefined => \{\s*\n\s*const c = copyNow;\s*\n\s*if \(!c\) return undefined;\s*\n\s*return \(c\.localId !== null \? held\.find\(\(g\) => g\.localId === c\.localId\) : undefined\) \?\? held\.find\(\(g\) => g\.name === c\.name\);[^\n]*\n\s*\};\s*\n\s*const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*if \(!readTabGroups\(\)\.on\) return undefined;\s*\n\s*const held = holding\(\);\s*\n\s*const home0 = heldCopy\(held\) \?\? \(held\.length === 1 && !held\[0\]\.pending \? held\[0\] : undefined\);[^\n]*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};/,
     "the computation itself, once, in showTabMenu's scope: the copy's group, tracked through a move (copyNow, a section ref since round 4 of the tab menu review, which moveUnion writes) and an add (aimAdd, round 5), matched by its tag's local id over every held union first and by its name only when no held union carries that id (round 6); else the one remaining holder; else nothing (round 3), read and never latched (round 5); only while sectioned, never a pending tag");
-  assert.match(fly, /lb\.textContent = "Move to " \+ g\.name; bodyE\.appendChild\(lb\);/);
-  assert.match(fly, /const to = liveUnion\(ref\), fromNow = homeNow\(\); if \(!to \|\| !fromNow \|\| !sameSection\(sectionRef\(fromNow\), from\)\) \{ refuse\("other", ref\); return; \} moveUnion\(fromNow, to\); build\(\); sb\.textContent = subText\(\);/, "the row IS the move, of the copy's group to the destination as both stand at the click (round 7 of the tab menu review: the destination resolved from the live unions by the ref this build read; round 8: the source is the copy's home at the click, and it must be the section the row was built for, else the refusal and no write)");
-  assert.match(fly, /plus\.title = "add this tag too — the session keeps its other tags";/, "…and multi-tag stays one click away");
-  assert.match(fly, /lb\.textContent = "\+ " \+ g\.name; bodyE\.appendChild\(lb\);/, "with no home tag, + <name> is the move");
+  assert.match(fly, /lb\.append\("Move to ", named\(\)\); bodyE\.appendChild\(lb\);/, "the tag inside the sentence is the chip (T321)");
+  assert.match(fly, /if \(settings\.tabsLocked\) return; const to = liveUnion\(ref\), fromNow = homeNow\(\); if \(!to \|\| !fromNow \|\| !sameSection\(sectionRef\(fromNow\), from\)\) \{ refuse\("other", ref\); return; \} moveUnion\(fromNow, to\); build\(\); sb\.textContent = subText\(\);/, "the row IS the move, of the copy's group to the destination as both stand at the click (round 7 of the tab menu review: the destination resolved from the live unions by the ref this build read; round 8: the source is the copy's home at the click, and it must be the section the row was built for, else the refusal and no write); the tab lock (T395) refuses first");
+  assert.match(fly, /plus\.title = "add this tag too \(the session keeps its other tags\)" \+ \(settings\.tabsLocked \? ": adding is not a move, so the lock does not hold it" : ""\);/, "…and multi-tag stays one click away (the tab lock, T395, adds its clause)");
+  assert.match(fly, /lb\.append\("\+ ", named\(\)\); bodyE\.appendChild\(lb\);/, "with no home tag, + <name> is the move");
   const mv = RENDER.slice(RENDER.indexOf("const moveUnion = (from: TagUnion, to: TagUnion)"), RENDER.indexOf("// HOVER-INTENT open"));
   assert.match(mv, /const a = applyUnionEdit\(nv, to, \{ add: \[id\] \}\);\s*\n\s*const r = applyUnionEdit\(nv, from, \{ remove: \[id\] \}\);/,
     "two edits on ONE blob shown — the strip never shows the half-moved state");
@@ -104,9 +105,10 @@ test("one-click MOVE between groups (tab groups, 2026-09-04): 'Move to <name>' a
     "editUnion and moveUnion share the one edit — never a forked implementation");
 });
 
-test("the menu groups BY KIND: [Rename+colors] / [toggles+billing+Tags] / [Browse] (the user 2026-08-24, final ruling)", () => {
-  // supersedes 644's single top section: aesthetic controls together at the top, the
-  // behavior/membership controls as the middle section, Browse alone at the bottom
+test("the menu groups by what each item changes: [Rename+colours] / [Tags, Move] / [switches+Billing] / [Browse] (the user 2026-09-11)", () => {
+  // supersedes the 2026-08-24 three-section ruling: membership and location (Tags, Move to folder…) leave
+  // the switches for a section of their own. tab-menu-sections.test.ts is the one pin of the whole grouping;
+  // this pins Rename's dress and the two dividers around the Tags section
   const at = RENDER.indexOf("function showTabMenu");
   const body = RENDER.slice(at, RENDER.indexOf("document.body.appendChild(menu);", at));
   const renameAt = body.indexOf('l.textContent = "Rename"');
@@ -115,15 +117,16 @@ test("the menu groups BY KIND: [Rename+colors] / [toggles+billing+Tags] / [Brows
   assert.match(body, /sb\.textContent = "the name is a label — mail, goals and history follow the session";/,
     "…and a sub-line saying what a rename preserves (uuid-keyed truth)");
   const colorsAt = body.indexOf('el("div", "ctx-colors")');
-  const firstToggleAt = body.indexOf('toggle("feed"');
   const tagsAt = body.indexOf('l.textContent = "Tags"');
+  const moveAt = body.indexOf('l.textContent = "Move to folder…"');
+  const firstToggleAt = body.indexOf('toggle("feed"');
   const browseAt = body.indexOf('l.textContent = "Browse files"');
-  assert.ok(renameAt < colorsAt && colorsAt < firstToggleAt && firstToggleAt < tagsAt && tagsAt < browseAt,
-    "order: Rename, colors, toggles, Tags, Browse");
-  // one divider between colors and the toggles; NONE inside section 1 or section 2
-  assert.ok(!body.slice(renameAt, colorsAt).includes('el("div", "ctx-sep")'), "Rename+colors are one section");
-  assert.ok(body.slice(colorsAt, firstToggleAt).includes('menu.appendChild(el("div", "ctx-sep"));'), "a divider splits sections 1/2");
-  assert.ok(!body.slice(firstToggleAt, tagsAt).includes('el("div", "ctx-sep")'),
-    "toggles, billing and Tags are ONE behavior section — no inner dividers");
-  assert.ok(body.slice(tagsAt, browseAt).includes('menu.appendChild(el("div", "ctx-sep"));'), "a divider splits sections 2/3 — Browse alone at the bottom");
+  assert.ok(renameAt < colorsAt && colorsAt < tagsAt && tagsAt < moveAt && moveAt < firstToggleAt && firstToggleAt < browseAt,
+    "order: Rename, colours, Tags, Move, switches, Browse");
+  // the MENU's dividers (the Tags flyout appends its own to `sub`, which never counts)
+  const SEP = 'menu.appendChild(el("div", "ctx-sep"));';
+  assert.ok(!body.slice(renameAt, colorsAt).includes(SEP), "Rename+colours are one section");
+  assert.ok(body.slice(colorsAt, tagsAt).includes(SEP), "a divider splits sections 1/2");
+  assert.ok(!body.slice(tagsAt, moveAt).includes(SEP), "Tags and Move to folder… are ONE section — where the session belongs");
+  assert.ok(body.slice(moveAt, firstToggleAt).includes(SEP), "a divider splits sections 2/3 — the switches start a section of their own");
 });

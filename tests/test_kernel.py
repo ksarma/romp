@@ -31,10 +31,6 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 em = load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
 jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
-# These exercise tmux BEHAVIOUR (they stub subprocess.run and assert on the argv). Declare a tmux
-# host explicitly so they assert the same thing on a machine without tmux installed, where the
-# backend is otherwise inert by design (see TmuxBackend.available).
-os.environ["ROMP_TMUX_AVAILABLE"] = "1"
 os.environ["ROMP_SERVE_TOKEN"] = "testtok"            # known token for the serve-security test
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
 
@@ -43,7 +39,7 @@ km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
 # covers. Neutralize it here: left live, these tests would read the REAL machine's usage.json and
 # start parking — correctly, but for a reason none of them is about — the moment that account hit a
 # limit. Pinning it off keeps them hermetic.
-km._limit_hold = lambda sid: None
+km._limit_hold = lambda sid, usage=None: None
 
 NOW = 1781100000
 SID = "11111111-2222-3333-4444-555555555555"
@@ -78,15 +74,6 @@ def trline(t, tool_use_id, uuid, parent, content="ok", is_error=False):
             "message": {"role": "user", "content": [b]}}
 
 
-def qop(operation, content=None):
-    # A Claude Code queue-operation transcript record (no uuid → not in the turn DAG): enqueue carries the
-    # queued text; dequeue/remove resolve the oldest pending one. _pending_queued folds these.
-    o = {"type": "queue-operation", "operation": operation, "sessionId": SID, "timestamp": iso(NOW)}
-    if content is not None:
-        o["content"] = content
-    return o
-
-
 def apierr_line(t, uuid, parent, text="API Error: 500 Internal server error.", status=500, category="server_error"):
     # An API-failure assistant record as Claude Code writes it: the top-level isApiErrorMessage flag is the
     # INVARIANT (the human text + status vary — 500 / timeout / model-not-found). _api_error keys on it.
@@ -118,7 +105,7 @@ class ViewBuilder(unittest.TestCase):
         names = td / "names"; names.mkdir()
         (names / SID).write_text("testsess\t%s\t#abcdef\n" % str(cdir))
         self.saved = (jd.NAMES, jd.PROJECTS, jd.CAPDIR, jd.ARCHDIR, jd.GOALDIR, jd.STATE,
-                      km.NAMES, km._tmux_sessions, km._GLOBAL_CLAUDE_MD, jd.gist_llm)
+                      km.NAMES, km._live_map, km._GLOBAL_CLAUDE_MD, jd.gist_llm)
         # the captioner's MESSAGE caption (jd.gist_llm) — stub it so NO test fires a real LLM subprocess.
         # The provisional card reads the PERSISTED message caption ('<segid>#p'), not this directly; the
         # gist-specific tests write that caption to drive the card's "Analyzing: …" text.
@@ -135,9 +122,9 @@ class ViewBuilder(unittest.TestCase):
         jd.CAPDIR, jd.ARCHDIR, jd.GOALDIR = td / "captions", td / "archive", td / "goals"
         jd.STATE = td                                  # sandbox the timeline helpers (usage/states/mail)
         km.NAMES = names
-        # deterministic tmux: the fixture session is ALIVE + idle (so the alive-only filter shows it);
+        # deterministic liveness: the fixture session is ALIVE + idle (so the alive-only filter shows it);
         # individual tests override this map to exercise other states.
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         session = em.parse_session(str(self.tpath), rompuuid=SID, candidate_files=[str(self.tpath)], now=NOW)
         turn = session["turns"][0]
@@ -164,7 +151,7 @@ class ViewBuilder(unittest.TestCase):
 
     def tearDown(self):
         (jd.NAMES, jd.PROJECTS, jd.CAPDIR, jd.ARCHDIR, jd.GOALDIR, jd.STATE,
-         km.NAMES, km._tmux_sessions, km._GLOBAL_CLAUDE_MD, jd.gist_llm) = self.saved
+         km.NAMES, km._live_map, km._GLOBAL_CLAUDE_MD, jd.gist_llm) = self.saved
         self.td.cleanup()
 
     def _write_msg_caption(self, caption):
@@ -192,16 +179,16 @@ class ViewBuilder(unittest.TestCase):
         the fleet-view sig MUST change when the order changes — else _cached_feed serves the stale order and
         the reordered cards lag the tabs by up to a 5s bucket (the user 2026-07-15). The chat tab strip never
         lagged because its tab_order is read fresh each push, not from the cached feed."""
-        tmux = {}
+        live_map = {}
         p = jd.STATE / "session-order.json"
         km._write_session_order(["11111111-2222-3333-4444-555555555555"])
-        sig1 = km._fleet_view_sig(NOW, tmux)
+        sig1 = km._fleet_view_sig(NOW, live_map)
         self.assertIn("__order__", dict(sig1), "the sig must watch session-order.json")
         self.assertEqual(dict(sig1)["__order__"], os.stat(p).st_mtime, "the sig tracks the order file's mtime")
         # a reorder rewrites the file → new mtime → the sig changes → _cached_feed rebuilds with the new order.
         # set a distinct mtime explicitly so the assertion never rides on sub-second write resolution.
         os.utime(p, (NOW - 100, NOW - 100))
-        sig2 = km._fleet_view_sig(NOW, tmux)
+        sig2 = km._fleet_view_sig(NOW, live_map)
         self.assertNotEqual(sig1, sig2, "a session-order change must bust the fleet-view sig")
 
     def test_reorder_within_the_throttle_needs_a_dirty_mark(self):
@@ -209,19 +196,19 @@ class ViewBuilder(unittest.TestCase):
         when the sig changed — so a reorder within 2s of the last feed build kept serving the OLD order (the
         'still slow' report, the user 2026-07-15). The reorder handler now _mark_views_dirty()s, and a dirty
         mark bypasses the throttle so the fresh order ships at once."""
-        now = int(time.time()); tmux = km._tmux_sessions()
+        now = int(time.time()); live_map = km._live_map()
         km._built_feed[:] = [None, None, 0.0, 0.0]; km._views_dirty[0] = 0.0
         other = "22222222-3333-4444-5555-666666666666"
         km._write_session_order([SID])
-        f1 = km._cached_feed(now, tmux, km._fleet_view_sig(now, tmux))   # warm the cache with this order
+        f1 = km._cached_feed(now, live_map, km._fleet_view_sig(now, live_map))   # warm the cache with this order
         self.assertEqual(f1["order"], [SID])
         # reorder within REBUILD_MIN_S: the sig changes, but the throttle still hands back the cached feed
         km._write_session_order([other, SID])
-        f2 = km._cached_feed(now, tmux, km._fleet_view_sig(now, tmux))
+        f2 = km._cached_feed(now, live_map, km._fleet_view_sig(now, live_map))
         self.assertEqual(f2["order"], [SID], "throttled reuse → still the pre-reorder order (the bug)")
         # a dirty mark (what the reorder handler now does) bypasses the throttle → rebuild with the new order
         km._mark_views_dirty()
-        f3 = km._cached_feed(now, tmux, km._fleet_view_sig(now, tmux))
+        f3 = km._cached_feed(now, live_map, km._fleet_view_sig(now, live_map))
         self.assertEqual(f3["order"], [other, SID], "dirty mark → immediate rebuild with the fresh order")
 
     def test_resolving_a_picker_marks_views_dirty_so_the_card_leaves_needs_you_at_once(self):
@@ -240,11 +227,11 @@ class ViewBuilder(unittest.TestCase):
                 km._views_dirty[0] = 0.0
                 self.assertTrue(km._drive({"type": op, "id": SID, **extra}, {}), op + " must route as a drive op")
                 self.assertGreater(km._views_dirty[0], 0.0, op + " resolves the picker → must mark views dirty")
-            for op in ("navAsk", "toggleAsk"):
+            for op in ("toggleAsk",):
                 km._views_dirty[0] = 0.0
                 km._drive({"type": op, "id": SID, "target": 1}, {})
                 self.assertEqual(km._views_dirty[0], 0.0, op + " only moves within an OPEN picker → no rebuild")
-            self.assertEqual(seen, ["answer", "submit", "cancel", "custom", "text", "focus", "toggle"],
+            self.assertEqual(seen, ["answer", "submit", "cancel", "custom", "text", "toggle"],
                              "every op still reaches the backend unchanged")
         finally:
             km.Sessions.backend_for = saved
@@ -706,7 +693,7 @@ class ViewBuilder(unittest.TestCase):
         feed = km.build_feed(NOW)
         rows = feed["sessions"]
         self.assertEqual([r["sid"] for r in rows],
-                         [s["sid"] for s in km._chat_tab_sessions(NOW, km._tmux_sessions())])
+                         [s["sid"] for s in km._chat_tab_sessions(NOW, km._live_map())])
         me = next(r for r in rows if r["sid"] == SID)
         self.assertEqual(me["name"], "testsess")
         self.assertEqual(me["color"], km._name_color(SID), "the tab_meta colour resolution, verbatim")
@@ -938,46 +925,13 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(m["ledger"]["summary"], "Fixing the feed")
         self.assertNotIn("bullets", m["ledger"], "the bullets list retired with its readers (2026-07-07 audit)")
 
-    def test_ledger_carries_the_working_note(self):
-        """The postal set_working note rides the per-session ledger (the chat's section snapshot shows it as
-        a row's own second line under the task; the ledgers attach carries it to the Outline for free).
-        Read from the backend-agnostic store (working/<sid>); "" when the session published none."""
-        saved = km.WORKING_DIR
-        km.WORKING_DIR = jd.STATE / "working"
-        try:
-            self.assertEqual(km.build_session(SID, NOW)["ledger"]["workingNote"], "", "no note → an empty string, never a missing key")
-            km.WORKING_DIR.mkdir(parents=True, exist_ok=True)
-            (km.WORKING_DIR / SID).write_text("  editing the notes-api tests  \n")
-            self.assertEqual(km.build_session(SID, NOW)["ledger"]["workingNote"], "editing the notes-api tests", "the note, stripped")
-            (km.WORKING_DIR / SID).unlink()
-            self.assertEqual(km.build_session(SID, NOW)["ledger"]["workingNote"], "", "cleared → empty again")
-        finally:
-            km.WORKING_DIR = saved
-
-    def test_muted_session_keeps_its_working_note(self):
-        """hideFromFeed empties the ledger's task tracking (tree, current, recent) but NOT the note: the note
-        is the session's own statement of what it holds, not a goal the judges track. Pinned because the
-        hideFromFeed branch is the natural place to "empty the ledger", and moving the field inside it
-        would flip this with every other test green (review 2026-09-06)."""
-        saved = km.WORKING_DIR
-        km.WORKING_DIR = jd.STATE / "working"
-        try:
-            km.WORKING_DIR.mkdir(parents=True, exist_ok=True)
-            (km.WORKING_DIR / SID).write_text("editing the notes-api tests\n")
-            km._set_session_flag(SID, "hideFromFeed", True); km._flags_cache.clear()
-            led = km.build_session(SID, NOW)["ledger"]
-            self.assertEqual((led["tree"], led["current"], led["recent"]), ([], None, []), "muted: out of task tracking")
-            self.assertEqual(led["workingNote"], "editing the notes-api tests", "…but the note stays: the session's claim, not a goal")
-        finally:
-            km._set_session_flag(SID, "hideFromFeed", False); km._flags_cache.clear()
-            km.WORKING_DIR = saved
-
     def test_a_working_note_write_busts_the_chat_build_cache(self):
-        """_chat_build_sig is (transcript, states, judge gen, stores…): a note write (set_working, a shell's
-        `romp mail working`, the kernel's own idle+done lift) touches NONE of them, so a background tab's
-        cached ledger kept the old note until the next producer pass ended (3 s plus the pass, minutes
-        while judges were calling the model; review 2026-09-06). The note is folded into the sig, so the
-        change reaches the row at the next push like every other ledger field."""
+        """The chat signature (_chat_build_sig, one labelled component per payload input, 39 of them) carries
+        the working note as its `note` component, the note file's identity: a note write (set_working, a
+        shell's `romp mail working`, the kernel's own idle+done lift) moves it, so the change reaches the
+        row at the next push like every other ledger field. Before the note was a component a background
+        tab's cached ledger kept the old note until the next producer pass ended (3 s plus the pass,
+        minutes while judges were calling the model; review 2026-09-06)."""
         sess = {"path": str(self.tpath), "sid": SID, "anchor": ""}
         saved = (km._sdk, km.WORKING_DIR)
         km._sdk = lambda: None
@@ -992,47 +946,6 @@ class ViewBuilder(unittest.TestCase):
             self.assertEqual(km._chat_build_sig(sess), before, "the lift (clear) busts it back")
         finally:
             km._sdk, km.WORKING_DIR = saved
-
-    def test_ledger_carries_the_feed_needs_you_verdict(self):
-        """ledger.needsInput is the FEED's per-session needs-you (review 2026-09-06): True when the last feed
-        build filed a card of this session under needs_input (here the fixture's judge-filed block, g2, on
-        an IDLE session, the case the tab's chip rule never sees), False when none, None before the first
-        feed build. Read from the feed build's own payload, never re-derived; a muted session has no cards.
-        The chat-build sig folds the bit so a background row follows a verdict flip at the next push."""
-        tmux = km._tmux_sessions()
-        saved = (list(km._built_feed), km._feed_needs_input[0], km._views_dirty[0], km._sdk)
-        km._built_feed[:] = [None, None, 0.0, 0.0]; km._feed_needs_input[0] = None; km._views_dirty[0] = 0.0
-        km._sdk = lambda: None
-        sess = {"path": str(self.tpath), "sid": SID, "anchor": ""}
-        try:
-            self.assertIsNone(km.build_session(SID, NOW)["ledger"]["needsInput"], "no feed build yet → None, not a verdict")
-            feed = km._cached_feed(NOW, tmux, km._fleet_view_sig(NOW, tmux))
-            self.assertTrue(any(a["sid"] == SID and a["column"] == "needs_input" for a in feed["asks"]),
-                            "the fixture's blocked goal files a needs_input card for the idle session")
-            self.assertEqual(tmux[SID]["state"], "idle", "…while the chip is idle: the tab's rule alone shows nothing")
-            self.assertIs(km.build_session(SID, NOW)["ledger"]["needsInput"], True, "the row's needs-you = the feed's column")
-            sig_blocked = km._chat_build_sig(sess)
-            # the judges rule the block answered: the store now holds the goal working; a dirty mark bypasses
-            # the rebuild throttle the way the reply handler does
-            store = json.loads((jd.GOALDIR / (SID + ".json")).read_text())
-            g2 = "%s:g2" % SID
-            store["nodes"][g2]["blocked"] = False; store["status"][g2] = "working"
-            (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(store))
-            km._mark_views_dirty()
-            feed = km._cached_feed(NOW, tmux, km._fleet_view_sig(NOW, tmux))
-            self.assertFalse(any(a["sid"] == SID and a["column"] == "needs_input" for a in feed["asks"]))
-            self.assertIs(km.build_session(SID, NOW)["ledger"]["needsInput"], False, "no card under needs-you → False")
-            self.assertNotEqual(km._chat_build_sig(sess), sig_blocked, "the flip busts the background tab's cached ledger")
-            # muted: out of the feed altogether → no cards → False, whatever the store says
-            store["nodes"][g2]["blocked"] = True; store["status"][g2] = "blocked"
-            (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(store))
-            km._set_session_flag(SID, "hideFromFeed", True); km._flags_cache.clear()
-            km._mark_views_dirty()
-            km._cached_feed(NOW, tmux, km._fleet_view_sig(NOW, tmux))
-            self.assertIs(km.build_session(SID, NOW)["ledger"]["needsInput"], False, "a muted session is out of task tracking")
-        finally:
-            km._set_session_flag(SID, "hideFromFeed", False); km._flags_cache.clear()
-            km._built_feed[:], km._feed_needs_input[0], km._views_dirty[0], km._sdk = saved
 
     def test_the_first_feed_build_does_not_bust_every_chat_build(self):
         """_chat_build_sig folds the feed's needs-you as a BOOL (review r2 2026-09-06). The set behind it is
@@ -1104,6 +1017,100 @@ class ViewBuilder(unittest.TestCase):
         cur = km.build_session(SID, NOW)["ledger"]["current"]
         self.assertIsNotNone(cur, "an open (unfinished) turn → the Fleet recency stamp")
         self.assertEqual(cur, {"t": NOW}, "slimmed to the one field its reader (fleet stamp) uses")
+
+    def test_ledger_carries_the_working_note(self):
+        """The postal set_working note rides the per-session ledger: the chat's section-at-a-glance view
+        shows it as a row's own second line under the task. Read from the backend-agnostic store
+        (working/<sid>); "" when the session published none, never a missing key."""
+        saved = km.WORKING_DIR
+        km.WORKING_DIR = jd.STATE / "working"
+        try:
+            self.assertEqual(km.build_session(SID, NOW)["ledger"]["workingNote"], "", "no note: an empty string")
+            km._set_working_note(SID, "  editing the notes-api tests  \n")
+            self.assertEqual(km.build_session(SID, NOW)["ledger"]["workingNote"], "editing the notes-api tests", "the note, stripped")
+            km._set_working_note(SID, "")
+            self.assertEqual(km.build_session(SID, NOW)["ledger"]["workingNote"], "", "cleared: empty again")
+        finally:
+            km.WORKING_DIR = saved
+
+    def test_muted_session_keeps_its_working_note(self):
+        """hideFromFeed empties the ledger's task tracking (tree, current, recent) but NOT the note: the note is
+        the session's own statement of what it holds, not a goal the judges track. Pinned because the
+        hideFromFeed branch is the natural place to empty the ledger, and a field moved inside it would flip
+        this with every other test green."""
+        saved = km.WORKING_DIR
+        km.WORKING_DIR = jd.STATE / "working"
+        try:
+            km._set_working_note(SID, "editing the notes-api tests")
+            km._set_session_flag(SID, "hideFromFeed", True); km._flags_cache.clear()
+            led = km.build_session(SID, NOW)["ledger"]
+            self.assertEqual((led["tree"], led["current"], led["recent"]), ([], None, []), "muted: out of task tracking")
+            self.assertEqual(led["workingNote"], "editing the notes-api tests", "but the note stays: the session's claim, not a goal")
+        finally:
+            km._set_session_flag(SID, "hideFromFeed", False); km._flags_cache.clear()
+            km.WORKING_DIR = saved
+
+    def test_ledger_carries_the_feed_needs_you_verdict(self):
+        """ledger.needsInput is the FEED's per-session needs-you: True when the last feed build filed a card of
+        this session under needs_input (here the fixture's judge-filed block, g2, on an IDLE session, the case
+        the tab's chip rule never sees), False when none, None before the first feed build. Read from the feed
+        build's own payload, never re-derived; a muted session has no cards. The section-at-a-glance row's
+        "needs you" reads it so the two panes agree. The goal store this rewrites, and the override journal
+        load_goals replays over it, live under the fixture's own temp root (setUp rebinds jd.GOALDIR and
+        jd.STATE), so no other module's journaled gesture on the shared placeholder sid reaches it.
+
+        The STATUS carries the same verdict as needsYou (2026-09-13): the tab strip's ask ring reads it there —
+        a skeleton tab gets status frames alone, and the rule reads one object — so the two fields must move
+        together at every step; the chip state stays what the live state says (the idle main thread's "ready"
+        here), since the ring rides beside the state class rather than replacing it. And a feed build that MOVES
+        the set wakes the pusher (the _mark_views_dirty pattern): a push builds the chat sessions before the feed,
+        so the verdict ships on the next cycle, and the wake makes that cycle now; a rebuild that moves no verdict
+        wakes nothing, so cycles cannot chain."""
+        live_map = km._live_map()
+        saved = (list(km._built_feed), km._feed_needs_input[0], km._views_dirty[0])
+        km._built_feed[:] = [None, None, 0.0, 0.0]; km._feed_needs_input[0] = None; km._views_dirty[0] = 0.0
+        try:
+            m = km.build_session(SID, NOW)
+            self.assertIsNone(m["ledger"]["needsInput"], "no feed build yet: None, not a verdict")
+            self.assertIsNone(m["status"]["needsYou"], "…and the status says the same nothing")
+            km._pusher_wake.clear()
+            feed = km._cached_feed(NOW, live_map, km._fleet_view_sig(NOW, live_map))
+            self.assertTrue(any(a["sid"] == SID and a["column"] == "needs_input" for a in feed["asks"]),
+                            "the fixture's blocked goal files a needs_input card for the idle session")
+            self.assertTrue(km._pusher_wake.is_set(), "the set moved (None → a card): the build wakes the pusher so the ring ships now")
+            km._mark_views_dirty(); km._pusher_wake.clear()
+            km._cached_feed(NOW, live_map, km._fleet_view_sig(NOW, live_map))
+            self.assertFalse(km._pusher_wake.is_set(), "a rebuild that moves no verdict wakes nothing: no chained cycles")
+            self.assertEqual(live_map[SID]["state"], "idle", "while the chip is idle: the tab's rule alone shows nothing")
+            m = km.build_session(SID, NOW)
+            self.assertIs(m["ledger"]["needsInput"], True, "the row's needs-you = the feed's column")
+            self.assertIs(m["status"]["needsYou"], True, "the tab's ask ring = the same column, on the status")
+            self.assertEqual(m["status"]["state"], "ready", "the chip is still the live state (an idle main thread reads ready): the ring composes with it, never replaces it")
+            # the judges rule the block answered: the store now holds the goal working; a dirty mark bypasses
+            # the rebuild throttle the way the reply handler does
+            store = json.loads((jd.GOALDIR / (SID + ".json")).read_text())
+            g2 = "%s:g2" % SID
+            store["nodes"][g2]["blocked"] = False; store["status"][g2] = "working"
+            (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(store))
+            km._mark_views_dirty(); km._pusher_wake.clear()
+            feed = km._cached_feed(NOW, live_map, km._fleet_view_sig(NOW, live_map))
+            self.assertFalse(any(a["sid"] == SID and a["column"] == "needs_input" for a in feed["asks"]))
+            self.assertTrue(km._pusher_wake.is_set(), "the card left the column: the ring comes off on the cycle the wake starts")
+            m = km.build_session(SID, NOW)
+            self.assertIs(m["ledger"]["needsInput"], False, "no card under needs-you: False")
+            self.assertIs(m["status"]["needsYou"], False, "the ring goes with the card")
+            # muted: out of the feed altogether, so no cards, so False, whatever the store says
+            store["nodes"][g2]["blocked"] = True; store["status"][g2] = "blocked"
+            (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(store))
+            km._set_session_flag(SID, "hideFromFeed", True); km._flags_cache.clear()
+            km._mark_views_dirty()
+            km._cached_feed(NOW, live_map, km._fleet_view_sig(NOW, live_map))
+            m = km.build_session(SID, NOW)
+            self.assertIs(m["ledger"]["needsInput"], False, "a muted session is out of task tracking")
+            self.assertIs(m["status"]["needsYou"], False, "…so no ring either")
+        finally:
+            km._set_session_flag(SID, "hideFromFeed", False); km._flags_cache.clear()
+            km._built_feed[:], km._feed_needs_input[0], km._views_dirty[0] = saved
 
     def test_host_sleep_closes_a_turn_left_open(self):
         # A turn still open when the laptop slept must NOT keep reading as "working": the kernel records the
@@ -1353,27 +1360,6 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(stn["a blocked step"]["blockWhy"], "waiting on the user's choice")   # nodes now (the payload
         self.assertEqual(stn["a finished step"]["doneWhy"], "shipped the fix")       # copies were never consumed)
 
-    def test_tmux_send_while_working_echoes_as_QUEUED_not_a_sent_bubble(self):
-        # The flicker (the user 2026-06-29): a composer send while a tmux session is WORKING flashed as a
-        # SENT (solid) bubble, then ~1s later flipped to the DOTTED queued bubble once Claude Code's
-        # queue-operation record landed in the transcript. Fix: while the turn is open, the optimistic tmux
-        # echo is folded into the queued list immediately → it renders dotted from the very first push, with
-        # no flip. No transcript queue-op record yet (pending_queued is still empty), so this is purely the
-        # optimistic path.
-        with self.tpath.open("a") as f:                  # an OPEN turn → _session_working is true
-            f.write(json.dumps(uline(NOW, "keep working on the strip", "uOpen", parent="a2")) + "\n")
-        km._parse_cache.clear()
-        km._tmux_echo.pop(SID, None)
-        km._tmux_echo_add(SID, "and also fix the header")  # the send fired while busy → will be queued by Claude Code
-        try:
-            events = km.build_session(SID, NOW)["events"]
-        finally:
-            km._tmux_echo.pop(SID, None)
-        qmsgs = [m["md"] for e in events if e["kind"] == "queued" for m in e["texts"]]
-        self.assertIn("and also fix the header", qmsgs, "a send while working shows as a QUEUED (dotted) bubble")
-        sent = [e for e in events if e["kind"] == "user" and e.get("md") == "and also fix the header"]
-        self.assertEqual(sent, [], "it must NOT also show as a sent (solid) user bubble — that was the flip")
-
     def _clear_watches(self):
         with km._watch_lock:
             km._watches.clear()
@@ -1452,7 +1438,7 @@ class ViewBuilder(unittest.TestCase):
         # the VERY NEXT build — the queued append has no compaction gate — carrying its park index and
         # cancelable:true, so the ✕ exists the moment any push paints (and _park_op marks views dirty,
         # so that push is immediate, never the backstop poll).
-        km._tmux_sessions = lambda: {SID: {"state": "compacting", "since": NOW - 5, "model": "",
+        km._live_map = lambda: {SID: {"state": "compacting", "since": NOW - 5, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         km._parse_cache.clear()
         km._park_op(SID, ("send", "wrap up the strip work", "human"))
@@ -1485,95 +1471,8 @@ class ViewBuilder(unittest.TestCase):
         import inspect
         src = inspect.getsource(km)
         self.assertIn('elif t == "cancelQueued" and msg.get("md"):', src)
-        self.assertIn("err = _cancel_parked(sid, -1, md, send_id=_sid_id)", src)   # the ✕ names its send by id too (2026-09-08)
-        self.assertIn("err2 = _cancel_backend_queued(be, sid, -1, md, send_id=_sid_id)", src)
-
-    def test_tmux_echo_the_transcript_OVERTOOK_is_not_counted_as_queued(self):
-        # The reported bug (the user 2026-08-26): a busy session's queued header counted sends from DAYS
-        # earlier — echoes whose text never landed verbatim (one lost at the pane, two delivered under text
-        # the transcript recorded differently), sitting in _tmux_echo forever and folded in as "queued" on
-        # every push. The pane is FIFO, so a genuine-human turn landing AFTER a send settles it: that send
-        # is a loss, not a pending message. It stays VISIBLE (the whole point of the tmux echo) but as the
-        # "never delivered" treatment, which carries a ✕ — never as one of N queued messages.
-        with self.tpath.open("a") as f:                  # an OPEN turn → the session reads busy
-            f.write(json.dumps(uline(NOW, "keep working on the strip", "uOpen", parent="a2")) + "\n")
-        km._parse_cache.clear()
-        km._tmux_echo.pop(SID, None)
-        stale = "does the notes-api build still fail"
-        km._tmux_echo_add(SID, stale)
-        for echo_atom in km._tmux_echo[SID].values():
-            echo_atom["t"] = NOW - 3600                  # typed before the turn the transcript has since taken
-        try:
-            events = km.build_session(SID, NOW)["events"]
-        finally:
-            km._tmux_echo.pop(SID, None)
-        qmsgs = [m["md"] for e in events if e["kind"] == "queued" for m in e["texts"]]
-        self.assertNotIn(stale, qmsgs, "an overtaken send is a loss, not a message waiting in the queue")
-        lost = [e for e in events if e["kind"] == "user" and e.get("md") == stale]
-        self.assertEqual(len(lost), 1, "it stays on screen — the loss must not vanish silently")
-        self.assertTrue(lost[0].get("undelivered"), "and reads as never delivered, with the dismiss affordance")
-
-    def test_tmux_send_while_IDLE_echoes_as_a_sent_bubble_not_queued(self):
-        # the gate: when the session is IDLE (default fixture ends on an ended turn), the SAME echo is a
-        # genuine sent message — it shows as a solid user bubble, never the dotted queued indicator.
-        km._parse_cache.clear()
-        km._tmux_echo.pop(SID, None)
-        km._tmux_echo_add(SID, "a fresh idle send")
-        try:
-            events = km.build_session(SID, NOW)["events"]
-        finally:
-            km._tmux_echo.pop(SID, None)
-        sent = [e for e in events if e["kind"] == "user" and e.get("md") == "a fresh idle send"]
-        self.assertEqual(len(sent), 1, "an idle send shows as a solid user bubble")
-        qmsgs = [m["md"] for e in events if e["kind"] == "queued" for m in e["texts"]]
-        self.assertNotIn("a fresh idle send", qmsgs, "an idle send is NOT queued")
-
-    def test_tmux_send_while_COMPACTING_echoes_as_QUEUED_not_a_sent_bubble(self):
-        # The user 2026-06-29: a composer send while a tmux session was COMPACTING showed as a SENT (solid blue)
-        # bubble, not a dotted queued one. A /compact runs no open assistant turn, so _session_working is False
-        # the whole compaction — the optimistic-echo fold only armed on _session_working, so it never fired and
-        # the echo rendered solid. Fix: the fold now also arms when the session is COMPACTING (_compacting). The
-        # default fixture ends on an ENDED turn (idle/not working); the optimistic compacting flag makes
-        # _compacting true with no tmux needed.
-        km._parse_cache.clear()
-        km._tmux_echo.pop(SID, None)
-        km._compact_clicked[SID] = NOW                    # optimistic compacting cue (no open turn, no boundary-since)
-        km._tmux_echo_add(SID, "switch to the dark palette")  # sent mid-compaction → Claude Code will queue it
-        try:
-            self.assertTrue(km._compacting(SID, "", km._parse(str(self.tpath), SID, NOW), NOW, None),
-                            "precondition: the session reads as compacting")
-            events = km.build_session(SID, NOW)["events"]
-        finally:
-            km._tmux_echo.pop(SID, None)
-            km._compact_clicked.pop(SID, None)
-        qmsgs = [m["md"] for e in events if e["kind"] == "queued" for m in e["texts"]]
-        self.assertIn("switch to the dark palette", qmsgs, "a send while compacting shows as a QUEUED (dotted) bubble")
-        sent = [e for e in events if e["kind"] == "user" and e.get("md") == "switch to the dark palette"]
-        self.assertEqual(sent, [], "it must NOT show as a sent (solid blue) user bubble")
-
-    def test_a_romp_authored_echo_renders_as_a_GRAY_bubble_not_blue(self):
-        # A NUDGE/auto-follow-up echo carries author "romp" → the chat draws the gray romp bubble (ev.romp),
-        # NOT the blue human bubble (the user 2026-06-29). This is the colour half of the nudge-vanish fix:
-        # the optimistic echo bridges the dequeue→landed gap, so it must read like the real romp atom will.
-        km._parse_cache.clear()
-        km._tmux_echo.pop(SID, None)
-        km._tmux_echo_add(SID, "checking in on the goal", author="romp")
-        try:
-            events = km.build_session(SID, NOW)["events"]
-        finally:
-            km._tmux_echo.pop(SID, None)
-        ev = next(e for e in events if e["kind"] == "user" and e.get("md") == "checking in on the goal")
-        self.assertTrue(ev.get("romp"), "a romp-authored echo is a gray romp bubble")
-        self.assertFalse(ev.get("human"), "and NOT a blue human bubble")
-
-    def test_followup_dispatch_adds_an_optimistic_echo_authored_by_nudge_vs_typed(self):
-        # the dispatch wiring: a tmux askFollowUp echoes the body so it survives the queued→landed gap; a
-        # nudge echoes as "romp" (gray), a typed follow-up as "human" (blue). The send routes through
-        # _send_or_park (the user 2026-07-02: a mid-compaction follow-up parks as a queued bubble), which
-        # stamps the echo when it actually delivers.
-        import inspect
-        src = inspect.getsource(km._drive)
-        self.assertIn('echo=("romp" if msg.get("nudge") else "human") if be is _TMUX else None', src)
+        self.assertIn("err = _cancel_parked(sid, -1, md, qid=qid)", src)
+        self.assertIn("err2 = _cancel_backend_queued(be, sid, -1, md, qid=qid)", src)
 
     def test_continue_button_rides_the_followup_arm_with_the_kernel_canned_body(self):
         # the Continue button (the user 2026-08-08) posts askFollowUp cont:true; the kernel substitutes
@@ -1638,16 +1537,19 @@ class ViewBuilder(unittest.TestCase):
             "nodes": {top: gn(top, "research the API", None, why="user asked for the research")},
             "placements": {}, "status": {top: "working"}}))
         saved = km._session_awaiting
+        def _feed():
+            km._feed_memo.clear()          # T368: a patched helper is no input the per-session memo can see; make the body run
+            return km.build_feed(NOW)
         try:
             for n in (1, 3):
                 km._session_awaiting = lambda sid, path, idle, stamp=False, live=None, n=n: {
                     "kind": "agents", "why": "%d background agent%s still working" % (n, "" if n == 1 else "s"),
                     "since": T0, "count": n}
-                card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == top)
+                card = next(a for a in _feed()["asks"] if a["itemId"] == top)
                 self.assertEqual(card["awaiting"]["kind"], "agents")
                 self.assertEqual(card["awaiting"]["count"], n, "the card's count is the snapshot's own")
             km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": None, "why": "waiting on dispatched work", "since": None}
-            card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == top)
+            card = next(a for a in _feed()["asks"] if a["itemId"] == top)
             self.assertIsNone(card["awaiting"]["count"], "a source that cannot count ships None, never a guess")
         finally:
             km._session_awaiting = saved
@@ -1680,8 +1582,8 @@ class ViewBuilder(unittest.TestCase):
         km._BG_TOPS_CACHE.clear()          # the launch-segment positives, the (parse, store)-keyed placement
         km._SESSION_STAMP_CACHE.clear()    # memo and the stat-keyed stamp read: cleared so an earlier fixture's
         #                                    answer under this sid, or a same-stat rewrite, serves nothing here
-        saved = km._tmux_sessions
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
+        saved = km._live_map
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
                                            "context": None, "compactPct": None, "color": None,
                                            "bgTasks": [{"desc": "campaign watcher", "type": "local_bash",
                                                         "since": since, "toolUseId": "tu_a1_0",
@@ -1691,7 +1593,7 @@ class ViewBuilder(unittest.TestCase):
             blocked = next(a for a in asks if a["itemId"] == top)
             return (blocked, next(a for a in asks if a["itemId"] == other)) if second_top else blocked
         finally:
-            km._tmux_sessions = saved
+            km._live_map = saved
 
     def test_a_block_newer_than_the_owned_dispatched_work_stays_needs_input(self):
         # the user 2026-07-15 (nimbus): the turn ENDED by asking the user questions while a background
@@ -1750,8 +1652,8 @@ class ViewBuilder(unittest.TestCase):
         km._task_seg_cache.clear()
         km._BG_TOPS_CACHE.clear()
         km._SESSION_STAMP_CACHE.clear()
-        saved = km._tmux_sessions
-        km._tmux_sessions = lambda: {SID: {"bgTasks": [
+        saved = km._live_map
+        km._live_map = lambda: {SID: {"bgTasks": [
             {"desc": "campaign watcher", "since": T0 + 200, "toolUseId": "tu_a1_0"},
             {"desc": "mystery task", "since": T0 + 300, "toolUseId": "tu_never_seen"}]}}
         try:
@@ -1763,7 +1665,7 @@ class ViewBuilder(unittest.TestCase):
             self.assertEqual([t["tid"] for t in km._bg_pending(SID, str(self.tpath), tasks)],
                              ["tu_never_seen"])
         finally:
-            km._tmux_sessions = saved
+            km._live_map = saved
 
     def test_a_placed_unstamped_task_is_a_service_not_a_wait(self):
         # the user 2026-07-24: a dev server (mkdocs serve) wore 'Waiting on task' long after the judge
@@ -1782,8 +1684,8 @@ class ViewBuilder(unittest.TestCase):
         km._task_seg_cache.clear()
         km._BG_TOPS_CACHE.clear()
         km._SESSION_STAMP_CACHE.clear()
-        saved = km._tmux_sessions
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
+        saved = km._live_map
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
                                            "context": None, "compactPct": None, "color": None,
                                            "bgTasks": [{"desc": "mkdocs serve 2>&1", "type": "local_bash",
                                                         "since": T0 + 200, "toolUseId": "tu_a1_0",
@@ -1798,7 +1700,7 @@ class ViewBuilder(unittest.TestCase):
             self.assertIn("mkdocs serve 2>&1", sum(feed["bgServices"].values(), []),
                           "the process surfaces as the neutral session chip instead")
         finally:
-            km._tmux_sessions = saved
+            km._live_map = saved
 
     def test_a_placed_task_under_a_stamped_top_stays_awaited(self):
         # the same placement, but the CLOSER affirmed the wait (a live ⏳ stamp on the placed node):
@@ -1816,8 +1718,8 @@ class ViewBuilder(unittest.TestCase):
         km._task_seg_cache.clear()
         km._BG_TOPS_CACHE.clear()
         km._SESSION_STAMP_CACHE.clear()
-        saved = km._tmux_sessions
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
+        saved = km._live_map
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
                                            "context": None, "compactPct": None, "color": None,
                                            "bgTasks": [{"desc": "campaign watcher", "type": "local_bash",
                                                         "since": T0 + 200, "toolUseId": "tu_a1_0",
@@ -1832,7 +1734,7 @@ class ViewBuilder(unittest.TestCase):
                              "the pill lists the judge-affirmed task")
             self.assertEqual(feed["bgServices"], {}, "an awaited task is never a service")
         finally:
-            km._tmux_sessions = saved
+            km._live_map = saved
 
     def test_a_service_only_session_gets_no_phantom_awaiting_card(self):
         # every goal cleared + a judged-service process still up: the ephemeral 'Waiting on a background
@@ -1849,8 +1751,8 @@ class ViewBuilder(unittest.TestCase):
         km._task_seg_cache.clear()
         km._BG_TOPS_CACHE.clear()
         km._SESSION_STAMP_CACHE.clear()
-        saved = km._tmux_sessions
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
+        saved = km._live_map
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
                                            "context": None, "compactPct": None, "color": None,
                                            "bgTasks": [{"desc": "mkdocs serve 2>&1", "type": "local_bash",
                                                         "since": T0 + 200, "toolUseId": "tu_a1_0",
@@ -1861,7 +1763,7 @@ class ViewBuilder(unittest.TestCase):
                              "no permanent phantom card for a process nobody waits on")
             self.assertIn("mkdocs serve 2>&1", sum(feed["bgServices"].values(), []))
         finally:
-            km._tmux_sessions = saved
+            km._live_map = saved
 
     def test_stale_awaiting_overlay_superseded_by_a_later_work_turn(self):
         # the user 2026-06-26: open_mvv showed the yellow 'working' dot + badge + timer + interrupt button in
@@ -1975,14 +1877,14 @@ class ViewBuilder(unittest.TestCase):
         p.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
         timer = {"desc": "20-minute timer for campaign-start check", "type": "local_bash",
                  "since": T0 + 9, "toolUseId": "tu_bg", "lastTool": ""}
-        saved = km._tmux_sessions
+        saved = km._live_map
         try:
-            km._tmux_sessions = lambda: {}                         # no live sources at all
+            km._live_map = lambda: {}                         # no live sources at all
             self.assertIsNone(km._session_awaiting(SID, str(p), True),
                               "a transcript-scrape bg launch alone is NOT awaiting (no live signal)")
             # source 0: real subagents in flight — the snapshot carries the live LIST (a {"type","since"}
             # per agent); the why counts via len() (the pre-fix code %d-formatted the list itself)
-            km._tmux_sessions = lambda: {SID: {"subagents": [{"type": "", "since": T0}, {"type": "", "since": T0}]}}
+            km._live_map = lambda: {SID: {"subagents": [{"type": "", "since": T0}, {"type": "", "since": T0}]}}
             # …each agent its own ROW since slice 2 (2026-09-05); a hook-only agent with no agentId has an
             # empty row id and its type (here none → "agent") as the label until a launch row names it.
             # The snapshot carries an EMPTY lifecycle set on purpose: since the sources are COMBINED, a
@@ -1990,7 +1892,7 @@ class ViewBuilder(unittest.TestCase):
             # above as a command row beside the agents (a mixed read) — an SDK snapshot's empty set is
             # authoritative and keeps this an agents-only read.
             agent_row = {"kind": "agents", "id": "", "label": "agent", "since": T0}
-            km._tmux_sessions = lambda: {SID: {"subagents": [{"type": "", "since": T0}, {"type": "", "since": T0}], "bgTasks": []}}
+            km._live_map = lambda: {SID: {"subagents": [{"type": "", "since": T0}, {"type": "", "since": T0}], "bgTasks": []}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
                              {"kind": "agents", "why": "2 background agents still working",
                               "since": T0,   # the oldest live agent's start → the chips' elapsed readout (the user 2026-08-23)
@@ -2000,13 +1902,14 @@ class ViewBuilder(unittest.TestCase):
             # source 0.5: the live bg-task set — one task shows its description verbatim (a COMMAND row;
             # the sentence says "command" since slice 2)
             desc = "20-minute timer for campaign-start check"
-            cmd_row = {"kind": "commands", "id": "tu_bg", "label": desc, "since": T0 + 9}
-            km._tmux_sessions = lambda: {SID: {"bgTasks": [timer]}}
+            cmd_row = {"kind": "commands", "id": "tu_bg", "label": desc, "since": T0 + 9,
+                       "stoppable": True}   # a lifecycle-set row: stop_task resolves its id (2026-09-10)
+            km._live_map = lambda: {SID: {"bgTasks": [timer]}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
                              {"kind": "task", "since": T0 + 9,   # the dispatch stamp (the user 2026-08-23)
                               "why": "waiting on a background command: " + desc,
                               "count": 1, "items": [cmd_row], "tasks": [desc]})
-            km._tmux_sessions = lambda: {SID: {"bgTasks": [timer, dict(timer, desc="power watcher")]}}
+            km._live_map = lambda: {SID: {"bgTasks": [timer, dict(timer, desc="power watcher")]}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
                              {"kind": "task", "since": T0 + 9,
                               "why": "waiting on 2 background commands — " + desc + ", …",
@@ -2015,12 +1918,12 @@ class ViewBuilder(unittest.TestCase):
             # an agent AND a bg task at once: until 2026-09-05 the agents source short-circuited and the task
             # vanished from the read; now both are rows of two kinds — kind "mixed", every row counted,
             # the why naming each group (the user: they are different things, show them separately)
-            km._tmux_sessions = lambda: {SID: {"subagents": [{"type": "", "since": T0}], "bgTasks": [timer]}}
+            km._live_map = lambda: {SID: {"subagents": [{"type": "", "since": T0}], "bgTasks": [timer]}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
                              {"kind": "mixed", "why": "waiting on 1 background agent and 1 background command",
                               "since": T0, "count": 2, "items": [agent_row, cmd_row], "tasks": ["agent", desc]})
         finally:
-            km._tmux_sessions = saved
+            km._live_map = saved
 
     def test_session_awaiting_reads_the_states_overlay(self):
         # the SDK channel (api 2026-06-22): the kernel reads an {"awaiting":bool,"why":…} overlay from
@@ -2200,8 +2103,8 @@ class ViewBuilder(unittest.TestCase):
                 pass                                     # no transcript on disk yet → nothing due
         (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(store))
 
-    def _working_tmux(self):
-        km._tmux_sessions = lambda: {SID: {"state": "working", "since": NOW - 10, "model": "",
+    def _working_live(self):
+        km._live_map = lambda: {SID: {"state": "working", "since": NOW - 10, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
 
     def test_provisional_card_surfaces_for_an_in_progress_prompt_with_no_card(self):
@@ -2214,7 +2117,7 @@ class ViewBuilder(unittest.TestCase):
             {g1: {"id": g1, "text": "first ask", "parentId": None, "nodeComplete": True,
                   "blocked": False, "cleared": False, "trail": [], "t": T0}},
             {g1: "completed"}, last=g1, planned=False)   # unplaced by premise: the provisional exists because the planner hasn't placed
-        self._working_tmux()
+        self._working_live()
         asks = km.build_feed(NOW)["asks"]
         prov = [a for a in asks if a.get("provisional")]
         self.assertEqual(len(prov), 1, "the in-progress prompt surfaces exactly one provisional card")
@@ -2242,7 +2145,7 @@ class ViewBuilder(unittest.TestCase):
             {g1: {"id": g1, "text": "first ask", "parentId": None, "nodeComplete": True,
                   "blocked": False, "cleared": False, "trail": [], "t": T0}},
             {g1: "completed"}, last=g1, planned=False)   # every goal done; only the open /compact turn remains
-        self._working_tmux()
+        self._working_live()
         asks = km.build_feed(NOW)["asks"]
         self.assertFalse([a for a in asks if a.get("provisional")],
                          "a raw-text /compact turn gets no provisional card (mirrors the landed-command guard)")
@@ -2262,7 +2165,7 @@ class ViewBuilder(unittest.TestCase):
             "nodes": {g1: {"id": g1, "text": "a mis-titled card", "parentId": None, "nodeComplete": False,
                            "blocked": False, "cleared": True, "trail": [held["id"]], "t": T0}},
             "placements": {held["id"] + "#p": g1}, "status": {g1: "cleared"}}))
-        self._working_tmux()
+        self._working_live()
         asks = km.build_feed(NOW)["asks"]
         prov = [a for a in asks if a.get("provisional")]
         self.assertEqual(len(prov), 1, "the placeholder resurrects: a working session never shows a blank board")
@@ -2283,7 +2186,7 @@ class ViewBuilder(unittest.TestCase):
                                "trail": [held["id"]], "t": T0 + 100}},
                 "placements": {held["id"] + "#p": g1, held["id"] + "#live": g3},
                 "status": {g1: "cleared", g3: "cleared" if g3_cleared else "working"}}))
-        self._working_tmux()
+        self._working_live()
         write(g3_cleared=False)                        # the live re-plan landed its fresh card
         asks = km.build_feed(NOW)["asks"]
         self.assertFalse([a for a in asks if a.get("provisional")],
@@ -2367,7 +2270,7 @@ class ViewBuilder(unittest.TestCase):
             {"enabled": True, "nudged": {g1: {"count": 1, "failed": True}}}))
         km._autonudge_cache.clear(); km._nudge_times_cache.clear()
         # the LIVE SubagentStart/Stop count rides the backend snapshot (the designed signal) — 2 agents running
-        km._tmux_sessions = lambda: {SID: {"state": "waiting", "since": NOW - 100, "model": "",
+        km._live_map = lambda: {SID: {"state": "waiting", "since": NOW - 100, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None,
                                            "subagents": [{"type": "", "since": 1}, {"type": "", "since": 2}]}}
         c = {a["itemId"]: a for a in km.build_feed(NOW)["asks"]}[g1]
@@ -2376,7 +2279,7 @@ class ViewBuilder(unittest.TestCase):
         self.assertIsNone(c.get("blocked"), "no red apiError floor while agents run")
         self.assertFalse(c.get("nudgeFailed"), "no stalled chip while agents run")
         # control: the SAME transcript with no live agents is genuinely dead in the water → the floor applies
-        km._tmux_sessions = lambda: {SID: {"state": "waiting", "since": NOW - 100, "model": "",
+        km._live_map = lambda: {SID: {"state": "waiting", "since": NOW - 100, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         c = {a["itemId"]: a for a in km.build_feed(NOW)["asks"]}[g1]
         self.assertEqual((c.get("blocked") or {}).get("state"), "apiError",
@@ -2394,7 +2297,7 @@ class ViewBuilder(unittest.TestCase):
             + json.dumps({"t": NOW - 30, "state": "waiting"}) + "\n")
         ov = km._states_awaiting_overlay(SID)
         self.assertFalse(ov and ov.get("awaiting"), "the overlay alone still reads superseded (the hole)")
-        km._tmux_sessions = lambda: {SID: {"state": "waiting", "since": NOW - 100, "model": "",
+        km._live_map = lambda: {SID: {"state": "waiting", "since": NOW - 100, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None,
                                            "subagents": [{"type": "", "since": 1}, {"type": "", "since": 2}]}}
         self.assertIn("2 background agents", (km._session_awaiting(SID, str(self.tpath), True) or {}).get("why", ""),
@@ -2550,7 +2453,7 @@ class ViewBuilder(unittest.TestCase):
                  "seams": [{"t": T0 + 100, "top": g1, "text": "fix A, B and C",
                             "segs": [jd._seg_key(seg_id)]}]}
         (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(store))
-        self._working_tmux()
+        self._working_live()
         asks = km.build_feed(NOW)["asks"]
         prov = [a for a in asks if a.get("provisional")]
         self.assertEqual(len(prov), 1, "the unplaced seam tail surfaces a Working placeholder")
@@ -2593,7 +2496,7 @@ class ViewBuilder(unittest.TestCase):
         legacy = SID + ":1000000000:da39a3ee"
         store["placements"].update({legacy + "#p": SID + ":gGONE", legacy: None})
         (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(store))
-        self._working_tmux()
+        self._working_live()
         prov = [a for a in km.build_feed(NOW)["asks"] if a.get("provisional")]
         self.assertEqual(len(prov), 1,
                          "the fresh uuid-keyed seam surfaces its placeholder — a legacy da39a3ee placement can't alias it")
@@ -2601,9 +2504,9 @@ class ViewBuilder(unittest.TestCase):
         self.assertTrue(any(a["itemId"] == g1 and a["column"] == "completed" for a in km.build_feed(NOW)["asks"]),
                         "the completed card stays completed alongside it")
 
-    def test_session_working_reads_the_event_model_not_tmux(self):
+    def test_session_working_reads_the_event_model_not_the_live_row(self):
         # the user 2026-06-22: WORKING is derived from the TRANSCRIPT (an open, un-ended final turn), never the
-        # tmux pane state — tmux is one backend, so the signal must be backend-agnostic.
+        # backend's live-row state — the signal must be backend-agnostic.
         saved = km._downtime; km._downtime = []          # no host-sleep windows interfering
         try:
             self.assertTrue(km._session_working([{"ended": False, "atoms": [{"type": "user"}], "t": NOW, "end": NOW}]),
@@ -2627,7 +2530,7 @@ class ViewBuilder(unittest.TestCase):
             km._downtime = saved
 
     def test_compacting_corroborated_against_the_event_model(self):
-        # a STUCK tmux @claude-state=compacting (a missed PostCompact — restart-storm / interrupted compaction)
+        # a STUCK live-row 'compacting' (a missed PostCompact — restart-storm / interrupted compaction)
         # must NOT read as compacting once the event model shows the session moved on: an OPEN working turn OR
         # a compact_boundary atom since the compaction start (the user 2026-06-24). A genuine compaction still
         # reads compacting. This is the chip/feed desync the user saw (compacting badge over a working session).
@@ -2646,20 +2549,20 @@ class ViewBuilder(unittest.TestCase):
             self.assertTrue(km._compacting(SID, "compacting", genuine, NOW, SINCE),
                             "compacting + no open turn + no boundary-since → genuinely compacting")
             self.assertFalse(km._compacting(SID, "working", genuine, NOW, SINCE),
-                             "tmux not compacting + no optimistic flag → not compacting")
+                             "live row not compacting + no optimistic flag → not compacting")
         finally:
             km._downtime = saved
 
-    def test_feed_working_list_follows_the_open_turn_not_tmux(self):
-        # The working DOT (feed["working"], read by every surface) must follow the event model, NOT tmux: an
-        # open turn is working even when tmux reads idle, and an ended turn is NOT working even when tmux reads
-        # working (the user 2026-06-22 — moving off the tmux backend).
+    def test_feed_working_list_follows_the_open_turn_not_the_live_row(self):
+        # The working DOT (feed["working"], read by every surface) must follow the event model, NOT the live
+        # row: an open turn is working even when the row reads idle, and an ended turn is NOT working even when
+        # the row reads working (the user 2026-06-22).
         name = km._name_of(SID)
-        self._open_turn_transcript(ended=False)        # OPEN turn; setUp's tmux says "idle" (_open_turn_transcript warms the parse)
-        self.assertIn(name, km.build_feed(NOW)["working"], "open turn → working even though tmux reads idle")
+        self._open_turn_transcript(ended=False)        # OPEN turn; setUp's live row says "idle" (_open_turn_transcript warms the parse)
+        self.assertIn(name, km.build_feed(NOW)["working"], "open turn → working even though the live row reads idle")
         self._open_turn_transcript(ended=True)         # ENDED turn
-        self._working_tmux()                                               # tmux now reads "working"
-        self.assertNotIn(name, km.build_feed(NOW)["working"], "ended turn → NOT working even though tmux reads working")
+        self._working_live()                                               # the live row now reads "working"
+        self.assertNotIn(name, km.build_feed(NOW)["working"], "ended turn → NOT working even though the live row reads working")
 
     def test_feed_carries_the_shared_session_order(self):
         # grouped mode (the user 2026-07-13) sorts each column's session runs by the SAME order the chat
@@ -2670,16 +2573,16 @@ class ViewBuilder(unittest.TestCase):
     def test_awaiting_task_descs_read_the_live_snapshot(self):
         # The feed's "Waiting on task" pill (the user 2026-07-13) expands the live bg-task DESCRIPTIONS —
         # straight from the backend snapshot's bgTasks (the CLI task-lifecycle set); a desc-less task gets
-        # a generic label; tmux sessions / unknown sids read []. Tasks with no launch id can't be
+        # a generic label; unknown sids read []. Tasks with no launch id can't be
         # classified (2026-07-24: the service split) → pending → still AWAITED, listed as before.
-        saved = km._tmux_sessions
-        km._tmux_sessions = lambda: {SID: {"bgTasks": [{"task_id": "t1", "desc": "Watch for round3 copy"},
+        saved = km._live_map
+        km._live_map = lambda: {SID: {"bgTasks": [{"task_id": "t1", "desc": "Watch for round3 copy"},
                                                        {"task_id": "t2", "desc": ""}]}}
         try:
             self.assertEqual(km._awaiting_task_descs(SID, "/nonexistent"),
                              ["Watch for round3 copy", "background task"])
         finally:
-            km._tmux_sessions = saved
+            km._live_map = saved
         self.assertEqual(km._awaiting_task_descs("00000000-0000-0000-0000-000000000000", "/nonexistent"), [])
         # build_feed attaches the list on awaiting cards, beside the why (source pin)
         src = Path(BIN, "romp-kernel").read_text()
@@ -2696,7 +2599,7 @@ class ViewBuilder(unittest.TestCase):
         self._goal_store({g1: {"id": g1, "text": "first ask", "parentId": None, "nodeComplete": True,
                                "blocked": False, "cleared": False, "trail": [], "t": T0}},
                          {g1: "completed"}, last=g1, planned=False)   # unplaced by premise: the provisional exists because the planner hasn't placed
-        self._working_tmux()
+        self._working_live()
         first = next(a for a in km.build_feed(NOW)["asks"] if a.get("provisional"))
         self.assertIn("empty space", first["text"], "no message caption yet → the raw prompt")
         self.assertNotIn("Analyzing", first["text"], "no stuck 'Analyzing…' placeholder — just the raw prompt")
@@ -2760,14 +2663,28 @@ class ViewBuilder(unittest.TestCase):
 
     # ── Auto Nudge (the user 2026-06-19): follow up ONCE on an orphaned working goal ──
     def _stub_nudge(self):
-        # capture nudges instead of pasting into tmux; returns (sent_list, restore_fn)
+        # capture nudges instead of handing them to the session's backend; returns (sent_list, restore_fn).
+        # A nudge fires through Sessions.backend_for(sid).send: wrap the route so send() records (as
+        # (sid, body)) and every other op still reaches whatever the route resolved (a test's own fake too).
         sent = []
-        saved_send, saved_fu = km._tmux_send, jd.optimistic_followup
-        km._tmux_send = lambda name, body, **kw: sent.append((name, body))
+        saved_bf, saved_fu = km.Sessions.backend_for, jd.optimistic_followup
+        inner = saved_bf
+
+        class _Capture:
+            def __init__(self, be):
+                self._be = be
+
+            def send(self, sid, body, **kw):
+                sent.append((sid, body))
+                return True
+
+            def __getattr__(self, k):
+                return getattr(self._be, k)
+        km.Sessions.backend_for = staticmethod(lambda sid: _Capture(inner(sid)))
         jd.optimistic_followup = lambda sid, gid: True
 
         def restore():
-            km._tmux_send, jd.optimistic_followup = saved_send, saved_fu
+            km.Sessions.backend_for, jd.optimistic_followup = staticmethod(saved_bf), saved_fu
         return sent, restore
 
     def test_open_top_goal_picks_a_working_top(self):
@@ -2813,7 +2730,7 @@ class ViewBuilder(unittest.TestCase):
         saved = (km._working_notes, km._alive_sessions, km._set_working_note,
                  km._session_working, km._open_top_goal, jd.parsed_session)
         km._working_notes = lambda: dict(notes)
-        km._alive_sessions = lambda now, tmux: [{"sid": SID, "path": str(self.tpath)}]
+        km._alive_sessions = lambda now, live_map: [{"sid": SID, "path": str(self.tpath)}]
         km._set_working_note = lambda sid, text: cleared.append((sid, text))
         km._session_working = lambda turns: working
         if top_goal is not self.STORE:
@@ -2873,13 +2790,13 @@ class ViewBuilder(unittest.TestCase):
         finally:
             restore()
 
-    def test_working_note_tmux_working_short_circuits_before_parse(self):
+    def test_working_note_live_working_short_circuits_before_parse(self):
         cleared, restore = self._stub_expire({SID: "feed.ts"}, working=False, top_goal=None)
         parsed = []
         jd.parsed_session = lambda *a, **k: (parsed.append(1), {"turns": []})[1]
         try:
-            km._clear_done_working_notes(NOW, {SID: {"state": "working"}})   # tmux says working
-            self.assertEqual(cleared, [], "tmux 'working' → keep the claim")
+            km._clear_done_working_notes(NOW, {SID: {"state": "working"}})   # the live row says working
+            self.assertEqual(cleared, [], "a live 'working' → keep the claim")
             self.assertEqual(parsed, [], "and short-circuit BEFORE parsing (cheap pre-gate)")
         finally:
             restore()
@@ -2897,22 +2814,22 @@ class ViewBuilder(unittest.TestCase):
         # (its client["active"], from the ?active= connect hint), then streams the rest — so first paint is the
         # active transcript, not a wait on every tab building. The tab strip is sent before any heavy build.
         sent = []   # (key, msg) in SEND order
-        saved = (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
+        saved = (km._live_map, km._chat_tab_sessions, km.build_session, km.build_feed,
                  km.build_timeline, km._send_client)
-        km._tmux_sessions = lambda: {}
+        km._live_map = lambda: {}
         p = str(self.tpath)   # a transcript ON DISK — a pathless fake would rank as just-created (top tier)
-        km._chat_tab_sessions = lambda now, tmux: [{"sid": "A", "path": p}, {"sid": "B", "path": p},
+        km._chat_tab_sessions = lambda now, live_map: [{"sid": "A", "path": p}, {"sid": "B", "path": p},
                                                    {"sid": "C", "path": p}]
-        km.build_session = lambda sid, now, tmux: {"id": sid, "name": sid, "color": None,
+        km.build_session = lambda sid, now, live_map: {"id": sid, "name": sid, "color": None,
                                                    "status": None, "ledger": None}
-        km.build_feed = lambda now, tmux: {"working": [], "asks": []}
-        km.build_timeline = lambda now, tmux: None
+        km.build_feed = lambda now, live_map: {"working": [], "asks": []}
+        km.build_timeline = lambda now, live_map: None
         km._send_client = lambda c, key, msg, pre=None: sent.append((key, msg))
         client = {"app": "chat", "active": "B", "alive": True}
         try:
             km._push([client])
         finally:
-            (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
+            (km._live_map, km._chat_tab_sessions, km.build_session, km.build_feed,
              km.build_timeline, km._send_client) = saved
         chat_order = [key[1] for (key, _) in sent if key[0] == "chat"]
         self.assertEqual(chat_order[0], "B", "the ACTIVE tab is built + streamed first")
@@ -2925,21 +2842,21 @@ class ViewBuilder(unittest.TestCase):
         # no client["active"] (e.g. nothing persisted yet) → graceful fallback: stream in tab order, still
         # incrementally (no regression, just no prioritization).
         sent = []
-        saved = (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
+        saved = (km._live_map, km._chat_tab_sessions, km.build_session, km.build_feed,
                  km.build_timeline, km._send_client)
-        km._tmux_sessions = lambda: {}
+        km._live_map = lambda: {}
         p = str(self.tpath)
-        km._chat_tab_sessions = lambda now, tmux: [{"sid": "A", "path": p}, {"sid": "B", "path": p},
+        km._chat_tab_sessions = lambda now, live_map: [{"sid": "A", "path": p}, {"sid": "B", "path": p},
                                                    {"sid": "C", "path": p}]
-        km.build_session = lambda sid, now, tmux: {"id": sid, "name": sid, "color": None,
+        km.build_session = lambda sid, now, live_map: {"id": sid, "name": sid, "color": None,
                                                    "status": None, "ledger": None}
-        km.build_feed = lambda now, tmux: {"working": [], "asks": []}
-        km.build_timeline = lambda now, tmux: None
+        km.build_feed = lambda now, live_map: {"working": [], "asks": []}
+        km.build_timeline = lambda now, live_map: None
         km._send_client = lambda c, key, msg, pre=None: sent.append((key, msg))
         try:
             km._push([{"app": "chat", "alive": True}])
         finally:
-            (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
+            (km._live_map, km._chat_tab_sessions, km.build_session, km.build_feed,
              km.build_timeline, km._send_client) = saved
         self.assertEqual([key[1] for (key, _) in sent if key[0] == "chat"], ["A", "B", "C"],
                          "no active hint → tab order, all tabs still delivered")
@@ -2951,23 +2868,23 @@ class ViewBuilder(unittest.TestCase):
         session that had been ready the whole time (the user 2026-08-08). Its build is near-free, so
         it rides the ACTIVE tier and its payload streams at the top of the cycle."""
         sent = []
-        saved = (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
+        saved = (km._live_map, km._chat_tab_sessions, km.build_session, km.build_feed,
                  km.build_timeline, km._send_client)
-        km._tmux_sessions = lambda: {}
+        km._live_map = lambda: {}
         p = str(self.tpath)
-        km._chat_tab_sessions = lambda now, tmux: [
+        km._chat_tab_sessions = lambda now, live_map: [
             {"sid": "A", "path": p},
             {"sid": "NEW", "path": p + ".does-not-exist"},   # just created: nothing on disk yet
             {"sid": "C", "path": p}]
-        km.build_session = lambda sid, now, tmux: {"id": sid, "name": sid, "color": None,
+        km.build_session = lambda sid, now, live_map: {"id": sid, "name": sid, "color": None,
                                                    "status": None, "ledger": None}
-        km.build_feed = lambda now, tmux: {"working": [], "asks": []}
-        km.build_timeline = lambda now, tmux: None
+        km.build_feed = lambda now, live_map: {"working": [], "asks": []}
+        km.build_timeline = lambda now, live_map: None
         km._send_client = lambda c, key, msg, pre=None: sent.append((key, msg))
         try:
             km._push([{"app": "chat", "active": "C", "alive": True}])
         finally:
-            (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
+            (km._live_map, km._chat_tab_sessions, km.build_session, km.build_feed,
              km.build_timeline, km._send_client) = saved
         chat_order = [key[1] for (key, _) in sent if key[0] == "chat"]
         self.assertEqual(chat_order, ["NEW", "C", "A"],
@@ -2978,13 +2895,13 @@ class ViewBuilder(unittest.TestCase):
         # into ChatEvent[] AND a json.dumps of the whole chat, per tab, even when nothing changed — which pegged
         # the kernel on multi-MB transcripts and starved the webview. A BACKGROUND tab whose transcript+states
         # are unchanged reuses its built payload (one stat() instead of a reshape+serialize). The ACTIVE tab
-        # used to rebuild on every push "to stay live"; since 2026-09-03 (upstream) it too is served from its
-        # last build while its exact key is unchanged — so a watched 80 MB session no longer costs a reshape
-        # per 0.5 s cycle with nothing moving. Since round-4 plan P4 that key is the one complete per-session
-        # signature every tab shares (_chat_build_sig): every input that can move the payload is a component,
-        # the in-memory stamps included, so the tab rebuilds when an input moved and on nothing else — a bare
-        # _mark_views_dirty (upstream's watermark for stamps no file records) is not new information for the
-        # chat and rebuilds nothing; a live-tail echo, which the payload renders, is and does.
+        # used to rebuild on every push "to stay live"; since 2026-09-03 it too is served from its last build
+        # while its key is unchanged, so a watched 80 MB session no longer costs a reshape per 0.5 s cycle
+        # with nothing moving. That key is now the one complete per-session signature every tab shares
+        # (_chat_build_sig): every input that can move the payload is a component, the in-memory stamps
+        # included, so a tab rebuilds when an input moved and on nothing else. A bare _mark_views_dirty (the
+        # watermark that used to stand in for the stamps no file records) is not new information for the
+        # chat and rebuilds no tab; a live-tail echo, which the payload renders, is and does.
         import tempfile
         d = tempfile.mkdtemp()
         pa, pb = os.path.join(d, "A.jsonl"), os.path.join(d, "B.jsonl")
@@ -2992,15 +2909,19 @@ class ViewBuilder(unittest.TestCase):
             with open(p, "w") as f:
                 f.write("{}\n")
         calls = []
-        saved = (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
-                 km.build_timeline, km._send_client, km._sdk)
-        km._tmux_sessions = lambda: {}
-        km._sdk = lambda: None                                          # both tabs tmux-owned
-        km._chat_tab_sessions = lambda now, tmux: [{"sid": "A", "path": pa}, {"sid": "B", "path": pb}]
-        km.build_session = lambda sid, now, tmux: (calls.append(sid) or
+        tail = []                                                       # A's live tail: the backend's, no file records it
+        fake_be = type("B", (), {"live_atoms": staticmethod(lambda sid: list(tail) if sid == "A" else []),
+                                 "__getattr__": lambda self, k: getattr(km._UNOWNED, k)})()
+        saved = (km._live_map, km._chat_tab_sessions, km.build_session, km.build_feed,
+                 km.build_timeline, km._send_client, km._sdk, km.Sessions.backend_for)
+        km._live_map = lambda: {}
+        km._sdk = lambda: None                                          # neither tab is SDK-owned
+        km.Sessions.backend_for = staticmethod(lambda sid: fake_be)     # the route hands both tabs this backend
+        km._chat_tab_sessions = lambda now, live_map: [{"sid": "A", "path": pa}, {"sid": "B", "path": pb}]
+        km.build_session = lambda sid, now, live_map: (calls.append(sid) or
                                                    {"id": sid, "name": sid, "color": None, "status": None, "ledger": None})
-        km.build_feed = lambda now, tmux: {"working": [], "asks": []}
-        km.build_timeline = lambda now, tmux: None
+        km.build_feed = lambda now, live_map: {"working": [], "asks": []}
+        km.build_timeline = lambda now, live_map: None
         km._send_client = lambda c, key, msg, pre=None: None
         km._built_chat.clear()
         client = {"app": "chat", "active": "A", "alive": True}
@@ -3021,20 +2942,20 @@ class ViewBuilder(unittest.TestCase):
             km._mark_views_dirty()                   # a dirty mark with no moved input
             km._push([client])                       # 5th: A still served (the key names inputs, not marks)
             after_five = list(calls)
-            km._tmux_echo_add("A", "and also fix the header")   # a kernel-side mutation no file records: the live tail
+            tail.append({"type": "user", "t": NOW, "text": "and also fix the header"})   # a backend-side mutation no file records: the live tail
             km._push([client])                       # 6th: A rebuilt (its live-tail revision moved)
         finally:
-            (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
-             km.build_timeline, km._send_client, km._sdk) = saved
+            (km._live_map, km._chat_tab_sessions, km.build_session, km.build_feed,
+             km.build_timeline, km._send_client, km._sdk, bf) = saved
+            km.Sessions.backend_for = staticmethod(bf)
             km._built_chat.clear()
-            km._tmux_echo.pop("A", None); km._tmux_echo_rev.pop("A", None)
         self.assertEqual(after_two.count("A"), 1, "an unchanged ACTIVE tab is served on the 2nd push")
         self.assertEqual(after_two.count("B"), 1, "an unchanged BACKGROUND tab is NOT rebuilt on the 2nd push")
         self.assertEqual(after_three.count("B"), 2, "the background tab rebuilds once its transcript actually changes")
         self.assertEqual(after_three.count("A"), 1, "…and that does not rebuild the active tab")
         self.assertEqual(after_four.count("A"), 2, "the active tab rebuilds once ITS transcript changes")
         self.assertEqual(after_five.count("A"), 2, "a dirty mark alone is no new information for the chat: still served")
-        self.assertEqual(calls.count("A"), 3, "a kernel-side mutation no file records (a live-tail echo) rebuilds the active tab")
+        self.assertEqual(calls.count("A"), 3, "a backend-side mutation no file records (the live tail) rebuilds the active tab")
 
     def _orphaned_goal(self, idle=True, closer_done=True, planned=True):
         # an idle (or still-open) session whose top goal still shows "working". closer_done puts the latest
@@ -3063,13 +2984,13 @@ class ViewBuilder(unittest.TestCase):
         km._set_auto_nudge(True)
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 1, "first nudge on the stall turn")
             self.assertIn("romp-goal-id: " + g, sent[0][1], "the follow-up targets that goal")
             self.assertIn(km.AUTO_NUDGE_TEXT, sent[0][1])         # carries the nudge prompt verbatim
-            km._auto_nudge_tick(NOW, km._tmux_sessions())          # SAME turn → NO re-fire
+            km._auto_nudge_tick(NOW, km._live_map())          # SAME turn → NO re-fire
             self.assertEqual(len(sent), 1, "no second nudge on the same turn — one per turn")
-            km._auto_nudge_tick(NOW, km._tmux_sessions())          # SAME turn again → still capped
+            km._auto_nudge_tick(NOW, km._live_map())          # SAME turn again → still capped
             self.assertEqual(len(sent), 1, "a persistent stop does not re-fire each tick")
         finally:
             restore()
@@ -3086,12 +3007,12 @@ class ViewBuilder(unittest.TestCase):
         km._set_auto_nudge(True)
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 0, "no nudge while the planner hasn't placed the turn's units")
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 0, "the hold persists across ticks, not a one-shot skip")
             self._orphaned_goal(idle=True, planned=True)    # the planner catches up (placements recorded)
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 1, "the placement landing opens the gate — the nudge fires")
             self.assertIn("romp-goal-id: " + g, sent[0][1])
         finally:
@@ -3111,7 +3032,7 @@ class ViewBuilder(unittest.TestCase):
         km._set_auto_nudge(True)
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             bodies = [b for (_n, b) in sent]
             self.assertEqual(len(sent), 1, "same-tick nudges bundle into ONE message, never N sends")
             self.assertTrue(any("romp-goal-id: " + g1 in b for b in bodies), "g1 nudged")
@@ -3124,16 +3045,15 @@ class ViewBuilder(unittest.TestCase):
         # for the user's OWN follow-ups, not romp's auto-nudge (the user 2026-06-28).
         g = self._orphaned_goal(idle=True)
         km._set_auto_nudge(True)
-        sent, fu_calls = [], []
-        saved_send, saved_fu = km._tmux_send, jd.optimistic_followup
-        km._tmux_send = lambda name, body, **kw: sent.append(body)
-        jd.optimistic_followup = lambda sid, gid, **kw: fu_calls.append(gid)
+        fu_calls = []
+        sent, restore = self._stub_nudge()
+        jd.optimistic_followup = lambda sid, gid, **kw: fu_calls.append(gid)   # restore() puts the real one back
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 1, "the nudge fired")
             self.assertEqual(fu_calls, [], "auto-nudge does NOT optimistic-followup → no Followed-up chip")
         finally:
-            km._tmux_send, jd.optimistic_followup = saved_send, saved_fu
+            restore()
 
     def _drive_nudge_over(self, turn, last_state):
         # Drive one _auto_nudge_tick over a single controlled TURN + _last_state, exercising the REAL
@@ -3145,16 +3065,16 @@ class ViewBuilder(unittest.TestCase):
         km._set_auto_nudge(True)
         saved = (jd.parsed_session, km._last_state, km._alive_sessions, km._session_awaiting,
                  km._api_error, km._wait_for_graph, km._session_flag, list(km._downtime))
-        km._downtime[:] = []                                         # no host-sleep interfering with _session_working
-        jd.parsed_session = lambda sid, paths, now: {"turns": [turn]}
-        km._last_state = lambda sid: last_state
-        km._alive_sessions = lambda now, tmux: [{"sid": SID, "path": str(self.tpath)}]
-        km._session_awaiting = lambda *a, **k: None
-        km._api_error = lambda p: None
-        km._wait_for_graph = lambda now, sids: {}
-        km._session_flag = lambda sid, flag: False
         sent, restore = self._stub_nudge()
-        try:
+        try:                                                         # every stub below is undone in the finally,
+            km._downtime[:] = []                                     # whatever raises: a leaked one poisons the module
+            jd.parsed_session = lambda sid, paths, now, **kw: {"turns": [turn]}
+            km._last_state = lambda sid: last_state
+            km._alive_sessions = lambda now, live_map: [{"sid": SID, "path": str(self.tpath)}]
+            km._session_awaiting = lambda *a, **k: None
+            km._api_error = lambda p: None
+            km._wait_for_graph = lambda now, sids: {}
+            km._session_flag = lambda sid, flag: False
             km._auto_nudge_tick(NOW, {SID: {"state": "working"}})
             return list(sent)
         finally:
@@ -3217,7 +3137,7 @@ class ViewBuilder(unittest.TestCase):
         km._set_auto_nudge(True)
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 1, "the stalled goal is nudged")
             # the fork ask (both the flat and the hierarchical-enumeration form carry these sentences):
             # the continue-or-name-the-blocker fork (the user 2026-07-02), leading with permission to
@@ -3336,20 +3256,20 @@ class ViewBuilder(unittest.TestCase):
         turn = {"id": SID + ":t1", "ended": True, "t": T0, "end": NOW,
                 "atoms": [{"type": "user", "t": T0}, {"type": "assistant", "t": NOW}]}
         cut = {"v": "11111111-2222-3333-4444-555555555555"}
-        fired = []                 # backend-owned sids fire via backend.send, not _tmux_send
+        # the nudge fires through the routed backend's send (_stub_nudge records it); the fake below is
+        # what the route resolves, so its pending_cut is what the tick reads
         fake = type("B", (), {"pending_cut": staticmethod(lambda sid: cut["v"]),
-                              "pending_queued": staticmethod(lambda sid: []),
-                              "send": staticmethod(lambda sid, body: fired.append(body))})()
+                              "pending_queued": staticmethod(lambda sid: [])})()
         saved_bf = km.Sessions.backend_for
         km.Sessions.backend_for = staticmethod(lambda sid: fake)
         try:
             sent = self._drive_nudge_over(turn, last_state=("waiting", NOW))
-            self.assertEqual((sent, fired), ([], []),
+            self.assertEqual(sent, [],
                              "an armed, unconsumed bare rollback holds the nudge — "
                              "the parse still shows the deleted turn")
             cut["v"] = ""          # the cut was spent: a record landed on the new branch
-            self._drive_nudge_over(turn, last_state=("waiting", NOW))
-            self.assertEqual(len(fired), 1, "cut consumed → the nudge flows again")
+            sent = self._drive_nudge_over(turn, last_state=("waiting", NOW))
+            self.assertEqual(len(sent), 1, "cut consumed → the nudge flows again")
         finally:
             km.Sessions.backend_for = saved_bf
 
@@ -3362,7 +3282,7 @@ class ViewBuilder(unittest.TestCase):
             g: {"count": 3, "lastTurnId": SID + ":told", "failed": True, "stalled": True}}})
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 1, "the new genuine stall fires")
             rec = km._auto_nudge_data()["nudged"][g]
             self.assertNotIn("failed", rec, "a fresh fire opens a fresh episode — failed resets")
@@ -3490,14 +3410,14 @@ class ViewBuilder(unittest.TestCase):
         km._write_auto_nudge({"enabled": True, "nudged": {}})
         seen = []
 
-        def boom(s, now, tmux, nudged, waitfor, alive_ids=None, **kw):   # kw: wake_only (2026-09-05)
+        def boom(s, now, live_map, nudged, waitfor, alive_ids=None, **kw):   # kw: wake_only (2026-09-05)
             if s["sid"] == "bad-session":
                 raise TypeError("%d format: a real number is required, not list")
             seen.append(s["sid"])
             return False
         orig_one, orig_alive = km._auto_nudge_session, km._alive_sessions
         km._auto_nudge_session = boom
-        km._alive_sessions = lambda now, tmux: [{"sid": "bad-session", "path": "x"},
+        km._alive_sessions = lambda now, live_map: [{"sid": "bad-session", "path": "x"},
                                                 {"sid": "good-session", "path": "y"}]
         try:
             km._auto_nudge_tick(NOW, {})
@@ -3525,12 +3445,12 @@ class ViewBuilder(unittest.TestCase):
         km._set_auto_nudge(True)
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 1, "first stall → nudged")
             self.assertEqual(km._auto_nudge_data()["nudged"][g]["count"], 1)
             self._stall_transcript(base + [uline(T0 + 200, "a3", "u3", "a2", ps="typed"),
                                            aline(T0 + 210, "d3", "a3", "u3", stop="end_turn")])   # NEW genuine turn
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 2, "a new genuine stall turn re-arms the nudge")
             self.assertEqual(km._auto_nudge_data()["nudged"][g]["count"], 2, "total count climbs each fire")
         finally:
@@ -3550,10 +3470,10 @@ class ViewBuilder(unittest.TestCase):
         sp.write_text(json.dumps({"t": T0 + 300, "state": "working"}) + "\n")   # working AFTER the parsed end → still going
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 0, "no nudge: the 'working' record is newer than the parsed turn end")
             sp.write_text(json.dumps({"t": T0 + 301, "state": "waiting"}) + "\n")   # genuine stop now
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 1, "once genuinely stopped (state log 'waiting'), the nudge fires")
         finally:
             restore()
@@ -3575,7 +3495,7 @@ class ViewBuilder(unittest.TestCase):
         sp.write_text(json.dumps({"t": T0 + 50, "state": "working"}) + "\n")   # stale: BEFORE the turn end, no later 'waiting'
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 1, "a finished turn with a stale pre-end 'working' record still gets nudged")
             self.assertIn("romp-goal-id: " + g, sent[0][1], "the nudge targets the orphaned working goal")
         finally:
@@ -3595,12 +3515,12 @@ class ViewBuilder(unittest.TestCase):
         km._set_auto_nudge(True)
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 1, "the genuine stall is nudged once")
             nudge = "Status?\n\n<!-- romp-injected --><!-- romp-goal-id: %s -->" % g   # romp-authored turn
             self._stall_transcript(base + [uline(T0 + 100, nudge, "u2", "a1", ps="typed"),
                                            aline(T0 + 110, "still working", "a2", "u2", stop="end_turn")])
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 1, "the nudge-RESPONSE turn does NOT re-arm — kills the runaway (the user 2026-07-01)")
         finally:
             restore()
@@ -3615,10 +3535,10 @@ class ViewBuilder(unittest.TestCase):
                                                        "color": None, "inCycle": False, "since": NOW}}
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(sent, [], "a session waiting on a live peer is held, not nudged")
             km._wait_for_graph = lambda now, alive: {}            # no longer waiting → the genuine stall is nudged
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 1, "once the wait clears, the genuine stall is nudged")
         finally:
             restore(); km._wait_for_graph = saved
@@ -3631,10 +3551,10 @@ class ViewBuilder(unittest.TestCase):
         sent, restore = self._stub_nudge()
         try:
             km._set_session_flag(SID, "hideFromFeed", True); km._flags_cache.clear()
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(sent, [], "a session muted from the feed is not auto-nudged")
             km._set_session_flag(SID, "hideFromFeed", False); km._flags_cache.clear()
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(sent, [], "un-mute does NOT re-nudge: muting VIEW-CLEARED the goal, so it stays sealed")
         finally:
             restore()
@@ -3648,10 +3568,10 @@ class ViewBuilder(unittest.TestCase):
         km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": "agents", "why": "Waiting on its background agents."}
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(sent, [], "an awaiting session is held, not nudged")
             km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: None   # no longer awaiting → the genuine stall is nudged
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 1, "once the wait clears, the genuine stall is nudged")
         finally:
             restore(); km._session_awaiting = saved
@@ -3662,7 +3582,7 @@ class ViewBuilder(unittest.TestCase):
         km._set_auto_nudge(True)
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             ev = [json.loads(l) for l in (jd.STATE / "nudge-events.jsonl").read_text().splitlines()]
             self.assertEqual(len(ev), 1)
             self.assertEqual(ev[0]["gid"], g)
@@ -3677,7 +3597,7 @@ class ViewBuilder(unittest.TestCase):
         km._set_auto_nudge(False)                                  # explicitly turned off
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(sent, [], "explicitly off → no nudges")
         finally:
             restore()
@@ -3687,7 +3607,7 @@ class ViewBuilder(unittest.TestCase):
         km._set_auto_nudge(True)
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(sent, [], "an actively-working session isn't orphaned")
         finally:
             restore()
@@ -3701,7 +3621,7 @@ class ViewBuilder(unittest.TestCase):
         km._set_auto_nudge(True)
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(sent, [], "no nudge until the closer has processed the latest turn")
         finally:
             restore()
@@ -3709,11 +3629,11 @@ class ViewBuilder(unittest.TestCase):
     def test_auto_nudge_skips_an_awaiting_session(self):
         self._orphaned_goal(idle=True)
         km._set_auto_nudge(True)
-        km._tmux_sessions = lambda: {SID: {"state": "permission", "since": NOW - 10, "model": "",
+        km._live_map = lambda: {SID: {"state": "permission", "since": NOW - 10, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(sent, [], "a session awaiting your approval is not orphaned")
         finally:
             restore()
@@ -3748,7 +3668,7 @@ class ViewBuilder(unittest.TestCase):
         km._set_auto_nudge(True)
         sent, restore = self._stub_nudge()
         try:
-            km._auto_nudge_tick(NOW, km._tmux_sessions())
+            km._auto_nudge_tick(NOW, km._live_map())
             self.assertEqual(len(sent), 1, "the tick takes its turn id from the closer's parse → matches closedTurns → fires")
         finally:
             restore(); jd.parsed_session = real
@@ -3778,7 +3698,7 @@ class ViewBuilder(unittest.TestCase):
             {g1: {"id": g1, "text": "first ask", "parentId": None, "nodeComplete": True,
                   "blocked": False, "cleared": False, "trail": [], "t": T0}},
             {g1: "completed"}, last=g1, planned=False)   # unplaced by premise: the provisional exists because the planner hasn't placed
-        self._working_tmux()
+        self._working_live()
         prov = [a for a in km.build_feed(NOW)["asks"] if a.get("provisional")]
         self.assertEqual(len(prov), 1, "an ENDED but unplaced ask still shows the placeholder — no gap before the real card")
         # Once the planner PLACES that segment (its key lands in placements — set even for a skip), the
@@ -3802,7 +3722,7 @@ class ViewBuilder(unittest.TestCase):
              g2: {"id": g2, "text": "ongoing work", "parentId": None, "nodeComplete": False,
                   "blocked": False, "cleared": False, "trail": [], "t": T0 + 50}},
             {g1: "completed", g2: "working"}, last=g2)
-        self._working_tmux()
+        self._working_live()
         asks = km.build_feed(NOW)["asks"]
         self.assertFalse([a for a in asks if a.get("provisional")],
                          "an existing working card suppresses the placeholder")
@@ -4465,11 +4385,11 @@ class ViewBuilder(unittest.TestCase):
         # the + picker's payload (requestSessions → sessionList). Was always empty: bin/romp-kernel had
         # no requestSessions handler, so the kernel never replied. Running sessions first; archive headline
         # as the summary; the names-registry color.
-        items = km._session_list(NOW, km._tmux_sessions())
+        items = km._session_list(NOW, km._live_map())
         self.assertTrue(items, "picker must list the live session")
         it = next(i for i in items if i["id"] == SID)
         self.assertEqual(it["name"], "testsess")
-        self.assertTrue(it["running"], "SID is alive in tmux → running")
+        self.assertTrue(it["running"], "SID is in the live map → running")
         self.assertEqual(it["time"], "running")
         self.assertEqual(it["summary"], "Fixing the feed")
         self.assertEqual(it["color"], {"bg": "#abcdef", "fg": "#ffffff"})
@@ -4532,34 +4452,19 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(ids.count(old_sid), 1, "the session appears exactly once")
         self.assertNotIn(fork_sid, ids, "its fork lane is not a row of its own in the picker")
 
-    def test_alive_filter_empty_tmux_with_tmux_present_shows_nothing(self):
+    def test_alive_filter_empty_map_is_authoritative(self):
         # The user 2026-06-16: after killing every session and reloading, the surfaces wrongly
-        # reopened tabs for the dead ones. Cause: an EMPTY tmux result fell back to file-derived
-        # sessions. With a tmux binary present (the host case), an empty result is a GENUINE zero —
-        # show nothing, not the dead session in the discover() window.
-        saved = km._has_tmux
-        km._has_tmux = lambda: True
-        try:
-            self.assertEqual(km._alive_sessions(NOW, {}), [], "tmux present + empty → no sessions")
-            feed = km.build_feed(NOW, tmux={})
-            self.assertEqual(feed.get("cards", []), [], "feed shows no card for a dead session")
-            self.assertEqual(km._ordered_alive(NOW, {}), [], "no chat tabs / timeline lanes either")
-        finally:
-            km._has_tmux = saved
-
-    def test_alive_filter_headless_no_tmux_falls_back_to_discover(self):
-        # The ONLY case that still falls back: a genuinely headless run with no tmux binary at all
-        # (a test box / CI), so a review-only surface isn't blank. Keyed on tmux PRESENCE, not a count.
-        saved = km._has_tmux
-        km._has_tmux = lambda: False
-        try:
-            sids = [s["sid"] for s in km._alive_sessions(NOW, {})]
-            self.assertIn(SID, sids, "no tmux at all → fall back to the discovered session")
-        finally:
-            km._has_tmux = saved
+        # reopened tabs for the dead ones. Cause: an EMPTY liveness result fell back to file-derived
+        # sessions. An empty map is a GENUINE zero — show nothing, not the dead session in the
+        # discover() window (no headless fallback remains since the tmux backend's removal).
+        self.assertEqual(km._alive_sessions(NOW, {}), [], "empty live map → no sessions")
+        feed = km.build_feed(NOW, live_map={})
+        self.assertEqual(feed.get("cards", []), [], "feed shows no card for a dead session")
+        self.assertEqual(km._chat_tab_sessions(NOW, {}), [], "no chat tabs either")
+        self.assertEqual(km._timeline_sessions(NOW, {}, live_only=True), [], "and no live timeline lanes")
 
     def test_producer_sig_tracks_renames(self):
-        # The user 2026-06-16: tmux/tab renames didn't propagate to the chat. A rename touches only the
+        # The user 2026-06-16: tab renames didn't propagate to the chat. A rename touches only the
         # names file (no transcript), so the push fingerprint must include it or the producer never
         # re-pushes the new name.
         s1 = km._producer_sig(browser=True)
@@ -4598,38 +4503,16 @@ class ViewBuilder(unittest.TestCase):
         self.assertNotEqual(after.get("status", {}).get(g2), "blocked", "rolled-up status leaves blocked")
         self.assertFalse(km._resolve_node(SID, g2), "resolve on an already-complete node is a no-op")
 
-    def test_rename_session_live_renames_tmux(self):
-        # A LIVE session renames via tmux; the after-rename-session hook then syncs the names file + pill.
-        saved_name, saved_run = km._tmux_name_of, km.subprocess.run
-        calls = []
-
-        class _R:
-            returncode = 0; stdout = ""; stderr = ""
-
-        km._tmux_name_of = lambda s: "testsess"
-        km.subprocess.run = lambda cmd, *a, **k: (calls.append(cmd), _R())[1]
-        try:
-            with mock.patch.dict(os.environ):
-                os.environ.pop("ROMP_TMUX_SOCKET", None)   # the bare argv this pins is the no-socket one:
-                out = km._rename_session(SID, "newname")   # a per-kernel socket prepends -L (test_tmux_optional)
-            self.assertEqual(out, "newname")
-            self.assertTrue(any(c[:2] == ["tmux", "rename-session"] and "newname" in c for c in calls),
-                            "live rename must call `tmux rename-session ... newname`")
-        finally:
-            km._tmux_name_of, km.subprocess.run = saved_name, saved_run
-
     def test_rename_session_dead_writes_names_file_preserving_color(self):
-        # A DEAD (read-only) tab has no tmux session, so the rename writes the names file directly,
-        # keeping the recorded dir + identity color.
-        saved_name = km._tmux_name_of
-        km._tmux_name_of = lambda s: None
-        try:
-            out = km._rename_session(SID, "archived_name")
-            self.assertEqual(out, "archived_name")
-            self.assertEqual(km._name_of(SID), "archived_name", "dead-tab rename writes the names file")
-            self.assertEqual(km._name_color(SID), {"bg": "#abcdef", "fg": "#ffffff"}, "color preserved")
-        finally:
-            km._tmux_name_of = saved_name
+        # A DEAD (read-only) tab has no live backend, so the rename writes the names file directly,
+        # keeping the recorded dir + identity color. The unowned route's rename is this same path.
+        out = km._rename_session(SID, "archived_name")
+        self.assertEqual(out, "archived_name")
+        self.assertEqual(km._name_of(SID), "archived_name", "dead-tab rename writes the names file")
+        self.assertEqual(km._name_color(SID), {"bg": "#abcdef", "fg": "#ffffff"}, "color preserved")
+        self.assertTrue(km._UNOWNED.rename(SID, "renamed_again"), "the unowned route renames the dead tab the same way")
+        self.assertEqual(km._name_of(SID), "renamed_again")
+        self.assertFalse(km._UNOWNED.rename(SID, "has spaces!"), "…and refuses what _rename_session refuses")
 
     def test_rename_session_rejects_invalid_name(self):
         self.assertIsNone(km._rename_session(SID, "has spaces!"), "invalid chars → rejected, no rename")
@@ -4638,40 +4521,37 @@ class ViewBuilder(unittest.TestCase):
         # the user 2026-06-17 REVERSED the earlier keep-a-tab-when-it-dies rule: a session shown alive then dead is now
         # TIMELINE-ONLY — it does NOT linger as a chat tab (reopen from the timeline instead). It still
         # reports 'closed' (so wherever it IS shown — a read-only tab — it renders struck-through).
-        saved_seen, saved_has, saved_kept = set(km._seen_live), km._has_tmux, set(km._kept_open)
-        km._has_tmux = lambda: True
+        saved_seen, saved_kept = set(km._seen_live), set(km._kept_open)
         try:
             km._seen_live.clear(); km._seen_live.add(SID); km._kept_open.discard(SID)
             tabs = [s["sid"] for s in km._chat_tab_sessions(NOW, {})]
             self.assertNotIn(SID, tabs, "a dead session no longer auto-keeps a tab (timeline-only)")
             self.assertEqual(km.build_session(SID, NOW, {})["status"]["state"], "closed")
         finally:
-            km._seen_live.clear(); km._seen_live.update(saved_seen); km._has_tmux = saved_has
+            km._seen_live.clear(); km._seen_live.update(saved_seen)
             km._kept_open.clear(); km._kept_open.update(saved_kept)
 
     def test_dead_session_not_kept_when_never_seen_live(self):
         # A fresh kernel start (_seen_live empty) must NOT resurrect a dead session's tab (the Part-A rule).
-        saved_seen, saved_has = set(km._seen_live), km._has_tmux
-        km._has_tmux = lambda: True
+        saved_seen = set(km._seen_live)
         try:
             km._seen_live.clear()
             tabs = [s["sid"] for s in km._chat_tab_sessions(NOW, {})]
             self.assertNotIn(SID, tabs, "never-seen dead session is not shown on a fresh start")
         finally:
-            km._seen_live.clear(); km._seen_live.update(saved_seen); km._has_tmux = saved_has
+            km._seen_live.clear(); km._seen_live.update(saved_seen)
 
     def test_dead_kept_tab_excluded_once_forgotten(self):
         # ×-closing a dead read-only tab discards it from _kept_open — dead is timeline-only again
         # (the closeTab route's one remaining duty; hidden-tabs is gone, the user 2026-08-11).
-        saved_seen, saved_has, saved_kept = set(km._seen_live), km._has_tmux, set(km._kept_open)
-        km._has_tmux = lambda: True
+        saved_seen, saved_kept = set(km._seen_live), set(km._kept_open)
         try:
             km._seen_live.clear(); km._seen_live.add(SID)
             km._kept_open.discard(SID)
             tabs = [s["sid"] for s in km._chat_tab_sessions(NOW, {})]
             self.assertNotIn(SID, tabs, "a forgotten dead tab is not shown")
         finally:
-            km._seen_live.clear(); km._seen_live.update(saved_seen); km._has_tmux = saved_has
+            km._seen_live.clear(); km._seen_live.update(saved_seen)
             km._kept_open.clear(); km._kept_open.update(saved_kept)
 
     def test_rel_ago_buckets(self):
@@ -4705,34 +4585,6 @@ class ViewBuilder(unittest.TestCase):
         m = km.build_session(SID, NOW)
         self.assertFalse(any(e["kind"] == "tool" and e["name"] in ("TaskCreate", "TaskUpdate") for e in m["events"]),
                          "raw Task* tool calls are folded away, not shown as tool cards")
-
-    def test_queued_card_from_transcript_queue_ops(self):
-        # Messages queued in the TUI while busy/compacting are written to the transcript as queue-operation
-        # records; _pending_queued folds them so they surface as a {kind:"queued"} card at the bottom (the
-        # "vanished during compaction" fix). EVENT-BASED (was pane-scraped) — and BOTH of two queued messages
-        # show: the pane scrape dropped the 2nd and lost both (the user 2026-06-16).
-        km._queued_parse_cache.clear()
-        with self.tpath.open("a") as f:
-            f.write(json.dumps(qop("enqueue", "fix the flaky test")) + "\n")
-            f.write(json.dumps(qop("enqueue", "then bump the version")) + "\n")
-        m = km.build_session(SID, NOW)
-        q = [e for e in m["events"] if e["kind"] == "queued"]
-        self.assertEqual(len(q), 1, "one queued card")
-        self.assertEqual([t["md"] for t in q[0]["texts"]], ["fix the flaky test", "then bump the version"],
-                         "BOTH queued messages, in submission order (the 2-message regression)")
-        self.assertTrue(all("followUp" not in t for t in q[0]["texts"]), "plain queued messages aren't follow-ups")
-        self.assertEqual(m["events"][-1]["kind"], "queued", "queued sits at the bottom, by the composer")
-
-    def test_queued_card_absent_when_all_dequeued(self):
-        # once Claude Code consumes the queue (dequeue records), nothing is still pending → no card.
-        km._queued_parse_cache.clear()
-        with self.tpath.open("a") as f:
-            f.write(json.dumps(qop("enqueue", "fix the flaky test")) + "\n")
-            f.write(json.dumps(qop("enqueue", "then bump the version")) + "\n")
-            f.write(json.dumps(qop("dequeue")) + "\n")
-            f.write(json.dumps(qop("dequeue")) + "\n")
-        m = km.build_session(SID, NOW)
-        self.assertFalse([e for e in m["events"] if e["kind"] == "queued"], "fully-drained queue → no card")
 
     def test_optimistic_compacting_until_boundary(self):
         # clicking compact marks the session 'compacting' AT ONCE on chat + timeline (no waiting for the
@@ -4815,14 +4667,6 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(card["blocked"]["status"], 500)
         self.assertEqual(card["column"], "needs_input", "an API-error card files under BLOCKED")
 
-    def test_injected_img_paths_for_the_send_wait(self):
-        # _tmux_send waits for these to resolve to "[Image #N]" before pressing Enter, so a text+image
-        # message doesn't race the async image read and drop the text (the user 2026-06-17).
-        self.assertEqual(km._injected_img_paths("look at /srv/a.png and ~/pics/b.jpg please"),
-                         ["/srv/a.png", "~/pics/b.jpg"])
-        self.assertEqual(km._injected_img_paths("no images here"), [])
-        self.assertEqual(km._injected_img_paths(""), [])
-
     def test_user_images_extracts_pasted_path_and_blocks(self):
         # the user 2026-06-17: path-pasted images stopped rendering after the Python rebuild dropped the
         # extraction. _user_images mirrors the old transcript.ts: base64 block → data URL; path source →
@@ -4849,7 +4693,8 @@ class ViewBuilder(unittest.TestCase):
         self.assertNotIn("explanations", _gear_src())                               # every trace of the pref is gone
         self.assertIn("dispatchEvent(new Event('romp:settings'))", _gear_src())     # same-doc re-render signal (compact toggle etc.)
         # the ↻ refresh + ⛭ gear BUTTONS moved to the shell's far-left rail (the user 2026-06-25); only the
-        # settings MODAL stays in the feed, opened by the rail gear via a {romp:'openSettings'} postMessage.
+        # settings MODAL stays in a pane iframe (the /settings page since 2026-09-10), opened by the rail gear
+        # via a {romp:'openSettings'} postMessage.
         self.assertNotIn("id=rrefresh", _gear_src())                              # refresh is on the rail now
         self.assertIn("e.data.romp === 'openSettings'", _gear_src())                  # the modal opens on the rail's request
         landing = km._landing()
@@ -4861,7 +4706,7 @@ class ViewBuilder(unittest.TestCase):
         # the user 2026-06-23: descriptions become HOVER tooltips (decluttered), and the analytics button drops
         # its 📊 emoji.
         self.assertIn("#rsettings .rs-sub { display: none; }", _gear_css_src())               # descriptions hidden by default
-        self.assertRegex(_gear_css_src(), r"#rsettings \.rs-row:hover \.rs-sub \{ display: block; position: absolute")  # float on hover
+        self.assertRegex(_gear_css_src(), r"#rsettings \.rs-row:hover \.rs-sub, #rsettings \.rs-widget:hover \.rs-sub \{ display: block; position: absolute")   # the widget rows share the popover (T379)  # float on hover
         self.assertNotIn("\U0001F4CA", _gear_src())                                 # the 📊 emoji is gone
         self.assertIn("Token usage analytics", _gear_src())                          # the label itself stays
 
@@ -4879,17 +4724,31 @@ class ViewBuilder(unittest.TestCase):
         self.assertIn("{ type: 'setColormap', name: name }", _gear_src())                     # picking a bar persists + posts
         self.assertNotIn("renderCmapBar", _gear_src())                                 # the old preview-bar fn is gone
 
-    def test_gear_has_show_git_branch_toggle(self):
-        # the user 2026-06-23: a "Show git branch" checkbox controls whether the chat bottom-bar shows the
-        # session's git branch beside the dir. OFF by default since 2026-08-10 (the user, trimming the
-        # statusline for narrow panes): an explicit stored true opts in. It mirrors render.ts'
-        # loadSettings().showBranch read, persisted in romp:settings.
-        self.assertIn("id=rs-branch", _gear_src())
-        self.assertIn("Show git branch", _gear_src())
-        self.assertIn("s.showBranch = gb.checked", _gear_src())        # change → persist
-        self.assertIn("gb.checked = s.showBranch === true", _gear_src())  # open → reflect (default OFF)
-        self.assertIn("showBranch: false", _gear_src())               # load() default OFF, both branches
+    def test_gear_has_the_status_line_section_where_the_git_branch_toggle_was(self):
+        # the user 2026-06-23: a "Show git branch" checkbox controlled whether the chat bottom-bar shows the session's
+        # git branch beside the dir; OFF by default since 2026-08-10. Since T409 (the user 2026-09-13) the branch is a
+        # WIDGET of the status line, ON by default, with its row in the Chat tab's Status line section; showBranch stays
+        # in the store as the widget's mirror, written on a section save and never injected as a default by load().
+        self.assertIn("data-section=statusline>Status line", _gear_src())
+        self.assertIn("id=rs-swidgets", _gear_src())
+        self.assertIn("require('./status-widgets.ts')", _gear_src())
+        self.assertNotIn("id=rs-branch", _gear_src())
+        self.assertNotIn("Show git branch", _gear_src())
+        self.assertIn("s.showBranch = m.showBranch; s.showSessionBadge = m.showSessionBadge; save(s);", _gear_src())   # a section save writes both mirrors
+        self.assertNotIn("showBranch: false", _gear_src())            # no injected default (the fresh-key rule)
         self.assertNotIn("showBranch: true", _gear_src())             # the old default must not linger
+
+    def test_gear_has_compact_tabs_and_agents_toggle(self):
+        # the user 2026-09-08: a "Compact tabs and agents" checkbox in the Chat section shrinks the tab strip's
+        # tabs and group headers and tightens the rows of the background-work panel (one body class, styles.css
+        # body.dense-chrome, applied by dense-chrome.ts from render.ts). OFF by default: an explicit stored true
+        # opts in. It mirrors render.ts' loadSettings().denseChrome read, persisted in romp:settings.
+        self.assertIn("id=rs-dense", _gear_src())
+        self.assertIn("Compact tabs and agents", _gear_src())
+        self.assertIn("s.denseChrome = dn.checked", _gear_src())          # change → persist
+        self.assertIn("dn.checked = s.denseChrome === true", _gear_src())  # open → reflect (default OFF)
+        self.assertIn("denseChrome: false", _gear_src())              # load() default OFF (dense-chrome.test.ts counts both branches)
+        self.assertNotIn("denseChrome: true", _gear_src())
 
     def test_chat_body_has_an_explicit_send_button(self):
         # The web-dashboard composer (kernel _chat_body, a SECOND copy of vscode-extension/src/page-skeleton.chatBody)
@@ -4931,11 +4790,11 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(comp[0]["text"], "Fix the feed flicker")
         self.assertEqual(comp[0]["tree"][0]["status"], "done")
         self.assertTrue(any(a["column"] == "needs_input" for a in d["asks"]), "the blocked goal is a BLOCKED card")
-        # card tint is the recency colormap (age → hawaii ramp), not a flat session color. It rides FULL
-        # frames only (an older bundle destructures it), stamped at serialization since 2026-09-07 (_feed_body);
-        # the built card carries none, and the delta path never does, because a colour that ticks with the
-        # clock is not a change (tests/test_feed_delta.py).
-        self.assertNotIn("trgb", comp[0])
+        # card tint is the recency colormap (age → hawaii ramp), not a flat session color. T368's fold stamps
+        # the built card per build (the per-session card memo, 2026-09-15) and the fork's whole-frame
+        # serialization re-stamps it from `t` (_feed_body, since 2026-09-07); the delta path strips it
+        # (_strip_trgb), because a colour that ticks with the clock is not a change (tests/test_feed_delta.py).
+        self.assertEqual(comp[0]["trgb"], list(km.cm.age_rgb(NOW - comp[0]["t"])), "the fold's stamp, the same clock")
         wire = next(a for a in json.loads(km._feed_body(d))["asks"] if a["itemId"] == comp[0]["itemId"])
         self.assertEqual(wire["trgb"], list(km.cm.age_rgb(NOW - comp[0]["t"])))
         self.assertNotEqual(wire["trgb"], km._rgb(comp[0]["color"]), "not the flat session color")
@@ -4969,7 +4828,7 @@ class ViewBuilder(unittest.TestCase):
             "nodes": {g: {"id": g, "text": "Work in progress", "parentId": None,
                           "nodeComplete": False, "blocked": False, "cleared": False, "trail": [], "t": NOW - 50}},
             "placements": {}, "status": {g: "working"}}))
-        km._tmux_sessions = lambda: {SID: {"state": "permission", "since": NOW - 30, "model": "",
+        km._live_map = lambda: {SID: {"state": "permission", "since": NOW - 30, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
         self.assertEqual(card["blocked"]["state"], "permission", "a live permission prompt floors the focus card")
@@ -4977,16 +4836,16 @@ class ViewBuilder(unittest.TestCase):
 
     def test_feed_live_picker_floors_focus_card_to_blocked(self):
         """An SDK AskUserQuestion reports live state "picker" (it IS a picker, not a permission Allow/Deny;
-        tmux's Notification hook calls the same prompt "permission"). The hard blocked floor must honor
-        "picker" too, else an SDK session stopped on a question never registers as blocked the way a tmux
-        one does (the user 2026-06-27). The card text says "awaiting your input" (vs "approval")."""
+        the removed tmux backend's Notification hook called the same prompt "permission"). The hard blocked
+        floor must honor "picker" too, else an SDK session stopped on a question never registers as blocked
+        the way a terminal one did (the user 2026-06-27). The card text says "awaiting your input" (vs "approval")."""
         g = "%s:g8" % SID
         (jd.GOALDIR / (SID + ".json")).write_text(json.dumps({
             "rompUuid": SID, "seq": 8, "lastNode": g,
             "nodes": {g: {"id": g, "text": "Work in progress", "parentId": None,
                           "nodeComplete": False, "blocked": False, "cleared": False, "trail": [], "t": NOW - 50}},
             "placements": {}, "status": {g: "working"}}))
-        km._tmux_sessions = lambda: {SID: {"state": "picker", "since": NOW - 30, "model": "",
+        km._live_map = lambda: {SID: {"state": "picker", "since": NOW - 30, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
         self.assertEqual(card["blocked"]["state"], "picker", "a live picker floors the focus card to blocked")
@@ -5000,7 +4859,7 @@ class ViewBuilder(unittest.TestCase):
         """The floor applies only to an OPEN focus goal — a live prompt while the focus is already
         completed (the block is on not-yet-placed new work) leaves the completed card alone."""
         # default store: lastNode = g1 (completed). A permission state must NOT floor g1.
-        km._tmux_sessions = lambda: {SID: {"state": "permission", "since": NOW - 30, "model": "",
+        km._live_map = lambda: {SID: {"state": "permission", "since": NOW - 30, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         comp = next(a for a in km.build_feed(NOW)["asks"] if a["column"] == "completed")
         self.assertIsNone(comp["blocked"], "a completed focus card is not floored by a live prompt")
@@ -5016,7 +4875,7 @@ class ViewBuilder(unittest.TestCase):
             "nodes": {g: {"id": g, "text": "Read the system prompt", "parentId": None,
                           "nodeComplete": True, "blocked": False, "cleared": False, "trail": [], "t": NOW - 50}},
             "placements": {}, "status": {g: "working"}}))
-        km._tmux_sessions = lambda: {SID: {"state": "permission", "since": NOW - 30, "model": "",
+        km._live_map = lambda: {SID: {"state": "permission", "since": NOW - 30, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
         self.assertEqual(card["blocked"]["state"], "permission",
@@ -5053,7 +4912,7 @@ class ViewBuilder(unittest.TestCase):
         (jd.GOALDIR / (SID + ".json")).write_text(json.dumps({
             "rompUuid": SID, "seq": 1, "lastNode": g,
             "nodes": {g: nd}, "placements": {}, "status": {g: "blocked"}}))
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         return g
 
@@ -5103,31 +4962,32 @@ class ViewBuilder(unittest.TestCase):
         # clears on the unblocker's watermark (blockCheckT) instead of the turn boundary — so the two
         # stranding properties to pin are: the echo alone arms nothing, and the watermark always releases.
         g = self._blocked_store()
-        km._tmux_echo.pop(SID, None)
         saved_p, saved_w = km._last_plain_user_turn_t, km._session_working
+        def _feed():
+            km._feed_memo.clear()          # T368: a patched helper is no input the per-session memo can see; make the body run
+            return km.build_feed(NOW)
         try:
-            # NO plain reply since the block in the parse — only a stranded echo in the live tail (the
-            # slash-command case that never prunes). It must not arm the flip, working or idle.
+            # NO plain reply since the block in the parse (the slash-command case: its expanded transcript
+            # form never text-matches the typed echo, so nothing reads as a reply). Nothing arms the flip,
+            # working or idle.
             km._last_plain_user_turn_t = lambda turns: NOW - 300
             km._session_working = lambda turns: False
-            km._tmux_echo_add(SID, "/jld go ahead, do option B", author="human")
-            card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
+            card = next(a for a in _feed()["asks"] if a["itemId"] == g)
             self.assertFalse(card["rejudging"], "a stranded echo can never arm rejudging — only a parsed reply can")
             self.assertEqual(card["column"], "needs_input",
                              "so the blocked card stays in Needs-You where the nudge sees it — never stuck in Working")
             # a REAL parsed reply after the block arms the latch even while idle (pending the judge)…
             km._last_plain_user_turn_t = lambda turns: NOW - 10
-            card2 = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
+            card2 = next(a for a in _feed()["asks"] if a["itemId"] == g)
             self.assertTrue(card2["rejudging"], "a parsed plain reply arms the latch — idle or not, it's the judge's move")
             self.assertEqual(card2["column"], "working")
             # …and the unblocker's watermark ALWAYS releases it — advanced on every examine and on the
             # parse give-up path, so the 2026-07-22 stuck-in-Working failure has no revival route.
             g = self._blocked_store(blockCheckT=NOW - 5)
-            card3 = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
+            card3 = next(a for a in _feed()["asks"] if a["itemId"] == g)
             self.assertFalse(card3["rejudging"], "the watermark passed the reply → released")
             self.assertEqual(card3["column"], "needs_input")
         finally:
-            km._tmux_echo.pop(SID, None)
             km._last_plain_user_turn_t, km._session_working = saved_p, saved_w
 
     def test_feed_recheck_targeted_followup_does_not_sweep_siblings(self):
@@ -5142,7 +5002,7 @@ class ViewBuilder(unittest.TestCase):
             "rompUuid": SID, "seq": 2, "lastNode": g1,
             "nodes": {g1: nd(g1, followupPending=True), g2: nd(g2)},
             "placements": {}, "status": {g1: "blocked", g2: "blocked"}}))
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         saved = km._last_plain_user_turn_t
         try:
@@ -5166,7 +5026,7 @@ class ViewBuilder(unittest.TestCase):
         (jd.GOALDIR / (SID + ".json")).write_text(json.dumps({
             "rompUuid": SID, "seq": 2, "lastNode": sub,
             "nodes": {top: tn, sub: sn}, "placements": {}, "status": {top: "blocked"}}))
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         return top
 
@@ -5218,7 +5078,7 @@ class ViewBuilder(unittest.TestCase):
         # the feed serve a pass-boundary-consistent view: the card holds its pre-pass state for the whole pass,
         # then jumps straight to the post-pass state. (Without the snapshot, the first assert reads live "blocked"
         # and fails — this is the regression guard.)
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         g = self._store_with_status("working")             # PRE-pass state: working
         km._begin_goals_pass()                             # judge pass starts → snapshot the pre-pass stores
@@ -5238,7 +5098,7 @@ class ViewBuilder(unittest.TestCase):
     def test_feed_reads_live_outside_a_judge_pass(self):
         # the snapshot only applies DURING a pass — with no pass active a write shows immediately, so user
         # actions (clear/follow-up) aren't delayed (the user 2026-06-30).
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         g = self._store_with_status("working")
         km._end_goals_pass()                               # ensure no pass snapshot is active
@@ -5272,7 +5132,7 @@ class ViewBuilder(unittest.TestCase):
         # window expired first and toasted "that follow-up didn't move the card to Working" while the session
         # was already working the reply. A user gesture must never wait out a judge pass: the override journal
         # it records is replayed onto the snapshot, so the card flies to Working on the very next build.
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         g = self._settled_store()
         km._begin_goals_pass()                             # a judge pass is already in flight when the user replies
@@ -5294,7 +5154,7 @@ class ViewBuilder(unittest.TestCase):
         # The re-punch is keyed on the user-write MARK, not a once-per-snapshot flag: replying to one card
         # and then another, both inside a single (long) judge pass, must move BOTH. A plain done-flag would
         # have served the first reply and silently swallowed every reply after it for the rest of the pass.
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         ga, gb = self._settled_store("gA", "gB")
         km._begin_goals_pass()
@@ -5316,7 +5176,7 @@ class ViewBuilder(unittest.TestCase):
         # re-open the store to the judges' half-applied writes, which is the whole reason the snapshot exists.
         # Three states are distinguishable here and only one is right: completed (frozen, the bug), needs_input
         # (the planner's transient, the flicker), working (the user's reply on the pre-pass card).
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         g = self._settled_store()
         km._begin_goals_pass()
@@ -5335,7 +5195,7 @@ class ViewBuilder(unittest.TestCase):
         # write racing the read loop must never be the one that gets lost. That is only safe because the
         # replay is idempotent, so pin the property the tie-break leans on: however many builds run, the
         # user's reopen appears in the card's diary exactly ONCE.
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         g = self._settled_store()
         km._end_goals_pass()
@@ -5936,16 +5796,16 @@ class ViewBuilder(unittest.TestCase):
         # buildId is what lets a client tell "this payload predates my click" from "this is the kernel's
         # answer to it" (see _next_feed_build_id / cardMoveAck), so it must advance on every real build and
         # hold steady on a cache hit — otherwise an acked prediction clears against a stale payload.
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         km._built_feed[:] = [None, None, 0.0, 0.0]
         km._views_dirty[0] = 0.0
-        first = km._cached_feed(NOW, km._tmux_sessions(), ("sig", 1))
+        first = km._cached_feed(NOW, km._live_map(), ("sig", 1))
         self.assertIsInstance(first.get("buildId"), int)
-        again = km._cached_feed(NOW, km._tmux_sessions(), ("sig", 1))
+        again = km._cached_feed(NOW, km._live_map(), ("sig", 1))
         self.assertEqual(again["buildId"], first["buildId"], "a cache hit re-sends the SAME build, same id")
         km._views_dirty[0] = time.time()                   # a user write forces a rebuild past the cache
-        third = km._cached_feed(NOW, km._tmux_sessions(), ("sig", 1))
+        third = km._cached_feed(NOW, km._live_map(), ("sig", 1))
         self.assertGreater(third["buildId"], first["buildId"], "a real rebuild advances the id")
 
     def test_seg_key_strips_the_volatile_timestamp(self):
@@ -5976,7 +5836,7 @@ class ViewBuilder(unittest.TestCase):
                           "blocked": False, "cleared": False, "trail": [drifted], "t": NOW - 100,
                           "mt": NOW - 95, "summary": "Wired the overview strip."}},
             "placements": {}, "status": {g: "completed"}}))
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
         self.assertEqual(card["summaryAnchorUuid"], "aReply",
@@ -5995,7 +5855,7 @@ class ViewBuilder(unittest.TestCase):
             "rompUuid": SID, "seq": 2, "lastNode": new,
             "nodes": {old: nd(old, NOW - 1000), new: nd(new, NOW - 10)},
             "placements": {}, "status": {old: "working", new: "working"}}))
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 50, "model": "",
                                            "effort": "", "context": None, "compactPct": None, "color": None}}
         saved = km._wait_for_graph
         try:                                              # the question was sent at NOW-500 (between gOld and gNew)
@@ -6203,7 +6063,7 @@ class ViewBuilder(unittest.TestCase):
         self.assertFalse(d2["canUndoClear"])
 
     def test_alive_filter_drops_dead_sessions(self):
-        # the hard filter: only sessions alive in tmux appear anywhere (feed/timeline/chat tabs)
+        # the hard filter: only sessions in the live map appear anywhere (feed/timeline/chat tabs)
         self.assertEqual(km._alive_sessions(NOW, {"other-sid": {}}), [], "dead session dropped")
         alive = km._alive_sessions(NOW, {SID: {"state": "working"}})
         self.assertEqual([s["sid"] for s in alive], [SID])
@@ -6215,14 +6075,14 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual([a for a in km.build_feed(NOW)["asks"] if a["column"] == "needs_input"], [],
                          "clear-all clears the blocked column too")
 
-    def test_chat_chip_working_is_event_model_not_tmux(self):
-        # @claude-state says "working" but the fixture's turn ENDED -> chip is ready, not working:
-        # working is the stable event-model signal (open turn), not the laggy tmux state (the user's
+    def test_chat_chip_working_is_event_model_not_the_live_row(self):
+        # the live row says "working" but the fixture's turn ENDED -> chip is ready, not working:
+        # working is the stable event-model signal (open turn), not the laggy live-row state (the user's
         # "working shows blue / flickers" regression)
-        km._tmux_sessions = lambda: {SID: {"state": "working", "since": NOW - 5, "model": "Opus 4.8",
+        km._live_map = lambda: {SID: {"state": "working", "since": NOW - 5, "model": "Opus 4.8",
                                            "effort": "max", "context": 30, "compactPct": None, "color": None}}
         self.assertEqual(km.build_session(SID, NOW)["status"]["state"], "ready",
-                         "ended turn -> ready even when tmux says working")
+                         "ended turn -> ready even when the live row says working")
 
     def test_no_hidden_tab_state_exists(self):
         # hidden tabs are GONE (the user 2026-08-11): a running session is always visible — × means End
@@ -6238,11 +6098,11 @@ class ViewBuilder(unittest.TestCase):
         # _reveal_chat_for since 2026-07-29: the reveal is aimed at the dashboard that asked (its wid),
         # so a jump in one window no longer drags every other open one to the same turn. With no client
         # in scope it still broadcasts, which is the path this exercises.
-        cap, orig_rc, orig_tx, orig_pa = [], km._reveal_chat_for, km._tmux_sessions, km._push_all
+        cap, orig_rc, orig_tx, orig_pa = [], km._reveal_chat_for, km._live_map, km._push_all
         try:
             km._reveal_chat_for = lambda c, m: cap.append(m)
             km._push_all = lambda: None
-            km._tmux_sessions = lambda: {SID: {}}            # SID alive; deadsid000 dead
+            km._live_map = lambda: {SID: {}}            # SID alive; deadsid000 dead
             cap.clear(); km._open_or_revive("deadsid000")
             self.assertEqual([m["type"] for m in cap], ["confirmRevive"])
             self.assertEqual(cap[0]["id"], "deadsid000")
@@ -6255,29 +6115,27 @@ class ViewBuilder(unittest.TestCase):
             live_focus = next(m for m in cap if m.get("type") == "focus" and m.get("id") == SID)
             self.assertTrue(live_focus.get("live"), "live open lands the chat on its live tail (the picker prompt)")
         finally:
-            km._reveal_chat_for = orig_rc; km._tmux_sessions = orig_tx; km._push_all = orig_pa
+            km._reveal_chat_for = orig_rc; km._live_map = orig_tx; km._push_all = orig_pa
 
-    def test_revive_session_resumes(self):
-        # confirming the modal's "Revive" must actually resume the session. The kernel owns the resume
-        # now (`romp <name> --resume <sid> --detach`): the old `romp-postal-service revive` subcommand
-        # was REMOVED in 2b5e181 but _revive_session kept shelling it — the CLI exits 0 on unknown
-        # commands with output DEVNULL'd, so the picker's Revive silently did nothing (the user
-        # 2026-07-05). Full coverage: tests/test_kernel_revive.py.
+    def test_revive_of_a_session_no_backend_records_is_refused_by_name(self):
+        # confirming the modal's "Revive" resumes through the backend that holds the session's record
+        # (the SDK backend; the Codex backend for a dead Codex thread — full coverage in
+        # tests/test_kernel_revive.py). A session NO backend records is refused by name and LOUDLY
+        # (the user 2026-07-05: a revive that silently did nothing for a week): nothing is shelled out —
+        # the terminal resume left with the tmux backend — and the reason is said.
         import subprocess as _sp
-        calls, saved, saved_tmux = [], km.subprocess.run, km._tmux_sessions
+        calls, saved, saved_live = [], km.subprocess.run, km._live_map
         km.subprocess.run = (lambda *a, **k:
                              calls.append(list(a[0])) or _sp.CompletedProcess(a[0], 0, "", ""))
-        km._tmux_sessions = lambda: {}   # the door's live snapshot (names reserved atomically) — not the tmux probe
+        km._live_map = lambda: {}   # the door's live snapshot (names reserved atomically)
+        err = io.StringIO()
         try:
-            km._revive_session("deadsid000")
+            with contextlib.redirect_stderr(err):
+                km._revive_session("deadsid000")
         finally:
-            km.subprocess.run, km._tmux_sessions = saved, saved_tmux
-        self.assertTrue(calls, "revive must shell out to the resume path")
-        argv = calls[0]
-        self.assertTrue(str(argv[0]).endswith("/romp"),
-                        "the kernel owns the resume (bin/romp), never the removed postal subcommand")
-        # --name pins the recorded name; this fixture has none, so _name_of falls back to the sid
-        self.assertEqual(argv[1:], ["resume", "deadsid000", "--name", "deadsid000", "--detach"])
+            km.subprocess.run, km._live_map = saved, saved_live
+        self.assertEqual(calls, [], "no backend holds it → no resume is shelled out")
+        self.assertIn("no backend can revive this session", err.getvalue(), "the refusal names the reason")
 
     def test_split_reminders(self):
         p, r = km._split_reminders("do the thing <system-reminder>be careful</system-reminder> now")
@@ -6340,66 +6198,6 @@ class ViewBuilder(unittest.TestCase):
         # echoed id lets it retire exactly the chip that asked and drop a stray twin
         self.assertIn('ack["shipId"] = str(msg["shipId"])', src)
         self.assertIn('_reply(client, ack)', src)
-
-    def test_permission_mode_cycle_presses(self):
-        # shift+tab press count from current → target in the cycle (the user 2026-06-16): there's no
-        # slash command for permission mode, so the picker cycles like the terminal UI.
-        self.assertEqual(km._MODE_CYCLE, ["auto", "default", "acceptEdits", "plan"])
-        self.assertEqual(km._mode_presses("default", "acceptEdits"), 1)
-        self.assertEqual(km._mode_presses("default", "plan"), 2)
-        self.assertEqual(km._mode_presses("acceptEdits", "plan"), 1)
-        self.assertEqual(km._mode_presses("plan", "auto"), 1)               # wraps forward to the top of the cycle
-        self.assertEqual(km._mode_presses("plan", "default"), 2)            # plan(3) → auto(0) → default(1)
-        self.assertEqual(km._mode_presses("auto", "plan"), 3)              # auto(0) → … → plan(3)
-        self.assertEqual(km._mode_presses("plan", "plan"), 0)              # already there → no presses
-        self.assertIsNone(km._mode_presses("default", "bypassPermissions"))  # flag-only, not a cycle target
-        self.assertIn("@claude-permission-mode", km.TmuxBackend.LANE_FMT)  # kernel reads the mode var (now a TmuxBackend const)
-
-    def test_cycle_mode_records_the_new_mode(self):
-        # The user's bug (2026-06-18): a chat mode switch flipped the terminal but the chat LABEL stayed
-        # stale. Claude Code never exposes the permission mode in its statusLine JSON, so @claude-permission-
-        # mode has no event source to self-heal from — _cycle_mode must record the mode it just cycled to,
-        # or the var stays frozen (and the next press count is computed from a stale `cur`).
-        calls, saved_run, saved_sleep = [], km.subprocess.run, km.time.sleep
-        saved_tmux, saved_thread, saved_push = km._tmux_sessions, km.threading.Thread, km._push_soon
-        class _SyncThread:                                  # run go() inline so the test sees the result
-            def __init__(self, target=None, daemon=None): self._t = target
-            def start(self): self._t()
-        km.subprocess.run = lambda args, **k: calls.append(list(args)) or type("R", (), {"stdout": ""})()
-        km.time.sleep = lambda *_a, **_k: None
-        km._tmux_sessions = lambda: {SID: {"mode": "auto"}}   # current mode is auto
-        km.threading.Thread = _SyncThread
-        km._push_soon = lambda: calls.append(["__push_soon__"])   # ack-fast poke, never an inline build (2026-08-30)
-        try:
-            km._cycle_mode("mysess", SID, "plan")
-        finally:
-            km.subprocess.run, km.time.sleep = saved_run, saved_sleep
-            km._tmux_sessions, km.threading.Thread, km._push_soon = saved_tmux, saved_thread, saved_push
-        btab = [c for c in calls if c[:2] == ["tmux", "send-keys"] and "BTab" in c]
-        self.assertEqual(len(btab), 3, "auto → plan is 3 shift+tab presses")
-        self.assertIn(["tmux", "set", "-t", "mysess", "@claude-permission-mode", "plan"], calls,
-                      "after cycling, the kernel records the new mode so the chat label updates")
-        self.assertIn(["__push_soon__"], calls, "and pokes the pusher so the label flips on its next cycle")
-
-    def test_tmux_set_mode_refuses_a_mode_the_cycle_cannot_reach(self):
-        # The picker gained Bypass for SDK sessions (the user 2026-08-15). shift+tab is the only handle
-        # the TUI gives us, so a tmux session cannot reach bypassPermissions/dontAsk at all — and
-        # set_mode used to return True regardless, telling the caller a permission mode had been set
-        # when _cycle_mode had already declined it. Refuse, so the kernel can say so.
-        saved_tmux, saved_cycle = km._tmux_sessions, km._cycle_mode
-        cycled = []
-        km._tmux_sessions = lambda: {SID: {"mode": "auto"}}
-        km._cycle_mode = lambda name, sid, target: cycled.append(target)
-        try:
-            be = km.TmuxBackend()
-            self.assertFalse(be.set_mode(SID, "bypassPermissions"), "no keystroke reaches it → say no")
-            self.assertFalse(be.set_mode(SID, "dontAsk"), "same for the other flag-only mode")
-            self.assertEqual(cycled, [], "and don't pretend to cycle")
-            for m in km._MODE_CYCLE:
-                self.assertTrue(be.set_mode(SID, m), "every cycle mode still goes through: %s" % m)
-            self.assertEqual(cycled, list(km._MODE_CYCLE))
-        finally:
-            km._tmux_sessions, km._cycle_mode = saved_tmux, saved_cycle
 
     def test_recency_colormap_chooser(self):
         # the colormap chooser (the user 2026-06-16): several perceptually-uniform maps + a persisted pick.
@@ -6739,18 +6537,23 @@ class ViewBuilder(unittest.TestCase):
                 "output": "Delivered to 'beta'.", "isError": False, "uuid": "t4", "ts": "x"}
         self.assertEqual(km._hydrate_postal([bare], {})[0]["intent"], "")
 
-    def test_ordered_alive_is_stable_under_activity(self):
+    def test_live_order_is_stable_under_activity(self):
         """Lanes/tabs must not auto-shuffle when a session becomes active: a fresh session is appended
-        once and keeps its slot even when its mtime later jumps ahead (the user 2026-06-15)."""
+        once and keeps its slot even when its mtime later jumps ahead (the user 2026-06-15). Read the way
+        the surfaces read it: the timeline's live-only lanes and the chat tabs, both through _ordered."""
         saved = km._alive_sessions
         try:
-            km._alive_sessions = lambda now, tmux: [{"sid": "A", "mtime": 100}, {"sid": "B", "mtime": 50}]
-            first = [s["sid"] for s in km._ordered_alive(NOW, {})]
-            # B now becomes the most-recently-active (its mtime jumps past A) — the order must NOT change
-            km._alive_sessions = lambda now, tmux: [{"sid": "A", "mtime": 100}, {"sid": "B", "mtime": 999}]
-            second = [s["sid"] for s in km._ordered_alive(NOW, {})]
+            km._alive_sessions = lambda now, live_map: [{"sid": "A", "mtime": 100}, {"sid": "B", "mtime": 50}]
+            first = [s["sid"] for s in km._timeline_sessions(NOW, {}, live_only=True)]
+            # B now becomes the most-recently-active (its mtime jumps past A), so the liveness read comes back
+            # newest-first, B ahead of A, the way _sessions sorts it. The saved order must win over that input
+            # order: a reader that handed the read through unsorted would return [B, A] here.
+            km._alive_sessions = lambda now, live_map: [{"sid": "B", "mtime": 999}, {"sid": "A", "mtime": 100}]
+            second = [s["sid"] for s in km._timeline_sessions(NOW, {}, live_only=True)]
             self.assertEqual(first, ["A", "B"], "new sessions frozen newest-active-first, once")
             self.assertEqual(second, first, "activity (mtime) must not reorder existing lanes/tabs")
+            self.assertEqual([s["sid"] for s in km._chat_tab_sessions(NOW, {})], first,
+                             "the chat tabs read the same order")
         finally:
             km._alive_sessions = saved
 
@@ -6760,10 +6563,12 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(km._session_order(), ["b", "a", "c"])
         fake = [{"sid": "a", "mtime": 3}, {"sid": "b", "mtime": 2}, {"sid": "c", "mtime": 1}]
         saved = km._alive_sessions
-        km._alive_sessions = lambda now, tmux: list(fake)
+        km._alive_sessions = lambda now, live_map: list(fake)
         try:
-            self.assertEqual([s["sid"] for s in km._ordered_alive(NOW, {})], ["b", "a", "c"],
-                             "living sessions follow the saved shared order")
+            self.assertEqual([s["sid"] for s in km._timeline_sessions(NOW, {}, live_only=True)], ["b", "a", "c"],
+                             "living sessions follow the saved shared order as timeline lanes")
+            self.assertEqual([s["sid"] for s in km._chat_tab_sessions(NOW, {})], ["b", "a", "c"],
+                             "and as chat tabs")
         finally:
             km._alive_sessions = saved
 
@@ -6789,7 +6594,7 @@ class ViewBuilder(unittest.TestCase):
         lane = next(s for s in m["sessions"] if s["id"] == SID)
         self.assertEqual(lane["color"], "#abcdef", "lane color is the hex string, not {bg,fg}")
         self.assertEqual(lane["state"], "ready", "turn ended → chip 'ready' (the shared derivation, the user 2026-07-03)")
-        self.assertEqual(lane["model"], "", "tmux-sourced lane decorations are deferred")
+        self.assertEqual(lane["model"], "", "live-row lane decorations are deferred")
         bars = [km._expand_bar(b) for b in m["turns"][SID]]   # the wire bars, long-named (T278c)
         self.assertEqual(len(bars), 1, "the one-input turn is one segment bar")
         bar = bars[0]
@@ -6821,35 +6626,39 @@ class ViewBuilder(unittest.TestCase):
         km._parse_cache.clear()
         self.assertTrue(km._session_working(em.parse_session(str(self.tpath), rompuuid=SID,
                         candidate_files=[str(self.tpath)], now=NOW)["turns"]), "fixture IS working by the event model")
-        km._tmux_sessions = lambda: {}                   # DEAD: not in the live map
+        km._live_map = lambda: {}                   # DEAD: not in the live map
         m = km.build_timeline(NOW)
         lane = next(s for s in m["sessions"] if s["id"] == SID)
-        self.assertFalse(lane["live"], "session is dead (not in tmux)")
+        self.assertFalse(lane["live"], "session is dead (not in the live map)")
         self.assertEqual(lane["state"], "idle", "a dead lane with an unfinished turn is idle, NOT working")
         self.assertFalse(km._expand_bar(m["turns"][SID][-1])["open"], "a dead lane's last bar is not an open (growing-to-now) bar")
 
     def test_lane_and_helper_report_backend(self):
-        """Each session carries a backend label ('sdk'|'tmux') so the ui peer can show it (tab tooltip +
-        timeline lane). Live metadata's field wins; else SDK-registry ownership; a non-SDK session is tmux
-        (the user 2026-06-22, via the ui peer)."""
-        saved = km._sdk
+        """Each session carries a backend label ('sdk'|'codex'|'') so the ui peer can show it (tab tooltip +
+        timeline lane). Live metadata's field wins; else SDK-registry ownership; else a Codex record; a
+        session no backend holds a record of reads '' (the user 2026-06-22, via the ui peer)."""
+        saved, saved_cx = km._sdk, km._codex
         km._sdk = lambda: None                               # deterministic: no SDK backend unless overridden
+        km._codex = lambda: None                             # …and no Codex backend unless overridden
         try:
             self.assertEqual(km._session_backend("x", {"backend": "sdk"}), "sdk")    # live field wins
-            self.assertEqual(km._session_backend("x", {"state": "idle"}), "tmux")    # no field, no SDK reg → tmux
+            self.assertEqual(km._session_backend("x", {"state": "idle"}), "")        # no field, no record → ""
             km._sdk = lambda: type("B", (), {"owns": lambda self, s: True})()
             self.assertEqual(km._session_backend("x", None), "sdk")                  # dead SDK lane → sdk via ownership
             km._sdk = lambda: None
+            km._codex = lambda: type("C", (), {"_session": lambda self, s: {"sid": s}})()
+            self.assertEqual(km._session_backend("x", None), "codex")                # a Codex record, live or dead → codex
+            km._codex = lambda: None
             lane = next(s for s in km.build_timeline(NOW)["sessions"] if s["id"] == SID)
             self.assertNotIn("backend", lane, "the lane never read it — dropped (2026-07-07 payload audit)")
-            self.assertEqual(km.build_session(SID, NOW)["status"]["backend"], "tmux")
+            self.assertEqual(km.build_session(SID, NOW)["status"]["backend"], "", "a names-only session: no label")
         finally:
-            km._sdk = saved
+            km._sdk, km._codex = saved, saved_cx
 
     def test_retrying_state_maps_to_retrying_chip(self):
         """An SDK session stalled in an api_retry storm publishes state 'retrying'; the chat chip surfaces
         it distinctly (not 'working'), so the user sees it's an API issue, not a hang (the user 2026-06-23)."""
-        km._tmux_sessions = lambda: {SID: {"state": "retrying", "since": NOW - 5, "model": "Opus 4.8",
+        km._live_map = lambda: {SID: {"state": "retrying", "since": NOW - 5, "model": "Opus 4.8",
                                            "effort": "high", "context": None, "compactPct": None,
                                            "color": None, "backend": "sdk"}}
         self.assertEqual(km.build_session(SID, NOW)["status"]["state"], "retrying")
@@ -6899,32 +6708,59 @@ class ViewBuilder(unittest.TestCase):
         self.assertIsNotNone(sl, "requestSessions returns a sessionList")
         self.assertEqual(sl.get("selfHost"), "TESTHOST", "the payload names this machine as peers know it")
 
-    def test_createSession_sdk_backend_unavailable_warns_instead_of_tmux_fallback(self):
-        """The user asked for an SDK session on a kernel without the SDK venv and got a MYSTERY TMUX session
-        instead (TESTHOST, 2026-07-02) — the handler silently fell through to _spawn_session. Now it warns
-        (naming bin/romp-sdk-setup) and creates nothing."""
-        saved_sdk, saved_spawn, saved_tmux = km._sdk, km._spawn_session, km._tmux_sessions
+    def test_createSession_sdk_backend_unavailable_warns_instead_of_a_fallback(self):
+        """The user asked for an SDK session on a kernel without the SDK venv and got a MYSTERY session on
+        another backend instead (TESTHOST, 2026-07-02) — the handler silently fell through to a spawn. Now it
+        warns (naming bin/romp-sdk-setup) and creates nothing."""
+        saved_sdk, saved_create, saved_live = km._sdk, km._create_sdk_session, km._live_map
         km._sdk = lambda: None                               # the backend is unavailable (no venv / py<3.10)
-        spawned = []
-        km._spawn_session = lambda nm, cwd: spawned.append(nm)
-        km._tmux_sessions = lambda: {}
+        created = []
+        km._create_sdk_session = lambda nm, cwd, **kw: created.append(nm) or (None, {})
+        km._live_map = lambda: {}
         sent = []
         client = {"send": lambda s: sent.append(json.loads(s)), "app": "chat"}
         try:
             km.Handler._dispatch_ws(None, {"type": "createSession", "name": "sdlkless", "backend": "sdk"}, client)
-            time.sleep(0.05)                                 # the tmux path spawns on a thread — give it a beat
         finally:
-            km._sdk, km._spawn_session, km._tmux_sessions = saved_sdk, saved_spawn, saved_tmux
+            km._sdk, km._create_sdk_session, km._live_map = saved_sdk, saved_create, saved_live
         warn = next((m for m in sent if m.get("type") == "warn"), None)
         self.assertIsNotNone(warn, "the client is told, not silently given a different backend")
         self.assertIn("romp-sdk-setup", warn["text"], "the warn names the fix")
-        self.assertEqual(spawned, [], "no tmux fallback session is created")
+        self.assertEqual(created, [], "no session is created, on any backend")
 
-    def test_timeline_state_and_metadata_from_tmux(self):
-        # live lanes take model/effort/context from tmux @claude-* vars; the STATE is the shared
-        # _session_chip derivation (the user 2026-07-03) — an idle tmux 'waiting' reads as chip 'ready'.
+    def test_createSession_refusal_is_the_backends_verdict(self):
+        """The warn's text is what the backend says about its venv NOW (creation_refusal over the same
+        verdict the session card reads), not a fixed string: a venv built for another python, or one
+        rebuilt while the kernel ran, is named as such on this door too, with the kernel's plain install
+        hint handed over as the default for the verdicts where it fits."""
+        class _Unusable:
+            def available(self):
+                return False
+
+            def creation_refusal(self, default):
+                return "THE VERDICT: %s" % default
+        fake = _Unusable()
+        saved = km._sdk, km._sdk_backend, km._create_sdk_session, km._live_map
+        km._sdk, km._sdk_backend = (lambda: fake), fake
+        created = []
+        km._create_sdk_session = lambda nm, cwd, **kw: created.append(nm) or (None, {})
+        km._live_map = lambda: {}
+        sent = []
+        client = {"send": lambda s: sent.append(json.loads(s)), "app": "chat"}
+        try:
+            km.Handler._dispatch_ws(None, {"type": "createSession", "name": "sdlkless", "backend": "sdk"}, client)
+        finally:
+            km._sdk, km._sdk_backend, km._create_sdk_session, km._live_map = saved
+        warn = next((m for m in sent if m.get("type") == "warn"), None)
+        self.assertIsNotNone(warn)
+        self.assertEqual(warn["text"], "THE VERDICT: " + km.SDK_SETUP_HINT)
+        self.assertEqual(created, [])
+
+    def test_timeline_state_and_metadata_from_the_live_row(self):
+        # live lanes take model/effort/context from the live row; the STATE is the shared
+        # _session_chip derivation (the user 2026-07-03) — an idle row's 'waiting' reads as chip 'ready'.
         # badgeFor hides the badge unless live, so live must be true here
-        km._tmux_sessions = lambda: {SID: {"state": "waiting", "since": NOW - 10, "model": "Opus 4.8",
+        km._live_map = lambda: {SID: {"state": "waiting", "since": NOW - 10, "model": "Opus 4.8",
                                            "effort": "xhigh", "context": 43, "compactPct": None,
                                            "color": "#abcdef"}}
         lane = next(s for s in km.build_timeline(NOW)["sessions"] if s["id"] == SID)
@@ -6937,9 +6773,9 @@ class ViewBuilder(unittest.TestCase):
     def test_chat_chip_and_timeline_lane_are_ONE_derivation(self):
         # the user 2026-07-03: after an API error the chat chip read API ERROR → READY while the timeline
         # lane sat on raw-snapshot 'working' — two derivations of one fact. Both surfaces now call the
-        # shared _session_chip, so under ANY backend snapshot they read the SAME state: tmux claims
+        # shared _session_chip, so under ANY backend snapshot they read the SAME state: the live row claims
         # 'working' here, but the transcript's turn ENDED → both say 'ready', together.
-        km._tmux_sessions = lambda: {SID: {"state": "working", "since": NOW - 10, "model": "", "effort": "",
+        km._live_map = lambda: {SID: {"state": "working", "since": NOW - 10, "model": "", "effort": "",
                                            "context": None, "compactPct": None, "color": None}}
         lane = next(s for s in km.build_timeline(NOW)["sessions"] if s["id"] == SID)
         chip = km.build_session(SID, NOW)["status"]["state"]
@@ -7000,9 +6836,9 @@ class ViewBuilder(unittest.TestCase):
             def live_atoms(self, sid): return list(self.atoms)
             def prune_live(self, *a, **k): pass
             def __getattr__(self, n): return getattr(self._inner, n)
-        saved_bf, saved_tmux = km.Sessions.backend_for, km._tmux_sessions
+        saved_bf, saved_live = km.Sessions.backend_for, km._live_map
         fake = _FakeBE(saved_bf(SID))
-        km._tmux_sessions = lambda: {SID: {"state": "waiting", "since": NOW - 10, "model": "", "effort": "",
+        km._live_map = lambda: {SID: {"state": "waiting", "since": NOW - 10, "model": "", "effort": "",
                                            "context": None, "compactPct": None, "color": None}}
         try:
             km.Sessions.backend_for = lambda sid: fake
@@ -7018,45 +6854,45 @@ class ViewBuilder(unittest.TestCase):
                              "both surfaces fall back to the disk truth together")
         finally:
             km.Sessions.backend_for = saved_bf
-            km._tmux_sessions = saved_tmux
+            km._live_map = saved_live
 
     def test_timeline_includes_dead_sessions_for_scrollback(self):
         # the user 2026-06-16: dead sessions appear as struck lanes so scrolling back surfaces them. The
         # regression was build_timeline feeding only LIVING sessions; it now includes window-dead ones
         # too (the render's active-filter only shows a dead lane when the window covers its activity).
-        # SID has a transcript but is passed NO tmux → it must still be a lane, marked dead.
-        s = {x["id"]: x for x in km.build_timeline(NOW, tmux={})["sessions"]}
+        # SID has a transcript but is passed an EMPTY live map → it must still be a lane, marked dead.
+        s = {x["id"]: x for x in km.build_timeline(NOW, live_map={})["sessions"]}
         self.assertIn(SID, s, "a window-dead session is still a timeline lane")
-        self.assertFalse(s[SID]["live"], "no tmux → a dead lane (the render strikes it)")
+        self.assertFalse(s[SID]["live"], "not in the live map → a dead lane (the render strikes it)")
 
     def test_model_pending_flows_to_chat_status_and_timeline_lane(self):
         # the user 2026-07-03: while a /model switch resolves, BOTH the chat chip and the timeline lane
         # show switching-dots — so the SDK snapshot's modelPending must reach both surfaces (the kernel
         # merges it in Sessions.live() and passes it through build_session + build_timeline).
-        km._tmux_sessions = lambda: {SID: {"state": "working", "since": NOW - 10, "model": "Fable 5",
+        km._live_map = lambda: {SID: {"state": "working", "since": NOW - 10, "model": "Fable 5",
                                            "effort": "high", "context": 20, "compactPct": None,
                                            "color": None, "modelPending": True}}
         st = km.build_session(SID, NOW)["status"]
         self.assertTrue(st.get("modelPending"), "the chat status carries the switching signal")
         lane = next(s for s in km.build_timeline(NOW)["sessions"] if s["id"] == SID)
         self.assertTrue(lane.get("modelPending"), "the timeline lane carries it too")
-        # a snapshot without the key must not crash and reads False (tmux sessions never set it)
-        km._tmux_sessions = lambda: {SID: {"state": "working", "since": NOW - 10, "model": "Opus 4.8",
+        # a snapshot without the key must not crash and reads False (a row without the key)
+        km._live_map = lambda: {SID: {"state": "working", "since": NOW - 10, "model": "Opus 4.8",
                                            "effort": "high", "context": 20, "compactPct": None, "color": None}}
         self.assertFalse(km.build_session(SID, NOW)["status"].get("modelPending"))
 
-    def test_model_pending_from_tmux_reaches_both_surfaces_regardless_of_which_ui_clicked(self):
-        # the user 2026-07-03 (follow-up): tmux tracks NO modelPending of its own (only the SDK backend
-        # does), so switching a tmux session's model used to show dots ONLY on whichever surface's own
-        # LOCAL click heuristic fired — clicking the timeline's picker left the chat chip with no cue at
-        # all, catching up only once the next tmux poll happened to report the new name. Fix: the kernel
+    def test_model_pending_stamped_by_the_kernel_reaches_both_surfaces_regardless_of_which_ui_clicked(self):
+        # the user 2026-07-03 (follow-up): a backend that tracks NO modelPending of its own (only the SDK
+        # backend does) used to show dots ONLY on whichever surface's own LOCAL click heuristic fired —
+        # clicking the timeline's picker left the chat chip with no cue at all, catching up only once the
+        # next live read happened to report the new name. Fix: the kernel
         # stamps ONE shared pending signal (_mark_model_pending) the instant EITHER surface's pick is
         # accepted (_set_model_or_park is the single funnel both the chat's setModel and the timeline's
         # sendCommand route through) — so both build_session and build_timeline show it identically.
         saved_push, km._push_all = km._push_all, lambda: None
         try:
             km._model_switch_pending.clear()
-            km._tmux_sessions = lambda: {SID: {"state": "working", "since": NOW - 10, "model": "Haiku",
+            km._live_map = lambda: {SID: {"state": "working", "since": NOW - 10, "model": "Haiku",
                                                "effort": "high", "context": 20, "compactPct": None, "color": None}}
             fake_be = types.SimpleNamespace(set_model=lambda sid, value: None)
             km._set_model_or_park(fake_be, SID, "opus")   # accepted, from EITHER surface — same call either way
@@ -7064,8 +6900,8 @@ class ViewBuilder(unittest.TestCase):
             self.assertTrue(st.get("modelPending"), "the chat chip shows the switching dots too")
             lane = next(s for s in km.build_timeline(NOW)["sessions"] if s["id"] == SID)
             self.assertTrue(lane.get("modelPending"), "…and so does the timeline lane, from the SAME stamp")
-            # the live tmux model now reflects the pick (a later poll) → the signal clears on BOTH surfaces
-            km._tmux_sessions = lambda: {SID: {"state": "working", "since": NOW - 10, "model": "Opus 4.8",
+            # the live row's model now reflects the pick (a later read) → the signal clears on BOTH surfaces
+            km._live_map = lambda: {SID: {"state": "working", "since": NOW - 10, "model": "Opus 4.8",
                                                "effort": "high", "context": 20, "compactPct": None, "color": None}}
             self.assertFalse(km.build_session(SID, NOW)["status"].get("modelPending"), "cleared once the name lands")
         finally:
@@ -7105,7 +6941,7 @@ class ViewBuilder(unittest.TestCase):
         # the timeline is a complete activity history (the user 2026-06-17): a dead session within the
         # lane window is still a struck lane, with no tab needed. (The ×-hidden variant of this pin died
         # with hidden tabs, the user 2026-08-11 — there is no tab state that could erase a lane anymore.)
-        s = {x["id"]: x for x in km.build_timeline(NOW, tmux={})["sessions"]}
+        s = {x["id"]: x for x in km.build_timeline(NOW, live_map={})["sessions"]}
         self.assertIn(SID, s, "a dead session in-window is STILL a timeline lane")
         self.assertFalse(s[SID]["live"], "and it's a dead (struck) lane")
 
@@ -7113,57 +6949,33 @@ class ViewBuilder(unittest.TestCase):
         # the user 2026-06-17: a dead session is TIMELINE-ONLY — no auto chat tab. It gets a read-only
         # tab ONLY on demand (View read-only → _kept_open); ×-close forgets it (timeline-only again).
         saved = set(km._kept_open)
-        # tmux={} is AMBIGUOUS to _alive_sessions: "zero live sessions" (trust it, show nothing) vs
-        # "no tmux here at all" (headless → fall back to every file-derived session). It disambiguates
-        # with _has_tmux(), i.e. whether a tmux BINARY exists on the machine running the tests. Left
-        # inherited, this test therefore asserts the opposite thing on a box without tmux: the fallback
-        # fires, SID comes back alive, and "not auto-kept as a tab" fails. Ubuntu runners ship tmux and
-        # macOS runners do not, so it passed on Linux CI and failed on macOS CI. Pin it: this test is
-        # about _kept_open in a tmux-capable environment, not about the headless fallback.
-        saved_has = km._has_tmux
-        km._has_tmux = lambda: True
+        # an empty live map is authoritative (no headless fallback): SID is dead here on every machine
         try:
             km._kept_open.discard(SID)
-            tabs = lambda: {x["sid"] for x in km._chat_tab_sessions(NOW, {})}   # tmux={} → SID is dead
+            tabs = lambda: {x["sid"] for x in km._chat_tab_sessions(NOW, {})}   # live_map={} → SID is dead
             self.assertNotIn(SID, tabs(), "a dead session is NOT auto-kept as a tab")
             km._kept_open.add(SID)                       # 'View read-only'
             self.assertIn(SID, tabs(), "View read-only → a read-only tab")
             km._kept_open.discard(SID)                   # ×-close
             self.assertNotIn(SID, tabs(), "×-close forgets it → timeline-only again")
         finally:
-            km._has_tmux = saved_has
             km._kept_open.clear(); km._kept_open.update(saved)
 
-    def test_headless_box_falls_back_to_file_derived_sessions(self):
-        """The other side of that ambiguity, which nothing covered: with NO tmux binary, an empty tmux
-        map means headless, not 'zero sessions', so surfaces fall back to file-derived sessions rather
-        than going blank. This is what made the test above machine-dependent, so pin both directions."""
-        saved_has = km._has_tmux
-        try:
-            km._has_tmux = lambda: False
-            self.assertIn(SID, {s["sid"] for s in km._alive_sessions(NOW, {})},
-                          "no tmux at all → fall back so a headless box isn't blank")
-            km._has_tmux = lambda: True
-            self.assertNotIn(SID, {s["sid"] for s in km._alive_sessions(NOW, {})},
-                             "tmux present + empty result → a genuine zero, show nothing")
-        finally:
-            km._has_tmux = saved_has
-
-    def test_chat_chip_maps_tmux_state(self):
-        # the chat chip maps tmux state: permission -> awaiting, plus model/effort/ctx for the statusline
-        km._tmux_sessions = lambda: {SID: {"state": "permission", "since": NOW - 5, "model": "Opus 4.8",
+    def test_chat_chip_maps_the_live_row_state(self):
+        # the chat chip maps the live row's state: permission -> awaiting, plus model/effort/ctx for the statusline
+        km._live_map = lambda: {SID: {"state": "permission", "since": NOW - 5, "model": "Opus 4.8",
                                            "effort": "max", "context": 20, "compactPct": None, "color": None}}
         st = km.build_session(SID, NOW)["status"]
         self.assertEqual(st["state"], "needsInput", "permission -> the needs-input chip (renamed 2026-08-15)")
         self.assertEqual(st["model"], "Opus 4.8")
         self.assertEqual(st["ctx"], "20")
-        self.assertFalse(st["ctxOver"], "tmux sessions never report a window overflow")
+        self.assertFalse(st["ctxOver"], "a row without ctxOver reads no overflow")
 
     def test_chat_status_carries_ctx_overflow(self):
         """The context % is clamped at 100 kernel-side; ctxOver carries the CLI's '100+' truth (tokens
         exceed the CURRENT model's window, e.g. right after a 1M→200k model switch) so the battery says
         'over this model's window' instead of a silent 100% (the user 2026-09-02)."""
-        km._tmux_sessions = lambda: {SID: {"state": "working", "since": NOW - 5, "model": "Haiku 4.5",
+        km._live_map = lambda: {SID: {"state": "working", "since": NOW - 5, "model": "Haiku 4.5",
                                            "effort": "max", "context": 100, "compactPct": None,
                                            "color": None, "ctxOver": True}}
         st = km.build_session(SID, NOW)["status"]
@@ -7316,9 +7128,11 @@ class ApiRetryAndTabOrderRoutes(unittest.TestCase):
 
 
 class TestPendingQueued(unittest.TestCase):
-    """km._pending_queued / _genuine_queued — still-pending queued messages folded FIFO from the
-    transcript's queue-operation records (event-based; replaces the pane scrape that dropped a 2nd queued
-    message and lost both). Synthetic records only — no real session data."""
+    """km._pending_ledger (_queue_ledger_step) / _genuine_queued — the texts the CLI's queue ledger still
+    lists as pending, folded FIFO from the transcript's queue-operation records (event-based). _pending_ledger
+    is the UNFILTERED read the SDK echo settle takes: every stripped text still owed, no _genuine_queued cut
+    (the display fold that applied it left with the tmux backend). Synthetic records only — no real session
+    data."""
 
     def setUp(self):
         km._queued_parse_cache.clear()
@@ -7341,26 +7155,26 @@ class TestPendingQueued(unittest.TestCase):
 
     def test_single_pending(self):
         self._write(("enqueue", "fix the flaky test"))
-        self.assertEqual(km._pending_queued(self.p), ["fix the flaky test"])
+        self.assertEqual(km._pending_ledger(self.p), ["fix the flaky test"])
 
     def test_two_pending_keep_submission_order(self):
         # the regression: TWO queued messages must BOTH show, oldest→newest (the user 2026-06-16).
         self._write(("enqueue", "first"), ("enqueue", "second"))
-        self.assertEqual(km._pending_queued(self.p), ["first", "second"])
+        self.assertEqual(km._pending_ledger(self.p), ["first", "second"])
 
     def test_dequeue_resolves_fifo_front(self):
         self._write(("enqueue", "first"), ("enqueue", "second"), ("dequeue",))
-        self.assertEqual(km._pending_queued(self.p), ["second"], "the oldest enqueue is the one consumed")
+        self.assertEqual(km._pending_ledger(self.p), ["second"], "the oldest enqueue is the one consumed")
 
     def test_remove_also_resolves(self):
         self._write(("enqueue", "first"), ("enqueue", "second"), ("remove",), ("remove",))
-        self.assertEqual(km._pending_queued(self.p), [], "remove drains like dequeue")
+        self.assertEqual(km._pending_ledger(self.p), [], "remove drains like dequeue")
 
     def test_popAll_clears_the_whole_queue(self):
         # The phantom (the user 2026-08-26): popAll — the CLI's record for the whole queue being recalled
         # at once — was UNHANDLED, so its enqueues stayed pending forever. Nothing here is still owed.
         self._write(("enqueue", "first"), ("enqueue", "second"), ("popAll", "first"))
-        self.assertEqual(km._pending_queued(self.p), [], "a recalled queue owes nothing")
+        self.assertEqual(km._pending_ledger(self.p), [], "a recalled queue owes nothing")
 
     def test_popAll_does_not_shift_later_resolutions(self):
         # The DAMAGE the unhandled op did, and the actual bug reported: with popAll ignored, its two
@@ -7368,13 +7182,13 @@ class TestPendingQueued(unittest.TestCase):
         # message it actually delivered — leaving the delivered one on screen as a queued bubble for good.
         self._write(("enqueue", "recalled one"), ("enqueue", "recalled two"), ("popAll", "recalled one"),
                     ("enqueue", "typed after the recall"), ("dequeue",))
-        self.assertEqual(km._pending_queued(self.p), [],
+        self.assertEqual(km._pending_ledger(self.p), [],
                          "the dequeue resolves the message that followed the recall, not a recalled one")
 
     def test_enqueue_after_popAll_is_still_pending(self):
         # the other direction: a recall clears what was queued THEN, never what arrives after it
         self._write(("enqueue", "recalled"), ("popAll", "recalled"), ("enqueue", "still waiting"))
-        self.assertEqual(km._pending_queued(self.p), ["still waiting"])
+        self.assertEqual(km._pending_ledger(self.p), ["still waiting"])
 
     def test_remove_with_content_takes_that_entry_not_the_oldest(self):
         # The CLI's removes are content-addressed single-item discards, routinely of a NON-oldest entry
@@ -7383,28 +7197,21 @@ class TestPendingQueued(unittest.TestCase):
         # caused: the survivor shown is not the message still waiting.
         self._write(("enqueue", "first"), ("enqueue", "second"), ("enqueue", "third"),
                     ("remove", "second"))
-        self.assertEqual(km._pending_queued(self.p), ["first", "third"])
+        self.assertEqual(km._pending_ledger(self.p), ["first", "third"])
 
     def test_a_content_remove_naming_nothing_pending_still_resolves_the_oldest(self):
         # The deliberate split from _undelivered_wake_tail, which resolves nothing here. This fold credits
-        # dequeues, so a dequeue may already have taken the named entry — and for a DISPLAY the two errors
-        # are not symmetric: an unresolved entry is a bubble that never leaves (the reported bug), while an
-        # over-resolved one self-heals at the next record.
+        # dequeues, so a dequeue may already have taken the named entry — and for a reader of what is still
+        # owed the two errors are not symmetric: an unresolved entry stays owed for good (the reported bug),
+        # while an over-resolved one self-heals at the next record.
         self._write(("enqueue", "first"), ("enqueue", "second"), ("dequeue",), ("remove", "first"))
-        self.assertEqual(km._pending_queued(self.p), [],
-                         "the CLI resolved something; the display must not strand the survivor")
-
-    def test_drops_postal_and_harness_injections(self):
-        # romp delivers a peer message by ENQUEUEing it (carries romp-msg-id / 📬 / a #### banner); those
-        # must not masquerade as the user's pending input — only the genuine typed message remains.
-        self._write(("enqueue", "#################### \U0001F4EC from peer\nromp-msg-id: 11111111-2222"),
-                    ("enqueue", "my real queued ask"))
-        self.assertEqual(km._pending_queued(self.p), ["my real queued ask"])
+        self.assertEqual(km._pending_ledger(self.p), [],
+                         "the CLI resolved something; the reader must not strand the survivor")
 
     def test_empty_when_no_records_or_missing_file(self):
-        self._write(("enqueue", ""))                       # blank content is not genuine
-        self.assertEqual(km._pending_queued(self.p), [])
-        self.assertEqual(km._pending_queued(os.path.join(self.td.name, "nope.jsonl")), [])
+        self._write(("enqueue", ""))                       # blank content is no text owed
+        self.assertEqual(km._pending_ledger(self.p), [])
+        self.assertEqual(km._pending_ledger(os.path.join(self.td.name, "nope.jsonl")), [])
 
     def test_genuine_queued_filter(self):
         self.assertTrue(km._genuine_queued("fix the bug"))
@@ -7420,64 +7227,30 @@ class TestPendingQueued(unittest.TestCase):
         self.assertFalse(km._genuine_queued('<system-reminder>be concise</system-reminder>'))
         self.assertTrue(km._genuine_queued("a normal message"))
 
-    def test_drops_queued_system_wrappers(self):
-        # a backgrounded agent's <task-notification> gets QUEUED when it lands while the session is busy/
-        # compacting — a harness injection, NOT typed input, so it must not show as a "queued message" (the
-        # user 2026-06-30: it rendered as a raw "1 queued message" in the chat). Synthetic: invented ids, TESTHOST.
-        notif = ('<task-notification>\n<task-id>11111111aaaa</task-id>'
-                 '<tool-use-id>toolu_0abc</tool-use-id>'
-                 '<output-file>/tmp/TESTHOST/tasks/11111111aaaa.output</output-file>'
-                 '<status>completed</status><summary>Agent "widget audit" came to rest</summary>'
-                 '<result>done</result></task-notification>')
-        self._write(("enqueue", notif), ("enqueue", "my real queued ask"))
-        self.assertEqual(km._pending_queued(self.p), ["my real queued ask"],
-                         "the queued task-notification is filtered, only the typed message remains")
-
     def test_cache_keys_on_mtime_size(self):
-        # build_session calls this every push; an unchanged transcript returns the cached list, a changed
+        # the echo settle reads this on every pass; an unchanged transcript returns the cached list, a changed
         # one (an enqueue appended) re-reads.
         self._write(("enqueue", "first"))
-        a = km._pending_queued(self.p)
+        a = km._pending_ledger(self.p)
         self.assertEqual(a, ["first"])
         with open(self.p, "a") as f:
             f.write(json.dumps({"type": "queue-operation", "operation": "enqueue", "content": "second"}) + "\n")
-        self.assertEqual(km._pending_queued(self.p), ["first", "second"], "append busts the (mtime,size) cache")
+        self.assertEqual(km._pending_ledger(self.p), ["first", "second"], "append busts the (mtime,size) cache")
 
 
 class CompactSessionRoute(unittest.TestCase):
     """The chat context-battery posts {compactSession, id}; the kernel must route it to /compact for that
-    session's tmux name — the SAME action as the timeline's {compact, name}. Without the handler the click
+    session — the SAME action as the timeline's {compact, name}. Without the handler the click
     was silently dropped (the user 2026-06-16)."""
 
     def test_compact_handler_source_routes_both_shapes(self):
         # both the chat (compactSession/id) and timeline (compact/name) shapes route /compact through the
-        # owning backend (was a tmux-only _tmux_send), unified in _drive.
+        # owning backend (was a single-backend terminal send), unified in _drive.
         src = Path(BIN, "romp-kernel").read_text()
         self.assertIn('t in ("compact", "compactSession")', src,
                       "_drive handles both compact shapes (chat battery + timeline)")
-        self.assertIn('be.send(sid, "/compact")', src,
-                      "compact sends the same /compact through whichever backend owns the sid")
-
-
-class TmuxInject(unittest.TestCase):
-    def test_tmux_send_sequence(self):
-        calls = []
-        # An EMPTY prompt box (the box sits between the last two ─── rules): the send's clear reads it,
-        # finds nothing to kill, and goes straight to the paste. A capture the send cannot PARSE is a
-        # refusal now, so the fake has to answer like a real pane rather than with a bare "".
-        empty_box = "\n".join(["  an earlier reply", "─" * 40, km.PROMPT_GLYPH + " ", "─" * 40])
-        real_run, real_sleep = km.subprocess.run, km.time.sleep
-        km.subprocess.run = lambda args, **k: calls.append(list(args)) or type(
-            "R", (), {"stdout": empty_box if args[:2] == ["tmux", "capture-pane"] else "", "returncode": 0})()
-        km.time.sleep = lambda s: None
-        try:
-            km._tmux_send("mysess", "hello world", _async=False)
-        finally:
-            km.subprocess.run, km.time.sleep = real_run, real_sleep
-        # set-buffer the text → bracketed paste-buffer to the session → Enter to submit
-        self.assertTrue(any(a[:2] == ["tmux", "set-buffer"] and "hello world" in a for a in calls))
-        self.assertTrue(any(a[:2] == ["tmux", "paste-buffer"] and "mysess" in a for a in calls))
-        self.assertTrue(any(a[:2] == ["tmux", "send-keys"] and "Enter" in a for a in calls))
+        self.assertIn('_user_send(be, sid, "/compact") is False', src,
+                      "compact sends the same /compact through whichever backend owns the sid, as the user's gesture (T315), and a refusal shows no cue")
 
 
 class ParentWatch(unittest.TestCase):
@@ -7777,7 +7550,7 @@ class ServeSecurity(unittest.TestCase):
         import urllib.request
         with urllib.request.urlopen("http://127.0.0.1:%d/?token=testtok" % self.port, timeout=5) as r:
             body = r.read().decode("utf-8", "replace")
-        for pane in ("src=/chat", "src=/feed", "src=/timeline"):
+        for pane in ("src=/chat", "data-src=/feed", "data-src=/timeline"):   # the optional panes load from data-src (the gear's Panes setting decides); an eager src returning would fail this
             self.assertIn(pane, body)
 
     def test_landing_has_a_focused_pane_cue(self):
@@ -7822,12 +7595,12 @@ class ServeSecurity(unittest.TestCase):
         self.assertIn("placeLifted(5)", _gear_src())             # measure the pane rect (retrying while the shell reacts)
         self.assertIn("getElementById('feed-pane')", _gear_src())
         self.assertIn("if (e.target === p) closeSettings()", _gear_src())   # backdrop click closes
-        # shell side: the feed iframe lifts to cover the whole window (the panes show THROUGH the transparent
-        # feed). background:transparent on the LIFTED IFRAME ELEMENT is load-bearing: the shell's default
-        # iframe{background:#1e1e1e} otherwise sits under the transparent page and turns the modal's dim
-        # into a full-window black-out (the user 2026-08-08).
+        # shell side: the settings iframe (the /settings page, 2026-09-10; the feed iframe before) lifts to
+        # cover the whole window (the panes show THROUGH the transparent page). background:transparent on the
+        # LIFTED IFRAME ELEMENT is load-bearing: the shell's default iframe{background:#1e1e1e} otherwise sits
+        # under the transparent page and turns the modal's dim into a full-window black-out (the user 2026-08-08).
         html = km._landing()
-        self.assertIn("body.settings-open #f-feed{display:block;position:fixed;inset:0;z-index:200;background:transparent}", html)
+        self.assertIn("body.settings-open #f-settings{display:block;position:fixed;inset:0;z-index:200;background:transparent}", html)
         self.assertIn("m.romp==='settings'", html)
         self.assertIn("document.body.classList.toggle('settings-open',!!m.on)", html)
 
@@ -7841,9 +7614,13 @@ class ServeSecurity(unittest.TestCase):
         # Height rides --app-h (the shell's live VISIBLE height): the layout viewport ignores the phone
         # keyboard, so an inset:0 lift sat half behind it, and the --app-h sizing is what delivers the
         # keyboard to the iframe as its own resize — the event the picker's fold keys on (2026-08-10).
-        self.assertIn("body.picker-open #f-chat{display:block;position:fixed;left:0;right:0;top:0;"
+        self.assertIn("body.picker-open iframe.lifted{display:block;position:fixed;left:0;right:0;top:0;"
                       "height:var(--app-h,100dvh);z-index:200;background:transparent}", html)
-        self.assertIn("body.picker-open #chat-pane{display:block!important}", html)         # un-hide it even if chat is toggled off
+        self.assertIn("body.picker-open .pane.lifted{display:block!important}", html)      # un-hide it even if chat is toggled off
+        # by CLASS since the split (2026-09-08): the shell marks the ASKING column .lifted, so a picker opened
+        # in a later column lifts that column and never the first
+        self.assertIn("var lf=(window.__rompFrameOfWin&&window.__rompFrameOfWin(e.source))||document.getElementById('f-chat');", html)
+        self.assertIn("if(m.on&&lf){lf.classList.add('lifted');if(lf.parentElement)lf.parentElement.classList.add('lifted');}", html)
         self.assertIn("m.romp==='picker'", html)                                            # the shell listens for the picker post
         self.assertIn("document.body.classList.toggle('picker-open',!!m.on)", html)
         # the settings bridge is untouched (both share the one message handler)
@@ -7866,18 +7643,21 @@ class ServeSecurity(unittest.TestCase):
         self.assertIn("<script src=/dist/palette-main.js?v=", html)
 
     def test_shell_perf_bundle_wired(self):
-        # the shell's performance collector (ui/webview/shell-perf.ts, 2026-09-09): Chromium reports an
-        # iframe's long animation frames to the top-level window only, so the shell page observes them and
-        # posts a minute row (app "shell") on its own socket (shellWS, window.__rompShellSend). A dist bundle
-        # like age-color-global, loaded right after it and before the errs script, so the boot's own long
-        # frames are seen; behavior is pinned in ui/webview/shell-perf.test.ts.
+        # the shell's performance collector (ui/webview/shell-perf.ts): Chromium reports a long animation
+        # frame to the top-level document, never to the iframe whose script ran it, so the shell page
+        # observes them and posts a minute row (app "shell") on its own socket (shellWS,
+        # window.__rompShellSend). It is a dist bundle like age-color-global, loaded right after it and
+        # before the errs script so that a long frame during the boot's own work is seen; its behavior is
+        # tested in ui/webview/shell-perf.test.ts, and tests/test_landing_bundles_built.py checks that the
+        # build emits every bundle this page names.
         html = km._landing()
         self.assertIn("<script src=/dist/shell-perf.js?v=", html)
         self.assertLess(html.index("/dist/age-color-global.js"), html.index("/dist/shell-perf.js"))
+        self.assertLess(html.index("/dist/shell-perf.js"), html.index("window.__rompAgeColor"))   # before the errs script
         self.assertLess(html.index("/dist/shell-perf.js"), html.index("/dist/palette-main.js"))
-        # the socket it posts through is the shell's own, defined by the settings script, which runs later:
-        # the bundle reads window.__rompShellSend at call time, so the order is fine
-        self.assertIn("window.__rompShellSend=function(o)", html)
+        # the socket it posts through is the shell's own, defined by the mobile-shell script, which runs
+        # later: the bundle reads window.__rompShellSend at call time, so the order is fine
+        self.assertIn("window.__rompShellSend=", html)
 
     def test_fleet_page_served(self):
         # Fleet (the user 2026-06-23): /fleet serves the by-session open-work view, rendered by dist/fleet.js.
@@ -7928,11 +7708,11 @@ class ServeSecurity(unittest.TestCase):
         self.assertIn("window.addEventListener('romp:wsdown',function(){if(ready()){badge(true);}else{show();}});", body)
 
     def test_files_page_served(self):
-        # "Files" (2026-09-03): /files serves the file viewer as its own pane, rendered by dist/files.js. It
-        # connects as its OWN app (app=files) with the ready hold alone: the viewer is request/response (HTTP
-        # /file for the bytes, op replies to the sending client), never a feed consumer. The chat's styles.css
-        # supplies the viewer's dress; files-pane.css is inlined live for the layout and the pane-resident
-        # variant. No romp loader: an empty pane is not a loading state.
+        # Files: /files serves the file viewer as its own pane, rendered by dist/files.js. It connects as its OWN
+        # app (app=files) with the shim's stale opt-out: the viewer is request/response (HTTP /file for the bytes,
+        # op replies to the sending client), never a feed consumer. The chat's styles.css supplies the viewer's
+        # dress; files-pane.css is inlined live for the layout and the pane-resident variant. No romp loader: an
+        # empty pane is not a loading state. The pane's own module is tests/test_files_pane.py.
         import urllib.request
         with urllib.request.urlopen("http://127.0.0.1:%d/files?token=testtok" % self.port, timeout=5) as r:
             self.assertEqual(r.status, 200)
@@ -7944,7 +7724,8 @@ class ServeSecurity(unittest.TestCase):
         self.assertIn("/dist/files.js", body)
         self.assertLess(body.index("/dist/federation.js"), body.index("/dist/files.js"), "manager before the bundle")
         self.assertIn("app=files", body)
-        self.assertIn('var CAPS="readyGate,noStale"', body)   # the ready hold + the stale opt-out (no pushed view)
+        self.assertIn("var NOSTALE=true;", body)   # no pushed view, so the "may be stale" prompt is never armed here
+        self.assertIn('var CAPS="readyGate"', body)   # the ready hold alone: never a feed consumer (the fork's caps)
         self.assertNotIn('var CAPS="feedDelta', body)
         self.assertIn("body.fileview-pane #romp-fileview{", body, "files-pane.css is inlined live")
         self.assertNotIn("id=pane-spin", body)
@@ -7956,7 +7737,7 @@ class ServeSecurity(unittest.TestCase):
         # For back-compat the chat tab bar / Fleet foot still post {romp:'toggleFleet'}; the shell routes that
         # to the same pane toggle (window.__rompPaneToggle('fleet',to?)). The old floating button stays gone.
         html = km._landing()
-        self.assertIn("<iframe id=f-fleet src=/fleet>", html)
+        self.assertIn("<iframe id=f-fleet data-src=/fleet>", html)   # data-src: an optional pane, loaded where the gear shows it (2026-09-10)
         self.assertIn("<div class=pane id=fleet-pane>", html)      # Fleet is a real pane, not an overlay
         self.assertNotIn("chat-fleet-toggle", html)               # the floating shell button is removed
         self.assertNotIn("show-fleet", html)                      # the swap mechanism is gone entirely
@@ -8038,8 +7819,9 @@ class ServeSecurity(unittest.TestCase):
 class NewSessionRoute(unittest.TestCase):
     """POST /new — `romp new` (2026-07-25): the WS createSession op as a one-shot token-gated POST.
     SDK is the default backend and there is NO silent fallback: an unavailable SDK answers ok:false
-    with the remedy; backend "tmux" threads the same _spawn_session the WS op uses. Runs the REAL
-    handler over loopback with the spawn/SDK seams patched (never a real session from a test)."""
+    with the remedy; backend "codex" takes the Codex arm and any other backend word is refused by name
+    (HTTP 400). Runs the REAL handler over loopback with the create/SDK seams patched (never a real
+    session from a test)."""
 
     @classmethod
     def setUpClass(cls):
@@ -8079,7 +7861,7 @@ class NewSessionRoute(unittest.TestCase):
         self.assertFalse(body["ok"])
         self.assertIn("directory not found", body["error"])
 
-    def test_sdk_unavailable_never_falls_back_to_tmux(self):
+    def test_sdk_unavailable_never_falls_back_to_another_backend(self):
         saved_sdk, saved_live = km._sdk, km._live_names
         km._sdk, km._live_names = (lambda: None), (lambda t: {})
         try:
@@ -8087,7 +7869,7 @@ class NewSessionRoute(unittest.TestCase):
         finally:
             km._sdk, km._live_names = saved_sdk, saved_live
         self.assertEqual(code, 200)
-        self.assertFalse(body["ok"], "no silent tmux session when the SDK is missing")
+        self.assertFalse(body["ok"], "no silent session on another backend when the SDK is missing")
         # asserted by MEANING, not by the old phrasing: nothing was created, and the one command that
         # fixes it is named (the user 2026-07-28 — "SDK backend unavailable" named nothing to do)
         self.assertIn("not created", body["error"])
@@ -8111,6 +7893,27 @@ class NewSessionRoute(unittest.TestCase):
         self.assertFalse(body["ok"], "a backend that cannot import its SDK must refuse, not create")
         self.assertIn("romp-sdk-setup", body["error"])
 
+    def test_the_refusal_is_the_backends_verdict(self):
+        """`romp new`'s error is the backend's creation_refusal, read at request time over the same venv
+        verdict the session card shows (a venv for another python, or one rebuilt while the kernel ran, is
+        named as such here too); the kernel's plain install hint rides in as the default."""
+        class _Unusable:
+            def available(self):
+                return False
+
+            def creation_refusal(self, default):
+                return "THE VERDICT: %s" % default
+        fake = _Unusable()
+        saved = km._sdk, km._sdk_backend, km._live_names
+        km._sdk, km._sdk_backend, km._live_names = (lambda: fake), fake, (lambda t: {})
+        try:
+            code, body = self._post({"name": "api", "dir": tempfile.gettempdir()})
+        finally:
+            km._sdk, km._sdk_backend, km._live_names = saved
+        self.assertEqual(code, 200)
+        self.assertFalse(body["ok"])
+        self.assertEqual(body["error"], "THE VERDICT: " + km.SDK_SETUP_HINT)
+
     def test_existing_live_name_is_an_idempotent_ok(self):
         saved_live = km._live_names
         km._live_names = lambda t: {"api": "sid-existing"}
@@ -8121,23 +7924,18 @@ class NewSessionRoute(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual((body["ok"], body["existing"], body["id"]), (True, True, "sid-existing"))
 
-    def test_tmux_backend_threads_the_spawn(self):
-        calls = []
-        saved_spawn, saved_live = km._spawn_session, km._live_names
-        km._spawn_session, km._live_names = (lambda nm, cwd=None: calls.append((nm, cwd))), (lambda t: {})
+    def test_unknown_backend_is_refused_by_name(self):
+        # the door knows two backends; any other word is a 400 that names both — never a session on a
+        # backend the asker did not pick
+        saved_live = km._live_names
+        km._live_names = lambda t: {}
         try:
-            code, body = self._post({"name": "term1", "dir": tempfile.gettempdir(),
-                                     "backend": "tmux"})
-            for _ in range(100):                     # the spawn is threaded — wait for it
-                if calls:
-                    break
-                time.sleep(0.05)
+            code, body = self._post({"name": "term1", "dir": tempfile.gettempdir(), "backend": "abacus"})
         finally:
-            km._spawn_session, km._live_names = saved_spawn, saved_live
-        self.assertEqual(code, 200)
-        self.assertTrue(body["ok"] and body.get("pending"))
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][0], "term1")
+            km._live_names = saved_live
+        self.assertEqual(code, 400)
+        self.assertFalse(body["ok"])
+        self.assertEqual(body["error"], 'unknown backend "abacus": "sdk" (Claude Code, the default) or "codex"')
 
 
 class HostSuspend(unittest.TestCase):
@@ -8239,31 +8037,31 @@ class HostSuspend(unittest.TestCase):
 
 class SessionListNameCollision(unittest.TestCase):
     """Regression (the user 2026-06-22): two functions were both named _session_list — the picker payload
-    builder _session_list(now, tmux) and a 0-arg tmux query for GET /sessions (commit 7b89bd9). The 0-arg
+    builder _session_list(now, live_map) and a 0-arg liveness query for GET /sessions (commit 7b89bd9). The 0-arg
     def came LATER, so it SHADOWED the picker's. The webview's `requestSessions` handler calls it with two
     args → TypeError → the WS handler thread died → the socket dropped → the client reconnected and BLANKED
     the chat (wiping the half-typed new-session name), and the picker dropdown showed NO existing sessions.
     Fix: the GET /sessions query is its OWN distinct 0-arg name (now _session_rows). Guard the re-collision."""
 
-    def test_picker_session_list_keeps_its_now_tmux_signature(self):
+    def test_picker_session_list_keeps_its_now_live_map_signature(self):
         import inspect
         params = inspect.signature(km._session_list).parameters
-        self.assertEqual(list(params)[:2], ["now", "tmux"],
-                         "the picker payload builder must stay callable as _session_list(now, tmux) — requestSessions calls it that way")
+        self.assertEqual(list(params)[:2], ["now", "live_map"],
+                         "the picker payload builder must stay callable as _session_list(now, live_map) — requestSessions calls it that way")
         # Anything AFTER those two must be optional (`window`, the 30-day deep list, 2026-07-24), so the
         # bare two-arg call the handler makes can never become a TypeError again — which is what this
         # regression is really about. A 0-arg def shadowing it still fails the first assert.
         self.assertTrue(all(p.default is not inspect.Parameter.empty for p in list(params.values())[2:]),
-                        "extra picker params must carry defaults, so _session_list(now, tmux) keeps working")
+                        "extra picker params must carry defaults, so _session_list(now, live_map) keeps working")
 
     def test_session_rows_is_a_distinct_zero_arg_function(self):
         import inspect
         self.assertTrue(hasattr(km, "_session_rows"), "the GET /sessions query has its OWN name now")
         self.assertEqual(list(inspect.signature(km._session_rows).parameters), [],
-                         "_session_rows is the 0-arg unified (tmux+SDK) query GET /sessions serves")
+                         "_session_rows is the 0-arg unified (SDK+Codex) query GET /sessions serves")
 
     def test_requestSessions_call_shape_does_not_raise_typeerror(self):
-        # exactly how the WS handler invokes it (now, tmux) — must NOT TypeError (the shadowing bug), and the
+        # exactly how the WS handler invokes it (now, live_map) — must NOT TypeError (the shadowing bug), and the
         # result is the list shape renderPicker consumes. Empty fixture dir → [] is fine; we only guard the call.
         items = km._session_list(int(time.time()), {})
         self.assertIsInstance(items, list, "the picker payload is a list of session rows")
@@ -8481,11 +8279,11 @@ class SessionOrderStable(unittest.TestCase):
     keeps its persisted slot, only a drag reorders (the user 2026-06-23). Before the fix, dead lanes were
     pulled into a separate mtime-sorted block, so a session jumped slots the moment it died."""
     def setUp(self):
-        self._saved = (km._ordered_alive, km._alive_sessions, km._sessions, km._session_order,
+        self._saved = (km._alive_sessions, km._sessions, km._session_order,
                        km._session_order_proved, set(km._kept_open))
 
     def tearDown(self):
-        (km._ordered_alive, km._alive_sessions, km._sessions, km._session_order,
+        (km._alive_sessions, km._sessions, km._session_order,
          km._session_order_proved, kept) = self._saved
         km._kept_open.clear(); km._kept_open.update(kept)
 
@@ -8500,11 +8298,10 @@ class SessionOrderStable(unittest.TestCase):
         km._session_order = lambda: ["A", "B", "C"]
         km._session_order_proved = lambda: ["A", "B", "C"]
         km._sessions = lambda now: [B, A, C]             # _sessions is mtime-DESC → B first
-        # _chat_tab_sessions/_timeline_sessions now read _alive_sessions directly and order via _ordered
-        # (the session-order refactor, 15f5037) — stub THAT for the live list; _ordered_alive is no longer
-        # on their path. B has DIED → only A, C live, in persisted order.
-        km._alive_sessions = lambda now, tmux: [A, C]
-        km._ordered_alive = lambda now, tmux: [A, C]
+        # _chat_tab_sessions/_timeline_sessions read _alive_sessions directly and order via _ordered
+        # (the session-order refactor, 15f5037): stub THAT for the live list. B has DIED, so only A, C live,
+        # in persisted order.
+        km._alive_sessions = lambda now, live_map: [A, C]
         return A, B, C
 
     def test_dead_timeline_lane_keeps_its_slot(self):
@@ -8517,236 +8314,6 @@ class SessionOrderStable(unittest.TestCase):
         km._kept_open.clear(); km._kept_open.add("B")    # B's tab kept open (read-only) after death
         got = [s["sid"] for s in km._chat_tab_sessions(NOW, {})]
         self.assertEqual(got, ["A", "B", "C"], "kept-open dead tab keeps its slot, same stable key as the timeline")
-
-
-class TmuxInputEcho(unittest.TestCase):
-    """Optimistic input echo for tmux sends (the user via bugs 2026-06-25): the SDK backend echoes a
-    composer message instantly, but tmux had none — a send whose Enter dropped at the pane prompt was
-    INVISIBLE in the web chat, so the user thought they'd replied. _merge_live_atoms now also merges a
-    kernel-side _tmux_echo for tmux sids: a successful send's echo prunes when the real user turn writes;
-    a DROPPED send's echo PERSISTS so the lost message stays visible. Synthetic only."""
-
-    def setUp(self):
-        self._saved_sdk = km._sdk
-        km._sdk = lambda: None                 # tmux path: no SDK backend owns the sid
-        km._tmux_echo.clear()
-
-    def tearDown(self):
-        km._sdk = self._saved_sdk
-        km._tmux_echo.clear()
-
-    def _session(self, atoms):
-        return {"turns": [{"id": "t", "trigger": None, "t": T0, "end": T0, "ended": True, "atoms": atoms}]}
-
-    def _real_user(self, text, uid="real-1"):
-        return {"type": "user", "uuid": uid,
-                "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
-
-    def test_echo_shows_instantly_before_the_transcript_has_it(self):
-        km._tmux_echo_add(SID, "restart Obsidian and I'll check")
-        merged = km._merge_live_atoms(self._session([self._real_user("earlier")]), SID)
-        texts = [km._atom_user_text(a) for a in merged["turns"][-1]["atoms"]]
-        self.assertIn("restart Obsidian and I'll check", texts, "the tmux send echoes instantly, ahead of disk")
-        self.assertTrue(merged["turns"][-1]["ended"], "but an echo must NOT reopen the turn (it's a user msg, not work)")
-
-    def test_successful_send_echo_prunes_when_the_real_user_atom_lands(self):
-        text = "edit the files and I'll rerun"
-        km._tmux_echo_add(SID, text)
-        merged = km._merge_live_atoms(self._session([self._real_user(text)]), SID)
-        texts = [km._atom_user_text(a) for a in merged["turns"][-1]["atoms"]]
-        self.assertEqual(texts.count(text), 1, "no duplicate bubble: the echo dedups against the real atom")
-        self.assertNotIn(SID, km._tmux_echo, "the echo is pruned once the real user turn writes")
-
-    def test_dropped_send_echo_persists_so_the_lost_message_stays_visible(self):
-        km._tmux_echo_add(SID, "this Enter dropped at the prompt")
-        merged = km._merge_live_atoms(self._session([]), SID)   # transcript never gets it — the send dropped
-        texts = [km._atom_user_text(a) for a in merged["turns"][-1]["atoms"]]
-        self.assertIn("this Enter dropped at the prompt", texts, "a dropped send stays visible, not silent")
-        self.assertIn(SID, km._tmux_echo, "the echo persists until the real turn lands")
-
-    def test_no_echo_is_a_noop(self):
-        sess = self._session([self._real_user("hello")])
-        self.assertIs(km._merge_live_atoms(sess, SID), sess, "no live echo → session returned unchanged")
-
-    def test_echo_suppressed_when_its_text_is_already_shown_as_queued(self):
-        # No double-show: a send that's QUEUED behind a busy turn is surfaced by the event-based
-        # kind:"queued" indicator. The echo for that same text must be hidden so it doesn't render twice.
-        text = "do the thing while you're busy"
-        km._tmux_echo_add(SID, text)
-        merged = km._merge_live_atoms(self._session([]), SID, shown_texts=[text])
-        texts = [km._atom_user_text(a) for a in merged["turns"][-1]["atoms"]]
-        self.assertNotIn(text, texts, "a queued message is owned by the queued indicator, not double-shown by the echo")
-        self.assertIn(SID, km._tmux_echo, "the echo is only HIDDEN while queued, not pruned — it retires when the real atom lands")
-
-    def test_echo_only_merge_does_not_make_the_session_look_working(self):
-        # THE chat↔timeline split (the user 2026-06-25): the chat is the only surface that merges live
-        # atoms, and it forced the last turn open for ANY fresh atom — so a lingering input echo (a dropped
-        # send persists forever) made the chat show 'working' + a counting timer while the timeline/feed (no
-        # merge) correctly showed idle. An echo is a pending USER message, not the assistant working.
-        ended_turn = self._session([self._real_user("earlier prompt")])  # last turn is ended=True
-        km._tmux_echo_add(SID, "this send dropped — its echo lingers")
-        merged = km._merge_live_atoms(ended_turn, SID)
-        self.assertTrue(merged["turns"][-1]["ended"], "an echo-only merge keeps the turn ENDED (not reopened)")
-        self.assertFalse(km._session_working(merged["turns"]), "a lone echo must NOT read as working")
-        texts = [km._atom_user_text(a) for a in merged["turns"][-1]["atoms"]]
-        self.assertIn("this send dropped — its echo lingers", texts, "the echo still renders (stays visible)")
-
-    def test_live_assistant_work_still_reopens_the_turn(self):
-        # The flip side: a genuine live ASSISTANT atom (an SDK stream reply leading the disk write) DOES
-        # reopen the turn → working. Only the lone-echo case is suppressed.
-        saved = km._sdk
-        live = [{"type": "assistant", "uuid": "live-a", "t": NOW,
-                 "message": {"role": "assistant", "content": [{"type": "text", "text": "on it"}]}}]
-        km._sdk = lambda: type("B", (), {"owns": lambda self, s: True,
-                                         "live_atoms": lambda self, s: live,
-                                         "prune_live": lambda self, s, u, t, hf=0: None})()
-        try:
-            merged = km._merge_live_atoms(self._session([self._real_user("go")]), SID)
-        finally:
-            km._sdk = saved
-        self.assertFalse(merged["turns"][-1]["ended"], "live assistant work reopens the turn")
-        self.assertTrue(km._session_working(merged["turns"]), "streaming assistant work reads as working")
-
-    def test_queued_suppression_strips_whitespace(self):
-        # _pending_queued .strip()s its texts; the echo stores the raw composer text. Match on stripped text.
-        km._tmux_echo_add(SID, "padded message\n")
-        merged = km._merge_live_atoms(self._session([]), SID, shown_texts=["padded message"])
-        texts = [km._atom_user_text(a) for a in merged["turns"][-1]["atoms"]]
-        self.assertNotIn("padded message", texts, "stripped-text match suppresses the echo against the queued bubble")
-
-
-class TmuxEchoSettledByALaterTurn(unittest.TestCase):
-    """A tmux echo the transcript has OVERTAKEN (the user 2026-08-26). The echo outlives a later turn on
-    purpose — that is how a send the pane dropped stays visible — but "still visible" had come to mean
-    "still posing as pending": days-old echoes were folded into the queued indicator on every busy push,
-    and off it they drew as ordinary sent bubbles with no way to clear them. The settling EVENT is a
-    genuine-human turn landing strictly later than the send: the pane is FIFO, so nothing typed after a
-    message the CLI still held could overtake it. Past that, the echo is marked dropped — the shipped
-    "never delivered" treatment, restore + dismiss — and never pruned out from under the user. Synthetic
-    only; the SDK's own floor semantics live in test_sdk_echo_durability.py."""
-
-    LANDED_AT = T0 + 500
-    SENT_BEFORE = T0 + 100          # overtaken: the transcript took a human turn after this
-    SENT_AFTER = T0 + 900           # still in flight: nothing has overtaken it
-
-    def setUp(self):
-        self._saved_sdk = km._sdk
-        km._sdk = lambda: None                 # tmux path: no SDK backend owns the sid
-        km._tmux_echo.clear()
-
-    def tearDown(self):
-        km._sdk = self._saved_sdk
-        km._tmux_echo.clear()
-
-    def _session_with_landed_human_turn(self):
-        return {"turns": [{"id": "t", "trigger": None, "t": T0, "end": T0, "ended": True,
-                           "atoms": [{"type": "user", "uuid": "real-1", "author": "human",
-                                      "t": self.LANDED_AT,
-                                      "message": {"role": "user",
-                                                  "content": [{"type": "text", "text": "a later ask"}]}}]}]}
-
-    def _echo_at(self, text, sent_at):
-        km._tmux_echo_add(SID, text)
-        for echo_atom in km._tmux_echo[SID].values():
-            if echo_atom.get("_echo_text") == text:
-                echo_atom["t"] = sent_at
-                return echo_atom
-        raise AssertionError("the echo was not stored")
-
-    def test_overtaken_echo_is_MARKED_dropped_and_kept_visible(self):
-        echo_atom = self._echo_at("this one never made it in", self.SENT_BEFORE)
-        km._merge_live_atoms(self._session_with_landed_human_turn(), SID)
-        self.assertTrue(echo_atom.get("dropped"), "an overtaken send reads as the loss it is")
-        self.assertIn(SID, km._tmux_echo, "marked, never pruned — the only copy of the text is in here")
-
-    def test_in_flight_echo_is_left_untouched(self):
-        echo_atom = self._echo_at("just typed, still going out", self.SENT_AFTER)
-        km._merge_live_atoms(self._session_with_landed_human_turn(), SID)
-        self.assertFalse(echo_atom.get("dropped"), "nothing has overtaken it — it is still in flight")
-
-    def test_a_send_in_the_SAME_second_as_a_landed_turn_stays_in_flight(self):
-        # Strictly later, never at-or-later: the equality case is a send racing the turn that happens to
-        # share its second, and treating that as overtaken would put the 2026-06-29 solid-then-dotted
-        # flicker back for it.
-        echo_atom = self._echo_at("same second as the turn", self.LANDED_AT)
-        km._merge_live_atoms(self._session_with_landed_human_turn(), SID)
-        self.assertFalse(echo_atom.get("dropped"))
-
-    def test_an_interrupt_record_does_not_settle_an_echo(self):
-        # _human_turn_floor excludes the interrupt record (the user 2026-07-07): it authors human but is a
-        # STOP event, not a message that landed and processed the send.
-        session = self._session_with_landed_human_turn()
-        session["turns"][0]["atoms"] = [
-            {"type": "user", "uuid": "int-1", "author": "human", "t": self.LANDED_AT,
-             "message": {"role": "user", "content": [{"type": "text",
-                                                      "text": "[Request interrupted by user]"}]}}]
-        echo_atom = self._echo_at("sent just before the stop", self.SENT_BEFORE)
-        km._merge_live_atoms(session, SID)
-        self.assertFalse(echo_atom.get("dropped"), "a stop is not a delivered turn")
-
-    def test_dismiss_echo_clears_a_settled_one_and_refuses_an_in_flight_one(self):
-        # Without a tmux dismiss_echo the ✕ on the "never delivered" bubble was a fake affordance: the
-        # kernel's drive op is gated on hasattr(be, "dismiss_echo"), so the click acknowledged and the
-        # bubble returned on the next push.
-        backend = km.TmuxBackend()
-        in_flight = self._echo_at("still going out", self.SENT_AFTER)
-        settled = self._echo_at("gone for good", self.SENT_BEFORE)
-        km._merge_live_atoms(self._session_with_landed_human_turn(), SID)
-        self.assertIsNone(backend.dismiss_echo(SID, uuid=in_flight["uuid"]),
-                          "an in-flight send is not the user's to clear")
-        self.assertEqual(backend.dismiss_echo(SID, uuid=settled["uuid"]), "gone for good")
-        self.assertIsNone(backend.dismiss_echo(SID, uuid=settled["uuid"]), "idempotent: a miss is a no-op")
-        remaining = [a.get("_echo_text") for a in km._tmux_echo_atoms(SID)]
-        self.assertEqual(remaining, ["still going out"], "only the dismissed one goes")
-
-    # ── the settle's two side arms, previously untested (PR-740 review follow-up, 2026-08-27) ──
-    # Direct _tmux_echo_settle calls: the arms live there, and the merge path's threading is one line
-    # (TmuxBackend.prune_live passes still_queued=self.pending_queued(sid)).
-
-    def test_path_bearing_overtaken_echo_is_RETIRED_when_the_predicate_resolves(self):
-        # The pop arm mirrors sdk_backend.prune_live: a path-bearing echo fails the text match
-        # STRUCTURALLY (the transcript extracts image paths out of the user text), so "overtaken" is not
-        # evidence of loss — labelling it "never delivered" would libel a delivered screenshot send.
-        echo_atom = self._echo_at("see /tmp/shot.png", self.SENT_BEFORE)
-        fake = types.ModuleType("romp_sdk_backend")
-        fake._path_bearing = lambda t: "/tmp/shot.png" in t
-        saved = sys.modules.get("romp_sdk_backend")
-        sys.modules["romp_sdk_backend"] = fake
-        try:
-            km._tmux_echo_settle(SID, human_floor=self.LANDED_AT)
-        finally:
-            if saved is None:
-                sys.modules.pop("romp_sdk_backend", None)
-            else:
-                sys.modules["romp_sdk_backend"] = saved
-        self.assertNotIn(SID, km._tmux_echo, "retired the SDK way, not labelled a loss it may not be")
-        self.assertFalse(echo_atom.get("dropped"))
-
-    def test_path_bearing_echo_is_MARKED_when_the_sdk_module_is_absent(self):
-        # With the predicate unavailable the settle cannot tell path-bearing from plain, and marking is
-        # the visible, reversible outcome — the dashed bubble's ✕ undoes a wrong call, a silent retire
-        # cannot be undone.
-        echo_atom = self._echo_at("see /tmp/shot.png", self.SENT_BEFORE)
-        saved = sys.modules.pop("romp_sdk_backend", None)
-        try:
-            km._tmux_echo_settle(SID, human_floor=self.LANDED_AT)
-        finally:
-            if saved is not None:
-                sys.modules["romp_sdk_backend"] = saved
-        self.assertTrue(echo_atom.get("dropped"), "marked, the reversible outcome")
-        self.assertIn(SID, km._tmux_echo)
-
-    def test_a_still_queued_echo_stands_down_and_settles_on_release(self):
-        # The floor is a per-SESSION clock: an older queued sibling delivering raises it past a younger
-        # send still genuinely waiting in the CLI's queue. The queue ledger is the authoritative "still
-        # owed" record, so the settle defers to it — marking would have /diag/sendvis call one message
-        # both pending and dropped. Once the ledger releases the text, the next settle rules normally.
-        echo_atom = self._echo_at("the younger queued send", self.SENT_BEFORE)
-        km._tmux_echo_settle(SID, human_floor=self.LANDED_AT,
-                             still_queued=["the younger queued send"])
-        self.assertFalse(echo_atom.get("dropped"), "still owed by the queue ledger — waiting, not lost")
-        km._tmux_echo_settle(SID, human_floor=self.LANDED_AT, still_queued=[])
-        self.assertTrue(echo_atom.get("dropped"), "the ledger released it — the floor's ruling stands")
 
 
 class TestCloserSettledGate(unittest.TestCase):
@@ -8856,18 +8423,20 @@ class SlashCommands(unittest.TestCase):
 
 
 class BootWarm(unittest.TestCase):
-    """_boot_warm pre-parses the living fleet into the kernel parse cache at STARTUP, during the browser's
-    reconnect/reload gap, so the first connect is warm instead of paying the cold serial parse (the user
-    2026-07-03: local sessions take a long time to load on restart)."""
+    """_boot_warm at STARTUP warms the shared discover() listing and parses NOTHING (T323 stage 1, the user
+    2026-09-10: a boot must not read every live transcript for nobody). It used to pre-parse the living fleet
+    for the browser's reconnect gap (the user 2026-07-03); the redial road now ships the active tab whole and
+    every other tab as a skeleton, so the one parse a reconnecting dashboard needs is its own connect push's."""
     def setUp(self):
-        self._saved = (km._alive_sessions, km._has_parsing_client, km._parse, km._tmux_sessions, km.jd.discover)
+        self._saved = (km._alive_sessions, km._has_parsing_client, km._parse, km._live_map, km.jd.discover)
         self.parsed = []
-        km.jd.discover = lambda now: []
-        km._tmux_sessions = lambda: {}
+        self.discovered = []
+        km.jd.discover = lambda now: self.discovered.append(now) or []
+        km._live_map = lambda: {}
         km._parse = lambda path, sid, now: self.parsed.append(sid)
 
     def tearDown(self):
-        (km._alive_sessions, km._has_parsing_client, km._parse, km._tmux_sessions, km.jd.discover) = self._saved
+        (km._alive_sessions, km._has_parsing_client, km._parse, km._live_map, km.jd.discover) = self._saved
 
     def _wait(self, pred, timeout=1.0):
         end = time.time() + timeout
@@ -8877,16 +8446,17 @@ class BootWarm(unittest.TestCase):
             time.sleep(0.02)
         return pred()
 
-    def test_boot_warm_parses_every_live_session(self):
+    def test_boot_warm_warms_discover_and_parses_no_session(self):
         km._has_parsing_client = lambda: False
-        km._alive_sessions = lambda now, tmux: [{"sid": "s1", "path": "/p1"}, {"sid": "s2", "path": "/p2"}]
+        km._alive_sessions = lambda now, live_map: [{"sid": "s1", "path": "/p1"}, {"sid": "s2", "path": "/p2"}]
         km._boot_warm()
-        self.assertTrue(self._wait(lambda: sorted(self.parsed) == ["s1", "s2"]),
-                        "boot-warm parsed every live session into the cache")
+        self.assertTrue(self._wait(lambda: len(self.discovered) == 1), "the shared discover listing is warmed once")
+        time.sleep(0.1)
+        self.assertEqual(self.parsed, [], "no live session is parsed at boot for nobody (T323 stage 1)")
 
     def test_boot_warm_stands_down_for_a_live_parsing_client(self):
         km._has_parsing_client = lambda: True     # the browser already reconnected → its build warms the cache
-        km._alive_sessions = lambda now, tmux: [{"sid": "s1", "path": "/p1"}]
+        km._alive_sessions = lambda now, live_map: [{"sid": "s1", "path": "/p1"}]
         km._boot_warm()
         time.sleep(0.1)
         self.assertEqual(self.parsed, [], "boot-warm defers to a live parsing client — no GIL contention")
@@ -8922,6 +8492,12 @@ class PostalPeerTunnels(unittest.TestCase):
 
     R = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 50001, "bus_port": 50002}
 
+    def tearDown(self):
+        # The flag-off case below sets ROMP_POSTAL_PEERS and never restores it, and _postal_peers_on() reads the
+        # variable at call time: under xdist the stale "0" reached every later module on the same worker (the
+        # remote-identity absorb case notifies the bus only with peers on). Mirrors CheckinMechanics.tearDown.
+        os.environ.pop("ROMP_POSTAL_PEERS", None)
+
     def test_flag_off_keeps_the_reverse_forward(self):
         os.environ["ROMP_POSTAL_PEERS"] = "0"          # peer mode is the DEFAULT now; 0 = legacy scheme
         argv = km._tunnel_argv(dict(self.R))
@@ -8941,11 +8517,22 @@ class PostalPeerTunnels(unittest.TestCase):
     def test_notify_bus_peer_is_guarded(self):
         saved = km.BUS_PORT
         km.BUS_PORT = 1                    # nothing listens here → refused instantly
+        # the refusal kicks the bus revive, which runs the postal service's ensure with THIS process's environment: for
+        # the call's duration the process is client-only with peers off and names a port nothing can bind, so no bus is
+        # ever started (2026-09-10: a hermetic bus reached the machine's fixed port from exactly this test while the real
+        # bus was down for a restart); restored after, whatever the outcome
+        env_saved = {k: os.environ.get(k) for k in ("ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PEERS", "ROMP_POSTAL_PORT")}
+        os.environ.update(ROMP_POSTAL_CLIENT_ONLY="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_PORT="1")
         try:
             self.assertFalse(km._notify_bus_peer("TESTHOST", 50002, True),
                              "postal down → False, never an exception (the supervisor must survive)")
         finally:
             km.BUS_PORT = saved
+            for k, v in env_saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
 
 class CheckinMechanics(unittest.TestCase):

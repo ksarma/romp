@@ -1,23 +1,27 @@
-// The file BROWSER (plans/file-browser.md, the user 2026-08-14): a breadcrumb bar over one directory's
-// entries — click a directory to descend, a file to open in the existing viewer, an ancestor crumb to
-// walk up. It exists because the viewer could only ever show a path someone else surfaced; this is the
-// "just look around the repo" half. Three documents host it, each through initFileBrowse with its own
-// contract (BrowseHost): the FEED pane, the shell's relay target for a browse while the Files pane is
-// closed; the FILES pane (files.ts), the listing as its own column when that pane is on screen or the
-// File-links setting names it (the user 2026-09-06); and the chat, for standalone /chat alone, where no
-// shell and no other pane exist (render.ts openBrowse decides among the three at the click).
+// The file BROWSER (the user 2026-08-14): a breadcrumb bar over one directory's entries: click a directory
+// to descend, a file to open in the existing viewer, an ancestor crumb to walk up. It exists because the
+// viewer could only ever show a path someone else surfaced; this is the "just look around the repo" half.
+// Four documents host it, each through initFileBrowse with its own contract (BrowseHost): the FEED pane,
+// the shell's relay target for a browse ask naming no pane and the one document whose close restores a
+// pane (the default contract); the FILES pane (files.ts), the listing as a column of its own while that
+// pane is on screen (no setting names a closed pane since T404); the chat, where a folder's listing
+// opens over the transcript otherwise (render.ts openBrowse decides among those three at the click, by the
+// file link's ladder in file-route.ts browseRoute); and the WAITING pane (waiting.ts), where the viewer's
+// directory link opens the listing over the pane in place, its close silent (shellRestore false, no relay).
 //
 // It is the viewer's SIBLING overlay and sits BENEATH it (z-index), and the stack is kept
 // ONE-DIRECTIONAL: opening a file from a listing overlays the viewer on top with the listing intact
 // underneath — while opening the BROWSER always closes a viewer that is up (openFileBrowse below),
 // because "browse" means the user wants the listing now, and a browser painted under an opaque
-// viewer is a dead click (found in review, 2026-08-14). One direction also makes the keydown story
+// viewer is a dead click (found in review, 2026-08-14). When unsaved edits keep that viewer up (its
+// discard confirm, answered with cancel), the browse stands down whole rather than paint the dead
+// listing beneath it (the stand-down in openFileBrowse). One direction also makes the keydown story
 // honest: the browser's handler always registers before the viewer's, so Escape's topmost-only rule
-// holds by construction. The close contract is ownership-aware — an in-document viewer never touches
-// the pane, and a RELAY-opened one (the chat's fileLinkPane preference, 2026-08-20) that this
-// browser closes at open hands its pane over silently — so the browser's own browseClosed is the
-// one restore for everything the overlay chain brought forward, and the shell puts the feed pane
-// back exactly once.
+// holds by construction. The close contract is ownership-aware — the viewer is a modal over this
+// document (2026-08-15) and never touches the pane, so the browser's own browseClosed is the ONLY
+// pane restore — the shell puts the feed pane back exactly once.
+// The FEED alone owes that notice (BrowseHost.shellRestore): the Files pane stays up, and neither the chat
+// nor the Waiting pane ever asks the shell to lift a pane for its browser, so their closes say nothing.
 //
 // The listing rides a WebSocket op (listDir → dirListing), NOT a new HTTP route: the sid field routes
 // it to the session-OWNING kernel over the existing federation splice, so browsing a remote session's
@@ -48,26 +52,26 @@ let curSid: string | null = null;
 let onKeyRef: ((e: KeyboardEvent) => void) | null = null;   // the live keydown handler, so close can unbind it
 let showHidden = false;
 let shellRestore = true;               // this document's close owes the shell a browseClosed (the feed's contract)
-let openPick: ((path: string, sid: string | null) => void) | null = null;   // the host's own file open (BrowseHost.openFile), else openFileView here
+let openPick: ((path: string, sid: string | null) => void) | null = null;   // the host's own open for a picked file (BrowseHost.openFile), else the viewer here
 
 /** A browse ask that reached this window: the shell's relay, or a viewer's directory link posting to its own
  *  window ({romp:"browseFiles", path, sid, identity}). */
 export type BrowseAsk = { path: string; sid?: unknown; identity?: unknown };
-/** How the hosting document takes part (initFileBrowse's second argument). */
+/** How the hosting document takes part (initFileBrowse's second argument). Every field is optional; the
+ *  feed's contract is the default. */
 export type BrowseHost = {
   /** Take the ask whole instead of opening here: the chat routes it through its file-link ladder (render.ts
-   *  openBrowse); the Files pane caches the identity it carries, then opens (files.ts). Default: open here. */
+   *  openBrowse); the Files pane caches the identity it carries, then opens (files.ts). */
   onRelay?: (m: BrowseAsk) => void;
-  /** Open a file picked from the listing (a row click, Enter on the active row) in place of the default
-   *  openFileView here. The Files pane routes a pick through its own open (files.ts openHere), so the file
-   *  enters its Recent list like every other file opened there (review 2026-09-07). */
+  /** Open a file picked from the listing (a row click, Enter on the active row) in place of the viewer here,
+   *  UNDER the gesture reader: a Cmd/Ctrl- or middle-clicked PDF row still takes the browser's own tab first.
+   *  The Files pane routes a pick through its own open (files.ts openHere), so the file enters its Recent list. */
   openFile?: (path: string, sid: string | null) => void;
-  /** Whether a close here tells the shell browseClosed, and a real open browseOpened. TRUE only for the FEED,
-   *  the pane the shell lifts for a relayed browse and puts back on that message (and, on a phone, brings
-   *  forward on the ack and leaves on the close). The Files pane stays up and the chat never asks for a lift,
-   *  so their closes and opens say nothing: a browseClosed from either would consume a flag the feed's relay
-   *  armed and hide the feed under its own browser, and a browseOpened would switch a phone to the Feed tab
-   *  for a listing that lives elsewhere. Default true, the feed's contract. */
+  /** Whether a close here tells the shell browseClosed. TRUE only for the FEED, the pane the shell lifts for a
+   *  relayed browse and puts back on that message. The Files pane stays up, and neither the chat nor the
+   *  Waiting pane (waiting.ts, the viewer's directory link opening the listing over the pane in place) ever
+   *  asks for a lift, so their closes say nothing: a browseClosed from any of them would consume a flag the
+   *  feed's relay armed and hide the feed under its own browser. */
   shellRestore?: boolean;
 };
 
@@ -77,28 +81,15 @@ function el(tag: string, cls?: string): HTMLElement {
   return e;
 }
 
-// The browser's close ends the overlay chain, so browseClosed restores a pane the shell turned on
-// for us — or one a RELAY-opened viewer turned on and handed to us when openFileBrowse closed it
-// (the shell's browseClosed arm consumes either flag). Fires on EVERY close path, in the document that
-// owes it (BrowseHost.shellRestore: the feed).
+// The browser is the ONLY overlay that juggles the feed pane (the viewer is a modal over whatever
+// document opened it since 2026-08-15, and never touches the panes), so browseClosed alone restores
+// a pane the shell turned on for us. Fires on EVERY close path, from the document that owes it
+// (BrowseHost.shellRestore: the feed).
 function tellShellClosed(): void {
   if (!shellRestore) return;
   try {
     if (window.parent !== window) window.parent.postMessage({ romp: "browseClosed" }, "*");
   } catch { /* no shell (standalone /feed) — nothing to restore */ }
-}
-
-// The feed's ack of a browse that OPENED: the box is up and its listing asked for. The shell arms a phone's way
-// back on this ack (the Feed tab comes forward, the tab the click came from is remembered for browseClosed) and
-// never at its relay, so a relay this document stands down (the viewer's veto in openFileBrowse: nothing opens,
-// and no ack follows) leaves nothing cocked for a later close to replay (review round 2, 2026-09-07). A listing
-// this document opens for itself (a viewer's directory link) acks too: the shell finds the Feed tab already
-// showing and arms nothing. Same gate as the close notice: the feed's contract only.
-function tellShellOpened(): void {
-  if (!shellRestore) return;
-  try {
-    if (window.parent !== window) window.parent.postMessage({ romp: "browseOpened" }, "*");
-  } catch { /* no shell (standalone /feed): nothing to bring forward */ }
 }
 
 export function closeFileBrowse(): void {
@@ -266,19 +257,17 @@ export function openFileBrowse(path: string, sid?: string | null): void {
     onKeyRef = onKey;
   }
   // "Browse" means the user wants the LISTING now: a viewer left up would sit over the browser (its
-  // modal backdrop draws above — the review's dead-click finding). The box above is deliberately
-  // built BEFORE this close: closeFileView's handoff suppress keys on #romp-filebrowse existing, so
-  // a RELAY-opened viewer (which would otherwise announce viewFileClosed and have the shell hide
-  // the pane with this browser inside it) closes silently, and the pane it brought forward now
-  // belongs to the browser — the shell carries the restore on the browser's own flag and
-  // browseClosed discharges it. The pane stays up for the listing either way.
+  // modal backdrop draws above — the review's dead-click finding). Closing it costs nothing beyond
+  // the modal itself: the viewer never touches the pane, so there is no restore to worry about and
+  // the pane stays up for the listing.
   if (document.getElementById("romp-fileview")) closeFileView();
-  // The viewer's dirty-edit guard can keep it (the person answered the discard confirm with cancel): then
-  // the click stands down WHOLE. No listing is fetched to sit beneath a viewer that covers it (a dead click,
-  // and a listing the pane's next Escape would fall through to), the confirm the person just answered is
-  // the announcement, and a box built above for this click is unbuilt again. The listing beneath an
-  // existing box is left as it was, its sid included: nothing below changed. The chat had this stand-down
-  // at its own end; the Files pane's and the feed's relays land here (review 2026-09-07).
+  // The viewer's dirty-edit guard can keep it (closeFileView's closeGuard: the person answered the discard
+  // confirm with cancel): then the click stands down WHOLE. No listing is fetched to sit beneath a viewer that
+  // covers it (a dead click, and a listing the pane's next Escape would fall through to), the confirm the
+  // person just answered is the announcement, and a box built above for this click is unbuilt again. The
+  // listing beneath an existing box is left as it was, its session and its Hidden state included: nothing
+  // below changed. The chat had this stand-down at its own end; the Files pane's and the feed's relays land
+  // here (review 2026-09-07).
   if (document.getElementById("romp-fileview")) { if (!had) unbuild(); return; }
   curSid = sid || null;
   showHidden = false;
@@ -287,14 +276,11 @@ export function openFileBrowse(path: string, sid?: string | null): void {
   const hb = document.getElementById("fb-hidden");
   if (hb) { hb.classList.remove("on"); hb.setAttribute("aria-pressed", "false"); }
   ask(path);
-  tellShellOpened();
 }
 
-// A box built for a click that then stood down (the viewer's veto above): gone again, outside the close
-// protocol. Nothing opened, so nothing is owed: no browseClosed (the shell may have lifted the feed for this
-// listing, and putting it back now would hide the kept viewer, which lives there; the pane parks forward,
-// the same named price a lost relay pays), no browseOpened (the shell arms a phone's way back on that ack, and
-// a listing that never opened has none to arm), and no latch to reset (no ask went out).
+// An overlay built for a click that then stood down (the viewer's veto above): gone again, outside the
+// close protocol. Nothing opened, so nothing is owed: no browseClosed (the notice a browser that was up
+// sends on closing; the shell's pane restore hangs on it), and no latch to reset, since no ask went out.
 function unbuild(): void {
   document.getElementById("romp-filebrowse")?.remove();
   document.body.classList.remove("filebrowse-open");
@@ -304,9 +290,7 @@ function unbuild(): void {
 function onAct(row: HTMLElement, ev?: MouseEvent | KeyboardEvent): void {
   const p = row.dataset.path || "";
   if (row.dataset.act === "dir") { ask(p); return; }
-  // the gesture reader (file-view.ts openFileClick): a modified click on a PDF → its own tab; a plain click → the host's
-  // own open when it has one (BrowseHost.openFile, the Files pane's openHere), else the viewer here
-  if (row.dataset.act === "file") { openFileClick(ev, p, curSid, openPick || undefined); return; }
+  if (row.dataset.act === "file") { openFileClick(ev, p, curSid, openPick ?? undefined); return; }   // a modified click on a PDF → its own tab; else the host's open, or the viewer here
   if (row.dataset.act === "dl") startDownload(p);       // download-only rows download directly —
 }                                                       // a viewer that could only apologize helps nobody
 
@@ -470,8 +454,8 @@ function onListing(m: DirListing): void {
 }
 
 /** Bind the kernel poster and listen for the shell's relay + the kernel's listing replies.
- *  Called once per hosting document (the feed's, the Files pane's and the chat's boot, beside initFileView);
- *  `host` is that document's contract (BrowseHost), the feed's by default. */
+ *  Called once per hosting document (the feed's, the Files pane's, the chat's and the Waiting pane's boot, beside
+ *  initFileView); `host` is that document's contract (BrowseHost), the feed's by default. */
 export function initFileBrowse(poster: (m: Record<string, unknown>) => void, host: BrowseHost = {}): void {
   post = poster;
   shellRestore = host.shellRestore !== false;
@@ -480,7 +464,7 @@ export function initFileBrowse(poster: (m: Record<string, unknown>) => void, hos
     const m = e.data;
     if (!m) return;
     if (m.romp === "browseFiles" && typeof m.path === "string") {
-      if (host.onRelay) { host.onRelay({ path: m.path, sid: m.sid, identity: m.identity }); return; }
+      if (host.onRelay) { host.onRelay({ path: m.path, sid: m.sid, identity: m.identity }); return; }   // this document's own contract takes the ask whole
       openFileBrowse(m.path || ".", typeof m.sid === "string" ? m.sid : null);
     } else if (m.type === "dirListing") {
       onListing(m as DirListing);

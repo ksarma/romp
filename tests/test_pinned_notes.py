@@ -720,8 +720,22 @@ class WireSeams(unittest.TestCase):
     """The rows reach the strip through the chat frames the transcript pane already reads: one path."""
 
     def test_the_chat_tail_carries_the_field_beside_user_todos(self):
-        src = inspect.getsource(km._send_chat_locked)
-        self.assertIn('"pinnedNotes": m.get("pinnedNotes") or []', src)
+        # BOTH chat-tail senders carry the seam: the index wire (_send_chat_locked) and the uuid-anchored wire
+        # (_send_chat_proto2, its own function since the 2026-09-15 pull-in; every real page is proto 2), so a line
+        # dropped from either would leave the other's cases green while one wire's strip went stale. The userTodos
+        # side of the same seam is pinned over both senders by tests/test_user_todos.py
+        # BuildSessionSeam::test_both_chat_tail_senders_carry_the_two_fields_by_source; this pin adds the position:
+        # the field rides beside userTodos in each sender's tail literal
+        seam = '"pinnedNotes": m.get("pinnedNotes") or []'
+        beside = '"userTodos": m.get("userTodos") or []'
+        for fn in (km._send_chat_locked, km._send_chat_proto2):
+            with self.subTest(sender=fn.__name__):
+                src = inspect.getsource(fn)
+                self.assertIn(seam, src, "%s lost the pinned-notes seam: both chat-tail senders carry it, "
+                              "_send_chat_locked (the index wire) and _send_chat_proto2 (the page wire)" % fn.__name__)
+                self.assertIn(beside, src, "%s lost the userTodos seam the pinned-notes field rides beside" % fn.__name__)
+                self.assertLess(src.index(beside), src.index(seam),
+                                "in %s the pinned-notes field follows userTodos in the chatTail literal" % fn.__name__)
 
     def test_the_chat_build_sig_folds_the_per_sid_fingerprint(self):
         src = inspect.getsource(km._chat_build_sig)
@@ -755,12 +769,12 @@ class BuildSessionSeam(unittest.TestCase):
         names.mkdir()
         (names / SID).write_text("web\t%s\t#abcdef\n" % str(cdir))
         self.saved = (jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.STATE, km.NAMES,
-                      km._read_task_store, km._tmux_sessions, km._GLOBAL_CLAUDE_MD)
+                      km._read_task_store, km._live_map, km._GLOBAL_CLAUDE_MD)
         jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.STATE = names, proj, td / "goals", td
         km.NAMES = names
         km._GLOBAL_CLAUDE_MD = td / "no-global.md"
         km._read_task_store = lambda fsid, fold=None: []
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
                                            "context": None, "compactPct": None, "color": None}}
         jd.GOALDIR.mkdir(parents=True)
         km._parse_cache.clear()
@@ -777,7 +791,7 @@ class BuildSessionSeam(unittest.TestCase):
 
     def tearDown(self):
         (jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.STATE, km.NAMES,
-         km._read_task_store, km._tmux_sessions, km._GLOBAL_CLAUDE_MD) = self.saved
+         km._read_task_store, km._live_map, km._GLOBAL_CLAUDE_MD) = self.saved
         km._parse_cache.clear()
         km._pinned_notes_cache.clear()
         self.td.cleanup()

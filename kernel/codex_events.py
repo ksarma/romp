@@ -93,7 +93,9 @@ def _mcp_text(item):
 
 def usage_from_token_usage(token_usage):
     """ThreadTokenUsage.last → the Anthropic usage keys the cost/token readers already understand
-    (kernel _session_tokens). reasoningOutputTokens is folded into output (that is what it is)."""
+    (kernel _session_tokens). reasoningOutputTokens is folded into output (that is what it is).
+    `last` is ONE model call's numbers — Codex sends a frame per call within a turn, every tool
+    round trip adding one — so the caller sums the frames: a turn's settle carries the whole turn."""
     last = (token_usage or {}).get("last") or {}
     if not last:
         return None
@@ -128,7 +130,7 @@ class ThreadNormalizer:
         self.turn_id = None
         self.turn_open = False        # turn/started..turn/completed bracket (the backend's busy signal)
         self.skipped = {}             # phase-2 item vocabulary seen on the wire: type -> count
-        self._usage = None            # newest thread/tokenUsage/updated, stamped onto the turn's settle
+        self._usage = None            # this turn's tokenUsage frames, summed; stamped on the settle
         self.context = None           # (last-call total tokens, model context window) — the fill %
         self._pending = None          # the held agentMessage: (uuid, ts_ms, text)
         self._minted = set(seen_uuids or ())    # every uuid this FILE already carries
@@ -217,6 +219,19 @@ class ThreadNormalizer:
         final message. stop stays null — the turn genuinely didn't settle."""
         return self._flush()
 
+    def abandoned(self, turn_id, message):
+        """The backend's settle for a turn whose stream ENDED WITHOUT turn/completed — the app-server
+        connection died mid-turn, or a transcript write failed — so no notification will ever close
+        it. Same shape as a terminal `error`: the held final reply lands mid-turn-shaped, then an
+        end_turn record flagged as the error card ENDS the turn. Without it the file's turn stays open
+        for good: the kernel reads working from the FILE, so the session shows working while nothing
+        runs, and the NEXT prompt is absorbed into the dead turn as mid-turn input instead of opening
+        its own (the interrupt settle above exists for the same reason). The turn's usage never lands
+        on a later settle, as for a failed turn."""
+        self.turn_open = False
+        self._usage = None
+        return self._error({"turnId": turn_id, "error": {"message": message}})
+
     # ── the dispatcher ─────────────────────────────────────────────────────────────────────────
     def handle(self, method, params):
         """Map one notification to the records to APPEND (possibly []). The caller owns the file."""
@@ -236,7 +251,16 @@ class ThreadNormalizer:
             return self._compacted(p)
         if method == "thread/tokenUsage/updated":
             tu = p.get("tokenUsage") or {}
-            self._usage = usage_from_token_usage(tu)
+            # one frame per model CALL within the turn (`last` = that call's numbers) — summed, so
+            # the settle carries the whole turn; an overwrite kept only the final call's, about 1/N
+            # of an N-call turn (every tool round trip is a call). Reset at every settle path.
+            u = usage_from_token_usage(tu)
+            if u:
+                if self._usage is None:
+                    self._usage = u
+                else:
+                    for k, v in u.items():
+                        self._usage[k] = self._usage.get(k, 0) + v
             # context fill is the LAST call's footprint (what occupies the window right now);
             # `total` is thread-cumulative — a cost number that exceeds the window within a few
             # turns (review finding #7; codex's own TUI meters on `last` too)

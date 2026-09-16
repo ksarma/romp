@@ -2,11 +2,18 @@
 """A drive op naming a session this kernel doesn't have must FAIL LOUDLY, never degrade into a no-op.
 
 The user 2026-07-29: on a board merging two kernels, a reply addressed to the wrong one reached a kernel
-that owns no such session. Sessions.backend_for() falls through to tmux for any unrecognized sid, and
-TmuxBackend.send then types at a pane named after the sid — with no such pane, the keystrokes evaporate
-with nothing raised and nothing logged, so typed messages simply ceased to exist. Per the repo's
-fail-loudly rule, an op we cannot deliver has to say so: a modal in the pane that fired it, the text kept
-verbatim on disk so nothing typed is lost, and a line in the kernel log.
+that owns no such session. Sessions.backend_for() then fell through to the tmux backend for any
+unrecognized sid, and that backend's send typed at a terminal pane named after the sid — with no such pane,
+the keystrokes evaporated with nothing raised and nothing logged, so typed messages simply ceased to exist.
+Per the repo's fail-loudly rule, an op we cannot deliver has to say so: a modal in the dashboard pane that
+fired it, the text kept verbatim on disk so nothing typed is lost, and a line in the kernel log.
+
+The fall-through itself is gone with that backend (removed 2026-09-11): a sid neither the Claude Code
+("sdk") nor the Codex backend owns now routes to _UNOWNED (kernel/kernel.py, _UnownedBackend), whose every
+op is an explicit refusal — send() returns False and says why on stderr, nothing is typed anywhere. The
+check pinned here still matters on its own: _drive asks _kernel_knows before the op is routed to a backend
+(Sessions.backend_for), and that is what produces the modal, the on-disk copy and the log line rather than
+a bare refusal.
 """
 import json
 import os
@@ -179,15 +186,14 @@ class RefusesForeignDriveOps(_ForeignDriveFixture):
         # is typed text for the ops in _TYPED_NAME_OPS (renameSession, forkSession, commentPromote, commentCreate);
         # for compact and sendCommand it is the target, kept in the row under its own key so the row still says
         # which session was addressed, and
-        # a sendCommand's text stays its cmd (review round 8, 2026-09-09). tmux is off, the comment threads' store
-        # empty and the roster clear, so the name resolves to nothing and the unknown refusal answers.
+        # a sendCommand's text stays its cmd (review round 8, 2026-09-09). The comment threads' store is empty
+        # and the roster clear, so the name resolves to nothing and the unknown refusal answers.
         import pathlib
         with tempfile.TemporaryDirectory() as d:
             saved = km.jd.STATE
             km.jd.STATE = pathlib.Path(d)
             try:
-                with mock.patch.object(km._TMUX, "available", lambda: False), \
-                     mock.patch.object(km, "_thread_names", lambda: {}), \
+                with mock.patch.object(km, "_thread_names", lambda: {}), \
                      mock.patch.dict(km._remotes, {}, clear=True):
                     for msg in ({"type": "compact", "name": "web-2"},
                                 {"type": "sendCommand", "name": "web-2", "cmd": "/model opus"},
@@ -238,9 +244,8 @@ class RefusesForeignDriveOps(_ForeignDriveFixture):
             saved = km.jd.STATE
             km.jd.STATE = pathlib.Path(d)
             try:
-                with mock.patch.object(km._TMUX, "available", lambda: False):
-                    for msg in msgs:
-                        self.assertTrue(km._drive(msg, self.client), msg)
+                for msg in msgs:
+                    self.assertTrue(km._drive(msg, self.client), msg)
                 rows = [json.loads(x) for x in (pathlib.Path(d) / "undelivered.jsonl").read_text().splitlines()]
             finally:
                 km.jd.STATE = saved
@@ -328,8 +333,8 @@ class TypedNameOpsClassifyEveryAcceptedOp(_ForeignDriveFixture):
     # `name` is the session ADDRESSED (the timeline keys these by session name): the row's target, never its text
     TARGET = {"compact": "the session to compact", "sendCommand": "the session the command goes to"}
     # every other op the front door accepts: `name` means nothing to its handler, and a refusal keeps none
-    NAMELESS = ("sendMessage", "rewindSend", "rewindDelete", "interrupt", "compactSession", "dismissDialog", "answerAsk",
-                "navAsk", "toggleAsk", "submitAsk", "addCustomAsk", "cancelAsk", "askText", "cancelQueued", "dismissEcho",
+    NAMELESS = ("sendMessage", "rewindSend", "rewindDelete", "interrupt", "compactSession", "answerAsk",
+                "toggleAsk", "submitAsk", "addCustomAsk", "cancelAsk", "askText", "cancelQueued", "dismissEcho",
                 "apiRetry", "setModel", "setEffort", "setMode", "setFast", "setAuth", "endSession", "moveSession",
                 "stopTask", "rewindFiles", "mcpAction", "commentReply", "commentResolve", "commentDelete", "commentSeen",
                 "userTodoAnswer", "userTodoDismiss", "unpinNote", "commentMerge", "askFollowUp")
@@ -457,8 +462,7 @@ class TypedNameOpsClassifyEveryAcceptedOp(_ForeignDriveFixture):
             def rows():
                 return [json.loads(x) for x in records.read_text().splitlines()] if records.exists() else []
             try:
-                with mock.patch.object(km._TMUX, "available", lambda: False), \
-                     mock.patch.object(km, "_thread_names", lambda: {}), \
+                with mock.patch.object(km, "_thread_names", lambda: {}), \
                      mock.patch.dict(km._remotes, {}, clear=True):
                     for op in sorted(accepted):
                         door = self.FRONT_DOOR.get(op) or ({} if op in self.TARGET else {"id": THEIRS})

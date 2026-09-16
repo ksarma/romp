@@ -43,14 +43,14 @@ test("Enter from the bare chat area (no focused control) drops into the message 
   // gated on activeElement === body so it never steals Enter from a control/tab/the live-ask card, and it
   // hooks no clicks → highlighting + expanding folds are unaffected
   const i = SRC.indexOf('window.addEventListener("keydown"', SRC.indexOf("NAV_SCROLL_STEP"));
-  const block = SRC.slice(i, i + 4200);   // the tail grew a hold line (T236: the hand-over note stands the default down), the arrows grew the folded-away tab's step (tab-groups.test.ts) and the full-pane stand-aside (the file viewer's focused body; Slice 6 of plans/markdown-viewer.md)
+  const block = SRC.slice(i, i + 4200);   // the tail grew a hold line (T236: the hand-over note stands the default down), the arrows grew the folded-away tab's step (tab-groups.test.ts) and the folded-away branch (the header as the active tab's stand-in), and the full-pane stand-aside (the file viewer's focused body; Slice 6 of plans/markdown-viewer.md)
   assert.match(block, /e\.key === "Enter"/);
   assert.match(block, /const ae = document\.activeElement;\s*if \(ae && ae !== document\.body\) return;/);
   assert.match(block, /if \(focusComposerOrAsk\(\)\) e\.preventDefault\(\);/);
 });
 
 test("the message box shows a thin accent-blue border when focused (panel-focus blue, on the border)", () => {
-  assert.match(CSS, /#composer-input:focus \{ border-color: var\(--accent\); \}/);
+  assert.match(CSS, /#composer-input:focus \{ border-color: var\(--composer-identity, var\(--accent\)\); \}/);
 });
 
 test("the tab-menu feed/mail icons use the accent blue when on (matching the timeline lanes)", () => {

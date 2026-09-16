@@ -6,28 +6,31 @@ the real push paths (_push, _push_session_now, _confirm_close_now).
 Upstream's #1017 (tests/test_chat_skeleton_reconnect.py, beside this module) pops the skeleton state on `ready`
 because there a `ready` comes only from a renderer that just evaluated; a redial socket never sends one. The fork
 holds every client that announced READY_GATE_CAP until its bundle says `ready` (slice 1: nothing is pushed at
-accept), and its shim re-sends `ready` on a redial once the bundle has sent its own, so on the fork a redial's
-`ready` is NOT a fresh evaluation. The fork keeps upstream's behaviour on both paths with a second flag: `redial`,
-set at accept beside `reconnect` and never consumed, and a reset that keeps a declared redial's skeleton state.
+accept), except a socket dialled with reconnect=1, which is ready from accept (2026-09-15): the shim posts its
+ready only until a caps frame acks it and dials the term only after that ack, so a redial re-posts no `ready`
+and nothing else could lift its hold (while the hold covered redials, every pane froze after a kernel restart
+or a socket drop until a reload). The fork keeps upstream's behaviour on both paths with a second flag: `redial`,
+set at accept beside `reconnect` and never consumed, and a reset that keeps a declared redial's skeleton state
+should a `ready` reach its socket anyway (the fork's shim re-sent one on every redial until the pull-in).
 That flag made the shim's URL term load-bearing, so the shim declares the redial only once the page has held a
 socket AND its bundle has said `ready` AND that `ready` is not still waiting in the shim's queue for the open
 (`everConnected&&bundleReady&&!readyQueued`, 2026-09-10): a first socket that opened and died before the bundle
 evaluated (the documented mid-load drop) held nothing for the page, and its redial dials as a fresh page; so does
 a redial whose bundle said `ready` only while the socket was down (the `ready` queued, and flushes onto the redial
 socket, where the kernel reads it as a fresh page's). Path by path, what this module pins:
-- a redial socket (?caps=readyGate&reconnect=1) is sent NOTHING before its re-sent `ready`: not by the pusher, not by
-  the off-cycle push, not by a close confirmation;
-- its first strip after `ready` carries `skeleton`: the reset kept the flag, and the pusher's _resolve_reconnect
-  resolves the set on the _push_one the handler runs;
+- a redial socket (?caps=readyGate&reconnect=1&proto=N, dialed only once the kernel's caps frame has acked the bundle's
+  ready: readyAcked, upstream's gate since the 2026-09-15 pull-in) is ready from accept and posts no `ready` of its own;
+- its FIRST strip, the next pusher cycle's, carries `skeleton`: _resolve_reconnect resolves the set on the first
+  strip sender and stamps the client in the ready arm's place;
 - a later resolve (activeTab, needFull) fills the set, and the strip says so;
 - a fresh page (no reconnect term) is held the same way, its `ready` pops the state, and its first strip is full
   with no `skeleton` key: every session whole, as before;
-- neither path gets a tabOrder frame from the `ready` handler itself: the guarded push is the only source;
+- neither path gets a tabOrder frame from the `ready` handler itself: the connect push is the only source;
 - the two halves joined, with the URL the REAL shim builds under node: a page whose first socket opened and died
   before its bundle's `ready` redials without the reconnect term and its bundle's own `ready` is served everything
   whole, as does a page whose bundle said `ready` while its socket was down (the queued `ready` goes out exactly
-  once, on the redial socket); only a page whose bundle had said `ready` before the drop declares the redial and
-  is served skeletons.
+  once, on the redial socket); only a page whose bundle had said `ready` before the drop declares the redial,
+  carries no `ready` on it, and is served skeletons from its first pusher cycle.
 Synthetic only: the notes-api demo world (web/api/tests/docs), placeholder UUIDs, TESTHOST. Never run raw: the
 loads below set no ROMP_MANAGER_PORT; pytest's conftest poisons the live ports.
 """
@@ -65,7 +68,8 @@ GONE = "11111111-2222-3333-4444-555555555559"  # an ended session, listed nowher
 NAMES = {S1: "web", S2: "api", S3: "tests", S4: "docs"}
 TAB_ORDER = [S2, S1, S3, S4]
 SIZES = {S2: 3000, S1: 2000, S3: 1000}        # transcript bytes; S4 has none
-REDIAL = "active=%s&caps=readyGate&reconnect=1" % S1   # what the fork's shim dials after a drop (caps first, reconnect last)
+REDIAL = "active=%s&caps=readyGate&reconnect=1&proto=1" % S1   # what the shim dials after a drop once a caps frame acked the
+#                                                                bundle's ready (caps first, then reconnect and the ready's wire, 1)
 FRESH = "active=%s&caps=readyGate" % S1               # a page's first socket: the gate announced, no reconnect term
 
 # The browser the shim thinks it runs in, for the tests that dial the kernel with the URL the REAL shim builds
@@ -90,6 +94,7 @@ function sock(){return sockets[sockets.length-1];}
 function open(){var s=sock();s.readyState=1;s.onopen();return s;}
 function redial(){var live=timers.filter(function(t){return t.live&&t.fn.name==="connect";});live[live.length-1].fn();}
 function drop(){sock().readyState=3;sock().onclose();redial();}
+function caps(){sock().onmessage({data:JSON.stringify({type:"caps"})});}   // the kernel's answer to a processed ready: the redial gate's latch (readyAcked)
 function readys(s){return s.sent.filter(function(x){return JSON.parse(x).type==="ready";}).length;}
 """ % S1
 
@@ -100,7 +105,8 @@ def _shim_redial(scenario):
     not yet open; then OPEN that redial socket (the shim's onopen flushes its queue and decides the re-send).
     Returns the query the redial was dialed with minus the page identity (app, delta, iid), i.e. the terms the
     kernel's accept reads (active, caps, reconnect) in the shim's order, ready for _dial, and the number of `ready`
-    frames the redial socket carried once open: the bundle's queued one, the shim's re-sent one, or none."""
+    frames the redial socket carried once open: the bundle's queued one (a fresh dial), or none (a declared redial:
+    the re-post stands down once a caps frame acked the ready)."""
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node not installed")
@@ -168,18 +174,18 @@ class GateDifferential(unittest.TestCase):
         self.paths[S4] = os.path.join(self.tmp, S4 + ".jsonl")   # never written: the transcript-less session
         self.SESS = {S1: _sess(S1, 5, "working"), S2: _sess(S2, 7, "working"),
                      S3: _sess(S3, 3, "waiting"), S4: _sess(S4, 0, "waiting")}
-        self._saved = (km._chat_tab_sessions, km._tmux_sessions, km._cached_feed, km.build_session,
+        self._saved = (km._chat_tab_sessions, km._live_map, km._cached_feed, km.build_session,
                        km._comments_frame, km._push_subagents, km.NAMES, km.jd.STATE, list(km._clients))
-        km._chat_tab_sessions = lambda now, tmux: [
+        km._chat_tab_sessions = lambda now, live_map: [
             {"sid": sid, "name": NAMES[sid], "path": self.paths[sid], "anchor": sid} for sid in TAB_ORDER]
-        km._tmux_sessions = lambda: {}
+        km._live_map = lambda: {}
         km._cached_feed = lambda *a, **k: None          # no feed build: the chat frames are what is pinned
 
-        def build(sid, now, tmux=None, **kw):
+        def build(sid, now, live_map=None, **kw):
             return json.loads(json.dumps(self.SESS[sid]))   # a fresh copy per build, as the real builder returns
         km.build_session = build
-        km._comments_frame = lambda sid, tmux: None
-        km._push_subagents = lambda clients, now, tmux: None
+        km._comments_frame = lambda sid, live_map: None
+        km._push_subagents = lambda clients, now, live_map: None
         km.NAMES = Path(self.tmp) / "names"
         km.NAMES.mkdir()
         km.jd.STATE = Path(self.tmp) / "state"
@@ -191,7 +197,7 @@ class GateDifferential(unittest.TestCase):
         km._pusher_wake.clear()
 
     def tearDown(self):
-        (km._chat_tab_sessions, km._tmux_sessions, km._cached_feed, km.build_session,
+        (km._chat_tab_sessions, km._live_map, km._cached_feed, km.build_session,
          km._comments_frame, km._push_subagents, km.NAMES, km.jd.STATE, clients) = self._saved
         del km._clients[:]
         km._clients.extend(clients)
@@ -248,30 +254,17 @@ class GateDifferential(unittest.TestCase):
         self.assertTrue(km._confirm_close_now(GONE))
 
     # ── the redial path ──
-    def test_01_a_redial_is_held_until_its_re_sent_ready_and_its_first_strip_after_it_is_skeleton_marked(self):
+    def test_01_a_redial_is_ready_from_accept_and_its_first_strip_is_skeleton_marked(self):
         c = self._dial(REDIAL)
         self.assertIs(c.get("reconnect"), True, "the shim's statement, recorded at accept")
         self.assertIs(c.get("redial"), True, "the ruling's flag, set at accept beside it")
-        self.assertFalse(c["ready"], "a page that announced the gate is held")
-        self.assertFalse(km._client_ready(c))
-        # nothing before ready: every sender filters on the hold, and none saw the flag
+        self.assertTrue(c["ready"], "a declared redial is ready from accept (2026-09-15): the shim dials the term only once "
+                                    "its bundle's ready was acked and posts no ready on the redial, so nothing else would lift a hold")
+        self.assertTrue(km._client_ready(c))
+        self.assertNotIn("skeleton", c, "no set before the first strip sender: the pusher resolves it")
+        # the first pusher cycle: the FIRST strip sender resolves the set (_resolve_reconnect) and the strip carries it
         km._clients.append(c)
-        self._every_sender(c)
-        self.assertEqual(c["_frames"], [], "a held redial is sent nothing")
-        self.assertIs(c.get("reconnect"), True, "the flag is untouched: no sender saw it")
-        self.assertNotIn("skeleton", c)
-        # the shim's re-sent ready: the handler re-bases the tails and KEEPS the declared redial's state
-        h = _Self()                                   # records the _push_one call without running it
-        km.Handler._dispatch_ws(h, {"type": "ready"}, c)
-        self.assertTrue(c["ready"], "the hold lifts")
-        self.assertEqual(h.calls, [c], "the guarded push is asked for")
-        self.assertIs(c.get("reconnect"), True, "the reset keeps a declared redial's flag (upstream's pop is for a fresh evaluation)")
-        self.assertIs(c.get("redial"), True, "never consumed")
-        self.assertEqual(self._tab_orders(c), [], "the ready handler sends no strip of its own")
-        self.assertEqual(self._sessions(c), [])
-        self.assertEqual(self._statuses(c), [])
-        # the push the handler asked for: the FIRST strip resolves the set and carries it
-        km._push([c], connect=True)
+        km._push([c])
         to = self._tab_orders(c)
         self.assertEqual(len(to), 1)
         self.assertEqual(to[0]["order"], TAB_ORDER)
@@ -284,12 +277,14 @@ class GateDifferential(unittest.TestCase):
         self.assertEqual(c["skeletonOrder"], [S3, S2])
         self.assertIsNone(c.get("reconnect"), "consumed by the first strip sender: the pusher")
         self.assertIs(c.get("redial"), True, "the flag outlives the resolve")
+        self.assertTrue(c["ready"], "the pop's stamp stands: no ready arm ever runs for this socket")
         types = [f["type"] for f in c["_frames"]]
         self.assertLess(types.index("tabOrder"), types.index("session"), "strip first")
+        # no ready follows on a redial socket: the set stands until a resolve fills it (test_02)
 
     def test_02_a_later_resolve_fills_a_redials_set_and_the_strip_says_so(self):
         c = self._dial(REDIAL)
-        km.Handler._dispatch_ws(_Self(lambda cl: km._push([cl], connect=True)), {"type": "ready"}, c)   # the real _push_one body
+        km._push([c])                                                     # the first pusher cycle: the redial's first strip
         self.assertEqual(self._tab_orders(c)[0]["skeleton"], [S3, S2])
         c["_frames"].clear()
         km.Handler._dispatch_ws(_Self(), {"type": "activeTab", "id": S2}, c)   # a click on a skeleton tab
@@ -308,8 +303,11 @@ class GateDifferential(unittest.TestCase):
         self.assertIs(c.get("redial"), True, "the flag is never consumed, whatever the set does")
 
     def test_03_a_second_ready_on_a_redial_socket_keeps_its_set_and_re_bases_its_tails(self):
-        # the shim re-sends `ready` exactly once per redial in normal operation; if a second one arrives on the same
-        # socket the reset still keeps the set (the flag is never consumed) while the tails re-base as slice 1 designed
+        # the shim posts no `ready` on a redial (its bundle's was acked before the term was dialled, 2026-09-15); should
+        # one reach a redial socket anyway (an older shim, a bundle that re-posts), and a second after it, the reset still
+        # keeps the set (the flag is never consumed) while the tails re-base as slice 1 designed,
+        # and the strip's dedup slot clears with the chat and status slots (upstream's #1240: a `ready` holds no strip
+        # either), so the connect push re-sends the strip once, the set still on it
         c = self._dial(REDIAL)
         km.Handler._dispatch_ws(_Self(lambda cl: km._push([cl], connect=True)), {"type": "ready"}, c)
         self.assertEqual(c["skeleton"], {S2, S3})
@@ -319,11 +317,14 @@ class GateDifferential(unittest.TestCase):
         self.assertEqual(c["skeleton"], {S2, S3}, "kept")
         self.assertEqual(c["skeletonOrder"], [S3, S2])
         self.assertEqual(c["echat"], {}, "the tails re-base")
-        self.assertFalse([k for k in c["sent"] if k[0] in ("chat", "status")], "the chat and status slots clear")
+        self.assertFalse([k for k in c["sent"] if k[0] in ("chat", "status", "taborder")],
+                         "the chat, status and strip slots clear (#1240)")
         self.assertEqual(self._tab_orders(c), [], "still no strip from the handler")
         km._push([c], connect=True)
         self.assertEqual(self._sessions(c), [S1, S4], "the held tabs re-sent whole, the skeleton ones not")
-        self.assertEqual(self._tab_orders(c), [], "the strip is unchanged, so its slot dedups it (the reset keeps that slot)")
+        to = self._tab_orders(c)
+        self.assertEqual(len(to), 1, "the strip's slot was cleared by the reset, so the connect push re-sends the strip once")
+        self.assertEqual(to[0]["skeleton"], [S3, S2], "with the kept set on it")
         self.assertEqual(c["skeleton"], {S2, S3}, "and the set stands")
 
     # ── the fresh-page path ──
@@ -352,14 +353,15 @@ class GateDifferential(unittest.TestCase):
         self.assertEqual(self._statuses(c), [], "no status frames: nothing is a skeleton")
         self.assertNotIn("skeleton", c)
 
-    def test_05_a_redial_with_no_active_hint_is_held_and_then_gets_everything(self):
+    def test_05_a_redial_with_no_active_hint_is_ready_from_accept_and_gets_everything(self):
         # the kernel cannot know what the page shows: no set, a full push (fail safe), exactly as upstream's item 7,
-        # now behind the hold
-        c = self._dial("caps=readyGate&reconnect=1")
+        # served by the first pusher cycle (a declared redial is not held, 2026-09-15). The dial carries the wire
+        # term the shim always adds to a redial (readyProto is 1 or 2 on every ready): without it upstream's handshake
+        # gate (ruling 10: `handshake` False until a wire is declared) would serve this socket no chat frame at all.
+        c = self._dial("caps=readyGate&reconnect=1&proto=1")
         self.assertIs(c.get("redial"), True)
+        self.assertTrue(c["ready"], "ready from accept")
         km._push([c])
-        self.assertEqual(c["_frames"], [])
-        km.Handler._dispatch_ws(_Self(lambda cl: km._push([cl], connect=True)), {"type": "ready"}, c)
         self.assertEqual(sorted(self._sessions(c)), sorted(TAB_ORDER))
         self.assertNotIn("skeleton", self._tab_orders(c)[0])
         self.assertNotIn("skeleton", c)
@@ -388,13 +390,16 @@ class GateDifferential(unittest.TestCase):
         self.assertNotIn("skeleton", c)
 
     def test_09_only_a_page_whose_bundle_had_said_ready_before_the_drop_is_served_skeletons(self):
-        # the designed redial, from the same shim: the bundle said ready on the first socket (the page held sessions),
-        # the socket died, the redial declares itself, and the shim's re-sent ready gets the skeleton strip
-        q = _shim_redial_query('open();window.__rompLocalSend({type:"ready"});drop();')
+        # the designed redial, from the same shim: the bundle said ready on the first socket, the kernel's caps frame
+        # acked it (the page held sessions), the socket died, the redial declares itself and carries NO ready (readyAcked
+        # stood the re-post down), and the first pusher cycle gets it the skeleton strip
+        q, readys = _shim_redial('open();window.__rompLocalSend({type:"ready"});caps();drop();')
         self.assertEqual(q, REDIAL, "the reconnect term, after the active hint and the caps")
+        self.assertEqual(readys, 0, "no ready on the redial socket: the bundle's was acked, so the shim re-posts nothing")
         c = self._dial(q)
         self.assertIs(c.get("redial"), True)
-        km.Handler._dispatch_ws(_Self(lambda cl: km._push([cl], connect=True)), {"type": "ready"}, c)   # the shim's re-send
+        self.assertTrue(c["ready"], "ready from accept: nothing else would lift a hold on this socket")
+        km._push([c])                                                    # the first pusher cycle
         to = self._tab_orders(c)
         self.assertEqual(len(to), 1)
         self.assertEqual(to[0]["skeleton"], [S3, S2])
@@ -407,7 +412,8 @@ class GateDifferential(unittest.TestCase):
         # and queues the frame (readyQueued). Keyed on everConnected&&bundleReady alone the redial declared itself,
         # the kernel flagged it `redial`, and the flushed ready (the bundle's OWN, its first) kept `reconnect` and was
         # served skeletons for tabs the page never had. The term gates on !readyQueued too: this redial dials as a
-        # fresh page, the queued ready flushes onto it exactly once (onopen's re-send stands down: flushedReady), and
+        # fresh page, the queued ready flushes onto it exactly once (onopen's re-post of readyMsg stands down while a
+        # ready is queued, !readyQueued, and readyAcked latches it off once a caps frame answers), and
         # the kernel pops the state for a full strip.
         q, readys = _shim_redial('open();sock().readyState=3;sock().onclose();window.__rompLocalSend({type:"ready"});redial();')
         self.assertEqual(q, FRESH, "no reconnect term: the bundle's ready is still in the shim's queue, so the page has held no session")
@@ -452,7 +458,8 @@ class GateDifferential(unittest.TestCase):
         for k in ("skeleton", "skeletonOrder", "reconnect"):
             self.assertNotIn(k, fresh, k)
         self.assertEqual(fresh["echat"], {})
-        self.assertEqual(fresh["sent"], {("taborder",): 1}, "the chat and status slots go; the strip's slot stays")
+        self.assertEqual(fresh["sent"], {}, "all three slots go: chat, status and the strip's (upstream's #1240: a renderer "
+                                            "that just evaluated holds no strip either)")
         redial = {"reconnect": True, "redial": True, "skeleton": {S2}, "skeletonOrder": [S2], "echat": {S1: ("u0", 0)},
                   "sent": {("chat", S1): 1, ("status", S2): 1, ("taborder",): 1}}
         km._client_reset_chat_base(redial)
@@ -460,7 +467,8 @@ class GateDifferential(unittest.TestCase):
                          "a declared redial keeps its state for _resolve_reconnect to consume")
         self.assertIs(redial["redial"], True)
         self.assertEqual(redial["echat"], {}, "while the tails re-base, as slice 1 designed")
-        self.assertEqual(redial["sent"], {("taborder",): 1})
+        self.assertEqual(redial["sent"], {}, "the slot clear runs for a declared redial too: all three slots go, the strip's "
+                                             "included (#1240), so its next connect push re-sends the strip")
 
     # ── the source, so a later fold keeps the flag (condition 3) ──
     def test_07_source_pins_the_flag_its_rationale_and_the_strip_less_ready_handler(self):
@@ -470,7 +478,7 @@ class GateDifferential(unittest.TestCase):
         arm = s[i:s.index("_register_ws_client(client)", i)]
         self.assertIn('client["reconnect"] = True', arm)
         self.assertIn('client["redial"] = True', arm, "set at accept, inside the reconnect arm, before registration")
-        for needle in ("NEVER consumed", "fresh evaluation", "re-sends `ready`", "everConnected", "2026-09-09 ruling"):
+        for needle in ("NEVER consumed", "fresh evaluation", "re-posts its own", "readyAcked", "everConnected", "2026-09-09 ruling"):   # the comment wraps after "own"
             self.assertIn(needle, arm, "the rationale the ruling asked for, stated where the flag is set")
         self.assertEqual(src.count('client["redial"] = True'), 1, "the one write")
         self.assertEqual(src.count('pop("redial"'), 0, "never consumed")
@@ -478,12 +486,13 @@ class GateDifferential(unittest.TestCase):
         self.assertIn('if not client.get("redial"):', r)
         self.assertLess(r.index("with _client_lock(client):"), r.index('if not client.get("redial"):'), "under the slot lock")
         self.assertLess(r.index('if not client.get("redial"):'), r.index('client.pop("skeleton", None)'), "the pops sit under the guard")
-        self.assertLess(r.index('client.pop("reconnect", None)'), r.index('k[0] in ("chat", "status")'),
-                        "the slot clear follows, outside the guard: it runs for a redial too")
+        self.assertLess(r.index('client.pop("reconnect", None)'), r.index('k[0] in ("chat", "status", "taborder", "activeChat")'),
+                        "the slot clear follows, outside the guard: it runs for a redial too, and takes the strip's slot "
+                        "with the chat and status slots (upstream's #1240)")
         i = src.index('if msg and msg.get("type") == "ready":')
         handler = src[i:src.index("_consume_pending_reveal(client)", i)]
         self.assertIn("_client_reset_chat_base(client)", handler)
-        self.assertIn("self._push_one(client)", handler, "the guarded push is the one tabOrder source")
+        self.assertIn("self._push_one(client)", handler, "the connect push is the one tabOrder source")
         self.assertLess(handler.index("_client_reset_chat_base(client)"), handler.index("self._push_one(client)"),
                         "reset, then push: a fresh page's pop precedes the strip that must carry no key")
         self.assertNotIn("_send_tab_order(", handler, "no strip of the handler's own")

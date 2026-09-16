@@ -389,8 +389,9 @@ test("scrollToFragment: decode, then the ONE lookup (an id, an <a name>, the hea
   assert.doesNotMatch(fn, /location\.|document\.getElementById|window\.open/);
 });
 
-test("the URL viewer handles fv-anchor in its body delegate: preventDefault, then scrollToFragment on the body; the local viewer's section links land through the same function", () => {
+test("both viewers land a section link on the body: the URL viewer through its fv-anchor delegate, the local one through its link listener", () => {
   const H = /"fv-anchor": \(a, ev\) => \{ ev\.preventDefault\(\); scrollToFragment\(body, a\.getAttribute\("href"\) \|\| ""\); \},/;
+  assert.match(OPEN_FN, /if \(x\.classList\.contains\(FRAG_LINK_CLASS\)\) \{[^\n]*\n\s*ev\.preventDefault\(\);\n(?:\s*\/\/[^\n]*\n)*\s*scrollToFragment\(body, x\.getAttribute\("href"\) \|\| ""\);/, "the local viewer's listener: a section link (file-view-links.ts FRAG_LINK_CLASS) is this document's scroll");
   assert.match(URL_FN, H, "the URL viewer installs its own delegate for it");
   assert.equal((URL_FN.match(/delegate\(body/g) || []).length, 1, "one listener per open");
   assert.ok(URL_FN.indexOf("delegate(body") < URL_FN.indexOf("const renderBody ="), "installed before any render can run");
@@ -456,8 +457,9 @@ test("rendered markdown never carries data-* attributes into the page, in the vi
   assert.match(SANITIZE, /purifier\(\)\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\)/);
   assert.match(SANITIZE, /const purifier = \(\): MdSanitizer => installedSanitizer \?\? DOMPurify;/, "…which falls back to the module-global instance");
   assert.doesNotMatch(VIEW + RENDER, /ALLOW_DATA_ATTR|DOMPurify\.sanitize\(/, "neither caller spells a profile of its own");
-  // the viewer's own stamps are set AFTER the sanitize, so they are unaffected
-  assert.ok(MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf('a.dataset.act = "fv-anchor"') && MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf("linkMarkdownAnchors(box"));
+  // the viewer's own marks are set AFTER the sanitize, so they are unaffected
+  assert.ok(MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf("linkMarkdownAnchors(box, doc.path)"));
+  assert.ok(MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf('a.dataset.act = "fv-anchor"'));
 });
 
 test("local file mode: a sibling link's #fragment lands after the first RENDERED paint, once", () => {

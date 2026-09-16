@@ -53,20 +53,29 @@ test("the kernel talking about a session this client doesn't hold triggers the S
   assert.match(RENDER,
     /function chatTail\(msg: any\) \{[\s\S]{0,900}?const s = sessions\.get\(msg\.id\);\s*\n\s*if \(!s\) \{[\s\S]{0,1400}?requestFullSession\(msg\.id, "nobase"\);\s*\n\s*return;\s*\n\s*\}/,   // upstream #1017's skeleton-delta ask precedes the base read; the windows cover the comments
     "chatTail with no base asks for the full session instead of dropping the evidence");
+  // statusOnly's no-base arm is the exception since upstream's #1529 (2026-09-11): the kernel sends a status frame for a sid
+  // it holds as a skeleton and for no other, so the status is HELD for the strip (skeleton-tabs.ts holdStatus), never
+  // chatTail's no-base ask, which asked for every withheld tab's full and loaded the whole board into a column opened as a
+  // view of one session (the tabOrder re-list is pinned in tab-ghost-heal)
   assert.match(RENDER,
-    /function statusOnly\(msg: any\) \{[\s\S]{0,900}?const s = sessions\.get\(msg\.id\);\s*\n\s*if \(!s\) \{ requestFullSession\(msg\.id, "nobase"\); return; \}/,   // every no-base ask names its why since upstream #1017; its skeleton-status arm precedes the base read
-    "statusOnly too — the same desync signal, third key (the tabOrder re-list is pinned in tab-ghost-heal)");
+    /function statusOnly\(msg: any\) \{[\s\S]{0,900}?const s = sessions\.get\(msg\.id\);\s*\n\s*if \(!s\) \{[\s\S]{0,1200}?holdStatus\(skeletonTabs, msg\.id, msg\.status\); return;\s*\n\s*\}/,
+    "statusOnly holds a status for a session this page holds nothing of, for the skeleton strip, and asks for no full (#1529)");
 });
 
-test("the re-ask stands down for closing tabs, provisional ids, and unreachable remote hosts", () => {
+test("the re-ask stands down for closing tabs and provisional ids", () => {
   // A tab the user just closed must not be resurrected by its own goodbye traffic (the kernel keeps
   // listing + talking about it for a push or two after the ✕); the kernel never knew a client-minted
-  // provisional id; and a DETACHED host's teardown (closeRemote's synthesized closed fan-out) or a down
-  // host must not turn into an ask-forever loop — the reattach's fresh connect re-sends everything anyway.
+  // provisional id. Both gates are the fork's (upstream's requestFullSession, taken at the 2026-09-15 pull-in,
+  // asks with no gate) and sit inside requestFullSession so every ask key inherits them. The third gate this
+  // case pinned, the detached-host and down-host suppression (`fed.hosts().indexOf(h) < 0 || hostIsDown(id)`),
+  // is RETIRED: it guarded the detached client's reattach (closeRemote's synthesized closed fan-out), which left
+  // with T386 stage 2, so the pull-in's ruling 16 (2026-09-15) took the gate out with the client; the function's
+  // body is pinned to read no host.
   assert.match(RENDER, /if \(isProvisionalId\(id\) \|\| closingTabs\.has\(id\)\) return;/,
     "provisional + mid-close suppression, inside requestFullSession so every ask key inherits it");
-  assert.match(RENDER, /fed\.hosts\(\)\.indexOf\(h\) < 0 \|\| hostIsDown\(id\)\) return;/,
-    "detached (not attached) and down hosts are suppressed the same way closingTabs is");
+  const askFn = RENDER.split("function requestFullSession(")[1].split("\n}")[0];
+  assert.doesNotMatch(askFn, /hostIsDown|fed\.hosts\(\)|hostOf\(/,
+    "requestFullSession reads no host: the detached-host gate retired with the detached client (T386 stage 2; the 2026-09-15 pull-in), and upstream's function never had one");
 });
 
 test("awaitingFull cannot wedge across a reconnect — the socket edge clears it", () => {
@@ -76,8 +85,8 @@ test("awaitingFull cannot wedge across a reconnect — the socket edge clears it
   // and re-sends full sessions, so clearing here never costs an extra ask — it only re-arms the repair).
   assert.match(RENDER, /window\.addEventListener\("romp:wsdown", \(\) => awaitingFull\.clear\(\)\);/);
   assert.match(RENDER, /window\.addEventListener\("romp:wsup", \(\) => awaitingFull\.clear\(\)\);/);
-  assert.match(RENDER, /if \(m\.type === "pipeState"\) \{ if \(!m\.up\) awaitingFull\.clear\(\);/,
-    "the VS Code pipe's down edge too — its shim never fires the romp:ws* events");
+  assert.match(RENDER, /if \(m\.type === "pipeState"\) \{ if \(!m\.up\) \{ awaitingFull\.clear\(\); markPendingLost\("connection"\); onWireDown\(\); \}/,
+    "the VS Code pipe's down edge too: its shim never fires the romp:ws* events (upstream's braces carry the wire's own down-edge work beside the clear)");
   // …and the shim genuinely fires those events on the local socket's close/reopen, so the clear has a source
   assert.ok(KERNEL.includes('new Event("romp:wsdown")'), "the shim dispatches romp:wsdown on close");
   assert.ok(KERNEL.includes('new Event("romp:wsup")'), "…and romp:wsup on reconnect");
@@ -126,13 +135,15 @@ test("a delta with NO base at all is a desync too — every delta path asks for 
     "chatTail: no base → ask, don't wait forever");
   const updateFn = RENDER.slice(RENDER.indexOf("function update(msg"), RENDER.indexOf("function chatTail(msg"));
   assert.match(updateFn, /if \(!s\) \{ requestFullSession\(msg\.id, "nobase"\); return; \}/, "update: same");
-  // The window is 1100 characters since 2026-09-07 (it was 400): statusOnly now OPENS with the skeleton-tab
-  // branch — a status frame for a tab the kernel is withholding after a redial is stored for the chip, not a
-  // desync — and its comment pushed the no-base line past the old window. That failure was the intended
-  // tripwire; the widening is deliberate, and the no-base contract below is byte-for-byte what it was (plus
-  // the why). skeleton-tabs-wiring.test.ts pins that the skeleton branch comes FIRST and never asks.
-  const statusFn = RENDER.slice(RENDER.indexOf("function statusOnly(msg"), RENDER.indexOf("function statusOnly(msg") + 1100);
-  assert.match(statusFn, /if \(!s\) \{ requestFullSession\(msg\.id, "nobase"\); return; \}/, "statusOnly: same");
+  // statusOnly is the exception (2026-09-11; it has OPENED with the skeleton-tab branch since 2026-09-07): the kernel
+  // sends a status frame for a sid it holds as a skeleton and for no other, so a status for a session the page holds
+  // nothing of is a skeleton's whose strip the shim's FIFO delivers BEHIND it (a newer strip takes the end of the
+  // burst), not a lost first frame. It is held for the strip (skeleton-tabs.ts holdStatus); the ask that stood here
+  // loaded the whole board into a chat column opened as a view of one session, one ask per withheld tab.
+  // skeleton-tabs-wiring.test.ts pins the branch's shape.
+  const statusFn = RENDER.split("function statusOnly(msg: any) {")[1].split("\n}")[0];
+  assert.doesNotMatch(statusFn, /requestFullSession\(msg\.id, "nobase"\)/, "statusOnly: a status is never a desync");
+  assert.match(statusFn, /if \(!s\) \{\s*\n(?:\s*\/\/[^\n]*\n)*\s*holdStatus\(skeletonTabs, msg\.id, msg\.status\); return;/, "statusOnly: held for its strip");
 });
 
 test("a reconnect clears parked asks — a dead socket's pending needFull can never gag the new one", () => {
@@ -143,11 +154,14 @@ test("the kernel's ready branch resets the client's WHOLE chat base before its p
   const i = KERNEL.indexOf('msg.get("type") == "ready"');
   assert.ok(i > 0);
   // the whole `ready` arm, up to the next frame type's arm: its comment explains both the reset and the
-  // ready-gate lift, so a fixed byte window would end before the push it must find
+  // ready-gate lift, so a fixed byte window would end before the push it must find (upstream's own window grew
+  // from 1600 to 3000 characters when the focused-session send (T347), the metrics team's connect-time reads and
+  // the skeleton client's re-arm landed together on 2026-09-11; the arm anchor needs no number)
   const next = KERNEL.indexOf('elif msg and msg.get("type") ==', i + 1);
   assert.ok(next > i, "a frame arm follows ready");
   const body = KERNEL.slice(i, next);
   assert.ok(body.includes("_client_reset_chat_base(client)"), "ready = the renderer holds nothing");
+  assert.ok(body.includes("_push_one(client)"), "the connect push is in the arm");
   assert.ok(body.indexOf("_client_reset_chat_base(client)") < body.indexOf("_push_one(client)"),
     "…reset first, so the push that follows is full frames");
 });

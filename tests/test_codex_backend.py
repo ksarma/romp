@@ -8,9 +8,11 @@ surfaces as launch_error text instead of a silent non-start. All data synthetic 
 Run:    python3 tests/test_codex_backend.py
 """
 import contextlib
+import errno
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import tempfile
@@ -30,6 +32,7 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 cb = load_source("romp_codex_backend", os.path.join(ROOT, "kernel", "codex_backend.py"))
 sb = load_source("romp_session_backend", os.path.join(ROOT, "kernel", "session_backend.py"))
+em = load_source("romp_event_model", os.path.join(ROOT, "bin", "romp-event-model"))
 
 
 @contextlib.contextmanager
@@ -341,6 +344,96 @@ class ApprovalModes(unittest.TestCase):
         self.assertEqual(params["approvalsReviewer"], "auto_review")
         restored.kill(sid)
 
+    def test_pending_session_recovery_keeps_the_picked_model(self):
+        # a model picked while the row was still a placeholder vanished at the first send:
+        # thread/start went out without it, and the server's reply (its default, never empty)
+        # overwrote the pick in memory and in the registry, so the turn ran on the default and
+        # the picker showed it, with no word to the user
+        def unavailable():
+            raise RuntimeError("synthetic unavailable client")
+        be, _, tmp = build(factory=unavailable)
+        sid = be.spawn("web", "/TESTDIR")
+        self.assertTrue(be.set_model(sid, "gpt-5-picked"))
+        fake = FakeClient()
+        restored = cb.CodexBackend(tmp, client_factory=lambda: fake)
+        try:
+            self.assertTrue(restored.send(sid, "synthetic recovery"))
+            self.assertTrue(until(lambda: not restored.busy(sid)))
+            self.assertEqual(fake.called("turn_start")[-1][3].get("model"), "gpt-5-picked",
+                             "the turn runs on the pick, not the server's default")
+            self.assertEqual(restored.live_sessions()[sid]["model"], "gpt-5-picked")
+            rows = json.loads(restored._reg_path().read_text())
+            self.assertEqual(rows[sid]["model"], "gpt-5-picked", "the registry keeps the pick")
+            self.assertEqual(fake.called("thread_start")[-1][1].get("model"), "gpt-5-picked",
+                             "the thread is created on the pick")
+        finally:
+            restored.kill(sid)
+
+    def test_failed_placeholder_recovery_keeps_the_picked_model(self):
+        # the same loss without a restart: thread/start raised at spawn (a failed- row on a live
+        # client), the user picked a model on the idle row, then sent
+        class BoomOnce(FakeClient):
+            def __init__(self):
+                super().__init__()
+                self.boom = True
+
+            def thread_start(self, params=None):
+                if self.boom:
+                    self.boom = False
+                    raise RuntimeError("synthetic thread/start failure")
+                return super().thread_start(params)
+        fake = BoomOnce()
+        be, _, _ = build(factory=lambda: fake)
+        sid = be.spawn("web", "/TESTDIR")
+        self.assertTrue(be._sessions[sid].tid.startswith("failed-"))
+        self.assertTrue(be.set_model(sid, "gpt-5-picked"))
+        try:
+            self.assertTrue(be.send(sid, "synthetic recovery"))
+            self.assertTrue(until(lambda: not be.busy(sid)))
+            self.assertEqual(fake.called("turn_start")[-1][3].get("model"), "gpt-5-picked")
+            self.assertEqual(be.live_sessions()[sid]["model"], "gpt-5-picked")
+            self.assertEqual(fake.called("thread_start")[-1][1].get("model"), "gpt-5-picked")
+        finally:
+            be.kill(sid)
+
+    def test_model_picked_while_the_thread_is_being_created_stays_picked(self):
+        # the create RPC runs under mode_lock alone and set_model takes the session lock alone, so
+        # a pick can land while thread/start is in flight; the reply must read the live model, not
+        # the snapshot the params were built from, or the server's default overwrites that pick
+        class Holding(FakeClient):
+            def __init__(self):
+                super().__init__()
+                self.entered = threading.Event()
+                self.release = threading.Event()
+
+            def thread_start(self, params=None):
+                self.entered.set()
+                assert self.release.wait(timeout=10), "the create was never released"
+                return super().thread_start(params)
+        def unavailable():
+            raise RuntimeError("synthetic unavailable client")
+        be, _, tmp = build(factory=unavailable)
+        sid = be.spawn("web", "/TESTDIR")
+        fake = Holding()
+        restored = cb.CodexBackend(tmp, client_factory=lambda: fake)
+        try:
+            self.assertEqual(restored._sessions[sid].model, "", "no pick before the send")
+            self.assertTrue(restored.send(sid, "synthetic recovery"))
+            self.assertTrue(fake.entered.wait(timeout=5), "thread/start never went out")
+            self.assertTrue(restored.set_model(sid, "gpt-5-picked"))
+            fake.release.set()
+            self.assertTrue(until(lambda: not restored.busy(sid)))
+            self.assertNotIn("model", fake.called("thread_start")[-1][1],
+                             "the pick landed after the create went out")
+            self.assertEqual(fake.called("turn_start")[-1][3].get("model"), "gpt-5-picked",
+                             "the turn runs on the pick that landed during the create")
+            self.assertEqual(restored.live_sessions()[sid]["model"], "gpt-5-picked")
+            rows = json.loads(restored._reg_path().read_text())
+            self.assertEqual(rows[sid]["model"], "gpt-5-picked", "the registry keeps the pick")
+        finally:
+            fake.release.set()             # a failure above must not leave the worker parked
+            restored.kill(sid)
+
     def test_mode_change_refuses_inflight_turn_and_rolls_back_failed_save(self):
         be, fake, _ = build()
         sid = be.spawn("web", "/TESTDIR")
@@ -400,6 +493,90 @@ class ApprovalModes(unittest.TestCase):
         self.assertTrue(notices)
         self.assertTrue(all(msg["type"] == "warn" for msg in notices))
 
+    def test_a_dead_stderr_never_raises_out_of_the_approval_handler(self):
+        # the handler's FIRST line is a log write, before any answer is returned, and it runs inline on the
+        # SDK's single reader thread (the case above). With a stderr that raises on write (a log disk at
+        # ENOSPC, the pipe a supervisor's end closed) that write raised out of the handler: the reader ended
+        # with no reply written and every in-flight request of every Codex session failed at once. The log
+        # callback is wrapped ONCE at construction, so the raising logger goes in through the constructor: a
+        # post-construction `be.log = ...` replaces the wrap and would prove nothing
+        def dead_stderr(m):
+            raise OSError(28, "No space left on device")
+        be = cb.CodexBackend(tempfile.mkdtemp(), client_factory=FakeClient, log=dead_stderr)
+        notices = []
+        be.notify = lambda app, msg: notices.append(msg)
+        answers = (("item/commandExecution/requestApproval", {"decision": "decline"}),
+                   ("item/fileChange/requestApproval", {"decision": "decline"}),
+                   ("item/permissions/requestApproval", {"permissions": {}, "scope": "turn"}),
+                   ("item/tool/requestUserInput", {"answers": {}}),
+                   ("unknown/requestApproval", {}))
+        for method, want in answers:
+            self.assertEqual(be._handle_approval(method, {}), want, method)
+        self.assertEqual(len(notices), len(answers), "the session still hears every denial")
+        self.assertTrue(all(msg["type"] == "warn" for msg in notices))
+        # the DEFAULT logger (no log= handed in: the bare `codex-backend:` stderr line) is wrapped the same way
+        be2 = cb.CodexBackend(tempfile.mkdtemp(), client_factory=FakeClient)
+        with mock.patch.object(sys, "stderr", SimpleNamespace(write=dead_stderr, flush=lambda: None)):
+            self.assertEqual(be2._handle_approval("item/commandExecution/requestApproval", {}),
+                             {"decision": "decline"})
+
+    def test_a_dead_stderr_does_not_end_the_pump_before_it_records_the_failure(self):
+        # the same shape on the pump thread: its except branch logs FIRST, then uninstalls the client
+        # (_record_client_failure_locked) and wakes queued workers. Under a raising stderr the pump died at
+        # that log line, so the dead client stayed installed: the next send's _get_client handed it back
+        # and turn_start parked forever in the SDK's untimed wait, every Codex session wedged until a
+        # restart, with nothing on the log to say so
+        def dead_stderr(m):
+            raise OSError(28, "No space left on device")
+        fake = FakeClient()
+        be = cb.CodexBackend(tempfile.mkdtemp(), client_factory=lambda: fake, log=dead_stderr)
+        self.assertIs(be._get_client(), fake)
+        fake.close()                                  # next_notification raises: the pump's except branch runs
+        self.assertTrue(until(lambda: be._client is None), "the dead client is uninstalled")
+        self.assertIn("client closed", be._client_err or "", "the failure is recorded, not lost with the line")
+
+    def test_a_dead_stderr_does_not_end_the_worker_before_it_files_the_failure(self):
+        # the third site with this shape, on each session's worker thread: _work's except branch logs the
+        # traceback FIRST, then files launch_error and sets the session "waiting". Under a raising stderr the
+        # worker died at that log line, and _work's finally only clears s.worker: nothing was filed, the
+        # queued batch parked with no visible reason, and the session read busy forever. A plain RuntimeError
+        # from turn_start (not a permanent rejection) reaches that branch; the second attempt holds at its
+        # entry, so the filed error is read before the ack that clears it
+        def dead_stderr(m):
+            raise OSError(28, "No space left on device")
+
+        class FailOnceClient(FakeClient):
+            def __init__(self):
+                super().__init__()
+                self.attempts = 0
+                self.retry_entered = threading.Event()
+                self.allow_retry = threading.Event()
+
+            def turn_start(self, tid, input_items, params=None):
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise RuntimeError("synthetic pre-ack failure")
+                self.retry_entered.set()
+                self.allow_retry.wait(5)
+                return super().turn_start(tid, input_items, params)
+
+        fake = FailOnceClient()
+        be = cb.CodexBackend(tempfile.mkdtemp(), client_factory=lambda: fake, log=dead_stderr)
+        sid = be.spawn("web", "/TESTDIR")
+        self.assertTrue(be.send(sid, "first"))
+        self.assertTrue(fake.retry_entered.wait(5), "the worker never came back for the retry: it died at the log line")
+        err = be.launch_error(sid)
+        self.assertIsNotNone(err, "the failure is filed, not lost with the line")
+        self.assertEqual(err["text"], "codex turn failed: synthetic pre-ack failure")
+        self.assertEqual(be.live_sessions()[sid]["state"], "waiting")
+        fake.allow_retry.set()
+        self.assertTrue(until(lambda: not be.busy(sid) and not be.pending_queued(sid)))
+        self.assertEqual(fake.attempts, 2)
+        # the contract itself, in one line: the wrap is at construction, so the callback the backend holds never
+        # raises, whichever site on whichever thread calls it. A guard at each of the three sites above would
+        # pass the three cases and fail here
+        be.log("probe")
+
     def test_real_client_is_constructed_with_fail_closed_handler(self):
         be, _, _ = build()
         be._client_factory = None
@@ -412,6 +589,95 @@ class ApprovalModes(unittest.TestCase):
              mock.patch.dict(sys.modules, {"openai_codex.client": module}):
             self.assertIs(be._get_client(), fake)
         self.assertEqual(module.CodexClient.call_args.kwargs["approval_handler"], be._handle_approval)
+
+
+class ExplicitBinFailures(unittest.TestCase):
+    """A codex that cannot be started from an EXPLICIT ROMP_CODEX_BIN is reported in the operator's words.
+    The kernel hands ROMP_CODEX_BIN through unchecked, and _get_client kept whatever the SDK's start() raised
+    as _client_err verbatim: for a missing file the pinned SDK's "Codex binary not found at X. Set
+    CodexConfig.codex_bin to a valid binary path." (a Python field the operator has never seen); for a file
+    that exists but cannot run (no exec bit, a directory) Popen's bare "[Errno 13] Permission denied: X", with
+    no remedy at all. Every surface that shows the record (the chat's red card, the creation refusals, the
+    resume detail, the /models note) repeated it, and nothing named the knob to fix (2026-09-11). The record
+    now names ROMP_CODEX_BIN and the managed-runtime alternative (_explicit_bin_failure). Same harness as
+    test_real_client_is_constructed_with_fail_closed_handler: the SDK module is the seam, its client's start()
+    raising exactly what the real one raises; the managed runtime's location is stubbed only so the
+    codex_bin=None case reaches start() on a state root with no runtime installed."""
+
+    def _probe(self, codex_bin, exc):
+        be, _, _ = build()
+        be._client_factory = None
+        be.codex_bin = codex_bin
+        fake = FakeClient()
+
+        def start():
+            raise exc
+        fake.start = start
+        module = SimpleNamespace(CodexClient=mock.Mock(return_value=fake),
+                                 CodexConfig=lambda **kwargs: kwargs)
+        with mock.patch.object(cb, "ensure_codex_sdk", return_value=True), \
+             mock.patch.dict(sys.modules, {"openai_codex.client": module}), \
+             mock.patch.object(cb._runtime, "runtime_path", return_value=Path("/TESTBIN/managed/bin/codex")):
+            self.assertIsNone(be._get_client())
+        return be._client_err or ""
+
+    def test_a_missing_file_names_the_knob_not_the_sdk_field(self):
+        text = self._probe("/TESTBIN/codex", FileNotFoundError(
+            "Codex binary not found at /TESTBIN/codex. Set CodexConfig.codex_bin to a valid binary path."))
+        self.assertIn("ROMP_CODEX_BIN=/TESTBIN/codex", text)
+        self.assertIn("unset ROMP_CODEX_BIN", text)
+        self.assertIn("restart the ROMP kernel", text,
+                      "the knob was read once, at construction: unset alone changes nothing: %r" % text)
+        self.assertIn("No such file or directory", text)
+        self.assertNotIn("CodexConfig", text, "the SDK's dataclass field means nothing to an operator: %r" % text)
+
+    def test_a_file_that_cannot_run_names_the_knob_and_a_remedy(self):
+        # exists() passes a non-executable file or a directory; Popen then raises the errno with no remedy
+        text = self._probe("/TESTBIN/codex", PermissionError(13, "Permission denied", "/TESTBIN/codex"))
+        self.assertIn("ROMP_CODEX_BIN=/TESTBIN/codex", text)
+        self.assertIn("unset ROMP_CODEX_BIN", text)
+        self.assertIn("restart the ROMP kernel", text)
+        self.assertIn("Permission denied", text, "the OS's reason is kept: %r" % text)
+
+    def test_a_file_that_is_not_a_binary_names_the_knob(self):
+        # exists() passes a text file or a wrong-arch binary; execve then answers ENOEXEC, the third path error
+        # the gate names
+        text = self._probe("/TESTBIN/codex", OSError(errno.ENOEXEC, "Exec format error", "/TESTBIN/codex"))
+        self.assertIn("ROMP_CODEX_BIN=/TESTBIN/codex", text)
+        self.assertIn("Exec format error", text, "the OS's reason is kept: %r" % text)
+
+    def test_a_host_fault_with_an_explicit_bin_stays_raw(self):
+        # the knob is set, but running out of descriptors is the host's fault, not the path's: the gate is the
+        # three path errors, not every OSError, so a fault Popen raised is recorded as it came, and a non-OSError
+        # from start() passes through untouched
+        err = OSError(errno.EMFILE, "Too many open files")
+        self.assertEqual(self._probe("/TESTBIN/codex", err), str(err))
+        err = RuntimeError("synthetic start failure")
+        self.assertEqual(self._probe("/TESTBIN/codex", err), str(err))
+
+    def test_a_directory_the_kernel_cannot_read_names_the_knob_not_a_sibling_path(self):
+        # ROMP_CODEX_BIN under a directory the kernel's user cannot traverse: _codex_config's look at the helpers
+        # beside the executable raises before start() is reached (pathlib passes EACCES through from is_dir()),
+        # and the record named <package>/codex-path, a path the operator never typed. The filesystem's answer
+        # for that one path is the seam; _codex_config itself runs for real, and start() is never reached.
+        real_is_dir = Path.is_dir
+
+        def is_dir(path, *a, **k):
+            if str(path) == "/TESTBIN/codex-path":
+                raise PermissionError(errno.EACCES, "Permission denied", str(path))
+            return real_is_dir(path, *a, **k)
+        with mock.patch.object(Path, "is_dir", is_dir):
+            text = self._probe("/TESTBIN/codex", AssertionError("start() must not be reached: the config step raised"))
+        self.assertIn("ROMP_CODEX_BIN=/TESTBIN/codex", text)
+        self.assertIn("unset ROMP_CODEX_BIN", text)
+        self.assertIn("Permission denied", text, "the OS's reason is kept: %r" % text)
+        self.assertNotIn("codex-path", text, "the path the operator set is named, not one beside it: %r" % text)
+
+    def test_the_managed_runtime_keeps_its_raw_errno_line(self):
+        # codex_bin None: there is no knob to name, and tests/test_codex_launch_error_card.py pins the raw
+        # errno line as the shape _client_failure_text frames — the managed path is left exactly alone
+        err = OSError(2, "No such file or directory", "codex")
+        self.assertEqual(self._probe(None, err), str(err))
 
 
 class Lifecycle(unittest.TestCase):
@@ -513,6 +779,105 @@ class Lifecycle(unittest.TestCase):
         self.assertTrue(until(lambda: not be.busy(sid)))
         recs = [json.loads(l) for l in Path(be.transcript_path(sid)).read_text().splitlines()]
         self.assertTrue(any("[Request interrupted" in json.dumps(r) for r in recs))
+
+    def test_turn_abandoned_by_a_dead_transport_settles_on_disk(self):
+        """A turn whose stream ends WITHOUT turn/completed (the app-server died mid-turn: the SDK puts the
+        transport failure into the turn's queue and next_turn_notification raises it) used to leave the
+        file turn open for good: nothing wrote the held final reply or ended the turn, so the session read
+        as working on every surface while nothing ran, and the next prompt was absorbed into the dead turn
+        as mid-turn input. The settle lands the held reply mid-turn-shaped, then an end_turn record
+        carrying the failure, and the next prompt opens its own turn. No interrupt goes out on the dead
+        transport: the SDK's request path waits on a reply with no timeout and its reader is gone, so a
+        worker that sent one would sit there for good (busy True, mode locked, kill's join timing out);
+        the pump's teardown of that client is what stops the turn."""
+        class DyingClient(FakeClient):
+            def next_turn_notification(self, turn_id):
+                n = super().next_turn_notification(turn_id)
+                if isinstance(n, BaseException):    # the SDK router's shape: fail_all → queue → raise
+                    raise n
+                return n
+
+            def turn_interrupt(self, tid, turn_id):
+                self._rec("turn_interrupt", tid, turn_id)
+                self.reply.wait()                   # the SDK's shape with its reader gone: no reply, ever
+
+        def item(turn, ms, it):
+            return ("item/completed", {"threadId": "T-1", "turnId": turn, "completedAtMs": ms, "item": it})
+
+        fake = DyingClient()
+        fake.reply = threading.Event()
+        self.addCleanup(fake.reply.set)             # a worker wedged on the interrupt is freed at the end
+        fake.hold_open = True
+        # wire stamps track the wall clock, as the app-server's do: the settle is clock-stamped, and a
+        # fixed-past fixture stamp would sort the SECOND turn's items ahead of it in the parse
+        ms = int(time.time() * 1000)
+        fake.scripts = [
+            [item("t-1", ms, {"type": "userMessage", "id": "u-1",
+                              "content": [{"type": "text", "text": "run the build"}]}),
+             item("t-1", ms + 1000, {"type": "agentMessage", "id": "a-1", "text": "partial reply"})],
+            [item("t-2", ms + 5000, {"type": "userMessage", "id": "u-2",
+                                     "content": [{"type": "text", "text": "try again"}]}),
+             item("t-2", ms + 6000, {"type": "agentMessage", "id": "a-2", "text": "ack: try again"}),
+             ("turn/completed", {"threadId": "T-1",
+                                 "turn": {"id": "t-2", "items": [], "status": "completed"}})]]
+        be, _, _ = build(factory=lambda: fake)
+        sid = be.spawn("web", "/TESTDIR")
+        path = Path(be.transcript_path(sid))
+
+        def recs():
+            return [json.loads(l) for l in path.read_text().splitlines()] if path.exists() else []
+        self.assertTrue(be.send(sid, "run the build"))
+        self.assertTrue(until(lambda: any(r["type"] == "user" for r in recs())))
+        fake.turn_queues["t-1"].put(RuntimeError("synthetic: app-server connection lost"))
+        self.assertTrue(until(lambda: not be.busy(sid) and be.launch_error(sid) is not None),
+                        "worker never settled; interrupt calls: %r" % fake.called("turn_interrupt"))
+        self.assertIn("connection lost", be.launch_error(sid)["text"])
+        rows = recs()
+        self.assertEqual([r["type"] for r in rows], ["user", "assistant", "assistant"])
+        held, settle = rows[1], rows[2]
+        self.assertEqual(held["message"]["content"][0]["text"], "partial reply")
+        self.assertIsNone(held["message"]["stop_reason"])       # the turn genuinely didn't settle
+        self.assertEqual(settle["message"]["stop_reason"], "end_turn")
+        self.assertTrue(settle.get("isApiErrorMessage"))
+        self.assertIn("connection lost", settle["message"]["content"][0]["text"])
+        self.assertEqual(settle["parentUuid"], held["uuid"])
+        self.assertEqual(fake.called("turn_interrupt"), [])
+        # the next prompt opens its OWN turn: the event model reads the abandoned one as ended
+        self.assertTrue(be.send(sid, "try again"))
+        self.assertTrue(until(lambda: not be.busy(sid) and len(recs()) == 5))
+        parsed = em.parse_session(str(path), rompuuid=sid, name="web", dir="/TESTDIR",
+                                  candidate_files=[str(path)], sdk_human=True)
+        self.assertEqual([t["ended"] for t in parsed["turns"]], [True, True])
+        be.kill(sid)
+
+    def test_turn_abandoned_by_a_failed_write_is_interrupted(self):
+        """The other way a turn is abandoned after its ACK: the transcript append raises (a full disk)
+        with the app-server alive and still running the instruction. The turn is told to stop (the
+        transport is up, so the reply comes), the settle's own failed write is logged, and launch_error
+        names the original fault, not the settle's."""
+        logs = []
+        fake = FakeClient()
+        be = cb.CodexBackend(tempfile.mkdtemp(), client_factory=lambda: fake, log=logs.append)
+        sid = be.spawn("web", "/TESTDIR")
+
+        writes = []
+        def failing_append(s, recs):
+            # the loop's write fails first; the settle's own write fails with a DIFFERENT error, so the
+            # test can tell which of the two launch_error and the log each carry
+            writes.append(recs)
+            raise (OSError(28, "No space left on device") if len(writes) == 1
+                   else OSError(5, "Input/output error"))
+        be._append = failing_append
+        self.assertTrue(be.send(sid, "write fails"))
+        self.assertTrue(until(lambda: not be.busy(sid) and be.launch_error(sid) is not None))
+        self.assertIn("No space left", be.launch_error(sid)["text"])
+        self.assertNotIn("Input/output", be.launch_error(sid)["text"])
+        self.assertEqual([c[2] for c in fake.called("turn_interrupt")], ["t-1"])
+        settle_logs = [m for m in logs if m.startswith("abandoned turn settle")]
+        self.assertEqual(len(settle_logs), 1, logs)
+        self.assertIn("Input/output error", settle_logs[0])
+        self.assertEqual(len(writes), 2)             # the loop's, then the settle's; nothing else wrote
+        be.kill(sid)
 
     def test_kill_resume_roundtrip(self):
         be, fake, _ = build()
@@ -647,6 +1012,60 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(len(fake.attempts), 2, "the replacement request parks if it is rejected too")
         self.assertTrue(be.kill(sid))
 
+    def test_a_queue_parked_on_a_permanent_rejection_reads_not_busy_until_a_change_re_arms_it(self):
+        # The kernel takes busy() as its authoritative "turn open" word: a model or effort pick parks behind
+        # it (a Codex pick applies at the next turn_start), and its drain skips the session for as long as
+        # busy() holds. A queue the worker parked on a permanent rejection read busy — non-empty, yet nothing
+        # in flight and no timer — so the very pick that would have unparked it was parked in turn, with no
+        # way out: this backend has no unqueue, and kill + resume re-arm the same queue with the same model
+        # (review, 2026-09-11). Parked reads not busy; an explicit change re-arms the retry and reads busy
+        # again from that event on, so a pick pressed after it parks behind the retry in press order.
+        class InvalidParamsError(RuntimeError):
+            def __init__(self, message):
+                super().__init__(message)
+                self.code = -32602
+
+        class RejectingClient(FakeClient):
+            def __init__(self):
+                super().__init__()
+                self.attempts = []
+                self.retry_started = threading.Event()   # the accepted retry is held INSIDE turn_start
+                self.release_retry = threading.Event()
+
+            def turn_start(self, tid, input_items, params=None):
+                self.attempts.append((list(input_items), dict(params or {})))
+                if (params or {}).get("model") != "gpt-5-fixed":
+                    raise InvalidParamsError("model is not available")
+                self.retry_started.set()
+                self.release_retry.wait(5)
+                return super().turn_start(tid, input_items, params)
+
+        fake = RejectingClient()
+        be, _, _ = build(factory=lambda: fake)
+        sid = be.spawn("web", "/TESTDIR")
+        self.assertTrue(be.send(sid, "keep this durable"))
+        self.assertTrue(until(lambda: be.launch_error(sid) is not None))   # written with the park, under the lock
+        self.assertEqual(len(fake.attempts), 1)
+        self.assertEqual(be.pending_queued(sid), ["keep this durable"], "the send stays visible as queued")
+        self.assertFalse(be.busy(sid), "a queue parked on a permanent rejection is neither in flight nor about to run")
+        # The event is the explicit change, not the worker's wake: with the worker still asleep in kick.wait(),
+        # a setter's generation bump alone re-arms the retry, and busy() says so before the worker clears the
+        # rejection — so a send handed over right then never arms a hold waiting for a turn to open.
+        s = be._session(sid)
+        with s.lock:
+            s.change_generation += 1
+        self.assertTrue(be.busy(sid), "a moved generation is a retry about to run")
+        with s.lock:
+            s.change_generation -= 1
+        self.assertFalse(be.busy(sid))
+        self.assertTrue(be.set_model(sid, "gpt-5-fixed"))
+        self.assertTrue(fake.retry_started.wait(5))
+        self.assertTrue(be.busy(sid), "the retry the pick armed is in flight: busy, so a later pick parks behind it")
+        fake.release_retry.set()
+        self.assertTrue(until(lambda: not be.busy(sid) and not be.pending_queued(sid)))
+        self.assertEqual(fake.attempts[1][1]["model"], "gpt-5-fixed")
+        self.assertTrue(be.kill(sid))
+
     def test_permanent_placeholder_prepare_parks_until_cwd_change(self):
         class InvalidParamsError(RuntimeError):
             code = -32602
@@ -760,6 +1179,56 @@ class Lifecycle(unittest.TestCase):
         self.assertTrue(until(lambda: not be.busy(sid) and not be.pending_queued(sid)))
         self.assertEqual(len(replacement.called("turn_start")), 1)
 
+    def test_replacement_server_resumes_a_thread_the_dead_server_had_loaded(self):
+        # `loaded` meant "thread/resume done in this process", but the process that has to know the
+        # thread is the app-server, and the backend replaces that one on the fly when the pump sees
+        # it die. The thread stayed "loaded" on a server that had never seen it, turn/start went out
+        # with no thread/resume before it, and the app-server refuses that with "thread not found":
+        # a permanent rejection, so every resend met the same refusal until a kernel restart. The fake
+        # answers the way the pinned app-server does, so the turn completing proves the resume came
+        # first; the old server started the thread itself and must not be resumed on the way there.
+        class InvalidRequestError(RuntimeError):
+            code = -32600
+
+        class ThreadAwareClient(FakeClient):
+            def __init__(self):
+                super().__init__()
+                self.known = set()
+
+            def thread_start(self, params=None):
+                resp = super().thread_start(params)
+                self.known.add(resp.thread.id)
+                return resp
+
+            def thread_resume(self, tid, params=None):
+                self.known.add(tid)
+                return super().thread_resume(tid, params)
+
+            def turn_start(self, tid, input_items, params=None):
+                if tid not in self.known:
+                    raise InvalidRequestError("thread not found: %s" % tid)
+                return super().turn_start(tid, input_items, params)
+
+        old, replacement = ThreadAwareClient(), ThreadAwareClient()
+        clients = [old, replacement]
+        be, _, _ = build(factory=lambda: clients.pop(0))
+        sid = be.spawn("web", "/TESTDIR")
+        self.assertTrue(be.send(sid, "first"))
+        self.assertTrue(until(lambda: not be.busy(sid) and not be.pending_queued(sid)))
+        self.assertEqual(len(old.called("turn_start")), 1)
+        with be._client_lock:                  # the old app-server died: the pump's invalidation
+            be._record_client_failure_locked(RuntimeError("server died"), old)
+            be._client_retry_at = 0.0
+        self.assertTrue(be.send(sid, "second"))
+        self.assertTrue(until(lambda: not be.busy(sid) and not be.pending_queued(sid)),
+                        "the second turn never ran on the replacement server")
+        resumes = replacement.called("thread_resume")
+        self.assertEqual([r[1] for r in resumes], [be._session(sid).tid])
+        self.assertEqual(len(replacement.called("turn_start")), 1)
+        self.assertLess(replacement.calls.index(resumes[0]),
+                        replacement.calls.index(replacement.called("turn_start")[0]))
+        self.assertEqual(old.called("thread_resume"), [])
+
     def test_client_factory_failure_backs_off_then_recovers_queued_session(self):
         fake = FakeClient()
         attempts = []
@@ -802,6 +1271,16 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(len(fake.called("thread_start")), 1,
                          "the pending placeholder must become a real Codex thread")
         self.assertFalse(be.pending_queued(sid))
+        # A thread the server itself just created is loaded on that server: the next turn goes
+        # straight to turn/start, with no thread/resume ahead of it. `loaded` counts only while its
+        # recorded app-server generation matches the current one, so the create path has to record
+        # the generation it created on; left unrecorded (None), every later turn would re-resume
+        # the same live server first, an extra RPC per turn that one turn never shows.
+        self.assertTrue(be.send(sid, "and again"))
+        self.assertTrue(until(lambda: not be.busy(sid) and not be.pending_queued(sid), timeout=20))
+        self.assertEqual(fake.called("thread_resume"), [],
+                         "a thread the server itself created is never resumed on that server")
+        self.assertEqual(len(fake.called("turn_start")), 2)
 
     def test_turn_end_pokes_after_busy_clears(self):
         # the kernel's parked-op drain wakes on the poke (2026-09-03): every in-loop poke fires while the
@@ -925,6 +1404,42 @@ class Lifecycle(unittest.TestCase):
             self.assertEqual(r["parentUuid"], prev["uuid"],
                              "chain broke across the restart at %s" % r["uuid"])
         self.assertEqual(len({r["uuid"] for r in recs}), len(recs))
+
+    def test_a_torn_trailing_line_does_not_swallow_the_next_record(self):
+        # A torn write (write(2) short under ENOSPC, a kill between pages) leaves the transcript ending
+        # mid-record with no newline. The next batch's first record was written straight after the
+        # fragment: one unparseable line every reader skips, so the record vanished — after a restart
+        # that is the user's next prompt — while _append still retired its echo by text, leaving the
+        # prompt nowhere in the UI. The fix closes the fragment's line before writing.
+        be, fake, tmp = build()
+        sid = be.spawn("web", "/TESTDIR")
+        self.assertTrue(be.send(sid, "first"))
+        self.assertTrue(until(lambda: not be.busy(sid)))
+        p = Path(be.transcript_path(sid))
+        whole = p.read_text()
+        before = [json.loads(l) for l in whole.splitlines()]
+        self.assertEqual([r["type"] for r in before], ["user", "assistant"])
+        fragment = json.dumps({"type": "user", "uuid": "11111111-2222-4333-8444-555555555555",
+                               "parentUuid": before[-1]["uuid"], "timestamp": "2026-06-01T00:00:00.000Z",
+                               "message": {"role": "user", "content": "a record the tear cut short"}})[:60]
+        p.write_text(whole + fragment)          # the tear: a partial record, no line end
+        be2 = cb.CodexBackend(tmp, client_factory=lambda: fake)   # the restart after the kill
+        self.assertTrue(be2.send(sid, "now add a test"))
+        self.assertTrue(until(lambda: not be2.busy(sid) and not be2.pending_queued(sid)))
+        lines = p.read_text().split("\n")
+        parsed = []
+        for l in lines:
+            try:
+                parsed.append(json.loads(l))
+            except ValueError:
+                pass                             # the fragment: skipped, as every reader skips it
+        landed = [r for r in parsed if r["type"] == "user" and "now add a test" in json.dumps(r)]
+        self.assertEqual(len(landed), 1, "the prompt sent after the torn line is not in the transcript")
+        self.assertIn(fragment, lines, "the fragment must stay its own line, not carry the next record")
+        # the chain continues off the last WHOLE record; the fragment is not a link
+        self.assertEqual(landed[0]["parentUuid"], before[-1]["uuid"])
+        # and the echo retire that ran for the landed prompt is now a retire for a record readers can see
+        self.assertTrue(until(lambda: be2.live_atoms(sid) == []))
 
     def test_load_registry_logs_malformed_json_and_falls_back_empty(self):
         tmp = tempfile.mkdtemp()
@@ -1116,12 +1631,10 @@ class Lifecycle(unittest.TestCase):
         sid = be.spawn("web", "/TESTDIR")
         self.assertTrue(be.kill(sid))       # child backends load it without starting queue workers
         code = r'''
-import importlib.util, os, sys
-# the repo's file-path importer, by path: a child process has no tests/ on sys.path (romp_load is the
-# test modules' door to the same helper)
-_spec = importlib.util.spec_from_file_location("romp_loadsource", os.path.join(os.path.dirname(sys.argv[1]), "loadsource.py"))
-_ls = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_ls)
-cb = _ls.load_source("codex_child", sys.argv[1])
+import sys
+sys.path.insert(0, sys.argv[5])          # the tests dir, where romp_load lives
+from romp_load import load_source
+cb = load_source("codex_child", sys.argv[1])
 be = cb.CodexBackend(sys.argv[2], client_factory=lambda: None, log=lambda message: None)
 s = be._session(sys.argv[3])
 for i in range(20):
@@ -1129,7 +1642,7 @@ for i in range(20):
     be._save_registry(s, queue_append={"id": "child-" + text, "text": text})
 '''
         backend_path = str(Path(ROOT) / "kernel" / "codex_backend.py")
-        procs = [subprocess.Popen([sys.executable, "-c", code, backend_path, tmp, sid, str(n)])
+        procs = [subprocess.Popen([sys.executable, "-c", code, backend_path, tmp, sid, str(n), HERE])
                  for n in range(4)]
         for p in procs:
             self.assertEqual(p.wait(timeout=15), 0)
@@ -1169,6 +1682,102 @@ for i in range(20):
         self.assertIn("codex login", err["text"])
         self.assertFalse(err["limit"])
         self.assertFalse(be.available())
+
+    def test_a_handshake_that_never_answers_is_ended_and_named(self):
+        # A codex that starts, holds stdout open and never writes its first frame (a start-up stalled on a hung
+        # mount, a stub that sleeps) left _get_client in the SDK's untimed wait with _client_lock HELD: every
+        # Codex creation, resume, send and /models read queued behind it, the tab whose receive loop made the
+        # call read no more ops, and nothing was logged or recorded (2026-09-11). The handshake now runs under
+        # a clock whose expiry ends the child, the one event the SDK's wait answers to, and names the reason.
+        # The reason then stands for at least the clock: a re-probe costs the whole clock again, lock held, so
+        # the ordinary backoff (cap 5s) would have re-run it almost continuously while the fault lasted.
+        class SilentClient(FakeClient):
+            """Every account_read parks until the next close(): the shape of a live child that never answers,
+            however often it is probed. (The injected path has no start/initialize; account_read is the
+            handshake call both paths share.)"""
+
+            def __init__(self):
+                super().__init__()
+                self.gate = threading.Event()
+
+            def account_read(self, *a, **k):
+                self._rec("account_read")
+                self.gate = gate = threading.Event()
+                gate.wait()
+                raise RuntimeError("Codex process closed stdout.")   # what the SDK's wait raises after close()
+
+            def close(self):
+                super().close()
+                self.gate.set()
+        saved = getattr(cb, "HANDSHAKE_TIMEOUT_S", None)
+        cb.HANDSHAKE_TIMEOUT_S = 0.3                     # the clock under test
+        self.addCleanup(setattr, cb, "HANDSHAKE_TIMEOUT_S", saved)
+        fake = SilentClient()
+        self.addCleanup(lambda: fake.gate.set())         # without the clock the probe parks forever; let it out
+        logs = []
+        be = cb.CodexBackend(tempfile.mkdtemp(), client_factory=lambda: fake, log=logs.append)
+        out = []
+        probe = threading.Thread(target=lambda: out.append(be.available()), name="probe", daemon=True)
+        probe.start()
+        probe.join(5)
+        self.assertFalse(probe.is_alive(), "available() must return once the handshake clock runs out")
+        self.assertEqual(out, [False])
+        self.assertTrue(fake.called("close"), "the clock ends the child; that is what unblocks the SDK's wait")
+        self.assertIn("did not answer", be._client_err or "")
+        recorded = [m for m in logs if "did not answer" in m]
+        self.assertTrue(recorded, logs)
+        delay = float(re.search(r"retry in ([\d.]+)s", recorded[0]).group(1))
+        self.assertGreaterEqual(delay, cb.HANDSHAKE_TIMEOUT_S,
+                                "a probe that costs the whole clock is not re-run before the clock: %s" % recorded[0])
+        sid = be.spawn("web", "/TESTDIR")                 # the session exists, visibly broken, with the reason
+        self.assertIn("did not answer", be.launch_error(sid)["text"])
+
+    def test_a_handshake_ended_by_its_clock_names_the_reason_not_the_transport(self):
+        # On a real client the parked call is initialize() inside bring_up: the clock's close() ends the child,
+        # the SDK's reader fails its waiter with the transport's text ("Codex process closed stdout. stderr_tail=
+        # ...") and that RAISES out of the handshake, the branch the injected path above never reaches (its
+        # account_read error is swallowed by the login check). The user reads the plain reason, not the
+        # transport's text and a stderr tail; the transport error stays attached as the cause.
+        class EndedClient(FakeClient):
+            def __init__(self):
+                super().__init__()
+                self.ended = threading.Event()
+
+            def close(self):
+                super().close()
+                self.ended.set()
+        fake = EndedClient()
+        transport = RuntimeError("Codex process closed stdout. stderr_tail=")   # the SDK's TransportClosedError shape
+
+        def bring_up():                                   # start + initialize on a real client: parks until the close
+            fake.ended.wait()
+            raise transport
+        saved = getattr(cb, "HANDSHAKE_TIMEOUT_S", None)
+        cb.HANDSHAKE_TIMEOUT_S = 0.3
+        self.addCleanup(setattr, cb, "HANDSHAKE_TIMEOUT_S", saved)
+        self.addCleanup(fake.ended.set)
+        be, _, _ = build(factory=lambda: fake)
+        with self.assertRaises(RuntimeError) as cm:
+            be._handshake(fake, bring_up)
+        self.assertIsInstance(cm.exception, cb._HandshakeTimeout)   # the class the record floors the retry on
+        self.assertIn("did not answer", str(cm.exception))
+        self.assertNotIn("stderr_tail", str(cm.exception))
+        self.assertIs(cm.exception.__cause__, transport)
+        self.assertTrue(fake.called("close"), "the clock ended the child")
+        self.assertEqual(fake.called("account_read"), [], "the login check never ran: the raise came first")
+
+    def test_a_handshake_that_settles_first_dismisses_its_clock(self):
+        # The other side of the gate: a good handshake cancels its clock, so no clock fires after it settled to
+        # close the installed client. The clock's thread ending is the event; a live one could still fire.
+        saved = getattr(cb, "HANDSHAKE_TIMEOUT_S", None)
+        cb.HANDSHAKE_TIMEOUT_S = 0.2
+        self.addCleanup(setattr, cb, "HANDSHAKE_TIMEOUT_S", saved)
+        be, fake, _ = build()
+        self.assertTrue(be.available())
+        self.assertTrue(until(lambda: not any(t.name == "codex-handshake-clock" for t in threading.enumerate())),
+                        "a settled handshake dismisses its clock")
+        self.assertEqual(fake.called("close"), [], "a clock dismissed by the handshake never ends the client")
+        self.assertIs(be._client, fake)
 
     def test_claude_only_knobs_refuse(self):
         be, _, _ = build()
@@ -1341,7 +1950,7 @@ class PruneLive(unittest.TestCase):
     bars logged a live-merge failure). The call shape is pinned across every backend in
     tests/test_backend_call_parity.py; this class covers the behaviour in the kernel's REAL shapes:
     record times are parse_z's whole seconds (the mapping's values are floats of them), and the echo's
-    own stamp is int(time.time()), as the SDK and tmux echoes stamp theirs."""
+    own stamp is int(time.time()), as the SDK echo stamps its own (and the removed tmux echo did)."""
 
     def _with_echo(self, text="ship it", t=1000):
         be, fake, _ = build()
@@ -1376,7 +1985,7 @@ class PruneLive(unittest.TestCase):
         self.assertEqual(be.live_atoms(sid), [], "a record at the send's second lands it")
 
     def test_a_record_later_in_the_sends_own_second_lands_the_echo(self):
-        # The echo is stamped in WHOLE seconds like the SDK's and the tmux echo's. A float stamp (1000.3)
+        # The echo is stamped in WHOLE seconds like the SDK's (and the removed tmux echo's). A float stamp (1000.3)
         # would keep an echo whose record was written at 1000.7: parse_z reads that record as 1000, and
         # 1000 >= 1000.3 is false, the same-second case the SDK retires.
         be, fake, _ = build()
@@ -1545,7 +2154,12 @@ class EchoAtoms(unittest.TestCase):
 
 class LaunchErrorNames(unittest.TestCase):
     """A LIVE launch-error row without a shared name let a retry mint a duplicate live session
-    under the same name (the v1.3.12 audit's P2) — both failure branches now write names/."""
+    under the same name (the v1.3.12 audit's P2) — both failure branches now write names/. Both
+    also keep the identity colour the caller picked: a placeholder that dropped it wrote an empty
+    colour into names/ and the registry row, and every later writer (the thread create once the
+    app-server was back, the load-time republish) copied that empty colour forward, so the
+    session ran colourless on every identity surface for its whole life while the kernel's
+    picker, which counts held colours from names/, handed its colour to the next session."""
 
     def test_a_clientless_spawn_writes_its_shared_name(self):
         import tempfile
@@ -1570,6 +2184,136 @@ class LaunchErrorNames(unittest.TestCase):
             name_file = os.path.join(td, "names", sid)
             self.assertTrue(os.path.exists(name_file))
             self.assertIn("webby", open(name_file).read())
+
+    def _assert_wears_the_picked_colour(self, td, be, sid):
+        parts = (Path(td) / "names" / sid).read_text().rstrip("\n").split("\t")
+        self.assertEqual(parts, ["web", "/TESTDIR", "#336699", "#ffffff"],
+                         "the shared identity file carries the picked colour, both fields")
+        self.assertEqual(be.live_sessions()[sid]["color"], "#336699",
+                         "so does the row: it is what the later thread create republishes from")
+        be2 = cb.CodexBackend(td, client_factory=lambda: None)
+        self.assertEqual(be2.live_sessions()[sid]["color"], "#336699",
+                         "and durably: the row rebuilt at the next load still carries it")
+
+    def test_a_clientless_spawn_keeps_the_picked_identity_colour(self):
+        with tempfile.TemporaryDirectory() as td:
+            be = cb.CodexBackend(td, client_factory=lambda: None)
+            sid = be.spawn("web", "/TESTDIR", "#336699", "#ffffff")
+            self.assertTrue(be._session(sid).tid.startswith("pending-"), "the client-missing branch")
+            self._assert_wears_the_picked_colour(td, be, sid)
+
+    def test_a_thread_start_failure_keeps_the_picked_identity_colour(self):
+        class BoomClient(FakeClient):
+            def thread_start(self, params):
+                raise RuntimeError("no threads today")
+        with tempfile.TemporaryDirectory() as td:
+            fake = BoomClient()
+            be = cb.CodexBackend(td, client_factory=lambda: fake)
+            sid = be.spawn("web", "/TESTDIR", "#336699", "#ffffff")
+            self.assertTrue(be._session(sid).tid.startswith("failed-"), "the thread/start-failure branch")
+            self._assert_wears_the_picked_colour(td, be, sid)
+
+    def test_the_placeholder_colour_outlives_the_thread_it_later_gets(self):
+        # the loss was for LIFE, not just while the row was red: once the app-server was back, the
+        # create path turned the placeholder into a real thread and republished names/ from the
+        # row, whose colour was the same empty string. With the colour on the row, that republish
+        # carries it forward.
+        with tempfile.TemporaryDirectory() as td:
+            be = cb.CodexBackend(td, client_factory=lambda: None)
+            sid = be.spawn("web", "/TESTDIR", "#336699", "#ffffff")
+            s = be._session(sid)
+            self.assertTrue(be._prepare_thread(s, FakeClient()), "the placeholder became a real thread")
+            self.assertFalse(s.tid.startswith("pending-"))
+            parts = (Path(td) / "names" / sid).read_text().rstrip("\n").split("\t")
+            self.assertEqual(parts[2:], ["#336699", "#ffffff"],
+                             "the republish after thread start keeps the colour")
+            self.assertEqual(be.live_sessions()[sid]["color"], "#336699")
+
+
+class RegistryNamesHeal(unittest.TestCase):
+    """spawn writes the durable registry row, then names/<sid>. A kernel death between the two left a
+    LIVE row with no shared identity file: the next boot rebuilt the session from the registry but
+    republished nothing, so every names/-derived surface (sender name and colour, cwd, the duplicate-
+    name claim) was blind to it, and the one heal a user could reach, a rename, wrote an empty colour
+    although the registry knew it (2026-09-11). All data synthetic per CLAUDE.md."""
+
+    def _crash_between_row_and_publish(self):
+        be, fake, tmp = build()
+        sid = be.spawn("web", "/TESTDIR", "#336699", "#ffffff")
+        nf = Path(tmp) / "names" / sid
+        nf.unlink()                            # the crash window: the row landed, the publish never ran
+        return be, fake, tmp, sid, nf
+
+    def test_a_live_row_missing_its_names_entry_is_republished_at_load(self):
+        be, fake, tmp, sid, nf = self._crash_between_row_and_publish()
+        logs = []
+        be2 = cb.CodexBackend(tmp, client_factory=lambda: fake, log=logs.append)
+        self.assertTrue(be2.owns(sid), "the row is live in the registry")
+        self.assertTrue(nf.is_file(), "the next boot republishes the identity file from the registry")
+        parts = nf.read_text().rstrip("\n").split("\t")
+        self.assertEqual(parts[:3], ["web", "/TESTDIR", "#336699"],
+                         "name, cwd and colour come from the registry, the durable source")
+        self.assertEqual(sorted(p.name for p in nf.parent.iterdir()), [sid], "no staging file left behind")
+        self.assertTrue(any(sid in m and "missing at load" in m for m in logs),
+                        "the heal is loud: the log names the sid and the state it repaired")
+
+    def test_a_failed_republish_at_load_leaves_the_boot_alive_and_names_the_unnamed_state(self):
+        # the heal's failure branch: the boot must not die over an identity file, and the log must
+        # NAME the state it leaves — a live row with no published name is the duplicate-name hole.
+        # The REAL writer runs under _disk_full, so the publish (os.replace onto names/<sid>) fails
+        # with ENOSPC exactly as it would on a full disk
+        be, fake, tmp, sid, nf = self._crash_between_row_and_publish()
+        logs = []
+        with _disk_full(nf):
+            be2 = cb.CodexBackend(tmp, client_factory=lambda: fake, log=logs.append)
+        self.assertTrue(be2.owns(sid), "the boot survived the failed write and the row is still live")
+        self.assertFalse(nf.exists(), "a failed publish creates nothing")
+        self.assertEqual(sorted(p.name for p in nf.parent.iterdir()), [], "no staging file left behind")
+        said = [m for m in logs if sid in m and "could not be republished at load" in m]
+        self.assertEqual(len(said), 1, logs)
+        self.assertIn("[Errno 28]", said[0], "the log names the errno")
+        self.assertIn("UNNAMED", said[0], "the log names the state the session is left in")
+
+    def test_a_row_whose_names_entry_exists_is_left_untouched_at_load(self):
+        # green on origin/main as well (it wrote nothing at load): the pin that the heal is for the
+        # MISSING file only — the names producers watch the mtime, and a kernel-side recolour lives
+        # in the file alone, so a rewrite from the registry would both flap and revert it
+        be, fake, tmp = build()
+        sid = be.spawn("web", "/TESTDIR", "#336699", "#ffffff")
+        nf = Path(tmp) / "names" / sid
+        nf.write_text("web\t/TESTDIR\t#abcdef\t#000000\n")   # a kernel-side recolour: names/ only
+        before = (nf.read_bytes(), nf.stat().st_mtime_ns)
+        logs = []
+        cb.CodexBackend(tmp, client_factory=lambda: fake, log=logs.append)
+        self.assertEqual((nf.read_bytes(), nf.stat().st_mtime_ns), before,
+                         "byte-identical and no mtime bump: nothing was missing, so nothing was written")
+        self.assertEqual([m for m in logs if "names/" in m], [])
+
+    def test_a_dead_row_missing_its_names_entry_is_not_republished(self):
+        # green on origin/main as well: a dead row claims no name slot — republishing it would
+        # hold the name against the create it no longer owns
+        be, fake, tmp, sid, nf = self._crash_between_row_and_publish()
+        self.assertTrue(be.kill(sid))
+        cb.CodexBackend(tmp, client_factory=lambda: fake)
+        self.assertFalse(nf.exists(), "a dead row claims no name slot")
+
+    def test_the_rename_heal_carries_the_registry_colour(self):
+        be, fake, tmp, sid, nf = self._crash_between_row_and_publish()
+        self.assertTrue(be.rename(sid, "api"))
+        parts = nf.read_text().rstrip("\n").split("\t")
+        self.assertEqual(parts[:3], ["api", "/TESTDIR", "#336699"],
+                         "the healed file carries the colour the registry knows, not an empty one")
+
+    def test_a_recolour_in_the_names_file_outranks_the_registry_colour(self):
+        # green on origin/main as well: the pin for the ORDER of the fallback (the file first) — a
+        # kernel-side recolour (_set_session_color) writes names/ only and never updates the
+        # registry's colour, so a rename must keep the file's, not revert to spawn's
+        be, fake, tmp = build()
+        sid = be.spawn("web", "/TESTDIR", "#336699", "#ffffff")
+        nf = Path(tmp) / "names" / sid
+        nf.write_text("web\t/TESTDIR\t#abcdef\t#000000\n")
+        self.assertTrue(be.rename(sid, "api"))
+        self.assertEqual(nf.read_text(), "api\t/TESTDIR\t#abcdef\t#000000\n")
 
 
 class RaisingRegistryTransactions(unittest.TestCase):
@@ -1872,7 +2616,8 @@ class RaisingRegistryTransactions(unittest.TestCase):
             s = be._session(sid)
             s.tid = "pending-%s" % sid[:8]         # force the create path
             s.loaded = False
-            prior_model = s.model
+            s.model = ""                           # no pick on the placeholder: the server's answer
+            prior_model = s.model                  # fills the field, so the flip is observable
 
             class OtherModel(type(fake)):
                 def thread_start(self2, params):
@@ -1902,18 +2647,96 @@ class RaisingRegistryTransactions(unittest.TestCase):
                 be.spawn("webby", "/tmp")
             self.assertEqual(len(be._sessions), 0)
 
+    def test_a_raising_registry_send_keeps_nothing_in_memory(self):
+        # send() was the one durable mutator without a rollback: the text stayed in the queue, its
+        # echo in the live atoms and busy() read True — a queued bubble on a busy session for a send
+        # whose caller was told it failed — with no worker kicked, so nothing ever drained it. The
+        # fault is the REAL one beneath the real writer (an unreadable registry.json), not a mock
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            fake = FakeClient()
+            be = cb.CodexBackend(td, client_factory=lambda: fake)
+            sid = be.spawn("web", "/TESTDIR")
+            self._corrupt(td)
+            with self.assertRaises(RuntimeError):
+                be.send(sid, "lost to an unreadable registry")
+            self.assertEqual(be.pending_queued(sid), [],
+                             "the entry never reached disk, so it leaves memory too")
+            self.assertEqual(be._session(sid).queue_ids, [], "and its id with it")
+            self.assertEqual(be.live_atoms(sid), [], "this send's echo goes with it")
+            self.assertFalse(be.busy(sid), "nothing is queued, so nothing reads as work to drive")
+
+    def test_a_raising_registry_send_takes_back_only_its_own_entry_and_echo(self):
+        # The take-back is scoped by the failed send's entry id and echo uuid, never by text or by a
+        # clear. An earlier SAME-text send is still queued (parked behind a backing-off worker) with
+        # its echo still awaiting the app-server's record: a clear would leave that earlier copy on
+        # disk but not in memory (the ACK-mismatch face this fix removes, reintroduced); a by-text
+        # take-back would remove the EARLIER copy's slot and echo and keep the failed send's own — the
+        # phantom back, and a real message gone from the chat. Same shape as the dead-path steer test
+        # (test_a_send_that_finds_the_session_dead_takes_back_only_its_own_echo): the earlier state is
+        # planted under the lock and expected to survive alone.
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            fake = FakeClient()
+            be = cb.CodexBackend(td, client_factory=lambda: fake)
+            sid = be.spawn("web", "/TESTDIR")
+            s = be._session(sid)
+            with s.lock:                           # an earlier same-text send, queued and echoed
+                s.queue.append("deploy the change")
+                s.queue_ids.append("q-11111111")
+                s.echoes.append({"text": "deploy the change", "t": 1000, "uuid": "echo-11111111"})
+            self._corrupt(td)
+            with self.assertRaises(RuntimeError):
+                be.send(sid, "deploy the change")
+            self.assertEqual(be.pending_queued(sid), ["deploy the change"],
+                             "the earlier copy stays queued: the take-back is no clear")
+            self.assertEqual(s.queue_ids, ["q-11111111"],
+                             "and under its own id: a by-text take-back would have removed this slot "
+                             "and kept the failed send's fresh id")
+            self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-11111111"],
+                             "the earlier send's echo survives; only the failed send's own is taken back")
+            self.assertTrue(be.busy(sid), "the earlier send still reads as work to drive")
+
+    def test_a_raising_registry_send_does_not_ride_the_next_turn(self):
+        # the second face of the same hole: the copy kept in memory rode the NEXT send's kick into
+        # that turn, so a user who retyped after freeing the disk had the agent read the instruction
+        # twice in one turn (and the ACK of both ids against a disk row holding one preserved the
+        # durable entry for a third delivery at the next restart)
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            fake = FakeClient()
+            be = cb.CodexBackend(td, client_factory=lambda: fake)
+            sid = be.spawn("web", "/TESTDIR")
+            reg = Path(td) / "codex" / "registry.json"
+            good = reg.read_bytes()
+            self._corrupt(td)
+            with self.assertRaises(RuntimeError):
+                be.send(sid, "deploy the change")
+            reg.write_bytes(good)                  # the registry is readable again: the user retypes
+            self.assertTrue(be.send(sid, "deploy the change"))
+            self.assertTrue(until(lambda: not be.busy(sid) and fake.called("turn_start")))
+            starts = fake.called("turn_start")
+            self.assertEqual(len(starts), 1)
+            self.assertEqual([i["text"] for i in starts[0][2]], ["deploy the change"],
+                             "the failed send is not delivered beside the retype")
+            rows = json.loads(reg.read_text())
+            self.assertEqual(registry_queue_entries(rows, sid), [],
+                             "one id appended, one id acked: the durable queue drains")
+
 
 class EnsureCodexSdk(unittest.TestCase):
     """ensure_codex_sdk adds the codexvenv's site-packages only when they were built for the interpreter
     this process runs (the twin of the SDK venv's rule, tests/test_sdk_venv_abi.py). Every
     codexvenv/lib/python3.* used to join sys.path[0] whatever the interpreter, so a codexvenv built with a
     newer python failed deep inside the import under the kernel's python and shadowed shared
-    dependencies for every later import (review round 2). find_spec is stubbed so the outcome does not
-    depend on whether this machine has openai_codex installed."""
+    dependencies for every later import. find_spec is stubbed so the outcome does not depend on
+    whether this machine has openai_codex installed."""
+
+    # The tag venv names this interpreter's lib directory with, from sys itself (not the code under test).
+    TAG = "%d.%d%s" % (sys.version_info[0], sys.version_info[1], "t" if "t" in getattr(sys, "abiflags", "") else "")
 
     def setUp(self):
         import io
-        import tempfile
         self.state = tempfile.mkdtemp()
         self.venv = Path(self.state) / "codexvenv"
         self.path_before = list(sys.path)
@@ -1932,14 +2755,14 @@ class EnsureCodexSdk(unittest.TestCase):
 
     def _run(self, importable_from=None):
         import importlib.util
+        real_find_spec = importlib.util.find_spec
 
         def fake_find_spec(name, *a, **k):
             if name != "openai_codex":
-                return fake_find_spec.__wrapped__(name, *a, **k)
+                return real_find_spec(name, *a, **k)
             if importable_from and any(p.startswith(importable_from) for p in sys.path):
                 return SimpleNamespace(name=name)
             return None
-        fake_find_spec.__wrapped__ = importlib.util.find_spec
         with mock.patch.object(importlib.util, "find_spec", fake_find_spec), \
              mock.patch.object(sys, "stderr", self.err):
             return cb.ensure_codex_sdk(self.state)
@@ -1947,24 +2770,25 @@ class EnsureCodexSdk(unittest.TestCase):
     def test_a_venv_for_another_python_is_not_added_and_is_named(self):
         sp = self._site("python3.99")
         self.assertFalse(self._run(importable_from=sp))
-        self.assertNotIn(sp, sys.path, "a 3.99 venv must never join a %s process" % cb._running_python_tag())
+        self.assertNotIn(sp, sys.path, "a 3.99 venv must never join a python%s process" % self.TAG)
         line = self.err.getvalue()
         self.assertIn("built for python 3.99", line)
-        self.assertIn("runs " + cb._running_python_tag(), line)
+        self.assertIn("runs " + self.TAG, line)
         self.assertIn("romp-codex-setup", line, "the remedy, named")
         self.assertEqual(cb._CODEX_VENV_BUILT_FOR, ["3.99"])
         self.assertFalse(self._run(importable_from=sp))
         self.assertEqual(self.err.getvalue(), line, "one line per verdict, not one per launch")
 
     def test_a_matching_venv_is_added_and_the_sdk_imports(self):
-        sp = self._site("python" + cb._running_python_tag())
+        self.assertEqual(cb._running_python_tag(), self.TAG)
+        sp = self._site("python" + self.TAG)
         self.assertTrue(self._run(importable_from=sp))
         self.assertIn(sp, sys.path)
         self.assertEqual(self.err.getvalue(), "", "nothing to say when the venv matches")
 
     def test_only_the_matching_directory_joins_when_both_exist(self):
         old = self._site("python3.99")
-        new = self._site("python" + cb._running_python_tag())
+        new = self._site("python" + self.TAG)
         self.assertTrue(self._run(importable_from=new))
         self.assertIn(new, sys.path)
         self.assertNotIn(old, sys.path)

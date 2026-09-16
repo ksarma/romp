@@ -111,6 +111,9 @@ const trapWrites = (page: any) => page.evaluate(() => {
 });
 const writes = (page: any): Promise<number[]> => page.evaluate(() => (window as any).__writes as number[]);
 const fontSizeOf = (page: any): Promise<number> => page.evaluate(() => parseFloat(getComputedStyle(document.querySelector(".fileview-md > p")!).fontSize));
+/** The text-size buttons ride the zoom glyph's flyout (upstream T367: shut until the glyph is pressed, and shut again by any
+ *  press outside it, a view switch or the Comments button among them): open it when it is shut, so a press lands on a shown button. */
+const openZoom = async (page: any) => { if (await page.evaluate(() => { const m = document.querySelector("#romp-fileview .fileview-zoom-menu") as HTMLElement | null; return !m || m.hidden; })) await page.locator("#romp-fileview .fileview-zoom-btn").click(); };
 /** The box of the element `sel` names (for an `img`, its parent `<p>`, the block's element), from the body's top edge. */
 const targetBox = (page: any, sel: string) => page.evaluate((s: string) => {
   const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect();
@@ -148,6 +151,7 @@ test("in a browser, the real module: a two-tag html block whose first tag hangs 
       // a text-size step reads the place too: it must paint, not throw
       const p0: number = await page.evaluate(() => (window as any).__paints);
       const fs0 = await fontSizeOf(page);
+      await openZoom(page);
       await page.locator('#romp-fileview button[aria-label="Larger text"]').click();
       await paintsReach(page, p0 + 1); await frames(page, 2);
       const fs1 = await fontSizeOf(page);
@@ -703,8 +707,8 @@ const imgToEdge = (page: any, alt: string, above = 0) => page.evaluate(([a, x]: 
   const i = document.querySelector(`.fileview-md img[alt="${a}"]`)!;
   body.scrollTop += i.getBoundingClientRect().top - body.getBoundingClientRect().top + x;
 }, [alt, above]);
-/** One press of a text-size button, awaited through the seam's paint count (the reflow's own paint), never a timer. */
-const sizeStep = async (page: any, label: string) => { const p: number = await page.evaluate(() => (window as any).__paints); await page.locator(`#romp-fileview button[aria-label="${label}"]`).click(); await paintsReach(page, p + 1); await frames(page, 3); };
+/** One press of a text-size button, the flyout opened first, awaited through the seam's paint count (the reflow's own paint), never a timer. */
+const sizeStep = async (page: any, label: string) => { await openZoom(page); const p: number = await page.evaluate(() => (window as any).__paints); await page.locator(`#romp-fileview button[aria-label="${label}"]`).click(); await paintsReach(page, p + 1); await frames(page, 3); };
 /** The pane dragged to `width`: the viewport resized, the reflow's paint awaited. */
 const dragTo = async (page: any, width: number) => { const p: number = await page.evaluate(() => (window as any).__paints); await page.setViewportSize({ width, height: 600 }); await paintsReach(page, p + 1); await frames(page, 3); };
 /** near, with the tolerance a Raw row's whole-pixel snap scales to by the picture's height over the row's (test 3's idiom). */

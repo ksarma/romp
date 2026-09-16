@@ -12,7 +12,8 @@ font-size:13px;display:flex;flex-direction:column;overflow:hidden}
    opened from a file-browser row still paints above the browser's fixed overlay (the "‹ Files" back path). */
 body.fileview-pane #romp-fileview{position:relative;inset:auto;flex:1 1 auto;min-height:0;background:none}
 body.fileview-pane .fileview{width:100%;height:100%;border:0;border-radius:0;box-shadow:none}
-/* The file BROWSER fills the pane the same way: the listing is its own column here (files.ts). The chat sheet has
+/* The file BROWSER (a relayed folder, or the viewer's directory link) fills the pane the same way: the listing is its
+   own column here (files.ts). The chat sheet has
    dressed it as the viewer's centered card since 2026-09-04 (styles.css: #romp-filebrowse is the fixed inset-0
    backdrop, dimmed; .filebrowse the min(720px,95%) by min(760px,95%) card with the modal border, radius and shadow),
    and in a column that card floated in a dim pane. The backdrop stays fixed and goes clear; the card takes the whole
@@ -45,11 +46,15 @@ body.fileview-pane .filebrowse{width:100%;height:100%;border:0;border-radius:0;b
 .fs-row{display:flex;align-items:center;gap:8px;min-width:0;padding:5px 8px;border-radius:6px;cursor:pointer}
 .fs-row:hover{background:var(--overlay-05,rgba(255,255,255,0.05))}
 /* Print (Slice 3 of plans/markdown-viewer.md): the pane's own screen rules undone so the note prints as a document, as the
-   base sheets' print block does for the modal (styles.css, which this page loads first, carries it). The page and the
-   viewer grow to the note's height, the body row's fill and clip go, and the ink is black on white; keywords, since this
-   sheet holds no bare hex (css-census.test.ts). The viewer's own position:relative above stands in print too: in flow it
-   prints as a block, and the z-index it keeps is what files.test.ts pins. file-view-print-browser.test.ts lays it out and
-   counts the pages. */
+   base sheets' print block does for the modal (styles.css, which this page loads first, carries it). That block keys on
+   :root and body.fileview-open, which outrank the html,body rule above for height, overflow and colour whatever the
+   order; but it never touches html's display:flex, it cannot beat the more specific .fileview size rule above
+   (body.fileview-pane .fileview), and with no file open (no fileview-open on the body) it does not apply at all. So the
+   page and the viewer grow to the note's height, the body row's fill and clip go, and the ink is black on white;
+   keywords, since this sheet holds no bare hex (css-census.test.ts). The empty state never prints, with or without a
+   file open (the base sheet hides it only under fileview-open). The viewer's own position:relative above stands in
+   print too: in flow it prints as a block, and the z-index it keeps is what files.test.ts pins.
+   file-view-print-browser.test.ts lays it out and counts the pages. */
 @media print{html,body{height:auto;overflow:visible;display:block;background:white;color:black}
 body.fileview-pane .fileview{width:auto;height:auto}
 #files-empty{display:none}}

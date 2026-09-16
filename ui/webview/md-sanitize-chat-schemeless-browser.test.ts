@@ -216,7 +216,7 @@ const DL_CASES: DlCase[] = [
     sel: "#romp-lightbox .romp-lightbox-dl", download: { url: fileUrlOf("/notes-api/plot.png"), name: "plot.png" }, opens: [], prevented: false },
   { name: "the viewer's Download button (a transient <a download> the button clicks)",
     setup: "window.__chrome.initFileView(function () {}); window.__chrome.openFileView('/notes-api/README.md', null)",
-    sel: "#romp-fileview button.fileview-btn:has-text('Download')", download: { url: fileUrlOf("/notes-api/README.md", true) }, opens: [], prevented: false },
+    sel: "#romp-fileview button.fileview-btn[aria-label='Download']", download: { url: fileUrlOf("/notes-api/README.md", true) }, opens: [], prevented: false },   // a glyph since T367: its word rides the aria-label
   { name: "the file browser's download-only row (the same transient anchor)",
     setup: "(function(){window.__chrome.initFileBrowse(function(m){if(m.type!=='listDir')return;window.postMessage({type:'dirListing',reqId:m.reqId,base:m.path,parent:'/',"
       + "entries:[{name:'data.bin',isDir:false,isLink:false,size:4096,mtime:0,viewable:false}]},'*');},{shellRestore:false});window.__chrome.openFileBrowse('/notes-api',null);})()",

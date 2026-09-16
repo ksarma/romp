@@ -3040,7 +3040,7 @@ class PlanTuning(unittest.TestCase):
         import inspect
         # the wrap-up asks for no reply since 2026-07-29, so ONE card is the exception, not the default
         # the phrase spans two source literals, so pin the half that carries the rule
-        self.assertIn("**one** new top-level goal, blocked on the user", inspect.getsource(jd.plan_units))
+        self.assertIn("**one** new top-level goal, blocked on the user", inspect.getsource(jd.plan_units) + inspect.getsource(jd._work_note))   # the note lives in the planner's note helper (T377)
 
     def test_menu_prompts_state_the_numbering_base(self):
         # The zero-based tell's prompt half (the user 2026-07-17): every menu-reading prompt says the
@@ -3097,9 +3097,14 @@ class PlanTuning(unittest.TestCase):
     def test_why_cap_raised_to_300(self):
         long = "word " * 100                                   # ~500 chars after normalization
         ops = jd._parse_plan('{"ops":[{"why":"%s","do":"mint","text":"G"}]}' % long.strip(), 1)
-        self.assertEqual(len(ops[0]["why"]), 300, "planner why capped at 300 (was 200)")
+        # the ceiling is 300 (was 200); since T388 the cut lands at a word or sentence boundary under it and ends
+        # with the visible cut mark, so the stored why is never a mid-word stump the brief judge could misread
+        self.assertLessEqual(len(ops[0]["why"]), 300 + len(jd.WHY_CUT_MARK), "planner why capped at 300 (was 200)")
+        self.assertGreaterEqual(len(ops[0]["why"]), 150, "…and cut no lower than half the cap")
+        self.assertTrue(ops[0]["why"].endswith("word" + jd.WHY_CUT_MARK), ops[0]["why"][-12:])
         done = jd._parse_close('{"done":[{"goal":1,"why":"%s"}]}' % long.strip(), 1)["done"]
-        self.assertEqual(len(done[1]), 300, "closer doneWhy capped at 300 (was 200)")
+        self.assertLessEqual(len(done[1]), 300 + len(jd.WHY_CUT_MARK), "closer doneWhy capped at 300 (was 200)")
+        self.assertTrue(done[1].endswith("word" + jd.WHY_CUT_MARK), done[1][-12:])
 
     def test_planner_eager_done_and_no_grouping(self):
         # the user 2026-06-17: the planner biases toward marking goals done EAGERLY, and (split out the
@@ -8565,8 +8570,10 @@ class StaleBlockGuard(unittest.TestCase):
         # this pin just keeps the planner on the one seam.
         import inspect
         src = inspect.getsource(jd)
-        self.assertIn('if t and record_verdict(store, nodes[t], "planner", "block", seg_t', src,
-                      "the planner's block op must go through record_verdict exactly like the closer")
+        self.assertIn('file_block(store, nodes[t], "planner", o["why"], seg_t, seg=seg_id) if t else', src,
+                      "the planner's block op goes through the one block writer, like the closer (T334)")
+        self.assertIn('record_verdict(store, nd, src, "block", ev_t, why=why, seg=seg)', inspect.getsource(jd.file_block),
+                      "…and that writer files a user's block through record_verdict, the fused gate+recorder")
 
 
 class FollowupContinuationCarry(unittest.TestCase):

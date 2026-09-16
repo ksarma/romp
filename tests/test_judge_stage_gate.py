@@ -423,7 +423,7 @@ class _Gate(unittest.TestCase):
         """Zero the evidence gate's per-tier counters and the two change gates' (the planner's inner, the courier's)."""
         for stats in list(jd._TIER_STATS.values()) + [jd._PLANNER_STATS, jd._COURIER_STATS]:
             for k in stats:
-                stats[k] = 0
+                stats[k] = {} if k == "mismatchByTerm" else 0   # the planner memo's histogram (T401 (5c)) is a dict
 
     def _stamp(self, tier, sid=SID):
         """The record of `tier`'s last complete no-op run over `sid`: the evidence gate's (sig, not_before) stamp for
@@ -1003,7 +1003,8 @@ class PlannerInnerGate(_Gate):
         # the skip (_TIER_STATS["plan"], the `plan` row of GET /perf's tiers block)
         self._session(SID)
         self._pass(tiers=("plan",)); self._pass(tiers=("plan",)); self._pass(tiers=("plan",))
-        self.assertEqual(jd.planner_skip_stats(), {"planned": 2, "skipped": 0, "recorded": 1},
+        self.assertEqual({k: v for k, v in jd.planner_skip_stats().items() if k in ("planned", "skipped", "recorded")},
+                         {"planned": 2, "skipped": 0, "recorded": 1},   # the persisted memo's own counters (restored, refused, persisted, mismatchByTerm) ride beside these since the 2026-09-15 pull-in
                          "the placing pass and the recording pass reached the inner gate; the skip never did")
         s = self._st("plan")
         self.assertEqual((s["ran"], s["skipped"], s["stamped"]), (2, 1, 2), "the outer gate ran twice, skipped once, stamped both runs")
@@ -2235,6 +2236,57 @@ class StoreCompleteness(_Gate):
         self._pass(tiers=("distill",))
         self.assertEqual(len(self._rows("stall-unreadable")), 4, "a fourth row")
 
+    def test_an_unreadable_reg_never_stamps_the_planner_and_the_session_is_planned(self):
+        # the planner memo tidy's round two: the gate's reg term was lenient (an unreadable or unparseable reg read as None,
+        # the same as a reg with no spawnedAt), so a plan stamp taken while the reg was readable skipped the session for as
+        # long as the reg stayed unreadable, and _plan_key's sentinel for the same fault was never computed. Strict now, like
+        # the stall slice: the gate answers run (skip False, no signature), the stage runs without a stamp and the session
+        # is planned; one row per failure episode; readable again, the run stamps
+        path = self._session(SID)
+        reg = jd.STATE / "sdk" / (SID + ".json"); reg.parent.mkdir(parents=True, exist_ok=True)
+        reg.write_text(json.dumps({"sid": SID, "alive": True}))        # readable, spawnedAt-less: the gate's reg term is None
+        self._converge(tiers=("plan",))
+        self.assertIsNotNone(self._stamp("plan"), "the sig stamped while the reg was readable")
+        own = jd.begin_pass_frame()
+        try:
+            self.assertEqual(jd._gate_check("plan", SID, str(path), NOW)[0], True, "the framed gate skips over the readable reg")
+            reg.write_text("{ not a document")
+            self.assertEqual(jd._gate_check("plan", SID, str(path), NOW), (False, None), "corrupt bytes: run, no signature")
+            if os.geteuid() != 0:
+                os.chmod(reg, 0)
+                try:
+                    self.assertEqual(jd._gate_check("plan", SID, str(path), NOW), (False, None), "mode 000: run, no signature")
+                finally:
+                    os.chmod(reg, 0o644)
+        finally:
+            jd.end_pass_frame(own)
+        planned = 0                                        # summed per pass: this harness's _reset zeroes the planner counters too
+        for _ in range(2):
+            self._reset()
+            self._pass(tiers=("plan",))
+            s = self._st("plan")
+            self.assertEqual((s["ran"], s["bypassed"], s["stamped"]), (1, 1, 0), "the stage ran without a stamp over the unreadable reg")
+            self.assertEqual(len(self._rows("reg-unreadable")), 1, "one row per failure episode, not per pass")
+            planned += jd._PLANNER_STATS["planned"]
+        self.assertEqual(planned, 2, "the session was planned on both passes (the memo's sentinel, never a row)")
+        self.assertNotIn(SID, jd._PLANNER_SEEN, "a sentinel key is never recorded")
+        reg.write_text(json.dumps({"sid": SID, "alive": True}))
+        self._reset()
+        self._pass(tiers=("plan",))
+        self.assertEqual((self._st("plan")["ran"], self._st("plan")["skipped"]), (0, 1),
+                         "readable again with the same content: the stamp survived the episode (as the stall slice's does) and the pass skips")
+        reg.write_text(json.dumps({"sid": SID, "alive": True, "spawnedAt": T0 + 5}))   # the reg's value moved: due, and the run stamps
+        self._reset()
+        self._pass(tiers=("plan",))
+        self.assertEqual((self._st("plan")["ran"], self._st("plan")["stamped"]), (1, 1), "a moved value: the run stamps")
+        self._reset()
+        self._pass(tiers=("plan",))
+        self.assertEqual((self._st("plan")["ran"], self._st("plan")["skipped"]), (0, 1), "and the next pass skips")
+        reg.write_text("{ not a document")
+        self._reset()
+        self._pass(tiers=("plan",))
+        self.assertEqual(len(self._rows("reg-unreadable")), 2, "a new failure episode after a good read: a second row")
+
     @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
     def test_a_stall_read_failing_after_a_good_signature_read_marks_the_run(self):
         # the other half of the strict rule: the signature's read succeeded (the file was readable at gate
@@ -3365,7 +3417,8 @@ class IndexReaders(_Gate):
         jd._judge_ctx.stage_incomplete = False
         self.assertEqual(self._tasks(path), tasks)                       # the hit
         self.assertFalse(jd._judge_ctx.stage_incomplete, "a good read marks nothing")
-        cf.write_text(json.dumps({"key": [[["stale", 1]], ""], "v": 6, "tasks": []}))   # the current version (v6, T252d): only the key is stale
+        cf.write_text(json.dumps({"key": [[["stale", 1]], ""], "capKey": json.loads(cf.read_text()).get("capKey"),   # the current version (v9 with capKey, T358; v6 was T252d) and the
+                                  "v": 9, "tasks": []}))                                                    # published capKey: ONLY the key is stale
         self.assertEqual(self._tasks(path), tasks, "a stale key is a plain miss")
         self.assertFalse(jd._judge_ctx.stage_incomplete)
         cf.unlink()
@@ -3492,6 +3545,12 @@ class IndexGate(_Gate):
         self.assertEqual((len(self.caption_calls), len(self.archive_calls)), (n_caps, 2), "no model call")
         wm = jd.pass_watermark("index", SID)
         self.assertIsNotNone(wm, "a completed run stamps pass_done")
+        self._reset()
+        seen_c.clear(); seen_a.clear()
+        # T358 (the 2026-09-15 pull-in) keys the unit cache on the captions file too (capKey), so the pass after a caption
+        # write regenerates and republishes the cache (undone units only) and the gate's PCACHE identity moves once more:
+        # one more follow-on pass before the skip lands
+        self._pass(tiers=("index",))
         self._reset()
         seen_c.clear(); seen_a.clear()
         io0 = jd.goal_io_stats()
@@ -3772,7 +3831,7 @@ class IndexGate(_Gate):
         self.assertEqual(self._ran(), (1, 0, 0, 1))
         self.assertEqual(len(self._rows("units-cache-unreadable")), 1)
         self.assertEqual(len(self.caption_calls), n0, "the regenerated tasks were all captioned already: no call")
-        self.assertEqual(json.loads(cf.read_text())["v"], 6, "repaired by the publish")   # v6 since T252d (upstream 5d295734 moved the seg ids)
+        self.assertEqual(json.loads(cf.read_text())["v"], 9, "repaired by the publish")   # v9 since T358 (capKey; v7 T318, v8 T333, v6 T252d), the 2026-09-15 pull-in
         self._reset()
         self._pass(tiers=("index",))
         self.assertEqual(self._ran(), (1, 0, 1, 0), "the repaired cache's identity re-armed once; the hit path stamps")
@@ -4001,6 +4060,7 @@ class IndexGate(_Gate):
         self._pass(tiers=("index",))
         self._pass(tiers=("index",))
         self._pass(tiers=("index",))
+        self._pass(tiers=("index",))                                    # one more: T358's capKey republish moves the gate once more before the skip
         s = self._st("index")
         self.assertEqual(s["ran"], s["stamped"] + s["bypassed"] + s["incomplete"])
         self.assertGreater(s["skipped"], 0)

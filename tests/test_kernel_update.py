@@ -19,6 +19,7 @@ import time
 import unittest
 from unittest import mock
 from romp_load import load_source
+from git_fixture import git, init_repo, forbid_background
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -1110,7 +1111,7 @@ class Routes(Fresh):
         # only when a label can be worded from them): every idle page load dialled the manager and waited its
         # 1 s timeout on a silent one. Both are skipped when nothing is offered (no release tag after the
         # dismissal filter, no drift sha): every count null, no dial, and the banner's note() records no counts
-        # from such an answer (the node scenario in tests/test_update_banner_confirm.py), since null there means
+        # from such an answer (the node scenario in tests/test_update_banner_confirm_served.py), since null there means
         # not asked, not unknown; the manager field, served on every answer, it does record (review round 7).
         # The connection class refuses every port: a read that runs is seen as a dial
         import contextlib
@@ -1751,7 +1752,7 @@ class Routes(Fresh):
                 km._run_main_update("pull", True, manager_port=None, target="")
                 d = check()
                 self.assertIn("no commit was named for the move", d["failed"])
-                self.assertIn("the next check re-reads main and offers the update again", d["failed"],
+                self.assertIn("Update again once the next check has read main", d["failed"],   # upstream's wording since the 2026-09-15 pull-in (kernel blocks 17, 18)
                               "the text promises the re-offer, never a button that will not show")
                 self.assertEqual((d["drift"], d["driftSha"], km._MAIN_DRIFT[0]), ("", "", ""), "no offer stands after a refused pull")
                 self.assertEqual([ok for _, ok in notices], [False, False, False])
@@ -2429,7 +2430,7 @@ class Wiring(unittest.TestCase):
         # what upstream lacks, and the help line's own words cover the notices ("one banner covers both",
         # "Off never checks"). Both sites in gear.js carry the heading, the row and the stale-pick toast's
         # label table, and the reference names the control by the same heading so a reader finds it in the gear.
-        self.assertIn("<b>Automatic updates <span class=rs-mixed hidden></span></b>", self.gear)
+        self.assertIn("<b>Updates install automatically <span class=rs-mixed hidden></span></b>", self.gear)   # upstream's T404 heading (the 2026-09-15 pull-in); the label table and the reference keep "Automatic updates"
         self.assertIn("'update-mode': 'Automatic updates',", self.gear)
         self.assertNotIn("Updates and update notices", self.gear)
         ref = re.sub(r"\s+", " ", (Path(BIN).parent / "docs" / "reference.md").read_text())
@@ -2443,7 +2444,7 @@ class Wiring(unittest.TestCase):
         # code converges in place with the kernel left up (_kernel_code_changed + _in_place_converge).
         # The copy names both routes. The route line is pinned too, so a change to the route flags
         # the copy for re-reading.
-        self.assertIn("if not _kernel_code_changed(_kernel_sha(), pulled) and _in_place_converge(pulled):",
+        self.assertIn("if not _kernel_code_changed(_kernel_sha(reask=True), pulled) and _in_place_converge(pulled):",
                       self.src)
         self.assertNotIn("quiet moment", self.gear,
                          "the gear still promises a quiet-window restart; since T269 every deploy restart "
@@ -2468,8 +2469,8 @@ class Wiring(unittest.TestCase):
         # list over-claims for the bus's script under bin/): code the running kernel executes restarts
         # at once, anything else converges in place. The code pin couples the copy to the route it
         # describes.
-        self.assertIn("if not _kernel_code_changed(_kernel_sha(), pulled) and _in_place_converge(pulled):", self.src,
-                      "the pull converge's in-place route, which the copy describes")
+        self.assertIn("if not _kernel_code_changed(_kernel_sha(reask=True), pulled) and _in_place_converge(pulled):", self.src,
+                      "the pull converge's in-place route, which the copy describes")   # reask=True: upstream's re-read of the running sha (#1478, the 2026-09-15 pull-in)
         ref = (Path(BIN).parent / "docs" / "reference.md").read_text()
         para = next(p for p in re.split(r"\n\s*\n", ref) if p.lstrip().startswith("**Update notices.**"))
         para = re.sub(r"\s+", " ", para)
@@ -2530,13 +2531,19 @@ class ReleaseChannelMigration(unittest.TestCase):
         and DETACHED at c3 — ahead of v9.9.9, on no tag: the walked-onto-main shape."""
         env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
                "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
+        # Through the shared runner (T299): `git commit`, fetch and merge spawn `git maintenance run
+        # --auto`, which on recent git detaches and can still be writing into .git while the
+        # TemporaryDirectory removes the repo (the CI flake "Directory not empty: '.git'",
+        # tests/test_restart_classifier.py, 2026-09-10); the runner forbids that work on every call,
+        # and init_repo / forbid_background write the same keys into each repo's own config so the
+        # update script's fetch + merge, run by the kernel's bash and not by this runner, obey them too.
         def g(cwd, *args):
-            r = subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True, text=True)
+            r = git(cwd, *args, env=env, check=False)
             self.assertEqual(r.returncode, 0, "git %s: %s%s" % (" ".join(args), r.stdout, r.stderr))
             return r.stdout.strip()
         src = os.path.join(tmp, "src")
         os.makedirs(src)
-        g(src, "init", "-q", "-b", "main")
+        init_repo(src, "-q", "-b", "main", env=env)
         with open(os.path.join(src, "install.sh"), "w") as f:
             f.write("#!/bin/sh\nexit 0\n")
         os.chmod(os.path.join(src, "install.sh"), 0o755)
@@ -2548,10 +2555,22 @@ class ReleaseChannelMigration(unittest.TestCase):
         g(src, "commit", "-qm", "c3", "--allow-empty")
         bare = os.path.join(tmp, "origin.git")
         g(tmp, "clone", "-q", "--bare", src, bare)
+        forbid_background(bare, env=env)                         # the script's fetch is served from here
         inst = os.path.join(tmp, "install")
         g(tmp, "clone", "-q", bare, inst)
+        forbid_background(inst, env=env)                         # the script's fetch + merge run here
         g(inst, "checkout", "-q", "--detach", "origin/main")     # the old banner's walk
         return g, inst
+
+    def test_the_fixture_repos_forbid_background_git_work(self):
+        # The pin for the keys above: the update script runs fetch, merge and checkout against the
+        # install through its own bash (the fetch served from the bare origin), never through g, so
+        # the no-background config must sit in each repo's LOCAL config, not only on the runner's flags.
+        with tempfile.TemporaryDirectory() as tmp:
+            _, inst = self._repos(tmp)
+            for repo in (inst, os.path.join(tmp, "origin.git"), os.path.join(tmp, "src")):
+                self.assertEqual(git(repo, "config", "--local", "--get", "maintenance.auto").stdout.strip(),
+                                 "false", repo)
 
     def _run(self, tag, inst):
         """Capture _run_update's script via the Popen seam, run it SYNCHRONOUSLY. The log and
@@ -2707,14 +2726,16 @@ class BootOnTheTag(Fresh):
     def test_a_release_checkout_reads_the_plus_and_the_boot_still_says_it_runs_it(self):
         env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
                "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
+        # the shared runner, for the reason ReleaseChannelMigration._repos gives (T299); the kernel's
+        # own `git rev-parse` reads this repo through ROOT, so init_repo puts the keys in its config
         def g(cwd, *args):
-            r = subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True, text=True)
+            r = git(cwd, *args, env=env, check=False)
             self.assertEqual(r.returncode, 0, "git %s: %s%s" % (" ".join(args), r.stdout, r.stderr))
             return r.stdout.strip()
         with tempfile.TemporaryDirectory() as tmp:
             src = os.path.join(tmp, "src")
             os.makedirs(src)
-            g(src, "init", "-q", "-b", "main")
+            init_repo(src, "-q", "-b", "main", env=env)
             with open(os.path.join(src, "VERSION"), "w") as f:
                 f.write("9.9.9\n")
             g(src, "add", "VERSION")

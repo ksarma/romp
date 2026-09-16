@@ -47,7 +47,9 @@ Sort events by evidence time (`ev_t`; arrival `at` breaks ties) and replay:
   clears.
 - **Snapshots**: provisional flips restore what they displaced. A `clear`
   snapshots the state it covers, and an undo-reopen restores it, so a
-  cleared completed card comes back completed, never "open". A msg-reopen
+  cleared completed card comes back completed, never "open". An
+  undo-reopen with nothing to restore (its clear lost, or a second undo
+  for one clear) leaves the state as it stands. A msg-reopen
   (the optimistic flip when you reply to a card) snapshots too, and a
   planner `dismiss` (the pivot verdict: that reply started its own thread)
   restores the original state and settle stamp. The pivot's new goal is its
@@ -172,7 +174,7 @@ within a beat it reverts with a toast, never silently.
    stretch (`deltaSince`).
 7. Identity: identical prompts in different turns are different work
    (twins); same-second identical bursts plan once; any seg-id-derivation
-   change ships a placements migration (`placementsV`, currently v12);
+   change ships a placements migration (`placementsV`, currently v14);
    `tests/test_placements_canary.py` pins the derivation.
 8. The auto-nudge fires once per genuine stall, never re-arms off romp's
    own turns, is suppressed while interrupted, and its failure becomes a

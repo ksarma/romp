@@ -46,16 +46,22 @@ TUNNELS = {
 HARNESS = r"""
 'use strict';
 const HTML_SETS = [];           // every string any element was given as innerHTML, in order (the markup sinks)
+const DROPS = [];               // every rn-drop class added, by element id: the rail's host-fell-off flash, one per drop
 function mkEl(id){
-  return {id:id, hidden:true, _text:'', title:'', style:{}, value:'', className:'',
-    children:[], _listeners:{}, _html:'',
+  const cls = new Set();   // ONE class set behind classList and className, so contains() answers what the DOM would
+  return {id:id, hidden:true, _text:'', title:'', style:{}, value:'',
+    get className(){return Array.from(cls).join(' ');},
+    set className(v){cls.clear(); String(v).split(/\s+/).filter(Boolean).forEach(function(c){cls.add(c);});},
+    children:[], _listeners:{}, _html:'',   // innerHTML stays a string sink: markup inside it is never parsed into children or classes here
     // Assigning innerHTML replaces an element's contents, so it must drop appended children too. Without
     // that, render()'s opening `list.innerHTML=''` left the previous pass's rows in place and every
     // refresh doubled the list.
     get innerHTML(){return this._html;}, set innerHTML(v){this._html=v; this.children=[]; HTML_SETS.push(String(v));},
     // …and so does assigning textContent (the DOM's rule) — the option lists clear themselves that way
     get textContent(){return this._text;}, set textContent(v){this._text=v; this.children=[];},
-    classList:{_s:new Set(), add(){}, remove(){}, toggle(){}, contains(){return false;}},
+    // classes are RECORDED (the drop cue is a class the icon gains), the DOM's toggle rule included, over the same set className reads and writes
+    classList:{add(c){cls.add(c); if(c==='rn-drop') DROPS.push(id);}, remove(c){cls.delete(c);},
+      toggle(c,v){ if(v===undefined) v=!cls.has(c); if(v) cls.add(c); else cls.delete(c); return v; }, contains(c){return cls.has(c);}},
     appendChild(c){this.children.push(c); return c;},
     querySelector(){return null;}, querySelectorAll(){return [];},
     addEventListener(k,f){this._listeners[k]=f;}, removeEventListener(){},
@@ -74,11 +80,17 @@ const localStorage = { getItem(){return null;}, setItem(){} };
 const TUNNELS = __TUNNELS__;
 const PAIRS = __PAIRS__;        // /tunnels/pairs answer; null = the read never lands (loader-state test)
 const SUB = __SUB__;            // /tunnels/of answer (a PEER's own rows); null = answer with TUNNELS as before
+const TQ = __TQ__;              // a QUEUE of /tunnels answers ({ok, status, body}), one per poll in order; empty = TUNNELS, ok, every time
+const HQ = __HQ__;              // a QUEUE of /ssh-hosts answers ({ok, status, body} or {reject}), one per load; empty = {hosts:['TESTHOST']}, ok
 const POSTS = [];               // every write the panel makes, so a test can assert what Attach sent
 function fetch(url, opts){
   if (opts && opts.method === 'POST') {
     POSTS.push({url:url, body:JSON.parse(opts.body || '{}')});
     return Promise.resolve({ ok:true, json(){ return Promise.resolve({ok:true}); } });
+  }
+  if (url === '/tunnels' && TQ.length) {
+    const a = TQ.shift();
+    return Promise.resolve({ ok:!!a.ok, status:a.status, json(){ return Promise.resolve(a.body); } });
   }
   if (url.indexOf('/tunnels/pairs') >= 0) {
     if (PAIRS === null) return new Promise(function(){});
@@ -86,6 +98,11 @@ function fetch(url, opts){
   }
   if (url.indexOf('/tunnels/of') >= 0 && SUB !== null) {
     return Promise.resolve({ ok:true, json(){ return Promise.resolve(SUB); } });
+  }
+  if (url.indexOf('/ssh-hosts') >= 0 && HQ.length) {
+    const a = HQ.shift();
+    if ('reject' in a) return Promise.reject(a.reject);   // the reason as given: a string, an object, null (the wrap's shapes)
+    return Promise.resolve({ ok:!!a.ok, status:a.status, json(){ return Promise.resolve(a.body); } });
   }
   const body = url.indexOf('/ssh-hosts') >= 0 ? {hosts:['TESTHOST']} : TUNNELS;
   return Promise.resolve({ ok:true, json(){ return Promise.resolve(body); } });
@@ -117,7 +134,10 @@ setTimeout_(() => {
     const rows = list.children.length;
     const html = list.children.map(collect).join(' | ');
     const add = ELS['rnet-add'], plus = ELS['rnet-plus'], dl = ELS['rnet-hosts'], fs = ELS['rnet-from'];
-    process.stdout.write(JSON.stringify({rows:rows, html:html, errors:console_err,
+    // the stub's own contract, reported so a test pins it: classList and className share one set
+    const _e = mkEl('stub-check'); _e.classList.add('a'); const viaName = _e.className; _e.className = 'b c';
+    const stubSharedClasses = viaName === 'a' && _e.classList.contains('c') && !_e.classList.contains('a');
+    process.stdout.write(JSON.stringify({rows:rows, html:html, errors:console_err, drops:DROPS, tqLeft:TQ.length, hqLeft:HQ.length, stubSharedClasses:stubSharedClasses,
       addHidden:!!add.hidden, plusHidden:!!plus.hidden,
       hosts:dl.children.map(function(o){return o.value;}), hostsHtml:String(dl.innerHTML||''),
       hostsLastDisabled:!!(dl.children.length&&dl.children[dl.children.length-1].disabled),
@@ -135,11 +155,13 @@ class _PanelHarness:
     no tests of its own, so the classes below share the driver without inheriting each other's tests (a
     subclass of a TestCase re-runs every inherited test — three copies of 26 node spawns, review find)."""
 
-    def _run(self, drive="", tunnels=None, pairs=None, sub=None):
+    def _run(self, drive="", tunnels=None, pairs=None, sub=None, tq=None, hq=None):
         js = (HARNESS.replace("__PANEL_JS__", km._LANDING_REMOTES_JS)
                      .replace("__TUNNELS__", json.dumps(tunnels if tunnels is not None else TUNNELS))
                      .replace("__PAIRS__", json.dumps(pairs))
                      .replace("__SUB__", json.dumps(sub))
+                     .replace("__TQ__", json.dumps(tq or []))
+                     .replace("__HQ__", json.dumps(hq or []))
                      .replace("__DRIVE__", drive))
         p = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30)
         self.assertEqual(p.returncode, 0, "panel JS crashed:\n%s" % p.stderr[-2000:])
@@ -147,6 +169,63 @@ class _PanelHarness:
 
 
 class RemotesPanelRender(_PanelHarness, unittest.TestCase):
+    def test_a_non_ok_tunnels_answer_is_a_failed_refresh_and_keeps_the_was_up_map_so_the_next_real_drop_flashes(self):
+        # A proxy in JSON-error mode answers /tunnels with a 5xx whose body parses. The refresh read the body without a
+        # status check, so the answer counted as "no hosts": the panel painted no hosts, and dropCue, which writes
+        # by ABSENCE, forgot every host it had seen up, so the next real drop never flashed (2026-09-14; the manager's own
+        # poll had the same class of bug). Three polls: the host up, the 502, the host down. The 502 is a failed refresh
+        # (named in the console, the loud road) and the drop on the third poll flashes exactly once.
+        down = json.loads(json.dumps(TUNNELS)); down["tunnels"][0]["status"] = "down"
+        # four answers for the four reads the drive makes (the panel's own open, then two opens from the drive, and the
+        # pairs refresh's re-read behind the third): the queue is asserted EMPTY at the end, so a read the harness default
+        # answered would show as a leftover, never as a silent pass on TUNNELS
+        tq = [{"ok": True, "status": 200, "body": TUNNELS},
+              {"ok": False, "status": 502, "body": {"error": "upstream timeout"}},
+              {"ok": True, "status": 200, "body": down},
+              {"ok": True, "status": 200, "body": down}]
+        out = self._run(drive="window.__rompOpenNet(); setTimeout_(function(){ window.__rompOpenNet(); }, 10);", tq=tq)
+        self.assertTrue(any("remotes refresh failed" in e and "HTTP 502" in e for e in out["errors"]), out["errors"])
+        self.assertEqual(out["drops"], ["rail-net"], "one flash, on the real drop; the 502 neither flashed nor forgot")
+        self.assertEqual(out["tqLeft"], 0, "every queued answer was read: the queue matches the reads")
+
+    def test_the_host_pickers_failure_rule_executed_a_status_keeps_the_list_a_rejection_forgets_it_and_an_object_reason_keeps_its_message(self):
+        # the fifth tidy: the rule stood on source pins alone. Four loads (the panel's open and three from the drive): a list
+        # with one host the tunnels never name; a 500 (the list kept, the console says so); a rejected fetch with a STRING
+        # reason (the list forgotten, the console does not claim to keep one); a rejected fetch with an OBJECT reason (its
+        # JSON in the console line, where the old wrap printed [object Object])
+        hq = [{"ok": True, "status": 200, "body": {"hosts": ["SSHONLY"]}},
+              {"ok": False, "status": 500, "body": {"error": "upstream"}},
+              {"reject": "socket closed"},
+              {"reject": {"code": 7}}]
+        drive = "window.__rompOpenNet(); setTimeout_(function(){ window.__rompOpenNet(); setTimeout_(function(){ window.__rompOpenNet(); }, 5); }, 5);"
+        out = self._run(drive=drive, hq=hq)
+        self.assertEqual(out["hqLeft"], 0, "every queued answer was read: four loads")
+        self.assertNotIn("SSHONLY", out["hosts"], "after the rejected fetches the ssh-config host is gone: a dead kernel does not hide behind the stale list")
+        errs = [e for e in out["errors"] if "ssh hosts could not be read" in e]
+        self.assertEqual(len(errs), 3, out["errors"])
+        self.assertIn("keeping the last list", errs[0], "the 500 kept the list and said so")
+        self.assertNotIn("keeping the last list", errs[1], "the rejection forgot the list and claimed no kept one")
+        self.assertIn("socket closed", errs[1])
+        self.assertNotIn("keeping the last list", errs[2], "after a rejection the flag is down: the next failure claims nothing")
+        self.assertIn('{"code":7}', errs[2], "an object reason reaches the console by its JSON, not as [object Object]")
+
+    def test_a_status_alone_keeps_the_ssh_config_host_in_the_picker(self):
+        hq = [{"ok": True, "status": 200, "body": {"hosts": ["SSHONLY"]}}, {"ok": False, "status": 500, "body": {"error": "upstream"}}]
+        out = self._run(drive="window.__rompOpenNet();", hq=hq)
+        self.assertEqual(out["hqLeft"], 0)
+        self.assertIn("SSHONLY", out["hosts"], "a non-ok answer keeps the last good list in the datalist")
+
+    def test_the_stubs_classlist_and_classname_share_one_set(self):
+        # a class added through classList reads back through className and a className write is what classList then
+        # contains; the base's split stub (a no-op classList beside a plain className string) answers false here
+        out = self._run()
+        self.assertTrue(out["stubSharedClasses"], "classList and className must be two views of one set")
+
+    def test_both_shell_side_tunnels_reads_check_the_status_before_the_body(self):
+        pin = "then(function(r){if(!r.ok)throw new Error('/tunnels answered HTTP '+r.status);return r.json();})"
+        self.assertIn(pin, km._LANDING_REMOTES_JS, "the network rail's refresh")
+        self.assertIn(pin, km._RDRIFT_JS, "the update banner's check")
+
     def test_an_attached_host_renders_a_row(self):
         out = self._run()
         self.assertEqual(out.get("errors"), [], "the refresh must not report a failure")
@@ -213,6 +292,26 @@ class RemotesPanelRender(_PanelHarness, unittest.TestCase):
         if tiers is not None:
             tn["peerTiers"] = tiers
         return tn
+
+    def test_a_peer_running_older_code_than_its_checkout_says_so_and_offers_the_restart(self):
+        """plans/drift-by-running-code.md: a peer whose checkout matches this machine is not behind, whatever its kernel
+        booted from; when its kernel runs older kernel code the row says so and the ask slot offers the restart, not an
+        update. Before, such a peer read "behind N" forever and was asked to pull and restart on every pass."""
+        tn = json.loads(json.dumps(TUNNELS))
+        tn["tunnels"][0].update({"status": "up", "checkinPeer": True, "outOfDate": False, "behindBy": 0, "aheadBy": 0,
+                                 "kernelSha": "abc1234", "checkoutSha": "def5678", "localSha": "def5678",
+                                 "kernelVer": "v0.1.3", "localVer": "v0.2.0", "restartPending": True, "askPull": True})
+        out = self._run(tunnels=tn)
+        html = out.get("html", "")
+        self.assertIn("(running older code)", html)
+        self.assertNotIn("behind", html, "its checkout matches: no drift count")
+        self.assertIn("a restart brings it onto the code it holds", html)
+        self.assertRegex(html, r'data-a="[^"]*"[^>]*>Restart</button>', "the ask slot offers the restart, not an update")
+        quiet = json.loads(json.dumps(TUNNELS))
+        quiet["tunnels"][0].update({"status": "up", "checkinPeer": True, "restartPending": False, "askPull": False})
+        html2 = self._run(tunnels=quiet).get("html", "")
+        self.assertNotIn("running older code", html2)
+        self.assertNotIn("Restart</button>", html2)
 
     def test_a_live_row_states_its_drift_plainly(self):
         # The control: an `up` row DID just poll, so its drift is fact and wears no hedge.

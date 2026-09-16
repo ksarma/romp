@@ -4,7 +4,7 @@
 ROMP_SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp"
 
 load free-port
-load tmux-private
+load cli-scope-floor
 
 setup() {
     TEST_DIR="$(mktemp -d)"
@@ -14,86 +14,23 @@ setup() {
 
     mkdir -p "$WORK_DIR" "$MOCK_DIR"
 
-    # Fixtures the tmux mock reads:
-    #   sessions file: one per line, "name" or "name|rompflag" (flag defaults to 1)
-    #   identity file: "name=colour" lines (for @identity-bg lookups)
-    export MOCK_TMUX_SESSIONS_FILE="$TEST_DIR/mock_sessions.txt"
-    export MOCK_TMUX_IDENTITY_FILE="$TEST_DIR/mock_identity.txt"
-    touch "$MOCK_TMUX_SESSIONS_FILE" "$MOCK_TMUX_IDENTITY_FILE"
-
+    # A fake tmux first on PATH as a TRIPWIRE, not a stand-in: the terminal backend left romp (the user
+    # 2026-09-10), so no path in bin/romp may shell tmux any more. The mock records every call to
+    # MOCK_LOG and answers nothing; the "no verb shells tmux" test below reads the log after a run of
+    # the surviving verbs, and a real tmux on the machine is never reached from here.
     cat > "$MOCK_DIR/tmux" << 'MOCK'
 #!/usr/bin/env bash
 echo "tmux $*" >> "$MOCK_LOG"
-# Opt-in: simulate an older tmux that rejects a given option (e.g. tmux 3.0 has no
-# copy-mode-position-style, added in 3.2). Off unless a test sets MOCK_TMUX_FAIL_OPT.
-if [[ -n "${MOCK_TMUX_FAIL_OPT:-}" && "$*" == *"$MOCK_TMUX_FAIL_OPT"* ]]; then
-  echo "invalid option: $MOCK_TMUX_FAIL_OPT" >&2
-  exit 1
-fi
-case "$1" in
-  has-session)
-    # $3 is "=<name>"; a session exists iff its name is in the file
-    target="${3#=}"
-    cut -d'|' -f1 "$MOCK_TMUX_SESSIONS_FILE" 2>/dev/null | grep -qx "$target" && exit 0
-    exit 1
-    ;;
-  display-message)
-    echo "${MOCK_TMUX_CURRENT:-mysession}"
-    exit 0
-    ;;
-  show-environment)
-    # the server's globals, one NAME=value per line, from the fixture (empty file = a clean server)
-    cat "${MOCK_TMUX_GLOBALS_FILE:-/dev/null}" 2>/dev/null
-    exit 0
-    ;;
-  list-sessions)
-    # Reformat each session line per the requested -F format ($3).
-    # @romp defaults to 1; a "name|0" line is a non-romp session.
-    fmt="$3"
-    while IFS='|' read -r s c; do
-      [[ -z "$s" ]] && continue
-      c="${c:-1}"
-      out="$fmt"
-      out="${out//'#{@romp}'/$c}"
-      out="${out//'#{session_name}'/$s}"
-      out="${out//'#S'/$s}"
-      echo "$out"
-    done < "$MOCK_TMUX_SESSIONS_FILE" 2>/dev/null
-    exit 0
-    ;;
-  show)
-    if [[ "$2" == "-t" && "$4" == "-v" && "$5" == "@identity-bg" ]]; then
-      result=$(grep "^${3}=" "$MOCK_TMUX_IDENTITY_FILE" 2>/dev/null | head -1 | cut -d= -f2)
-      [[ -n "$result" ]] && { echo "$result"; exit 0; }
-      exit 1
-    fi
-    # global status-format[0] — the default main-row composition the
-    # provisioning pins onto each session (sentinel for assertions)
-    if [[ "$2" == "-gv" && "$3" == "status-format[0]" ]]; then
-      echo "GLOBAL_ROW0"; exit 0
-    fi
-    exit 0
-    ;;
-esac
 exit 0
 MOCK
     chmod +x "$MOCK_DIR/tmux"
 
-    # Hermetic claude: the launch path probes `claude --version` for the 2.1.224
-    # floor (the inbound-accept setting + @romp-inbound-accept tag) — a dev
-    # machine's real claude would nondeterministically flip those on. Pin a
-    # modern version; per-test override via _stub_claude.
-    _stub_claude "2.1.226"
-
-    # Hermetic postal service (2026-09-06): on every resume bin/romp double-forks
-    # `romp-postal-service picker-check` and returns without waiting for it. The real
-    # service mints a serve-token under $HOME/.local/state/romp when none exists, and did
-    # so after teardown had removed TEST_DIR, so the tree came back with that one file in
-    # it: four to six per run of this file. bin/romp puts its own directory first on PATH,
-    # so a stand-in here cannot shadow the real one through PATH; it reaches bin/romp
-    # through the ROMP_POSTAL_BIN seam, which the picker-check honours like `mail` and
-    # `refresh`. A no-op: the tests that assert on the service's calls overwrite it with
-    # a recording mock.
+    # Hermetic postal service (2026-09-06): the real service mints a serve-token under
+    # $HOME/.local/state/romp when none exists, and once did so after teardown had removed
+    # TEST_DIR. bin/romp puts its own directory first on PATH, so a stand-in here cannot
+    # shadow the real one through PATH; it reaches bin/romp through the ROMP_POSTAL_BIN seam
+    # (`mail`, `refresh`). A no-op: the tests that assert on the service's calls overwrite
+    # it with a recording mock.
     printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_DIR/romp-postal-service"
     chmod +x "$MOCK_DIR/romp-postal-service"
     export ROMP_POSTAL_BIN="$MOCK_DIR/romp-postal-service"
@@ -123,22 +60,29 @@ MOCK
     # kernel start the fake one, which exports the port it bound.
     export ROMP_KERNEL_PORT=1
     export PATH="$MOCK_DIR:$PATH"
-    # The romp-manager tests below start a REAL bin/romp-manager, whose startup runs `tmux start-server`,
-    # and `romp new -t` runs `tmux new-session`: the mock above takes both, and the private socket
-    # directory keeps any call that reaches the real binary off the machine's tmux server
-    # (tests/tmux-private.bash has the 2026-09-06 incident).
-    tmux_private_socket_dir "$TEST_DIR"
-    unset TMUX            # default: outside tmux → attach-session branch
+    # The romp-manager tests below start a REAL bin/romp-manager: the floor keeps it, and any kernel,
+    # from leaving a transient scope on the developer's user manager (tests/cli-scope-floor.bash).
+    cli_scope_floor
     unset ROMP_SID        # default: outside a romp session — `romp new` names no parent (tests export it on purpose)
     # Hermetic HOME: bin/romp probes $HOME/.claude/romp-postal.mcp.json (would
     # nondeterministically append --mcp-config on a dev machine) and writes the
     # names map under XDG_STATE_HOME (was polluting the REAL state dir).
     export HOME="$TEST_DIR/home"
     export XDG_STATE_HOME="$HOME/.local/state"
-    # ROMP_STATE_DIR outranks that floor and a session of a profiled kernel inherits it: the two real
-    # managers below write their SIGTERM notes to STATE_ROOT/restart-audit.jsonl on every stop, so an
-    # inherited value would send the suite's rows to a LIVE ledger (tests/bats-state-isolation.bats).
+    # ROMP_STATE_DIR outranks that floor, and a profiled kernel's sessions inherit it: the real managers
+    # the romp-manager tests start would boot from that root's kernels.json (tests/bats-state-isolation.bats).
     unset ROMP_STATE_DIR
+    # bin/romp-service resolves the unit and the plist under XDG_CONFIG_HOME, then HOME: under the test
+    # HOME, so a test that reaches the real romp-service (the `romp up` dispatch below) finds none of
+    # the machine's and never runs its systemctl or launchctl.
+    export XDG_CONFIG_HOME="$HOME/.config"
+    # Dead control, kernel-serve and kernel ports, the floor tests/conftest.py gives the pytest side.
+    # bin/romp puts its own bin directory first on PATH, so a test that mocks no romp-manager runs the
+    # REAL one, and with the variable unset its status probe reaches the machine's manager on the
+    # default port, where `romp down` would go on to stop it; a kernel probe with no port set reaches
+    # the machine's kernel the same way. The tests that start a real manager set their own free ports;
+    # the `romp down` cases set ROMP_KERNEL_PORT to their fake kernel's (see their preamble).
+    export ROMP_MANAGER_PORT=1 ROMP_SERVE_PORT=1 ROMP_KERNEL_PORT=1
     mkdir -p "$HOME"
     cd "$WORK_DIR"
 }
@@ -154,24 +98,12 @@ teardown() {
     [[ -n "${OTHER_PID:-}" ]] && kill -9 "$OTHER_PID" 2>/dev/null
     # the stub kernel the `romp tag` tests start (_stub_tag_kernel) serves until reaped here
     [[ -n "${TAG_KERNEL_PID:-}" ]] && kill "$TAG_KERNEL_PID" 2>/dev/null
-    # The kill before the rm (a server the real tmux started must not outlive the test), and last, so
-    # its failure is teardown's status: bats swallows a failing command mid-teardown.
-    tmux_private_kill && rm -rf "$TEST_DIR"
+    rm -rf "$TEST_DIR"
 }
 
 # Helper — runs romp with merged stdout+stderr so BATS captures errors
 run_romp() {
     "$ROMP_SCRIPT" "$@" 2>&1
-}
-
-# Helper — a fake `claude` reporting the given version (the launch path only ever
-# runs `claude --version`; the exec line itself lands in the tmux mock's log)
-_stub_claude() {
-    cat > "$MOCK_DIR/claude" <<STUB
-#!/usr/bin/env bash
-echo "$1 (Claude Code)"
-STUB
-    chmod +x "$MOCK_DIR/claude"
 }
 
 # Helper — a fake `curl` for the kernel-API paths (`romp new` SDK spawn + `-m` send).
@@ -208,10 +140,12 @@ if [[ -n "${MOCK_CURL_SEND_404:-}" && "$url" == */send ]]; then
   printf '{"ok": false, "error": "no live session named '"'"'ideabox'"'"'"}%b\n' "${_w//\%\{http_code\}/404}"
   exit 0
 fi
+if [[ -n "${MOCK_CURL_SEND_REFUSED:-}" && "$url" == */send ]]; then printf '{"ok": false, "error": "no running backend owns web — the message was not delivered"}%b\n' "${_w//\%\{http_code\}/200}"; exit 0; fi
 if [[ -n "${MOCK_CURL_WATCH_PR_REFUSE:-}" && "$url" == */watch-pr ]]; then
   echo '{"ok": false, "retryable": true, "error": "the watch could not be saved ([Errno 28] No space left on device) - nothing is watching TESTORG/testrepo#7; retry once the state directory takes writes again"}'
   exit 0
 fi
+if [[ -n "${MOCK_CURL_VERSION:-}" && "$url" == */version ]]; then echo "$MOCK_CURL_VERSION"; exit 0; fi
 if [[ -n "${MOCK_CURL_NEW_400:-}" && "$url" == */new ]]; then
   for a in "$@"; do
     if [[ "$a" == "-f" || "$a" == -[!-]*f* ]]; then exit 22; fi
@@ -232,11 +166,41 @@ MOCK
 @test "bare romp is the dashboard front door: no kernel, loud error, never a session" {
     # Round 3 (2026-07-25): the shortest command does the most common thing. In this
     # hermetic env there is no serve token, so it must fail loudly and launch nothing.
-    touch "$MOCK_LOG"    # this path makes no tmux calls at all
     run run_romp
     [ "$status" -eq 1 ]
     [[ "$output" == *"no serve token"* ]]
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
+}
+
+@test "no verb shells tmux: the fake tmux on PATH records nothing across a run of the surviving verbs" {
+    # the terminal backend left romp (the user 2026-09-10): bin/romp talks to the kernel's API and
+    # never to a terminal multiplexer. setup() puts a recording tmux first on PATH, so a
+    # representative run of what is left (a kernel-backed new with a first prompt, a Codex new, a
+    # send, help, a bad verb, the resume refusal, a dead-kernel new, the bare front door) must
+    # leave no `tmux` line in the log at all.
+    _stub_curl
+    : > "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    run run_romp new -m "first prompt" ideabox
+    [ "$status" -eq 0 ]
+    run run_romp new --codex -d "$WORK_DIR" codexbox
+    [ "$status" -eq 0 ]
+    run run_romp send ideabox "hello"
+    [ "$status" -eq 0 ]
+    run run_romp help
+    [ "$status" -eq 0 ]
+    run run_romp bogus-verb
+    [ "$status" -eq 2 ]
+    run run_romp resume
+    [ "$status" -eq 2 ]
+    unset ROMP_SERVE_TOKEN
+    run run_romp new nokernel
+    [ "$status" -eq 1 ]
+    run run_romp
+    [ "$status" -eq 1 ]
+    grep -q '/new' "$MOCK_LOG"               # the run did reach the kernel API: the log is not empty by accident
+    grep -q '/send' "$MOCK_LOG"
+    run grep -c '^tmux ' "$MOCK_LOG"          # `run`: grep -c exits 1 on a zero count
+    [ "$output" = "0" ]
 }
 
 @test "new -m: missing or empty text is a usage error, never a silent no-op" {
@@ -245,14 +209,6 @@ MOCK
     [[ "$output" == *"[-m <text>]"* ]]
     run run_romp new -m "" ideabox
     [ "$status" -eq 2 ]
-}
-
-@test "new -m with -t is refused loudly (the first prompt is the SDK path's job)" {
-    touch "$MOCK_LOG"
-    run run_romp new -t -m "do the thing" ideabox
-    [ "$status" -eq 2 ]
-    [[ "$output" == *"-m needs the default (Claude Code) session"* ]]
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
 }
 
 @test "new -m: a first prompt the kernel PARKED is reported as queued, not delivered" {
@@ -792,36 +748,6 @@ MOCK
     [ "$(grep -c '/emoji?target=' "$MOCK_LOG")" -eq 3 ]        # the three reads
 }
 
-@test "names map: the tab emoji (5th field) survives the rename hook's rewrite; an entry without one keeps four fields" {
-    # the kernel stores a session's tab emoji as the names entry's 5th tab field; the shell-side rewrite
-    # (the tmux after-rename-session hook → _romp_rename_record → _romp_record) must carry it, and must
-    # not swallow it into the fg word (a 4-variable `read` hands the rest of the line to the last one)
-    touch "$MOCK_LOG"
-    cat > "$MOCK_DIR/tmux" << 'MOCK'
-#!/usr/bin/env bash
-echo "tmux $*" >> "$MOCK_LOG"
-if [[ "$1" == "show" && "$5" == "@romp-session-id" ]]; then
-  case "$3" in
-    exp-api) echo 11111111-2222-3333-4444-555555555555 ;;
-    exp-y)   echo 22222222-3333-4444-5555-666666666666 ;;
-  esac
-fi
-exit 0
-MOCK
-    chmod +x "$MOCK_DIR/tmux"
-    ndir="$XDG_STATE_HOME/romp/names"
-    mkdir -p "$ndir"
-    printf 'exp-web\t%s\t#1EA1EB\twhite\t🌙\n' "$WORK_DIR" > "$ndir/11111111-2222-3333-4444-555555555555"
-    printf 'exp-x\t%s\t#1EA1EB\twhite\n' "$WORK_DIR" > "$ndir/22222222-3333-4444-5555-666666666666"
-    run run_romp _renamed exp-api
-    [ "$status" -eq 0 ]
-    [ "$(cat "$ndir/11111111-2222-3333-4444-555555555555")" = "$(printf 'exp-api\t%s\t#1EA1EB\twhite\t🌙' "$WORK_DIR")" ]
-    run run_romp _renamed exp-y
-    [ "$status" -eq 0 ]
-    [ "$(cat "$ndir/22222222-3333-4444-5555-666666666666")" = "$(printf 'exp-y\t%s\t#1EA1EB\twhite' "$WORK_DIR")" ]
-    grep -q 'send-keys -t exp-api /rename exp-api Enter' "$MOCK_LOG"
-}
-
 @test "emoji: an empty or blank emoji argument is a usage error, never a clear; the success line prints what the kernel stored" {
     # `--clear` is the only clear: `romp emoji web "$EMOJI"` with EMOJI unset must not wipe the label
     # (the same guard `romp color` has); and the success line shows the kernel's stored value — the
@@ -983,118 +909,6 @@ MOCK
     [ "$(grep -c '^curl' "$MOCK_LOG")" -eq 0 ]   # the registry reads never dialed anything
 }
 
-@test "resume: the tab emoji (5th field) survives every tmux resume shape" {
-    # the kernel stores a session's tab emoji as the names entry's 5th field; each resume/revive shape
-    # rewrites the record and must carry it — before the review (2026-09-06) every one of them read the
-    # field into `_` and wrote four fields back, so a tmux session lost its emoji on every resume
-    ndir="$XDG_STATE_HOME/romp/names"
-    mkdir -p "$ndir"
-    printf 'myproject\t%s\t#1EA1EB\twhite\t🌙\n' "$WORK_DIR" > "$ndir/abc123-uuid"
-    run run_romp resume abc123-uuid
-    [ "$status" -eq 0 ]
-    [ "$(cat "$ndir/abc123-uuid")" = "$(printf 'myproject\t%s\t#1EA1EB\twhite\t🌙' "$WORK_DIR")" ]
-    grep -q 'status-style bg=#1EA1EB,fg=white' "$MOCK_LOG"      # the recorded color was reused, not the emoji
-    # the kernel's own reviver shape
-    run run_romp resume abc123-uuid --name myproject --detach
-    [ "$status" -eq 0 ]
-    [ "$(cat "$ndir/abc123-uuid")" = "$(printf 'myproject\t%s\t#1EA1EB\twhite\t🌙' "$WORK_DIR")" ]
-    # the old-kernel revive shape (a rename rides along; the emoji stays)
-    run run_romp web --resume abc123-uuid --detach
-    [ "$status" -eq 0 ]
-    [ "$(cat "$ndir/abc123-uuid")" = "$(printf 'web\t%s\t#1EA1EB\twhite\t🌙' "$WORK_DIR")" ]
-    # the skill-conversion shape
-    run run_romp --resume abc123-uuid --detach
-    [ "$status" -eq 0 ]
-    [ "$(cat "$ndir/abc123-uuid")" = "$(printf 'myproject\t%s\t#1EA1EB\twhite\t🌙' "$WORK_DIR")" ]
-}
-
-@test "names map: a record with no colors and an emoji is read tab-exactly by the launch and the title-freeing rewrite" {
-    # the kernel can label a dormant pre-color (or Codex launch-error) record by sid: `name\tcwd\t\t\t🌙`.
-    # bash's `IFS=$'\t' read` folds the run of tabs and took the emoji for the color — tmux got
-    # `status-style bg=🌙` (an invalid style, fatal under set -e) and the rewrite stored the emoji as bg
-    ndir="$XDG_STATE_HOME/romp/names"
-    mkdir -p "$ndir"
-    printf 'myproject\t%s\t\t\t🌙\n' "$WORK_DIR" > "$ndir/abc123-uuid"
-    run run_romp resume abc123-uuid
-    [ "$status" -eq 0 ]
-    run grep -q 'bg=🌙' "$MOCK_LOG"
-    [ "$status" -ne 0 ]   # never a bare `! grep` here: set -e and the ERR trap skip an inverted command, so mid-test it checks nothing
-    grep -qE 'status-style bg=#[0-9A-Fa-f]{6},fg=[a-z]+' "$MOCK_LOG"   # a palette color, as for any colorless record
-    rec="$(cat "$ndir/abc123-uuid")"
-    [ "$(awk -F'\t' '{print NF}' <<<"$rec")" -eq 5 ]
-    [ "$(awk -F'\t' '{print $1}' <<<"$rec")" = "myproject" ]
-    [[ "$(awk -F'\t' '{print $3}' <<<"$rec")" == "#"?????? ]]
-    [ "$(awk -F'\t' '{print $5}' <<<"$rec")" = "🌙" ]
-    # freeing a reused title suffixes the STALE holder's record through the same reader: the colorless
-    # shape round-trips (colors stay empty, the emoji stays the 5th field)
-    printf 'exp-free\t%s\t\t\t🚀\n' "$WORK_DIR" > "$ndir/22222222-3333-4444-5555-666666666666"
-    run run_romp new -t --detach exp-free
-    [ "$status" -eq 0 ]
-    rec="$(cat "$ndir/22222222-3333-4444-5555-666666666666")"
-    [ "$(awk -F'\t' '{print NF}' <<<"$rec")" -eq 5 ]
-    [[ "$(awk -F'\t' '{print $1}' <<<"$rec")" =~ ^exp-free-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
-    [ "$(awk -F'\t' '{print $2}' <<<"$rec")" = "$WORK_DIR" ]
-    [ -z "$(awk -F'\t' '{print $3 $4}' <<<"$rec")" ]
-    [ "$(awk -F'\t' '{print $5}' <<<"$rec")" = "🚀" ]
-}
-
-@test "names map: the record writer is atomic — a temp moved into place, and a reader racing the rename hook never sees an empty record" {
-    # _romp_record (launch, the rename hook, the title-freeing rewrite) wrote with `printf > file`: truncate,
-    # then write. The kernel's names writers read the file between those two steps and published a record
-    # with no name and no cwd over it, and the kernel's atomic write won (review round 3, 2026-09-06). The
-    # rule: write a temp in the same directory, mv it into place — pinned at the source (no redirect into
-    # the record's path, one temp name, one mv) and exercised: a reader polling the record while the hook
-    # rewrites it must never find it empty, and no temp may be left behind.
-    [ "$(grep -c '> "\$ROMP_NAMES_DIR/\$sid"' "$ROMP_SCRIPT")" -eq 0 ]
-    grep -q 'local tmp="\$ROMP_NAMES_DIR/\.\$sid\.tmp\.\$\$"' "$ROMP_SCRIPT"
-    grep -q 'mv -f "\$tmp" "\$ROMP_NAMES_DIR/\$sid"' "$ROMP_SCRIPT"
-    [ "$(grep -c '> "\$tmp"' "$ROMP_SCRIPT")" -eq 2 ]     # the five-field and the four-field printf, nothing else
-    cat > "$MOCK_DIR/tmux" << 'MOCK'
-#!/usr/bin/env bash
-if [[ "$1" == "show" && "$5" == "@romp-session-id" ]]; then echo 11111111-2222-3333-4444-555555555555; fi
-exit 0
-MOCK
-    chmod +x "$MOCK_DIR/tmux"
-    ndir="$XDG_STATE_HOME/romp/names"
-    mkdir -p "$ndir"
-    f="$ndir/11111111-2222-3333-4444-555555555555"
-    printf 'exp-web\t%s\t#1EA1EB\twhite\t🌙\n' "$WORK_DIR" > "$f"
-    # the writer: the rename hook, 40 times over; the reader: as many looks as fit meanwhile
-    ( for i in $(seq 1 40); do "$ROMP_SCRIPT" _renamed exp-web >/dev/null 2>&1; done ) &
-    wpid=$!
-    empty=0; reads=0
-    while kill -0 "$wpid" 2>/dev/null; do
-        reads=$((reads + 1))
-        [ -s "$f" ] || empty=$((empty + 1))
-    done
-    wait "$wpid"
-    [ "$reads" -gt 100 ]
-    [ "$empty" -eq 0 ]
-    [ "$(cat "$f")" = "$(printf 'exp-web\t%s\t#1EA1EB\twhite\t🌙' "$WORK_DIR")" ]
-    [ "$(ls -A "$ndir" | grep -vc '^11111111-2222-3333-4444-555555555555$')" -eq 0 ]   # no temp left behind
-}
-
-@test "names map: the rename hook reads a colorless record with an emoji tab-exactly" {
-    touch "$MOCK_LOG"
-    cat > "$MOCK_DIR/tmux" << 'MOCK'
-#!/usr/bin/env bash
-echo "tmux $*" >> "$MOCK_LOG"
-if [[ "$1" == "show" && "$5" == "@romp-session-id" ]]; then
-  case "$3" in
-    exp-api) echo 11111111-2222-3333-4444-555555555555 ;;
-  esac
-fi
-exit 0
-MOCK
-    chmod +x "$MOCK_DIR/tmux"
-    ndir="$XDG_STATE_HOME/romp/names"
-    mkdir -p "$ndir"
-    printf 'exp-web\t%s\t\t\t🌙\n' "$WORK_DIR" > "$ndir/11111111-2222-3333-4444-555555555555"
-    run run_romp _renamed exp-api
-    [ "$status" -eq 0 ]
-    [ "$(cat "$ndir/11111111-2222-3333-4444-555555555555")" = "$(printf 'exp-api\t%s\t\t\t🌙' "$WORK_DIR")" ]
-}
-
 @test "fork: usage errors exit 2; no kernel token is a loud exit 1" {
     touch "$MOCK_LOG"
     run run_romp fork
@@ -1192,16 +1006,10 @@ MOCK
     [[ "$output" != *"did not acknowledge"* ]]
 }
 
-@test "new --in: needs a value, is refused with -t (tag a terminal session afterwards), and help lists it" {
+@test "new --in: needs a value, and help lists it" {
     run run_romp new --in
     [ "$status" -eq 2 ]
     [[ "$output" == *"[--in <tag>]"* ]]
-    touch "$MOCK_LOG"
-    run run_romp new -t --in pool ideabox
-    [ "$status" -eq 2 ]
-    [[ "$output" == *"--in needs a Claude Code or Codex session; a terminal session cannot join a group"* ]]
-    [[ "$output" == *"romp tag pool --add ideabox"* ]]
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
     run run_romp help
     [[ "$output" == *"romp new --in <tag> <name>"* ]]
     [[ "$output" == *"romp new --no-inherit <name>"* ]]
@@ -1344,6 +1152,20 @@ MOCK
     [[ "$output" != *"WARNING"* ]]
 }
 
+@test "send: a refusal the kernel answers as ok:false is printed in the kernel's words and exits non-zero" {
+    # the kernel answers ok:false with an error for a message no running backend takes (a dead or names-only
+    # session); `romp send` must never print ok for it (review find, 2026-09-11)
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    export MOCK_CURL_SEND_REFUSED=1
+    run run_romp send web "hello there"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"refused"* ]]
+    [[ "$output" == *"no running backend owns web"* ]]
+    [[ "$output" != *"ok (web)"* ]]
+}
+
 @test "new -m: a failed send is loud and names the retry (the session IS up)" {
     _stub_curl
     touch "$MOCK_LOG"
@@ -1393,6 +1215,7 @@ MOCK
     run run_romp new web
     [ "$status" -eq 1 ]
     [[ "$output" == *"not reachable"* ]]
+    [[ "$output" != *"romp new -t"* ]]       # a dead kernel offers no terminal fallback any more
 }
 
 @test "help lists new -m" {
@@ -1400,321 +1223,52 @@ MOCK
     [[ "$output" == *"romp new -m <text> <name>"* ]]
 }
 
-@test "new -t: terminal session named by the argument, claude exec'd with --name + --session-id" {
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    grep -q 'tmux new-session -d -s myproject' "$MOCK_LOG"
-    grep -q 'tmux set -t myproject @romp 1' "$MOCK_LOG"
-    # The pill carries the session name, and a self-assigned --session-id lets
-    # romp record name<->id up front (names map → resume picker). The command is
-    # handed to the pane with respawn-pane (atomic), not typed with send-keys.
-    # The romp identity rides the CLI's environment on this backend too (the user 2026-08-16):
-    # external tools attribute authors env-first (ROMP_SESSION_NAME) instead of asking tmux.
-    grep -qE 'tmux respawn-pane -k -t myproject exec ROMP_SID=[0-9a-f-]{36} ROMP_SESSION_NAME="myproject" claude --name "myproject" --session-id [0-9a-f-]{36}' "$MOCK_LOG"
-    grep -q 'tmux attach-session -t myproject' "$MOCK_LOG"
-}
+# ─── romp resume is gone (the user 2026-09-10): a past conversation is revived from the dashboard ───
 
-# The tmux SERVER's globals are what a new pane inherits. romp holds no API key (2026-09-08), so a leftover
-# ANTHROPIC_API_KEY there is refused before the pane exists: the kernel alone refusing to boot on the same
-# variable left this path open (a review find), and a quiet scrub would hide the misconfiguration.
-_stale_server_globals() {
-    export MOCK_TMUX_GLOBALS_FILE="$TEST_DIR/mock_globals.txt"
-    printf '%s\n' "OP_SERVICE_ACCOUNT_TOKEN=synthetic-op-token" "OP_SESSION_acct=synthetic-session" \
-        "ANTHROPIC_API_KEY=synthetic-stale-key" "PATH=/usr/bin" "HOME=/nonexistent" > "$MOCK_TMUX_GLOBALS_FILE"
-}
-
-@test "new -t: a leftover ANTHROPIC_API_KEY in the tmux server's globals refuses the session, loudly, without scrubbing" {
-    _stale_server_globals
-    run run_romp new -t myproject
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"ANTHROPIC_API_KEY"* ]]
-    [[ "$output" == *"apiKeyHelper"* ]]
-    [[ "$output" != *"synthetic-stale-key"* ]]
-    run grep -q 'new-session' "$MOCK_LOG"          # `run` + status, not a bare `! grep`: `!` is exempt from set -e mid-test
-    [ "$status" -ne 0 ]
-    run grep -q 'set-environment' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
-}
-
-@test "new -t: clean server globals (op's names, a login token) start the session and touch nothing" {
-    export MOCK_TMUX_GLOBALS_FILE="$TEST_DIR/mock_globals.txt"
-    printf '%s\n' "OP_SERVICE_ACCOUNT_TOKEN=synthetic-op-token" "ANTHROPIC_AUTH_TOKEN=synthetic-bearer" \
-        "PATH=/usr/bin" > "$MOCK_TMUX_GLOBALS_FILE"
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    grep -q 'new-session' "$MOCK_LOG"
-    run grep -q 'set-environment' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
-}
-
-@test "new -t on a 2.1.224+ claude: inbound-accept setting + @romp-inbound-accept tag" {
-    # The kernel's inbox-socket delivery leg fires only for launches that passed the
-    # CLI's inbound-accept setting (an unverifiable sender's mail can otherwise be
-    # held and silently expire); the tag records exactly those launches — one code
-    # path writes both, so they can never disagree. Setup pins claude at 2.1.226.
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    grep -qF -- "--settings '{\"crossSessionInbound\":\"accept\"}'" "$MOCK_LOG"
-    grep -q 'tmux set -t myproject @romp-inbound-accept 1' "$MOCK_LOG"
-}
-
-@test "new -t on an old claude: no setting, no tag, one upgrade nudge" {
-    _stub_claude "2.1.220"
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"claude update"* ]]     # the informative floor line, not a failure
-    # (checked BEFORE the greps below: `run` clobbers $output, so the output assertion must come first)
-    run grep -q -- '--settings' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
-    run grep -q -- '@romp-inbound-accept' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
-}
-
-@test "launch hands the exec line to respawn-pane, never typed via send-keys (dropped-char bug)" {
-    # Regression: a fresh shell flushes its tty input on startup, so send-keys'd
-    # keys are dropped — the launch once started `ec claude …` (the "ex" eaten).
-    # The exec command must reach the pane atomically (respawn-pane), so the exec
-    # line must NEVER appear on a send-keys call.
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    grep -qE 'tmux respawn-pane -k -t myproject exec ROMP_SID=\S+ ROMP_SESSION_NAME="myproject" claude' "$MOCK_LOG"
-    run grep -qE 'send-keys.*exec (ROMP_SID=\S+ ROMP_SESSION_NAME="[^"]*" )?claude' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
-}
-
-@test "old tmux without copy-mode-position-style still launches claude (no set -e abort)" {
-    # Regression: bin/romp sets the cosmetic copy-mode-position-style, added in tmux
-    # 3.2. On an older tmux (e.g. a remote host on 3.0) that errors "invalid option",
-    # which under `set -e` aborted session creation before the claude launch — the
-    # pane was left at a bare shell. The cosmetic set must be guarded so the session
-    # still starts. Simulate the old tmux by failing exactly that option.
-    export MOCK_TMUX_FAIL_OPT="copy-mode-position-style"
-    run run_romp new -t --detach myproject
-    [ "$status" -eq 0 ]
-    grep -qE 'tmux respawn-pane -k -t myproject exec ROMP_SID=\S+ ROMP_SESSION_NAME="myproject" claude' "$MOCK_LOG"
-}
-
-@test "append-system-prompt: omitted when no working-style prompt is installed" {
-    # Default hermetic HOME has no romp-session-prompt.md, so the -f guard skips it.
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    run grep -q -- '--append-system-prompt' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
-}
-
-@test "append-system-prompt: appended (deferred \$(cat ...)) when the prompt is installed" {
-    mkdir -p "$HOME/.claude"
-    printf 'Working style: be explicit.\n' > "$HOME/.claude/romp-session-prompt.md"
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    # The flag carries a deferred cat of the fixed path — the multi-line content
-    # stays OUT of the exec line, so the launch shell expands it at exec time.
-    grep -F -- "--append-system-prompt \"\$(cat $HOME/.claude/romp-session-prompt.md)\"" "$MOCK_LOG"
-    # Still the same single exec line, handed to the pane via respawn-pane.
-    grep -qE 'tmux respawn-pane -k -t myproject exec ROMP_SID=\S+ ROMP_SESSION_NAME="myproject" claude --name "myproject" --session-id [0-9a-f-]{36} --append-system-prompt .*' "$MOCK_LOG"
-}
-
-@test "append-system-prompt: also appended on the resume path" {
-    mkdir -p "$HOME/.claude"
-    printf 'Working style: be explicit.\n' > "$HOME/.claude/romp-session-prompt.md"
-    run run_romp resume abc123-uuid
-    [ "$status" -eq 0 ]
-    grep -F -- "--append-system-prompt \"\$(cat $HOME/.claude/romp-session-prompt.md)\"" "$MOCK_LOG"
-}
-
-@test "provisioning pins status-format[0] alongside the session-scoped peers row" {
-    # tmux gotcha (2026-06-12): a session-scoped status-format[1] shadows the
-    # whole inherited array — without [0] pinned to the global composition the
-    # main status row (status-left + windows + status-right) renders EMPTY.
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    grep -q 'tmux set -t myproject status-format\[0\] GLOBAL_ROW0' "$MOCK_LOG"
-    grep -q 'tmux set -t myproject status-format\[1\]' "$MOCK_LOG"
-}
-
-@test "named session: romp new -t my-task → my-task" {
-    run run_romp new -t my-task
-    [ "$status" -eq 0 ]
-    grep -q 'tmux new-session -d -s my-task' "$MOCK_LOG"
-    grep -q 'tmux attach-session -t my-task' "$MOCK_LOG"
-}
-
-@test "session name sanitization: dots and colons replaced with dashes" {
-    run run_romp new -t "my.task:v2"
-    [ "$status" -eq 0 ]
-    grep -q 'tmux new-session -d -s my-task-v2' "$MOCK_LOG"
-    grep -qE 'exec ROMP_SID=\S+ ROMP_SESSION_NAME="my-task-v2" claude --name "my-task-v2"' "$MOCK_LOG"
-}
-
-@test "session name sanitization: shell metacharacters folded to dashes (no command injection)" {
-    # A name/dir carrying $(), ;, or quotes must NOT survive into the launch
-    # command the pane shell runs — every unsafe char becomes '-'. Regression for
-    # the command-injection-via-session-name hole.
-    run run_romp new -t 'pwn$(touch INJECTED);x"y'
-    [ "$status" -eq 0 ]
-    local line
-    line="$(grep -F 'respawn-pane' "$MOCK_LOG" | grep -F ' claude ')"
-    [ -n "$line" ]
-    # no shell metacharacters survive in the exec line
-    # `run` + status, NOT a bare `! grep`: `!` is exempt from set -e, so mid-test it asserts nothing.
-    run grep -qE '[$();]' <<<"$line"
-    [ "$status" -ne 0 ]
-    # exactly the four quotes that wrap ROMP_SESSION_NAME="<name>" and --name "<name>" (the same
-    # sanitized value twice), no injected extras. The fixed --settings tail romp itself appends
-    # carries its own JSON quotes — a trusted constant, not name-derived — so strip it first.
-    line="${line%%--settings*}"
-    [ "$(grep -o '"' <<<"$line" | wc -l | tr -d ' ')" -eq 4 ]
-}
-
-@test "interrupt/escape key bindings route the session name through tmux #{q:} quoting" {
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    grep -F 'bind -n C-c' "$MOCK_LOG"    | grep -qF 'romp-interrupt-reset #{q:session_name}'
-    grep -F 'bind -n Escape' "$MOCK_LOG" | grep -qF 'romp-interrupt-reset #{q:session_name}'
-    # the unquoted (injectable) form must be gone
-    run grep -qF 'romp-interrupt-reset #{session_name}' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
-}
-
-@test "resume: a session id with shell metacharacters is refused before any launch" {
-    # resume_id is typed into `claude --resume <id>`; a non-alphanumeric id must
-    # be rejected before a session is created.
-    run run_romp resume 'abc;touch INJECTED' --name myproject --detach
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"invalid session id"* ]]
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
-}
-
-@test "state dir is created private (0700)" {
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    local perms
-    # GNU stat (-c) first, BSD/macOS stat (-f) as fallback. The reverse order
-    # breaks on Linux, where `stat -f` means --file-system and mangles output.
-    perms="$(stat -c '%a' "$XDG_STATE_HOME/romp" 2>/dev/null || stat -f '%Lp' "$XDG_STATE_HOME/romp")"
-    [ "$perms" = "700" ]
-}
-
-# ─── Resume tests ────────────────────────────────────────────────────
-
-@test "resume: bare -r with no resumable sessions is a no-op" {
-    # bare -r opens the by-name picker; with an empty names map there is
-    # nothing to offer — no session may be created as a side effect. The names
-    # dir exists-but-empty (steady state on any machine that ran romp before);
-    # a MISSING dir is the silent first-run path, exercised below.
-    # NOTE bats/macOS gotcha: a false [[ ]] mid-test is SWALLOWED (only the
-    # last command's status fails a test) — assert with simple commands
-    # (grep, [ ]) so failures actually fire.
-    mkdir -p "$XDG_STATE_HOME/romp/names"
+@test "resume: the verb is gone; one line pointing at the dashboard's Revive, exit 2, nothing launched" {
+    # `romp resume` and its picker drove the terminal backend; the dashboard's Revive brings a past
+    # conversation back as a Claude Code session. `--resume` was the agent-facing alias (delivered
+    # text names it) and answers the same one line; the pre-round-3 reviver shapes are plain
+    # unknown-command / unknown-option errors, never a launch; help no longer lists the verb.
+    _stub_curl
+    : > "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
     run run_romp resume
-    [ "$status" -eq 0 ]
-    grep -q "no resumable sessions" <<<"$output"
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
-}
-
-@test "resume: --resume is a silent alias of resume (agent-facing text names it)" {
-    mkdir -p "$XDG_STATE_HOME/romp/names"
-    run run_romp resume
-    [ "$status" -eq 0 ]
-    grep -q "no resumable sessions" <<<"$output"
-
+    [ "$status" -eq 2 ]
+    [ "$(printf '%s\n' "$output" | wc -l)" -eq 1 ]
+    [[ "$output" == *"is gone"* ]]
+    [[ "$output" == *"Revive"* ]]
+    run run_romp resume 11111111-2222-3333-4444-555555555555 --name web --detach
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"is gone"* ]]
     run run_romp --resume
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"is gone"* ]]
+    [[ "$output" == *"Revive"* ]]
+    run run_romp -r                          # the retired short flag says the same
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"Revive"* ]]
+    run run_romp web --resume 11111111-2222-3333-4444-555555555555 --detach
+    [ "$status" -eq 2 ]
+    [[ "$output" == *'unknown command "web"'* ]]
+    run run_romp --detach web
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"unknown option: --detach"* ]]
+    run grep -c 'curl\|^tmux ' "$MOCK_LOG"   # nothing reached the kernel and nothing shelled tmux
+    [ "$output" = "0" ]
+    run run_romp help
     [ "$status" -eq 0 ]
-    grep -q "no resumable sessions" <<<"$output"
-    [[ "$output" != *"retired"* ]]
-}
-
-@test "resume: first run ever (no names dir) exits silently, creating nothing" {
-    touch "$MOCK_LOG"    # this path may make no tmux calls at all
-    run run_romp resume
-    [ "$status" -eq 0 ]
-    [ -z "$output" ]
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
+    [[ "$output" != *"romp resume"* ]]
+    [[ "$output" != *"romp new -t"* ]]
 }
 
 @test "an unknown bare word is a loud error naming both readings, never a session" {
     # Round 3: commands are bare words, so a word that is not one gets exit 2
     # with the `romp new` fix spelled out — nothing silently becomes a session.
-    touch "$MOCK_LOG"    # this path makes no tmux calls at all
     run run_romp foo
     [ "$status" -eq 2 ]
     [[ "$output" == *'unknown command "foo"'* ]]
     [[ "$output" == *"romp new foo"* ]]
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
-}
-
-@test "resume: the old-kernel revive shape (name --resume id --detach) still works, silently" {
-    # A kernel on pre-round-3 code revives tmux sessions as `romp <name> --resume
-    # <sid> --detach`; that exact shape must keep working (SILENTLY) until every
-    # kernel restarts onto new code — its spawn path swallows stderr.
-    run run_romp web --resume abc123-uuid --detach
-    [ "$status" -eq 0 ]
-    [[ "$output" != *"retired"* ]]
-    grep -q 'tmux new-session -d -s web' "$MOCK_LOG"
-    grep -qE 'tmux respawn-pane -k -t web exec ROMP_SID=abc123-uuid ROMP_SESSION_NAME="web" claude --resume abc123-uuid --name "web"' "$MOCK_LOG"
-    run grep -q 'tmux attach-session' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
-}
-
-@test "resume: explicit session id resumes that conversation" {
-    run run_romp resume abc123-uuid
-    [ "$status" -eq 0 ]
-    grep -q 'tmux respawn-pane -k -t myproject exec ROMP_SID=abc123-uuid ROMP_SESSION_NAME="myproject" claude --resume abc123-uuid --name "myproject"' "$MOCK_LOG"
-}
-
-@test "resume: name collision uniquifies instead of hijacking the session" {
-    echo "myproject" > "$MOCK_TMUX_SESSIONS_FILE"
-
-    run run_romp resume abc123-uuid
-    [ "$status" -eq 0 ]
-    run grep -qE 'tmux attach-session -t myproject$' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
-    grep -q 'tmux new-session -d -s myproject-2' "$MOCK_LOG"
-    grep -qE 'tmux respawn-pane -k -t myproject-2 exec ROMP_SID=abc123-uuid ROMP_SESSION_NAME="myproject-2" claude --resume abc123-uuid --name "myproject-2"' "$MOCK_LOG"
-}
-
-@test "resume: the background picker-check goes through ROMP_POSTAL_BIN, and the stand-in writes nothing" {
-    # bin/romp double-forks `romp-postal-service picker-check` on a resume and returns at once;
-    # the real service mints ~/.local/state/romp/serve-token when none exists, and did so after
-    # teardown had removed TEST_DIR, re-creating it. bin/romp's own directory leads PATH, so the
-    # seam is the only way a test can stand in for the service. The setup() stand-in leaves the
-    # state dir alone; a recording one for this test shows the resume path reaching the seam —
-    # the call is detached, so the check waits (bounded) for its record instead of racing it.
-    [ "$ROMP_POSTAL_BIN" = "$MOCK_DIR/romp-postal-service" ]
-    run "$ROMP_POSTAL_BIN" picker-check --name myproject --id abc123-uuid
-    [ "$status" -eq 0 ]
-    [ -z "$output" ]
-    [ ! -e "$HOME/.local/state/romp" ]
-
-    printf '#!/usr/bin/env bash\necho "postal $*" >> "%s"\n' "$TEST_DIR/postal.log" > "$MOCK_DIR/romp-postal-service"
-    run run_romp resume abc123-uuid
-    [ "$status" -eq 0 ]
-    local i; for i in $(seq 1 50); do [ -s "$TEST_DIR/postal.log" ] && break; sleep 0.1; done
-    grep -q '^postal picker-check --name myproject --id abc123-uuid$' "$TEST_DIR/postal.log"
-}
-
-# ─── Detach tests ────────────────────────────────────────────────────
-
-@test "detach: new -t --detach creates the session but does not attach" {
-    run run_romp new -t --detach myproject
-    [ "$status" -eq 0 ]
-    grep -q 'tmux new-session -d -s myproject' "$MOCK_LOG"
-    grep -qE 'tmux respawn-pane -k -t myproject exec ROMP_SID=\S+ ROMP_SESSION_NAME="myproject" claude --name "myproject" --session-id [0-9a-f-]{36}' "$MOCK_LOG"
-    # $output is asserted BEFORE the `run grep` below overwrites it with grep's (empty) output.
-    [[ "$output" == *"attach with: tmux attach -t myproject"* ]]
-    run grep -q 'tmux attach-session' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
-}
-
-@test "detach: --resume + id + detach (the skill conversion path) still works as an alias" {
-    run run_romp --resume sess-xyz --detach
-    [ "$status" -eq 0 ]
-    grep -q 'tmux new-session -d -s myproject' "$MOCK_LOG"
-    grep -qE 'tmux respawn-pane -k -t myproject exec ROMP_SID=sess-xyz ROMP_SESSION_NAME="myproject" claude --resume sess-xyz --name "myproject"' "$MOCK_LOG"
-    # $output asserted before the `run grep` overwrites it.
-    [[ "$output" == *"(detached)"* ]]
-    run grep -q 'tmux attach-session' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
 }
 
 # ─── Misc ────────────────────────────────────────────────────────────
@@ -1725,162 +1279,50 @@ _stale_server_globals() {
     [[ "$output" == *"unknown option: -x"* ]]
 }
 
-@test "names map: the record writer publishes atomically, so a reader racing the rename hook never sees an empty record" {
-    # _romp_record (a launch, the after-rename hook, the title-freeing rewrite) fills a temp in the names
-    # directory and moves it into place. The kernel's names writers read the record while the hook
-    # rewrites it and publish their edit over what they read, so a writer that truncated before it wrote
-    # cost the session its name and cwd. A reader polling the record while the hook rewrites it forty
-    # times must never find it empty; the rename must land with the dir and colors intact, and every hook
-    # run must reach the writer (the mock tmux answers the sid and logs the send-keys that follows the
-    # write), so a hook that never writes cannot pass by leaving the seed alone. The temp is dot-prefixed:
-    # the `*` glob _romp_free_title walks the directory with must never see it, and none may be left behind.
-    cat > "$MOCK_DIR/tmux" << 'MOCK'
-#!/usr/bin/env bash
-echo "tmux $*" >> "$MOCK_LOG"
-if [[ "$1" == "show" && "$5" == "@romp-session-id" ]]; then echo aaaa1111-bbbb-2222-cccc-333333333333; fi
-exit 0
-MOCK
-    chmod +x "$MOCK_DIR/tmux"
-    ndir="$XDG_STATE_HOME/romp/names"
-    mkdir -p "$ndir"
-    f="$ndir/aaaa1111-bbbb-2222-cccc-333333333333"
-    printf 'stale\t%s\t#1EA1EB\twhite\n' "$WORK_DIR" > "$f"
-    # the writer: the rename hook, 40 times over; the reader: as many looks as fit meanwhile
-    ( for i in $(seq 1 40); do "$ROMP_SCRIPT" _renamed exp-web >/dev/null 2>&1; done ) &
-    wpid=$!
-    empty=0; reads=0; seen=0
-    while kill -0 "$wpid" 2>/dev/null; do
-        reads=$((reads + 1))
-        [ -s "$f" ] || empty=$((empty + 1))
-        for e in "$ndir"/*; do [ "$e" = "$f" ] || seen=$((seen + 1)); done   # the glob _romp_free_title walks
-    done
-    wait "$wpid"
-    [ "$reads" -gt 100 ]
-    [ "$empty" -eq 0 ]
-    [ "$seen" -eq 0 ]                                                      # the temp never shows to that glob
-    [ "$(grep -c '^tmux send-keys' "$MOCK_LOG")" -eq 40 ]                   # every hook run got past the writer
-    [ "$(cat "$f")" = "$(printf 'exp-web\t%s\t#1EA1EB\twhite' "$WORK_DIR")" ]   # the rename landed; dir and colors intact
-    [ "$(ls -A "$ndir" | grep -vc '^aaaa1111-bbbb-2222-cccc-333333333333$')" -eq 0 ]   # no temp left behind
-}
-
-@test "old-kernel spawn shape (--detach <name>) still works, silently" {
-    # A kernel on pre-round-3 code spawns dashboard tmux sessions as `romp
-    # --detach <name>` with stderr swallowed — the shape must keep working.
-    run run_romp --detach oldk
-    [ "$status" -eq 0 ]
-    [[ "$output" != *"retired"* ]]
-    grep -q 'tmux new-session -d -s oldk' "$MOCK_LOG"
-    run grep -q 'tmux attach-session' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
-}
-
-@test "new: usage errors are loud — missing name, two names, dangling -d" {
-    touch "$MOCK_LOG"    # these paths make no tmux calls at all
+@test "new: usage errors are loud — missing name, two names, dangling -d, and the retired -t/--detach are unknown options" {
+    _stub_curl
+    : > "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
     run run_romp new
     [ "$status" -eq 2 ]
     [[ "$output" == *"usage: romp new"* ]]
-    run run_romp new -t alpha beta
+    [[ "$output" != *"[-t"* ]]               # the usage line offers no terminal variant
+    run run_romp new alpha beta
     [ "$status" -eq 2 ]
-    run run_romp new -t -d
+    run run_romp new -d
     [ "$status" -eq 2 ]
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
-}
-
-@test "existing session reattaches instead of creating new" {
-    echo "myproject" > "$MOCK_TMUX_SESSIONS_FILE"
-
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    run grep -q 'tmux new-session' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
-    grep -q 'tmux attach-session -t myproject' "$MOCK_LOG"
-}
-
-# ─── Identity-color tests ────────────────────────────────────────────
-
-@test "color: first session gets the first palette color + a status dot" {
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    grep -q 'tmux set -t myproject @identity-bg #1EA1EB' "$MOCK_LOG"
-    # The tab dot is seeded blue (ready) at launch; the status hook drives
-    # it thereafter.
-    grep -q 'tmux set -t myproject @romp-emoji 🔵' "$MOCK_LOG"
-}
-
-@test "color: second session gets a different color from the first" {
-    echo "other" > "$MOCK_TMUX_SESSIONS_FILE"
-    echo "other=#1EA1EB" > "$MOCK_TMUX_IDENTITY_FILE"
-
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    grep -q 'tmux set -t myproject @identity-bg #54B204' "$MOCK_LOG"
-}
-
-@test "color: third session gets teal (colorblind-tuned order: blue, green, teal)" {
-    # The 3rd slot is teal #4EA8A9, the more colorblind-friendly of teal/purple against
-    # the blue+green pair (the user 2026-06-12) — pin both earlier colors as taken.
-    printf '%s\n' "s1" "s2" > "$MOCK_TMUX_SESSIONS_FILE"
-    printf '%s\n' "s1=#1EA1EB" "s2=#54B204" > "$MOCK_TMUX_IDENTITY_FILE"
-
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    grep -q 'tmux set -t myproject @identity-bg #4EA8A9' "$MOCK_LOG"
-}
-
-@test "color: a kernel-written palette-colors mirror overrides the built-in set" {
-    # The identity palette is selectable (2026-07-12): the kernel mirrors the ACTIVE set to
-    # STATE/palette-colors (bg<TAB>fg per line) and the launcher assigns from it; the hardcoded
-    # arrays are only the fallback for a machine whose kernel never booted.
-    mkdir -p "$XDG_STATE_HOME/romp"
-    printf '#AA0000\twhite\n#00BB00\tblack\n' > "$XDG_STATE_HOME/romp/palette-colors"
-
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    grep -q 'tmux set -t myproject @identity-bg #AA0000' "$MOCK_LOG"
-    grep -q 'tmux set -t myproject @identity-fg white' "$MOCK_LOG"
-}
-
-@test "color: all colors taken falls back to a hash pick" {
-    local palette=("#1EA1EB" "#54B204" "#4EA8A9" "#DD42FF" "#E87221" "#98998A" "#F85B5A" "#F9D849" "#9088F0")
-    > "$MOCK_TMUX_SESSIONS_FILE"
-    > "$MOCK_TMUX_IDENTITY_FILE"
-    for i in "${!palette[@]}"; do
-        echo "sess${i}" >> "$MOCK_TMUX_SESSIONS_FILE"
-        echo "sess${i}=${palette[$i]}" >> "$MOCK_TMUX_IDENTITY_FILE"
+    for flag in -t --tmux --detach; do
+        run run_romp new $flag alpha
+        [ "$status" -eq 2 ]
+        [[ "$output" == *"unknown option: $flag"* ]]
     done
-
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    grep -q 'tmux set -t myproject @identity-bg #' "$MOCK_LOG"
+    run grep -c '/new' "$MOCK_LOG"           # none of these reached the kernel
+    [ "$output" = "0" ]
 }
 
-# ─── No attach/rename subcommands (use tmux a / tmux rename) ─────────
+# ─── Stray words never start anything ─────────
 
 @test "'a' and 'attach' are unknown commands, never sessions" {
-    # There is no attach command (plain tmux does that), and round 3 made every
-    # non-command bare word a loud error pointing at `romp new`. (`rename` left
-    # this list when it became a real verb — see the rename tests above.)
+    # Neither is a romp verb (a session is reached from the dashboard), and round 3 made every
+    # non-command bare word a loud error pointing at `romp new`. (`rename` left this list when
+    # it became a real verb — see the rename tests above.)
     for word in a attach; do
-        : > "$MOCK_LOG"
         run run_romp "$word"
         [ "$status" -eq 2 ]
         [[ "$output" == *"romp new ${word}"* ]]
-        [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
     done
 }
 
 @test "retired human spellings fail loudly naming today's word, and start nothing" {
     # Rounds 1-2 spellings (short view flags, dashed manager commands). The
-    # agent-facing aliases (--mail/--url/--send/--interrupt/--end/--resume,
-    # --version, first-arg --detach) are exercised elsewhere and stay SILENT.
+    # agent-facing aliases (--mail/--url/--send/--interrupt/--end, --version) are
+    # exercised elsewhere and stay SILENT; --resume answers the resume refusal.
     for flag in -l --launch -d -f -j -r --on --refresh --status --update --checkin --checkout --default-dir --debug; do
-        : > "$MOCK_LOG"
         run run_romp "$flag"
         [ "$status" -eq 2 ]
         [[ "$output" == *"retired"* ]]
-        # every hint names today's spelling, or says the command is gone (the terminal TUIs)
+        # every hint names today's spelling, or says the command is gone (the terminal TUIs, the resume picker)
         [[ "$output" == *"is now"* || "$output" == *"just: romp"* || "$output" == *"is gone"* ]]
-        [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
     done
     # spot-check: a RENAMED command names its new spelling, a DELETED one says so
     run run_romp -d
@@ -1906,8 +1348,9 @@ echo "romp-postal-service called: $*" >> "$MOCK_LOG"
 MOCK
     chmod +x "$MOCK_DIR/romp-postal-service"
     export ROMP_POSTAL_BIN="$MOCK_DIR/romp-postal-service"
+    mock_service 3               # no login service installed: `romp up` falls through to the manager
 
-    run run_romp up              # `romp up` is PURELY start-the-manager
+    run run_romp up              # `romp up` starts the manager (through the service when one is installed)
     [ "$status" -eq 0 ]
     grep -q 'romp-manager called: up' "$MOCK_LOG"
     run grep -q 'romp-postal-service called' "$MOCK_LOG"   # up does not touch the bus
@@ -1959,7 +1402,8 @@ MOCK
     grep -q '"sid": "11111111-2222-3333-4444-555555555555"' "$audit"
     grep -q '"name": "demo_agent"' "$audit"          # sid resolved to the session's NAME
     grep -q '"parent":' "$audit"                     # the caller's parent argv rides along
-    grep -q '"action": "refresh"' "$audit"           # the kernel's cut ledger joins on this
+    # the refresh row is the attribution alone, no action: the manager's restart-all note names the refresh
+    [[ "$(tail -1 "$audit")" == *'"ppid"'* && "$(tail -1 "$audit")" != *'"action"'* ]]
     grep -q 'romp-manager called: restart-all' "$MOCK_LOG"   # ...and the restart still ran
 }
 
@@ -2007,39 +1451,38 @@ MOCK
 
 @test "'on', 'serve', 'launch', 'open' are unknown commands: loud exit 2, no session" {
     # These words never became round-3 commands (up replaced on; serve was removed; the
-    # dashboard is bare romp). Each must fail naming the fix. (`down` joined the commands
-    # on 2026-09-06 — see the romp down tests below.)
+    # dashboard is bare romp). Each must fail naming the fix. (`down` is a command: see the
+    # romp down tests below.)
     for word in on serve launch open; do
-        : > "$MOCK_LOG"
         run run_romp "$word"
         [ "$status" -eq 2 ]
         [[ "$output" == *"romp new ${word}"* ]]
-        [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
     done
 }
 
-# ─── romp down / romp up / romp status with a romp down marker (2026-09-06) ──────────
+# ─── romp down / romp up / romp status with a romp down marker ──────────────────────────
 # `romp down` quiesces the kernel through POST /down, leaves the down-by-romp marker, writes an
 # audit row, and stops THROUGH the supervisor (romp-service stop); only when no login service is
-# installed (exit 3) does it fall back to the manager's own /stop. Last it probes the kernel port
-# itself (GET /healthz) and stops a kernel nothing above took down through the kernel's own door,
-# a SIGTERM at the pid it named on POST /down under this romp's serve token, and only when the
-# auth-exempt GET /version names the same pid. A kernel that rejects the token is another romp's
-# and is left alone (2026-09-06: a `romp down` aimed at a port it did not mean, an empty
-# ROMP_KERNEL_PORT falling to the default, took a 403 for "nothing answered", read the pid off
-# /version and SIGTERMed another romp's kernel, cutting every session there). A fake kernel (python
-# http.server, alive until teardown or until a stop takes it) answers POST /down from
-# $TEST_DIR/down-reply, adding its own pid the way the real kernel does unless the body names one or
-# the mode is no-pid, and logs every POST (path, token ok?, body) to $TEST_DIR/kreq and every GET and
-# signal to $TEST_DIR/kget; its GET /version names its own pid, or the one $TEST_DIR/version-pid
-# holds. Recording mocks stand in for romp-service and romp-manager, so nothing here can reach the
-# machine's systemctl or its live manager. A mock stop that lands takes the fake kernel with it
-# (kill -9, so a SIGTERM in kget can only be the CLI's own), as the real service and manager do;
-# "keep-kernel" leaves it up. Every case sets ROMP_KERNEL_PORT to the fake's port, or to the floor
-# port 1 when it starts no fake, and start_down_kernel asserts the fake answers before the CLI runs:
-# `romp down` in a test must never reach a port that could be the machine's own kernel.
+# installed (exit 3) or it is not running (4) does it fall back to the manager's own /stop. Last it
+# probes the kernel port itself (GET /healthz) and stops a kernel nothing above took down through
+# the kernel's own door, a SIGTERM at the pid it named on POST /down under this romp's serve token,
+# and only when the auth-exempt GET /version names the same pid. A kernel that rejects the token is
+# another romp's and is left alone (a `romp down` aimed at a port it did not mean, an empty
+# ROMP_KERNEL_PORT falling to the default, must never take a 403 for "nothing answered", read the
+# pid off /version and SIGTERM another romp's kernel). A fake kernel (python http.server, alive
+# until teardown or until a stop takes it) answers POST /down from $TEST_DIR/down-reply, adding its
+# own pid the way the real kernel does unless the body names one or the mode is no-pid, and logs
+# every POST (path, token ok?, body) to $TEST_DIR/kreq and every GET and signal to $TEST_DIR/kget;
+# its GET /version names its own pid, or the one $TEST_DIR/version-pid holds. Recording mocks stand
+# in for romp-service and romp-manager, so nothing here can reach the machine's systemctl or its
+# live manager. A mock stop that lands takes the fake kernel with it (kill -9, so a SIGTERM in kget
+# can only be the CLI's own), as the real service and manager do; "keep-kernel" leaves it up. Every
+# case sets ROMP_KERNEL_PORT to the fake's port, or to the floor port 1 when it starts no fake, and
+# start_down_kernel asserts the fake answers before the CLI runs: `romp down` in a test must never
+# reach a port that could be the machine's own kernel.
 
 start_down_kernel() {   # $1 = the /down reply body; $2 = "" | ignore-term | exit-after-down | refuse-401 | no-pid
+                        #      | hold-term (holds its SIGTERM for 7.5 s on a thread beside the accept loop, then leaves)
                         #      | exit-before-confirm (leaves before answering the second POST /down)
                         #      | exit-before-version (answers every POST /down, leaves before answering GET /version)
                         #      | refuse-second-401 (accepts the first POST /down, answers 401 to every later one)
@@ -2047,7 +1490,7 @@ start_down_kernel() {   # $1 = the /down reply body; $2 = "" | ignore-term | exi
     export ROMP_SERVE_TOKEN="test-token-DO-NOT-USE"
     rm -f "$TEST_DIR/kport" "$TEST_DIR/kpid"
     python3 - "$TEST_DIR" "$ROMP_SERVE_TOKEN" "${2:-}" <<'PY' &
-import http.server, json, os, signal, sys
+import http.server, json, os, signal, sys, threading
 tdir, tok, mode = sys.argv[1], sys.argv[2], sys.argv[3]
 ndown = 0     # POST /down requests so far: the quiesce is the first, the probe's confirmation the second
 def note(line):
@@ -2055,9 +1498,17 @@ def note(line):
         f.write(line + "\n")
 def on_term(signum, frame):
     # the kernel's stop door (the manager's stopKernel sends exactly this): a real kernel drains and
-    # exits; the ignore-term variant records the ask and stays, the way a wedged one would
+    # exits; the ignore-term variant records the ask and stays, the way a wedged one would; hold-term
+    # drains for 7.5 s (a manager-spawned kernel's whole exit budget under the 8 s grace) on a thread
+    # beside the accept loop, so the port keeps answering until the exit, the way a kernel already
+    # draining on its parent-death watchdog's thread does (the SIGTERM handler proper holds the loop,
+    # so a hold on this thread would close the port at once and prove nothing about the poll's bound)
     if mode == "ignore-term":
         note("SIGTERM ignored")
+        return
+    if mode == "hold-term":
+        note("SIGTERM held")
+        threading.Timer(7.5, lambda: os._exit(0)).start()
         return
     note("SIGTERM")
     os._exit(0)
@@ -2168,7 +1619,7 @@ mock_manager() {   # $1 = exit code
     cat > "$MOCK_DIR/romp-manager" <<MOCK
 #!/usr/bin/env bash
 echo "romp-manager called: \$*" >> "$MOCK_LOG"
-[ "\$1" = status ] && [ "$1" -ne 0 ] && echo "romp manager is not running on :7432 — start it with \\\`romp up\\\`." >&2
+[ "\$1" = status ] && [ "$1" -ne 0 ] && echo "romp manager is not running on :7432 (start it with \\\`romp up\\\`)." >&2
 [ "\$1" = status ] && [ "$1" -eq 0 ] && echo '{"ok": true, "manager": {"pid": 424242, "controlPort": 7432}, "kernels": [{"id": "main"}]}'
 exit $1
 MOCK
@@ -2192,7 +1643,7 @@ MOCK
     export ROMP_MANAGER_BIN="$MOCK_DIR/romp-manager"
 }
 
-@test "romp down: quiesces through POST /down, leaves the marker + audit row, stops through the service" {
+@test "romp down: quiesces through POST /down, leaves the marker and audit row, stops through the service" {
     start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 1.2}'
     mock_service 0
     mock_manager 1                                    # no manager outside the service
@@ -2211,9 +1662,9 @@ MOCK
     # the stop went THROUGH the supervisor, never the manager's own /stop; afterwards the manager was
     # probed once, so "down" is a checked fact, not the service's word for it
     grep -q 'romp-service called: stop' "$MOCK_LOG"
-    [[ "$output" == *"down — \`romp up\` starts it again"* ]]
+    [[ "$output" == *"down; \`romp up\` starts it again"* ]]
     grep -q 'romp-manager called: status' "$MOCK_LOG"
-    run grep -q 'romp-manager called: down' "$MOCK_LOG"     # (`run` replaces $output — assert on it above)
+    run grep -q 'romp-manager called: down' "$MOCK_LOG"     # (`run` replaces $output: assert on it above)
     [ "$status" -ne 0 ]
     run grep -q 'SIGTERM' "$TEST_DIR/kget"                  # the service's stop took the kernel; the CLI sent nothing
     [ "$status" -ne 0 ]
@@ -2222,26 +1673,30 @@ MOCK
 @test "romp down --now: no wait (the one ask is the token check with a wait of 0, unreported), the marker and audit say --now, the stop still goes through the service" {
     start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0}'
     mock_service 0
+    mock_manager 1                                    # no manager outside the service
     run run_romp down --now
     [ "$status" -eq 0 ]
-    # the kernel was asked once, with no wait: the token gate answers before anything is stopped
-    # (review round 3, finding 2), and --now reports nothing about a wait it did not make
+    # the kernel was asked once, with no wait: the token gate answers before anything is stopped,
+    # and --now reports nothing about a wait it did not make
     [ "$(grep -c '^/down' "$TEST_DIR/kreq")" -eq 1 ]
     grep -q '^/down token=ok {"wait": 0}$' "$TEST_DIR/kreq"
     [[ "$output" != *"quiet:"* && "$output" != *"mid-turn"* ]]
+    # the marker's cmd carries the flag; the audit row names the action alone (the kernel's cut ledger
+    # reads `down`, never a flag spelling)
     grep -q '"cmd": "romp down --now"' "$XDG_STATE_HOME/romp/down-by-romp"
     grep -q '"action": "down"' "$XDG_STATE_HOME/romp/restart-audit.jsonl"
-    grep -q '"reason": "--now"' "$XDG_STATE_HOME/romp/restart-audit.jsonl"
+    [[ "$(grep '"action": "down"' "$XDG_STATE_HOME/romp/restart-audit.jsonl")" != *'"reason"'* ]]
     grep -q 'romp-service called: stop' "$MOCK_LOG"
 }
 
 @test "romp down --wait N: passes the wait through and names what a still-busy kernel is about to cut" {
     start_down_kernel '{"ok": true, "quiet": false, "busy": 2, "inflight": ["web", "api"], "waited": 2.0}'
     mock_service 0
+    mock_manager 1                                    # no manager outside the service
     run run_romp down --wait 2
     [ "$status" -eq 0 ]
     grep -q '^/down token=ok {"wait": 2}$' "$TEST_DIR/kreq"
-    [[ "$output" == *"2 session(s) still mid-turn after 2.0s (web, api) — stopping anyway"* ]]
+    [[ "$output" == *"2 session(s) still mid-turn after 2.0s (web, api); stopping anyway"* ]]
     [[ "$output" == *"pick up where they stopped at the next romp up"* ]]
     grep -q '"cmd": "romp down --wait 2"' "$XDG_STATE_HOME/romp/down-by-romp"
     grep -q 'romp-service called: stop' "$MOCK_LOG"
@@ -2255,10 +1710,11 @@ MOCK
 
 @test "romp down: bad options are loud exit 2 and touch nothing" {
     mock_service 0
+    mock_manager 1                                    # no manager outside the service
     export ROMP_KERNEL_PORT=1                          # no fake here: the floor port, which refuses at once
     # 600.4 / 600.5 round to 600 under printf %.0f but the kernel refuses anything above 600.0 with a
-    # 400, which the CLI would turn into a stop with no wait: the CLI's bound is the same, unrounded
-    # a leading zero is not JSON: 05 / 0600 / 00.5 went into the body raw and came back as a 400, a stop with no wait
+    # 400, which the CLI would turn into a stop with no wait: the CLI's bound is the same, unrounded.
+    # A leading zero is not JSON: 05 / 0600 / 00.5 would go into the body raw and come back as a 400
     for args in "--wait abc" "--wait 601" "--wait -1" "--bogus" "--wait" "--wait 600.4" "--wait 600.5" "--wait=600.01" "--wait 0600.5" \
                 "--wait 05" "--wait 0600" "--wait 00.5" "--wait=007"; do
         # shellcheck disable=SC2086
@@ -2296,12 +1752,12 @@ MOCK
     mock_service 3
     mock_manager 1
     # a port nothing listens on, set explicitly: with ROMP_KERNEL_PORT unset the CLI probes its
-    # default port, which on a machine running romp is the live kernel (the 2026-09-06 incident),
-    # so no test here ever leaves it unset. The floor port stands in for "nothing there".
+    # default port, which on a machine running romp is the live kernel, so no test here ever leaves
+    # it unset. The floor port stands in for "nothing there".
     export ROMP_KERNEL_PORT=1
     run run_romp down
     [ "$status" -eq 0 ]
-    [[ "$output" == *"isn't answering on :1 — nothing to quiesce"* ]]
+    [[ "$output" == *"isn't answering on :1; nothing to quiesce"* ]]
     [[ "$output" == *"nothing was running"* ]]
     [[ "$output" == *"auto-start stays held until \`romp up\`"* ]]
     [[ "$output" != *"pid"* ]]                         # no pid was learned, so none could be signaled
@@ -2315,7 +1771,7 @@ MOCK
     mock_manager 0
     run run_romp down
     [ "$status" -eq 1 ]
-    [[ "$output" == *"did not stop — the kernel keeps running"* ]]
+    [[ "$output" == *"did not stop; the kernel keeps running"* ]]
     grep -q '^/down token=ok {"cancel": true}$' "$TEST_DIR/kreq"   # turns resume now, not at the lease's end
     [ ! -e "$XDG_STATE_HOME/romp/down-by-romp" ]                    # a running kernel must not read as down
     run grep -q 'romp-manager called' "$MOCK_LOG"                  # no fallback: the service IS installed
@@ -2358,10 +1814,11 @@ PY
 @test "romp down: an older kernel without /down stops without waiting, through the service; one the service does not take is not signaled" {
     # 404: the route is missing, so no quiesce; the supervised stop still runs and takes the kernel
     mock_service 0
+    mock_manager 1                                    # no manager outside the service
     start_old_kernel
     run run_romp down
     [ "$status" -eq 0 ]
-    [[ "$output" == *"predates the quiesce route — stopping without waiting"* ]]
+    [[ "$output" == *"predates the quiesce route; stopping without waiting"* ]]
     grep -q 'romp-service called: stop' "$MOCK_LOG"
     kernel_port_closed; KERNEL_PID=""
     # the same kernel with nothing above it: it cannot name its pid under the token, so the probe
@@ -2380,11 +1837,10 @@ PY
 }
 
 @test "romp down: a kernel that rejects the serve token is another romp's: exit 1, the line, nothing touched, the kernel left alive" {
-    # the 2026-09-06 incident, paraphrased: a `romp down` aimed at a port it did not mean got a 403
-    # from the kernel there, went on as if nothing had answered, read that kernel's pid off the
-    # auth-exempt GET /version and SIGTERMed it: another romp's kernel, every session on it cut for
-    # two hours. A refused token now ends the command before the marker, the service, the manager
-    # or any signal. Both codes a token gate can answer.
+    # a `romp down` aimed at a port it did not mean gets a 403 from the kernel there; it must not go
+    # on as if nothing had answered, read that kernel's pid off the auth-exempt GET /version and
+    # SIGTERM it (another romp's kernel, every session on it cut). A refused token ends the command
+    # before the marker, the service, the manager or any signal. Both codes a token gate can answer.
     mock_service 0
     mock_manager 0
     local code kpid
@@ -2471,9 +1927,10 @@ PY
 }
 
 @test "romp down --now: a kernel that rejects the token is refused before the marker, the service and the manager: exit 1, nothing touched" {
-    # review round 3, finding 2: --now sent nothing token-gated until the probe, so a --now aimed at
-    # another romp's kernel first stopped this romp's own service and manager, then took the marker
-    # back at the probe's 401, and the kernel it had stopped read as a crash. Both codes a gate answers.
+    # --now must send the token-gated ask before it stops anything: a --now that sent nothing gated
+    # until the probe would first stop this romp's own service and manager, then take the marker
+    # back at the probe's 401, and the kernel it had stopped would read as a crash. Both codes a
+    # gate answers.
     mock_service 0
     mock_manager 0
     local code kpid
@@ -2523,9 +1980,9 @@ PY
 }
 
 @test "romp down: the login service is stopped (4) but a manager runs outside it: stopped through its own /stop" {
-    # the hole the 2026-09-06 review found: `systemctl --user stop` on an inactive unit exits 0, so the
-    # old code took a manager started by `romp up --foreground` (or a hand `romp-manager up`, or the
-    # auto-start) for stopped and left it running under a marker that said otherwise
+    # `systemctl --user stop` on an inactive unit exits 0, so a stop that trusted the service's exit
+    # would take a manager started by `romp up --foreground` (or a hand `romp-manager up`) for
+    # stopped and leave it running under a marker that said otherwise
     start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0}'
     mock_service 4
     mock_manager_live
@@ -2584,7 +2041,7 @@ PY
     [[ "$last" == *'a manager still answers on :7599 (pid 424242)'* ]]
 }
 
-@test "romp down: end to end, an installed-but-inactive unit and a real manager started outside it (the review's scenario)" {
+@test "romp down: end to end, an installed-but-inactive unit and a real manager started outside it" {
     command -v node >/dev/null 2>&1 || skip "node not available"
     command -v curl >/dev/null 2>&1 || skip "curl not available"
     local bin; bin="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)"
@@ -2609,21 +2066,19 @@ STUB
     local fake="$TEST_DIR/fake-serve"
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$fake"
     chmod +x "$fake"
-    export ROMP_MANAGER_PORT=7603 ROMP_SERVE_PORT=7604 ROMP_KERNEL_PORT=7604   # the kernel probe goes where the fake serve would listen
-    # the manager's /stop takes the serve token; the CLI's `romp-manager down` reads the same file under
-    # the hermetic state root (no ROMP_SERVE_TOKEN in this test's environment: the file is the token)
-    unset ROMP_SERVE_TOKEN; mkdir -p "$XDG_STATE_HOME/romp"; printf 'e2e-down-token\n' > "$XDG_STATE_HOME/romp/serve-token"
+    local mport kport; free_port mport kport
+    export ROMP_MANAGER_PORT=$mport ROMP_SERVE_PORT=$kport ROMP_KERNEL_PORT=$kport   # the kernel probe goes where the fake serve would listen
     ROMP_SERVE_BIN="$fake" node "$bin/romp-manager" up >/dev/null 2>&1 &
     MGR_PID=$!
     local i
-    for i in $(seq 1 30); do curl -fsS "http://127.0.0.1:7603/status" >/dev/null 2>&1 && break; sleep 0.1; done
-    curl -fsS "http://127.0.0.1:7603/status" >/dev/null
+    for i in $(seq 1 30); do curl -fsS "http://127.0.0.1:$mport/status" >/dev/null 2>&1 && break; sleep 0.1; done
+    curl -fsS "http://127.0.0.1:$mport/status" >/dev/null
     run run_romp down --now
     [ "$status" -eq 0 ]
     [[ "$output" == *"installed but not running"* ]]       # romp-service said what it found
     [[ "$output" == *"the manager and its kernels are stopping"* ]]
     # the manager is gone: its port answers nothing and the process has exited
-    run curl -fsS "http://127.0.0.1:7603/status"
+    run curl -fsS "http://127.0.0.1:$mport/status"
     [ "$status" -ne 0 ]
     for i in $(seq 1 30); do kill -0 "$MGR_PID" 2>/dev/null || break; sleep 0.1; done
     run kill -0 "$MGR_PID"
@@ -2636,18 +2091,150 @@ STUB
     [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]
 }
 
+@test "romp down: a manager whose kernel uses most of its SIGKILL grace is polled past that grace: exit 0, the manager gone, the marker kept" {
+    command -v node >/dev/null 2>&1 || skip "node not available"
+    command -v curl >/dev/null 2>&1 || skip "curl not available"
+    # Pull-in review round 1 (2026-09-16): the manager exits once its kernels have left, or once the grace it
+    # grants them (SHUTDOWN_GRACE_MS, 8 s by default) plus 200 ms has run out; `romp down` polled for it 28
+    # times a quarter second, 7 s nominal, a bound from when the grace was 5 s, so a kernel that used its
+    # exit budget made the down report a manager that would not stop, exit 1 and take the marker back. The
+    # poll is sized from the grace now, the manager's own word (manager.shutdownGraceMs on the status answer
+    # the down fetches; review round 2: ROMP_SHUTDOWN_GRACE_MS read from the down's shell, floored at 10 s, is
+    # the fallback for a manager without the field) plus a 2 s margin; this shell exports the knob, so the
+    # manager and the fallback read the same value. Driven with a REAL manager under a 12 s grace and a kernel
+    # that holds its SIGTERM for 11.5 s and then leaves on its own, just before the SIGKILL: the manager
+    # exits about 11.6 s after the stop, past the old bound (about 8.5 s of wall time, the control client's
+    # startup on top of each sleep) and inside the new one (56 polls, 14 s nominal).
+    local bin; bin="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)"
+    export ROMP_SHUTDOWN_GRACE_MS=12000
+    local fake="$TEST_DIR/fake-serve"
+    cat > "$fake" <<'FAKE'
+#!/usr/bin/env bash
+# a kernel that uses most of its grace: SIGTERM starts an 11.5 s drain, then a clean exit of its own
+sleep 600 & bg=$!
+trap 'kill "$bg" 2>/dev/null; sleep 11.5; exit 0' TERM
+wait "$bg"
+FAKE
+    chmod +x "$fake"
+    local mport kport; free_port mport kport
+    export ROMP_MANAGER_PORT=$mport ROMP_SERVE_PORT=$kport ROMP_KERNEL_PORT=$kport   # the kernel probe goes where the fake serve would listen
+    export ROMP_MANAGER_BIN="$bin/romp-manager"
+    ROMP_SERVE_BIN="$fake" node "$bin/romp-manager" up >/dev/null 2>&1 &
+    MGR_PID=$!
+    local i st
+    for i in $(seq 1 30); do curl -fsS "http://127.0.0.1:$mport/status" >/dev/null 2>&1 && break; sleep 0.1; done
+    st="$(curl -fsS "http://127.0.0.1:$mport/status")"
+    # the premise: a kernel is up under the manager, so the stop has something to grant the grace to
+    MGR_ST="$st" python3 -c 'import json, os; ks = json.loads(os.environ["MGR_ST"])["kernels"]; assert ks and ks[0].get("pid"), ks'
+    local t0=$SECONDS
+    run run_romp down --now
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"the manager and its kernels are stopping"* ]]
+    run grep -q 'still running' <<< "$output"      # never the false failure
+    [ "$status" -ne 0 ]
+    (( SECONDS - t0 >= 11 ))                        # the down outlasted the kernel's hold: polled past the old bound
+    # the manager is gone: its port answers nothing and the process has exited
+    run curl -fsS "http://127.0.0.1:$mport/status"
+    [ "$status" -ne 0 ]
+    for i in $(seq 1 30); do kill -0 "$MGR_PID" 2>/dev/null || break; sleep 0.1; done
+    run kill -0 "$MGR_PID"
+    [ "$status" -ne 0 ]
+    MGR_PID=""
+    [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]
+}
+
+@test "romp down: the grace set on the manager's launch line alone, never in this shell, sizes the poll, read off the manager's /status" {
+    command -v node >/dev/null 2>&1 || skip "node not available"
+    command -v curl >/dev/null 2>&1 || skip "curl not available"
+    # Pull-in review round 2 (2026-09-16): the round 1 fix read ROMP_SHUTDOWN_GRACE_MS from the down's own shell,
+    # but a manager started by a bare `romp up` or `--foreground` reads it from the shell that launched IT, and
+    # /status carried no grace, so a grace raised only there still made the down report a manager that would
+    # not stop, exit 1 and take the marker back. The manager's status answer carries shutdownGraceMs now, the
+    # value it runs with, and the down sizes its poll from that field; the variable in the down's shell is the
+    # fallback for a manager without the field. Here the knob is on the manager's launch line ALONE, 20 s, and
+    # unset in this shell: a kernel that holds its SIGTERM for 19.5 s and then leaves on its own has the manager
+    # exit about 19.6 s after the stop, past the fallback's bound (40 polls, about 12.5 s of wall time) and
+    # inside the one the field gives (88 polls, 22 s nominal).
+    local bin; bin="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)"
+    unset ROMP_SHUTDOWN_GRACE_MS                     # the down's shell knows nothing of the manager's grace
+    local fake="$TEST_DIR/fake-serve"
+    cat > "$fake" <<'FAKE'
+#!/usr/bin/env bash
+# a kernel that uses most of a 20 s grace: SIGTERM starts a 19.5 s drain, then a clean exit of its own
+sleep 600 & bg=$!
+trap 'kill "$bg" 2>/dev/null; sleep 19.5; exit 0' TERM
+wait "$bg"
+FAKE
+    chmod +x "$fake"
+    local mport kport; free_port mport kport
+    export ROMP_MANAGER_PORT=$mport ROMP_SERVE_PORT=$kport ROMP_KERNEL_PORT=$kport   # the kernel probe goes where the fake serve would listen
+    export ROMP_MANAGER_BIN="$bin/romp-manager"
+    ROMP_SHUTDOWN_GRACE_MS=20000 ROMP_SERVE_BIN="$fake" node "$bin/romp-manager" up >/dev/null 2>&1 &
+    MGR_PID=$!
+    local i st
+    for i in $(seq 1 30); do curl -fsS "http://127.0.0.1:$mport/status" >/dev/null 2>&1 && break; sleep 0.1; done
+    st="$(curl -fsS "http://127.0.0.1:$mport/status")"
+    # the premise: a kernel is up under the manager, the manager's word on its grace is the launch line's, and
+    # this shell holds no copy of it
+    MGR_ST="$st" python3 -c 'import json, os; d = json.loads(os.environ["MGR_ST"]); assert d["kernels"] and d["kernels"][0].get("pid"), d; assert d["manager"]["shutdownGraceMs"] == 20000, d["manager"]'
+    [ -z "${ROMP_SHUTDOWN_GRACE_MS:-}" ]
+    local t0=$SECONDS
+    run run_romp down --now
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"the manager and its kernels are stopping"* ]]
+    run grep -q 'still running' <<< "$output"      # never the false failure
+    [ "$status" -ne 0 ]
+    (( SECONDS - t0 >= 19 ))                        # the down outlasted the kernel's hold: the poll was the manager's grace, not this shell's
+    # the manager is gone: its port answers nothing and the process has exited
+    run curl -fsS "http://127.0.0.1:$mport/status"
+    [ "$status" -ne 0 ]
+    for i in $(seq 1 30); do kill -0 "$MGR_PID" 2>/dev/null || break; sleep 0.1; done
+    run kill -0 "$MGR_PID"
+    [ "$status" -ne 0 ]
+    MGR_PID=""
+    [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]
+}
+
+@test "romp down: a kernel with no manager that drains for its whole budget beside a live accept loop is polled past that budget: exit 0, stopped, the marker kept" {
+    # Pull-in review round 2 (2026-09-16): the round 1 fix sized the manager poll from the grace; the kernel-drain
+    # poll on the direct-SIGTERM road (step 5 of down) still ran a fixed 24 x 0.25 s under a comment that called
+    # the drain about 2 s, while a kernel's exit budgets are shares of ROMP_SHUTDOWN_GRACE_MS (7.5 s of an 8 s
+    # grace). The real SIGTERM handler holds the accept loop, so /healthz stops answering at once and the short
+    # poll ended on that event; a kernel already draining on its parent-death watchdog's thread keeps answering,
+    # so the fake holds its SIGTERM for 7.5 s on a background thread (a main-thread hold would not fail before
+    # the fix). The poll is the manager poll's bound now (no manager here and so no field: the fallback, 40
+    # polls, 10 s nominal); it used to give up at about 6 s and report a kernel that would not stop.
+    start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0.3}' hold-term
+    mock_service 3
+    mock_manager 1
+    unset ROMP_SHUTDOWN_GRACE_MS                      # the bare kernel's road: nothing passed a grace down
+    local kpid; kpid="$(cat "$TEST_DIR/kpid")"
+    local t0=$SECONDS
+    run run_romp down --now
+    [ "$status" -eq 0 ]
+    grep -q '^SIGTERM held$' "$TEST_DIR/kget"            # asked through its own door; the drain ran beside the port
+    [[ "$output" == *"[romp] down: a kernel was running on :$ROMP_KERNEL_PORT (pid $kpid) with no manager; stopped it. \`romp up\` starts it again"* ]]
+    run grep -q 'still running' <<< "$output"          # never the false failure
+    [ "$status" -ne 0 ]
+    (( SECONDS - t0 >= 7 ))                            # the down outlasted the drain: polled past the old 6 s bound
+    kernel_port_closed
+    KERNEL_PID=""
+    [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]         # a real down: the marker stays
+    run grep -q '^/down token=ok {"cancel": true}$' "$TEST_DIR/kreq"   # no release: the stop landed
+    [ "$status" -ne 0 ]
+}
+
 @test "romp down: a kernel with no manager (a bare romp-serve) is stopped through its own door, and the line says so" {
-    # the review's scenario (2026-09-06, finding 1): the dashboard's remote Start and the update and
-    # restart fallbacks leave `nohup romp-serve` on a host with no manager and no login service. The old
-    # code took the manager's absence for the kernel's: "nothing was running", exit 0, marker kept, and
-    # 35s later the hold lapsed and turns resumed under a marker that said down on purpose
+    # the dashboard's remote Start and the update and restart fallbacks leave `nohup romp-serve` on a
+    # host with no manager and no login service. The manager's absence is not the kernel's: taking
+    # it so would print "nothing was running", exit 0, keep the marker, and have turns resume under
+    # a marker that said down on purpose once the hold lapsed
     start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0.3}'
     mock_service 3
     mock_manager 1
-    local kpid t0; kpid="$(cat "$TEST_DIR/kpid")"; t0=$SECONDS
+    local kpid; kpid="$(cat "$TEST_DIR/kpid")"
     run run_romp down
     [ "$status" -eq 0 ]
-    [ $((SECONDS - t0)) -le 1 ]                            # nothing above stopped it: no drain time to grant
     grep -q '^/down token=ok {"wait": 5}$' "$TEST_DIR/kreq"
     grep -q '^/healthz$' "$TEST_DIR/kget"                  # the kernel port was asked, not the manager's word
     grep -q '^/version$' "$TEST_DIR/kget"                  # the pid came from the kernel itself
@@ -2683,17 +2270,15 @@ STUB
 }
 
 @test "romp down: a kernel that outlives its manager's stop is stopped directly, after the drain time that stop gave it" {
-    # the manager's /stop landed (it no longer answers) but its kernel is still on the port: the wedged
-    # child the manager used to leave behind after one SIGTERM. It gets the drain's time before the CLI
-    # asks it itself (a second SIGTERM inside the drain writes a second, emptier ledger row), then the
-    # same door the manager used
+    # the manager's /stop landed (it no longer answers) but its kernel is still on the port: a wedged
+    # child. It gets the drain's time before the CLI asks it itself (a second SIGTERM inside the
+    # drain writes a second, emptier ledger row), then the same door the manager used
     start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0}'
     mock_service 3
     mock_manager_live keep-kernel
-    local kpid t0; kpid="$(cat "$TEST_DIR/kpid")"; t0=$SECONDS
+    local kpid; kpid="$(cat "$TEST_DIR/kpid")"
     run run_romp down
     [ "$status" -eq 0 ]
-    [ $((SECONDS - t0)) -ge 3 ]                            # the drain time was granted first
     grep -q 'romp-manager called: down' "$MOCK_LOG"
     grep -q '^SIGTERM$' "$TEST_DIR/kget"
     [[ "$output" == *"[romp] down: the kernel on :$ROMP_KERNEL_PORT (pid $kpid) outlived the stop and was stopped directly; \`romp up\` starts it again"* ]]
@@ -2710,16 +2295,16 @@ STUB
     [ "$status" -eq 0 ]
     [[ "$output" == *"quiet: no turn in flight"* ]]
     [[ "$output" != *"nothing was running"* ]]
-    [[ "$output" == *"[romp] down: the kernel on :$ROMP_KERNEL_PORT answered the quiesce but has since gone (no login service installed or running, no manager on :7432); \`romp up\` starts it again"* ]]
+    [[ "$output" == *"[romp] down: the kernel on :$ROMP_KERNEL_PORT answered the quiesce but has since gone (no login service installed or running, no manager on :${ROMP_MANAGER_PORT:-7432}); \`romp up\` starts it again"* ]]
     KERNEL_PID=""
     [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]
 }
 
 @test "romp down: a kernel that leaves after the confirmation and before its pid is checked is the documented refusal, not a bare exit 7" {
-    # review round 3, finding 1: bin/romp runs under set -euo pipefail, and the probe's GET /version
-    # pipeline had no `|| true`. A kernel gone by then (its own exit, or the end of the drain a stop
-    # above began) made curl exit non-zero, and the command died with that code: no line, exit 7,
-    # the marker left in place, no down-failed row. Now the not-confirmed refusal the docs promise.
+    # bin/romp runs under set -euo pipefail: a kernel gone between the confirmation and the pid
+    # check (its own exit, or the end of the drain a stop above began) makes curl exit non-zero,
+    # and the command must not die with that code (no line, the marker left in place, no
+    # down-failed row). It is the not-confirmed refusal the docs promise.
     start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0}' exit-before-version
     mock_service 3
     mock_manager 1
@@ -2739,8 +2324,6 @@ STUB
 }
 
 @test "romp down: a kernel that leaves before answering the confirmation is 'no answer': exit 1, the line, marker taken back" {
-    # the same hole one request earlier: the confirmation's curl already had its `|| true`, but the
-    # GET /version right after it did not, so this case too died with curl's code instead of the line
     start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0}' exit-before-confirm
     mock_service 3
     mock_manager 1
@@ -2779,7 +2362,7 @@ STUB
     [ "$status" -ne 0 ]
 }
 
-@test "romp up: no login service (3) → the foreground manager, marker cleared; --foreground skips the service" {
+@test "romp up: no login service (3) means the foreground manager, marker cleared; --foreground skips the service" {
     mock_service 3
     mock_manager 0
     mkdir -p "$XDG_STATE_HOME/romp"
@@ -2984,7 +2567,7 @@ PY
     command -v node >/dev/null 2>&1 || skip "node not available"
     # Review round 1 (2026-09-10): the manager's write gate answers /stop 401 when this romp's token is not
     # one it holds (another state root, another romp's manager) and 503 when it cannot read its own token
-    # file. `romp down` discarded the answer, polled status for seven seconds and printed "a manager is still
+    # file. `romp down` discarded the answer, polled status for its whole bound and printed "a manager is still
     # running ... Stop it by hand", hiding both the refusal and the remedy. The stand-in here is the control
     # port: it answers /status like a running manager, refuses /stop with the given status and the manager's
     # own body, records every request, and stays up (a refused stop stops nothing).
@@ -3144,7 +2727,8 @@ PY
         [ "$(grep -c '^POST ' "$TEST_DIR/mgr-seen")" -eq 1 ]     # one ask
         run grep -q 'romp-postal-service called' "$MOCK_LOG"     # nothing restarted, the bus included
         [ "$status" -ne 0 ]
-        [[ "$(tail -1 "$XDG_STATE_HOME/romp/restart-audit.jsonl")" == *'"action": "refresh"'* ]]   # who asked is still on record
+        # who asked is still on record: the attribution row, which carries no action
+        [[ "$(tail -1 "$XDG_STATE_HOME/romp/restart-audit.jsonl")" == *'"ppid"'* && "$(tail -1 "$XDG_STATE_HOME/romp/restart-audit.jsonl")" != *'"action"'* ]]
         kill "$MGR_PID" 2>/dev/null || true; MGR_PID=""
     done
 }
@@ -3156,19 +2740,15 @@ PY
     [ "$status" -eq 0 ]
     [[ "$output" == *"Usage:"* ]]
     [[ "$output" == *"romp new"* ]]
-    run grep -q 'tmux new-session' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
 }
 
 @test "help, -h and --help all print usage" {
-    touch "$MOCK_LOG"    # help makes no tmux calls at all
     run run_romp --help
     [ "$status" -eq 0 ]
     [[ "$output" == *"Usage:"* ]]
     run run_romp help
     [ "$status" -eq 0 ]
     [[ "$output" == *"Usage:"* ]]
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
 }
 
 @test "mail dispatches to romp-postal with its args (--mail is its silent alias)" {
@@ -3192,85 +2772,6 @@ MOCK
     grep -q 'romp-postal called: send beta hello' "$MOCK_LOG"
 }
 
-# _romp_resume_rows builds the resume-picker rows in ONE python pass: it walks the
-# projects tree once into a sid->transcript index, reads each session's name file
-# + cached gloss (archive headline, else latest caption), and emits FS-delimited
-# rows newest-first. These extract JUST the function (never source the whole
-# script — that would re-run its top-level dispatch + reset ROMP_*_DIR) and point
-# the dirs at fixtures. FS is \x1f; fields are mtime|sid|name|dir|rgb|kind|text.
-_resume_rows_fn() {   # writes the extracted function to $1
-    sed -n '/^_romp_resume_rows()/,/^}/p' "$ROMP_SCRIPT" > "$1"
-}
-
-@test "resume rows: archive headline, caption fallback, ordering, live-exclusion" {
-    local ndir="$TEST_DIR/names" adir="$TEST_DIR/archive" cdir="$TEST_DIR/captions"
-    local pdir="$TEST_DIR/projects" fn="$TEST_DIR/_rows.sh"
-    mkdir -p "$ndir" "$adir" "$cdir" "$pdir/proj-a"
-    _resume_rows_fn "$fn"
-
-    # three resumable sessions + one LIVE (must be excluded)
-    printf 'arch-sess\t/tmp/b\t#aabbcc\t#000000\n' > "$ndir/sid-arch"
-    printf 'cap-sess\t/tmp/c\t#ddeeff\t#000000\n'  > "$ndir/sid-cap"
-    printf 'live-sess\t/tmp/a\t#112233\t#ffffff\n' > "$ndir/sid-live"
-    : > "$pdir/proj-a/sid-arch.jsonl"
-    : > "$pdir/proj-a/sid-cap.jsonl"
-    : > "$pdir/proj-a/sid-live.jsonl"
-    # cap-sess transcript OLDER than arch-sess -> arch-sess sorts first
-    touch -t 202606160000 "$pdir/proj-a/sid-cap.jsonl"
-    touch -t 202606161200 "$pdir/proj-a/sid-arch.jsonl"
-    printf '{"headline":"Synthetic archive headline"}\n' > "$adir/sid-arch.json"
-    printf '{"caption":"older step"}\n{"caption":"newest caption step"}\n' > "$cdir/sid-cap.jsonl"
-
-    run env ROMP_NAMES_DIR="$ndir" ROMP_ARCHIVE_DIR="$adir" ROMP_CAPTIONS_DIR="$cdir" \
-        ROMP_PROJECTS_DIR="$pdir" \
-        bash -c 'source "$1"; _romp_resume_rows "$2" "$3"' _ "$fn" $'sid-live' $'\x1f'
-    [ "$status" -eq 0 ]
-    # live session excluded
-    [[ "$output" != *"live-sess"* ]]
-    # newest first: arch row before cap row
-    local first; first="$(printf '%s\n' "$output" | head -1)"
-    [[ "$first" == *"arch-sess"* ]]
-    # archive headline wins for arch-sess; caption fallback for cap-sess (last non-empty)
-    [[ "$output" == *"Synthetic archive headline"* ]]
-    [[ "$output" == *"newest caption step"* ]]
-    [[ "$output" != *"older step"* ]]
-    # rgb derived from the bg hex (#aabbcc -> 170;187;204)
-    [[ "$output" == *$'\x1f'"170;187;204"$'\x1f'* ]]
-}
-
-@test "resume rows: stale name file (transcript gone) is pruned" {
-    local ndir="$TEST_DIR/names" pdir="$TEST_DIR/projects" fn="$TEST_DIR/_rows.sh"
-    mkdir -p "$ndir" "$pdir/proj-a" "$TEST_DIR/archive" "$TEST_DIR/captions"
-    _resume_rows_fn "$fn"
-    printf 'has-tx\t/tmp/x\t\t\n'   > "$ndir/sid-has"
-    printf 'stale\t/tmp/y\t\t\n'    > "$ndir/sid-stale"
-    : > "$pdir/proj-a/sid-has.jsonl"          # only sid-has has a transcript
-    run env ROMP_NAMES_DIR="$ndir" ROMP_ARCHIVE_DIR="$TEST_DIR/archive" \
-        ROMP_CAPTIONS_DIR="$TEST_DIR/captions" ROMP_PROJECTS_DIR="$pdir" \
-        bash -c 'source "$1"; _romp_resume_rows "$2" "$3"' _ "$fn" '' $'\x1f'
-    [ "$status" -eq 0 ]
-    [ -f "$ndir/sid-has" ]            # kept
-    [ ! -f "$ndir/sid-stale" ]        # pruned
-}
-
-@test "resume rows: an EMPTY/unreadable projects index never prunes the cache" {
-    # Regression guard: if the projects tree is missing, "transcript gone" is
-    # unverifiable, so we must NOT delete any name files (an env mismatch once
-    # wiped the whole cache this way).
-    local ndir="$TEST_DIR/names" fn="$TEST_DIR/_rows.sh"
-    mkdir -p "$ndir" "$TEST_DIR/archive" "$TEST_DIR/captions"
-    _resume_rows_fn "$fn"
-    printf 'a\t/tmp/a\t\t\n' > "$ndir/sid-a"
-    printf 'b\t/tmp/b\t\t\n' > "$ndir/sid-b"
-    run env ROMP_NAMES_DIR="$ndir" ROMP_ARCHIVE_DIR="$TEST_DIR/archive" \
-        ROMP_CAPTIONS_DIR="$TEST_DIR/captions" ROMP_PROJECTS_DIR="$TEST_DIR/nonexistent" \
-        bash -c 'source "$1"; _romp_resume_rows "$2" "$3"' _ "$fn" '' $'\x1f'
-    [ "$status" -eq 0 ]
-    [ -f "$ndir/sid-a" ]             # both survive — nothing pruned without an index
-    [ -f "$ndir/sid-b" ]
-    [ -z "$output" ]                 # and no rows (no transcripts to show)
-}
-
 @test "help -h reflects which commands are PRESENT (presence-checked, no drift)" {
     # Run a copy of romp with only SOME backing romp-* binaries reachable: present commands show, absent
     # ones are hidden, built-ins always show — so the help can't drift from what's installed (the user 2026-06-16).
@@ -3281,7 +2782,7 @@ _resume_rows_fn() {   # writes the extracted function to $1
     [ "$status" -eq 0 ]
     # built-ins (no backing binary) always shown
     [[ "$output" == *"romp new"* ]]
-    [[ "$output" == *"romp resume"* ]]
+    [[ "$output" != *"romp resume"* ]]      # the verb is gone (2026-09-10): the dashboard's Revive
     # `romp serve` was removed (tailnet reach = tailscale serve to loopback) — must not resurface
     [[ "$output" != *"romp serve"* ]]
     # present backing → shown
@@ -3296,60 +2797,21 @@ _resume_rows_fn() {   # writes the extracted function to $1
     [[ "$output" != *"romp judges"* ]]
 }
 
-# ─── ROMPHOME — never launch a session in $HOME ──────────────────────
-# $HOME is the one cwd whose direct children include the macOS TCC-protected
-# Downloads/Desktop/Documents; indexing them trips spurious OS file-access
-# prompts. A $HOME launch is redirected to ROMPHOME instead.
-
-@test "ROMPHOME: a launch from \$HOME is redirected there, not created in \$HOME" {
-    export ROMPHOME="$TEST_DIR/romphome"
-    mkdir -p "$ROMPHOME"
-    local expect; expect="$(cd "$ROMPHOME" && pwd -P)"
-    local home_real; home_real="$(cd "$HOME" && pwd -P)"
-    cd "$HOME"
-    run run_romp new -t box
-    [ "$status" -eq 0 ]
-    grep -qF "tmux new-session -d -s box -c $expect" "$MOCK_LOG"
-    # the redirect is announced to the user — asserted BEFORE the `run grep` overwrites $output
-    [[ "$output" == *"not launching in \$HOME"* ]]
-    # the session must NOT be rooted at $HOME
-    run grep -qF "tmux new-session -d -s box -c $home_real" "$MOCK_LOG"
-    [ "$status" -ne 0 ]
-}
-
-@test "ROMPHOME: a name-less resume from \$HOME is named after ROMPHOME, not \$HOME" {
-    # Regression: basename(\$HOME) is the username — a privacy leak as a session
-    # name. `romp new` requires a name now, so the folder-name default only fires
-    # on an explicit-id resume without --name; the name must come from the
-    # resolved (redirected) dir.
-    export ROMPHOME="$TEST_DIR/scratchpad"
-    mkdir -p "$ROMPHOME"
-    cd "$HOME"
-    run run_romp resume abc123-uuid
-    [ "$status" -eq 0 ]
-    grep -q 'tmux new-session -d -s scratchpad' "$MOCK_LOG"
-    run grep -qE 'tmux new-session -d -s home( |$| -)' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
-}
-
-@test "ROMPHOME: a launch from a normal project dir is unaffected" {
-    export ROMPHOME="$TEST_DIR/romphome"
-    mkdir -p "$ROMPHOME"
-    # setup() already cd'd into $WORK_DIR, a normal project dir
-    local expect; expect="$(cd "$WORK_DIR" && pwd -P)"
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    grep -qF "tmux new-session -d -s myproject -c $expect" "$MOCK_LOG"
-    [[ "$output" != *"not launching in \$HOME"* ]]
-}
-
-@test "new: -d launches in the given directory, not the cwd" {
+@test "new: -d rides the /new payload as the session's dir, not the cwd" {
+    _stub_curl
+    : > "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
     local other="$TEST_DIR/elsewhere"
     mkdir -p "$other"
-    local expect; expect="$(cd "$other" && pwd -P)"
-    run run_romp new -t -d "$other" side
+    run run_romp new -d "$other" side
     [ "$status" -eq 0 ]
-    grep -qF "tmux new-session -d -s side -c $expect" "$MOCK_LOG"
+    [[ "$output" == *"working in $other"* ]]
+    grep '/new' "$MOCK_LOG" | grep -qF "\"dir\": \"$other\""
+    # without -d the payload names the caller's cwd (setup() cd'd into WORK_DIR)
+    : > "$MOCK_LOG"
+    run run_romp new side
+    [ "$status" -eq 0 ]
+    grep '/new' "$MOCK_LOG" | grep -qF "\"dir\": \"$WORK_DIR\""
 }
 
 @test "romp checkin/checkout: usage without a host, loud failure with no kernel" {
@@ -3366,18 +2828,20 @@ _resume_rows_fn() {   # writes the extracted function to $1
 
 # ─── romp new (SDK default) ──────────────────────────────────────────
 
-@test "new (no -t): no kernel token → loud error naming both fixes, nothing launched" {
-    touch "$MOCK_LOG"    # this path makes no tmux calls at all
+@test "new: no kernel token → loud error naming the one fix (start romp), nothing launched" {
+    _stub_curl
+    : > "$MOCK_LOG"
     run run_romp new api
     [ "$status" -eq 1 ]
     [[ "$output" == *"kernel isn't running"* ]]
-    [[ "$output" == *"romp new -t api"* ]]
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
+    [[ "$output" == *"romp up"* ]]
+    [[ "$output" != *"romp new -t"* ]]       # a dead kernel offers no terminal fallback any more
+    run grep -c '/new' "$MOCK_LOG"
+    [ "$output" = "0" ]
 }
 
-@test "new (no -t): POSTs the kernel /new with backend sdk, and starts no tmux session" {
+@test "new: POSTs the kernel /new with backend sdk (the default)" {
     command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-    touch "$MOCK_LOG"    # this path makes no tmux calls at all
     mkdir -p "$XDG_STATE_HOME/romp"
     printf 'tok-test' > "$XDG_STATE_HOME/romp/serve-token"
     # One-shot fake kernel: accept a single POST, log it, answer ok:true. Ephemeral
@@ -3417,7 +2881,6 @@ PY
     grep -q '"token": "tok-test"' "$TEST_DIR/req.log"
     grep -q '"name": "api"' "$TEST_DIR/req.log"
     grep -q '"backend": "sdk"' "$TEST_DIR/req.log"
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
 }
 
 @test "new --model/--effort: ride /new VERBATIM (full ids, no alias munging) and report what was applied" {
@@ -3454,7 +2917,6 @@ PY
     grep -q '"model": "claude-fable-5"' "$TEST_DIR/req.log"
     grep -q '"effort": "ultracode"' "$TEST_DIR/req.log"
     [[ "$output" == *"applied model claude-fable-5, effort ultracode"* ]]
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
 }
 
 @test "new --model/--effort: a kernel that does NOT ack them warns loudly (no silent divergence)" {
@@ -3524,14 +2986,6 @@ PY
     [[ "$output" == *"did not acknowledge --env (older kernel?)"* ]]
 }
 
-@test "new --model with -t refuses loudly (SDK-only flags), and starts nothing" {
-    touch "$MOCK_LOG"
-    run run_romp new -t --model claude-fable-5 x
-    [ "$status" -eq 2 ]
-    [[ "$output" == *"--model/--effort/--env need the default (Claude Code) session"* ]]
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
-}
-
 @test "new: help names --model and --effort (the nightly optimizer's presence guard greps help)" {
     run run_romp -h
     [ "$status" -eq 0 ]
@@ -3580,7 +3034,6 @@ PY
     grep -q '"FEATURE_FLAG": "1"' "$TEST_DIR/req.log"
     grep -q '"UI_THEME": "dark"' "$TEST_DIR/req.log"
     [[ "$output" == *"applied env FEATURE_FLAG=1,UI_THEME=dark"* ]]
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
 }
 
 @test "new --env: the value splits on the FIRST '=' and an empty value is meaningful" {
@@ -3617,7 +3070,6 @@ PY
     run run_romp new --env
     [ "$status" -eq 2 ]
     [[ "$output" == *"usage: romp new"* ]]
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
 }
 
 @test "new --no-env sends the explicit empty declaration and reports the clear as applied" {
@@ -3630,17 +3082,6 @@ PY
     grep -q '"env": {}' "$TEST_DIR/req.log"
     [[ "$output" == *"applied env cleared"* ]]
     [[ "$output" != *"WARNING"* ]]
-}
-
-@test "new --env with -t refuses loudly (SDK-only flags), and starts nothing" {
-    touch "$MOCK_LOG"
-    run run_romp new -t --env FEATURE_FLAG=1 x
-    [ "$status" -eq 2 ]
-    [[ "$output" == *"need the default (Claude Code) session"* ]]
-    run run_romp new -t --no-env x
-    [ "$status" -eq 2 ]
-    [[ "$output" == *"need the default (Claude Code) session"* ]]
-    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
 }
 
 @test "new --env/--no-env on a Codex spawn refuses loudly, naming the door (--codex or the engine default), and dials no kernel" {

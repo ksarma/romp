@@ -61,12 +61,16 @@ function withCls(el) {
   return el;
 }
 const EL = {};
-['rail-errs', 'merr', 'rerr-back', 'rerr-list', 'rerr-clear', 'rerr-x', 'rerr-fgrid', 'f-feed'].forEach((id) => {
+['rail-errs', 'merr', 'rerr-back', 'rerr-list', 'rerr-clear', 'rerr-x', 'rerr-fgrid', 'f-feed', 'f-settings'].forEach((id) => {
   EL[id] = withCls(mkEl(id));
 });
 const POSTED = [];   // what the shell posts into the feed iframe (revealCard)
 EL['f-feed'].contentWindow = { postMessage: (msg) => POSTED.push(msg) };
+const SETTINGS_POSTED = [];   // what it posts into the settings iframe: the unread count for the gear's Open log button (the gear's own page since 2026-09-10)
+EL['f-settings'].contentWindow = { postMessage: (msg) => SETTINGS_POSTED.push(msg) };
 const TOGGLES = [];  // window.__rompPaneToggle calls (revealing the feed pane on a jump)
+const SENT = [];     // what the shell socket is asked to send (a jump with the Feed pane off here: openSession)
+let SHELL_OK = true, FEED_OFF = false;   // the socket is open; the gear's Panes section has the Feed pane off in this browser
 EL['rail-errs']._num = mkEl('');   // the <text class=rerr-n> INSIDE each bell svg (the in-bell count)
 EL['merr']._num = mkEl('');
 function bellNum() { return EL['rail-errs']._num.textContent; }
@@ -75,6 +79,8 @@ const WL = {};
 global.window = {
   addEventListener: (k, f) => { (WL[k] = WL[k] || []).push(f); },
   __rompPaneToggle: (k, to) => TOGGLES.push(k + ':' + to),
+  __rompShellSend: (m) => { SENT.push(m); return SHELL_OK; },
+  __rompPaneEnabled: (k) => !(k === 'feed' && FEED_OFF),   // the head script's reader of the Panes setting, stubbed
 };
 global.document = {
   getElementById: (id) => EL[id] || null,
@@ -146,10 +152,40 @@ out.jump = { linky: jumpRow.className.indexOf('link') >= 0 };
 jumpRow.fire('click');
 out.jump.closed = EL['rerr-back'].hidden;
 out.jump.posted = POSTED.filter((m) => m.romp === 'revealCard').pop() || null;   // paint() also posts the unread count (T290)
-out.unseenPosts = POSTED.filter((m) => m.romp === 'logUnseen').map((m) => m.n);
+out.unseenPosts = SETTINGS_POSTED.filter((m) => m.romp === 'logUnseen').map((m) => m.n);
+out.unseenToFeed = POSTED.filter((m) => m.romp === 'logUnseen').length;   // none: the feed page hosts no gear
 out.jump.toggles = TOGGLES.join('|');
 // …while a kernel-minted entry (no target) is not clickable
 out.plainRowLinky = EL['rerr-list'].children[1].className.indexOf('link') >= 0;
+// 14) the Feed pane off in this browser (the gear's Panes section): a card's entry (itemId: the feed's badge mirror)
+// is not logged; an entry naming only a session lands, and its jump opens the session in the chat (openSession on the
+// shell socket), never toggling or posting into a feed that is not here; a socket that is down says so in the Log
+FEED_OFF = true; POSTED.length = 0; TOGGLES.length = 0;
+const before = notes().length;
+post({ romp: 'notify', kind: 'warn', text: 'api \u2014 anomaly on a card', sid: 'TESTSID', itemId: 'TESTSID:g7' });
+out.feedOff = { cardLogged: notes().length - before };
+post({ romp: 'notify', kind: 'sdk', text: 'api \u2014 stream dropped', sid: 'TESTSID' });
+out.feedOff.sessionLogged = notes().length - before;
+EL['rail-errs'].fire('click');   // reopen: step 13's jump closed the popover, and a closed Log does not re-render its rows
+const sessRow = EL['rerr-list'].children[0];
+out.feedOff.rowText = sessRow.children[1].textContent;
+out.feedOff.linky = sessRow.className.indexOf('link') >= 0;
+sessRow.fire('click');
+out.feedOff.sent = SENT.slice(); out.feedOff.toggles = TOGGLES.slice(); out.feedOff.posted = POSTED.filter((m) => m.romp === 'revealCard');
+out.feedOff.closed = EL['rerr-back'].hidden;
+SHELL_OK = false; SENT.length = 0;
+EL['rail-errs'].fire('click');
+EL['rerr-list'].children[0].fire('click');
+out.feedOff.down = { sent: SENT.length, newest: notes()[notes().length - 1] };
+SHELL_OK = true; FEED_OFF = false; SENT.length = 0;
+// the pane back on: a card's entry lands and its jump takes the feed road again
+const before2 = notes().length;   // the session entry and the socket-down 'locate' entry above are in the store
+post({ romp: 'notify', kind: 'warn', text: 'api \u2014 anomaly on a card', sid: 'TESTSID', itemId: 'TESTSID:g7' });
+out.feedOn = { cardLogged: notes().length - before2 };
+EL['rail-errs'].fire('click');
+out.feedOn.rowText = EL['rerr-list'].children[0].children[1].textContent;
+EL['rerr-list'].children[0].fire('click');
+out.feedOn.sent = SENT.slice(); out.feedOn.toggles = TOGGLES.slice(); out.feedOn.posted = POSTED.filter((m) => m.romp === 'revealCard');
 console.log(JSON.stringify(out));
 """
 
@@ -245,7 +281,7 @@ class ErrorCenterExecutes(unittest.TestCase):
         self.assertEqual(a["stored"], '{"conn":1}', "the choice persists")
         self.assertEqual(a["n"], 1, "the entry is still STORED while muted")
         self.assertFalse(a["red"], "a muted kind neither counts unread nor holds the live-down cue")
-        self.assertIn("hidden by the filters", a["emptyText"])
+        self.assertIn("Nothing to show", a["emptyText"]); self.assertIn("the filters above are hiding everything logged", a["emptyText"])
 
     def test_unmuting_shows_what_happened_and_re_reddens(self):
         a = self.out["afterUnmute"]
@@ -260,12 +296,43 @@ class ErrorCenterExecutes(unittest.TestCase):
         a = self.out["jump"]
         self.assertTrue(a["linky"], "a targeted entry renders as a link row")
         self.assertTrue(a["closed"], "the popover closes on jump")
-        self.assertEqual(a["posted"], {"romp": "revealCard", "itemId": "TESTSID:g9", "sid": "TESTSID"})
+        self.assertEqual(a["posted"], {"romp": "revealCard", "itemId": "TESTSID:g9", "sid": "TESTSID", "gesture": True},
+                         "the bell click is the reader's gesture, marked on the frame so the feed's fallback switch honours it (T416)")
         # the unread count rides into the feed pane for the gear's Open log button (T290): the drop posted a 1,
         # opening the Log (everything seen) posted a 0
         self.assertIn(1, self.out["unseenPosts"]); self.assertIn(0, self.out["unseenPosts"])
+        self.assertEqual(self.out["unseenToFeed"], 0, "the count rides into the settings iframe (the gear's own page), not the feed")
         self.assertIn("feed:true", a["toggles"], "the feed pane is revealed for the jump")
         self.assertFalse(self.out["plainRowLinky"], "a kernel-minted entry with no target is not a link")
+
+    def test_with_the_feed_pane_off_here_card_entries_are_not_logged_and_a_jump_opens_the_session_in_the_chat(self):
+        # the user 2026-09-10: a browser with the Feed pane off in the gear's Panes section shows no card here, so a
+        # card's Log entry (the feed's badge mirror, a pane hidden mid-page still posting) is not this browser's, and
+        # a jump from an entry naming a session opens THE SESSION in the chat (openSession on the shell socket, the
+        # card's own session link's road) instead of toggling and posting into a feed that is not here
+        f = self.out["feedOff"]
+        self.assertEqual(f["cardLogged"], 0, "a card's entry is not logged while the pane is off here")
+        self.assertEqual(f["sessionLogged"], 1, "an entry naming only a session lands")
+        self.assertTrue(f["linky"], "…and is a link")
+        self.assertEqual(f["rowText"], "api \u2014 stream dropped", "the row clicked is the session entry, newest first")
+        self.assertEqual(f["sent"], [{"type": "openSession", "id": "TESTSID"}], "the jump opens the session in the chat")
+        self.assertEqual(f["toggles"], [], "no feed pane is toggled")
+        self.assertEqual(f["posted"], [], "nothing is posted into the feed")
+        self.assertTrue(f["closed"], "the popover closes on the jump as ever")
+        d = f["down"]
+        self.assertEqual(d["sent"], 1, "the send is attempted")
+        self.assertEqual(d["newest"]["kind"], "locate", "a shell socket that is down: the Log says the jump failed")
+        self.assertIn("no live connection", d["newest"]["text"])
+        n = self.out["feedOn"]
+        self.assertEqual(n["cardLogged"], 1, "the pane back on: a card's entry lands")
+        self.assertEqual(n["rowText"], "api \u2014 anomaly on a card")
+        self.assertEqual(n["sent"], [], "…and its jump takes the feed road, not the chat's")
+        self.assertEqual(n["toggles"], ["feed:true"])
+        self.assertEqual(n["posted"], [{"romp": "revealCard", "itemId": "TESTSID:g7", "sid": "TESTSID", "gesture": True}])
+        js = km._LANDING_ERRS_JS
+        self.assertIn("function feedHere(){return !(window.__rompPaneEnabled&&!window.__rompPaneEnabled('feed'));}", js)
+        self.assertIn("if(!feedHere()){jumpChat(n.tgt.sid||'');return;}", js)
+        self.assertIn("if(m&&m.romp==='notify'&&m.text){if(m.itemId&&!feedHere())return;", js)
 
     def test_past_nine_the_count_yields_to_plus(self):
         # the user 2026-07-28: digits 1-9, then "something else to mean many" — a two-glyph "10"
@@ -317,14 +384,14 @@ class ErrorCenterWiring(unittest.TestCase):
         # every kind's toggle AND entry chip explains itself (not just show/hide)
         self.assertIn("var DESC={conn:", html)
         self.assertIn("b.title='Show or hide these entries. '+KINDLBL[k]+': '+DESC[k]", html)
-        # the undelivered kind's description covers the whole kind, the five causes the kind files, as the text
-        # lists them: no session by that id, a record that would not read, a live session list the tmux probe did
-        # not answer for, a comment threads' store that would not read while a session name was resolved (the WS
-        # by-name door's refusal, round 7's addition, which the round-7 text missed), a goals file that could not
-        # be read or written, with the dialog that announced the entry saying which. The torn record is the
-        # resolution's door read (_resolve_sid, _unreadable_dormant_named, ahead of the miss path), the failed scan
-        # and the store are the miss path's (_named_miss), and the first and the last cause are on neither (rounds
-        # 9 to 11; round 9's comment had the miss path reading the scan before the torn record, its order then).
+        # the undelivered kind's description covers the whole kind, the four causes the kind files, as the text
+        # lists them: no session by that id, a record that would not read, a comment threads' store that would not
+        # read while a session name was resolved (the WS by-name door's refusal, round 7's addition, which the
+        # round-7 text missed), a goals file that could not be read or written, with the dialog that announced the
+        # entry saying which. The torn record is the resolution's door read (_resolve_sid, _unreadable_dormant_named,
+        # ahead of the miss path), the store is the miss path's (_named_miss), and the first and the last cause are
+        # on neither (rounds 9 to 11). A fifth cause, a live session list the tmux probe did not answer for, left
+        # with the tmux backend (the 2026-09-15 pull-in: the scan-failed verdict had no input once _LiveMap was gone).
         # The on-disk row: a typed message is kept verbatim, and a refused reply, interrupt, end or compact (the
         # drive gate's refusals of the ops that carry no text; a compact by name carries its session's name as
         # the target, never as text) files a row with no text; only the goals-file gesture refusals (clear, drop,
@@ -333,17 +400,17 @@ class ErrorCenterWiring(unittest.TestCase):
         # (ui/webview/undelivered-err.test.ts) reads the same prefix off kernel.py
         self.assertIn('undelivered:"something you sent never reached a session. Either the kernel it was addressed '
                       'to has no session by that id', html)
-        self.assertIn("or it holds a record for that session that would not read, or it could not read the live "
-                      "session list (tmux did not answer; the same send works once it does), or it could not read the "
+        self.assertIn("or it holds a record for that session that would not read, or it could not read the "
                       "comment threads' store while resolving a session name, or it could not read or write the "
                       "session's goals file; the dialog that announced it says which", html)
+        self.assertNotIn("tmux did not answer", html, "the live-list cause left with the tmux probe")
         self.assertIn("A message you typed is kept verbatim in undelivered.jsonl under ~/.local/state/romp, and a "
                       "refused reply, interrupt, end or compact files a row there with no text; a clear, drop or undo "
                       "refused over the goals file writes nothing there", html)
         self.assertNotIn("a refused card gesture writes nothing there", html)
         self.assertNotIn("interrupt or end files a row", html, "the compact joined the list")
         # targeted entries jump: close, reveal the feed pane, post revealCard into the feed iframe
-        self.assertIn("{romp:'revealCard',itemId:n.tgt.itemId||'',sid:n.tgt.sid||''}", html)
+        self.assertIn("{romp:'revealCard',itemId:n.tgt.itemId||'',sid:n.tgt.sid||'',gesture:true}", html)
         # timestamps wear the SHARED recency ramp: the standalone dist bundle is loaded BEFORE the
         # errs script and read behind a feature test (dim default if the bundle is stale/missing)
         self.assertLess(html.index("/dist/age-color-global.js"), html.index("window.__rompAgeColor"))

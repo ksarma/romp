@@ -1,9 +1,11 @@
 // A file:// URI in a Waiting-on-you row's detail opens like a bare path does (plans/file-review.md,
-// Slice 0; the 2026-09-06 review). path-links.ts stamps data-sid on a bare path's span and NOT on a
-// file:// URI's — an absolute path names no session — and the list delegate's openpath used to gate on
-// the span's sid, so a URI link took the delegate's press flash and then opened nothing, while the same
-// link in the Reply modal (sid from its closure) worked. The handler now reads the session from the row,
-// the way it always read the todo id. Everything here is EXECUTED: the real matcher marks the spans, the
+// Slice 0; the 2026-09-06 review). At the time path-links.ts stamped data-sid on a bare path's span and NOT
+// on a file:// URI's (an absolute path named no session), and the list delegate's openpath gated on the
+// span's sid, so a URI link took the delegate's press flash and then opened nothing, while the same link in
+// the Reply modal (sid from its closure) worked. The handler now reads the session from the row, the way it
+// always read the todo id. Since the 2026-09-15 upstream pull-in (4e V2) path-links.ts stamps the caller's
+// sid on the URI span too (openPathLink(tok, open, !isUri, sid)), so the first test pins all three spans
+// with the row's session. Everything here is EXECUTED: the real matcher marks the spans, the
 // real delegate() dispatches the click, and both openpath handlers are lifted out of waiting.ts's source
 // and transpiled — a source pin of the old handler is exactly what let the defect through.
 import { test } from "node:test";
@@ -133,7 +135,7 @@ test("every path in a row's detail opens through the list delegate — the file:
   delegate(list as unknown as HTMLElement, { openpath: listHandler(opened) as any });   // installed once, on the stable root
   const { spans } = await row(list);
   assert.equal(spans.length, 3, "the relative path, the absolute path and the URI all marked");
-  assert.deepEqual(spans.map((s) => s.dataset.sid), [SID, SID, undefined], "path-links.ts's contract: the URI span carries no sid");
+  assert.deepEqual(spans.map((s) => s.dataset.sid), [SID, SID, SID], "path-links.ts's contract since 4e V2: the URI span carries the caller's sid like any path span");
   for (const s of spans) list.click(s);
   assert.deepEqual(opened, OPENS.map((p): Opened => [p, SID, TID]), "each click posts with the ROW's session and todo id");
   assert.ok(spans.every((s) => s.classList.contains("romp-acted")), "the delegate's press flash on each");

@@ -9,7 +9,7 @@
 // paints its highlight and change marks INTO the links, and the browser decides which element a click on a mark lands
 // on; a confirm dialog is a real one. Two more pages run the chat's and the feed's own click handlers (their source,
 // transformed and installed over the same bundle) so the three documents' routing is exercised, not pinned. Skips
-// LOUDLY without a playwright browser (CI installs none), as waiting-link-focus.test.ts does. Synthetic values only:
+// LOUDLY without a playwright browser (CI installs none), as waiting-pane-browser.test.ts does. Synthetic values only:
 // the notes-api world under /tmp/TESTHOST, a placeholder session id, example.invalid addresses.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -296,6 +296,9 @@ async function inBrowser(t: any, host: "files" | "chat" | "feed", body: (h: Harn
   }
 }
 const rowTexts = (page: any) => page.evaluate(() => Array.from(document.querySelectorAll("#romp-fileview code.hljs .fv-cl")).map((r) => r.textContent));
+/** The text-size buttons ride the zoom glyph's flyout (upstream T367: shut until the glyph is pressed, and shut again by any
+ *  press outside it): open it when it is shut, so a press on A+, A- or the readout lands on a shown button. */
+const openZoom = async (page: any) => { if (await page.evaluate(() => { const m = document.querySelector("#romp-fileview .fileview-zoom-menu") as HTMLElement | null; return !m || m.hidden; })) await page.click("#romp-fileview .fileview-zoom-btn"); };
 /** The next page the context opens (a new tab from an anchor or window.open, opener or not), and its URL once loaded. */
 async function nextTab(h: Harness, act: () => Promise<unknown>): Promise<string> {
   const [tab] = await Promise.all([h.ctx.waitForEvent("page", { timeout: 10000 }), act()]);
@@ -333,13 +336,13 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     // ── a text-size step (A+; the viewer restyles and repaints its marks, keeping the selection): the links stand, the rows read
     //    as before, the selection survives the repaint, and the click that follows still opens the file ──
     await page.evaluate(() => { const l = document.querySelector("#romp-fileview .file-uri-link")!; getSelection()!.selectAllChildren(l.parentElement!); });
-    await page.locator("#romp-fileview .fileview-size", { hasText: "A+" }).click(); await settle();
+    await openZoom(page); await page.locator("#romp-fileview .fileview-size", { hasText: "A+" }).click(); await settle();
     assert.match((await page.locator("#romp-fileview .fileview-size-reset").textContent()) || "", /115/, "one step up from 100%");
     assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => l.text), links.map((l) => l.text), "the links stand at the new size");
     assert.deepEqual(await rowTexts(page), APP_TEXT.split("\n").slice(0, -1), "every row still reads as the file's line");
     assert.equal(await page.evaluate(() => !getSelection()!.isCollapsed), true, "the repaint kept the selection");
     await page.evaluate(() => getSelection()!.removeAllRanges());
-    await page.locator("#romp-fileview .fileview-size-reset").click(); await settle();   // back to 100% for the row-in-view checks below
+    await openZoom(page); await page.locator("#romp-fileview .fileview-size-reset").click(); await settle();   // back to 100% for the row-in-view checks below
     // Still the one fetch: a text-size step repaints from the text on hand (textSizeControl's step reads the place, restyles, seats;
     // nothing there fetches). Asserted here, apart from the click below, so a stray second fetch names its moment: one red
     // run under 34 concurrent browser legs and 16 CPU burners (the Slice 2 review, round 3) found app.py at served[1] and
@@ -458,6 +461,47 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     await page.keyboard.press("Enter");
     await page.locator("#romp-fileview .fileview-base", { hasText: "config.json" }).waitFor({ timeout: 10000 });
     assert.deepEqual(await fetched(nEnter), { path: CONFIG, sid: SID });
+  });
+});
+
+// upstream's gesture case (#1204, the offer's review), run in this harness: the own-tab gesture on a path link in the
+// viewer's own page, the URL anchor's tab, and the drags that must open nothing (the first suite above covers the drags
+// across and inside a link too; this case keeps upstream's exact shapes so the two trees' claims stay comparable)
+test("in a browser: the gesture: a Cmd-click or a middle-click on a path link opens the file in a tab of its own off the /file route and leaves the viewer where it was; a plain click on a URL anchor opens the URL in a tab; a drag that selects text inside a link, or that runs into one, opens nothing", async (t) => {
+  await inBrowser(t, "files", async (h) => {
+    const { page, served, open, settle, base } = h;
+    await open(APP);
+    const cfg = page.locator('#romp-fileview .file-uri-link[data-path$="config.json"]');
+    for (const [how, act] of [["a Cmd-click", () => cfg.click({ modifiers: ["Meta"] })], ["a middle-click", () => cfg.click({ button: "middle" })]] as const) {
+      assert.match(await nextTab(h, act), /\/file\?path=%2Ftmp%2FTESTHOST%2Fnotes-api%2Fsrc%2Fdata%2Fconfig\.json&sid=/, how + ": one tab, off the /file route");
+      assert.equal(await base(), "app.py", how + ": the viewer stays on the file it showed");
+    }
+    assert.equal(await nextTab(h, () => page.locator("#romp-fileview a.fv-url").click()), URL_SETUP, "the URL anchor's own tab");
+    assert.equal(await base(), "app.py");
+    // a press-drag-release INSIDE the guide link (its left edge to its middle) selects its text, and the click that ends
+    // it (the press and the release both on the link, so the link is the click's target) opens nothing: the viewer's
+    // listener finds the selection open and yields
+    const before = served.length;
+    const guide30 = page.locator('#romp-fileview .file-uri-link[data-line="30"]');
+    const gb = (await guide30.boundingBox())!;
+    await page.mouse.move(gb.x + 1, gb.y + gb.height / 2); await page.mouse.down();
+    await page.mouse.move(gb.x + gb.width / 2, gb.y + gb.height / 2, { steps: 8 }); await page.mouse.up();
+    await settle();
+    const picked = await page.evaluate(() => String(window.getSelection()));
+    assert.ok(picked.length > 0 && "../docs/guide.md:30".includes(picked), "the drag selected text inside the link: " + JSON.stringify(picked));
+    assert.equal(await base(), "app.py", "the click that ended the drag opened nothing");
+    // a drag from the row's start into the link: the browser sends that click to the elements' common ancestor, so no
+    // link sees it, and nothing opens either way
+    const row1 = (await page.locator("#romp-fileview code.hljs .fv-cl:nth-child(1) .fv-ct").first().boundingBox())!;
+    await page.mouse.move(row1.x + 1, row1.y + row1.height / 2); await page.mouse.down();
+    await page.mouse.move(gb.x + gb.width / 2, gb.y + gb.height / 2, { steps: 8 }); await page.mouse.up();
+    await settle();
+    assert.ok((await page.evaluate(() => String(window.getSelection()))).length > 0, "the drag selected text");
+    assert.equal(served.length, before, "neither drag fetched anything");
+    // the plain click after either drag does open: its press collapses the selection first
+    await cfg.click();
+    await page.locator("#romp-fileview .fileview-base", { hasText: "config.json" }).waitFor({ timeout: 10000 });
+    assert.deepEqual(served.slice(before).map((x) => x.path), [CONFIG], "the click that followed fetched the one file it named");
   });
 });
 
@@ -839,7 +883,7 @@ test("in a browser, under the chat's own document-level opener and its body dele
     // the recorders are live, so the empties above mean something: a span in a todo card opens through the delegate; a span
     // loose in the body (no todo host) is seen and refused, as the viewer's are
     assert.deepEqual(await page.evaluate(() => {
-      const card = document.createElement("div"); card.className = "todo-card";
+      const card = document.createElement("div"); card.className = "turn turn-notice turn-todo";   // the to-do notice's host class (W2 of the 2026-09-15 pull-in: the card is one notice(), .turn-todo)
       const s = document.createElement("span"); s.dataset.act = "openpath"; s.dataset.path = "/tmp/TESTHOST/elsewhere.md";
       card.appendChild(s); document.body.appendChild(card); s.click(); card.remove();
       const loose = document.createElement("span"); loose.dataset.act = "openpath"; loose.dataset.path = "/tmp/TESTHOST/loose.md";

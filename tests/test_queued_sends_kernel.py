@@ -1,28 +1,30 @@
 #!/usr/bin/env python3
-"""The kernel's half of the send id (2026-09-08): a composer send's client-minted id rides a PARKED op as
-its 5th slot, the drain hands it to the backend, build_session stamps it on the queued chip (a backend
-queue entry's or a parked op's), on the send's echo event and on the record that landed it
-(_note_send_landings), and a ✕ that names its send cancels EXACTLY that entry; an id no queue holds is
-the honest miss, never a relocation onto a neighbour wearing the same words (review round 1). The
-landed-ids map is bounded and its walk is guarded against a concurrent build of the same session. Round 2
-(2026-09-08): a goal-cited follow-up carries its bubble's id into the park or the queue entry, and the park
-arm of cancelQueued looks in the backend queue by id before answering a miss (a parked run drains there and
-dwells behind the feed hold).
+"""The kernel's user-todo slot on a parked send, the ws park arm's look into the backend queue by the copy's id,
+and the cancel paths that carry no copy id, driven through the functions (2026-09-08; re-aimed 2026-09-15 with
+the upstream pull-in): a parked ANSWER carries its todo id as the op's seventh slot (the fourth is the copy's
+press-time id, or None when only a todo rides, the fifth the user's word, the sixth the attachment list:
+_op_qid, _op_todo), the drain hands only a real todo id to the
+backend and stamps only the real answers, a park cancel whose id names no parked op looks in the backend queue by
+that id before answering the miss (4e Q4: a fork-only arm riding the fork-only feed hold), an id-less cancel keeps
+the index/body reading in the ws park arm and in SdkSession.unqueue, a feed-button follow-up parks bare, and the
+one-time mirror migration in _load_pending_ops carries a pending-ops file written by the kernel before the fourth
+slot took the copy's id (the K2 audit's shapes).
 
-The neighbours pin the same surfaces by source text (tests/test_kernel_send_park.py,
-tests/test_kernel.py); this module drives the functions. Loader and isolation as in
-tests/test_kernel_send_park.py: hermetic state BEFORE the loads, the account and prompt holds off.
+The copy's own identity is the id the client mints at the press (upstream's #1224 with #1260, #1261 and #1273):
+its kernel half is tests/test_queued_copy_press_id.py and its SdkBackend half tests/test_queued_copy_identity.py.
+This module's earlier identity cases (the fork's fifth-slot send id, the id on the wire, the kernel's landed-ids
+map, the mirror's id field) retired with that identity under the pull-in's 4e Q1 and Q5; each retired case is
+named with its twin in the class docstring or the module comment that replaces it, and in the pull-in's log.
+
+The neighbours pin the same surfaces by source text (tests/test_kernel_send_park.py, tests/test_kernel.py); this
+module drives the functions. Loader and isolation as in tests/test_kernel_send_park.py: hermetic state BEFORE the
+loads, the account and prompt holds off.
 SYNTHETIC fixtures only: this module's own placeholder sid, hostname TESTHOST, invented texts.
 """
 import json
 import os
-import sys
 import tempfile
-import threading
-import time
 import unittest
-from datetime import datetime, timezone
-from unittest import mock
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -37,23 +39,15 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 km = load_source("romp_kernel_queuedsends", os.path.join(BIN, "romp-kernel"))
 sbk = load_source("romp_sdk_backend_queuedsends", os.path.join(BIN, "romp_sdk_backend.py"))
 
-# The ACCOUNT gate and the tmux PROMPT HOLD are separate axes (tests/test_kernel_limit_queue.py,
-# tests/test_kernel_parked_ops_liveness.py): off here, as in tests/test_kernel_send_park.py.
-km._limit_hold = lambda sid: None
-km._TMUX_PROMPT_HOLD_S = 0.0
+# The ACCOUNT gate (_limit_hold, tests/test_kernel_limit_queue.py) is a separate axis from the park and drain paths
+# this module covers: off here, as in tests/test_kernel_send_park.py. The stub takes the chat build's `usage=`
+# keyword too, so a build path reaching the limit branch never trips on it.
+km._limit_hold = lambda sid, usage=None: None
 
 SID = "11111111-2222-3333-4444-bbbbbbbbbb22"        # this module's own synthetic sid
-MISS = "too late to cancel — the message already reached the session, and will be answered in the current turn"
-
-
-def _iso(epoch):
-    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-
-
-def _q(text, send_id="", todo=""):
-    """A backend queue entry carrying a client send id: the SDK's _QueueText, the class build_session and
-    the cancel path read `send_id` off."""
-    return sbk._QueueText(text, todo, send_id)
+QID = "echo:" + "a" * 32                            # a copy id in the kernel's own echo form (_CLIENT_QID_RE)
+QID_B = "echo:" + "b" * 32                          # another copy's id: a same-words neighbour in a queue
+QID_C = "echo:" + "c" * 32
 
 
 class _ParkFixture(unittest.TestCase):
@@ -62,10 +56,9 @@ class _ParkFixture(unittest.TestCase):
     def setUp(self):
         self.echoes = []
         self.stamps = []
-        self._saved = (km._compacting_now, km.Sessions.backend_for, km._push_all, km._optimistic_echo,
+        self._saved = (km._compacting_now, km.Sessions.backend_for, km._push_all,
                        km._working_now, km._stamp_user_todo_answered)
         km._push_all = lambda: None
-        km._optimistic_echo = lambda sid, text, author="human": self.echoes.append((text, author))
         km._stamp_user_todo_answered = lambda sid, tid, text, nonce=None: self.stamps.append((tid, text))
         km._working_now = lambda sid: False
         km._compacting_now = lambda sid: False
@@ -73,17 +66,18 @@ class _ParkFixture(unittest.TestCase):
         km._inflight_ops.pop(SID, None)
 
     def tearDown(self):
-        (km._compacting_now, km.Sessions.backend_for, km._push_all, km._optimistic_echo,
+        (km._compacting_now, km.Sessions.backend_for, km._push_all,
          km._working_now, km._stamp_user_todo_answered) = self._saved
         km._pending_ops.clear()
         km._inflight_ops.pop(SID, None)
 
 
-class _IdKeepingBackend:
-    """An SDK-shaped backend for the drain: forwards its own sends and keeps a todo id and a send id on
-    the queue entry (the two capability flags _backend_send reads)."""
-    queue_carries_todos = True
-    queue_carries_send_ids = True
+class _TodoKeepingBackend:
+    """An SDK-shaped backend for the drain: forwards its own sends and keeps a todo id on the queue entry
+    (its send NAMES `user_todo`, the signature read _send_with_id makes through _takes_kw; the fork's
+    queue_carries_todos flag retired with _backend_send, 2026-09-15). Its send takes no `qid` and no `user`,
+    so a press-minted copy id and the user's word are left off (_takes_qid, _takes_user) and the keywords it
+    records are the todo's alone."""
 
     def __init__(self):
         self.calls = []
@@ -91,101 +85,133 @@ class _IdKeepingBackend:
     def forwards_sends(self):
         return True
 
-    def send(self, sid, text, **kw):
-        self.calls.append((text, kw))
+    def send(self, sid, text, user_todo=None):
+        self.calls.append((text, {"user_todo": user_todo} if user_todo else {}))
         return True
 
 
-class ParkedSendCarriesItsId(_ParkFixture):
-    """_send_or_park parks a send WITH its client id as the op's 5th slot; the slot survives the disk
-    mirror; the drain hands the id (and only a real todo id) to the backend."""
+class ParkedAnswerCarriesItsTodo(_ParkFixture):
+    """_send_or_park parks an ANSWER with its todo id as the op's SEVENTH slot, behind the copy's press-time id or
+    None (fourth), the user's word (fifth, True: an answer is a user send) and the attachment list (sixth, None
+    here); PLAN2 2c item 1 of the 2026-09-15 pull-in re-cut 4e Q2 REFINED's fifth slot onto upstream's padded
+    shape. The drain hands only a real todo id to the backend and stamps only the real answers.
+    This class's copy-id cases retired 2026-09-15 with the fork's send-id identity (4e Q1; R1, R5), each with its
+    twin in tests/test_queued_copy_press_id.py::ParkedSendCarriesItsPressId:
+    the id half of test_the_parked_op_carries_the_id_as_its_fifth_slot_and_bare_shapes_stay_bare ->
+    test_two_same_text_parks_carry_their_ids_in_press_order_and_a_park_without_one_stays_three_slot;
+    test_the_fifth_slot_survives_the_disk_mirror -> test_the_slot_survives_the_disk_mirror;
+    test_deliver_send_batch_alone_forwards_the_fifth_slot and the id half of
+    test_the_drain_hands_the_backend_the_id_and_only_a_real_todo_id -> test_the_drain_hands_each_parked_send_its_own_id.
+    The two todo halves stay below, re-aimed onto the resolved op shape."""
 
-    def test_the_parked_op_carries_the_id_as_its_fifth_slot_and_bare_shapes_stay_bare(self):
+    def test_a_parked_answer_carries_its_todo_as_the_seventh_slot_and_a_plain_send_stays_three_slot(self):
         km._compacting_now = lambda sid: True
-        be = _IdKeepingBackend()
-        self.assertEqual(km._send_or_park(be, SID, "go ahead", echo="human", send_id="s-1"), "parked")
-        self.assertEqual(km._send_or_park(be, SID, "Re: the ask — yes", echo="human", user_todo="ut-1", send_id="s-2"),
-                         "parked")
-        self.assertEqual(km._send_or_park(be, SID, "an answer alone", echo="human", user_todo="ut-2"), "parked")
-        self.assertEqual(km._send_or_park(be, SID, "a plain send", echo="human"), "parked")
+        be = _TodoKeepingBackend()
+        self.assertIs(km._send_or_park(be, SID, "an answer alone", echo="human", user=True, user_todo="ut-2"), True)
+        self.assertIs(km._send_or_park(be, SID, "Re: the ask, yes", echo="human", qid=QID, user=True, user_todo="ut-1"),
+                      True)
+        self.assertIs(km._send_or_park(be, SID, "a plain send", echo="human"), True)
         self.assertEqual(km._pending_ops[SID],
-                         [("send", "go ahead", "human", "", "s-1"),
-                          ("send", "Re: the ask — yes", "human", "ut-1", "s-2"),
-                          ("send", "an answer alone", "human", "ut-2"),
+                         [("send", "an answer alone", "human", None, True, None, "ut-2"),
+                          ("send", "Re: the ask, yes", "human", QID, True, None, "ut-1"),
                           ("send", "a plain send", "human")],
-                         "the id is the 5th slot, present only when set; the 3- and 4-slot shapes are unchanged")
+                         "the todo id is the 7th slot behind the copy's id or None, the user's word and no attachments; "
+                         "a plain send keeps the 3-slot shape")
         self.assertEqual(be.calls, [], "parked, not sent")
-        self.assertEqual(self.echoes, [], "a parked send stamps no echo until it fires")
 
-    def test_the_fifth_slot_survives_the_disk_mirror(self):
-        km._compacting_now = lambda sid: True
-        km._send_or_park(_IdKeepingBackend(), SID, "go ahead", echo="human", send_id="s-1")
-        self.assertEqual(km._load_pending_ops().get(SID), [("send", "go ahead", "human", "", "s-1")],
-                         "a kernel restart restores the parked send with its id (the chip keeps its ✕-by-id)")
-
-    def test_the_drain_hands_the_backend_the_id_and_only_a_real_todo_id(self):
-        be = _IdKeepingBackend()
+    def test_the_drain_hands_the_backend_only_a_real_todo_id(self):
+        be = _TodoKeepingBackend()
         km.Sessions.backend_for = lambda sid: be
-        km._pending_ops[SID] = [("send", "a", "human", "", "s-1"),
-                                ("send", "Re: the ask — yes", "human", "ut-9", "s-2"),
-                                ("send", "an answer alone", "human", "ut-3"),
+        km._pending_ops[SID] = [("send", "a", "human"),
+                                ("send", "Re: the ask, yes", "human", None, True, None, "ut-9"),
+                                ("send", "an answer alone", "human", None, True, None, "ut-3"),
                                 ("send", "c", "human")]
         km._apply_pending_ops()
-        self.assertEqual(be.calls, [("a", {"send_id": "s-1"}),
-                                    ("Re: the ask — yes", {"user_todo": "ut-9", "send_id": "s-2"}),
+        self.assertEqual(be.calls, [("a", {}),
+                                    ("Re: the ask, yes", {"user_todo": "ut-9"}),
                                     ("an answer alone", {"user_todo": "ut-3"}),
                                     ("c", {})],
-                         "op[4] rides as send_id; an EMPTY 4th slot is no todo id (nothing stamped, nothing passed)")
-        self.assertEqual(self.stamps, [("ut-9", "Re: the ask — yes"), ("ut-3", "an answer alone")],
+                         "a real 5th slot rides as user_todo; a 3-slot send passes nothing")
+        self.assertEqual(self.stamps, [("ut-9", "Re: the ask, yes"), ("ut-3", "an answer alone")],
                          "only the two real answers stamp their todo")
         self.assertNotIn(SID, km._pending_ops, "the whole run drained")
 
-    def test_deliver_send_batch_alone_forwards_the_fifth_slot(self):
-        be = _IdKeepingBackend()
-        km._deliver_send_batch(be, SID, [("send", "one", None, "", "s-7"), ("send", "two", None)])
-        self.assertEqual(be.calls, [("one", {"send_id": "s-7"}), ("two", {})])
-        self.assertEqual(self.stamps, [], "an empty 4th slot never stamps")
+
+class TheMirrorMigrationInLoadPendingOps(unittest.TestCase):
+    """_load_pending_ops's TWO one-time layout migrations (4e Q3, and PLAN2 2c item 1 of the 2026-09-15 pull-in):
+    a pending-ops file written by the kernel before the fourth slot took the copy's press-time id put a send's
+    user-todo id fourth and the client's send id fifth; the stage 1 kernel (one life) put the todo FIFTH. A record
+    with a todo loads as ('send', text, echo, None, True, None, todo): the todo id seventh, behind the user's word
+    (an answer is a user send) and no attachments; one with an EMPTY todo (the common parked record: a composer send
+    that answered no todo) loads as the bare ('send', text, echo); the old fifth slot is dropped either way, so no
+    reader takes a retired send id for a todo id. A record already in the current layout (an id in the echo form
+    fourth, upstream's five-slot user record, the six-slot attachment record, the seven-slot answer) loads byte for
+    byte: the second migration keys on a five-slot send whose fifth is a non-empty STRING, which upstream's records
+    (True or None fifth) never are."""
+
+    def setUp(self):
+        km._pending_ops.clear()
+        km._PENDING_OPS_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        km._pending_ops.clear()
+        km._save_pending_ops()                        # an empty mirror behind us, matching the in-memory queue
+
+    def _load(self, records):
+        km._PENDING_OPS_FILE.write_text(json.dumps({SID: records}))
+        return km._load_pending_ops().get(SID)
+
+    def test_an_old_record_with_a_todo_moves_the_todo_to_the_seventh_slot_behind_none_and_the_users_word(self):
+        self.assertEqual(self._load([["send", "Re", "human", "ut-1", "s-2"]]),
+                         [("send", "Re", "human", None, True, None, "ut-1")],
+                         "the todo id leaves the 4th slot for the 7th; the old client send id is dropped")
+        self.assertEqual(self._load([["send", "an answer alone", "human", "ut-3"]]),
+                         [("send", "an answer alone", "human", None, True, None, "ut-3")],
+                         "the old four-slot answer (a todo and no send id) migrates the same way")
+
+    def test_a_stage_one_five_slot_answer_moves_its_todo_to_the_seventh_slot(self):
+        # the one-life shape of the stage 1 kernel (the todo fifth, behind the copy's id or None); upstream's own
+        # five-slot record carries the bool True fifth and is left alone by the guard's isinstance(str) read
+        self.assertEqual(self._load([["send", "Re", "human", None, "ut-2"], ["send", "Re", "human", QID, "ut-1"],
+                                     ["send", "typed", "human", None, True]]),
+                         [("send", "Re", "human", None, True, None, "ut-2"), ("send", "Re", "human", QID, True, None, "ut-1"),
+                          ("send", "typed", "human", None, True)],
+                         "the second migration: a five-slot send with a STRING fifth is a stage 1 answer")
+
+    def test_an_old_record_with_an_empty_todo_loads_as_the_bare_three_slot_send(self):
+        self.assertEqual(self._load([["send", "go ahead", "human", "", "s-1"]]),
+                         [("send", "go ahead", "human")],
+                         "the common parked record: no todo, and the retired send id is dropped, never read as one")
+        self.assertEqual(self._load([["send", "a", "human", "", "s-1"], ["command", "/compact", "human"],
+                                     ["model", "opus"]]),
+                         [("send", "a", "human"), ("command", "/compact", "human"), ("model", "opus")],
+                         "only a send's fourth slot is read; the other kinds load as written")
+
+    def test_a_record_in_the_current_layout_loads_byte_for_byte(self):
+        qid = "echo:" + "a" * 16
+        self.assertEqual(self._load([["send", "a", "human", qid]]), [("send", "a", "human", qid)],
+                         "an id in the echo form fourth is the current layout: nothing moves")
+        current = [("send", "an answer alone", "human", None, True, None, "ut-2"), ("send", "Re", "human", QID, True, None, "ut-1"),
+                   ("send", "typed", "human", None, True), ("send", "shot", "human", None, True, ["/tmp/notes-api/shot.png"]),
+                   ("command", "/compact", "human", QID), ("send", "plain", "human")]
+        km._pending_ops[SID] = list(current)
+        km._save_pending_ops()
+        self.assertEqual(km._load_pending_ops().get(SID), current,
+                         "a todo behind None or behind the copy's id, upstream's user and attachment records, a command's id "
+                         "and a plain send round-trip")
 
 
-class CancelParkedById(_ParkFixture):
-    """The ✕ on a parked send that names its send: exact by id; an id no parked op carries is the miss and
-    removes nothing; only an id-less cancel keeps the index/body fallback."""
-
-    OP1 = ("send", "go ahead", "human", "", "s-1")
-    OP2 = ("send", "go ahead", "human", "", "s-2")
-
-    def test_removes_exactly_the_op_carrying_the_id_of_two_wearing_the_same_words(self):
-        km._pending_ops[SID] = [self.OP1, self.OP2]
-        self.assertIsNone(km._cancel_parked(SID, 0, "go ahead", send_id="s-2"),
-                          "a stale index and the shared words: the id wins")
-        self.assertEqual(km._pending_ops[SID], [self.OP1], "the other send stays parked")
-
-    def test_an_id_no_parked_op_carries_is_the_miss_and_removes_nothing(self):
-        # the first send drained between the push that drew its bubble and the click: its twin is still parked
-        km._pending_ops[SID] = [self.OP2]
-        self.assertEqual(km._cancel_parked(SID, 0, "go ahead", send_id="s-1"), MISS,
-                         "the named send is gone: say so, never pop the neighbour wearing its words")
-        self.assertEqual(km._pending_ops[SID], [self.OP2], "the twin survives")
-        # the optimistic arm (no park index yet) resolves the same way
-        self.assertEqual(km._cancel_parked(SID, -1, "go ahead", send_id="s-1"), MISS)
-        self.assertEqual(km._pending_ops[SID], [self.OP2])
-
-    def test_the_in_flight_head_is_never_the_ids_target(self):
-        km._pending_ops[SID] = [self.OP1, self.OP2]
-        km._inflight_ops[SID] = km._pending_ops[SID][0]          # the drain is handing s-1 to the backend now
-        self.assertEqual(km._cancel_parked(SID, 0, "go ahead", send_id="s-1"), MISS,
-                         "the backend has it: too late, and never a wrong-op removal")
-        self.assertEqual(km._pending_ops[SID], [self.OP1, self.OP2])
-        self.assertIsNone(km._cancel_parked(SID, 1, "go ahead", send_id="s-2"), "the second chip still cancels")
-        self.assertEqual(km._pending_ops[SID], [self.OP1])
-
-    def test_an_id_less_cancel_keeps_the_index_and_body_fallback(self):
-        km._pending_ops[SID] = [("send", "first", "human"), ("send", "second", "human")]
-        self.assertIsNone(km._cancel_parked(SID, 0, "second"), "an older client's ✕: the body relocates")
-        self.assertEqual(km._pending_ops[SID], [("send", "first", "human")])
-        km._pending_ops[SID] = [self.OP1, self.OP2]
-        self.assertIsNone(km._cancel_parked(SID, 1, "go ahead"), "and it may name an id-carrying op by index")
-        self.assertEqual(km._pending_ops[SID], [self.OP1])
+# Retired 2026-09-15 with the fork's send-id identity (4e Q1; R1, R5), the twins in tests/test_queued_copy_press_id.py:
+# class CancelParkedById (the parked-FIFO cancel by id) -> press_id's CancelParkedById, the same four names
+#   (test_removes_exactly_the_op_carrying_the_id_of_two_wearing_the_same_words,
+#   test_an_id_no_parked_op_carries_is_the_miss_and_removes_nothing, test_the_in_flight_head_is_never_the_ids_target,
+#   test_an_id_less_cancel_keeps_the_index_and_body_fallback).
+# class CancelBackendQueuedById (the backend-queue cancel by id) -> press_id's CancelBackendQueuedById:
+#   test_the_id_wins_over_a_stale_index_and_the_shared_words, test_an_id_the_queue_does_not_hold_misses_and_touches_nothing
+#   and test_an_id_less_cancel_keeps_the_body_relocation_and_the_raw_index under the same names;
+#   test_a_backend_without_the_id_parameter_still_gets_the_pop ->
+#   test_a_backend_whose_unqueue_takes_no_id_takes_the_index_and_body_path_never_a_refusal.
+# The _QueueBackendWithoutTheIdParameter fixture that class alone used went with it.
 
 
 class _DriveFixture(_ParkFixture):
@@ -207,117 +233,67 @@ class _DriveFixture(_ParkFixture):
         super().tearDown()
 
 
-class AFollowUpCarriesTheBubblesId(_DriveFixture):
-    """A chat-typed citation follow-up (askFollowUp with the composer's sendId): the kernel wraps the text in
-    the goal body and the id rides the parked op or the backend queue entry like a plain send's, so the
-    bubble's ✕ finds exactly that entry. Before, the handler passed no id while the bubble wore one: the ✕
-    missed by id and toasted 'too late' with the follow-up still queued (review round 2)."""
+class AFollowUpWithoutAnId(_DriveFixture):
+    """A feed-button follow-up (askFollowUp with `nudge`) posts no copy id and stays bare: the kernel invents none;
+    parked, a typed follow-up is the USER's word (T315: `user=not msg.get("nudge")`, folded 2026-09-15), so its op is
+    upstream's five-slot user record with no id and no attachments, never a seven-slot answer. The chat-typed follow-up's identity cases retired 2026-09-15 with the
+    fork's send-id identity (4e Q1; R1, R5), each with its twin in tests/test_queued_copy_press_id.py:
+    test_a_parked_follow_up_carries_the_id_as_its_fifth_slot_and_its_cancel_finds_it ->
+    TheWireCarriesTheId::test_a_follow_up_parks_its_wrapped_body_under_the_id and
+    TheWireCarriesTheId::test_a_cancel_that_names_the_id_removes_that_copy_whatever_index_the_click_carried;
+    test_a_delivered_follow_up_hands_the_backend_the_id ->
+    ParkedSendCarriesItsPressId::test_handed_over_now_the_id_reaches_a_backend_that_identifies_its_copies_and_not_one_that_does_not."""
 
     FU = {"type": "askFollowUp", "itemId": SID + ":g1", "text": "and the tests?", "sid": SID}
 
-    def test_a_parked_follow_up_carries_the_id_as_its_fifth_slot_and_its_cancel_finds_it(self):
-        km._compacting_now = lambda sid: True
-        be = _IdKeepingBackend()
-        km.Sessions.backend_for = lambda sid: be
-        self.assertTrue(km._drive({**self.FU, "sendId": "s-fu"}, self.client))
-        ops = km._pending_ops.get(SID) or []
-        self.assertEqual(len(ops), 1, ops)
-        self.assertEqual(ops[0][0], "send")
-        self.assertTrue(ops[0][1].startswith("and the tests?"), "the typed words lead the wrapped body")
-        self.assertIn("<!-- romp-goal-id: %s:g1 -->" % SID, ops[0][1], "the goal marker rides along")
-        self.assertEqual(ops[0][4], "s-fu", "the bubble's id is the op's 5th slot")
-        self.assertEqual(be.calls, [], "parked, not sent")
-        self.assertIsNone(km._cancel_parked(SID, -1, "and the tests?", send_id="s-fu"),
-                          "the bubble's ✕ names its send and finds the parked follow-up")
-        self.assertNotIn(SID, km._pending_ops)
-
-    def test_a_delivered_follow_up_hands_the_backend_the_id(self):
-        be = _IdKeepingBackend()
-        km.Sessions.backend_for = lambda sid: be
-        self.assertTrue(km._drive({**self.FU, "sendId": "s-fu2"}, self.client))
-        self.assertEqual(len(be.calls), 1, be.calls)
-        text, kw = be.calls[0]
-        self.assertTrue(text.startswith("and the tests?"))
-        self.assertEqual(kw.get("send_id"), "s-fu2", "the queue entry, echo and landing name the bubble")
-
     def test_a_feed_button_follow_up_posts_no_id_and_stays_bare(self):
-        be = _IdKeepingBackend()
+        be = _TodoKeepingBackend()
         km.Sessions.backend_for = lambda sid: be
         self.assertTrue(km._drive({**self.FU, "nudge": True}, self.client))
         self.assertEqual(len(be.calls), 1, be.calls)
         self.assertEqual(be.calls[0][1], {}, "no id was posted, none is invented")
         km._compacting_now = lambda sid: True
         self.assertTrue(km._drive(self.FU, self.client))
-        self.assertEqual(len(km._pending_ops[SID][0]), 3, "a bare follow-up parks in the 3-slot shape")
+        op = km._pending_ops[SID][0]
+        self.assertEqual((op[0], op[3], op[4], len(op)), ("send", None, True, 5),
+                         "a typed follow-up parks as the user's send with no id: upstream's five-slot shape, nothing invented")
 
 
 class _QueueBackend:
-    """A backend that owns its queue (exposes unqueue) and keeps send ids on its entries, mirroring
-    SdkBackend.unqueue's contract for the kernel's decision: records every pop it is asked for."""
+    """A backend that owns its queue (exposes unqueue) and identifies its copies the way SdkBackend does since the
+    pull-in (pending_queued_meta; its unqueue takes the copy's id, so _takes_qid reads True, and locates by it the
+    way SdkSession.unqueue does under its own lock): the queue keeps (text, id) pairs, a bare text carries None.
+    Records every unqueue it is asked for as (index, expected body, id) and pops by id when one is named, else by
+    the index re-located onto the body (SdkBackend.unqueue's drift guard)."""
 
     def __init__(self, pending):
-        self._p = list(pending)
+        self.q = [x if isinstance(x, tuple) else (x, None) for x in pending]
         self.unqueued = []
 
     def pending_queued(self, sid):
-        return list(self._p)
+        return [t for t, _ in self.q]
 
-    def unqueue(self, sid, idx, expect=None, send_id=None):
-        self.unqueued.append((idx, str(expect) if expect is not None else None, send_id))
-        if send_id:
-            hit = next((i for i, q in enumerate(self._p) if getattr(q, "send_id", "") == send_id), -1)
-            if hit >= 0:
-                idx, expect = hit, None
-        if expect is not None and not (0 <= idx < len(self._p) and self._p[idx] == expect):
-            idx = next((i for i, q in enumerate(self._p) if q == expect), -1)
-        return self._p.pop(idx) if 0 <= idx < len(self._p) else None
+    def pending_queued_meta(self, sid):
+        return [{"md": t, "qid": q, "qts": None} for t, q in self.q]
 
-
-class _QueueBackendWithoutTheIdParameter(_QueueBackend):
-    def unqueue(self, sid, idx, expect=None):
-        return _QueueBackend.unqueue(self, sid, idx, expect)
-
-
-class CancelBackendQueuedById(unittest.TestCase):
-    """The ✕ on a backend-queue entry that names its send (the same rule as the parked arm)."""
-
-    def test_the_id_wins_over_a_stale_index_and_the_shared_words(self):
-        be = _QueueBackend([_q("go ahead", "s-1"), _q("go ahead", "s-2")])
-        self.assertIsNone(km._cancel_backend_queued(be, SID, 0, "go ahead", send_id="s-2"))
-        self.assertEqual(be.unqueued, [(1, "go ahead", "s-2")], "located by id, and the backend is told the id")
-        self.assertEqual([q.send_id for q in be._p], ["s-1"], "the other entry stays")
-
-    def test_an_id_the_queue_does_not_hold_misses_and_touches_nothing(self):
-        # s-1 was fed into the CLI between the push and the click; s-2 wears the same words
-        be = _QueueBackend([_q("go ahead", "s-2")])
-        self.assertEqual(km._cancel_backend_queued(be, SID, 0, "go ahead", send_id="s-1"), MISS)
-        self.assertEqual(km._cancel_backend_queued(be, SID, -1, "go ahead", send_id="s-1"), MISS,
-                         "the optimistic arm (no index yet) is the same miss")
-        self.assertEqual(be.unqueued, [], "no pop was even attempted")
-        self.assertEqual([q.send_id for q in be._p], ["s-2"], "the twin survives")
-
-    def test_an_id_less_cancel_keeps_the_body_relocation_and_the_raw_index(self):
-        be = _QueueBackend(["alpha", "beta"])
-        self.assertIsNone(km._cancel_backend_queued(be, SID, 2, "beta"), "a stale index relocates by body")
-        self.assertEqual(be.unqueued, [(1, "beta", None)])
-        be = _QueueBackend([_q("go ahead", "s-1"), _q("go ahead", "s-2")])
-        self.assertIsNone(km._cancel_backend_queued(be, SID, 1, "go ahead"),
-                          "an older client may still name an id-carrying entry by index and body")
-        self.assertEqual([q.send_id for q in be._p], ["s-1"])
-
-    def test_a_backend_without_the_id_parameter_still_gets_the_pop(self):
-        be = _QueueBackendWithoutTheIdParameter([_q("go ahead", "s-1")])
-        self.assertIsNone(km._cancel_backend_queued(be, SID, 0, "go ahead", send_id="s-1"))
-        self.assertEqual(be.unqueued, [(0, "go ahead", None)], "the id located it; the pop fell back to the 3-arg form")
-        self.assertEqual(be._p, [])
+    def unqueue(self, sid, idx, expect=None, qid=None):
+        self.unqueued.append((idx, str(expect) if expect is not None else None, qid))
+        if qid:
+            idx = next((i for i, (_, q) in enumerate(self.q) if q == qid), -1)
+        elif expect is not None and not (0 <= idx < len(self.q) and self.q[idx][0] == expect):
+            idx = next((i for i, (t, _) in enumerate(self.q) if t == expect), -1)
+        return self.q.pop(idx)[0] if 0 <= idx < len(self.q) else None
 
 
 class TheParkArmLooksInTheBackendQueueById(_DriveFixture):
-    """The ✕ on a bubble drawn as PARKED (park + sendId) after the run drained: the op left the kernel FIFO
-    for the backend's queue, where it dwells behind the feed hold until the CLI takes the text ahead of it,
-    still recallable. The park arm used to answer the miss at once; now, for an id no parked op carries, it
-    looks in the backend queue by that id, as the md-only arm does (review round 2). By id only: an id-less
-    park cancel keeps the single look, since a body could relocate onto a same-words neighbour there."""
+    """The cancel on a bubble drawn as PARKED (park + qid) after the run drained: the op left the kernel FIFO for
+    the backend's queue, where it dwells behind the fork's feed hold until the CLI takes the text ahead of it,
+    still recallable. For an id no parked op carries, the park arm looks in the backend queue by that id before
+    answering the miss, as the md-only arm does (review round 2). A fork-only arm riding the fork-only hold,
+    kept and re-expressed on the copy's press-time id at the 2026-09-15 pull-in (4e Q4, whose ruling re-pins
+    these four cases on qid; upstream's park arm is the single _cancel_parked call). By id only: an id-less park
+    cancel keeps the single look, since a body could relocate onto a same-words neighbour there. The arm's source
+    pin is tests/test_kernel_send_park.py::QueuedBubble::test_drive_routes_park_cancels."""
 
     def _cancel(self, be, **fields):
         km.Sessions.backend_for = lambda sid: be
@@ -328,41 +304,42 @@ class TheParkArmLooksInTheBackendQueueById(_DriveFixture):
         return res[0]
 
     def test_a_drained_parked_send_is_still_cancelled_from_its_park_bubble_by_id(self):
-        be = _QueueBackend([_q("go ahead", "s-1")])           # the FIFO is empty: the run drained
-        r = self._cancel(be, park=0, md="go ahead", sendId="s-1")
+        be = _QueueBackend([("go ahead", QID)])                # the FIFO is empty: the run drained
+        r = self._cancel(be, park=0, md="go ahead", qid=QID)
         self.assertTrue(r["ok"], r)
-        self.assertEqual(be.unqueued, [(0, "go ahead", "s-1")], "found in the backend queue by id, popped there")
-        self.assertEqual(be._p, [])
+        self.assertEqual(be.unqueued, [(-1, None, QID)],
+                         "found in the backend queue by id and popped there: asked by the id alone, no index, no body")
+        self.assertEqual(be.q, [])
 
     def test_an_id_neither_queue_holds_is_the_miss_and_touches_nothing(self):
-        be = _QueueBackend([_q("go ahead", "s-2")])           # a same-words neighbour, another send's
-        r = self._cancel(be, park=0, md="go ahead", sendId="s-1")
+        be = _QueueBackend([("go ahead", QID_B)])              # a same-words neighbour, another send's
+        r = self._cancel(be, park=0, md="go ahead", qid=QID)
         self.assertFalse(r["ok"])
-        self.assertEqual(r["text"], MISS)
-        self.assertEqual(be.unqueued, [], "no pop attempted")
-        self.assertEqual([q.send_id for q in be._p], ["s-2"], "the neighbour survives")
+        self.assertEqual(r["text"], km._cancel_miss_text("go ahead"), "the honest too-late answer")
+        self.assertEqual(be.unqueued, [(-1, None, QID)], "asked by id alone; nothing popped")
+        self.assertEqual(be.q, [("go ahead", QID_B)], "the neighbour survives: never a relocation onto the same words")
 
     def test_an_id_less_park_cancel_keeps_the_single_look(self):
         be = _QueueBackend(["go ahead"])
         r = self._cancel(be, park=0, md="go ahead")
         self.assertFalse(r["ok"], "the parked op is gone and no id names the send: the honest miss")
         self.assertEqual(be.unqueued, [], "the backend queue is not searched by body from this arm")
-        self.assertEqual(be._p, ["go ahead"])
+        self.assertEqual(be.pending_queued(SID), ["go ahead"])
 
     def test_a_parked_op_that_is_still_there_wins_without_consulting_the_backend(self):
-        km._pending_ops[SID] = [("send", "go ahead", "human", "", "s-1")]
-        be = _QueueBackend([_q("go ahead", "s-9")])
-        r = self._cancel(be, park=0, md="go ahead", sendId="s-1")
+        km._pending_ops[SID] = [("send", "go ahead", "human", QID)]
+        be = _QueueBackend([("go ahead", QID_C)])
+        r = self._cancel(be, park=0, md="go ahead", qid=QID)
         self.assertTrue(r["ok"])
         self.assertNotIn(SID, km._pending_ops)
-        self.assertEqual(be.unqueued, [])
+        self.assertEqual(be.unqueued, [], "the parked FIFO is read first; the backend is not consulted")
 
 
-class TheBackendUnqueueHonoursTheSameRule(unittest.TestCase):
-    """SdkSession.unqueue is the pop the kernel's cancel reaches, re-located UNDER the backend's lock: an id
-    it is given and does not hold must be the miss there too, or the window between the kernel's snapshot
-    and the pop (the feeder taking the named entry) still pops the same-words neighbour. An id-less pop
-    keeps its text re-location."""
+class TheBackendUnqueueWithoutAnId(unittest.TestCase):
+    """SdkSession.unqueue is the pop the kernel's cancel reaches, re-located UNDER the backend's lock: an id-less
+    pop keeps its text re-location. The by-id case, test_an_id_the_session_does_not_hold_pops_nothing, retired
+    2026-09-15 with the fork's send-id identity (4e Q1; R1, R5); its twin is
+    tests/test_queued_copy_identity.py::TheSdkQueueTakesTheClientsId::test_unqueue_by_id_pops_the_named_copy_and_its_echo_leaving_the_same_text_other."""
 
     def setUp(self):
         self.state = tempfile.mkdtemp()
@@ -375,272 +352,29 @@ class TheBackendUnqueueHonoursTheSameRule(unittest.TestCase):
     def tearDown(self):
         self.s.shutdown()
 
-    def test_an_id_the_session_does_not_hold_pops_nothing(self):
-        self.s._pending = [_q("go ahead", "s-2")]
-        self.assertIsNone(self.s.unqueue(0, "go ahead", send_id="s-1"),
-                          "the named entry left the queue: a miss, never the neighbour wearing its words")
-        self.assertEqual([q.send_id for q in self.s._pending], ["s-2"], "the twin survives")
-        got = self.s.unqueue(0, "go ahead", send_id="s-2")
-        self.assertEqual(getattr(got, "send_id", ""), "s-2", "the id it does hold pops exactly that entry")
-        self.assertEqual(self.s._pending, [])
-
     def test_an_id_less_pop_keeps_the_text_relocation(self):
         self.s._pending = ["alpha", "beta"]
         self.assertEqual(self.s.unqueue(2, "beta"), "beta", "a stale index relocates by text")
         self.assertEqual(self.s._pending, ["alpha"])
 
 
-class _ChatBackend:
-    """An SDK-shaped backend double for build_session: owns the sid, serves a fixed queue and a fixed live
-    tail, exposes unqueue (so the queued chips are cancelable and the tmux echo fold stands down)."""
-
-    def __init__(self, queued=(), live=()):
-        self._q = list(queued)
-        self._live = list(live)
-        self.pruned = []
-
-    def owns(self, sid):
-        return True
-
-    def pending_queued(self, sid):
-        return list(self._q)
-
-    def unqueue(self, sid, idx, expect=None, send_id=None):
-        return None
-
-    def live_atoms(self, sid):
-        return list(self._live)
-
-    def prune_live(self, sid, tx_uuids, tx_text_t, human_floor):
-        self.pruned.append((set(tx_uuids), dict(tx_text_t)))
-
-    def busy(self, sid):
-        return None
-
-
-def _echo(text, send_id, t, n):
-    atom = {"type": "user", "uuid": "echo:%d" % n, "session_id": SID, "t": t, "parentUuid": None,
-            "author": "human", "_echo_text": text,
-            "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
-    if send_id:
-        atom["_send_id"] = send_id
-    return atom
-
-
-def _urec(uuid, t, content, parent=None):
-    """A transcript user record, the CLI's shape: the parser keeps a user record only with its thread
-    fields (parentUuid, cwd) present."""
-    return {"type": "user", "uuid": uuid, "parentUuid": parent, "timestamp": _iso(t), "sessionId": SID,
-            "cwd": "/work/notes-api", "message": {"role": "user", "content": content}}
-
-
-def _arec(uuid, t, parent, text="done."):
-    return {"type": "assistant", "uuid": uuid, "parentUuid": parent, "timestamp": _iso(t), "sessionId": SID,
-            "cwd": "/work/notes-api", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
-
-
-class BuildSessionStampsTheIds(unittest.TestCase):
-    """build_session: the queued chip carries `sendId` (a backend entry's or a parked op's), an echo's user
-    event carries `sendIds`, and the record that landed an id-carrying send carries every id it landed."""
-
-    U1 = "22222222-2222-3333-4444-bbbbbbbbbb01"
-    U2 = "22222222-2222-3333-4444-bbbbbbbbbb02"
-    U3 = "22222222-2222-3333-4444-bbbbbbbbbb03"
-    A1 = "33333333-2222-3333-4444-bbbbbbbbbb01"
-
-    def setUp(self):
-        self.dir = tempfile.mkdtemp()
-        self.tx = os.path.join(self.dir, SID + ".jsonl")
-        self.now = int(time.time())
-        self.t0 = self.now - 600                     # the transcript's turn, ten minutes ago
-        self.sess = [{"sid": SID, "name": "web", "path": self.tx, "mtime": self.now}]
-        km._pending_ops.clear()
-        km._landed_send_ids.pop(SID, None)
-
-    def tearDown(self):
-        km._pending_ops.clear()
-        km._landed_send_ids.pop(SID, None)
-
-    def _write(self, recs):
-        with open(self.tx, "w") as f:
-            for r in recs:
-                f.write(json.dumps(r) + "\n")
-
-    def _build(self, be):
-        with mock.patch.object(km, "_sessions", lambda now, **kw: list(self.sess)), \
-             mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: be)), \
-             mock.patch.object(km, "_captions", lambda sid: {}), \
-             mock.patch.object(km, "_limit_hold", lambda sid: None):
-            m = km.build_session(SID, self.now, tmux={})
-        self.assertIsNotNone(m, "the session must build")
-        return m["events"]
-
-    def test_the_queued_chips_carry_the_id_of_the_entry_or_the_parked_op_they_stand_for(self):
-        self._write([_urec(self.U1, self.t0, "status?"), _arec(self.A1, self.t0 + 30, self.U1)])
-        be = _ChatBackend(queued=[_q("hello there", "s-q1"), "plain queued"])
-        km._pending_ops[SID] = [("send", "parked words", "human", "", "s-p1"), ("send", "bare parked", "human"),
-                                ("model", "opus")]
-        evs = self._build(be)
-        q = next((e for e in evs if e.get("kind") == "queued"), None)
-        self.assertIsNotNone(q, "the queued indicator shows")
-        chips = [(t["md"], t.get("idx"), t.get("park"), t.get("sendId")) for t in q["texts"]]
-        self.assertEqual(chips, [("hello there", 0, None, "s-q1"), ("plain queued", 1, None, None),
-                                 ("parked words", None, 0, "s-p1"), ("bare parked", None, 1, None),
-                                 ("/model opus", None, 2, None)],
-                         "an id-carrying entry or parked send names itself; a bare one carries no sendId key")
-        self.assertTrue(all("sendId" not in t for t in q["texts"] if t.get("sendId") is None),
-                        "no empty sendId key on a bare chip")
-
-    def test_an_echo_still_in_flight_carries_its_send_id_on_its_user_event(self):
-        self._write([_urec(self.U1, self.t0, "status?"), _arec(self.A1, self.t0 + 30, self.U1)])
-        be = _ChatBackend(live=[_echo("not yet landed", "s-e1", self.now - 5, 1),
-                                _echo("a bare echo", "", self.now - 4, 2)])
-        evs = self._build(be)
-        users = {e["md"]: e for e in evs if e.get("kind") == "user"}
-        self.assertEqual(users["not yet landed"].get("sendIds"), ["s-e1"], "the echo names its send")
-        self.assertNotIn("sendIds", users["a bare echo"], "a send with no client identity stamps nothing")
-        self.assertNotIn("sendIds", users["status?"], "a record that landed no id-carrying send stamps nothing")
-
-    def test_the_record_that_landed_the_send_carries_its_id_and_a_folded_record_every_id(self):
-        # two same-worded sends land on two records in send order; one record wearing two sends' text
-        # blocks (the CLI's fold) carries both ids; the echoes themselves are retired by the landing
-        t_send = self.now - 30
-        self._write([_urec(self.U1, t_send + 2, "ship it"),
-                     _urec(self.U2, t_send + 4, "ship it", self.U1),
-                     _urec(self.U3, t_send + 6, [{"type": "text", "text": "first words"},
-                                                 {"type": "text", "text": "Re: the ask — the reply"}], self.U2),
-                     _arec(self.A1, t_send + 8, self.U3)])
-        be = _ChatBackend(live=[_echo("ship it", "s-1", t_send, 1), _echo("ship it", "s-2", t_send + 1, 2),
-                                _echo("first words", "s-3", t_send + 1, 3),
-                                _echo("Re: the ask — the reply", "s-4", t_send + 1, 4)])
-        evs = self._build(be)
-        by_uuid = {e["uuid"]: e for e in evs if e.get("kind") == "user"}
-        self.assertEqual(by_uuid[self.U1].get("sendIds"), ["s-1"])
-        self.assertEqual(by_uuid[self.U2].get("sendIds"), ["s-2"], "the second send's record, in order")
-        self.assertEqual(by_uuid[self.U3].get("sendIds"), ["s-3", "s-4"], "a folded record carries every id")
-        self.assertEqual([e["md"] for e in evs if e.get("kind") == "user" and e["uuid"].startswith("echo:")], [],
-                         "the landed echoes are hidden behind their records")
-        self.assertEqual(len(be.pruned), 1, "the prune ran once, after the landings were noted")
-        # a second build (the pusher's next cycle) stamps the same ids: nothing doubles, nothing moves
-        evs2 = self._build(be)
-        self.assertEqual({e["uuid"]: e.get("sendIds") for e in evs2 if e.get("kind") == "user"},
-                         {e["uuid"]: e.get("sendIds") for e in evs if e.get("kind") == "user"})
-
-
-def _landing(n, t0=1_700_000_000):
-    """One id-carrying echo and the record that lands it, both synthetic, for the map's bookkeeping."""
-    text = "landing number %d" % n
-    live = [{"_echo_text": text, "_send_id": "s-%d" % n, "t": t0 + n, "uuid": "echo:%d" % n}]
-    turns = [{"atoms": [{"type": "user", "uuid": "rec-%d" % n, "t": t0 + n + 1,
-                         "message": {"role": "user", "content": text}}]}]
-    return live, turns, {text: t0 + n + 1}
-
-
-class LandedIdsMap(unittest.TestCase):
-    """_landed_send_ids: bounded at _LANDED_SEND_IDS_CAP (oldest landing out first), and its walk is safe
-    against a concurrent build of the same session."""
-
-    def setUp(self):
-        km._landed_send_ids.pop(SID, None)
-
-    def tearDown(self):
-        km._landed_send_ids.pop(SID, None)
-
-    def test_the_cap_trims_the_oldest_landing_first(self):
-        cap = km._LANDED_SEND_IDS_CAP
-        for n in range(cap + 1):
-            km._note_send_landings(SID, *_landing(n))
-        ids = km._landed_send_ids[SID]
-        self.assertEqual(len(ids), cap, "one over the cap: one trimmed")
-        self.assertNotIn("rec-0", ids, "the oldest landing goes first")
-        self.assertEqual(ids["rec-%d" % cap]["ids"], ["s-%d" % cap], "the newest stays")
-        self.assertIn("rec-1", ids)
-
-    def test_two_builds_of_one_session_never_break_each_others_walk(self):
-        """A pusher cycle and an HTTP request's build run _note_send_landings for one sid at once: one
-        inserts landings (and trims) while the other walks the map. Unguarded, the walk raised
-        'dictionary changed size during iteration' out of the whole build (review round 1). The switch
-        interval is dropped so the threads interleave at nearly every bytecode."""
-        cap = km._LANDED_SEND_IDS_CAP
-        for n in range(cap):
-            km._note_send_landings(SID, *_landing(n))          # a full map: every walk is as long as it gets
-        unlanded = ([{"_echo_text": "still in flight", "_send_id": "s-x", "t": 1_700_000_000, "uuid": "echo:x"}],
-                    [], {})                                    # a build whose echo has not landed: walk only
-        errors, rounds = [], 400
-        gate = threading.Barrier(2)
-
-        def lander():
-            try:
-                gate.wait()
-                for n in range(cap, cap + rounds):
-                    km._note_send_landings(SID, *_landing(n))
-            except BaseException as e:                          # noqa: BLE001 (the test reports it)
-                errors.append(("lander", repr(e)))
-
-        def walker():
-            try:
-                gate.wait()
-                for _ in range(rounds):
-                    km._note_send_landings(SID, *unlanded)
-            except BaseException as e:                          # noqa: BLE001
-                errors.append(("walker", repr(e)))
-
-        old = sys.getswitchinterval()
-        sys.setswitchinterval(1e-6)
-        try:
-            ts = [threading.Thread(target=lander), threading.Thread(target=walker)]
-            for t in ts:
-                t.start()
-            for t in ts:
-                t.join(30)
-        finally:
-            sys.setswitchinterval(old)
-        self.assertFalse(any(t.is_alive() for t in ts), "both builds finished")
-        self.assertEqual(errors, [], "neither build raised")
-        self.assertEqual(len(km._landed_send_ids[SID]), cap, "the cap held throughout")
-
-
-class TheIdSurvivesTheRestartMirror(unittest.TestCase):
-    """The echo mirror round trip: an id-carrying echo persisted by one kernel is reseeded by the next
-    with its id, and when its CLI died holding it the re-queued entry carries the id too, so the client's
-    bubble still clears by id after the restart."""
-
-    def setUp(self):
-        self.state = tempfile.mkdtemp()
-        self.cwd = os.path.join(self.state, "proj")
-        os.makedirs(self.cwd)
-        self.lines = []
-        self.reg = {"sid": SID, "name": "web", "mode": "acceptEdits", "alive": True, "cwd": self.cwd}
-        sbk.write_reg(self.state, SID, dict(self.reg))
-
-    def _backend(self):
-        return sbk.SdkBackend(self.state, "/bin/true", lambda *a, **k: None,
-                              log=lambda m, **k: self.lines.append(str(m)))
-
-    def test_the_reseeded_echo_and_the_re_queued_entry_carry_the_id(self):
-        be1 = self._backend()
-        t = int(time.time()) - 10
-        be1._stash_live(SID, "echo:1", _echo("carry me", "s-1", t, 1))
-        be1._stash_live(SID, "echo:2", _echo("plain", "", t + 1, 2))
-        be1._persist_echoes(SID)
-        mirror = {e["text"]: e for e in (sbk.read_reg(self.state, SID) or {}).get("echoes", [])}
-        self.assertEqual(mirror["carry me"].get("sendId"), "s-1", "the mirror keeps the id")
-        self.assertNotIn("sendId", mirror["plain"])
-        # the next kernel: a readable transcript with neither text landed, so the dead CLI provably
-        # held both sends and the boot re-queues them
-        path = sbk.transcript_path(self.cwd, SID)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        open(path, "w").close()
-        be2 = self._backend()
-        be2._reseed_echoes([sbk.read_reg(self.state, SID)])
-        live = {a["_echo_text"]: a for a in be2.live_atoms(SID) if a.get("_echo_text")}
-        self.assertEqual(live["carry me"].get("_send_id"), "s-1", "the reseeded echo carries the id")
-        self.assertNotIn("_send_id", live["plain"])
-        queue = (sbk.read_reg(self.state, SID) or {}).get("queue")
-        self.assertEqual(queue, [{"text": "carry me", "sendId": "s-1"}, "plain"],
-                         "the re-queued entry carries the id; a bare send re-queues bare")
-        self.assertEqual([getattr(q, "send_id", "") for q in sbk._queue_texts(queue)], ["s-1", ""],
-                         "…and the seed reads it back onto the entry")
+# Retired 2026-09-15 with the fork's send-id identity (4e Q1 and Q5; R1, R5): the kernel's landed-ids map (its cap
+# and its landing note) is gone with upstream's stampBase (#1273) and the per-build pairing of the fed ledger, the
+# chip and user-event fields are `qid`, and the mirror carries `qid`. The twins, all in tests/test_queued_copy_identity.py:
+# class BuildSessionStampsTheIds -> TheChatCarriesTheIds:
+#   test_the_queued_chips_carry_the_id_of_the_entry_or_the_parked_op_they_stand_for ->
+#   test_the_queued_group_and_the_landed_atom_share_the_copys_id and
+#   test_a_parked_copy_carries_the_id_it_was_pressed_with_and_a_kernel_parked_one_none_until_the_backend;
+#   the in-flight echo's user-event test (its name spells the retired identifier; the pull-in log names it) ->
+#   test_an_intermediate_build_between_the_feed_and_the_landing_keeps_the_pairing and
+#   test_ids_ride_only_when_each_one_sits_beside_its_own_text;
+#   test_the_record_that_landed_the_send_carries_its_id_and_a_folded_record_every_id ->
+#   test_a_two_block_record_carries_both_copies_ids and test_the_queued_group_and_the_landed_atom_share_the_copys_id.
+# class LandedIdsMap (test_the_cap_trims_the_oldest_landing_first, test_two_builds_of_one_session_never_break_each_others_walk):
+#   the map has no successor; the landing pairs per build from the fed ledger (TheChatCarriesTheIds's tests above).
+# class TheIdSurvivesTheRestartMirror (test_the_reseeded_echo_and_the_re_queued_entry_carry_the_id) ->
+#   IdentitySurvivesTheKernelsDeath::test_the_restored_queue_and_the_reseeded_echo_keep_the_copys_id_and_the_landing_pairs_with_it.
+# The _ChatBackend, _echo, _urec, _arec, _iso and _landing fixtures those classes alone used went with them.
 
 
 if __name__ == "__main__":

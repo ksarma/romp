@@ -462,7 +462,7 @@ class _InterruptTickRig(unittest.TestCase):
                  "_push_all")
         self.saved = {n: getattr(km, n) for n in names}
         self.saved_parsed = jd.parsed_session
-        km._alive_sessions = lambda now, tmux: [{"sid": SID, "path": "/nonexistent.jsonl"}]
+        km._alive_sessions = lambda now, live: [{"sid": SID, "path": "/nonexistent.jsonl"}]
         km._session_flag = lambda sid, flag: False
         km._compacting_now = lambda sid, **k: False   # the tick hands in the row's path and live meta
         km._api_error = lambda path: None
@@ -554,7 +554,8 @@ class InterruptBlockTickUnderAFault(_InterruptTickRig):
                                           "(the real writer, in MidTickFaultThenHeal; this rig's stub marks nothing)")
 
     def test_a_fault_landing_mid_tick_leaves_the_block_it_filed_to_its_writers_mark_and_then_stands_down(self):
-        # the tag check at the arm's top proves; the fault lands before the marker write. The block IS in
+        # the tag check at the arm's top proves on the tick's ONE ledger read; the fault lands on the marker write's own
+        # read (no second ledger read sits between the check and the write since the one-read change). The block IS in
         # the goal store — a proved write, whose writer marks the views dirty (the real one; MidTickFaultThenHeal
         # pins the mark) — so the flip reaches the next cycle whatever the marker's fate, and the tick pushes
         # nothing inline; every later faulted tick stands down at the check: no storm
@@ -646,13 +647,14 @@ class MidTickFaultThenHeal(_InterruptTickRig):
         return [e.get("src") for e in self._store()["nodes"][GID].get("log") or [] if e.get("kind") == "block"]
 
     def _fault_on_the_marker_write(self):
-        """Reads 1 (the tag check) and 2 (the marker lookup) prove; the block is filed; read 3, the marker
-        write's own, finds the file moved on and unreadable. Leaves the file healed."""
+        """Read 1 (the tick's ONE ledger read per session: the key, the arm's tag check and the marker lookup all read that
+        snapshot since T401 (3) round two; before it the tag check and the marker lookup were two reads) proves; the block is
+        filed; read 2, the marker write's own, finds the file moved on and unreadable. Leaves the file healed."""
         real, calls, ledger, test = km._auto_nudge_data, [0], self.p, self
 
         def flaky():
             calls[0] += 1
-            if calls[0] == 3:
+            if calls[0] == 2:
                 ledger.write_text(json.dumps(DEFAULT, indent=1))
                 test._fail_read()
             return real()

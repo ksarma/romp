@@ -46,7 +46,7 @@ km = load_source("romp_kernel_parkedlock", os.path.join(BIN, "romp-kernel"))
 
 # The ACCOUNT gate is a separate axis (tests/test_kernel_limit_queue.py); pinned off so the real
 # machine's usage.json can never make these tests park for a reason none of them is about.
-km._limit_hold = lambda sid: None
+km._limit_hold = lambda sid, usage=None: None
 
 SID = "11111111-2222-3333-4444-555555555555"
 
@@ -74,7 +74,9 @@ def _lock_free_for_another_thread():
 
 
 class _FakeBackend:
-    """A tmux-shaped backend: it cannot forward its own sends, so a send parks while the turn is open."""
+    """A backend that cannot forward its own sends (no shipped backend is one since the tmux backend's
+    removal; _forwards_sends reads a fake without the capability as False), so a send parks while the turn
+    is open."""
 
     def __init__(self):
         self.calls = []
@@ -115,9 +117,9 @@ class _FakeBackend:
         return 0
 
 
-def _tmux_row(state):
+def _live_row(state):
     return {"state": state, "since": int(time.time()) - 5, "model": "", "effort": "", "context": None,
-            "compactPct": None, "color": None, "mode": "", "backend": "tmux"}
+            "compactPct": None, "color": None, "mode": "", "backend": "sdk"}
 
 
 class _Drain(unittest.TestCase):
@@ -126,10 +128,9 @@ class _Drain(unittest.TestCase):
         self._patches = [
             mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: self.be)),
             mock.patch.object(km, "_compacting_now", lambda sid, **k: False),
-            mock.patch.object(km, "_optimistic_echo", lambda *a, **k: None),
             mock.patch.object(km, "_mark_compacting", lambda sid: None),
             mock.patch.object(km, "_names_snapshot", lambda: {}),
-            mock.patch.object(km, "_tmux_sessions", lambda: {SID: _tmux_row("waiting")}),
+            mock.patch.object(km, "_live_map", lambda: {SID: _live_row("waiting")}),
         ] + [mock.patch.object(km, name, lambda *a, **k: None) for name in _OTHER_JOBS]
         for p in self._patches:
             p.start()
@@ -147,7 +148,6 @@ class _Drain(unittest.TestCase):
         km._moving.clear()
         km._move_askers.clear()
         km._drain_hold.clear()
-        km._refresh_parse_failures.clear()
         km._inflight_ops.clear()
         try:
             os.unlink(km._PENDING_OPS_FILE)
@@ -204,7 +204,7 @@ class OneLockAroundEveryMutation(_Drain):
         def send(sid, text):
             self.be.calls.append(("send", text))
             if text == "/clear":                           # a pane send lands while the backend still has the /clear…
-                self.assertEqual(km._send_or_park(self.be, SID, "hello", echo="human"), "parked", "…and PARKS")
+                self.assertIs(km._send_or_park(self.be, SID, "hello", echo="human"), True, "…and PARKS")
             self.be.open = True                            # only now does busy() flip
             return True
         self.be.send = send
@@ -334,7 +334,7 @@ class OneLockAroundEveryMutation(_Drain):
         km._pending_ops[SID] = [("compact",)]
         with mock.patch.object(km, "_ops_gate", lambda sid: False):
             km._set_model_or_park(self.be, SID, "opus")
-            self.assertEqual(km._send_or_park(self.be, SID, "hello"), "parked")   # (its own first gate reads the queue too)
+            self.assertIs(km._send_or_park(self.be, SID, "hello"), True)   # parked (its own first gate reads the queue too)
         self.assertEqual(self.be.calls, [], "nothing handed over past an existing queue")
         self.assertEqual(km._pending_ops[SID], [("compact",), ("model", "opus"), ("send", "hello", None)])
 
@@ -520,7 +520,7 @@ class OneLockAroundEveryMutation(_Drain):
         self.assertEqual(km._pending_ops.get(SID), [("send", "second", "human")])
 
     def test_a_handlers_queue_check_and_park_share_the_lock_but_its_gates_and_handover_do_not(self):
-        # the expensive gates (they fork tmux / call the backend's busy()) run outside the lock; the
+        # the expensive gates (they sweep discover / call the backend's busy()) run outside the lock; the
         # queue-presence check and the park are one locked step; the handover runs outside it again
         owned = {"gate": [], "park": [], "handover": []}
         real_wn, real_park_locked = km._working_now, km._park_op_locked
@@ -547,7 +547,7 @@ class OneLockAroundEveryMutation(_Drain):
         with mock.patch.object(km, "_working_now", gate_probe), \
              mock.patch.object(km, "_park_op_locked", park_probe):
             km._pending_ops[SID] = [("compact",)]          # …but a queue exists: everything parks BEHIND it
-            self.assertEqual(km._send_or_park(self.be, SID, "hello"), "parked")
+            self.assertIs(km._send_or_park(self.be, SID, "hello"), True)   # parked
             km._set_model_or_park(self.be, SID, "opus")
             self.assertTrue(km._compact_or_park(self.be, SID))
             self.assertEqual([op[0] for op in km._pending_ops[SID]], ["compact", "send", "model", "compact"],
@@ -555,10 +555,10 @@ class OneLockAroundEveryMutation(_Drain):
             self.assertEqual(owned["park"], [True] * 3, "the queue check + park is one locked step")
             self.assertEqual(self.be.calls, [])
             km._pending_ops.clear()                        # no queue: everything hands over
-            # the fork's three-outcome contract, kept over upstream's parked-or-not bool in the 2026-09-07 upstream
-            # fold: a handover returns the backend send's own result (True here), a park returns "parked", a refused
-            # send its falsy result, so a caller can tell the three apart (_send_or_park's docstring)
-            self.assertIs(km._send_or_park(self.be, SID, "hello"), True)
+            # upstream's three-outcome contract (2026-09-15, the pull-in): a park returns True, a handover returns
+            # False (the backend took it now), a refused send None, so a caller can tell the three apart
+            # (_send_or_park's docstring)
+            self.assertIs(km._send_or_park(self.be, SID, "hello"), False)
             km._set_model_or_park(self.be, SID, "opus")
             self.assertEqual(owned["handover"], [False, False], "the handover to the backend is outside the lock")
             self.assertEqual(self.be.calls, [("send", "hello"), ("model", "opus")])

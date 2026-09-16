@@ -831,3 +831,11 @@ def default():
 def copy_dist(dest):
     """The served labs' call: a private, serve-ready copy of the checkout's bundles at `dest`."""
     default().copy_to(dest)
+
+
+def copy_prebuilt(src, dest):
+    """A served lab's copy of a dist built ELSEWHERE, served as it is: the `<KNOB>_BEFORE_DIST=<dir>` trees upstream's
+    screenshot and bisect legs hand a lab (the "before" of a change). Nothing is built and the checkout's marker is not
+    consulted (the tree is not this checkout's dist); the copy takes the same ignore as copy_dist, so a staging name or a
+    harness lock and marker inside the foreign tree never reach the lab. Without a knob the labs call copy_dist."""
+    shutil.copytree(src, dest, ignore=copy_ignore)

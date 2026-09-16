@@ -8,7 +8,7 @@
 // follows the picture's ratio as the column caps the width; a height-only picture, which that rule's guard leaves
 // alone, keeps the author's height and is drawn under whatever `object-fit` the sheet gives `.fileview-md img` (none,
 // so `fill` stretches it); and the overlay must sit where the picture's pixels are in every case. Skips LOUDLY
-// without a playwright browser (CI installs none), as waiting-link-focus.test.ts does. Synthetic values only: a
+// without a playwright browser (CI installs none), as waiting-pane-browser.test.ts does. Synthetic values only: a
 // picture painted on a canvas, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";

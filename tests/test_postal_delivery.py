@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""The bus's live-push (auto-wake on deliver) goes through the kernel (POST /deliver), not a tmux pane-inject
-(the user 2026-06-26): drain the maildir, hand the banner to the kernel, and put the mail BACK if the kernel
-didn't inject — so the maildir-drain stays the backstop and the bus never shells tmux. Synthetic only.
+"""The bus's live-push (auto-wake on deliver) goes through the kernel (POST /deliver), which enqueues the
+mail as the session's next turn (the user 2026-06-26): drain the maildir, hand the banner to the kernel, and
+put the mail BACK if the kernel reports the session did not take it — so the maildir-drain stays the backstop
+and the bus never touches a session directly. Synthetic only.
 """
 import io
 import json
@@ -119,18 +120,19 @@ class PushThroughKernel(unittest.TestCase):
         self.assertNotIn(self.THREAD, pm.HEARTBEATS)
         self.assertEqual(self.fetches, [True], "the handler asks for thread rows")
 
-    def test_source_uses_the_kernel_deliver_not_a_tmux_inject(self):
+    def test_source_wakes_through_the_kernel_deliver(self):
         src = open(os.path.join(BIN, "romp-postal-service"), encoding="utf-8").read()
         self.assertIn('_kernel_post("/deliver"', src, "the live-push wakes via the kernel")
-        self.assertNotIn("paste-buffer", src, "no tmux pane-inject remains in the bus")
-        self.assertNotIn("capture-pane", src, "no tmux pane-capture remains in the bus")
+        # the two POSTs that painted the removed backend's status chrome are gone with it (2026-09-11)
+        self.assertNotIn('"/mail-badge"', src)
+        self.assertNotIn('"/deliver-chrome"', src)
 
 
 class PushIsChunkedUnderTheKernelsCap(unittest.TestCase):
     """The kernel reads a POST body only up to _POST_MAX_BYTES (1 MiB). The bus used to hand it ONE
     /deliver banner for a recipient's whole box: past the cap the kernel refused it with 413 before
     reading a byte, _kernel_post folded the refusal into None, and _push filed it as the same "deferred"
-    every safe-pane deferral logs and re-posted the identical banner on every retry pass, forever (review
+    every not-taken deferral logs and re-posted the identical banner on every retry pass, forever (review
     find, 2026-09-08). Now the box crosses in chunks measured against the exact wire size, a refusal is
     logged by status and reads as one, and a single message no chunk can carry is bounced to its sender."""
     SID = "11111111-2222-3333-4444-555555555555"
@@ -203,9 +205,9 @@ class PushIsChunkedUnderTheKernelsCap(unittest.TestCase):
         self.assertIn("2 msg(s) restored", line)
         self.assertIn("after 1 landed", line)
 
-    def test_a_pane_deferral_and_a_kernel_refusal_read_differently_in_the_log(self):
-        # both used to log the same "deferred" line, so a size refusal was indistinguishable from a pane
-        # that was not safe to paste into
+    def test_a_not_taken_deferral_and_a_kernel_refusal_read_differently_in_the_log(self):
+        # both used to log the same "deferred" line, so a size refusal was indistinguishable from a
+        # session that did not take the wake
         pm._drain = lambda sid: {"messages": [self._msg("m1", 1000)]}
         pm._kernel_post = lambda path, body, timeout=2: {"ok": True, "injected": False}
         self.assertFalse(pm._push(self.SID, {"id": self.SID, "state": "idle"}))
@@ -268,6 +270,37 @@ class PushIsChunkedUnderTheKernelsCap(unittest.TestCase):
         self.assertLess(len(note), 600)
         self.assertTrue(any("m-big" in l and "bounced to its sender" in l for l in self.logged), self.logged)
 
+    def test_the_bounce_retracts_the_drains_read_stamp_so_the_senders_receipt_reads_bounced_not_read(self):
+        # The live push drains the box as a CLAIM, and read_box(consume=True) stamps an `exec` row ("the
+        # recipient read it") for every message it claims. The local-sender arm of _bounce_oversize wrote only
+        # its `bounced` row, so the ledger read exec + bounced, and format_receipts tests exec first: the
+        # sender's check_sent said "read HH:MM" for a message that was never handed over and was returned
+        # (while the dashboard's card, which ranks bounced first, said Bounced). The real deliver, drain,
+        # ledger and receipts here; only the kernel leg is stubbed. Private sids: the ledger is module-wide.
+        rcp, snd = "55555555-6666-7777-8888-999999999999", "66666666-7777-8888-9999-aaaaaaaaaaaa"
+        pm._drain, pm.deliver, pm.restore, pm._tl_append = self.saved[0], self.saved[2], self.saved[3], self.saved[7]
+        pm._name_for_id = lambda sid, rows=None: "api" if sid == rcp else None
+        saved_agents = pm.local_agents
+        pm.local_agents = lambda threads=False: []           # the receipts' name lookup never reaches a kernel
+        try:
+            mid = pm.deliver(rcp, "web", snd, "x" * 1_000_000, kind="coordinate")
+            pm._kernel_post = self._inject_all
+            pm._push(rcp, {"id": rcp, "state": "idle"})
+            self.assertEqual(self.posted, [], "the oversize message is never posted")
+            self.assertFalse((pm.MAILROOT / rcp / "new" / mid).exists(), "it left the recipient's box")
+            self.assertEqual(len(pm.read_box(snd, consume=False)), 1, "its sender holds the bounce note")
+            recs = pm._sent_receipts(snd)
+            text = pm.format_receipts(recs)
+            self.assertNotIn("read ", text, "check_sent must not say a returned message was read")
+            self.assertIn("undeliverable, returned to you", text)
+            self.assertEqual([(r["id"], r["exec"], bool(r["bounced"])) for r in recs], [(mid, None, True)])
+            rows = [json.loads(l) for l in (pm.TLDIR / "messages.jsonl").read_text().splitlines()]
+            self.assertEqual([r["ev"] for r in rows if r.get("id") == mid], ["sent", "exec", "unexec", "bounced"],
+                             "the drain's claim stamped exec; the bounce retracts it before its terminal row")
+        finally:
+            pm.local_agents = saved_agents
+            pm.STREAKS.pop(rcp, None)
+
     def test_an_oversize_message_with_no_local_sender_waits_for_the_drain_and_is_named_once(self):
         relayed = self._msg("m-far", 1_000_000, from_host="TESTHOST")   # acked to its host at relay time
         pm._drain = lambda sid: {"messages": [relayed]}
@@ -279,6 +312,27 @@ class PushIsChunkedUnderTheKernelsCap(unittest.TestCase):
         named = [l for l in self.logged if "m-far" in l]
         self.assertEqual(len(named), 1, named)
         self.assertIn("waits in new/ for the turn-end drain", named[0])
+
+    def test_an_oversize_message_from_a_from_label_sender_is_put_back_and_the_rest_still_land(self):
+        # `romp mail send --from cron` mails under ext:cron (cli_send), which is no mailbox: the REAL deliver()
+        # raises ValueError for it (_safe_id has no ':'). Before 2026-09-10 the local-sender arm took it, the
+        # ValueError escaped into _push's catch-all as "push error", nothing was posted and nothing put back:
+        # every message the drain had claimed sat in cur/ while its sender's receipt read "read".
+        pm.deliver = self.saved[2]                            # the real one: its refusal is the point
+        big = self._msg("m-big", 1_000_000, **{"from": "cron", "from_id": "ext:cron"})
+        pm._drain = lambda sid: {"messages": [big, self._msg("m-small", 1000)]}
+        pm._kernel_post = self._inject_all
+        self.assertTrue(pm._push(self.SID, {"id": self.SID, "state": "idle"}), "the rest of the box landed")
+        self.assertEqual([l for l in self.logged if "push error" in l], [], "nothing escaped to the catch-all")
+        self.assertEqual(len(self.posted), 1)
+        self.assertIn("<!-- romp-msg-id: m-small -->", self.posted[0]["text"])
+        self.assertNotIn("m-big", self.posted[0]["text"], "the oversize message is never posted")
+        self.assertEqual(self.restored, [(self.SID, "m-big")],
+                         "put back under its own id for the drain and check_inbox, which have no size cap")
+        self.assertFalse((pm.MAILROOT / "ext:cron").exists(), "no mailbox is made for the label")
+        named = [l for l in self.logged if "m-big" in l]
+        self.assertEqual(len(named), 1, named)
+        self.assertIn("has no local sender to bounce to", named[0])
 
     def test_publish_working_reads_a_refusal_as_failure(self):
         pm._kernel_post = lambda path, body, timeout=2: {"ok": False, "status": 400, "error": "id required"}

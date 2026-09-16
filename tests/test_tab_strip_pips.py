@@ -13,10 +13,12 @@ converged with upstream (2026-08-14): a blank is the honest rendering of "alive 
 the unreadable case needed a mark of its own.
 
 Since the 2026-09-09 fold (upstream's T262g, their PR #1108) the state → dot-class rule is `tabDotClass` and
-the hover-title rule `tabDotTitle`, side by side in ui/webview/tab-state.ts; render.ts only wires them
-onto the tab. Every tab carries the dot's SLOT in every state (a state with no dot gets the hidden
-"tab-dot none", so a tab's width never depends on its state), and the pins below read the rule where
-it lives.
+the hover-title rule `tabDotTitle`, side by side in ui/webview/tab-state.ts. Since the 2026-09-15 pull-in
+(upstream's T379, romp-on/romp#1541) the dot is a registered tab WIDGET whose render reads both rules
+(ui/webview/tab-widgets.ts, the "dot" entry); render.ts composes the widgets onto the tab (composeTabWidgets)
+and reads neither rule itself. Every tab carries the dot's SLOT in every state (a state with no dot gets
+the hidden "tab-dot none", so a tab's width never depends on its state), and the pins below read the rule
+where it lives.
 
 Source-pinning, like the other chat-render tests (the renderer has no jsdom harness).
 """
@@ -28,6 +30,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 RENDER = open(os.path.join(ROOT, "ui", "webview", "render.ts"), encoding="utf-8").read()
 TAB_STATE = open(os.path.join(ROOT, "ui", "webview", "tab-state.ts"), encoding="utf-8").read()
+TAB_WIDGETS = open(os.path.join(ROOT, "ui", "webview", "tab-widgets.ts"), encoding="utf-8").read()
 CSS = open(os.path.join(ROOT, "ui", "webview", "styles.css"), encoding="utf-8").read()
 FEED_TS = open(os.path.join(ROOT, "ui", "webview", "feed.ts"), encoding="utf-8").read()
 FEED_CSS = open(os.path.join(ROOT, "ui", "webview", "feed.css"), encoding="utf-8").read()
@@ -53,13 +56,20 @@ class TabStripPips(unittest.TestCase):
                          "a MISSING state must render an explicit unknown ring, not nothing")
         self.assertNotIn('st === "ready"', body, "a healthy idle session gets NO pip — a blank says it")
         self.assertNotIn('"tab-dot ready"', TAB_STATE, "a healthy idle session gets NO pip: a blank says it")
-        for src, name in ((TAB_STATE, "tab-state.ts"), (RENDER, "render.ts")):
+        for src, name in ((TAB_STATE, "tab-state.ts"), (TAB_WIDGETS, "tab-widgets.ts"), (RENDER, "render.ts")):
             self.assertNotIn('"idle — nothing running', src, "%s: the ready tooltip went with the ready pip" % name)
-        # the wiring: render.ts reads the rule, never a dot ladder of its own
-        self.assertIn("const dotCls = tabDotClass(st);", RENDER, "the tab render must class its dot by tabDotClass")
-        self.assertIn('if (dotCls) tab.appendChild(el("span", dotCls));', RENDER, "the classed slot goes on the tab")
-        self.assertNotRegex(RENDER, r"const dot: \[string, string\] \| null =",
-                            "render.ts grew a dot ladder of its own beside tab-state.ts's rule")
+        # the wiring: the dot widget reads the rule (T379), render.ts composes the widgets onto the tab, and neither
+        # grows a dot ladder of its own
+        self.assertIn("const cls = tabDotClass(status.state);", TAB_WIDGETS, "the dot widget must class its dot by tabDotClass")
+        self.assertIn('const d = el("span", cls === "tab-dot none" && opts.idle === "grey" ? "tab-dot idle" : cls);', TAB_WIDGETS,
+                      "the classed slot is the widget's element (the hidden slot, or the widget's own grey idle dot)")
+        self.assertIn('composeTabWidgets(tab, "before", s.id || "", s.status, settings.tabWidgets);', RENDER,
+                      "render.ts composes the before-the-name widgets, the dot among them, onto the tab")
+        self.assertNotRegex(RENDER, re.compile(r"^import \{[^}\n]*\btabDot(Class|Title)\b[^}\n]*\} from \"\./tab-state\";", re.M),
+                            "render.ts imports neither dot rule: the widget is their one reader")
+        for src, name in ((RENDER, "render.ts"), (TAB_WIDGETS, "tab-widgets.ts")):
+            self.assertNotRegex(src, r"const dot: \[string, string\] \| null =",
+                                "%s grew a dot ladder of its own beside tab-state.ts's rule" % name)
 
     def test_states_with_their_own_tab_treatments_stay_undotted(self):
         """blocked/awaiting/retrying/compacting/closed carry border/bar/strike treatments; the dot
@@ -90,10 +100,12 @@ class TabStripPips(unittest.TestCase):
         self.assertRegex(body, r'if \(st === "awaitingBg"\) return "%s";' % re.escape(tips["await"]))
         self.assertRegex(body, r'if \(!st\) return "%s";' % re.escape(tips["unknown"]))
         self.assertRegex(body, r'if \(st === "opening"\) return "opening — ')
-        self.assertIn("const dotTip = dotCls ? tabDotTitle(st) : null;", RENDER,
-                      "render.ts must take the slot's title from tabDotTitle")
-        self.assertIn("(tab.lastElementChild as HTMLElement).title = dotTip;", RENDER,
-                      "the title must land on the slot tabDotClass classed")
+        # the dot widget (tab-widgets.ts, T379) takes the slot's title from tabDotTitle and sets it on the dot the
+        # one rule classed; a state with no title (the hidden slot) sets none unless the widget's own grey idle dot
+        self.assertIn("const tip = tabDotTitle(status.state);", TAB_WIDGETS,
+                      "the dot widget must take the slot's title from tabDotTitle")
+        self.assertRegex(TAB_WIDGETS, r"const cls = tabDotClass\(status\.state\);[^\x00]*?const tip = tabDotTitle\(status\.state\);\s*\n\s*if \(tip\) d\.title = tip;",
+                         "the title must land on the slot tabDotClass classed, inside the one widget render")
 
     def test_the_unknown_ring_matches_the_other_sheets(self):
         """The ring styling is mirrored by hex across the three standalone sheets; a re-tint in one

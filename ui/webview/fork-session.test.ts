@@ -39,6 +39,18 @@ test("the fork button sits INLINE, right of the worked-seconds label — never i
   assert.match(CSS, /\.turn-elapsed \.fork-spot \{ margin-top: 0; \}/);
   // the OLD home is gone: the prompt's msg-acts row no longer carries a fork (the user 2026-08-19)
   assert.doesNotMatch(RENDER, /acts\.appendChild\(fk\);/);
+  // the fork GLYPH beside the word, Fork in the accessible name (T381, the user 2026-09-12): the stroke family's
+  // drawing from icons.ts, a line in from the left branching into two that run on to the right, no arrowheads
+  assert.match(RENDER, /fk\.innerHTML = ICON_FORK \+ '<span class="msg-fork-word">fork<\/span>';/, "the glyph carried on the button, the word beside it");
+  assert.match(RENDER, /fk\.setAttribute\("aria-label", "Fork"\);/);
+  assert.match(RENDER, /import \{ GEAR_GLYPH, ICON_FORK \} from "\.\/icons";/);   // the strip's gear glyph shares the import (the lock icons left with the gear's menu, T415)
+  assert.doesNotMatch(RENDER, /fk\.textContent = "fork";/, "no bare word any more");
+  const ICONS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "icons.ts"), "utf8");
+  const fork = ICONS.slice(ICONS.indexOf("export const ICON_FORK"), ICONS.indexOf(";", ICONS.indexOf("export const ICON_FORK")));
+  assert.match(fork, /<polyline points="2 12 9 12 15 7 22 7"\/>/, "the trunk from the left edge to the fork point, then up-right to the right edge");
+  assert.match(fork, /<polyline points="9 12 15 17 22 17"\/>/, "…and the second branch down-right to the right edge");
+  assert.doesNotMatch(fork, /marker|arrow|#[0-9a-fA-F]{3,6}\b/, "no arrowheads, no raw hex: currentColor strokes in the shared family");
+  assert.match(CSS, /\.msg-fork \{ display: inline-flex; align-items: center; gap: 4px; \}/);
   // click-safe: the button is DELEGATED (data-act), landing in the shared modal with the spot's own cut
   assert.match(RENDER, /fk\.dataset\.act = "forkspot";/);
   assert.match(RENDER, /forkspot: \(elx\) => \{/);
@@ -51,7 +63,7 @@ test("the fork button sits INLINE, right of the worked-seconds label — never i
   // never the terracotta code tint; T141 2026-08-28 unified all button rests to the feed's — dark
   // ground, the mirrored --card-border hairline). Only .code-copy keeps the tint — it sits ON the
   // tinted code block and blends there.
-  for (const block of [".msg-edit {", ".msg-del, .msg-restorefiles, .msg-fork {", ".undelivered-act {"]) {
+  for (const block of [".msg-edit {", ".msg-del, .msg-restorefiles, .msg-fork {", ".notice-act {"]) {   // .undelivered-act → the notice word button (2026-09-08)
     const body = CSS.slice(CSS.indexOf(block), CSS.indexOf("}", CSS.indexOf(block)));
     assert.ok(body.includes("background: transparent"), block + " wears the one button rest");
     assert.ok(body.includes("var(--card-border)"), block + " wears the feed hairline");
@@ -77,7 +89,7 @@ test("the modal defaults to <session>-fork and posts forkSession {id, uuid, name
 
 test("the palette forks the ACTIVE session from the tip, via the chat pane", () => {
   assert.match(PALETTE, /id: "session\.fork", title: "Fork this session…"/);
-  assert.match(PALETTE, /pane\("f-chat"\)!\.contentWindow!\.postMessage\(\{ romp: "forkSession" \}, "\*"\)/);
+  assert.match(PALETTE, /chatPane\(\)!\.contentWindow!\.postMessage\(\{ romp: "forkSession" \}, "\*"\)/);   // the chat column last worked in (split screen 2026-09-08)
   assert.match(RENDER, /if \(m\.romp === "forkSession"\) \{/);
   assert.match(RENDER, /if \(activeId && !isProvisionalId\(activeId\) && sessions\.get\(activeId\)\) showForkPrompt\(activeId, ""\);/);
 });
@@ -128,6 +140,9 @@ test("kernel persists lineage durably and serves it on the session payload", () 
 
 test("branch chrome wears the accent, like every highlight", () => {
   const css = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
-  assert.match(css, /\.branch-divider::before, \.branch-divider::after \{[^}]*var\(--accent\)/s);
+  // 2026-09-08 (the notice-vocabulary pass): the child's divider is a slim BRANCH notice in the romp severity —
+  // the accent on its rail/dot/glyph; the accent hairlines + pill are retired
+  assert.match(css, /\.notice-sev-romp\s+\{ --notice-rail: var\(--accent\);/);
+  assert.doesNotMatch(css, /\.branch-divider|\.branch-label/);
   assert.match(css, /\.branch-chip \{[^}]*color: var\(--accent\)/s);
 });

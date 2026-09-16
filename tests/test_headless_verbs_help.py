@@ -29,16 +29,16 @@ REFUSAL_ROW = "an unknown session is refused with the kernel's reason, exit 1"
 REFUSAL_DOC = "An unknown session is refused with the kernel's reason and exit 1"
 REFUSAL_HELP = "An unknown session name exits 1 with the kernel's reason."
 # the known-but-refusing clause (`romp send` only): a session the kernel knows whose backend refuses the send
-# answers 409 with the reason and the message is not delivered. The contract sentence per surface, and the
-# one example the two surfaces that list examples had drifted on (review round 6, 2026-09-09: the -h list
-# lacked the tmux-backed case the reference row named)
-NOT_RUNNING_HELP = ("A known session that is not running (an ended SDK session addressed by id, an ended comment "
-                    "thread by id or name, a tmux-backed session no pane runs) is refused with the kernel's reason "
-                    "and exit 1; the message is not delivered.")
-NOT_RUNNING_ROW = "a known session that is not running is refused the same way (409, not delivered)"
-NOT_RUNNING_DOC = ("a session the kernel knows whose backend refuses it (an ended SDK session addressed by id, an "
-                   "ended comment thread by id or name, a tmux-backed session no pane runs) is refused the same "
-                   "way, HTTP 409 with the kernel's reason, and the message is not delivered")
+# answers with the reason and the message is not delivered. The contract sentence per surface, and the
+# examples the two surfaces that list them must agree on (review round 6, 2026-09-09; the tmux-backed example
+# left with that backend 2026-09-11, and "SDK session" is spelled "Claude Code session" on every surface).
+NOT_RUNNING_HELP = ("A known session that is not running (an ended Claude Code session addressed by id, an ended "
+                    "comment thread by id or name) is refused with the kernel's reason and exit 1; the message is "
+                    "not delivered.")
+NOT_RUNNING_ROW = "a known session that is not running is refused the same way (not delivered, exit 1)"
+NOT_RUNNING_DOC = ("a session the kernel knows whose backend refuses it (an ended Claude Code session addressed by id, "
+                   "an ended comment thread by id or name) is refused the same way, with the kernel's reason, and "
+                   "the message is not delivered")
 
 
 def _read(rel):

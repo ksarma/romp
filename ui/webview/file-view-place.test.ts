@@ -411,13 +411,18 @@ test("file-view.ts: the place is read before the text swap and seated after the 
   // the body's own size report, a ResizeObserver installLayout arms for every layout, is the third mover after the body's scroll
   // and a figure's load (the Slice 6 review, round 5: the changed-on-disk bar's raise moved the passage under a standing offer)
   assert.match(install, /this\.sizer = new ResizeObserver\(\(\) => \{ this\.hideFloatOnScroll\(\); this\.scheduleLayout\(\); \}\);\n\s*this\.sizer\.observe\(body\);/, "the body's size report re-runs the float's subject test before the layout");
-  // the sheets: no overflow-anchor rule (the swap never relied on anchoring, and anchoring helps after the seat when a
-  // figure above loads late), and the row declares no container of its own. The anchoring pin reads declarations only,
-  // comments stripped: upstream's 2026-09-08 note above #content (keep the browser's scroll anchoring on, measured
-  // under T262e; its own pin is box-below.test.ts) names the property in prose to say the same thing this pin says.
+  // the sheets: no overflow-anchor rule of the VIEWER's (the swap never relied on anchoring, and anchoring helps after
+  // the seat when a figure above loads late), and the row declares no container of its own. The anchoring pin reads
+  // declarations only, comments stripped: upstream's 2026-09-08 note above #content (keep the browser's scroll anchoring
+  // on, measured under T262e; its own pin is box-below.test.ts) names the property in prose to say the same thing this
+  // pin says. ONE rule may declare it: upstream's T386 stage 2 gap placeholder (.tx-gap, the chat's stand-in for history
+  // the page does not hold), which turns anchoring off for itself so the first visible turn holds while a gap above it
+  // fills. The claim here is about the viewer's rules, so every rule that declares the property must be that one.
   for (const f of ["styles.css", "feed.css"]) {
     const css = read(f);
-    assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ""), /overflow-anchor/, f + ": no overflow-anchor");
+    const decls = css.replace(/\/\*[\s\S]*?\*\//g, ""), rule = /([^{}]+)\{([^{}]*)\}/g, anchoring: string[] = [];
+    for (let m = rule.exec(decls); m; m = rule.exec(decls)) if (/overflow-anchor/.test(m[2])) anchoring.push(m[1].trim());
+    assert.ok(anchoring.every((sel) => sel === ".tx-gap"), f + ": overflow-anchor only in T386 stage 2's .tx-gap rule, never a viewer rule (found: " + anchoring.join(", ") + ")");
     assert.match(css, /\n\.fileview-main \{ flex: 1 1 auto; min-height: 0; display: flex; \}\n/, f + ": the row without container-type");
     assert.match(css, /\n\.fileview > \.fileview-err \{ flex: 0 0 auto; \}\n/, f + ": the note bar's rule");
   }

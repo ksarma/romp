@@ -23,16 +23,19 @@ test("the header is ONE line worded from the rows — 'Awaiting …' idle, 'In t
   // presentations at each turn boundary; one renderer now words the header from the same rows in both states
   assert.doesNotMatch(SRC, /count \+ " background tasks"/);
   assert.doesNotMatch(SRC, /"Background task · "/);
-  assert.match(SRC, /lab\.textContent = "In the background · " \+ awaitBreakdown\(counted\);/);
-  assert.match(SRC, /lab\.textContent = "Awaiting " \+ word \+ " · " \+ awaitBreakdown\(items\);/);
+  assert.match(SRC, /lab\.textContent = "In the background · " \+ listBreakdown\(counted, keptN\);/);   // every row the list shows by kind, then how many wear the verdict (T394)
+  assert.match(SRC, /lab\.textContent = "Awaiting " \+ word \+ " · " \+ listBreakdown\(counted, keptN\);/);
   // collapsed by default: when the fold isn't open, only the header renders
-  assert.match(SRC, /const open = bgFoldOpen\.has\(sid\);/);
+  assert.match(SRC, /const open = openFolds\.has\("bgfold:" \+ sid\);/);   // the ONE fold store since 2026-09-08 (was bgFoldOpen)
   assert.match(SRC, /if \(!open\) return;/);
 });
 
 test("three-level disclosure: header fold, then per-task detail, both keyed so they survive re-render", () => {
-  assert.match(SRC, /const bgExpanded = new Set<string>\(\);/);
-  assert.match(SRC, /const bgFoldOpen = new Set<string>\(\);/);
+  // 2026-09-08 (the notice-vocabulary pass): both folds key into openFolds — "bgfold:<sid>" for the box,
+  // "bgrow:<id>" for a row — the ONE fold store (their private Sets were two of the four the audit found)
+  assert.match(SRC, /const open = openFolds\.has\("bgfold:" \+ sid\);/);
+  assert.match(SRC, /const tOpen = openFolds\.has\("bgrow:" \+ t\.id\);/);
+  assert.doesNotMatch(SRC.replace(/\/\/[^\n]*/g, ""), /bgExpanded|bgFoldOpen/);
   assert.match(SRC, /head\.dataset\.act = "bg-fold"; head\.dataset\.id = sid;/);
   assert.match(SRC, /rh\.dataset\.act = "bg-toggle"; rh\.dataset\.id = t\.id;/);
   // detail body = command + output, textContent only (untrusted)
@@ -68,8 +71,8 @@ test("expanded list is capped (never crowds the composer) and scrolls; tasks are
   assert.doesNotMatch(taskRule, /border|background/);
 });
 
-test("status tints keep their meaning (running yellow, failed red, completed blue — not the accent)", () => {
+test("status tints keep their meaning (running yellow, failed red, completed the dim ink); the command kind alone wears the accent blue (T394)", () => {
   assert.match(CSS, /\.bg-task \{ --bgt: var\(--st-working-bg\)/);
   assert.match(CSS, /\.bg-task\.bg-failed \{ --bgt: var\(--st-blocked-bg\); \}/);
-  assert.match(CSS, /\.bg-task\.bg-completed \{ --bgt: var\(--st-ready-bg\); \}/);
+  assert.match(CSS, /\.bg-task\.bg-completed \{ --bgt: var\(--dim\); \}/);   // T394: the dim ink, since the ready blue would collide with the command hue
 });

@@ -8,7 +8,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { pickHeldLine, pickHeldTitle, pickHeldSubject, badgeHeldTip, workPhrase, pickKindName, heldUntil, heldRowValue, heldMenuMarks, reloadingTitle, switchingTitle, RUNNING_TAG } from "./pick-held";
+import { pickHeldLine, pickHeldTitle, pickHeldSubject, badgeHeldTip, workPhrase, pickKindName, heldUntil, heldRowValue, heldMenuMarks, billingHeld, billingHeldRow, billingHeldSub, reloadingTitle, switchingTitle, RUNNING_TAG } from "./pick-held";
 
 test("the reloading line's title names the change the reload applies, per kind and for two at once", () => {
   // the chat's reloading element shows for an effort, fast or mode reload (the kernel's pending flags); its title said
@@ -149,8 +149,9 @@ test("one 'until' clause for every surface that says when a held pick applies, a
   // "the background work" while the chat line beside them named the turn; the tab tooltip's Mode and Effort rows
   // showed the running value flat, with no sign of the hold the Billing row in the same popover explained
   // (review round 4, 2026-09-10). heldUntil is the one phrase; heldRowValue is the tooltip rows' shape. The
-  // callers are pinned here and executed in billing-label.test.ts; render.ts's rows are pinned in
-  // effort-switch-pending.test.ts
+  // callers are pinned here; the held Billing readings (billingHeldRow, billingHeldSub, this module's since the
+  // 2026-09-15 upstream pull-in retired the Billing label module) are executed in the next case; render.ts's rows
+  // are pinned in effort-switch-pending.test.ts
   assert.equal(heldUntil({ surfaces: ["auth"], subagents: 1, tasks: 0 }), "the background work finishes");
   assert.equal(heldUntil({ surfaces: ["auth"], subagents: 0, tasks: 2, inflight: false }), "the background work finishes",
     "work still running: the counts decide, whatever the turn bit");
@@ -171,14 +172,74 @@ test("one 'until' clause for every surface that says when a held pick applies, a
     "Accept edits until the next turn finishes, then the picked permission mode");
   assert.equal(heldRowValue("Default", "mode", { surfaces: ["mode"], subagents: 0, tasks: 1 }),
     "Default until the background work finishes, then the picked permission mode");
-  // the callers take the clause from here: no second wording anywhere
-  const BILLING = fs.readFileSync(path.join(WEBVIEW, "billing-label.ts"), "utf8");
+  // the callers take the clause from here: no second wording anywhere. The Billing row's and sub-line's held readings
+  // lived in the fork's Billing label module until the 2026-09-15 upstream pull-in retired it for upstream's inline
+  // Billing ladders (T346); the hold is fork-only, so its readings moved into this module and lead both ladders in render.ts
+  const PICK = fs.readFileSync(path.join(WEBVIEW, "pick-held.ts"), "utf8");
   const RENDER = fs.readFileSync(path.join(WEBVIEW, "render.ts"), "utf8");
-  assert.match(BILLING, /import \{ heldUntil, type PickHeld \} from "\.\/pick-held";/);
-  assert.match(BILLING, /const until = heldUntil\(f\.pickHeld!\);\s*\n\s*if \(now && f\.authLive === f\.auth\) return `\$\{then\} \(the reload waits until \$\{until\}\)`;\s*\n\s*return now \? `\$\{now\} until \$\{until\}, then \$\{then\}` : `\$\{then\} applies when \$\{until\}`;/);
-  assert.match(BILLING, /if \(billingHeld\(f\)\) return `waiting until \$\{heldUntil\(f\.pickHeld!\)\}`;/);
-  assert.doesNotMatch(BILLING, /until the background work finishes|waiting for background work/, "the old fixed wording is gone");
+  assert.match(PICK, /const now = billingSide\(st\.authLive \|\| "", acct\), then = billingSide\(st\.auth \|\| "", acct\), until = heldUntil\(st\.pickHeld!\);\s*\n\s*if \(now && st\.authLive === st\.auth\) return `\$\{then\} \(the reload waits until \$\{until\}\)`;\s*\n\s*return now \? `\$\{now\} until \$\{until\}, then \$\{then\}` : `\$\{then\} applies when \$\{until\}`;/, "billingHeldRow reads the clause from heldUntil");
+  assert.match(PICK, /return `waiting until \$\{heldUntil\(st\.pickHeld!\)\}`;/, "billingHeldSub too");
+  assert.equal(PICK.split("the background work finishes").length, 2, "the phrase is written once, in heldUntil");
+  assert.doesNotMatch(PICK, /waiting for background work/, "the old fixed wording is gone");
   assert.match(RENDER, /heldRowValue\(now, kind, held, pickedOf\(kind\)\)/);
+  assert.match(RENDER, /^import \{[^\n]*\bbillingHeld, billingHeldRow, billingHeldSub\b[^\n]*\} from "\.\/pick-held";/m, "render.ts takes the held Billing readings from here");
+  assert.match(RENDER, /rows\.push\(\["Billing",\s*\n\s*billingHeld\(s\.status\) \? billingHeldRow\(s\.status\) : s\.status\.authPending\b/, "the tab hover's Billing row: the held arm leads upstream's ladder");
+  assert.match(RENDER, /sb\.textContent = billingHeld\(st\) \? billingHeldSub\(st\) : st\.authPending \? "applying…"/, "the tab menu's Billing sub-line: the held arm leads there too");
+});
+
+test("a billing pick HELD for the session's live work says so, and names what bills meanwhile", () => {
+  // The case re-homed from the retired Billing label module's test at the 2026-09-15 upstream pull-in (the readings are
+  // this module's now).
+  // The switch reconnects, and the reconnect waits for the session's subagents and background tasks (2026-09-09); the
+  // status's one held marker (pickHeld) carries it. Until review round 2 the row read "Login (applying, not confirmed
+  // yet)" and the sub-line "applying..." for the whole hold, though nothing was applying; the CLI's last report still
+  // describes the running process, so it leads
+  const f = { auth: "login", authLive: "key", authPending: true, pickHeld: { surfaces: ["auth"], subagents: 1, tasks: 0 } };
+  assert.equal(billingHeld(f), true, "a pending billing pick with the auth surface held");
+  assert.equal(billingHeldRow(f), "API key until the background work finishes, then Login");
+  assert.equal(billingHeldSub(f), "waiting until the background work finishes");
+  // no report to name: the pick is named as what waits, never as the fact
+  const g = { auth: "key", authLive: "", authPending: true, pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 2 } };
+  assert.equal(billingHeldRow(g), "API key applies when the background work finishes");
+  assert.equal(billingHeldSub(g), "waiting until the background work finishes");
+  // the work is done and the pick waits for a turn to finish (review round 4, 2026-09-10): the row and the sub-line
+  // name the turn, the way the chat line does, through the one clause (heldUntil); until round 4 both read only the
+  // surfaces and said "the background work" for a wait that can last indefinitely (authPending stands from the pick
+  // to the landing). Both forms of the row: with a report and without
+  const open = { ...f, pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 0, inflight: true } };
+  assert.equal(billingHeldRow(open), "API key until this turn finishes, then Login");
+  assert.equal(billingHeldSub(open), "waiting until this turn finishes");
+  const idle = { ...f, pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 0, inflight: false } };
+  assert.equal(billingHeldRow(idle), "API key until the next turn finishes, then Login");
+  assert.equal(billingHeldSub(idle), "waiting until the next turn finishes");
+  const older = { ...f, pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 0 } };
+  assert.equal(billingHeldRow(older), "API key until this turn finishes, then Login", "a payload without the bit keeps this turn");
+  assert.equal(billingHeldSub(older), "waiting until this turn finishes");
+  assert.equal(billingHeldRow({ ...g, pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 0, inflight: false } }), "API key applies when the next turn finishes");
+  assert.equal(billingHeldRow({ ...g, pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 0, inflight: true } }), "API key applies when this turn finishes");
+  assert.equal(billingHeldSub({ ...g, pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 0, inflight: false } }), "waiting until the next turn finishes");
+  // the picked side EQUALS the side the CLI reports (review round 5, ui-1): the kernel compares a billing pick against
+  // the side that launched, never against the report, so a key pick on a process that launched plain and found the
+  // helper's key is held with authLive "key" already. The row said "API key until the background work finishes, then
+  // API key"; it names the side once now and says the reload waits. The sub-line names no side and is unchanged
+  const sameKey = { auth: "key", authLive: "key", authPending: true, pickHeld: { surfaces: ["auth"], subagents: 1, tasks: 0 } };
+  assert.equal(billingHeldRow(sameKey), "API key (the reload waits until the background work finishes)");
+  assert.equal(billingHeldSub(sameKey), "waiting until the background work finishes");
+  const sameLogin = { auth: "login", authLive: "login", authPending: true, authAcct: "user@example.com", pickHeld: { surfaces: ["auth"], subagents: 0, tasks: 0, inflight: true } };
+  assert.equal(billingHeldRow(sameLogin), "Login (user@example.com) (the reload waits until this turn finishes)");
+  assert.equal(billingHeldSub(sameLogin), "waiting until this turn finishes");
+  // the account beside Login is the kernel's authLabel (a stored login's display, T346), else the account an older kernel sends
+  assert.equal(billingHeldRow({ ...f, authLabel: "work", authAcct: "user@example.com" }), "API key until the background work finishes, then Login (work)");
+  assert.equal(billingHeldRow({ ...f, authAcct: "user@example.com" }), "API key until the background work finishes, then Login (user@example.com)");
+  for (const h of [f, g, open, idle, older, sameKey, sameLogin]) {
+    assert.doesNotMatch(billingHeldRow(h) + " " + billingHeldSub(h), /applying/, "nothing is applying during a hold (round 2 retired that wording for holds)");
+  }
+  // a hold on some OTHER pick leaves the billing words to upstream's ladder, and so do the armed reconnect (no hold)
+  // and a landed pick: billingHeld is false and render.ts's held arm stands aside for the pending arm
+  assert.equal(billingHeld({ auth: "login", authLive: "", authPending: true, pickHeld: { surfaces: ["effort"], subagents: 1, tasks: 0 } }), false);
+  assert.equal(billingHeld({ auth: "login", authPending: true, pickHeld: null }), false);
+  assert.equal(billingHeld({ auth: "login", authPending: true }), false);
+  assert.equal(billingHeld({ auth: "login", authLive: "key", authPending: false, pickHeld: { surfaces: ["auth"], subagents: 1, tasks: 0 } }), false, "a landed pick is not held");
 });
 
 test("the tooltip rows name the PICKED value when the status carries it, and fall back to the kind when it does not", () => {

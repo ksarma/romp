@@ -59,6 +59,9 @@ const reflowed = async (page: any, paints: number): Promise<void> => {
   await page.waitForFunction((n: number) => (window as any).__paints > n, paints, { timeout: 10000 });
   await frames(page, 4);
 };
+/** The text-size buttons ride the zoom glyph's flyout (upstream T367: shut until the glyph is pressed, and shut again by any
+ *  press outside it): open it when it is shut, so the A+ press lands on a shown button. */
+const openZoom = async (page: any) => { if (await page.evaluate(() => { const m = document.querySelector(".fileview-zoom-menu") as HTMLElement | null; return !m || m.hidden; })) await page.click(".fileview-zoom-btn"); };
 
 test("in a browser, the real module: a pane narrowing and a text-size step leave the panel's marks standing and re-place the cards over them, with no paint pass (before: every reflow unwrapped and re-wrapped every mark and rebuilt the aside); a reload with new text still repaints", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
@@ -95,6 +98,7 @@ test("in a browser, the real module: a pane narrowing and a text-size step leave
 
     // (2) a text-size step: the text grows around the marks; the same holds
     await keepMarks(page);
+    await openZoom(page);
     await page.click('button[aria-label="Larger text"]');
     await reflowed(page, r1.paints);
     const r2 = await read(page);

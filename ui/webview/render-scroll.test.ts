@@ -67,7 +67,7 @@ test("appendActive snaps only when the user is already near the bottom of OVERFL
   // the slack rule (the user 2026-08-25): while nothing overflows, atBottom is trivially true —
   // ungated, the very append crossing the overflow boundary yanked the view; now streaming into
   // slack writes in place and grows the scrollbar, and the stick engages only once overflowing
-  assert.match(RENDER, /const stick = content\.scrollHeight > content\.clientHeight \+ 2 && atBottom\(content\);[\s\S]*?if \(stick && followTail\(distBefore, heightBefore, content\.scrollHeight\)\) writeScroll\(content, content\.scrollHeight, "append-stick", true\)/,   // …and only when there is new content to follow (T262 followTail)
+  assert.match(RENDER, /const stick = content\.scrollHeight > content\.clientHeight \+ 2 && atBottom\(content\);[\s\S]*?if \(stick && followTail\(distBefore, heightBefore, content\.scrollHeight\)\) writeScroll\(content, content\.scrollHeight, "append-stick", true, before\)/,   // …and only when there is new content to follow (T262 followTail)
     "tail-append follows the live edge only if content overflows AND the reader was at the bottom");
   // the popover's thread list speaks the same rule
   assert.match(RENDER, /const overflowed = list\.scrollHeight > list\.clientHeight \+ 2;/);
@@ -83,13 +83,13 @@ test("a scrolled-up append restores by turn ANCHOR (data-uuid), raw scrollTop on
   const fn = RENDER.slice(RENDER.indexOf("function appendActive"), RENDER.indexOf("window.addEventListener(\"resize\", scheduleRestamp)"));
   assert.match(fn, /const anchor = !stick && v \? captureScrollAnchor\(content, v\) : null;/,
     "the anchor is captured BEFORE the rebuild, only when scrolled up");
-  assert.match(fn, /else if \(!\(v && restoreScrollAnchor\(content, v, anchor\)\)\) writeScroll\(content, before, "append-raw"\);/,
+  assert.match(fn, /else if \(!\(v && restoreScrollAnchor\(content, v, anchor, before\)\)\) writeScroll\(content, before, "append-raw", false, before\);/,
     "anchor-relative restore first; the raw pixel offset only when the anchor was evicted");
   assert.match(RENDER, /function captureScrollAnchor\(content: HTMLElement, v: View\)/);
   assert.match(RENDER, /r\.bottom > cTop \+ 1/, "the anchor is the first turn still visible at the viewport top");
   assert.match(RENDER, /querySelector\(`\[data-uuid="\$\{cssEscape\(a\.uuid\)\}"\]`\)/,
     "the anchor re-resolves by its stable uuid after the rebuild");
-  assert.match(RENDER, /writeScroll\(content, yNow - a\.y, "anchor-restore"\);/, "the anchor turn keeps its exact on-screen offset");
+  assert.match(RENDER, /writeScroll\(content, yNow - a\.y, "anchor-restore", false, from\);/, "the anchor turn keeps its exact on-screen offset, the write's origin the caller's pre-change read (round three, medium)");
 });
 
 // BY-ID landing only — NO time-based fallback anywhere (the user 2026-06-20, who wanted to shrink the 29%, then remove
@@ -133,10 +133,11 @@ test("the kind guard accepts a peer's postal card as a valid PROMPT target (reco
 
 test("the kind guard accepts a harness-injected record's notice card as a valid PROMPT target (a turn opened by a stamped prompt)", () => {
   // a scheduled task's fired prompt is origin-stamped, so its turn renders as a sourced notice (renderInjected →
-  // noticeCard's standalone .turn-notice), not .turn-user; a prompt-intent deep link into that turn was refused as
+  // notice()'s standalone .turn-notice), not .turn-user; a prompt-intent deep link into that turn was refused as
   // the wrong kind and died silently (review find, 2026-09-09, on #1099). An assistant turn is still refused.
   assert.match(RENDER, /pendingAnchorIntent === "user"\s+&& !target\.classList\.contains\("turn-user"\) && !target\.classList\.contains\("turn-postal-service"\)\s+&& !target\.classList\.contains\("turn-notice"\)\) \{/);
-  assert.match(RENDER, /el\("div", "turn turn-notice notice-" \+ o\.variant\)/, "the standalone notice turn wears the class the guard reads");
+  // 2026-09-08 (the notice-vocabulary pass): the one builder mints the standalone turn, severity-classed
+  assert.match(RENDER, /el\("div", "turn turn-notice notice-sev-" \+ sev \+ \(boxed \? " notice-boxed" : ""\)/, "the standalone notice turn wears the class the guard reads");
 });
 
 test("honest-fail fires whenever the deep-link can't resolve by id (the turn is genuinely gone)", () => {
@@ -161,7 +162,7 @@ test("a deep-link to an anchor OLDER than the resident tail fetches older histor
   // the helper stashes the TARGET uuid (not the current top row) so chatHead lands on it
   assert.match(RENDER, /function fetchOlderForAnchor\(sid: string, uuid: string\): boolean/);
   assert.match(RENDER, /pendingOlderAnchor\.set\(sid, uuid\)/);
-  assert.match(RENDER, /vscodeApi\?\.postMessage\(\{ type: "loadOlder", id: sid, before: s\.headFrom \}\)/);
+  assert.match(RENDER, /vscodeApi\?\.postMessage\(\{ type: "loadOlder", id: sid, before: s\.proto === 2 \? s\.firstUuid : s\.headFrom \}\)/);   // proto 2 anchors by uuid (T323 stage 4b)
   // the flag is reset at the start of each attempt so it can't leak a stale "fetching" state
   assert.match(RENDER, /anchorPendingOlder = false;\s+\/\/ fresh attempt/);
 });
@@ -172,8 +173,9 @@ test("a deep-link to an anchor OLDER than the resident tail fetches older histor
 test("timeline→chat glow matches turns BY UUID, not a ±2s time window (the user 2026-06-19)", () => {
   // applyGlow lights .turn[data-uuid] against the segment's atom uuids the kernel sends (kernel
   // _segment_atom_uuids); the old data-t range match was a flaky time heuristic and is gone.
-  assert.match(RENDER, /function applyGlow\(groups: Array<\{ sid: string; uuids: string\[\] \}>/);
-  assert.match(RENDER, /uset\.has\(n\.dataset\.uuid \|\| ""\)/, "glow matches by uuid set");
+  // (the group also carries idx/total since T318b, for the ruler's history strip; the uuid match is unchanged)
+  assert.match(RENDER, /function applyGlow\(groups: Array<\{ sid: string; uuids: string\[\]; idx\?: Record<string, number>; total\?: number \}>/);
+  assert.match(RENDER, /const u = n\.dataset\.uuid \|\| "";\s*if \(uset\.has\(u\)\)/, "glow matches by uuid set");
   assert.doesNotMatch(RENDER, /t >= s - 2 && t <= e \+ 2/, "the old ±2s data-t window match is gone");
 });
 

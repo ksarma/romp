@@ -47,10 +47,10 @@ test("release ordering: whichever measure clears LAST releases exactly once, in 
   assert.equal(paints, 1);
 });
 
-test("the shim's word: the union of both measures, published as a boolean on the host; unset until the first event (the probe's turn)", () => {
-  // The kernel's pane shim (kernel.py paneHidden) reads window.__rompPaneHidden when it is a boolean and falls back
-  // to its zero-viewport probe otherwise. The probe is right for a pane hidden since load and wrong for one hidden
-  // after a first show (the iframe keeps its size), so the gate, which sees both cases, publishes its word.
+test("the pane's hidden word: the union of both measures, published as a boolean on the host, on the gate's own events", () => {
+  // The kernel's pane shim gates its stale banner on paneHidden(), which reads its zero-viewport probe OR this word.
+  // The probe is right for a pane hidden since load and, in Chromium, wrong for one hidden after a first show (the
+  // iframe keeps its size), so the gate, which sees both cases, publishes what its two measures say.
   const w: PaneHiddenHost = {};
   assert.equal(typeof w.__rompPaneHidden, "undefined", "before the first event nothing is published: the shim's probe decides");
   assert.equal(publishPaneHidden(false, true, w), false, "visible tab, pane on screen");
@@ -62,25 +62,24 @@ test("the shim's word: the union of both measures, published as a boolean on the
   assert.equal(publishPaneHidden(false, true, w), false, "shown again: the word follows the event, no timer");
   for (const [d, i] of [[false, true], [false, false], [true, true], [true, false]] as const) {
     assert.equal(publishPaneHidden(d, i, w), paintHeld(d, i, true), "the word is the gate's own hold decision with content present");
-    assert.equal(typeof w.__rompPaneHidden, "boolean");
+    assert.equal(typeof w.__rompPaneHidden, "boolean", "a boolean, the type the shim tests for");
   }
 });
 
-test("the observer's word is null until it speaks: the paint gate reads null as on screen; the publisher publishes NOTHING for it (round 3)", () => {
+test("the observer's word is null until it speaks: the paint gate reads null as on screen, and the publisher publishes NOTHING for it", () => {
   // A page loaded in a background tab gets no IntersectionObserver callback until the tab's first rendering step
-  // after its return, so the return's visibilitychange ran before the observer's first word. With the word at a
-  // `true` default it published false for a pane that was display:none, one rendering step before the observer's
-  // entry corrected it, and the shim preferred that boolean over its probe (innerWidth 0, right). The word starts
-  // null now: for the paint that measure holds nothing (the first content painted through anyway), and the
-  // publisher stays silent, so the probe decides at boot, on both arms of visibilitychange.
+  // after its return, so the return's visibilitychange runs before the observer's first word. A word published then
+  // would be document.hidden alone, which says visible for a display:none pane. So the word starts null: for the
+  // paint that measure holds nothing (the first content painted through anyway), and the publisher stays silent, so
+  // the probe decides at boot, on both arms of visibilitychange.
   assert.equal(paintHeld(false, null, true), false, "unspoken observer, visible tab: the paint proceeds, as with the old true default");
-  assert.equal(paintHeld(true, null, true), true, "...the tab's hiding still holds it");
+  assert.equal(paintHeld(true, null, true), true, "the tab's hiding still holds it");
   assert.equal(paintHeld(false, null, false), false);
   assert.equal(paintReleased(true, false, null), true, "a return with the observer unspoken releases the owed paint");
   assert.equal(paintReleased(true, true, null), false);
   const w: PaneHiddenHost = {};
   assert.equal(publishPaneHidden(false, null, w), null, "the visible arm before the observer's word: nothing");
-  assert.equal(publishPaneHidden(true, null, w), null, "the hidden arm before it: nothing either (a page with no observer would otherwise read hidden for good)");
+  assert.equal(publishPaneHidden(true, null, w), null, "the hidden arm before it: nothing either (a page with no observer keeps the probe for good)");
   assert.equal(typeof w.__rompPaneHidden, "undefined", "unset: the shim's probe decides");
   assert.equal(publishPaneHidden(false, false, w), true, "the observer's first word publishes");
   assert.equal(publishPaneHidden(false, true, w), false);

@@ -10,6 +10,7 @@ order. All fixtures SYNTHETIC: invented text, placeholder UUIDs.
 """
 import contextlib
 import errno
+import io
 import json
 import os
 import shutil
@@ -27,7 +28,6 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
-os.environ["ROMP_TMUX_AVAILABLE"] = "1"
 os.environ["ROMP_SERVE_TOKEN"] = "testtok"
 em = load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
 jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
@@ -448,6 +448,69 @@ class ThreadProjection(CommentBase):
             km._views_dirty[0] = 0.0
             km._built_thread.clear()
 
+    def test_a_signature_that_raises_on_the_thread_path_is_said_once_per_episode(self):
+        """One of the signature's component reads raising for a thread: the fault is written to stderr with
+        its traceback and filed as one refused bell row naming the thread, ONCE per fault episode (the chat
+        loop's rule for the same signature); a build is attempted every frame and nothing is stored while
+        the key cannot be taken. The same fault the next frame says nothing, a different fault is a new
+        episode, a signature that is taken ends it, and the same fault after that is said anew."""
+        self._seed_thread()
+        km._built_thread.clear()
+        km._views_dirty[0] = 0.0
+        saved = (km._watch_awaiting, km.build_session, list(km._SYNC_NOTICES), dict(km._chat_sig_faults))
+        del km._SYNC_NOTICES[:]
+        km._chat_sig_faults.clear()
+        fail = ["synthetic: the watch rows cannot be read"]
+        orig, real = saved[0], saved[1]
+        calls = []
+
+        def watch(sid):
+            if sid == THREAD and fail[0]:
+                raise OSError(fail[0])
+            return orig(sid)
+
+        km._watch_awaiting = watch
+        km.build_session = lambda sid, now, tm=None, **kw: (calls.append(sid), real(sid, now, tm, **kw))[1]
+
+        head = "push build: chat signature %s" % THREAD[:8]
+        seen = []
+
+        def frame():
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                km._comments_frame(PARENT)
+            seen.append(err.getvalue())
+            return seen[-1].count(head)
+        try:
+            self.assertEqual(frame(), 1, "the first frame says it")
+            self.assertIn(head + ": Traceback (most recent call last)", seen[-1], "...with the traceback")
+            self.assertIn(fail[0], seen[-1], "...naming the fault")
+            self.assertEqual(frame(), 0, "the second frame, same fault: not again")
+            self.assertEqual(frame(), 0)
+            self.assertEqual(calls.count(THREAD), 3, "a build is attempted every frame while the key cannot be taken")
+            self.assertNotIn(THREAD, km._built_thread, "nothing is stored")
+            self.assertEqual(len(km._SYNC_NOTICES), 1, "one episode, one bell row")
+            self.assertIn("thread-x", km._SYNC_NOTICES[-1]["text"], "the row names the thread")
+            self.assertEqual(km._SYNC_NOTICES[-1].get("kind"), "refused")
+            fail[0] = "synthetic: a different fault on the same thread"
+            self.assertEqual(frame(), 1, "a different fault is a new episode")
+            self.assertEqual(len(km._SYNC_NOTICES), 2)
+            fail[0] = ""
+            self.assertEqual(frame(), 0)
+            self.assertNotIn(THREAD, km._chat_sig_faults, "a signature that is taken ends the episode")
+            self.assertIn(THREAD, km._built_thread, "...and the build is cached like any other")
+            fail[0] = "synthetic: the watch rows cannot be read"
+            self.assertEqual(frame(), 1, "the same fault after a success is a new episode, said anew")
+        finally:
+            km._watch_awaiting = orig
+            km.build_session = real
+            del km._SYNC_NOTICES[:]
+            km._SYNC_NOTICES.extend(saved[2])
+            km._chat_sig_faults.clear()
+            km._chat_sig_faults.update(saved[3])
+            km._views_dirty[0] = 0.0
+            km._built_thread.clear()
+
     def test_projection_starts_after_the_cut_and_strips_the_frame(self):
         self._seed_thread()
         msgs = km._thread_messages(THREAD, "a1")
@@ -858,6 +921,34 @@ class ThreadProjection(CommentBase):
                                             aline(t + 140, "Cap it at two minutes.", "ca2", parent="cu2")], state="")
             self.assertEqual(th["queued"], 0, "landed → not held")
             self.assertFalse(th["replyOwed"])
+        finally:
+            self._State.live = []
+
+    def test_a_slash_sends_echo_is_landed_by_its_wrapper_record(self):
+        # a slash or skill command typed into the composer: the CLI records it as a <command-name> wrapper
+        # (no verbatim copy of the typed text), which parses to "/deploy staging now" with one space where
+        # the sender typed a space and two newlines. The held count reads the landing off that record;
+        # before, the echo was held forever and the thread owed a reply that had already come. The record
+        # lands in the SAME second as the send: a strictly later human turn would read the echo as
+        # overtaken (a loss, not held) whatever its text, and this case is about the landing rule alone.
+        t = self.now - 500
+        self._seed_thread(seen=self.now)
+        recs = self._thread_side(aline(t + 120, "Jitter prevents thundering herds.", "ca1", parent="cu1"))
+        echo = {"type": "user", "author": "human", "t": t + 130, "uuid": "echo:1", "_echo_text": "/deploy \n\nstaging now"}
+        wrap = lambda args: ("<command-message>deploy</command-message>\n<command-name>/deploy</command-name>\n"
+                             "<command-args>%s</command-args>\n<skill-format>true</skill-format>" % args)
+        try:
+            self._State.live = [echo]
+            th = self._frame_thread(recs, state="")
+            self.assertEqual(th["queued"], 1, "held until its record lands")
+            th = self._frame_thread(recs + [uline(t + 130, wrap("staging now"), "cc1", parent="ca1", meta=True),
+                                            aline(t + 140, "Deploying staging now.", "ca2", parent="cc1")], state="")
+            self.assertEqual(th["queued"], 0, "the wrapper record is this send's landing")
+            self.assertFalse(th["replyOwed"])
+            self._State.live = [echo]
+            th = self._frame_thread(recs + [uline(t + 130, wrap("production now"), "cc1", parent="ca1", meta=True),
+                                            aline(t + 140, "Deploying production now.", "ca2", parent="cc1")], state="")
+            self.assertEqual(th["queued"], 1, "another command's record is not this send's landing")
         finally:
             self._State.live = []
 
@@ -1310,11 +1401,11 @@ class CommentOps(CommentBase):
         self._saved_sessions = km._sessions
         self._saved_reveal = km._reveal_chat_for
         self._saved_push_now = km._push_session_now
-        self._saved_tmux = km._tmux_sessions
+        self._saved_live_map = km._live_map
         km.Sessions.backend_for = staticmethod(lambda sid: self.be)
         km._sdk_ready = lambda: True
-        km._tmux_sessions = lambda: {}   # the create/promote doors' live snapshot (names reserved atomically) — never the box's tmux
-        p = self._write(PARENT, self._parent_records())
+        km._live_map = lambda: {}   # the create/promote doors' live snapshot (names reserved atomically) — never the machine's live sessions
+        p = self.parent_path = self._write(PARENT, self._parent_records())
         km._sessions = lambda now, window=None, forks=True: [
             {"sid": PARENT, "name": "parent", "path": str(p), "mtime": self.now}]
         km._reveal_chat_for = lambda client, msg: None
@@ -1326,7 +1417,7 @@ class CommentOps(CommentBase):
         km._sessions = self._saved_sessions
         km._reveal_chat_for = self._saved_reveal
         km._push_session_now = self._saved_push_now
-        km._tmux_sessions = self._saved_tmux
+        km._live_map = self._saved_live_map
         self._clear_defaults()   # the module shares one hermetic STATE — never leak across tests
         super().tearDown()
 
@@ -1356,6 +1447,38 @@ class CommentOps(CommentBase):
         row = km._comment_thread(PARENT, tid)
         self.assertEqual(row["status"], "open")
         self.assertEqual(row["anchorUuid"], "a1")
+
+    def _stub(self, name, value):
+        self.addCleanup(setattr, km, name, getattr(km, name))
+        setattr(km, name, value)
+
+    def test_a_parent_idle_past_the_discovery_window_still_takes_a_comment(self):
+        # the user 2026-09-14: a 4-day-idle session's popover said "no transcript for this session yet"
+        # while its chat rendered fine — _sessions' 48h horizon is caption/walk cost, not a permission.
+        # The door now resolves an SDK parent through its registry (cwd + lastSid) like build_session does.
+        km._sessions = lambda now, window=None, forks=True: []
+        self._stub("_sdk", lambda: type("Owner", (), {"owns": staticmethod(lambda sid: sid == PARENT)})())
+        real_reg = km._thread_reg
+        self._stub("_thread_reg", lambda sid: ({"name": "parent", "lastSid": PARENT, "cwd": str(Path(str(self.parent_path)).parent)}
+                                               if sid == PARENT else real_reg(sid)))
+        real_tpath = km._thread_transcript_path
+        self._stub("_thread_transcript_path",
+                   lambda reg, sid: str(self.parent_path) if sid == PARENT else real_tpath(reg, sid))
+        err, tid = km._comment_create(PARENT, "a1", "exponential backoff", "Why jitter at all?")
+        self.assertIsNone(err)
+        self.assertEqual([c[0] for c in self.be.calls], ["fork", "connect", "send"])
+        self.assertEqual(self.be.calls[0][3], "a1", "the cut resolved against the registry's transcript")
+        self.assertEqual(km._comment_thread(PARENT, tid)["name"], "parent-comment-1",
+                         "the default name still comes off the resolved row's name")
+
+    def test_a_parent_with_no_transcript_anywhere_is_still_refused(self):
+        km._sessions = lambda now, window=None, forks=True: []
+        self._stub("_sdk", lambda: None)
+        self._stub("_discover_wide", lambda now, window: {})
+        err, tid = km._comment_create(PARENT, "a1", "exponential backoff", "Why?")
+        self.assertIn("no transcript", err)
+        self.assertIsNone(tid)
+        self.assertEqual(self.be.calls, [])
 
     def test_threads_autoname_by_count_and_accept_an_edited_name(self):
         _, tid1 = km._comment_create(PARENT, "a1", "exponential backoff", "Why?")
@@ -1759,7 +1882,7 @@ class ForkCommentRoutes(CommentBase):
         self._saved_sessions = km._sessions
         self._saved_push_now = km._push_session_now
         km.Sessions.backend_for = staticmethod(lambda sid: self.be)
-        km.Sessions.live = staticmethod(lambda: {})   # hermetic: never consult the box's real tmux
+        km.Sessions.live = staticmethod(lambda: {})   # hermetic: never consult the machine's live sessions
         km._sdk_ready = lambda: True
         # km.NAMES is bound at import (module-scope constant) — _rebind_state moves only jd's copy,
         # so _name_of would read the import-time root and miss the per-test registry entry
@@ -1835,10 +1958,10 @@ class ForkCommentRoutes(CommentBase):
         res = km._fork_comment_request({"name": "no-such-session", "text": self.OPENER})
         self.assertEqual(res["_status"], 404)
         self.assertIn("no session named", res["error"])
-        km.Sessions.backend_for = staticmethod(lambda sid: object())   # tmux: no fork machinery
+        km.Sessions.backend_for = staticmethod(lambda sid: object())   # a backend with no fork machinery (the unowned route's shape)
         res = km._fork_comment_request({"id": PARENT, "text": self.OPENER})
         self.assertNotIn("_status", res)
-        self.assertIn("tmux", res["error"])
+        self.assertIn("another backend", res["error"])
 
     def test_fork_comment_holds_the_postal_isolation_gate(self):
         saved_shaped, saved_iso = km._postal_shaped, km._postal_isolated

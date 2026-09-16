@@ -15,20 +15,8 @@ import { adoptArrivals, applyViewOrder, applyViewOrderTo, churnSwaps, healOrder,
          readViewOrder, writeViewOrder, VIEW_ORDER_KEY, VIEW_ORDER_EVENT } from "./view-order";
 import { applyFeedDelta } from "./feed-delta";
 import { adoptViews, capsAdopts, announcedSeq, announcedAfter } from "./views-writes";
-import { hostOf, bareId } from "./host-prefix";
+import { hostOf, bareId, hostDialLive } from "./host-prefix";
 import { installPerfTelemetry, classifyFrame, type RompPerf } from "./perf-telemetry";
-
-/** The page's performance collector (ui/webview/perf-telemetry.ts), installed on every kernel page, the Files
- *  pane included. That pane gets no frames pushed to it (its content is fetched on demand), so it used to get no
- *  collector either; but its viewer's paint pass over a large reviewed file is the dashboard's costliest
- *  main-thread work (a divider drag with a big note open blocked for about 20 s on 2026-09-09, and no pane
- *  recorded a long frame), and the viewer times that pass through this collector as `fileview:<why>`
- *  (file-view.ts perfTimed), so the row carries the pass cost, the free sample after it, the long frames
- *  the pane's own observer sees, and the socket's op replies (`fed:<type>`) as on every pane. start() installs through this; exported so the test can check the decision
- *  without start()'s timers. */
-export function perfCollectorFor(app: string): RompPerf | null {
-  return installPerfTelemetry(app);
-}
 
 export const SEP = ":";
 export const LOCAL = ""; // the local kernel's host key — no prefix, so the single-kernel path is untouched
@@ -96,9 +84,64 @@ const KERNEL_SETTING = new Set(["setAutoNudge", "setJudgeModel", "setIndexModel"
                                 "setJudgeEffort", "setIndexEffort", "setUpdateMode",
                                 "setJudgeConcurrency",   // T277: the judges' pool width, one value across machines
                                 "setDistillModel", "setDistillEffort", "setFileEditing",
-                                "setCompactSuggest",
+                                "setCompactSuggest", "setTaskTracking",   // T404: the master switch, one value across machines
                                 "setCommentModel", "setCommentEffort", "setCommentFast",
-                                "setTmuxBackend"]);   // T288: the tmux backend's offer, one value across machines
+                                "setJudgeFast", "setDistillFast", "setIndexFast"]);   // Fast mode per judge tier, one value across machines
+
+// ── what a send to a host whose relay socket is NOT open does, by message class (2026-09-10) ─────────
+// Three classes, decided by an EXPLICIT list — never guessed from the type's spelling at run time:
+// - a KERNEL_SETTING (above) queues on the conn, latest per type, and flushes on the socket's open;
+// - the pane's own BOOKKEEPING (this map) queues the same way, latest per KEY, and never toasts. These
+//   are messages the pane emits on its own — a hint, a fetch it dedupes itself, a read watermark, a
+//   metric row, a pointer position — so the user made no gesture that this message is the outcome of,
+//   and a toast about it names a message they never sent (the user 2026-09-10: on the phone, a fresh
+//   page whose active tab was a remote session posted activeTab before the relay socket to that host had
+//   opened, and the tap they had just made, which had in fact worked, was answered with a warning that
+//   "activeTab" was not delivered). HELD rather than dropped because the drop is what gagged the pane:
+//   needFull's awaitingFull, imgRequest's imgRequested, loadEpisode's episodePendingKey and loadOlder's
+//   loadingOlder each hold their re-ask until a reply lands, and a dead socket's never does;
+// - everything else is a GESTURE — the message IS the action (sendMessage, createSession, renameSession,
+//   askClear, a tag edit…) and the remote kernel doing it is the whole point, so a drop is said to the
+//   user (dropWarn's toast) and never replayed later (a stale action can be worse than a dropped one).
+//   An UNKNOWN type takes this arm too: a toast about a message that did not matter costs a glance; a
+//   silent drop of one that did loses the thread.
+// The value is the queue KEY, so "latest wins per key" mirrors the settings queue's per-type dedupe with
+// the granularity each message needs: one active tab per pane, so activeTab keys by type alone and the
+// newest supersedes; a fetch keys by what it fetches, so asks for two sessions both stand (a type-only
+// key would flush one and leave the other's pane-side dedupe holding forever); a pointer position keys
+// by type, since only the newest means anything and a leave clears; a metric or audit row keys by type,
+// so a long outage holds one row and not an unbounded backlog — a row lost to an outage is a metric,
+// never a gesture. A key function may answer null for an INSTANCE that is a gesture after all: the
+// feed's showAskPath is the card hover's glow, but with `jump` it is the click that lands the chat on
+// that card, and a jump minutes later would put the user somewhere they no longer asked to be.
+const K = "\u001f";   // the key separator: a control character no session id, path or slot name contains
+export const BOOKKEEPING: ReadonlyMap<string, (m: any) => string | null> = new Map<string, (m: any) => string | null>([
+  ["activeTab",      ()  => "activeTab"],                          // render.ts notifyActive: the tab this pane is looking at
+  ["needFull",       (m) => "needFull" + K + m.id],                // render.ts requestFullSession: a session's re-send (gap / nobase / skeleton / prefetch)
+  ["needSlot",       (m) => "needSlot" + K + m.slot],              // fleet.ts: a view slot's re-send after a rejected delta
+  ["loadOlder",      (m) => "loadOlder" + K + m.id],               // render.ts: the head's older page on a scroll-up or a deep link into it
+  ["loadAround",     (m) => "loadAround" + K + m.id],              // render.ts: a window around a deep-link anchor past the resident list (proto 2)
+  ["loadTurns",      (m) => "loadTurns" + K + m.id + K + m.lo + K + m.hi],   // render.ts requestTurns: a gap's page by turn span (T386 stage 2); flushed on the open like loadOlder, one per span
+  ["loadEpisode",    (m) => "loadEpisode" + K + m.id],             // render.ts noticeOpened: a clear notice's conversation on first expand
+  ["imgRequest",     (m) => "imgRequest" + K + m.id + K + m.path], // render.ts: an inline image's bytes, asked on render
+  ["commentSeen",    (m) => "commentSeen" + K + m.id + K + m.tid], // render.ts: a thread's read watermark as its popover opens or a reply lands in it
+  ["dotHover",       ()  => "dotHover"],                           // render.ts: the chat's hovered dot (a bare dotHover is the leave)
+  ["hoverHighlight", ()  => "hoverHighlight"],                     // feed.ts: the hovered card's rows on the timeline
+  ["showAskPath",    (m) => (m.jump ? null : "showAskPath")],      // feed.ts: the hovered / pinned card's path glow (`off` clears); `jump` is the click
+  ["timelineHover",  ()  => "timelineHover"],                      // timeline-boot.ts: the hovered lane segment (`off` clears, broadcast)
+  ["dirComplete",    ()  => "dirComplete"],                        // render.ts: the + picker's typed-ahead path query (its reply carries reqId; a stale one is dropped there)
+  ["cardOpened",     ()  => "cardOpened"],                         // feed.ts: the open-metric row
+  ["locateDiag",     ()  => "locateDiag"],                         // render.ts: a chat landing attempt's audit row
+  ["orderAudit",     ()  => "orderAudit"],                         // render.ts auditTabOrder: a tab-order permutation's audit row
+]);
+
+/** The key a held bookkeeping message dedupes under on the conn's queue, or null when the message is a
+ *  gesture (an instance the list's function declines, a type not listed, or no type at all): the loud arm. */
+export function bookkeepingKey(msg: any): string | null {
+  if (!msg || typeof msg !== "object" || typeof msg.type !== "string") return null;
+  const f = BOOKKEEPING.get(msg.type);
+  return f ? f(msg) : null;
+}
 
 /** Return a COPY of an inbound message with every session-id field prefixed by `host`. The local host
  *  ("") is the identity transform, so local messages are untouched. Unknown fields pass through. */
@@ -298,6 +341,12 @@ export function stripHost(host: string, id: string): string {
 export function routeOutbound(msg: any, knownHosts?: ReadonlySet<string>): Route[] {
   if (!msg || typeof msg !== "object") return [{ host: LOCAL, msg }];
 
+  // redial ALWAYS stays LOCAL, `host` INTACT: it asks the kernel THIS page talks to for a fresh dial of its
+  // tunnel to `host` (the composer's refusal on a downed host, render.ts). The explicit-host rule below
+  // carried it to that very host — down, so it dropped with a toast about "redial" on top of the refusal's
+  // own copy — with the field stripped, which the kernel's handler requires (2026-09-10).
+  if (msg.type === "redial") return [{ host: LOCAL, msg }];
+
   // an explicit `host` field wins (the + modal's createSession picks the target kernel): route there with
   // the field stripped — the kernel's handlers are host-blind.
   if (typeof msg.host === "string") {
@@ -350,6 +399,16 @@ export function routeOutbound(msg: any, knownHosts?: ReadonlySet<string>): Route
   // local kernel needs the host prefix INTACT to know which remote machine to SSH into instead of treating
   // the path as local (see bin/romp-kernel's openFolder handler + _split_host_id).
   if (msg.type === "openFolder") return [{ host: LOCAL, msg }];
+
+  // activeTab (render.ts notifyActive) goes to the owning host AND, for a remote session, to the LOCAL kernel
+  // with the id left prefixed (T347): the local kernel records each window's active tab for its feed pane's
+  // focused-session section, and the section names cards by the merged board's prefixed ids, so a remote
+  // session's focus must reach the local record as "host:sid". The owning host still gets the bare id it
+  // builds and streams first, as before. A local session takes the one local route below.
+  if (msg.type === "activeTab" && typeof msg.id === "string") {
+    const h = hostOf(msg.id);
+    if (h && h !== LOCAL) return [{ host: h, msg: { ...msg, id: stripHost(h, msg.id) } }, { host: LOCAL, msg }];
+  }
 
   // a scalar session id picks the owning host.
   let host = LOCAL;
@@ -425,8 +484,12 @@ export function mergeHostOrder(perHost: Record<string, readonly string[]>, hostS
  *  Absent `arrivedAt` (a caller with no wire), no `nowAt` is set and the pane anchors on its own arrival. */
 /** Apply the viewer's foreign cleared ids (bare, from the local payload) over REMOTE rows of a merged feed:
  *  remote asks/items they name are dropped; remote archived tops they name read cleared, rolled down to the
- *  subtree (the live tree's top-only cross-off). Rewrites `merged.asks`/`merged.items` and each remote ledger
- *  entry's archivedTops with fresh row objects; the host payloads' own rows are not mutated. No-op without ids. */
+ *  subtree (the live tree's top-only cross-off), except a cleared top whose only completion is the copied
+ *  status, which leaves the list with its subtree, as the owning kernel's overlay (_ledger_cleared_overlay)
+ *  drops it: a cleared flag rolls up to status cleared, so a copied "completed" beside a clear is a stale copy,
+ *  not a completion. A top with its own verdict (`derived` false) or a takeaway (a non-blank `summary`) stays
+ *  listed and reads cleared. Rewrites `merged.asks`/`merged.items` and each remote ledger entry's archivedTops
+ *  with fresh row objects; the host payloads' own rows are not mutated. No-op without ids. */
 export function applyViewerClears(merged: any, ledgers: any[], clearedForeign: any): void {
   const foreign = new Set<string>(Array.isArray(clearedForeign) ? clearedForeign.filter((x: any) => typeof x === "string") : []);
   if (!foreign.size) return;
@@ -441,14 +504,23 @@ export function applyViewerClears(merged: any, ledgers: any[], clearedForeign: a
     if (!l || !remote(l.sid)) return;
     const tops = l.ledger?.archivedTops;
     if (!Array.isArray(tops) || !tops.length) return;
-    let rootCleared = false, changed = false;
-    const out = tops.map((n: any) => {
-      if (n?.depth === 0) rootCleared = !!n.cleared || (typeof n.id === "string" && foreign.has(n.id));
+    let rootCleared = false, drop = false, changed = false;
+    const out: any[] = [];
+    for (const n of tops) {
+      if (n?.depth === 0) {
+        rootCleared = !!n.cleared || (typeof n.id === "string" && foreign.has(n.id));
+        // The owning kernel's rule, read from the same projection fields: at depth 0 `derived` means the copied
+        // status or a summary, never an ancestor (a root has none), so derived with a blank summary is a root
+        // whose only completion is the copied status. Cleared, it is dropped rather than marked; the viewer's
+        // ids stand in for the rows the owning kernel's own overlay would have read, so the outcome matches.
+        drop = rootCleared && !!n.derived && !String(n.summary || "").trim();
+      }
+      if (drop) { changed = true; continue; }   // a dropped root's descendants follow it in the flat list; they go with it
       const c = !!n?.cleared || (typeof n?.id === "string" && foreign.has(n.id)) || (n?.depth !== 0 && rootCleared);
-      if (c === !!n?.cleared) return n;
+      if (c === !!n?.cleared) { out.push(n); continue; }
       changed = true;
-      return { ...n, cleared: c };
-    });
+      out.push({ ...n, cleared: c });
+    }
     // a fresh ENTRY too, never the host payload's own object: the merge pushed those by reference
     if (changed) ledgers[i] = { ...l, ledger: { ...l.ledger, archivedTops: out } };
   });
@@ -456,7 +528,7 @@ export function applyViewerClears(merged: any, ledgers: any[], clearedForeign: a
 
 export function mergeHostFeeds(perHost: Record<string, any>, hostSeq: readonly string[],
                                view: readonly string[] = [], deadHosts: readonly string[] = [],
-                               arrivedAt: Record<string, number> = {}): any {
+                               arrivedAt: Record<string, number> = {}, hostsRead = true): any {
   const local = perHost[LOCAL] || {};
   const merged: any = { ...local, type: "feed", items: [], asks: [], working: [], awaiting: [], stateUnknown: [], order: [], sessions: [], userTodos: {} };
   let anchor = typeof local.now === "number" ? LOCAL : null;
@@ -498,10 +570,18 @@ export function mergeHostFeeds(perHost: Record<string, any>, hostSeq: readonly s
   // of uptime, "outranked" the remote ack's small post-restart buildId on the first merged emission,
   // dropping the prediction while the cached remote frame still predated the reopen).
   const buildIds: Record<string, number> = {};
+  // The Task tracking switch (T404 round six): a host whose frame is the switch's stand-in (off, no cards built) is
+  // NAMED here beside its counter. `merged.off` stays the local kernel's word (the spread above), so the notice and
+  // the gear row agree, both reading the kernel this dashboard belongs to; a remote host's off frame contributes no
+  // cards while the local frame is a normal one, and without this list the pane would read that host's cards as
+  // gone and drop their seen marks by absence. The mesh converges the switch across hosts on the supervisor's
+  // steady pass, so a mixed state is a short one; the pane keeps every card mark while any host is named here.
+  const offHosts: string[] = [];
   for (const h of hostSeq) {
     const f = perHost[h];
     if (!f) continue;
     if (typeof f.buildId === "number") buildIds[h] = f.buildId;
+    if (f.off === true) offHosts.push(h);
     if (Array.isArray(f.syncNotices)) {
       for (const r of f.syncNotices) {
         if (!r || !r.sig) continue;
@@ -532,8 +612,11 @@ export function mergeHostFeeds(perHost: Record<string, any>, hostSeq: readonly s
   // gesture taken while the owner was unreachable, a ledger copied between machines, an older client). The
   // local payload carries those ids (kernel: clearedForeign, bare); a remote ask or item they name is
   // dropped, and a remote archived top they name reads cleared, its subtree with it, exactly as the owning
-  // kernel's own overlay would have read them. Local rows are untouched: the local kernel already applied
-  // its ledger to them.
+  // kernel's own overlay would have read them: a cleared top whose only completion is the copied status
+  // leaves the list with its subtree (the kernel's _ledger_cleared_overlay drops it, since a cleared flag
+  // rolls up to status cleared and the copied "completed" is a stale copy); one with its own verdict or a
+  // takeaway stays listed, struck through. Local rows are untouched: the local kernel already applied its
+  // ledger to them.
   applyViewerClears(merged, ledgers, local.clearedForeign);
   if (anyLedgers) merged.ledgers = ledgers;
   else delete merged.ledgers;
@@ -546,6 +629,7 @@ export function mergeHostFeeds(perHost: Record<string, any>, hostSeq: readonly s
   if (syncs.length) merged.syncNotices = syncs;
   else delete merged.syncNotices;
   merged.buildIds = buildIds;
+  merged.offHosts = offHosts;
   // Hosts ATTACHED but yet to contribute a feed payload (the user 2026-08-25: after attaching, the
   // sessions land via the faster tabOrder/timeline channels while the cards trail with no cue) —
   // the sessions-shown/cards-pending window, named per host so the board can say cards are coming.
@@ -557,6 +641,14 @@ export function mergeHostFeeds(perHost: Record<string, any>, hostSeq: readonly s
   // THAT instead of an open-ended wait — the fail-loudly rule; still retired only by the real
   // events (a payload arriving, or the detach dropping the host from hostSeq).
   merged.pendingDead = merged.pendingHosts.filter((h: string) => deadHosts.includes(h));
+  // The host list itself may not be in hand yet (T404 round nine): a page load's FIRST merged frame is built when the
+  // local kernel's push lands on its open socket, before the first /tunnels answer has put any remote host in
+  // hostSeq, so offHosts and pendingHosts are both empty and read as "every card in hand". Until the manager has
+  // absorbed one answer the frame says so, and the pane's absence-driven writers stand down for it exactly as for
+  // an off or pending host (frameCardsUnknown); the local host's cards still show and still ring. The manager
+  // re-emits the moment the first answer lands, so the wait is the answer's, not a push's.
+  if (!hostsRead) merged.hostsUnread = true;
+  else delete merged.hostsUnread;
   return merged;
 }
 
@@ -795,16 +887,29 @@ interface Conn {
   lastRecv: number; // epoch ms of the last frame on the CURRENT socket (keepalives count); 0 = none yet
   resumeProvisional: number; // the `resume` stamp lastRecv rests on until a frame confirms it (the watchdog runs at REMOTE_PROVISIONAL_MS meanwhile); 0 = confirmed, or no stamp
   connT: number;    // when the current socket's connect() attempt started — the watchdog's reference point
-  // KERNEL_SETTING messages that arrived while this host's socket was down, newest per type only —
-  // flushed on the socket's open event (sendRemote/flushPending). Bounded by construction: at most
-  // one entry per setting type. Lives on the CONN, not the socket, so it survives every re-dial —
-  // the onclose retry, the poll's, and the liveness watchdog's abandon-and-dial (watchdog()).
+  everOpened?: boolean; // a socket for this conn has reached `open` at least once (the shim's everConnected)
+  readyAcked?: boolean; // the remote answered this page's `ready` with a `caps` frame at least once (the shim's readyAcked): the redial gate's latch that the remote served this page whole and holds its sessions
+  dialedReconnect?: boolean; // the CURRENT socket was dialed with reconnect=1, so its open must post NO `ready`: the redial's dial term IS the handshake, and a `ready` would make the remote's ready reset pop `reconnect` and serve the whole board (the shim posts no ready on a redial for the same reason)
+  // KERNEL_SETTING messages (newest per type) and the pane's own BOOKKEEPING (newest per key, see
+  // BOOKKEEPING) that arrived while this host's socket was down — flushed on the socket's open event
+  // (sendRemote/flushPending). Bounded by construction: one entry per setting type, per bookkeeping
+  // key. Lives on the CONN, not the socket, so it survives every re-dial — the onclose retry, the
+  // poll's, and the liveness watchdog's abandon-and-dial (watchdog()).
   pending: Map<string, any>;
+}
+
+/** The TYPES held on a conn's queue, for the hostconn rows (flush-halt's `held`, detach's `pendingDropped`):
+ *  a bookkeeping key carries the sid it is per, and the journal names what, not which. */
+function pendingTypes(c: Conn): string[] {
+  return [...c.pending.values()].map((m) => (m && typeof m.type === "string" ? m.type : ""));
 }
 
 export class FederationManager {
   app = "chat";
+  private iidFallback = "";   // a stable per-page prefix for the remote iid when this dashboard has no wid, so the iid a hub pane sends is NEVER bare (a bare iid equal to a remote's own local page retires that page's socket): iidNamespace()
+  private lastActiveRemote = "";   // the remote host the last activeTab named (or "" for a local tab): when the active moves OFF it, that host is told a clear, or it keeps building the tab nobody watches first (outbound)
   private conns = new Map<string, Conn>();
+  private pageProto: number | null = null;   // the chat protocol the page's ready declared (2), told to every remote kernel's socket
   private frozeAt = 0;   // the Page Lifecycle `freeze` before the current thaw: a socket already overdue at that moment is not stamped by resumed()
   private perHostOrder: Record<string, string[]> = {};
   private perHostTabs: Record<string, any[]> = {};
@@ -830,15 +935,22 @@ export class FederationManager {
   private perHostTlBars: Record<string, any> = {}; // last timeline {type:"bars"} detail per host
   private tlBarsHeld = false; // a bars emission waited for the LOCAL lanes skeleton: their arrival emits it (emitMergedTimeline)
   private hostSeq: string[] = [LOCAL]; // local first, then attach order — fixes the group order in the strip
+  // false until the first /tunnels answer is absorbed (poll): before it, hostSeq is the local host alone and says
+  // nothing about which remote hosts exist, so a merged frame built then is flagged hostsUnread (T404 round nine)
+  private hostsRead = false;
+  // a /tunnels poll that fails leaves hostsRead standing and the pane's absence-driven writers standing down; that
+  // spell is filed once (a hostconn crumb) and its end once, so a browser whose prunes never resume says why
+  private pollFailing = false;
   private downHosts = new Set<string>(); // attached, but its tunnel isn't up: what's on screen is a memory
+  private dialingHosts = new Set<string>(); // the kernel is dialing or health-checking these right now (the row's `dialing`)
   // each host's recovery counter as last seen (/tunnels upSeq, T291b): the kernel bumps it when a row that had
   // missed polls answers again, so a link that failed a request while its status never left "up" still has a
   // recovery event; a change is treated as that host coming back (hostUp). A first observation is not a bump.
   private upSeq = new Map<string, number>();
   private lastSeen: Record<string, number> = {}; // host -> epoch secs of its last `up` poll
-  // the page's performance collector (ui/webview/perf-telemetry.ts), set by start() on pages the kernel pushes
-  // frames to; inbound() times its own merge and dispatch through it as fed:<type>, nested outside the pane's
-  // handler. Public so a test can hand it a stand-in.
+  // the page's performance collector (ui/webview/perf-telemetry.ts), set by start(); inbound() times its own
+  // merge and dispatch through it as fed:<type>, nested outside the pane's handler. Public so a test can hand
+  // it a stand-in.
   perf: RompPerf | null = null;
   // The pane's frame handlers, registered through onFrame (window.__rompFed.onFrame): the merged frames this
   // layer emits reach them by direct call, never as a window "message" event. See emit() for why.
@@ -890,7 +1002,7 @@ export class FederationManager {
     // the page's performance collector (perf-telemetry.ts), published as window.__rompPerf: the pane bundle
     // installs its own on load, but the kernel-served timeline page has no bundle beyond this one, and its
     // inline boot (kernel.py _TIMELINE_BOOT) wraps its message listener through the window slot
-    this.perf = perfCollectorFor(this.app);
+    this.perf = installPerfTelemetry(this.app);
     w.__rompFed = {
       inbound: (h: string, m: any) => this.inbound(h, m),
       outbound: (m: any) => this.outbound(m),
@@ -907,6 +1019,10 @@ export class FederationManager {
       // panel says "loading sessions…" from the same set
       pending: () => this.pendingFor(),
       lastSeen: (h: string) => this.lastSeen[h] || 0,
+      // is a dial attempt to this host in flight right now? The host-down notice's swirl spins on exactly
+      // this (host-prefix.ts hostDialLive: the socket's CONNECTING state), and romp:hostDial below says
+      // when it changes — on the dial, the open and the close, never on a timer
+      dialing: (h: string) => { const c = this.conns.get(h); return hostDialLive(this.dialingHosts.has(h), c && c.ws ? c.ws.readyState : null); },
     };
     // A drag in ANY pane rewrites the arrangement; every other pane hears it through `storage` (which fires
     // only in other same-origin contexts) and this one through the writer's own CustomEvent. Both land here,
@@ -1002,6 +1118,7 @@ export class FederationManager {
         dead.onopen = dead.onmessage = dead.onclose = dead.onerror = null;
         try { dead.close(); } catch (e) { /* already dying */ }
         c.ws = null;
+        this.dialEvent(c.host, false);   // its onclose is detached above, so the attempt's end is said HERE (the swirl must not spin on a dead dial)
         this.connect(c);   // settings queued on the conn meanwhile ride the fresh socket's open (flushPending)
       } else if (v === "redial") {
         this.connect(c);
@@ -1194,7 +1311,7 @@ export class FederationManager {
     }
     this.publishPending();
     const dead = this.deadHosts();
-    this.emit(mergeHostFeeds(this.perHostFeed, this.hostSeq, this.view(), dead, this.perHostFeedAt));
+    this.emit(mergeHostFeeds(this.perHostFeed, this.hostSeq, this.view(), dead, this.perHostFeedAt, this.hostsRead));
   }
 
   // the hosts whose link is DOWN right now (this manager knows its sockets) — the merges' pendingDead input
@@ -1265,10 +1382,17 @@ export class FederationManager {
   // tabOrder push mutates the store, in absorbHostReport below, because only a host's own report is
   // evidence about what exists.
   private emitMergedOrder(fresh = false, freshHost: string = LOCAL): void {
+    this.publishPending();   // before the hold, as emitMergedTimeline does: a pane waiting on its LOCAL strip is waiting on the remotes too
+    // HOLD a synthetic re-emission until the LOCAL kernel's strip is in the store — the hold emitMergedTimeline applies to
+    // its own payload. A re-emission is re-served from the stored slices, and on a fresh page those are EMPTY until the
+    // local strip is absorbed: the merged order would be [], which the chat reads as the board (the vanishing tab, the
+    // user 2026-09-12: another pane's view-order write reached a new chat column's manager in that window, the column
+    // reported its one member gone and the shell closed it). The local kernel pushes its strip on connect, so the hold is
+    // momentary, and the local arrival itself emits; a host's own FRESH push is never held — its ids are its word.
+    if (!fresh && !(LOCAL in this.perHostOrder)) return;
     const order = mergeHostOrder(this.perHostOrder, this.hostSeq, this.view());
     const tabs = this.hostSeq.flatMap((h) => this.perHostTabs[h] || []);
     const live = this.hostSeq.flatMap((h) => this.perHostLive[h] || []);   // T258: the union the pane's omission guard reads
-    this.publishPending();
     // `skeleton` rides EVERY merged strip, an array even when empty: the pane's rule is "array → replace,
     // absent → keep", and this frame is the union of every host's slice — the authority the pane must
     // replace from. Leaving the key off an empty union would tell the pane "no news" and let a set the
@@ -1313,6 +1437,7 @@ export class FederationManager {
     const reporting = new Set(Object.keys(this.perHostOrder));
     const live = new Set<string>();
     for (const h of reporting) for (const id of this.perHostOrder[h] || []) live.add(id);
+    for (const h of reporting) for (const id of this.perHostLive[h] || []) live.add(id);   // T258: an id the host affirms live but this strip omits stays placed — a transient read failure must not drop it from the arrangement to re-adopt it at the end
     const seed: string[] = [];
     for (const h of this.hostSeq) seed.push(...(this.perHostOrder[h] || []));
     const next = adoptArrivals(pruneViewOrder(healed, hostOf, reporting, live), seed);
@@ -1333,6 +1458,29 @@ export class FederationManager {
       this.lastClearHosts = [LOCAL];
       for (const h of hosts) this.sendTo(h, m);
       return;
+    }
+    if (m && m.type === "ready") {
+      // the page's ready goes to the local kernel; its protocol is remembered for every remote socket (sent on each
+      // open, above) and told now to the ones already open
+      this.pageProto = m.proto === 2 ? 2 : 1;
+      // told whatever the page speaks, the index wire included: a kernel that serves no chat frame before the handshake
+      // (T386 stage 2) would otherwise serve an index page's remote socket nothing (the follow-up after PR 1584, low 2).
+      // NOT to a REDIAL socket (dialedReconnect): a ready there would clear its diet the same way onopen's would (the
+      // symmetry hole is unreachable today, the page posts ready once per renderer life, but the guard closes it).
+      for (const c of this.conns.values()) {
+        if (c.ws && c.ws.readyState === 1 && !c.dialedReconnect) { try { c.ws.send(JSON.stringify({ type: "ready", proto: this.pageProto })); } catch (e) { /* the socket's own close says */ } }
+      }
+    }
+    // When the active tab moves OFF a remote host (to a local tab, or another host's), tell the OLD host so it
+    // stops building the tab nobody is watching first: its client.active would otherwise keep the departed sid
+    // (routeOutbound sends the new activeTab to the NEW owner and the local kernel, never the old one). id "" clears
+    // the kernel's client.active (kernel.py _dispatch_ws activeTab). (2026-09-15, low.)
+    if (m && m.type === "activeTab" && typeof m.id === "string") {
+      const nowHost = hostOf(m.id);
+      if (this.lastActiveRemote && this.lastActiveRemote !== nowHost && this.conns.has(this.lastActiveRemote)) {
+        this.sendRemote(this.lastActiveRemote, { type: "activeTab", id: "" });
+      }
+      this.lastActiveRemote = nowHost;
     }
     const routes = routeOutbound(m, new Set(this.hostSeq.filter((h) => h !== LOCAL)));
     if (m && (m.type === "askClear" || m.type === "askClearMany" || m.type === "clearAll")) {
@@ -1366,9 +1514,12 @@ export class FederationManager {
   //   time, which would forge freshness onto an hours-old pick. Queueing is journaled (`sendqueue`),
   //   so a later disagreement between machines is attributable to this tab holding the pick while
   //   the host was down, and to the older pick of the same type it replaced;
-  // - anything else keeps its behavior (replaying an arbitrary action minutes later can be worse
-  //   than dropping it — a deliberate non-goal) but the drop lands a client-diag breadcrumb naming
-  //   the type and host, beside the existing warn toast: a drop is never silent.
+  // - the pane's own BOOKKEEPING (the BOOKKEEPING list, above) holds the same way, latest per key, and
+  //   never toasts: the user sent nothing for a toast to be about (2026-09-10);
+  // - anything else — a GESTURE, or an unknown type — keeps its behavior (replaying an arbitrary action
+  //   minutes later can be worse than dropping it — a deliberate non-goal) but the drop lands a
+  //   client-diag breadcrumb naming the type and host, beside the existing warn toast: a drop is never
+  //   silent.
   private sendRemote(host: string, msg: any): void {
     const c = this.conns.get(host);
     if (c && c.ws && c.ws.readyState === 1) {
@@ -1385,6 +1536,18 @@ export class FederationManager {
       this.diag("sendqueue", { host, msgType: msg.type, gt: typeof msg.gt === "number" ? msg.gt : 0,
                                rs: c.ws ? c.ws.readyState : -1,
                                ...(prev ? { superseded: typeof prev.gt === "number" ? prev.gt : true } : {}) });
+      return;
+    }
+    const key = bookkeepingKey(msg);
+    if (key !== null) {
+      // the pane's own bookkeeping (BOOKKEEPING): held for the open, never toasted — the user sent
+      // nothing for a toast to be about. A host this page holds no conn for (known from a frame, never
+      // dialed, or detached since) has nothing to hold it on: dropped with the breadcrumb alone. Journaled
+      // once per KEY, at the not-held → held transition, in the hostconn family: a hover held per pointer
+      // move would otherwise write a row per move; the open row names everything that flushed.
+      if (!c) { this.diag("senddrop", { host, msgType: msg.type, why: "no-conn" }); return; }
+      if (!c.pending.has(key)) this.diag("hostconn", { host, ev: "hold", msgType: msg.type, rs: c.ws ? c.ws.readyState : -1 });
+      c.pending.set(key, msg);
       return;
     }
     this.diag("senddrop", { host, msgType: (msg && msg.type) || "" });
@@ -1406,22 +1569,24 @@ export class FederationManager {
   private flushPending(conn: Conn): string[] {
     if (!conn.pending.size || !conn.ws || conn.ws.readyState !== 1) return [];
     const flushed: string[] = [];
-    for (const [t, m] of conn.pending) {   // deleting the current entry mid-iteration is spec-safe on a Map
+    for (const [k, m] of conn.pending) {   // deleting the current entry mid-iteration is spec-safe on a Map
       try {
         conn.ws.send(JSON.stringify(m));
       } catch (e) {
-        this.diag("hostconn", { host: conn.host, ev: "flush-halt", flushed: [...flushed], held: [...conn.pending.keys()] });
+        this.diag("hostconn", { host: conn.host, ev: "flush-halt", flushed: [...flushed], held: pendingTypes(conn) });
         break;
       }
-      conn.pending.delete(t);
-      flushed.push(t);
+      conn.pending.delete(k);
+      flushed.push(m && typeof m.type === "string" ? m.type : k);   // by TYPE: a bookkeeping key carries the sid it is per
     }
     return flushed;
   }
 
-  // A route to a host whose socket isn't open would otherwise VANISH — creating a session on an
+  // A GESTURE routed to a host whose socket isn't open would otherwise VANISH — creating a session on an
   // unreachable remote gave no feedback at all (the user 2026-07-10). Surface the drop as a local
   // `warn` (render.ts toasts it), naming the host and the action so the user knows what didn't land.
+  // Only for a gesture: the pane's own bookkeeping is held instead (BOOKKEEPING), since a toast about a
+  // message the user never sent reads as a failure of the tap they did make (2026-09-10).
   private dropWarn(host: string, msg: any): void {
     window.dispatchEvent(new MessageEvent("message", { data: { type: "warn",
       text: `${host} is unreachable (its kernel isn't answering) — “${(msg && msg.type) || "action"}” was not delivered` } }));
@@ -1435,8 +1600,17 @@ export class FederationManager {
     let tunnels: any[] = [];
     try {
       const r = await fetch("/tunnels", { cache: "no-store" });
+      // a non-ok answer is not the list (a proxy in JSON-error mode returns a 5xx whose body parses, and it used to
+      // read as "the list in hand, no hosts", pruning every remote host's marks on the first frame): it throws,
+      // so the catch returns with hostsRead still false and the next poll, 4 s on, tries again
+      if (!r.ok) throw new Error("/tunnels answered HTTP " + r.status);
       tunnels = (await r.json()).tunnels || [];
     } catch (e) {
+      if (!this.pollFailing) {
+        this.pollFailing = true;
+        // one line, capped: a 200 whose body is not JSON puts body bytes into the parse error's message
+        this.diag("hostconn", { host: "", ev: "tunnels-poll-failing", why: String((e && (e as any).message) || e).replace(/\s+/g, " ").slice(0, 200), unread: !this.hostsRead });
+      }
       return;
     }
     // `hasToken`, never the token: the kernel publishes whether a remote's credential EXISTS, and the
@@ -1447,11 +1621,23 @@ export class FederationManager {
     let opened = false;
     for (const [host, t] of want) if (!this.conns.has(host)) { this.openRemote(host, t.status === "up"); opened = true; }
     for (const host of [...this.conns.keys()]) if (!want.has(host)) this.closeRemote(host);
+    // The host list is in hand from here (T404 round nine): the first answer, hosts or none, ends the frames'
+    // hostsUnread mark, and the merged feed is re-emitted once for it, so the pane's absence-driven writers
+    // run on a frame that knows its hosts rather than on the next push that happens to land. A failed fetch
+    // returned above and leaves the mark standing: a list that could not be read is not a list in hand.
+    const firstRead = !this.hostsRead;
+    this.hostsRead = true;
+    // the recovery crumb is filed AFTER the flag flips, so the one row a reader checks to learn whether the prunes
+    // resumed says unread false; endedUnread says whether this answer was the first the page ever read
+    if (this.pollFailing) {
+      this.pollFailing = false;
+      this.diag("hostconn", { host: "", ev: "tunnels-poll-recovered", unread: !this.hostsRead, endedUnread: firstRead });
+    }
     // A host just ATTACHED is pending from this moment, not from the next push that happens to land:
     // re-emit the merged payloads so the placeholders appear at the attach event. Each emission holds
     // until the LOCAL payload exists (the feed's hold is here; the timeline's is its own), so a page
     // still booting never gets an empty merged feed dropped onto its loader.
-    if (opened) {
+    if (opened || firstRead) {
       if (LOCAL in this.perHostFeed) this.emitMergedFeed();
       this.emitMergedTimeline(false);
       this.publishPending();
@@ -1493,6 +1679,12 @@ export class FederationManager {
     if (recovered.length) window.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: recovered } }));
     this.downHosts = down;
     if (changed) window.dispatchEvent(new Event("romp-hosts"));   // panes repaint their disconnected marks
+    // …and whether the kernel is TRYING right now (the row's `dialing`, kernel.py _row_dialing): the host-down
+    // notice's swirl spins on it. Published on a change only, through the same event the relay socket's own
+    // dial transitions use, so one listener sees every reason the state can move
+    const dialing = new Set([...want.keys()].filter((h) => want.get(h).dialing === true));
+    for (const h of new Set([...dialing, ...this.dialingHosts])) if (dialing.has(h) !== this.dialingHosts.has(h)) this.dialEvent(h, dialing.has(h));
+    this.dialingHosts = dialing;
   }
 
   private openRemote(host: string, live: boolean): void {
@@ -1501,19 +1693,58 @@ export class FederationManager {
     // from a phone reading the dashboard over `tailscale serve`, that address is the phone itself,
     // and every remote host silently vanished with no disconnected mark (the user 2026-07-30).
     // Same-origin also means the local auth cookie rides the upgrade; the remote kernel's own
-    // credential is added by the relay (_remote_ws), so this URL carries no token at all.
-    const proto = location.protocol === "https:" ? "wss://" : "ws://";
-    // …carrying this dashboard's `wid`, exactly as the pane's own local socket does. Without it a remote
-    // kernel sees every federated viewer as one anonymous client and BROADCASTS its per-viewer messages,
-    // so one dashboard's jump to a remote session yanked every other open dashboard to that tab — the
-    // very cross-window yank the local path fixed (the user 2026-07-29).
-    const w = dashboardWid();
-    const url = `${proto}${location.host}/remote/${encodeURIComponent(host)}/ws?app=${encodeURIComponent(this.app)}`
-      + (w ? `&wid=${encodeURIComponent(w)}` : "");
-    const conn: Conn = { host, ws: null, url, closed: false, live, lastRecv: 0, resumeProvisional: 0, connT: 0, pending: new Map() };
+    // credential is added by the relay (_remote_ws), so this URL carries no token at all. The URL is
+    // built fresh on every dial (remoteDialUrl, called from connect) so a redial reflects the page's
+    // current terms, exactly as the pane's own local socket rebuilds its ?active=/reconnect on each open.
+    const conn: Conn = { host, ws: null, url: "", closed: false, live, lastRecv: 0, resumeProvisional: 0, connT: 0, pending: new Map() };
     this.conns.set(host, conn);
     this.ensureHost(host);
     this.connect(conn);
+  }
+
+  // The remote socket's URL, carrying THIS page's own dial terms for its app so a federated pane is served
+  // the way the local pane is (the design in plans/federated-pane-dial-terms.md): a bare
+  // app+wid dial made the remote build every tab whole with no skeleton diet and no provisional rows, the
+  // cost the user's long chat thread ran on. The terms come from the shim's __rompDialTerms (kernel.py, the
+  // served page's reload core), read fresh here so a redial states current state. `wid` carries this
+  // dashboard's identity, exactly as the pane's own local socket does: without it a remote kernel sees every
+  // federated viewer as one anonymous client and BROADCASTS its per-viewer messages, so one dashboard's jump
+  // to a remote session yanked every other open dashboard to that tab (the user 2026-07-29). `iid` is
+  // namespaced (iidNamespace: the wid, or a stable per-page fallback so it is never bare) so a hub pane's
+  // per-socket identity cannot collide with the remote's OWN local page's iid (the reconnect-supersession
+  // twin-retire key). `active` is the watched tab only when it is THIS host's, stripped to the bare sid the
+  // remote knows. reconnect=1&proto rides a REDIAL that already got a ready acked (the shim's
+  // everConnected && bundleReady && readyAcked gate: the remote served this page whole and holds its
+  // sessions), so the remote holds what it served this page and skeletons the rest; a socket that opened but
+  // never got a ready acked dials as a first dial, holding nothing to reconnect to.
+  private remoteDialUrl(conn: Conn, redial: boolean): string {
+    const host = conn.host;
+    const proto = location.protocol === "https:" ? "wss://" : "ws://";
+    const w = dashboardWid();
+    let t: any = null;
+    try { const f = (window as any).__rompDialTerms; if (typeof f === "function") t = f(); } catch (e) { /* no terms → the bare dial, the pre-2026-09-15 behaviour */ }
+    let url = `${proto}${location.host}/remote/${encodeURIComponent(host)}/ws?app=${encodeURIComponent(this.app)}`
+      + (w ? `&wid=${encodeURIComponent(w)}` : "");
+    if (t) {
+      if (t.delta) url += "&delta=1";
+      if (t.iid) url += `&iid=${encodeURIComponent(this.iidNamespace() + ":" + t.iid)}`;
+      if (t.active && hostOf(t.active) === host) url += `&active=${encodeURIComponent(stripHost(host, t.active))}`;
+      if (t.col) url += `&col=${encodeURIComponent(t.col)}`;
+      if (t.skeleton) url += "&skeleton=1";
+      if (t.provrows) url += "&provrows=1";
+    }
+    if (redial && (this.pageProto === 1 || this.pageProto === 2)) url += `&reconnect=1&proto=${this.pageProto}`;
+    return url;
+  }
+
+  /** The namespace prefix for a remote iid: this dashboard's wid, or a stable per-page fallback minted once
+   *  when there is no wid, so the iid a hub pane sends is ALWAYS namespaced and can never equal (and retire)
+   *  a remote's own local page's bare iid. */
+  private iidNamespace(): string {
+    const w = dashboardWid();
+    if (w) return w;
+    if (!this.iidFallback) this.iidFallback = "hub-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    return this.iidFallback;
   }
 
   // HOST-CONNECTION TRIPWIRE (the user 2026-07-31, remote cards blinking in and out): every remote
@@ -1521,8 +1752,12 @@ export class FederationManager {
   // feed's tripwires write, so a blink is attributed to the connection layer (a drop, a /tunnels
   // flap) or ruled out of it — instead of re-guessed from pixels. Rides the LOCAL kernel socket.
   private diag(what: string, data: any): void {
-    const s = (window as any).__rompLocalSend;
-    if (typeof s === "function") s({ type: "clientDiag", surface: "federation", what, data });
+    // never throws: poll() is fire-and-forget and files crumbs from its catch, so a shim whose send throws would turn
+    // a failing poll into an unhandled rejection in the browser (the kernel's own diag helpers swallow the same way)
+    try {
+      const s = (window as any).__rompLocalSend;
+      if (typeof s === "function") s({ type: "clientDiag", surface: "federation", what, data });
+    } catch { /* a diagnostics row is never worth the poll */ }
   }
 
   private connect(conn: Conn): void {
@@ -1532,6 +1767,12 @@ export class FederationManager {
     conn.connT = Date.now();
     conn.lastRecv = 0;
     conn.resumeProvisional = 0;   // a fresh socket starts unmarked: the provisional rule was the resumed socket's
+    // a REDIAL only when the remote served this page whole before (everOpened && readyAcked) and the page has a
+    // proto to name, mirroring the shim's everConnected && bundleReady && readyAcked gate; then reconnect=1 rides
+    // the URL and this socket's open posts NO ready (the redial's dial term IS the handshake, see onopen)
+    const redial = !!conn.everOpened && !!conn.readyAcked && (this.pageProto === 1 || this.pageProto === 2);
+    conn.dialedReconnect = redial;
+    conn.url = this.remoteDialUrl(conn, redial);   // rebuilt from the page's CURRENT terms every dial
     try {
       ws = new WebSocket(conn.url);
     } catch (e) {
@@ -1539,12 +1780,23 @@ export class FederationManager {
       return;
     }
     conn.ws = ws;
+    this.dialEvent(conn.host, true);   // a dial attempt is in flight: the host-down notice's swirl spins
     ws.onopen = () => {
+      this.dialEvent(conn.host, false);
+      conn.everOpened = true;   // a socket for this conn has opened (the shim's everConnected): part of the redial gate in connect()
       // settings queued while the socket was down go out FIRST — on the open event itself, never a
       // timer — so nothing sent after the reconnect can overtake them (see flushPending). That is
       // also why the relay-up dispatch below comes AFTER the flush: the chat's upload re-ship rides
       // that event, and a re-shipped dropFile must not get ahead of a queued setting on this socket.
       const flushed = this.flushPending(conn);
+      // the chat wire this page speaks, told to THIS host's kernel once the page has said it (T323 stage 4b): the
+      // bundle's own ready reaches the local kernel alone, so a remote kernel would otherwise never learn the protocol
+      // and serve index frames over a floor'd list; an older remote kernel ignores the field and answers as before.
+      // NOT on a REDIAL socket (dialedReconnect): its reconnect=1&proto in the URL IS the handshake, and a `ready`
+      // here would run the remote's ready reset (_client_reset_chat_base), which pops `reconnect` with nothing to
+      // re-arm the skeleton set, so the redial would be served the whole board (2026-09-15, the shim posts no ready
+      // on its own redial for the same reason).
+      if (this.pageProto !== null && !conn.dialedReconnect) { try { ws.send(JSON.stringify({ type: "ready", proto: this.pageProto })); } catch (e) { /* the next frame says */ } }   // the proto the page speaks, 1 included (low 2)
       this.diag("hostconn", flushed.length ? { host: conn.host, ev: "open", flushed }
                                            : { host: conn.host, ev: "open" });
       conn.lastRecv = Date.now();   // the watchdog measures this socket's silence from ITS open
@@ -1567,9 +1819,14 @@ export class FederationManager {
         return;
       }
       if (msg && msg.type === "ka") return;
+      // the remote's `caps` frame is its ready arm's word that it PROCESSED this page's ready and served it whole
+      // (kernel.py _send_caps, sent by the ready arm alone): latch it as the redial gate's readyAcked, exactly as
+      // the shim does for its own local socket, so a later redial may state reconnect=1 (connect()).
+      if (msg && msg.type === "caps") conn.readyAcked = true;
       this.inbound(conn.host, msg);
     };
     ws.onclose = (ev: CloseEvent) => {
+      this.dialEvent(conn.host, false);   // the attempt ended (refused, or the socket dropped): still until the redial
       this.diag("hostconn", { host: conn.host, ev: "close", code: ev.code, clean: ev.wasClean, detached: conn.closed });
       if (!conn.closed) setTimeout(() => this.connect(conn), 2000); // reconnect a dropped remote
     };
@@ -1580,13 +1837,24 @@ export class FederationManager {
     };
   }
 
+  /** One host's dial state changed: its relay socket's dial began (CONNECTING) or ended (open, closed, or
+   *  abandoned by the watchdog), or the kernel's /tunnels poll reported its `dialing` flipping. The chat's
+   *  host-down notice repaints its swirl on this event alone (render.ts syncHostOfflineFoot); the state
+   *  itself is read back through __rompFed.dialing, so a listener that missed an event still paints the
+   *  truth. Dispatch must never break the relay. */
+  private dialEvent(host: string, dialing: boolean): void {
+    try {
+      window.dispatchEvent(new CustomEvent("romp:hostDial", { detail: { host, dialing } }));
+    } catch (e) { /* nothing to do */ }
+  }
+
   private closeRemote(host: string): void {
     const c = this.conns.get(host);
     if (!c) return;
     // /tunnels no longer lists it → its cards drop NOW. A detach also discards any settings still
     // queued for the host (the user removed it from the mesh; a later reattach re-syncs through the
     // gear's mixed marks) — named in the breadcrumb, because a drop is never silent.
-    this.diag("hostconn", c.pending.size ? { host, ev: "detach", pendingDropped: [...c.pending.keys()] }
+    this.diag("hostconn", c.pending.size ? { host, ev: "detach", pendingDropped: pendingTypes(c) }
                                          : { host, ev: "detach" });
     c.closed = true;
     try {

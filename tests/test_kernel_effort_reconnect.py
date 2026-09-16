@@ -75,14 +75,18 @@ class EffortReconnect(unittest.TestCase):
         self.assertEqual(km._reconnecting_event({"modePending": True, "effort": "high", "pickHeld": held})["picks"], [])
 
     def test_the_loop_top_resets_every_arm_field_before_the_drop_and_the_landing_stamps_after_the_handshake(self):
-        # the reconnect loop's top: _reset_reconnect_state is the FIRST statement after the wake clear
-        # (adjacent, not merely somewhere above), and it precedes the teardown's _drop_live_work; the
-        # round-0 line (`self._reconnect = False`) left the deferred arm and its hold standing, and every
+        # the reconnect loop's top: the wake clear, then upstream's deliberate-connect read (`deliberate = ...`, its
+        # stamp for the host hello, `self._reconnect = False`; the 2026-09-15 pull-in), then _reset_reconnect_state as
+        # the FIRST statement after that clear (adjacent, not merely somewhere above; the reset reads nothing the clear
+        # changed), and the reset precedes the teardown's _drop_live_work; the round-0 line (a bare
+        # `self._reconnect = False` with no reset after it) left the deferred arm and its hold standing, and every
         # test stayed green with it (review round 2, 2026-09-09: the helper was only ever called by hand)
         loop = BACKEND_SRC[BACKEND_SRC.index("        while not self.ended:\n            self._wake.clear()"):]
-        lines = [l.strip() for l in loop.splitlines()[:3]]
-        self.assertEqual(lines[:3], ["while not self.ended:", "self._wake.clear()",
-                                     "self._reset_reconnect_state()   # every request is served by this connect (a held pick rides it)"])
+        stmts = [l.strip() for l in loop.splitlines() if l.strip() and not l.strip().startswith("#")]
+        self.assertEqual(stmts[:2], ["while not self.ended:", "self._wake.clear()"])
+        i_clear = stmts.index("self._reconnect = False")
+        self.assertTrue(stmts[i_clear + 1].startswith("self._reset_reconnect_state()   # every request is served by this connect (a held pick rides it)"),
+                        stmts[:i_clear + 2])
         self.assertLess(loop.index("self._reset_reconnect_state()"), loop.index('self._drop_live_work("reconnect")'))
         self.assertNotIn("self._reconnect = False   #", loop[:loop.index("self._reset_reconnect_state()")])
         # and the stamps land with the connect: _connect_landed follows the launch-error clear, inside the loop; its
@@ -124,26 +128,34 @@ class EffortReconnect(unittest.TestCase):
         fake = _Fake(real)
         td = _tf.TemporaryDirectory()
         t = Path(td.name)
-        names, proj = t / "names", t / "projects"
-        names.mkdir(); proj.mkdir()
+        names, proj, sdkdir = t / "names", t / "projects", t / "sdk"
+        names.mkdir(); proj.mkdir(); sdkdir.mkdir()   # a readable sdk/ registry directory beside the names record: Sessions.live
+        #   stands the SDK read down on a missing one while names/ holds an entry (_sdk_records_blind, the 2026-09-15 pull-in)
         (names / SID).write_text("web\t%s\t#abcdef\n" % str(t / "work"))
-        saved = [(m, k, getattr(m, k)) for m in (km.jd,) for k in ("NAMES", "PROJECTS", "CAPDIR", "ARCHDIR", "GOALDIR", "STATE")]
-        saved += [(km, "NAMES", km.NAMES), (km, "_sdk", km._sdk), (km, "_codex", km._codex),
-                  (km._TMUX, "live_sessions", km._TMUX.live_sessions)]
+        saved = [(m, k, getattr(m, k)) for m in (km.jd,) for k in ("NAMES", "PROJECTS", "SDKDIR", "CAPDIR", "ARCHDIR", "GOALDIR", "STATE")]
+        saved += [(km, "NAMES", km.NAMES), (km, "_sdk", km._sdk), (km, "_codex", km._codex)]
         try:
-            km.jd.NAMES, km.jd.PROJECTS = names, proj
+            km.jd.NAMES, km.jd.PROJECTS, km.jd.SDKDIR = names, proj, sdkdir
             km.jd.CAPDIR, km.jd.ARCHDIR, km.jd.GOALDIR, km.jd.STATE = t / "captions", t / "archive", t / "goals", t
             km.NAMES = names
             km._sdk = lambda: fake
             km._codex = lambda: None
-            km._TMUX.live_sessions = lambda: {}
             live = km.Sessions.live()
             self.assertEqual(live[SID]["pickHeld"], held, "the live merge carries the hold")
             self.assertTrue(live[SID]["effortPending"])
             now = _time.time()
+
+            def _recon(m):
+                # every built event carries a uuid since the proto-2 wire keys on it (upstream's _uniq_event_uuids, the
+                # 2026-09-15 pull-in): an overlay card is named by its kind, so the element's own fields are compared
+                # here with that uuid asserted and set aside
+                out = [dict(e) for e in m["events"] if e.get("kind") == "reconnecting"]
+                for e in out:
+                    self.assertEqual(e.pop("uuid", None), "reconnecting", "the overlay card is addressable by its kind")
+                return out
             m = km.build_session(SID, now)
             self.assertIsNotNone(m, "the live SDK session builds from its row")
-            recon = [e for e in m["events"] if e.get("kind") == "reconnecting"]
+            recon = _recon(m)
             self.assertEqual(recon, [{"kind": "reconnecting", "effort": "", "held": held, "picks": [], "switching": False}],
                              "the chat's element carries the hold, and names no effort while a pick is held")
             self.assertEqual(m["status"]["pickHeld"], held, "the status dict carries the same hold")
@@ -151,7 +163,7 @@ class EffortReconnect(unittest.TestCase):
             # the hold over, the armed effort reload names the effort and carries no hold
             row.update(pickHeld=None)
             m = km.build_session(SID, now)
-            recon = [e for e in m["events"] if e.get("kind") == "reconnecting"]
+            recon = _recon(m)
             self.assertEqual(recon, [{"kind": "reconnecting", "effort": "high", "held": None, "picks": ["effort"], "switching": False}])
             self.assertIsNone(m["status"]["pickHeld"])
             # neither flag: no element at all
@@ -165,7 +177,7 @@ class EffortReconnect(unittest.TestCase):
                 live = km.Sessions.live()
                 self.assertTrue(live[SID][flag], "the live merge carries %s" % flag)
                 m = km.build_session(SID, now)
-                recon = [e for e in m["events"] if e.get("kind") == "reconnecting"]
+                recon = _recon(m)
                 self.assertEqual(recon, [{"kind": "reconnecting", "effort": "", "held": None,
                                           "picks": ["fast" if flag == "fastPending" else "mode"], "switching": False}], flag)
                 self.assertTrue(m["status"][flag], "the status dict carries %s" % flag)
@@ -182,13 +194,13 @@ class EffortReconnect(unittest.TestCase):
             live = km.Sessions.live()
             self.assertIs(live[SID]["modeSwitching"], True, "the live merge carries modeSwitching")
             m = km.build_session(SID, now)
-            recon = [e for e in m["events"] if e.get("kind") == "reconnecting"]
+            recon = _recon(m)
             self.assertEqual(recon, [{"kind": "reconnecting", "effort": "", "held": None, "picks": ["mode"], "switching": True}],
                              "the event says the mode change is being applied, the pending mode pick riding it")
             # the switch over, the pick still pending: the same element reads as a reload again
             row.update(modeSwitching=False)
             m = km.build_session(SID, now)
-            recon = [e for e in m["events"] if e.get("kind") == "reconnecting"]
+            recon = _recon(m)
             self.assertEqual(recon, [{"kind": "reconnecting", "effort": "", "held": None, "picks": ["mode"], "switching": False}])
             self.assertTrue(m["status"]["modePending"])
             row.update(modePending=False)
@@ -248,7 +260,7 @@ class EffortReconnect(unittest.TestCase):
         # whose ultracode sessions seemed to downgrade at random). The whole setter family goes
         # through _update_reg now.
         for pin in ('self._update_reg(sid, effort=value, effortPending=True)',
-                    'self._update_reg(sid, auth=value, authPending=True, apiKeyAuth=None)',
+                    'self._update_reg(sid, auth=side, authLogin=login_id, authPending=True, apiKeyAuth=None)',
                     'self._update_reg(sid, mode=mode)',
                     'self._update_reg(sid, fast=(value == "on"), liveFast=value)',
                     'self._update_reg(sid, name=new_name,',   # + the rename ping rides the same locked RMW when owed (2026-08-24/25)

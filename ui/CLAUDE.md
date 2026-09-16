@@ -1,4 +1,4 @@
-# romp UI — design rules
+# romp UI design rules
 
 Repo-wide rules live in the root `CLAUDE.md`; these apply to any UI work.
 
@@ -83,6 +83,20 @@ toggles, in-progress loading dots, the Fleet pill, focus cues — anywhere you w
 romp blue." Do NOT use it for STATUS colors, which keep their own meaning: working =
 `--st-working-bg` (yellow), blocked/API-error = red, ready = `--st-ready-bg`, compacting =
 teal. New accent chrome should reference `var(--accent)`, never re-hardcode the hex.
+Two exceptions. The first, the user's choice of 2026-09-12 (T394): the background box's COMMAND rows wear
+the accent blue as their KIND hue (`--kind-command`, the dot and the caption word), beside
+the agents' working gold and the watches' awaiting green. That is a kind, not a status: the
+status still overrides it where it means something (a failed row's dot is the blocked red,
+a completed row's the dim ink). The light theme's accent is an orange, so `--kind-command`
+carries its own blue there (`#356890`).
+The second, the user's choice of 2026-09-10 (T301): the rail's API-health dot wears
+the accent in its FINE state (`.ah-dot[data-dot=fine]` in the kernel's served CSS, through
+`var(--accent)`, so the light theme's orange there too); its other two states keep status
+colors (errors the blocked red, no API traffic the label gray). The served landing page
+loads no stylesheet and defines no `--dim`, so `var(--dim)` falls back to its literal
+`#9aa4ad` in either theme, while the light theme spells the light label gray `#5D574E`
+(styles.css's light `--dim`) as a literal; swapping that literal for the token would lose
+the contrast fix.
 
 ### Loading/waiting states: show the romp loader FIRST
 Anytime something is loading, parsing, or otherwise making the user wait, the FIRST
@@ -100,7 +114,7 @@ the loader animation otherwise.
 The dashboard re-renders on every kernel push (cycles at least 1.0 s apart
 under the pusher's minimum interval, except that a stream event or echo for
 the chat tab being watched pushes at once; a 0.5–3s backstop covers changes
-with no event, a tmux session's mid-turn output among them). A control whose action
+with no event). A control whose action
 is hung on a DOM node that a re-render rebuilds gets destroyed mid-click: a
 native `click` fires on the nearest common ancestor of the mousedown and mouseup
 targets, and a pressed node that a rebuild removed before the mouseup has none,
@@ -160,3 +174,13 @@ and a five-pane matrix of every tag filled the page and left two session rows sh
 A change to a tag or session surface is checked against a fixture of thirty tags (the
 dialog's is `ui/timeline-tags-scale.test.ts`, with the measured layout in
 `ui/timeline-tags-scale-browser.test.ts`).
+
+**Tags render as ONE chip everywhere** (the user 2026-09-10): `tagChip` in
+`ui/webview/tag-menu.ts` builds every tag the UI shows (the strip's group rows and filter
+chips, the feed's and outline's filter chips, the tag-lens menu, the tab menu's Tags flyout,
+the picker's Tags row), a thin border and the text in the tag's colour, weight 400, the
+context's size, faded when off; never bold, which is the session names' weight
+(`ui/webview/tag-chip-everywhere.test.ts` pins the sites and the sheets; the two documents
+that load no module, the landing page's spend panel and the Obsidian timeline view, inline
+the same bytes under drift pins in `tests/test_spend_detail.py` and
+`ui/timeline-tag-chips.test.ts`).

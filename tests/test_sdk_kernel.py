@@ -3,9 +3,13 @@
 
 Deterministic: _sdk() is stubbed with a FakeBackend that records calls, so this needs neither the SDK nor
 any state on disk. It locks in the routing table — _drive sends each per-session op to whichever backend
-OWNS the sid (Sessions.backend_for): SDK-owned sids → the SDK backend, everything else → the tmux backend —
-plus the live-session merge. (the user 2026-06-26: tmux + SDK behind one session API.)
+OWNS the sid (Sessions.backend_for): SDK-owned sids → the SDK backend, Codex-owned sids → the Codex backend,
+anything else → the unowned route, whose every op refuses — plus the live-session merge. (the user
+2026-06-26, who wanted every backend behind one session API.)
 """
+import contextlib
+import io
+import json
 import os
 import unittest
 from romp_load import load_source
@@ -19,6 +23,11 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+# Fixture git goes through the shared runner: `git commit` spawns `git maintenance run --auto`, which on recent
+# git detaches from its parent and can still be writing into .git while the fixture's directory is removed (the
+# CI flake "Directory not empty: '.git'", tests/test_restart_classifier.py, 2026-09-10); the runner forbids that
+# background work on every invocation and in every repo it inits.
+from git_fixture import git, init_repo
 
 
 class FakeBackend:
@@ -101,45 +110,116 @@ class KernelWiring(unittest.TestCase):
         self.assertTrue(self._route({"type": "sendMessage", "id": "sid-sdk", "text": "hi"}))
         self.assertIn(("send", "sid-sdk", "hi"), self.be.calls)
 
-    def test_non_sdk_sid_routes_to_the_tmux_backend(self):
-        # a non-SDK sid no longer "falls through" — _drive routes it to the tmux backend via
-        # Sessions.backend_for (the fallback). The unified dispatch handles BOTH kinds.
+    def test_a_codex_owned_sid_routes_to_the_codex_backend(self):
+        # a non-SDK sid does not "fall through" — _drive routes it to the backend that OWNS it via
+        # Sessions.backend_for: the Codex backend here. The unified dispatch handles every kind.
         # It must be a session this kernel HAS, though: since 2026-07-29 _drive refuses an id it has never
-        # heard of rather than letting backend_for's tmux fallback type at a pane that isn't there. The
-        # names entry is what a real tmux session would carry; test_drive_foreign_sid.py owns the refusal.
-        tm = FakeBackend(); tm._owned = set()
-        saved, saved_name = km._TMUX, km._name_of
-        km._TMUX = tm
+        # heard of; the names entry is what a real session carries. test_drive_foreign_sid.py owns the refusal.
+        cx = FakeBackend(); cx._owned = {"sid-codex"}
+        saved, saved_name = km._codex, km._name_of
+        km._codex = lambda: cx
         km._name_of = lambda sid: "web"
         try:
-            self.assertTrue(self._route({"type": "sendMessage", "id": "sid-tmux", "text": "hi"}))
-            self.assertIn(("send", "sid-tmux", "hi"), tm.calls)   # routed to the tmux backend
-            self.assertEqual(self.be.calls, [])                   # the SDK backend was untouched
-        finally:
-            km._TMUX, km._name_of = saved, saved_name
-            km._tmux_echo.pop("sid-tmux", None)                   # the optimistic echo wrote here — don't leak it
-
-    def test_a_typed_slash_model_or_effort_on_a_tmux_session_takes_the_setter_too(self):
-        # The routing is backend-agnostic: a typed "/model X" or "/effort X" on a tmux-owned sid reaches
-        # TmuxBackend's setters — which type the CLI's own command into the pane and, for /model, accept
-        # the confirmation the CLI asks for (SessionBackend.set_model) — never send() as literal text.
-        # The SDK-sid test below covers one door; this pins the other, so the two backends cannot drift
-        # apart at the router.
-        tm = FakeBackend(); tm._owned = set()
-        saved, saved_name = km._TMUX, km._name_of
-        km._TMUX = tm
-        km._name_of = lambda sid: "web"
-        try:
-            self.assertTrue(self._route({"type": "sendMessage", "id": "sid-tmux", "text": "/model opus"}))
-            self.assertTrue(self._route({"type": "sendMessage", "id": "sid-tmux", "text": "/effort high"}))
-            self.assertIn(("set_model", "sid-tmux", "opus"), tm.calls)
-            self.assertIn(("set_effort", "sid-tmux", "high"), tm.calls)
-            self.assertEqual([c for c in tm.calls if c[0] == "send"], [], "neither reaches the pane as text")
+            self.assertTrue(self._route({"type": "sendMessage", "id": "sid-codex", "text": "hi"}))
+            self.assertIn(("send", "sid-codex", "hi"), cx.calls)  # routed to the Codex backend
             self.assertEqual(self.be.calls, [], "the SDK backend was untouched")
         finally:
-            km._TMUX, km._name_of = saved, saved_name
-            km._tmux_echo.pop("sid-tmux", None)
-            km._model_switch_pending.pop("sid-tmux", None)        # the pick's switching-dots stamp — don't leak it
+            km._codex, km._name_of = saved, saved_name
+
+    def test_a_sid_no_backend_owns_takes_the_unowned_route_which_refuses(self):
+        # a known sid that neither backend owns (dead history, a names entry with no live owner) resolves to
+        # _UNOWNED, whose send refuses by name on stderr and hands nothing anywhere (decision c of the
+        # terminal backend's removal, 2026-09-11) — the op is consumed, never silently dropped.
+        saved, saved_name = km._codex, km._name_of
+        km._codex = lambda: None
+        km._name_of = lambda sid: "web"
+        try:
+            self.assertIs(km.Sessions.backend_for("sid-unowned"), km._UNOWNED)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertTrue(self._route({"type": "sendMessage", "id": "sid-unowned", "text": "hi"}))
+            self.assertIn("send to sid-unowned refused: no backend owns this session", err.getvalue())
+            self.assertEqual(self.be.calls, [], "the SDK backend was untouched")
+        finally:
+            km._codex, km._name_of = saved, saved_name
+
+    def test_a_typed_slash_model_or_effort_on_a_codex_session_takes_the_setter_too(self):
+        # The routing is backend-agnostic: a typed "/model X" or "/effort X" on a Codex-owned sid reaches
+        # that backend's setters (SessionBackend.set_model / set_effort) — never send() as literal text.
+        # The SDK-sid test below covers one door; this pins the other, so the two backends cannot drift
+        # apart at the router.
+        cx = FakeBackend(); cx._owned = {"sid-codex"}
+        saved, saved_name = km._codex, km._name_of
+        km._codex = lambda: cx
+        km._name_of = lambda sid: "web"
+        try:
+            self.assertTrue(self._route({"type": "sendMessage", "id": "sid-codex", "text": "/model opus"}))
+            self.assertTrue(self._route({"type": "sendMessage", "id": "sid-codex", "text": "/effort high"}))
+            self.assertIn(("set_model", "sid-codex", "opus"), cx.calls)
+            self.assertIn(("set_effort", "sid-codex", "high"), cx.calls)
+            self.assertEqual([c for c in cx.calls if c[0] == "send"], [], "neither reaches the session as text")
+            self.assertEqual(self.be.calls, [], "the SDK backend was untouched")
+        finally:
+            km._codex, km._name_of = saved, saved_name
+            km._model_switch_pending.pop("sid-codex", None)       # the pick's switching-dots stamp — don't leak it
+
+    def test_a_codex_model_pick_in_its_own_vocabulary_takes_the_setter_on_both_surfaces(self):
+        # The VALUE is vouched by the owning backend's vocabulary, not only by the kernel's catalog: a gpt-… id
+        # is the one value CodexBackend.set_model accepts, and no Claude table can vouch it. Before this, the
+        # timeline lane's pick (the sendCommand arm, keyed by session NAME) and the same text typed into the
+        # composer were no meta command at all: they fell through to _send_or_park and the Codex agent read the
+        # pick as a literal prompt, while the chat statusline's setModel op landed it (review find, 2026-09-11).
+        # The vouch is the OWNING backend's: the same text on an SDK sid stays the CLI's, verbatim.
+        cx = FakeBackend(); cx._owned = {"sid-codex"}
+        saved, saved_name, saved_sid_of, saved_resolve = km._codex, km._name_of, km._sid_of, km._resolve_sid
+        km._codex = lambda: cx
+        km._name_of = lambda sid: "web"
+        km._sid_of = lambda who: "sid-codex" if who == "web" else who   # the lane menu keys its ops by session NAME
+        # the fork's by-name door (E1): _drive resolves a by-name op through _resolve_sid(named, door=True), never _sid_of;
+        # the tuple is (sid, live, store_unreadable)
+        km._resolve_sid = lambda named, door=False: ("sid-codex", None, False) if named == "web" else (None, None, False)
+        try:
+            self.assertTrue(self._route({"type": "sendCommand", "name": "web", "cmd": "/model gpt-5-test"}))
+            self.assertTrue(self._route({"type": "sendMessage", "id": "sid-codex", "text": "/model gpt-5-test"}))
+            self.assertEqual([c for c in cx.calls if c[0] == "send"], [], "neither reaches the agent as text")
+            self.assertEqual([c for c in cx.calls if c[0] == "set_model"],
+                             [("set_model", "sid-codex", "gpt-5-test")] * 2, "the lane and the composer both reach the setter")
+            self.assertTrue(self._route({"type": "sendMessage", "id": "sid-sdk", "text": "/model gpt-5-test"}))
+            self.assertEqual(self.be.calls, [("send", "sid-sdk", "/model gpt-5-test")],
+                             "an SDK session's gpt-… is not its vocabulary: the CLI answers it, as before")
+        finally:
+            km._codex, km._name_of, km._sid_of, km._resolve_sid = saved, saved_name, saved_sid_of, saved_resolve
+            km._model_switch_pending.pop("sid-codex", None)       # the pick's switching-dots stamp — don't leak it
+
+    def test_a_dead_codex_lanes_model_pick_is_refused_to_the_client_not_on_stderr_alone(self):
+        # A DEAD Codex session still reports backend 'codex' (_session_backend reads the durable registry row), so
+        # its timeline lane still offers the gpt-… choices — and a pick sends "/model gpt-…" for a sid no backend
+        # owns (CodexBackend.owns says False once dead; backend_for answers _UNOWNED). That pick is vouched for the
+        # unowned route too, so it reaches the route's refusal arm like a dead SDK lane's "/model opus": the client
+        # is warned and nothing is stamped. Before this the gpt-… vouch asked only the live Codex backend, the route
+        # answered False, and the sendCommand arm handed the text to _UNOWNED.send, whose refusal is a stderr line
+        # the client never hears (review find, 2026-09-11).
+        cx = FakeBackend(); cx._owned = set()                      # the Codex backend is up; this session of its own is dead
+        saved, saved_name, saved_sid_of = km._codex, km._name_of, km._sid_of
+        km._codex = lambda: cx
+        km._name_of = lambda sid: "web"
+        km._sid_of = lambda who: "sid-unowned" if who == "web" else who
+        heard = []
+        try:
+            self.assertIs(km.Sessions.backend_for("sid-unowned"), km._UNOWNED)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertTrue(km._drive({"type": "sendCommand", "name": "web", "cmd": "/model gpt-5-test"},
+                                          {"send": heard.append}))
+            warns = [json.loads(m) for m in heard if json.loads(m).get("type") == "warn"]
+            self.assertEqual(len(warns), 1, "the client hears the refusal once: %r" % (heard,))
+            self.assertIn("no running backend owns this session", warns[0]["text"])
+            self.assertNotIn("sid-unowned", km._model_switch_pending, "refused before any switching-dots stamp")
+            self.assertEqual(cx.calls, [], "a dead session's backend is not asked to set or send anything")
+            self.assertEqual(self.be.calls, [], "the SDK backend was untouched")
+        finally:
+            km._codex, km._name_of, km._sid_of = saved, saved_name, saved_sid_of
+            km._model_switch_pending.pop("sid-unowned", None)
 
     def test_ui_op_falls_through_even_for_sdk_sid(self):
         # closeTab/openSession are backend-agnostic UI ops → never intercepted
@@ -289,7 +369,7 @@ class KernelWiring(unittest.TestCase):
         return [c[2] for c in self.be.calls if c[0] == "send" and c[1] == sid]
 
     def test_askfollowup_resolves_sid_from_itemid(self):
-        # unified with tmux (the user 2026-07-01): an itemId follow-up now sends the WRAPPED body on the SDK
+        # unified across backends (the user 2026-07-01): an itemId follow-up now sends the WRAPPED body on the SDK
         # too — the user's text plus the romp-goal-id marker (for the reopen + the chat's ↩ Follow-up header),
         # no longer raw text. (No goal store in the test → the context quote is empty, so the body is just the
         # text + the marker tail.)
@@ -299,7 +379,7 @@ class KernelWiring(unittest.TestCase):
         self.assertIn("<!-- romp-goal-id: sid-sdk:g1 -->", sent[0], "the goal marker rides along for the reopen")
 
     def test_askfollowup_optimistically_reopens_the_card(self):
-        # SDK parity with the tmux path (the user 2026-06-23): a follow-up on an SDK card reopens its goal NOW
+        # SDK parity with the terminal path of the time (the user 2026-06-23): a follow-up on an SDK card reopens its goal NOW
         # (optimistic_followup → board jumps to WORKING + a "Followed up" chip), not just sends the text. A
         # reopen (True) dirty-marks the views + wakes the pusher (the store write is invisible to the fleet
         # sig, so a plain push would have served the stale cached feed — the user 2026-07-05).
@@ -367,8 +447,8 @@ class KernelWiring(unittest.TestCase):
         self.assertIn(("send", "sid-sdk", "hi"), self.be.calls)
         self.assertEqual(self.fu_calls, [], "no itemId → nothing to reopen")
 
-    def test_tmux_sessions_merges_sdk_rows(self):
-        sess = km._tmux_sessions()                     # merges tmux (real/empty) + the fake SDK row
+    def test_live_map_merges_sdk_rows(self):
+        sess = km._live_map()                     # merges the Codex rows (real/empty) + the fake SDK row
         self.assertIn("sid-sdk", sess)
         row = sess["sid-sdk"]
         self.assertEqual(row["state"], "working")
@@ -388,11 +468,9 @@ class LiveTailAndOpen(unittest.TestCase):
         km._sdk = lambda: self.be
         km._push_all = lambda *a, **k: None
         km._send_to_app = lambda *a, **k: None
-        km._tmux_echo.clear()                         # isolate the shared tmux-echo store across tests
 
     def tearDown(self):
         km._sdk, km._sessions, km._push_all, km._send_to_app = self.saved
-        km._tmux_echo.clear()
 
     def test_merge_appends_fresh_live_atom_non_mutating(self):
         self.be._live = {"sid-sdk": [{"type": "assistant", "uuid": "new1", "t": 50,
@@ -417,9 +495,9 @@ class LiveTailAndOpen(unittest.TestCase):
 
     def test_merge_skips_when_no_live_atoms(self):
         session = {"turns": []}
-        # a tmux sid with an empty echo store has no live atoms → the owning backend (tmux) returns [] and
-        # the merge is a no-op (returns the same object). The SDK case is covered by the tests above.
-        self.assertIs(km._merge_live_atoms(session, "sid-tmux"), session)
+        # a sid no backend owns has no live atoms → the unowned route returns [] and the merge is a no-op
+        # (returns the same object). The SDK case is covered by the tests above.
+        self.assertIs(km._merge_live_atoms(session, "sid-unowned"), session)
 
     def test_merge_reopens_the_turn_for_genuine_live_work(self):
         # a streaming assistant reply IS an in-flight turn — the merge must keep forcing it open
@@ -483,7 +561,7 @@ class LiveTailAndOpen(unittest.TestCase):
 
 class Responsiveness(unittest.TestCase):
     """The chat pusher is event-driven + short-poll so BOTH backends feel snappy (the user 2026-06-22):
-    the SDK live-tail and /tick wake it instantly; a 0.5s backstop covers tmux mid-turn streaming."""
+    the SDK live-tail and /tick wake it instantly; a 0.5s backstop covers any mid-turn streaming gap."""
 
     def test_tick_wakes_the_pusher_and_short_backstop(self):
         with open(os.path.join(BIN, "romp-kernel")) as f:
@@ -491,7 +569,7 @@ class Responsiveness(unittest.TestCase):
         self.assertIn("PUSH_BACKSTOP_S = 0.5", src)                   # short backstop poll
         self.assertIn("_woke = wake.wait(PUSH_BACKSTOP_S)", src)       # …which the pusher loop waits on
         tick = src.split('u.path == "/tick"', 1)[1].split("return self._send", 1)[0]
-        self.assertIn("_pusher_wake.set()", tick)                     # /tick wakes the pusher (tmux turn-end shows now)
+        self.assertIn("_pusher_wake.set()", tick)                     # /tick wakes the pusher (a turn-end shows now)
 
 
 class SdkQueuedIndicator(unittest.TestCase):
@@ -502,16 +580,16 @@ class SdkQueuedIndicator(unittest.TestCase):
         with open(os.path.join(BIN, "romp-kernel")) as f:
             src = f.read()
         # build_session reads the queued texts from the OWNING backend, uniformly — the SDK from its
-        # in-memory queue, tmux from the transcript's queue-operation records (TmuxBackend.pending_queued →
-        # _pending_queued). No backend fork in build_session anymore.
+        # in-memory queue, the Codex backend from its own; an unowned sid has none. No backend fork in
+        # build_session anymore.
         self.assertIn("be = Sessions.backend_for(sid)", src)
         # (the path_override arm is the read-only episode render — a closed episode has no live queue)
         self.assertIn("queued = [] if path_override else be.pending_queued(sid)", src)
-        self.assertIn("return _pending_queued(p) if p else []", src)   # tmux pending_queued reads the transcript
+        self.assertEqual(km._UNOWNED.pending_queued("sid-unowned"), [])   # the unowned route has no queue to read
 
 
 class SdkMetadataParity(unittest.TestCase):
-    """SDK sessions should surface the same statusline metadata as tmux (the user 2026-06-24): model/mode on
+    """SDK sessions should surface the same statusline metadata as the terminal backend did (the user 2026-06-24): model/mode on
     OPEN (eager-connect), the git branch derived straight from the FOLDER, and a context-fill bar."""
 
     def test_git_branch_derived_from_folder(self):
@@ -530,29 +608,42 @@ class SdkMetadataParity(unittest.TestCase):
         self.assertEqual(km._git_branch(tempfile.mkdtemp()), "", "not a repo → ''")
         self.assertEqual(km._git_branch(""), "", "no dir → ''")
 
-    def test_git_branch_is_empty_on_a_detached_head(self):
-        """Detached HEAD → '' is the CONTRACT (kernel _git_branch docstring), not an accident. Pinned on a
-        purpose-built repo so it holds regardless of how the checkout running these tests is shaped."""
-        import subprocess, tempfile
+    # -c identity so this never depends on (or is polluted by) the machine's global git config.
+    IDENT = ("romp-test@example.invalid", "romp test")
+
+    def _committed_repo(self):
+        """A purpose-built repo with one commit on a branch: the fixture the kernel's own `git rev-parse`
+        (_git_branch) runs against."""
+        import tempfile
         d = tempfile.mkdtemp()
-        # -c identity so this never depends on (or is polluted by) the machine's global git config.
-        git = ["git", "-C", d, "-c", "user.email=romp-test@example.invalid", "-c", "user.name=romp test"]
         # --template= (empty): a machine-global init.templateDir would otherwise copy its hooks into
         # this repo — a maintainer's gitleaks pre-commit hook failed the commit below whenever the
         # scanner wasn't on the test shell's PATH (2026-08-10). The test is about branch derivation;
         # no machine hook belongs in it.
-        subprocess.run(["git", "init", "-q", "--template=", d], check=True, capture_output=True)
+        init_repo(d, "-q", "--template=", ident=self.IDENT)
         open(os.path.join(d, "f"), "w").write("x")
-        subprocess.run(git + ["add", "f"], check=True, capture_output=True)
-        subprocess.run(git + ["commit", "-qm", "c"], check=True, capture_output=True)
+        git(d, "add", "f", ident=self.IDENT, text=False)
+        git(d, "commit", "-qm", "c", ident=self.IDENT, text=False)
+        return d
+
+    def test_git_branch_is_empty_on_a_detached_head(self):
+        """Detached HEAD → '' is the CONTRACT (kernel _git_branch docstring), not an accident. Pinned on a
+        purpose-built repo so it holds regardless of how the checkout running these tests is shaped."""
+        d = self._committed_repo()
         # _git_branch caches per cwd keyed on .git/HEAD's mtime. Both calls here land in the same test, so
         # on a coarse-granularity filesystem the two HEAD writes could share an mtime and serve a stale hit.
         # Clear between calls: this test is about the branch derivation, not the cache.
         km._branch_cache.clear()
         self.assertNotEqual(km._git_branch(d), "", "attached: a real branch name")
-        subprocess.run(git + ["checkout", "-q", "--detach"], check=True, capture_output=True)
+        git(d, "checkout", "-q", "--detach", ident=self.IDENT, text=False)
         km._branch_cache.clear()
         self.assertEqual(km._git_branch(d), "", "detached HEAD is not a branch name")
+
+    def test_the_fixture_repos_forbid_background_git_work(self):
+        # the kernel forks its own `git rev-parse` at this repo (_git_branch), outside the fixture runner's
+        # -c flags, so the no-background keys have to sit in the repo's own config
+        d = self._committed_repo()
+        self.assertEqual(git(d, "config", "--local", "--get", "maintenance.auto").stdout.strip(), "false")
 
     def test_open_eager_connects_sdk_branch_fallback_and_ctx_passthrough(self):
         with open(os.path.join(BIN, "romp-kernel")) as f:

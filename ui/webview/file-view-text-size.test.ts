@@ -284,7 +284,7 @@ function view(): Promise<typeof import("./file-view")> {
   });
   return bound;
 }
-type Card = { fv: typeof import("./file-view"); ctx?: FileViewActionCtx; wrap: El; root: El; bar: El; acts: El; body: El; down: El; reset: El; up: El; btn: (label: string) => El };
+type Card = { fv: typeof import("./file-view"); ctx?: FileViewActionCtx; wrap: El; root: El; bar: El; acts: El; body: El; down: El; reset: El; up: El; zoom: El; btn: (label: string) => El };   // zoom: the glyph that shows or hides the control (T367); ctx: the per-open seam a case reads (file review)
 /** The card up now, with the control's three buttons held by reference (they are built once per open). */
 function card(fv: typeof import("./file-view")): Card {
   const wrap = doc.getElementById("romp-fileview");
@@ -296,10 +296,10 @@ function card(fv: typeof import("./file-view")): Card {
   const body = root.querySelector(".fileview-body")!;   // inside .fileview-main beside the comments aside in the local viewer; the root's child in the URL viewer
   assert.ok(body, "the body");
   const acts = bar.children.find((c) => c.classList.contains("fileview-acts"))!;
-  const btn = (label: string) => { const b = acts.children.find((c) => c.tagName === "button" && c.textContent === label); assert.ok(b, "the " + label + " button"); return b!; };
-  const reset = acts.children.find((c) => c.classList.contains("fileview-size-reset"));
+  const btn = (label: string) => { const walk = (n: El): El | undefined => { for (const c of n.children) { if (c.tagName === "button" && (c.textContent === label || c.getAttribute("aria-label") === label)) return c; const d = walk(c); if (d) return d; } return undefined; }; const b = walk(acts); assert.ok(b, "the " + label + " button"); return b!; };   // T367: controls sit in groups, glyph buttons carry their word as aria-label
+  const reset = acts.querySelector(".fileview-size-reset");   // inside the zoom flyout since T367
   assert.ok(reset, "the readout between A− and A+ (the reset)");
-  return { fv, wrap: wrap!, root, bar, acts, body, down: btn("A−"), reset: reset!, up: btn("A+"), btn };
+  return { fv, wrap: wrap!, root, bar, acts, body, down: btn("A−"), reset: reset!, up: btn("A+"), zoom: acts.querySelector(".fileview-zoom-btn")!, btn };
 }
 /** Open `p` for the fixture session; `wait` lets the bytes land. The stored size is the caller's, set before the call. */
 async function openFile(t: TestContext, p: string, wait = true): Promise<Card> {
@@ -368,21 +368,29 @@ test("foldWheel: a notch is one step, a pinch's small deltas add up to one, a re
 
 // ── the control over the real openFileView ─────────────────────────────────────────────────────────
 
-test("a markdown file opens at the default: A− and A+ after the format toggles, the readout slot empty, the root at 100; each press steps, stores and acknowledges in the same tick; an end reads as reached and a press there changes nothing", async (t) => {
+test("a markdown file opens at the default: the zoom glyph after the format pair, its flyout holding A−, the readout (dimmed) and A+, the root at 100; each press steps, stores and acknowledges in the same tick; an end reads as reached and a press there changes nothing", async (t) => {
   const { TEXT_SIZES } = await view();
   const o = await openFile(t, REPORT);
   assert.equal(size(o), "100", "the root carries the step the sheets read");
-  assert.equal(o.down.hidden, false); assert.equal(o.up.hidden, false);
-  assert.equal(o.reset.hidden, false, "the readout's slot is in the row from the start, so A− never moves when it fills");
-  assert.equal(blank(o), true, "nothing to reset at the default, so nothing is said: the slot is empty");
+  assert.equal(o.zoom.hidden, false);
+  assert.equal(o.zoom.hidden, false, "the readout's slot is in the flyout from the start, so A− never moves when it fills");
+  assert.equal(blank(o), true, "nothing to reset at the default: the readout reads dimmed (T367: inside the flyout, never an empty slot)");
   assert.equal(o.down.getAttribute("aria-label"), "Smaller text"); assert.equal(o.up.getAttribute("aria-label"), "Larger text");
-  const row = labels(o.acts);
-  assert.ok(row.indexOf("Raw") < row.indexOf("A−") && row.indexOf("A−") < row.indexOf("A+") && row.indexOf("A+") < row.indexOf("Edit"),
-    "the control sits after Rendered and Raw and before Edit: " + row.join(" | "));
-  assert.equal(o.acts.children.indexOf(o.reset), o.acts.children.indexOf(o.down) + 1, "the readout sits between A− and A+");
+  // T367: the row is GROUPS; the view group leads with the Rendered|Raw pair, then the zoom glyph whose flyout holds the three
+  const viewGroup = o.acts.children[0];
+  assert.ok(viewGroup.classList.contains("fileview-group-view"), "the view group leads the row: " + labels(o.acts).join(" | "));
+  // ...with this fork's Outline button between the pair and the glyph (Slice 6 of plans/markdown-viewer.md: a view control, in the view group)
+  assert.ok(viewGroup.children[0].classList.contains("fileview-seg") && viewGroup.children[1].classList.contains("fileview-outline-btn") && viewGroup.children[2].classList.contains("fileview-zoom"), "the zoom glyph follows the Rendered|Raw pair and the Outline button");
+  const zoomBtn = viewGroup.children[2].children[0], menu = viewGroup.children[2].children[1];
+  assert.equal(zoomBtn, o.zoom);
+  assert.equal(zoomBtn.getAttribute("aria-label"), "Text size"); assert.equal(zoomBtn.title, "Text size 100% (Ctrl/Cmd + wheel)", "the hover says the size and the wheel binding");
+  assert.equal(menu.className, "fileview-zoom-menu");
+  assert.deepEqual(menu.children, [o.down, o.reset, o.up], "A−, the readout, A+ ride the flyout in that order");
+  assert.ok(o.acts.children[1].classList.contains("fileview-group-file"), "the file group (edit, download, copy path) follows the view group");
   o.up.click();
   assert.equal(size(o), "115", "one step, synchronously");
   assert.equal(blank(o), false); assert.equal(o.reset.textContent, "115%", "the readout is the acknowledgement");
+  assert.equal(o.zoom.title, "Text size 115% (Ctrl/Cmd + wheel)", "and the glyph's hover follows it");
   assert.equal(store.get(SIZE_KEY), "115", "stored as the percentage, under the viewer's own key");
   o.down.click(); o.down.click();
   assert.equal(size(o), "90"); assert.equal(o.reset.textContent, "90%"); assert.equal(store.get(SIZE_KEY), "90");
@@ -424,11 +432,11 @@ test("persistence: the size survives a close and a fresh open, is on the root be
   const again = await openFile(t, REPORT, false);                    // no settle: the loader still holds the body
   assert.equal(size(again), "150", "the stored step is on the root at open, before the fetch, so the first paint is at size");
   assert.equal(again.reset.textContent, "150%");
-  assert.equal(again.down.hidden, true); assert.equal(again.reset.hidden, true); assert.equal(again.up.hidden, true,
+  assert.equal(again.zoom.hidden, true); assert.equal(again.zoom.hidden, true,
     "the control waits for the bytes: whether this is a text file is the kernel's verdict, in the fetch's headers");
   await settle();
   assert.equal(size(again), "150", "the paint keeps it");
-  assert.equal(again.down.hidden, false); assert.equal(again.reset.hidden, false); assert.equal(blank(again), false);
+  assert.equal(again.zoom.hidden, false); assert.equal(blank(again), false);
   again.fv.closeFileView();
   store.set(SIZE_KEY, "purple");
   const third = await openFile(t, REPORT);
@@ -438,7 +446,7 @@ test("persistence: the size survives a close and a fresh open, is on the root be
   store.set(SIZE_KEY, "80");
   const fourth = await openFile(t, APP);
   assert.equal(size(fourth), "80", "one size for every file this browser opens, a .py included");
-  assert.equal(fourth.down.hidden, false, "a non-markdown text file has the control: its code view scales too");
+  assert.equal(fourth.zoom.hidden, false, "a non-markdown text file has the control: its code view scales too");
   assert.equal(fourth.reset.textContent, "80%");
 });
 
@@ -500,49 +508,53 @@ test("click-safe: the three buttons are built once per open and never rebuilt by
 
 test("the control is absent for a picture and a PDF, present for the SVG Source view, hidden in edit mode and back on exit", async (t) => {
   const pic = await openFile(t, PLOT);
-  assert.equal(pic.down.hidden, true); assert.equal(pic.up.hidden, true); assert.equal(pic.reset.hidden, true, "a picture has no text to size");
+  assert.equal(pic.zoom.hidden, true, "a picture has no text to size");   // the glyph is the control's visibility (T367)
   pic.fv.closeFileView();
   const pdf = await openFile(t, PAPER);
-  assert.equal(pdf.down.hidden, true); assert.equal(pdf.up.hidden, true); assert.equal(pdf.reset.hidden, true, "a PDF: the browser's viewer owns its text");
+  assert.equal(pdf.zoom.hidden, true, "a PDF: the browser's viewer owns its text");   // the glyph is the control's visibility (T367)
   pdf.fv.closeFileView();
   const svg = await openFile(t, FIG);
-  assert.equal(svg.down.hidden, true, "an SVG shown as a picture: no text yet");
+  assert.equal(svg.zoom.hidden, true, "an SVG shown as a picture: no text yet");
   svg.btn("Source").click();
   await settle();
   assert.equal(svg.body.children[0].className, "fileview-code", "the Source view is up");
-  assert.equal(svg.down.hidden, false); assert.equal(svg.up.hidden, false); assert.equal(svg.reset.hidden, false, "the Source view is a text view and has the control");
+  assert.equal(svg.zoom.hidden, false, "the Source view is a text view and has the control");   // the glyph is the control's visibility (T367)
   const ev = wheel({ dy: -100, ctrl: true });
   svg.body.dispatchEvent(ev);
   assert.equal(size(svg), "115", "and the wheel steps it"); assert.equal(ev.defaultPrevented, true);
   svg.fv.closeFileView(); store.delete(SIZE_KEY);
   store.set(SIZE_KEY, "115");
   const o = await openFile(t, REPORT);
-  assert.equal(o.down.hidden, false); assert.equal(blank(o), false, "off the default, the readout says the size");
+  assert.equal(o.zoom.hidden, false); assert.equal(blank(o), false, "off the default, the readout says the size");
   o.btn("Edit").click();
   await settle();
   assert.equal(o.btn("Cancel").hidden, false, "edit mode");
-  assert.equal(o.down.hidden, true); assert.equal(o.up.hidden, true); assert.equal(o.reset.hidden, true, "the editor keeps its own size");
+  assert.equal(o.acts.children[0].hidden, true, "the view group takes no room in edit mode: the pair and the glyph are hidden (review)");
+  assert.equal(o.zoom.hidden, true, "the editor keeps its own size");   // the glyph is the control's visibility (T367)
   const ev2 = wheel({ dy: -100, ctrl: true });
   o.body.dispatchEvent(ev2);
   assert.equal(size(o), "115", "the wheel stands down in edit mode"); assert.equal(ev2.defaultPrevented, false);
   o.btn("Cancel").click();
   assert.equal(o.btn("Cancel").hidden, true);
-  assert.equal(o.down.hidden, false); assert.equal(o.reset.hidden, false); assert.equal(o.up.hidden, false); assert.equal(blank(o), false, "back with the read view");
+  assert.equal(o.acts.children[0].hidden, false, "the view group is back with the read view");
+  assert.equal(o.zoom.hidden, false);   // the glyph is the control's visibility (T367)
+  assert.equal(blank(o), false, "back with the read view");
 });
 
 test("the control shows only once a text body is KNOWN: hidden beside the loader, shown when a text file's bytes land, never for a picture", async (t) => {
   store.set(SIZE_KEY, "130");
   const o = await openFile(t, REPORT, false);
-  assert.equal(o.down.hidden, true); assert.equal(o.up.hidden, true); assert.equal(o.reset.hidden, true, "the loader holds the body: not yet a text view");
+  assert.equal(o.zoom.hidden, true, "the loader holds the body: not yet a text view");   // the glyph is the control's visibility (T367)
   assert.equal(size(o), "130", "the step is on the root already, so the first paint is at size");
   await settle();
-  assert.equal(o.down.hidden, false); assert.equal(o.up.hidden, false); assert.equal(o.reset.hidden, false); assert.equal(o.reset.textContent, "130%");
+  assert.equal(o.zoom.hidden, false);   // the glyph is the control's visibility (T367)
+  assert.equal(o.reset.textContent, "130%");
   o.fv.closeFileView();
   const pic = await openFile(t, PLOT, false);
-  assert.equal(pic.down.hidden, true, "a picture: hidden for the load");
+  assert.equal(pic.zoom.hidden, true, "a picture: hidden for the load");
   await settle();
   assert.equal(pic.body.children[0].className, "fileview-imgbox", "the picture landed");
-  assert.equal(pic.down.hidden, true); assert.equal(pic.up.hidden, true); assert.equal(pic.reset.hidden, true, "and after it: nothing there reads the property");
+  assert.equal(pic.zoom.hidden, true, "and after it: nothing there reads the property");   // the glyph is the control's visibility (T367)
 });
 
 test("a press on a bar control settles no selection: with a passage selected in the body, A+ steps the size and neither re-reads the file nor re-seeds the quote chip; a lift on the bar's path or padding still settles", async (t) => {
@@ -713,12 +725,13 @@ test("openUrlView carries the stored step on its root and mounts the same contro
   t.after(() => { fv.closeFileView(); store.clear(); });
   const o = card(fv);
   assert.equal(size(o), "130", "the stored step is on the root before the document lands");
-  assert.equal(o.down.hidden, true); assert.equal(o.reset.hidden, true); assert.equal(o.up.hidden, true, "hidden beside the loader");
+  assert.equal(o.zoom.hidden, true, "hidden beside the loader");   // the glyph is the control's visibility (T367)
   const row = labels(o.acts);
-  assert.ok(row.indexOf("Raw") < row.indexOf("A−") && row.indexOf("A+") < row.indexOf("Open ↗"), "after Rendered and Raw, before the link out: " + row.join(" | "));
+  const zoomAt = row.findIndex((x) => x.startsWith("A−"));   // the zoom wrap reads as one label: the flyout's three buttons (T367)
+  assert.ok(row.indexOf("Raw") < zoomAt && zoomAt < row.indexOf("Open ↗"), "after Rendered and Raw, before the link out: " + row.join(" | "));
   await settle();
   assert.equal(o.body.children[0].className, "fileview-md", "the document rendered");
-  assert.equal(o.down.hidden, false); assert.equal(o.reset.hidden, false); assert.equal(o.up.hidden, false);
+  assert.equal(o.zoom.hidden, false);   // the glyph is the control's visibility (T367)
   assert.equal(o.reset.textContent, "130%"); assert.equal(blank(o), false);
   o.up.click();
   assert.equal(size(o), "150"); assert.equal(store.get(SIZE_KEY), "150", "stored under the same key as a local file's");
@@ -827,9 +840,9 @@ test("both sheets: the title bar wraps and its action row shrinks and wraps to t
     assert.deepEqual(decls(ruleOf(css, '.fileview-btn:disabled:hover, .fileview-btn[aria-disabled="true"]:hover {')), ["border-color: var(--card-border)", "color: var(--fg)", "background: transparent"], name + ": the hover is inert (the rest colours, not the accent)");
     assert.deepEqual(decls(ruleOf(css, '.fileview-btn:disabled:active, .fileview-btn[aria-disabled="true"]:active {')), ["transform: none"], name + ": no press pulse");
     assert.doesNotMatch(css, /\.fileview-gh \.fileview-btn:disabled/, name + ": the GitHub unit's disabled rules are the bar's now, not its own");
-    // the readout: one width whatever it says, and an empty slot (not none) at the default
+    // the readout: one width whatever it says, and dimmed (not empty) at the default since it moved into the zoom flyout (T367)
     assert.deepEqual(decls(ruleOf(css, ".fileview-size-reset {")), ["min-width: 5.5em", "box-sizing: border-box", "text-align: center", "font-variant-numeric: tabular-nums"], name + ": a slot of one width");
-    assert.deepEqual(decls(ruleOf(css, ".fileview-size-reset.fileview-size-default {")), ["visibility: hidden"], name + ": the empty slot keeps its width and leaves the tab order");
+    assert.deepEqual(decls(ruleOf(css, ".fileview-size-reset.fileview-size-default {")), ["color: var(--dim)"], name + ": at the default the readout reads dimmed inside the flyout (T367): nothing to reset, the slot keeps its width");
   }
   const [chat, feed] = SHEETS.map(([, css]) => css);
   for (const head of [".fileview-bar {", ".fileview-name {", ".fileview-acts {", ".fileview-bar .fileview-name {", ".fileview-bar .fileview-acts {",
@@ -1115,7 +1128,7 @@ test("in a browser: from 380 to 1400px in both modals the close button and every
         if (g.win <= 600) assert.ok(g.acts.t >= g.name.b - 0.5, cell + " " + what + ": the action row is the line below the path (row top " + g.acts.t + ", path bottom " + g.name.b + ")");
         if (g.win >= 1400) assert.ok(g.acts.t < g.name.b - 0.5 && g.acts.b > g.name.t + 0.5, cell + " " + what + ": room for both, so the path and the action row share a line");
       }
-      assert.equal(off.resetVis, "hidden", cell + ": at the default the readout's slot is empty by visibility");
+      assert.equal(off.resetVis, "visible", cell + ": at the default the readout reads dimmed, its slot kept (T367: inside the flyout, visibility is never hidden)");
       assert.ok(off.reset.w > 20, cell + ": and keeps its width (" + off.reset.w + "px)");
       assert.equal(on.resetVis, "visible", cell + ": off the default the readout shows");
       near(off.down.l, on.down.l, cell + ": A− does not move when the readout fills"); near(off.down.t, on.down.t, cell + ": A− stays on its line");
@@ -1356,6 +1369,9 @@ async function openReal(browser: any, mode: "chat" | "feed" | "pane", width: num
 const SEL = { down: 'button[aria-label="Smaller text"]', up: 'button[aria-label="Larger text"]', reset: ".fileview-size-reset", root: ".fileview" };
 const rectOf = (page: any, sel: string) => page.evaluate((s: string) => { const r = (document.querySelector(s) as HTMLElement).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; }, sel);
 const sizeOf = (page: any) => page.evaluate((s: string) => (document.querySelector(s) as HTMLElement).dataset.fvText, SEL.root);
+/** The text-size buttons ride the zoom glyph's flyout (upstream T367: shut until the glyph is pressed, and shut again by any
+ *  press outside it): open it when it is shut, so a press on A+, A- or the readout lands on a shown button. */
+const openZoom = async (page: any) => { if (await page.evaluate(() => { const m = document.querySelector(".fileview .fileview-zoom-menu") as HTMLElement | null; return !m || m.hidden; })) await page.click(".fileview .fileview-zoom-btn"); };
 
 test("the real-module page inlines its file table with `<` escaped: two script elements whatever the notes hold, the table parsing back to the same texts (a bare JSON.stringify let a note's `</script>` end the harness script before the fetch stub)", () => {
   const count = (s: string, re: RegExp) => (s.match(re) || []).length;
@@ -1455,11 +1471,13 @@ test("in a browser, the real module: the bar wraps, so the close button and ever
         // waiting for a kernel that never answers here), has no box; the readout's empty slot (visibility) keeps its box
         const btns = (Array.from(bar.querySelectorAll(".fileview-acts .fileview-btn")) as HTMLElement[]).filter((b) => b.getClientRects().length > 0);
         const box = (e: Element) => { const b = e.getBoundingClientRect(); return { left: b.left, right: b.right, top: b.top, bottom: b.bottom }; };
-        return { labels: btns.map((b) => b.textContent), root: box(root), minLeft: Math.min(...btns.map((b) => box(b).left)), maxRight: Math.max(...btns.map((b) => box(b).right)),
+        // a glyph button's word rides its aria-label (T367)
+        return { labels: btns.map((b) => b.getAttribute("aria-label") || b.textContent), root: box(root), minLeft: Math.min(...btns.map((b) => box(b).left)), maxRight: Math.max(...btns.map((b) => box(b).right)),
           close: box(bar.querySelector(".fileview-close")!), main: box(root.querySelector(".fileview-main")!), barOver: bar.scrollWidth - bar.clientWidth,
           name: (bar.querySelector(".fileview-name") as HTMLElement).getBoundingClientRect().width, nameFont: parseFloat(getComputedStyle(bar.querySelector(".fileview-name")!).fontSize) };
       });
-      for (const l of ["Rendered", "Raw", "A−", "A+", "Edit", "Comments", "GitHub", "Download", "Copy path", "✕"]) assert.ok(m.labels.includes(l), cell + ": the row measured is the kernel-answered one, with " + l + ": " + m.labels.join(","));
+      // A− and A+ live in the zoom glyph's flyout since T367 (hidden until the glyph is pressed), so the glyph stands for them in the row
+      for (const l of ["Rendered", "Raw", "Text size", "Edit", "Comments", "GitHub", "Download", "Copy path", "Close the file viewer"]) assert.ok(m.labels.includes(l), cell + ": the row measured is the kernel-answered one, with " + l + ": " + m.labels.join(","));
       assert.ok(m.close.left >= m.root.left - 0.5 && m.close.right <= m.root.right + 0.5, cell + `: the close button lies inside the card: x ${m.close.left}-${m.close.right} in ${m.root.left}-${m.root.right}`);
       assert.ok(m.minLeft >= m.root.left - 0.5 && m.maxRight <= m.root.right + 0.5, cell + `: every action lies inside the card: x ${m.minLeft}-${m.maxRight} in ${m.root.left}-${m.root.right}`);
       assert.ok(m.close.bottom <= m.main.top + 0.5, cell + ": the wrapped actions sit above the body, not over it");
@@ -1477,15 +1495,17 @@ test("in a browser, the real module: A− and A+ never move when the readout app
       const { page, errors } = await openReal(browser, mode, 900);
       const rects = () => page.evaluate((q: typeof SEL) => {
         const r = (s: string) => { const b = (document.querySelector(s) as HTMLElement).getBoundingClientRect(); return { left: b.left, top: b.top, width: b.width }; };
-        return { down: r(q.down), up: r(q.up), reset: r(q.reset), vis: getComputedStyle(document.querySelector(q.reset)!).visibility, text: document.querySelector(q.reset)!.textContent };
+        // T367: the readout at the default is dimmed text wearing fileview-size-default (the fork's slot emptied by visibility retired)
+        return { down: r(q.down), up: r(q.up), reset: r(q.reset), dim: document.querySelector(q.reset)!.classList.contains("fileview-size-default"), text: document.querySelector(q.reset)!.textContent };
       }, SEL);
+      await openZoom(page);   // T367: the three ride the glyph's flyout; open, so the rectangles are boxes and the presses land
       const r0 = await rects();
-      assert.equal(await sizeOf(page), "100"); assert.equal(r0.vis, "hidden", mode + ": the slot is empty at the default");
+      assert.equal(await sizeOf(page), "100"); assert.equal(r0.dim, true, mode + ": the readout reads dimmed at the default (nothing to reset)"); assert.equal(r0.text, "100%", mode + ": ...and says the default");
       assert.ok(r0.reset.width > 40, mode + ": ...and has its width already: " + r0.reset.width);
       const at = { x: r0.down.left + 6, y: r0.down.top + 6 };   // a point inside A−, kept for the second press
       await page.mouse.click(at.x, at.y);
       let r1 = await rects();
-      assert.equal(await sizeOf(page), "90"); assert.equal(r1.vis, "visible", mode + ": the readout appears"); assert.equal(r1.text, "90%");
+      assert.equal(await sizeOf(page), "90"); assert.equal(r1.dim, false, mode + ": the readout fills (the dimmed dress leaves)"); assert.equal(r1.text, "90%");
       near(r1.down.left, r0.down.left, mode + ": A− did not move"); near(r1.up.left, r0.up.left, mode + ": A+ did not move"); near(r1.reset.left, r0.reset.left, mode + ": the slot was there all along");
       await page.mouse.click(at.x, at.y);
       assert.equal(await sizeOf(page), "80", mode + ": the second press at the same point is a second step, not the reset");
@@ -1535,6 +1555,7 @@ test("in a browser, the real module: A− and A+ never move when the readout app
       await page.mouse.move(pBox.left + 2, pBox.top + 8); await page.mouse.down(); await page.mouse.move(pBox.left + 220, pBox.top + 8, { steps: 5 }); await page.mouse.up();
       const s1 = await page.evaluate(() => ({ sels: (window as any).__sels, chars: getSelection()!.toString().length }));
       assert.ok(s1.chars > 0, mode + ": a passage is selected (" + s1.chars + " chars)"); assert.equal(s1.sels, 1, mode + ": the lift over the body ran the selection hooks once");
+      await openZoom(page);   // the drag's mousedown in the body shut the flyout
       const up = await rectOf(page, SEL.up);
       await page.mouse.click(up.left + 6, up.top + 6);
       const s2 = await page.evaluate(() => ({ sels: (window as any).__sels, chars: getSelection()!.toString().length }));
@@ -1550,6 +1571,7 @@ test("in a browser, the real module: A− and A+ never move when the readout app
       assert.match(s3.lastUp, /fileview-(dir|base|name)/, mode + ": the lift landed on the bar's path: " + s3.lastUp);
       assert.ok(s3.chars > 0 && s3.anchorInBody, mode + ": a passage anchored in the body is selected (" + s3.chars + " chars)");
       assert.equal(s3.sels, 2, mode + ": released over the bar's path, the drag settles: the hooks ran");
+      await openZoom(page);   // shut again by the second drag; it reopens under the glyph, so the same point is A+
       await page.mouse.click(up.left + 6, up.top + 6);
       const s4 = await page.evaluate(() => ({ sels: (window as any).__sels, lastUp: (window as any).__lastUp as string }));
       assert.equal(await sizeOf(page), "90", mode + ": A+ stepped again"); assert.match(s4.lastUp, /fileview-btn/);
@@ -1592,6 +1614,7 @@ test("in a browser, the real module: a selection overlapping a comment highlight
       assert.notEqual(bare.text, text0, mode + ": ...and the selection did not survive it on its own (" + bare.text.length + " of " + text0.length + " chars): the round-2 measurement, reproduced");
       // the same repaint through the viewer's step: the selection stands, every character of it
       assert.equal(await pick(false), text0);
+      await openZoom(page);
       let up = await rectOf(page, SEL.up);
       await page.mouse.click(up.left + 6, up.top + 6);
       assert.equal(await sizeOf(page), "115", mode + ": the step happened");
@@ -1609,6 +1632,7 @@ test("in a browser, the real module: a selection overlapping a comment highlight
       assert.equal(r.text, text0, mode + ": the selection survives the resize");
       // backwards (the anchor after the focus, a drag made leftwards): the direction is kept across the step
       assert.equal(await pick(true), text0);
+      await openZoom(page);
       up = await rectOf(page, SEL.up);
       await page.mouse.click(up.left + 6, up.top + 6);
       assert.equal(await sizeOf(page), "130");
@@ -1644,6 +1668,7 @@ test("in a browser, the real module: a selection holding a picture alone (anchor
       assert.equal(await pick(), "", mode + ": a selection around the picture holds no text");
       let r = await read();
       assert.deepEqual([r.collapsed, r.anchor, r.focus], [false, 0, 1], mode + ": ...and is not collapsed: the figure is what it holds");
+      await openZoom(page);
       const up = await rectOf(page, SEL.up);
       await page.mouse.click(up.left + 6, up.top + 6);
       assert.equal(await sizeOf(page), "115", mode + ": the step happened");
@@ -1680,6 +1705,7 @@ test("in a browser, the real module, the Raw view: a drag from a row's first col
       });
       const rect = (i: number) => page.evaluate((i: number) => { const r = (document.querySelectorAll(".fileview-body .fv-cl .fv-ct")[i] as HTMLElement).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; }, i);
       const survives = async (what: string, before: { text: string; anchorRow: number; focusRow: number; anchorOffset: number; focusOffset: number }) => {
+        await openZoom(page);   // a drag or a triple-click in the body shut the flyout
         const up = await rectOf(page, SEL.up);
         const size0 = Number(await sizeOf(page));
         await page.mouse.click(up.left + 6, up.top + 6);
@@ -1727,6 +1753,7 @@ test("in a browser, the real module, the Raw view: a drag from a row's first col
       });
       const forced = await read();
       assert.equal(forced.text, "def main():\n    return 1", mode + ": the drag's shape, set directly");
+      await openZoom(page);
       const up = await rectOf(page, SEL.up);
       await page.mouse.click(up.left + 6, up.top + 6);
       const r = await read();
@@ -1778,7 +1805,7 @@ test("in a browser, the real module: an end on a text-less line boundary keeps i
         for (const trigger of ["step", "resize"] as const) {
           const paints0 = (await read(page)).paints;
           if (trigger === "step") {
-            const up = await rectOf(page, SEL.up); const size0 = Number(await sizeOf(page));
+            await openZoom(page); const up = await rectOf(page, SEL.up); const size0 = Number(await sizeOf(page));
             await page.mouse.click(up.left + 6, up.top + 6);
             assert.ok(Number(await sizeOf(page)) > size0, mode + ": " + what + ": the step happened");
           } else {
@@ -1849,7 +1876,7 @@ test("in a browser, the real module: an end on a text-less line boundary keeps i
         assert.deepEqual([triple.anchorOffset, triple.anchorLine, triple.anchorInMark, triple.focusLine], [0, 1, true, 2], mode + ": from the highlight's first character to the second line's start");
         await forced(page, "the triple-clicked line", triple);
         // plain prose away from the highlight: the paint leaves it standing, and the viewer does not touch it (the same node)
-        const step = async () => { const paints0 = (await read(page)).paints; const up = await rectOf(page, SEL.up); await page.mouse.click(up.left + 6, up.top + 6); await page.waitForFunction((n: number) => (window as any).__paints > n, paints0, { timeout: 5000 }); };
+        const step = async () => { const paints0 = (await read(page)).paints; await openZoom(page); const up = await rectOf(page, SEL.up); await page.mouse.click(up.left + 6, up.top + 6); await page.waitForFunction((n: number) => (window as any).__paints > n, paints0, { timeout: 5000 }); };
         const same = () => page.evaluate(() => { const s = getSelection()!; return s.anchorNode === (window as any).__n && s.focusNode === (window as any).__n; });
         await page.evaluate(() => { const done = Array.from(document.querySelectorAll(".fileview-md p")).pop()!.firstChild as Text; (window as any).__n = done; getSelection()!.setBaseAndExtent(done, 1, done, 4); });
         let r = await read(page);

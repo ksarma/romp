@@ -20,7 +20,7 @@
 //   romp up        → `up`          run the manager in the foreground (Ctrl+C stops it + its kernels)
 //   romp refresh   → `restart-all` restart EVERY kernel the manager owns (loops the registry)
 //   romp status    → `status`      print the manager + kernel status
-//   romp down      → `down`        stop every kernel and exit — the UNSUPERVISED half of `romp down`
+//   romp down      → `down`        stop every kernel and exit: the UNSUPERVISED half of `romp down`
 //                                  (under the login service bin/romp stops the service instead, or
 //                                  Restart=always / KeepAlive would respawn us within seconds)
 // (`restart [kernel]` (single) is this client's own verb: no romp verb and no front end dials POST /restart;
@@ -38,7 +38,7 @@
 
 const http = require('http');
 const crypto = require('crypto');
-const { spawn, execFileSync } = require('child_process');
+const { spawn } = require('child_process');
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
@@ -60,19 +60,19 @@ const KERNELS_FILE = path.join(STATE_ROOT, 'kernels.json');
 // `romp down` leaves this marker (bin/romp writes {t, cmd}) so a stopped kernel reads as stopped on
 // purpose. Two consumers here: `ensure` (the supervised start that `romp update <host>` and the remote
 // restart run on a far host) refuses to bring the manager back while it exists, since a remote update
-// must not silently undo a deliberate stop, and `up` (a deliberate start: `romp up`, the login service, a hand `systemctl start`) clears it.
+// must not silently undo a deliberate stop, and `up` (a deliberate start: `romp up`, the login service,
+// a hand `systemctl start`) clears it.
 const DOWN_MARKER = path.join(STATE_ROOT, 'down-by-romp');
 function downMarkerHeld(file = DOWN_MARKER) { try { return fs.existsSync(file); } catch (e) { return false; } }
 function clearDownMarker(file = DOWN_MARKER) {
   try { fs.unlinkSync(file); return true; } catch (e) { return false; }   // absent = nothing to clear
 }
 
-// $TMUX scrub (2026-07-20): a manager launched by hand from INSIDE a tmux session leaks $TMUX to
-// its kernels and their SDK-session children — whose tmux-status hooks then resolve `#S` to
-// whatever session is ATTACHED and hijack ITS @romp-session-id anchor (a live session flapping
-// "dead" → bogus revive prompts). launchd spawns us clean; this makes the manual path just as
-// clean at the source. Mirrors kernel/judge.py's scrub for judge subprocesses. The hook's own
-// CLAUDE_CODE_ENTRYPOINT guard stays as defense-in-depth for managers older than this line.
+// Environment scrub: a manager started by hand from inside a terminal multiplexer pane inherits that
+// pane's variables (TMUX, TMUX_PANE). Every kernel is spawned with a copy of this process's
+// environment (specEnv), and each session's CLI inherits its kernel's, so the leak would tell every
+// CLI it sits in a pane of that multiplexer. launchd and systemd start the manager clean; this makes
+// the manual path as clean, at the source. Mirrors kernel/judge.py's scrub for judge subprocesses.
 delete process.env.TMUX;
 delete process.env.TMUX_PANE;
 
@@ -101,7 +101,7 @@ function rompServeBin() {
 // demand via /ensure ('k<port>').
 
 // kernels.json (plans/multi-kernel.md phase 3): the durable aux-kernel profiles —
-//   { "kernels": [ { "id", "port", "postalPort"?, "stateDir"?, "claudeConfigDir"?, "tmuxSocket"? } ] }
+//   { "kernels": [ { "id", "port", "postalPort"?, "stateDir"?, "claudeConfigDir"? } ] }
 // Parsed FRESH at every consult (never cached at manager start): the --refresh stale-manager
 // incident (the user 2026-07-24) was the manager baking config once at start and then respawning
 // kernels with values the disk had long since moved past. A `main` entry may override the primary's
@@ -137,7 +137,7 @@ function loadSpecs(file, mainPort, controlPort) {
       if (!Number.isInteger(pp) || pp < 1024 || pp > 65535 || ports.has(pp)) { bad('postalPort must be a free integer in [1024,65535]'); continue; }
       spec.postalPort = pp; ports.add(pp);
     }
-    for (const [field, pat] of [['stateDir', /^[/~]/], ['claudeConfigDir', /^[/~]/], ['tmuxSocket', /^[A-Za-z0-9_-]{1,64}$/]]) {
+    for (const [field, pat] of [['stateDir', /^[/~]/], ['claudeConfigDir', /^[/~]/]]) {
       if (k[field] != null) {
         const v = String(k[field]);
         if (!pat.test(v)) { spec._bad = field; break; }
@@ -151,8 +151,8 @@ function loadSpecs(file, mainPort, controlPort) {
 }
 
 // The per-spec child env (pure, exported for tests): the profile's whole isolation story rides these
-// five variables — the kernel and everything it spawns (SDK sessions, its tmux server, its postal
-// bus) inherit them, so one env set at spawn scopes state, sessions, and mail per kernel.
+// four variables — the kernel and everything it spawns (SDK sessions, its postal bus) inherit them,
+// so one env set at spawn scopes state, sessions, and mail per kernel.
 function specEnv(spec, base, ids) {
   const env = Object.assign({}, base, {
     // BOTH spellings of the listen port, always overwritten together: `base` is the manager's own
@@ -162,11 +162,11 @@ function specEnv(spec, base, ids) {
     ROMP_KERNEL_PORT: String(spec.port),
     ROMP_MANAGER_PID: String(ids.managerPid),  // → kernel's parent-death watchdog
     ROMP_MANAGER_PORT: String(ids.controlPort),
+    ROMP_SHUTDOWN_GRACE_MS: String(SHUTDOWN_GRACE_MS),   // → the kernel's exit budgets (shares of the grace)
   });
   if (spec.postalPort) env.ROMP_POSTAL_PORT = String(spec.postalPort);
   if (spec.stateDir) env.ROMP_STATE_DIR = spec.stateDir;
   if (spec.claudeConfigDir) env.CLAUDE_CONFIG_DIR = spec.claudeConfigDir;
-  if (spec.tmuxSocket) env.ROMP_TMUX_SOCKET = spec.tmuxSocket;
   return env;
 }
 
@@ -240,24 +240,24 @@ const BUSY_MISS_LIMIT = Number(process.env.ROMP_BUSY_MISS_LIMIT) || 3;
 const QUIET_MAX_DEFER_MS = Number(process.env.ROMP_QUIET_MAX_DEFER_MS) || 15 * 60 * 1000;
 
 // The manager's own note of a SIGTERM it is about to send, in the SAME restart-audit.jsonl the
-// requesters (bin/romp refresh, the kernel's self-update, the dashboard button) and the kernel's
-// cut ledger read. Without it a `romp on restart` or a service stop reached the kernel with no
-// row on disk, indistinguishable from a stray kill, and the kernel's "no request on record"
-// verdict would name the manager's own kills wrongly. Aux kernels read the file under their own
-// state root, so the row goes where that kernel will look. Best-effort: never blocks the kill.
+// requesters (bin/romp refresh, the kernel's self-update, the dashboard button) write and the
+// kernel's exit handler reads. Without it a `romp-manager restart` or a service stop reaches the kernel with no
+// row on disk, indistinguishable from a stray kill, and the kernel's "no request on record" verdict
+// (kernel/kernel.py _unrequested_signal_reason) would name the manager's own kills wrongly. Aux
+// kernels read the file under their own state root, so the row goes where that kernel will look.
+// Best-effort: never blocks the kill.
 //
 // MECHANISM NOTES, NOT INTENTS. A manager-sigterm row says the manager was the messenger; who
-// asked is the requester's own row, written before it (bin/romp's `refresh` row, the kernel's
-// self-update, `romp down`'s `down` row). A reader after the newest intent therefore SKIPS
-// manager-sigterm rows rather than stopping at the newest row: `romp down` writes its `down` row
-// and then stops the service, and this row lands after it (kernel/kernel.py _recent_restart_reason
-// skips them; any reader that takes only the newest row must do the same). `trigger` names what
-// set the SIGTERM off, so the row is legible on its own:
-//   restart      one kernel, POST /restart (`romp-manager restart [kernel]`; the dashboard's Restart arrives as restart-all)
+// asked is the requester's own row, written before it (bin/romp's refresh row, the kernel's
+// self-update). A reader after the newest intent therefore SKIPS manager-sigterm rows rather than
+// stopping at the newest row (kernel/kernel.py _recent_restart_audit does; any reader that takes
+// only the newest row must do the same). `trigger` names what set the SIGTERM off, so the row is
+// legible on its own:
+//   restart      one kernel, POST /restart (the dashboard button, `romp-manager restart`)
 //   restart-all  every kernel, POST /restart-all (`romp refresh`), at once or at the quiet window
 //   refresh      the stale-manager self-bounce: kernels stopped so the supervisor respawns the new manager
 //   cli-down     a stop while `romp down`'s marker (DOWN_MARKER) is on disk: the CLI asked for it
-//   stop         any other stop: a service stop by hand, Ctrl+C on `romp up`, POST /stop
+//   stop         any other stop: a service stop by hand, Ctrl+C on the foreground manager, POST /stop
 // `reason` stays what the manager does next: `restart` (respawn) or `stop` (reap).
 function auditSigterm(spec, pid, reason, trigger) {
   const t = Math.floor(Date.now() / 1000);
@@ -270,16 +270,43 @@ function auditSigterm(spec, pid, reason, trigger) {
   return t;
 }
 
-// A stop that finds `romp down`'s marker (DOWN_MARKER above; bin/romp writes it before it stops the
-// service) was the CLI's, not a hand on systemctl or a Ctrl+C. Read at stop time, never cached: the
-// marker appears seconds before the SIGTERM does.
+// The trigger of a stop nobody labeled (SIGINT/SIGTERM to the manager, POST /stop). A stop that finds
+// `romp down`'s marker (DOWN_MARKER above; bin/romp writes it before it stops the service) was the
+// CLI's, not a hand on systemctl or a Ctrl+C; anything else is `stop`. Read at stop time, never
+// cached (the marker appears seconds before the SIGTERM does), and once per shutdown, so every
+// kernel's row names the same cause.
 function stopTrigger() { return downMarkerHeld() ? 'cli-down' : 'stop'; }
+
+// T304: the quiet window's OWN row in restart-audit.jsonl, written when the parked refresh APPLIES, so the
+// wait from parked to restart and the fifteen-minute backstop's firing are machine-readable (until now they
+// were the `applying deferred refresh … waited Ns` log line alone). A mechanism note like manager-sigterm,
+// never a request: the kernel's reason walk lists `quiet-window` in _NO_RESTART_ACTIONS and passes it over;
+// the restart it releases writes its own manager-sigterm note. `since` and `t` are epoch seconds; `reason`
+// is quietGate's verdict verbatim ('quiet', 'backstop cap', or the unreachable-kernel sentence), `backstop`
+// the one bit a reader wants most; the drain counts are the park's evidence (queueQuietRestart records them).
+function quietWindowRow(park, g, now) {
+  const p = park || {}; const since = Number(p.since) || now;
+  return { t: Math.floor(now / 1000), action: 'quiet-window', since: Math.floor(since / 1000),
+           waitedS: Math.max(0, Math.round((now - since) / 1000)), reason: String((g && g.reason) || ''),
+           backstop: !!(g && g.reason === 'backstop cap'), coalesced: p.count || 1, mode: String(p.mode || 'all'),
+           lastInflight: p.lastInflight === undefined ? null : p.lastInflight, misses: p.misses || 0,
+           drainRefusedCount: p.drainRefusedCount || 0, drainArmedCount: p.drainArmedCount || 0,
+           drainRefusedAfterArm: p.drainRefusedAfterArm || 0 };
+}
+function auditQuietWindow(park, g, now) {
+  const row = quietWindowRow(park, g, now || Date.now());
+  try {
+    fs.mkdirSync(STATE_ROOT, { recursive: true });
+    fs.appendFileSync(path.join(STATE_ROOT, 'restart-audit.jsonl'), JSON.stringify(row) + '\n');
+  } catch (e) { /* a lost note, not a lost restart */ }
+  return row;
+}
 
 // The exit handler's verdict (pure, exported for tests): what to log and whether to respawn. A
 // kernel we asked to stop is reaped; one we SIGTERMed for a restart keeps the plain respawn line;
 // one that exited with NEITHER on record (a signal from elsewhere, or a crash) says so, because
-// that is the exit worth a second look (2026-09-06: a direct SIGTERM to the kernel pid was logged
-// like any requested restart, and the respawn that followed started a two-hour outage).
+// that is the exit worth a second look: a direct SIGTERM to the kernel pid used to be logged like
+// any requested restart, and a respawn that lands on a different python takes every session down.
 function exitLine(rec, code, sig, delay) {
   const id = rec.spec.id;
   if (rec.stopping) return { respawn: false, line: `kernel '${id}' stopped` };
@@ -301,7 +328,7 @@ function spawnKernel(spec) {
   // ROMP_MANAGER_PID lets the kernel run a parent-death watchdog (_parent_watch in bin/romp-kernel):
   // if we die uncleanly (SIGKILL / crash / closed terminal) and never SIGTERM it, it sees us vanish and
   // exits itself instead of orphaning. ROMP_SERVE_PORT is the kernel's listen port; the rest of the
-  // profile env (state root, Claude config dir, postal port, tmux socket) is the kernel's whole
+  // profile env (state root, Claude config dir, postal port) is the kernel's whole
   // isolation story (specEnv).
   const env = specEnv(spec, process.env, { managerPid: process.pid, controlPort: CONTROL_PORT });
   // stdio inherited → the kernel's own logs surface in this foreground terminal (visible owner).
@@ -326,7 +353,9 @@ function spawnKernel(spec) {
     log(exitLine(cur, code, sig, delay).line);
     setTimeout(() => {
       const c = kernels.get(spec.id);
-      if (c && c.child === child && !c.stopping) spawnKernel(spec);   // still ours & not asked to stop
+      if (!(c && c.child === child && !c.stopping)) return;   // superseded, or asked to stop
+      if (staleManagerYields(`respawning kernel '${spec.id}'`)) return;   // the fresh manager brings it back
+      spawnKernel(spec);                                     // still ours & not asked to stop
     }, delay);                                               // crash OR requested restart → bring it back
   });
 }
@@ -357,20 +386,33 @@ function restartGate(st, now, opts) {
 const STORM_OPTS = { coalesceMs: RESTART_COALESCE_MS, stormWindowMs: STORM_WINDOW_MS,
   stormMax: STORM_MAX, stormCooldownMs: STORM_COOLDOWN_MS };
 
-// How long a kernel gets to leave on SIGTERM before SIGKILL. The kernel's own drain is bounded at
-// about 2s (_graceful_term in kernel/kernel.py); one still there at 5s is wedged. The manager used to
-// exit 800ms after one SIGTERM and escalate to nothing, so a kernel that ignored the signal outlived
-// it, keeping its port and its sessions under a `romp down` marker that said otherwise (review
-// 2026-09-06, finding 1). The env seam is for the unit tests, which cannot sit through 5s.
-const SHUTDOWN_GRACE_MS = Number(process.env.ROMP_SHUTDOWN_GRACE_MS) || 5000;
+// How long a kernel gets to leave on SIGTERM before SIGKILL: 8 s, with ROMP_SHUTDOWN_GRACE_MS overriding it
+// (was 5 s). The kernel's exit budgets (its drain and checkpoint windows, _graceful_term in kernel/kernel.py)
+// are shares of this value, passed down in specEnv, so a kernel never assumes more grace than it gets, and
+// one still there when the grace runs out is wedged. The manager used to exit 800ms after one SIGTERM and
+// escalate to nothing, so a kernel that ignored the signal outlived it, keeping its port and its sessions
+// under a `romp down` marker that said otherwise. The env seam is for the unit tests, which cannot sit
+// through the 8 s, and for an install whose kernels need longer.
+// ONE contract for the value, shared with `romp down`: a plain whole number of milliseconds, one to nine
+// digits, above zero. Any other form (an exponent, hex, a sign, a fraction, whitespace, a leading zero, empty)
+// is the 8000 default, never a Number() coercion. bin/romp sizes its poll for this manager's exit from the
+// value the manager runs with, read off GET /status (manager.shutdownGraceMs), and falls back to reading
+// ROMP_SHUTDOWN_GRACE_MS from its own shell only when the field is absent; the two readers accepting the
+// same shape is what keeps the fallback honest (pull-in review round 2, 2026-09-16: Number() took 2e4 and
+// 0x2ee0 where the CLI's read did not, so a grace in such a form outran the poll). Nine digits also keeps
+// the value under setTimeout's bound (2^31-1 ms; a longer delay fires at once, a SIGKILL right behind the
+// SIGTERM).
+function shutdownGrace(raw) {
+  return /^[1-9][0-9]{0,8}$/.test(raw == null ? '' : String(raw)) ? Number(raw) : 8000;
+}
+const SHUTDOWN_GRACE_MS = shutdownGrace(process.env.ROMP_SHUTDOWN_GRACE_MS);
 
 // SIGTERM a kernel and, when it is still there once the grace has run out, SIGKILL it and say so.
-// Every stop and every restart goes through here: round 2 gave shutdownAll the escalation and left
-// restartKernel with its lone SIGTERM, so a kernel that ignored it under `romp refresh`, the
-// dashboard's restart or the quiet-window apply was never respawned and kept its port and its
-// sessions on stale code, with nothing logged (review round 3, finding 3). The timer holds the
-// child it signaled, never the registry's current one: a kernel respawned in the meantime is not
-// the one that owes the exit. The exit handler does the rest (reap or respawn, per rec.stopping).
+// Every stop and every restart goes through here: a kernel that ignores its SIGTERM under `romp
+// refresh`, the dashboard's restart or the quiet-window apply would otherwise never be respawned and
+// keep its port and its sessions on stale code, with nothing logged. The timer holds the child it
+// signaled, never the registry's current one: a kernel respawned in the meantime is not the one that
+// owes the exit. The exit handler does the rest (reap or respawn, per rec.stopping).
 function termThenKill(rec) {
   const child = rec.child;
   try { child.kill('SIGTERM'); } catch (e) { return; }
@@ -772,6 +814,7 @@ function queueQuietRestart(mode) {
           : p.drainRefusedAfterArm > 0
             ? ` — the drain hold armed and was then LOST for this park (refused ${p.drainRefusedAfterArm} time(s) after arming, ${p.drainRefusedCount - p.drainRefusedAfterArm} before), so turns started after the loss may be cut`
             : ` — the drain hold was refused ${p.drainRefusedCount} time(s) before arming for this park, so turns started before it armed may be cut`;
+      auditQuietWindow(p, g, Date.now());   // the row before the restart it releases (T304: the wait, measured)
       log(`applying deferred refresh — ${g.reason}${cause} (${p.count} request(s) coalesced, waited ${Math.round((Date.now() - p.since) / 1000)}s)`);
       if (p.mode === 'all') restartAllOrSelf(); else restartKernel(p.mode);
     },
@@ -817,16 +860,16 @@ function runManager() {
   });
 }
 
-// romp holds no API key and runs no secret-manager CLI (the user 2026-09-08): the tmux server the manager
-// starts inherits the manager's environment unchanged, so nothing is scrubbed here. A retired provider
-// variable in that environment is refused BEFORE the server starts (retiredCredentialNames, below): every
-// pane the server ever creates inherits the SERVER's globals, and a `romp new -t` terminal session's `exec
-// claude` would read a leftover ANTHROPIC_API_KEY from there even though the kernel refuses to boot on the
-// same variable (kernel/credentials.py check_boot_environment). The manager is what receives service.env
-// (systemd's EnvironmentFile=, bin/romp-node-launch), so this is the check that covers the tmux path.
-// The retired provider variables, then the 1Password CLI's own names (the retired reference kind read
-// them; romp no longer runs op, and a token left here would ride into every pane): kernel/credentials.py
-// RETIRED_VARS, OP_ENV_NAMES and OP_ENV_PREFIX, mirrored.
+// romp holds no API key and runs no secret-manager CLI (the user 2026-09-08): every kernel the manager
+// spawns inherits the manager's environment as it stands (specEnv copies it), and nothing is scrubbed
+// here. A retired provider variable in that environment is refused BEFORE a kernel starts
+// (retiredCredentialNames, below). The kernel refuses to boot on the same variable
+// (kernel/credentials.py check_boot_environment), but the manager is what receives service.env (systemd's
+// EnvironmentFile=, bin/romp-node-launch), so the check sits at the door the file comes in through: the
+// variable never reaches a kernel or a session it starts, and the manager's own log names the line to
+// remove. The retired provider variables, then the 1Password CLI's own names (the retired reference kind
+// read them; romp no longer runs op, and a token left here would ride into every kernel and session):
+// kernel/credentials.py RETIRED_VARS, OP_ENV_NAMES and OP_ENV_PREFIX, mirrored.
 const RETIRED_CREDENTIAL_NAMES = ['ROMP_API_KEY_CMD', 'ROMP_API_KEY_REF', 'ANTHROPIC_API_KEY'];
 const OP_ENV_NAMES = ['OP_SERVICE_ACCOUNT_TOKEN', 'OP_CONNECT_HOST', 'OP_CONNECT_TOKEN', 'OP_ACCOUNT'];
 const OP_ENV_PREFIX = 'OP_SESSION_';
@@ -843,201 +886,34 @@ function retiredCredentialMessage(names) {
     '(a key romp holds is a key a session can print). Remove the line from service.env (and any exported variable), ' +
     'configure apiKeyHelper in Claude Code\'s settings, declare the billing with ROMP_EXPECTED_AUTH=key, then start again.' + op;
 }
-function withoutOpCredentials(env) {
-  return Object.assign({}, env);
-}
-//
-// Under the Linux service the server goes into a transient systemd scope of its own (2026-09-05). The
-// manager runs as a systemd user service that relies on systemd's default KillMode=control-group (the
-// unit sets no KillMode line), so a server started here lands in the service's cgroup and `systemctl
-// --user restart romp-manager` kills it, with every session's tmux jobs inside — a service restart that
-// day killed two sessions' tmux servers and setsid jobs along with the kernel. `systemd-run --scope`
-// starts the daemon outside the service cgroup; a session's later `tmux new-session` joins that server
-// and survives a service restart. The tmux CLIENT still exits at once (it only starts the daemon), so
-// execFileSync's semantics are unchanged, and when a server already runs the call is the same no-op and
-// the scope collects itself. Any failure of the scoped path falls back to the bare call, and the line after
-// it READS where the server actually sits (its cgroup) rather than assuming the bare call placed it: a
-// timed-out scoped call kills only tmux's client, the daemon it forked stays inside the scope. The macOS
-// path is as it was: launchd owns the lineage there and the TCC rationale above still applies.
-const TMUX_START_ARGV = ['tmux', 'start-server', ';', 'set', '-g', 'exit-empty', 'off'];
 
-// Is `name` an executable on the env's PATH? (Node has no `which`.)
-function commandOnPath(name, env = process.env) {
-  for (const dir of (env.PATH || '').split(path.delimiter)) {
-    if (!dir) continue;
-    try { fs.accessSync(path.join(dir, name), fs.constants.X_OK); return true; } catch { /* next dir */ }
+// A manager whose binary changed since it started must not bring a kernel up under itself (the stale-manager
+// shape restartAllOrSelf handles for `romp refresh`): the same for a single kernel's /restart and for the crash
+// respawn (T325 review: a new-code kernel under an old manager inherits its stale environment, ports and profile
+// env alike, for as long as the checkout sits ahead of the running manager). Supervised → exit so the
+// supervisor respawns the new manager, which brings every kernel back on the new defaults; foreground → warn and
+// let the kernel come up anyway. Returns true when the manager is exiting instead.
+function staleManagerYields(why) {
+  if (!managerStale()) return false;
+  if (process.env.ROMP_SUPERVISED) {
+    log(`manager binary changed since start — exiting for a supervised respawn instead of ${why} under the stale manager`);
+    shutdownAll(0, 'refresh');
+    return true;
   }
+  log(`WARNING: bin/romp-manager changed since this manager started — ${why} inherits STALE manager defaults. Restart the manager to load the new one.`);
   return false;
 }
 
-// The PURE choice of how to start the server — exported for unit tests. null when tmux is not on PATH:
-// nothing to start and nothing to say (the behaviour before the scopes; a tmux-less box must not log a
-// scope failure at every start). Scoped exactly when the kernel scopes session CLIs (cli_scope_supported
-// in kernel/sdk_backend.py, the same switch): ROMP_CLI_SCOPE=1, or under the supervised service
-// (ROMP_SUPERVISED, what bin/romp-service's unit sets) unless ROMP_CLI_SCOPE=0 — so a terminal-run
-// manager scopes nothing unless asked — and then only on Linux with systemd-run on PATH. The unit name
-// carries a timestamp: systemd refuses a duplicate name ("already loaded") and the last scope may
-// still be alive with the server in it.
-function tmuxStartArgv({ platform = process.platform, env = process.env, onPath = commandOnPath, now = Date.now } = {}) {
-  if (!onPath('tmux', env)) return null;
-  const want = env.ROMP_CLI_SCOPE;
-  const wanted = want === '1' || (Boolean(env.ROMP_SUPERVISED) && want !== '0');
-  if (platform !== 'linux' || !wanted || !onPath('systemd-run', env)) {
-    return { argv: TMUX_START_ARGV.slice(), scoped: false };
-  }
-  return { argv: ['systemd-run', '--user', '--scope', '--quiet', '--collect', `--unit=romp-tmux-${now()}`,
-                  '--', ...TMUX_START_ARGV], scoped: true };
-}
-
-const TMUX_START_TIMEOUT_MS = 5000;
-const FAILURE_LINE_MAX = 200;
-
-// What a failed scoped start says in the log, from execFileSync's error: the tool that failed, and its
-// first stderr line, bounded. systemd-run in --scope mode execs the command in place, so a non-zero exit
-// is either systemd-run's own — no user bus, a refused unit name; its logger prefixes every line
-// "Failed to …" — or tmux's, failing inside a scope that did start ("error connecting to …"). The line
-// names whichever wrote the message. With nothing on stderr it names systemd-run, the command that ran,
-// and says how it ended. Exported for the node suite.
-function scopedStartFailure(e) {
-  const first = String((e && e.stderr) || '').split('\n').map((s) => s.trim()).find(Boolean) || '';
-  const tool = first && !/^Failed to /.test(first) ? 'tmux' : 'systemd-run';
-  let detail = first;
-  if (!detail) {
-    if (e && e.code === 'ETIMEDOUT') detail = `timed out after ${TMUX_START_TIMEOUT_MS / 1000} s`;
-    else if (e && e.signal) detail = `killed by ${e.signal}`;
-    else if (e && typeof e.status === 'number') detail = `exit ${e.status}, nothing on stderr`;
-    else detail = String(e && e.message || e).split('\n')[0];   // a spawn error: "spawnSync systemd-run ENOENT"
-  }
-  if (detail.length > FAILURE_LINE_MAX) detail = detail.slice(0, FAILURE_LINE_MAX - 1) + '…';
-  return { tool, detail };
-}
-
-// After a failed scoped start the bare call runs, and where the server then sits is READ, not predicted
-// (the #953 review): the old fixed line said the server was unscoped and a service restart would take it
-// down, which is wrong in two cases. A scoped call that times out — execFileSync SIGTERMs the tmux CLIENT
-// (systemd-run exec'd it in place) while the server daemon that client forked stays alive inside the
-// romp-tmux scope, so the bare retry is a no-op onto a scoped server. And after a service restart the
-// previous manager's server is still up in its old scope, so if systemd-run fails on THIS start (bus not
-// up yet, a refused unit) the bare call no-ops onto a scoped server again. `#{pid}` is the server's pid;
-// display-message does not start a server (exit 1, "no server running on …", when there is none — tmux 3.4).
-const TMUX_SERVER_PID_ARGV = ['tmux', 'display-message', '-p', '#{pid}'];
-
-// PURE: the path of the hierarchy systemd manages, from a /proc/<pid>/cgroup text — the `0::<path>` line on
-// cgroup v2; on v1 (one `<id>:<controllers>:<path>` line per controller) the `name=systemd` controller's,
-// else the first path present. '' when the text carries none.
-function systemdCgroupPath(text) {
-  const rows = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
-    const parts = l.split(':');
-    return parts.length >= 3 ? { id: parts[0], controllers: parts[1], path: parts.slice(2).join(':') } : null;
-  }).filter(Boolean);
-  const v2 = rows.find((r) => r.id === '0' && r.controllers === '');
-  const v1 = rows.find((r) => r.controllers.split(',').includes('name=systemd'));
-  return ((v2 || v1 || rows[0]) || { path: '' }).path;
-}
-
-// PURE: where a /proc/<pid>/cgroup text places the server, against the manager's own (/proc/self/cgroup).
-// Every line is tried for a romp-tmux-* scope (cgroup v1 has one per controller, each ending in the unit);
-// only the manager's own scopes count — a romp-session-* scope is a session CLI's, not this feature's claim.
-// Otherwise the server's cgroup is COMPARED with the manager's, not classified from the shape of its path
-// (the #967 review): the same cgroup, or one under it, is the service's own, which KillMode=control-group
-// takes down with the service — 'unscoped', the line as it always was. Any other cgroup is outside the
-// service's reach — a server the user started from a terminal sits in the login session's scope — and a
-// service restart leaves it alive, so 'outside' names the cgroup instead of predicting a loss.
-function placementFromCgroup(text, own) {
-  const lines = String(text || '').split('\n');
-  for (const line of lines) {
-    const m = /\/(romp-tmux-\d+\.scope)\s*$/.exec(line);
-    if (m) return { placement: 'scoped', unit: m[1] };
-  }
-  const server = systemdCgroupPath(text);
-  if (!server) return { placement: 'unknown', why: lines.some((l) => l.trim()) ? 'no cgroup path in the file' : 'empty cgroup file' };
-  const mine = systemdCgroupPath(own);
-  if (!mine) return { placement: 'unknown', why: "the manager's own cgroup file is empty" };
-  if (server === mine || server.startsWith(mine.replace(/\/$/, '') + '/')) return { placement: 'unscoped' };
-  return { placement: 'outside', cgroup: server };
-}
-
-function defaultServerPid() {
-  return execFileSync(TMUX_SERVER_PID_ARGV[0], TMUX_SERVER_PID_ARGV.slice(1),
-                      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: TMUX_START_TIMEOUT_MS,
-                        env: withoutOpCredentials(process.env) });
-}
-function defaultReadCgroup(pid) { return fs.readFileSync('/proc/' + pid + '/cgroup', 'utf8'); }
-
-// Never throws — a throw here would abort startManager before the control port binds — so every failure
-// of the probe is an 'unknown' placement carrying the failure's first line, bounded like the failure
-// line's detail. `serverPid` and `readCgroup` are injectable for the node suite; the defaults ask tmux
-// (bounded by the same timeout as the start) and read /proc — the server's file, then the manager's own
-// (`self`), which the placement compares it with.
-function tmuxServerPlacement({ serverPid = defaultServerPid, readCgroup = defaultReadCgroup } = {}) {
-  const why = (e) => {
-    const first = String((e && e.stderr) || '').split('\n').map((s) => s.trim()).find(Boolean)
-      || String(e && e.message || e).split('\n')[0];
-    return first.length > FAILURE_LINE_MAX ? first.slice(0, FAILURE_LINE_MAX - 1) + '…' : first;
-  };
-  let pid;
-  try { pid = String(serverPid()).trim(); } catch (e) { return { placement: 'unknown', why: why(e) }; }
-  if (!/^\d+$/.test(pid)) return { placement: 'unknown', why: 'tmux reported no server pid' };
-  let text, own;
-  try { text = readCgroup(pid); own = readCgroup('self'); } catch (e) { return { placement: 'unknown', why: why(e) }; }
-  return placementFromCgroup(text, own);
-}
-
-// PURE: the line the bare call's success logs, worded from where the server sits. The unscoped wording is
-// the line as it always was (its pins stay); the other three predict no loss.
-function bareEnsuredLine({ placement, unit, cgroup, why }) {
-  if (placement === 'scoped') {
-    return `tmux server ensured — already running inside ${unit} (the scoped start had begun it, or an earlier one still holds it); a service restart leaves it and its sessions' jobs alive`;
-  }
-  if (placement === 'unscoped') {
-    return 'tmux server ensured without a scope — under the service, a service restart will take it down';
-  }
-  if (placement === 'outside') {
-    return `tmux server ensured — already running outside the service's cgroup, in ${cgroup} (a server begun from a terminal sits in the login session's scope); a service restart leaves it and its sessions' jobs alive`;
-  }
-  return `tmux server ensured — whether it sits in a scope could not be read (${why}); under the service, a restart takes it down only if it is not in one`;
-}
-
-function startTmuxServer() {
-  const pick = tmuxStartArgv();
-  if (!pick) return;   // no tmux on PATH: nothing to start, and nothing to log (as before the scopes)
-  // stderr is piped on the scoped call, for the failure line below: with stdio 'ignore' the error carried
-  // "Command failed: <argv>" and nothing about why. The pipe closes when tmux's client exits — its server
-  // daemonizes onto /dev/null — so it holds nothing open. The bare call keeps 'ignore': nothing reads it.
-  const stdio = pick.scoped ? ['ignore', 'ignore', 'pipe'] : 'ignore';
-  try {
-    execFileSync(pick.argv[0], pick.argv.slice(1), { stdio, timeout: TMUX_START_TIMEOUT_MS, env: withoutOpCredentials(process.env) });
-    log(pick.scoped
-      ? 'tmux server ensured in its own transient scope (romp-tmux-*) — a service restart leaves it and its sessions\' jobs alive'
-      : 'tmux server ensured (launchd-rooted) — new sessions won\'t inherit a terminal\'s TCC identity');
-    return;
-  } catch (e) {
-    if (!pick.scoped) return;   // a server is already up, or tmux itself failed — nothing more to do
-    // Say what failed; where the server sits is read from its cgroup after the bare call (bareEnsuredLine),
-    // not predicted here.
-    const { tool, detail } = scopedStartFailure(e);
-    log(tool === 'tmux'
-      ? `tmux failed inside the scope systemd-run started for it (${detail}) — starting it the plain way instead`
-      : `systemd-run could not start the tmux server in a scope (${detail}) — starting it the plain way instead`);
-  }
-  try {
-    execFileSync(TMUX_START_ARGV[0], TMUX_START_ARGV.slice(1), { stdio: 'ignore', timeout: TMUX_START_TIMEOUT_MS, env: withoutOpCredentials(process.env) });
-    log(bareEnsuredLine(tmuxServerPlacement()));
-  } catch (e) { /* a server is already up, or tmux itself failed — nothing to do */ }
-}
-
-// startManager's first two statements, in this order: the `romp down` marker is cleared (a deliberate start
-// brings the kernels back, and a start refused below still records that it was asked for, so `romp status`
-// does not call the kernel stopped on purpose), then a retired credential name in the environment refuses the
-// start BEFORE the tmux server exists (retiredCredentialNames above; the supervisor restarts the manager on its
-// backoff, so the line repeats in its log until the file is repaired, the kernel's own shape). Both are source
-// pins: tests/manager-down.test.js reads the clear within the first 400 characters, tests/manager-op-env.test.js
-// the refusal before startTmuxServer(), so the comment lives here and not inside the function.
+// startManager's first statement clears the `romp down` marker: a deliberate start brings the kernels
+// back, and a start the credential check below refuses still records that it was asked for, so
+// `romp status` does not call the kernel stopped on purpose.
 function startManager() {
-  if (clearDownMarker()) log('cleared the `romp down` marker — this start brings the kernels back');
+  if (clearDownMarker()) log('cleared the `romp down` marker; this start brings the kernels back');
   const retired = retiredCredentialNames(process.env);
-  if (retired.length) { log(retiredCredentialMessage(retired)); process.exit(1); }
-  startTmuxServer();
+  if (retired.length) {
+    log(retiredCredentialMessage(retired));   // the supervisor restarts the manager on its backoff, so the line
+    process.exit(1);                          // repeats in its log until the file is repaired (the kernel's own shape)
+  }
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || '/', 'http://x');
     const kid = url.searchParams.get('kernel') || 'main';
@@ -1068,7 +944,9 @@ function startManager() {
     if (req.method === 'GET' && url.pathname === '/status') {
       return json(200, {
         ok: true,
-        manager: { pid: process.pid, controlPort: CONTROL_PORT, stale: managerStale() },
+        // shutdownGraceMs: the grace this manager runs with (SHUTDOWN_GRACE_MS, its contract above), the
+        // authoritative value `romp down` sizes its poll for the manager's exit from
+        manager: { pid: process.pid, controlPort: CONTROL_PORT, stale: managerStale(), shutdownGraceMs: SHUTDOWN_GRACE_MS },
         kernels: [...kernels].map(([id, r]) => ({ id, port: r.spec.port, pid: r.child.pid, restarts: r.restarts, upSec: Math.round((Date.now() - r.startedAt) / 1000) })),
       });
     }
@@ -1097,6 +975,8 @@ function startManager() {
         return json(202, { ok: true, deferred: true, coalesced: queueQuietRestart(kid) });
       }
       clearPendingQuiet();                                       // a single restart satisfies a pending deploy in passing
+      if (!kernels.has(kid)) return json(404, { ok: false, error: `no kernel '${kid}'` });
+      if (staleManagerYields(`restarting kernel '${kid}'`)) return json(200, { ok: true, restarted: kid, managerRestart: true });
       return restartKernel(kid) ? json(200, { ok: true, restarted: kid }) : json(404, { ok: false, error: `no kernel '${kid}'` });
     }
     if (req.method === 'POST' && url.pathname === '/stop') {
@@ -1191,10 +1071,10 @@ function control(method, pathname, kernel, params) {
   req.end();
 }
 
-// `romp-manager ensure` — idempotent, non-blocking auto-start: if a manager is already
-// up, do nothing; otherwise spawn `up` DETACHED and return immediately. `romp update <host>` and
-// the dashboard's remote restart run this on the far host so the supervisor (and the kernel) come
-// up there without a `romp up`.
+// `romp-manager ensure`: idempotent, non-blocking auto-start. If a manager is already up, do
+// nothing; otherwise spawn `up` DETACHED and return immediately. `romp update <host>` and the
+// dashboard's remote restart run this on the far host so the supervisor (and the kernel) come up
+// there without a `romp up`.
 // Race-safe: the detached `up` re-probes and exits cleanly if another session won.
 // A `romp down` marker HOLDS it: auto-start is the one door that would bring a deliberately
 // stopped kernel back without anyone asking (a remote update), so it refuses, says why, and
@@ -1221,12 +1101,13 @@ function ensureUp() {
 // file is executed directly, so require()-ing it from a test has no side effects.
 module.exports = { restartGate, quietGate, quietTick, loadSpecs, specEnv, fileStamp,
                    kernelToken, serveToken, readTokenFile, acceptedTokens, mintServeTokenIfAbsent, writeGate, fetchBusy, resetDrainNotices, queueQuietRestart, clearPendingQuiet,
-                   tmuxStartArgv, scopedStartFailure, commandOnPath, TMUX_START_ARGV,
-                   placementFromCgroup, tmuxServerPlacement, bareEnsuredLine, TMUX_SERVER_PID_ARGV,
-                   withoutOpCredentials, retiredCredentialNames, retiredCredentialMessage, exitLine, auditSigterm,
-                   ensureDecision, downMarkerHeld, clearDownMarker, DOWN_MARKER,
-                   // the SIGTERM wiring, for tests that seed `kernels` with a stand-in child
-                   restartKernel, restartAll, stopKernel, shutdownAll, stopTrigger, kernels };
+                   staleManagerYields, startManager,
+                   retiredCredentialNames, retiredCredentialMessage, exitLine, auditSigterm,
+                   ensureDecision, downMarkerHeld, clearDownMarker, DOWN_MARKER, shutdownGrace, SHUTDOWN_GRACE_MS,
+                   quietWindowRow, auditQuietWindow,
+                   // the SIGTERM wiring, for tests that seed `kernels` with a stand-in child or point
+                   // ROMP_SERVE_BIN at a stand-in launcher
+                   restartKernel, restartAll, restartAllOrSelf, stopKernel, shutdownAll, stopTrigger, spawnKernel, kernels };
 if (require.main === module) {
   const cmd = process.argv[2];
   // `restart-all` (the `romp refresh` deploy path) bounces IMMEDIATELY by default (T160, the user

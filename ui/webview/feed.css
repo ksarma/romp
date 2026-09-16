@@ -78,11 +78,13 @@
   --menu-bg: var(--vscode-menu-background, #252526);   /* the menu SKIN tokens (T226) — mirror styles.css */
   --menu-fg: var(--vscode-menu-foreground, #cccccc);
   --menu-border: rgba(255, 255, 255, 0.12);
+  --rule-strong: rgba(255, 255, 255, 0.22);   /* a rule a step up from the hairline: the focused section's divider (T410) */
   --menu-hover: rgba(255, 255, 255, 0.09);
   --menu-ring: #fff;
   --check-ring: rgba(30, 161, 235, 0.55);
   --surface-raised: #252526;  /* the transient-notice vocabulary — mirrors styles.css */
   --radius-toast: 8px;
+  --radius-card: 6px;   /* the boxed notice / card radius — mirrors styles.css */
   --shadow-toast: 0 8px 28px rgba(0, 0, 0, 0.45);
   --radius-modal: 10px;  /* the centered-modal vocabulary (CLAUDE.md) — mirrors styles.css */
   --shadow-modal: 0 12px 36px #000000aa;
@@ -129,6 +131,8 @@
      tokens of their own): the awaiting green and the compacting teal here, inks of the light theme's own in its block. */
   --callout-tip: #54B204;
   --callout-important: #14b8a6;
+  --st-retrying-bg: #e67e22; --st-retrying-fg: #2a1500;   /* the RETRYING amber — mirrors styles.css (tokenised 2026-09-08) */
+  --st-ask-bg: #f5d33f; --st-ask-fg: #332600;   /* the ASK yellow (the tab's Waiting-on-you ring, 2026-09-13): mirrors styles.css, so the settings' ring demo resolves it in every theme (the gear's hosts load this sheet, not styles.css) */
 
   /* Card background + border are set inline per card (the hawaii recency tint).
      These neutral tokens are for the chrome that frames them (header, detail box,
@@ -204,24 +208,30 @@ body.theme-light {
   --warn-on-white: #9A6A00;   /* the white sheet's amber is the same in both themes */
   --dim-on-white: #5D574E;    /* the white sheet's dim is the same in both themes — the light theme's own --dim */
   --accent-on-white: #C2410C; /* the white sheet's accent is the same in both themes — the light theme's own --accent */
-  --st-working-bg: #e0b020; --st-working-fg: #332600;   /* status FILLS carry their own fg — same chips, both themes */
+  /* working gold + compacting teal re-inked for cream (the user 2026-09-08) — mirrors styles.css, same numbers */
+  --st-working-bg: #8B6914; --st-working-fg: #ffffff;
   --st-ready-bg: #2b7fb8;   --st-ready-fg: #ffffff;
   --st-awaiting-bg: #c0392b;--st-awaiting-fg: #ffffff;
   --st-awaitbg-bg: #54B204; --st-awaitbg-fg: #0c1a00;
-  --st-compacting-bg: #14b8a6; --st-compacting-fg: #ffffff;
+  --st-compacting-bg: #0F766E; --st-compacting-fg: #ffffff;
   --st-blocked-bg: #e5484d; --st-blocked-fg: #ffffff;
   --callout-tip: #3E7D0E;         /* the light --green: 4.25:1 on the page (the awaiting green reads at 2.27:1 there) */
   --callout-important: #0F766E;   /* a teal at 4.59:1 on the page (the compacting teal reads at 2.09:1 there) */
+  --st-5xx-bg: #A21CAF; --st-5xx-fg: #ffffff;   /* the 5xx magenta (T316), mirrors styles.css */
+  --st-retrying-bg: #9C4A0C; --st-retrying-fg: #ffffff;
+  --st-ask-bg: #504100; --st-ask-fg: #ffffff;   /* the ask yellow in the light palette (a dark olive: the one lightness apart from the gold and the amber under a red-green deficiency), mirrors styles.css */
   --radius-menu: 6px;
   --shadow-menu: 0 4px 12px rgba(31, 26, 20, 0.16);
   --menu-bg: #FBF6EF;
   --menu-fg: #1F1E1D;
   --menu-border: rgba(0, 0, 0, 0.12);
+  --rule-strong: rgba(0, 0, 0, 0.22);
   --menu-hover: rgba(0, 0, 0, 0.06);
   --menu-ring: #1F1E1D;
   --check-ring: rgba(194, 65, 12, 0.55);
   --surface-raised: #FAF5EE;
   --radius-toast: 8px;
+  --radius-card: 6px;   /* the boxed notice / card radius — mirrors styles.css */
   --shadow-toast: 0 8px 28px rgba(31, 26, 20, 0.18);
   --radius-modal: 10px;
   --shadow-modal: 0 12px 36px rgba(31, 26, 20, 0.22);
@@ -442,7 +452,76 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
     background: transparent; border: 0; font: inherit; font-size: 1.389em; font-weight: 400;
     line-height: 1; cursor: pointer; transition: color 0.12s ease; }
   .fcol-fold:hover, .fcol-fold:focus-visible { color: var(--fg); }
+  /* stacked, the focused section's blocks are full width: nothing to trade width with, so no gutter (T410) */
+  .focus-gutter { display: none; }
+  /* stacked, a focused block whose category has no cards hides WHOLE, chip and all (the user 2026-09-14); it returns
+     with the first card. Side by side the heads stand as the board's do (this rule lives under the query alone).
+     With the no-cards line gone as well (the same day's amendment), a focused session with NO cards shows, single
+     column, just its label and the divider: the two amendments combined, and what the user asked for. */
+  .feed-focus-cols .feed-col.col-empty { display: none; }
 }
+
+/* ---------- the FOCUSED SESSION section (T347, the user 2026-09-11, who wanted the focused session's cards on top) ----------
+   When a tab has focus in the chat pane, the feed puts that session's cards ABOVE the board — its name as the
+   head, the board's three column chips, a horizontal rule under it — and the board below stays exactly as it
+   is (feed.ts renderFocusSection). The section's columns carry .feed-cols / .feed-col, so the row layout, the
+   stacked container query above and the --col-order var all reach them unchanged; what differs is here: no
+   sticky heads (a miniature is short), the block furniture the board has not got — an always-on fold caret,
+   a resize gutter, a focusable chip for the arrow keys — and the rule (T410). Both themes read through the
+   variables. */
+#feed-focus { display: flex; flex-direction: column; gap: 8px; }
+/* the LABEL (T410b): "Current session: <name>", the section's fold control. The board's column heads' size
+   (0.72em — no new size) at the session headers' weight (600); the label text dim like the column heads, the
+   name bold in its identity colour (set inline, as the session headers do); the whole row folds on click, so
+   it wears the pointer. The caret is the block carets' glyph at their compensated size (1em / 0.72, back to the
+   feed's base exactly); the folded count rides .feed-col-count. */
+/* ONE line, never wrapping (T410 review round two): with flex-wrap the oversize name wrapped onto its own line before
+   flex-shrink could clamp it, and the caret onto a third; nowrap lets the name's min-width: 0 and ellipsis do their
+   work, so the caret sits at the end of the label's line, to the right of the name, at 420 px too */
+.feed-focus-head { display: flex; flex-wrap: nowrap; align-items: baseline; gap: 6px; margin: 2px 3px 0;
+  font-size: 0.72em; font-weight: 600; cursor: pointer; }
+/* the name is styled as a session name is below it (the user 2026-09-14): the session headers' size (the card titles',
+   the feed's base: 1em / 0.72 back up from the label's 0.72em, exact) and weight, its identity colour set inline; the card's name
+   clamp (.fask-id .fname) so a long name shrinks and the caret keeps the end of the line */
+.feed-focus-head .fname { font-size: calc(1em / 0.72); font-weight: 600;
+  flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feed-focus-fold { flex: none; padding: 0; border: 0; background: transparent; font: inherit; color: var(--dim);
+  cursor: pointer; transition: color 0.12s ease; }
+.feed-focus-head:hover .feed-focus-fold, .feed-focus-fold:focus-visible { color: var(--fg); }
+.feed-focus-caret { flex: none; padding: 0 3px; color: var(--dim); font-size: calc(1em / 0.72); font-weight: 400; line-height: 1;
+  transition: color 0.12s ease; }
+.feed-focus-head:hover .feed-focus-caret { color: var(--fg); }
+.feed-focus-cols { align-items: stretch; }   /* the blocks share the row's height, so a gutter spans the row */
+.feed-focus-cols .feed-col { position: relative; }   /* the gutter's positioned ancestor */
+.feed-focus-cols .feed-col-head { position: static; }
+/* the section's chips DRAG, as the board's do (the user 2026-09-14: no grip; the heads above and below the divider read
+   the same), and take keyboard focus for the arrow keys: the board's focus ring vocabulary */
+.feed-focus-cols .fcol-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* the fold caret shows in the section in BOTH layouts (the stacked rule's dress, copied; this selector outranks
+   the base `display: none`): folding is how a block gives its room back, since height is never resized */
+.feed-focus-cols .fcol-fold { display: inline-block; flex: none; padding: 0 5px; margin-left: -2px; color: var(--dim);
+  background: transparent; border: 0; font: inherit; font-size: calc(1em / 0.72); font-weight: 400;
+  line-height: 1; cursor: pointer; transition: color 0.12s ease; }
+.feed-focus-cols .fcol-fold:hover, .feed-focus-cols .fcol-fold:focus-visible { color: var(--fg); }
+/* a collapsed block: its list hidden, the block shrunk to its head (the others take the room), its gutter gone */
+.feed-focus-cols .feed-col.col-collapsed { flex: 0 0 auto; }
+.feed-focus-cols .feed-col.col-collapsed .feed-col-list { display: none; }
+/* the GUTTER (T410): an 8px hit zone centred in the 12px gap on a block's right edge, drawing a 2px line in the
+   menus' hairline that brightens on hover and while dragging; column-resize cursor. WIDTH only — the section
+   grows with its content, there is no height to trade. feed.ts hides it on the last block and on a collapsed
+   one; the [hidden] rule is explicit because an author `display` would otherwise outrank the UA's. */
+.focus-gutter { position: absolute; top: 0; bottom: 0; right: -10px; width: 8px; cursor: col-resize;
+  touch-action: none; z-index: 2; }
+.focus-gutter::before { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px;
+  background: var(--menu-border); transition: background 0.12s ease; }
+.focus-gutter:hover::before, .focus-gutter.active::before { background: var(--dim); }
+.focus-gutter[hidden] { display: none; }
+/* the rule under the section (T410): a 2px line in --rule-strong, a step up from the menus' hairline, with more
+   air above it than below. The margin shorthand zeroes the <hr>'s auto inline margins, which would otherwise
+   keep a flex item from stretching. */
+.feed-focus-divider { border: 0; border-top: 2px solid var(--rule-strong); margin: 8px 0 4px; }
+/* "No session is focused in the chat" / "<name> has no cards" — one quiet line, the menus' sub-line size */
+.feed-focus-empty { color: var(--dim); font-size: 0.82em; }
 
 /* ---------- ask card (the inbox unit): three rows (the user 2026-06-14) ---------- */
 /* row 1 — ask title, full width across the top. Hit-area still fits its TEXT (the title must
@@ -677,6 +756,12 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    .fmodal-warn-cap vocabulary, shown only when more than one group is on the card */
 .ftask-group { font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); margin: 4px 0 1px; }
 .ftask-group:first-child { margin-top: 1px; }
+/* NESTED rows (2026-09-10): what an awaited agent is itself waiting on, indented under its row; the first
+   led by a small dim "waiting on" (the .ftask-group rung), the rest by its blank twin so the marks align;
+   a nested row's own deeper waits are counted in .ftask-deeper (dim, same size as the text). */
+.fcheck.ftask-sub { padding-left: 1.2em; }
+.ftask-waits-on { flex: 0 0 auto; width: 5.4em; text-align: right; font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); white-space: nowrap; align-self: center; }
+.ftask-deeper { color: var(--dim); }
 
 /* "Followed up" — optimistic reopen pending the judge's re-file (judges delegation, 2026-06-17); blue pill */
 .fask-followedup { flex: 0 0 auto; font-size: 0.66em; font-weight: 700; letter-spacing: 0.04em;
@@ -788,6 +873,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 .ftree-seclabel { font-size: 0.92em; color: var(--dim); margin-top: 4px; }
 .ftree-summary-link { cursor: pointer; border-radius: 6px; transition: background 0.1s ease; }
 .ftree-summary-link:hover { background: rgba(255, 255, 255, 0.07); text-decoration: underline; text-underline-offset: 2px; }
+.ftree-relaynote { font-size: 0.86em; line-height: 1.45; margin: 0 0 6px; color: var(--dim); white-space: pre-wrap; overflow-wrap: anywhere; }   /* the modal's twin of .fask-relaynote */
 .st-done .ftree-mark { color: var(--rel-done); }
 /* a BLOCKED (needs-you) node: the "?" is RED inside a RED ring the SAME 13px size as the ✓ checkbox disc,
    and its label reads "BLOCKED" in red (the user 2026-06-17) — a stronger, unmistakable block signal than
@@ -1097,7 +1183,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 /* ---------- liveness anomaly rings (2026-06-11) ---------- */
 /* The OUTLINE ring marks a card whose LIVE state disagrees with the column it's
    filed in (agreement = no ring; the user's simplification). Host-computed from
-   live tmux state + open handoffs; colors only, decides nothing. The border
+   live session state + open handoffs; colors only, decides nothing. The border
    keeps the recency tint; focus/pin keep box-shadow.
    green  = settled-but-in-Asks (nothing can move it without you — likely done)
    dashed = stalled-in-Asks (unfinished handoff, nobody working)
@@ -1229,8 +1315,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    stay primary and rows never wrap. */
 .fsm-chips { flex: 1 1 auto; min-width: 0; margin-left: 8px; text-align: right;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
-.fsm-chip-tag { display: inline-block; font-style: normal; padding: 0 6px; margin-left: 4px;
-  border: 1px solid var(--dim); border-radius: 9px; font-size: 0.82em; color: var(--dim); }
+.fsm-chip-tag { margin-left: 4px; }   /* the chip's look is tagChip's own (T321); the sheet spaces it */
 /* the VIEW MENU (the user 2026-08-24): the sort + layout controls live behind one monochrome ordering
    glyph now (NOT a gear — the strip's ⛭ sits right below this footer on the kernel page). The popup
    wears the shared .ctx-menu vocabulary (chrome defined with the card menus below); these rules add
@@ -1328,6 +1413,10 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 .fcheck.freviewed:hover { opacity: 0.85; }
 /* the STALE-takeaway note above a completed card's summary: the user followed up after reading it */
 .fsum-stale { font-style: italic; opacity: 0.62; font-size: 0.92em; margin-bottom: 3px; }
+/* A far host still holds a relayed question after its wait ended (feed.ts relayNote): the card's own dim line
+   beside the sections (outside them, like the face), never a paragraph of the brief (the per-paragraph stamps
+   map the brief's paragraphs) and never inside the distill element (the sections hide that without a brief). */
+.fask-relaynote { color: var(--dim); opacity: 1; white-space: pre-wrap; overflow-wrap: anywhere; }
 .fcheck-text.lz-hl { background: rgba(255, 255, 255, 0.12); border-radius: 3px; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12); }
 .fcheck-mark.lz-hl { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.16); }
 /* standalone-completion modal: same tree vocabulary as ask cards; pending
@@ -1507,34 +1596,54 @@ body.fileview-open { overflow: hidden; }
 .fileview-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 /* the GitHub link wears the button treatment but IS an anchor — the browser owns the new tab */
 a.fileview-btn { text-decoration: none; display: inline-flex; align-items: center; }
-/* the GitHub action is one unit: the control and, when the kernel gave one, its reason as a caption
-   beside it — visible without hover (touch has none, and a disabled button takes no focus), and whole:
-   it wraps inside a bounded width rather than truncating, because nothing in the unit takes a tap,
-   click or focus that could finish a cut sentence; same size as the buttons it annotates, ragged edge
-   away from the control it precedes. */
+/* the GitHub action is one unit holding the link when the kernel's check resolves to a URL, and hidden otherwise
+   (T367: no greyed button, no caption; the [hidden] rule below takes it out of the row's flow) */
 .fileview-gh { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
-.fileview-gh-why { font-size: 0.82em; line-height: 1.25; color: var(--dim); max-width: 18em; text-align: right; }
-/* pending: the kernel's check is on its way (up to 3 s when it must ask origin), so the slot holds the
-   dimmed button and the loader's dots (.fileview-dot, the pane's own) where the caption will go — a slow
-   check must read as a wait, not as the old no-button state nor as a verdict (the loading-state rule) */
-.fileview-gh-dots { display: inline-flex; align-items: center; gap: 4px; }
-/* a disabled bar button, greyed, hover inert: the GitHub unit's no-link state (a real disabled button, never
-   hidden: an absent button read as "broken" when the file was simply not committed yet, 2026-09-05), the
-   editor's Save while a save is in flight (disabled and reading "Saving…"), and the text-size control's ends
-   (A− at the smallest step, A+ at the largest; aria-disabled, so the button keeps the keyboard focus it holds
-   and the ring stays where the person left it). One treatment for every bar button, so neither an end nor a
-   save in progress reads as live under the pointer. */
+/* a disabled bar button, greyed, hover inert: the editor's Save while a save is in flight (disabled and reading
+   "Saving…"), and the text-size control's ends (A− at the smallest step, A+ at the largest; aria-disabled, so
+   the button keeps the keyboard focus it holds and the ring stays where the person left it). One treatment for
+   every bar button, so neither an end nor a save in progress reads as live under the pointer. */
 .fileview-btn:disabled, .fileview-btn[aria-disabled="true"] { opacity: 0.55; cursor: default; }
 .fileview-btn:disabled:hover, .fileview-btn[aria-disabled="true"]:hover { border-color: var(--card-border); color: var(--fg); background: transparent; }
 .fileview-btn:disabled:active, .fileview-btn[aria-disabled="true"]:active { transform: none; }
-/* the text-size readout between A− and A+ (file-view.ts textSizeControl): a slot of ONE width whatever it
-   says, and at the default (nothing to reset, nothing to say) an empty slot rather than none, so A− never
-   moves under the pointer when the readout appears after the first press. visibility, not display: the slot
-   stays, the button leaves the tab order. */
+/* the text-size readout between A− and A+ in the zoom flyout (file-view.ts textSizeControl): a slot of ONE
+   width whatever it says, so A− never moves under the pointer as the number changes; at the default (nothing
+   to reset) it reads dimmed rather than empty (T367). */
 .fileview-size-reset { min-width: 5.5em; box-sizing: border-box; text-align: center; font-variant-numeric: tabular-nums; }
-.fileview-size-reset.fileview-size-default { visibility: hidden; }
-/* a link whose branch is not on origin yet: dashed, the caption carries the note */
+.fileview-size-reset.fileview-size-default { color: var(--dim); }
+/* a link whose branch is not on origin yet: dashed, the note in its tooltip and aria-label */
 a.fileview-gh-note { border-style: dashed; }
+/* T367 (the user 2026-09-12): the bar's controls in GROUPS that read as units — the view group (the Rendered|Raw
+   pair, the SVG Source toggle, the text-size glyph) and the file group (edit, the GitHub link, download, copy path),
+   set apart by a wider gap than the controls within them; the close cross alone at the end. The wider gaps apply
+   only where groups exist: the file browser's row and the URL viewer's flat row keep their spacing. */
+.fileview-group { display: inline-flex; align-items: center; gap: 4px; }
+.fileview-acts > .fileview-group + .fileview-group, .fileview-acts > .fileview-group ~ .fileview-close { margin-left: 10px; }
+/* the Rendered|Raw pair is ONE segmented control: joined, the shared hairline drawn once, the outer corners rounded,
+   the pressed segment's accent border over the seam */
+.fileview-seg { display: inline-flex; align-items: stretch; }
+.fileview-seg .fileview-btn { border-radius: 0; }
+.fileview-seg .fileview-btn + .fileview-btn { margin-left: -1px; }
+.fileview-seg .fileview-btn:first-child { border-radius: 6px 0 0 6px; }
+.fileview-seg .fileview-btn:last-child { border-radius: 0 6px 6px 0; }
+.fileview-seg .fileview-btn.on { position: relative; z-index: 1; }
+/* a glyph button: the drawing alone, its words in the title and aria-label (one hover away); the copy control's
+   acknowledgements (a check, a cross) recolour it; a busy press dims it until the answer */
+.fileview-btn.fileview-icon { display: inline-flex; align-items: center; justify-content: center; padding: 3px 7px; line-height: 1; }
+.fileview-btn.fileview-icon svg { display: block; }
+/* the display an author rule sets (inline-flex on a glyph button, on a group) would beat the browser's own [hidden]
+   rule, and a hidden edit pencil or zoom glyph would still paint (found on the lab's image screenshot) */
+.fileview-btn[hidden], .fileview-group[hidden], .fileview-zoom[hidden], .fileview-gh[hidden] { display: none; }
+.fileview-btn.fileview-icon.ok { color: var(--accent); border-color: var(--accent); }
+.fileview-btn.fileview-icon.err { color: var(--err); border-color: var(--err); }
+.fileview-btn.fileview-busy { opacity: 0.55; }
+/* the text-size flyout under its glyph: the menu vocabulary (the menu tokens, ui/CLAUDE.md), one row holding A−,
+   the readout and A+; the readout at the default reads dimmed (nothing to reset) rather than empty */
+.fileview-zoom { position: relative; display: inline-flex; }
+.fileview-zoom-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 5; display: flex; align-items: center; gap: 4px; padding: 4px;
+  background: var(--menu-bg, #252526); color: var(--menu-fg, #cccccc); border: 1px solid var(--menu-border, rgba(255, 255, 255, 0.12));
+  border-radius: var(--radius-menu, 6px); box-shadow: var(--shadow-menu, 0 4px 12px rgba(0, 0, 0, 0.35)); }
+.fileview-zoom-menu[hidden] { display: none; }
 /* The body's content width reaches the sheet as --fv-body-w, written by the viewer's ResizeObserver (file-view.ts, the width
    observer: the observer's report is the layout's own event) on each top-level table, for the pane-wide table's cap
    (.fileview-md > table, below). The property is registered NON-INHERITED: written on the body as an ordinary custom property
@@ -1609,12 +1718,11 @@ a.fileview-gh-note { border-style: dashed; }
 /* the romp loader, per the loading-state rule: swirl + wordmark + three pulsing accent dots */
 .fileview-load { display: flex; align-items: center; justify-content: center; gap: 7px;
   padding: 30px 0; color: var(--dim); font-size: 0.86em; }
-.fileview-load img { width: 17px; height: 17px; animation: fileview-spin 1.6s linear infinite reverse; }
+.fileview-load img { width: 17px; height: 17px; animation: fask-swirl-spin 7s linear infinite; }   /* the feed sheet's own shared swirl keyframe, at the loader pace (was a forked fileview-spin reverse) */
 .fileview-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--accent);
   animation: fileview-pulse 1.1s ease-in-out infinite; }
 .fileview-dot:nth-of-type(2) { animation-delay: 0.18s; }
 .fileview-dot:nth-of-type(3) { animation-delay: 0.36s; }
-@keyframes fileview-spin { to { transform: rotate(360deg); } }
 @keyframes fileview-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
 
 /* A pressed viewer toggle (Rendered/Raw, Wrap) wears the app-wide selected language — accent text +
@@ -1673,9 +1781,10 @@ a.fileview-gh-note { border-style: dashed; }
    that turns solid on hover; nothing else in the view changes. A Markdown link whose target is a file keeps the
    link ink the other Markdown links wear. Neither is draggable (-webkit-user-drag: none, with draggable=false on the
    anchor) and both are selectable (user-select: text; Chromium starts no selection inside a link without it), so a
-   press-drag that starts on a link selects the text under it, as on plain text, instead of starting the browser's link
-   drag; the click that ends such a drag finds the selection open, and the viewer's delegate and the chat's opener both
-   yield to it (path-links.ts selectionOpenIn). Mirrored in styles.css and feed.css (fileview-parity.test.ts). */
+   press-drag inside a path link selects its text as on plain text, a press held on a URL anchor and then dragged
+   selects too (Chromium's rule for a link: an immediate drag on one selects nothing), and neither starts the browser's
+   link drag; a click that arrives with the selection open finds the viewer's listener and the chat's opener yielding
+   to it (path-links.ts selectionOpenIn). Mirrored in styles.css and feed.css (fileview-parity.test.ts). */
 .fileview-body .file-uri-link, .fileview-body .fv-url { color: inherit; cursor: pointer; text-decoration: underline dotted; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 2px; -webkit-user-drag: none; user-select: text; }
 .fileview-body .file-uri-link:hover, .fileview-body .fv-url:hover { text-decoration: underline; text-decoration-color: currentColor; }
 .fileview-md a.file-uri-link { color: var(--link); text-decoration: none; }
@@ -2456,6 +2565,7 @@ a.fileview-gh-note { border-style: dashed; }
    you or completes; the armed state is the quiet accent bell beside Clear. */
 .ctx-menu {
   position: fixed; z-index: 100; min-width: 110px; padding: 4px;
+  max-height: calc(100vh - 8px); overflow-y: auto; overscroll-behavior: contain;   /* mirrors styles.css: a menu taller than the window scrolls (2026-09-13) */
   background: var(--menu-bg);   /* mirrors styles.css .ctx-menu — the menu tokens (T226) */
   color: var(--menu-fg);
   border: 1px solid var(--box-border); border-radius: var(--radius-menu);

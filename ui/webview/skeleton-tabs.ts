@@ -1,11 +1,14 @@
 // Skeleton tabs (2026-09-07): the client half of the reconnect diet. When a pane redials after its socket
 // died (a laptop lid, a long freeze, a network change), the kernel used to serve the fresh socket as a client
-// that holds nothing — seventeen full `session` frames, ~9 MB, for ONE tab on screen. Now a redial declares itself (`reconnect=1`) once the bundle's ready has
-// left on a socket; before that, or with the ready still queued, it dials as a fresh page. The kernel sends the tab strip with a `skeleton` list (every background tab it
+// that holds nothing: seventeen full `session` frames, ~9 MB, for ONE tab on screen. Now a redial declares
+// itself (`reconnect=1`), the kernel sends the tab strip with a `skeleton` list (every background tab it
 // is withholding, cheapest first), the ACTIVE tab in full, and a ~400 B `status` frame per withheld tab. This
 // module owns the client's copy of that set — which tabs are resting, what the kernel last said about each,
 // and which one to fetch next in idle — as a pure, DOM-free state machine (the prebuild.ts / tab-meta.ts
 // pattern: executable in node, so the policy is pinned by skeleton-tabs.test.ts while render.ts only wires it).
+// A redial declares itself only once the kernel's caps frame has answered the bundle's ready; before that, with
+// the ready still queued for the open, or after a socket that died before its caps frame came back, the shim dials
+// as a fresh page and the kernel sends everything whole (2026-09-10).
 //
 // The page HELD every session before the outage, and render.ts deliberately keeps those `sessions` entries
 // (the eventual full then takes upsert's append path, so the DOM and the reader's scroll survive). What a
@@ -73,6 +76,18 @@ export function onStatus(st: SkeletonState, id: string, status: unknown): "skele
   return "skeleton";
 }
 
+/** A {type:"status"} frame for an id the set does not list (yet) and the page holds NO session for. The kernel sends a
+ *  status frame for a sid it holds as a skeleton and for no other (_send_chat_or_status), so such a frame is a skeleton
+ *  tab's whose strip this page has not applied: the pane shim's dispatch FIFO carries a newer whole-state frame (a
+ *  second tabOrder) to the END of the burst, so the statuses that arrived between two strips are delivered ahead of
+ *  the strip that names their set (a later chat column's open sends two: the pusher cycle its handshake woke and the
+ *  ready arm's connect push). Held for that strip: applyTabOrderSkeleton keeps the entry when the array lists the id
+ *  and drops it when it does not, and the chip reads it only for a skeleton id. Never the no-base ask, which asked for
+ *  every withheld tab's full and loaded the whole board into a column opened as a view of one session (2026-09-11). */
+export function holdStatus(st: SkeletonState, id: string, status: unknown): void {
+  st.status.set(id, status);
+}
+
 /** A full `session` frame landed (upsert): the id is loaded, its skeleton entry and stored status go.
  *  Returns whether it WAS held — a just-loaded skeleton that is the active tab must re-show its view, not
  *  append to the hidden one. Also records the id as loaded on this socket (see applyTabOrderSkeleton). */
@@ -87,6 +102,11 @@ export function onFull(st: SkeletonState, id: string): boolean {
 
 /** The tab left the strip (a close, the kernel's omission, a host drop): nothing to load any more. */
 export function onDismiss(st: SkeletonState, id: string): void {
+  // its view and session left the page with the tab, so it is no longer LOADED here: a later re-listing (a host
+  // re-attach, a relay redial) names it a skeleton again and the pane asks for its frame — the way the unfocused
+  // pane gets the session the user was on back (T357); before, a once-loaded id could never be a skeleton again on
+  // the same socket, so the re-listed tab sat with an "opening…" loader and no ask
+  st.loaded.delete(id);
   if (!st.ids.delete(id)) return;
   st.order = st.order.filter((x) => x !== id);
   st.status.delete(id);

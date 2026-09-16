@@ -386,12 +386,12 @@ class OffOnThePayloads(unittest.TestCase):
         names.mkdir()
         (names / SID).write_text("web\t%s\t#abcdef\n" % str(cdir))
         self.saved = (jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.STATE, km.NAMES,
-                      km._read_task_store, km._tmux_sessions, km._GLOBAL_CLAUDE_MD)
+                      km._read_task_store, km._live_map, km._GLOBAL_CLAUDE_MD)
         jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.STATE = names, proj, td / "goals", td
         km.NAMES = names
         km._GLOBAL_CLAUDE_MD = td / "no-global.md"
         km._read_task_store = lambda fsid, fold=None: []
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
                                            "context": None, "compactPct": None, "color": None}}
         jd.GOALDIR.mkdir(parents=True)
         km._parse_cache.clear()
@@ -412,7 +412,7 @@ class OffOnThePayloads(unittest.TestCase):
 
     def tearDown(self):
         (jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.STATE, km.NAMES,
-         km._read_task_store, km._tmux_sessions, km._GLOBAL_CLAUDE_MD) = self.saved
+         km._read_task_store, km._live_map, km._GLOBAL_CLAUDE_MD) = self.saved
         km._parse_cache.clear()
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
@@ -446,14 +446,14 @@ class OffOnThePayloads(unittest.TestCase):
 
     def test_build_feed_ships_an_empty_map_while_off_and_the_counts_once_on(self):
         sessions = [{"sid": SID, "name": "web", "path": "/nonexistent/%s.jsonl" % SID, "anchor": 0, "mtime": 0}]
-        with mock.patch.object(km, "_alive_sessions", lambda now, tmux: list(sessions)), \
+        with mock.patch.object(km, "_alive_sessions", lambda now, live_map: list(sessions)), \
                 mock.patch.object(km, "_warm_fleet_bg", lambda now: None):
             self.assertEqual(km.build_feed(NOW, {}).get("userTodos"), {})
             km._set_user_todos(True)
             self.assertEqual(km.build_feed(NOW, {}).get("userTodos"), {SID: 1})
 
     def test_the_feed_sig_watches_the_switch_file(self):
-        with mock.patch.object(km, "_alive_sessions", lambda now, tmux: []), \
+        with mock.patch.object(km, "_alive_sessions", lambda now, live_map: []), \
                 mock.patch.object(km, "_warm_fleet_bg", lambda now: None):
             before = km._fleet_view_sig(NOW, {})
             km._set_user_todos(True)
@@ -467,7 +467,7 @@ class OffOnThePayloads(unittest.TestCase):
         # the nudge stand-down and the escalation floor read it (grep-provable wiring)
         ksrc = inspect.getsource(km)
         self.assertIn("_todo_standdown = bool(_open_user_todos(sid))", ksrc)
-        self.assertIn("_ut_open = _open_user_todos(fsid)", ksrc)
+        self.assertIn("ut_open = _open_user_todos(fsid)", ksrc)   # the feed memo KEY's read (_feed_session_key, T368; 2026-09-15)
 
 
 class BootNotice(_Sandbox):

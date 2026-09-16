@@ -64,7 +64,9 @@ ROMP_WORDS = [
     ("dismissal", "a board gesture"),
     ("status check", "announces a form rather than asking a question"),
     ("nudge", "romp's name for this message"),
-    ("key cycle", "romp's name for a credential rotation"),
+    # ("key cycle", "romp's name for a credential rotation"): retired at the 2026-09-15 pull-in. The operation it named
+    # left with romp's own key paths (upstream's key model), and this list must equal the kernel's ROMP_VOICE_WORDS
+    # (T334's one-list pin below), which never carried it.
 ]
 
 
@@ -323,6 +325,15 @@ def _romp_hits(literals):
     return [(base, n, lit, word, why) for base, n, lit in literals for word, why in ROMP_WORDS if word in lit.lower()]
 
 
+def _atom(role, text, tools=0):
+    blocks = [{"type": "text", "text": text}] + [{"type": "tool_use", "name": "Read"} for _ in range(tools)]
+    return {"type": role, "t": 1, "message": {"role": role, "content": blocks}}
+
+
+_RELAY_TURN = {"t": 1, "end": 2, "atoms": [_atom("user", "start on the exporter"),
+                                         _atom("assistant", "which client should it target?", tools=2)]}
+
+
 class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -377,6 +388,8 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                  {"who": "assistant", "text": "Yes: write-through avoids the stale-read window and "
                                               "the extra invalidation pass; the cost is one write "
                                               "per update, which this workload absorbs."}]),
+            # the spend guard's one message to a session over the hourly ceiling (T350, the user 2026-09-11)
+            "spend ceiling": km._spend_ceiling_body(1240.0, 1000.0),
             "debt reminder (question)": km._debt_reminder_body(
                 [("web", T0, "question", "Which port should the staging server use?")]),
             "debt reminder (handoff)": km._debt_reminder_body(
@@ -388,6 +401,15 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # index, so it shipped saying "goal" twice and announcing "(Automated re-check…)" until
             # 2026-08-11 — exactly the drift this index exists to catch
             "awaiting backstop": km.AWAITING_BACKSTOP_TEXT,
+            # the relayed question (T334): a worker's block toward the peer that delegated its work, sent as the
+            # worker's own words; the why is the closer's prose, scrubbed of any clause that speaks romp
+            "relayed question": km._relay_body("api", "which client should the exporter target?"),
+            "relayed question (procedural why)": km._relay_body("api", jd.NUDGE_BLOCK_WHY),
+            "relayed question (with the conversation)": km._relay_body(
+                "api", "which client should the exporter target?",
+                jd._relay_excerpt([_RELAY_TURN], 1, 4096, who="api")),   # the REAL header and turn rendering, so the
+            #                                                             scan reads the words the code emits (the
+            #                                                             manager's fourth verdict: a copied header went stale)
             # a comment thread's opening message (the user 2026-08-13): the highlight + comment are
             # the user's own words; the quoting frame around them is romp-authored and scanned here
             "comment thread opener": km._comment_first_message(
@@ -556,6 +578,17 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         for i, v in enumerate(km.AUTO_NUDGE_STALLED_VARIANTS, 1):
             bodies["fork nudge variant %d" % i] = v
         return bodies
+
+    def test_the_relayed_conversation_fixture_is_rendered_by_the_real_excerpt(self):
+        body = self._bodies()["relayed question (with the conversation)"]
+        self.assertIn("The conversation this question ends, oldest first: 1 of 1 turn shown.", body)
+        self.assertIn("user: start on the exporter", body)
+        self.assertIn("(2 tool calls)", body)
+        self.assertNotIn("1 of 1 turn.\n", body, "the pre-change header wording is gone from the fixture")
+
+    def test_the_relay_scrub_speaks_this_lists_words(self):
+        # the kernel scrubs a relayed question's why by the same vocabulary this file scans for (T334): one list
+        self.assertEqual(tuple(w for w, _why in ROMP_WORDS), km.ROMP_VOICE_WORDS)
 
     def test_no_romp_vocabulary_reaches_the_session(self):
         for name, body in self._bodies().items():
@@ -810,6 +843,9 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                  "killed": sb.CRASH_RESUME_NUDGE_KILLED}
         for name, text in forms.items():
             with self.subTest(form=name):
+                # every mechanics notice ends in its one-line gist marker (the trailing comment the client folds into
+                # the head); the prose under test is what stands between the leading markers and that tail
+                text = re.sub(r"<!-- romp-gist: [^>]+ -->$", "", text.rstrip())
                 prose = text[text.index("[romp]"):]
                 self.assertNotIn("<!--", prose, "markers lead, prose follows")
                 body = prose.split("]", 1)[1].lower()
@@ -895,6 +931,8 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # to answer them — its ask is "address these and ask me for another look", not a status
             # …and the user-todo file warning is a tool reply's clause about a path that did not resolve —
             # it tells the agent what to pass next time, and asks for nothing
+            # …and the spend ceiling's message is a STOP order with one question (what was fanning out), not a
+            # progress ask: the session is to halt, not to report where things stand
             if (name.startswith("file comments message")       # every form of the Send to session message
                     or name in ("typed follow-up on a summary",
                                 "debt reminder (question)", "debt reminder (handoff)",
@@ -902,8 +940,12 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                                 "user-todo context block", "user-todo file warning", "edit trace", "reject trace",
                                 "reject trace (one change)", "reject trace (count unknown)",
                                 "save trace", "save trace (one change)",
-                                "comment-thread merge", "compaction suggestion")):
-                                # ^ a housekeeping suggestion, not a progress ask — it elicits nothing
+                                "comment-thread merge", "compaction suggestion", "spend ceiling",
+                                "relayed question", "relayed question (procedural why)",
+                                "relayed question (with the conversation)")):
+                                # ^ a housekeeping suggestion, not a progress ask: it elicits nothing; and the relayed
+                                #   question is a WORKER's question to the peer that delegated its work, in the worker's
+                                #   words, never a progress ask to the user (T334)
                 continue
             text = prose(body).lower()
             with self.subTest(message=name):

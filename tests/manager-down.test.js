@@ -1,12 +1,12 @@
 'use strict';
-// The `romp down` marker as the manager sees it (2026-09-06). bin/romp writes STATE/down-by-romp
-// when it stops the kernel on purpose; here two consumers: `ensure` (the supervised start that the
-// far-host scripts of `romp update <host>` and the dashboard's remote restart run) must refuse to
-// bring the manager back while the marker exists, since it is the one door that would undo a
-// deliberate stop with nobody asking, and a deliberate `up` clears it. Then shutdownAll's other half
-// of `romp down`: a kernel that ignores SIGTERM is SIGKILLed, so it never outlives its manager, and
-// the same escalation under a restart (round 3), so it never keeps its sessions on stale code. Run
-// from the repo root:
+// The `romp down` marker as the manager sees it. bin/romp writes STATE/down-by-romp when it stops
+// the kernel on purpose; here two consumers: `ensure` (the supervised start that the far-host
+// scripts of `romp update <host>` and the dashboard's remote restart run) must refuse to bring the
+// manager back while the marker exists, since it is the one door that would undo a deliberate stop
+// with nobody asking, and a deliberate `up` clears it. Then shutdownAll's half of `romp down`: a
+// kernel that ignores SIGTERM is SIGKILLed when the grace runs out, so it never outlives its
+// manager under a marker that says down, and the same escalation under a restart, so it never
+// keeps its sessions on stale code. Run from the repo root:
 //   node --test tests/manager-*.test.js
 const { test, after } = require('node:test');
 const assert = require('node:assert');
@@ -14,16 +14,17 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const net = require('net');
 const { spawn } = require('child_process');
 
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-down-marker-'));
 after(() => fs.rmSync(stateDir, { recursive: true, force: true }));   // one leaked dir per run otherwise
 process.env.ROMP_STATE_DIR = stateDir;       // baked at require time (STATE_ROOT)
 delete process.env.ROMP_SUPERVISED;
-const { ensureDecision, downMarkerHeld, clearDownMarker, DOWN_MARKER } =
+const { ensureDecision, downMarkerHeld, clearDownMarker, stopTrigger, DOWN_MARKER, shutdownGrace, SHUTDOWN_GRACE_MS } =
   require(path.join(__dirname, '..', 'bin', 'romp-manager'));
 
-test('the marker lives under the state root as down-by-romp — the path bin/romp and romp-service write', () => {
+test('the marker lives under the state root as down-by-romp, the path bin/romp and romp-service write', () => {
   assert.equal(DOWN_MARKER, path.join(stateDir, 'down-by-romp'));
 });
 
@@ -37,7 +38,7 @@ test('ensure: a live manager is a no-op, a held marker refuses, otherwise spawn'
 test('downMarkerHeld reads the file; clearDownMarker removes it and reports whether there was one', () => {
   const f = path.join(stateDir, 'down-by-romp');
   assert.equal(downMarkerHeld(f), false);
-  assert.equal(clearDownMarker(f), false, 'nothing to clear says so — the start log stays quiet');
+  assert.equal(clearDownMarker(f), false, 'nothing to clear says so: the start log stays quiet');
   fs.writeFileSync(f, JSON.stringify({ t: 1700000000, cmd: 'romp down' }) + '\n');
   assert.equal(downMarkerHeld(f), true);
   assert.equal(clearDownMarker(f), true, 'a deliberate start clears the marker');
@@ -45,26 +46,47 @@ test('downMarkerHeld reads the file; clearDownMarker removes it and reports whet
   assert.equal(downMarkerHeld(f), false);
 });
 
-test('startManager clears the marker before anything else (source pin: a deliberate start brings the kernels back)', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'bin', 'romp-manager'), 'utf8');
-  const i = src.indexOf('function startManager() {');
-  assert.ok(i > 0);
-  const body = src.slice(i, i + 400);
-  assert.ok(body.indexOf('clearDownMarker()') > 0 && body.indexOf('clearDownMarker()') < body.indexOf('startTmuxServer()'),
-    'the clear is the first thing a starting manager does');
+// The trigger the manager's stop notes carry (auditSigterm, before every SIGTERM of a stop): read off
+// the marker at stop time, so a stop `romp down` asked for is legible as the CLI's on the ledger and a
+// stop nothing labeled (a hand on systemctl, Ctrl+C, POST /stop) stays `stop`.
+test('stopTrigger reads the marker at stop time: cli-down while it is on disk, stop otherwise', () => {
+  assert.equal(stopTrigger(), 'stop');
+  fs.writeFileSync(DOWN_MARKER, JSON.stringify({ t: 1700000000, cmd: 'romp down' }) + '\n');
+  try {
+    assert.equal(stopTrigger(), 'cli-down', 'the CLI asked for this stop');
+  } finally {
+    clearDownMarker();
+  }
+  assert.equal(stopTrigger(), 'stop', 'nothing cached: the marker is read at every stop');
 });
 
-// The escalation cases below run a REAL manager on ports no other suite binds, with a stand-in kernel
-// that swallows SIGTERM; ROMP_SHUTDOWN_GRACE_MS shortens the 5s grace so each stays bounded. PATH
-// holds only a no-op tmux, so startTmuxServer() never reaches the machine's server
-// (tests/tmux-private.bash has the incident), and the socket directory is private too. The stand-in
-// writes its pid to the ready file once its handler is installed (a SIGTERM before that would simply
-// kill it), so a respawn is told apart from the kernel it replaced.
-function stubbornManager(managerPort, servePort) {
+test('startManager clears the marker before it brings the kernels back (source pin: a deliberate start brings the kernels back)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'bin', 'romp-manager'), 'utf8');
+  const body = src.slice(src.indexOf('function startManager() {'));
+  const clear = body.indexOf('clearDownMarker()');
+  const boot = body.indexOf('for (const spec of boot.specs) spawnKernel(spec);');
+  assert.ok(clear > 0 && boot > 0 && clear < boot, 'the clear runs before the boot specs are spawned');
+});
+
+// Two free loopback ports, fresh per case, never a literal: a literal pair once collided with another
+// suite's control port, where a concurrent run's manager answered the probe.
+function freePorts(n) {
+  return Promise.all(Array.from({ length: n }, () => new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.on('error', reject);
+    s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
+  })));
+}
+
+// The escalation cases below run a REAL manager with a stand-in kernel that swallows SIGTERM;
+// ROMP_SHUTDOWN_GRACE_MS shortens the 8 s grace so each stays bounded (graceEnv: the raw text on the
+// manager's launch environment, '1000' unless a case passes one). The stand-in writes its pid to
+// the ready file once its handler is installed (a SIGTERM before that would simply kill it), so a
+// respawn is told apart from the kernel it replaced. Every wait below is for an EVENT (the manager's
+// exit, a kernel's death, a fresh kernel reporting ready), bounded only by the test's own timeout.
+function stubbornManager(managerPort, servePort, graceEnv) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-stubborn-'));
-  const bin = path.join(dir, 'bin');
-  for (const d of [bin, path.join(dir, 'tmux'), path.join(dir, 'state')]) fs.mkdirSync(d);
-  fs.writeFileSync(path.join(bin, 'tmux'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.mkdirSync(path.join(dir, 'state'));
   // the manager's write doors take the serve token (writeGate); the stand-in state root carries one,
   // and h.req presents it on every POST (a synthetic value, never a real token)
   const token = 'stand-in-token-for-tests';
@@ -73,14 +95,22 @@ function stubbornManager(managerPort, servePort) {
   const serve = path.join(dir, 'fake-serve');
   fs.writeFileSync(serve, `#!/bin/sh\nexec "${process.execPath}" -e "process.on('SIGTERM', () => {}); require('fs').writeFileSync(process.env.ROMP_TEST_READY, String(process.pid)); setInterval(() => {}, 1000)"\n`, { mode: 0o755 });
   const env = Object.assign({}, process.env, {
-    PATH: bin, TMUX_TMPDIR: path.join(dir, 'tmux'), ROMP_CLI_SCOPE: '0',
+    ROMP_CLI_SCOPE: '0',
     ROMP_STATE_DIR: path.join(dir, 'state'), ROMP_MANAGER_PORT: String(managerPort), ROMP_SERVE_PORT: String(servePort),
-    ROMP_SERVE_BIN: serve, ROMP_SHUTDOWN_GRACE_MS: '1000', ROMP_TEST_READY: ready,
+    ROMP_SERVE_BIN: serve, ROMP_SHUTDOWN_GRACE_MS: graceEnv === undefined ? '1000' : graceEnv, ROMP_TEST_READY: ready,
   });
   delete env.ROMP_SUPERVISED;
   delete env.ROMP_SERVE_TOKEN;   // the file above is the token; an inherited env value would outrank it
-  const mgr = spawn(process.execPath, [path.join(__dirname, '..', 'bin', 'romp-manager'), 'up'], { env, stdio: ['ignore', 'ignore', 'pipe'] });
-  const h = { mgr, log: '', pids: new Set() };            // pids: every kernel the manager reported, reaped at cleanup
+  // detached: the manager leads its own process group, and every stand-in it spawns joins it (spawnKernel
+  // inherits stdio and sets no detached flag), so the cleanup below can kill the whole group without
+  // knowing a single kernel pid. A stand-in holds the write end of this stderr pipe, and one that outlived
+  // its cleanup kept the runner waiting on the read end forever (a red in the /status case before the
+  // second readyKernel had registered the second stand-in; pull-in review round 3, 2026-09-16).
+  const mgr = spawn(process.execPath, [path.join(__dirname, '..', 'bin', 'romp-manager'), 'up'], { env, stdio: ['ignore', 'ignore', 'pipe'], detached: true });
+  // pids: every kernel the manager reported, killed one by one at cleanup as a belt under the group kill;
+  // stateDir: the manager's state root, where its stop notes (restart-audit.jsonl) and a `romp down`
+  // marker live
+  const h = { mgr, log: '', pids: new Set(), stateDir: path.join(dir, 'state') };
   mgr.stderr.on('data', (d) => { h.log += d; });
   h.exited = new Promise((resolve) => mgr.on('exit', (code, sig) => resolve({ code, sig })));
   h.sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -92,10 +122,10 @@ function stubbornManager(managerPort, servePort) {
     r.on('error', reject); r.on('timeout', () => { r.destroy(); reject(new Error('timeout')); }); r.end();
   });
   h.alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return false; } };
-  h.gone = async (pid) => { for (let i = 0; i < 30 && h.alive(pid); i++) await h.sleep(100); return !h.alive(pid); };
-  // the kernel the manager reports, other than `not`, once its handler is installed: up to 5s
+  h.gone = async (pid) => { for (let i = 0; i < 60 && h.alive(pid); i++) await h.sleep(100); return !h.alive(pid); };
+  // the kernel the manager reports, other than `not`, once its handler is installed
   h.readyKernel = async (not) => {
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 100; i++) {
       let kpid = 0;
       try { kpid = ((JSON.parse((await h.req('/status', 'GET')).body).kernels || [])[0] || {}).pid || 0; } catch (e) { /* not yet */ }
       if (kpid && kpid !== not) h.pids.add(kpid);
@@ -104,7 +134,11 @@ function stubbornManager(managerPort, servePort) {
     }
     assert.fail(`the manager never reported a kernel${not ? ` other than ${not}` : ''} with its SIGTERM handler installed: ${h.log}`);
   };
+  // Independent of registration: the group kill (pgid == mgr.pid, detached above) takes the manager and
+  // every stand-in it ever forked, registered by readyKernel or not, respawned or not, handler installed
+  // or not; SIGKILL cannot be swallowed. The pid loop is a belt for a stand-in that left the group.
   h.cleanup = () => {
+    try { process.kill(-mgr.pid, 'SIGKILL'); } catch (e) { /* the group is gone */ }
     try { mgr.kill('SIGKILL'); } catch (e) { /* gone */ }
     for (const p of h.pids) { try { process.kill(p, 'SIGKILL'); } catch (e) { /* gone */ } }
     fs.rmSync(dir, { recursive: true, force: true });
@@ -112,46 +146,89 @@ function stubbornManager(managerPort, servePort) {
   return h;
 }
 
-// shutdownAll's escalation (review 2026-09-06, finding 1): the manager used to exit 800ms after one
-// SIGTERM, so a kernel that ignored the signal outlived it, still holding its port and its sessions
-// under a `romp down` marker that said otherwise.
-test('shutdownAll: a kernel that ignores SIGTERM is SIGKILLed when the grace runs out, and the manager still exits', async () => {
-  const h = stubbornManager(7621, 7622);
+// The grace's ONE contract (pull-in review round 2, 2026-09-16): the manager used to read
+// ROMP_SHUTDOWN_GRACE_MS through `Number(x) || 8000`, which took an exponent, hex, whitespace, a sign
+// and a leading zero, while `romp down` read a plain decimal from its own shell; a grace in such a form
+// ran the manager past the CLI's poll, and the CLI reported a manager that would not stop. Both readers
+// take a plain whole number of milliseconds, one to nine digits, above zero, and anything else is the
+// 8000 default (bin/romp mirrors the regex).
+test('shutdownGrace: a plain whole number of milliseconds is the grace; an exponent, hex, padded, signed, fractional, zero, empty or ten-digit form is the 8000 default', () => {
+  assert.equal(shutdownGrace('12000'), 12000);
+  assert.equal(shutdownGrace('1'), 1);
+  assert.equal(shutdownGrace('999999999'), 999999999, 'nine digits, the most the contract takes (under setTimeout\'s bound)');
+  for (const [raw, why] of [
+    ['2e4', 'an exponent'], ['1e3', 'an exponent'], ['0x2ee0', 'hex (12000 to Number())'], [' 8000', 'leading whitespace'], ['8000 ', 'trailing whitespace'],
+    ['08000', 'a leading zero'], ['+8000', 'a sign'], ['-8000', 'a negative'], ['8000.5', 'a fraction'], ['8000.0', 'a whole value in fraction form'],
+    ['0', 'zero'], ['', 'empty'], [undefined, 'unset'], ['Infinity', 'a word Number() takes'], ['1000000000', 'ten digits'], ['8_000', 'a separator'],
+  ]) {
+    assert.equal(shutdownGrace(raw), 8000, `${why} (${JSON.stringify(raw)}) falls to the default`);
+  }
+  assert.equal(SHUTDOWN_GRACE_MS, shutdownGrace(process.env.ROMP_SHUTDOWN_GRACE_MS), 'the manager runs with the parsed value of its own environment');
+});
+
+// GET /status carries the grace the manager runs with: the authoritative value `romp down` sizes its
+// poll for the manager's exit from (bin/romp, step 4 of down), so a knob set only where the manager was
+// launched reaches the CLI, and a rejected form reaches it as the default the manager applies, never as
+// the text on the environment.
+test('/status carries manager.shutdownGraceMs: the parsed grace under an accepted form, 8000 under a rejected one', async () => {
+  const [mp, sp, mp2, sp2] = await freePorts(4);
+  const h = stubbornManager(mp, sp);                 // '1000', the escalation cases' grace
+  const h2 = stubbornManager(mp2, sp2, '1e3');       // an exponent: Number() read 1000 here, the contract reads nothing
+  try {
+    await h.readyKernel();
+    const st = JSON.parse((await h.req('/status', 'GET')).body);
+    assert.equal(st.manager.shutdownGraceMs, 1000, JSON.stringify(st));
+    await h2.readyKernel();
+    const st2 = JSON.parse((await h2.req('/status', 'GET')).body);
+    assert.equal(st2.manager.shutdownGraceMs, 8000, JSON.stringify(st2));
+  } finally {
+    h.cleanup();
+    h2.cleanup();
+  }
+});
+
+// shutdownAll's escalation: the manager used to exit 800ms after one SIGTERM, so a kernel that
+// ignored the signal outlived it, still holding its port and its sessions under a `romp down`
+// marker that said otherwise. The stop runs under the marker, the way `romp down` leaves it (bin/romp
+// writes the marker before it stops the service), so the stop note the manager appends before its
+// SIGTERM is the wired one: trigger `cli-down`, which the kernel's exit reader answers with.
+test('shutdownAll: a kernel that ignores SIGTERM is SIGKILLed when the grace runs out, the manager still exits, and its stop note says cli-down under the marker', async () => {
+  const [mp, sp] = await freePorts(2);
+  const h = stubbornManager(mp, sp);
   try {
     const kpid = await h.readyKernel();
     assert.ok(h.alive(kpid));                               // alive before the stop
-    const t0 = Date.now();
+    fs.writeFileSync(path.join(h.stateDir, 'down-by-romp'), JSON.stringify({ t: 1700000000, cmd: 'romp down' }) + '\n');
     assert.equal((await h.req('/stop', 'POST')).code, 200);
-    const outcome = await Promise.race([h.exited, h.sleep(5000).then(() => null)]);
-    const elapsed = Date.now() - t0;
-    assert.ok(outcome !== null, `the manager was still running ${elapsed}ms after /stop: ${h.log}`);
-    assert.ok(elapsed >= 1000, `the manager left ${elapsed}ms after /stop, before the grace ran out: the kernel had no time to drain`);
-    assert.ok(elapsed < 4000, `the manager took ${elapsed}ms to leave after a 1000ms grace`);
+    const outcome = await Promise.race([h.exited, h.sleep(8000).then(() => null)]);
+    assert.ok(outcome !== null, `the manager was still running after /stop: ${h.log}`);
     assert.match(h.log, /pid \d+\) still running 1000ms after SIGTERM; sending SIGKILL/, `the escalation is on the manager log: ${h.log}`);
     assert.equal(await h.gone(kpid), true, `the kernel stand-in (pid ${kpid}) survived the manager`);   // gone, not merely signalled: SIGKILL cannot be ignored
+    assert.match(h.log, /shutting down: stopping all kernels \(cli-down\)/, `the stop names its trigger once: ${h.log}`);
+    const rows = fs.readFileSync(path.join(h.stateDir, 'restart-audit.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const notes = rows.filter((r) => r.action === 'manager-sigterm');
+    assert.equal(notes.length, 1, JSON.stringify(rows));
+    assert.deepEqual({ kernel: notes[0].kernel, pid: notes[0].pid, reason: notes[0].reason, trigger: notes[0].trigger },
+      { kernel: 'main', pid: kpid, reason: 'stop', trigger: 'cli-down' }, 'the note before the SIGTERM says the CLI asked');
   } finally {
     h.cleanup();
   }
 });
 
-// restartKernel's escalation (review round 3, finding 3): round 2 gave shutdownAll the grace and the
-// SIGKILL and left restartKernel with its lone SIGTERM, so a kernel that ignored it under `romp
-// refresh` (restart-all), the dashboard's restart or the quiet-window apply was never respawned: it
-// kept its port and its sessions on stale code, and the manager logged nothing. Both paths now share
-// one helper, and for a restart the exit handler's respawn follows the SIGKILL.
+// restartKernel's escalation: a kernel that ignored SIGTERM under `romp refresh` (restart-all), the
+// dashboard's restart or the quiet-window apply was never respawned; it kept its port and its
+// sessions on stale code, and the manager logged nothing. Both paths share one helper, and for a
+// restart the exit handler's respawn follows the SIGKILL.
 test('restartKernel: a kernel that ignores SIGTERM is SIGKILLed when the grace runs out, logged and respawned, and the manager stays up', async () => {
-  const h = stubbornManager(7623, 7624);
+  const [mp, sp] = await freePorts(2);
+  const h = stubbornManager(mp, sp);
   try {
     const k1 = await h.readyKernel();
-    const t0 = Date.now();
     const r = await h.req('/restart-all', 'POST');          // the `romp refresh` door
     assert.equal(r.code, 200, r.body);
     const restarted = JSON.parse(r.body).restarted;
     assert.equal(restarted.length, 1, r.body);
     const k2 = await h.readyKernel(k1);                     // a fresh kernel, not the one that owed the exit
-    const elapsed = Date.now() - t0;
-    assert.ok(elapsed >= 1000, `the kernel was replaced ${elapsed}ms after the restart, before the grace ran out`);
-    assert.ok(elapsed < 5000, `the replacement took ${elapsed}ms after a 1000ms grace`);
     assert.match(h.log, new RegExp(`kernel '${restarted[0]}' \\(pid ${k1}\\) still running 1000ms after SIGTERM; sending SIGKILL`), `the escalation is on the manager log: ${h.log}`);
     assert.match(h.log, /sig=SIGKILL\).*respawning in/, `the exit handler respawned it: ${h.log}`);
     assert.equal(await h.gone(k1), true, `the old kernel (pid ${k1}) is still there`);

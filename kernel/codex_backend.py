@@ -25,6 +25,7 @@ set_fast/set_auth/stop_task/rewind_files → False, on_ask → False, current_as
 """
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
 import os
@@ -47,8 +48,8 @@ _runtime = load_source("romp_codex_runtime", HERE / "codex_runtime.py")
 # The by-text KEY RULE (session_backend.echo_text_key): the one normalization under which an input echo's
 # text is compared with a transcript record's, shared with the kernel's _atom_user_texts and
 # SdkBackend.prune_live, so an echo whose text carries a trailing newline still lands. The kernel's own
-# copy of that module when it is loaded (kernel.py loads it as romp_session_backend, and TmuxBackend
-# subclasses that copy's ABC); otherwise the file is loaded under its OWN module name, as sdk_backend
+# copy of that module when it is loaded (kernel.py loads it as romp_session_backend, and its
+# _UnownedBackend subclasses that copy's ABC); otherwise the file is loaded under its OWN module name, as sdk_backend
 # does, so re-executing the source never rebinds the ABC out from under a subclass.
 echo_text_key = (sys.modules.get("romp_session_backend")
                  or load_source("romp_session_backend_keys", HERE / "session_backend.py")).echo_text_key
@@ -102,6 +103,7 @@ SEED_TAIL = 200   # records whose uuids seed the normalizer's dedup on re-attach
 CLIENT_RETRY_MIN = 0.25
 CLIENT_RETRY_MAX = 5.0
 WORKER_JOIN_TIMEOUT = 2.0
+HANDSHAKE_TIMEOUT_S = 30.0   # a new app-server answers its start-up requests within this, or the child is ended
 
 _PERMANENT_RPC_ERRORS = {"ParseError", "InvalidRequestError", "MethodNotFoundError",
                          "InvalidParamsError"}
@@ -140,6 +142,14 @@ class _PermanentRequestRejection(RuntimeError):
         self.operation = operation
         self.change_generation = change_generation
         self.client_generation = client_generation
+
+
+class _HandshakeTimeout(RuntimeError):
+    """The handshake clock ran out and the child was ended (_handshake). Its own class because its retry floor
+    differs: re-probing a child that never answers costs the whole clock again, under _client_lock, so the
+    record does not retry it before HANDSHAKE_TIMEOUT_S. The ordinary backoff (cap CLIENT_RETRY_MAX = 5s) would
+    have re-run the probe almost continuously while the fault lasted, holding the creation door and the
+    models list for the clock out of every clock-plus-cap."""
 
 
 def _execution_permissions(cwd, thread_start=False):
@@ -199,9 +209,8 @@ def ensure_codex_sdk(state_dir):
     codexvenv/lib/python3.*/site-packages used to be inserted at sys.path[0] whatever the interpreter,
     so a codexvenv built with a newer python (the picker before 2026-09-06 took the newest on PATH)
     failed deep inside the import under the kernel's python, with an error naming a module rather than
-    the venv, and shadowed shared dependencies for every later lazy import in the process (review
-    round 2). A venv for another tag adds nothing and is named on stderr once, with the remedy. True
-    when importable."""
+    the venv, and shadowed shared dependencies for every later lazy import in the process. A venv for
+    another tag adds nothing and is named on stderr once, with the remedy. True when importable."""
     import importlib.util
     import glob
     global _CODEX_VENV_BUILT_FOR
@@ -265,6 +274,21 @@ def _tail_state(path):
     return last, set(tail)
 
 
+def _ends_mid_line(path):
+    """True when the file is non-empty and its last byte is not a newline: an earlier write was torn
+    (write(2) returned short under ENOSPC, the process was killed between pages, power was lost) and
+    left a partial line, a record with no line end. The next record must start its own line, or the
+    two join in ONE unparseable line every reader skips."""
+    try:
+        with open(path, "rb") as f:
+            if f.seek(0, os.SEEK_END) == 0:
+                return False
+            f.seek(-1, os.SEEK_END)
+            return f.read(1) != b"\n"
+    except FileNotFoundError:
+        return False
+
+
 class _Session:
     """One Codex session: registry row + runtime state. The worker thread owns the normalizer and
     the file; everything else only reads or enqueues."""
@@ -287,6 +311,9 @@ class _Session:
         self.echoes = []              # optimistic user-atom echoes ahead of the materialized file
         self.turn_id = None           # the active turn (interrupt/steer target), else None
         self.loaded = False           # thread/resume done in THIS process
+        self.loaded_client_generation = None  # ...on WHICH app-server (client generation): a
+                                              # replacement server has never seen the thread, so
+                                              # `loaded` counts only while this matches the current one
         self.launch_error = None      # {text, at, limit} — why the session can't run, or None
         self.norm = None              # ThreadNormalizer, built by the worker on first need
         self.worker = None
@@ -313,7 +340,21 @@ class CodexBackend:
         self.push = push or (lambda: None)
         self.push_session = push_session or (lambda sid: None)
         self.codex_bin = codex_bin
-        self.log = log or (lambda m: sys.stderr.write("codex-backend: %s\n" % m))
+        raw_log = log or (lambda m: sys.stderr.write("codex-backend: %s\n" % m))
+
+        def _log(m):
+            # Best-effort, like the kernel's _exit_log: no log line may raise on the thread that wrote it. The
+            # kernel hands a bare sys.stderr.write, and a stderr that raises on write (a log disk at ENOSPC, the
+            # pipe a supervisor's end closed) used to raise out of every site that logs first and acts second:
+            # _handle_approval, inline on the pinned SDK's single reader thread (the reader ended with no reply
+            # written and every in-flight request of every Codex session failed at once); the pump's except
+            # branch, before _record_client_failure_locked (the dead client stayed installed and the next turn
+            # parked forever on it); each worker's, before launch_error is filed (the session stayed "working").
+            try:
+                raw_log(m)
+            except Exception:
+                pass
+        self.log = _log
         self._client_factory = client_factory   # tests inject a fake; None → real CodexClient
         self._client = None
         self._client_err = None       # why the client can't be built/authed (str), or None
@@ -328,6 +369,7 @@ class CodexBackend:
         self._sessions_lock = threading.RLock()
         self._reg_lock = threading.Lock()
         self._load_registry()
+        self._republish_missing_names()
         # A kernel restart must not strand a durable backend queue until the user happens to send
         # again. Re-arm every live queued session immediately; client retry backoff keeps failures cool.
         for _, s in self._session_items():
@@ -380,6 +422,33 @@ class CodexBackend:
                 s.note = r.get("note", "")
                 s.launch_error = r.get("launchError") if isinstance(r.get("launchError"), dict) else None
                 self._sessions[sid] = s
+
+    def _republish_missing_names(self):
+        """spawn writes the durable registry row, then names/<sid>. A kernel death between the two
+        left a LIVE row with no shared identity file, and nothing rewrote it: _load_registry rebuilt
+        the session from the row, the first turn took _prepare_thread's resume branch (no names
+        write), and only a rename would have healed it. Every surface that reads names/ alone
+        (sender name and colour, cwd, the duplicate-name claim, which sees live names through that
+        file only) was blind to the session, so a same-name create could mint a second live one
+        (2026-09-11). The registry IS the durable source for name, cwd and colour, so a live row
+        whose file is missing is republished from it here, once, at load. A row whose file exists
+        is left alone (the names consumers watch the mtime); a dead row claims no name slot. fg is
+        not in the registry and comes back empty, exactly as a rename's heal leaves it."""
+        d = self.state / "names"
+        for sid, s in self._session_items():
+            with s.lock:
+                dead = s.dead
+            if dead or (d / sid).is_file():
+                continue
+            try:
+                self._write_name(s)
+            except (OSError, UnicodeDecodeError) as e:
+                self.log("codex: names/%s could not be republished at load (%s) — the session runs "
+                         "UNNAMED on shared surfaces until a rename lands; a same-name create may "
+                         "collide meanwhile" % (sid, e))
+            else:
+                self.log("codex: republished names/%s, missing at load for a live registry row "
+                         "(a kernel death between spawn's registry write and its name publish)" % sid)
 
     def _session(self, sid):
         with self._sessions_lock:
@@ -568,16 +637,19 @@ class CodexBackend:
             try:
                 if self._client_factory:
                     candidate = self._client_factory()
+                    self._handshake(candidate, lambda: None)
                 else:
                     if not ensure_codex_sdk(self.state):
                         raise RuntimeError(SETUP_HINT)
                     from openai_codex.client import CodexClient, CodexConfig
-                    cfg = _codex_config(CodexConfig, self.codex_bin, self.state)
+                    cfg = self._naming_explicit_bin(lambda: _codex_config(CodexConfig, self.codex_bin, self.state))
                     candidate = CodexClient(config=cfg, approval_handler=self._handle_approval)
-                    candidate.start()
-                    candidate.initialize()
+
+                    def bring_up():
+                        self._naming_explicit_bin(candidate.start)
+                        candidate.initialize()
+                    self._handshake(candidate, bring_up)
                     self.log("app-server runtime: %s" % (self.codex_bin or "ROMP-managed %s" % getattr(_runtime, "VERSION", "")))
-                self._check_auth(candidate)
                 self._client = candidate
                 self._client_err = None
                 self._client_retry_at = 0.0
@@ -594,12 +666,112 @@ class CodexBackend:
                 self._record_client_failure_locked(e, candidate)
                 return None
 
+    def _naming_explicit_bin(self, step):
+        """Run one step that reaches for the explicit ROMP_CODEX_BIN, re-raising an OSError about the path as
+        _explicit_bin_failure's sentence, cause attached. Two steps reach for it and both need this: the child's
+        start (Popen's errno line, the SDK's FileNotFoundError), and before it the config's look at the helpers
+        and assets beside the executable (_codex_config), which under a directory the kernel's user cannot
+        traverse raises first (pathlib passes EACCES through from is_dir() and exists(), verified on 3.10 to
+        3.12), naming <package>/codex-path, a path the operator never typed; a pathlib that answers False there
+        instead reaches start(), whose PermissionError this same wrap names (review find, 2026-09-14)."""
+        try:
+            return step()
+        except OSError as e:
+            named = self._explicit_bin_failure(e)
+            if named is None:
+                raise
+            raise named from e
+
+    def _explicit_bin_failure(self, error):
+        """The failure to record when a codex could not be started from an EXPLICIT ROMP_CODEX_BIN, or None
+        when the error is not that. The kernel hands the operator's ROMP_CODEX_BIN through unchecked and the
+        pinned SDK's start() raises, for a missing file, FileNotFoundError("Codex binary not found at X. Set
+        CodexConfig.codex_bin to a valid binary path.") — a Python field the operator has never seen — and,
+        for a file that exists but cannot run (no exec bit, a directory, a wrong-arch binary), Popen's bare
+        errno line, which names no remedy at all; both reached every surface that shows the record verbatim
+        (2026-09-11). The knob to fix is ROMP_CODEX_BIN, so the recorded text names it and the alternative,
+        keeping the OS's reason without the SDK's advice. Only the errors that are about the path qualify: a
+        host fault Popen can raise (out of descriptors, out of memory) is not the knob's, and stays raw. The
+        managed runtime (codex_bin None) has no knob to name, so its errno line stays raw too
+        (tests/test_codex_launch_error_card.py pins that shape). The two remedies apply at different events,
+        and the sentence says which: a file repaired at the same path is picked up by the next probe after
+        backoff, but the knob was read once, when kernel.py built this backend from its environment, so
+        unsetting it changes nothing until the kernel starts again (the wording codex_runtime.py uses for the
+        same event)."""
+        if not self.codex_bin or not isinstance(error, OSError):
+            return None
+        if not (isinstance(error, (FileNotFoundError, PermissionError)) or error.errno == errno.ENOEXEC):
+            return None
+        reason = error.strerror or (os.strerror(errno.ENOENT) if isinstance(error, FileNotFoundError)
+                                    else str(error) or error.__class__.__name__)
+        return RuntimeError("ROMP_CODEX_BIN=%s is not a runnable Codex executable (%s). Fix the file at that path, "
+                            "or unset ROMP_CODEX_BIN and restart the ROMP kernel to use the managed runtime "
+                            "(romp-codex-setup)." % (self.codex_bin, reason))
+
+    def _handshake(self, candidate, bring_up):
+        """Run a new client's start-up requests (`bring_up`: start + initialize on a real client; nothing for
+        an injected one) and the login check under ONE clock, ending the child when it runs out.
+
+        The pinned SDK's request wait has no timeout: the one event that unblocks it is the reader thread
+        failing every waiter, which happens when the child's stdout ends. So a codex that starts, holds stdout
+        open and never writes its first frame (a start-up stalled on a hung ~/.codex or state mount, a stub
+        that sleeps) parked _get_client in that wait with _client_lock HELD, forever: every Codex creation,
+        resume, send and turn worker queued behind it, /models blocked under _catalog_lock, the tab whose
+        receive loop made the call read no more ops, and nothing was logged or recorded (2026-09-11). The
+        child offers no event of its own, so the clock stands in for one; its expiry is candidate.close(),
+        the SDK's own unblocking event (child terminated, reader sees EOF, the wait raises), and the failure
+        is recorded as the plain reason rather than the transport's text. The gate makes the two outcomes
+        exclusive: a clock that fires after the handshake settled must not close an installed client, and a
+        handshake that settled after the clock fired must not install a closed one (_check_auth swallows the
+        account_read error the close provokes, so the flag is read after it, not only on the raise path).
+        The expiry is its own class, _HandshakeTimeout, so _record_client_failure_locked floors the retry at
+        the clock: the next probe costs the whole clock again with the lock held, and the ordinary backoff (cap
+        5s) would have re-run it almost continuously while the fault lasted; inside the floor every caller gets
+        the recorded reason at once."""
+        gate = threading.Lock()
+        state = {"expired": False, "settled": False}
+
+        def expire():
+            with gate:
+                if state["settled"]:
+                    return
+                state["expired"] = True
+            try:
+                candidate.close()
+            except Exception:
+                pass
+
+        def settle():
+            timer.cancel()
+            with gate:
+                state["settled"] = True
+                return state["expired"]
+
+        timer = threading.Timer(HANDSHAKE_TIMEOUT_S, expire)
+        timer.daemon = True
+        timer.name = "codex-handshake-clock"
+        timer.start()
+        text = ("The Codex app-server (%s) did not answer within %.0fs of starting, so it was ended; "
+                "check the codex binary, then try again"
+                % (self.codex_bin or "managed runtime", HANDSHAKE_TIMEOUT_S))
+        try:
+            bring_up()
+            self._check_auth(candidate)
+        except Exception as e:
+            if settle():
+                raise _HandshakeTimeout(text) from e
+            raise
+        if settle():
+            raise _HandshakeTimeout(text)
+
     def _record_client_failure_locked(self, error, candidate=None):
         """Record one failed client generation. Caller owns _client_lock."""
         self._client_err = str(error) or error.__class__.__name__
         self._client_failures += 1
         delay = min(CLIENT_RETRY_MAX,
                     CLIENT_RETRY_MIN * (2 ** min(self._client_failures - 1, 8)))
+        if isinstance(error, _HandshakeTimeout):
+            delay = max(delay, HANDSHAKE_TIMEOUT_S)   # a re-probe costs the whole clock, lock held: not before then
         self._client_retry_at = time.monotonic() + delay
         if candidate is None:
             candidate = self._client
@@ -615,6 +787,21 @@ class CodexBackend:
             except Exception:
                 pass
         self.log("client unavailable: %s (retry in %.2fs)" % (self._client_err, delay))
+
+    def _client_failure_text(self):
+        """The launch_error text for a session the client cannot serve right now: the recorded client
+        failure, framed as the app-server's when it is a raw one. SETUP_HINT and LOGIN_HINT are whole
+        sentences that name codex and carry their remedy, so they stand as written; anything else is
+        whatever building, starting or draining the client raised — str(error), or the bare class name
+        (_record_client_failure_locked): a missing binary's errno line, "TimeoutError" — and names no
+        process. The chat's red card shows a Codex session's text as the backend wrote it (kernel
+        build_session, 2026-09-11), so the frame is written here, at the two writers of this record.
+        _client_err itself stays raw: model_catalog and the kernel's creation refusals wrap it in
+        sentences of their own, and a frame there would double."""
+        err = self._client_err or SETUP_HINT
+        if err in (SETUP_HINT, LOGIN_HINT):
+            return err
+        return "The Codex app-server isn't available — %s" % err
 
     def _client_retry_remaining(self):
         with self._client_lock:
@@ -740,6 +927,15 @@ class CodexBackend:
         workers pushing concurrently AB-BA across their sessions' locks."""
         path = self.transcript_path(s.sid)
         with open(path, "a", encoding="utf-8") as f:
+            if _ends_mid_line(path):
+                # A torn earlier write left a partial line. Written straight after it, this batch's first
+                # record would join it in ONE unparseable line every reader skips (_tail_state, the event
+                # model's readers), so the record vanished while the retire below still took its echo: a
+                # prompt sent after the tear (the first record after a kill and restart) was nowhere in
+                # the UI. Close the fragment first: it stays its own skipped line and the record lands
+                # whole. Logged so the tear is seen, not silently papered over (review find, 2026-09-11).
+                self.log("transcript for %s ended mid-line (a torn write); closing that line" % s.name)
+                f.write("\n")
             for r in recs:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
         # A landed user record replaces its optimistic echoes (uuid-independent: match by text, under
@@ -805,6 +1001,13 @@ class CodexBackend:
         with s.lock:
             return not s.dead
 
+    def has_record(self, sid):
+        """True while the registry holds a row for sid, alive or ended. The kernel's answer to whether a session's
+        typed prompts were a person's (the shared parse's sdk_human, read by the display and the judges) must not
+        flip the moment the row is marked dead, so it reads record presence here, never owns(), which send routing
+        keeps live-only."""
+        return self._session(sid) is not None
+
     def live_sessions(self):
         out = {}
         for sid, s in self._session_items():
@@ -823,11 +1026,28 @@ class CodexBackend:
         return out
 
     def busy(self, sid):
+        """A turn is open, or a queued send is about to open one. A queue the worker has PARKED on a permanent
+        request rejection (a model the account refuses: _work breaks to kick.wait() with no timer) is neither:
+        nothing is in flight and nothing runs until an explicit change bumps change_generation. It must read
+        NOT busy, because the kernel takes busy() as its authoritative "turn open" word and parks a model or
+        effort pick behind it (Codex applies a pick at the next turn_start, model_switches_live False), and its
+        drain skips the session for as long as busy() holds — so a parked queue that read busy parked the very
+        pick that would have unparked it, with no way out: Codex has no unqueue, and kill + resume re-arm the
+        same queue with the same model (review, 2026-09-11). The rejection is stale the moment an explicit
+        change moves the generation (send, set_model, set_mode, set_effort, resume all bump it and kick), so
+        busy() flips back to True right then, before the worker wakes and clears the tuple, and a pick pressed
+        after that one parks behind the retry in press order. A new client generation is the worker's own
+        clear (it is kicked for it), a scheduling quantum later."""
         s = self._session(sid)
         if not s:
             return None
         with s.lock:
-            return None if s.dead else bool(s.turn_id or s.queue)
+            if s.dead:
+                return None
+            if s.turn_id:
+                return True
+            parked = s.turn_rejection is not None and s.turn_rejection[0] == s.change_generation
+            return bool(s.queue) and not parked
 
     def restart_impact(self):
         """(live, busy): how many Codex sessions a kernel restart would stop right now, and how many of
@@ -856,7 +1076,7 @@ class CodexBackend:
         with s.lock:
             if s.dead:
                 return False
-            # WHOLE seconds, as the SDK and tmux echoes stamp theirs: record times are parse_z's int
+            # WHOLE seconds, as the SDK echoes stamp theirs: record times are parse_z's int
             # seconds and prune_live lands an echo by text only through a record at or after its send,
             # so a float stamp would keep an echo whose record was written later in the same second. The
             # text is stored under the shared key rule (echo_text_key), the key prune_live and _append
@@ -884,10 +1104,23 @@ class CodexBackend:
             entry_id = "q-%s" % uuidlib.uuid4().hex
             s.queue.append(text)
             s.queue_ids.append(entry_id)
-            s.change_generation += 1
             # Keep append order identical in memory and on disk. _save_registry snapshots this RLock
             # reentrantly before taking either registry lock; it never takes a session lock afterward.
-            self._save_registry(s, queue_append={"id": entry_id, "text": text})
+            try:
+                self._save_registry(s, queue_append={"id": entry_id, "text": text})
+            except BaseException:
+                # A raising durable write publishes NOTHING, as every sibling mutator keeps it: the entry
+                # never reached disk, so it leaves memory too, and this send's echo with it — by its id
+                # and uuid, never by position or text, so no other send's copy goes. Kept, they showed a
+                # queued bubble on a busy session for a send the caller was told failed, with no worker
+                # kicked to drain it, and the copy rode the next kick into that turn beside the retype.
+                if entry_id in s.queue_ids:
+                    at = s.queue_ids.index(entry_id)
+                    del s.queue[at]
+                    del s.queue_ids[at]
+                s.echoes = [e for e in s.echoes if e["uuid"] != echo_uuid]
+                raise
+            s.change_generation += 1
         self._ensure_worker(s)
         s.kick.set()
         return True
@@ -1068,7 +1301,11 @@ class CodexBackend:
                 old = (d / s.sid).read_text().rstrip("\n").split("\t")
             except (OSError, UnicodeDecodeError):
                 old = []
-            bg = bg or (old[2] if len(old) > 2 else "")
+            bg = bg or (old[2] if len(old) > 2 else "") or s.color
+            #    the FILE first: a kernel-side recolour (_set_session_color) writes names/ only
+            #    and never updates s.color. The registry's colour is the fallback for a file with
+            #    none — a rename that healed a MISSING file wrote an empty colour although the
+            #    registry knew it (2026-09-11)
             fg = fg or (old[3] if len(old) > 3 else "")
             emoji = old[4] if len(old) > 4 else ""   # the kernel's tab emoji (5th field) rides along
             tmp = d / (s.sid + ".tmp")
@@ -1089,9 +1326,13 @@ class CodexBackend:
         c = self._get_client()
         if c is None:
             # the entry still exists so the failure is VISIBLE on the lane (launch_error),
-            # never a silently-missing session
-            s = _Session(sid, "pending-%s" % sid[:8], name, cwd)
-            s.launch_error = {"text": self._client_err or SETUP_HINT, "at": time.time(),
+            # never a silently-missing session. The identity colour the caller picked rides on
+            # the row and into names/ exactly as on the success path: a placeholder that dropped
+            # it ran colourless for its whole life (the later thread create and the load-time
+            # republish both copy the row's empty colour forward) and the kernel's picker, which
+            # counts held colours from names/, handed the same colour to the next session
+            s = _Session(sid, "pending-%s" % sid[:8], name, cwd, color=bg)
+            s.launch_error = {"text": self._client_failure_text(), "at": time.time(),
                               "limit": False}
             with s.lock:
                 self._put_session(s)
@@ -1104,8 +1345,9 @@ class CodexBackend:
                     with self._sessions_lock:
                         self._sessions.pop(sid, None)
                     raise
-            self._publish_spawn_name(s)    # a LIVE launch-error row without a shared name let a
-            #                                retry mint a duplicate live "web" (the v1.3.12 audit)
+            self._publish_spawn_name(s, bg, fg)    # a LIVE launch-error row without a shared name
+            #                                        let a retry mint a duplicate live "web" (the
+            #                                        v1.3.12 audit)
             return sid
         try:
             resp = c.thread_start({"cwd": cwd, **_approval_params(),
@@ -1113,7 +1355,7 @@ class CodexBackend:
             tid = resp.thread.id
             model = getattr(resp, "model", "") or ""
         except Exception as e:
-            s = _Session(sid, "failed-%s" % sid[:8], name, cwd)
+            s = _Session(sid, "failed-%s" % sid[:8], name, cwd, color=bg)
             s.launch_error = {"text": "codex thread/start failed: %s" % e, "at": time.time(),
                               "limit": False}
             with s.lock:
@@ -1124,10 +1366,11 @@ class CodexBackend:
                     with self._sessions_lock:
                         self._sessions.pop(sid, None)
                     raise
-            self._publish_spawn_name(s)    # same rule as the client-missing branch above
+            self._publish_spawn_name(s, bg, fg)    # same rules as the client-missing branch above
             return sid
         s = _Session(sid, tid, name, cwd, model=model, color=bg)
         s.loaded = True
+        s.loaded_client_generation = self._client_generation_for(c)
         with s.lock:
             self._put_session(s)
             try:
@@ -1271,7 +1514,7 @@ class CodexBackend:
             if s.worker and s.worker.is_alive():
                 return
             s.worker = threading.Thread(target=self._work, args=(s,), daemon=True,
-                                        name="codex-%s" % s.name)
+                                        name="codex:%s" % s.name)   # kind:payload: the kernel's stack sample keeps the kind
             s.worker.start()
 
     def _prepare_thread(self, s, c):
@@ -1279,18 +1522,27 @@ class CodexBackend:
         with s.lock:
             if s.dead:
                 return False
-            tid, cwd = s.tid, s.cwd
+            tid, cwd, model = s.tid, s.cwd, s.model
             create = tid.startswith("pending-") or tid.startswith("failed-")
         if create:
-            resp = c.thread_start({"cwd": cwd, **_approval_params(s.mode),
-                                   **_execution_permissions(cwd, thread_start=True)})
+            params = {"cwd": cwd, **_approval_params(s.mode),
+                      **_execution_permissions(cwd, thread_start=True)}
+            if model:
+                params["model"] = model    # picked while the row was a placeholder: born on it
+            resp = c.thread_start(params)
+            loaded_client_generation = self._client_generation_for(c)
             with s.lock:
                 if s.dead:
                     return False
-                prior = (s.tid, s.model, s.loaded)
+                prior = (s.tid, s.model, s.loaded, s.loaded_client_generation)
                 s.tid = resp.thread.id
-                s.model = getattr(resp, "model", "") or s.model
+                # The pick outlives the create. The server's reply names ITS model, never empty
+                # (ThreadStartResponse.model is a required string), so `resp.model or s.model` let
+                # the default overwrite a model the user chose on the pending-/failed- row, saved
+                # it below, and ran every turn on it with no word to anyone (2026-09-11).
+                s.model = s.model or getattr(resp, "model", "") or ""
                 s.loaded = True
+                s.loaded_client_generation = loaded_client_generation
                 try:
                     self._save_registry(s, fields=("tid", "model"))
                 except BaseException:
@@ -1299,7 +1551,7 @@ class CodexBackend:
                     # loaded 'pending-…' and silently started a FRESH Codex thread (the r29
                     # verification). Rolled back, the loud retry re-runs thread_start; an
                     # orphaned server-side thread beats a silently forked conversation.
-                    (s.tid, s.model, s.loaded) = prior
+                    (s.tid, s.model, s.loaded, s.loaded_client_generation) = prior
                     raise
             with s.norm_lock:
                 s.norm = None
@@ -1330,10 +1582,12 @@ class CodexBackend:
             return True
         c.thread_resume(tid, {"cwd": cwd, **_approval_params(s.mode),
                               **_execution_permissions(cwd, thread_start=True)})
+        loaded_client_generation = self._client_generation_for(c)
         with s.lock:
             if s.dead:
                 return False
             s.loaded = True
+            s.loaded_client_generation = loaded_client_generation
         return True
 
     def _work(self, s):
@@ -1426,18 +1680,23 @@ class CodexBackend:
         if c is None:
             try:
                 with s.lock:
-                    s.launch_error = {"text": self._client_err or SETUP_HINT, "at": time.time(),
+                    s.launch_error = {"text": self._client_failure_text(), "at": time.time(),
                                       "limit": False}
                     self._save_registry(s, fields=("launchError",))
             except Exception:
                 self.log("client failure registry save: %s" % traceback.format_exc())
             self.push_session(s.sid)
             return False                   # queue stays parked; worker retries after the deadline
+        prepare_client_generation = self._client_generation_for(c)
         with s.lock:
-            loaded = s.loaded
+            # `loaded` holds per app-server. When the pump saw the old server die and _get_client
+            # built this replacement, the thread stayed "loaded" on a process that had never seen
+            # it, and turn/start went out with no thread/resume before it: the server refuses that
+            # with "thread not found", a permanent rejection every resend met again until a kernel
+            # restart re-read the registry (2026-09-11). Resume it on the server it will run on.
+            loaded = s.loaded and s.loaded_client_generation == prepare_client_generation
             prepare_change_generation = s.change_generation
         if not loaded:
-            prepare_client_generation = self._client_generation_for(c)
             try:
                 prepared = self._prepare_thread(s, c)
             except Exception as e:
@@ -1478,6 +1737,7 @@ class CodexBackend:
             raise
         turn_id = started.turn.id
         ack_persisted = False
+        stream_failed = False
         try:
             with s.lock:
                 if s.queue[:len(batch)] != batch or s.queue_ids[:len(batch_ids)] != batch_ids:
@@ -1509,7 +1769,11 @@ class CodexBackend:
                 except Exception as e:
                     self.log("kill interrupt %s: %s" % (s.name, e))
             while True:
-                n = c.next_turn_notification(turn_id)
+                try:
+                    n = c.next_turn_notification(turn_id)
+                except Exception:
+                    stream_failed = True       # the transport is down: see the except below
+                    raise
                 method = getattr(n, "method", "")
                 wrote = False
                 with s.norm_lock:
@@ -1522,14 +1786,45 @@ class CodexBackend:
                     self.push_session(s.sid)
                 if method == "turn/completed":
                     break
-        except Exception:
-            if not ack_persisted:
-                # The request is still durable, so prevent an untracked acknowledged turn from
-                # continuing alongside its retry. unregister in finally always releases routing.
+        except Exception as exc:
+            # Whatever ended the loop, the app-server's turn is now UNTRACKED: unregister in finally
+            # releases its routing, so its later notifications are dropped, and with turn_id cleared
+            # neither interrupt() nor kill() can reach it. Before the ACK the request is still durable,
+            # so this keeps the acknowledged turn from continuing alongside its retry; after it, the
+            # turn would keep executing in the sandbox with busy() False and no way to stop it.
+            # ONLY when the failure was on our side (a transcript write, a normalizer raise) with the
+            # transport up, though. A raise from the READ means the SDK's reader thread is gone: the one
+            # writer of an exception into a turn queue is the router's fail_all, run once from that
+            # thread's own except (pinned wheel, client.py _reader_loop). An RPC now would wedge this
+            # worker for good: _request_raw waits on its reply with no timeout, fail_all has already
+            # failed every waiter it will ever fail, and close() fails none, so the request is written to
+            # a process nothing reads answers from. busy() would read True forever, mode_lock stay held,
+            # kill() time out on the join and skip the drain. The global pump reads the same failure and
+            # closes that client, terminating the app-server, so the turn dies with it and there is
+            # nothing left to interrupt.
+            if not stream_failed:
                 try:
                     c.turn_interrupt(tid, turn_id)
                 except Exception as e:
-                    self.log("unpersisted turn interrupt %s: %s" % (s.name, e))
+                    if ack_persisted:
+                        self.log("abandoned turn interrupt %s: %s" % (s.name, e))
+                    else:
+                        self.log("unpersisted turn interrupt %s: %s" % (s.name, e))
+            if ack_persisted:
+                # The ACK consumed the prompt from the queue, so this turn has no retry and the file is
+                # the only place its end can be recorded: settle it there (the held final reply lands,
+                # then an end_turn record carrying the failure, codex_events.abandoned). No notification
+                # will do it — a dead transport sends none, and a turn the SDK no longer routes drops its
+                # own turn/completed — and an open file turn reads as working on every surface and
+                # absorbs the next prompt. The finally's poke/push announce the records. The append may
+                # be exactly what raised: its failure is logged, never allowed to mask the original.
+                try:
+                    with s.norm_lock:
+                        recs = norm.abandoned(turn_id, "codex turn failed: %s" % exc)
+                        if recs:
+                            self._append(s, recs)
+                except Exception:
+                    self.log("abandoned turn settle %s: %s" % (s.name, traceback.format_exc()))
             raise
         finally:
             try:
@@ -1580,7 +1875,7 @@ class CodexBackend:
         without that floor a repeated text ("ok" twice) would retire the second echo the moment it was
         sent (the SDK's T237b case); a plain set (an older caller) keeps the unfloored match. Texts are
         compared under echo_text_key on BOTH sides. Record times are parse_z's whole seconds, so send()
-        stamps the echo with int(time.time()) as the SDK and tmux echoes do: a float stamp would keep an
+        stamps the echo with int(time.time()) as the SDK echoes do: a float stamp would keep an
         echo whose record was written later in the same second. The backend's own _append retire is the
         other exit; it sees only the records it just wrote and takes one echo per landed text block, the
         oldest carrying the text (a turn started from several queued sends lands as one record with a

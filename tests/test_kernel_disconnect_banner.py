@@ -6,9 +6,14 @@ blind-reloading — reloading to resync only once the socket is actually back.
 The shell surface changed on 2026-07-27: the fixed top "Disconnected — reconnecting…" banner is gone —
 connection drops now log entries in the shell's NOTIFICATION CENTER (the bell in the bottom bar, red while
 anything is unread or a visible pane is down), whose behavioral tests live in test_error_center.py. The
-source pins here cover the pane shim (unchanged) and the shell's wiring of the center."""
+source pins here cover the pane shim and the shell's wiring of the center; the hidden-pane test runs the
+served paneHidden() under node."""
 import inspect
+import json
 import os
+import re
+import shutil
+import subprocess
 import unittest
 from romp_load import load_source
 import tempfile
@@ -48,17 +53,22 @@ class DisconnectBanner(unittest.TestCase):
                       'restartAnnounced=0;', js)   # T217: the announced-restart latch spends inside the gate
         self.assertIn('if(!ann)armStale(pendingWhy||"reconnect");', js)
         # the flip as a FRAME too (upstream 2026-09-07): enqueue() follows the dispatch, and the onopen body closes
-        # after it; the fork's ready re-send below sits above both (the resolved shim's order)
+        # after it; upstream's ready re-post below sits above both (the resolved shim's order)
         self.assertIn('try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}\nenqueue({type:"wsup"});}', js)
-        # …and re-sends the bundle's connect handshake, so the kernel's connect push resyncs this socket
-        # at once instead of on the pusher's next cycle (2026-09-02) — ONLY once the bundle has sent its own
-        # and the flush did not just carry it (the 2026-09-03 review: a redial that completed before the
-        # bundle had loaded said `ready` for it, and the frame went to a page with no listener); sent raw so
-        # the shim's re-send never counts as the bundle's (pane-shim-stale.test.ts runs both rules)
-        self.assertIn('if(bundleReady&&!flushedReady)ws.send(JSON.stringify({type:"ready"}));', js)
-        self.assertIn('if(m&&m.type==="ready")bundleReady=true;', js)
+        # ...and re-posts the bundle's OWN ready message (readyMsg, the bytes the bundle sent), so the kernel's connect
+        # push resyncs this socket at once instead of on the pusher's next cycle: ONLY while the bundle has sent its
+        # ready (bundleReady), no caps frame has answered one yet (readyAcked: the kernel's word, sent by the ready arm
+        # alone after its own pushes, that it processed the ready and served the page whole) and the flush did not
+        # just carry it (readyQueued). The fork's raw re-send on every reconnect (2026-09-02, `flushedReady`) retired
+        # for upstream's readyMsg re-post under readyAcked (the 2026-09-15 pull-in; upstream's romp-on/romp#1404,
+        # #1642 and #1724): a redial whose ready a caps frame answered dials with `&reconnect=1` instead and is ready
+        # from the kernel's accept, so the socket carries no second ready for the bundle's listener to double
+        self.assertIn('if(bundleReady&&!readyAcked&&!readyQueued&&readyMsg)ws.send(readyMsg);readyQueued=false;', js)
+        self.assertIn('if(m&&m.type==="ready"){bundleReady=true;readyProto=(m.proto===2?2:1);readyMsg=s;}', js)
+        self.assertIn('if(msg&&msg.type==="caps")readyAcked=true;', js)
         self.assertIn('if(m&&m.type==="ready")readyQueued=true;', js)
         self.assertNotIn('send({type:"ready"});', js, "the unconditional re-send is gone")
+        self.assertNotIn("flushedReady", js, "the fork's per-reconnect re-send went with its latch")
         self.assertNotIn("if(everConnected){location.reload();return;}", js,
                          "the silent auto-reload-on-reconnect is replaced by a reload PROMPT")
         self.assertNotIn("ws.onclose=function(){setTimeout(function(){location.reload();},1500);};", js,
@@ -84,33 +94,70 @@ class DisconnectBanner(unittest.TestCase):
         # the user 2026-08-15, on the phone: the mobile shell shows ONE pane, hiding the rest with
         # display:none; iOS throttles the hidden iframes' JS, so each hidden pane's watchdog kept
         # force-closing its own healthy socket and re-raising the banner every ~45s over a dashboard
-        # that was visibly working. A display:none iframe has a ZERO viewport — raiseStale checks that
-        # at raise time (no event exists for a CSS display flip) and stays silent while hidden; a pane
-        # shown while genuinely stale re-raises within one watchdog tick, now visible. The probe is right for
-        # a pane hidden SINCE LOAD only: a display:none iframe keeps the size of its last show (Chromium:
-        # innerWidth 0 while never shown, 600 once shown and hidden again), so it misses every pane the shell
-        # hides after the user has looked at it, the phone shell's every tab switch. The pane's paint gate
-        # (ui/webview/paint-gate.ts, upstream #1016's hold, steer 2 of the 2026-09-08 fold) holds the two
-        # measures that do not miss it and publishes their union as window.__rompPaneHidden on its own events
-        # (publishPaneHidden: the observer callback, visibilitychange, the release; never a timer; the chat page
-        # through ui/webview/chat-visibility.ts). Firefox is the mirror image: a display:none iframe's viewport
-        # reads 0 there (the probe is right) but its IntersectionObserver does not run (the word goes stale), so
-        # the shim says hidden when EITHER says so at raise time (the fold's round 2 gave the fork's 2026-09-06
-        # read a publisher again; round 3 made the read the union after a Firefox probe showed a boolean-first
-        # read raising from a hidden pane there; the fold's first cut had pinned the probe alone, which
-        # re-opened the flap for every re-hidden pane in Chromium).
+        # that was visibly working. raiseStale asks paneHidden() at raise time (no event exists for a CSS
+        # display flip) and stays silent while hidden; a pane shown while genuinely stale re-raises within
+        # one watchdog tick, now visible.
+        # Whether the user can see a pane has TWO witnesses, and paneHidden() reads their union. The shim's
+        # own witness is the zero-viewport probe (a display:none iframe has a zero viewport), right for a pane
+        # hidden since load in any browser and in Firefox always. In Chromium a display:none iframe keeps the
+        # size of its last show, so once the user has looked at a pane (the phone shell's every tab switch)
+        # the probe reads it as shown; the pane's own visibility code sees that case and publishes
+        # document.hidden OR its IntersectionObserver's last word as window.__rompPaneHidden, a boolean
+        # (ui/webview/paint-gate.ts publishPaneHidden for the feed and Outline panes, ui/webview/chat-visibility.ts
+        # for the chat page, the timeline's _publishPaneHidden), on its own events and never on a timer. Firefox
+        # does not run an IntersectionObserver inside a display:none frame, so there the word can go stale while
+        # the probe is right: hidden is EITHER witness, never the word first. The served function runs here
+        # under node over window stand-ins; tests/test_pane_hidden_word_browser.py drives real browsers.
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not installed")
         js = km._shim("feed")
-        self.assertIn("function paneHidden(){try{return (window.parent!==window&&(window.innerWidth===0||window.innerHeight===0))"
-                      "||window.__rompPaneHidden===true;}catch(e){return false;}}", js,
-                      "hidden when either says so: the zero-viewport probe, or a published word of true")
-        self.assertNotIn('typeof window.__rompPaneHidden==="boolean")return window.__rompPaneHidden', js,
-                         "a stale word must never override a probe that says zero viewport (Firefox)")
+        m = re.search(r"^function paneHidden\(\)\{[^\n]*$", js, re.M)
+        self.assertIsNotNone(m, "the shim's paneHidden is one line of the served shim")
+        fx = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, fx, ignore_errors=True)
+        with open(os.path.join(fx, "run.js"), "w") as f:
+            f.write(r"""
+var vm = require("vm"), fs = require("fs");
+var fn = fs.readFileSync(process.argv[2], "utf8");
+function verdict(framed, iw, ih, word) {
+  var win = { innerWidth: iw, innerHeight: ih };
+  win.parent = framed ? {} : win;
+  if (word !== undefined) win.__rompPaneHidden = word;
+  return vm.runInNewContext(fn + "\npaneHidden();", { window: win });
+}
+process.stdout.write(JSON.stringify({
+  neverShown: verdict(true, 0, 0, undefined),
+  shown: verdict(true, 600, 400, undefined),
+  wordHidden: verdict(true, 600, 400, true),
+  wordShown: verdict(true, 600, 400, false),
+  staleWord: verdict(true, 0, 0, false),
+  standaloneWord: verdict(false, 600, 400, true),
+  standaloneNoWord: verdict(false, 0, 0, undefined),
+  nonBoolean: verdict(true, 600, 400, "yes"),
+}));
+""")
+        with open(os.path.join(fx, "paneHidden.js"), "w") as f:
+            f.write(m.group(0))
+        r = subprocess.run([node, os.path.join(fx, "run.js"), os.path.join(fx, "paneHidden.js")],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        v = json.loads(r.stdout)
+        self.assertTrue(v["neverShown"], "a framed pane with a zero viewport: hidden since load, by the probe")
+        self.assertFalse(v["shown"], "a framed pane with a viewport and no word: shown")
+        self.assertTrue(v["wordHidden"], "a viewport and a word of true: hidden after a first show (Chromium keeps the iframe's size)")
+        self.assertFalse(v["wordShown"], "a viewport and a word of false: shown")
+        self.assertTrue(v["staleWord"], "a zero viewport and a stale word of false: hidden (Firefox zeroes the viewport and stalls the observer)")
+        self.assertTrue(v["standaloneWord"], "a standalone page's word is its tab's hiding; the probe never applies there")
+        self.assertFalse(v["standaloneNoWord"], "a standalone page with no word: never hidden by the probe")
+        self.assertFalse(v["nonBoolean"], "only a boolean true is the word")
+        self.assertIn('function raiseStale(why){if(paneHidden()){staleDiag("stale-suppressed-hidden",why);return;}', js,
+                      "the visibility gate is at RAISE time, so hidden panes reconnect silently")
+        # the other end of the word: the pane's shared publisher writes the flag under the name read above, on events
         gate = open(os.path.join(os.path.dirname(HERE), "ui", "webview", "paint-gate.ts"), encoding="utf-8").read()
         self.assertIn("export function publishPaneHidden(", gate, "the publisher, by name, in the pane's paint gate")
         self.assertRegex(gate, r"\.__rompPaneHidden = ", "publishing the flag the shim reads, under that exact name")
         self.assertNotIn("setInterval", gate, "published on the gate's own events, never a timer")
-        self.assertIn('function raiseStale(why){if(paneHidden()){staleDiag("stale-suppressed-hidden",why);return;}', js,
-                      "the visibility gate is at RAISE time, so hidden panes reconnect silently")
 
     def test_every_stale_raise_leaves_a_breadcrumb_naming_pane_and_path(self):
         # the user 2026-08-15: the flapping-banner repro was Chrome-on-Android after an iOS-shaped
@@ -130,7 +177,7 @@ class DisconnectBanner(unittest.TestCase):
         # indistinguishable. (A socket the shim ABANDONS leaves none — abandon() disowns its onclose; the
         # watchdog-close row above went down the quiet socket before the abandon, and an armed socket's
         # "-quiet" raise rides the redial.)
-        self.assertIn('if(openSock===this){try{send({type:"clientDiag",surface:"pane-shim",what:"wsclose",data:{app:APP,code:ev?ev.code:-1,'
+        self.assertIn('if(openSock===this){armFresh();try{send({type:"clientDiag",surface:"pane-shim",what:"wsclose",data:{app:APP,code:ev?ev.code:-1,'
                       'reason:(ev&&ev.reason)||"",wasClean:!!(ev&&ev.wasClean),'
                       'sinceOpenMs:openT?Date.now()-openT:-1,quietMs:lastRecv?Date.now()-lastRecv:-1,everConnected:everConnected,bundleReady:bundleReady}', js,
                       "the row carries the bundle's ready state at the close: with the kernel's stamp of the carrying socket's "
@@ -214,8 +261,9 @@ class DisconnectBanner(unittest.TestCase):
         # disowns the socket's onclose, so it runs the close rule itself; without that, every silent cycle
         # re-armed from zero and the prompt never came). Nothing else. pane-shim-stale.test.ts RUNS the rule;
         # these pins hold its text.
-        self.assertIn('function armStale(why){if(NOSTALE)return;stalePending=why;staleKa=0;}', js,
-                      "arming records the path, shows nothing (NOSTALE: a page with no pushed view never arms — test_files_pane)")
+        self.assertIn("function armStale(why){if(NOSTALE)return;stalePending=why;staleKa=0;}", js,
+                      "arming records the path, shows nothing (a page with no pushed view, NOSTALE, never arms: the Files pane)")
+        self.assertIn("var NOSTALE=false;", js, "every pushed pane keeps the arm")
         self.assertNotIn("setTimeout(function(){staleTimer=0;raiseStale(why);},1000)", js, "the timer is gone")
         self.assertNotIn("staleTimer", js)
         self.assertIn('if(stalePending&&++staleKa>=2){var sw=stalePending;stalePending="";raiseStale(sw);}', js,
@@ -229,7 +277,7 @@ class DisconnectBanner(unittest.TestCase):
         self.assertNotIn("if(wasReconn){raiseStale();", js, "…and never raises it outright")
         self.assertIn('function clearStale(){stalePending="";', js,
                       "the resync disarms it, so it never appears at all")
-        self.assertIn("if(freshPending){freshPending=false;clearStale();}", js,
+        self.assertIn("if(freshPending){freshPending=false;window.__rompFreshPending=false;clearStale();try{if(window.__rompReload)window.__rompReload.ended();}catch(e){}}", js,   # the reload core's fresh hold ends here too (invisible restarts, 2026-09-14)
                       "the first real frame after it fires the retire")
         # keepalives must NOT count as a resync — the ka branch returns before the retire line
         self.assertLess(js.index('msg.type==="ka"'), js.index("if(freshPending)"),

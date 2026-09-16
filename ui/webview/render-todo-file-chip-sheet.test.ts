@@ -78,8 +78,8 @@ const rowHtml = (id: string, file: string | null) =>
 // the chat page: the transcript's todo card in a 600px pane (room on the line: a chip that wraps the text is a taller row
 // by design, as any word would be), and the Reply modal as showUserTodoReply builds it, open
 const PAGE_HTML = `<!DOCTYPE html><html><head><meta charset=utf-8><link href=/dist/styles.css rel=stylesheet></head><body>
-<div id="content"><div class="turn turn-todo"><span class="dot ring"></span><div class="todo-card">
-<div class="todo-head ut-head">Waiting on you · 3</div>
+<div id="content"><div class="turn turn-todo"><span class="dot ring"></span><div class="turn turn-notice turn-todo">
+<div class="ut-head">Waiting on you · 3</div>
 ${rowHtml("plain", null)}${rowHtml("chip", FILE)}${rowHtml("long", FILE_LONG)}
 </div></div></div>
 <div class="picker-overlay confirm-overlay" id="ut-reply-prompt"><div class="picker-box confirm-box">

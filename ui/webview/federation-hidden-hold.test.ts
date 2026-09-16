@@ -265,8 +265,11 @@ test("federation holds nothing: a feed delta applied while the pane is hidden ke
   for (const gone of ["HoldSlot", "setPaneOn", "installPaneHold", "holdWhileHidden", "flushOwed", "__rompPaneHidden"]) {
     assert.ok(!FED.includes(gone), "federation.ts no longer carries the frame hold: " + gone);
   }
-  assert.match(FLEET, /import \{ paintHeld, paintReleased \} from "\.\/paint-gate";/, "the Outline holds at its paint");
-  assert.match(FEED, /import \{ paintHeld, paintReleased \} from "\.\/paint-gate";/, "so does the feed");
+  // fleet.ts and feed.ts import the gate and the publisher on one line, upstream's own text since the publisher
+  // landed there (P1 at the 2026-09-15 pull-in); waiting.ts (fork-only) keeps the publisher on a second line (its
+  // pin is in the Waiting test below)
+  assert.match(FLEET, /import \{ paintHeld, paintReleased, publishPaneHidden \} from "\.\/paint-gate";/, "the Outline holds at its paint");
+  assert.match(FEED, /import \{ paintHeld, paintReleased, publishPaneHidden \} from "\.\/paint-gate";/, "so does the feed");
 });
 
 test("the timeline's lanes and bars reach the pane in wire order, unheld; the pane applies both while hidden and paints one catch-up on show", () => {
@@ -308,8 +311,11 @@ test("the timeline's lanes and bars reach the pane in wire order, unheld; the pa
 test("the chat is never held; the feed pane holds its PAINT like the Outline and applies its payload whatever the visibility", () => {
   // steer 2 changed the feed's half: the federation hold exempted the feed pane's frames, #1016 gates its paint
   // (feed-hidden-paint.test.ts runs that gate) while applyFeedPayload never looks at the visibility
-  assert.ok(!RENDER.includes("paintHeld(") && !RENDER.includes("paintReleased(") && !/from "\.\/paint-gate"/.test(RENDER),
+  // render.ts imports paint-gate.ts's HOST INTERFACE alone (`import type { PaneHiddenHost }`, upstream's text, for the
+  // chat's own hidden probe pinned below): a type, not a gate; no gate function is imported or called
+  assert.ok(!RENDER.includes("paintHeld(") && !RENDER.includes("paintReleased(") && !/^import \{[^}]*\b(?:paintHeld|paintReleased|publishPaneHidden)\b[^}]*\} from "\.\/paint-gate";/m.test(RENDER),
     "render.ts (the chat) has no paint gate: every frame paints (its shim word comes through chat-visibility.ts: the publisher pins below)");
+  assert.match(RENDER, /^import type \{ PaneHiddenHost \} from "\.\/paint-gate";/m, "the one paint-gate import in render.ts is the host interface, a type");
   // two gates in feed.ts since the browser-frames offer came home reviewed (upstream #1061; R1 at the 2026-09-09 fold): render()'s,
   // and the live pass's hidden test handed to feed-age.ts liveRefresher (feed-hidden-paint.test.ts pins the same count)
   assert.equal(FEED.split("paintHeld(").length - 1, 2, "the feed gates twice: render() and the live pass's hidden test");
@@ -361,14 +367,21 @@ test("the Waiting pane (fork-only, hidden by default on desktop) gates its paint
 });
 
 test("source pins: every pane that gates publishes the shim's word from the gate's own events, through paint-gate.ts; the flag name lives in one place", () => {
-  for (const [name, src, vis] of [["fleet.ts", FLEET, "paneVisible"], ["feed.ts", FEED, "feedIntersecting"], ["waiting.ts", WAITING, "paneVisible"]] as const) {
-    assert.match(src, /import \{ publishPaneHidden \} from "\.\/paint-gate";/, name + ": the publisher, on its own import line (the paintHeld/paintReleased line is upstream's text, pinned by its tests)");
+  // fleet.ts and feed.ts carry the publisher on upstream's merged import line (P1 at the 2026-09-15 pull-in);
+  // waiting.ts, fork-only, keeps it on a second line beside the Outline-shaped gate import its tests pin
+  const MERGED = /import \{ paintHeld, paintReleased, publishPaneHidden \} from "\.\/paint-gate";/;
+  const OWN_LINE = /import \{ publishPaneHidden \} from "\.\/paint-gate";/;
+  for (const [name, src, vis, imp] of [["fleet.ts", FLEET, "paneVisible", MERGED], ["feed.ts", FEED, "feedIntersecting", MERGED], ["waiting.ts", WAITING, "paneVisible", OWN_LINE]] as const) {
+    assert.match(src, imp, name + ": the publisher is imported from paint-gate.ts (the merged line in fleet.ts and feed.ts, its own line in waiting.ts)");
     const rel = /^function releasePaint\(\): void \{([\s\S]*?)\n\}/m.exec(src)![1];
     assert.match(rel, new RegExp("^\\n\\s*publishPaneHidden\\(document\\.hidden, " + vis + "\\);[^\\n]*\\n\\s*if \\(!paintReleased\\("), name + ": the release publishes FIRST, before the owed-paint decision, so the observer's callback and the tab's return both publish");
     assert.match(src, new RegExp('document\\.addEventListener\\("visibilitychange", \\(\\) => \\{ if \\(document\\.hidden\\) publishPaneHidden\\(true, ' + vis + '\\); \\}\\);'), name + ": the hidden arm publishes too (the pinned visible arm releases, and so publishes)");
     assert.equal(src.split("publishPaneHidden(").length - 1, 2, name + ": two publish sites, the release and the hidden arm; the observer's callback and the revealCard settle go through the release");
     assert.ok(!/set(Interval|Timeout)\([^\n]*publishPaneHidden/.test(src), name + ": never on a timer");
-    assert.ok(!src.includes("__rompPaneHidden"), name + ": the flag's name is paint-gate.ts's, not the pane's");
+    // a pane names the flag in a comment at most (upstream's header comment on the gate names window.__rompPaneHidden);
+    // its CODE never reads or writes it: the write is paint-gate.ts's
+    const code = src.replace(/^\s*\/\/.*$/gm, "");
+    assert.ok(!code.includes("__rompPaneHidden"), name + ": the flag's name is paint-gate.ts's, not the pane's code");
     assert.match(src, new RegExp("^let " + vis + ": boolean \\| null = null;", "m"), name + ": the observer's word starts null (round 3), so nothing is published before it speaks");
   }
   assert.match(GATE, /export function publishPaneHidden\(docHidden: boolean, intersecting: boolean \| null, w: PaneHiddenHost = globalThis as PaneHiddenHost\): boolean \| null \{\s*\n\s*if \(intersecting === null\) return null;[^\n]*\n\s*const hidden = docHidden \|\| !intersecting;\s*\n\s*w\.__rompPaneHidden = hidden;/,
@@ -380,7 +393,10 @@ test("source pins: every pane that gates publishes the shim's word from the gate
   assert.match(RENDER, /^import \{ watchChatVisibility, browserChatVisibilityDeps \} from "\.\/chat-visibility";/m, "render.ts imports the chat's publisher");
   assert.match(RENDER, /^watchChatVisibility\(document\.body, browserChatVisibilityDeps\(\)\);/m, "installed at top level, over the page's body (the element the shell's display:none takes the box from)");
   assert.equal(RENDER.split("watchChatVisibility(").length - 1, 1, "once");
-  assert.ok(!RENDER.includes("__rompPaneHidden") && !CHATVIS.includes("__rompPaneHidden"), "the flag's name stays paint-gate.ts's");
+  // render.ts READS the word in its own hidden probe (upstream's text: the shim's union mirrored for the skeleton
+  // prefetch); it never WRITES it, and chat-visibility.ts never names it
+  assert.match(RENDER, /\(window as PaneHiddenHost\)\.__rompPaneHidden === true/, "the chat's probe reads the published word through the host interface");
+  assert.ok(!/__rompPaneHidden\s*=[^=]/.test(RENDER) && !CHATVIS.includes("__rompPaneHidden"), "the flag's name stays paint-gate.ts's: render.ts writes it nowhere, chat-visibility.ts names it nowhere");
   assert.match(CHATVIS, /import \{ publishPaneHidden, type PaneHiddenHost \} from "\.\/paint-gate";/, "through the shared publisher");
   assert.ok(!/set(Interval|Timeout)/.test(CHATVIS), "never on a timer");
   assert.ok(!CHATVIS.includes('"panes"') && !CHATVIS.includes("romp:") && !CHATVIS.includes("panesOn"), "from the frame's own visibility, never the shell's panes message");

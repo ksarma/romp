@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
+const MODULE = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "status-controls.ts"), "utf8");   // the status line's controls moved here from render.ts (T415 part two)
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 
 test("Status carries the server-driven modelPending flag", () => {
@@ -15,20 +16,24 @@ test("Status carries the server-driven modelPending flag", () => {
 });
 
 test("syncMetaControls renders dots for a pending model, driven by the server flag (+ local click heuristic)", () => {
-  // model + effort both drive dots now (effort reconnects to apply); the model clause is still present. The one
-  // gate in front of them: a kind whose pick is HELD for the session's live work (st.pickHeld, 2026-09-09) shows
-  // the running value with a mark and no dots (effort-switch-pending.test.ts pins that branch). A model pick
-  // is never held (it resolves live, no reconnect), so for the model badge the server flag alone decides. The
-  // three lines are pinned in order (review round 7): the held read, then settleMetaHold, the hold-cleared frame's
-  // retirement of a loader armed during the hold (review round 6; REQUIRED between them, since the settle is part
-  // of the mechanism and an optional group would let its removal pass), then the pending expression, which the
-  // server's mode and fast flags join (modePending, fastPending: the reload of a held mode or fast pick, round 7)
+  // model + effort both drive dots now (effort reconnects to apply); the model clause is still present. The badges
+  // build in status-controls.ts (T415 part two), whose pending read ORs the server's two flags with the chat's hook
+  assert.match(MODULE, /const pending = \(kind === "model" && !!st\.modelPending\) \|\| \(kind === "effort" && !!st\.effortPending\)\s*\n\s*\|\| !!\(hooks\.pending && hooks\.pending\(kind, st\)\);/);   // the local heuristic is the chat's hook (T415 part two)
+  assert.match(MODULE, /const showDots = pending && \(kind === "model" \|\| kind === "effort"\);/);   // billing moved to the tab menu (2026-08-09)
+  assert.match(MODULE, /if \(!label\.querySelector\("\.meta-dots"\)\) label\.replaceChildren\(metaDots\(\)\);/);
+  // The one gate in front of them, this fork's: a kind whose pick is HELD for the session's live work (st.pickHeld,
+  // 2026-09-09) shows the running value with a mark and no dots (effort-switch-pending.test.ts pins that branch). A
+  // model pick is never held (it resolves live, no reconnect), so for the model badge the server flag alone decides.
+  // The chat's pending hook carries the server's mode and fast flags (modePending, fastPending: the reload of a held
+  // mode or fast pick, review round 7), and the post-pass applyHeldMarks undoes the module's pending dress on a held
+  // kind, three lines pinned in order: the held read, then settleMetaHold (the hold-cleared frame's retirement of a
+  // loader armed during the hold, review round 6; REQUIRED between them, since the settle is part of the mechanism and
+  // an optional group would let its removal pass), then the pending class removed
+  assert.match(RENDER, /pending: \(kind, st\) => \{ const s = st as Status; return \(kind === "mode" && !!s\.modePending\) \|\| \(kind === "fast" && !!s\.fastPending\) \|\| isMetaPending\(kind, s\); \},/);
   const i0 = RENDER.indexOf("const held = !!st.pickHeld && st.pickHeld.surfaces.includes(kind);");
   assert.ok(i0 > 0, "the held read");
-  const gate = RENDER.slice(i0, i0 + 800);
-  assert.match(gate, /^const held = !!st\.pickHeld && st\.pickHeld\.surfaces\.includes\(kind\);\s*\n\s*settleMetaHold\(forSid \|\| activeId \|\| "", kind, held\);[^\n]*\n\s*const pending = !held && \(\(kind === "model" && !!st\.modelPending\) \|\| \(kind === "effort" && !!st\.effortPending\)\s*\n\s*\|\| \(kind === "mode" && !!st\.modePending\) \|\| \(kind === "fast" && !!st\.fastPending\)[^\n]*\n\s*\|\| isMetaPending\(kind, st\)\);/);
-  assert.match(RENDER, /const showDots = pending && \(kind === "model" \|\| kind === "effort"\);/);   // billing moved to the tab menu (2026-08-09)
-  assert.match(RENDER, /if \(!label\.querySelector\("\.meta-dots"\)\) label\.replaceChildren\(metaDots\(\)\);/);
+  const gate = RENDER.slice(i0, i0 + 400);
+  assert.match(gate, /^const held = !!st\.pickHeld && st\.pickHeld\.surfaces\.includes\(kind\);\s*\n\s*settleMetaHold\(forSid \|\| activeId \|\| "", kind, held\);[^\n]*\n\s*if \(held\) \{\s*\n\s*b\.classList\.remove\("meta-pending"\);/);
   // the local loader's arm and retirement, the mechanism the settle line above belongs to (review round 6): a click
   // on the row that IS the running value arms none (the model kind excepted: its match is a family prefix), a real
   // change arms it, and the frame where a hold ends retires one armed during the hold (the event, not the timer)
@@ -37,8 +42,8 @@ test("syncMetaControls renders dots for a pending model, driven by the server fl
 });
 
 test("metaDots builds three <i> dots", () => {
-  assert.match(RENDER, /function metaDots\(\): HTMLElement \{/);
-  const body = RENDER.slice(RENDER.indexOf("function metaDots"));
+  assert.match(MODULE, /export function metaDots\(\): HTMLElement \{/);
+  const body = MODULE.slice(MODULE.indexOf("function metaDots"));
   assert.equal((body.slice(0, body.indexOf("return d;")).match(/el\("i"\)/g) || []).length, 3,
                "exactly three dots");
 });

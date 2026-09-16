@@ -3,8 +3,8 @@
 // every other row uses, painted on open. gear.js cannot import settings.ts, so it carries a copy of the default list and
 // of the normaliser; both are lifted out by anchor and run here against the TS module's (gear-file-comments.test.ts's
 // idiom), so the two cannot drift apart without this failing. The wiring that needs the whole modal is pinned at source;
-// so is the open paint line's union with main's side (the merge of origin/main caf61ebd1 met main's tmux backend offer
-// on the line the row's paint lives on): a resolution dropping either call leaves the gear stale and no other test red.
+// so is the open paint line, where the fork's fill sits among upstream's (the 2026-09-15 upstream pull-in re-cut the card,
+// T404): a resolution dropping the fill leaves the hosts textarea empty on open and no other test red.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -68,17 +68,17 @@ test("source: the row is a textarea saved through load/save on change and painte
   assert.equal(GEAR.split("var FIGURE_HOSTS_DEFAULT = [").length, 2, "one copy of the list in gear.js");
 });
 
-test("source: the open paint line carries the row beside main's tmux backend offer (the merge's union at the one line both sides changed)", () => {
-  // The merge of origin/main caf61ebd1 (the fold's T288 and T290 against the slice's row) conflicted on openSettings' paint
-  // line and was resolved as a union. Nothing else pins main's call on that line, so a replay of the resolution that
-  // dropped either side would paint a stale gear (the offer never shown, or the hosts textarea empty) with every test green.
-  const open = slice(GEAR, "  function openSettings() {", "\n  if (g) g.onclick");
+test("source: the open paint line carries the fork's fill among upstream's (the one line both sides change at every fold)", () => {
+  // openSettings' paint line is upstream's (T404 re-cut the card; the signature took `tab, section` with T379) with the
+  // fork's hosts fill spliced in right after upstream's Files-control fill. Nothing else pins the fill's place on that
+  // line, so a fold that replays the line THEIRS would paint the hosts textarea empty with every test green. The tmux
+  // backend offer that shared the line (paintBackendOffer, T288) left with the backend at the 2026-09-15 upstream pull-in
+  // (romp-on/romp#1401), and its pin with it; the backend select's value line is upstream's own again.
+  const open = slice(GEAR, "  function openSettings(tab, section) {", "\n  if (g) g.onclick");
   const paint = open.split("\n").filter((l) => l.includes("p.hidden = false; feedFull(true); setModalCls(true); var s = load();"));
   assert.equal(paint.length, 1, "one paint line on open");
-  assert.match(paint[0], /if \(fh\) \{ var fhl = figureHostList\(s\.figureHosts\); fh\.value = fhl\.join\('\\n'\); figureHostsNote\(fhl\); \}/, "the slice's row, painted on open");
-  assert.match(paint[0], /paintBackendOffer\(tb \? tb\.checked : false\)/, "main's tmux backend offer (T288) on the same line");
-  assert.doesNotMatch(paint[0], /if \(bk\) bk\.value = s\.backend/, "the backend select's value line that T288 replaced is gone, not kept beside its replacement");
-  assert.match(open, /romp: 'logUnseenQuery'/, "main's Open log count query (T290), the other line of the hunk, precedes the paint");
+  assert.match(paint[0], /if \(fsc\) fsc\.checked = \(s\.showFilesControl === true\); if \(fh\) \{ var fhl = figureHostList\(s\.figureHosts\); fh\.value = fhl\.join\('\\n'\); figureHostsNote\(fhl\); \}/, "the fork's fill, painted on open right after upstream's Files-control fill");
+  assert.match(open, /romp: 'logUnseenQuery'/, "upstream's Open log count query (T290), the other line of the hunk, precedes the paint");
 });
 
 test("source: settings.ts declares the field, normalises it on load, and documents the default's scope", () => {

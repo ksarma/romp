@@ -422,8 +422,11 @@ const rowAt = (page: any, i: number) => page.evaluate((k: number) => {
   const r = body.querySelectorAll("code.hljs .fv-cl")[k]; const rr = r.getBoundingClientRect();
   return { text: (r.textContent || "").trim().slice(0, 48), top: Math.round((rr.top - br.top) * 10) / 10, height: Math.round(rr.height * 10) / 10 };
 }, i);
-/** One press of a text-size button, awaited through the seam's paint count (the reflow's own paint), never a timer. */
-const sizeStep = async (page: any, label: string) => { const p: number = await page.evaluate(() => (window as any).__paints); await page.locator(`#romp-fileview button[aria-label="${label}"]`).click(); await paintsReach(page, p + 1); await frames(page, 3); };
+/** The text-size buttons ride the zoom glyph's flyout (upstream T367: shut until the glyph is pressed, and shut again by any
+ *  press outside it, a view switch or the Comments button among them): open it when it is shut, so a press lands on a shown button. */
+const openZoom = async (page: any) => { if (await page.evaluate(() => { const m = document.querySelector("#romp-fileview .fileview-zoom-menu") as HTMLElement | null; return !m || m.hidden; })) await page.locator("#romp-fileview .fileview-zoom-btn").click(); };
+/** One press of a text-size button, the flyout opened first, awaited through the seam's paint count (the reflow's own paint), never a timer. */
+const sizeStep = async (page: any, label: string) => { await openZoom(page); const p: number = await page.evaluate(() => (window as any).__paints); await page.locator(`#romp-fileview button[aria-label="${label}"]`).click(); await paintsReach(page, p + 1); await frames(page, 3); };
 
 test("in a browser, the real module: from Raw, an OPEN fold's own rows switched to Rendered keep the first nested block at its row's distance, the summary below the edge (the review's round 4; round 3 read the open fold's summary as a shut fold's and capped the block at the summary at the edge): the `<summary>` row at the edge round-trips exactly at 900 and 380px (round 3: 6px lost, the row above the edge), and the opener's row puts paragraph 11 where its row was, the summary 24px down (round 3: at the edge); Rendered to Raw to Rendered from the open fold's summary 2 and 5px below the edge is exact (round 3: the summary pulled to the edge); the shut fold's rows stand as the earlier tests pin them", { timeout: 300000 }, async (t) => {
   await inBrowser(t, async (browser) => {

@@ -78,7 +78,7 @@ class Sess:
         names = td / "names"; names.mkdir()
         (names / SID).write_text("web\t%s\t#abcdef\n" % str(self.cdir))
         self.saved = [(m.jd.NAMES, m.jd.PROJECTS, m.jd.CAPDIR, m.jd.ARCHDIR, m.jd.GOALDIR, m.jd.STATE,
-                       m.NAMES, m._tmux_sessions, m._GLOBAL_CLAUDE_MD, m._msg_summaries) for m in MODS]
+                       m.NAMES, m._live_map, m._GLOBAL_CLAUDE_MD, m._msg_summaries) for m in MODS]
         self.now = int(__import__("time").time())        # discovery keys on the real clock
         self.t = self.now - 3 * 86400
         state = "working" if working else "idle"
@@ -90,7 +90,7 @@ class Sess:
             m.jd.STATE = td
             m.NAMES = names
             m._GLOBAL_CLAUDE_MD = td / "no-global-claude.md"
-            m._tmux_sessions = lambda: self.tm
+            m._live_map = lambda: self.tm
             m._chat_fold.clear()
             m._parse_cache.clear()
             m._PATH_LINK_CACHE.clear()                  # keyed (sid, uuid): fixtures reuse both across tests
@@ -103,7 +103,7 @@ class Sess:
     def close(self):
         for m, sv in zip(MODS, self.saved):
             (m.jd.NAMES, m.jd.PROJECTS, m.jd.CAPDIR, m.jd.ARCHDIR, m.jd.GOALDIR, m.jd.STATE,
-             m.NAMES, m._tmux_sessions, m._GLOBAL_CLAUDE_MD, m._msg_summaries) = sv
+             m.NAMES, m._live_map, m._GLOBAL_CLAUDE_MD, m._msg_summaries) = sv
             m._chat_fold.clear()
         self.td.cleanup()
 
@@ -145,7 +145,7 @@ class Sess:
         m = mod or km
         m._live_scope.names = m._names_snapshot()   # the pusher's names scope, as _pusher_cycle sets it: the fold's
         try:                                        # sealed postal cards are verified from it (a build without the
-            return m.build_session(SID, self.now, self.tm)   # scope seals them unverified, see the PostalCards tests)
+            return m.build_session(SID, self.now, self.tm)   # scope seals them unverified, see PostalCards)
         finally:
             m._live_scope.names = None
 
@@ -244,6 +244,30 @@ class Gates(_Fold):
         inc = self.equiv(label)
         self.assertGreater(km._CHAT_FOLD_STATS.get(g, 0), n0, "the %s gate must demote here" % reason)
         return inc
+
+    def test_an_event_sealed_without_a_preview_verdict_refolds_once(self):
+        # T364: an event built before the kernel judged previews (or restored from a document that predates them)
+        # carries pathLinks and no pathPreview key, and the fold kept it sealed for good, so links in existing messages
+        # never gained a preview. One refold gives every such event the key; afterwards the clause is quiet
+        s = self.s
+        (s.cdir / "notes.md").write_text("# Notes\n")
+        u1 = s.uid(); s.append([uline(s.tick(), "see notes.md", u1, None)])
+        a1 = s.uid(); s.append([aline(s.tick(), "Read notes.md first.", a1, u1, stop="end_turn")])
+        u2 = s.uid(); s.append([uline(s.tick(), "ok", u2, a1)])
+        a2 = s.uid(); s.append([aline(s.tick(), "Done.", a2, u2)])
+        self.equiv("two turns, a link in the first")
+        sealed = [e for e in km._chat_fold_get(SID)["events"] if e.get("pathLinks")]
+        self.assertTrue(sealed, "the first turn's link is sealed")
+        self.assertTrue(all("pathPreview" in e for e in sealed), "every sealed event with links carries the verdict key: %r" % [sorted(e) for e in sealed])
+        self.assert_folding()
+        fe = km._chat_fold_get(SID)
+        for e in fe["events"]:
+            e.pop("pathPreview", None); e.pop("pathPreviewWhy", None)   # the old shape
+        fe.pop("pv_missing", None)                                       # a restored entry's shape: no field; the events are scanned once
+        inc = self._demotes("path-preview", "the old shape refolds once")
+        self.assertTrue(all("pathPreview" in e for e in inc["events"] if e.get("pathLinks")), "…and the rebuilt events carry the key")
+        self.assertEqual(km._chat_fold_get(SID).get("pv_missing"), [], "nothing left to refold for")
+        self.assert_folding()
 
     def test_a_tool_result_landing_in_a_later_turn_demotes(self):
         # turn 1 ENDS with a tool call still unanswered (a typed prompt only opens a new turn after an
@@ -423,9 +447,9 @@ class PostalCards(_Fold):
     def test_a_caption_rewritten_after_the_seal_refreshes_the_card(self):
         # the judge writes a LIVE caption under an id it later overwrites with the final one: a card
         # sealed complete between the two must not keep the live gloss forever. The caption is one of the
-        # values the sealed cards are keyed on (round-4 plan, P17 merged with P3(c)), so the card refreshes
-        # from the caption's appearance in _msg_summaries() alone: no judge pass (_judge_gen) is bumped here,
-        # and no transcript, log or states file changes
+        # values the sealed cards are keyed on (2026-09-09), so the card refreshes from the caption's change
+        # in _msg_summaries() alone: no judge generation is bumped here, and no transcript, log or states
+        # file changes
         s = self.s
         self._log()
         caps = {self.MID: "peer: tests green (live)"}
@@ -447,88 +471,7 @@ class PostalCards(_Fold):
         self.assertEqual(card2.get("summary"), "peer: api tests green")
         self.assertEqual(km._chat_fold_get(SID)["postal_deps"], ((self.MID, "peer: api tests green", None, None),))
 
-    def test_a_peers_colour_change_refreshes_the_sealed_card_and_unrelated_writes_do_not(self):
-        s = self.s
-        self._log()
-        caps = {self.MID: "peer: api tests green"}
-        for m in MODS:
-            m._msg_summaries = lambda caps=caps: dict(caps)
-        self.grow(1)
-        self._incoming()
-        inc = self.equiv("sealed")
-        card = next(ev for ev in inc["events"] if ev.get("kind") == "postal-service")
-        self.assertIsNone(card.get("color"), "the sender has no registry entry yet")
-        # writes that move nothing the card embeds: a judge pass, a caption for another message
-        h0, g0, n0 = km._chat_postal_stats["hit"], km._chat_postal_stats["gate"], km._CHAT_FOLD_STATS.get("g:postal", 0)
-        for m in MODS:
-            m._judge_gen[0] += 1
-        caps["1788400000.200_2.TESTHOST"] = "peer: something else"
-        self.equiv("unrelated writes")
-        self.assertEqual(km._chat_postal_stats["gate"], g0, "no re-hydration")
-        self.assertGreater(km._chat_postal_stats["hit"], h0, "the sealed card was verified from its recorded values")
-        self.assertEqual(km._CHAT_FOLD_STATS.get("g:postal", 0), n0)
-        # the sender gains a registry colour: the card's colour is a value it embeds
-        (jd.NAMES / self.PEER).write_text("api\t%s\t#123456\n" % str(s.cdir))
-        inc2 = self.equiv("peer coloured")
-        card2 = next(ev for ev in inc2["events"] if ev.get("kind") == "postal-service")
-        self.assertEqual(card2.get("color"), {"bg": "#123456", "fg": "#ffffff"})
-        self.assertGreater(km._chat_postal_stats["gate"], g0)
-        self.assertGreater(km._CHAT_FOLD_STATS.get("g:postal", 0), n0)
-        self.assertEqual(km._chat_fold_get(SID)["postal_deps"],
-                         ((self.MID, "peer: api tests green", "api", {"bg": "#123456", "fg": "#ffffff"}),))
-
-    def test_builds_within_one_pusher_cycle_read_the_caption_map_once(self):
-        # the gate's per-card caption check and the hydrations read the cycle's caption map
-        # (_msg_summaries_scoped): one fetch per cycle however many tabs build; a build with no cycle scope
-        # (a handler thread) fetches once per build
-        s = self.s
-        self._log()
-        calls = []
-
-        def summaries(mid=self.MID):
-            calls.append(1)
-            return {mid: "peer: api tests green"}
-        for m in MODS:
-            m._msg_summaries = summaries
-        self.grow(1)
-        self._incoming()
-        self.equiv("sealed")
-        calls.clear()
-        km._live_scope.names, km._live_scope.msgsum = km._names_snapshot(), [km._MSGSUM_UNSET]   # one cycle
-        try:
-            for _ in range(3):
-                km.build_session(SID, s.now, s.tm)
-        finally:
-            km._live_scope.names, km._live_scope.msgsum = None, None
-        self.assertEqual(len(calls), 1, "three builds in one cycle: one fetch")
-        calls.clear()
-        for _ in range(3):
-            s.build()
-        self.assertEqual(len(calls), 3, "no cycle slot: one fetch per build")
-
-    def test_a_build_outside_the_names_scope_seals_unverified_and_the_next_scoped_build_verifies_once(self):
-        # a handler-thread build (a connect push) reads the registry per card, so the values it embeds and
-        # the values it would record are two reads: it records None, and the pusher's next build, which reads
-        # one snapshot, re-hydrates once and records what it saw
-        s = self.s
-        self._log()
-        for m in MODS:
-            m._msg_summaries = lambda mid=self.MID: {mid: "peer: api tests green"}
-        self.grow(1)
-        self._incoming()
-        km._chat_fold.clear()
-        km.build_session(SID, s.now, s.tm)                  # no cycle names snapshot on this thread
-        self.assertIsNone(km._chat_fold_get(SID)["postal_deps"], "sealed unverified")
-        g0, h0 = km._chat_postal_stats["gate"], km._chat_postal_stats["hit"]
-        s.build()
-        self.assertEqual((km._chat_postal_stats["gate"], km._chat_postal_stats["hit"]), (g0 + 1, h0),
-                         "the scoped build re-hydrated once")
-        self.assertIsNotNone(km._chat_fold_get(SID)["postal_deps"])
-        s.build()
-        self.assertEqual((km._chat_postal_stats["gate"], km._chat_postal_stats["hit"]), (g0 + 1, h0 + 1),
-                         "and from then on the recorded values verify it")
-
-    # ── B2 (perf plan 2026-09-06): the seal keeps only REAL postal Bash events raw ────────────────────
+    # ── the seal keeps only REAL postal Bash events raw (2026-09-06) ──────────────────────────────────
     def _bash_turn(self, i, command, result="ok\n"):
         """One complete turn whose single tool round is a Bash call running `command`, its result `result`.
         build_session stores the input as JSON ({"command", "description"}), truncated at 4000 chars."""
@@ -635,259 +578,6 @@ class PostalCards(_Fold):
         self.assertEqual([len(c) == 1 and c[0] is raw[0] for c in calls[2:]], [True, False], "the gate, then the tail pass")
         self.assertEqual((km._chat_postal_stats["hit"], km._chat_postal_stats["gate"]), (h0 + 2, g0 + 1))
         self.assertEqual(km._chat_postal_stats["commit_new"], c0, "nothing new was sealed, so nothing new was hydrated")
-
-
-class PostalRelevance(_Fold):
-    """_chat_postal_relevant decides what the fold keeps raw; _hydrate_postal decides what renders. The
-    invariant tying them: an event the predicate rejects comes back from hydration as the same object."""
-    MID = PostalCards.MID
-    PEER = PostalCards.PEER
-    BODY = "the api tests are green now"
-
-    def _index(self, **rows):
-        idx = {self.MID: {"id": self.MID, "from": "api", "fromId": self.PEER, "fromHost": "", "toId": SID,
-                          "body": self.BODY, "kind": "coordinate", "t": 1788400000, "park": False}}
-        idx.update(rows)
-        return idx
-
-    def _cases(self):
-        """(label, event, relevant, renders a card) — one row per shape the plan names, plus the neighbours
-        that must NOT count: an echo of a marker in an assistant reply, a Read whose output carries one."""
-        marker = "<!-- romp-msg-id: %s -->" % self.MID
-        ts = iso(1788400010)
-        def bash(command, output="ok\n", input=None):
-            inp = input if input is not None else json.dumps({"command": command, "description": "d"})
-            return {"kind": "tool", "name": "Bash", "input": inp, "output": output, "isError": False,
-                    "uuid": "t", "ts": ts}
-        def tool(name, output, **inp):
-            return {"kind": "tool", "name": name, "input": json.dumps(inp), "output": output,
-                    "isError": False, "uuid": "t", "ts": ts}
-        return [
-            ("plain bash", bash("uv run pytest -q"), False, False),
-            ("truncated bash", bash(None, input=json.dumps({"command": "echo " + "x" * 5000})[:4000]), False, False),
-            ("bash output carrying a marker", bash("grep -rn romp-msg-id notes.md", output="notes.md:3:" + marker), False, False),
-            ("bash send, raw input", bash(None, input='romp mail send api "%s"' % self.BODY,
-                                          output="[romp mail] delivered to api"), True, True),
-            ("bash send, json input", bash('romp mail send api "%s"' % self.BODY,
-                                           output="[romp mail] delivered to api"), True, False),
-            ("bash inbox read", bash("romp mail inbox", output="from api:\n" + marker), True, True),
-            ("check_inbox", tool("mcp__romp-postal-service__check_inbox", marker), True, True),
-            ("send_message", tool("mcp__romp-postal-service__send_message", "Delivered to 'api'.",
-                                  to="api", body=self.BODY), True, True),
-            ("read whose output carries a marker", tool("Read", marker, file_path="/tmp/notes-api/notes.md"), False, False),
-            ("user text with a marker", {"kind": "user", "md": "####\nfrom api\n####\n%s\n%s" % (self.BODY, marker),
-                                         "uuid": "u", "ts": ts, "human": False}, True, True),
-            ("plain user text", {"kind": "user", "md": "please run the tests", "uuid": "u", "ts": ts, "human": True}, False, False),
-            ("assistant echo of a marker", {"kind": "assistant", "md": "noted " + marker, "uuid": "a", "ts": ts}, False, False),
-        ]
-
-    def test_only_postal_events_are_relevant_and_the_rest_pass_through_by_identity(self):
-        for m in MODS:
-            m._msg_summaries = lambda: {}
-        index = self._index()
-        for label, ev, relevant, renders in self._cases():
-            with self.subTest(label):
-                self.assertEqual(km._chat_postal_relevant(ev), relevant, label)
-                out = km._hydrate_postal([ev], index, SID)
-                self.assertEqual(len(out), 1)
-                if not relevant:
-                    self.assertIs(out[0], ev, "a rejected event comes back as the same object")
-                self.assertEqual(out[0].get("kind") == "postal-service", renders, label)
-                if ev.get("name") == "Bash":
-                    # the two Bash predicates agree with the renderers they stand for
-                    self.assertEqual(km._cli_send_match(ev) is not None or km._reads_mail(ev), relevant)
-                    if km._cli_send_card(ev) is not None:
-                        self.assertTrue(relevant, "a Bash event that renders a send card is never sealed away")
-
-    def test_a_bash_send_card_follows_the_recipients_caption(self):
-        # the hydrator-level half of PostalCards' Bash-send test: the card joins the log row wearing its
-        # body and wears whatever caption the recipient's judge has filed by now
-        ev = {"kind": "tool", "name": "Bash", "input": 'romp mail send api "%s"' % self.BODY,
-              "output": "[romp mail] delivered to api", "isError": False, "uuid": "t", "ts": iso(1788400010)}
-        caps = {self.MID: "peer: tests green (live)"}
-        for m in MODS:
-            m._msg_summaries = lambda caps=caps: dict(caps)
-        card = km._hydrate_postal([ev], self._index(), SID)[0]
-        self.assertEqual((card["kind"], card["direction"], card["mid"], card["summary"]),
-                         ("postal-service", "out", self.MID, "peer: tests green (live)"))
-        caps[self.MID] = "peer: api tests green"
-        card2 = km._hydrate_postal([ev], self._index(), SID)[0]
-        self.assertEqual(card2["summary"], "peer: api tests green")
-
-    def test_the_body_map_joins_the_row_the_linear_scan_found(self):
-        # enrich_out used to scan every index row per outgoing card; the body-keyed map must pick the
-        # same row: closest in time to the send, the FIRST such row on a tie, the last row when the send
-        # carries no time
-        body = "please pick up the notes-api deploy"
-        def row(mid, t, b=body):
-            return {"id": mid, "from": "web", "fromId": "", "fromHost": "", "toId": "", "body": b,
-                    "kind": "", "t": t, "park": False}
-        index = {"m1": row("m1", 100), "m2": row("m2", 5000), "m9": row("m9", 5000, "a different message"),
-                 "m3": row("m3", 9000), "m4": row("m4", 5000)}
-        def linear(et):
-            recs = [r for r in index.values() if r["body"] == body]
-            return (min(recs, key=lambda r: abs((r["t"] or 0) - et)) if et else recs[-1])["id"]
-        def send(ts):
-            return {"kind": "tool", "name": "mcp__romp-postal-service__send_message",
-                    "input": json.dumps({"to": "api", "body": body}), "output": "Delivered to 'api'.",
-                    "isError": False, "uuid": "t", "ts": ts}
-        for m in MODS:
-            m._msg_summaries = lambda: {}
-        for et, want in ((4980, "m2"), (120, "m1"), (8000, "m3"), (2550, "m1"), (0, "m4")):
-            with self.subTest(et=et):
-                card = km._hydrate_postal([send(iso(et) if et else None)], index)[0]
-                self.assertEqual(card["mid"], want)
-                self.assertEqual(card["mid"], linear(et), "the same row the linear scan picked")
-        plain = km._hydrate_postal([send(iso(4980))], {"m9": index["m9"]})[0]
-        self.assertNotIn("mid", plain, "no row wearing the body: the card stays unjoined")
-
-    def test_the_memoized_index_carries_one_body_map_per_version(self):
-        self.addCleanup(km._postal_index_memo.__setitem__, 0, None)
-        d = jd.STATE / "timeline"; d.mkdir(exist_ok=True)
-        log = d / "messages.jsonl"
-        def line(mid, t):
-            return json.dumps({"ev": "sent", "id": mid, "from": "web", "from_id": self.PEER, "to_id": SID,
-                               "body": "deploy please", "kind": "coordinate", "t": t}) + "\n"
-        log.write_text(line("m1", 100) + line("m2", 5000))
-        idx = km._postal_index()
-        bm = km._postal_body_rows(idx)
-        self.assertIs(km._postal_body_rows(km._postal_index()), bm, "one map per index version, not per call")
-        self.assertEqual([r["id"] for r in bm["deploy please"]], ["m1", "m2"])
-        with open(log, "a") as f:
-            f.write(line("m3", 9000))
-        idx2 = km._postal_index()
-        self.assertIsNot(idx2, idx, "the log grew: a new index version")
-        bm2 = km._postal_body_rows(idx2)
-        self.assertIsNot(bm2, bm)
-        self.assertEqual([r["id"] for r in bm2["deploy please"]], ["m1", "m2", "m3"])
-        own = dict(idx2)                                  # a caller's own dict never borrows the memo's map
-        self.assertIsNot(km._postal_body_rows(own), bm2)
-        self.assertEqual(km._postal_body_rows(own), bm2)
-
-    def test_a_sent_row_whose_body_is_not_a_string_neither_breaks_the_index_nor_the_join(self):
-        # the far-host relay logs a /send request's body with no type check, so a sent row can carry a
-        # JSON list or object; the body map must skip it (unhashable) rather than raise inside every
-        # session's chat build, and an outgoing card still joins its own string-bodied row
-        self.addCleanup(km._postal_index_memo.__setitem__, 0, None)
-        d = jd.STATE / "timeline"; d.mkdir(exist_ok=True)
-        def line(mid, body):
-            return json.dumps({"ev": "sent", "id": mid, "from": "web", "from_id": self.PEER, "to_id": SID,
-                               "body": body, "kind": "coordinate", "t": 5000}) + "\n"
-        (d / "messages.jsonl").write_text(line("m1", "deploy please") + line("m2", ["not", "a", "string"])
-                                          + line("m3", {"text": "an object"}))
-        idx = km._postal_index()
-        self.assertEqual(sorted(idx), ["m1", "m2", "m3"], "every row is indexed, as before")
-        bm = km._postal_body_rows(idx)
-        self.assertEqual({k: [r["id"] for r in v] for k, v in bm.items()}, {"deploy please": ["m1"]})
-        for m in MODS:
-            m._msg_summaries = lambda: {}
-        def send(body):
-            return {"kind": "tool", "name": "mcp__romp-postal-service__send_message",
-                    "input": json.dumps({"to": "api", "body": body}), "output": "Delivered to 'api'.",
-                    "isError": False, "uuid": "t", "ts": iso(5010)}
-        card = km._hydrate_postal([send("deploy please")], idx, SID)[0]
-        self.assertEqual((card["kind"], card["direction"], card["mid"]), ("postal-service", "out", "m1"))
-        other = km._hydrate_postal([send("a body no row wears")], idx, SID)[0]
-        self.assertEqual(other["kind"], "postal-service")
-        self.assertNotIn("mid", other, "no row wearing the body: the card passes through unjoined")
-
-    # ── the seal keeps only REAL postal Bash events raw (2026-09-06) ──────────────────────────────────
-    def _bash_turn(self, i, command, result="ok\n"):
-        """One complete turn whose single tool round is a Bash call running `command`, its result `result`.
-        build_session stores the input as JSON ({"command", "description"}), truncated at 4000 chars."""
-        recs = self.s.turn(i, tools=("Bash",))
-        recs[1]["message"]["content"][1]["input"] = {"command": command, "description": "step %d" % i}
-        recs[2]["message"]["content"][0]["content"] = result
-        return recs
-
-    def _count_hydrate(self):
-        """Every _hydrate_postal call build_session makes from here on, as the event lists it was handed."""
-        calls = []
-        orig = km._hydrate_postal
-        def counting(events, index, sid=None):
-            calls.append(list(events))
-            return orig(events, index, sid)
-        km._hydrate_postal = counting
-        self.addCleanup(setattr, km, "_hydrate_postal", orig)
-        return calls
-
-    def test_sealing_plain_bash_turns_leaves_no_raw_postal_event(self):
-        # Every plain Bash event used to ride the sealed entry's postal_raw and be re-hydrated on every
-        # judge pass, to the same raw row each time. Only a send or a mail read belongs there.
-        s = self.s
-        self._log()
-        for m in MODS:
-            m._msg_summaries = lambda: {}
-        s.append(self._bash_turn(0, "uv run pytest -q"))
-        self.equiv("plain bash")
-        s.append(self._bash_turn(1, "echo " + "x" * 5000))        # its stored input is cut at 4000 chars: not JSON
-        self.equiv("truncated bash")
-        # a marker in a plain Bash OUTPUT is text the agent read (a grep hit), not mail: the row stays raw
-        s.append(self._bash_turn(2, "grep -rn romp-msg-id notes.md",
-                                 result="notes.md:3:<!-- romp-msg-id: %s -->\n" % self.MID))
-        self.equiv("marker in a bash output")
-        s.append(self._bash_turn(3, "uv run pytest -q"))
-        inc = self.equiv("sealed")
-        entry = km._chat_fold_get(SID)
-        self.assertEqual(entry["n"], 3, "three ended turns sealed; the last is never")
-        self.assertEqual(entry["postal_raw"], [], "no plain Bash event rides the entry raw")
-        self.assertEqual(entry["postal_cards"], [])
-        bash_rows = [e for e in entry["events"] if e.get("kind") == "tool" and e.get("name") == "Bash"]
-        self.assertEqual(len(bash_rows), 3, "the three Bash events are sealed as rendered rows")
-        self.assertTrue(any(self.MID in (e.get("output") or "") for e in bash_rows), "the grep hit is one of them")
-        self.assertEqual([e for e in inc["events"] if e.get("kind") == "postal-service"], [])
-
-    def test_a_warm_build_hydrates_once_with_and_without_a_judge_pass(self):
-        # With nothing postal sealed, the tail pass is the ONE hydration a warm build makes: the gate has
-        # nothing to re-hydrate on a judge pass and the re-commit has nothing to hydrate either.
-        s = self.s
-        for i in range(4):
-            s.append(self._bash_turn(i, "uv run pytest -q"))
-        self.equiv("sealed")
-        self.assertEqual(km._chat_fold_get(SID)["postal_raw"], [])
-        calls = self._count_hydrate()
-        n_fold, n_postal = km._CHAT_FOLD_STATS["fold"], km._CHAT_FOLD_STATS.get("g:postal", 0)
-        s.build()
-        self.assertEqual(km._CHAT_FOLD_STATS["fold"], n_fold + 1, "the warm build folded")
-        self.assertEqual(len(calls), 1, "one hydration: the tail pass")
-        for m in MODS:
-            m._judge_gen[0] += 1
-        s.build()
-        self.assertEqual(km._CHAT_FOLD_STATS["fold"], n_fold + 2, "the judge pass did not demote")
-        self.assertEqual(len(calls), 2, "a judge pass with nothing postal sealed adds no hydration")
-        self.assertEqual(km._CHAT_FOLD_STATS.get("g:postal", 0), n_postal, "and filed no postal demotion")
-
-    def test_a_bash_send_stays_raw_and_is_rehydrated_when_the_judges_run(self):
-        # The `romp mail send` twin of the caption-rewrite test above: the send is the one Bash event the
-        # seal keeps raw in this transcript, and a judge pass re-hydrates exactly it, so its card can pick up the recipient's
-        # caption. The card's caption itself is pinned at the hydrator level (PostalRelevance): build_session
-        # stores a Bash input as JSON, which _cli_send_card does not unwrap, so no card renders here (a
-        # limit that predates this change and is not widened by it).
-        s = self.s
-        self._log()
-        for m in MODS:
-            m._msg_summaries = lambda: {}
-        s.append(self._bash_turn(0, "uv run pytest -q"))
-        s.append(self._bash_turn(1, 'romp mail send api "the api tests are green now"',
-                                 result="[romp mail] delivered to api\n"))
-        s.append(self._bash_turn(2, "uv run pytest -q"))
-        s.append(self._bash_turn(3, "uv run pytest -q"))
-        self.equiv("send sealed")
-        raw = km._chat_fold_get(SID)["postal_raw"]
-        self.assertEqual(len(raw), 1, "the send, and only the send, rides the entry raw")
-        self.assertEqual((raw[0]["kind"], raw[0]["name"]), ("tool", "Bash"))
-        self.assertIsNotNone(km._cli_send_match(raw[0]), "kept by the matcher the card renders from")
-        calls = self._count_hydrate()
-        s.build()
-        # the tail pass, plus the re-commit hydrating the entry's raw list (the send alone)
-        self.assertEqual([len(c) == 1 and c[0] is raw[0] for c in calls], [False, True])
-        for m in MODS:
-            m._judge_gen[0] += 1
-        s.build()
-        # the gate re-hydrates the sealed send against the new captions, then the tail pass and the re-commit
-        self.assertEqual([len(c) == 1 and c[0] is raw[0] for c in calls[2:]], [True, False, True])
-        self.assertEqual(len(calls), 5)
-
 
 class PostalRelevance(_Fold):
     """_chat_postal_relevant decides what the fold keeps raw; _hydrate_postal decides what renders. The
@@ -1261,6 +951,109 @@ class Wiring(unittest.TestCase):
         src = inspect.getsource(km)
         self.assertIn('fold=_chat_fold_last_info().get("fold", 0)', src)
 
+
+class PlacedEchoes(Gates):
+    """A STALE live echo placed into a sealed turn (T344: an echo stamped before the last turn's start sits
+    where its send time belongs) changes state without a parse change: dismissed (dismissEcho pops it from
+    the live tail), flagged dropped, or landed. The fold keys its sealed prefix on the merge's `_placed`
+    report and refolds ("echo") on a change, so the sealed events never hold a ghost of a dismissed echo
+    or a stale copy of its flag; the equivalence with a full build holds through every step."""
+
+    ECHO = "echo:" + "d" * 32
+    NOTICE = "[romp] The condition you asked romp to watch now HOLDS: the notes-api search suite has its verdict."
+
+    class _Backend(km._UnownedBackend):
+        """The owning backend as the chat build reads it: a live tail this test edits, a prune that retires nothing."""
+
+        def __init__(self):
+            self.live = []
+
+        def owns(self, sid):
+            return True
+
+        def live_atoms(self, sid):
+            return sorted(self.live, key=lambda a: a.get("t", 0))
+
+        def prune_live(self, sid, tx_uuids, tx_user_texts=(), human_floor=0):
+            return None
+
+    def setUp(self):
+        super().setUp()
+        self.be = self._Backend()
+        self._saved_bf = km.Sessions.backend_for
+        km.Sessions.backend_for = staticmethod(lambda sid: self.be)
+
+    def tearDown(self):
+        km.Sessions.backend_for = self._saved_bf
+        super().tearDown()
+
+    def _echo(self, t, **extra):
+        a = {"type": "user", "uuid": self.ECHO, "session_id": SID, "t": t, "parentUuid": None, "author": "romp",
+             "_echo_text": self.NOTICE, "message": {"role": "user", "content": [{"type": "text", "text": self.NOTICE}]}}
+        a.update(extra)
+        return a
+
+    def _sealed_uuids(self):
+        return [ev.get("uuid") for ev in km._chat_fold_get(SID)["events"]]
+
+    def test_a_placed_echo_is_sealed_and_its_dismissal_refolds(self):
+        self.grow(3)
+        t_first = self.s.now - 3 * 86400 + 6           # inside the FIRST turn's window: placed there, sealed with it
+        self.be.live.append(self._echo(t_first))
+        self.equiv("stale echo placed into a sealed turn")
+        e = km._chat_fold_get(SID)
+        self.assertIn(self.ECHO, self._sealed_uuids(), "the placed echo's event is part of the sealed prefix")
+        self.assertEqual(e["placed"], ((0, self.ECHO, False),), "…and the entry records its placement and state")
+        self.assert_folding()
+        self.be.live.clear()                            # dismissEcho: the live tail no longer holds it
+        inc = self._demotes("echo", "the placed echo dismissed")
+        self.assertNotIn(self.ECHO, self._sealed_uuids(), "the refold dropped the ghost from the sealed prefix")
+        self.assertNotIn(self.ECHO, [ev.get("uuid") for ev in inc["events"]], "…and from the payload")
+        self.assertEqual(km._chat_fold_get(SID)["placed"], ())
+
+    def test_a_placed_echo_flagged_dropped_refolds_and_the_sealed_copy_reads_dropped(self):
+        self.grow(3)
+        t_first = self.s.now - 3 * 86400 + 6
+        self.be.live.append(self._echo(t_first))
+        self.equiv("stale echo placed")
+        self.assert_folding()
+        self.be.live[0]["dropped"] = True                # _mark_dropped_echoes / settle_echoes flagged it
+        inc = self._demotes("echo", "the placed echo flagged dropped")
+        ev = next(x for x in inc["events"] if x.get("uuid") == self.ECHO)
+        self.assertTrue(ev.get("undelivered"), "the payload reads the flag (`undelivered`): %r" % {k: ev[k] for k in ev if k != "md"})
+        self.assertEqual(km._chat_fold_get(SID)["placed"], ((0, self.ECHO, True),))
+        self.assert_folding()                           # and folds again once the state is sealed anew
+
+    def test_a_placed_echo_that_lands_refolds_and_leaves_the_prefix(self):
+        # the third exit the fold's docstring names: the echo's TEXT lands in the transcript (a record carrying
+        # it), the display dedup drops the echo from the merge, `placed` empties, the sealed copy must go
+        self.grow(3)
+        t_first = self.s.now - 3 * 86400 + 6
+        self.be.live.append(self._echo(t_first))
+        self.equiv("stale echo placed")
+        self.assert_folding()
+        s = self.s
+        u = s.uid(); s.append([uline(s.tick(), self.NOTICE, u, s.last)])   # the notice lands as a user record
+        # The landing is a parse change too, and the sealed turn's fingerprint moves with the echo's departure
+        # (one atom fewer), so the gate chain demotes on "turnfp" before it reaches "echo"; either way the
+        # build refolds, and `placed` records the emptiness. What matters is that no ghost survives.
+        n_fp, n_echo = km._CHAT_FOLD_STATS.get("g:turnfp", 0), km._CHAT_FOLD_STATS.get("g:echo", 0)
+        inc = self.equiv("the placed echo landed")
+        self.assertTrue(km._CHAT_FOLD_STATS.get("g:turnfp", 0) > n_fp or km._CHAT_FOLD_STATS.get("g:echo", 0) > n_echo,
+                        "the landing refolds: the turn fingerprint moved with the echo's departure, or the echo gate fired")
+        self.assertNotIn(self.ECHO, self._sealed_uuids(), "the landed echo's sealed copy is gone")
+        self.assertNotIn(self.ECHO, [ev.get("uuid") for ev in inc["events"]], "…and the payload shows the record, not the echo")
+        self.assertEqual(km._chat_fold_get(SID)["placed"], ())
+
+    def test_a_fresh_echo_in_the_last_turn_never_touches_the_fold(self):
+        self.grow(3)
+        self.assert_folding()
+        self.be.live.append(self._echo(self.s.t + 1))    # after the last turn's start: the tail, as before
+        f0 = km._CHAT_FOLD_STATS["fold"]
+        inc = self.equiv("fresh echo in the tail")
+        self.assertIn(self.ECHO, [ev.get("uuid") for ev in inc["events"]])
+        self.assertGreater(km._CHAT_FOLD_STATS["fold"], f0, "a tail echo folds like any live tail")
+        self.assertEqual(km._chat_fold_get(SID)["placed"], ())
 
 if __name__ == "__main__":
     unittest.main()

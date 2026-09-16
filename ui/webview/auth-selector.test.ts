@@ -21,22 +21,18 @@ import { heldMenuMarks } from "./pick-held";
 
 const ROOT = path.resolve(process.cwd(), "..");
 const RENDER = fs.readFileSync(path.join(ROOT, "ui", "webview", "render.ts"), "utf8");
+const MODULE = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "status-controls.ts"), "utf8");   // the status line's controls moved here from render.ts (T415 part two)
 const INTENT = fs.readFileSync(path.join(ROOT, "vscode-extension", "src", "pipe-intent.ts"), "utf8");
-const BILLING = fs.readFileSync(path.join(ROOT, "ui", "webview", "billing-label.ts"), "utf8");
 
 test("the picker's Billing row shows for SDK whenever availability is known", () => {
-  // one thing the host can name is enough to SHOW the row (the user 2026-08-09): a login, a key of romp's,
-  // or a declared key (review round 1, 2026-09-09: the apiKeyHelper box has neither credential of romp's).
-  // The decision is billing-label.ts's pickerBillingRow, executed in billing-label.test.ts; the both-test
-  // only decides buttons vs written-out text; the backend toggle still re-decides the row (tmux CLIs live
-  // in the tmux server's env, which the kernel doesn't control)
+  // one known choice is enough to SHOW the row (the user 2026-08-09) — the both-test only decides
+  // buttons vs written-out text; the backend toggle still re-decides the row (Billing is a Claude Code
+  // matter, so the Codex pick hides it)
   // (pickerBackendChoice reads the Backend row's chip alone since tab groups, 2026-09-04 — the Tags
   // row wears the same chip grammar, and a selected tag must never read as the backend)
-  assert.match(RENDER, /const row = pickerBillingRow\(a\);\s*\n\s*const show = !pickMode && row\.show && pickerBackendChoice\(\) === "sdk";/);
-  assert.match(BILLING, /const show = !!\(a && \(a\.login \|\| a\.key \|\| a\.default === "key"\)\);/);
-  assert.match(RENDER, /function pickerBackendChoice\(\): string \{\s*\n\s*const beSel = document\.querySelector\("#picker \.picker-backend:not\(\.picker-host\):not\(\.picker-auth\):not\(\.picker-tags\) \.picker-be-opt\.sel"\) as HTMLElement \| null;\s*\n\s*return beSel\?\.dataset\.be \|\| effectiveDefaultBackend\(loadSettings\(\)\.backend, kernelTmuxBackend\);/);
-  assert.match(RENDER, /const both = row\.both;/);
-  assert.match(BILLING, /const both = !!\(a && a\.login && a\.key\);/);
+  assert.match(RENDER, /const show = !pickMode && !!\(a && \(a\.login \|\| a\.key\)\) && pickerBackendChoice\(\) === "sdk";/);
+  assert.match(RENDER, /function pickerBackendChoice\(\): string \{\s*\n\s*const beSel = document\.querySelector\("#picker \.picker-backend:not\(\.picker-host\):not\(\.picker-auth\):not\(\.picker-tags\) \.picker-be-opt\.sel"\) as HTMLElement \| null;\s*\n\s*return beSel\?\.dataset\.be \|\| effectiveDefaultBackend\(loadSettings\(\)\.backend\);/);
+  assert.match(RENDER, /const both = !!\(a!\.login && a!\.key\);/);
   assert.match(RENDER, /auWrap\.style\.display = "none";\s*\/\/ hidden until a sessionList reply carries authAvail/);
   assert.match(RENDER, /beWrap\.addEventListener\("click", \(\) => \{ syncPickerAuth\(\); syncPickerTags\(\); \}\);/);   // the Tags row follows the backend pick too (tab groups)
   // a host switch clears the availability — the choices on screen belong to the OLD host
@@ -50,18 +46,12 @@ test("one real choice renders WRITTEN OUT in the buttons' place, naming the logi
   // 2026-08-09: informative, never a one-option selector) — Login named by its account when known
   assert.match(RENDER, /wrap\.querySelectorAll\("\.picker-be-opt"\)\.forEach\(\(x\) => \(\(x as HTMLElement\)\.style\.display = both \? "" : "none"\)\);/);
   assert.match(RENDER, /fixed\.style\.display = both \? "none" : "";/);
-  // the written-out choice is the key when romp holds one OR when the host declares its sessions bill one
-  // (a.default reads "key" under ROMP_EXPECTED_AUTH=key on an apiKeyHelper box, which holds no key of romp's),
-  // else the login named by its account: pickerBillingRow's `fixed`, executed in billing-label.test.ts
-  assert.match(RENDER, /fixed\.textContent = row\.fixed;/);
-  // the written-out choice follows the kernel's default (what a spawn without a pick bills), the key arm
-  // only for a reply carrying no default (verification round 2, 2026-09-09)
-  assert.match(BILLING, /function pickerKeyed\(a: BillingAvail\): boolean \{ return a\.default \? a\.default === "key" : !!a\.key; \}/);   // 2026-09-09 fold: factored out of pickerBillingRow (the hover is keyed on a.key, as upstream keys it)
-  assert.match(BILLING, /const keyed = !!a && pickerKeyed\(a\);[^\n]*\n\s*const fixed = !show \|\| both \? "" : \(keyed \? "API key" : billingSide\("login", a!\.acct\)\);/);
-  assert.match(RENDER, /import \{ billingRowText, billingSubText, pickerBillingRow, pickerBillingTitle \} from "\.\/billing-label";/);
+  // the written-out choice is the key when romp holds one, else the login named by its account (a host with several
+  // stored logins takes the dropdown road above this line, T346's syncPickerAuthMany, executed in auth-logins.test.ts)
+  assert.match(RENDER, /fixed\.textContent = both \? "" : \(a!\.key \? "API key" : \(a!\.acct \? `Login \(\$\{a!\.acct\}\)` : "Login"\)\);/);
   // …and the written-out row's hover names why the OTHER side is not on offer, in the kernel's reason (upstream #1147,
-  // the user 2026-09-08): pickerBillingTitle, executed in billing-label.test.ts (upstream's expression, keyed on the helper)
-  assert.match(RENDER, /fixed\.title = pickerBillingTitle\(a\);/);
+  // the user 2026-09-08)
+  assert.match(RENDER, /fixed\.title = both \? "" : \(a!\.key \? `Login unavailable: \$\{a!\.loginWhy \|\| "no Claude login signed in on this machine"\}`/);
   assert.match(RENDER, /const auFixed = el\("span", "picker-auth-fixed"\);/);
   // in button mode, the Login button's hover names WHICH account
   assert.match(RENDER, /if \(loginBtn && a!\.acct\) loginBtn\.title = `Bill this session to the machine's Claude login \(\$\{a!\.acct\}\)\.`;/);
@@ -83,8 +73,8 @@ test("the pick rides createSession, omitted when the row is hidden or written-ou
 
 test("the switching CONTROL is the tab menu's Billing submenu, both sides listed (the unavailable one greyed)", () => {
   // moved OUT of the statusline (the user 2026-08-09): no auth badge kind survives there
-  assert.match(RENDER, /type MetaKind = "mode" \| "model" \| "effort" \| "fast";/);
-  assert.doesNotMatch(RENDER, /metaButton\("auth"/);
+  assert.match(MODULE, /export type MetaKind = "mode" \| "model" \| "effort" \| "fast";/);   // the kinds live with the controls (T415 part two)
+  assert.doesNotMatch(RENDER + MODULE, /metaButton\("auth"/);
   assert.doesNotMatch(RENDER, /AUTH_CHOICES/);
   // …and INTO showTabMenu: only when the machine offers both choices does the item exist at all
   // (a one-auth machine keeps the fact on the tab hover, never a dead selector)
@@ -93,19 +83,20 @@ test("the switching CONTROL is the tab menu's Billing submenu, both sides listed
   // with the session's current choice check-marked
   assert.match(RENDER, /\{ label: st\.authAcct \? `Login \(\$\{st\.authAcct\}\)` : "Login", value: "login", why: avail\.login \? "" : /);   // 2026-09-08: each option carries the reason it is greyed, or ""
   assert.match(RENDER, /\{ label: "API key", value: "key", why: avail\.key \? "" : /);   // 2026-09-08: reason field, see above
-  // ...check-marked on the intent, or, while the billing pick is HELD for live work, on the pick with the side the
-  // CLI reports tagged running (pick-held.ts heldMenuMarks, review round 5; effort-switch-pending.test.ts pins the
-  // convention across the menus); the side this box cannot bill stays greyed with its reason, held or not (2026-09-08:
-  // the unavailable side is greyed, never hidden)
-  // ...falling back to st.auth, the field that carries the billing PICK, when the held payload names none (an older
-  // kernel; review round 6, executed below)
-  assert.match(RENDER, /const current = heldAuth \? \(heldAuth\.current \|\| st\.auth\) === c\.value : st\.auth === c\.value;/);
-  assert.match(RENDER, /el\("div", "ctx-item" \+ \(current \? " current" : ""\) \+ \(running \? " running" : ""\) \+ \(c\.why \? " disabled" : ""\)\)/);
+  // the current mark is by WHICH login since T346 (authChoiceCurrent: the key, or a login by st.authLogin); while the
+  // billing pick is HELD for live work the check sits on the pick instead, with the side the CLI reports tagged running
+  // (pick-held.ts heldMenuMarks, review round 5; effort-switch-pending.test.ts pins the convention across the menus),
+  // falling back to st.auth, the field that carries the billing PICK, when the held payload names none (an older
+  // kernel; review round 6, executed below). No greyed row since 2026-09-14: the flyout lists what this box can bill
+  // and nothing else (billing-one-auth.test.ts)
+  assert.match(RENDER, /const cur = heldAuth \? \(heldAuth\.current \|\| st\.auth\) === c\.value : authChoiceCurrent\(st, c\.value\);/);
+  assert.match(RENDER, /const running = !!heldAuth && heldAuth\.running === c\.value;/);
+  assert.match(RENDER, /el\("div", "ctx-item" \+ \(cur \? " current" : ""\) \+ \(running \? " running" : ""\)\)/);   // 2026-09-14: the unavailable side is not offered (list what is set up, grey nothing; 2026-09-08 to then: greyed)
   // a pick posts the same setAuth the badge used, and only a CHANGE posts (current = dismiss)
-  assert.match(RENDER, /if \(st\.auth !== c\.value && vscodeApi\) vscodeApi\.postMessage\(\{ type: "setAuth", id, value: c\.value \}\);/);
-  // the item's sub-line names the current billing, or the applying reconnect (billing-label.ts's words)
-  assert.match(BILLING, /if \(f\.authPending\) return "applying…";/);
-  assert.match(RENDER, /auth\?: string; authLive\?: string; authPending\?: boolean; authBoth\?: boolean; authAvail\?: AuthAvail; authPickUnavailable\?: string; authPickFell\?: string; authAcct\?: string;/);   // 2026-09-09: the fall the launch took rides beside the unavailable pick
+  assert.match(RENDER, /if \(!cur && vscodeApi\) vscodeApi\.postMessage\(\{ type: "setAuth", id, value: c\.value \}\);/);
+  // the item's sub-line names the current billing, or the applying reconnect
+  assert.match(RENDER, /st\.authPending \? "applying…"/);
+  assert.match(RENDER, /auth\?: string; authLive\?: string; authPending\?: boolean; authBoth\?: boolean; authAvail\?: AuthAvail; authPickUnavailable\?: string; authPickFell\?: string; authAcct\?: string; authLogin\?: string; authLabel\?: string;/);   // 2026-09-09: the fall the launch took rides beside the unavailable pick; T346: WHICH login
 });
 
 test("no key material reaches the webview — no tail plumbing survives anywhere", () => {
@@ -116,33 +107,36 @@ test("no key material reaches the webview — no tail plumbing survives anywhere
   assert.doesNotMatch(RENDER, /a!\.tail/);
 });
 
-test("the chat tab hover says Billing whenever the backend reports it, through billing-label's words", () => {
-  // ungated on machine shape (the user 2026-08-09: one-auth machines included; only a tmux session,
-  // whose CLI env romp does not control, reports nothing). Anchored at the gate + label: a no-auth
-  // session (tmux, the exclusion above) must never grow a fabricated Billing row, so the
-  // `if (s.status.auth)` guard is part of the pinned behavior. The WORDS are billing-label.ts's and
-  // run as executed cases in billing-label.test.ts (the CLI's report leads, a pending pick reads as
-  // pending, an explicit pick the CLI contradicted leads with the warning, a seeded default never does).
-  assert.match(RENDER, /if \(s\.status\.auth\) rows\.push\(\["Billing", billingRowText\(s\.status\)\]\);/,
-    "the hover row's text is the shared decision");
-  // the SWITCH CONTROL (the Billing submenu) carries the same decision where the pick lives (T124)
-  assert.match(RENDER, /sb\.textContent = billingSubText\(st\);/,
-    "the submenu sub-line is the same decision, shorter");
-  assert.match(RENDER, /import \{ billingRowText, billingSubText, pickerBillingRow, pickerBillingTitle \} from "\.\/billing-label";/);   // 2026-09-09: the picker row's hover joined the module (upstream #1147's reason for the missing side)
-  // the field that tells a pick from a seeded default rides the status type, after upstream's one-auth fields
-  assert.match(RENDER, /authAcct\?: string; authPicked\?: boolean;/);
-  // …and a pick this box cannot bill is said on the hover and in the sub-line (upstream #1147, 2026-09-08), from the
-  // kernel's word (authPickUnavailable, never inferred) and the side the launch fell to (authPickFell): the same
-  // module decides it, ahead of the contradiction reading; the strings run in billing-label.test.ts
-  assert.match(BILLING, /if \(billingPickUnavailable\(f\)\) \{\s*\n\s*const fell = billingFellTo\(f\);\s*\n\s*return `⚠ \$\{billingSide\(f\.auth \|\| ""\)\} picked, but \$\{unavailableWhy\(f\)\}`/,
-    "the hover row says the pick could not be billed here, and where the launch went");
-  assert.match(BILLING, /return `⚠ \$\{wordOf\(f\.auth \|\| ""\)\} unavailable` \+ \(fell \? `, billing \$\{wordOf\(fell\)\}` : ""\);/,
-    "the sub-line says the same in fewer words");
+test("the chat tab hover says Billing whenever the backend reports it, naming the login", () => {
+  // ungated on machine shape (the user 2026-08-09: one-auth machines included) — and 'Login (account)' when known
+  // the name beside Login is the kernel's authLabel (a stored login's display, else the machine's own as
+  // email · organisation · kind), falling back to authAcct for an older kernel (T346, loginName)
+  assert.match(RENDER, /s\.status\.auth === "key" \? "API key"\s*\n\s*: \(loginName\(s\.status\) \? `Login \(\$\{loginName\(s\.status\)\}\)` : "Login"\)\]\);/);
+  assert.match(RENDER, /function loginName\(st: Status\): string \{ return st\.authLabel \|\| st\.authAcct \|\| ""; \}/);
+  assert.match(RENDER, /: s\.status\.authPickUnavailable === s\.status\.auth\s*\n(?:\s*\/\/[^\n]*\n)*\s*\? `⚠ /);   // 2026-09-08: a pick this box cannot bill is said on the hover too
+  // …and the row tells the TRUTH in every landing shape (T124, superseding the quiet-parenthetical
+  // form: after a switch the row showed the pick as applied fact through the whole reconnect
+  // window, and a wrong-side landing read as an aside). A PENDING pick says "applying — not
+  // confirmed yet"; a CONFIRMED contradiction (authLive on the other side — a key found via
+  // apiKeyHelper on a login launch) LEADS with the warning and names what is actually billed.
+  // Anchored at the gate + label: a session reporting no auth must never grow a fabricated Billing row,
+  // so the `if (s.status.auth)` guard is part of the pinned behavior.
+  // (this fork's settings-pick hold leads the ladder: a billing pick HELD for the session's live work reads as held, never as
+  // applying, in pick-held.ts's words (billingHeld, billingHeldRow; executed in pick-held.test.ts); the pending reading follows)
+  assert.match(RENDER, /if \(s\.status\.auth\) rows\.push\(\["Billing",\s*\n\s*billingHeld\(s\.status\) \? billingHeldRow\(s\.status\) : s\.status\.authPending\s*\n\s*\? \(s\.status\.auth === "key" \? "API key" : "Login"\) \+ " \(applying — not confirmed yet\)"/,
+    "the reconnect window renders as pending intent, never as applied fact");
+  assert.match(RENDER, /⚠ \$\{s\.status\.auth === "key" \? "API key" : "Login"\} picked, but the CLI reports `\s*\n\s*\+ `\$\{s\.status\.authLive === "key" \? "the API key" : "the login"\} — this session bills that`/,
+    "a confirmed contradiction leads with the warning");
+  // the SWITCH CONTROL (the Billing submenu) carries the same truth where the pick lives
+  // (T346: the stored-login evidence branch sits between "applying…" and the unavailable pick)
+  // (the held arm leads here too: billingHeldSub's "waiting until" words while the pick is held for live work)
+  assert.match(RENDER, /sb\.textContent = billingHeld\(st\) \? billingHeldSub\(st\) : st\.authPending \? "applying…"\s*\n\s*: \(st\.auth === "login" && st\.authLogin && st\.authLoginLive === ""\)\s*\n\s*\? "⚠ CLI used another credential"[^\n]*\n\s*: st\.authPickUnavailable === st\.auth\s*\n(?:\s*\/\/[^\n]*\n)*\s*\? `⚠ \$\{wordOf\(st\.auth\)\} unavailable`[^\n]*\n\s*: st\.authLive && st\.authLive !== st\.auth\s*\n\s*\? `⚠ CLI reports \$\{st\.authLive === "key" \? "API key" : "login"\}`/,
+    "the submenu sub-line shows the contradiction, not the unapplied pick");
 });
 
 test("set_auth refuses a login pick on a box with no login — the same bar the key side always had (T124)", () => {
   const BACKEND = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "sdk_backend.py"), "utf8");
-  assert.ok(BACKEND.includes('why = self.auth_unavailable_why(value)') && BACKEND.includes('if self.login_ok() is False:'),   // 2026-09-08: one reason vocabulary (credentials.WHY_*), login_ok still the probe; 2026-09-09: tri-state, None = cannot tell
+  assert.ok(BACKEND.includes('why = self.auth_unavailable_why(side, login_id)') && BACKEND.includes('if self.login_ok() is False:'),   // T346: the pick may name a stored login   // 2026-09-08: one reason vocabulary (credentials.WHY_*), login_ok still the probe; 2026-09-09: tri-state, None = cannot tell
     "refuse loudly at pick time when the box demonstrably lacks the credential");
   const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
   assert.ok(KERNEL.includes('_sdk_backend.login_ok = lambda: (None if _claude_account_state() == "unreadable" else bool(_claude_account()))'),
@@ -158,13 +152,16 @@ test("setAuth is an intent op — held through a kernel-restart window, never dr
 test("executed: the Billing flyout's check falls back to st.auth when the held payload names no picked value", () => {
   // the flyout's own line, read from render.ts and run over the marks heldMenuMarks returns for a Status: a held
   // payload WITH the picked side checks it (the running side tagged); one WITHOUT (an older kernel) checks the
-  // side st.auth names, since auth is the one kind whose status field carries the pick; not held, st.auth as ever
-  const flyout = RENDER.slice(RENDER.indexOf('const sub = el("div", "ctx-menu ctx-sub");'), RENDER.indexOf("menu.appendChild(sub);"));
-  const expr = (flyout.match(/const current = (.+);\n/) || [])[1];
+  // side st.auth names, since auth is the one kind whose status field carries the pick; not held, the check is
+  // upstream's authChoiceCurrent (by WHICH login, T346), stood in here by its plain-login reading since no stored
+  // login is in play (the function itself is executed in auth-logins.test.ts)
+  const flyout = RENDER.slice(RENDER.indexOf("    const openBillingFly = (): HTMLElement | null => {"), RENDER.indexOf('    wireFlyout(menu, item, ".ctx-sub-billing"'));
+  const expr = (flyout.match(/const cur = (.+?);[ \t]*(?:\/\/[^\n]*)?\n/) || [])[1];
   assert.ok(expr, "the flyout's current line moved; re-anchor");
+  const plainCurrent = (st: { auth: string }, value: string) => (value === "key" ? st.auth === "key" : st.auth === "login");
   const currentRows = (st: { auth: string; authLive?: string; pickHeld?: any }) => {
     const heldAuth = heldMenuMarks("auth", st.pickHeld, st.authLive || "");
-    return ["login", "key"].filter((value) => new Function("heldAuth", "st", "c", "return " + expr)(heldAuth, st, { value }));
+    return ["login", "key"].filter((value) => new Function("heldAuth", "st", "c", "authChoiceCurrent", "return " + expr)(heldAuth, st, { value }, plainCurrent));
   };
   const base = { auth: "login", authLive: "key", authBoth: true };
   assert.deepEqual(currentRows({ ...base, pickHeld: { surfaces: ["auth"], subagents: 1, tasks: 0 } }), ["login"],

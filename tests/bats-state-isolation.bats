@@ -1,34 +1,38 @@
 #!/usr/bin/env bats
 
 # Every bats suite that starts the REAL bin/romp-manager gives it a state root of its own. The
-# manager's STATE_ROOT is ROMP_STATE_DIR || XDG_STATE_HOME/romp || ~/.local/state/romp, and since
-# 2026-09-06 it writes a row to STATE_ROOT/restart-audit.jsonl before every SIGTERM it sends
-# (auditSigterm): a suite whose teardown stops a real manager with neither variable set appends to
-# the LIVE ledger, and those rows read as requests on record for kills nobody made (seven such rows
-# landed there on 2026-09-06, from tests/romp-manager-ensure.bats). This is the ratchet for the
-# bats side, as tests/test_state_isolation_order.py is for the pytest modules: the isolation lines
-# must be present in each such suite, before its first @test (setup() runs before every test; a
-# floor set inside one test leaves the others on the live root).
+# manager's STATE_ROOT is ROMP_STATE_DIR || XDG_STATE_HOME/romp || ~/.local/state/romp, and a suite
+# whose setup() sets neither hands the manager the developer's live root: `up` loads that root's
+# kernels.json and spawns one child per registered kernel (the suite's fake launcher, with the
+# registry entry's stateDir as its ROMP_STATE_DIR: specEnv), and the drain poll's token comes from
+# that root's serve-token (kernelToken). The manager writes nothing there and dials no live kernel,
+# so the leak is silent: the suite passes while a fake kernel runs for every kernel registered on the
+# machine. This is the ratchet for the bats side, as tests/test_state_isolation_order.py is for the
+# pytest modules: the isolation lines must be present in each such suite, before its first @test
+# (setup() runs before every test; a floor set inside one test leaves the others on the live root).
 #
 # The two lines, as the suites spell them:
-#     unset ROMP_STATE_DIR                    # a profiled kernel exports it; it outranks the XDG floor
-#     export XDG_STATE_HOME="$TEST_DIR/state"  # or another path under the test's own directory
-# A suite that instead exports ROMP_STATE_DIR to a path under its test directory satisfies both, and
-# so do the equivalent spellings: `X="$TEST_DIR/..."` on one line with an `export X` on another, or
-# the assignment unquoted. A helper the suite `load`s counts as part of the suite, both ways: a floor
+#     unset ROMP_STATE_DIR                    # a profiled kernel's sessions inherit it; it outranks the XDG floor
+#     export XDG_STATE_HOME="$TEST_DIR/state"  # or another path under a shell variable
+# A suite that instead exports ROMP_STATE_DIR to such a path satisfies both, and so do the equivalent
+# spellings: `X="$TEST_DIR/..."` on one line with an `export X` on another, or the assignment unquoted.
+# The check reads the line's shape, not where the path resolves: every suite today uses `$TEST_DIR`, or
+# `$HOME` after re-exporting HOME under its test directory (tests/romp.bats); a variable left pointing
+# at a live path would pass it. A helper the suite `load`s counts as part of the suite, both ways: a floor
 # set in a helper's function isolates, and a helper that starts the manager makes the suite one that
-# does (review round 2: the first version read only the suite file, so a manager started through a
-# loaded helper was never checked). Any spelling of the load counts (`load name`, `load
-# "$BATS_TEST_DIRNAME/name"`, `source`), and a helper's own loads are read in turn (review round 3).
+# does. Any spelling of the load counts (`load name`, `load "$BATS_TEST_DIRNAME/name"`, `source`),
+# and a helper's own loads are read in turn.
 
 TESTS="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)"
+
+setup() { SYN="$(mktemp -d)"; }   # the self-checks' synthetic suites, removed whether or not the check passes
+teardown() { rm -rf "$SYN"; }
 
 # The helper files a suite brings in, one per line, nothing for a suite that loads none: every `load`
 # (bats resolves `load name` to name, else name.bash, beside the suite; a path as given when absolute),
 # `source` and `.` line, with `$BATS_TEST_DIRNAME` or `${BATS_TEST_DIRNAME}` in the argument expanded
-# to the suite's directory, and each helper's own such lines read in turn, every file once (review
-# round 3: the first version read a literal `load name` from the suite file alone, so `load
-# "$BATS_TEST_DIRNAME/helper"` resolved nothing and a helper's load of a second helper was never read).
+# to the suite's directory, and each helper's own such lines read in turn, every file once (a helper
+# that loads a second helper, or two helpers that load each other, is read as one chain).
 loaded_helpers() {   # $1 suite
     local _seen="|"
     _helpers_of "$1" "$1"
@@ -54,18 +58,21 @@ _helpers_of() {   # $1 suite, $2 the file whose load lines to read; appends to t
     return 0
 }
 
-# A suite "starts the manager" when it, or a helper it loads, resolves the real binary for execution:
-# a path built from the tests directory (`.../bin" && pwd)/romp-manager"`), `.../bin/romp-manager"`,
-# or `"$<VAR>/romp-manager"` where a command starts: the line's first word or the word after `;`,
-# `&&`, `||`, `|`, `(`, `{`, `then`, `do` or `else`, with any `VAR=value` prefixes and a `node`, `run`,
-# `exec`, `nohup`, `env` or `timeout N` in front (review round 3: `node` was required, so a direct
-# `"$BIN/romp-manager" up` was not an execution). Comment lines do not count, and neither do mocks
-# written under a test directory (`"$MOCK_DIR/romp-manager"` as a heredoc target or as
-# ROMP_MANAGER_BIN: neither is a command), nor a line that only talks about the binary (TALK_ONLY_RE:
-# a grep, an assert, a `[[ ]]` or `[ ]` test naming it in an operand; tests/romp-uninstall.bats greps
-# its uninstaller for a pkill pattern that names the binary and was listed for it, review round 3).
+# A suite "starts the manager" when it, or a helper it loads, resolves the repository's own binary for
+# execution: a path climbing from the tests directory (`.../bin" && pwd)/romp-manager"` or
+# `../bin/romp-manager"`), or `"$<VAR>/.../romp-manager"` where a command starts: the line's first word
+# or the word after `;`, `&&`, `||`, `|`, `(`, `{`, `then`, `do` or `else`, with any `VAR=value`
+# prefixes and a `node`, `run`, `exec`, `nohup`, `env` or `timeout N` in front. Comment lines do not
+# count, and neither do stand-ins written under a test directory (`"$MOCK_DIR/romp-manager"` or
+# `"$TEST_DIR/bin/romp-manager"` as a heredoc or printf target, a chmod operand, or the value of
+# ROMP_MANAGER_BIN: none is a command, and a path under a test directory never climbs to `../bin`;
+# tests/romp-refresh-audit.bats drives bin/romp against such a stand-in and starts no manager), nor a
+# line that only talks about the binary (TALK_ONLY_RE: a grep, an assert, a `[[ ]]` or `[ ]` test
+# naming it in an operand; tests/romp-uninstall.bats greps its uninstaller for a pkill pattern that
+# names the binary). A new spelling of the real binary is added to MANAGER_START_RE with the suite
+# that introduces it, and the suite to the exact list below.
 CMD_START='(^|[;&|({]|[[:space:]](then|do|else))[[:space:]]*(([A-Za-z_][A-Za-z_0-9]*=("[^"]*"|[^[:space:]]*)|node|run( -[^[:space:]]+)*|exec|nohup|env|timeout[[:space:]]+[0-9]+[smh]?)[[:space:]]+)*'
-MANAGER_START_RE='(pwd\)/romp-manager"|/bin/romp-manager"|'"$CMD_START"'"\$\{?[A-Za-z_][A-Za-z_0-9]*\}?/romp-manager"([[:space:]]|$))'
+MANAGER_START_RE='(pwd\)/romp-manager"|\.\./bin/romp-manager"|'"$CMD_START"'"\$\{?[A-Za-z_][A-Za-z_0-9]*\}?(/[^/"[:space:]]+)*/romp-manager"([[:space:]]|$))'
 TALK_ONLY_RE='^[[:space:]]*(run[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)?(grep|egrep|fgrep|assert[A-Za-z_]*|refute[A-Za-z_]*|test|\[\[?|!)([[:space:]]|$)'
 
 suite_text() {   # $1 suite: the suite plus every helper it loads, comment and talk-only lines dropped
@@ -77,12 +84,12 @@ suite_text() {   # $1 suite: the suite plus every helper it loads, comment and t
 
 # The suite's text is collected whole and matched after, never piped into `grep -q`: that grep stops at
 # its first hit, and a writer still behind it then meets EPIPE. Silent while SIGPIPE kills the writer,
-# but the GitHub Actions runner starts every child with SIGPIPE ignored, and there each such grep printed
-# `grep: write error: Broken pipe`, which `run` folds into $output beside the paths (CI-only, 2026-09-07).
+# but a runner that starts every child with SIGPIPE ignored (GitHub Actions does) has each such grep
+# print `grep: write error: Broken pipe`, which `run` collects into $output beside the paths.
 manager_suites() {
     local f text
     for f in "$TESTS"/*.bats; do
-        [ "$f" = "$BATS_TEST_FILENAME" ] && continue     # this file quotes the pattern in its self-check
+        [ "$(basename "$f")" = "$(basename "$BATS_TEST_FILENAME")" ] && continue   # this file quotes the pattern in its self-checks
         text="$(suite_text "$f")"
         if grep -Eq "$MANAGER_START_RE" <<<"$text"; then
             printf '%s\n' "$f"
@@ -127,18 +134,14 @@ isolation_problems() {   # $1 suite
 
 @test "the detector finds exactly the suites known to start a manager (a regex drift cannot pass vacuously, or list a mention)" {
     # the list is exact, not a floor: a suite that only names the binary in a grep pattern or an assert
-    # (tests/romp-uninstall.bats) was a fourth entry nobody saw. A new suite that starts the real manager
-    # is added here, with its isolation lines.
+    # (tests/romp-uninstall.bats), or drives bin/romp against a stand-in under its test directory
+    # (tests/romp-refresh-audit.bats), must not appear. A new suite that starts the real manager is
+    # added here, with its isolation lines.
     run manager_suites
     [ "$status" -eq 0 ]
     local expected
-    # romp-manager-tmux-scope.bats came with the 2026-09-07 upstream sync: it starts the real manager
-    # to read where tmux lands, and floors its state root through tests/tmux-private.bash.
-    # romp-refresh-audit.bats (upstream, the 2026-09-07 catch-up) starts no real manager: its fake lives at
-    # "$TEST_DIR/bin/romp-manager", and the detector reads that path's tail as the binary. Listed rather
-    # than excused, since it does isolate (ROMP_STATE_DIR exported in setup) and the list stays exact.
     expected="$(printf '%s\n' "$TESTS/romp-manager-ensure.bats" "$TESTS/romp-manager-origin.bats" \
-        "$TESTS/romp-manager-tmux-scope.bats" "$TESTS/romp-refresh-audit.bats" "$TESTS/romp.bats" | LC_ALL=C sort)"
+        "$TESTS/romp.bats" | LC_ALL=C sort)"
     [ "$(printf '%s\n' "$output" | LC_ALL=C sort)" = "$expected" ]
 }
 
@@ -148,20 +151,20 @@ isolation_problems() {   # $1 suite
         while IFS= read -r line; do bad+=("$line"); done < <(isolation_problems "$f")
     done < <(manager_suites)
     if [ "${#bad[@]}" -ne 0 ]; then
-        printf 'These suites start a real bin/romp-manager without a state root of their own; its\n' >&2
-        printf 'SIGTERM notes would land in the live restart-audit.jsonl:\n' >&2
+        printf 'These suites start a real bin/romp-manager without a state root of their own; it would boot\n' >&2
+        printf 'from the live kernels.json, one fake kernel per registered kernel, and read the live serve-token:\n' >&2
         printf '  %s\n' "${bad[@]}" >&2
         return 1
     fi
 }
 
 # The self-checks below build synthetic suites line by line: a `@test` at column 0 inside a heredoc
-# here would register with bats as a test of THIS file (it did: "unknown test name test_starts_one").
+# here would register with bats as a test of THIS file.
 
 @test "the ratchet itself rejects a suite that starts a manager on the live root" {
     # the detector must see it and the rule must fail it, else a regex drift would make the test above
     # pass with nothing checked
-    local d; d="$(mktemp -d)"
+    local d="$SYN"
     printf '%s\n' '#!/usr/bin/env bats' 'setup() {' '    TEST_DIR="$(mktemp -d)"' \
         '    MGR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"' '}' \
         '@'"test \"starts one\" { node \"\$MGR\" up; }" > "$d/leaky.bats"
@@ -172,12 +175,11 @@ isolation_problems() {   # $1 suite
     [ "${#lines[@]}" -eq 2 ]
     [[ "${lines[0]}" == "leaky.bats: neither 'unset ROMP_STATE_DIR'"* ]]
     [[ "${lines[1]}" == "leaky.bats: no 'export XDG_STATE_HOME"* ]]
-    rm -rf "$d"
 }
 
 @test "a manager started through a loaded helper is seen, and the helper's missing floor is reported" {
     # the suite file alone never names the binary: the helper resolves and starts it
-    local d; d="$(mktemp -d)"
+    local d="$SYN"
     printf '%s\n' '# a helper that starts the real manager' 'start_mgr() {' \
         '    MGR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"' \
         '    node "$MGR" up &' '}' > "$d/mgr-helper.bash"
@@ -189,12 +191,11 @@ isolation_problems() {   # $1 suite
     [ "$output" = "$d/viahelper.bats" ]
     run isolation_problems "$d/viahelper.bats"
     [ "${#lines[@]}" -eq 2 ]
-    rm -rf "$d"
 }
 
 @test "a floor set in a loaded helper, in the equivalent spellings, isolates the suite" {
     # the assignment and the export on separate lines, the unset with a second variable: all accepted
-    local d; d="$(mktemp -d)"
+    local d="$SYN"
     printf '%s\n' 'state_floor() {' '    unset OTHER_VAR ROMP_STATE_DIR' \
         '    XDG_STATE_HOME="$TEST_DIR/state"; export XDG_STATE_HOME' '}' > "$d/floor.bash"
     printf '%s\n' '#!/usr/bin/env bats' 'load floor' 'setup() {' '    TEST_DIR="$(mktemp -d)"' \
@@ -212,25 +213,25 @@ isolation_problems() {   # $1 suite
         '@'"test \"starts one\" { node \"\$MGR\" up; }" > "$d/rompdir.bats"
     run isolation_problems "$d/rompdir.bats"
     [ -z "$output" ]
-    rm -rf "$d"
 }
 
 @test "a floor set only inside a test, or only mentioned in a comment, does not isolate the suite" {
-    local d; d="$(mktemp -d)"
+    local d="$SYN"
     printf '%s\n' '#!/usr/bin/env bats' '# export XDG_STATE_HOME="$TEST_DIR/state" would go here' 'setup() {' \
         '    TEST_DIR="$(mktemp -d)"' \
         '    MGR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"' '}' \
-        '@'"test \"starts one\" { export XDG_STATE_HOME=\"\$TEST_DIR/state\"; unset ROMP_STATE_DIR; node \"\$MGR\" up; }" \
-        > "$d/late.bats"
+        '@'"test \"starts one\" {" '    unset ROMP_STATE_DIR' '    export XDG_STATE_HOME="$TEST_DIR/state"' \
+        '    node "$MGR" up' '}' > "$d/late.bats"
+    # the two lines are shaped exactly as a setup() would carry them, one per line: only the cut at the
+    # first @test keeps them out of the suite head
     TESTS="$d" run manager_suites
     [ "$output" = "$d/late.bats" ]
     run isolation_problems "$d/late.bats"
     [ "${#lines[@]}" -eq 2 ]
-    rm -rf "$d"
 }
 
 @test "a helper loaded as \"\$BATS_TEST_DIRNAME/name\" or sourced is read, and so are a helper's own loads" {
-    local d; d="$(mktemp -d)"
+    local d="$SYN"
     # via-dirname: the common bats spelling for a helper beside the suite; the suite alone never names the binary
     printf '%s\n' 'start_mgr() {' '    MGR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"' \
         '    node "$MGR" up &' '}' > "$d/h-dirname.bash"
@@ -260,16 +261,23 @@ isolation_problems() {   # $1 suite
         run isolation_problems "$d/$f.bats"
         [ "${#lines[@]}" -eq 2 ]
     done
-    rm -rf "$d"
 }
 
-@test "a node-less exec of the resolved binary is seen; a text-only mention or a mock is not" {
-    local d; d="$(mktemp -d)"
+@test "a node-less exec of the resolved binary, the ../bin spelling and a path under a root variable are seen; a text-only mention or a stand-in is not" {
+    local d="$SYN"
     # direct: the file is executable with a node shebang, so `"$BIN/romp-manager" up` starts it (after an
     # env prefix, here); nothing else on the line names the path
     printf '%s\n' '#!/usr/bin/env bats' 'BIN="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)"' 'setup() {' \
         '    TEST_DIR="$(mktemp -d)"' '    ROMP_SERVE_BIN="$TEST_DIR/fake" "$BIN/romp-manager" up &' '}' \
         '@'"test \"starts one\" { true; }" > "$d/direct.bats"
+    # dotdot: the binary resolved by climbing from the tests directory without a cd/pwd, then run by name
+    printf '%s\n' '#!/usr/bin/env bats' 'setup() {' '    TEST_DIR="$(mktemp -d)"' \
+        '    MGR="$BATS_TEST_DIRNAME/../bin/romp-manager"' '}' \
+        '@'"test \"starts one\" { node \"\$MGR\" up; }" > "$d/dotdot.bats"
+    # depth: the binary run through a variable holding the repository root, the path climbing from there
+    printf '%s\n' '#!/usr/bin/env bats' 'ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"' 'setup() {' \
+        '    TEST_DIR="$(mktemp -d)"' '    node "$ROOT/bin/romp-manager" up &' '}' \
+        '@'"test \"starts one\" { true; }" > "$d/depth.bats"
     # greponly: every spelling of the real path, each as the operand of a grep, a test or an assert
     printf '%s\n' '#!/usr/bin/env bats' 'setup() { TEST_DIR="$(mktemp -d)"; }' \
         '@'"test \"talks only\" {" \
@@ -284,21 +292,32 @@ isolation_problems() {   # $1 suite
         '    cat > "$MOCK_DIR/romp-manager" <<MOCK' 'exit 0' 'MOCK' '    chmod +x "$MOCK_DIR/romp-manager"' \
         '    export ROMP_MANAGER_BIN="$MOCK_DIR/romp-manager"' '}' \
         '@'"test \"mocks one\" { true; }" > "$d/mock.bats"
+    # standin: the same under a bin/ directory inside the test directory, written by printf, made executable
+    # and handed to bin/romp as ROMP_MANAGER_BIN (the shape of tests/romp-refresh-audit.bats); the suite
+    # then runs bin/romp itself, resolved by climbing from the tests directory
+    printf '%s\n' '#!/usr/bin/env bats' 'setup() {' '    TEST_DIR="$(mktemp -d)"' '    mkdir -p "$TEST_DIR/bin"' \
+        '    printf '"'"'#!/usr/bin/env bash\nexit 0\n'"'"' > "$TEST_DIR/bin/romp-manager"' \
+        '    chmod +x "$TEST_DIR/bin/romp-manager" "$TEST_DIR/bin/romp-postal-service"' \
+        '    export ROMP_MANAGER_BIN="$TEST_DIR/bin/romp-manager"' \
+        '    ROMP="$BATS_TEST_DIRNAME/../bin/romp"' '}' \
+        '@'"test \"drives romp against the stand-in\" { run \"\$ROMP\" refresh --quiet; }" > "$d/standin.bats"
+    grep -qF '"$TEST_DIR/bin/romp-manager"' "$d/standin.bats"             # the fixture carries the stand-in path
     TESTS="$d" run manager_suites
-    [ "$output" = "$d/direct.bats" ]
-    run isolation_problems "$d/direct.bats"
-    [ "${#lines[@]}" -eq 2 ]
-    rm -rf "$d"
+    [ "$(printf '%s\n' "$output" | LC_ALL=C sort)" = "$(printf '%s\n' "$d/depth.bats" "$d/direct.bats" "$d/dotdot.bats" | LC_ALL=C sort)" ]
+    for f in direct dotdot depth; do
+        run isolation_problems "$d/$f.bats"
+        [ "${#lines[@]}" -eq 2 ]
+    done
 }
 
 @test "the detector prints only paths when SIGPIPE is ignored, as the GitHub Actions runner leaves it for every child" {
     # `suite_text "$f" | grep -Eq ...` let grep stop at the first hit while the greps behind it were
     # still writing. With SIGPIPE at its default they die silently; ignored (the runner's host process
     # starts each step so, and the disposition survives exec), each one meets EPIPE and prints
-    # `grep: write error: Broken pipe`, which `run` collects into $output beside the paths. Green here,
-    # red on CI (2026-09-07). The shape that met it every time: a suite that matches on its own and
-    # then loads a helper, so a writer is still to come after the match.
-    local d; d="$(mktemp -d)"
+    # `grep: write error: Broken pipe`, which `run` collects into $output beside the paths. The shape
+    # that met it every time: a suite that matches on its own and then loads a helper, so a writer is
+    # still to come after the match.
+    local d="$SYN"
     printf '%s\n' 'state_floor() { unset ROMP_STATE_DIR; export XDG_STATE_HOME="$TEST_DIR/state"; }' > "$d/floor.bash"
     printf '%s\n' '#!/usr/bin/env bats' 'load floor' 'setup() {' '    TEST_DIR="$(mktemp -d)"' '    state_floor' \
         '    MGR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"' '}' \
@@ -314,5 +333,4 @@ isolation_problems() {   # $1 suite
     trap - PIPE
     [ -n "$plain" ]
     [ "$ignored" = "$plain" ]                                  # the same list either way, nothing beside it
-    rm -rf "$d"
 }

@@ -9,6 +9,7 @@ root, synthetic ledger, the notes-api demo sessions (web/api/tests), placeholder
 import inspect
 import json
 import os
+import re
 import tempfile
 import time
 import unittest
@@ -84,7 +85,7 @@ class SpendDetail(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         state = Path(self.td.name)
-        self._saved = (km.jd.STATE, km.NAMES, km._live_names, km._tmux_sessions, km._self_host,
+        self._saved = (km.jd.STATE, km.NAMES, km._live_names, km._live_map, km._self_host,
                        km._claude_account, km._auth_key_present, dict(km._remotes))
         km.jd.STATE = state
         km.NAMES = state / "names"
@@ -93,7 +94,7 @@ class SpendDetail(unittest.TestCase):
         (km.NAMES / API).write_text("api\t/tmp/notes-api\t#54B204\t#ffffff\n")
         (km.NAMES / TESTS).write_text("tests\t/tmp/notes-api\n")          # no identity color
         km._live_names = lambda tm: {"web": WEB, "api": API}                # tests is no longer running
-        km._tmux_sessions = lambda: []
+        km._live_map = lambda: []
         km._self_host = lambda: "TESTHOST"
         km._claude_account = lambda: ""                                     # a key-only machine: total scope
         km._auth_key_present = lambda: True
@@ -102,7 +103,7 @@ class SpendDetail(unittest.TestCase):
         write_ledger(state)
 
     def tearDown(self):
-        (km.jd.STATE, km.NAMES, km._live_names, km._tmux_sessions, km._self_host,
+        (km.jd.STATE, km.NAMES, km._live_names, km._live_map, km._self_host,
          km._claude_account, km._auth_key_present, saved_remotes) = self._saved
         km._remotes.clear()
         km._remotes.update(saved_remotes)
@@ -276,7 +277,7 @@ class SpendDetail(unittest.TestCase):
         # T247b review find: the recorder rounds the bucket sum and each sid's sum independently (6
         # places), so a fully attributed bucket can carry a +1e-6..+6e-6 dollar residue with zero token
         # residue — 28 of 113 live hour buckets did — and the presence test on the unrounded residues
-        # hung a hatched "unattributed" chip with no bars on the 8-day view. Below the rounding grain
+        # hung a hatched "unattributed" chip with no bars on the hourly view. Below the rounding grain
         # a residue is zero: no stack, no row.
         hours, days = {}, {}
         for n in range(0, 40):
@@ -625,23 +626,52 @@ class SpendDetail(unittest.TestCase):
         self.assertIn(".rsp-tbl thead th{position:sticky;top:0;background:#252526;z-index:1}", js)
         self.assertIn("body.theme-light .rsp-tbl thead th{background:#FFFFFF}", js)
         self.assertIn('<span class="tab-label colored" style="--chip-bg:\'+spColor(s)+\'">', js, "a row's title wears the tab strip's classes")
+        # a merge-by-tag row names its TAG as the one tag chip (T321): tagChip's pill inlined, never the title's bold
+        self.assertIn("(s.kind==='tag'?(spTagChip(s)+", js, "the tag row's name is the chip, not the session title")
+        self.assertEqual(js.count('<span class="tab-label colored"'), 1, "the session-title markup stays the title's alone (spTitle)")
+        menu = open(os.path.join(os.path.dirname(HERE), "ui", "webview", "tag-menu.ts")).read()
+        shared = re.search(r'chip\.setAttribute\("style", "([^"]+)"\s*\n\s*\+ "border-radius:9px;"', menu)
+        self.assertTrue(shared, "the shared tagChip's style is where the pin expects it")
+        twin = re.search(r"function spTagChip\(s\)\{var c=spColor\(s\);return '<span class=rsp-tag-chip style=\"([^\"]+)\"", js)
+        self.assertTrue(twin, "the landing page inlines the chip")
+        self.assertTrue(twin.group(1).startswith(shared.group(1) + "border-radius:9px;border:1px solid "), "the pill, byte for byte up to the colour (the row's size: no font-size)")
+        self.assertIn(";background:transparent;white-space:nowrap;font-weight:400;letter-spacing:normal;", twin.group(1), "the tail after the colour: the shared weight and tracking")
         # T247f: the order chips beside the measure chips; the choice persists with the other toggles
         self.assertIn('data-act=order:spend>by spend</button>', js)
         self.assertIn('data-act=order:yours>your order</button>', js)
         self.assertIn("var SP_PREFS_KEY='romp:spendModal';", js)
         # T247g: three ranges and the merge toggle, persisted with the rest
         self.assertIn('data-act=range:day>1 day ', js)
-        self.assertIn('data-act=range:hours>8 days ', js)
+        self.assertIn('data-act=range:hours>7 days ', js)   # T293: 7 days over 168 hourly buckets (the ledger's 192 keep a day of slack)
+        self.assertNotIn('8 days', js)
         self.assertIn('data-act=range:days>90 days ', js)
         self.assertIn('data-act=merge:toggle>merge by tag</button>', js)
         self.assertIn("JSON.stringify({range:SP.range,measure:SP.measure,order:SP.order,merge:SP.merge})", js)
         self.assertIn("localStorage.getItem('romp:vieworder')", js, "the viewer's arrangement is the strip's own key")
+        # T293 (the user 2026-09-09): the hover crosshair — a pointer-inert hairline inside the svg at the pointer's
+        # bucket, a stamp naming the bucket in words placed out of the flow (nothing moves under the pointer), and the
+        # tooltip listing that bucket's sessions in spend order; all three leave with the pointer. The pure functions
+        # are executed by ui/webview/spend-crosshair.test.ts; the served-page test hovers the real chart.
+        self.assertIn("var SP_RANGE_BUCKETS={day:24,hours:168};", js)
+        self.assertIn("xh.setAttribute('class','rsp-xh');", js)
+        self.assertIn("stamp.className='rsp-xh-stamp'", js)
+        self.assertIn("svgEl.onpointerleave=xhHide;", js, "the line, the stamp and the tooltip leave with the pointer")
+        self.assertIn(".rsp-xh{stroke:rgba(255,255,255,0.45);stroke-width:1;pointer-events:none}", html)
+        self.assertIn(".rsp-xh-stamp{position:absolute;top:4px;transform:translateX(6px);font-size:10px;line-height:1;padding:3px 5px;border-radius:3px;"
+                      "background:rgba(30,30,30,0.88);color:#cfd6dd;pointer-events:none;white-space:nowrap}", html,
+                      "the stamp: out of the flow, the surface's 10px annotation size, no pointer events")
+        self.assertIn("body.theme-light .rsp-xh{", html, "a light step for the hairline")
+        self.assertIn("body.theme-light .rsp-xh-stamp{", html, "…and for the stamp")
+        self.assertIn(".rsp-tip-row i{", html, "a row's dot wears its stack's colour")
+        self.assertNotIn("function spTipShow(", js, "the one-segment tip is gone: the bucket tooltip serves a bar too")
         # the landing page loads no stylesheet, so the strip's two rules are inlined as a TWIN; this pins the
         # twin's declarations against the source so the two cannot drift
         import re as _re
         css = open(os.path.join(os.path.dirname(HERE), "ui", "webview", "styles.css")).read()
         def decls(sel):
-            m = _re.search(_re.escape(sel) + r"\s*\{([^}]*)\}", css)
+            # the rule that STARTS a line: a descendant rule such as `.mention-chip .host-prefix` also ends in
+            # the selector and may sit earlier in the sheet than the global rule this twin mirrors
+            m = _re.search(r"(?m)^" + _re.escape(sel) + r"\s*\{([^}]*)\}", css)
             self.assertIsNotNone(m, sel + " missing from styles.css")
             return _re.sub(r"\s+", "", m.group(1)).rstrip(";")
         self.assertIn(".rsp-name .tab-label.colored{" + decls(".tab.colored .tab-label") + "}", js,

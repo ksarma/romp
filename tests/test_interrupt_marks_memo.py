@@ -7,8 +7,9 @@ records are tool_result-only harness lines that can never be an interrupt record
 and the user-todo floor's call was a second full scan over the very turns the card's badge had just read.
 
 The gate drops the atoms the file adapter marked text-less (author None) before the text scan; exact,
-because author_of returns None on no other shape. build_feed hands its badge read into the floor. The
-memo keys on the parse object's identity plus the machineCut stamp, per (sid, parse family).
+because author_of returns None on no other shape. The feed's per-session entry (_feed_session_entry, the
+T368 memo the 2026-09-15 pull-in adopted; the loop body of build_feed before it) hands its badge read into
+the floor. The memo keys on the parse object's identity plus the machineCut stamp, per (sid, parse family).
 
 Synthetic fixtures only: placeholder UUIDs, invented prompt text, hostname-free paths.
 """
@@ -172,7 +173,8 @@ class AuthorNoneAtomsAreSkipped(unittest.TestCase):
 
 class FloorReusesTheBadgeRead(unittest.TestCase):
     """_user_todo_idle takes the caller's interrupt read instead of scanning the same turns again;
-    an unknown (None) read still computes, and build_feed hands its badge value through."""
+    an unknown (None) read still computes, and the feed's per-session entry (_feed_session_entry) hands
+    its badge value through."""
 
     def setUp(self):
         self.saved = (km._compacting_now, km._backend_queued, km._backend_rewind_pending, km._last_state,
@@ -219,8 +221,10 @@ class FloorReusesTheBadgeRead(unittest.TestCase):
         finally:
             km._interrupt_suppresses_nudge = saved
 
-    def test_build_feed_hands_its_badge_read_to_the_floor(self):
-        src = inspect.getsource(km.build_feed)
+    def test_the_feed_entry_hands_its_badge_read_to_the_floor(self):
+        # the floor call and the badge read live in _feed_session_entry since T368 (the per-session card memo,
+        # the 2026-09-15 pull-in): build_feed only folds the entries
+        src = inspect.getsource(km._feed_session_entry)
         self.assertIn("interrupted=_intr_read", src, "the floor call carries the badge's own read")
         self.assertIn("sess_interrupted, _intr_read = False, None", src,
                       "a raised badge read hands the floor None (compute), never False (idle)")
@@ -319,7 +323,7 @@ class _MemoHarness(unittest.TestCase):
         (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(
             {"rompUuid": SID, "seq": 1, "lastNode": g["id"], "closedTurns": [], "nodes": {g["id"]: g},
              "placements": {}, "status": {g["id"]: "working"}}))
-        self.tmux = {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
+        self.live = {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
                            "context": None, "compactPct": None, "color": None}}
 
     def _reset(self):
@@ -438,45 +442,42 @@ class MemoHitsAndMisses(_MemoHarness):
 class MemoAcrossTheCycle(_MemoHarness):
     def test_the_tick_and_build_feed_hit_on_the_second_cycle(self):
         km._parse(str(self.tpath), SID, NOW)                       # warm the display cache (_warm_fleet_bg)
-        km._interrupt_block_tick(NOW, self.tmux)
-        km.build_feed(NOW, self.tmux)
+        km._interrupt_block_tick(NOW, self.live)
+        km.build_feed(NOW, self.live)
         self.assertEqual(sorted(k for k in km._intr_marks_memo if k[0] == SID),
                          [(SID, "display"), (SID, "judge")], "one entry per family after a cycle")
         s0 = self._stats()
-        km._interrupt_block_tick(NOW, self.tmux)
-        km.build_feed(NOW, self.tmux)
+        km._interrupt_block_tick(NOW, self.live)
+        km._feed_memo.clear()      # T368: the feed's per-session card memo would serve the unchanged session without running
+        #                            the body; this test is about the MARKS memo the body consults, so make the body run
+        km.build_feed(NOW, self.live)
         s1 = self._stats()
         self.assertEqual(s1["miss"], s0["miss"], "the second cycle recomputes nothing")
         self.assertGreaterEqual(s1["hit"] - s0["hit"], 2, "the tick hit and build_feed hit")
 
     def test_the_families_do_not_evict_each_other(self):
         km._parse(str(self.tpath), SID, NOW)
-        km._interrupt_block_tick(NOW, self.tmux)
-        km.build_feed(NOW, self.tmux)
+        km._interrupt_block_tick(NOW, self.live)
+        km.build_feed(NOW, self.live)
         judge = km._intr_marks_memo[(SID, "judge")]
         disp = km._intr_marks_memo[(SID, "display")]
-        self.assertIsNot(judge[0], disp[0], "two distinct parse objects, one slot each")
-        km._interrupt_block_tick(NOW, self.tmux)
+        self.assertIs(judge[0], disp[0], "ONE parse object since stage 2 (the kernel and the judges share the store); still one slot per family")
+        km._interrupt_block_tick(NOW, self.live)
         self.assertIs(km._intr_marks_memo[(SID, "display")], disp, "the tick left the display slot alone")
-        km.build_feed(NOW, self.tmux)
+        km.build_feed(NOW, self.live)
         self.assertIs(km._intr_marks_memo[(SID, "judge")], judge, "build_feed left the judge slot alone")
 
     def test_a_sid_leaving_the_alive_set_loses_its_entries(self):
         km._parse(str(self.tpath), SID, NOW)
-        km._interrupt_block_tick(NOW, self.tmux)
-        km.build_feed(NOW, self.tmux)
+        km._interrupt_block_tick(NOW, self.live)
+        km.build_feed(NOW, self.live)
         dead = ("11111111-2222-3333-4444-888888888888", "judge")
         km._intr_marks_memo[dead] = ([], (0.0, ""), (0, 0))
-        km._interrupt_block_tick(NOW, self.tmux)
+        km._interrupt_block_tick(NOW, self.live)
         self.assertNotIn(dead, km._intr_marks_memo, "a sid outside the alive set is swept")
         self.assertIn((SID, "judge"), km._intr_marks_memo, "…the alive one stays")
         s0 = self._stats()
-        saved = km._has_tmux
-        km._has_tmux = lambda: True                     # an empty map is a genuine zero, not headless
-        try:
-            km._interrupt_block_tick(NOW, {})
-        finally:
-            km._has_tmux = saved
+        km._interrupt_block_tick(NOW, {})               # an empty live map is authoritative: nobody is alive
         self.assertEqual([k for k in km._intr_marks_memo if k[0] == SID], [],
                          "the session left the alive set: both of its entries are released")
         self.assertEqual(self._stats()["evict"], s0["evict"] + 2)
@@ -484,13 +485,13 @@ class MemoAcrossTheCycle(_MemoHarness):
     def test_the_nudge_tick_reads_the_judge_entry_without_a_scan(self):
         # the third per-cycle caller: the nudge tick's interrupt gate reads the judge parse through the memo, so after
         # the interrupt tick has filled the (sid, "judge") entry the nudge tick text-scans no atom
-        km._interrupt_block_tick(NOW, self.tmux)
+        km._interrupt_block_tick(NOW, self.live)
         self.assertIn((SID, "judge"), km._intr_marks_memo)
-        row = next(r for r in km._alive_sessions(NOW, self.tmux) if r["sid"] == SID)
+        row = next(r for r in km._alive_sessions(NOW, self.live) if r["sid"] == SID)
         s0 = self._stats()
         c = _Counter(km.em, "is_interrupt_record")
         try:
-            verdict = km._auto_nudge_session(row, NOW, self.tmux, {}, {}, alive_ids={SID})
+            verdict = km._auto_nudge_session(row, NOW, self.live, {}, {}, alive_ids={SID})
         finally:
             c.close()
         self.assertEqual(verdict, "user-interrupt", "the gate ruled on the interrupt")
@@ -515,12 +516,15 @@ class MemoAcrossTheCycle(_MemoHarness):
     def test_perf_reports_the_memo(self):
         turns = self._judge_turns()
         km._interrupt_marks(turns, SID, family="judge")
-        before = km._PERF_STATS.snapshot()["memos"]["intr_marks"]
+        before = km._PERF_STATS.snapshot()["memos"]["intrMarks"]
         km._interrupt_marks(turns, SID, family="judge")
-        after = km._PERF_STATS.snapshot()["memos"]["intr_marks"]
+        after = km._PERF_STATS.snapshot()["memos"]["intrMarks"]
         self.assertEqual(after["hit"], before["hit"] + 1)
         self.assertEqual(after["entries"], len(km._intr_marks_memo))
-        self.assertEqual(set(after), {"hit", "miss", "evict", "entries"})
+        # the fork's three counters and the entries gauge, plus upstream's (T401 (3), the 2026-09-15 pull-in): restored
+        # and refused (the persisted marks loaded at boot, or refused as stale), persisted (the disk mirror's rows) and
+        # computeMs (the tallies' cost, whole milliseconds on /perf)
+        self.assertEqual(set(after), {"hit", "miss", "evict", "restored", "refused", "computeMs", "entries", "persisted"})
 
 
 class CounterBumpsAreAtomic(unittest.TestCase):

@@ -27,7 +27,11 @@ function measure(): Cell {
   return { scale: cs(root).getPropertyValue("--fv-scale").trim() || "1", fontSize: parseFloat(cs(p).fontSize), lineHeight: parseFloat(cs(p).lineHeight),
     rootLineHeight: parseFloat(cs(root).lineHeight), bodyLineHeight: parseFloat(cs(document.body).lineHeight), height: r.height, lines: tops.size, width: r.width };
 }
+/** The text-size buttons ride the zoom glyph's flyout (upstream T367: shut until the glyph is pressed, and shut again by any
+ *  press outside it): open it when it is shut, so the A+ press lands on a shown button. */
+const openZoom = async (page: any) => { if (await page.evaluate(() => { const m = document.querySelector(".fileview-zoom-menu") as HTMLElement | null; return !m || m.hidden; })) await page.click(".fileview-zoom-btn"); };
 const stepUp = async (page: any) => {
+  await openZoom(page);
   await page.click('button[aria-label="Larger text"]');
   await page.waitForFunction(() => getComputedStyle(document.querySelector(".fileview-md")!).getPropertyValue("--fv-scale").trim() === "1.15", null, { timeout: 5000 });
   await frames(page, 2);

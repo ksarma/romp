@@ -298,6 +298,10 @@ const viewFiles = () => shellPosts.filter(([m]) => m && m.romp === "viewFile").m
 
 test("boot: the pane renders one row per todo from the frame, and only the todo that names a file wears the chip", async () => {
   await import("./waiting");
+  // the shell's boot word, once, as the shell posts it on this iframe's load: the Files pane on screen and available. Since
+  // T404 (adopted at the 2026-09-15 pull-in) the click routes by that word, and no word reads as every pane off, which would
+  // open the viewer over this pane instead of posting the relay the click cases below assert
+  await dispatch({ romp: "panes", on: { waiting: true, files: true }, avail: { files: true } });
   assert.equal(posted.filter((m) => m.type === "ready").length, 1, "the ready handshake");
   await dispatch(frame([WITH_FILE, NO_FILE]));
   assert.equal(list.querySelectorAll(".ut-item").length, 2);

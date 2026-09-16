@@ -106,7 +106,7 @@ test("userMd() renders through the breaks:true instance and the SAME sanitizer a
 
 test("the user bubble renders the user's OWN words with userMd, harness notes and everything else with md", () => {
   // the landed bubble: kind "user" → userMd; the harness-injected note sharing the branch → md
-  assert.match(RENDER, /bubble\.innerHTML = kind === "user" \? userMd\(ev\.md\) : md\(ev\.md\);\n\s*linkifyFileUris\(bubble, imgPaths, ev\.spacePaths, ev\.pathLinks, ev\.pathPins\);/);
+  assert.match(RENDER, /bubble\.innerHTML = kind === "user" \? userMd\(ev\.md\) : md\(ev\.md\);\n\s*linkifyFileUris\(bubble, imgPaths, ev\.spacePaths, ev\.pathLinks, ev\.pathPins, ev\.pathPreview, ev\.pathPreviewWhy\);/);
   assert.doesNotMatch(RENDER, /bubble\.innerHTML = md\(ev\.md\);/, "no user bubble left on the soft-wrap grammar");
   // the queued / optimistic bubble is the same message a beat earlier — same renderer, so the swap to the
   // landed bubble changes nothing on screen
@@ -114,5 +114,5 @@ test("the user bubble renders the user's OWN words with userMd, harness notes an
   assert.doesNotMatch(RENDER, /bubble\.innerHTML = md\(t\.md\);/);
   // romp-authored surfaces keep the assistant grammar: nudges, notices, the Continue gesture, tagged sends
   assert.match(RENDER, /full\.innerHTML = md\(raw\);/, "the romp nudge fold");
-  assert.match(RENDER, /if \(more\) body\.innerHTML = md\(text\);[^\n]*\n\s*return noticeCard\(\{ variant: "romp"/, "the romp system notice (a one-liner gets no body, T243)");
+  assert.match(RENDER, /if \(more\) body\.innerHTML = md\(text\);[^\n]*\n\s*return notice\(\{ src: "romp", glyph: "romp", sev: "romp"/, "the romp system notice (a one-liner gets no body, T243; the one builder since 2026-09-08)");
 });

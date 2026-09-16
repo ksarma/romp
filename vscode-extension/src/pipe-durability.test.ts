@@ -52,9 +52,11 @@ test("both webviews render the pipe-down banner with the held count", () => {
   // re-arm, 2026-08-18 — pinned in chat-delta-resync.test.ts) and marks unconfirmed sends lost
   // (send-pending.test.ts, 2026-09-06); the banner wiring is identical.
   for (const [name, src] of [["render.ts", RENDER], ["feed.ts", FEED]] as const) {
-    // the feed has no tab re-ask and no sends, so both down-edge groups are optional and its bare form still matches
+    // the chat's handler re-asks lost sessions (awaitingFull.clear(), this fork) and marks unconfirmed sends "not confirmed"
+    // on the down edge, inside upstream's braced clause with onPipeDown()/onWireDown() (render.ts markPendingLost, the
+    // history regions); the feed has no tab re-ask and no sends, so the down-edge group is optional and its bare form still matches
     assert.match(src,
-      /if \(m\.type === "pipeState"\) \{ (?:if \(!m\.up\) awaitingFull\.clear\(\); )?(?:if \(!m\.up\) markPendingLost\("connection"\); )?pipeBanner\(!!m\.up, Number\(m\.queued\) \|\| 0\); return; \}/,
+      /if \(m\.type === "pipeState"\) \{ (?:if \(!m\.up\) (?:markPendingLost\("connection"\);|\{ (?:awaitingFull\.clear\(\); )?markPendingLost\("connection"\); (?:onPipeDown|onWireDown)\(\); \}) )?pipeBanner\(!!m\.up, Number\(m\.queued\) \|\| 0\); return; \}/,
       `${name} must handle pipeState`);
     assert.ok(src.includes("held, sending when it's back"), `${name} must count held messages`);
   }

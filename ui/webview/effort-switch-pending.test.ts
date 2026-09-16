@@ -12,16 +12,18 @@ import { heldMenuMarks, badgeHeldTip, pickHeldLine, pickHeldTitle, reloadingTitl
 import { hideEdges } from "../test-dom-shim";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
+const MODULE = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "status-controls.ts"), "utf8");   // the status line's controls moved here from render.ts (T415 part two)
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 
 test("the effort badge shows switching-dots while a reconnect is pending, like the model badge", () => {
   assert.match(RENDER, /effortPending\?: boolean;/);   // status carries it
-  assert.match(RENDER, /\(kind === "effort" && !!st\.effortPending\)/);          // effort feeds `pending`
+  assert.match(MODULE, /\(kind === "effort" && !!st\.effortPending\)/);          // effort feeds `pending`
   // the mode and fast reloads carry the same flag since review round 7 (fastPending, modePending), read into `pending`
-  // beside the effort's; the executed slice below drives the pulse from them
+  // through the chat's pending hook (this fork's, beside T415 part two: the module ORs modelPending and effortPending
+  // itself, then asks the hook); the executed slice below drives the pulse from them
   assert.match(RENDER, /pickHeld\?: PickHeld \| null; fastPending\?: boolean; modePending\?: boolean;/);
-  assert.match(RENDER, /\(kind === "mode" && !!st\.modePending\) \|\| \(kind === "fast" && !!st\.fastPending\)/);
-  assert.match(RENDER, /const showDots = pending && \(kind === "model" \|\| kind === "effort"\);/);   // dots for both reconnect-style badges (billing moved to the tab menu, 2026-08-09)
+  assert.match(RENDER, /pending: \(kind, st\) => \{ const s = st as Status; return \(kind === "mode" && !!s\.modePending\) \|\| \(kind === "fast" && !!s\.fastPending\) \|\| isMetaPending\(kind, s\); \},/);
+  assert.match(MODULE, /const showDots = pending && \(kind === "model" \|\| kind === "effort"\);/);   // dots for both reconnect-style badges (billing moved to the tab menu, 2026-08-09)
 });
 
 test("a live reconnect has its own ChatEvent kind, dispatched to renderReconnecting", () => {
@@ -33,35 +35,41 @@ test("a live reconnect has its own ChatEvent kind, dispatched to renderReconnect
   assert.ok(recon > 0 && compact > 0 && recon < compact);
 });
 
-test("renderReconnecting draws the accent loader dots + a 'Reloading session' line naming the effort", () => {
+test("renderReconnecting is a slim live SESSION notice: the accent loader dots in its glyph slot, naming the effort", () => {
+  // 2026-09-08 (the notice-vocabulary pass): the ONE builder, romp severity (accent) for an in-flight romp operation
   assert.match(RENDER, /function renderReconnecting\(ev: Extract<ChatEvent, \{ kind: "reconnecting" \}>\)/);
-  assert.match(RENDER, /el\("div", "turn turn-reconnecting"\)/);
-  assert.match(RENDER, /line\.appendChild\(metaDots\(\)\);/);   // the SAME pulsing accent dots as the badge
-  assert.match(RENDER, /Reloading session: applying \$\{ev\.effort\} effort…/);   // a colon, not an em dash (review round 10)
+  assert.match(RENDER, /notice\(\{ src: "session", glyph: noticeLiveGlyph\(metaDots\(\)\), sev: "romp", gist: reconnectingGist\(ev\.effort\), live: true,/);
+  assert.match(RENDER, /Reloading session — applying \$\{effort\} effort…/);
   assert.match(RENDER, /"Reloading session…"/);                // effort-less fallback
-  assert.match(CSS, /\.turn-reconnecting \.dot \{[^}]*background: var\(--accent\)/);   // accent (loading), not a status color
+  assert.match(CSS, /\.notice-sev-romp\s+\{ --notice-rail: var\(--accent\)/);   // accent (loading), not a status color
 });
 
 test("a pick HELD for live work renders a waiting line, not the reloading animation", () => {
   // the kernel holds a pick while the session's subagents and background tasks run (the reload would
-  // kill them) and carries the hold on the event (`held`) and the status (`pickHeld`); the element then
+  // kill them) and carries the hold on the event (`held`) and the status (`pickHeld`); the notice then
   // says which pick waits and on what, with no loader dots. The words come from pick-held.ts (executed
   // in pick-held.test.ts, per kind and per state); render.ts is pinned to take them from there
-  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, reloadingTitle, switchingTitle, RUNNING_TAG, type PickHeld \} from "\.\/pick-held";/);
+  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, billingHeld, billingHeldRow, billingHeldSub, reloadingTitle, switchingTitle, RUNNING_TAG, type PickHeld \} from "\.\/pick-held";/);   // the held Billing readings joined the module with the 2026-09-15 pull-in (the fork's billing words module retired for upstream's T346 ladders)
   assert.match(RENDER, /kind: "reconnecting"; effort\?: string; held\?: PickHeld \| null;/);
   assert.match(RENDER, /effortPending\?: boolean; pickHeld\?: PickHeld \| null;/);
-  assert.match(RENDER, /if \(ev\.held\) \{/);
-  assert.match(RENDER, /txt\.textContent = pickHeldLine\(ev\.held\);/);
-  assert.match(RENDER, /line\.title = pickHeldTitle\(ev\.held\);/);
-  assert.doesNotMatch(RENDER, /Applying \$\{ev\.effort\} effort when the background work finishes/,
-    "the round-1 copy named the effort for every held kind");
-  // the dots and the reloading words live in the else branch: a hold shows neither
+  // the held state is its own notice() exit (the notice-vocabulary shape, 2026-09-08): a still glyph and no `live`
+  // mark, the hold's words as the gist and the tip, the held class kept as the sheet's hook
   const start = RENDER.indexOf("function renderReconnecting(");
   const fn = RENDER.slice(start, RENDER.indexOf("\nfunction ", start + 1));   // this function alone
-  const held = fn.indexOf("if (ev.held) {"), els = fn.indexOf("} else {");
-  assert.ok(held > 0 && els > held);
-  assert.ok(fn.indexOf("line.appendChild(metaDots());") > els, "no loader dots while held");
-  assert.ok(fn.indexOf("Reloading session") > els, "no reload claim while held");
+  const heldCall = fn.match(/if \(ev\.held\) return notice\(\{([\s\S]*?)\}\);/);
+  assert.ok(heldCall, "the held branch is a notice() exit of its own");
+  assert.match(heldCall![1], /glyph: "session"/, "a still glyph: no loader dots while held");
+  assert.match(heldCall![1], /gist: pickHeldLine\(ev\.held\)/);
+  assert.match(heldCall![1], /tip: pickHeldTitle\(ev\.held\)/);
+  assert.match(heldCall![1], /cls: "turn-reconnecting turn-reconnecting-held"/);
+  assert.doesNotMatch(heldCall![1], /live: true|noticeLiveGlyph|metaDots|Reloading session/, "no reload claim and no dots while held");
+  assert.doesNotMatch(RENDER, /Applying \$\{ev\.effort\} effort when the background work finishes/,
+    "the round-1 copy named the effort for every held kind");
+  // the dots and the reloading words live in the exits after the held one: a hold shows neither
+  const held = fn.indexOf("if (ev.held) return notice(");
+  assert.ok(held > 0);
+  assert.ok(fn.indexOf("noticeLiveGlyph(metaDots())") > held, "no loader dots while held");
+  assert.ok(fn.indexOf("reconnectingGist(ev.effort)") > held, "no reload claim while held");
 });
 
 test("a held kind's badge shows the running value with a pending mark: no loader dots, no dim pulse", () => {
@@ -69,8 +77,11 @@ test("a held kind's badge shows the running value with a pending mark: no loader
   // stays the value the kernel reports (the running one while held), a small accent mark says a change
   // waits, and the tip names the pick; effortPending's loader dots and the dim .meta-pending pulse are
   // both off for a held kind, since each claimed a change in progress (review round 2, 2026-09-09)
+  // (T415 part two moved the badges into status-controls.ts, whose sync reads the server's two flags and the chat's hook;
+  // the hold is this fork's post-pass in render.ts, applyHeldMarks, which undoes that pending dress on a held kind)
+  assert.match(MODULE, /const pending = \(kind === "model" && !!st\.modelPending\) \|\| \(kind === "effort" && !!st\.effortPending\)\s*\n\s*\|\| !!\(hooks\.pending && hooks\.pending\(kind, st\)\);/);
   assert.match(RENDER, /const held = !!st\.pickHeld && st\.pickHeld\.surfaces\.includes\(kind\);/);
-  assert.match(RENDER, /const pending = !held && \(\(kind === "model" && !!st\.modelPending\) \|\| \(kind === "effort" && !!st\.effortPending\)/);
+  assert.match(RENDER, /if \(held\) \{\s*\n\s*b\.classList\.remove\("meta-pending"\);/);
   assert.match(RENDER, /b\.classList\.toggle\("meta-held", held\);/);
   assert.match(RENDER, /const m = el\("span", "meta-held-mark"\);/);
   // the glyph is decoration: hidden from assistive tech, so the badge's name reads "high" and not "high•"
@@ -88,8 +99,8 @@ test("a held kind's badge shows the running value with a pending mark: no loader
   assert.match(rule, /align-self: flex-start/);
   assert.match(rule, /transform: translateY\(-0\.1em\)/);
   assert.match(rule, /line-height: 1/);
-  // the same sync serves mode, model, effort and fast badges (the kinds the statusline draws)
-  assert.match(RENDER, /type MetaKind = "mode" \| "model" \| "effort" \| "fast";/);
+  // the same sync serves mode, model, effort and fast badges (the kinds the statusline draws; the union lives with the badges)
+  assert.match(MODULE, /export type MetaKind = "mode" \| "model" \| "effort" \| "fast";/);
 });
 
 test("the tab tooltip's Mode and Effort rows show a held pick the way the Billing row does", () => {
@@ -107,8 +118,11 @@ test("the tab tooltip's Mode and Effort rows show a held pick the way the Billin
   assert.match(fn, /const pickedOf = \(kind: string\) => \{ const p = \(\(held && held\.picked\) \|\| \{\}\)\[kind\]; return p \? \(kind === "mode" \? prettyMode\(p\) : p\) : undefined; \};/);
   assert.match(fn, /const heldRow = \(kind: string, now: string\) => held && held\.surfaces\.includes\(kind\) \? heldRowValue\(now, kind, held, pickedOf\(kind\)\) : now;/);
   assert.match(fn, /rows\.push\(\["Mode", heldRow\("mode", prettyMode\(s\.status\.mode\)\)\]\);/);
-  assert.match(fn, /rows\.push\(\["Effort", heldRow\("effort", s\.status\.effort\)\]\);/);
-  assert.match(fn, /rows\.push\(\["Billing", billingRowText\(s\.status\)\]\);/, "the Billing row keeps its own decision, from billing-label.ts");
+  assert.match(fn, /rows\.push\(\["Effort", heldRow\("effort", s\.status\.effort\), metaColor\("effort", s\.status\)\]\);/);   // the colour term is T372's (the footer chip's tint)
+  // the Billing row keeps its own ladder, inline since the fork's billing words module retired (T346, upstream's words), and it opens on
+  // the HELD reading (pick-held.ts billingHeld / billingHeldRow, the same "until" words as the rows above): a held billing
+  // pick never reads as applying (review round 2 of the hold)
+  assert.match(fn, /if \(s\.status\.auth\) rows\.push\(\["Billing",\s*\n\s*billingHeld\(s\.status\) \? billingHeldRow\(s\.status\) : s\.status\.authPending\s*\n\s*\?/, "the Billing row keeps its own ladder, the held arm first");
   assert.doesNotMatch(fn, /badgeHeldTip|pickHeldLine/, "not the badge tip's words (it ends on what the badge shows) nor the chat line's");
 });
 
@@ -117,7 +131,7 @@ test("the badge menus and the Billing flyout mark a held pick the same way: the 
   // toggleMetaMenu never read pickHeld) while the tab menu's Billing flyout check-marked the PICKED side (review
   // round 5, ui-2). One convention now, pick-held.ts's heldMenuMarks (executed in pick-held.test.ts): the check on the
   // pick, the running value tagged. render.ts's rows are pinned here and metaRowMarks is executed below
-  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, reloadingTitle, switchingTitle, RUNNING_TAG, type PickHeld \} from "\.\/pick-held";/);
+  assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, billingHeld, billingHeldRow, billingHeldSub, reloadingTitle, switchingTitle, RUNNING_TAG, type PickHeld \} from "\.\/pick-held";/);   // the held Billing readings joined the module with the 2026-09-15 pull-in (the fork's billing words module retired for upstream's T346 ladders)
   assert.match(RENDER, /function matchesMeta\(kind: MetaKind, current: string, value: string\): boolean \{/);
   assert.match(RENDER, /function isCurrentMeta\(kind: MetaKind, st: Status, value: string\): boolean \{\n\s+if \(kind === "model"\) return \(st\.model \|\| ""\)\.toLowerCase\(\)\.startsWith\(value\);\n\s+return matchesMeta\(kind, metaCurrent\(kind, st\), value\);\n\}/);
   assert.match(RENDER, /function metaRowMarks\(kind: MetaKind, st: Status, value: string\): \{ current: boolean; running: boolean \} \{\n\s+const held = heldMenuMarks\(kind, st\.pickHeld, metaCurrent\(kind, st\)\);/);
@@ -127,13 +141,13 @@ test("the badge menus and the Billing flyout mark a held pick the same way: the 
   assert.equal((menu.match(/if \(marks\.running\) (?:head|item)\.appendChild\(runningTag\(\)\);/g) || []).length, 3, "the sub-lined, the icon and the plain row shapes");
   assert.doesNotMatch(menu, /el\("div", "meta-item" \+ \(isCurrentMeta\(kind, s\.status, c\.value\)/, "the rows no longer check the running value alone");
   // the Billing flyout, the same rule: the check on the pick and the tag on the side the CLI reports while held
-  const flyout = RENDER.slice(RENDER.indexOf('const sub = el("div", "ctx-menu ctx-sub");'), RENDER.indexOf("menu.appendChild(sub);"));
+  const flyout = RENDER.slice(RENDER.indexOf("    const openBillingFly = (): HTMLElement | null => {"), RENDER.indexOf('    wireFlyout(menu, item, ".ctx-sub-billing"'));
   assert.match(flyout, /const heldAuth = heldMenuMarks\("auth", st\.pickHeld, st\.authLive \|\| ""\);/);
   // (the flyout falls back to st.auth, the field that carries the billing pick, when the payload names none:
-  // review round 6, executed in auth-selector.test.ts)
-  assert.match(flyout, /const current = heldAuth \? \(heldAuth\.current \|\| st\.auth\) === c\.value : st\.auth === c\.value;/);
+  // review round 6, executed in auth-selector.test.ts; not held, the check is T346's authChoiceCurrent, by WHICH login)
+  assert.match(flyout, /const cur = heldAuth \? \(heldAuth\.current \|\| st\.auth\) === c\.value : authChoiceCurrent\(st, c\.value\);/);
   assert.match(flyout, /const running = !!heldAuth && heldAuth\.running === c\.value;/);
-  assert.match(flyout, /el\("div", "ctx-item" \+ \(current \? " current" : ""\) \+ \(running \? " running" : ""\) \+ \(c\.why \? " disabled" : ""\)\)/);   // main's greyed unavailable side rides beside the held marks (billing-one-auth.test.ts)
+  assert.match(flyout, /el\("div", "ctx-item" \+ \(cur \? " current" : ""\) \+ \(running \? " running" : ""\)\)/);   // no greyed side since 2026-09-14: the flyout lists what this box can bill (billing-one-auth.test.ts)
   assert.match(flyout, /if \(running\) opt\.appendChild\(runningTag\(\)\);/);
   // the tag is the menu sub-line vocabulary, spaced from the label; no size of its own (ui/CLAUDE.md)
   assert.match(RENDER, /function runningTag\(\): HTMLElement \{\n\s+const tag = el\("span", "meta-item-sub running-tag"\);\n\s+tag\.textContent = " " \+ RUNNING_TAG;/);
@@ -145,10 +159,13 @@ test("executed: metaRowMarks checks the picked row and tags the running row whil
   // the row-mark rule lifted from render.ts (metaCurrent through metaRowMarks) and run against statuses, with
   // heldMenuMarks supplied from pick-held.ts, so the classes the menu draws are executed, not only pinned
   const requireCjs = createRequire(__filename);
-  const start = RENDER.indexOf("function metaCurrent(kind: MetaKind, st: Status): string {");
+  // metaCurrent moved to status-controls.ts with the badges (T415 part two); the marks are render.ts's
+  const cur0 = MODULE.indexOf("export function metaCurrent(kind: MetaKind, st: MetaStatus): string {");
+  const cur1 = MODULE.indexOf("\n}\n", cur0) + 3;
+  const start = RENDER.indexOf("function matchesMeta(kind: MetaKind, current: string, value: string): boolean {");
   const end = RENDER.indexOf("\n}\n", RENDER.indexOf("function metaRowMarks(")) + 3;
-  assert.ok(start > 0 && end > start, "the slice anchors moved; re-anchor");
-  const js = requireCjs("esbuild").transformSync(RENDER.slice(start, end), { loader: "ts" }).code;
+  assert.ok(cur0 > 0 && cur1 > cur0 && start > 0 && end > start, "the slice anchors moved; re-anchor");
+  const js = requireCjs("esbuild").transformSync(MODULE.slice(cur0, cur1).replace(/^export /, "") + "\n" + RENDER.slice(start, end), { loader: "ts" }).code;
   const api = new Function("heldMenuMarks", js + "\nreturn { metaRowMarks, isCurrentMeta, matchesMeta };")(heldMenuMarks);
   const held = { surfaces: ["effort", "mode"], subagents: 1, tasks: 0, picked: { effort: "max", mode: "bypassPermissions" } };
   const st = { effort: "high", mode: "default", model: "Opus 5", fast: "off", pickHeld: held };
@@ -229,66 +246,86 @@ test("executed: a FakeEl inspects as its own projection: the edges (children, pa
   assert.equal(root.firstElementChild, kid); assert.equal(root.querySelector(".kid"), kid);
 });
 
-test("executed: the reloading line's hover title names the change the reload applies, per kind", () => {
-  // round 7's gate emits the reloading element for a fast or mode reload too, and its title said "applying the effort
+test("executed: the reloading notice's tip names the change the reload applies, per kind; the held and switching states keep their own words", () => {
+  // round 7's gate emits the reloading notice for a fast or mode reload too, and its title said "applying the effort
   // change" for all of them (review round 9, correctness-2 and ui-2). The kernel's event carries the pending kinds
   // (picks: effort, mode, fast) and pick-held.ts words the title from them (reloadingTitle, executed per kind in
-  // pick-held.test.ts); renderReconnecting is lifted here and run against one event per variant
+  // pick-held.test.ts); renderReconnecting is lifted here with reconnectingGist (its gist) and run against one event
+  // per variant over a notice() stub that records the spec each exit hands it (the notice-vocabulary shape, 2026-09-08)
   const requireCjs = createRequire(__filename);
   const start = RENDER.indexOf("function renderReconnecting(");
   const end = RENDER.indexOf("\n}\n", start) + 3;
-  assert.ok(start > 0 && end > start, "the slice anchors moved; re-anchor");
-  const js = requireCjs("esbuild").transformSync(RENDER.slice(start, end), { loader: "ts" }).code;
-  const mk = (tag: string, cls?: string) => new FakeEl(tag, cls);
-  const render = new Function("el", "dot", "metaDots", "pickHeldLine", "pickHeldTitle", "reloadingTitle", "switchingTitle", js + "\nreturn renderReconnecting;")(
-    mk, () => mk("span", "dot"), () => mk("span", "meta-dots"), pickHeldLine, pickHeldTitle, reloadingTitle, switchingTitle);
-  const line = (ev: object) => render(ev).querySelector(".reconnecting-line") as FakeEl & { title?: string };
+  const gistLine = RENDER.match(/^function reconnectingGist\(effort\?: string\): string \{.*\}$/m);
+  assert.ok(start > 0 && end > start && gistLine, "the slice anchors moved; re-anchor");
+  const js = requireCjs("esbuild").transformSync(gistLine![0] + "\n" + RENDER.slice(start, end), { loader: "ts" }).code;
+  type Spec = { src: string; glyph: string | FakeEl; sev: string; gist: string; live?: boolean; cls?: string; tip?: string };
+  const specs: Spec[] = [];
+  const notice = (sp: Spec) => { specs.push(sp); return new FakeEl("div", "turn turn-notice " + (sp.cls || "")); };
+  const render = new Function("notice", "noticeLiveGlyph", "metaDots", "pickHeldLine", "pickHeldTitle", "reloadingTitle", "switchingTitle", js + "\nreturn renderReconnecting;")(
+    notice, (inner: FakeEl) => new FakeEl("span", "notice-glyph notice-glyph-live").appendChild(inner).parent!, () => new FakeEl("span", "meta-dots"),
+    pickHeldLine, pickHeldTitle, reloadingTitle, switchingTitle);
+  const spec = (ev: object): Spec => { render(ev); return specs[specs.length - 1]; };
+  const dots = (sp: Spec) => typeof sp.glyph !== "string" && !!sp.glyph.querySelector(".meta-dots");
   const tail = ": reloading the session (it re-reads the transcript); any message you send lands once it's back";
-  const effort = line({ kind: "reconnecting", effort: "max", held: null, picks: ["effort"] });
-  assert.equal(effort.title, "applying the effort change" + tail);
-  assert.equal(effort.textContent, "Reloading session: applying max effort\u2026");   // the visible text, pinned above (a colon since round 10)
-  const fast = line({ kind: "reconnecting", effort: "", held: null, picks: ["fast"] });
-  assert.equal(fast.title, "applying the fast mode change" + tail, "a fast reload names fast mode, not effort");
-  assert.equal(fast.textContent, "Reloading session…");
-  const mode = line({ kind: "reconnecting", effort: "", held: null, picks: ["mode"] });
-  assert.equal(mode.title, "applying the permission mode change" + tail, "a mode reload names the permission mode");
-  assert.equal(line({ kind: "reconnecting", effort: "max", held: null, picks: ["effort", "fast"] }).title,
+  const effort = spec({ kind: "reconnecting", effort: "max", held: null, picks: ["effort"] });
+  assert.equal(effort.tip, "applying the effort change" + tail);
+  assert.equal(effort.gist, "Reloading session \u2014 applying max effort\u2026");   // the visible text, pinned above (upstream's reconnectingGist)
+  assert.equal(effort.live, true); assert.ok(dots(effort), "the dots: romp is working");
+  assert.equal(effort.cls, "turn-reconnecting");
+  const fast = spec({ kind: "reconnecting", effort: "", held: null, picks: ["fast"] });
+  assert.equal(fast.tip, "applying the fast mode change" + tail, "a fast reload names fast mode, not effort");
+  assert.equal(fast.gist, "Reloading session\u2026");
+  const mode = spec({ kind: "reconnecting", effort: "", held: null, picks: ["mode"] });
+  assert.equal(mode.tip, "applying the permission mode change" + tail, "a mode reload names the permission mode");
+  assert.equal(spec({ kind: "reconnecting", effort: "max", held: null, picks: ["effort", "fast"] }).tip,
     "applying the effort and fast mode changes" + tail, "two picks riding one reload");
   // an older kernel's event carries no picks: its effort text still names effort; otherwise the change is unnamed
-  assert.equal(line({ kind: "reconnecting", effort: "max", held: null }).title, "applying the effort change" + tail);
-  assert.equal(line({ kind: "reconnecting", effort: "", held: null }).title, "applying the settings change" + tail);
-  // held: the hold's own words, no reload claim
+  assert.equal(spec({ kind: "reconnecting", effort: "max", held: null }).tip, "applying the effort change" + tail);
+  assert.equal(spec({ kind: "reconnecting", effort: "", held: null }).tip, "applying the settings change" + tail);
+  // held: the hold's own words, no reload claim, a still glyph and no live mark
   const hold = { surfaces: ["fast"], subagents: 1, tasks: 0 };
-  const held = line({ kind: "reconnecting", effort: "", held: hold, picks: [] });
-  assert.equal(held.title, pickHeldTitle(hold));
-  assert.equal(held.textContent, pickHeldLine(hold));
-  assert.doesNotMatch(held.title!, /reloading the session/);
+  const held = spec({ kind: "reconnecting", effort: "", held: hold, picks: [] });
+  assert.equal(held.tip, pickHeldTitle(hold));
+  assert.equal(held.gist, pickHeldLine(hold));
+  assert.doesNotMatch(held.tip!, /reloading the session/);
+  assert.equal(held.glyph, "session", "a still glyph, not the loader dots");
+  assert.ok(!held.live, "no live mark while held");
+  assert.equal(held.cls, "turn-reconnecting turn-reconnecting-held");
   // the landing's live switch in flight (the event's `switching`; review round 10): the mode change is being applied and
-  // nothing reloads, so the line says so, with the dots, and the title names the reload that follows for the other picks
-  const sw = line({ kind: "reconnecting", effort: "", held: null, picks: ["mode"], switching: true });
-  assert.equal(sw.textContent, "Applying the permission mode change…");
-  assert.equal(sw.title, switchingTitle(["mode"]));
-  assert.doesNotMatch(sw.title!, /reloading the session/, "nothing reloads during the switch alone");
-  assert.ok(sw.querySelector(".meta-dots"), "the dots: romp is working");
-  const sw2 = line({ kind: "reconnecting", effort: "", held: null, picks: ["mode", "fast"], switching: true });
-  assert.equal(sw2.textContent, "Applying the permission mode change…");
-  assert.match(sw2.title!, /then reloading the session for the fast mode change/);
-  assert.equal(line({ kind: "reconnecting", effort: "", held: null, picks: ["mode"], switching: false }).textContent, "Reloading session…",
-    "a mode reload with no switch in flight keeps the reloading line");
-  assert.match(RENDER, /line\.title = reloadingTitle\(ev\.picks, ev\.effort\);/);
-  assert.match(RENDER, /line\.title = switchingTitle\(ev\.picks\);/);
+  // nothing reloads, so the gist says so, with the dots, and the tip names the reload that follows for the other picks
+  const sw = spec({ kind: "reconnecting", effort: "", held: null, picks: ["mode"], switching: true });
+  assert.equal(sw.gist, "Applying the permission mode change\u2026");
+  assert.equal(sw.tip, switchingTitle(["mode"]));
+  assert.doesNotMatch(sw.tip!, /reloading the session/, "nothing reloads during the switch alone");
+  assert.equal(sw.live, true); assert.ok(dots(sw), "the dots: romp is working");
+  const sw2 = spec({ kind: "reconnecting", effort: "", held: null, picks: ["mode", "fast"], switching: true });
+  assert.equal(sw2.gist, "Applying the permission mode change\u2026");
+  assert.match(sw2.tip!, /then reloading the session for the fast mode change/);
+  assert.equal(spec({ kind: "reconnecting", effort: "", held: null, picks: ["mode"], switching: false }).gist, "Reloading session\u2026",
+    "a mode reload with no switch in flight keeps the reloading notice");
+  assert.match(RENDER, /tip: reloadingTitle\(ev\.picks, ev\.effort\)/);
+  assert.match(RENDER, /tip: switchingTitle\(ev\.picks\)/);
   assert.match(RENDER, /kind: "reconnecting"; effort\?: string; held\?: PickHeld \| null; picks\?: string\[\]; switching\?: boolean;/);
   assert.doesNotMatch(RENDER, /applying the effort change \u2014 reloading/, "the round-8 title, one sentence for every kind");
 });
 
-// render.ts's statusline slice, metaCurrent through syncMetaControls (the menu-row rule, the local loader's arm and
-// its hold-end retirement, the badge builder), lifted and run with the chat's helpers stubbed to their identities
+// The statusline, lifted and run with the chat's helpers stubbed to their identities: status-controls.ts's badge code
+// (metaCurrent through syncMetaControls, T415 part two) under the names the chat imports it by (buildMetaButton,
+// syncMetaControlsWith), then render.ts's own half, matchesMeta through applyHeldMarks (the menu-row rule, the local
+// loader's arm and its hold-end retirement, the pending hook, the wrappers and this fork's held post-pass) and metaTip
 function liftStatusline(activeId: string) {
   const requireCjs = createRequire(__filename);
-  const start = RENDER.indexOf("function metaCurrent(kind: MetaKind, st: Status): string {");
-  const end = RENDER.indexOf("\n}\n", RENDER.indexOf("function syncMetaControls(")) + 3;
-  assert.ok(start > 0 && end > start, "the slice anchors moved; re-anchor");
-  const js = requireCjs("esbuild").transformSync(RENDER.slice(start, end), { loader: "ts" }).code;
+  const m0 = MODULE.indexOf("export function metaCurrent(kind: MetaKind, st: MetaStatus): string {");
+  const m1 = MODULE.indexOf("\n}\n", MODULE.indexOf("export function syncMetaControls(")) + 3;
+  const start = RENDER.indexOf("function matchesMeta(kind: MetaKind, current: string, value: string): boolean {");
+  const end = RENDER.indexOf("\n}\n", RENDER.indexOf("function applyHeldMarks(")) + 3;
+  const t0 = RENDER.indexOf("function metaTip(kind: MetaKind): string {");
+  const t1 = RENDER.indexOf("\n}\n", t0) + 3;
+  assert.ok(m0 > 0 && m1 > m0 && start > 0 && end > start && t0 > 0 && t1 > t0, "the slice anchors moved; re-anchor");
+  const mod = MODULE.slice(m0, m1).replace(/^export /gm, "")
+    .replace("function metaButton(", "function buildMetaButton(").replace(/metaButton\("/g, 'buildMetaButton("')
+    .replace("function syncMetaControls(", "function syncMetaControlsWith(");
+  const js = requireCjs("esbuild").transformSync(mod + "\n" + RENDER.slice(start, end) + "\n" + RENDER.slice(t0, t1), { loader: "ts" }).code;
   const names = ["heldMenuMarks", "badgeHeldTip", "RUNNING_TAG", "el", "setTip", "modeIconSvg", "riskyMode", "toggleMetaMenu",
                  "pickTone", "readableRgb", "prettyMode", "prettyFast", "fastAvailable", "activeId"];
   const body = js + "\nreturn { syncMetaControls, armMetaPending, settleMetaHold, isMetaPending, metaCurrent, metaPending };";
@@ -365,8 +402,10 @@ test("executed: a click on the running row arms no loader, and the hold-cleared 
   assert.equal(pulse("effort"), false);
   api.syncMetaControls(meta, plainSt);                                  // the hold ends with high still running
   assert.equal(api.metaPending.has(`${SID}:effort`), false, "retired by the hold's end, not by the timer");
-  assert.equal(dots("effort"), false);
-  assert.equal(pulse("effort"), false);
+  // the frame where the hold ends paints no loader either: the settle must run before the module's pass reads the
+  // loader (a post-pass alone would paint the dots for this one frame and clear them on the next sync)
+  assert.equal(dots("effort"), false, "the hold-end frame shows no dots for the loader it retires");
+  assert.equal(pulse("effort"), false, "…and no pulse");
   assert.equal(api.isMetaPending("effort", plainSt), false);
   // the server's own signal still drives the dots for an effort reload after the hold
   api.syncMetaControls(meta, { ...plainSt, effortPending: true });

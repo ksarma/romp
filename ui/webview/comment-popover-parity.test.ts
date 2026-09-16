@@ -199,6 +199,12 @@ test("the thread popover opens 70% wide right-aligned, 60% tall — and NEVER gr
   assert.ok(!opener.includes("commentPopPos = { x, y }"), "no click-coord seeding on thread open");
   // …and the CSS no longer hard-sizes the box (the inline open geometry owns it)
   assert.doesNotMatch(CSS, /\.cmt-pop \{[^}]*width: 440px/s);
+  // the remembered size (2026-09-10, comment-pop-size.test.ts) sits ABOVE these lines and only fills the
+  // inline size when a preference exists — so with nothing stored the two lines above still decide, byte
+  // for byte, and the create dialog still writes no inline size at all
+  const body = RENDER.split("function renderCommentPopover(")[1].split("\nfunction ")[0];
+  assert.ok(body.indexOf("const pref = readCmtPopSize();") < body.indexOf("if (th && !pop.style.width)"));
+  assert.match(body, /if \(pref\) \{[\s\S]*?pop\.style\.width = sz\.w \+ "px";[\s\S]*?\}\s*\n\s*\/\/ OPEN GEOMETRY/, "the preference branch, then the default");
 });
 
 test("the popover resizes from ANY edge or corner, macOS-style; the old grip keeps working", () => {
@@ -237,7 +243,8 @@ test("the pickers re-read /models on the kernel's models frame — the pick memo
   // picker — chat, timeline, and the feed, where the settings gear's judge-tier pickers live (a
   // round left the feed out once, so the gear never heard the frame where it actually opens)
   assert.match(KERNEL, /frame = \{"type": "models", "rev": _models_rev\[0\]\}/);
-  assert.match(KERNEL, /for app in \("chat", "timeline", "feed"\):\s*\n\s*_send_to_app\(app, frame\)/);
+  assert.match(KERNEL, /for app in \("chat", "timeline", "feed", "settings"\):\s*\n\s*_send_to_app\(app, frame\)/,
+    "the models frame reaches the settings page too, since the gear lives there (the optional-panes change)");
   // …and the payload carries the same counter, so a consumer can drop a response older than one applied
   assert.match(KERNEL, /\{"rev": _rev,\s*\n\s*"models": \[/);
   assert.match(KERNEL, /_rev = _models_rev\[0\]\s*\n\s*_learned = _learned_versions\(\)/, "read before the list, never after it");

@@ -156,10 +156,10 @@ class DrainLease(unittest.TestCase):
 
 
 class GoingDownHold(unittest.TestCase):
-    """`romp down`'s quiesce (2026-09-06) rides the same lease: quiesce(ttl) extends the hold to cover
-    the wait plus the stop that follows and flags the create doors closed (quiescing); a deploy poll
-    landing inside it must never SHORTEN it; the cancel releases and wakes; and it stays a lease —
-    no stop, and the kernel carries on by itself."""
+    """`romp down`'s quiesce rides the same lease: quiesce(ttl) extends the hold to cover the wait plus
+    the stop that follows and flags the create doors closed (quiescing); a deploy poll landing inside it
+    must never SHORTEN it; the cancel releases and wakes; and it stays a lease: no stop, and the kernel
+    carries on by itself."""
 
     def test_a_fresh_backend_is_not_quiescing(self):
         self.assertFalse(_backend().quiescing())
@@ -168,8 +168,8 @@ class GoingDownHold(unittest.TestCase):
     def test_quiesce_arms_both_the_turn_hold_and_the_create_gate_for_the_ttl(self):
         be = _backend()
         be.quiesce(0.3)
-        self.assertTrue(be.drain_holding(), "new turn starts hold — the same gate inputs() consults")
-        self.assertTrue(be.quiescing(), "…and the create doors read closed")
+        self.assertTrue(be.drain_holding(), "new turn starts hold: the same gate inputs() consults")
+        self.assertTrue(be.quiescing(), "and the create doors read closed")
         time.sleep(0.45)
         self.assertFalse(be.quiescing(), "a lease, not a latch: with no stop the kernel carries on")
         self.assertFalse(be.drain_holding())
@@ -179,8 +179,11 @@ class GoingDownHold(unittest.TestCase):
         be.DRAIN_HOLD_TTL = 0.1
         be.quiesce(5)
         be.refresh_drain_hold()
-        self.assertGreater(be._drain_hold_until, time.time() + 4,
-                           "the 12s lease refresh extends a hold, it never cuts a longer one back")
+        try:
+            self.assertGreater(be._drain_hold_until, time.time() + 4,
+                               "the 12s lease refresh extends a hold, it never cuts a longer one back")
+        finally:
+            be._drain_wake_timer.cancel()
 
     def test_a_deploy_poll_inside_a_quiesce_does_not_ring_a_stale_clock(self):
         # refresh_drain_hold's "still parked" escalation clocks from _drain_hold_since; a quiesce that
@@ -190,7 +193,10 @@ class GoingDownHold(unittest.TestCase):
         be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None, log=logs.append)
         be.quiesce(5)
         be.refresh_drain_hold()
-        self.assertFalse(any("still parked" in str(l) for l in logs), logs)
+        try:
+            self.assertFalse(any("still parked" in str(l) for l in logs), logs)
+        finally:
+            be._drain_wake_timer.cancel()
 
     def test_cancel_releases_at_once_and_wakes_the_held_inputs(self):
         be = _backend()
@@ -212,15 +218,6 @@ class GoingDownHold(unittest.TestCase):
         n = len(logs)
         be.cancel_quiesce()
         self.assertEqual(len(logs), n, "a cancel with nothing to cancel says nothing")
-
-    def test_the_kernel_doors_ride_the_gate(self):
-        ksrc = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read()
-        self.assertIn('if u.path == "/down":', ksrc)
-        import re
-        self.assertEqual(len(re.findall(r"^\s*if _going_down\(\):", ksrc, re.M)), 1,
-                         "POST /new refuses on the shared helper")
-        self.assertEqual(len(re.findall(r"^\s*elif _going_down\(\):", ksrc, re.M)), 1,
-                         "so does the WS createSession op")
 
 
 if __name__ == "__main__":

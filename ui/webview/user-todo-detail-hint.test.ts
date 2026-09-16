@@ -73,7 +73,7 @@ test("the uttoggle handler repaints the hint in place (open ↔ closed) alongsid
 test("the hint wears the row's chrome rung and the dim text color — the accent is not for this", () => {
   const rule = (CSS.match(/\.ut-more \{[^}]*\}/) || [""])[0];
   assert.ok(rule, ".ut-more rule exists");
-  assert.match(rule, /font-size: 0\.72em;/, "the .ut-btn / .todo-head rung: row chrome matches row chrome");
+  assert.match(rule, /font-size: 0\.72em;/, "the .ut-btn / .ut-head rung: row chrome matches row chrome");
   assert.match(rule, /color: var\(--dim\);/);
   assert.match(rule, /display: inline-block;/, "so the text's dotted hover underline does not run under the hint");
   assert.match(rule, /white-space: nowrap;/, "the caret and the word never split across a wrap");

@@ -20,7 +20,7 @@
 // ephemeralWarnToast marks it data-ephemeral for the reading to skip. The record is text only, on purpose: a toast
 // has no action beyond its dismissal today, and a future toast with one would replay as its words alone. Pure and
 // DOM-free so node --test executes both readings (reload-notices.test.ts); the served scenario is
-// tests/test_ship_reship.py NackNoticeSurvivesReload.
+// tests/test_ship_reship_served.py NackNoticeSurvivesReload.
 //
 // One divergence from upstream's module: this fork's reload core keeps a 60 s backstop on the pane hold (kernel.py
 // _RELOAD_CORE_JS, the fork's; ledger upstream/2026-09-09-reload-deadline-backstop.md) that hands the pane a release note

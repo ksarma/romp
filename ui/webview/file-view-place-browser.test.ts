@@ -30,6 +30,9 @@ import { inBrowser, openViewer, openPanel, closePanel, frames, paintsReach, topB
 
 const near = (a: number, b: number, what: string, tol = 1.5) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b}`);
 const P40 = "Paragraph 40:";
+/** The text-size buttons ride the zoom glyph's flyout (upstream T367: shut until the glyph is pressed, and shut again by any
+ *  press outside it): open it when it is shut, so a press on A+, A- or the readout lands on a shown button. */
+const openZoom = async (page: any) => { if (await page.evaluate(() => { const m = document.querySelector(".fileview .fileview-zoom-menu") as HTMLElement | null; return !m || m.hidden; })) await page.click(".fileview .fileview-zoom-btn"); };
 
 test("in a browser, the real module: a reload that inserts twenty paragraphs above the reader keeps the top block at its height, Rendered and Raw, in the pane at 900 and 380px and in the chat modal; with the Comments aside open too", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
@@ -132,6 +135,7 @@ test("in a browser, the real module: the width reflow keeps the place, whichever
     }
     // a text-size step: the text grows around the reader
     paints = await page.evaluate(() => (window as any).__paints);
+    await openZoom(page);
     await page.click('button[aria-label="Larger text"]');
     await paintsReach(page, paints + 1);
     await frames(page, 2);

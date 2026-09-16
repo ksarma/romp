@@ -84,9 +84,12 @@ const wholeIn = (c: Box, of: Box): boolean => c.top >= of.top - 1 && c.bottom <=
 const markSel = (key: string): string => key.startsWith("chg:") ? '.fileview-body [data-act="fcchange"][data-id="' + key.slice(4) + '"]' : '.fileview-body [data-act="fcopen"][data-id="' + key + '"]';
 const cardSel = (key: string, inner = ""): string => '.fileview-aside .fc-card[data-id="' + key + '"]' + (inner ? " " + inner : "");
 const click = (page: any, sel: string): Promise<void> => page.evaluate((sel: string) => { const n = document.querySelector(sel) as HTMLElement | null; if (!n) throw new Error("nothing at " + sel); n.click(); }, sel);
-/** The action bar's view toggle: the button whose label is the view's name. */
-const clickView = (page: any, label: "Raw" | "Rendered"): Promise<void> => page.evaluate((label: string) => { const b = Array.from(document.querySelectorAll(".fileview .fileview-btn")).find((x) => x.textContent === label) as HTMLElement | undefined; if (!b) throw new Error("no view button " + label); b.click(); }, label);
+/** The action bar's view toggle: the button whose label is the view's name, as its text or its aria-label (T367's glyph buttons carry the label as aria-label). */
+const clickView = (page: any, label: "Raw" | "Rendered"): Promise<void> => page.evaluate((label: string) => { const b = Array.from(document.querySelectorAll(".fileview .fileview-btn")).find((x) => x.textContent === label || x.getAttribute("aria-label") === label) as HTMLElement | undefined; if (!b) throw new Error("no view button " + label); b.click(); }, label);
 const paints = (page: any): Promise<number> => page.evaluate(() => (window as any).__paints);
+/** The text-size buttons ride the zoom glyph's flyout (upstream T367: shut until the glyph is pressed, and shut again by any
+ *  press outside it): open it when it is shut, so a press on A+, A- or the readout lands on a shown button. */
+const openZoom = async (page: any) => { if (await page.evaluate(() => { const m = document.querySelector(".fileview .fileview-zoom-menu") as HTMLElement | null; return !m || m.hidden; })) await page.click(".fileview .fileview-zoom-btn"); };
 const changeMarked = (page: any): Promise<unknown> => page.waitForFunction(() => !!document.querySelector('.fileview-body [data-act="fcchange"][data-id="h1"]'), null, { timeout: 10000 });
 
 /** The focused card's seat: level with its mark within a pixel, the track's scroll the body's within a pixel, not pushed;
@@ -137,7 +140,7 @@ test("in a browser, the real viewer, pane 1000x600: a comment's card made the fo
     s = await scene(page); assert.equal(s.view, "rendered", "(a) the Rendered view"); seated(s, "a", "(a) after Rendered", true);
     // (b) A+: textSizeControl's set runs the step bracket: its repaint, then its seat
     n = s.paints;
-    await page.click('button[aria-label="Larger text"]'); await paintsReach(page, n + 1); await frames(page, 3);
+    await openZoom(page); await page.click('button[aria-label="Larger text"]'); await paintsReach(page, n + 1); await frames(page, 3);
     s = await scene(page); assert.notEqual(s.size, "100", "(b) the text size stepped: " + s.size); seated(s, "a", "(b) after A+", false);
     // (c) a session's write above the marks lands through the poll: the status names the new mtime, the panel asks the
     // viewer to reload, the fetch brings the new bytes, renderBody paints (the pass) and seats the top block

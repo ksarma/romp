@@ -1,20 +1,20 @@
-// THE SECTION SNAPSHOT, VIEW HELPERS (tab-snapshot-view.ts; the round-2 review of the tabsnapshot branch):
-// the pane-side rules render.ts applies to the snapshot, pure so they execute here without a DOM. The
-// model and its words are tab-snapshot.ts; the render.ts pins are tab-snapshot-pane.test.ts. Synthetic
-// only: the notes-api demo world (web / api / tests), placeholder ids.
+// A SECTION AT A GLANCE, THE VIEW HELPERS (tab-snapshot-view.ts): the pane-side rules render.ts applies to
+// the view, pure so they execute here without a DOM: which row click may open a session, how Escape yields
+// to every layer that owns its own Escape, and how the rows update in place. The model and its words are
+// tab-snapshot.ts; the pane's wiring is tab-snapshot-pane.test.ts. Synthetic only: the notes-api demo world.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { rowStillOpen, installSnapshotEscape, reconcileRows } from "./tab-snapshot-view";
 
-test("a row whose session left the strip mid-press opens nothing (round 2): a frame's row needs its session, a placeholder's row its meta, and a closing tab is neither", () => {
+test("a row whose session left the strip mid-press opens nothing: a frame's row needs its session, a placeholder's row its meta, and a closing tab is neither", () => {
   // click safety keeps the pressed row in the DOM until the release, so a session dismissed between mousedown
-  // and mouseup (the kernel's closed frame, a tabOrder push without it) is still under the click. setActive on
-  // that id found tabMeta still holding it (dismissSession leaves tabMeta to the next tabOrder frame) and put
-  // up an "opening…" loader, composer enabled, for a session that never arrives.
+  // and mouseup (the kernel's closed frame, a tabOrder push without it) is still under the click; setActive on
+  // that id would find tabMeta still holding it (dismissSession leaves tabMeta to the next tabOrder frame) and
+  // put up a loader for a session that never arrives
   const frame = { loading: false }, placeholder = { loading: true };
   assert.equal(rowStillOpen(frame, true, true, false), true, "a live row with its session: opens");
-  assert.equal(rowStillOpen(frame, false, true, false), false, "its session gone, its meta lingering (closed frame before the next tabOrder push): nothing opens");
-  assert.equal(rowStillOpen(frame, false, false, false), false, "session and meta gone (a tabOrder push without it): nothing opens");
+  assert.equal(rowStillOpen(frame, false, true, false), false, "its session gone, its meta lingering: nothing opens");
+  assert.equal(rowStillOpen(frame, false, false, false), false, "session and meta gone: nothing opens");
   assert.equal(rowStillOpen(placeholder, false, true, false), true, "a placeholder row (no frame yet) with its meta: opens, the loading branch is its state");
   assert.equal(rowStillOpen(placeholder, false, false, false), false, "a placeholder whose meta left: nothing opens");
   assert.equal(rowStillOpen(placeholder, true, false, false), true, "a placeholder whose frame landed mid-press: the session is there, it opens");
@@ -23,7 +23,6 @@ test("a row whose session left the strip mid-press opens nothing (round 2): a fr
   assert.equal(rowStillOpen(undefined, false, true, false), false);
 });
 
-// ── the snapshot's Escape, two phases on one window ───────────────────────────────────────────────
 // A stand-in for one keydown's dispatch through the chat frame, in DOM order: the window's capture listeners,
 // the DOCUMENT's capture listeners (where the shell's Escape chain sits: kernel.py _LANDING_ESC_JS wires onEsc
 // onto this frame's contentDocument at capture), then the target and the bubble back up to the window. A
@@ -45,28 +44,27 @@ const key = (k: string, target: EventTarget | null = null) => {
     preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; } };
   return e as unknown as KeyboardEvent;
 };
-// the shell's chain, as _LANDING_ESC_JS behaves: a panel open → close it, mark the Escape, stop it; else nothing
+// the shell's chain, as _LANDING_ESC_JS behaves: a panel open, close it, mark the Escape, stop it; else nothing
 const shell = (panel: { open: boolean }) => (e: KeyboardEvent) => { if (e.key === "Escape" && panel.open) { panel.open = false; e.preventDefault(); e.stopPropagation(); } };
 
-test("Escape leaves the snapshot only when no layer claimed it: the shell's panels (log, usage, network) live out of this page's sight, so the decision waits for the shell's chain (round 2)", () => {
-  // the one-phase handler (window capture) ran before the shell's document-capture chain and could not see the
-  // shell document's panels: an Escape aimed at the log panel closed it AND swapped the pane. Two phases now:
-  // armed at capture (this page's own layers still on the page to be seen), decided at bubble, which an Escape the
-  // shell stopped never reaches
+test("Escape leaves the view only when no layer claimed it: the shell's panels live out of this page's sight, so the decision waits for the shell's chain", () => {
+  // a one-phase handler at the window's capture would run before the shell's document-capture chain and could
+  // not see the shell document's panels: an Escape aimed at the log panel would close it AND swap the pane. Two
+  // phases: armed at capture (this page's own layers still on the page to be seen), decided at bubble, which an
+  // Escape the shell stopped never reaches
   const f = frame();
   const panel = { open: true };
   f.docCap.push(shell(panel));
   let showing = true, left = 0, layer = false;
   installSnapshotEscape(f.win, { showing: () => showing, typing: () => false, layerOpen: () => layer, leave: () => { left++; showing = false; } });
   assert.equal(f.winCap.length, 1); assert.equal(f.winBub.length, 1, "one listener per phase");
-  // 1. a shell panel open: the shell closes it and stops the Escape; the snapshot stays
   let e = key("Escape"); f.dispatch(e);
   assert.equal(panel.open, false, "the shell closed its panel");
-  assert.equal(left, 0, "…and the snapshot stayed");
+  assert.equal(left, 0, "and the view stayed");
   assert.equal(e.defaultPrevented, true, "the shell's mark");
-  // 2. nothing open anywhere: the Escape reaches the bubble unclaimed; the snapshot leaves, once, marked
   e = key("Escape"); f.dispatch(e);
-  assert.equal(left, 1, "left"); assert.equal(e.defaultPrevented, true, "and marked as taken");
+  assert.equal(left, 1, "nothing open anywhere: the Escape reaches the bubble unclaimed; the view leaves, once");
+  assert.equal(e.defaultPrevented, true, "and is marked as taken");
   f.dispatch(key("Escape"));
   assert.equal(left, 1, "not showing any more: nothing to leave");
 });
@@ -93,7 +91,6 @@ test("the arm yields to this page's own layers at capture, to an earlier capture
   f.dispatch(key("Escape")); assert.equal(left, 1, "marked between the phases: yielded");
 });
 
-// ── the rows update in place, keyed by session id ─────────────────────────────────────────────────
 // A stand-in for the list node: children in order, the DOM's insertBefore (a node already in the list is
 // moved: detached, then put before the reference; a null reference appends) and removeChild. Each row's node
 // is a plain object, so identity is what the assertions compare.
@@ -110,44 +107,38 @@ class List {
 }
 const rows = (...rs: Array<[string, string]>): Row[] => rs.map(([id, now]) => ({ id, now }));
 
-test("a changed row keeps its node, patched; a row that came is made and one that went is removed with the others standing; a reorder moves without remaking (round 2)", () => {
-  // every model change repainted the rows wholesale (host.replaceChildren), and sameRow folds lastT and lastMsg,
-  // so the rows rebuilt on nearly every push while a member worked: the button a keyboard user had Tabbed onto
-  // was destroyed under them within seconds (focus to body, Enter dead), and a hover's title dismissed. The
-  // node is what focus and the title belong to, so the node is what a rebuild must keep.
+test("a changed row keeps its node, patched; a row that came is made and one that went is removed with the others standing; a reorder moves without remaking", () => {
+  // sameRow (tab-snapshot.ts) folds lastT and lastMsg, so the model changes on nearly every push while a member
+  // works: a wholesale repaint would destroy the button a keyboard user had Tabbed onto within seconds (focus to
+  // body, Enter dead) and dismiss a hover's title. Focus and the title belong to the NODE, so the node is kept.
   const list = new List();
   const made: string[] = [], patched: string[] = [];
   const key = (n: Node) => n.id;
   const make = (r: Row): Node => { made.push(r.id); return { id: r.id, text: r.now }; };
   const patch = (n: Node, r: Row) => { patched.push(r.id); n.text = r.now; };
-  // the first paint: every row made, in the model's order
   let out = reconcileRows(list, rows(["web", "building the list page"], ["api", "idle"], ["tests", "running the suite"]), key, make, patch);
-  assert.deepEqual(out, { kept: 0, made: 3, moved: 0, removed: 0 });
+  assert.deepEqual(out, { kept: 0, made: 3, moved: 0, removed: 0 }, "the first paint: every row made, in the model's order");
   assert.deepEqual(list.children.map((n) => n.id), ["web", "api", "tests"]);
   const [web, api, tests] = list.children;
-  // the push that changes the second row (a tool call: its lastT moved): the node the user is on stands, patched
   made.length = 0; patched.length = 0;
   out = reconcileRows(list, rows(["web", "building the list page"], ["api", "reading the schema"], ["tests", "running the suite"]), key, make, patch);
   assert.equal(list.children[1], api, "the same object: focus and the hover title stay on it");
   assert.equal(api.text, "reading the schema", "with the new parts");
   assert.deepEqual(made, [], "nothing remade");
-  assert.deepEqual(patched, ["web", "api", "tests"], "every standing row takes the model's parts (the model changed; which row is not tracked)");
+  assert.deepEqual(patched, ["web", "api", "tests"], "every standing row takes the model's parts");
   assert.deepEqual(out, { kept: 3, made: 0, moved: 0, removed: 0 });
-  // a row gone (its session left the section) and a row come: the others' nodes stand where they were
   made.length = 0;
   out = reconcileRows(list, rows(["web", "building the list page"], ["tests", "running the suite"], ["docs", "drafting the guide"]), key, make, patch);
-  assert.deepEqual(list.children.map((n) => n.id), ["web", "tests", "docs"]);
+  assert.deepEqual(list.children.map((n) => n.id), ["web", "tests", "docs"], "a row gone and a row come: the others' nodes stand where they were");
   assert.equal(list.children[0], web); assert.equal(list.children[1], tests);
   assert.deepEqual(made, ["docs"]);
   assert.deepEqual(out, { kept: 2, made: 1, moved: 0, removed: 1 });
-  // a reorder (the strip's order changed): nothing made or removed; one node moves
   const docs = list.children[2];
   out = reconcileRows(list, rows(["docs", "drafting the guide"], ["web", "building the list page"], ["tests", "running the suite"]), key, make, patch);
-  assert.deepEqual(list.children, [docs, web, tests], "the same three objects, in the new order");
+  assert.deepEqual(list.children, [docs, web, tests], "a reorder: the same three objects, in the new order");
   assert.deepEqual(out, { kept: 3, made: 0, moved: 1, removed: 0 });
-  // an empty section: every row removed
   out = reconcileRows(list, rows(), key, make, patch);
-  assert.deepEqual(list.children, []);
+  assert.deepEqual(list.children, [], "an empty section: every row removed");
   assert.deepEqual(out, { kept: 0, made: 0, moved: 0, removed: 3 });
 });
 

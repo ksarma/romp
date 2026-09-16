@@ -247,6 +247,8 @@ export function chatKeysScript(): string {
     "const neighborOfFolded = (): string | null => null;", "const lastStripItems: unknown[] = [];",
     "const setActive = (id: string): void => { (window as any).__setActive.push(id); activeId = id; };", "(window as any).__setActive = [];",
     "(window as any).__chatScene = (ord: string[], active: string | null): void => { order.splice(0, order.length, ...ord); activeId = active; };",
+    // render.ts's pickFirstVisibleTab (T357), body for body: from the unfocused pane a keyboard step lands on the first visible tab
+    "const pickFirstVisibleTab = (): boolean => { if (activeId) return false; const first = visibleOrder()[0]; if (!first) return false; setActive(first); return true; };",
     "const scrollContentBy = (content: HTMLElement, dy: number, _writer: string): void => { content.scrollTop += dy; (window as any).__contentScrolls++; };",
     "const transcriptSelection = (): null => null;", "const seedTranscriptQuote = (): void => {};",
     "const focusComposer = (): void => { (document.getElementById(\"composer-input\") as HTMLTextAreaElement).focus(); };",

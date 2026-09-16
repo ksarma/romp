@@ -138,10 +138,59 @@ teardown() { rm -rf "$TEST_DIR"; }
     [ ! -f "$CURL_LOG" ]                                 # no kernel round trip
 }
 
-@test "romp perf client: a Files pane row (the viewer's fileview:<why> passes) and a shell row (long frames only, no frame types) render as panes of their dashboard without special handling" {
-    # 2026-09-09: the Files pane got a collector (its viewer times its own paint pass, since nothing is pushed to it)
-    # and the shell page one with no brackets at all (Chromium reports an iframe's long animation frames to the
-    # top-level window only). Both rows have the minute row's shape, so the verb folds them like any pane's.
+@test "romp perf client: the shell's row (long frames only, no frame types) renders as a pane of its dashboard without special handling" {
+    # The dashboard shell (the top-level window, ui/webview/shell-perf.ts) runs the panes' collector with no
+    # brackets at all: Chromium reports a long animation frame to the top-level document, never to the iframe
+    # whose script ran it, so the shell's row is where a pane script that blocked the page is named. The row
+    # has the minute row's shape with an empty frames map and no free sample, so the verb renders it like any pane's.
+    python3 - "$DIAG" <<'PY'
+import json, sys, time
+now = int(time.time())
+W1 = "11111111-2222-3333-4444-555555555555"
+def row(t, wid, what, data): return json.dumps({"t": t, "wid": wid, "surface": "perf", "what": what, "data": data})
+shell = {"app": "shell", "since": (now - 70) * 1000, "span_ms": 60000,
+         "frames": {}, "free": None,
+         "loaf": {"n": 1, "blocking_ms": 19950, "worst_ms": 20000,
+                  "top": [{"k": "chat.js:paintAll@9000", "ms": 19500, "n": 1, "inv": "Window.requestAnimationFrame"},
+                          {"k": "page:onMove@120", "ms": 150, "n": 1, "inv": "DIV.onpointermove"}], "src": "loaf"},
+         "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 60.0, "dom": 900, "visible": True, "hidden_pane": False, "ua": "chrome-desktop"}
+with open(sys.argv[1], "a") as f:
+    f.write(row(now - 10, W1, "minute", shell) + "\n")
+PY
+    run "$ROMP_SCRIPT" perf client
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"2 dashboards, 4 panes, 6 minute rows, 1 slow frame row"* ]]
+    # the shell: one more pane of dashboard 11111111, no frame types, the long frame it alone saw with the pane script the browser named
+    [[ "$output" == *"dashboard 11111111 · shell   chrome-desktop   1 min reported   heap 60.0 MB   dom 900   visible"* ]]
+    shell_block="$(echo "$output" | sed -n '/^dashboard 11111111 · shell/,/^dashboard 22222222/p')"
+    [[ "$shell_block" == *"handler      no frames"* ]]
+    [[ "$shell_block" == *"main thread  free after a frame p90 n/a   long frames 1.0/min   blocking 19950 ms/min   worst 20000 ms"* ]]
+    [[ "$shell_block" == *"attribution  chat.js:paintAll@9000 19500 ms (Window.requestAnimationFrame)   page:onMove@120 150 ms (DIV.onpointermove)"* ]]
+    [[ "$shell_block" == *"0 ms handler   no frames   long frames 1, blocking 19950 ms"* ]]
+    [[ "$shell_block" == *"slow frames  none"* ]]
+    # the feed pane's own screen is unchanged by the extra pane
+    [[ "$output" == *"feed           14.4/min    360 ms/min   p50 <4   p90 <32   p99 <128 ms   max 130   >16.7 ms 25%   >=100 ms 6%"* ]]
+    run "$ROMP_SCRIPT" perf client --json
+    [ "$status" -eq 0 ]
+    echo "$output" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+panes = {(p["wid"], p["app"]): p for p in d["panes"]}
+assert set(panes) == {("11111111", "feed"), ("11111111", "chat"), ("11111111", "shell"), ("22222222", "feed")}, set(panes)
+s = panes[("11111111", "shell")]
+assert s["frames"] == {} and s["total_ms_per_min"] == 0 and s["free_p90"] is None and s["minutes"] == 1, s
+assert s["loaf"] == {"per_min": 1.0, "blocking_ms_per_min": 19950.0, "worst_ms": 20000, "src": "loaf"}, s["loaf"]
+assert s["top"] == [{"k": "chat.js:paintAll@9000", "ms": 19500, "inv": "Window.requestAnimationFrame"}, {"k": "page:onMove@120", "ms": 150, "inv": "DIV.onpointermove"}], s["top"]
+assert s["worst_minute"]["total_ms"] == 0 and s["worst_minute"]["loaf_n"] == 1 and s["worst_minute"]["blocking_ms"] == 19950, s["worst_minute"]
+assert s["slow"] == [] and s["heap_mb"] == 60.0 and s["dom"] == 900
+'
+}
+
+@test "romp perf client: a Files pane row (the viewer's fileview:paint and fileview:reflow passes, no frames pushed to it) renders as a pane of its dashboard without special handling" {
+    # The Files pane receives no frames; its collector times the viewer's own passes (perf-telemetry.ts,
+    # file-view.ts perfTimed): fileview:paint (a text body painted) and fileview:reflow (the comments panel's
+    # re-place of its cards over reflowed text). A 20 s divider drag over a large reviewed document was invisible
+    # to this verb until the pane had a collector; its row has the minute row's shape, so the verb folds it like any pane's.
     python3 - "$DIAG" <<'PY'
 import json, sys, time
 now = int(time.time())
@@ -152,52 +201,44 @@ def H(**at):
     for k, v in at.items(): h[int(k[1:])] = v
     return h
 def st(n, ms_sum, ms_max, n16, n100, hist): return {"n": n, "ms_sum": ms_sum, "ms_max": ms_max, "n16": n16, "n100": n100, "hist": hist}
-NOSLOW = {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}
 files = {"app": "files", "since": (now - 70) * 1000, "span_ms": 60000,
          "frames": {"fileview:paint": st(1, 180, 180, 1, 1, H(b8=1)), "fileview:reflow": st(12, 720, 90, 12, 0, H(b6=12))},
          "free": {"n": 13, "p50": 40, "p90": 95, "max": 120},
          "loaf": {"n": 0, "blocking_ms": 0, "worst_ms": 0, "top": [], "src": "loaf"},
          "slow": {"sent": 1, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 210.0, "dom": 40000, "visible": True, "hidden_pane": False, "ua": "chrome-desktop"}
-shell = {"app": "shell", "since": (now - 70) * 1000, "span_ms": 60000,
-         "frames": {}, "free": None,
-         "loaf": {"n": 1, "blocking_ms": 19950, "worst_ms": 20000, "top": [{"k": "files.js:paintAll@9000", "ms": 19500, "n": 1, "inv": "Window.requestAnimationFrame"}, {"k": "page:onMove@120", "ms": 150, "n": 1, "inv": "DIV.onpointermove"}], "src": "loaf"},
-         "slow": NOSLOW, "heap_mb": 60.0, "dom": 900, "visible": True, "hidden_pane": False, "ua": "chrome-desktop"}
 slow = {"app": "files", "type": "fileview:paint", "ms": 180, "dom": 40000}
 with open(sys.argv[1], "a") as f:
-    f.write(row(now - 12, W1, "minute", files) + "\n" + row(now - 11, W1, "slowframe", slow) + "\n" + row(now - 10, W1, "minute", shell) + "\n")
+    f.write(row(now - 12, W1, "minute", files) + "\n" + row(now - 11, W1, "slowframe", slow) + "\n")
 PY
     run "$ROMP_SCRIPT" perf client
     [ "$status" -eq 0 ]
-    [[ "$output" == *"2 dashboards, 5 panes, 7 minute rows, 2 slow frame rows"* ]]
+    [[ "$output" == *"2 dashboards, 4 panes, 6 minute rows, 2 slow frame rows"* ]]
     # the Files pane: the viewer's two pass types, the reflow's twelve passes first by handler time
     [[ "$output" == *"dashboard 11111111 · files   chrome-desktop   1 min reported   heap 210.0 MB   dom 40000   visible"* ]]
-    [[ "$output" == *"handler      900 ms/min total"* ]]
-    [[ "$output" == *"fileview:reflow   12.0/min    720 ms/min   p50 <64   p90 <64   p99 <64 ms   max 90   >16.7 ms 100%   >=100 ms 0%"* ]]
-    [[ "$output" == *"fileview:paint    1.0/min    180 ms/min   p50 <256   p90 <256   p99 <256 ms   max 180   >16.7 ms 100%   >=100 ms 100%"* ]]
-    [[ "$output" == *"free after a frame, worst minute's p90 95 ms"* ]]
-    [[ "$output" == *"fileview:paint 180 ms (dom 40000)"* ]]
-    # the shell: no frame types, the long frames it alone saw with the pane script the browser named
-    [[ "$output" == *"dashboard 11111111 · shell   chrome-desktop   1 min reported   heap 60.0 MB   dom 900   visible"* ]]
-    shell_block="$(echo "$output" | sed -n '/^dashboard 11111111 · shell/,/^dashboard 22222222/p')"
-    [[ "$shell_block" == *"handler      no frames"* ]]
-    [[ "$shell_block" == *"long frames 1.0/min   blocking 19950 ms/min   worst 20000 ms"* ]]
-    [[ "$shell_block" == *"files.js:paintAll@9000 19500 ms (Window.requestAnimationFrame)   page:onMove@120 150 ms (DIV.onpointermove)"* ]]
-    [[ "$shell_block" == *"no frames   long frames 1, blocking 19950 ms"* ]]
+    files_block="$(echo "$output" | sed -n '/^dashboard 11111111 · files/,/^dashboard 22222222/p')"
+    [[ "$files_block" == *"handler      900 ms/min total"* ]]
+    [[ "$files_block" == *"fileview:reflow   12.0/min    720 ms/min   p50 <64   p90 <64   p99 <64 ms   max 90   >16.7 ms 100%   >=100 ms 0%"* ]]
+    [[ "$files_block" == *"fileview:paint    1.0/min    180 ms/min   p50 <256   p90 <256   p99 <256 ms   max 180   >16.7 ms 100%   >=100 ms 100%"* ]]
+    reflow_line="$(echo "$files_block" | grep -n '^    fileview:reflow ' | head -1 | cut -d: -f1)"
+    paint_line="$(echo "$files_block" | grep -n '^    fileview:paint ' | head -1 | cut -d: -f1)"
+    [ -n "$reflow_line" ] && [ -n "$paint_line" ] && [ "$reflow_line" -lt "$paint_line" ]
+    [[ "$files_block" == *"main thread  free after a frame, worst minute's p90 95 ms   long frames 0.0/min   blocking 0 ms/min   worst 0 ms"* ]]
+    [[ "$files_block" == *"900 ms handler   fileview:reflow 12 (p90 <64 ms, max 90)   fileview:paint 1 (p90 <256 ms, max 180)   long frames 0, blocking 0 ms"* ]]
+    [[ "$files_block" == *"fileview:paint 180 ms (dom 40000)"* ]]
+    # the feed pane's own screen is unchanged by the extra pane
+    [[ "$output" == *"feed           14.4/min    360 ms/min   p50 <4   p90 <32   p99 <128 ms   max 130   >16.7 ms 25%   >=100 ms 6%"* ]]
     run "$ROMP_SCRIPT" perf client --json
     [ "$status" -eq 0 ]
     echo "$output" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 panes = {(p["wid"], p["app"]): p for p in d["panes"]}
-assert ("11111111", "files") in panes and ("11111111", "shell") in panes, set(panes)
+assert set(panes) == {("11111111", "feed"), ("11111111", "chat"), ("11111111", "files"), ("22222222", "feed")}, set(panes)
 f = panes[("11111111", "files")]
-assert set(f["frames"]) == {"fileview:paint", "fileview:reflow"} and f["frames"]["fileview:reflow"]["n"] == 12 and f["free_p90"] == 95
+assert set(f["frames"]) == {"fileview:paint", "fileview:reflow"} and f["frames"]["fileview:reflow"]["n"] == 12 and f["frames"]["fileview:paint"]["n"] == 1, f["frames"]
+assert f["free_p90"] == 95 and f["total_ms_per_min"] == 900 and f["minutes"] == 1, f
 assert f["slow"] == [{"t": f["slow"][0]["t"], "type": "fileview:paint", "ms": 180, "dom": 40000, "loaf": []}], f["slow"]
-s = panes[("11111111", "shell")]
-assert s["frames"] == {} and s["total_ms_per_min"] == 0 and s["free_p90"] is None
-assert s["loaf"] == {"per_min": 1.0, "blocking_ms_per_min": 19950.0, "worst_ms": 20000, "src": "loaf"}, s["loaf"]
-assert s["top"][0] == {"k": "files.js:paintAll@9000", "ms": 19500, "inv": "Window.requestAnimationFrame"}
-assert s["worst_minute"]["total_ms"] == 0 and s["worst_minute"]["loaf_n"] == 1
+assert f["loaf"] == {"per_min": 0.0, "blocking_ms_per_min": 0.0, "worst_ms": 0, "src": "loaf"} and f["top"] == [], (f["loaf"], f["top"])
 '
 }
 
@@ -330,7 +371,7 @@ PY
 @test "romp perf: the two-snapshot verb is untouched — its usage now names client, and help lists the sub-verb" {
     run "$ROMP_SCRIPT" perf --nope
     [ "$status" -eq 2 ]
-    [[ "$output" == *"usage: romp perf [--interval <s>] [--json] | romp perf log on|off | romp perf client"* ]]
+    [[ "$output" == *"usage: romp perf [--interval <s>] [--json] | romp perf log on|off | romp perf stacks [--json] | romp perf client"* ]]   # the stacks verb sits in the line (T401)
     run "$ROMP_SCRIPT" help
     [ "$status" -eq 0 ]
     [[ "$output" == *"romp perf client"* ]]

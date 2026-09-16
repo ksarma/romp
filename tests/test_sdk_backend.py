@@ -9,9 +9,24 @@ Two layers:
     This exercises the headline path: a user turn -> the model calls
     AskUserQuestion -> it surfaces as an askLive picker -> the UI answers ->
     PermissionResultAllow(updated_input={questions, answers}) goes back.
+
+The SDK-gated classes RUN in the full suite (the pull-in review, 2026-09-16): tests/test_host_transport.py's import
+puts romp's SDK venv on sys.path, and every xdist worker imports every collected module before it runs a test, so
+under -n 4 the _HAVE_SDK gate below opens in every worker and the gated cases run against the installed SDK exactly
+as under tests/README.md's PYTHONPATH recipe for this module; alone, on a machine without the venv, they skip, and a
+skip reads green. Five cases were red that way (OptionsAssembly's ultracode seed, FastModeReportedState's refused
+ask, ApiRetryState twice, ReconnectReconcilesInflight): two stale pins from before the code they read moved, a class
+with no current event loop for the settle to schedule on, a fake whose init streamed at connect, and one real defect
+(the api_retry detail dropped the wire's `error` string). All five were re-pinned or fixed on 2026-09-16; each case's
+comment says which. Judge this module BOTH ways before calling it green, plain and with the README's PYTHONPATH
+recipe:
+    python -m pytest tests/test_sdk_backend.py -q                (or -k <ClassName> for one class)
+The postal module's PeerRoutePrefersDirect red under -n 4 is a different import-time leak (ROMP_POSTAL_PEERS, set at
+module level by tests/test_kernel_tunnels.py); its own header says so.
 """
 import asyncio
 import inspect
+import contextlib
 import io
 import os
 import json
@@ -611,8 +626,9 @@ class LiveTail(unittest.TestCase):
         self.assertFalse(be2.set_fast("no-such-sid", "on"))
 
     def test_fast_mode_is_never_remembered_as_the_seed_for_new_sessions(self):
-        # Fast mode draws credits at a higher rate and has its own rate limit, so it stays per-session —
-        # the same call ultracode makes, and the reason romp never spreads it to every new session.
+        # Fast mode draws credits at a higher rate and has its own rate limit, so it stays per-session and
+        # never seeds the next new session. An effort pick does seed it, ultracode included (set_effort since
+        # 2026-08-14); until 2026-09-16 this comment said ultracode was held back the same way.
         d = tempfile.mkdtemp()
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
         sid = be.spawn("a", d)
@@ -2388,6 +2404,13 @@ except Exception:
     _HAVE_SDK = False
 
 
+def _hosts_off(state_dir):
+    """A class that drives the connect loop with a fake client tests the plain-child road: hosts OFF explicitly, since
+    they are on by default (T348) and a bare state dir would send the connect to a real host spawn."""
+    os.makedirs(state_dir, exist_ok=True)
+    open(os.path.join(state_dir, "session-hosts"), "w").write("off")
+
+
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
 class AskRoundTrip(unittest.TestCase):
     """Drive a full turn through a fake client and assert the AskUserQuestion
@@ -2395,6 +2418,7 @@ class AskRoundTrip(unittest.TestCase):
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
+        _hosts_off(self.d)
         self._orig_client = _sdk.ClaudeSDKClient
 
         QUESTION = {"questions": [{
@@ -2601,6 +2625,7 @@ class CustomAnswerRoundTrip(unittest.TestCase):
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
+        _hosts_off(self.d)
         self.actions = []
         def notify(app, msg):
             if msg.get("type") == "askLive" and self.actions:
@@ -2648,6 +2673,7 @@ class PermissionAndPlanRoundTrip(unittest.TestCase):
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
+        _hosts_off(self.d)
         self.answer = "1"
         def notify(app, msg):
             if msg.get("type") == "askLive":
@@ -2985,7 +3011,7 @@ class SpendRecord(unittest.TestCase):
                       "tokens come from _turn_usage — the flat usage dict is per-turn and is never diffed")
         self.assertIn('mu = getattr(msg, "model_usage", None)', src,
                       "the cumulative modelUsage map is the counter the token watermarks diff")
-        self.assertIn("sid=self.thread_of or self.sid)   # the rail's spend", src,
+        self.assertIn("sid=self.thread_of or self.sid,", src,
                       "a comment THREAD bills its OWNING session (T144); a plain session bills itself "
                       "(T100's per-session attribution, completed)")
         self.assertIn("self._seed_spend_watermarks()   # a fresh CLI process starts its cumulative counters at", src,
@@ -3807,19 +3833,23 @@ class OptionsAssembly(unittest.TestCase):
         with open(pb) as f:
             self.assertEqual(json.load(f), {"ultracode": True}, "b's file is untouched by a's fast mode")
 
-    def test_ultracode_is_a_choice_everywhere_but_never_the_seeded_default(self):
+    def test_ultracode_is_a_choice_everywhere_and_the_latest_pick_seeds_new_sessions(self):
         self.assertIn("ultracode", sb.EFFORT_LEVELS, "the SDK backend accepts the pick")
         with open(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin", "romp-kernel")) as f:
             self.assertIn('("low", "medium", "high", "xhigh", "max", "ultracode")', f.read(),
                           "the effort dropdown (kernel EFFORT_CHOICES) offers ultracode")
-        # per-session by design (the CLI: "this session only") — picking it must not seed NEW sessions
+        # Every pick is the new-session seed, ultracode included (set_effort; the user 2026-08-14, whose new
+        # sessions opened at max under the old never-remember guard). The CLI's "this session only" holds per
+        # session through the launch shape spawn hands each new one (--effort xhigh plus the ultracode settings
+        # key). Until 2026-09-16 this case still pinned the retired guard (the seed never ultracode) and was red
+        # whenever the SDK was importable.
         be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
         sid = "11111111-2222-3333-4444-555555555555"
         sb.write_reg(self.d, sid, {"sid": sid, "name": "n", "cwd": self.d})
         self.assertTrue(be.set_effort(sid, "ultracode"))
-        self.assertNotEqual(sb.read_sdk_defaults(self.d).get("effort"), "ultracode",
-                            "ultracode never becomes the default for the next new session")
-        self.assertEqual(sb.read_reg(self.d, sid)["effort"], "ultracode", "but THIS session keeps it")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("effort"), "ultracode",
+                         "the latest pick seeds the next new session, ultracode too")
+        self.assertEqual(sb.read_reg(self.d, sid)["effort"], "ultracode", "and THIS session keeps it")
 
     def test_raises_max_buffer_size_well_above_the_1mb_default(self):
         # A single >1MB stdout message (a big Read / grep result / echoed image) would otherwise crash the
@@ -3953,12 +3983,17 @@ class FastModeReportedState(unittest.TestCase):
         self.assertTrue(sess.fast_opt, "and the persisted ask is untouched by the report")
 
     def test_an_opted_in_session_the_cli_refuses_reports_the_reason(self):
-        # e.g. fast mode asked for on a session whose model isn't Opus: we say on, the CLI says off.
+        # e.g. fast mode asked for on a session whose model isn't Opus: we say on, the CLI says off. The refusal
+        # ANSWERS the armed ask (_adopt_fast_state's refused_ask, 2026-08-11): the opt-in clears rather than staying
+        # armed on disk, and the badge shows the CLI's verdict with its reason; the warn toast and the flagless
+        # relaunch are LiveTail.test_a_refusal_answering_the_users_ask_warns_clears_it_and_restores_the_badge's.
+        # Until 2026-09-16 this case still pinned the opt-in as unchanged (its 2026-08-07 shape) and was red
+        # whenever the SDK was importable.
         sess = self._sess(fast=True)
         self._init(sess, {"fast_mode_state": "off", "fast_mode_disabled_reason": "model_not_allowed"})
         snap = sess.snapshot()
-        self.assertTrue(sess.fast_opt, "romp's opt-in is unchanged — the user did ask for it")
-        self.assertEqual(snap["fast"], "off", "but the CLI's verdict is what the badge shows")
+        self.assertFalse(sess.fast_opt, "the refusal answers the ask: the opt-in clears instead of staying armed")
+        self.assertEqual(snap["fast"], "off", "the CLI's verdict is what the badge shows")
         self.assertEqual(snap["fastReason"], "model_not_allowed")
 
     def test_cooldown_is_reported_verbatim(self):
@@ -4013,6 +4048,26 @@ class FastModeReportedState(unittest.TestCase):
 class ApiRetryState(unittest.TestCase):
     """An api_retry storm (API rate-limit/overload) must surface as a distinct 'retrying' state, not a
     silent 'working', so a stall reads as an API issue (the user 2026-06-23). Cleared on real output."""
+
+    def setUp(self):
+        # the settle (a ResultMessage) schedules the context refresh on the CURRENT loop, as it does inside the
+        # session's own loop in production; give this thread one to schedule onto (never run to completion: the
+        # coroutine is irrelevant here) so _on_message can be driven synchronously. Without it Python 3.12's
+        # get_event_loop raises "no current event loop" once any earlier set_event_loop in the process
+        # (FastModeReportedState's tearDown, an asyncio.run) has marked the policy, so the bare-payload case
+        # below was red whenever the SDK was importable (2026-09-16).
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+
+    def tearDown(self):
+        pending = asyncio.all_tasks(self._loop)
+        for t in pending:
+            t.cancel()   # cancelled before its first step: the coroutine never runs, and the loop closes with
+            #              nothing pending (no destroyed-task warning at collection)
+        if pending:
+            self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        asyncio.set_event_loop(None)
+        self._loop.close()
 
     def test_api_retry_shows_retrying_then_clears(self):
         d = tempfile.mkdtemp()
@@ -4071,6 +4126,31 @@ class ApiRetryState(unittest.TestCase):
                          _sdk.AssistantMessage, _sdk.ResultMessage, _sdk.SystemMessage)
         self.assertIsNone(sess.snapshot()["retryInfo"])
 
+    def test_the_installed_clis_wire_frame_fills_the_attempt_and_the_error(self):
+        # the frame the CLI itself emits (its embedded SDKAPIRetryMessage schema, read from the 2.1.266 binary):
+        # attempt / max_retries / retry_delay_ms / error_status (null for a connection error) / error (a category
+        # STRING such as "overloaded" or "rate_limit") / no_response (optional). Until 2026-09-16 the detail read
+        # neither `attempt` (the local tally stood in) nor the string `error` (the card's reason stayed blank on
+        # every live storm); tests/test_api_health.py's ring read both all along.
+        d = tempfile.mkdtemp()
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        sess = sb.SdkSession(be, {"sid": "r4", "name": "n", "cwd": d, "mode": "acceptEdits"})
+        sess.inflight = 1
+        sess._on_message(_sdk.SystemMessage("api_retry", {"attempt": 4, "max_retries": 10, "retry_delay_ms": 2000,
+                                                          "error_status": 529, "error": "overloaded"}),
+                         _sdk.AssistantMessage, _sdk.ResultMessage, _sdk.SystemMessage)
+        info = sess.snapshot()["retryInfo"]
+        self.assertEqual(info["attempt"], 4, "the CLI's own attempt number, not the local tally (1 here)")
+        self.assertEqual((info["max"], info["status"]), (10, 529))
+        self.assertEqual(info["error"], "overloaded", "the wire's category string is the card's reason")
+        sess._on_message(_sdk.SystemMessage("api_retry", {"attempt": 5, "max_retries": 10, "retry_delay_ms": 4000,
+                                                          "error_status": None, "error": "unknown"}),
+                         _sdk.AssistantMessage, _sdk.ResultMessage, _sdk.SystemMessage)
+        info = sess.snapshot()["retryInfo"]
+        self.assertEqual(info["attempt"], 5)
+        self.assertIsNone(info["status"], "a connection error has no HTTP status: null on the wire, None here")
+        self.assertEqual(info["error"], "unknown")
+
 
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
 class InterruptSettlesStall(unittest.TestCase):
@@ -4080,6 +4160,7 @@ class InterruptSettlesStall(unittest.TestCase):
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
+        _hosts_off(self.d)
         self._orig = _sdk.ClaudeSDKClient
         import asyncio as _aio
 
@@ -4297,6 +4378,7 @@ class PendingQueueLoop(unittest.TestCase):
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
+        _hosts_off(self.d)
         self._orig_client = _sdk.ClaudeSDKClient
         import asyncio as _aio
 
@@ -4383,6 +4465,7 @@ class InterruptWithQueue(unittest.TestCase):
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
+        _hosts_off(self.d)
         self._orig = _sdk.ClaudeSDKClient
         import asyncio as _aio
 
@@ -4466,6 +4549,7 @@ class ReconnectReconcilesInflight(unittest.TestCase):
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
+        _hosts_off(self.d)
         self._orig = _sdk.ClaudeSDKClient
         import asyncio as _aio
 
@@ -4490,10 +4574,14 @@ class ReconnectReconcilesInflight(unittest.TestCase):
             async def get_context_usage(self): return {"percentage": 2, "model": "claude-x"}
 
             async def receive_messages(self):
-                yield _sdk.SystemMessage("init", {"session_id": self.options.session_id or "fsid"})
+                # the CLI's init opens a TURN (one per turn, none on a turn-less connect: _on_message's init
+                # branch says so), so the fake streams it with the first dequeued turn. Streamed at connect, the
+                # SECOND client's init read as a turn the CLI started (a turn frame at inflight 0 counts as one
+                # since 2026-09-08) and held inflight at 1: red whenever the SDK was importable (2026-09-16).
                 while True:
                     turn = await self._turnq.get()
                     StallClient.received.append(turn["message"]["content"][0]["text"])
+                    yield _sdk.SystemMessage("init", {"session_id": self.options.session_id or "fsid"})
                     await _aio.sleep(3600)           # stall this turn forever (never a ResultMessage)
 
         _sdk.ClaudeSDKClient = StallClient
@@ -5016,6 +5104,392 @@ class RegListCache(unittest.TestCase):
         self.assertEqual([r["sid"] for r in sb.list_regs(self.sd)], ["aaaa"])
 
 
+class UpdateRegDroppingUnreadable(unittest.TestCase):
+    """_update_reg_dropping tells an unreadable reg from an absent one by an explicit stat (2026-09-14): under a mode-000 sdk/
+    CPython 3.14's Path.exists() answered False, so the guard read absent and the write below it would have gutted a reg the
+    backend could not read. The real fault staged, never a stub of the call that would raise."""
+
+    SID = "11111111-2222-3333-4444-555555555577"
+
+    def test_a_reg_under_an_unlistable_directory_refuses_the_write_and_says_so(self):
+        if os.geteuid() == 0:
+            self.skipTest("root reads through chmod 000")
+        root = tempfile.mkdtemp(); _hosts_off(root)
+        be = sb.SdkBackend(root, "/bin/true", lambda *a, **k: None)
+        sb.write_reg(root, self.SID, {"sid": self.SID, "name": "web", "cwdPending": True})
+        d = os.path.join(root, "sdk"); os.chmod(d, 0)
+        err = io.StringIO()
+        try:                                                    # restored in a finally, as every staged-fault test here
+            with contextlib.redirect_stderr(err):
+                be._update_reg_dropping(self.SID, drop=("cwdPending",), cwd="/tmp/x")
+        finally:
+            os.chmod(d, 0o755)
+        self.assertIn("unreadable", err.getvalue(), "the refusal is said: %r" % err.getvalue())
+        self.assertEqual(sb.read_reg(root, self.SID), {"sid": self.SID, "name": "web", "cwdPending": True}, "the reg untouched, never gutted")
+
+    def test_update_reg_under_an_unlistable_directory_refuses_the_write_and_says_so(self):
+        """Round two's medium 1: _update_reg kept the exists() guard its twin dropped; under a mode-000 sdk/ the guard read absent
+        and the write raised PermissionError out of the caller from inside write_reg on 3.14 (raised out of the guard on 3.13)."""
+        if os.geteuid() == 0:
+            self.skipTest("root reads through chmod 000")
+        root = tempfile.mkdtemp(); _hosts_off(root)
+        be = sb.SdkBackend(root, "/bin/true", lambda *a, **k: None)
+        sb.write_reg(root, self.SID, {"sid": self.SID, "name": "web", "alive": True})
+        d = os.path.join(root, "sdk"); os.chmod(d, 0)
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                be._update_reg(self.SID, cwd="/tmp/x")          # must not raise, must not write
+        finally:
+            os.chmod(d, 0o755)
+        self.assertIn("unreadable", err.getvalue(), err.getvalue())
+        self.assertEqual(sb.read_reg(root, self.SID), {"sid": self.SID, "name": "web", "alive": True}, "name and alive stand")
+
+    def test_a_symlink_loop_reg_path_is_never_a_writable_absence(self):
+        """ELOOP: Path.exists() answered False on every interpreter, so _update_reg built {sid}+fields over a path that cannot hold
+        a reg and the session lost name and alive (the 2026-08-31 blink class); read_reg_for_rmw answered {} there, the
+        writable-empty base its docstring forbids. A writer may build a fresh record only on ENOENT."""
+        root = tempfile.mkdtemp(); _hosts_off(root)
+        be = sb.SdkBackend(root, "/bin/true", lambda *a, **k: None)
+        p = sb._reg_path(root, self.SID); p.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(p.name, p)                                   # a loop: the path names itself
+        self.assertIsNone(sb.read_reg_for_rmw(root, self.SID), "a loop is not an absent reg: None, the caller skips its write")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            be._update_reg(self.SID, name="x")
+            be._update_reg_dropping(self.SID, drop=("cwdPending",), name="y")
+        self.assertEqual(err.getvalue().count("unreadable"), 2, err.getvalue())
+        self.assertTrue(os.path.islink(p) and not os.path.exists(p), "the loop stands, nothing was written through it")
+        self.assertEqual(sb.read_reg_for_rmw(root, "11111111-2222-3333-4444-555555555599"), {}, "a genuinely absent reg: the empty base")
+
+    def test_read_reg_for_rmw_answers_none_under_an_unlistable_directory(self):
+        if os.geteuid() == 0:
+            self.skipTest("root reads through chmod 000")
+        root = tempfile.mkdtemp(); _hosts_off(root)
+        sb.write_reg(root, self.SID, {"sid": self.SID, "bgLedger": [1, 2, 3]})
+        d = os.path.join(root, "sdk"); os.chmod(d, 0)
+        try:
+            self.assertIsNone(sb.read_reg_for_rmw(root, self.SID), "unreadable: None, never the writable-empty base")
+        finally:
+            os.chmod(d, 0o755)
+        self.assertEqual(sb.read_reg_for_rmw(root, self.SID)["bgLedger"], [1, 2, 3])
+
+
+def _sdk_module_for_the_road_pins():
+    """The module the connect loop imports ClaudeSDKClient from, and whether this call installed it: the installed SDK when
+    there is one, else a stand-in with an inert class for any name the backend imports. The road pins stub the transport and
+    fake the client, so they need no package; CI installs none, and a gate on the package would let a re-key on the pre-read
+    go green on every Python (the follow-up's item a). The stand-in lives in sys.modules only for the test that asked (its
+    tearDown removes it): left behind, it made every later import of the SDK succeed with inert classes, and the kernel's own
+    wiring took roads it never takes without the package (two shared-parse tests red under the whole suite)."""
+    if _HAVE_SDK:
+        return _sdk, False
+    import types
+    m = sys.modules.get("claude_agent_sdk")
+    if m is not None:
+        return m, False
+    class _StandIn(types.ModuleType):
+        def __getattr__(self, name):
+            if name.startswith("__"):
+                raise AttributeError(name)
+            cls = type(name, (), {"__init__": lambda self, *a, **k: None})
+            setattr(self, name, cls)
+            return cls
+    m = _StandIn("claude_agent_sdk")
+    sys.modules["claude_agent_sdk"] = m
+    return m, True
+
+
+class SpawnedAtStampedOncePerCli(unittest.TestCase):
+    """spawnedAt is the CLI's epoch (judge _cli_epoch, the bg-tasks ghost gate, the evidence gate, the planner's persisted
+    memo): stamped ONCE PER CLI, keyed on the CLI's identity, never on the connect's road or a lease pre-read (2026-09-14:
+    every kernel boot under session hosts re-stamped every attached session; then a stamp at the connect's outcome missed a
+    host whose CLI came up and whose handshake then failed, since the retry ATTACHED to that fresh CLI and nothing stamped
+    for its life). Under a host the decision is made at the host's hello (_on_host_hello, inside the transport's connect,
+    before the SDK's initialize): the hello's cli.pid:cli.start against the reg's spawnedAtCli, the epoch the host's own
+    cli.spawnedAt, the launch login the hello's cli.login; for a kernel child at the connect, with now. The pins drive the
+    REAL connect loop (`_run` into `_amain`) with the transport road stubbed to each shape and a fake SDK client whose
+    connect delivers the road's hello as HostTransport.connect does, then fails or completes."""
+
+    SID = "11111111-2222-3333-4444-555555555588"
+    T0 = 1700000000                            # the reg's epoch, the CLI the reg names
+    T_HOST = 1700005000                        # a fresh CLI's spawn time, the host's own
+    CLI_A = {"pid": 4242, "start": "a1"}       # the CLI the reg's epoch belongs to (a survivor)
+    CLI_B = {"pid": 4343, "start": "b1"}       # a fresh CLI under a host
+
+    def setUp(self):
+        self._mod, self._installed = _sdk_module_for_the_road_pins()
+        self._orig_client = self._mod.ClaudeSDKClient
+
+    def tearDown(self):
+        self._mod.ClaudeSDKClient = self._orig_client
+        if self._installed:
+            sys.modules.pop("claude_agent_sdk", None)     # the stand-in never outlives the test that needed it
+
+    def _world(self, hosts, stamped=True):
+        root = tempfile.mkdtemp()
+        open(os.path.join(root, "session-hosts"), "w").write(hosts)
+        self.logs = []
+        be = sb.SdkBackend(root, "/bin/true", lambda *a, **k: None, log=self.logs.append)
+        reg = {"sid": self.SID, "name": "web", "cwd": "/tmp", "spawnedAt": self.T0}
+        if stamped:
+            reg["spawnedAtCli"] = "4242:a1"             # this kernel (or an earlier one on this code) stamped CLI_A
+        sb.write_reg(root, self.SID, reg)
+        s = sb.SdkSession(be, {"sid": self.SID, "name": "web", "cwd": "/tmp"})
+        s._launched_login = "restored-login"        # what the reg restored for a surviving CLI (an attach keeps it)
+        return root, be, s
+
+    def _hello(self, cli, spawned=None, login="launch-login", old=False):
+        """A host's hello for `cli`: a host on this code carries the CLI's spawn time and the launch's login identifier;
+        `old` is a host running code older than the fields."""
+        c = dict(cli, fsid=self.SID)
+        if not old:
+            c["spawnedAt"] = self.T_HOST if spawned is None else spawned
+            c["login"] = login
+        return {"host": {"pid": 77, "start": "h1", "version": "test"}, "cli": c, "journal": {"next": 0}, "parked": [],
+                "inflight": 0}
+
+    def _live_host_lease(self, root):
+        """A lease that reads 'attach' before the connect: its CLI pid and holder are THIS process (alive, start time
+        matching), the holder a host, the beat now. The decision no longer reads it; the controls write it to show that."""
+        pid = os.getpid(); start = sb.proc_start(pid); now = time.time()
+        sb.write_lease(root, {"sid": self.SID, "fsid": self.SID, "name": "web", "pid": pid, "start": start,
+                              "holder": {"kind": "host", "pid": pid, "start": start}, "version": "test", "spawnedAt": self.T0, "t": now})
+
+    def _drive(self, be, s, root, roads, marking_raises=False):
+        """Run the real connect loop. `roads` is one dict per iteration: {"road": "attach" | "spawn-host" | "child",
+        "hello": the host's hello (host roads), "fail": None | "before-hello" (the connect fails before any CLI exists) |
+        "after-hello" (the host's CLI is up and its hello arrived, then the SDK's initialize fails: the loop's own retry
+        road)}. The fake client's connect delivers the hello as HostTransport.connect does, then fails or completes; the
+        thread ends after the last road's connect. Returns the reg's (spawnedAt, spawnedAtCli) after each fresh-CLI block."""
+        seen = []; calls = {"n": 0}; sid = self.SID; roads = list(roads)
+        class FakeTransport:
+            hello = None; _init_pending = True; exit_info = None; ack_offset = -1
+        async def transport_for(sess, opts, msg_classes):
+            r = roads[min(calls["n"], len(roads) - 1)]
+            if r["road"] == "child":
+                return None                                  # a kernel child
+            sess._host_is_attach = r["road"] == "attach"
+            t = FakeTransport(); t.hello = r.get("hello"); sess._host = t
+            return t
+        real_stamp = s._fresh_cli_stamp
+        def stamp(spawned_at, cli_ident="", mark_echoes=True):
+            real_stamp(spawned_at, cli_ident, mark_echoes=mark_echoes)
+            reg = sb.read_reg(root, sid)
+            seen.append((reg.get("spawnedAt"), reg.get("spawnedAtCli")))
+        s._fresh_cli_stamp = stamp
+        class FakeClient:
+            def __init__(self, options=None, transport=None):
+                pass
+            async def __aenter__(self):
+                r = roads[min(calls["n"], len(roads) - 1)]; calls["n"] += 1
+                if r.get("fail") == "before-hello":
+                    raise OSError("the binary is missing: no CLI launched")   # this launch fails before any CLI exists
+                if r["road"] != "child":
+                    be._on_host_hello(s, r["hello"])         # what HostTransport.connect does once the hello frame arrives
+                if r.get("fail") == "after-hello":
+                    raise TimeoutError("initialize timed out")   # the SDK's connect fails with the host's CLI up
+                if calls["n"] >= len(roads):
+                    s.ended = True; s._wake.set()            # the last connect: the loop ends once the connect has landed
+                return self
+            async def __aexit__(self, *a):
+                return False
+            async def query(self, prompt):
+                async for _ in prompt:
+                    pass
+            async def receive_messages(self):
+                if False:
+                    yield None
+            async def get_context_usage(self):
+                return None
+            async def get_server_info(self):
+                return None
+        if marking_raises:
+            def boom(sid_, texts, refeed=True):
+                raise RuntimeError("the tail moved under the walk")
+            be._mark_dropped_echoes = boom                   # a bookkeeping fault, never a launch error
+        be._host_transport_for = transport_for
+        self._mod.ClaudeSDKClient = FakeClient
+        s._run()
+        return seen
+
+    def _reg(self, root):
+        r = sb.read_reg(root, self.SID)
+        return (r.get("spawnedAt"), r.get("spawnedAtCli"))
+
+    def test_the_mirror_road_stamps_the_fresh_cli_once_at_the_hello_whose_handshake_then_failed(self):
+        """Round one's medium: hosts on, the spawn road; the host spawns the CLI, writes its lease, serves its socket, and
+        the SDK's initialize then fails; the retry ATTACHES to that fresh CLI. The decision was made at the hello inside
+        the failed connect, so the epoch (the host's spawn time) and the launch login (the hello's cli.login) are stamped
+        once, and the attach that follows finds the CLI the reg already names."""
+        root, be, s = self._world("on")
+        seen = self._drive(be, s, root, [{"road": "spawn-host", "hello": self._hello(self.CLI_B), "fail": "after-hello"},
+                                          {"road": "attach", "hello": self._hello(self.CLI_B)}])
+        self.assertEqual(seen, [(self.T_HOST, "4343:b1")], "one block, at the first hello, with the host's spawn time")
+        self.assertEqual(self._reg(root), (self.T_HOST, "4343:b1"))
+        self.assertEqual(s._launched_login, "launch-login", "the login the launch's spec carried, stamped once")
+        self.assertEqual(sb.read_reg(root, self.SID).get("launchedLogin"), "launch-login")
+        self.assertTrue(any("attach did not complete" in str(m) for m in self.logs), "the loop's own retry road was taken: %s" % self.logs[-4:])
+
+    def test_two_failed_handshakes_then_the_attach_stamp_once(self):
+        root, be, s = self._world("on")
+        seen = self._drive(be, s, root, [{"road": "spawn-host", "hello": self._hello(self.CLI_B), "fail": "after-hello"},
+                                          {"road": "attach", "hello": self._hello(self.CLI_B), "fail": "after-hello"},
+                                          {"road": "attach", "hello": self._hello(self.CLI_B)}])
+        self.assertEqual(seen, [(self.T_HOST, "4343:b1")])
+        self.assertEqual(sum("attach did not complete" in str(m) for m in self.logs), 2)
+
+    def test_a_survivor_attach_keeps_its_epoch_its_identity_and_its_login(self):
+        root, be, s = self._world("on"); self._live_host_lease(root)
+        seen = self._drive(be, s, root, [{"road": "attach", "hello": self._hello(self.CLI_A, login="today")}])
+        self.assertEqual(seen, [], "the CLI the reg names: nothing runs")
+        self.assertEqual(self._reg(root), (self.T0, "4242:a1"))
+        self.assertEqual(s._launched_login, "restored-login", "the restored launch login and init evidence stand")
+
+    def test_an_older_hosts_hello_records_the_identity_and_moves_nothing(self):
+        """A host running code older than the spawn-time field: its CLI predates this kernel (every host spawned by this code
+        carries the field), so the epoch, the login and the heals all stand, and the identity is recorded for the next
+        attach to compare against. The first deploy boot of this change attaches only such hosts."""
+        root, be, s = self._world("on", stamped=False)          # a reg written before the identity existed
+        seen = self._drive(be, s, root, [{"road": "attach", "hello": self._hello(self.CLI_A, old=True)}])
+        self.assertEqual(seen, [])
+        self.assertEqual(self._reg(root), (self.T0, "4242:a1"), "the identity recorded, the epoch untouched")
+        self.assertEqual(s._launched_login, "restored-login")
+        self.assertTrue(any("recorded, nothing stamped" in str(m) for m in self.logs), self.logs[-4:])
+
+    def test_a_hello_without_a_cli_identity_is_tolerated_with_a_log_line(self):
+        """A hello older than the identity itself (no cli dict, or one without pid or start): nothing stamped, said in the
+        log, and the connect goes on."""
+        root, be, s = self._world("on")
+        hello = self._hello(self.CLI_B); hello["cli"] = {"fsid": self.SID}
+        bare = self._hello(self.CLI_B); del bare["cli"]
+        seen = self._drive(be, s, root, [{"road": "attach", "hello": bare, "fail": "after-hello"}, {"road": "attach", "hello": hello}])
+        self.assertEqual(seen, [])
+        self.assertEqual(self._reg(root), (self.T0, "4242:a1"))
+        self.assertEqual(sum("names no CLI identity" in str(m) for m in self.logs), 2, self.logs)
+        self.assertFalse(any("crashed" in str(m) for m in self.logs), "never a raise out of the connect: %s" % self.logs)
+
+    def test_a_kernel_child_stamps_at_the_connect_with_now_and_no_identity(self):
+        root, be, s = self._world("off")
+        seen = self._drive(be, s, root, [{"road": "child"}])
+        self.assertEqual(len(seen), 1); self.assertGreater(seen[0][0], self.T0); self.assertEqual(seen[0][1], "")
+        self.assertEqual(s._launched_login, "", "a kernel child stamps its options' login (the machine's own here)")
+
+    def test_a_launch_that_fails_before_any_cli_exists_moves_nothing(self):
+        root, be, s = self._world("on")
+        seen = self._drive(be, s, root, [{"road": "spawn-host", "hello": self._hello(self.CLI_B), "fail": "before-hello"}])
+        self.assertEqual(seen, [], "no block ran")
+        self.assertEqual(self._reg(root), (self.T0, "4242:a1"), "the failed launch moved nothing")
+        self.assertEqual(s._launched_login, "restored-login", "nor the launch login")
+        s2 = sb.SdkSession(be, {"sid": self.SID, "name": "web", "cwd": "/tmp"})
+        seen2 = self._drive(be, s2, root, [{"road": "spawn-host", "hello": self._hello(self.CLI_B)}])
+        self.assertEqual(seen2, [(self.T_HOST, "4343:b1")], "the launch that succeeded stamped once")
+
+    def test_a_raise_out_of_the_marking_is_a_bookkeeping_fault_not_a_launch_error(self):
+        root, be, s = self._world("on")
+        seen = self._drive(be, s, root, [{"road": "spawn-host", "hello": self._hello(self.CLI_B)}], marking_raises=True)
+        self.assertEqual(len(seen), 1, "the block completed and the connect was reached")
+        self.assertTrue(any("dropped-echo marking" in str(m) and "failed" in str(m) for m in self.logs), self.logs)
+        self.assertFalse(any("failed to start" in str(m) for m in self.logs), "never a launch error: %s" % self.logs)
+
+    def test_a_deliberate_reconnect_stamps_the_fresh_cli_but_marks_no_echoes(self):
+        """The waker's effort or model change tears the client down and reconnects in the same thread: the host it asks to
+        end is replaced by a fresh one, whose CLI is fresh (its epoch moves), but the forwarded sends land through the
+        resume, so nothing is marked dropped (the loop's `deliberate`, carried to the hello's decision)."""
+        root, be, s = self._world("on")
+        marked = []
+        be._mark_dropped_echoes = lambda sid_, texts, refeed=True: marked.append(sid_)
+        s._reconnect = True                                  # the waker armed a reconnect; no attach retry pending
+        seen = self._drive(be, s, root, [{"road": "spawn-host", "hello": self._hello(self.CLI_B)}])
+        self.assertEqual(seen, [(self.T_HOST, "4343:b1")])
+        self.assertEqual(marked, [], "a deliberate reconnect marks nothing")
+        root2, be2, s2 = self._world("on")
+        marked2 = []
+        be2._mark_dropped_echoes = lambda sid_, texts, refeed=True: marked2.append(sid_)
+        self._drive(be2, s2, root2, [{"road": "spawn-host", "hello": self._hello(self.CLI_B)}])
+        self.assertEqual(marked2, [self.SID], "a thread-top spawn marks")
+
+    def test_a_first_hello_naming_the_known_cli_then_a_second_naming_a_fresh_one_moves_once(self):
+        """The follow-up's read, low 1: an attach to the CLI the reg names whose handshake then fails (keep), then a spawn
+        whose hello names a fresh CLI (move): one stamp, with the host's spawn time and the launch's login; and a stale lease
+        beside a surviving CLI (the pre-read would have said spawn) still keeps, since the lease never decides."""
+        root, be, s = self._world("on")
+        seen = self._drive(be, s, root, [{"road": "attach", "hello": self._hello(self.CLI_A), "fail": "after-hello"},
+                                          {"road": "spawn-host", "hello": self._hello(self.CLI_B)}])
+        self.assertEqual(seen, [(self.T_HOST, "4343:b1")], "the known CLI kept at the first hello; the fresh one stamped at the second")
+        self.assertEqual(s._launched_login, "launch-login")
+        root2, be2, s2 = self._world("on")
+        pid = os.getpid(); start = sb.proc_start(pid)
+        sb.write_lease(root2, {"sid": self.SID, "fsid": self.SID, "name": "web", "pid": pid, "start": start,
+                               "holder": {"kind": "host", "pid": pid, "start": start}, "version": "test", "spawnedAt": self.T0,
+                               "t": time.time() - 3600})                   # a beat an hour stale: the pre-read would call it an orphan
+        seen2 = self._drive(be2, s2, root2, [{"road": "attach", "hello": self._hello(self.CLI_A, login="today")}])
+        self.assertEqual((seen2, self._reg(root2), s2._launched_login), ([], (self.T0, "4242:a1"), "restored-login"))
+
+    def test_a_host_iteration_then_a_kernel_child_iteration_stamp_twice_and_the_child_clears_the_identity(self):
+        """The follow-up's read, low 2: the kernel-child gate at the connect is `self._host is None`, true only because the
+        loop's finally clears the host each iteration. A host iteration (a fresh CLI stamped at its hello, the handshake then
+        fails) followed by a child iteration stamps twice, and the child's stamp clears the identity; a change to that finally
+        that left the host set would skip the child's stamp and fail here."""
+        root, be, s = self._world("on")
+        seen = self._drive(be, s, root, [{"road": "spawn-host", "hello": self._hello(self.CLI_B), "fail": "after-hello"},
+                                          {"road": "child"}])
+        self.assertEqual(len(seen), 2, seen)
+        self.assertEqual(seen[0], (self.T_HOST, "4343:b1"), "the host's CLI at its hello")
+        self.assertGreater(seen[1][0], self.T0); self.assertEqual(seen[1][1], "", "the kernel child's stamp clears the identity")
+
+    def test_the_plain_roads_as_controls(self):
+        """The lease before the connect is irrelevant to the decision: a host gone between the reads (a live lease, then a
+        spawn), hosts off with a live lease (a kernel child), the reverse race (no lease, then an attach to the CLI the reg
+        names) and the four plain roads all decide by the CLI the hello names, or by the connect for a kernel child."""
+        for hosts, lease, road, cli, moves in (("on", True, "spawn-host", "B", "host"), ("off", True, "child", None, "now"),
+                                               ("on", False, "attach", "A", None), ("on", True, "attach", "A", None),
+                                               ("on", False, "spawn-host", "B", "host"), ("off", False, "child", None, "now"),
+                                               ("on", False, "child", None, "now")):
+            with self.subTest(hosts=hosts, lease=lease, road=road, cli=cli):
+                root, be, s = self._world(hosts)
+                if lease:
+                    self._live_host_lease(root)
+                r = {"road": road}
+                if cli:
+                    r["hello"] = self._hello(self.CLI_A if cli == "A" else self.CLI_B)
+                seen = self._drive(be, s, root, [r])
+                if moves == "host":
+                    self.assertEqual(seen, [(self.T_HOST, "4343:b1")], "a fresh CLI under a host: the host's spawn time")
+                elif moves == "now":
+                    self.assertEqual(len(seen), 1); self.assertGreater(seen[0][0], self.T0); self.assertEqual(seen[0][1], "")
+                else:
+                    self.assertEqual(seen, [], "the CLI the reg names keeps its epoch")
+                    self.assertEqual(self._reg(root), (self.T0, "4242:a1"))
+
+class HealCwdPendingUnderAnUnreadableSlug(unittest.TestCase):
+    """The queued low (b): the boot reconcile decided a mid-move reg by two os.path.exists calls, so an unsearchable pending slug
+    with the transcript also at the old slug read as a move that never happened and dropped cwdPending; an unreadable slug
+    takes the loud branch and leaves the flag."""
+
+    SID = "11111111-2222-3333-4444-555555555599"
+
+    def test_an_unreadable_pending_slug_leaves_the_move_pending_and_says_so(self):
+        if os.geteuid() == 0:
+            self.skipTest("root reads through chmod 000")
+        root = tempfile.mkdtemp(); _hosts_off(root)
+        logs = []
+        be = sb.SdkBackend(root, "/bin/true", lambda *a, **k: None, log=logs.append)
+        proj = Path(tempfile.mkdtemp()) / "projects"
+        old, pend = proj / "-tmp-old", proj / "-tmp-new"
+        old.mkdir(parents=True); pend.mkdir(parents=True)
+        (old / (self.SID + ".jsonl")).write_text(""); (pend / (self.SID + ".jsonl")).write_text("")
+        with mock.patch.object(sb, "transcript_path", lambda slug, fsid: str(Path(slug) / (fsid + ".jsonl"))):
+            sb.write_reg(root, self.SID, {"sid": self.SID, "name": "web", "cwd": str(old), "cwdPending": str(pend)})
+            os.chmod(pend, 0)
+            try:
+                be._heal_cwd_pending(sb.read_reg(root, self.SID))
+            finally:
+                os.chmod(pend, 0o755)
+        self.assertEqual(sb.read_reg(root, self.SID).get("cwdPending"), str(pend), "the move stays pending: the folder could not be read")
+        self.assertTrue(any("cannot be read" in str(m) for m in logs), logs)
+
+
 class PushSessionCallback(unittest.TestCase):
     """_push_session — the connect handshake's targeted one-session push (2026-08-10). The handshake is
     the exact event the kernel's opening chip stands down on, and a plain pusher wake left that flip
@@ -5418,6 +5892,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
     def _sess(self, **reg):
         self.logs, self.pokes = [], []
         self._dirs.append(tempfile.mkdtemp())
+        _hosts_off(self._dirs[-1])                              # hosts are on by default (T348): a bare root would send a connect to a real host spawn
         be = sb.SdkBackend(self._dirs[-1], "/bin/true", lambda *a, **k: None, log=self.logs.append,
                            poke=lambda: self.pokes.append(1))
         sb.write_reg(be.state_dir, self.SID, {"sid": self.SID, "name": "web", "cwd": "/tmp", "alive": True, **reg})
@@ -8380,7 +8855,9 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         walk(tree, None)
         self.assertEqual(calls, {"set_effort": ["effort"], "set_mode": ["mode", "mode"], "set_fast": ["fast"],
                                  "set_env": ["env"], "set_auth": ["auth"], "_adopt_fast_state": [None],
-                                 "_arm_rewind": [None], "_complete_rewind_wait": [None]})
+                                 "_arm_rewind": [None], "_complete_rewind_wait": [None],
+                                 "_note_auth_source": [None]})   # upstream's wrong-landing reconnect onto the fallback side
+        #                                                          (T346, the 2026-09-15 pull-in): a mechanism's reconnect, no pick
 
     def test_y6_a_pick_the_composed_connect_serves_rides_it_and_keeps_its_flag_until_the_landing(self):
         # the served check's in-progress branch moves the names it discards into the riding set, so a pick that landed
@@ -9166,6 +9643,7 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self._saved_refresh = sb.SdkSession._do_refresh_usage
         sb.SdkSession._do_refresh_usage = _noop_refresh
         self.state = tempfile.mkdtemp()
+        _hosts_off(self.state)                                  # hosts are on by default (T348): this class drives the plain-child road with a fake client
         self.cwd = os.path.join(self.state, "proj")
         os.makedirs(self.cwd)
         self.lines = []
@@ -10325,6 +10803,129 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self._wait(lambda: c2.writes == ["still here"], "the feeder serves the landed client")
 
 
+class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
+    """The same pick road with session hosts ON: the default since T348 and the road every session on a deployed box
+    runs (the pull-in review's fresh-2, 2026-09-16, a coverage gap: every pick class wrote hosts off, so the hold, its
+    arm and the landing had no executed case on the hosted road). The parent's cases run again here unchanged: the
+    hold's arm, the served check and the landing read no transport state, so the hosted road must leave every one of
+    their assertions standing. What differs: the connect enters _host_transport_for (stubbed to a fake transport, since
+    no host process runs here), the fake client's __aenter__ runs the transport's connect the way ClaudeSDKClient does,
+    and that connect delivers a host's hello to the REAL hello handler (_on_host_hello: under a host the fresh-CLI stamp
+    and the launch login are decided there, not at the connect); the hosted options road sets `timeout` on every hook
+    matcher, so the SDK stand-in's HookMatcher takes attributes (the parent's dict stand-in refuses one). The fake
+    transport records what a real HostTransport.close would send (`end` once the handshake completed, `detach` for a
+    connect that never did): a pick's reconnect ends the host's CLI through that close, and the composed case below
+    reads it. Not asserted anywhere: that the hello landed the launched shape (the connect-landed call stamps it after
+    the SDK handshake, on both roads). The real host is driven in tests/test_session_host.py (HostProcess's pick case)."""
+
+    class _Client(SettingsPickThroughTheLoop._Client):
+        instances = []
+        spawn_gate = {}
+        mode_gate = {}
+        refuse_modes = False
+
+        def __init__(self, options=None, transport=None):
+            super().__init__(options, transport)
+            self.transport = transport
+
+        async def __aenter__(self):
+            await super().__aenter__()                  # the spawn window (a gated test picks during it)
+            if self.transport is not None:
+                await self.transport.connect()          # the attach and the hello, inside the SDK's connect
+            return self
+
+        async def __aexit__(self, *a):
+            await super().__aexit__(*a)
+            if self.transport is not None:
+                await self.transport.close()
+            return False
+
+    class _Matcher:
+        """An attribute-capable HookMatcher stand-in: _options sets `timeout` on every matcher under a host."""
+
+        def __init__(self, **kw):
+            self.timeout = None
+            self.__dict__.update(kw)
+
+    class _Transport:
+        """What the loop reads of a HostTransport, plus the frame a real one would send at the close."""
+
+        def __init__(self, hello, on_hello):
+            self._hello, self._on_hello = hello, on_hello
+            self.hello = None
+            self.exit_info = None
+            self.ack_offset = -1
+            self._init_pending = True
+            self.detach_mode = False
+            self.end_grace = 120.0
+            self.sent = []
+
+        async def connect(self):
+            self.hello = self._hello
+            self._on_hello(self.hello)                  # HostTransport.connect: the kernel's handler, once the frame arrived
+            self._init_pending = False                  # the fake client's handshake completes at once
+
+        async def close(self):
+            # HostTransport.close's rule: a kernel leaving, or a connect that never completed, detaches; else `end`
+            self.sent.append("detach" if (self.detach_mode or self._init_pending) else "end")
+
+    def setUp(self):
+        super().setUp()
+        open(os.path.join(self.state, "session-hosts"), "w").write("on")   # the parent wrote off; this class runs the default
+        sys.modules["claude_agent_sdk"].HookMatcher = self._Matcher
+        self.hosted = []                                # the fake transports, one per connect, in order
+        be = self.be
+
+        async def transport_for(sess, opts, msg_classes):
+            n = len(self.hosted) + 1                    # every connect spawns: a fresh host, a fresh CLI identity
+            hello = {"host": {"pid": 7000 + n, "start": "h%d" % n, "version": "test"},
+                     "cli": {"pid": 4300 + n, "start": "c%d" % n, "fsid": self.FSID, "spawnedAt": 1700000000 + n, "login": ""},
+                     "journal": {"next": 0}, "parked": [], "inflight": 0}
+            t = self._Transport(hello, lambda h, sess=sess: be._on_host_hello(sess, h))
+            sess._host_is_attach = False
+            sess._host = t
+            self.hosted.append(t)
+            return t
+        be._host_transport_for = transport_for
+
+    def _cli(self):
+        return (sb.read_reg(self.be.state_dir, self.SID) or {}).get("spawnedAtCli")
+
+    def test_a_held_pick_under_a_host_ends_the_hosts_cli_at_the_settle_and_a_fresh_host_lands_it(self):
+        """The composed hosted case: a live subagent holds an effort pick; the settle that finds the sets empty arms
+        the reconnect; the teardown asks the host to END its CLI (the close in end mode, never a detach, which would
+        leave the old CLI running beside the new one); the fresh host's hello stamps the fresh CLI; the landing stamps
+        the pick, records it once and closes the spawn window."""
+        s, c1 = self.s, self._connect()
+        t1 = self.hosted[0]
+        self.assertIs(s._host, t1)
+        self.assertEqual(self._cli(), "4301:c1", "the first hello stamped the fresh CLI")
+        asyncio.run(s._subagent_start_hook({"agent_id": "a1", "agent_type": "general-purpose"}, None, None))
+        self.assertTrue(self.be.set_effort(self.SID, "low"))
+        self._wait(lambda: s._reconnect_when_idle, "the request ran on the loop")
+        self.assertTrue(s._reconnect_held_for_work)
+        self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["effort"])
+        self.assertEqual(t1.sent, [], "the host is not asked to end while the work lives")
+        self.assertEqual(len(self.hosted), 1)
+        asyncio.run(s._subagent_stop_hook({"agent_id": "a1", "agent_type": "general-purpose"}, None, None))
+        self._turn(c1)                                  # the delivery turn: its settle finds the sets empty and arms
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client
+                   and s._launching is None and s._effort_pending == "", "the reconnect landed on the fresh host")
+        self._settled("the landing")
+        self.assertEqual(t1.sent, ["end"], "the reconnect's teardown asked the host to end its CLI, never a detach")
+        self.assertTrue(c1.torn_down)
+        self.assertEqual(len(self.hosted), 2, "one fresh host for the reconnect")
+        self.assertIs(s._host, self.hosted[1])
+        self.assertEqual(self.hosted[1].sent, [], "the fresh host is attached")
+        self.assertEqual(self._cli(), "4302:c2", "the fresh host's hello stamped its CLI")
+        self.assertEqual(self._Client.instances[1].options.effort, "low", "the fresh host was spawned with the pick")
+        self.assertEqual(s._launched_effort, ("low", False), "stamped by the landing, after the handshake")
+        self.assertEqual(self._applied(), ["low"], "the applied record, once, at the landing")
+        self.assertFalse(s._reconnect_held_for_work)
+        self.assertIsNone(s.snapshot()["pickHeld"])
+        self.assertEqual(s.snapshot()["effort"], "low")
+
+
 class WorkflowProgressShapeIsLoud(unittest.TestCase):
     """The retirement parser keys on the field names the probe recorded. If the CLI renames them, the
     ever-growing live count comes back — and would come back SILENTLY, so a list this build cannot read is
@@ -10434,6 +11035,87 @@ class SettleBeforePoke(unittest.TestCase):
                         "the increment sits inside the lock block that popped the item")
         self.assertLess(body.index("self.inflight += 1"), body.index("self._persist_queue()"),
                         "…before the registry write that used to separate them")
+
+
+class KillDuringRevive(unittest.TestCase):
+    """A Kill that lands while _ensure is reviving the same sid (the producer waking a cron-armed
+    session at the instant the user clicks Kill) must end the session the revive builds, not miss it.
+    _ensure reads alive, constructs, inserts and starts under the backend lock; kill used to flip the
+    reg under _reg_lock and pop the session under no lock, so a kill arriving mid-construction popped
+    nothing, and the revive then inserted and started a CLI for a reg the flip had just marked dead: a
+    running claude process with no tab, no listing and nothing that could stop it. Event-ordered, no
+    sleeps: the session under construction parks the revive inside the lock until the test lets it go,
+    and the kill thread signals the moment it commits to its path — on main by completing its pop
+    (finding nothing) while the revive is parked; with the fix by queueing on the backend lock — and
+    only then is the revive released. Either way the kill then has to take effect on the session the
+    revive built."""
+
+    def test_kill_during_revive_ends_the_revived_session(self):
+        d = tempfile.mkdtemp()
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        sid = be.spawn("alpha", d)
+        Real = sb.SdkSession
+        constructing, release, committed = threading.Event(), threading.Event(), threading.Event()
+        built = []
+        self.addCleanup(lambda: [s.shutdown() for s in built])   # never leave a parked stand-in behind
+
+        class Parked(Real):
+            def __init__(self, backend, reg):
+                super().__init__(backend, reg)
+                self._stopped = threading.Event()
+                built.append(self)
+                constructing.set()
+                release.wait(10)
+
+            def _run(self):                          # the CLI stand-in: alive until shutdown says stop
+                self._stopped.wait(10)
+
+            def shutdown(self):
+                super().shutdown()
+                self._stopped.set()
+
+        class PopSpy(dict):                          # main's kill commits by popping under no lock
+            def pop(self, key, *default):
+                r = super().pop(key, *default)
+                if threading.current_thread() is killer:
+                    committed.set()
+                return r
+
+        class LockSpy:                               # the fixed kill commits by queueing on the lock
+            def __init__(self, real):
+                self._real = real
+
+            def __enter__(self):
+                if threading.current_thread() is killer:
+                    committed.set()
+                return self._real.__enter__()
+
+            def __exit__(self, *a):
+                return self._real.__exit__(*a)
+
+        be.sessions = PopSpy(be.sessions)
+        be._lock = LockSpy(be._lock)
+        revived = []
+        reviver = threading.Thread(target=lambda: revived.append(be._ensure(sid)))
+        killer = threading.Thread(target=lambda: be.kill(sid))
+        with mock.patch.object(sb, "SdkSession", Parked):
+            reviver.start()
+            self.assertTrue(constructing.wait(10), "the revive never reached construction")
+            killer.start()
+            self.assertTrue(committed.wait(10), "the kill never committed to a path")
+            release.set()
+            reviver.join(10)
+            killer.join(10)
+        self.assertFalse(reviver.is_alive() or killer.is_alive(), "a thread never finished")
+        self.assertEqual(len(built), 1, "the revive built exactly one session")
+        s = built[0]
+        self.assertIs(revived[0], s, "the revive returned the session it built")
+        self.assertFalse(sb.read_reg(d, sid)["alive"], "the kill flipped the reg dead")
+        self.assertNotIn(sid, be.sessions,
+                         "the revived session outlived the kill: a running CLI whose reg says dead")
+        self.assertTrue(s.ended, "the revived session was never shut down")
+        s.thread.join(10)
+        self.assertFalse(s.thread.is_alive(), "the stand-in CLI thread kept running after the kill")
 
 
 if __name__ == "__main__":

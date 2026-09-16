@@ -26,7 +26,9 @@ test("build_session gates the API-error (chip 'blocked') on NOT busy — mirrors
 
 test("build_session computes open_now + the awaiting signal BEFORE the gate consumes them", () => {
   const onow = KERNEL.indexOf('open_now = _session_working(session["turns"])');
-  const awaiting = KERNEL.indexOf('_aw = _session_awaiting(sid, sess["path"], not open_now, stamp=True, live=tmux.get(sid))');
+  // live= is this fork's liveness hand-off (the handed row); the map is upstream's _live_map() since the tmux backend
+  // retired at the 2026-09-15 pull-in (upstream's own call passes no live row)
+  const awaiting = KERNEL.indexOf('_aw = _session_awaiting(sid, sess["path"], not open_now, stamp=True, live=live_map.get(sid))');
   const unpack = KERNEL.indexOf('awaiting_why = _aw["why"] if _aw else None');
   assert.ok(unpack !== -1 && awaiting < unpack, "the {kind, why} unpack follows the one call");
   const gate = KERNEL.indexOf('aerr = _api_error(sess["path"]) if not (open_now or awaiting_why) else None');

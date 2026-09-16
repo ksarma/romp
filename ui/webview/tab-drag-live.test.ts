@@ -47,9 +47,11 @@ test("the slot comes from the VIRTUAL layout — boundaries that cannot move und
   // the boxes are measured by getBoundingClientRect, which excludes margins — so no strip member
   // may carry a horizontal margin, or the virtual row holds more than the real one and the slot
   // hops in a band at every wrap boundary (the separator's 6px gutters were margin: a 12px drift)
-  assert.match(body, /\?\? t\.getBoundingClientRect\(\)\.width,\s*\n\s*br: isBreak\(t\) \|\| isBreak\(before\(t\)\) \}\)\);/);
-  // T264 (on the fork under the stripGroupRows setting): the untagged trail's boundary is a zero-height ROW
-  // BREAK, not a box in the real layout, so it joins the virtual one as a zero-width row opener (w: 0, br),
+  // the row openers are the breaks and the header a break precedes; the trail's first tab, which follows its break, is
+  // not one (the break already opened its row — two openers on one row is what the themed-gap bug rode, 2026-09-11)
+  assert.match(body, /\?\? t\.getBoundingClientRect\(\)\.width,\s*\n\s*br: isBreak\(t\) \|\| \(t\.classList\.contains\("tab-group-head"\) && isBreak\(before\(t\)\)\) \}\)\);/);
+  // T264 (on the fork under the stripGroupRows setting, OFF by default): the untagged trail's boundary is a zero-height
+  // ROW BREAK, not a box in the real layout, so it joins the virtual one as a zero-width row opener (w: 0, br),
   // and a header after a break opens a row too; the simulation then wraps exactly where the strip does
   const brk = CSS.match(/^\.tab-group-break \{[^}]*\}/m)![0];
   assert.match(brk, /flex: 0 0 100%; height: 0; margin: 0; padding: 0;/, "the break spans the row and has no box of its own");
@@ -58,8 +60,10 @@ test("the slot comes from the VIRTUAL layout — boundaries that cannot move und
   // there the trail's boundary is the pre-T264 13px divider, a real box the virtual layout measures by its rect,
   // whose gutters are padding (a margin would drift the simulated row); its rule is scoped off the break
   assert.doesNotMatch(CSS, /^\.tab-group-sep \{/m, "no unscoped separator rule: the break's boundary class gives it no box");
-  const sep = CSS.match(/^\.tab-group-sep:not\(\.tab-group-break\) \{[^}]*\}/m)![0];
-  assert.match(sep, /width: 13px; padding: 8px 6px;/, "the inline divider's footprint is its box");
+  const sepM = CSS.match(/^\.tab-group-sep:not\(\.tab-group-break\) \{[^}]*\}/m);
+  assert.ok(sepM, "the divider's rule exists, scoped off the break");
+  const sep = sepM[0];
+  assert.match(sep, /width: 13px; padding: 8px 6px;/, "the divider's footprint is its box");
   assert.doesNotMatch(sep, /margin/, "no margin on the divider: the virtual row holds what the real one holds");
   const head = CSS.match(/^\.tab-group-head \{[^}]*\}/m)![0];
   assert.doesNotMatch(head, /margin/, "headers carry no horizontal margin either");
@@ -73,7 +77,7 @@ test("the slot comes from the VIRTUAL layout — boundaries that cannot move und
 });
 
 test("the DOM insertion still does the cross-row move; the simulation only decides WHERE", () => {
-  assert.match(CSS, /#tabs \{ display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; position: relative; \}/);
+  assert.match(CSS, /#tabs \{ display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 1px 0; position: relative; \}/);
   const body = between('tabs.addEventListener("dragover"', "});");
   assert.match(body, /flipTabs\(\(\) => tabs\.insertBefore\(dragged, ref\)\);/,
     "one insert per boundary crossing — the wrap layout itself performs the visual reflow");
@@ -88,8 +92,8 @@ test("the hover popover never survives a drag (defect 2, the user's recording)",
 
 test("drop commits through the SAME reorderTo — neighbor + side, hidden-view ids keep their places", () => {
   const body = between('tabs.addEventListener("drop"', "});");
-  assert.match(body, /if \(prev\?\.dataset\?\.id\) \{ reorderTo\(draggedId, prev\.dataset\.id, true\); tabDragCommitted = true; \}/);
-  assert.match(body, /else if \(next\?\.dataset\?\.id\) \{ reorderTo\(draggedId, next\.dataset\.id, false\); tabDragCommitted = true; \}/,
+  assert.match(body, /if \(prev\?\.dataset\?\.id\) tabDragCommitted = reorderTo\(draggedId, prev\.dataset\.id, true\);/);   // committed iff the reorder happened (2026-09-10)
+  assert.match(body, /else if \(next\?\.dataset\?\.id\) tabDragCommitted = reorderTo\(draggedId, next\.dataset\.id, false\);/,
     "committed only when a reorder ran (T264b): no neighbour → dragend's cancel path FLIPs the copy home");
   // the neighbours are TABS (tab groups, 2026-09-04): a section header or separator beside the
   // dropped tab is skipped, so a drop at a section's edge still names the nearest tab and its side
@@ -120,9 +124,11 @@ test("cancel (Escape / dropped outside) re-renders from the untouched order, FLI
   const de = between('tab.addEventListener("dragend"', "});");
   assert.match(de, /const cancelled = !tabDragCommitted;/);
   assert.match(de, /if \(cancelled\) flipTabs\(\(\) => renderTabs\(\)\);/);
-  // the drop handler is what marks a commit, and it does so AFTER committing
+  // the drop handler is what marks a commit, and it does so from the reorder's own word: a refused reorder (a page
+  // without its manager, 2026-09-10) is a cancelled drag, so the strip FLIPs home
   const drop = between('tabs.addEventListener("drop"', "});");
-  assert.match(drop, /tabDragCommitted = true;/);
+  assert.match(drop, /tabDragCommitted = reorderTo\(/);
+  assert.doesNotMatch(drop, /tabDragCommitted = true;/);
 });
 
 test("reduced motion: the mutation still happens, only the transition is skipped", () => {
@@ -136,4 +142,32 @@ test("the old landing marker is fully retired", () => {
   for (const [name, src] of [["render.ts", RENDER], ["styles.css", CSS]] as const) {
     assert.ok(!/drop-(?:before|after)/.test(src), name + " carries no landing-marker classes");
   }
+});
+
+test("the shell hears the drag: tabDrag on at dragstart after the geometry snapshot, off at dragend ahead of the cancel branch (the chat split, 2026-09-11)", () => {
+  // the shell (kernel.py _LANDING_SPLIT_JS) mounts its drop zones — the other columns, the right edge — for the
+  // gesture's length; the sid and the name ride the message, so it reads nothing from dataTransfer
+  const ds = between('tab.addEventListener("dragstart"', "});");
+  assert.match(ds, /draggedId = id; draggedEl = tab; tabDragCommitted = false;/, "the pinned head is unchanged (tab-groups and tab-strip-skip pin it)");
+  const snap = ds.indexOf("snapshotDragGeometry(tab);"), post = ds.indexOf("postTabDrag(true, id);");
+  assert.ok(snap > 0 && post > snap, "the shell is told after the snapshot");
+  const de = between('tab.addEventListener("dragend"', "});");
+  const off = de.indexOf("postTabDrag(false);"), cancel = de.indexOf("if (cancelled) flipTabs(() => renderTabs());");
+  assert.ok(off > 0 && cancel > off, "the off ahead of the cancel branch: the zones go before the strip re-renders from the new sets");
+  const fn = between("function postTabDrag(", "\n}");
+  assert.match(fn, /if \(!inRompShell\(\)\) return;/, "nothing posted outside the shell");
+  assert.match(fn, /window\.parent\.postMessage\(\{ romp: "tabDrag", on: false \}, "\*"\)/);
+  assert.match(fn, /const bar = document\.getElementById\("tabbar"\);/, "stripH is the strip's bottom in this page's pixels");
+  assert.match(fn, /window\.parent\.postMessage\(\{ romp: "tabDrag", on: true, sid: id, name, stripH: bar \? bar\.getBoundingClientRect\(\)\.bottom : 0 \}, "\*"\)/);
+  assert.doesNotMatch(fn, /dataTransfer/, "the sid rides the message, never dataTransfer");
+});
+
+test("a create in flight is not draggable, and the page answers the shell's two questions before a move or a close (the chat split, review finds 2026-09-11)", () => {
+  // a provisional tab has no session to move: draggable, the shell's zones would have opened a column on an id the kernel
+  // does not know (it flashed open and shut); a sub-agent viewer was already not draggable
+  assert.match(RENDER, /tab\.draggable = !s\.sub && !fedMissing && !isProvisionalId\(id\) && !settings\.tabsLocked;/);   // …nor while the tabs are locked (T395)
+  // the palette's DOM read can still name either: the shell asks the page at its one mutation (tests/test_chat_split.py
+  // runs the refusals), and whether this column has a create in flight before it closes it under one
+  assert.match(RENDER, /\(window as any\)\.__rompMovableSession = \(sid: unknown\): boolean => typeof sid === "string" && !!sid && !isProvisionalId\(sid\) && !isSubId\(sid\) && !settings\.tabsLocked;/);   // the shell's move question answers no while the tabs are locked (T395)
+  assert.match(RENDER, /\(window as any\)\.__rompColumnBusy = \(\): boolean => !!provisionalId \|\| failedProvisionals\.size > 0;/);
 });

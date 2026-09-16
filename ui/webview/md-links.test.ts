@@ -3,6 +3,8 @@
 // them. Synthetic hosts and paths throughout (TESTHOST, the notes-api demo tree).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";     // the slug fixture the kernel shares (T351), read by the last test
+import * as path from "node:path";
 import { isMarkdownUrl, resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs, browserTabClick } from "./md-links";
 
 const ORIGIN = "https://TESTHOST";
@@ -223,4 +225,13 @@ test("browserTabClick: Shift everywhere; Cmd on macOS and Ctrl elsewhere; the ot
   assert.equal(browserTabClick({ metaKey: true }, false), false, "Super-click on Linux and Windows is a plain click to the browser: the resolver must land it");
   assert.equal(browserTabClick({ metaKey: true, shiftKey: true }, false), true, "Shift beside any other key is still the browser's");
   assert.equal(browserTabClick({ ctrlKey: true, metaKey: true }, true), true, "both keys held: the platform's one counts");
+});
+
+// T351: the slug rule is shared with the kernel (kernel.py _heading_slug / _unique_slugs), which slices a `path#slug`
+// link's section for the chat's file preview; the fixture pins both sides so the section the kernel slices is the
+// heading the viewer lands on (tests/test_file_slice.py runs the same fixture through the Python port).
+test("headingSlug and uniqueSlugs agree with the kernel's port over the shared fixture", () => {
+  const fx = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "..", "tests", "fixtures", "heading_slugs.json"), "utf8"));
+  for (const [text, slug] of fx.slugs as [string, string][]) assert.equal(headingSlug(text), slug, JSON.stringify(text));
+  for (const [inp, out] of fx.unique as [string[], string[]][]) assert.deepEqual(uniqueSlugs(inp), out, JSON.stringify(inp));
 });

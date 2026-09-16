@@ -522,6 +522,9 @@ test("routeOutbound: the gear's kernel-side settings reach EVERY attached kernel
                      { type: "setCommentModel", model: "claude-opus-5" },
                      { type: "setCommentEffort", effort: "high" },
                      { type: "setCommentFast", fast: "on" },
+                     { type: "setJudgeFast", enabled: true },
+                     { type: "setDistillFast", enabled: true },
+                     { type: "setIndexFast", enabled: true },
                      { type: "setFileEditing", enabled: true },
                      { type: "setCompactSuggest", enabled: true }]) {   // T248: no longer per-install
     const routes = routeOutbound(msg, new Set(["TESTHOST", "gpu1"]));
@@ -766,4 +769,12 @@ test("re-based times cannot strand a connector after its sender's last bar (the 
   assert.ok(msg.sent <= lane.end, "the send mark sits within the sender's re-based work, not after it");
   assert.equal(msg.sent, 990);
   assert.deepEqual(lane, { start: 910, end: 995 });
+});
+
+test("routeOutbound: redial ALWAYS stays local with its host field INTACT — it asks the LOCAL kernel to re-dial that tunnel", () => {
+  // the composer's refusal on a downed host posts {type:"redial", host} (render.ts, 2026-08-16). The explicit-host
+  // rule carried it to that very host — down, so it dropped with a toast about "redial" on top of the refusal's own
+  // copy — with the field stripped, which the kernel's handler requires (2026-09-10).
+  assert.deepEqual(routeOutbound({ type: "redial", host: "gpu1" }), [{ host: "", msg: { type: "redial", host: "gpu1" } }]);
+  assert.deepEqual(routeOutbound({ type: "redial", host: "gpu1" }, new Set(["gpu1"])), [{ host: "", msg: { type: "redial", host: "gpu1" } }]);
 });

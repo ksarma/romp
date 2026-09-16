@@ -1,13 +1,30 @@
 #!/usr/bin/env python3
-"""No bats test may negate a command with a bare `!` anywhere but as its LAST command (review round 2,
-2026-09-06). bats runs a test under `set -e` with an ERR trap, and bash exempts an inverted command
-from both, so `! grep -q x "$LOG"` followed by another line checks nothing: the test passes whether or
-not the log contains x. The emoji names-map test asserted `! grep -q 'bg=...'` that way and would have
-passed with the very bug it was written against. As the last command it IS checked, because bats reads
-the test function's return status — which is why the many last-line sites pass today, and why they stop
-checking anything the moment someone appends an assertion. The checked form is `run <cmd>` followed by
-`[ "$status" -ne 0 ]`, or a count (`grep -c ... -eq 0`) for a pipeline; bats 1.5+ also has `run !`,
-which needs `bats_require_minimum_version 1.5.0` in the file."""
+"""No bats test may negate a command with a bare `!` unless that is the test's LAST command.
+
+bats runs a test body under `set -e` with an ERR trap, and bash exempts an inverted command from
+both, so `! grep -q x "$LOG"` followed by another command checks nothing: the test passes whether
+or not the log contains x. As the last command it IS checked, because bats reads the test
+function's return status. That is why last-line sites work, and why they stop checking anything
+the moment someone appends an assertion after them. PR #383 armed nineteen such sites by hand and
+PR #403 one more; within a month three new ones had arrived, one each in tests/romp-headless.bats
+(c2a5f844), tests/tmux-status-hook.bats (e0d76b85) and tests/romp.bats (989854c6), each asserting
+nothing. This module is the ratchet those hand fixes lacked: the suite test scans every
+tests/*.bats and names each inert site, and the Scanner tests pin the scanner itself on synthetic
+snippets.
+
+The checked form is `run <cmd>` followed by `[ "$status" -ne 0 ]` (tests/romp-postal.bats and
+tests/git-hermetic.bats write it inline; the `log_lacks` helper that wrapped it left with
+tests/romp-manager-tmux-scope.bats when the tmux backend was removed, 2532d6d8 on 2026-09-11), a count for a pipeline (`[ "$(grep -c x "$LOG")" -eq 0 ]`),
+or `run ! <cmd>` in a file that declares `bats_require_minimum_version 1.5.0`. `run` overwrites $status and
+$output, so an armed negation goes after any `[[ "$output" ... ]]` check that reads the previous run.
+
+Scope: a line scan, not a bash parser. Inside a `@test ... {` block it reads every line that begins
+with `! ` and reports one whose next non-blank, non-comment line is not the block's closing `}`. It
+does not see `!cmd` written without a space, a `! cmd` sharing a line with another command, a
+bare `!` inside setup(), teardown() or a helper function (also under errexit), or a test whose
+`@test` line does not end in `{`; a lone `}` line inside a test body (a brace group, a heredoc) ends
+the block early and hides what follows. It does report `! cmd || <fallback>`, which errexit checks
+through the list's last command; write that as `run` + status too."""
 import os
 import re
 import tempfile
@@ -22,7 +39,7 @@ _BLANK_OR_COMMENT = re.compile(r"^\s*(#.*)?$")
 
 def mid_test_bare_negations(text):
     """(line number, line) for every bare `!` command inside a @test block that is followed by another
-    command — the ones bats cannot see fail. A bare `!` whose next command line is the block's closing
+    command, the ones bats cannot see fail. A bare `!` whose next command line is the block's closing
     brace is the test's return value and is not reported."""
     lines = text.split("\n")
     hits, in_test = [], False
@@ -73,7 +90,10 @@ class Scanner(unittest.TestCase):
         self.assertEqual(mid_test_bare_negations(text), [])
 
     def test_ignores_a_bare_bang_outside_a_test_block(self):
-        text = ('setup() {\n    ! grep -q x "$LOG"\n    true\n}\n@test "x" {\n    true\n}\n')
+        # a helper before the block and one after it: the block's closing `}` must end the scan, or the
+        # second helper's negation would be reported as if it were the test's
+        text = ('setup() {\n    ! grep -q x "$LOG"\n    true\n}\n@test "x" {\n    true\n}\n'
+                'helper() {\n    ! grep -q x "$LOG"\n    true\n}\n')
         self.assertEqual(mid_test_bare_negations(text), [])
 
     def test_reports_the_file_the_suite_test_would(self):

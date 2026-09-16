@@ -17,12 +17,14 @@ import io
 import json
 import os
 import re
+import sys
 import tempfile
 import threading
 import time
 import unittest
 import shutil
 import urllib.request
+from unittest import mock
 from contextlib import redirect_stderr
 from http.server import ThreadingHTTPServer
 from romp_load import load_source
@@ -45,8 +47,18 @@ SID = "11111111-2222-3333-4444-555555555555"
 # A PRIVATE synthetic sid for the goal-store tests: load_goals replays the per-sid override journal,
 # and node ids collide across test modules under the shared placeholder (CLAUDE.md, goal-store fixtures).
 GOAL_SID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
-TOP_KEYS = {"now", "since", "uptime_s", "log", "process", "pusher", "stages_ms", "builds", "sends",
-            "goals", "memos", "judge", "http", "caches"}
+TOP_KEYS = {"now", "since", "uptime_s", "log", "process", "pusher", "jobs", "stages_ms", "builds", "sends",   # jobs: the jobs thread's passes
+            "goals", "memos", "judge", "http", "parses",   # parses: cold event-model parses (T323 stage 1)
+            "checkpoints",                                 # checkpoints: the folds' checkpoints (T323 stage 3)
+            "asmCheckpoint",                               # asmCheckpoint: the assembly documents (T323 stage 4a)
+            "asmIndex",                                    # asmIndex: the lazy index's built atoms, by caller (T323 stage 4c)
+            "recordCache",                                 # recordCache: the shared reader's byte budget and evictions (2026-09-11)
+            "chatPages",                                   # chatPages: the pre-floor history pages cache (T323 stage 4b)
+            "skillLoadIndex",                              # skillLoadIndex: the judge's skill-load boot pass, its raw reads (T333)
+            "fileSlice",                                   # fileSlice: the file preview popover's slice cache: hit / miss / bytes / warm (T351)
+            "glossary",                                    # glossary: files parsed, frames / terms / bytes built per cycle, entries cut, files refused (T351 stage 2)
+            "stacks",                                      # stacks: every thread's last frames under ROMP_PERF_STACKS, else None (T358)
+            "caches"}                                      # caches: the declared caches' exact occupancy (M1-lite, perf round 4; this fork's)
 PROCESS_KEYS = {"rss_kb", "threads", "cpu_s", "pid", "rss_anon_kb", "hwm_kb", "source", "allocated_blocks", "gc_gen2", "malloc"}
 # The caches the `caches` block gauges (perf round 4, M1-lite): exact occupancy, a len() or a sum of len()s,
 # nothing estimated. A cache added to the kernel, the judge or the event model is added here deliberately.
@@ -114,9 +126,11 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["stages_ms"]), set(km._PerfStats.STAGES))
         self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline", "feedJson", "thread"})   # thread: the comment popover's build (2026-09-08)
         self.assertEqual(set(snap["builds"]["timeline"]), {"cached", "built", "ms"})
-        self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss", "moved"},
-                         "the chat builder carries the active/background split, the miss attribution (round-4 P3) "
-                         "and the builds left uncached because their signature moved (P4)")
+        self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss", "moved",
+                                                       "coldSkipped", "bySession"},
+                         "the chat builder carries the active/background split, the miss attribution (round-4 P3), "
+                         "the builds left uncached because their signature moved (P4), the skeleton-held tabs the cold-tab "
+                         "gate skipped (coldSkipped, upstream #1659) and the per-session timer (bySession)")
         self.assertEqual(set(snap["builds"]["chat"]["bg_miss"]), set(km._PerfStats.CHAT_MISS))
         self.assertEqual(km._PerfStats.CHAT_MISS, km._CHAT_SIG_LABELS + ("cold", "nosig"),
                          "one counter per labelled signature component, plus the two no-signature cases")
@@ -146,25 +160,58 @@ class Collector(unittest.TestCase):
                                               "absent_hits", "absent_misses", "noop_hash_ms", "unreadable_stores",
                                               "lineage_reads"},
                          "read through jd.goal_io_stats (unreadable_stores is a gauge beside the counters)")
-        self.assertEqual(set(snap["memos"]),
-                         {"pass", "shared", "chain",
-                          "nudgeGate", "cleared", "courierSkip", "backref", "captions", "goalArchive", "plannerSkip",
-                          "lift_gate", "nudge_walk", "wire", "intr_marks", "sessions_scope",
-                          "caps", "states_overlay", "thread_reg", "bg_tops",
-                          "feed_segs", "lanes",
-                          "chat_merge_sets", "chat_postal", "chat_ledger", "chat_fold_tasks"},
-                         "one block per memo the kernel keeps (plan D4): the three identity memos on the goal-store "
-                         "path under upstream's names (pass, shared, chain; review find, 2026-09-08), the seven "
-                         "judge- and walk-side memos of the 2026-09-09 fold (nudgeGate, cleared, courierSkip, backref, "
-                         "captions, goalArchive, plannerSkip), then the rest; `caps` is the kernel's _Caps object memo, "
-                         "renamed from `captions` when upstream's captions file-read memo took that key")
         # the three identity memos' readers land here (review find, 2026-09-08: they had no consumer)
-        self.assertEqual(set(snap["memos"]["plannerSkip"]), {"skipped", "planned", "recorded"})
-        self.assertEqual(set(snap["memos"]["captions"]), {"served", "parsed"})
+        self.assertEqual(set(snap["memos"]), {"pass", "shared", "chain", "nudgeGate", "nudgeWalk", "cleared", "courierSkip", "backref", "captions", "goalArchive", "plannerSkip", "ghostDropped",
+                                              "bgTops", "liftGate", "intrMarks", "deadWait", "tickSeen", "statesOverlay", "lanes", "spendTree", "summaryAnchor",
+                                              "chatMergeSets", "chatPostal", "chatLedger", "chatFoldTasks",   # the chat build's fixed-cost memos (2026-09-09)
+                                              "outlineProvisional",   # the Outline's provisional-row ledger memo, parse-free (plans/outline-pane-provisional-row.md, 2026-09-15)
+                                              "wire", "sessions_scope", "caps", "thread_reg"},
+                         "one block per memo the kernel keeps: the shared names spelled as upstream reports them "
+                         "(camelCase), plus this kernel's own memos (the wire caches, the discover scope, the _Caps "
+                         "object memo, the SDK registry reader); `caps` is the _Caps object memo, renamed from "
+                         "`captions` when the captions file-read memo took that key; the nudge walk reports as "
+                         "upstream's nudgeWalk since the 2026-09-15 pull-in, and the feed's per-session memo as "
+                         "builds.feed.memo (T368)")
+        self.assertEqual(set(snap["memos"]["outlineProvisional"]), {"hit", "miss", "bypass_hold", "bypass_empty", "entries"},
+                         "the provisional ledger memo: hits and misses on the store object's identity, the two bypasses (a rewind hold, an empty store), and the occupancy")
+        self.assertEqual(set(snap["memos"]["spendTree"]), {"entries", "bytes", "bound", "dirStats", "fileStats", "entryStats", "listings", "loaded", "loadFailed", "written", "swept", "dropped", "dumpSkipped", "evicted", "writeFailed"}, "the spend guard's tree memos against their bound")
+        self.assertEqual(snap["memos"]["spendTree"]["bound"], km.SPEND_GUARD_TREE_MEMO_BYTES)
+        self.assertEqual(set(snap["memos"]["summaryAnchor"]), {"entries", "bytes", "bound", "hit", "miss", "evict", "fault"},
+                         "the brief line's text-atom landings (T388): occupancy and counters against their bound")
+        self.assertEqual(snap["memos"]["summaryAnchor"]["bound"], km.SUMMARY_ANCHOR_MEMO_BYTES)
+        self.assertEqual(set(snap["memos"]["bgTops"]), {"hit", "miss", "resolve", "walk", "walk_neg", "idx_build", "entries"},
+                         "the placed-launch memo (_bg_placed_tops): counters plus its occupancy")
+        for k, v in snap["memos"]["bgTops"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["liftGate"]), {"skip", "load", "shared", "writer", "noop", "entries"},
+                         "the awaiting-lift gate: session-cycles skipped vs read, the probes the shared cache "
+                         "answered, the writer loads and the ones that filed nothing, plus its occupancy")
+        for k, v in snap["memos"]["liftGate"].items():
+            self.assertIsInstance(v, int, k)
+        # the two memos the interrupt tick trims to its alive set: the interrupt-marks memo and the awaiting
+        # overlay's states-log fold, each with its counters and its occupancy
+        self.assertEqual(set(snap["memos"]["intrMarks"]), {"hit", "miss", "evict", "entries", "restored", "refused", "computeMs", "persisted"},
+                         "the identity memo's counters and the persisted memo's (T401 (3) target 3)")
+        self.assertEqual(snap["memos"]["intrMarks"], km._intr_marks_memo_report())
+        self.assertEqual(set(snap["memos"]["statesOverlay"]), {"hit", "append", "refold", "fail", "evict", "entries"})
+        self.assertEqual(snap["memos"]["statesOverlay"], km._states_overlay_report())
+        for blk in ("intrMarks", "statesOverlay"):
+            for k, v in snap["memos"][blk].items():
+                self.assertIsInstance(v, int, "%s.%s" % (blk, k))
+        self.assertEqual(set(snap["memos"]["lanes"]), {"hit", "miss", "live_tail", "complain_skip", "unshared_skip", "evict", "entries",
+                                                     "segs_hit", "segs_miss", "prefix_hit", "prefix_segs", "dead_serve", "dead_miss", "dead_failed_serve"},
+                         "the timeline's per-lane segment memo: one outcome per live lane per bars build, the dead lanes beside")
+        self.assertTrue(all(type(v) is int for v in snap["memos"]["lanes"].values()))
+        self.assertEqual(set(snap["memos"]["chatMergeSets"]), {"hit", "miss", "entries", "floorAgeMaxS", "builtAboveFloor"})   # 5b's two
+        self.assertEqual(set(snap["memos"]["chatPostal"]), {"gate", "hit", "commit_new"})
+        self.assertEqual(set(snap["memos"]["chatLedger"]), {"hit", "miss", "bypass_live", "bypass_hold", "bypass_empty", "evict", "entries"})
+        self.assertEqual(set(snap["memos"]["chatFoldTasks"]), {"hit", "miss", "entries"})
+        self.assertEqual(set(snap["memos"]["plannerSkip"]), {"skipped", "planned", "recorded", "restored", "refused", "persisted", "mismatchByTerm"})   # T401 (5c)
+        self.assertEqual(set(snap["memos"]["captions"]), {"served", "parsed", "unstatable"})
         self.assertEqual(set(snap["memos"]["goalArchive"]), {"served", "loaded"})
         self.assertEqual(set(snap["memos"]["backref"]), {"served", "built"},
                          "the sender-board walk behind the courier link repair: built once per input state (2026-09-09)")
-        self.assertEqual(snap["memos"]["nudgeGate"], {"served": 0, "derived": 0},
+        self.assertEqual(snap["memos"]["nudgeGate"], {"served": 0, "derived": 0, "failed": 0},
                          "the nudge walk's placement gate: served vs re-derived (2026-09-09)")
         self.assertEqual(set(snap["memos"]["cleared"]), {"served", "derived"},
                          "the clear set: parsed once per file state, served while it stands (2026-09-09)")
@@ -175,50 +222,20 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["memos"]["chain"], km.jd.chain_memo_stats())
         self.assertEqual(set(snap["memos"]["chain"]), {"hit", "miss", "populate", "bypass"},
                          "read through jd.chain_memo_stats: the write-moment chain memo's counters")
-        self.assertEqual(set(snap["builds"]["feed"]), {"cached", "built", "ms", "dirty"},
-                         "the feed build also counts the rebuilds a kernel-side mutation forced past the view signature")
+        self.assertEqual(set(snap["builds"]["feed"]), {"cached", "built", "ms", "dirty", "memo"},
+                         "the feed build also counts the rebuilds a kernel-side mutation forced past the view signature, "
+                         "and carries T368's per-session card memo (test_the_feed_build_block_carries_the_per_session_card_memo)")
         self.assertEqual(snap["builds"]["feed"]["dirty"], 0)
-        self.assertEqual(set(snap["memos"]["chat_ledger"]),
-                         {"hit", "miss", "bypass_live", "bypass_hold", "bypass_empty", "evict", "entries"},
-                         "the ledger memo (round-4 P3 a, interim): counters, its three bypasses, its occupancy")
-        for k, v in snap["memos"]["chat_ledger"].items():
-            self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["chat_fold_tasks"]), {"hit", "miss", "entries"},
-                         "the per-turn task fold memo (round-4 P3 b, interim)")
-        for k, v in snap["memos"]["chat_fold_tasks"].items():
-            self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["chat_merge_sets"]), {"hit", "miss", "entries"},
-                         "the live-merge sets memo (round-4 P3 d): counters plus its occupancy")
-        for k, v in snap["memos"]["chat_merge_sets"].items():
-            self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["chat_postal"]), {"gate", "hit", "commit_new"},
-                         "the fold's sealed postal cards (round-4 P17/P3 c): gate re-hydrations, verified checks, new raw hydrated")
-        for k, v in snap["memos"]["chat_postal"].items():
-            self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["pass"]),
                          {"hit", "miss", "fail", "evict", "punch", "live", "snap", "entries", "bytes"},
                          "the judge pass's goal-store memo: counters plus its occupancy, and the feed's serve branches")
         for k, v in snap["memos"]["pass"].items():
             self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["lift_gate"]), {"skip", "load", "shared", "writer", "noop", "entries"},
-                         "the awaiting-lift gate: session-cycles skipped vs read, the probes the shared cache "
-                         "answered, the writer loads and the ones that filed nothing, plus its occupancy")
-        for k, v in snap["memos"]["lift_gate"].items():
-            self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["nudge_walk"]),
-                         {"walked", "gated", "loads", "shared", "deleg_hit", "deleg_miss", "lifted", "evict", "entries"},
-                         "the auto-nudge walk (round 5, trimmed in the 2026-09-09 fold): session-cycles visited and gated, "
-                         "the decision's store reads and the shared-cache answers, the delegated check's memo counters, "
-                         "the wake-only lifts filed, evictions, plus the placement-gate memo's occupancy; the gate's own "
-                         "served / derived pair is memos.nudgeGate (a hit reads as served, a miss or a bypass as derived; "
-                         "no stale pin exists under the parse cache's own key)")
-        for k, v in snap["memos"]["nudge_walk"].items():
-            self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["bg_tops"]),
-                         {"hit", "miss", "resolve", "walk", "walk_neg", "idx_build", "entries"},
-                         "the placed-launch memo (_bg_placed_tops): counters plus its occupancy")
-        for k, v in snap["memos"]["bg_tops"].items():
-            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["nudgeWalk"]), set(km._NUDGE_WALK_STATS),
+                         "the auto-nudge walk's parse gate (upstream's nudgeWalk row, the successor of this fork's own walk "
+                         "row since the 2026-09-15 pull-in): looks, skipped and paid parses, cold ones, deferred sessions, the "
+                         "unbounded legs and their notes, clock-due and wake-only looks; the placement gate's own served / "
+                         "derived / failed counters are memos.nudgeGate")
         self.assertEqual(set(snap["memos"]["shared"]),
                          {"hit", "miss", "compare_miss", "refuse", "dup", "absent", "corrupt", "unreadable_journal",
                           "evict", "fallback", "poisoned", "entries", "bytes", "off"},
@@ -227,15 +244,12 @@ class Collector(unittest.TestCase):
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["wire"]),
                          {"feed_cards_hit", "feed_cards_miss", "split_hit", "split_miss", "feed_body", "bars_body",
-                          "bars_sig_fallback", "default_str"},
+                          "feed_sig_fallback", "feed_first", "bars_sig_fallback", "default_str"},
                          "the pusher's wire caches: the feed's per-card memo, the collection-split memo the bars and "
-                         "the slot path share (_delta_split_memo), the whole frames actually made, the unkeyable bars "
+                         "the slot path share (_delta_split_memo), the whole frames actually made, the cards-first "
+                         "connect frame (feed_first) and its one unkeyable path (feed_sig_fallback), the unkeyable bars "
                          "fallback, the values a wire encoder shipped as str()")
         for k, v in snap["memos"]["wire"].items():
-            self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["intr_marks"]), {"hit", "miss", "evict", "entries"},
-                         "the _interrupt_marks memo: counters plus its occupancy")
-        for k, v in snap["memos"]["intr_marks"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["sessions_scope"]), {"hit", "miss", "wide_hit", "wide_miss"},
                          "the pusher cycle's discover memo: _sessions reads and the wide walk")
@@ -245,33 +259,24 @@ class Collector(unittest.TestCase):
                          "the _Caps object memo (perf round 4, item C; memos.caps since the 2026-09-09 fold, when upstream's "
                          "captions file-read memo took `captions`): reads served against read, failed reads, entries "
                          "dropped, and its occupancy")
-        self.assertEqual(set(snap["memos"]["states_overlay"]), {"hit", "append", "refold", "fail", "evict", "entries"},
-                         "the states-overlay fold: unchanged, appended rows only, every row, failed reads, entries dropped, occupancy")
         self.assertEqual(set(snap["memos"]["thread_reg"]), {"hit", "miss", "fail", "evict", "entries"},
                          "the SDK registry reader's memo: the captions memo's shape")
-        self.assertEqual(set(snap["memos"]["lanes"]),
-                         {"hit", "miss", "live_tail", "complain_skip", "unshared_skip", "evict", "entries",
-                          "segs_hit", "segs_miss", "dead_serve", "dead_miss", "dead_failed_serve"},
-                         "the per-lane segment memo (perf round 4, item A): one outcome per LIVE lane per bars build "
-                         "(served, derived, live tail, complained, unshared store), entries dropped, its "
-                         "occupancy, the segments served against derived, and the dead lanes' outcomes since the "
-                         "2026-09-09 fold (served from the dead-lane memo, derived directly, served as a cached "
-                         "failed parse)")
-        for blk in ("caps", "captions", "states_overlay", "thread_reg", "lanes"):
+        for blk in ("caps", "captions", "thread_reg"):
             for k, v in snap["memos"][blk].items():
                 self.assertIsInstance(v, int, "%s.%s" % (blk, k))
-        self.assertEqual(set(snap["memos"]["feed_segs"]),
-                         {"hit", "miss", "bypass_live", "bypass_degraded", "bypass_unkeyed", "bypass_unscoped",
-                          "evict", "entries"},
-                         "build_feed's per-session memo (round-4 plan P2-A): counters plus its occupancy")
-        for k, v in snap["memos"]["feed_segs"].items():
-            self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["process"]), PROCESS_KEYS)
         self.assertGreater(snap["process"]["threads"], 0)
         self.assertGreaterEqual(snap["process"]["rss_kb"], 0)
         self.assertEqual(set(snap["caches"]), CACHE_NAMES, "one exact-occupancy block per declared cache (M1-lite)")
         self.assertGreaterEqual(snap["uptime_s"], 0)
         json.dumps(snap)                                     # the whole thing serializes as-is
+
+    def test_every_memo_key_is_named_in_the_collectors_docstring(self):
+        # the /perf reader's reference for a memo block is _PerfStats's own docstring (its `memos` rows): a memo
+        # registered without a row there is a counter nobody can read about
+        doc = km._PerfStats.__doc__
+        for key in self.st.snapshot()["memos"]:
+            self.assertTrue(re.search(r"\b%s\b" % re.escape(key), doc), "memos.%s has no docstring row" % key)
 
     def test_the_process_block_carries_the_memory_gauges(self):
         # M1-lite (perf round 4): the three-way RSS question (allocator retention, an object graph, one cache
@@ -387,6 +392,40 @@ class Collector(unittest.TestCase):
             km.jd._rebind_state(saved)
             shutil.rmtree(td, ignore_errors=True)
 
+    def test_the_asm_checkpoint_block_names_the_restore_parts(self):
+        """1606 low 4: nothing pinned restoreMs on /perf. The block's restoreMs sub-keys: the four named parts and the total."""
+        st = km.em.asm_checkpoint_stats()
+        self.assertEqual(set(st["restoreMs"]), {"load", "verify", "index", "seed", "total"})
+        self.assertTrue(all(isinstance(v, float) for v in st["restoreMs"].values()), st["restoreMs"])
+
+    def test_the_asm_index_block_carries_the_documented_keys(self):
+        """The lazy index's block (asmIndex): its keys pinned, the light-facts gauge among them (T401 (3) target 3, round three:
+        the gauge was documented on /perf but never exposed)."""
+        st = km.em.asm_index_stats()
+        self.assertEqual(set(st), {"cap", "evictions", "materialized", "materializedBy", "materializedByStage", "resident", "restoredTurns",
+                                   "rowDecodes", "userFacts"})
+        self.assertIsInstance(st["userFacts"], int); self.assertGreaterEqual(st["userFacts"], 0)
+
+    def test_the_feed_build_block_carries_the_per_session_card_memo(self):
+        """builds.feed gained `memo` (T368): the feed's per-session card memo beside the build counters, its hits and
+        misses per session per build, the misses attributed to the key component that moved (plus `cold`), the
+        evictions, and the resident set against its bound (a fraction of the machine's memory, or ROMP_FEED_MEMO_BYTES).
+        The map is the memo's own report, copied per read; tests/test_feed_session_memo.py drives the values."""
+        snap = self.st.snapshot()
+        self.assertEqual(set(snap["builds"]["feed"]), {"cached", "built", "ms", "dirty", "memo"})   # dirty: this fork's forced-rebuild counter beside the memo
+        memo = snap["builds"]["feed"]["memo"]
+        self.assertEqual(set(memo), {"hit", "miss", "evict", "entries", "bytes", "bound", "derived", "miss_by"})
+        self.assertEqual(set(memo["miss_by"]), set(km._FEED_MEMO_LABELS) | {"cold"})
+        self.assertEqual(memo["bound"], km.FEED_MEMO_BYTES)
+        self.assertEqual(memo, km._feed_memo_report())
+        for k, v in memo.items():
+            self.assertIsInstance(v, (int, dict), k)
+        for k, v in memo["miss_by"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertIsNot(memo, km._FEED_MEMO_STATS, "a copy per read, never the live counters")
+        for kind in ("chat", "timeline", "feedJson", "thread"):
+            self.assertEqual(set(snap["builds"][kind]) & {"memo"}, set(), "%s: only the feed carries the memo" % kind)
+
     def test_pusher_counters(self):
         self.st.wake(); self.st.wake(); self.st.wake()
         self.st.wake_kind(True); self.st.wake_kind(False); self.st.wake_kind(False)
@@ -418,6 +457,38 @@ class Collector(unittest.TestCase):
         self.assertAlmostEqual(p["cycle_ms_ring_max"], 299.0, msg="the window's max: the ring's largest")
         self.assertAlmostEqual(p["cycle_ms_max"], 5000.0, msg="the lifetime max keeps the boot cycle")
 
+    def test_the_per_session_chat_build_timer_keeps_first_last_and_max_and_leaves_with_its_sessions_certified_death(self):
+        """The process split's measure (2026-09-14): beside the aggregate, a row per session with the FIRST build after the
+        boot (set once per process life), the last, the max, the counts and the leaf's bytes; sorted by max under
+        builds.chat.bySession; a row leaves with its session's CERTIFIED death (_record_death drops it, whichever road
+        recorded the death) and with nothing else; the aggregate is unchanged."""
+        A, B, C = "aaaaaaaa-2222-4333-8444-0000000000a1", "bbbbbbbb-2222-4333-8444-0000000000b2", "cccccccc-2222-4333-8444-0000000000c3"
+        self.st.build_chat(False, 0.100, active=True, sid=A, nbytes=1000)    # A: first 100 ms
+        self.st.build_chat(False, 0.050, sid=A, nbytes=1200)                  # A: last 50, max stays 100
+        self.st.build_chat(False, 0.020, sid=B, nbytes=50)                    # B: first 20
+        self.st.build_chat(False, 0.300, sid=B, nbytes=60)                    # B: last 300, max 300
+        self.st.build_chat(True, sid=C)                                       # C: cached only, never built
+        self.st.build_chat(True, sid=A)
+        self.st.build_chat(False, 0.010)                                      # no sid: the aggregate alone
+        snap = self.st.snapshot()
+        chat = snap["builds"]["chat"]
+        self.assertEqual((chat["built"], chat["cached"]), (5, 2), "the aggregate counts every build as before")
+        rows = {r["sid"]: r for r in chat["bySession"]}
+        self.assertEqual([r["sid"] for r in chat["bySession"]], [B, A, C], "sorted by max, the largest first")
+        self.assertEqual(rows[A], {"sid": A, "first": 100.0, "last": 50.0, "max": 100.0, "n": 2, "cached": 1, "bytes": 1200})
+        self.assertEqual(rows[B], {"sid": B, "first": 20.0, "last": 300.0, "max": 300.0, "n": 2, "cached": 0, "bytes": 60})
+        self.assertEqual(rows[C], {"sid": C, "first": None, "last": None, "max": 0.0, "n": 0, "cached": 1, "bytes": None})
+        self.st.build_chat(False, 0.400, sid=A)
+        rows = {r["sid"]: r for r in self.st.snapshot()["builds"]["chat"]["bySession"]}
+        self.assertEqual((rows[A]["first"], rows[A]["last"], rows[A]["max"]), (100.0, 400.0, 400.0), "first is set once; last and max move")
+        self.st.chat_row_drop(B)                                              # B's death was certified (_record_death calls this)
+        self.assertEqual(sorted(r["sid"] for r in self.st.snapshot()["builds"]["chat"]["bySession"]), sorted([A, C]))
+        self.st.chat_row_drop("no-such-sid")                                  # a death of a session never built: nothing to drop
+        self.assertEqual(len(self.st.snapshot()["builds"]["chat"]["bySession"]), 2)
+        # the certified death drives the drop through the real _record_death and the real death sweep's tick over three ticks
+        # (tests/test_sdk_registry_blind.py, ChatBuildRowsLeaveWithTheCertifiedDeath); the call sites are executed, not read: PushStages below
+        # drives the real _push and the real _push_session_now and reads the rows from the snapshot
+
     def test_stages_builds_judge(self):
         self.st.stage("push.chat", 0.5); self.st.stage("push.chat", 0.25); self.st.stage("jobs", 0.1)
         self.st.build("chat", True); self.st.build("chat", False, 0.040); self.st.build("feed", False, 1.0)
@@ -425,10 +496,11 @@ class Collector(unittest.TestCase):
         snap = self.st.snapshot()
         self.assertAlmostEqual(snap["stages_ms"]["push.chat"], 750.0)
         self.assertAlmostEqual(snap["stages_ms"]["jobs"], 100.0)
-        chat = snap["builds"]["chat"]
-        self.assertEqual({k: chat[k] for k in ("cached", "built", "ms")}, {"cached": 1, "built": 1, "ms": 40.0})
-        self.assertEqual((chat["active_built"], chat["bg_built"], sum(chat["bg_miss"].values())), (0, 0, 0),
-                         "the plain writer records no split; build_chat does (test_chat_fixed_cost_memos)")
+        # chat also carries the watched/background split and the per-component attribution (2026-09-09); the
+        # plain writer counts the build and attributes nothing
+        self.assertEqual(snap["builds"]["chat"], {"cached": 1, "built": 1, "ms": 40.0, "active_built": 0, "bg_built": 0,
+                                                  "moved": 0, "coldSkipped": 0, "bg_miss": {k: 0 for k in km._PerfStats.CHAT_MISS},
+                                                  "bySession": []})                   # the per-session timer (2026-09-14): no sid handed in, no row
         self.assertEqual(snap["builds"]["feed"]["built"], 1)
         self.assertEqual(snap["builds"]["timeline"], {"cached": 0, "built": 0, "ms": 0.0})
         self.assertEqual(snap["judge"]["passes"], 2)
@@ -525,6 +597,51 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["pusher"]["wakes"], 16000)
         self.assertEqual(snap["sends"]["full"]["chat"]["count"], 16000)
         self.assertEqual(snap["http"]["GET /p"]["count"], 16000)
+
+
+class ProcessStatsFallback(unittest.TestCase):
+    """_process_stats reads VmRSS from /proc/self/status; a platform without /proc (macOS) gets
+    ru_maxrss, which the kernel there reports in bytes and Linux in KB, so only the darwin branch
+    scales. Both branches are driven here: /proc is made to fail on every platform, and the
+    platform name and the rusage read are patched so the figure is exact."""
+
+    class _Usage:
+        ru_maxrss = 2048 * 1024                              # bytes on darwin, KB on linux
+
+    def _stats(self, platform):
+        real_open = open
+
+        def no_proc(path, *a, **kw):
+            if path == "/proc/self/status":
+                raise FileNotFoundError(path)
+            return real_open(path, *a, **kw)
+        import resource
+        with mock.patch("builtins.open", side_effect=no_proc), \
+                mock.patch.object(resource, "getrusage", return_value=self._Usage()), \
+                mock.patch.object(sys, "platform", platform):
+            return km._process_stats()
+
+    def test_without_proc_rss_comes_from_ru_maxrss(self):
+        st = self._stats("linux")
+        self.assertIsInstance(st["rss_kb"], int)
+        self.assertEqual(st["rss_kb"], 2048 * 1024, "linux reports ru_maxrss in KB: taken as is")
+        for k in ("threads", "cpu_s", "pid"):
+            self.assertIn(k, st)
+        self.assertEqual(st["pid"], os.getpid())
+
+    def test_on_darwin_ru_maxrss_is_bytes_and_is_scaled_to_kb(self):
+        st = self._stats("darwin")
+        self.assertEqual(st["rss_kb"], 2048, "ru_maxrss // 1024")
+
+    def test_with_proc_present_the_fallback_is_not_used(self):
+        import resource
+        with mock.patch.object(resource, "getrusage", side_effect=AssertionError("fallback taken")):
+            try:
+                with open("/proc/self/status"):
+                    pass
+            except OSError:
+                self.skipTest("no /proc on this platform")
+            self.assertGreater(km._process_stats()["rss_kb"], 0, "VmRSS read from /proc")
 
 
 class WakeCounting(unittest.TestCase):
@@ -681,9 +798,19 @@ class GoalIoCounters(unittest.TestCase):
         # with this PR, so the doc names the memos section and sends the reader there (review find, 2026-09-08)
         doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
         self.assertIn("- `memos`:", doc)
-        for k in ("`pass`", "`shared`", "`chain`"):
+        for k in ("`pass`", "`shared`", "`chain`", "`intrMarks`", "`statesOverlay`", "`deadWait`"):
             self.assertIn(k, doc)
         self.assertIn("`memos.shared`", doc)
+
+    def test_the_reference_doc_names_the_shared_memos_by_their_camelcase_keys(self):
+        # the memo keys upstream also reports are spelled one way in GET /perf and in the doc (bgTops, liftGate,
+        # intrMarks, statesOverlay, chatMergeSets, chatPostal, chatLedger, chatFoldTasks); the older snake_case
+        # spellings of the same memos must not survive in the reference as backticked names
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        for k in ("bgTops", "liftGate", "intrMarks", "statesOverlay", "chatMergeSets", "chatPostal", "chatLedger", "chatFoldTasks"):
+            self.assertIn("`%s`" % k, doc, k)
+            snake = re.sub(r"[A-Z]", lambda m: "_" + m.group(0).lower(), k)   # the retired spelling of the same memo
+            self.assertNotIn("`%s`" % snake, doc, "the retired spelling of a shared memo: %s" % snake)
 
     def test_the_pushers_shared_loads_count_under_memos_shared_not_under_goals_loads(self):
         # `goals.loads` is the writer's loader alone; the pusher's read-only loads ride load_goals_shared and
@@ -740,25 +867,25 @@ class PusherRecords(unittest.TestCase):
             "_end_on_idle_sweep", "_deferral_sweep_tick", "_auto_nudge_tick", "_interrupt_block_tick",
             "_auto_pause_on_limit", "_usage_poll_tick", "_auto_pause_on_spend_limit", "_auto_resume_retry",
             "_auto_resume_session_retry", "_auto_retry_tick", "_idle_queue_drive_tick",
-            "_clear_done_working_notes", "_push_all", "_tab_list_tmux",
-            "_api_health_frame", "_api_health_push",   # the bottom bar's API cell
+            "_clear_done_working_notes", "_spend_guard_tick", "_push_all",
+            "_api_health_frame", "_api_health_push",   # the bottom bar's API cell; the spend guard (T350, "_converge_checkpoints")
             "_turn_notify_tick")                       # upstream's turn-end notification pass
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         names = Path(self.td.name) / "names"
         names.mkdir()
-        self.saved = (km.NAMES, km._tmux_sessions, km._pusher_cycle_jobs, list(km._built_feed),
+        self.saved = (km.NAMES, km._live_map, km._pusher_cycle_jobs, list(km._built_feed),
                       list(km._built_timeline), km.build_feed, km.build_timeline, km._needs_you_count,
                       km._feed_notifications, km._badge_push, km._views_dirty[0])
         self.saved_jobs = {nm: getattr(km, nm) for nm in self.JOBS}
         km.NAMES = names
-        km._tmux_sessions = lambda: {}
+        km._live_map = lambda: {}
         self.addCleanup(self._restore)
         self.addCleanup(self.td.cleanup)
 
     def _restore(self):
-        (km.NAMES, km._tmux_sessions, km._pusher_cycle_jobs, bf, bt, km.build_feed, km.build_timeline,
+        (km.NAMES, km._live_map, km._pusher_cycle_jobs, bf, bt, km.build_feed, km.build_timeline,
          km._needs_you_count, km._feed_notifications, km._badge_push, vd) = self.saved
         km._built_feed[:] = bf
         km._built_timeline[:] = bt
@@ -773,7 +900,7 @@ class PusherRecords(unittest.TestCase):
         # IDLE CYCLES (2026-09-09): the loop re-enters after a fixed 0.5 s backstop whether or not anything
         # changed; the idle share is what a cadence change is judged on. A cycle whose jobs set no wake,
         # sent no client payload and saved no goal store counts as idle, with its wall and CPU.
-        km._pusher_cycle_jobs = lambda now, tmux, any_client: time.sleep(0.003)
+        km._pusher_cycle_jobs = lambda now, live_map, any_client: time.sleep(0.003)
         before = self._pusher()
         km._pusher_cycle()
         after = self._pusher()
@@ -783,7 +910,7 @@ class PusherRecords(unittest.TestCase):
         self.assertEqual(after["cycles"], before["cycles"] + 1, "an idle cycle is still a cycle")
 
     def test_a_cycle_that_sends_a_payload_is_not_idle(self):
-        km._pusher_cycle_jobs = lambda now, tmux, any_client: km._PERF_STATS.send(("chat", "s1"), "full", 10)
+        km._pusher_cycle_jobs = lambda now, live_map, any_client: km._PERF_STATS.send(("chat", "s1"), "full", 10)
         before = self._pusher()
         km._pusher_cycle()
         after = self._pusher()
@@ -793,7 +920,7 @@ class PusherRecords(unittest.TestCase):
     def test_a_deduped_frame_does_not_break_an_idle_cycle(self):
         # with a dashboard connected the push builds and compares the per-cycle chat frames every cycle; a
         # frame the client already holds is reported as "deduped" and is not a payload that went out
-        km._pusher_cycle_jobs = lambda now, tmux, any_client: km._PERF_STATS.send(("chat", "taborder"), "deduped", 10)
+        km._pusher_cycle_jobs = lambda now, live_map, any_client: km._PERF_STATS.send(("chat", "taborder"), "deduped", 10)
         before = self._pusher()
         km._pusher_cycle()
         after = self._pusher()
@@ -801,23 +928,23 @@ class PusherRecords(unittest.TestCase):
         self.assertEqual(after["sends"], before["sends"], "a deduped frame is not a send")
 
     def test_a_cycle_that_sets_the_wake_is_not_idle(self):
-        km._pusher_cycle_jobs = lambda now, tmux, any_client: km._pusher_wake.set()
+        km._pusher_cycle_jobs = lambda now, live_map, any_client: km._pusher_wake.set()
         before = self._pusher()
         km._pusher_cycle()
         km._pusher_wake.clear()
         self.assertEqual(self._pusher()["idle_cycles"], before["idle_cycles"])
 
     def test_a_cycle_that_saves_a_goal_store_is_not_idle(self):
-        km._pusher_cycle_jobs = lambda now, tmux, any_client: km.jd._goal_io_bump("saves")
+        km._pusher_cycle_jobs = lambda now, live_map, any_client: km.jd._goal_io_bump("saves")
         before = self._pusher()
         km._pusher_cycle()
         self.assertEqual(self._pusher()["idle_cycles"], before["idle_cycles"])
-        km._pusher_cycle_jobs = lambda now, tmux, any_client: km.jd._goal_io_bump("writes")
+        km._pusher_cycle_jobs = lambda now, live_map, any_client: km.jd._goal_io_bump("writes")
         km._pusher_cycle()
         self.assertEqual(self._pusher()["idle_cycles"], before["idle_cycles"])
 
     def test_a_cycle_is_counted_and_timed(self):
-        km._pusher_cycle_jobs = lambda now, tmux, any_client: time.sleep(0.005)
+        km._pusher_cycle_jobs = lambda now, live_map, any_client: time.sleep(0.005)
         before = self._pusher()
         km._pusher_cycle()
         after = self._pusher()
@@ -826,14 +953,14 @@ class PusherRecords(unittest.TestCase):
         self.assertEqual(after["ring_n"], min(before["ring_n"] + 1, km._PerfStats.RING))
 
     def test_a_cycle_records_its_threads_cpu_not_its_waits(self):
-        km._pusher_cycle_jobs = lambda now, tmux, any_client: time.sleep(0.020)   # a wait, no CPU
+        km._pusher_cycle_jobs = lambda now, live_map, any_client: time.sleep(0.020)   # a wait, no CPU
         before = self._pusher()
         km._pusher_cycle()
         after = self._pusher()
         self.assertGreaterEqual(after["cycle_ms_last"], 20.0)
         self.assertLess(after["cycle_cpu_ms_sum"] - before["cycle_cpu_ms_sum"], 15.0,
                         "a sleeping cycle adds far less CPU than wall")
-        km._pusher_cycle_jobs = lambda now, tmux, any_client: _burn_cpu(0.005)     # CPU, no wait
+        km._pusher_cycle_jobs = lambda now, live_map, any_client: _burn_cpu(0.005)     # CPU, no wait
         before = self._pusher()
         km._pusher_cycle()
         after = self._pusher()
@@ -841,34 +968,72 @@ class PusherRecords(unittest.TestCase):
                                 "a spinning cycle's CPU lands in cycle_cpu_ms_sum")
 
     def test_a_raising_cycle_is_still_counted(self):
-        km._pusher_cycle_jobs = lambda now, tmux, any_client: (_ for _ in ()).throw(RuntimeError("job died"))
+        km._pusher_cycle_jobs = lambda now, live_map, any_client: (_ for _ in ()).throw(RuntimeError("job died"))
         before = self._pusher()["cycles"]
         with self.assertRaises(RuntimeError):
             km._pusher_cycle()
         self.assertEqual(self._pusher()["cycles"], before + 1)
 
     def test_cycle_jobs_split_into_push_and_jobs(self):
-        # the REAL _pusher_cycle_jobs with every tick job a no-op and _push_all a 5 ms sleep: `push` is the
-        # _push_all call, `jobs` the rest of the function, so push >= 5 and 0 <= jobs < push
+        # the REAL _pusher_cycle_jobs with every tick job a no-op and _push_all a stub that reads the clock ONCE,
+        # under a stubbed time.monotonic that steps 1 ms per read: `push` is the _push_all call (the read inside
+        # the stub plus the read that closes it: 2 ms exactly), `jobs` the rest of the function (the reads outside
+        # the push: a count of clock reads, never negative). A wall-clock ratio here (push >= a 5 ms sleep, jobs
+        # below two pushes) was green alone and a coin toss under the suite (2026-09-12, 2026-09-14); a stubbed
+        # clock makes both stages counts
         for nm in self.JOBS:
             setattr(km, nm, lambda *a, **k: None)
-        km._push_all = lambda tmux=None: time.sleep(0.005)
-        before = km._PERF_STATS.snapshot()["stages_ms"]
-        km._pusher_cycle_jobs(int(time.time()), {}, True)
-        after = km._PERF_STATS.snapshot()["stages_ms"]
-        push, jobs = after["push"] - before["push"], after["jobs"] - before["jobs"]
-        self.assertGreaterEqual(push, 5.0)
-        self.assertGreaterEqual(jobs, 0.0, "jobs is the function minus the push, never negative")
-        self.assertLess(jobs, push, "no-op jobs cost less than a 5 ms push")
-        before = km._PERF_STATS.snapshot()["stages_ms"]
-        km._pusher_cycle_jobs(int(time.time()), {}, False)   # no client: no push, the jobs still run
-        after = km._PERF_STATS.snapshot()["stages_ms"]
-        self.assertEqual(after["push"], before["push"])
-        self.assertGreaterEqual(after["jobs"], before["jobs"])
+        km._push_all = lambda live_map=None: time.monotonic()
+        reads = [0]
+        def _clock():
+            reads[0] += 1
+            return reads[0] * 0.001
+        with mock.patch.object(km.time, "monotonic", _clock):
+            before = km._PERF_STATS.snapshot()["stages_ms"]
+            km._pusher_cycle_jobs(int(time.time()), {}, True)
+            after = km._PERF_STATS.snapshot()["stages_ms"]
+            push, jobs = after["push"] - before["push"], after["jobs"] - before["jobs"]
+            n_first = reads[0]
+            self.assertAlmostEqual(push, 2.0, places=6, msg="the push stage spans the stub's read and the closing read")
+            self.assertGreaterEqual(jobs, 0.0, "jobs is the function minus the push, never negative")
+            self.assertAlmostEqual(push + jobs, (n_first - 1) * 1.0, places=6, msg="push plus jobs is the function's whole span: every read but the first")
+            before = km._PERF_STATS.snapshot()["stages_ms"]
+            km._pusher_cycle_jobs(int(time.time()), {}, False)   # no client: no push, the jobs still run
+            after = km._PERF_STATS.snapshot()["stages_ms"]
+            self.assertEqual(after["push"], before["push"])
+            self.assertAlmostEqual(after["jobs"] - before["jobs"], (reads[0] - n_first - 1) * 1.0, places=6, msg="the no-client cycle's jobs span every read but its first")
+
+    def test_a_connect_serves_the_build_it_tested_when_the_cache_is_replaced_between_its_reads(self):
+        # _cached_timeline tested the cached payload and returned it as two reads of the shared list while the
+        # pusher thread assigns _built_timeline[:] on a rebuild; a connect on the handler thread whose two reads
+        # straddled that assignment returned the replacement build, not the one its freshness test saw. One read.
+        class Swapped(list):
+            """_built_timeline with the pusher's `_built_timeline[:] = [...]` landing between two reads of the
+            payload slot: the first read answers the build, every later one the replacement."""
+            def __init__(self, entry, later):
+                super().__init__(entry)
+                self.reads, self.later = 0, later
+
+            def __getitem__(self, i):
+                if i == 1:
+                    self.reads += 1
+                    if self.reads > 1:
+                        return self.later
+                return list.__getitem__(self, i)
+        built = {"type": "timeline", "now": 1.0, "turns": {}, "judging": {}, "messages": []}
+        replacement = {"type": "timeline", "now": 2.0, "turns": {}, "judging": {}, "messages": []}
+        real = km._built_timeline
+        km._built_timeline = Swapped(["sig-a", built, 5.0, 4.0], replacement)   # the pusher replaced the build between the two reads
+        self.addCleanup(setattr, km, "_built_timeline", real)
+        km.build_timeline = lambda *a, **k: (_ for _ in ()).throw(AssertionError("a connect never rebuilds"))
+        served = km._VIEW_STATS["tlServe"]
+        self.assertIs(km._cached_timeline(int(time.time()), {}, "sig-b", connect=True), built,
+                      "the connect gets the build its freshness test saw, not the replacement that landed under it")
+        self.assertEqual(km._VIEW_STATS["tlServe"], served + 1)
 
     def test_feed_and_timeline_builds_count_cached_and_rebuilt(self):
-        km.build_feed = lambda now, tmux: {"working": [], "items": []}
-        km.build_timeline = lambda now, tmux, **kw: {"turns": [], "judging": [], "messages": [], "now": now}
+        km.build_feed = lambda now, live_map: {"working": [], "items": []}
+        km.build_timeline = lambda now, live_map, **kw: {"turns": [], "judging": [], "messages": [], "now": now}
         km._needs_you_count = lambda feed: 0
         km._feed_notifications = lambda feed: []
         km._badge_push = lambda n: None
@@ -974,7 +1139,7 @@ class PushStages(unittest.TestCase):
     the first push and as cached on the second (same transcript, background tab), and the timeline
     client's bars go out in the send stage."""
 
-    STUBS = ("NAMES", "_tmux_sessions", "_live_names", "_tab_list_tmux", "_chat_tab_sessions", "build_session",
+    STUBS = ("NAMES", "_live_map", "_live_names", "_chat_tab_sessions", "build_session",
              "_cached_feed", "_cached_timeline", "build_timeline", "_fleet_view_sig", "_comments_frame",
              "_retry_parked_creates")
 
@@ -991,18 +1156,17 @@ class PushStages(unittest.TestCase):
         km.NAMES = names
         km.jd.STATE = Path(self.tmp) / "state"
         km.jd.STATE.mkdir(parents=True, exist_ok=True)
-        km._tmux_sessions = lambda: {}
+        km._live_map = lambda: {}
         km._live_names = lambda tm: {"web": SID}
-        km._tab_list_tmux = lambda tmux: dict(tmux)             # a trustworthy empty tmux half; no real probe
-        km._chat_tab_sessions = lambda now, tmux: [{"sid": SID, "name": "web", "path": str(self.transcript),
+        km._chat_tab_sessions = lambda now, live_map: [{"sid": SID, "name": "web", "path": str(self.transcript),
                                                     "anchor": SID}]
         km.build_session = self._build_session
-        km._cached_feed = lambda now, tmux, sig, connect=False: self._slow({"working": [], "awaiting": [], "now": now})
-        km._cached_timeline = lambda now, tmux, sig, connect=False: self._slow(
+        km._cached_feed = lambda now, live_map, sig, connect=False: self._slow({"working": [], "awaiting": [], "now": now})
+        km._cached_timeline = lambda now, live_map, sig, connect=False: self._slow(
             {"turns": {}, "judging": [], "messages": [], "now": now})
-        km.build_timeline = lambda now, tmux, **kw: {"lanes": [], "now": now}
-        km._fleet_view_sig = lambda now, tmux: {"probe": 1}
-        km._comments_frame = lambda sid, tmux: None
+        km.build_timeline = lambda now, live_map, **kw: {"lanes": [], "now": now}
+        km._fleet_view_sig = lambda now, live_map: {"probe": 1}
+        km._comments_frame = lambda sid, live_map: None
         km._retry_parked_creates = lambda: None
         km._built_chat.clear(); km._prev_chat_events.clear(); km._prev_chat_ledger.clear()
         self.builds = 0
@@ -1025,7 +1189,7 @@ class PushStages(unittest.TestCase):
         time.sleep(0.005)
         return value
 
-    def _build_session(self, sid, now, tmux):
+    def _build_session(self, sid, now, live_map):
         self.builds += 1
         return self._slow({"type": "session", "id": sid, "name": "web", "events": [{"uuid": "e1", "type": "user"}],
                            "ledger": None, "status": {"state": "waiting"}, "color": None})
@@ -1055,6 +1219,59 @@ class PushStages(unittest.TestCase):
         self.assertEqual(snap2["builds"]["chat"]["built"] - snap1["builds"]["chat"]["built"], 0)
         self.assertLess(snap2["stages_ms"]["push.chat"] - snap1["stages_ms"]["push.chat"], 5.0,
                         "a cached tab costs the chat stage no build")
+
+    def test_the_per_session_row_is_fed_by_the_real_push_with_the_leafs_bytes_and_a_cached_second_push(self):
+        # round three, low 2: the wiring executed instead of a regex over the kernel source: the built site hands the sid and
+        # the leaf's byte size, the cached site hands the sid; a second push over the same transcript raises `cached` and leaves n
+        km._PERF_STATS.chat_by_session.pop(SID, None)
+        km._push([self.chat, self.tl])
+        rows = {r["sid"]: r for r in km._PERF_STATS.snapshot()["builds"]["chat"]["bySession"]}
+        self.assertIn(SID, rows, "the built site hands the sid: %s" % sorted(rows))
+        row = rows[SID]
+        self.assertEqual((row["n"], row["cached"], row["bytes"]), (1, 0, os.path.getsize(self.transcript)), row)
+        self.assertGreaterEqual(row["first"], 5.0, "the build's sleep is the first build's ms"); self.assertEqual((row["last"], row["max"]), (row["first"], row["first"]))
+        km._push([self.chat, self.tl])
+        row2 = {r["sid"]: r for r in km._PERF_STATS.snapshot()["builds"]["chat"]["bySession"]}[SID]
+        self.assertEqual((row2["n"], row2["cached"], row2["first"]), (1, 1, row["first"]), "the cached site hands the sid; n and first stand")
+
+    def test_the_targeted_push_records_its_build_in_the_row_and_the_aggregate(self):
+        # round three, low 1: _push_session_now built through build_session and recorded nothing, so the row's first (the number
+        # the timer exists to read) could be a build over a cache an unrecorded handshake push had warmed; it records under the
+        # label `targeted` now and still caches nothing (no dependency record: a stored entry would have no signature)
+        km._PERF_STATS.chat_by_session.pop(SID, None)
+        saved = (list(km._clients), km._PERF_STATS.snapshot()["builds"]["chat"])
+        with km._clients_lock:
+            km._clients[:] = [self.chat]
+        try:
+            km._push_session_now(SID)
+        finally:
+            with km._clients_lock:
+                km._clients[:] = saved[0]
+        self.assertEqual(self.builds, 1, "the targeted push built the session")
+        snap = km._PERF_STATS.snapshot()["builds"]["chat"]
+        row = {r["sid"]: r for r in snap["bySession"]}.get(SID)
+        self.assertIsNotNone(row, "the targeted push feeds the per-session row")
+        self.assertEqual((row["n"], row["cached"], row["bytes"]), (1, 0, os.path.getsize(self.transcript)), row)
+        self.assertGreaterEqual(row["first"], 5.0)
+        self.assertEqual(snap["built"] - saved[1]["built"], 1, "and the aggregate")
+        self.assertEqual(snap["bg_miss"].get("targeted", 0) - saved[1]["bg_miss"].get("targeted", 0), 1, "attributed to the push, not a signature component")
+        self.assertNotIn(SID, km._built_chat, "still not cached: the build ran with no dependency record")
+        self.assertIn("session", [f["type"] for f in self.chat_frames])
+        # round four, low b: the watched tab's handshake build lands under active_built, read from the target client's active sid
+        self.chat["active"] = SID
+        km._PERF_STATS.chat_by_session.pop(SID, None)
+        before = km._PERF_STATS.snapshot()["builds"]["chat"]
+        with km._clients_lock:
+            km._clients[:] = [self.chat]
+        try:
+            km._push_session_now(SID)
+        finally:
+            with km._clients_lock:
+                km._clients[:] = saved[0]
+        after = km._PERF_STATS.snapshot()["builds"]["chat"]
+        self.assertEqual((after["active_built"] - before["active_built"], after["bg_built"] - before["bg_built"]), (1, 0),
+                         "the watched tab's build counts as active, not background")
+        self.assertEqual(after["bg_miss"].get("targeted", 0), before["bg_miss"].get("targeted", 0), "no background attribution for the watched tab")
 
     def test_the_seams_stay_where_the_stages_are_defined(self):
         # the order of the four stage records in _push is the definition of the split; pinned beside the
@@ -1131,6 +1348,187 @@ class PerfRoutes(unittest.TestCase):
         st, body = self._req("GET", "/perf", token=False)
         self.assertEqual(st, 403)
         self.assertNotIn("cycles", str(body))
+        st, body = self._req("GET", "/perf?stacks=1", token=False)
+        self.assertEqual(st, 403, "the stack sample is token-gated like the snapshot")
+        self.assertNotIn("frames", str(body))
+
+    def test_get_perf_stacks_carries_one_frame_list_per_thread_with_its_stage_mark(self):
+        """T401 (2)'s proof instrument: `?stacks=1` adds one row per live thread (name, ident, self, stage, frames innermost
+        last); a thread inside a tick job shows `jobs.<job>` and the frame it waits in; the plain snapshot carries no `stacks`;
+        the registry row is gone once the job returns."""
+        ev = threading.Event(); inside = threading.Event()
+        def probe():
+            inside.set(); ev.wait(10)
+        th = threading.Thread(target=lambda: km._job_stage("probe", probe), name="probe-thread", daemon=True)
+        th.start(); self.assertTrue(inside.wait(5))
+        try:
+            st, snap = self._req("GET", "/perf?stacks=1")
+        finally:
+            ev.set(); th.join(5)
+        self.assertEqual(st, 200)
+        rows = snap["stacks"]
+        self.assertIsInstance(rows, dict, "?stacks=1 fills the slot the plain snapshot leaves null")
+        self.assertTrue(rows and all(set(r) == {"self", "stage", "frames"} for r in rows.values()), list(rows.items())[:1])
+        key = "%d probe-thread" % th.ident
+        self.assertIn(key, rows, sorted(rows))                              # keyed "<ident> <kind>" (T358's duplicate-worker case)
+        mine = rows[key]
+        self.assertEqual(mine["stage"], "jobs.probe", mine)
+        self.assertTrue(any(f.startswith("wait (threading.py:") for f in mine["frames"]), mine["frames"])
+        self.assertTrue(any(f.startswith("_job_stage (") for f in mine["frames"]), mine["frames"])   # the kernel's file name is
+        #                                                                                                the launcher's here
+        self.assertEqual(mine["frames"][-1].split(" ")[0], "wait", "innermost last")
+        self.assertEqual(sum(1 for r in rows.values() if r["self"]), 1, "the answering handler thread is marked once")
+        self.assertTrue(all(len(r["frames"]) <= 40 for r in rows.values()))
+        self.assertTrue(any(k.endswith(" handler") and rows[k]["self"] for k in rows), "the answering thread's kind is handler: %s" % sorted(rows))
+        self.assertNotIn(th.ident, km._STAGE_BY_TID, "the registry row is gone once the job returns")
+        st, plain = self._req("GET", "/perf")
+        self.assertIsNone(plain["stacks"], "the plain snapshot carries the slot empty, as before")
+
+    def test_the_sample_keys_threads_by_kind_never_by_a_session_name(self):
+        """Round one, medium 1: an SDK session thread is named "sdk:<session name>", and the sample's key carried it where
+        the reference promised no session content. Keys are "<ident> <kind>", the kind _thread_kind's (the name before the
+        convention's separator, a default name's target function, a pool worker's prefix)."""
+        gate = threading.Event()
+        th = threading.Thread(target=gate.wait, name="sdk:notes-api-web", daemon=True); th.start()
+        try:
+            rows = km._thread_stacks()
+        finally:
+            gate.set(); th.join(5)
+        self.assertIn("%d sdk" % th.ident, rows, sorted(rows))
+        self.assertNotIn("notes-api-web", json.dumps(rows), "no session name anywhere in the sample")
+        self.assertEqual((km._thread_kind("sdk-intr:web"), km._thread_kind("Thread-12 (process_request_thread)"), km._thread_kind("pusher"),
+                          km._thread_kind("MainThread"), km._thread_kind(None)), ("sdk-intr", "handler", "pusher", "main", "?"))
+        # round two: every identity-bearing worker follows kind:payload, and a default name keeps its target function
+        self.assertEqual((km._thread_kind("codex:notes-api-web"), km._thread_kind("end-host:11111111"), km._thread_kind("peer:TESTHOST")),
+                         ("codex", "end-host", "peer"))
+        self.assertEqual((km._thread_kind("Thread-7 (_ask_poll)"), km._thread_kind("Thread-9 (serve_forever)"), km._thread_kind("Thread-3")),
+                         ("_ask_poll", "serve_forever", "thread"), "a default name keeps the target function, the identity a slow-boot read needs")
+        self.assertEqual((km._thread_kind("judge-index_2"), km._thread_kind("ThreadPoolExecutor-0_4")), ("judge-index", "pool"))
+        gate = threading.Event()
+        th = threading.Thread(target=gate.wait, daemon=True); th.start()   # unnamed: Python's "Thread-N (wait)"
+        try:
+            rows = km._thread_stacks()
+        finally:
+            gate.set(); th.join(5)
+        self.assertIn("%d wait" % th.ident, rows, sorted(rows))
+
+    def test_every_named_thread_site_maps_to_a_kind_without_an_identity(self):
+        """Round two, medium 1, and round three's medium 1: a census of every thread and pool construction site in the kernel,
+        every module the kernel loads in-process (the backends, the judge, the credentials helper) and the postal service,
+        walked with the ast module (a regex could not cross a newline and missed five named sites, the Codex worker's among
+        them). A constant name is a kind already; a name with a dynamic part (a session name, a sid, a host) must carry it after
+        the convention's separator so _thread_kind drops it; a name built any other way fails, and so does a name the census
+        cannot see: a Thread's positional name (its third positional argument), a Timer with a positional beyond its interval
+        and function, keywords passed through **kwargs, or an aliased constructor (an assignment whose value is one of the
+        constructors; ctor_of resolves Name and Attribute spellings only, so an alias would hide every site built through it).
+        Every kind family the census derives must appear in the reference's kind list, so a new kind cannot ship undocumented."""
+        import ast, re
+        root = os.path.dirname(BIN)
+        files = [os.path.join(root, "kernel", f) for f in ("kernel.py", "sdk_backend.py", "codex_backend.py", "session_host.py",
+                                                            "judge.py", "credentials.py")] + \
+                [os.path.join(root, "postal", "postal_service.py")]
+        CTORS = {"Thread", "Timer", "ThreadPoolExecutor", "_TimedPool"}
+        def ctor_of(call):
+            f = call.func
+            n = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else None)
+            return n if n in CTORS else None
+        def static_prefix(v):
+            """(the constant text before any dynamic part, whether the name has a dynamic part), or None for an unreadable expression."""
+            if isinstance(v, ast.Constant) and isinstance(v.value, str):
+                return v.value, False
+            if isinstance(v, ast.JoinedStr):
+                first = v.values[0] if v.values else None
+                return (first.value if isinstance(first, ast.Constant) else ""), any(isinstance(p, ast.FormattedValue) for p in v.values)
+            if isinstance(v, ast.BinOp) and isinstance(v.op, (ast.Mod, ast.Add)) and isinstance(v.left, ast.Constant) and isinstance(v.left.value, str):
+                return v.left.value.split("%")[0], True
+            if isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr == "format" and isinstance(v.func.value, ast.Constant):
+                return v.func.value.value.split("{")[0], True
+            return None, None
+        sites, named, bad, dyn_kinds, per_file = 0, [], [], set(), {}
+        for f in files:
+            src = open(f, encoding="utf-8").read()
+            tree = ast.parse(src)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == "threading" and any(a.name in CTORS and a.asname for a in node.names):
+                    bad.append(("%s:%d" % (os.path.basename(f), node.lineno), "a constructor imported under an alias the census cannot follow", ""))
+                if isinstance(node, ast.Import) and any(a.name == "threading" and a.asname for a in node.names):
+                    bad.append(("%s:%d" % (os.path.basename(f), node.lineno), "the threading module imported under an alias the census cannot follow", ""))
+                if isinstance(node, ast.Assign) and isinstance(node.value, (ast.Name, ast.Attribute)) and ctor_of(ast.Call(func=node.value, args=[], keywords=[])) \
+                        and not all(isinstance(tg, ast.Name) and tg.id in CTORS for tg in node.targets):   # judge.py rebinds ThreadPoolExecutor
+                    bad.append(("%s:%d" % (os.path.basename(f), node.lineno), "a constructor aliased into a name the census cannot follow", ast.dump(node.value)[:60]))   # to its timed subclass: both names are constructors, so every site stays visible
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or ctor_of(node) is None:
+                    continue
+                sites += 1; per_file[os.path.basename(f)] = per_file.get(os.path.basename(f), 0) + 1
+                label = "%s:%d" % (os.path.basename(f), node.lineno)
+                if ctor_of(node) == "Thread" and len(node.args) >= 3:
+                    bad.append((label, "a positional name the census cannot read: pass name= as a keyword", "")); continue
+                if ctor_of(node) == "Timer" and len(node.args) > 2:
+                    bad.append((label, "a Timer with a positional beyond its interval and function: spell args, kwargs and any name as keywords", "")); continue
+                if any(k.arg is None for k in node.keywords):
+                    bad.append((label, "keywords through **kwargs may carry a name the census cannot read: spell them", "")); continue
+                kw = next((k for k in node.keywords if k.arg in ("name", "thread_name_prefix")), None)
+                if kw is None:
+                    continue                                     # a default name: the rule keeps the target function
+                static, dynamic = static_prefix(kw.value)
+                named.append(label)
+                if static is None:
+                    bad.append((label, "a name built from an expression the census cannot read", ast.dump(kw.value)[:80])); continue
+                if dynamic:
+                    if not static.endswith(km._THREAD_NAME_SEP):
+                        bad.append((label, "a dynamic part without the kind:payload separator", static)); continue
+                    kind = km._thread_kind(static + "notes-api-web")
+                    if kind != static[:-1] or "notes" in kind:
+                        bad.append((label, "the payload survives", kind))
+                    dyn_kinds.add(kind)                          # a kind with a payload is a documented family (sdk, codex, ...)
+                else:
+                    kind = km._thread_kind(static if kw.arg == "name" else static + "_0")   # a pool prefix names its workers <prefix>_N
+                    if kind != static or re.search(r"[/\\]|[0-9a-f]{8}-", static):
+                        bad.append((label, "a constant name that is not a plain kind", kind))
+        self.assertGreaterEqual(sites, 60, "the census walked the construction sites: %d" % sites)
+        self.assertGreaterEqual(len(named), 23, "the census found every named site, the multi-line ones included: %r" % named)
+        self.assertTrue(any(l.startswith("codex_backend.py:") for l in named), "the Codex worker's site is walked: %r" % named)
+        self.assertGreaterEqual(per_file.get("credentials.py", 0), 1, "the credentials helper's Timer is a construction site the census walked: %r" % per_file)
+        self.assertGreaterEqual(per_file.get("judge.py", 0), 7, "the judge tiers' pools are construction sites the census walked: %r" % per_file)
+        self.assertEqual(bad, [], "every named thread maps to a kind with no identity in it")
+        ref = open(os.path.join(root, "docs", "reference.md"), encoding="utf-8").read()
+        para = ref[ref.index("- `stacks`: every live thread's stack"):]
+        para = para[:para.index("\n- ", 10)]
+        undocumented = sorted(k for k in dyn_kinds if "`%s`" % k not in para)
+        self.assertEqual(undocumented, [], "every kind family with a payload (sdk, codex, end-host, peer, ...) is in the reference's kind list; a constant name is its own kind")
+        self.assertGreaterEqual(len(dyn_kinds), 5, sorted(dyn_kinds))
+
+    def test_the_judge_pools_workers_carry_their_tier(self):
+        """Round three, low 2: the pin on the pool prefix was a substring check on the source; the behaviour is pinned instead:
+        a _TimedPool built on a thread named like a tier gives its workers names whose kind is judge-<tier>."""
+        jd = km.jd
+        out = []
+        def tier():
+            with jd._TimedPool(max_workers=1) as ex:
+                out.append(ex.submit(lambda: threading.current_thread().name).result(5))
+        th = threading.Thread(target=tier, name="index"); th.start(); th.join(10)
+        self.assertEqual(len(out), 1, out)
+        self.assertEqual(km._thread_kind(out[0]), "judge-index", out[0])
+
+    def test_the_sample_never_reads_source_through_linecache(self):
+        """Round one, low 1: extract_stack read and cached every source file in every stack (4 MB of kernel) for line text
+        the sample never prints; the frame walk touches no file."""
+        import linecache
+        linecache.clearcache()
+        km._thread_stacks()
+        self.assertEqual([k for k in linecache.cache if k.endswith(("romp-kernel", "kernel.py", "threading.py"))], [],
+                         "the sample loaded source it does not print")
+
+    def test_the_stage_registry_follows_the_marks(self):
+        """`_set_stage` writes the thread-local the readers consult and the by-ident row the sample reads, and clears the row at
+        None; the push decorator and the job thunk both go through it."""
+        tid = threading.get_ident()
+        km._set_stage(None)
+        self.assertNotIn(tid, km._STAGE_BY_TID)
+        km._job_stage("probe", lambda: self.assertEqual((km._current_read_stage(), km._STAGE_BY_TID.get(tid)), ("jobs.probe", "jobs.probe")))
+        self.assertEqual((km._current_read_stage(), km._STAGE_BY_TID.get(tid)), (None, None))
+        km._stage_marked("marked")(lambda: self.assertEqual(km._STAGE_BY_TID.get(tid), "marked"))()
+        self.assertNotIn(tid, km._STAGE_BY_TID)
 
     def test_post_perf_requires_the_token(self):
         st, body = self._req("POST", "/perf", {"log": True}, token=False)
@@ -1215,6 +1613,39 @@ class PerfRoutes(unittest.TestCase):
         self.assertEqual(after["count"], before["count"] + 1, "and not a second time in the finally")
         self.assertEqual(after["ms"], before["ms"], "a socket's lifetime is not a request time")
 
+
+
+class StacksField(unittest.TestCase):
+    """The perf route's `stacks` (T358, a debugging aid behind ROMP_PERF_STACKS; T401's sample): every thread's frames, keyed by
+    the thread's ident WITH its kind, so two workers sharing a kind stay two entries (the duplicate-worker case the aid is for);
+    None without the switch."""
+    def test_two_threads_sharing_a_name_are_two_entries(self):
+        import threading
+        from unittest import mock
+        gate = threading.Event()
+        ths = [threading.Thread(target=gate.wait, name="same-name-worker", daemon=True) for _ in range(2)]
+        for t in ths:
+            t.start()
+        try:
+            with mock.patch.dict(os.environ, {"ROMP_PERF_STACKS": "1"}):
+                snap = km._PerfStats().snapshot()
+            keys = [k for k in (snap.get("stacks") or {}) if k.endswith(" same-name-worker")]
+            self.assertEqual(len(keys), 2, "one entry per thread, the name carried: %s" % sorted(snap.get("stacks") or {}))
+            self.assertEqual(len(set(keys)), 2, "keyed by ident: distinct")
+            self.assertTrue(all(str(t.ident) in k for t, k in zip(sorted(ths, key=lambda t: t.ident), sorted(keys, key=lambda k: int(k.split()[0])))))
+            for k in keys:                                                   # the value shape (T401): the row the served
+                row = snap["stacks"][k]                                      #  boot diagnostic and romp perf stacks read
+                self.assertEqual(set(row), {"self", "stage", "frames"}, row)
+                self.assertIs(row["self"], False); self.assertIsNone(row["stage"])
+                self.assertTrue(row["frames"] and all(" (" in f and f.endswith(")") for f in row["frames"]), row["frames"])
+                self.assertTrue(row["frames"][-1].startswith("wait ("), "innermost last: the worker waits on its gate")
+        finally:
+            gate.set()
+            for t in ths:
+                t.join(timeout=5)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ROMP_PERF_STACKS", None)
+            self.assertIsNone(km._PerfStats().snapshot()["stacks"], "None without the switch")
 
 if __name__ == "__main__":
     unittest.main()

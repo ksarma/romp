@@ -25,6 +25,7 @@ Synthetic only: a private synthetic sid, invented key material assembled at run 
 import hashlib
 import inspect
 import io
+from contextlib import redirect_stderr
 import json
 import math
 import os
@@ -46,7 +47,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_apih_hover", os.path.join(BIN, "romp-kernel"))
-sb = load_source("romp_sdk_backend_apih_hover", os.path.join(BIN, "romp_sdk_backend.py"))
+sb = load_source("romp_sdk_backend_apih_hover", os.path.join(os.path.dirname(HERE), "kernel", "sdk_backend.py"))
 
 SID = "88888888-aaaa-4bbb-8ccc-000000000001"     # this module's private synthetic sid
 KEY_MATERIAL = "test-key-material-" + "h" * 28    # invented; not shaped like any provider's key
@@ -175,7 +176,7 @@ class Payload(unittest.TestCase):
         m = re.search(r"var HIST_ROWS=(\d+);", JS)
         self.assertIsNotNone(m, "the section caps its rows")
         self.assertLessEqual(int(m.group(1)), sb.API_HEALTH_TRANSITIONS_KEEP, "the section shows a slice of the tail")
-        self.assertEqual(int(m.group(1)), 6, "about six rows: what fits the hover")
+        self.assertEqual(int(m.group(1)), 4, "four rows: a glance, not a log (T301)")
 
     def test_a_restart_files_the_row_the_section_matches(self):
         self.storm(T0 - 600, T0)
@@ -250,8 +251,8 @@ class OneClock(unittest.TestCase):
         self._check(be.api_health.snapshot(T0 + 31), T0 + 30)
         self.assertIn('"bootAt": self.boot_stamp', inspect.getsource(sb.ApiHealth.snapshot))
         self.assertNotIn('out["bootAt"]', inspect.getsource(km.Handler.do_GET))
-        # and the section reads stateSince alone: no why-keyed branch, nothing for it to be dead on
-        self.assertIn("var since=b?b.stateSince:0;", HIST)
+        # and the section keys the divider on bootAt alone: no why-keyed branch, nothing for it to be dead on
+        self.assertIn("boot=d.bootAt,", HIST)
         self.assertNotIn("b.why===RESTART_WHY", HIST)
 
     def test_the_kernel_builds_the_backend_with_its_own_start_as_boot_at(self):
@@ -267,27 +268,30 @@ class OneClock(unittest.TestCase):
 
         fake = types.SimpleNamespace(SdkBackend=_Recorder, startup_auth_env=lambda *a, **k: {})
 
-        names = ("_sdk_backend", "load_source", "_sdk_import_notice", "_ensure_sdk_on_path",
-                 "_load_model_catalog_cache", "_refresh_model_catalog", "_claude_bin", "_mark_boot", "_sdk_problem")
+        names = ("_sdk_backend", "load_source", "_sdk_import_notice", "_ensure_sdk_on_path", "_model_catalog_boot",
+                 "_claude_bin", "_mark_boot", "_sdk_problem")
         saved = {n: getattr(km, n) for n in names}
-        saved_jd = (km.jd._LOGIN_AUTH_ENV_FN, km.jd._USAGE_REFRESH_FN, km.jd._UNPICKED_AUTH_FN)
+        saved_jd = (km.jd._LOGIN_AUTH_ENV_FN, km.jd._USAGE_REFRESH_FN)
         problems = []
         try:
             km._sdk_backend = None
-            km.load_source = lambda name, path: fake     # the kernel loads the backend through its module-level loader
+            km.load_source = lambda name, path: fake
             km._sdk_import_notice = lambda: True         # the import notice runs before that load; quiet here
             km._ensure_sdk_on_path = lambda: True
-            km._load_model_catalog_cache = lambda: None
-            km._refresh_model_catalog = lambda why: None
+            km._model_catalog_boot = lambda _async=True: False   # the boot's one catalog call (T296): stubbed whole
             km._claude_bin = lambda: "/bin/true"
             km._mark_boot = lambda *a, **k: None
             km._sdk_problem = problems.append
-            be = km._sdk_locked()
+            err = io.StringIO()
+            with redirect_stderr(err):
+                be = km._sdk_locked()
         finally:
             for n in names:
                 setattr(km, n, saved[n])
-            km.jd._LOGIN_AUTH_ENV_FN, km.jd._USAGE_REFRESH_FN, km.jd._UNPICKED_AUTH_FN = saved_jd
+            km.jd._LOGIN_AUTH_ENV_FN, km.jd._USAGE_REFRESH_FN = saved_jd
         self.assertEqual(problems, [], "the construction ran clean")
+        self.assertNotIn("model catalog boot:", err.getvalue(),
+                         "...and so did the catalog leg: no swallowed traceback under the boot's own except (T296b)")
         self.assertEqual(len(built), 1, "one backend built")
         self.assertIsInstance(be, _Recorder)
         kw = built[0]
@@ -357,8 +361,7 @@ class OneClock(unittest.TestCase):
         self.assertIn(int(out["bootAt"]), (int(km._STARTED), int(km._STARTED) + 1),
                       "the clamp may cross the second; /version's started stays int(_STARTED)")
         self.assertEqual(len([ln for ln in lines if "not before this boot" in ln]), 1, lines)
-        # the section reads the three from these fields and nothing else, so they show one time
-        self.assertIn("var since=b?b.stateSince:0;", HIST)
+        # the section reads the divider and the restart row from these fields and nothing else, so they show one time
         self.assertIn("boot=d.bootAt,", HIST)
         self.assertIn("<span class=ru-tip-k>'+hmd(boot)+'</span><span class=ah-hword>kernel restarted</span>", HIST)
 
@@ -569,7 +572,8 @@ class Route(unittest.TestCase):
         status, body = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK,
                                                   "Origin": "http://evil.example", "Host": "127.0.0.1:%d" % km.PORT})
         self.assertEqual(status, 403, "a cross-site page's cookie is refused")
-        self.assertIn("fetch('/api-health',{cache:'no-store'})", JS)
+        self.assertIn("fetchDoc(h?'/remote/'+encodeURIComponent(h)+'/api-health':'/api-health')", JS)
+        self.assertIn("fetch(u,{cache:'no-store'})", JS)
         self.assertIn("fetch('/usage/fleet',{cache:'no-store'})", km._LANDING_USAGE_JS, "the same shape as the shell's other read")
 
     def test_a_missing_backend_is_a_loud_503_that_the_section_shows_as_its_failure_line(self):
@@ -577,9 +581,10 @@ class Route(unittest.TestCase):
         status, body = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK})
         self.assertEqual(status, 503)
         self.assertIn("error", json.loads(body))
-        self.assertIn("if(!r.ok)throw new Error('HTTP '+r.status);", HIST, "a non-2xx is the failure, with its status")
-        self.assertIn("HIST={error:String((e&&e.message)||e)};", HIST)
-        self.assertIn("Could not read the API history: '+esc(HIST.error)", HIST)
+        self.assertIn("if(!r.ok){var tp=(typeof r.text==='function')?r.text():Promise.resolve('');", HIST, "a non-2xx is the failure, with its status")
+        self.assertIn("return {error:'HTTP '+r.status+(t?", HIST)
+        self.assertIn(".catch(function(e){return {error:String((e&&e.message)||e)};});}", HIST)
+        self.assertIn("Could not read the API history'+(many?' of '+esc(name):'')+': '+esc((d&&d.error)||'no answer')", HIST)
 
 
 class FrameUnchanged(unittest.TestCase):
@@ -589,7 +594,7 @@ class FrameUnchanged(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         self._state, self._alive, self._send, self._sdk = km.jd.STATE, km._alive_sessions, km._send_to_app, km._sdk
         km.jd.STATE = Path(self.td.name)
-        km._alive_sessions = lambda now, tmux: []
+        km._alive_sessions = lambda now, live_map: []
         self.sent = []
         km._send_to_app = lambda app, m: self.sent.append((app, m))
         self.be = _Backend()
@@ -606,7 +611,7 @@ class FrameUnchanged(unittest.TestCase):
         km._api_health_push(f1)
         self.assertEqual(len(self.sent), 1)
         self.assertEqual(set(f1), {"type", "state", "cls", "reason", "text", "waiting", "retrying", "blocked",
-                                   "since", "tmux", "sessions", "seq"}, "the documented keys, nothing added")
+                                   "since", "sessions", "seq", "hosts", "quiet", "errs", "host"}, "the documented keys, nothing added")
         for k in ("windows", "transitions", "buckets", "history", "overall", "bootAt"):
             self.assertNotIn(k, f1)
         # a hover reads the route in between (the read files a transition: the storm classifies)
@@ -629,9 +634,12 @@ class Docs(unittest.TestCase):
         sec = self._section()
         self.assertIn("**History**", sec)
         self.assertIn("`GET /api-health`", sec)
-        for k in ("`overall.state`", "`stateSince`", "`why`", "`config.windows`", "`requests`", "`rate429`", "`rate5xx`",
-                  "`gaveUp`", "`sessionsRetrying`", "`complete`", "`transitions`", "`asOf`", "`bootAt`"):
+        # T301: the reading counts the failures over the longest window and draws `series`; the state machine's word
+        # is read only through the plain phrasing, so `overall.state` is no longer what the section describes
+        for k in ("`config.windows`", "`requests`", "`noStatus`", "`rateLimited`", "`serverErrors`", "`gaveUp`", "`series`",
+                  "`transitions`", "`asOf`", "`bootAt`", "`hosts`", "`quiet`"):
             self.assertIn(k, sec, k)
+        self.assertNotIn("`overall.state` with", sec, "the machine's word is not what the user reads")
         self.assertIn("`kernel restarted`", sec)
         self.assertIn("never the previous numbers", sec)
         self.assertIn("Nothing polls", sec)
@@ -648,8 +656,9 @@ class Docs(unittest.TestCase):
     def test_the_guide_tells_the_user_what_the_hover_shows(self):
         guide = Path(DOCS, "guide.md").read_text()
         self.assertIn("the history under it", guide)
-        self.assertIn("last 1, 5 and 15 minutes", guide)
+        self.assertIn("the last 15 minutes", guide)
         self.assertIn("A kernel restart shows as its own line there", guide)
+        self.assertIn("every connected kernel", guide)
 
     def test_the_reference_names_the_three_failed_reads(self):
         self.assertIn("A read that fails (a non-2xx, no answer, or an answer without the signal's shape) shows one line "
@@ -663,7 +672,7 @@ class Docs(unittest.TestCase):
         for w in ("card", "board", "goal", "column"):
             self.assertNotIn("'" + w, HIST, w)          # no quoted romp noun inside the History script
         css = km._landing()
-        i = css.index(".ah-dot[data-state=thrashing]")
+        i = css.index(".ah-dot[data-dot=fine]")     # the dot rules follow #1338: keyed on the dot word, not the machine state
         self.assertNotIn("\u2014", css[i:i + 400])
 
 
@@ -675,8 +684,8 @@ class Script(unittest.TestCase):
     def test_the_history_is_the_one_read_fired_by_the_show_the_open_from_hidden_and_a_frame_on_an_open_card(self):
         self.assertTrue(HIST, "the cell's script carries a History block")
         self.assertEqual(JS.count("fetch("), 1, "one read in the cell's script: the history's")
-        self.assertIn("function load(fresh){var n=++histSeq;if(fresh)HIST=null;", HIST)
-        self.assertIn("tip.style.display='block';el.setAttribute('aria-describedby','ah-summary');load(true);render();}", JS,
+        self.assertIn("function load(fresh){var n=++histSeq,names=[''].concat(hostsOf(LAST)),by={};", HIST)
+        self.assertIn("tip.style.display='block';el.setAttribute('aria-describedby','ah-summary');load(true);render();armAge();}", JS,
                       "show drops the last answer and reads")
         self.assertIn("var was=tip.style.display==='block';", JS)
         self.assertIn("window.__rompApiClose=close;back.onclick=close;try{tip.focus();}catch(e){}if(!was)load();}", JS,
@@ -688,40 +697,106 @@ class Script(unittest.TestCase):
 
     def test_no_timers_the_newest_read_wins_and_the_answer_paints_through_the_held_gate(self):
         self.assertNotIn("setTimeout", JS)
-        self.assertNotIn("setInterval", JS)
+        # the one timer is the read-age label's minute tick (T316 review: a pinned detail must not say 'now' for ten
+        # minutes): it re-words one span and never reads anything; nothing polls the history
+        self.assertEqual(JS.count("setInterval("), 1)
+        self.assertIn("function ageTick(){var n=tip.querySelector('.ah-ago');if(n){var w=ageWords();if(w)n.textContent=w;}}", JS)
+        self.assertNotIn("fetch", JS[JS.index("function ageTick"):JS.index("function disarmAge")], "the tick reads nothing")
         self.assertIn("window.addEventListener('focus',function(){winFocusEl=document.activeElement;requestAnimationFrame(function(){winFocusEl=null;});});", JS,
                       "the window-focus mark is cleared on the next animation frame, an event")
-        self.assertEqual(HIST.count("if(n!==histSeq)return;"), 2, "both arms of the read drop an answer a newer read superseded")
-        self.assertEqual(HIST.count("if(tip.style.display!=='block')return;if(held){dirty=true;return;}render();"), 2,
+        # T301: one read per machine (this machine's document and every attached host's, each landing on its own), so one guard of each
+        self.assertEqual(HIST.count("if(n!==histSeq)return;"), 1, "the read drops an answer a newer read superseded")
+        self.assertEqual(HIST.count("if(tip.style.display!=='block')return;if(held){dirty=true;return;}render();"), 1,
                          "the answer repaints an open card only, and never under a held pointer")
+        self.assertIn("names.forEach(function(h){fetchDoc(h?'/remote/'+encodeURIComponent(h)+'/api-health':'/api-health')", HIST, "one read per machine, each landing on its own")
+        self.assertIn(".catch(function(e){return {error:String((e&&e.message)||e)};});}", HIST, "a rejected fetch is that machine's failure line, never an unhandled rejection")
 
     def test_a_failed_read_is_one_line_in_place_of_the_rows(self):
-        self.assertIn("HIST=(d&&d.buckets)?d:{error:'malformed answer'};", HIST, "an answer without the signal's shape is a failure too")
-        self.assertIn("if(HIST.error)return h+'<div class=\"ah-line ah-err\">Could not read the API history: '+esc(HIST.error)+'</div></div>';", HIST,
-                      "the line stands where the rows would, and the function returns before any row")
+        self.assertIn("return (d&&d.buckets)?d:{error:'malformed answer'};", HIST, "an answer without the signal's shape is a failure too")
+        # T301: per machine: the line stands where that machine's reading would, named when there are several
+        self.assertIn("if(!d||d.error){h+='<div class=\"ah-line ah-err\">Could not read the API history'+(many?' of '+esc(name):'')+': '+esc((d&&d.error)||'no answer')+'</div>';return;}", HIST)
         self.assertIn("if(!HIST)return h+'<div class=\"rl-dots ah-wait\"><i></i><i></i><i></i></div></div>';", HIST,
                       "before the first answer: the loader's dots")
 
-    def test_the_rows_wear_the_spend_hover_s_grammar(self):
-        self.assertIn("'<div class=\"ru-tip-win ah-hist\"><div class=ru-tip-name><span>History</span>'", HIST)
-        self.assertIn("'<span class=ru-tip-reset>as of '+hms(HIST.asOf)+'</span>'", HIST, "the payload's asOf on the heading")
-        self.assertIn("'<div class=\"ru-tip-row ah-head\"><i class=ah-dot data-state='+esc(st)+'></i><span class=ah-word>'+esc(st)+'</span>'", HIST)
-        self.assertIn("if(b&&b.why)h+='<div class=\"ah-line ru-tip-reset\">'+esc(b.why)+'</div>';", HIST, "the reason in the small annotation grammar")
-        self.assertIn("((d.config&&d.config.windows)||[60,300,900]).forEach(function(w){h+=winRow(w,(b.windows||{})[String(w)],d.uptimeS);});", HIST,
-                      "the windows come from the config in force")
-        self.assertIn("var lab=(w%60===0?(w/60)+' min':w+' s');if(c&&c.complete===false&&typeof up==='number')lab+=' · kernel up '+dur(up);", HIST)
-        self.assertIn("var v,rq=(c&&c.requests)||0,ns=(c&&c.noStatus)||0;if(!c||!(rq||ns||c.gaveUp||c.sessionsRetrying))v='no attempts';", HIST,
-                      "a window is quiet only when every count is zero")
-        self.assertIn("v+=' · '+(c.gaveUp||0)+' gave up · '+pl(c.sessionsRetrying,'session')+' retried';}", HIST)
-        self.assertNotIn("' retrying'", HIST, "no present-tense label on a windowed count")
-        self.assertIn("'<div class=\"ru-tip-row ah-hrow\"><span class=ru-tip-k>'+esc(lab)+'</span><span class=ru-tip-v>'+esc(v)+'</span></div>'", HIST,
-                      "the spend row's classes")
+    def test_the_section_draws_stacked_bars_a_vertical_legend_and_an_age_in_words(self):
+        # T316 (the user's design): one stacked histogram per machine (successes in the accent, 429 in the blocked red, 5xx
+        # in the 5xx magenta, the other band for no-connection and other-status failures only when present), no peak text,
+        # one ceiling label; the legend vertical, its class tokens in their inks (T340), the other line only when it applies;
+        # the as-of stamp an age
+        self.assertIn("var h='<div class=\"ru-tip-win ah-hist\"><div class=ru-tip-name><span>History</span>'+ago+'</div>';", HIST)
+        self.assertIn("'<span class=\"ru-tip-reset ah-ago\">'+esc(ageWords())+'</span>'", HIST)
+        self.assertIn("function ageWords(){return LANDED&&MERGE?'read '+MERGE.agoWords((Date.now()-LANDED)/1000):'';}", JS,
+                      "the read's age: the time since this machine's document landed, one clock (review find: asOf is another host's clock)")
+        self.assertIn("if(h==='')LANDED=Date.now();", HIST)
+        self.assertNotIn("Date.now()/1000-loc.asOf", HIST, "never the browser's clock against the kernel's")
+        self.assertIn("if(fresh){READINGS={};LANDED=null;}", HIST, "a fresh show drops the last hover's counts with its rows")
+        self.assertIn("var rd=READINGS[host];if(rd&&rd.counts&&(rd.counts.none+rd.counts.other)>0)other=true;", HIST, "the other legend row follows the counted lines too")
+        self.assertIn("other:[],older:true}", HIST, "an older kernel's series is marked and named")
+        self.assertNotIn("peak '+mx", HIST, "no peak text")
+        self.assertNotIn("hms(loc.asOf)", HIST)
+        self.assertIn("var BAR_CLASSES=['ok','rateLimited','serverErrors','noStatus','other'];", HIST, "the stack order: successes, 429, 5xx, then the other classes")
+        self.assertIn("bars+='<rect class=\"ah-seg ah-seg-'+c+'\" x=\"'+x.toFixed(1)+'\" y=\"'+(yb-hgt).toFixed(1)+'\" width=\"'+bw.toFixed(1)+'\" height=\"'+hgt.toFixed(1)+'\"></rect>';", HIST,
+                      "one rect per class per bar, stacked bottom-up, every attribute quoted, the fill a class per theme")
+        self.assertNotIn("style=\"fill:", HIST, "no inline fill: the light theme must be able to re-ink a segment")
+        self.assertNotIn("<polyline", HIST, "no overlaid lines")
+        self.assertIn("'<span class=ru-tip-gy style=\"top:'+(big?ty:ty/H*56).toFixed(0)+'px\">'+top+'</span><div class=ru-tip-gx>'+xlab+'</div></div>';}", HIST, "one ceiling label; the ticks under")
+        # T340 (the user 2026-09-11): no swatches; the class token wears its ink and the explanation sits beside it as plain text
+        self.assertIn("var LEGEND_ROWS=[['r429','429','rate limit: the API told us to slow down'],['r5xx','5xx','server error: the API itself failed'],['none','other','no connection, or another error']];", JS)
+        self.assertIn("function legendHTML(other){var h='<div class=ah-legend>';LEGEND_ROWS.forEach(function(r){if(r[0]==='none'&&!other)return;", HIST, "the other line only when the range holds any")
+        self.assertIn("h+='<div class=ah-lrow><span class=\"ah-lt ah-c-'+r[0]+'\">'+r[1]+'</span> <span>'+r[2]+'</span></div>';});return h+'</div>';}", HIST, "the class token in its ink, the explanation beside it, no swatch")
+        self.assertNotIn("ah-lsw", JS, "the legend swatches are gone"); self.assertNotIn("ah-sw", JS, "…and the waiting rows' coloured squares with them")
+        self.assertIn("if(!pinned)h+=legendHTML(other);", HIST, "the hover: the legend under the histograms, once")
+        self.assertIn("if(pinned)h+=rangeHTML()+legendHTML(other);", HIST, "the detail: the legend under the range chips, where the eye starts (a short window folded the bottom one away)")
+        self.assertEqual(HIST.count("legendHTML(other);"), 2, "drawn in exactly one of the two places")
+        self.assertIn(".ah-legend{display:flex;flex-direction:column;align-items:flex-start;gap:3px;margin-top:7px}", km._landing(), "vertical, left-justified; no group opacity (T340 review: the tokens must stand at full strength)")
+        self.assertIn("if(many)h+='<div class=\"ru-tip-row ah-gname\"><span class=ah-nm>'+esc(name)+'</span></div>';", HIST, "several machines: each histogram under its machine's name")
+        self.assertIn("var RANGES={hour:{tier:'minute',per:1,label:'1 hour',s:3600},day:{tier:'fiveMin',per:3,label:'24 hours',s:86400},week:{tier:'hour',per:1,label:'7 days',s:604800}};", JS,
+                      "the hover draws the day as quarter-hours; the detail offers the three ranges")
+        self.assertIn("R=RANGES[pinned?range:'day'];", HIST, "the hover draws the day; the detail its chosen range")
+        self.assertIn("if(pinned)h+=rangeHTML()+legendHTML(other);", HIST, "the range chips only in the detail")
+        self.assertIn("else if(act.indexOf('range:')===0){range=act.slice(6);render();}", JS)
+        self.assertNotIn("winRow", JS, "the per-window rows are gone")
+        self.assertNotIn("worst of", JS, "and the bucket-count caveat with them")
+        self.assertNotIn("kernel up", JS, "and the uptime caveat")
+        self.assertNotIn("headWords", JS, "no summary head line: the per-machine lines do the work")
         self.assertEqual(sb._AH_COUNTED, ("ok", "429", "529", "5xx", "other"),
                          "requests excludes 'none', so requests plus noStatus counts every attempt once")
-        self.assertIn("rows.forEach(function(r){h+=rowHTML(r,full);});h+='</div>';}\nh+=histHTML();\nif(m.tmux>0)h+=", JS,
-                      "the section sits after the sessions waiting and before the tmux line, in hover and detail alike")
+        self.assertIn("rows.forEach(function(r){h+=rowHTML(r,full);});h+='</div>';}\nh+=histHTML();\nif(full)h+=", JS,
+                      "the section sits after the sessions waiting and before the footer, in hover and detail alike")
+        self.assertNotIn("tmux session", JS, "T331: the terminal-coverage line is gone (the frame carries no count for it either)")
 
-    def test_the_tail_holds_six_rows_newest_first_each_state_s_hold_and_a_restart_never_hidden(self):
+    def test_the_card_names_every_machine_with_its_counts_in_their_colours_and_the_window_once(self):
+        # T316: no head sentence; one line per machine (the dot in its state, the kernel's own name, the counts as coloured
+        # pieces); the window named once beside the title; this machine by the name its peers know
+        self.assertIn("mg.machines.forEach(function(x){h+='<div class=\"ru-tip-row ah-mline\" data-host=\"'+esc(x.host)+'\"><i class=ah-dot data-dot='+esc(x.dot)+'></i><span class=ah-nm>'+esc(x.name)+'</span>'+partsHTML(x.parts||[])", JS)
+        self.assertIn("function partsHTML(parts){return '<span class=ah-desc>'+parts.map(function(p){return '<span class=\"ah-c-'+esc(p.kind)+'\">'+esc(p.text)+'</span>';}).join(' \u00b7 ')+'</span>';}", HIST)
+        self.assertIn("var win=MERGE?MERGE.windowWords(rd?rd.windowS:86400):'';", JS)
+        self.assertIn("(win?'<span class=\"ru-tip-reset ah-win\">'+esc(win)+'</span>':'')", JS, "the window once, at the top")
+        self.assertIn("function SELF(){return (LAST&&LAST.host)||'this machine';}", JS, "this kernel's own name, from its frame")
+        self.assertNotIn("ah-head", JS.split("function html(m,full)")[1].split("function anchor()")[0], "no head row in the card")
+        html = km._landing()
+        # the inks (review find: chip colours as text sit under 4.5:1; the failure line's #ef6b6f / #B02A1C is the precedent),
+        # each with its light twin; the bars' fills as classes with their light twins; the swatches keep the chip colours
+        for dark, light in ((".ah-c-ok{color:var(--accent,#9cd2ff)}", "body.theme-light .ah-c-ok{color:#C2410C}"),
+                            (".ah-c-r429{color:#ef6b6f}", "body.theme-light .ah-c-r429{color:#B02A1C}"),
+                            (".ah-c-r5xx{color:#e879f9}", "body.theme-light .ah-c-r5xx{color:#86198F}"),
+                            (".ah-c-none{color:#d9f99d}", "body.theme-light .ah-c-none{color:#4f46e5}"),   # T340: the other band's hue as ink
+                            (".ah-seg-ok{fill:var(--accent,#9cd2ff)}", "body.theme-light .ah-seg-ok{fill:#C2410C}"),
+                            (".ah-seg-serverErrors{fill:var(--st-5xx-bg,#c026d3)}", "body.theme-light .ah-seg-serverErrors{fill:#A21CAF}"),
+                            (".ah-seg-noStatus,.ah-seg-other{fill:#d9f99d}", "body.theme-light .ah-seg-noStatus,body.theme-light .ah-seg-other{fill:#4f46e5}")):
+            self.assertIn(dark, html, dark)
+            self.assertIn(light, html, "the light twin: " + light)
+        for rule in ("#ah-tip.ru-modal{width:min(720px,92vw)}", ".ah-bars.ah-big svg{height:110px}"):
+            self.assertIn(rule, html)
+        # the read's age re-ticks once a minute while the tip or the detail is open, the label alone; cleared on close
+        self.assertIn("function armAge(){if(!ageTimer)ageTimer=setInterval(ageTick,60000);}", JS)
+        self.assertIn("function disarmAge(){if(ageTimer){clearInterval(ageTimer);ageTimer=null;}}", JS)
+        self.assertIn("load(true);render();armAge();}", JS, "armed on show")
+        self.assertIn("render();back.classList.add('on');armAge();", JS, "and on open")
+        self.assertIn("function hide(){tip.style.display='none';el.removeAttribute('aria-describedby');disarmAge();}", JS, "cleared on hide (close hides)")
+
+    def test_the_tail_holds_four_rows_newest_first_in_plain_words_each_state_s_hold_and_a_restart_never_hidden(self):
+        self.assertIn("var HIST_ROWS=4;", JS, "T301: a glance, not a log")
         self.assertIn(".sort(function(a,b){return b.t-a.t;})", HIST, "newest first")
         self.assertIn("var end=now,cur=true;for(var j=i-1;j>=0;j--)if(rows[j].bucket===r.bucket){end=rows[j].t;cur=false;break;}", HIST,
                       "a state holds until the SAME bucket's next change")
@@ -731,23 +806,29 @@ class Script(unittest.TestCase):
         self.assertIn("pre=hasBoot&&r.t<boot;", HIST)
         self.assertIn("if(restart)sawRestart=true;shown++;}", HIST, "any restart row above suppresses the divider")
         self.assertEqual(HIST.count("shown++"), 1, "shown counts transition rows only: the divider takes no slot")
-        self.assertIn("var word=(multi?bname(d,r.bucket)+' ':'')+r.to", HIST, "a bucket is named only when there are several")
-        self.assertIn("return dup?fam+' · '+(b.auth||key.split('|')[0]):fam;}", HIST, "two of one family are told apart by auth")
+        self.assertIn("var word=(multi?bname(d,r.bucket)+' ':'')+(STATE_WORD[r.to]||r.to)", HIST, "a bucket is named only when there are several; the state in plain words")
+        self.assertIn("var STATE_WORD={thrashing:'rate-limit storm',degraded:'API failing',recovering:'recovering',healthy:'fine',unknown:'quiet'};", JS)
+        self.assertIn("return dup?fam+' · '+(b.label||b.auth||key.split('|')[0]):fam;}", HIST, "two of one family are told apart by the login's label, else the auth label")
 
     def test_the_roles_follow_the_mode_and_the_cell_is_described_by_the_short_summary(self):
-        self.assertIn("el.addEventListener('focus',function(){if(skipFocus||winFocusEl===el||pinned||tip.style.display==='block')return;show(null);});", JS)
+        self.assertIn("el.addEventListener('focus',function(){if(moving||skipFocus||winFocusEl===el||pinned||tip.style.display==='block')return;show(null);});", JS)
         self.assertNotIn("winFocus=true", JS, "the mark is an element, not a flag")
         self.assertIn("var desc=document.createElement('span');desc.id='ah-summary';desc.className='ah-vh';document.body.appendChild(desc);", JS)
-        self.assertIn("tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();desc.textContent=descText();", JS, "refreshed on every render")
-        self.assertIn("function descText(){var tail=' Press Enter to open it.';if(!HIST)return 'History: '+((LAST&&LAST.text)||'unknown')+'. Reading the details.'+tail;", HIST)
-        self.assertIn("return 'History: '+(ov.state||'unknown')+((b&&b.stateSince)?' since '+hmd(b.stateSince):'')+'.'+tail;}", HIST)
+        self.assertIn("tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();fitAxisLabels(tip);desc.textContent=descText();", JS, "refreshed on every render")
+        # T301: the description is the head's plain words, a failed read said as such, and the read in flight named
+        self.assertIn("function descText(){var tail=' Press Enter to open it.';var mg=merged();var m0=mg.machines[0];", HIST, "this machine's own line")
+        self.assertIn("var w=m0?(m0.parts||[]).map(function(p){return p.text;}).join(' \u00b7 '):'';", HIST, "its words alone: the counts, or the kernel's own words")
+        self.assertIn("if(!w){w=DOTWORD[mg.dot]||'';if(w)w=w.charAt(0).toUpperCase()+w.slice(1);}", HIST, "a fine frame before its read: the dot's state word, so the description never lacks one")
+        self.assertIn("var loc=HIST&&HIST[''];if(loc&&loc.error)return 'Could not read the API history: '+loc.error+'.'+tail;", HIST)
+        self.assertIn("if(!HIST||(HIST['']&&HIST[''].pending))return 'API health: '+w+' Reading the details.'+tail;\nreturn 'API health: '+w+tail;}", HIST)
+        self.assertNotIn("'unknown'", HIST.replace("unknown:'quiet'", ""), "the machine's word never reaches the description")
         self.assertNotIn("'aria-describedby','ah-tip'", JS, "the tip's whole text is never the description")
         self.assertIn("tip.setAttribute('role','tooltip');tip.setAttribute('aria-label','API health');tip.tabIndex=-1;", JS, "created as a tooltip")
         self.assertIn("tip.classList.remove('ru-modal');tip.setAttribute('role','tooltip');tip.removeAttribute('aria-modal');", JS, "show: tooltip")
         self.assertIn("tip.setAttribute('role','dialog');tip.setAttribute('aria-modal','true');el.removeAttribute('aria-describedby');", JS, "open: dialog")
         self.assertEqual(JS.count("'aria-modal'"), 2, "set by open, removed by show, nowhere else")
-        self.assertIn("function hide(){tip.style.display='none';el.removeAttribute('aria-describedby');}", JS)
-        self.assertIn("el.addEventListener('blur',function(){if(!pinned)hide();});", JS)
+        self.assertIn("function hide(){tip.style.display='none';el.removeAttribute('aria-describedby');disarmAge();}", JS)
+        self.assertIn("el.addEventListener('blur',function(){if(moving)return;if(!pinned)hide();});", JS)
         self.assertIn("skipFocus=true;try{(fb&&fb.focus?fb:el).focus();}catch(e){}skipFocus=false;}", JS,
                       "the close's refocus fires the cell's focus event; the flag covers that one call")
 
@@ -760,12 +841,16 @@ class Skin(unittest.TestCase):
     def setUpClass(cls):
         cls.html = km._landing()
 
-    def test_the_dot_wears_status_hexes_never_the_accent_and_the_rows_are_quiet(self):
-        self.assertIn(".ah-dot[data-state=thrashing]{background:#e5484d;opacity:1}.ah-dot[data-state=recovering]{background:#e67e22;opacity:.7}", self.html)
-        rules = re.findall(r"[^{}]*\.ah-(?:dot|err)[^{}]*\{[^}]*\}", self.html)
-        self.assertGreater(len(rules), 3)
+    def test_the_dot_wears_the_accent_when_fine_the_status_tokens_otherwise_and_the_rows_are_quiet(self):
+        # T301 (the user 2026-09-10): the fine dot IS the romp accent; errors wear the blocked red, quiet the label gray;
+        # every colour through a token with a fallback for a var-less harness
+        self.assertIn("#rail-api[data-dot=fine] .ah-dot,.ah-dot[data-dot=fine]{background:var(--accent,#9cd2ff);opacity:1}", self.html)
+        self.assertIn("#rail-api[data-dot=errors] .ah-dot,.ah-dot[data-dot=errors]{background:var(--st-blocked-bg,#e5484d);opacity:1}", self.html)
+        self.assertIn("#rail-api[data-dot=quiet] .ah-dot,.ah-dot[data-dot=quiet]{background:var(--dim,#9aa4ad);opacity:.55}", self.html)
+        self.assertNotIn("data-state=thrashing", self.html, "the machine's words are not colours any more")
+        rules = re.findall(r"[^{}]*\.ah-err[^{}]*\{[^}]*\}", self.html)
         for rule in rules:
-            self.assertNotIn("var(--accent)", rule, rule)
+            self.assertNotIn("var(--accent", rule, "the failure line is never the accent: " + rule)
         self.assertIn(".ah-hword{opacity:.8}.ah-hsub{opacity:.55}.ah-boot .ah-hword{font-style:italic;opacity:.6}", self.html)
         self.assertIn(".ah-hname{margin-top:6px}.ah-err{color:#ef6b6f}.ah-wait{margin:5px 0 2px}", self.html)
         self.assertIn("body.theme-light .ah-err{color:#B02A1C}", self.html, "the light theme's error-text red")

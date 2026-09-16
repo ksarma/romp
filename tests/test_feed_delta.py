@@ -18,7 +18,7 @@ tint and nothing else; a page that announced READY_GATE_CAP is HELD — the real
 push path send it nothing — until its bundle's `ready`, which is served the cached full frame at once,
 stamped with the clock as of the serve (a frame built hours earlier must not anchor the pane's ages hours
 in the past); a socket that did not announce is ready from accept; needFullFeed re-bases; the ready handler
-emits no tab order of its own (the connect push's guarded one is the only source); the Outline page (app=fleet)
+emits no tab order of its own (the connect push's is the only source); the Outline page (app=fleet)
 announces the capability too (2026-09-05) and, on a real socket, hears every change after its first full frame
 as a delta — federation.js applies them for fleet.ts, which keeps reading whole frames.
 
@@ -612,13 +612,13 @@ class ReadyHandshake(_DefaultPalette):
             _restore(saved)
 
     def test_the_ready_handler_emits_no_tab_order_of_its_own(self):
-        # The connect push's tabOrder goes through the _tab_list_tmux collapse guard; the handler used to
-        # send a SECOND one from a raw _tmux_sessions() read — an omitted id is an authoritative teardown
-        # on the client (tabs, drafts) — and the shim now re-sends `ready` on a reconnect.
+        # The connect push's tabOrder is built from the cycle's liveness map; the handler used to send a
+        # SECOND one from its own raw liveness read (an omitted id is an authoritative teardown on the client:
+        # tabs, drafts), and the shim re-posts its `ready` on a reconnect until a caps frame acks it.
         h = self._handler()
         c, sent = _client(caps=(), app="chat")
         h._dispatch_ws({"type": "ready"}, c)
-        self.assertEqual(h.pushed, [c], "the guarded push is the only tab-order source")
+        self.assertEqual(h.pushed, [c], "the connect push is the only tab-order source")
         self.assertEqual([json.loads(x).get("type") for x in sent], [], "no frame from the handler itself")
         i = KSRC.index('if msg and msg.get("type") == "ready":')
         handler = KSRC[i:KSRC.index("_consume_pending_reveal(client)", i)]
@@ -677,7 +677,8 @@ class ReadyHandshake(_DefaultPalette):
         self.assertIn("Nothing is pushed at accept", accept)
         self.assertIn('caps = (q.get("caps") or [""])[0]', accept)
         self.assertIn('client["caps"] = set(x for x in caps.split(",") if x)', accept)
-        self.assertIn('client["ready"] = READY_GATE_CAP not in client["caps"]', accept, "the hold is decided at accept")
+        self.assertIn('client["ready"] = READY_GATE_CAP not in client["caps"] or reconnect', accept,
+                      "the hold is decided at accept, and a declared redial is ready from it (2026-09-15)")
         self.assertIn('if msg and msg.get("type") == "needFullFeed":', KSRC)
         i = KSRC.index('if msg and msg.get("type") == "ready":')
         handler = KSRC[i:KSRC.index("_consume_pending_reveal(client)", i)]
@@ -784,9 +785,12 @@ class ShimAnnouncesForTheFeedPage(_DefaultPalette):
         for app in ("chat", "timeline"):
             self.assertIn('_shim("%s", v, caps=READY_GATE_CAP)' % app, KSRC, app)
         # the Files pane (2026-09-03) is request/response, never a feed consumer: no deltas — the hold, plus
-        # the stale opt-out (NO_STALE_CAP: no pushed view ever resyncs it, so its arm could only ever raise)
-        self.assertIn('_shim("files", v, caps=READY_GATE_CAP + "," + NO_STALE_CAP)', KSRC)
-        self.assertEqual(KSRC.count("_shim("), 8, "the definition, the six panes and the _shim_core test helper (upstream "
+        # the stale opt-out, the `no_stale` keyword (F1: no pushed view ever resyncs it, so its arm could only ever
+        # raise; the fork's cap token for it retired for upstream's keyword form, 2026-09-15)
+        self.assertIn('_shim("files", v, caps=READY_GATE_CAP, no_stale=True)', KSRC)
+        self.assertEqual(KSRC.count("_shim("), 9, "the definition, the seven pages (the gear's settings page since T400, which "
+                                                 "announces no cap: its bundle posts no ready and takes no pushed view) and the "
+                                                 "_shim_core test helper (upstream "
                          "c017b510, folded 2026-09-08) that slices the real shim for the node tests; another caller must announce too")
 
 
@@ -970,6 +974,8 @@ class ReadyGate(_DefaultPalette):
             self.assertEqual([json.loads(x)["id"] for x in sent], [SID], "the parked reveal lands after it")
             self.assertIsNone(km._PENDING_REVEAL[0])
             c2, sent2 = _client(caps=(), app="chat"); c2["wid"] = "w6"
+            c2["ready"] = True     # a cap-less socket is stamped ready at the accept (the fixture skips it); T312's reveal
+                                   # targeting reads that stamp (upstream's `c.get("ready")`, 2026-09-15)
             with km._clients_lock:
                 km._clients.append(c2)
             try:

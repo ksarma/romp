@@ -60,7 +60,7 @@ test("the kernel serves spend windows for BOTH payload shapes, keyed-only beside
   assert.ok(BACKEND.includes('mu = getattr(msg, "model_usage", None)'));
   assert.ok(BACKEND.includes("out[k] = v - last if v >= last else v"), "a shrunken running total is a reset we missed → fold whole");
   assert.ok(KERNEL.includes('KINDS = ("tokIn", "tokOut", "tokCacheR", "tokCacheW")'));
-  assert.ok(BACKEND.includes("sid=self.thread_of or self.sid)   # the rail's spend"),
+  assert.ok(BACKEND.includes("sid=self.thread_of or self.sid,"),   // T346: the stored login the launch carried rides beside it
     "the settle threads the OWNING sid — a comment thread bills its owner (T144), a plain session itself (T100)");
   assert.ok(BACKEND.includes("if keyed or ke:   # carry an existing key split forward even on a login turn"));
   assert.ok(BACKEND.includes("_fold(days, day, 90)"));
@@ -95,7 +95,8 @@ test("the web rail's API cell is numbers under a constant label — no spend bar
   // window cells' own grammar — the window's ONE display name, name-font, LEFT of its value, with
   // dollars AND tokens (the user 2026-08-09: no more '$12 5h' second vocabulary trailing the number)
   assert.ok(usageJS.includes("function apiCellHTML(live)"));
-  assert.ok(usageJS.includes("'<div class=ru-name>API</div>'"));
+  // T301: the API-health dot's slot follows the label (the stable #rail-api node moves into it); the label itself is unchanged
+  assert.ok(usageJS.includes("'<div class=ru-name>API</div><span class=ah-slot></span>'"));
   assert.ok(!usageJS.includes("_tail"), "no tail plumbing survives in the rail JS");
   // the month segment carries the version-skew caveat (T235b): a legacy host's calendar month is left
   // out of the rolling segment, and the segment's title says how many machines were not counted
@@ -265,7 +266,12 @@ test("the cost view shows the CLI's own cost, adds a labelled estimate for the t
   assert.match(KERNEL, /"from": t0, "buckets": kind/);
   // …and the estimate itself dedupes split responses and reads subagent transcripts, nested ones too (2026-09-06)
   assert.match(KERNEL, /def _subagent_transcripts\(path\):/);
-  assert.match(KERNEL, /for root, dirs, files in os\.walk\(d\):/, "Workflow agents nest under subagents/workflows/");
+  // the tree is listed one directory at a time (upstream's memoised os.scandir listing replaced the fork's os.walk; its
+  // docstring says "as os.walk had it"), each subdirectory queued for a listing of its own, no symlink followed
+  const sub = KERNEL.slice(KERNEL.indexOf("def _subagent_transcripts(path):"), KERNEL.indexOf("\ndef ", KERNEL.indexOf("def _subagent_transcripts(path):") + 1));
+  assert.match(sub, /with os\.scandir\(d\) as it:/, "Workflow agents nest under subagents/workflows/: each directory's listing feeds the next");
+  assert.match(sub, /if e\.is_dir\(follow_symlinks=False\):\n\s+subdirs\.append\(e\.name\)/, "a subdirectory is queued for its own listing, a symlink never (the walk's rule survives the scandir)");
+  assert.match(sub, /stack\.extend\(os\.path\.join\(d, n\) for n in subdirs\)/, "...and the queued subdirectories are listed in turn");
   assert.match(KERNEL, /j = by_id\.get\(mid\)/, "one row per message.id");
   assert.match(KERNEL, /"claude-fable-5-1":\s+\{"in": 10e-6, "out": 50e-6, "cache_w": 12\.5e-6, "cache_r": 0\.25e-6\}/);
 });

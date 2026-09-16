@@ -10,9 +10,11 @@ same copy and `--compare` prints the per-benchmark deltas.
 
 Usage (every path below is an example; the copy lives OUTSIDE any repo):
 
-    # 1. copy the state directory, leaving out the SDK venv (hundreds of MB, not data) and the two
-    #    credential files the bench never needs
+    # 1. copy the state directory, leaving out the SDK venv (hundreds of MB, not data) and the
+    #    credential files the bench never needs (MIRROR_IGNORE below: the serve token, the Web Push key
+    #    and subscriptions, the remote kernels' tokens)
     rsync -a --exclude sdkvenv --exclude serve-token --exclude push-vapid.json \\
+        --exclude push-subscriptions.json --exclude remotes.json \\
         ~/.local/state/romp/ /tmp/romp-state-copy/
     #    transcripts are read from Claude's own directory; for a strict A/B (an active session's
     #    transcript grows between runs) copy that too and pass --claude-dir:
@@ -27,7 +29,7 @@ Usage (every path below is an example; the copy lives OUTSIDE any repo):
 
 The tool REFUSES the live default state directory ($ROMP_STATE_DIR, $XDG_STATE_HOME/romp, or
 ~/.local/state/romp) unless `--i-know-this-is-live` is passed — and even then it never runs the
-kernel against that directory: it mirrors the directory to a fresh temp copy (sdkvenv and the two
+kernel against that directory: it mirrors the directory to a fresh temp copy (sdkvenv and the
 credential files excluded) and benches the mirror, so the live directory is only ever read. The
 mirror is removed afterwards unless `--keep-mirror`.
 
@@ -36,25 +38,31 @@ directory lands in a shadow directory under the tool's private temp dir instead 
 below): the repo-root marker the kernel writes when it is imported, the session order the push
 appends new sids to, the order audit log. The end-of-run census fingerprints the copy before the
 kernel is imported and after the last row, on the error path too, and prints what changed; a run
-that reports anything but 0 changed, 0 new, 0 removed found a writer this tool does not know about.
+that reports anything but 0 changed, 0 new, 0 removed found a writer the shadow does not take. One
+such writer is known: a state file the kernel cannot parse is quarantined by an os.replace to a
+.corrupt-<stamp> sibling in the same directory, which goes through none of the shadowed doors, so
+on a copy holding such a file the census lists that file removed and its sibling new; anything
+else is a writer this tool does not know about. The census records mtimes, sizes, directories and
+link targets, not modes: the kernel import sets the state root it is pointed at to 0700, a change
+only on a copy whose root was not already 0700 (a live directory is, and rsync -a keeps it).
 
 Redacted copies. A copy tool that rewrites the cwd in every registry file (a home path replaced by
 X-es) while Claude's projects/ directory keeps the original name leaves discovery with nothing: the
 kernel derives the project directory from the registry cwd (judge.py's _proj_dir), so no transcript
 is found for any session. `--cwd-map FROM=TO` (repeatable) rewrites a registry cwd's leading path
-components before that derivation — `--cwd-map /XXXX/XXXXXX=$HOME` maps
-/XXXX/XXXXXX/code/notes-api to $HOME/code/notes-api — and the report counts the hits per
-rule. It touches nothing else: the cwd the chat build hands to its git queries stays the redacted
-one (a directory that does not exist here, so those queries fail as they would on a machine without
-the checkout). A later version of the copy tool will rename the project directories to match;
-until then, use the map. The no-transcript error names the counts it worked from (live
-sessions, hits in the 48 h window and in the 365-day backfill, registry cwds and how many of them
-map to an existing project directory) so a wrong --claude-dir, a redacted cwd and a stale copy read
-differently.
+components before that derivation (`--cwd-map /XXXX/XXXXXX=$HOME` maps /XXXX/XXXXXX/code/notes-api
+to $HOME/code/notes-api), and the report counts, per rule, every _proj_dir call of the whole run
+that the rule rewrote (discovery's, the tool's own transcript search's and the builders'), read
+when the run ends. It touches nothing else: the cwd
+the chat build hands to its git queries stays the redacted one (a directory that does not exist
+here, so those queries fail as they would on a machine without the checkout). The no-transcript
+error names the counts it worked from (live sessions, hits in the 48 h window and in the 365-day
+backfill, registry cwds and how many of them map to an existing project directory) so a wrong
+--claude-dir, a redacted cwd and a stale copy read differently.
 
 What is measured. Unless noted, each row is one untimed warm-up call followed by `--iters` timed
 calls, reported as ms min/median/max:
-  liveness_snapshot      Sessions.live() — the pusher cycle's one liveness read (tmux backend off)
+  liveness_snapshot      Sessions.live() — the pusher cycle's one liveness read
   names_snapshot         _names_snapshot() — the cycle's names-registry read
   discover_cold/warm     jd.discover(now) with and without its fingerprint cache
   build_session_cold:S   build_session for each of the K largest live transcripts with EVERY cache a
@@ -112,16 +120,14 @@ How the liveness snapshot is reconstructed, and what is approximated:
     A running session's snapshot also carries live-only fields (subagents, bgTasks); those read
     empty here. ctxTokens and the context percentage come from the reg's persisted values, as for a
     dormant row. `--all-regs-live` also lists regs with alive=false.
-  * The tmux backend is switched off (ROMP_TMUX_AVAILABLE=0, the kernel's own seam) and TMUX_TMPDIR
-    points at an empty private directory, so no `tmux` is ever run and tmux-backed sessions are not
-    represented. Comment threads (threadOf regs) are skipped, as the real live_sessions skips them.
+  * Comment threads (threadOf regs) are skipped, as the real live_sessions skips them.
   * The SDK backend's manager key is pinned empty (dormant rows read auth=login).
   * The session list is discovery's (jd.discover, a 48 h window keyed to the real clock) restricted to
     the live rows, plus — as _alive_sessions does for the builders — every live sid outside that
     window resolved through the long backfill window, so the pick list, the parse warm-up and the
     builders see ONE world. A live sid with no transcript anywhere is listed in the report; a run
     where neither the window nor the backfill finds a transcript for ANY live sid is an error (a wrong
-    --claude-dir, registry cwds a redaction rewrote — see --cwd-map above — or a copy older than the
+    --claude-dir; registry cwds a redaction rewrote, see --cwd-map above; or a copy older than the
     backfill window), raised only after the backfill has run.
   * Transcripts are read from Claude Code's own directory ($CLAUDE_CONFIG_DIR or ~/.claude), which
     the registry references; `--claude-dir` points at a copy or a synthetic one.
@@ -135,19 +141,23 @@ error, never a silent skip):
     bin/romp's down path and vscode-extension/src/extension.ts still default to 7432; see
     tests/conftest.py), so nothing this process does can reach the live manager.
   * ROMP_MODEL_CATALOG=off, ROMP_CLI_SCOPE=0, ROMP_CLAUDE_BIN=/bin/false, the service env file
-    pointed at a missing path, every ANTHROPIC_* variable removed.
+    pointed at a missing path, and every key-source and credential name tests/conftest.py pops removed
+    (KEY_SOURCE_ENV below: the API keys, the key reference and command, the token credentials, the auth
+    declaration and 1Password's names, plus every ANTHROPIC_* and OP_SESSION_* name).
   * Functions that would start a network fetch, a background parse thread, a desktop notification,
     a Web Push or a badge push are replaced with recorders (they are not builders; the push path
     reaches them from _cached_feed and the pricing table).
   * `subprocess` in every loaded romp module is replaced with a tripwire that raises on any spawn —
-    except the kernel's own read-only local git queries: `git rev-parse` and `git ls-files`, which
-    the chat build runs to place path links, and `git remote get-url`, which names the session's
-    GitHub repository for PR links (the pair only — `git remote` also has writing subcommands, and
-    those trip). Those run and are counted per build. The kernel caches their answers only for a cwd
-    inside a git checkout (on the index and tree mtimes, and the config file's mtime for the
-    remote); for any other cwd it re-runs `git ls-files` on EVERY build, so the per-build count
-    beside the build_session rows says how much of a sample is spawn time. `--no-git` answers those
-    queries as failures instead, for a strict zero-exec run.
+    except the kernel's read-only local git queries: `git rev-parse` and `git ls-files` (the chat
+    build's path-link pass) and the pair `git remote get-url` (the file-link route; the pair only —
+    `git remote` also has writing subcommands, and those trip). Those run and are counted per build.
+    "Every loaded romp module" is the kernel, the judge, the event model, the SDK backend, and every
+    sibling kernel/ module one of them loaded (credentials among them); the report's `neutralized` list
+    names each one.
+    The kernel caches their answers only for a cwd inside a git checkout (on the index and tree
+    mtimes, and the config file's mtime for the remote); for any other cwd it re-runs `git ls-files`
+    on EVERY build, so the per-build count beside the build_session rows says how much of a sample is
+    spawn time. `--no-git` answers those queries as failures instead, for a strict zero-exec run.
   * pwd.getpwnam / pwd.getpwuid are wrapped as counters (nss_lookups in the output): the chat build's
     path-link pass calls os.path.expanduser on every path-shaped token, and a `~name/...` token makes
     glibc consult the name service — AF_UNIX connects to nscd and systemd-userdb, local, not network.
@@ -155,14 +165,20 @@ error, never a silent skip):
     among them), every Path.write_text the kernel import performs against the state directory (the
     repo-root marker) and the order audit log's append are redirected to <private dir>/shadow/<same
     relative path>, and the kernel's ONE strict reader of the small JSON state files
-    (_read_state_json) reads a shadowed file from the shadow — so a read-modify-write such as the
+    (_read_state_json) reads a shadowed file from the shadow, so a read-modify-write such as the
     session order's append of new sids lands once, as it does live, instead of re-firing on every
-    build against a file that never changed. A write aimed anywhere else is an error. The copy's
-    files, directories and symlink targets are fingerprinted before the kernel is imported and again
-    at the end, on EVERY exit path — a guard's error, an exception out of the candidate kernel (at
-    import or inside a builder), Ctrl-C — and the output lists what changed (nothing, or a writer this
-    tool does not know about) beside the relative paths that were shadowed; the JSON, when asked for,
-    is written on those paths too, with the error beside the census.
+    build against a file that never changed. A write aimed anywhere else is recorded and refused
+    (refused_writes in the output). The copy's files, directories and symlink targets are
+    fingerprinted before the kernel is imported and again at the end, on EVERY exit path (a guard's
+    error, an exception out of the candidate kernel at import or inside a builder, Ctrl-C), and the
+    output lists what changed (nothing; the quarantine move of an unparseable state file, the one
+    known writer the shadow does not take; or a writer this tool does not know about) beside the
+    relative paths that were shadowed; the JSON, when asked for, is written on those paths too, with
+    the error beside the census.
+  * A guard that trips inside a call the kernel CATCHES is still an error: _push wraps its whole build in
+    `except Exception` and returns, so a refused spawn or write during the push rows would otherwise be
+    timed as an aborted cycle and the run would exit 0. Every refusal is recorded before it raises, and a
+    run that ends with one on record fails naming the guard (check_guards_held).
 
 Verification: run once under `strace -f -e trace=execve,connect`. Expected: the interpreter's own
 execve, plus (without `--no-git`) one execve of git per counted git query and nothing else; connect()
@@ -176,6 +192,7 @@ directory."""
 import argparse
 import cProfile
 import gc
+import importlib.util
 import json
 import os
 import pstats
@@ -192,10 +209,16 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA = 3          # 3: writes.shadowed replaces writes.atomic_writes; live_transcripts.searched; cwd_map
+SCHEMA = 3          # the JSON shape: writes.shadowed and refused_writes beside the census, live_transcripts.searched, cwd_map
 DEFAULT_CLIENTS = "chat,feed,timeline"
+_TOOL_FILE = os.path.realpath(__file__)          # the tripwire's frame filter excludes this file, by path
 PROFILE_TOP = 25
-MIRROR_IGNORE = ("sdkvenv", "serve-token", "push-vapid.json")
+# What a mirror of the live directory (and the rsync recipe above) leaves out: the SDK venv, and every file the
+# kernel writes 0600 because it holds a credential: the serve token, the Web Push VAPID key, the Web Push
+# subscriptions (each carries a browser's auth secret) and the remote kernels' serve tokens. The bench reads
+# none of them (the notification functions are recorders; remotes are re-attached only at kernel boot); the
+# first form of this list copied the last two into every mirror (review find, 2026-09-08).
+MIRROR_IGNORE = ("sdkvenv", "serve-token", "push-vapid.json", "push-subscriptions.json", "remotes.json")
 # The kernel-side caches a freshly started kernel lacks and build_session reads (all plain dicts, no
 # lock). Missing names are skipped: older revisions lack some, and the assembly-counter check below
 # is what proves a sample cold, not this list.
@@ -207,11 +230,24 @@ COLD_KERNEL_CACHES = ("_parse_cache", "_built_chat", "_prev_chat_events", "_prev
                       "_lanes_memo")                                                # the per-lane segment memo (item A)
 # (cache, its lock) in the event model: the parse layer under _parse. Missing names are skipped here too
 # (the trailing-record cache is newer than the assembly counters this tool requires); cold_caches in the
-# report says which of both lists were emptied, and the test pins that list at HEAD.
+# report says which of both lists were emptied, and tests/test_perf_bench.py checks the ones the cold
+# proof rests on.
 COLD_EM_CACHES = (("_JSONL_CACHE", "_JSONL_CACHE_LOCK"), ("_ASM_CACHE", "_ASM_LOCK"), ("_TRAILING_CACHE", "_TRAILING_LOCK"))
 WORLD_KEYS = (("liveness.live", "live rows"), ("live_transcripts.count", "transcripts"), ("iters", "iters"),
               ("sessions_requested", "sessions"), ("git_queries.answered_as_failure", "no-git"),
-              ("push_rebuilds", "push_steady rebuild samples"))
+              ("push_rebuilds", "push_steady rebuild samples"),
+              ("error", "run error"))      # a run that stopped on a guard is flagged before its rows are diffed
+# Every key-source and credential name tests/conftest.py pops before any test runs (its KEY_SOURCE_ENV_NAMES
+# and KEY_SOURCE_ENV_PREFIXES: credentials.FLOOR_ENV_NAMES, which is the retired provider names, the login
+# tokens, the auth declaration and 1Password's names, plus credentials.FLOOR_ENV_PREFIXES and
+# sdk_backend.AUTH_ENV_NAMES), removed here before the import for the same reason: every shell under a
+# romp-managed session inherits the manager's credentials, a retired provider name in the kernel's
+# environment is a boot failure (credentials.check_boot_environment), and the login tokens would be claimed
+# for a launch. The first form dropped ANTHROPIC_* only (review find, 2026-09-08); tests/test_perf_bench.py
+# pins this list against the kernel's own constants.
+KEY_SOURCE_ENV = ("ANTHROPIC_API_KEY", "ROMP_API_KEY_REF", "ROMP_API_KEY_CMD", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
+                  "ROMP_EXPECTED_AUTH", "OP_SERVICE_ACCOUNT_TOKEN", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN", "OP_ACCOUNT")
+KEY_SOURCE_ENV_PREFIXES = ("ANTHROPIC_", "OP_SESSION_")
 
 
 class BenchError(Exception):
@@ -264,10 +300,13 @@ def parse_cwd_maps(specs):
 def install_cwd_map(jd, maps):
     """Wrap jd._proj_dir so a registry cwd under a FROM prefix is rewritten to TO before the kernel
     derives Claude's project directory from it (whole-component prefix match; the first matching rule
-    wins). judge.py resolves _proj_dir by name on every call, so the wrapper is seen by discovery, the
-    liveness rows' transcript paths and the chat build alike; nothing else reads the map. Returns the
-    per-rule hit counters (a list the wrapper updates). With no rules nothing is wrapped: the default
-    run's timed rows call the kernel's own _proj_dir, with no extra frame."""
+    wins). judge.py resolves _proj_dir by name on every call and the kernel reaches it as jd._proj_dir,
+    so the wrapper is seen by discovery, the liveness rows' transcript paths and the chat build alike;
+    nothing else reads the map. Returns the per-rule hit counters (a list the wrapper updates for as
+    long as the run lasts, so a count read at the end covers every _proj_dir call of the run: the
+    discovery rows', the tool's own transcript search's (one per distinct registry cwd) and the
+    builders' transcript-path derivations). With no rules nothing is wrapped: the default run's timed
+    rows call the kernel's own _proj_dir, with no extra frame."""
     if not maps:
         return []
     real = jd._proj_dir
@@ -308,6 +347,7 @@ def mirror_state(src):
     except shutil.Error as e:
         errors = e.args[0] if e.args and isinstance(e.args[0], list) else []
         if not errors or not all(("[Errno 2]" in str(why)) or ("No such file" in str(why)) for _s, _d, why in errors):
+            shutil.rmtree(root, ignore_errors=True)       # a half-made mirror is not benched; leave nothing behind
             raise
         sys.stderr.write("perf-bench: %d file(s) vanished during the mirror copy (a live writer's temp files); continuing\n" % len(errors))
     return root, dst
@@ -322,11 +362,9 @@ def prepare_env(state, claude_dir, private_dir):
         if k in os.environ:
             os.environ.pop(k)
             changes.append("unset " + k)
-    for k in [k for k in os.environ if k.startswith("ANTHROPIC_")]:
+    for k in [k for k in os.environ if k in KEY_SOURCE_ENV or k.startswith(KEY_SOURCE_ENV_PREFIXES)]:
         os.environ.pop(k)
         changes.append("unset " + k)
-    tmux_dir = os.path.join(private_dir, "tmux")
-    os.makedirs(tmux_dir, exist_ok=True)          # tmux falls back to the default socket dir when this is missing
     no_env = os.path.join(private_dir, "no-such-service.env")
     sets = {
         "ROMP_MANAGER_PORT": "1",                 # a dead port, the floor: every kernel door (_manager_port) reads absent, empty
@@ -336,8 +374,6 @@ def prepare_env(state, claude_dir, private_dir):
         "ROMP_MODEL_CATALOG": "off",
         "ROMP_CLI_SCOPE": "0",
         "ROMP_CLAUDE_BIN": "/bin/false",
-        "ROMP_TMUX_AVAILABLE": "0",
-        "TMUX_TMPDIR": tmux_dir,
         "ROMP_SERVE_TOKEN": "perf-bench-token-not-for-use",
         "ROMP_SERVICE_ENV_FILE": no_env,
         "ROMP_SERVICE_ENV": no_env,
@@ -357,15 +393,18 @@ class StateShadow:
     """Where every write the kernel aims at the state copy lands instead: <root>/<the same relative
     path>, in the tool's private temp dir. The copy stays byte-identical, and the kernel's own re-reads
     of the small JSON state files (installed on _read_state_json by install_guards) see the shadow, so a
-    read-modify-write — the session order's append of new sids — lands once, as it does live, instead of
+    read-modify-write (the session order's append of new sids) lands once, as it does live, instead of
     re-firing on every build against a file that never changed (each re-fire would add an audit record
     with a captured stack to the very rows this tool times). `written` lists every relative path that
-    was diverted, in order, duplicates kept; the report dedups it."""
+    was diverted, in order, duplicates kept; the report dedups it. A write aimed anywhere else is
+    appended to `refused` (the recorder's refused_writes list) before it is refused, so a caller that
+    swallows the error cannot hide it (check_guards_held)."""
 
-    def __init__(self, state, root):
+    def __init__(self, state, root, refused=None):
         self.state = Path(state).resolve()
         self.root = Path(root)
         self.written = []
+        self.refused = refused if refused is not None else []
 
     def rel(self, path):
         """The path relative to the state copy, or None when `path` is not under it."""
@@ -376,7 +415,7 @@ class StateShadow:
 
     def target(self, path):
         """Where a write to `path` lands: its shadow when it aims at the copy (recorded), itself when it
-        is already in the shadow (the audit log's own trim); a write aimed anywhere else is an error."""
+        is already in the shadow (the audit log's own trim); a write aimed anywhere else is refused."""
         r = self.rel(path)
         if r is not None:
             self.written.append(str(r))
@@ -386,10 +425,13 @@ class StateShadow:
         p = Path(path).resolve()
         if self.root.resolve() in p.parents:
             return p
-        raise BenchError("perf-bench: a write outside the state copy: %s" % p)
+        self.refused.append(str(p))      # on record BEFORE the raise: _push swallows the exception
+        raise BenchError("perf-bench: _atomic_write outside the state copy: %s" % p)
 
     def read_path(self, path):
-        """Where a read of `path` looks: its shadow once one has been written, else `path` itself."""
+        """Where a read of `path` looks: its shadow once one has been written, else `path` itself. One
+        resolve() and one stat per call, paid inside the timed rows by every read of a small JSON state
+        file: microseconds against rows measured in milliseconds, and the same on both sides of an A/B."""
         r = self.rel(path)
         if r is not None and (self.root / r).exists():
             return self.root / r
@@ -397,18 +439,22 @@ class StateShadow:
 
 
 def new_recorder():
-    return {"spawns": [], "notifications": [], "tripwires": [], "nss": {}}
+    """What the guards see, made before the kernel loads so the census can read it whichever way the run
+    ends: refused spawns, suppressed notifications and background parses, refused writes, the tripwires
+    (for their git counters), the name-service lookups, the threads started and the --cwd-map rules'
+    hit counters (install_cwd_map's list, empty without rules)."""
+    return {"spawns": [], "notifications": [], "refused_writes": [], "tripwires": [], "nss": {}, "warm_calls": [],
+            "thread_starts": 0, "cwd_map_hits": []}
 
 
 # ── side-effect tripwires ───────────────────────────────────────────────────────────────────────
 class SubprocessTripwire:
     """Stands in for the `subprocess` module inside the loaded romp modules: constants and helpers pass
-    through; every spawn raises, except the kernel's own read-only local git queries — `git rev-parse`
-    and `git ls-files`, which the chat build runs to place path links, and `git remote get-url`, which
-    names a session's GitHub repository for its PR links (_github_repo_of; the get-url pair only, never
-    `git remote` at large, whose add/set-url/remove forms rewrite config). Those are counted. With no_git
-    they are answered as failures (the "no git on this box" shape) instead of run, so a strict zero-exec
-    run is possible without replacing any kernel function."""
+    through; every spawn raises, except the kernel's read-only local git queries — `git rev-parse` and
+    `git ls-files` (the chat build's path-link pass) and the pair `git remote get-url` (the file-link
+    route; the get-url pair only, never `git remote` at large, whose add/set-url/remove forms rewrite
+    config). Those are counted. With no_git they are answered as failures (the "no git on this box"
+    shape) instead of run, so a strict zero-exec run is possible without replacing any kernel function."""
     _SPAWN = ("Popen", "run", "call", "check_call", "check_output", "getoutput", "getstatusoutput")
     _GIT_READ_ONLY = ("rev-parse", "ls-files")          # single-word queries admitted by their subcommand
     _GIT_READ_ONLY_PAIRS = (("remote", "get-url"),)      # two-word queries admitted only as the whole pair
@@ -445,7 +491,10 @@ class SubprocessTripwire:
                     if self._no_git:
                         return self._real.CompletedProcess(argv, 1, "" if k.get("text") else b"", "" if k.get("text") else b"")
                     return self._real.run(*a, **k)
-                where = [fr for fr in traceback.extract_stack()[:-1] if "perf-bench" not in fr.filename][-4:]
+                # the caller's frames, this file's own excluded by identity: a substring match on the tool's name
+                # emptied the attribution for any checkout or state path that spelled it (found by the test whose
+                # scratch kernel lives under a perf-bench-* directory, 2026-09-08)
+                where = [fr for fr in traceback.extract_stack()[:-1] if os.path.realpath(fr.filename) != _TOOL_FILE][-4:]
                 via = " <- ".join("%s:%d %s" % (os.path.basename(fr.filename), fr.lineno, fr.name) for fr in reversed(where))
                 self._log.append("subprocess.%s %r via %s" % (name, argv, via))
                 raise BenchError("perf-bench tripwire: subprocess.%s called (argv %r) via %s" % (name, argv, via))
@@ -455,9 +504,9 @@ class SubprocessTripwire:
 
 def install_guards(km, sbmod, shadow, rec, no_git=False):
     """Neutralize the non-builder side effects the push path can reach; return the list of names for
-    the report (`rec`, from new_recorder(), collects what the guards saw). A safety target the kernel
-    revision lacks is an error: a renamed notification function would otherwise leave the real one in
-    place (Web Push to every subscription in the copy's store)."""
+    the report (`rec`, from new_recorder(), collects what the guards saw; `shadow` takes the writes).
+    A safety target the kernel revision lacks is an error: a renamed notification function would
+    otherwise leave the real one in place (Web Push to every subscription in the copy's store)."""
     names = []
 
     def stub(attr, fn):
@@ -466,14 +515,29 @@ def install_guards(km, sbmod, shadow, rec, no_git=False):
         setattr(km, attr, fn)
         names.append("km." + attr)
 
-    stub("_refresh_remote_prices", lambda now=None: None)          # network fetch thread
-    stub("_warm_fleet_bg", lambda now=None: None)                  # background parse thread
-    stub("_system_notify", lambda t, b: rec["notifications"].append(("system", t)))
-    stub("_push_notify", lambda t, b, sid="", badge=None: rec["notifications"].append(("push", t)))
-    stub("_push_forward", lambda evs: rec["notifications"].append(("forward", len(evs))))
-    stub("_badge_push", lambda n: rec["notifications"].append(("badge", n)))
-    for mod in (km, getattr(km, "jd", None), getattr(km, "em", None), sbmod):
-        if mod is not None and getattr(mod, "subprocess", None) is not None:
+    # Each recorder takes whatever the kernel passes: _push_notify is called with kind=, card_id=, quiet=
+    # and host= keywords the recorder never reads, and a shape mismatch would not fail the run. _push
+    # catches every exception in its build, writes `push build: <traceback>` to stderr and returns, so
+    # that cycle would be timed with its frames dropped and the notification count would come up short.
+    stub("_refresh_remote_prices", lambda *a, **k: None)            # network fetch thread
+    stub("_warm_fleet_bg", lambda *a, **k: rec["warm_calls"].append(time.time()))   # background parse thread; counted
+    stub("_system_notify", lambda t, b, *a, **k: rec["notifications"].append(("system", t)))
+    stub("_push_notify", lambda t, b, *a, **k: rec["notifications"].append(("push", t)))
+    stub("_push_forward", lambda evs, *a, **k: rec["notifications"].append(("forward", len(evs))))
+    stub("_badge_push", lambda n, *a, **k: rec["notifications"].append(("badge", n)))
+    # Every loaded romp module: the four the harness drives, plus every sibling of kernel.py that one of them
+    # loaded (sdk_backend loads credentials, whose apiKeyHelper runs as a subprocess). The first form guarded the four
+    # only, while the docstring promised every loaded module (review find, 2026-09-08).
+    mods = [km, getattr(km, "jd", None), getattr(km, "em", None), sbmod]
+    kfile = getattr(km, "__file__", None)
+    if isinstance(kfile, str):
+        kdir = os.path.dirname(os.path.realpath(kfile))
+        for m in list(sys.modules.values()):
+            f = getattr(m, "__file__", None)
+            if isinstance(f, str) and os.path.dirname(os.path.realpath(f)) == kdir and not any(m is x for x in mods):
+                mods.append(m)
+    for mod in mods:
+        if mod is not None and isinstance(getattr(mod, "subprocess", None), type(sys)):
             tw = SubprocessTripwire(_real_subprocess, rec["spawns"], no_git=no_git)
             mod.subprocess = tw
             rec["tripwires"].append(tw)
@@ -481,7 +545,7 @@ def install_guards(km, sbmod, shadow, rec, no_git=False):
     real_aw = km._atomic_write
 
     def shadowed_write(path, text, mode=None):
-        t = shadow.target(path)
+        t = shadow.target(path)                     # the shadow's path; a write aimed elsewhere is recorded, then refused
         return real_aw(t, text, mode) if mode is not None else real_aw(t, text)
     stub("_atomic_write", shadowed_write)
     names[-1] = "km._atomic_write (shadowed)"
@@ -494,7 +558,7 @@ def install_guards(km, sbmod, shadow, rec, no_git=False):
         return real_rsj(t, st, *a, **k)
     stub("_read_state_json", overlaid_read)
     names[-1] = "km._read_state_json (shadow overlay)"
-    stub("_order_audit_path", lambda: shadow.target(km.jd.STATE / "order-audit.jsonl"))
+    stub("_order_audit_path", lambda: shadow.target(Path(km.jd.STATE) / "order-audit.jsonl"))
     names[-1] = "km._order_audit_path (shadowed)"
     for fn in ("getpwnam", "getpwuid"):            # os.path.expanduser's name-service lookups, counted
         real = getattr(pwd, fn)
@@ -504,7 +568,36 @@ def install_guards(km, sbmod, shadow, rec, no_git=False):
             return _real(*a, **k)
         setattr(pwd, fn, counted)
         names.append("pwd.%s (counted)" % fn)
+    # Every thread started from here on is counted (thread_starts in the output). threads_new, the other
+    # thread check, compares the live set at exit with the one before the import, so it sees only a thread
+    # still alive at the end; a parse thread that ran and finished inside a sample would pass it.
+    real_start = threading.Thread.start
+
+    def counted_start(self, *a, **k):
+        rec["thread_starts"] += 1
+        return real_start(self, *a, **k)
+    threading.Thread.start = counted_start
     return names
+
+
+def check_guards_held(rec):
+    """A guard that tripped is an error even when the kernel caught it. The tripwire and the write guard raise
+    BenchError, but _push wraps its whole build in `except Exception` (it writes `push build: <traceback>` to
+    stderr and returns), so a spawn or an out-of-copy write attempted during the push rows was refused and the
+    cycle went on, timed with its frames dropped, while the run exited 0 with no `error` in the JSON (review
+    find, 2026-09-08). Every refusal is recorded before its raise, so an entry still on record at the end of
+    the run means a caller swallowed it; the run then ends the way any other tripped guard ends it (the rows
+    so far print, the JSON carries `error`, the exit status is 1), naming the guard."""
+    spawns, writes = rec["spawns"], rec["refused_writes"]
+    if not spawns and not writes:
+        return
+    what = []
+    if spawns:
+        what.append("subprocess tripwire: %d refused spawn(s): %s" % (len(spawns), "; ".join(spawns[:3]) + ("; ..." if len(spawns) > 3 else "")))
+    if writes:
+        what.append("_atomic_write guard: %d refused write(s) outside the copy: %s" % (len(writes), ", ".join(writes[:3]) + (", ..." if len(writes) > 3 else "")))
+    raise BenchError("a guard tripped inside a call the kernel catches (its traceback is on stderr under `push build:`), so the "
+                     "push rows timed an aborted cycle; " + "; ".join(what))
 
 
 def git_calls_total(rec):
@@ -515,21 +608,71 @@ def git_calls_total(rec):
     return out
 
 
+def asm_delta(em, before):
+    """The event model's assembly counters that moved since `before` (a copy of em._ASM_STATS)."""
+    return {k: em._ASM_STATS.get(k, 0) - before.get(k, 0) for k in set(em._ASM_STATS) | set(before)
+            if em._ASM_STATS.get(k, 0) != before.get(k, 0)}
+
+
+def check_cold_sample(em, tag, path, asm_before):
+    """Prove one cold build_session sample was cold: the assembly counters moved by at least one full
+    assembly since `asm_before`, and `path` (the session's own transcript) is now a key of the assembly
+    cache the sample started with empty. Returns the counter delta; raises BenchError otherwise, so a
+    cache this tool does not clear (above or below the parse) is an error, never a warm row."""
+    d = asm_delta(em, asm_before)
+    if not d.get("full"):
+        raise BenchError("build_session_cold:%s ran no full assembly (assembly counters moved %r): a cache "
+                         "this harness does not clear served the parse" % (tag, d))
+    asm_cache = getattr(em, "_ASM_CACHE", {})
+    with em._ASM_LOCK:
+        own = any(isinstance(k, tuple) and k and k[0] == path for k in asm_cache)
+    if not own:
+        raise BenchError("build_session_cold:%s never assembled its own transcript (%s is absent from the "
+                         "assembly cache the sample started with empty; counters moved %r): a cache above the "
+                         "event model served it" % (tag, os.path.basename(path), d))
+    return d
+
+
+def check_snapshot_rows(rows, regs, all_regs):
+    """The liveness snapshot must hold exactly one row per qualifying registry entry (alive, not a comment
+    thread; with all_regs, closed entries too). Sessions.live() catches and logs a failing backend merge and
+    carries on with whatever rows it has, so a bench backend that a kernel revision drives differently would
+    otherwise be timed against an empty or partial world and report success."""
+    expected = sum(1 for r in regs if not r.get("threadOf") and (r.get("alive") or all_regs))
+    if len(rows) != expected:
+        raise BenchError("liveness snapshot has %d rows but %d registry entries qualify — the backend merge "
+                         "failed inside the kernel (its traceback is on stderr); the bench backend needs "
+                         "adjusting for this revision" % (len(rows), expected))
+    return expected
+
+
+def bucket_steady_samples(samples):
+    """Split push_steady's samples into (quiet, rebuilt): a sample in which _cached_feed or _cached_timeline
+    rebuilt is set aside, because the rebuild is decided by wall-clock alignment (the 5 s view-signature
+    bucket rolling REBUILD_MIN_S after the previous build), not by the code under test."""
+    quiet = [f for f in samples if not (f["rebuilt_feed"] or f["rebuilt_timeline"])]
+    rebuilt = [f for f in samples if f["rebuilt_feed"] or f["rebuilt_timeline"]]
+    return quiet, rebuilt
+
+
+def steady_rows(samples, apps):
+    """The push_steady row (the quiet samples' numbers, every sample listed) and the push_steady_rebuild
+    row (None when no sample rebuilt)."""
+    quiet, rebuilt = bucket_steady_samples(samples)
+    st = ms_stats([f["ms"] for f in quiet])
+    st.update({"bytes_per_push": (sum(f["bytes"] for f in quiet) / len(quiet)) if quiet else None,
+               "samples": samples, "clients": apps, "rebuild_samples": len(rebuilt)})
+    st2 = None
+    if rebuilt:
+        st2 = ms_stats([f["ms"] for f in rebuilt])
+        st2["bytes_per_push"] = sum(f["bytes"] for f in rebuilt) / len(rebuilt)
+    return st, st2
+
+
 # ── the constructor-free SDK backend ────────────────────────────────────────────────────────────
 def make_backend(sbmod, state, dormant_rows, all_regs):
     class BenchSdkBackend(sbmod.SdkBackend):
-        # Capabilities the kernel asks a backend for with hasattr() and branches on, which this fork's SDK
-        # backend does NOT define: T252c's per-copy identity surfaces (qids_for_landing on every landed
-        # record, pending_queued_meta on a queued bubble). The fork's send id is the one queued-copy
-        # identity, so the kernel's guarded call sites are dead for SDK sessions and live for the tmux
-        # backend (upmerge4 fold, decision f). On the real class hasattr() reads False; the bench answers
-        # the same for exactly these two, so the build takes the branch it takes live instead of tripping
-        # the constructor tripwire below.
-        _PROBED_ABSENT = ("qids_for_landing", "pending_queued_meta")
-
         def __getattr__(self, name):          # only reached for attributes the constructor would have set
-            if name in self._PROBED_ABSENT:
-                raise AttributeError(name)    # absent on the real class too: hasattr() reads False, as live
             raise BenchError("perf-bench: the bench backend lacks attribute %r (a code path this tool "
                              "did not anticipate reached it — add it to make_backend)" % name)
 
@@ -560,16 +703,19 @@ def make_backend(sbmod, state, dormant_rows, all_regs):
     be.__dict__.update({
         "state_dir": Path(state), "claude_bin": "/bin/false", "sessions": {},
         "_lock": threading.Lock(), "_reg_lock": threading.Lock(), "_pending_ask": {}, "_live": {},
-        "_fork_children_memo": None,
+        "_live_rev": {},    # the live tail's per-sid revision (Sessions.live_rev reads it for every chat signature)
+        "_owns_memo": {},   # owns() memoizes on the reg file's identity here, and build_session and
+        #   _alive_sessions reach owns() through Sessions.backend_for: without the slot the first chat
+        #   build raises on the attribute instead of answering
+        "_fork_children_memo": None, "_work_key_pin": "", "work_key": "",   # a property with a pin at
+        #   HEAD (the pin wins), a plain attribute in older revisions (the instance value wins)
         "_problems": [], "_problem_seq": 0,
         "_problem_lock": threading.Lock(), "_sdk_missing": False, "_turn_seq": {}, "_drive_marks": {},
         "_drive_inflight": set(), "_heal_attempts": {}, "_notify": None, "_poke_cb": None,
-        "_push_cb": None, "_push_session_cb": None, "_todo_lost_cb": None, "_log_cb": None,
+        "_push_cb": None, "_push_session_cb": None, "_log_cb": None,
+        "_todo_lost_cb": None,   # the user-todo answer path's callback, set in this fork's SdkBackend.__init__
         "mcp_config": None, "append_prompt_path": None, "cli_scope": False, "thread_wake_model": None,
         "_bench_dormant": bool(dormant_rows), "_bench_all_regs": bool(all_regs),
-        "_owns_memo": {},  # the owns() memo sdk_backend sets in __init__; read on the liveness path since the 2026-09-07 fold
-        "_live_rev": {},   # the live-tail revision map __init__ sets (_touch_live / live_rev): every chat signature
-        #                    reads it (round-4 plan P4), and without it the guard above turned each into no signature
     })
     return be
 
@@ -580,10 +726,19 @@ def load_kernel(repo, shadow=None):
     performs against the state copy lands in the shadow instead (the kernel writes its repo-root
     marker at import, before any guard can be installed on the module); the diversion is removed
     once the import returns, and the guards install_guards puts on the named write doors take over."""
-    import importlib.util
     kpath = os.path.join(repo, "kernel", "kernel.py")
     if not os.path.isfile(kpath):
         raise BenchError("no kernel at %s" % kpath)
+    # The loader is the project's load_source (kernel/loadsource.py: a file-path import with the sys.modules
+    # semantics of SourceFileLoader.load_module(), without the deprecated call). It comes from THIS tool's
+    # checkout, not from --repo: it is stdlib glue independent of the revision under measurement, so a
+    # candidate checkout without the module is still benchable, and it is bootstrapped here rather than at
+    # module level because the tool loads no romp code at import.
+    _ls_spec = importlib.util.spec_from_file_location(
+        "romp_loadsource", os.path.join(os.path.dirname(os.path.dirname(_TOOL_FILE)), "kernel", "loadsource.py"))
+    _ls_mod = importlib.util.module_from_spec(_ls_spec)
+    _ls_spec.loader.exec_module(_ls_mod)
+    load_source = _ls_mod.load_source
     real_write_text = Path.write_text
 
     def diverted_write_text(self, data, *a, **k):
@@ -592,26 +747,16 @@ def load_kernel(repo, shadow=None):
     if shadow is not None:
         Path.write_text = diverted_write_text
     try:
-        km, sbmod = _import_kernel(repo, kpath)
+        km = load_source("romp_kernel_perf_bench", kpath)
+        # a backend already loaded under this name (by the kernel's import, or earlier in this process) is
+        # reused: load_source executes a name already in sys.modules again, in place
+        sbmod = sys.modules.get("romp_sdk_backend")
+        if sbmod is None:
+            sbmod = load_source("romp_sdk_backend", os.path.join(repo, "kernel", "sdk_backend.py"))
     finally:
         Path.write_text = real_write_text
-    return km, sbmod
-
-
-def _import_kernel(repo, kpath):
-    import importlib.util
-    # the repo's file-path importer (kernel/loadsource.py), loaded by path from the checkout under test
-    _spec = importlib.util.spec_from_file_location("romp_loadsource", os.path.join(repo, "kernel", "loadsource.py"))
-    if _spec is None or not os.path.isfile(_spec.origin):
-        raise BenchError("this kernel predates kernel/loadsource.py; the harness does not know how to load it")
-    _ls = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(_ls)
-    km = _ls.load_source("romp_kernel_perf_bench", kpath)
-    sbmod = sys.modules.get("romp_sdk_backend")
-    if sbmod is None:
-        sbmod = _ls.load_source("romp_sdk_backend", os.path.join(repo, "kernel", "sdk_backend.py"))
     for sym in ("_live_scope", "Sessions", "build_session", "build_feed", "build_timeline", "_push",
-                "_names_snapshot", "_sessions", "_parse", "_parse_cache", "_tmux_sessions", "_atomic_write",
+                "_names_snapshot", "_sessions", "_parse", "_parse_cache", "_live_map", "_atomic_write",
                 "_built_feed", "_built_timeline", "em", "jd"):
         if not hasattr(km, sym):
             raise BenchError("this kernel lacks %s; the harness does not know how to drive it" % sym)
@@ -832,23 +977,30 @@ def run(args, state, mirror_of, out, private):
     repo = os.path.realpath(args.repo) if args.repo else os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
     out["repo"], out["repo_head"], out["state"], out["state_mirror_of"] = repo, git_head(repo), state, mirror_of
     maps = parse_cwd_maps(args.cwd_map)
+    out["cwd_map"] = [{"from": frm, "to": to, "hits": 0} for frm, to in maps]
     out["env_changes"] = prepare_env(state, args.claude_dir, private)
-    shadow = StateShadow(state, os.path.join(private, "shadow"))
     rec = new_recorder()
+    shadow = StateShadow(state, os.path.join(private, "shadow"), rec["refused_writes"])
     fp_before = fingerprint(state)
     threads_before = {t.name for t in threading.enumerate()}
     try:
         _bench(args, state, repo, out, shadow, rec, maps)
+        check_guards_held(rec)
     finally:
         # the census runs on EVERY exit path: a run that stopped on an error has still imported the
         # kernel and may have built, and what it wrote into the copy is what the caller needs to know
         out["writes"] = fingerprint_diff(fp_before, fingerprint(state))
         out["writes"]["shadowed"] = sorted(set(shadow.written))
+        for rule, n in zip(out["cwd_map"], rec["cwd_map_hits"]):   # read here, after the builders' calls, not at discovery
+            rule["hits"] = n
         out["notifications_suppressed"] = len(rec["notifications"])
+        out["warm_calls_suppressed"] = len(rec["warm_calls"])
+        out["thread_starts"] = rec["thread_starts"]
         out["spawn_attempts"] = rec["spawns"]
         out["git_queries"] = {"answered_as_failure": bool(args.no_git), "calls": git_calls_total(rec)}
         out["nss_lookups"] = dict(rec["nss"])
         out["threads_new"] = sorted({t.name for t in threading.enumerate()} - threads_before)
+        out["refused_writes"] = list(rec["refused_writes"])
     return out
 
 
@@ -881,27 +1033,26 @@ def _bench(args, state, repo, out, shadow, rec, maps):
     if hasattr(km, "_codex_backend"):
         km._codex_backend = False              # "module unavailable": _codex() returns None, loads nothing
     out["neutralized"] = install_guards(km, sbmod, shadow, rec, no_git=args.no_git)
-    map_hits = install_cwd_map(jd, maps)
+    map_hits = rec["cwd_map_hits"] = install_cwd_map(jd, maps)   # run()'s census copies the counts when the run ends
     if maps:
         out["neutralized"].append("jd._proj_dir (cwd-map)")   # the derivation is wrapped: say so in the report
-    out["cwd_map"] = [{"from": frm, "to": to, "hits": 0} for frm, to in maps]
     bench = out["benchmarks"] = {}
     profiles = out["profiles"] = {}
     iters = max(1, args.iters)
-    out["cold_caches"] = {"kernel": [n for n in COLD_KERNEL_CACHES + ("_chat_fold",) if isinstance(getattr(km, n, None), dict)],
+    out["cold_caches"] = {"kernel": [n for n in COLD_KERNEL_CACHES + ("_chat_fold",) if callable(getattr(getattr(km, n, None), "clear", None))],
                           "event_model": [n for n, _lock in COLD_EM_CACHES if isinstance(getattr(em, n, None), dict)]}
 
     def now():
         return int(time.time())
 
-    def scope(tmux):
+    def scope(live_map):
         """The pusher cycle's scope, as _pusher_cycle opens it: the liveness snapshot, the sid->path memo,
-        the discover-rows memo (perf batch 2 P3; a kernel from before it never reads the slot), the names
-        snapshot and the cycle's billing-availability memo (_auth_avail_status, upstream
-        https://github.com/romp-on/romp/pull/1147, folded 2026-09-09; a kernel from before it never reads
-        the slot). tests/test_perf_bench.py CycleScopeParity reads _pusher_cycle's slots and fails when one
-        is missing here."""
-        km._live_scope.snapshot = tmux
+        the discover-rows memo (a per-cycle memo slot some kernel revisions read), the names snapshot and
+        the cycle's billing-availability memo (_auth_avail_status, upstream
+        https://github.com/romp-on/romp/pull/1147; a kernel from before it never reads the slot).
+        tests/test_perf_bench.py CycleScopeParity reads _pusher_cycle's slots and fails when one is
+        missing here."""
+        km._live_scope.snapshot = live_map
         km._live_scope.paths = {}
         km._live_scope.sessions = {}
         km._live_scope.auth = {}
@@ -924,7 +1075,7 @@ def _bench(args, state, repo, out, shadow, rec, maps):
         """The kernel-side caches a freshly started kernel lacks (build_session's inputs above the parse)."""
         for name in COLD_KERNEL_CACHES:
             d = getattr(km, name, None)
-            if isinstance(d, dict):
+            if callable(getattr(d, "clear", None)):   # a dict, or the kernel's view over the shared parse store (T323 stage 2)
                 d.clear()
         if hasattr(km, "_chat_fold"):
             lock = getattr(km, "_chat_fold_lock", None)
@@ -940,7 +1091,7 @@ def _bench(args, state, repo, out, shadow, rec, maps):
         sample cold)."""
         for name, lock_name in COLD_EM_CACHES:
             d = getattr(em, name, None)
-            if not isinstance(d, dict):
+            if not callable(getattr(d, "clear", None)):
                 continue
             lock = getattr(em, lock_name, None)
             if lock is not None:
@@ -953,10 +1104,6 @@ def _bench(args, state, repo, out, shadow, rec, maps):
         clear_kernel_caches()
         clear_em_caches()
         gc.collect()
-
-    def asm_delta(before):
-        return {k: em._ASM_STATS.get(k, 0) - before.get(k, 0) for k in set(em._ASM_STATS) | set(before)
-                if em._ASM_STATS.get(k, 0) != before.get(k, 0)}
 
     class Counters:
         """Per-row deltas of the git call counter, the assembly counters and the NSS counter, over the
@@ -973,7 +1120,7 @@ def _bench(args, state, repo, out, shadow, rec, maps):
             nss = {k: nss1.get(k, 0) - self.nss0.get(k, 0) for k in set(nss1) | set(self.nss0) if nss1.get(k, 0) != self.nss0.get(k, 0)}
             n = max(1, self.n)
             return {"git_per_build": {k: round(v / n, 2) for k, v in git.items()},
-                    "asm": asm_delta(self.asm0), "nss_per_build": {k: round(v / n, 2) for k, v in nss.items()}}
+                    "asm": asm_delta(em, self.asm0), "nss_per_build": {k: round(v / n, 2) for k, v in nss.items()}}
 
     def timed_counted(fn, before=None, after=None):
         """timed() with the per-row counters reset AFTER the warm-up, so a row's git/asm/nss deltas
@@ -987,37 +1134,34 @@ def _bench(args, state, repo, out, shadow, rec, maps):
         return st, last
 
     # liveness + names snapshots (the pusher cycle's per-cycle reads)
-    bench["liveness_snapshot"], tmux = timed(lambda: km.Sessions.live(), iters)
+    bench["liveness_snapshot"], live_map = timed(lambda: km.Sessions.live(), iters)
     bench["names_snapshot"], _ = timed(lambda: km._names_snapshot(), iters)
     regs = sbmod.list_regs(state)
-    expected = sum(1 for r in regs if not r.get("threadOf") and (r.get("alive") or args.all_regs_live))
-    if len(tmux) != expected:
-        # Sessions.live() catches and logs a failing backend merge and carries on with whatever rows it
-        # has, so a bench backend that a kernel revision drives differently would otherwise be timed
-        # against an empty or partial world and report success. Exact by construction: every counted reg
-        # must produce exactly one row.
-        raise BenchError("liveness snapshot has %d rows but %d registry entries qualify — the backend merge "
-                         "failed inside the kernel (its traceback is on stderr); the bench backend needs "
-                         "adjusting for this revision" % (len(tmux), expected))
-    out["liveness"] = {"live": len(tmux), "alive_regs": sum(1 for r in regs if r.get("alive") and not r.get("threadOf")),
+    check_snapshot_rows(live_map, regs, args.all_regs_live)      # exact by construction: one row per counted reg
+    out["liveness"] = {"live": len(live_map), "alive_regs": sum(1 for r in regs if r.get("alive") and not r.get("threadOf")),
                        "closed_regs": sum(1 for r in regs if not r.get("alive") and not r.get("threadOf")),
                        "thread_regs": sum(1 for r in regs if r.get("threadOf")),
-                       "rows": "dormant" if args.dormant_rows else "states-file"}
-    scope(tmux)
+                       "rows": "dormant" if args.dormant_rows else "states-file",
+                       "states": {sid[:8]: (row.get("state") if isinstance(row, dict) else None) for sid, row in live_map.items()}}
+    scope(live_map)
     try:
         # discovery
+        discover_clears = [0]
+
         def cold_discover():
             cache = getattr(jd, "_discover_cache", None)
             if isinstance(cache, dict):
                 cache.clear()
+                discover_clears[0] += 1
         bench["discover_cold"], _ = timed(lambda: jd.discover(now()), iters, before=cold_discover)
+        out["discover_cache_cleared"] = discover_clears[0]      # iters + the warm-up: one clear per sample
         bench["discover_warm"], _ = timed(lambda: jd.discover(now()), iters)
 
         # ONE world: discovery's live sessions, plus every live sid outside its window resolved the way
         # _alive_sessions resolves them for the builders
-        sessions = [s for s in km._sessions(now()) if s["sid"] in tmux]
+        sessions = [s for s in km._sessions(now()) if s["sid"] in live_map]
         have = {s["sid"] for s in sessions}
-        missing = [sid for sid in tmux if sid not in have]
+        missing = [sid for sid in live_map if sid not in have]
         backfilled = []
         if missing and hasattr(jd, "DEATH_BACKFILL_WINDOW"):
             wide = {f[0]: f for f in jd.discover(now(), window=jd.DEATH_BACKFILL_WINDOW)}
@@ -1033,10 +1177,8 @@ def _bench(args, state, repo, out, shadow, rec, maps):
                 sessions.append({"sid": fsid, "name": name or fsid[:8], "anchor": anchor, "path": str(path), "mtime": mtime})
                 backfilled.append(sid)
         no_transcript = [sid for sid in missing if sid not in set(backfilled)]
-        searched = transcript_search(jd, state, tmux)
-        for rule, n in zip(out["cwd_map"], map_hits):
-            rule["hits"] = n
-        if tmux and not sessions:
+        searched = transcript_search(jd, state, live_map)
+        if live_map and not sessions:
             # after the backfill, not before it: a copy whose transcripts are all older than the
             # discovery window is a normal copy, and the backfill is what finds them
             raise BenchError("discovery found no transcript for any of the %d live sessions: %d in the %d h window, "
@@ -1044,7 +1186,7 @@ def _bench(args, state, repo, out, shadow, rec, maps):
                              "director%s holding %d transcript(s)%s. Causes: a wrong --claude-dir; registry cwds a "
                              "redaction rewrote while the project directories kept their names (see --cwd-map); a copy "
                              "whose transcripts are older than the backfill window"
-                             % (len(tmux), len(have), int(getattr(jd, "WINDOW", 0)) // 3600, len(backfilled),
+                             % (len(live_map), len(have), int(getattr(jd, "WINDOW", 0)) // 3600, len(backfilled),
                                 int(getattr(jd, "DEATH_BACKFILL_WINDOW", 0)) // 86400, searched["cwds"],
                                 searched["project_dirs"], "y" if searched["project_dirs"] == 1 else "ies",
                                 searched["transcripts"],
@@ -1074,19 +1216,9 @@ def _bench(args, state, repo, out, shadow, rec, maps):
                 asm_before.update(em._ASM_STATS)
 
             def cold_after(ms, _tag=tag, _path=os.path.realpath(s["path"])):
-                d = asm_delta(asm_before)
-                if not d.get("full"):
-                    raise BenchError("build_session_cold:%s ran no full assembly (assembly counters moved %r): a cache "
-                                     "this harness does not clear served the parse" % (_tag, d))
-                asm_cache = getattr(em, "_ASM_CACHE", {})
-                with em._ASM_LOCK:
-                    own = any(isinstance(k, tuple) and k and k[0] == _path for k in asm_cache)
-                if not own:
-                    raise BenchError("build_session_cold:%s never assembled its own transcript (%s is absent from the "
-                                     "assembly cache the sample started with empty; counters moved %r): a cache above the "
-                                     "event model served it" % (_tag, os.path.basename(_path), d))
+                check_cold_sample(em, _tag, _path, asm_before)
                 ctr.n += 1
-            st_cold, m = timed_counted(lambda: km.build_session(sid, now(), tmux), before=cold_before, after=cold_after)
+            st_cold, m = timed_counted(lambda: km.build_session(sid, now(), live_map), before=cold_before, after=cold_after)
             bench["build_session_cold:" + tag] = st_cold
 
             def emwarm_before():
@@ -1095,15 +1227,15 @@ def _bench(args, state, repo, out, shadow, rec, maps):
 
             def count_after(ms):
                 ctr.n += 1
-            st_em, _ = timed_counted(lambda: km.build_session(sid, now(), tmux), before=emwarm_before, after=count_after)
+            st_em, _ = timed_counted(lambda: km.build_session(sid, now(), live_map), before=emwarm_before, after=count_after)
             bench["build_session_emwarm:" + tag] = st_em
-            st_warm, _ = timed_counted(lambda: km.build_session(sid, now(), tmux), after=count_after)
+            st_warm, _ = timed_counted(lambda: km.build_session(sid, now(), live_map), after=count_after)
             bench["build_session_warm:" + tag] = st_warm
             out["benched_sessions"].append({"sid8": tag, "name": s.get("name", ""), "bytes": s["bytes"],
                                             "events": len((m or {}).get("events") or [])})
             if args.profile:
-                profiles["build_session_cold:" + tag] = profile_entry(lambda: km.build_session(sid, now(), tmux), clear_all_caches, repo)
-                profiles["build_session_warm:" + tag] = profile_entry(lambda: km.build_session(sid, now(), tmux), None, repo)
+                profiles["build_session_cold:" + tag] = profile_entry(lambda: km.build_session(sid, now(), live_map), clear_all_caches, repo)
+                profiles["build_session_warm:" + tag] = profile_entry(lambda: km.build_session(sid, now(), live_map), None, repo)
 
         # every live parse once from empty (the boot-time cost); kept warm for the feed/timeline
         clear_all_caches()
@@ -1113,16 +1245,16 @@ def _bench(args, state, repo, out, shadow, rec, maps):
         bench["warm_all_parses"] = single((time.perf_counter() - t0) * 1000, sessions=len(sessions))
 
         # feed + timeline in the steady state
-        bench["build_feed"], feed = timed(lambda: km.build_feed(now(), tmux), iters)
+        bench["build_feed"], feed = timed(lambda: km.build_feed(now(), live_map), iters)
         bench["build_feed"]["cards"] = {k: len(feed.get(k) or []) for k in ("asks", "working", "awaiting") if isinstance(feed, dict)}
-        bench["build_timeline_bars"], tl = timed(lambda: km.build_timeline(now(), tmux, with_bars=True), iters)
+        bench["build_timeline_bars"], tl = timed(lambda: km.build_timeline(now(), live_map, with_bars=True), iters)
         bench["build_timeline_bars"]["lanes"] = len((tl or {}).get("sessions") or [])
-        bench["build_timeline_skel"], _ = timed(lambda: km.build_timeline(now(), tmux, with_bars=False), iters)
+        bench["build_timeline_skel"], _ = timed(lambda: km.build_timeline(now(), live_map, with_bars=False), iters)
         if args.profile:
-            profiles["build_feed"] = profile_entry(lambda: km.build_feed(now(), tmux), None, repo)
-            profiles["build_timeline_bars"] = profile_entry(lambda: km.build_timeline(now(), tmux, with_bars=True), None, repo)
+            profiles["build_feed"] = profile_entry(lambda: km.build_feed(now(), live_map), None, repo)
+            profiles["build_timeline_bars"] = profile_entry(lambda: km.build_timeline(now(), live_map, with_bars=True), None, repo)
         # the feed with nothing parsed (cards-first boot)
-        bench["build_feed_noparse"], _ = timed(lambda: km.build_feed(now(), tmux), iters, before=km._parse_cache.clear)
+        bench["build_feed_noparse"], _ = timed(lambda: km.build_feed(now(), live_map), iters, before=km._parse_cache.clear)
         for s in sessions:
             km._parse(s["path"], s["sid"], now())
 
@@ -1161,13 +1293,15 @@ def _bench(args, state, repo, out, shadow, rec, maps):
                 if hasattr(km, name):
                     setattr(km, name, None)
             unscope()
-            scope(tmux)
+            scope(live_map)
+            asm0 = dict(em._ASM_STATS)
             t0 = time.perf_counter()
-            km._push(clients, tmux=tmux)
-            bench["push_cold_cycle"] = single((time.perf_counter() - t0) * 1000, bytes=client_bytes(clients), clients=apps)
+            km._push(clients, live_map=live_map)
+            bench["push_cold_cycle"] = single((time.perf_counter() - t0) * 1000, bytes=client_bytes(clients), clients=apps,
+                                              asm=asm_delta(em, asm0))   # every live transcript parsed inside the cycle
             reset_client_bytes(clients)
             new_cycle()
-            km._push(clients, tmux=tmux)               # a warming cycle: baselines, wire caches, chat cache
+            km._push(clients, live_map=live_map)               # a warming cycle: baselines, wire caches, chat cache
             reset_client_bytes(clients)
 
             # a page load: one fresh client with empty dedup state, connect=True
@@ -1179,47 +1313,41 @@ def _bench(args, state, repo, out, shadow, rec, maps):
                     unscope()                          # a handler thread: no cycle scope (see the docstring)
 
                 def connect_push():
-                    km._push([holder["c"]], connect=True, tmux=tmux)
+                    km._push([holder["c"]], connect=True, live_map=live_map)
                 st, _ = timed(connect_push, iters, before=connect_before)
                 st["bytes"] = client_bytes([holder["c"]])[app]
                 bench["push_connect:" + app] = st
-            scope(tmux)                                # back on the pusher's footing for the rows below
+            scope(live_map)                                # back on the pusher's footing for the rows below
             reset_client_bytes(clients)
 
             # the periodic push, steady state; rebuild samples separated
             samples = []
-            quiet, rebuilt = [], []
             for _ in range(3 * iters):
                 new_cycle()
                 reset_client_bytes(clients)
                 b0 = built_at()
                 t0 = time.perf_counter()
-                km._push(clients, tmux=tmux)
+                km._push(clients, live_map=live_map)
                 ms = (time.perf_counter() - t0) * 1000
                 b1 = built_at()
-                flags = {"ms": round(ms, 2), "rebuilt_feed": b1[0] != b0[0], "rebuilt_timeline": b1[1] != b0[1],
-                         "bytes": total_bytes(clients)}
-                samples.append(flags)
-                (rebuilt if (flags["rebuilt_feed"] or flags["rebuilt_timeline"]) else quiet).append(flags)
-                if len(quiet) >= iters:
+                samples.append({"ms": round(ms, 2), "rebuilt_feed": b1[0] != b0[0], "rebuilt_timeline": b1[1] != b0[1],
+                                "bytes": total_bytes(clients)})
+                if len(bucket_steady_samples(samples)[0]) >= iters:
                     break
-            st = ms_stats([f["ms"] for f in quiet])
-            st.update({"bytes_per_push": (sum(f["bytes"] for f in quiet) / len(quiet)) if quiet else None,
-                       "samples": samples, "clients": apps, "rebuild_samples": len(rebuilt)})
+            st, st2 = steady_rows(samples, apps)
+            rebuilt = bucket_steady_samples(samples)[1]
             bench["push_steady"] = st
-            if rebuilt:
-                st2 = ms_stats([f["ms"] for f in rebuilt])
-                st2["bytes_per_push"] = sum(f["bytes"] for f in rebuilt) / len(rebuilt)
+            if st2 is not None:
                 bench["push_steady_rebuild"] = st2
             reset_client_bytes(clients)
             new_cycle()
-            km._push(clients, tmux=tmux)
+            km._push(clients, live_map=live_map)
             bench["push_steady"]["bytes"] = client_bytes(clients)   # one further cycle's per-slot bytes
             out["push_rebuilds"] = len(rebuilt)
             if args.profile:
                 def one_push():
                     new_cycle()
-                    km._push(clients, tmux=tmux)
+                    km._push(clients, live_map=live_map)
                 profiles["push_steady"] = profile_entry(one_push, None, repo)
     finally:
         unscope()
@@ -1311,8 +1439,9 @@ def render_text(out, profile):
     if cc:
         L.append("caches emptied before each cold build_session sample: kernel %s; event model %s"
                  % (", ".join(cc.get("kernel") or []) or "none", ", ".join(cc.get("event_model") or []) or "none"))
-    L.append("notifications suppressed: %d; refused spawns: %d; new threads: %s"
-             % (out.get("notifications_suppressed", 0), len(out.get("spawn_attempts", [])), out.get("threads_new") or "none"))
+    L.append("notifications suppressed: %d; background parses suppressed: %d; refused spawns: %d; refused writes: %d; threads started: %d; new threads: %s"
+             % (out.get("notifications_suppressed", 0), out.get("warm_calls_suppressed", 0), len(out.get("spawn_attempts", [])),
+                len(out.get("refused_writes", [])), out.get("thread_starts", 0), out.get("threads_new") or "none"))
     if profile and out.get("profiles"):
         for name, p in out["profiles"].items():
             L.append("")

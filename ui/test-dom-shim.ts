@@ -9,8 +9,8 @@
 // sameNodes for its assertions over node lists; this module's own test pins the rule on factory nodes and scratch
 // objects, and the two files the ratchet's NON_DOM_EDGES lists reach it through nothing. A factory node is a plain
 // object the real TimelinePanel drives:
-// children, parentNode, attributes, classList, style, dataset, text, listeners, geometry, focus and the caret. A test
-// installs its own fake `document` and window on globalThis around it, as before.
+// children, parentNode, attributes, classList, style, dataset, text, listeners, geometry, contains, click, focus and
+// the caret. A test installs its own fake `document` and window on globalThis around it, as before.
 //
 // A NODE INSPECTS AS ITS OWN PROJECTION, never as the tree. At creation, hideEdges makes every own property that holds
 // an object (children, parentNode, the listener tables, classList, the attribute, style and dataset records, every
@@ -178,6 +178,8 @@ export function nodeFactory(opts: ShimOptions = {}): (tag: string) => any {
       },
       setPointerCapture() {}, releasePointerCapture() {},
       querySelector() { return null; }, querySelectorAll() { return []; }, closest() { return null; },
+      // contains walks the child's parentNode chain, as the DOM's does (a menu asks whether the focus left it)
+      contains(c: any): boolean { for (let p = c; p; p = p.parentNode) if (p === n) return true; return false; },
       // geometry is a test input: the node's own `_rect`, else the module-level `globalThis.__rectOf(node)` hook
       // (so a test can move a row without holding the node a rebuild replaces), else the factory's one rect
       getBoundingClientRect() { return n._rect || (g.__rectOf ? g.__rectOf(n) : null) || { ...rect }; },
@@ -187,9 +189,13 @@ export function nodeFactory(opts: ShimOptions = {}): (tag: string) => any {
       get scrollTop() { return n._scrollTop; },
       set scrollTop(v: any) { const max = g.__scrollMax == null ? Infinity : g.__scrollMax; n._scrollTop = Math.max(0, Math.min(Number(v) || 0, max)); },
       // focus and the caret are OBSERVABLE: focus records the active element on the fake document, once a test
-      // has installed one; select() and setSelectionRange() record the selection in _sel, the one property the shim
-      // itself adds after construction, defined non-enumerable so the projection holds
-      focus() { if (g.document) g.document.activeElement = n; },
+      // has installed one, marks the node (_focused) and fires its focus listener, as a browser would (a menu row's
+      // focus listener roves the tab stop: ui/timeline-tag-chips.test.ts, upstream's tags-menu keyboard grammar,
+      // whose inline fake this factory replaces); click() fires the click listener with a stub event; select() and
+      // setSelectionRange() record the selection in _sel. _focused and _sel are the two properties the shim itself
+      // adds after construction, each defined non-enumerable so the projection holds
+      focus() { if (g.document) g.document.activeElement = n; defineHidden(n, "_focused", true); if (n._listeners.focus) n._listeners.focus({ type: "focus", target: n }); },
+      click() { if (n._listeners.click) n._listeners.click({ type: "click", target: n, stopPropagation() {}, preventDefault() {} }); },
       select() { defineHidden(n, "_sel", "all"); n.selectionStart = 0; n.selectionEnd = String(n.value || "").length; },
       setSelectionRange(a: number, b: number) { defineHidden(n, "_sel", [a, b]); n.selectionStart = a; n.selectionEnd = b; },
       selectionStart: 0, selectionEnd: 0,

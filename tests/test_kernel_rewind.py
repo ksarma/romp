@@ -129,7 +129,7 @@ class DriveOpPins(unittest.TestCase):
 
     def test_rewind_send_gates_on_backend_and_busy(self):
         src = inspect.getsource(km._rewind_send)
-        self.assertIn('if not hasattr(be, "rewind"):', src)          # SDK-only (tmux has Esc Esc natively)
+        self.assertIn('if not hasattr(be, "rewind"):', src)          # Claude Code only (the removed tmux backend had Esc Esc natively)
         self.assertIn("if _ops_gate(sid):", src)                     # busy/compacting/parked-queue → refuse
         self.assertIn("target, err = _rewind_target(", src)          # transcript validation before the backend
 
@@ -159,7 +159,7 @@ class DeleteRollback(unittest.TestCase):
         # arms the rewind at the turn's end; compacting/queued keep honest refusals there). The
         # edit rewind keeps its gate (test above): its replacement turn must not race a dying one.
         src = inspect.getsource(km._rewind_rollback)
-        self.assertIn('if not hasattr(be, "rollback"):', src)    # SDK-only (tmux has Esc Esc natively)
+        self.assertIn('if not hasattr(be, "rollback"):', src)    # Claude Code only (the removed tmux backend had Esc Esc natively)
         self.assertNotIn("if _ops_gate(sid):", src)              # busy is the BACKEND's decision now
         self.assertIn("target, err = _rewind_target(", src)      # the SAME cut point as an edit
         # the arm-time re-check rides along: a mid-window compaction can move the boundary past
@@ -248,12 +248,17 @@ class ParseCut(unittest.TestCase):
 
     def test_kernel_parse_keys_the_cache_on_the_cut(self):
         # arming and clearing both change the parse with NO file change — the cut must ride the key
+        # stage 2 (2026-09-11): the kernel's parse is the judges' parsed_session; the cut rides ITS key and its slot
         src = inspect.getsource(km._parse)
-        self.assertIn("cut = _be.pending_cut(sid) if _be else \"\"", src)
-        self.assertIn("key = (st.st_mtime, st.st_size, cut)", src)
-        self.assertIn("leaf_override=cut or None", src)
-        # the never-parsing feed reader compares the file identity prefix only
-        self.assertIn("tuple(hit[0][:2]) == key", inspect.getsource(km._parse_cached))
+        self.assertIn("jd.parsed_session(sid, [path], now, asm_mode_out=_mode, stats=stats, states=states,", src)
+        self.assertIn("sdk_human=_display_sdk_human(sid))", src, "the display passes its own owner answer: a differing judge answer keeps its own slot")
+        jsrc = inspect.getsource(km.jd.parsed_session)
+        self.assertIn("cut = _pending_cut(fsid)", jsrc)
+        self.assertIn("key = (pair[0], cut) if pair is not None else None", jsrc)
+        self.assertIn("hit = _parse_slot(fsid, cut, ", jsrc, "the slot is per cut: two callers reading different cuts never share a tree")
+        self.assertIn("leaf_override=cut or None", jsrc)
+        # the never-parsing feed reader asks the shared store under the live key
+        self.assertIn("jd.parse_cached(", inspect.getsource(km._parse_cached))
 
     def test_the_built_chat_cache_sig_carries_the_cut_too(self):
         # same lesson one level up: the BUILT payload cache would otherwise keep pushing a

@@ -37,6 +37,7 @@ Every id here is synthetic (the placeholder uuid family); no message content is 
 """
 import asyncio
 import inspect
+import json
 import os
 import re
 import shutil
@@ -55,7 +56,7 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()       # hermetic state BEFORE the load (import-time root)
 os.environ.pop("ROMP_STATE_DIR", None)
 sb = load_source("romp_sdk_backend_streamsurvive",
-                 os.path.join(BIN, "romp_sdk_backend.py"))
+                      os.path.join(BIN, "romp_sdk_backend.py"))
 
 SID = "11111111-2222-3333-4444-aaaaaaaaaaa1"           # this module's own synthetic sid
 UNKNOWN_SID = "11111111-2222-3333-4444-bbbbbbbbbbb2"   # a session id the kernel never registered
@@ -357,8 +358,9 @@ class TheLiveTailLock(unittest.TestCase):
                          "under the lock no key vanishes mid-sweep, so no race line")
 
     def test_mark_dropped_echoes_survives_a_concurrent_send_stash(self):
-        """Refuter finding 2: _mark_dropped_echoes runs on the SESSION thread at spawn and at every
-        reconnect, outside the connect's try; its comprehension over the tail raised RuntimeError when
+        """Refuter finding 2: _mark_dropped_echoes runs on the SESSION thread inside the connect loop, right after
+        a fresh CLI spawns (a raise there is caught and logged as a bookkeeping fault, never read as a launch
+        error); its comprehension over the tail raised RuntimeError when
         the kernel thread's send() stashed an echo mid-walk, and the session thread died with no reconnect."""
         be = self._backend()
         def session_body(i):
@@ -1031,12 +1033,17 @@ class TheDeferredReconnectTakesTheHeldQueueWithIt(unittest.TestCase):
         self._Client.instances = []
         fake = types.ModuleType("claude_agent_sdk")
         fake.__spec__ = ModuleSpec("claude_agent_sdk", loader=None)   # sdk_importable's find_spec reads it
-        fake.ClaudeSDKClient, fake.ClaudeAgentOptions, fake.HookMatcher = self._Client, self._Options, (lambda **kw: kw)
+        # the matcher stand-in bears attributes like the SDK's dataclass: the options loop sets each matcher's `timeout`
+        # under hosts (the default since T348), which a plain dict refused
+        fake.ClaudeSDKClient, fake.ClaudeAgentOptions, fake.HookMatcher = self._Client, self._Options, (lambda **kw: types.SimpleNamespace(**kw))
         fake.AssistantMessage, fake.ResultMessage = _AssistantMessage, _ResultMessage
         fake.SystemMessage, fake.TextBlock = _SystemMessage, _TextBlock
         self._saved_sdk = sys.modules.get("claude_agent_sdk")
         sys.modules["claude_agent_sdk"] = fake
         self.state = tempfile.mkdtemp()
+        # this class runs the REAL connect loop against the fake client on the plain-child road: hosts OFF explicitly,
+        # since they are on by default (T348) and a bare state dir would send the connect to a real host spawn
+        open(os.path.join(self.state, "session-hosts"), "w").write("off")
         cwd = os.path.join(self.state, "proj")
         os.makedirs(cwd)
         self.lines = []
@@ -1085,6 +1092,33 @@ class TheDeferredReconnectTakesTheHeldQueueWithIt(unittest.TestCase):
         c1 = self._Client.instances[0]
         self.assertEqual(c1.writes, [("first turn", "before-result")])
         return c1
+
+    def test_a_fed_turn_gets_the_pop_stamp_and_its_row_carries_both_event_stamps(self):
+        """The two event stamps the latency figures read: the feeder's pop stamps fedT as it hands the
+        fresh turn's text to the client, the first streamed work atom stamps firstOutT, and the settle's
+        row carries both (rounded to the millisecond) and then spends them. Driven through the real
+        _amain on the stand-in SDK; every cross-thread read waits on its event, and what is asserted is
+        presence and order, never a duration."""
+        t0 = time.time()
+        c1 = self._first_turn()
+        s = self.s
+        self._wait(lambda: s._fed_t is not None, "the pop stamp")
+        self.assertIsInstance(s._fed_t, float)
+        self.assertTrue(t0 <= s._fed_t <= time.time(), "the pop's own clock reading")
+        self._wait(lambda: s._first_out_t is not None, "the first work atom")
+        fed_seen, first_seen = s._fed_t, s._first_out_t
+        self.assertLessEqual(fed_seen, first_seen, "fed, then the first output")
+        s.loop.call_soon_threadsafe(c1.release.set)          # the turn's ResultMessage: the settle runs
+        self._wait(lambda: s.inflight == 0, "the settle")
+        rows = [json.loads(ln) for ln in (self.be.state_dir / sb.TURNS_FILE).read_text().splitlines()]
+        self.assertEqual(len(rows), 1, "one row for the settled turn")
+        row = rows[0]
+        self.assertEqual((row["fedT"], row["firstOutT"]), (round(fed_seen, 3), round(first_seen, 3)))
+        self.assertTrue(row["fedT"] <= row["firstOutT"] <= row["resultT"])
+        self.assertEqual((row["fedTexts"], row["opener"]), (1, "human"))
+        self.assertIn("usd", row, "the spend accounting's figure rode along")
+        self.assertTrue(s._fed_t is None and s._first_out_t is None and s._turn_spend is None,
+                        "spent with the row")
 
     def test_a_head_held_behind_an_interrupted_turn_is_fed_to_the_new_client_and_never_flagged(self):
         s = self.s
@@ -1150,7 +1184,7 @@ class TheDeferredReconnectTakesTheHeldQueueWithIt(unittest.TestCase):
     def test_the_hold_keys_on_the_armed_flag_by_source(self):
         src = inspect.getsource(sb.SdkSession._amain)
         i_inputs = src.index("async def inputs():")
-        i_pop = src.index("item = self._pending.pop(0)", i_inputs)
+        i_pop = src.index("item, _meta = self._pop_for_feed_locked(fi)", i_inputs)   # T252c: the head leaves through the feed pop (T306: the first unheld slot)
         gate = src[i_inputs:i_pop]
         self.assertIn("blocked = blocked or self._reconnect\n", gate, "the armed flag is a hold in the gate")
         self.assertNotIn("_reconnect_when_idle", gate, "…and the deferred flag is not (mid-turn forwards flow)")

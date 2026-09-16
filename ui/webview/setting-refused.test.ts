@@ -169,7 +169,7 @@ test("the shell's bell knows the `refused` kind: listed, labelled, explained, an
   assert.doesNotMatch(KERNEL, /refused:'not saved'/);
   // the tooltip covers BOTH things filed under the kind (review find, 2026-09-08): a change that did not
   // save (a read OR a write fault), and a state file that could not be read or was moved aside
-  assert.match(KERNEL, /refused:"a setting that could not be saved, a state file that could not be read, or a restart the manager refused\. A change you made \\u2014 a lane or tab setting, a card bell, a lane order \\u2014 was not saved because romp could not read or write the file that holds it/);
+  assert.match(KERNEL, /refused:"a setting that could not be saved, a state file that could not be read, or a restart the manager refused\. A change you made \(a lane or tab setting, a card bell, a lane order\) was not saved because romp could not read or write the file that holds it/);
   assert.match(KERNEL, /refused:"[^"]*could not be read \(the last values are shown until it can\), or held bytes romp could not parse and was moved aside/);
   // ...and a restart the manager refused (review round 2, 2026-09-10): the kernel's _report_manager_refusal files
   // its notice under this kind, so a mute on the machine-sync kind never hides it

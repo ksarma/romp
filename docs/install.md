@@ -30,10 +30,13 @@ in `bin/romp-serve`), trying these in order:
    for the pick.
 
 `bin/romp-sdk-setup` and `bin/romp-codex-setup` apply the same rule, so each
-venv is built with the interpreter the kernel runs. `install.sh` only checks
-that a `python3` exists. The reference's [The kernel's
-Python](reference.md#the-kernels-python) has the full rule, what a mismatch
-reports, and how the kernel keys the match.
+venv is built with the interpreter the kernel runs. `install.sh` runs that same
+pick as its preflight (`bin/romp-serve --print-python`) and stops, naming the
+interpreter and the install command, when it is older than 3.10, the floor the
+kernel and the Agent SDK share; `bin/romp-serve` refuses to start the kernel on
+one below it, so a manager never respawns a kernel that cannot run. The
+reference's [The kernel's Python](reference.md#the-kernels-python) has the full
+rule, what a mismatch reports, and how the kernel keys the match.
 
 The kernel also runs on free-threaded CPython 3.14t, the build with the GIL off.
 The test suite passes there, CI runs it, and the kernel's shared caches are
@@ -58,6 +61,10 @@ included, and the venv must be rebuilt for it. If romp runs as a service, pin
 the interpreter anyway, by its versioned path: `ROMP_PYTHON=/usr/bin/python3.12`
 in `~/.config/romp/service.env` holds through a deleted or rebuilt venv, where
 `python3` would follow the next upgrade.
+
+Install extra interpreters with `uv python install --no-bin <version>` and reach
+them through `uv python find <version>` or a venv, never as a bare `python3.X`
+on `PATH`.
 
 A move to another Python, 3.14t included, goes in this order:
 
@@ -101,6 +108,14 @@ curl -fsSL https://raw.githubusercontent.com/romp-on/romp/main/bootstrap.sh | ba
 
 Open a new terminal afterwards, so `~/romp/bin` is on your `PATH`, and type
 `romp` to launch the user interface in a browser.
+
+On macOS the login agent runs the manager under its own copy of `node`
+(`romp-node`, in the state directory), so Full Disk Access can be granted to romp
+alone; a `node` that cannot run from a copy (Homebrew's build is one) is
+detected and the system `node` used instead, and `ROMP_NO_NODE_COPY=1` in
+`~/.config/romp/service.env` skips the copy (`0`, `false`, `no` and `off` are off; any
+other non-empty value, `disabled` and `none` included, is on). See the
+[reference](reference.md#service-environment-and-credentials).
 
 The same command updates Romp later. To remove Romp, run `romp uninstall` (add
 `--purge` to delete recorded sessions too).

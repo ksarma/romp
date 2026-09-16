@@ -31,9 +31,13 @@ setup() {
     export SNAP_A="$TEST_DIR/a.json"
     export SNAP_B="$TEST_DIR/b.json"
     export SNAP_C="$TEST_DIR/c.json"
+    export SNAP_S="$TEST_DIR/s.json"
+    export SNAP_OLD="$TEST_DIR/old.json"
     # A and B: the same kernel process ten seconds apart. Over the window: 20 cycles, 60 wakes, 6 s of
     # cycle time (4 s of it in push, 3 s of that in the chat block), 300 ms of pusher CPU and 50 ms of
-    # judge CPU inside 500 ms of process CPU, 2 chat rebuilds against 18 cache hits, 1 MB sent as chat
+    # judge CPU inside 500 ms of process CPU, 2 chat rebuilds (one of the watched tab, one of a background
+    # tab whose store component moved) against 18 cache hits, 3 builds not cached because an input moved
+    # while they ran, 1 MB sent as chat
     # full frames, one GET /feed.json build (150 ms) against 4 of its cache hits, 100 goal loads and 50
     # shared loads, 2 judge passes totalling 2400 ms (so 25 ms of judge CPU per pass) woken by 6 producer
     # sets of which 2 ended a wait (4 absorbed), the planner gate 2 ran / 60 skipped and the closer's 3 ran /
@@ -51,10 +55,7 @@ setup() {
             "cycle_ms_max": 900.0, "cycle_ms_last": 200.0, "cycle_cpu_ms_sum": 10000.0,
             "cycle_ms_p50": 180.0, "cycle_ms_p90": 400.0, "cycle_ms_ring_max": 900.0, "ring_n": 100},
  "stages_ms": {"jobs": 5000.0, "push": 20000.0, "push.chat": 15000.0, "push.feed": 3000.0, "push.timeline": 1000.0, "push.send": 500.0},
- "builds": {"chat": {"cached": 80, "built": 20, "ms": 800.0, "active_built": 12, "bg_built": 8,
-                     "bg_miss": {"store": 5, "transcript": 3, "states": 0, "tasks": 0, "todos": 0, "cut": 0, "note": 0, "needs": 0, "cold": 0, "nosig": 0}},
-            "feed": {"cached": 90, "built": 10, "ms": 5000.0}, "timeline": {"cached": 95, "built": 5, "ms": 4000.0},
-            "feedJson": {"cached": 5, "built": 1, "ms": 300.0}},
+ "builds": {"chat": {"cached": 80, "built": 20, "ms": 800.0, "active_built": 12, "bg_built": 8, "moved": 0, "bg_miss": {"transcript": 5, "states": 2, "store": 1, "tasks": 0, "cut": 0, "row": 0, "cold": 1, "nosig": 0}}, "feed": {"cached": 90, "built": 10, "ms": 5000.0}, "timeline": {"cached": 95, "built": 5, "ms": 4000.0}, "feedJson": {"cached": 5, "built": 1, "ms": 300.0}},
  "sends": {"full": {"chat": {"count": 10, "bytes": 1000000}}, "delta": {"chat": {"count": 100, "bytes": 50000}}, "deduped": {"feed": {"count": 90, "bytes": 9000000}}},
  "goals": {"loads": 1000, "loads_shared": 500, "saves": 200, "writes": 50, "scans": 10, "scan_hits": 100, "scan_parses": 20,
            "disk_hits": 100, "disk_misses": 20, "disk_seeds": 10, "absent_hits": 100, "absent_misses": 10, "noop_hash_ms": 100.0,
@@ -85,10 +86,7 @@ JSON
             "wakes_live": 30, "held": 10, "held_ms": 3000.0, "exempt": 4,
             "cycle_ms_p50": 190.0, "cycle_ms_p90": 420.0, "cycle_ms_ring_max": 700.0, "ring_n": 120},
  "stages_ms": {"jobs": 6000.0, "push": 24000.0, "push.chat": 18000.0, "push.feed": 3600.0, "push.timeline": 1200.0, "push.send": 600.0},
- "builds": {"chat": {"cached": 98, "built": 22, "ms": 880.0, "active_built": 13, "bg_built": 9,
-                     "bg_miss": {"store": 6, "transcript": 3, "states": 0, "tasks": 0, "todos": 0, "cut": 0, "note": 0, "needs": 0, "cold": 0, "nosig": 0}},
-            "feed": {"cached": 108, "built": 12, "ms": 6000.0}, "timeline": {"cached": 114, "built": 6, "ms": 4800.0},
-            "feedJson": {"cached": 9, "built": 2, "ms": 450.0}},
+ "builds": {"chat": {"cached": 98, "built": 22, "ms": 880.0, "active_built": 13, "bg_built": 9, "moved": 3, "bg_miss": {"transcript": 5, "states": 2, "store": 2, "tasks": 0, "cut": 0, "row": 0, "cold": 1, "nosig": 0}}, "feed": {"cached": 108, "built": 12, "ms": 6000.0}, "timeline": {"cached": 114, "built": 6, "ms": 4800.0}, "feedJson": {"cached": 9, "built": 2, "ms": 450.0}},
  "sends": {"full": {"chat": {"count": 12, "bytes": 2048576}}, "delta": {"chat": {"count": 120, "bytes": 60000}}, "deduped": {"feed": {"count": 108, "bytes": 10800000}}},
  "goals": {"loads": 1100, "loads_shared": 550, "saves": 220, "writes": 55, "scans": 20, "scan_hits": 190, "scan_parses": 30,
            "disk_hits": 119, "disk_misses": 21, "disk_seeds": 15, "absent_hits": 190, "absent_misses": 15, "noop_hash_ms": 150.0,
@@ -111,6 +109,23 @@ JSON
     # Stub curl: records argv AND stdin (the auth header rides stdin as a curl config) and emits the
     # body followed by the -w status trailer the script asks for. A POST answers the toggle's ack; a
     # GET serves snapshot A first, then B (or C under CURL_RESTART), so two reads see counters move.
+    # S: a snapshot with the thread-stack sample (GET /perf?stacks=1): the pusher inside the nudge job waiting on a
+    # lock, a handler thread answering, a producer idle; frames innermost last
+    cat > "$SNAP_S" <<'JSON'
+{"now": 1000.0, "since": 900.0, "uptime_s": 100.0, "log": false,
+ "process": {"rss_kb": 409600, "threads": 3, "cpu_s": 60.0, "pid": 4242},
+ "stacks": {
+  "11 pusher": {"self": false, "stage": "jobs.autoNudge",
+   "frames": ["_pusher (kernel.py:100)", "_job_stage (kernel.py:200)", "_auto_nudge_session (kernel.py:300)", "parse_session (event_model.py:400)", "__enter__ (threading.py:500)"]},
+  "12 producer": {"self": false, "stage": null, "frames": ["_producer (kernel.py:600)", "wait (threading.py:700)"]},
+  "13 handler": {"self": true, "stage": null, "frames": ["do_GET (kernel.py:800)", "_thread_stacks (kernel.py:900)"]}}}
+JSON
+    # OLD: the switch's shape before the sample (T358): ident and name to a list of format_stack lines; well-formed JSON, so
+    # the dict guard alone does not refuse it and the per-row frames check must
+    cat > "$SNAP_OLD" <<'JSON'
+{"now": 1000.0, "process": {"pid": 4242},
+ "stacks": {"11 pusher": ["  File \"kernel.py\", line 100, in _pusher\n    _pusher_cycle()", "  File \"kernel.py\", line 200, in _pusher_cycle"]}}
+JSON
     cat > "$MOCK/curl" <<'MOCK'
 #!/usr/bin/env bash
 echo "$*" >> "$CURL_LOG"
@@ -120,6 +135,12 @@ if [ -n "${CURL_403:-}" ]; then printf 'forbidden: token required\n403'; exit 0;
 if [[ "$*" == *"-X POST"* ]]; then
     printf '{"ok": true, "log": %s}\n200' "$([[ "$*" == *'"log": true'* ]] && echo true || echo false)"
     exit 0
+fi
+if [[ "$*" == *"stacks=1"* ]]; then
+    if [ -n "${CURL_OLD_KERNEL:-}" ]; then cat "$SNAP_A"
+    elif [ -n "${CURL_OLD_SHAPE:-}" ]; then cat "$SNAP_OLD"
+    else cat "$SNAP_S"; fi
+    printf '\n200'; exit 0
 fi
 n=0; [ -f "$CURL_CALLS" ] && n="$(cat "$CURL_CALLS")"
 echo $((n + 1)) > "$CURL_CALLS"
@@ -195,9 +216,10 @@ PY
 @test "romp perf: builds, sends, goals, judge and http lines carry the window's deltas" {
     run "$ROMP_SCRIPT" perf --interval 0
     [ "$status" -eq 0 ]
-    # the chat split (round-4 plan P3): 1 active and 1 background rebuild in the window, the background one
-    # caused by a goal-store publish; the zero-count causes stay off the line
-    [[ "$output" == *"chat 2 built / 18 cached (40 ms avg; 1 active, 1 bg: store 1)"* ]]
+    # the chat line's split: the watched tab's rebuild against the background one's, per signature component
+    # the background rebuilds it caused (only the non-zero causes; the store moved once in the window), and the
+    # builds not cached because an input moved while they ran (three in the window; printed only when non-zero)
+    [[ "$output" == *"chat 2 built / 18 cached (40 ms avg; 1 watched, 1 background: store 1; 3 moved)"* ]]
     [[ "$output" == *"feed 2 built / 18 cached (500 ms avg)"* ]]
     [[ "$output" != *"transcript 0"* ]]
     # GET /feed.json's own reads print beside the pusher's feed, never folded into it (review find, 2026-09-08)
@@ -228,6 +250,52 @@ PY
     [ "$status" -eq 0 ]
     echo "$output" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["pusher"]["cycles"] == 100; assert d["process"]["pid"] == 4242'
     [ "$(cat "$CURL_CALLS")" -eq 1 ]
+}
+
+@test "romp perf stacks: reads GET /perf?stacks=1 once and prints one block per thread, its stage and its frames innermost last" {
+    run "$ROMP_SCRIPT" perf stacks
+    [ "$status" -eq 0 ]
+    [ "$(grep -c "127.0.0.1:29855/perf?stacks=1" "$CURL_LOG")" -eq 1 ]
+    grep -q "X-Romp-Token: TESTTOKEN123" "$CURL_STDIN"
+    echo "$output" | grep -q "^3 threads at 1000.000 (pid 4242)"
+    echo "$output" | grep -q "^pusher (ident 11)  stage jobs.autoNudge$"
+    echo "$output" | grep -q "^producer (ident 12)$"
+    echo "$output" | grep -q "^handler (ident 13) \[answering this request\]$"
+    # the pusher's frames in order, innermost last
+    echo "$output" | python3 -c '
+import sys
+lines = [l for l in sys.stdin.read().splitlines()]
+i = lines.index("pusher (ident 11)  stage jobs.autoNudge")
+assert lines[i + 1:i + 6] == ["    _pusher (kernel.py:100)", "    _job_stage (kernel.py:200)", "    _auto_nudge_session (kernel.py:300)",
+                              "    parse_session (event_model.py:400)", "    __enter__ (threading.py:500)"], lines[i:i + 6]'
+}
+
+@test "romp perf stacks --json: prints the raw stacks list" {
+    run "$ROMP_SCRIPT" perf stacks --json
+    [ "$status" -eq 0 ]
+    echo "$output" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert sorted(d) == ["11 pusher", "12 producer", "13 handler"], sorted(d); assert d["11 pusher"]["stage"] == "jobs.autoNudge"'
+}
+
+@test "romp perf stacks: a kernel from before the sample is named as such and the exit is 1, never 0 threads" {
+    CURL_OLD_KERNEL=1 run "$ROMP_SCRIPT" perf stacks
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "does not answer stacks"
+    run bash -c "CURL_OLD_KERNEL=1 '$ROMP_SCRIPT' perf stacks 2>/dev/null | grep -c threads"
+    [ "$output" = "0" ]
+}
+
+@test "romp perf stacks: the OLD switch shape (a list of lines per thread) is refused like no stacks, in both forms" {
+    CURL_OLD_SHAPE=1 run "$ROMP_SCRIPT" perf stacks
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q "does not answer stacks"
+    CURL_OLD_SHAPE=1 run "$ROMP_SCRIPT" perf stacks --json
+    [ "$status" -eq 1 ]
+}
+
+@test "romp perf stacks: an unknown flag is refused with the usage" {
+    run "$ROMP_SCRIPT" perf stacks --bogus
+    [ "$status" -eq 2 ]
+    echo "$output" | grep -q "usage: romp perf"
 }
 
 @test "romp perf: reads GET /perf on the kernel, authorizing on stdin, twice" {

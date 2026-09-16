@@ -20,9 +20,9 @@ suite's floors (conftest's ROMP_CLAUDE_BIN=/bin/false) exist to prevent by defau
     settings as their apiKeyHelper; or, failing both, the `apiKeyHelper` from the user's OWN Claude
     Code settings ($CLAUDE_CONFIG_DIR/settings.json, default ~/.claude/settings.json), copied into
     the hermetic settings as-is (the hermetic dir sees none of the operator's own settings otherwise).
-    Either way the helper COMMAND travels, never a key, and this test writes no key to a file (the
-    2026-09-05 rule: keys live only in the vault and in process environment; the ~/.config key cache
-    this test once read no longer exists).
+    Under pytest the suite's conftest floors CLAUDE_CONFIG_DIR to an empty dir for every test and saves
+    the real location in ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR, which the borrow reads first.
+    Either way the helper COMMAND travels, never a key, and this test writes no key to a file.
 CI has none of these and skips cleanly. Synthetic content throughout (an invented sid, an invented
 codeword, temp folders)."""
 import json
@@ -138,10 +138,10 @@ def _sdk_python():
 def _user_api_key_helper(config_dir=None):
     """The `apiKeyHelper` command from the user's own Claude Code settings ("" when there is none): the
     hermetic config dir borrows the COMMAND, so the child authenticates exactly the way the user's real
-    sessions do. Never a key: keys live in the vault and in process environment only, and this test
-    writes none to disk. `config_dir` defaults to the user's real config dir: under pytest the suite's
-    conftest floors $CLAUDE_CONFIG_DIR to an empty dir and saves the real location in
-    $ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR, so that is read first; else $CLAUDE_CONFIG_DIR, else ~/.claude."""
+    sessions do. Never a key: this test writes none to disk. `config_dir` defaults to the user's real
+    config dir: under pytest the suite's conftest floors $CLAUDE_CONFIG_DIR to an empty dir and saves the
+    real location in $ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR, so that is read first; else $CLAUDE_CONFIG_DIR,
+    else ~/.claude."""
     d = (config_dir or os.environ.get("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR") or os.environ.get("CLAUDE_CONFIG_DIR")
          or os.path.expanduser("~/.claude"))
     try:
@@ -233,8 +233,9 @@ class ApiKeyHelperPrecedence(unittest.TestCase):
     $ROMP_MOVE_LIVE_API_KEY_HELPER wins; else the command borrowed from the real config dir the suite's
     conftest saved in $ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR; else from $CLAUDE_CONFIG_DIR/settings.json;
     else from ~/.claude/settings.json; "" when none names one. HOME and CLAUDE_CONFIG_DIR point at temp
-    dirs throughout and the saved real location is cleared inside every patch (under pytest it names the
-    operator's own ~/.claude), so nothing here reads the operator's own settings."""
+    dirs throughout and the saved real location is cleared, or pointed at a temp dir, inside every patch
+    (under pytest it names the operator's own ~/.claude), so nothing here reads the operator's own
+    settings."""
 
     def setUp(self):
         self.td = tempfile.mkdtemp(prefix="romp-move-live-prec-")
@@ -280,8 +281,8 @@ class ApiKeyHelperPrecedence(unittest.TestCase):
             self.assertEqual(_api_key_helper(), "")
 
     def test_the_saved_real_config_dir_outranks_the_floored_one(self):
-        # the fork's conftest floors CLAUDE_CONFIG_DIR to an empty dir for every test and saves the
-        # pre-floor location in ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR; the live run borrows from the saved
+        # conftest floors CLAUDE_CONFIG_DIR to an empty dir for every test and saves the location the
+        # run was handed in ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR; the live run borrows from the saved
         # location, else it could never find the operator's helper under pytest
         real = self._settings("real", "/opt/example/real-helper")
         floor = self._settings("floor", "/opt/example/floored-helper")

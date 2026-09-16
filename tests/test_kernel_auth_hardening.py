@@ -25,7 +25,6 @@ import time
 import unittest
 from http.client import HTTPMessage
 from http.server import ThreadingHTTPServer
-from pathlib import Path
 from romp_load import load_source
 import tempfile
 
@@ -65,6 +64,12 @@ def _serve_get(path, headers=None):
 
     Asserting on a route's position in the source cannot catch a route served on the wrong side of
     the gate; asking the handler is the only thing that can."""
+    status, _sent, body = _serve_get_full(path, headers)
+    return status, body
+
+
+def _serve_get_full(path, headers=None):
+    """_serve_get with the response headers too: (status, {header: value}, body)."""
     h = km.Handler.__new__(km.Handler)
     h.client_address = ("127.0.0.1", 0)
     h.headers = dict(headers or {})
@@ -87,7 +92,7 @@ def _serve_get(path, headers=None):
     h.end_headers = lambda: None
     h.log_message = lambda *a: None
     h.do_GET()
-    return captured.get("status"), h.wfile.getvalue().decode("utf-8", "replace")
+    return captured.get("status"), captured.get("headers", {}), h.wfile.getvalue().decode("utf-8", "replace")
 
 
 def _auth(peer="127.0.0.1", headers=None, token=None):
@@ -327,6 +332,20 @@ class CookieDoesNotBypassOrigin(unittest.TestCase):
                                   "Host": "127.0.0.1:%d" % km.PORT})
         self.assertTrue(ok)
 
+    def test_cookie_still_authorizes_the_kernels_own_loopback_origin_under_another_host(self):
+        # the kernel's own origin reached under its other loopback name: a page served at
+        # http://127.0.0.1:<port> whose request arrives with Host localhost:<port>, or the reverse.
+        # The Host string no longer matches the Origin, so same-origin-by-Host does not apply and
+        # the gate's own-loopback branch is the one that accepts (the case SECURITY.md names as the
+        # kernel's own port on 127.0.0.1 or localhost); it fails when that branch is removed.
+        for origin, host in (("http://127.0.0.1:%d" % km.PORT, "localhost:%d" % km.PORT),
+                             ("http://localhost:%d" % km.PORT, "127.0.0.1:%d" % km.PORT)):
+            with self.subTest(origin=origin, host=host):
+                ok, _, why = _auth(headers={"Cookie": "romp_token=" + TOK,
+                                            "Origin": origin, "Host": host})
+                self.assertTrue(ok, "the kernel's own loopback origin authorizes the cookie under "
+                                    "either of its names: " + why)
+
     def test_cookie_still_authorizes_the_vscode_webview(self):
         ok, _, _ = _auth(headers={"Cookie": "romp_token=" + TOK,
                                   "Origin": "vscode-webview://0p9m1abc"})
@@ -349,6 +368,7 @@ class ResponseHardeningHeaders(unittest.TestCase):
         self.assertIn('"X-Content-Type-Options", "nosniff"', src)
         self.assertIn('"X-Frame-Options", "SAMEORIGIN"', src)
         self.assertIn("frame-ancestors 'self'", src)
+        self.assertIn('"Referrer-Policy", "same-origin"', src)   # executed by TokenLeavesTheUrl below
 
     def test_remote_relay_derives_its_own_mime_and_discards_the_remotes(self):
         # the /remote/<host>/file relay must decide the Content-Type from the requested extension
@@ -361,6 +381,92 @@ class ResponseHardeningHeaders(unittest.TestCase):
         # the type must not be READ from the remote (a comment may still name it as "never this")
         self.assertNotIn("ctype = resp.getheader", src)
         self.assertNotIn('resp.status, resp.getheader("Content-Type")', src)
+
+
+# The shell's head <script> (the wid mint, the iOS-standalone flip, the address scrub) against stubs of
+# the few browser globals it touches. ROMP_TEST_HREF is the URL the page opened on; REPLACED records
+# every history.replaceState. navigator is a getter-only global in node, so it is defined, not
+# assigned; crypto is left as node's own (the mint's randomUUID).
+_HEAD_HARNESS = r"""
+'use strict';
+const REPLACED = [];
+global.window = global;
+global.sessionStorage = { getItem: () => null, setItem() {} };
+global.document = { documentElement: { className: '' }, querySelector: () => null };
+Object.defineProperty(global, 'navigator', { configurable: true, value: { standalone: false } });
+global.location = { href: process.env.ROMP_TEST_HREF };
+global.history = { replaceState: (s, t, u) => REPLACED.push(u) };
+"""
+_HEAD_DRIVER = "\nconsole.log(JSON.stringify(REPLACED));\n"
+
+
+def _head_script(html):
+    """The shell's FIRST <script>: the head script, before <body> (tests/test_per_viewer_focus.py pins
+    the wid mint there)."""
+    i = html.index("<script>") + len("<script>")
+    return html[i:html.index("</script>", i)]
+
+
+def _run_head_script(href):
+    """node runs the harness + the shell's head script, booting on `href`; returns the replaceState URLs."""
+    import subprocess
+    env = dict(os.environ, ROMP_TEST_HREF=href)
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+        f.write(_HEAD_HARNESS + _head_script(km._landing()) + _HEAD_DRIVER)
+        path = f.name
+    try:
+        r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30, env=env)
+    finally:
+        os.unlink(path)
+    assert r.returncode == 0, "the head script threw: " + r.stderr[:800]
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+class TokenLeavesTheUrl(unittest.TestCase):
+    """The token a browser presents as ?token= is spent by the response that serves the page: that
+    response turns it into the cookie every later request rides. The URL copy must not outlive it: a
+    document URL is what a Referer carries, what a same-origin iframe reads as document.referrer and
+    what the address bar shows. Two guards, both executed: the shell drops the param from its address
+    in its head script, before the manifest link or the first iframe can make a request, and every
+    page the kernel serves declares Referrer-Policy: same-origin, so no browser default decides
+    whether a cross-origin load (an <img> in a transcript) learns the page URL."""
+
+    def test_the_shell_drops_the_token_from_its_address_before_any_request(self):
+        cases = (
+            # the token goes; the other params and the hash stay, in the same document (no reload)
+            ("http://localhost:7777/?token=abc&keep=1#frag", ["/?keep=1#frag"]),
+            # nothing to drop, nothing rewritten (a reload after the scrub lands here)
+            ("http://localhost:7777/?keep=1#frag", []),
+            # the token alone leaves the bare path, no dangling '?'
+            ("http://localhost:7777/?token=abc", ["/"]),
+            # a push deep link survives for the reveal script, which strips its own params later in the body
+            ("http://localhost:7777/?token=abc&push-reveal=S1", ["/?push-reveal=S1"]),
+            # the rest of the query is re-serialized by URLSearchParams, so a comma comes back as %2C;
+            # the shell's panes reader goes through searchParams.get, which decodes it
+            ("http://localhost:7777/?token=abc&panes=chat,feed#frag", ["/?panes=chat%2Cfeed#frag"]),
+        )
+        for href, replaced in cases:
+            with self.subTest(href=href):
+                self.assertEqual(_run_head_script(href), replaced)
+        # ...and it runs in the head: ahead of the install manifest's fetch and of the first pane
+        html = km._landing()
+        scrub = html.index("searchParams['delete']('token')")
+        self.assertLess(scrub, html.index("</script>"), "inside the head script, not a script of its own")
+        self.assertLess(scrub, html.index("<link rel=manifest"))
+        self.assertLess(scrub, html.index("<iframe"))
+
+    def test_every_page_the_kernel_serves_carries_referrer_policy_same_origin(self):
+        # the shell on its token bootstrap: the response that sets the cookie is the one whose page
+        # then drops the token from its address; a pane page a user can open bare; a static asset
+        status, sent, _ = _serve_get_full("/?token=" + TOK)
+        self.assertEqual(status, 200)
+        self.assertTrue(sent.get("Set-Cookie", "").startswith("romp_token="), "the bootstrap response")
+        self.assertEqual(sent.get("Referrer-Policy"), "same-origin")
+        for path in ("/chat", "/media/romp-swirl-glyph.svg"):
+            with self.subTest(path=path):
+                status, sent, _ = _serve_get_full(path, headers={"X-Romp-Token": TOK})
+                self.assertEqual(status, 200)
+                self.assertEqual(sent.get("Referrer-Policy"), "same-origin")
 
 
 class _DrainSpy:
@@ -650,30 +756,6 @@ class ApiHealthRouteGate(unittest.TestCase):
         self.assertEqual(status, 503)
         self.assertIn("error", json.loads(body))
 
-    def test_coverage_counts_the_tmux_sessions_the_signal_does_not_see(self):
-        # the kernel's half of `coverage`: tmux-backed sessions have no SDK stream; the backend's
-        # half (sdkSessionsLive / inTurn / retrying) arrives with the payload
-        saved = km.Sessions.live
-        km.Sessions.live = staticmethod(lambda: {"11111111-2222-3333-4444-555555555555": {"backend": "tmux"},
-                                                 "11111111-2222-3333-4444-666666666666": {"backend": "sdk"},
-                                                 "11111111-2222-3333-4444-777777777777": {"backend": "tmux"}})
-        try:
-            status, body = _serve_get("/api-health", {"X-Romp-Token": TOK})
-        finally:
-            km.Sessions.live = saved
-        self.assertEqual(status, 200)
-        cov = json.loads(body)["coverage"]
-        self.assertEqual(cov["tmuxSessionsUncovered"], 2)
-        self.assertEqual((cov["sdkSessionsLive"], cov["inTurn"], cov["retrying"]), (1, 1, 1))
-        # …and a failed enumeration is a visible null, never a silent zero
-        km.Sessions.live = staticmethod(lambda: (_ for _ in ()).throw(RuntimeError("no tmux")))
-        try:
-            status, body = _serve_get("/api-health", {"X-Romp-Token": TOK})
-        finally:
-            km.Sessions.live = saved
-        self.assertEqual(status, 200)
-        self.assertIsNone(json.loads(body)["coverage"]["tmuxSessionsUncovered"])
-
 
 class _RfileSpy:
     """A request body that RECORDS every read: the gate under test must refuse before reading any of it."""
@@ -895,16 +977,17 @@ class ForkRoutesReadBodiesThroughTheValidator(unittest.TestCase):
 
 
 class ForkGearSwitchesRefuseNonBooleanFlags(unittest.TestCase):
-    """setUserTodos `enabled` and setJudgeFast `on` (the fork's gear switches) take a boolean the way
-    upstream's setConserve, setFileEditing and setThinkingSummaries do since the 2026-09-08 fold: a string
-    is refused through _refuse_ws_flag (a warn frame to the sender, one stderr line naming the op) and
-    nothing is written. bool("false") is True, so a string here used to turn the switch ON."""
+    """setUserTodos `enabled` (the fork's gear switch) and setJudgeFast `enabled` (the judges' Fast mode box, a
+    kernel setting since #1292) take a boolean the way upstream's setConserve, setFileEditing and
+    setThinkingSummaries do: a string is refused through _refuse_ws_flag (a warn frame to the sender, one
+    stderr line naming the op) and nothing is written. bool("false") is True, so a string here used to turn
+    the switch ON. The judge-fast arm stores on or off under the gesture stamp (_set_judge_fast(v, gt=))."""
 
     def setUp(self):
         self._saved = km._set_user_todos, km._set_judge_fast, km._mark_views_dirty
         self.calls = []
         km._set_user_todos = lambda enabled, gt=None: self.calls.append(("setUserTodos", enabled)) or 1
-        km._set_judge_fast = lambda v: self.calls.append(("setJudgeFast", v))
+        km._set_judge_fast = lambda v, gt=None: self.calls.append(("setJudgeFast", v)) or 1
         km._mark_views_dirty = lambda: None
 
     def tearDown(self):
@@ -922,8 +1005,8 @@ class ForkGearSwitchesRefuseNonBooleanFlags(unittest.TestCase):
     def test_a_string_flag_is_refused_on_the_socket_and_the_log_and_writes_nothing(self):
         for frame, field in (({"type": "setUserTodos", "enabled": "yes"}, "enabled"),
                              ({"type": "setUserTodos", "enabled": "false"}, "enabled"),
-                             ({"type": "setJudgeFast", "on": "true"}, "on"),
-                             ({"type": "setJudgeFast", "on": 1}, "on")):
+                             ({"type": "setJudgeFast", "enabled": "true"}, "enabled"),
+                             ({"type": "setJudgeFast", "enabled": 1}, "enabled")):
             with self.subTest(frame=frame):
                 sent, log = self._dispatch(frame)
                 self.assertEqual(sent, [{"type": "warn", "text": "%s: '%s' must be true or false, got %s"
@@ -935,9 +1018,9 @@ class ForkGearSwitchesRefuseNonBooleanFlags(unittest.TestCase):
     def test_a_real_boolean_applies(self):
         sent, log = self._dispatch({"type": "setUserTodos", "enabled": True})
         self.assertEqual((sent, log), ([], ""))
-        sent, log = self._dispatch({"type": "setJudgeFast", "on": False})
+        sent, log = self._dispatch({"type": "setJudgeFast", "enabled": False})
         self.assertEqual((sent, log), ([], ""))
-        self.assertEqual(self.calls, [("setUserTodos", True), ("setJudgeFast", "")])
+        self.assertEqual(self.calls, [("setUserTodos", True), ("setJudgeFast", "off")])
 
 
 def _raw_post(port, path, headers, body=b"", half_close=True):

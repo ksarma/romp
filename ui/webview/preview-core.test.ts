@@ -47,7 +47,7 @@ test("chat: a mentioned image/PDF grows a FULL render at its mention, deduped an
   // (the user 2026-07-20: full renders replaced the 2026-07-08 thumbnails in the chat; the user
   // 2026-08-15: figures moved from a tail strip to the mentioning block —
   // chat-inline-preview.test.ts pins the placement shape)
-  assert.match(RENDER, /import \{ previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal, setLightboxNav, type LightboxNavEntry \} from "\.\/preview";/);
+  assert.match(RENDER, /import \{ previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal, mdImgPostPass, setLightboxNav, type LightboxNavEntry \} from "\.\/preview";/);
   assert.match(RENDER, /if \(previewKind\(open\) && !previewable\.includes\(open\) && !\(skipThumbs && skipThumbs\.includes\(open\)\)\) \{/, "collected while linkifying — same detection, no second regex pass; an in-bubble image never re-renders");
   assert.match(RENDER, /if \(previewable\.length\) \{/, "both surfaces now — VS Code images ride the host data-URL flow");
   assert.match(RENDER, /for \(const p of previewable\) renderFig\(p\);/,
@@ -74,13 +74,18 @@ test("the lightbox offers a download beside the close, saving the same bytes it 
     "saved under the file's own basename");
   assert.ok(body.indexOf("dl.onclick = (ev) => ev.stopPropagation()") > 0,
     "saving must not also dismiss the lightbox");
-  assert.ok(body.indexOf('const controls = [dl, ...(cp ? [cp] : []), close]') > 0,
-    "between the filename and the ✕ — with copy slotted beside it where the clipboard API exists (2026-08-31)");
+  assert.ok(body.indexOf('group.append(dl, ...(cp ? [cp] : []));') > 0,
+    "in the file group with copy beside it where the clipboard API exists (2026-08-31); the group then the close (T385, the file viewer's order)");
+  assert.ok(body.indexOf('acts.append(group, close);') > 0, "the close cross alone at the end of the actions");
+  assert.ok(body.indexOf('inner.prepend(bar);') > 0, "the bar precedes the picture (T385; lightbox-bar.test.ts runs the builder and reads the order)");
   // an inline TRAY SVG, not a codepoint: "⭳" (U+2B73) has no coverage in the mac system fonts and
   // rendered as a tofu box (the user 2026-08-19). Same stroke family as the composer's buttons.
-  assert.ok(body.indexOf('<polyline points="7 10 12 15 17 10"/>') > 0, "the arrow-into-tray glyph");
+  assert.ok(body.indexOf("dl.innerHTML = ICON_DOWNLOAD") > 0, "the tray glyph from icons.ts (T367: one drawing, shared with the file viewer's bar)");
+  const ICONS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "icons.ts"), "utf8");
+  assert.ok(ICONS.indexOf('<polyline points="7 10 12 15 17 10"/>') > 0, "the arrow-into-tray glyph");
   assert.ok(body.indexOf("\u2b73") < 0 && body.indexOf("⭳") < 0, "the uncovered codepoint is gone");
   const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
-  assert.match(CSS, /\.romp-lightbox-dl, \.romp-lightbox-copy \{ font: inherit; font-size: 0\.86em;/,
-    "one control vocabulary — download and copy share the chip dress of the close beside them (2026-08-31)");
+  assert.match(body, /dl\.className = "fileview-btn fileview-icon romp-lightbox-dl";/,
+    "one control vocabulary — download, copy and the close wear the file viewer's bar buttons (T385; 2026-08-31 gave them one chip dress)");
+  assert.match(CSS, /^a\.fileview-btn \{ text-decoration: none; display: inline-flex; align-items: center; \}/m, "the anchor wears the button treatment");
 });

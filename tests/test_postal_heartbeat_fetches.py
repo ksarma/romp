@@ -48,8 +48,9 @@ class Counting(unittest.TestCase):
         # os.environ is process-wide: other modules in the same pytest worker pop or repoint the seam
         # between tests, so pin both env halves here and put them back after (the self-identity test's idiom)
         self._env = (os.environ.get("CLAUDE_CODE_SESSION_ID"), os.environ.get("ROMP_SESSIONS_FILE"),
-                     os.environ.get("ROMP_POSTAL_PEERS"))
+                     os.environ.get("ROMP_POSTAL_PEERS"), os.environ.get("CODEX_THREAD_ID"))
         os.environ["CLAUDE_CODE_SESSION_ID"] = WEB
+        os.environ.pop("CODEX_THREAD_ID", None)   # the second identity source (a Codex shell's variable): the no-identity cases below need both absent
         os.environ["ROMP_SESSIONS_FILE"] = _SESS
         os.environ.pop("ROMP_POSTAL_PEERS", None)               # peer mode, the default; legacy tests set 0
         pm._LOCAL_CONFIRMED[0] = False                          # a fresh MCP process
@@ -66,7 +67,8 @@ class Counting(unittest.TestCase):
     def tearDown(self):
         pm._kernel_sessions_checked, pm._http, pm.ensure = self._saved
         pm._LOCAL_CONFIRMED[0] = False
-        for key, val in zip(("CLAUDE_CODE_SESSION_ID", "ROMP_SESSIONS_FILE", "ROMP_POSTAL_PEERS"), self._env):
+        for key, val in zip(("CLAUDE_CODE_SESSION_ID", "ROMP_SESSIONS_FILE", "ROMP_POSTAL_PEERS", "CODEX_THREAD_ID"),
+                            self._env):
             if val is None:
                 os.environ.pop(key, None)
             else:
@@ -263,7 +265,8 @@ class Counting(unittest.TestCase):
         # is the only fetch (28 per 30 s poll on a box with 58 mailboxes, review 2026-09-06)
         self._dead_boxes(["ghost-a", "ghost-b", "ghost-c"])
         pm._sweep_orphans()
-        self.assertEqual(self.fetches, [False], "one listing for the whole sweep")
+        self.assertEqual(self.fetches, [True], "one listing for the whole sweep, thread rows included: a comment "
+                                               "thread's box is live while its row is (2026-09-10)")
 
     def test_recall_by_a_dead_name_fetches_once(self):
         dead = self._dead_boxes(["ghost-a", "ghost-b", "ghost-c"])
@@ -337,7 +340,8 @@ class Counting(unittest.TestCase):
             pm.deliver(WEB, "api", API, "synthetic reply", kind="coordinate")
             self.fetches.clear()
             pm._retry_pending()
-            self.assertEqual(self.fetches, [False], "one listing fetch for the whole pass, not one per marker")
+            self.assertEqual(self.fetches, [True], "one listing fetch for the whole pass, not one per marker; "
+                                                   "thread rows included so a thread's marker is retried")
             self.assertEqual(sorted(pushed), sorted([API, WEB]))
         finally:
             pm._push = saved_push

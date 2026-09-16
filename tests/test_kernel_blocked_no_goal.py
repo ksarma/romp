@@ -49,7 +49,7 @@ class BlockedNoGoal(unittest.TestCase):
         self.assertEqual(c["blocked"]["what"], "this session is stopped awaiting your approval")
 
     def test_build_feed_synthesizes_it_only_when_blocked_with_no_floorable_goal(self):
-        src = inspect.getsource(km.build_feed)
+        src = inspect.getsource(km._feed_session_entry)
         # the synthesis is gated: no working card AND no top goal to floor under BLOCKED (perm_top
         # None; todo_top joined the guard 2026-08-22 — a todo-floored card is had-working-equivalent) ...
         self.assertIn("if not had_working and perm_top is None and todo_top is None and ps:", src)
@@ -62,15 +62,15 @@ class BlockedNoGoal(unittest.TestCase):
         # (the user 2026-06-29). Patch backend_for→a stub current_ask so no real session is needed.
         class _StubBackend:
             def current_ask(self, sid):
-                return {"kind": "single", "header": "Backend", "question": "Use tmux or the SDK backend?",
-                        "options": [{"label": "tmux"}, {"label": "SDK"}]}
+                return {"kind": "single", "header": "Backend", "question": "Use Codex or Claude Code?",
+                        "options": [{"label": "Codex"}, {"label": "Claude Code"}]}
         orig = km.Sessions.backend_for
         km.Sessions.backend_for = lambda sid: _StubBackend()
         try:
             c = _card("picker")
         finally:
             km.Sessions.backend_for = orig
-        self.assertEqual(c["text"], "Use tmux or the SDK backend?", "card shows the question, not the generic line")
+        self.assertEqual(c["text"], "Use Codex or Claude Code?", "card shows the question, not the generic line")
 
     def test_picker_question_is_truncated_with_an_ellipsis(self):
         long_q = "A" * 200

@@ -38,25 +38,33 @@ test("the list expands DOWNWARD beneath the header (header at the top) — nothi
 // The OPEN list is capped at about six rows (the user 2026-09-08, whose phone showed the box over the
 // transcript): seven agents in flight fit under the box's min(50vh, 340px) cap without scrolling, so the
 // open box took half the phone's screen and left about three lines of chat between the tab strip and the
-// box. The fold itself was already the user's: bgFoldOpen is a page-lifetime Set of session ids, empty
-// (closed) by default and written only by the header click and the Awaiting chip, so a box opens only on
-// a tap and a reload starts it closed; the fix is the open list's height, not the fold.
+// box. The fold itself was already the user's: the box's fold is the "bgfold:<sid>" key of openFolds, the
+// page-lifetime fold set (upstream's one store since 2026-09-08; the fork's own bgFoldOpen set retired into it at
+// the 2026-09-15 pull-in), absent (closed) by default and written only by the header click and the Awaiting chip,
+// so a box opens only on a tap and a reload starts it closed; the fix is the open list's height, not the fold.
 test("the open list shows about six rows and scrolls beyond; the cap lifts while a row's details are open (the user 2026-09-08)", () => {
   assert.match(CSS, /\.bg-list:not\(:has\(\.bg-task\.open\)\) \{ max-height: 180px; \}/, "six rows of 29px plus the list's padding");
   assert.match(CSS, /\.bg-list \{[^}]*overflow-y: auto;/, "the inner scroll is the list's own");
   assert.match(BOX, /max-height: min\(50vh, 340px\);/, "the box's own cap still bounds an open row's details");
-  // a row's details wear .open on the .bg-task (bgRow), the class that lifts the cap
-  assert.match(RENDER, /const row = el\("div", "bg-task bg-" \+ \(t\.status \|\| "running"\) \+ \(t\.awaited \? " bg-awaited" : ""\) \+ \(tOpen && foldable \? " open" : ""\)\);/);
+  // a row's details wear .open on the .bg-task (bgRow), the class that lifts the cap (the bg-sub term is upstream's
+  // #1267: a task nested under an agent's own wait; the bg-kind-<kind> and bg-kept terms are upstream's T394, one hue
+  // per kind and the kept row, taken at the 2026-09-15 pull-in, and the literal wraps onto a second line after them)
+  assert.match(RENDER, /const row = el\("div", "bg-task bg-" \+ \(t\.status \|\| "running"\) \+ \(t\.kind \? " bg-kind-" \+ t\.kind : ""\) \+ \(t\.kept \? " bg-kept" : ""\)\s+\+ \(t\.awaited \? " bg-awaited" : ""\) \+ \(t\.sub \? " bg-sub" : ""\) \+ \(tOpen && foldable \? " open" : ""\)\);/);
 });
 
 test("the fold is the user's: closed by default, opened only by a tap, never by the renderer (the user 2026-09-08)", () => {
-  assert.match(RENDER, /const bgFoldOpen = new Set<string>\(\);/, "a page-lifetime Set of session ids, empty (closed) at load");
+  // the box's fold and each row's detail fold are keys of ONE page-lifetime Set (upstream's openFolds, since
+  // 2026-09-08: "bgfold:<sid>" for the box, "bgrow:<id>" for a row); the fork's own bgFoldOpen set retired into it at
+  // the 2026-09-15 pull-in (notice-vocab.test.ts asserts the old names gone)
+  assert.match(RENDER, /^const openFolds = new Set<string>\(\);/m, "a page-lifetime Set of fold keys, empty (every fold closed) at load");
   const body = RENDER.split("function renderBgTasks(")[1].split("\nfunction ")[0];
-  assert.match(body, /const open = bgFoldOpen\.has\(sid\);[\s\S]*?host\.appendChild\(head\);\s*\n\s*if \(!open\) return;/, "not in the set → the header line alone");
-  assert.doesNotMatch(body, /bgFoldOpen\.(add|delete|clear)\(/, "the renderer never opens or closes it");
-  // the two writers, both gestures (awaiting-rows.test.ts pins the exact list)
-  assert.match(RENDER, /"bg-fold": \(el\) => \{[\s\S]{0,200}?if \(bgFoldOpen\.has\(id\)\) bgFoldOpen\.delete\(id\); else bgFoldOpen\.add\(id\);/);
-  assert.match(RENDER, /"awaitingChip": \(\) => \{[\s\S]{0,120}?bgFoldOpen\.add\(activeId\);/);
+  assert.match(body, /const open = openFolds\.has\("bgfold:" \+ sid\);[\s\S]*?host\.appendChild\(head\);\s*\n\s*if \(!open\) return;/, "no bgfold key in the set → the header line alone");
+  assert.doesNotMatch(body, /openFolds\.(add|delete|clear)\(/, "the renderer never opens or closes a fold");
+  // the writers, all gestures (awaiting-rows.test.ts pins the exact bgfold list): the header click and the Awaiting
+  // chip for the box's fold, a row's own header for its detail fold
+  assert.match(RENDER, /"bg-fold": \(el\) => \{[\s\S]{0,200}?if \(openFolds\.has\("bgfold:" \+ id\)\) openFolds\.delete\("bgfold:" \+ id\); else openFolds\.add\("bgfold:" \+ id\);/);
+  assert.match(RENDER, /"bg-toggle": \(el\) => \{[\s\S]{0,200}?if \(openFolds\.has\("bgrow:" \+ id\)\) openFolds\.delete\("bgrow:" \+ id\); else openFolds\.add\("bgrow:" \+ id\);/);
+  assert.match(RENDER, /"awaitingChip": \(\) => \{[\s\S]{0,120}?openFolds\.add\("bgfold:" \+ activeId\);/);
 });
 
 test("status dots are SOLID — the pulsating yellow animation is gone", () => {

@@ -70,6 +70,7 @@ class _FakeBackend:
 class _Base(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)                  # cleanups run last in, first out: the seams go back, then the dir
         td = Path(self.td.name)
         self.saved = {k: getattr(km, k) for k in (
             "_alive_sessions", "_wait_for_graph", "_session_flag", "_compacting_now", "_api_error",
@@ -80,6 +81,12 @@ class _Base(unittest.TestCase):
         self.saved_jd = {k: getattr(jd, k) for k in ("STATE", "GOALDIR", "EPIDIR", "parsed_session", "_segs",
                                                      "plan_units", "load_goals", "load_goals_shared")}
         self.saved_backend = km.Sessions.backend_for
+        self.shared_off_before = jd._SHARED_OFF[0]
+        # The seams above go back through a cleanup, not tearDown: unittest skips tearDown when setUp raises and runs
+        # the cleanups regardless, so a setUp that fails after the rebind below cannot leave jd.STATE naming this
+        # test's directory for every later test in the process (conftest's shared-state guard). The 3.10 CI leg of
+        # 2026-09-16 turned one KeyError in this setUp into fifteen guard errors that way.
+        self.addCleanup(self._restore)
         jd.STATE = td
         jd.GOALDIR = td / "goals"; jd.GOALDIR.mkdir(parents=True)
         jd.EPIDIR = td / "episodes"; jd.EPIDIR.mkdir(parents=True)
@@ -89,7 +96,7 @@ class _Base(unittest.TestCase):
         # the shared cache's switch and poison counter are process-wide (one judge module per worker):
         # another module's deliberate frozen-write test leaves the counter raised, so the writer check
         # below is a DELTA over this test, and the switch is on for the test and restored after it
-        self.shared_off_before = jd._SHARED_OFF[0]
+        # (saved with the other seams above)
         jd._SHARED_OFF[0] = False
         self.poisoned_before = jd.shared_store_stats().get("poisoned", 0)
         self.fb = _FakeBackend()
@@ -123,7 +130,7 @@ class _Base(unittest.TestCase):
             self.calls[name] += 1
             return ret
         jd._segs = lambda tn, store: _count("segs", [])
-        jd.plan_units = lambda session, store: _count("plan_units", [])
+        jd.plan_units = lambda session, store, lazy_text=None: _count("plan_units", [])   # lazy_text: upstream's keys-alone call (T396)
         jd.load_goals = lambda sid: _count("load_goals", real_load(sid))
         jd.load_goals_shared = lambda sid: _count("load_goals_shared", real_shared(sid))
         self.turns = [{"id": "t1", "ended": True, "end": NOW - 8 * H, "t": NOW - 8 * H - 10, "atoms": []},
@@ -139,10 +146,17 @@ class _Base(unittest.TestCase):
             jd._PARSE_CACHE[sid] = (("fixture", self.parse_gen), sess)
             return sess
         jd.parsed_session = _parsed
-        jd._PARSE_CACHE.pop(SID, None)
+        # the store's own drop, never _PARSE_CACHE.pop(SID, None): the store is an OrderedDict subclass whose slots
+        # are (fsid, cut, leaf) tuples, and a bare sid is not a key of its own. Python 3.11+ answers that pop with
+        # the default and drops nothing; 3.10's OrderedDict.pop dispatches to the overridden __contains__ and
+        # __getitem__ (which read the bare sid as the newest slot) and then to the inherited __delitem__, which
+        # raises KeyError on it (the 3.10 CI leg, 2026-09-16)
+        jd.parse_cache_drop(SID)
         self.gid = SID + ":g1"
 
-    def tearDown(self):
+    def _restore(self):
+        """Every process-wide seam setUp moved goes back the way it was found: a cleanup registered in setUp before
+        the first rebind, so it runs whether setUp finished or not; the temp dir's own cleanup runs after it."""
         journal = jd._overrides_dir() / (SID + ".jsonl")     # under the test's STATE, resolved before it is restored
         for k, v in self.saved.items():
             setattr(km, k, v)
@@ -152,13 +166,12 @@ class _Base(unittest.TestCase):
         km._SESSION_STAMP_CACHE.clear(); km._autonudge_cache.clear()
         jd._shared_clear()
         km._nudge_gate_memo.clear(); km._nudge_deleg_memo.clear()
-        jd._PARSE_CACHE.pop(SID, None)
+        jd.parse_cache_drop(SID)                              # the store's own drop (see setUp)
         jd._SHARED_OFF[0] = self.shared_off_before
         try:
             journal.unlink()
         except OSError:
             pass
-        self.td.cleanup()
 
     # ── fixtures ──
     def _toggle(self, enabled):
@@ -361,12 +374,12 @@ class TheWalkGateMemoOnlyServesTheSharedView(_Base):
         self._cycle()
         self.assertIn(SID, km._nudge_gate_memo)
         self.assertIn(SID, km._nudge_deleg_memo, "the unstamped top's delegated-work check filled the second memo")
-        before = dict(km._nudge_walk_stats)
-        km._alive_sessions = lambda now, tmux: []
+        km._alive_sessions = lambda now, live_map: []
         self._tick(NOW + 5)
         self.assertNotIn(SID, km._nudge_gate_memo, "a sid that left the alive set holds no entry")
         self.assertNotIn(SID, km._nudge_deleg_memo, "in either memo")
-        self.assertEqual(km._nudge_walk_stats["evict"] - before["evict"], 1, "one eviction per sid, both memos")
+        # the walk's own counters (the fork's memos.nudge_walk row, its evict count among them) retired with the
+        # 2026-09-15 pull-in for upstream's memos.nudgeWalk (the parse gate's counters, tests/test_nudge_walk_parse_gate.py)
 
 
 class FileWakeAnswerLoadsItsOwnCopy(_Base):
@@ -379,36 +392,6 @@ class FileWakeAnswerLoadsItsOwnCopy(_Base):
         rows = [e for e in self._node()["log"] if e.get("kind") == "awaiting" and e.get("src") == "nudge"]
         self.assertEqual(len(rows), 1)
         self.assertNoWriterSawTheSharedView()
-
-
-class PerfBlock(_Base):
-    def test_the_walk_reports_its_counters_under_memos(self):
-        snap = km._PERF_STATS.snapshot()
-        self.assertIn("nudge_walk", snap["memos"])
-        self.assertEqual(set(snap["memos"]["nudge_walk"]),
-                         {"walked", "gated", "loads", "shared", "deleg_hit", "deleg_miss", "lifted", "evict", "entries"})
-        for k, v in snap["memos"]["nudge_walk"].items():
-            self.assertIsInstance(v, int, k)
-        # the gate's own pair rides upstream's block (ruling A, slice 3)
-        self.assertEqual(set(snap["memos"]["nudgeGate"]), {"served", "derived"})
-        for k, v in snap["memos"]["nudgeGate"].items():
-            self.assertIsInstance(v, int, k)
-
-    def test_the_counters_move_with_the_walk(self):
-        self._toggle(False)
-        self._seed(kind="job", age=7 * H)
-        before = dict(km._nudge_walk_stats)
-        before_gate = dict(km._NUDGE_GATE_STATS)
-        self._cycle(); self._cycle(NOW + 5); self._cycle(NOW + 60)
-        d = {k: km._nudge_walk_stats[k] - before[k] for k in before}
-        g = {k: km._NUDGE_GATE_STATS[k] - before_gate[k] for k in before_gate}
-        self.assertEqual(d["walked"], 3)
-        self.assertEqual(d["gated"], 0, "every gate passed in this fixture")
-        self.assertEqual((d["loads"], d["shared"]), (3, 3), "three decision reads, all answered by the cache "
-                                                             "(the gate's currency re-reads are not walk loads)")
-        self.assertEqual((g["derived"], g["served"]), (2, 1), "computed on the first cycle and after the lift moved the store")
-        self.assertEqual(d["lifted"], 1)
-        self.assertEqual(d["evict"], 0, "the session stayed alive")
 
 
 if __name__ == "__main__":

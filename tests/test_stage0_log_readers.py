@@ -24,6 +24,7 @@ em = load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
 jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+from git_fixture import git, init_repo
 
 SID = "11111111-2222-3333-4444-999999999901"     # private synthetic sid: this module owns its states file
 NOW = 1781100000
@@ -72,6 +73,18 @@ def _append_rows(path, rows):
     with open(path, "a") as f:
         for r in rows:
             f.write(json.dumps(r) + "\n")
+
+
+def _repo_on_main():
+    """A throwaway repository with one commit on `main`, the shape test_d3 reads a branch from. Built through
+    the shared runner (tests/git_fixture.py): `git commit` spawns `git maintenance run --auto`, which on
+    recent git detaches and can still be writing into .git while the temp dir is removed (the CI flake
+    "Directory not empty: '.git'", 2026-09-10); init_repo also writes the no-background keys into the repo's
+    own config, so the git the KERNEL forks against it (the branch memo) obeys them too."""
+    repo = tempfile.mkdtemp()
+    init_repo(repo, "-q", "-b", "main")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "init", ident=("t@example.invalid", "t"))   # main is born: the branch resolves
+    return repo
 
 
 class _OpenCounter:
@@ -357,14 +370,14 @@ class ViewSignatureKeysOnExactInputs(_StateSandbox):
 
 class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
     """The watched chat tab used to rebuild from all atoms on every pusher cycle "by design", because its
-    payload moves with inputs no file records. Upstream (2026-09-03) served it on a separate exact key,
-    _active_chat_sig, beside the background tabs' file-stat key; the fork's complete per-session signature
-    (_chat_build_sig, round-4 plan P4) is ONE key for every tab, and these tests — upstream's, rewritten
-    against that key — pin the same observable: an identical world yields the same key and any moved
-    payload input moves it. Of upstream's inputs, the captions store is keyed through what the payload
-    embeds from it (the postal cards' caption values, the postal component; tests/test_chat_build_sig_inputs.py
-    moves one), and the in-flight judge set is not keyed because build_session does not read it (the
-    census there is the check). Synthetic session, private sid."""
+    payload moves with inputs no file records; since 2026-09-03 it was served on a separate exact key
+    beside the background tabs' file-stat key. There is ONE key for every tab now, the complete per-session
+    signature (_chat_build_sig), and these tests pin the same observable through it: an identical world
+    yields the same key and any moved payload input moves it, attributed to its component. Of the old
+    key's inputs, the captions store is keyed through what the payload embeds from it (the postal cards'
+    caption values, the postal component; tests/test_chat_build_sig_inputs.py moves one), and the
+    in-flight judge set is not keyed because build_session does not read it (the census there is the
+    check). Synthetic session, private sid."""
 
     SID = "11111111-2222-3333-4444-999999999941"
 
@@ -378,8 +391,9 @@ class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
         self.sess = {"sid": self.SID, "path": str(self.tpath), "anchor": self.SID}
         self.tm = {"state": "waiting", "since": NOW - 100, "model": "m", "subagents": [], "bgTasks": [], "snapT": NOW}
         self.saved_sdk = km._sdk
-        km._sdk = lambda: None                                    # tmux-owned unless a test says otherwise
+        km._sdk = lambda: None                                    # no backend owns it unless a test says otherwise
         km._built_chat.pop(self.SID, None)
+        km._live_scope.usage = km._live_scope.spend_pause = None   # a drain scope another module left on this thread
         self._clear_stamps()
 
     def tearDown(self):
@@ -393,13 +407,13 @@ class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
             km._watches[:] = [w for w in km._watches if w.get("sid") != self.SID]
 
     def _clear_stamps(self):
-        for d in (km._interrupt_clicked, km._model_switch_pending, km._compact_clicked, km._tmux_echo, km._tmux_echo_rev):
+        for d in (km._interrupt_clicked, km._model_switch_pending, km._compact_clicked):
             d.pop(self.SID, None)
 
     def sig(self, tm=None, now=NOW, **kw):
-        """The complete key, as the pusher takes it: the session, the push's liveness map and clock."""
+        """The complete key, as the pusher takes it: the session, its liveness row, the push's clock and map."""
         tm = self.tm if tm is None else tm
-        return km._chat_build_sig(self.sess, {self.SID: tm} if tm is not None else {}, now, **kw)
+        return km._chat_build_sig(self.sess, tm, now, live_map={self.SID: tm} if tm is not None else {}, **kw)
 
     def test_a_an_identical_world_yields_the_same_key_and_a_volatile_stamp_does_not_matter(self):
         s1 = self.sig()
@@ -416,23 +430,27 @@ class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
         s2 = self.sig()
         self.assertNotEqual(s1, s2, "a states row")
         # the judge's OUTPUT the payload reads is the goal store (the ledger, the seams, the awaiting stamps):
-        # a publish moves the key at once, through the store's live identity. Upstream keyed the captions
-        # store here (its captions reach the payload only as the postal cards' caption values, keyed by the
-        # postal component) and the in-flight judge set (not an input of build_session)
+        # a publish moves the key at once, through the store's live identity, and no other tab's
         jd.GOALDIR.mkdir(parents=True, exist_ok=True)
         gs = jd.GOALDIR / (self.SID + ".json")
         try:
             gs.write_text(json.dumps({"rompUuid": self.SID, "nodes": {}, "status": {}}))
             s3 = self.sig()
             self.assertNotEqual(s2, s3, "a goal store published")
-            self.assertEqual(km._chat_sig_miss(s2, s3), ("store",), "…attributed to the store component alone")
+            self.assertEqual(km._chat_sig_miss(s2, s3), ("store",), "...attributed to the store component alone")
+            g0 = km._judge_gen[0]
+            km._judge_gen[0] += 1
+            try:
+                self.assertEqual(self.sig(), s3, "the judge-pass counter is not a chat input")
+            finally:
+                km._judge_gen[0] = g0
         finally:
             try: os.unlink(gs)
             except OSError: pass
 
     def test_c_clock_booleans_flip_exactly_at_their_deadlines(self):
         """The clock enters the key only as the booleans the build derives from it, so the key moves at each
-        crossing and at no other tick (upstream's _clock_predicates, now the signature's clock component)."""
+        crossing and at no other tick (the clock component)."""
         tm = {"state": "ready", "since": NOW - 3599, "bgTasks": []}
         s0 = self.sig(tm, NOW)
         self.assertEqual(s0, self.sig(tm, NOW + 1), "one second short of the hour: nothing moved")
@@ -447,12 +465,12 @@ class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
         self.assertNotEqual(s3, s4, "an armed compaction is a clock fact")
         self.assertEqual(km._chat_sig_miss(s3, s4), ("clock",))
         s5 = self.sig(tm, NOW + 4)                                # 181 s: the cap ran out, and the key follows the flip
-        self.assertEqual(s5, s3, "…back to the clicked-nothing key, exactly at the crossing")
+        self.assertEqual(s5, s3, "...back to the clicked-nothing key, exactly at the crossing")
 
     def test_d_a_live_task_expiring_moves_the_key_through_the_builds_own_filter(self):
         """The raw snapshot rows carry no deadline; the build joins each task's recorded deadline from the
         launch ledger and drops expired ones. The key carries that filtered set (the bg component), so an
-        expiry — a tid dropping out — moves it exactly when the awaiting box would change (review 2026-09-03)."""
+        expiry, a tid dropping out, moves it exactly when the awaiting box would change (review 2026-09-03)."""
         saved = km._bg_live_norm
         rows = [{"tid": "t1", "desc": "watch", "t": NOW - 60}]
         km._bg_live_norm = lambda sid, path, **kw: list(rows)
@@ -470,7 +488,7 @@ class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
         """The task box shows a running task's output tail, read live from a file outside the state root. The
         build records each output it read as a dependency of its payload (_chat_build_deps), and the key
         re-stats the recorded file every cycle (the taskout component), so the tail keeps moving (review
-        2026-09-03; upstream stat'd the running tasks' files in its active key)."""
+        2026-09-03; the old watched-tab key stat'd the running tasks' files itself)."""
         out = jd.STATE / "task-out.log"; out.write_text("line 1\n")
         rec = {"task_outs": [(str(out), km._chat_stat_key(str(out)))], "pl_pending": [], "pl_at": (), "pl_check": None,
                "postal_any": False, "postal_cards": []}
@@ -485,11 +503,7 @@ class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
     def test_d3_the_branch_of_a_subdirectory_cwd_is_keyed(self):
         """build_session reads the branch of the registered cwd's tree (and of the last edited file's tree);
         the key carries them by value through the branch memo, which is keyed on the tree's HEAD."""
-        import subprocess
-        repo = tempfile.mkdtemp()
-        subprocess.run(["git", "init", "-q", "-b", "main", repo], check=True)
-        subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
-                        "commit", "-q", "--allow-empty", "-m", "init"], check=True)   # main is born: the branch resolves
+        repo = _repo_on_main()
         sub = os.path.join(repo, "pkg"); os.makedirs(sub)
         saved_cwd = km._cwd_of
         km._cwd_of = lambda sid: sub                       # a cwd INSIDE the repo, not its top
@@ -497,12 +511,19 @@ class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
             s1 = self.sig()
             cwd_i = km._CHAT_SIG_LABELS.index("cwd")
             self.assertEqual(s1[cwd_i][1], "main", "the repo's branch is read for a subdirectory cwd: %r" % (s1[cwd_i],))
-            subprocess.run(["git", "-C", repo, "checkout", "-q", "-b", "feature"], check=True)
+            git(repo, "checkout", "-q", "-b", "feature")
             s2 = self.sig()
             self.assertNotEqual(s1, s2, "a branch switch moves the key")
             self.assertEqual(s2[cwd_i][1], "feature")
         finally:
             km._cwd_of = saved_cwd
+
+    def test_the_fixture_repos_forbid_background_git_work(self):
+        """The kernel runs git against test_d3's repo through its own subprocess (_git_out, the branch memo),
+        so the no-background keys must sit in the repo's own config, not only on the fixture runner's
+        command line."""
+        repo = _repo_on_main()
+        self.assertEqual(git(repo, "config", "--local", "--get", "maintenance.auto").stdout.strip(), "false", repo)
 
     def test_e_the_backend_leg_and_the_watches_move_the_key(self):
         """A stub backend stands in for the SDK: the live-tail revision, the send queue and the brackets each
@@ -517,7 +538,6 @@ class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
             def compacting(self, sid): return self.comp
             def clearing(self, sid): return self.clr
             def pending_cut(self, sid): return ""
-            def new_session_auth(self): return "login"   # the chat signature's account component reads the backend's one billing rule (fold slice 3)
         stub = Stub()
         km._sdk = lambda: stub
         s1 = self.sig()
@@ -533,31 +553,9 @@ class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
         self.assertNotEqual(s4, s5, "a watch armed")
         self.assertEqual(km._chat_sig_miss(s4, s5), ("watch",))
 
-    def test_f_the_owning_backends_live_tail_moves_the_key_for_a_tmux_session(self):
-        """Review 2026-09-05: the key read only the SDK backend's tail, so a tmux session's composer echo — a
-        kernel-side store the build renders — left the watched tab served stale until some file moved. The
-        tmux echo store counts its changes (_tmux_echo_bump) the way the SDK backend does, and Sessions.live_rev
-        dispatches to the owning backend."""
-        s1 = self.sig()
-        self.assertIsNotNone(s1)
-        km._tmux_echo_add(self.SID, "please also fix the header")
-        s2 = self.sig()
-        self.assertNotEqual(s1, s2, "the echo the build renders is in the key")
-        t = km._tmux_echo_atoms(self.SID)[0]["t"]
-        km._tmux_echo_settle(self.SID, human_floor=t + 5)          # the pane dropped the keystroke: marked, rendered differently
-        self.assertTrue(km._tmux_echo_atoms(self.SID)[0].get("dropped"))
-        s3 = self.sig()
-        self.assertNotEqual(s2, s3, "…and so is its dropped flag")
-        self.assertEqual(km._TMUX.dismiss_echo(self.SID, t=t), "please also fix the header")
-        s4 = self.sig()
-        self.assertNotEqual(s3, s4, "the dismissal is a change too")
-        # a revision counts changes, so the key never returns to an earlier value (one rebuild per change,
-        # never a stale hit) — upstream's digest of the atoms did, which is the one difference here
-        self.assertEqual([km._chat_sig_miss(a, b) for a, b in ((s1, s2), (s2, s3), (s3, s4))], [("live",)] * 3)
-
     def test_g_the_key_carries_the_snapshot_facts_a_tabs_chips_render(self):
         """The judge generation no longer advances every pass, so a tab's chips (state, retrying, subagents,
-        pending picks…) are keyed on the snapshot row itself (review 2026-09-05), minus its volatile stamp."""
+        pending picks...) are keyed on the snapshot row itself (review 2026-09-05), minus its volatile stamp."""
         b1 = self.sig()
         self.assertIsNotNone(b1)
         tm2 = dict(self.tm); tm2["snapT"] = NOW + 30
@@ -568,13 +566,15 @@ class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
             b3 = self.sig(tm3)
             self.assertNotEqual(b1, b3, k)
             self.assertIn("row", km._chat_sig_miss(b1, b3), k)   # modelPending is a clock input too (_model_pending_now)
-        self.assertNotEqual(b1, km._chat_build_sig(self.sess, {}, NOW),
-                            "no row for the sid → a different (row-less) key, never a false hit")
+        self.assertNotEqual(b1, km._chat_build_sig(self.sess, None, NOW, live_map={}),
+                            "no row for the sid: a different (row-less) key, never a false hit")
 
     def test_h_the_spend_hold_moves_the_key_of_a_tab_with_a_queued_send_and_the_writer_marks_nothing(self):
         """The account-level hold is what a QUEUED bubble names, so the key folds it exactly when the build
-        can render one (a queue, parked ops, an in-flight tmux echo) and never asks otherwise — upstream
-        stat'd retry-paused.json for every watched tab."""
+        can render one (a queue, parked ops, a non-forwarding backend's in-flight echo) and never asks otherwise; the old
+        watched-tab key stat'd retry-paused.json for every watched tab. The writer marks no view dirty: it
+        wakes the pusher (_push_soon), and the signature's limit component carries the hold to every tab
+        that renders it."""
         class Stub:
             def owns(self, sid): return True
             def live_rev(self, sid): return 0
@@ -586,25 +586,34 @@ class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
             def clearing(self, sid): return False
             def pending_cut(self, sid): return ""
             def launch_error(self, sid): return None
-            def new_session_auth(self): return "login"   # read by the account component of the chat signature (fold slice 3)
         km._sdk = lambda: Stub()
-        s1 = self.sig()
-        before = km._views_dirty[0]
-        km._set_retry_paused(True, reason="spend")
-        try:
-            s2 = self.sig()
-            self.assertNotEqual(s1, s2, "the spend hold the queued bubble renders is in the key")
-            self.assertEqual(km._chat_sig_miss(s1, s2), ("limit",))
-            # the fork's rule (perf batch 2 P1, 2026-09-06; kept in the 2026-09-07 fold): the writer marks no view
-            # dirty; the callers _push_soon and the signature's limit component carries the hold
-            self.assertEqual(km._views_dirty[0], before, "the hold's writer publishes nothing itself")
-        finally:
-            km._set_retry_paused(False)
-        quiet = {"sid": self.SID, "path": str(self.tpath), "anchor": self.SID}
-        km._sdk = lambda: None                                    # nothing queued, nothing parked, no echo
+        # the hold reader, held for this test over the real pause file: other modules loading this same kernel
+        # module stub _limit_hold to a no-op at import (the drive-op gates), so the shared copy's may be theirs
+        saved_hold = km._limit_hold
+        km._limit_hold = lambda sid, usage=None: ({"reason": "spend", "resetsAt": None, "what": "waiting for your monthly spend limit to be raised"}
+                                                  if (km._retry_paused_on() and km._retry_pause_reason() == "spend") else None)
         lim = km._CHAT_SIG_LABELS.index("limit")
-        self.assertIsNone(km._chat_build_sig(quiet, {self.SID: self.tm}, NOW)[lim],
-                          "with no queued bubble to render, the hold is not read and not keyed")
+        try:
+            s1 = self.sig()
+            self.assertIsNone(s1[lim], "a queue, no hold: read, and None")
+            before = km._views_dirty[0]
+            km._set_retry_paused(True, reason="spend")
+            try:
+                s2 = self.sig()
+                self.assertNotEqual(s1, s2, "the spend hold the queued bubble renders is in the key")
+                self.assertEqual(km._chat_sig_miss(s1, s2), ("limit",))
+                self.assertEqual(s2[lim]["reason"], "spend")
+                self.assertEqual(km._views_dirty[0], before, "the hold's writer publishes nothing itself; the pusher is woken instead")
+            finally:
+                km._set_retry_paused(False)
+            km._sdk = lambda: None                                # nothing queued, nothing parked, no echo
+            km._set_retry_paused(True, reason="spend")
+            try:
+                self.assertIsNone(self.sig()[lim], "with no queued bubble to render, the hold is not read and not keyed")
+            finally:
+                km._set_retry_paused(False)
+        finally:
+            km._limit_hold = saved_hold
 
 
 class PerBuildReadersAreCached(_StateSandbox):
@@ -795,48 +804,48 @@ class PerCycleStoreReadersAreCached(_StateSandbox):
         jd.GOALDIR.mkdir(parents=True, exist_ok=True)
         gpath = jd.GOALDIR / (sid + ".json")
         gpath.write_text(json.dumps({"rompUuid": sid, "seq": 0, "nodes": {}, "placements": {}, "status": {}}))
-        loads = []
+        loads = []                                         # the tick's store reads: the shared-view probe
         real = jd.load_goals_shared
         jd.load_goals_shared = lambda fsid: (loads.append(fsid), real(fsid))[1]
         saved_alive = km._alive_sessions
-        km._alive_sessions = lambda now, tmux: [{"sid": sid, "path": str(gpath)}]
-        tmux = {sid: {"state": "waiting", "bgTasks": []}}
+        km._alive_sessions = lambda now, live_map: [{"sid": sid, "path": str(gpath)}]
+        live = {sid: {"state": "waiting", "bgTasks": []}}
         scan = []                                          # what the transcript pairs: a running watcher
         saved_scan = km._bg_scan_all_cached
         km._bg_scan_all_cached = lambda path: list(scan)
         try:
             km._lift_seen.pop(sid, None)
-            km._lift_spent_awaiting(NOW, tmux)
-            km._lift_spent_awaiting(NOW + 1, tmux)
-            km._lift_spent_awaiting(NOW + 2, tmux)
+            km._lift_spent_awaiting(NOW, live)
+            km._lift_spent_awaiting(NOW + 1, live)
+            km._lift_spent_awaiting(NOW + 2, live)
             self.assertEqual(loads, [sid], "one read while nothing recorded moved")
             tmp = gpath.with_suffix(".tmp")                  # published the way save_goals publishes: tmp + replace
             tmp.write_text(json.dumps({"rompUuid": sid, "seq": 1, "nodes": {}, "placements": {}, "status": {}, "note": "longer"}))
             os.replace(tmp, gpath)
-            km._lift_spent_awaiting(NOW + 3, tmux)
+            km._lift_spent_awaiting(NOW + 3, live)
             self.assertEqual(len(loads), 2, "a store write is re-examined")
-            tmux[sid]["bgTasks"] = [{"toolUseId": "t1", "status": "running"}]
-            km._lift_spent_awaiting(NOW + 4, tmux)
+            live[sid]["bgTasks"] = [{"toolUseId": "t1", "status": "running"}]
+            km._lift_spent_awaiting(NOW + 4, live)
             self.assertEqual(len(loads), 3, "a live task appearing is re-examined")
-            tmux[sid]["subagents"] = [{"id": "a1"}]
-            km._lift_spent_awaiting(NOW + 5, tmux)
+            live[sid]["subagents"] = [{"id": "a1"}]
+            km._lift_spent_awaiting(NOW + 5, live)
             self.assertEqual(len(loads), 4, "a subagent appearing is re-examined")
             scan.append({"id": "toolu_1", "status": "running", "t": NOW, "deadline": NOW + 100})
-            km._lift_spent_awaiting(NOW + 6, tmux)
+            km._lift_spent_awaiting(NOW + 6, live)
             self.assertEqual(len(loads), 5, "a new dispatch is re-examined")
-            km._lift_spent_awaiting(NOW + 150, tmux)
+            km._lift_spent_awaiting(NOW + 150, live)
             self.assertEqual(len(loads), 5, "…and not again while its deadline has not passed")
-            km._lift_spent_awaiting(NOW + 100 + 121, tmux)
+            km._lift_spent_awaiting(NOW + 100 + 121, live)
             self.assertEqual(len(loads), 6, "the recorded deadline passing (plus grace) re-examines: the clock arm is keyed")
-            km._lift_spent_awaiting(NOW + 100 + 122, tmux)
+            km._lift_spent_awaiting(NOW + 100 + 122, live)
             self.assertEqual(len(loads), 6, "…once")
             boom = [True]
             jd.load_goals_shared = lambda fsid: (loads.append(fsid), (_ for _ in ()).throw(RuntimeError("torn read")) if boom[0] else real(fsid))[1]
             scan.append({"id": "toolu_2", "status": "running", "t": NOW + 300})
-            km._lift_spent_awaiting(NOW + 300, tmux)      # the ruling raises → not a ruling
+            km._lift_spent_awaiting(NOW + 300, live)      # the ruling raises → not a ruling
             self.assertEqual(len(loads), 7)
             boom[0] = False
-            km._lift_spent_awaiting(NOW + 301, tmux)      # …so the next cycle retries on the same inputs
+            km._lift_spent_awaiting(NOW + 301, live)      # …so the next cycle retries on the same inputs
             self.assertEqual(len(loads), 8, "a raised ruling is retried, not skipped")
         finally:
             jd.load_goals_shared = real; km._alive_sessions = saved_alive; km._bg_scan_all_cached = saved_scan; km._lift_seen.pop(sid, None)

@@ -11,16 +11,21 @@ const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview"
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 
-test("the tab menu carries a Move to folder… row beside Rename that opens the move dialog", () => {
+test("the tab menu carries a Move to folder… row beside Tags that opens the move dialog", () => {
+  // the SECOND section, between the menu's first two dividers: where the session belongs (Tags, then Move;
+  // the user 2026-09-11, who regrouped the menu by what each item changes)
+  const SEP = 'menu.appendChild(el("div", "ctx-sep"));';
   const i = RENDER.indexOf("function showTabMenu(");
-  const menu = RENDER.slice(i, RENDER.indexOf("menu.appendChild(el(\"div\", \"ctx-sep\"));", i));
-  assert.match(menu, /l\.textContent = "Rename"/);
+  const sep1 = RENDER.indexOf(SEP, i);
+  const menu = RENDER.slice(sep1, RENDER.indexOf(SEP, sep1 + SEP.length));
+  assert.doesNotMatch(menu, /l\.textContent = "Rename"/, "Rename stays in the first section");
+  assert.match(menu, /l\.textContent = "Tags"/);
   assert.match(menu, /l\.textContent = "Move to folder…"/);
+  assert.ok(menu.indexOf('l.textContent = "Tags"') < menu.indexOf('l.textContent = "Move to folder…"'), "Move follows Tags");
   assert.match(menu, /dismissTabMenu\(\); showMovePrompt\(id\);/);
-  // a terminal session has no relocation primitive: the row says so and takes no click
-  assert.match(menu, /const isTmux = !!\(sTm && sTm\.status && sTm\.status\.backend === "tmux"\);/);
-  assert.match(menu, /if \(!isTmux\) mv\.addEventListener\("click"/);
-  assert.match(menu, /terminal sessions can't move/);
+  // every session moves (T331: the terminal backend, which had no relocation primitive, is no longer offered)
+  assert.match(menu, /mv\.addEventListener\("click", \(ev\) => \{ ev\.stopPropagation\(\); dismissTabMenu\(\); showMovePrompt\(id\); \}\);/);
+  assert.doesNotMatch(menu, /isTmux|terminal sessions can't move|ctx-item-off/, "no greyed state, no note");
 });
 
 test("the dialog posts moveSession with the typed folder and acknowledges before the round trip", () => {

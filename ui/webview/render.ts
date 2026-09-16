@@ -1,4 +1,5 @@
 import { marked } from "marked";
+import { GEAR_GLYPH, ICON_FORK } from "./icons";   // the fork control's glyph (T381), the stroke family the bars share
 import { sanitizeMd, userContentTarget } from "./md-sanitize";   // the one sanitizer every markdown surface shares, and the lookup for a message's own `#` links
 import hljs from "highlight.js/lib/core";
 import bash from "highlight.js/lib/languages/bash";
@@ -13,71 +14,97 @@ import diff from "highlight.js/lib/languages/diff";
 import yaml from "highlight.js/lib/languages/yaml";
 import type { ParsedAsk } from "../ask-types";
 import { TABBAR_H_KEY, TABBAR_H_DEFAULT, clampTabbarH, parseTabbarH } from "./tabbar-resize";
+import type { CmtPopFrac } from "./comment-pop-size";
+import { CMT_POP_SIZE_KEY, CMT_POP_THREAD_DEFAULT, parseCmtPopSize, clampCmtPopPx, toCmtPopFrac, isCmtPopMax,
+         centerCmtPop, cmtPopCapPx, CMT_POP_MIN_W, CMT_POP_MIN_H, CMT_POP_CAP_W, CMT_POP_CAP_H, CMT_POP_EDGE } from "./comment-pop-size";
 import { ctxFallbackColor, pickTone, readableRgb } from "./ctx-color";
 import { applyTheme } from "./theme";
+import { installPostalWash } from "./postal-wash";   // the incoming postal card's tint lightness, measured from the page (T337c)
 import { applyDenseChrome } from "./dense-chrome";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
+import { prependHead, mergeWindow, historyLabel, indexOfUuid, keyOf, olderRequestAllowed } from "./chat-window";   // the uuid-anchored wire (T323 stage 4b)
+import { SUBAGENT_OPEN_WAIT_MS, subagentStallText, subagentStalled } from "./subagent-wait";   // the viewer's wait bound and its stall (T355)
+import { placeholderKind, placeholderStands, fillPlaceholder } from "./pane-placeholder";   // the empty pane's placeholder, by kind (T355)
 import { mintWriteId, ackOutcome, adoptViews, seqOf, capsAdopts, announcedSeq, announcedAfter, createInFlight, rederivePending, lensBlob, applyLensFields, type InflightWrite, type LensFields, type TagEditOp, type ViewsAck } from "./views-writes";
 import { lensVisible, surfaceLens } from "./tag-lens";
-import { openTagMenu, tagMenuButton, syncTagFilter, tagChip } from "./tag-menu";
+import { openTagMenu, tagMenuButton, syncTagFilter, tagChip, TAG_BTN_BORDER_CSS } from "./tag-menu";
 import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, emojiConfirmClosesDialog, PendingTabMeta } from "./tab-meta";
 import { EMOJI_RECENT_KEY, gridSections, moveInGrid, parseRecentEmoji, rememberEmoji, sameEmoji } from "./emoji-picker";
 import type { GridPos } from "./emoji-picker";
 import { EMOJI_CATEGORIES } from "./emoji-data";
-import { markerLabel, dayContext } from "./time-marker";
-import { compactDisplay, toolCounts, type DisplayItem } from "./compact";
+import { inInputEvent } from "./input-event";
+import { markerLabel, dayContext, DayWalk, relativeLabel, relativeLines } from "./time-marker";
+import { composeStatusWidgets, folderIconNode, folderLink, type StatusRecord } from "./status-widgets";
+import { REVEAL_LABEL, revealFraction, revealShownFraction, residentSpan, revealCountWords, revealPercentWords, messageCount } from "./reveal-progress";
+import { compactDisplay, isFoldableNoticeShape, itemAnchor, type DisplayItem } from "./compact";
+import { insertRun, regionsFromRuns, gapHeight, pagesToAsk, gapAt, gapFraction, landingNotice, runsOf, turnsBeforeTail, type Region, type Run, type Gap } from "./chat-regions";
 import { senderKind, SenderKind } from "./sender-identity";
-import { loadSettings, onExternalSettingsChange, installSettingsSync, type RompSettings } from "./settings";
+import { loadSettings, saveSettings, onExternalSettingsChange, installSettingsSync, type RompSettings } from "./settings";
 import { backendLabel, effectiveDefaultBackend } from "./backend-names";
 import { delegate } from "./actions";
+import { flash } from "./actions";   // its own line: the import above is pinned verbatim by click-safe.test.ts (the file-view precedent)
 import { pressHold } from "./actions";   // its own line (round 7): the delegate line is pinned by tests outside the tab menu, and upstream gives flash its own line the same way
 import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
 import { buildPinnedNotes, pinnedNotesKey, pinnedMeasureCut, pinnedWatchWidth, armUnpin, latchUnpinAt, latchedNotes, PINNED_ACT, type PinnedNote, type PinnedFoldState, type UnpinLatch } from "./pinned-notes";
-import { awaitWord, awaitBreakdown, groupRows, GROUP_TITLE, workingFor, type AwaitRow } from "./spin-caption";
+import { awaitWord, awaitBreakdown, groupRows, rowIds, waitsNote, listBreakdown, keptWord, GROUP_TITLE, ROW_KINDS, workingFor, type AwaitRow } from "./spin-caption";
+import { CHIP_LABEL, chipWords, statusChip, type ChipState } from "./status-chip";   // the session status chip: its words and its classes, the one builder the bar and the tag overview's rows share (T322b)
 import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from "./clear-confirm";
 import { prebuildPlan, type ViewState } from "./prebuild";
-import { newSkeletonState, applyTabOrderSkeleton, onStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind } from "./skeleton-tabs";
-import { reconcileTabOrder } from "./tab-order";
+import { historyMarks, historyBands, windowSpans, HIST_H, HIST_GAP } from "./glow-history";
+import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind } from "./skeleton-tabs";
+import { reconcileTabOrder, adoptArrival } from "./tab-order";
 import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, setPinned, isHidden, setHidden, prunePinned, reachableFrom, headWords,
-         followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem, type StripHead, type TabGroupsState, type SectionRef } from "./tab-groups";
+         followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, revealedTabs, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem, type StripHead, type TabGroupsState, type SectionRef } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, standInPip, type SnapModel, type SnapRow } from "./tab-snapshot";
 import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick } from "./tab-snapshot-view";
-import { tabStateClass, tabDotClass, tabDotTitle, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick } from "./tab-state";
-import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
+import { tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick } from "./tab-state";
+import { composeTabWidgets, composeTabRing, ringSwitch, tabHotkey, miniChord } from "./tab-widgets";   // the tab-title widgets (T379): the dot, the context bar and the hot-key keycap compose onto every tab from the registry, and the rings too, one class at a time; miniChord is the chord the strip signature reads
+import { titleWithKey, keyHint, chordOf, effectiveChord, loadOverrides, saveOverride, KEYS_EVENT } from "./keybindings";
+import { hotkeyCommandId, loadTabKeys, rememberTabKey, forgetTabKey, goneTabKeys, renamedTabKeys } from "./tab-keys";   // per-tab hot keys (2026-09-10): the set and its bookkeeping; the keycap on the tab is the T379 widget, read from the same store
+import { notePendingFlag, dropPendingFlag, applyFrameFlags, type PendingFlags, type SessionFlag } from "./flag-pending";   // the per-session view flags' pending guard (review 2026-09-14)
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
-import { StagedStack, quoteReplyBody, stagedPosts } from "./staged-messages";
-import { type PendingSend, type TailEvent, OPT_PREFIX, isOptimisticUuid, newPending, reconcilePending, queuedCopyToHide, dropPending, bareGroupLabel, sentAtLabel } from "./send-pending";
+import { StagedStack, quoteReplyBody, stagedPosts, type StagedMsg } from "./staged-messages";
+import { type PendingSend, type TailEvent, OPT_PREFIX, isOptimisticUuid, isKernelEchoUuid, newPending, mintQid, reconcilePending, queuedCopyToHide, dropPending, bareGroupLabel, sentAtLabel, pendingBody } from "./send-pending";
 import { reconcileHeld, heldAsQueued, type HeldCopy, type HeldQueued, type HeldMemory } from "./queued-held";
+import { rescindedComposerState } from "./queued-rescind";   // a queued message's edit pulls it back into the composer (T373)
 import { reloadHoldReason } from "./reload-hold";
 import { liveNotices, keepReloadNotices, releasedNotices, takeReloadNotices } from "./reload-notices";   // the notices a reload would wipe, replayed on the fresh page; the hold itself is __rompPaneBusy below (its reason from reload-hold.ts)
 import { mintProvisionalId, isProvisionalId, provisionalName, adoptsProvisional, focusResolvesProvisional } from "./provisional";
-import { onlyTag, matchesOnly } from "./only-filter";
+import { colFromSearch, columnHolds, columnEmptiness, type ColSets } from "./chat-columns";   // the chat split's partition (2026-09-11): which column this page is, which sessions it holds
+import { onlyTag, matchesOnly, onlyWindow } from "./only-filter";
 import { numberDiff, type DiffRow } from "./diff-lines";
+import { actionParts, toolRowLabel, toolInputText } from "./compact";
 import { parseAgentNotif, notifHead, type AgentNotif } from "./agent-notif";
 import { injectedHead, type InjectedSource } from "./injected-source";
-import { subTabId, isSubId, subParts, subLabel, gistLines, stepLines, stepsNote, agentFoldLabel, subHeadParts, openIconSvg, pinIconSvg, type SubMeta, type AgentGist, type AgentGistRow, type GistLine } from "./subagent-view";
-import { previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal, setLightboxNav, type LightboxNavEntry } from "./preview";
+import { subTabId, isSubId, subParts, subLabel, gistLines, stepLines, stepsNote, agentFoldLabel, subHeadParts, subWaitTail, openIconSvg, pinIconSvg, type SubMeta, type AgentGist, type AgentGistRow, type GistLine } from "./subagent-view";
+import { previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal, mdImgPostPass, setLightboxNav, type LightboxNavEntry } from "./preview";
 import { openFileClick, type At } from "./file-view";                  // a clicked file WITH its gesture (pdf-new-tab.test.ts)
-import { openPathLink, linkifyPathTokens, selectionOpenIn } from "./path-links";
+import { openPathLink, linkifyPathTokens, selectionOpenIn } from "./path-links";   // the path matcher the chat's links are made from (a shared module)
 import { linkTarget, type PathLinkOptions } from "./path-links";   // a todo link's target (`docs/a.md#results`, `docs/a.md:12`): the one reader the hosts share (Slice 6 of plans/markdown-viewer.md)
 // initFileView rides its OWN line: the import above is pinned verbatim by file-view.test.ts
 import { initFileView, setFileViewIdentity, hostStub } from "./file-view";
 import { panelMark } from "./file-comments";
 import { openUrlView } from "./file-view";                 // the URL mode of the same viewer (md-url-view.test.ts)
+import { viewerPathGate } from "./file-view-links";       // the viewer's code-aware path gate, for the chat's fenced blocks (2026-09-12)
 import { isMarkdownUrl } from "./md-links";
 import { LINK_SEL, browserTabClick, linkHref } from "./md-links";   // the link selector, the browser's-tab test and the href read the click delegate shares with the viewer's mdBlock
+import { PREVIEW_DWELL_MS, PREVIEW_GRACE_MS, HoverIntent, parsePreviewLink, previewKindOf, sliceUrl, contentFor, textOnlyContent, stripRemoteLoads, type PreviewContent } from "./file-preview";
+import { buildMatcher, linkifyTerms, type GlossaryIndex, type TermMatcher } from "./glossary-links";   // the team's coinages, linked where written (T351 stage 2)   // the file preview popover's pure half (T351)
 import { initFileBrowse, openFileBrowse } from "./file-browse";   // the chat's own browser instance, for standalone /chat (openBrowse)
-import { fileLinkRoute, browseRoute, type BrowseRoute } from "./file-route";   // where a file or folder click opens: one ladder, pure
+import { fileLinkRoute, browseRoute, type BrowseRoute } from "./file-route";   // where a file or folder click opens: here, or the Files pane (file-route.test.ts, browse-route.test.ts)
 import { pastedFilePath } from "./paste-path";
 import { insertAtCaret } from "./composer-insert";
-import { hostNameNodes, hostPartsNodes, hostPrefix, hostOf, hostIsDown, hostDownNote } from "./host-prefix";
-import { MENTION_MAX_ROWS, mentionQuery, rankMentions, mentionMoreNote, mentionToken, insertMention, mentionKeyAction, mentionSegments } from "./composer-mention";
+import { hostNameNodes, hostPartsNodes, hostPrefix, hostOf, hostIsDown, hostIsDialing, hostDownNote } from "./host-prefix";
+import { focusAfterDismiss, emptyStateParts } from "./pane-focus";   // where focus goes when a tab leaves, and the empty body's line (T357)
+import { MENTION_MAX_ROWS, mentionQuery, rankMentions, mentionMoreNote, mentionToken, insertMention, mentionKeyAction, mentionSegments } from "./composer-mention";   // the @-mention card's rules, pure; the DOM is setupComposer's mention block and markMentions
 import type { MentionCandidate, MentionQuery } from "./composer-mention";
 import { defaultCommentName, defaultBreakoutName, defaultForkName, nameToSend } from "./comment-name";
-import { followReader, keepPlaceAcrossShow, followTail, atBottomDist, followBoxBelow, followTailShrink } from "./scroll-keep";
+import { followReader, keepPlaceAcrossShow, followTail, atBottomDist, followBoxBelow, followTailShrink, reshowStick } from "./scroll-keep";
+import { phParts } from "./composer-placeholder";   // the resting placeholder names the session (2026-09-09)
 import { retainLiveOmitted } from "./tab-order";
+import { localStrip, stripHost, readCloseAckMs } from "./tab-order";
 import { userTurnShows } from "./user-turn-content";
 import { ScrollDiagBudget, classifyScroll, scrollWriteRow, tailChangeRow, tailLabel, spacerRow, readScrollDiagCap, summarizeTailMutations, tailMutRow, unitChangeRow, unitChanges, boxChanges, boxLabel, BOX_FROM_TAIL } from "./scroll-write";
 import { reloadScrollRecord, takeReloadScroll, type ReloadScroll } from "./reload-restore";
@@ -86,23 +113,32 @@ import { activeTabToReannounce } from "./relay-active";
 import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from "./dir-complete";
 import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
+import { durLabel } from "./duration";
 import { apiErrorReason } from "./api-error-reason";
-import { billingRowText, billingSubText, pickerBillingRow, pickerBillingTitle } from "./billing-label";
-import { pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, reloadingTitle, switchingTitle, RUNNING_TAG, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line, the badge tips, the tab tooltip's held rows and the menus' marks (pick-held.ts)
+import { pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, billingHeld, billingHeldRow, billingHeldSub, reloadingTitle, switchingTitle, RUNNING_TAG, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line, the badge tips, the tab tooltip's held rows, the held Billing readings and the menus' marks (pick-held.ts)
 import { userMdHtml } from "./chat-md";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, shared with the viewer and the anchor map (md-config.ts)
 import { setTip, pruneTip } from "./tip";
-import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
+import { MetaKind, MetaHooks, metaButton as buildMetaButton, syncMetaControls as syncMetaControlsWith, ctxBar as buildCtxBar, setCtxBar as setCtxBarWith,
+  metaColor, modeIconSvg, riskyMode, prettyMode, prettyFast, fastAvailable, metaCurrent, metaDots, rampOn } from "./status-controls";   // the status line's controls, one renderer for the chat's line, the popovers and the settings card's preview (T415 part two)
+import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, newCommentCreate, commentCreateFrame,
+         pickMarkToOpen, type CommentThread, type CommentCreate, markSkipsParent } from "./comments";
+import { isReplyReady, placeMark, placeWindowed, readyChips, replyLine, chipLabel, chipTip, chipAria, type Dir, type ReadyMark, type ReadyChip } from "./reply-ready";
 import { dragSlotIndex } from "./dragslot";
+import { acceptDragEnter } from "./drag-accept";
+import { perfFrameHandler } from "./perf-telemetry";
 import { linkifyPrRefs, senderPrRepo, postalSenderHost } from "./pr-links";
 import { linkifyUrls, urlChip } from "./url-links";   // a URL in a todo's or a note's text is a link, and a todo's own `link` is a chip (the user 2026-09-08)
-import { perfFrameHandler } from "./perf-telemetry";
-import { listenForFrames } from "./frame-listener";
-import { watchChatVisibility, browserChatVisibilityDeps } from "./chat-visibility";   // the shim's hidden word for the chat page (no paint gate here)
+import { SETTLE_MS, SETTLE_FIRST_PAINT_MS, SETTLE_ROW_VIEWPORT_CAP, settleStep, settleRowFields, reachableOffset, gestureEvidence, scrollerGrab, writerIsReader, type SettleSample } from "./landing-settle";   // a deep-link landing settles before its row is filed (T386 stage 1)
+import { listenForFrames, federationMissing, federationLoadEntry, fedRetryKey } from "./frame-listener";
 import { highlightHtml } from "./highlight-cache";
 import { wrapCodeLines, addCopyBtn } from "./code-block";   // a fence's per-line rows and Copy button, shared with the file viewer
 import { turnWorkedSecs as workedSecsOf, workedFooterPlan } from "./worked-footer";
 import { reconcileRewindPass, type RewindEvent } from "./rewind-reconcile";
+import { watchChatVisibility, browserChatVisibilityDeps } from "./chat-visibility";
+import type { PaneHiddenHost } from "./paint-gate";
+import { gistOf, collapseWs, postalHead } from "./gist";   // the shared gist rule + the postal head (T294)
+import { kindLabel, deliveryOf, deliveryTitle, DELIVERY_GLYPHS, type PostalDelivery, type PostalReceipt } from "./postal-state";   // the postal card's kind word + delivery state (T302), the marks' drawings (T337)
 
 for (const [name, lang] of Object.entries({
   bash, sh: bash, shell: bash, python, py: python, javascript, js: javascript,
@@ -132,12 +168,14 @@ type TaskOutputs = Record<string, { command: string; output: string }>;
 type ChatEvent = (
   // mid/mids: postal message ids the kernel could NOT resolve into cards, carried on the raw turn so a
   // timeline arc into it still lands (see _hydrate_postal's unresolved path)
-  // sendIds: the client send id(s) a user event stands for (an echo's own; a landed record's every send) — send-pending.ts matches a pending bubble on them; absorbed/sentAt: a mid-turn send placed at its landing, with its send time for the bubble's hover (T252d); hiddenByPending: client-only, the kernel's echo of a send whose bubble is drawn as our own at the tail (T262h: the echo is hidden the way a queued copy is, reconcileOptimistic)
+  // absorbed/sentAt: a mid-turn send placed at its landing, with its send time for the bubble's hover (T252d); hiddenByPending: client-only, the kernel's echo of a send whose bubble is drawn as our own at the tail (T262h: the echo is hidden the way a queued copy is, reconcileOptimistic)
   // source/preamble: a harness-INJECTED record (kernel injected_source — a background agent's completion, a
   // system notice, a peer's message) and the CLI's note-to-the-model paragraph lifted out of its text; the
   // event renders as a labelled notice (renderInjected), never the user's bubble (the user 2026-09-07)
-  | { kind: "user"; md: string; uuid?: string; ts?: string; reminders?: string[]; taskOutputs?: TaskOutputs; human?: boolean; romp?: boolean; rompAuto?: boolean; rompSystem?: boolean; followUp?: boolean; goal?: string; fuCtx?: string; canned?: string; tag?: string; mid?: string; mids?: string[]; images?: { src: string; path?: string }[]; undelivered?: boolean; echoT?: number; absorbed?: boolean; sentAt?: number; sendIds?: string[]; hiddenByPending?: boolean; source?: InjectedSource; preamble?: string; spacePaths?: string[]; pathLinks?: Record<string, string>; pathPins?: Record<string, string> }
-  | { kind: "assistant"; md: string; uuid?: string; ts?: string; spacePaths?: string[]; pathLinks?: Record<string, string>; pathPins?: Record<string, string> }   // spacePaths: backticked filenames WITH spaces the kernel verified exist (build_session _space_paths) → whole-span links. pathLinks: path-shaped tokens the kernel verified against the filesystem, token → real open target (build_session _path_links) — the linkifier's gate
+  // gist: a romp SYSTEM notice's USER-facing head, lifted by the kernel from the notice's <!-- romp-gist -->
+  // marker (2026-09-08) — the body is written to the agent and never doubles as the head
+  | { kind: "user"; md: string; uuid?: string; ts?: string; reminders?: string[]; taskOutputs?: TaskOutputs; human?: boolean; romp?: boolean; rompAuto?: boolean; rompSystem?: boolean; gist?: string; followUp?: boolean; goal?: string; fuCtx?: string; canned?: string; tag?: string; mid?: string; mids?: string[]; images?: { src: string; path?: string }[]; undelivered?: boolean; echoT?: number; absorbed?: boolean; sentAt?: number; hiddenByPending?: boolean; source?: InjectedSource; preamble?: string; spacePaths?: string[]; pathLinks?: Record<string, string>; pathPins?: Record<string, string>; pathPreview?: Record<string, string>; pathPreviewWhy?: Record<string, string> }
+  | { kind: "assistant"; md: string; uuid?: string; ts?: string; spacePaths?: string[]; pathLinks?: Record<string, string>; pathPins?: Record<string, string>; pathPreview?: Record<string, string>; pathPreviewWhy?: Record<string, string> }   // pathPreview: the links a hover may preview, by kind (T351). spacePaths: backticked filenames WITH spaces the kernel verified exist (build_session _space_paths) → whole-span links. pathLinks: path-shaped tokens the kernel verified against the filesystem, token → real open target (build_session _path_links) — the linkifier's gate
   | { kind: "thinking"; text: string; encrypted: boolean; uuid?: string; ts?: string }
   | {
       kind: "tool";
@@ -193,7 +231,8 @@ type ChatEvent = (
       mid?: string;      // postal message id (joins feed-modal handoff hovers to this card)
       t?: number;        // epoch seconds (incoming)
       park?: boolean;
-      status?: "delivered" | "parked"; // outgoing
+      status?: "delivered" | "parked"; // outgoing, as stamped at send time
+      receipt?: PostalReceipt;         // outgoing: the ledger's later outcomes, joined by message id (read / relayed / bounced / recalled / remote)
       ts?: string;
       uuid?: string;
     }
@@ -217,7 +256,7 @@ type ChatEvent = (
   // `held` DOES come from the kernel (_limit_hold): the queue is stuck on the ACCOUNT rather than on this
   // session — a usage limit or a monthly spend cap holds every send — so the head names what it is waiting
   // for, and how long is left when the API reported a reset (the user 2026-07-24).
-  | { kind: "queued"; texts: { md: string; followUp?: boolean; goal?: string; fuCtx?: string; idx?: number; park?: number; cancelable?: boolean; optimistic?: boolean; romp?: boolean; rompSystem?: boolean; rompAuto?: boolean; imgPaths?: string[]; lost?: string; qts?: number; sendId?: string; hiddenByPending?: boolean; landing?: boolean }[]; ts?: string; uuid?: string; bare?: boolean; held?: { reason: string; resetsAt?: number | null; what: string; detail?: string } }   // imgPaths: an optimistic echo's dragged-image attachments → thumbnails, the landed form's own renderer (the user 2026-08-25); lost: client-only, the connection dropped after this unconfirmed send; qts: on OUR optimistic copy the pending entry's identity (its press time) so the ✕ removes ITS entry (send-pending.ts); a kernel copy's own qts, when it ships one, is its enqueue stamp, not an entry; sendId: the send's identity on both sides, minted at the press and carried by the kernel's queued copy, so the ✕ and the reconcile name exactly this send; hiddenByPending: client-only, the kernel's copy of a send whose bubble is drawn as our own bare group at the tail (T252/T252d, hideQueuedCopy); landing: client-only, a kernel copy the queue no longer lists whose record has not landed yet, held in its slot until it does (T262i, queued-held.ts)
+  | { kind: "queued"; texts: { md: string; followUp?: boolean; goal?: string; goalId?: string; paths?: string[]; fuCtx?: string; idx?: number; park?: number; cancelable?: boolean; optimistic?: boolean; romp?: boolean; rompSystem?: boolean; rompAuto?: boolean; gist?: string; imgPaths?: string[]; lost?: string; qts?: number; qid?: string; hiddenByPending?: boolean; landing?: boolean }[]; ts?: string; uuid?: string; bare?: boolean; held?: { reason: string; resetsAt?: number | null; what: string; detail?: string } }   // imgPaths: an optimistic echo's dragged-image attachments → thumbnails, the landed form's own renderer (the user 2026-08-25); lost: client-only, the connection dropped after this unconfirmed send; qts: on OUR optimistic copy the pending entry's identity (its press time) so the ✕ removes ITS entry, on a kernel copy its enqueue stamp (T252c); qid: the copy's identity (T252c): minted at the press on OUR copy and posted with the send, so the kernel's copy wears the same one; the ✕ names it on both (send-pending.ts)
   // The turn stopped on an API error (event-based: transcript isApiErrorMessage). The session is BLOCKED
   // until retried — a red-dot card at the bottom with a Retry button (the user 2026-06-16).
   | { kind: "apiError"; text: string; status?: number; ts?: string; uuid?: string }
@@ -295,12 +334,49 @@ interface TodoTask { id: string; subject: string; activeForm?: string; status: s
 // Fixed store values only (createdT is stamped once): this rides the dedup-compared chat payload.
 interface UserTodo { id: string; text: string; detail?: string; createdT?: number; file?: string; link?: string }   // file: the absolute path of the file the todo is about, as the kernel filed it (the todo-file follow-on, 2026-09-07), shown as a chip on the row and in the Reply modal (todoFileChip); link: the http(s) address the todo carries (the user 2026-09-08), a chip beside it (todoLinkChip)
 
-type ChipState = "working" | "ready" | "needsInput" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // needsInput = a live permission/picker prompt (on YOU) — renamed from the legacy "awaiting" (2026-08-15), which stays accepted for OLDER REMOTE KERNELS across federation; awaitingBg = idle main thread waiting on background work it dispatched (the user 2026-07-13)
+// ChipState, the kernel's chip states, lives in status-chip.ts since T322b beside its labels (imported above), so the label
+// map is checked exhaustive over it: needsInput = a live permission/picker prompt (on YOU), the legacy "awaiting" accepted
+// for older remote kernels; awaitingBg = idle main thread waiting on background work it dispatched (the user 2026-07-13).
 type PeerIdent = { name: string; host?: string; sid?: string; color?: { bg: string; fg: string } | null };   // a named peer behind a peer-kind wait (kernel _peer_identity, 2026-08-26)
 // which billing sides this box can bill, and why not for the other (kernel _auth_avail, 2026-09-08): the
 // Billing submenu lists both and greys the unavailable one with the reason in its hover
-interface AuthAvail { login?: boolean; key?: boolean; loginWhy?: string; keyWhy?: string; acct?: string; default?: string }
-interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; awaitingCount?: number | null; awaitingItems?: AwaitRow[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; pickHeld?: PickHeld | null; fastPending?: boolean; modePending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAvail?: AuthAvail; authPickUnavailable?: string; authPickFell?: string; authAcct?: string; authPicked?: boolean; ctx?: string; ctxOver?: boolean; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions): the #bg-tasks box renders it as the header of the in-flight rows (renderBgTasks; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried: retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried: a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
+// one login a host offers a session (T346): the machine's own (machine: true, value "login") or a stored one (value
+// "login:<id>"); `label` is its display (email · organisation · kind for the machine's, the user's label plus what
+// the add flow could read for a stored one), `why` the reason it is greyed when `available` is false
+interface AuthLogin { id?: string; value?: string; label?: string; machine?: boolean; available?: boolean; why?: string; expiresSoon?: boolean }
+interface AuthAvail { login?: boolean; key?: boolean; loginWhy?: string; keyWhy?: string; acct?: string; default?: string; defaultExplicit?: boolean; logins?: AuthLogin[] }   // defaultExplicit: set in the Billing flyout's Default group, else the helper rule (T380)
+interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; bgServiceIds?: string[]; awaitingCount?: number | null; awaitingItems?: AwaitRow[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; pickHeld?: PickHeld | null; fastPending?: boolean; modePending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAvail?: AuthAvail; authPickUnavailable?: string; authPickFell?: string; authAcct?: string; authLogin?: string; authLabel?: string; authLoginLive?: string | null; ctx?: string; ctxOver?: boolean; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; needsYou?: boolean | null; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it as the header of the in-flight rows (renderBgTasks; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "sdk" | "codex"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); needsYou = the FEED filed a card of this session under needs-you (build_session, from the kernel's last feed build; null before the first) → the Waiting-on-you ring widget wears a dashed yellow ring on the tab in every live state, working included (tab-state.ts RING_TEST, tab-widgets.ts composeTabRing; the ask ring, 2026-09-13); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
+
+// The side a pick this box cannot bill actually fell to ("login" | "key"), "" when nothing did: the kernel's
+// authPickFell (the launch's own decision, 2026-09-09). An older kernel without the field is read the way the
+// Billing sub-line always inferred it: the pick is unavailable and the other side exists.
+function authFellTo(st: Status): string {
+  if (st.authPickFell !== undefined) return st.authPickFell || "";
+  if (!st.auth || st.authPickUnavailable !== st.auth) return "";
+  const other = st.auth === "key" ? "login" : "key";
+  const avail: AuthAvail = st.authAvail || { login: true, key: true };
+  return avail[other] ? other : "";
+}
+// The name beside 'Login' for a session billing a login (T346): the kernel's authLabel (a stored login's display,
+// else the machine's own as email · organisation · kind), falling back to the account name an older kernel sends.
+function loginName(st: Status): string { return st.authLabel || st.authAcct || ""; }
+// The Billing choices a kernel offers (T346): every login it knows (the machine's own first, then the stored ones)
+// plus the API key, each with the reason it is greyed or "". Called only when the kernel sent `logins`; an older
+// kernel's caller keeps its two-entry list.
+function authLoginChoices(avail: AuthAvail): { label: string; value: string; why: string }[] {
+  const out = (avail.logins || []).map((l) => ({
+    label: l.label ? `Login (${l.label})` : "Login",
+    value: l.value || (l.id ? `login:${l.id}` : "login"),
+    why: l.available === false ? (l.why || (l.machine ? (avail.loginWhy || "no Claude login signed in on this machine") : "this login is unavailable")) : "" }));
+  out.push({ label: "API key", value: "key", why: avail.key ? "" : (avail.keyWhy || "no apiKeyHelper configured") });
+  return out;
+}
+// Whether a Billing choice IS the session's current pick: the key, or a login by WHICH login (st.authLogin names a
+// stored one, "" the machine's own).
+function authChoiceCurrent(st: Status, value: string): boolean {
+  if (value === "key") return st.auth === "key";
+  return st.auth === "login" && ("login" + (st.authLogin ? `:${st.authLogin}` : "")) === value;
+}
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
 // status, expandable to the command + its output. status = running | completed | failed. For a dispatched
@@ -314,12 +390,13 @@ interface BgTasks { count: number; tasks: BgTask[]; }
 // kernel ships only the last WIRE_TAIL events (headFrom > 0) to keep startup light; older history streams in
 // on scroll-back (loadOlder → chatHead prepends, lowering headFrom). headFrom 0 = the whole transcript is
 // resident. chatTail's `from` is GLOBAL and mapped through headFrom.
-interface Session { id: string; name: string; color: Color | null; emoji?: string; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; githubRepo?: string | null; headFrom?: number; headTotal?: number; bgTasks?: BgTasks; userTodos?: UserTodo[]; pinnedNotes?: PinnedNote[]; hideFromFeed?: boolean; postalServiceOff?: boolean; notify?: boolean; branch?: { fromSid: string; fromName: string; cut: string; t: number } | null; branches?: { sid: string; name: string; cut: string; t: number }[] | null; sub?: SubInfo; }
+interface Session { id: string; name: string; color: Color | null; emoji?: string; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; githubRepo?: string | null; headFrom?: number; headTotal?: number | null; proto?: number; headKnown?: boolean; firstUuid?: string | null; lastUuid?: string | null; regions?: Region[]; pageTurns?: number; tailLo?: number | null; bgTasks?: BgTasks; userTodos?: UserTodo[]; pinnedNotes?: PinnedNote[]; hideFromFeed?: boolean; postalServiceOff?: boolean; mailOffWhy?: string; notify?: boolean; branch?: { fromSid: string; fromName: string; cut: string; t: number } | null; branches?: { sid: string; name: string; cut: string; t: number }[] | null; sub?: SubInfo; }
 // A SUBAGENT VIEWER pseudo-session (plans/subagent-transcripts.md): a read-only tab whose events are one
 // agent's own transcript, fed by {type:"subagent"} frames. Client-only — the kernel never lists it in
 // tabOrder (reconcileTabOrder keeps a known, never-kernel-seen id), so it lives exactly as long as the
 // viewer. anchorUuid = the parent's Agent tool head, for the header's link back.
-interface SubInfo { parentId: string; agentId: string; meta: SubMeta | null; running: boolean; truncated: boolean; error: string | null; loaded: boolean; anchorUuid: string | null; }
+interface SubInfo { parentId: string; agentId: string; meta: SubMeta | null; running: boolean; truncated: boolean; error: string | null; loaded: boolean; anchorUuid: string | null;
+                    stalled?: boolean; askedAt?: number; }   // stalled: the ask went unanswered past SUBAGENT_OPEN_WAIT_MS (T355)
 
 const vscodeApi =
   typeof (window as any).acquireVsCodeApi === "function" ? (window as any).acquireVsCodeApi() : undefined;
@@ -338,9 +415,21 @@ if ((window as any).__rompShowStrip) {
 initStrip(() => window.postMessage({ romp: "openSettings" }, "*"),
   (m) => vscodeApi?.postMessage(m));
 installSettingsSync();   // a gear save in ANOTHER VS Code pane lands here via the host
+// Open the settings gear on a NAMED tab, at a named SECTION of it when one is given (T379: the tab-widgets glyph opens
+// the Chat tab scrolled to its Tab widgets section): the same openSettings message every opener posts, with the tab and
+// the section named. Through the shell when this pane sits in one (the kernel's __rompOpenSettings relays it into the
+// settings iframe, tab and section and all); else to this window, whose own gear (the VS Code chat's, mounted above)
+// listens for it.
+function openSettingsOn(tab: string, section?: string): void {
+  const m: { romp: string; tab: string; section?: string } = { romp: "openSettings", tab };
+  if (section) m.section = section;
+  if (inRompShell()) { try { window.parent.postMessage(m, "*"); } catch { /* no shell to ask */ } return; }
+  window.postMessage(m, "*");
+}
 
 let settings: RompSettings = loadSettings();   // global webview settings (compact mode, …) — see settings.ts
-const expandedGroups = new Set<string>();      // compact mode: tool-group keys the user clicked open
+// (compact mode's expanded tool/notice runs are keyed in openFolds — "tg:<uuid>" / "ng:<uuid>" — the ONE fold
+// store since 2026-09-08; this had its own expandedGroups set)
 
 const sessions = new Map<string, Session>();
 const order: string[] = [];           // positional tab order (for cycling)
@@ -452,7 +541,10 @@ function reconcileOptimisticInner(s: Session): void {
   // `lost` rides along so the bubble can say "not confirmed" after a connection drop (markPendingLost).
   // `qts` is the entry's identity: the ✕ removes THAT entry, never the first with the same text (two
   // identical sends can sit in different states — one lost, one received).
-  const mk = (p: PendingSend) => ({ md: p.text, optimistic: true, cancelable: true, imgPaths: p.imgPaths, lost: p.lost, qts: p.ts, sendId: p.sendId });
+  // `qid` is the copy's identity on the kernel's side too (the id the press minted, posted with the send): the
+  // ✕ names it, so the kernel cancels exactly this copy, wherever the send landed and whatever else wears the
+  // same words.
+  const mk = (p: PendingSend) => ({ md: p.text, optimistic: true, cancelable: true, imgPaths: p.imgPaths, lost: p.lost, qts: p.ts, qid: p.qid });
   // ONE BARE dashed group at the TAIL, the sends in send order (T252d): below every event the kernel has
   // shown, where the model will read them; the landed atom, placed at its landing time, takes that same
   // position. No "N queued messages" header to claim what we can't back. A copy hidden out of a HELD kernel
@@ -493,17 +585,15 @@ function stripOptimistic(s: Session, keepHeld = false): void {
 const HELD_PREFIX = "held:";
 const isHeldGroup = (e: ChatEvent): boolean => e.kind === "queued" && !!e.uuid && e.uuid.startsWith(HELD_PREFIX);
 const heldQueued = new Map<string, HeldMemory>();
-// the copies the user cancelled with the ✕ on this client, per session (their sendId, or their text when the kernel
+// the copies the user cancelled with the ✕ on this client, per session (their qid, or their text when the kernel
 // gave none): the kernel drops them and nothing lands, so a vanished cancelled copy is never held; the entry is
 // forgotten once the queue no longer lists the copy (the cancel took effect) — event-based, no timer
-const cancelledQueued = new Map<string, { sendId?: string; md: string }[]>();
-function noteCancelledQueued(sid: string, md: string, sendId?: string): void {
+const cancelledQueued = new Map<string, { qid?: string; md: string }[]>();
+function noteCancelledQueued(sid: string, md: string, qid?: string): void {
   const list = cancelledQueued.get(sid) || [];
-  list.push({ sendId, md });
+  list.push({ qid, md });
   cancelledQueued.set(sid, list);
 }
-// queued-held.ts speaks the wire's names, a queued entry's `sendId` and a user event's `sendIds` (send-pending.ts): upstream's
-// qid/qids were renamed at the 2026-09-09 fold (one vocabulary), so the records go in and come back as they are.
 function reconcileHeldCopies(s: Session): void {
   // idempotent: a frame that kept the resident events (an empty full frame) still carries the previous pass's held
   // marks and group — cleared first, so the pass recomputes from the kernel's copies alone
@@ -519,17 +609,17 @@ function reconcileHeldCopies(s: Session): void {
   const settled = !(s.status.state === "working" || s.status.state === "compacting");
   const r = reconcileHeld(mem, s.events as any, cur, {   // as any: a teammate event's blocks are objects, HeldEvent's strings; the pass reads user events
     settled,
-    cancelled: (c) => cancelled.some((x) => x.sendId && c.sendId ? x.sendId === c.sendId : x.md.trim() === c.md.trim()),
+    cancelled: (c) => cancelled.some((x) => x.qid && c.qid ? x.qid === c.qid : x.md.trim() === c.md.trim()),
   });
   // a cancel has taken effect once the kernel's queue no longer lists the copy: forget it
   if (cancelled.length) {
-    const still = cancelled.filter((x) => cur.some((t) => x.sendId && t.sendId ? t.sendId === x.sendId : (typeof t.md === "string" && t.md.trim() === x.md.trim())));
+    const still = cancelled.filter((x) => cur.some((t) => x.qid && t.qid ? t.qid === x.qid : (typeof t.md === "string" && t.md.trim() === x.md.trim())));
     if (still.length) cancelledQueued.set(s.id, still); else cancelledQueued.delete(s.id);
   }
   heldQueued.set(s.id, r);
   // the held set changed (a copy taken, a copy landed): the frame may keep its LENGTH while a held card gives way to
   // the landed atom, and the repaint's no-op fast path reads length alone — so the view is marked stale here
-  const key = (h: HeldCopy[]) => h.map((c) => c.sendId || c.md).join("\u0000");
+  const key = (h: HeldCopy[]) => h.map((c) => c.qid || c.md).join("\u0000");
   if (key(mem.held) !== key(r.held)) { const v = views.get(s.id); if (v) v.stale = true; }
   if (!r.held.length) return;
   const add = r.held.map(heldAsQueued);
@@ -549,19 +639,20 @@ function hideQueuedCopy(s: Session, p: PendingSend): { held?: Extract<ChatEvent,
   const qi = tailQueuedIdx(s.events);
   if (qi < 0) return { held: undefined };            // nothing queued at the tail: nothing to hide, ours shows
   const q = s.events[qi] as Extract<ChatEvent, { kind: "queued" }>;
-  const k = queuedCopyToHide(q.texts, p.text, p.sendId);   // the copy naming this send first, else the newest id-less copy of its text
+  const k = queuedCopyToHide(q.texts, p.text, p.qid);   // ours by identity first (T252c)
   if (k < 0) return null;                            // no copy to hide (or a non-cancelable one): the kernel's bubble stays
   const texts = q.texts.slice(); texts[k] = { ...texts[k], hiddenByPending: true };
   s.events[qi] = { ...q, texts };
   return { held: q.held || undefined };
 }
 
-// Record a composer send as in-flight and show its optimistic bubble NOW (before any kernel push). Returns
-// the entry: its `sendId` is posted WITH the send (routeUserMessage), so every kernel copy of this send
-// — its queued entry, its echo, the record that lands it — names this bubble (send-pending.ts, 2026-09-08).
-function registerOptimistic(id: string, text: string, imgPaths?: string[]): PendingSend {
+// Record a composer send as in-flight and show its optimistic bubble NOW (before any kernel push). `qid` is the
+// copy's id the caller minted at the press (mintQid) and posted with the send, so the kernel queues or parks the
+// copy under the id this bubble wears and the bubble, the kernel's chip and the ✕ agree from the press; a caller
+// that posts nothing (a provisional tab's send, held until the session exists) lets the entry mint its own.
+function registerOptimistic(id: string, text: string, imgPaths?: string[], qid?: string, paths?: string[]): void {
   const arr = pendingSent.get(id) || [];
-  const p = newPending(text, imgPaths);
+  const p = newPending(text, imgPaths, Date.now(), qid, paths);
   arr.push(p);   // the anchor (`at`) is stamped by the reconcile just below
   pendingSent.set(id, arr);
   const s = sessions.get(id);
@@ -569,7 +660,7 @@ function registerOptimistic(id: string, text: string, imgPaths?: string[]): Pend
   // is pending — selectable, composer live). The first upsert stamps the entry, against a frame that may
   // already hold this send's own echo or landing; `late` tells stampBase to read the events' own stamps,
   // so only what the kernel stamped before the press is background (send-pending.ts).
-  if (!s) { p.late = true; return p; }
+  if (!s) { p.late = true; return; }
   reconcileOptimistic(s);
   // The reconcile can mutate the tail IN PLACE — merging into an existing queued group, or pop+push
   // on a repeat send — which leaves s.events.length unchanged, and syncView's no-op fast path
@@ -592,7 +683,6 @@ function registerOptimistic(id: string, text: string, imgPaths?: string[]): Pend
     appendActive();
     if (content && wasAtBottom) writeScroll(content, content.scrollHeight, "optimistic-send", true);
   }
-  return p;
 }
 
 // The socket (or the VS Code pipe) went DOWN: every send still unconfirmed may never have reached the
@@ -661,13 +751,12 @@ const tabMeta = new Map<string, { name: string; color: Color | null; emoji?: str
 // swirl, looking like a shutdown you had to wait out (the user 2026-07-24, who wanted the tab to just go and
 // the shutdown to run behind it). Cleared on the kernel's ack — its push dropping the id — not on a timer.
 const closingTabs = new Map<string, number>();
-// …with a backstop for the ack that never comes. A kill failure the kernel can DETECT sends the typed
-// endFailed frame (see the message handler): one toast, suppression released, tab back immediately — so
-// the backstop never double-reports those. It remains for failures with no event to key on (a socket
-// lost mid-close, a kernel that never saw the close), where the sole evidence is the kernel still
-// listing the tab long after. Past this we say so and let the tab back, rather than hiding a session
-// that's really still open.
-const CLOSE_ACK_MS = 15_000;
+// …with a backstop for the ack that never comes: a kill the kernel never confirms (a socket lost
+// mid-close, a kernel that never saw the close) has no event to key on, and the sole evidence is the
+// kernel still listing the tab long after. Past this we say so and let the tab back, rather than hiding a session
+// that's really still open. Fifteen seconds, or the page's
+// localStorage knob for a lab (tab-order.ts readCloseAckMs: the served split test waits past it in seconds, not fifteen).
+const CLOSE_ACK_MS = readCloseAckMs((k) => { try { return localStorage.getItem(k); } catch { return null; } });
 // Optimistic label/color edits awaiting their kernel echo — holds a stale in-flight push from
 // reverting the strip (see tab-meta.ts; the sessionViews pending machinery's reasoning).
 const pendingTabMeta = new Map<string, PendingTabMeta>();
@@ -954,16 +1043,51 @@ function assertPeekFor(id: string): void {
   const next = chatVisible(id) ? null : id;
   if (next !== peekId) { peekId = next; renderTabs(); }
 }
-function tabInView(id: string): boolean { return id === peekId || chatVisible(id); }
+// THE COLUMN this page is (the chat split, the user 2026-09-11, who asked for columns that hold different sessions
+// instead of each showing the whole board): "" for the first column, a standalone page and the VS Code webview; a
+// number for a later column (chat-columns.ts, the shim's rule). The shell owns which sessions each later column
+// holds (__rompChatSets, read ONCE per renderTabs into colSets — a cross-window call, the focusIsOurs precedent) and
+// the first column holds the rest. A sub-agent viewer and a provisional (create) tab are this page's own, whatever
+// the sets say. null sets: no partition (no shell, an older shell, the phone), everything is held. The filter is the
+// whole partition on the page: tabInView feeds visibleIds, the keyboard walk, the hidden-active re-point, the strip
+// plan and the signature, so a tab moved away is simply gone from this strip.
+const COL = colFromSearch(location.search);
+let colSets: ColSets | null = null;
+let tabOrderSeen = false;   // the kernel's first strip has landed on this socket (applyTabOrder, the local kernel's own frame only — tab-order.ts localStrip): the emptiness post and the stale-active fallback wait for it
+// The ids the last applied strip's `live` set affirms (the kernel's raw liveness, T258): a member of this column the strip
+// omits while live still names it is a transient read failure, never an emptiness (noteColumnEmptiness).
+let boardLive = new Set<string>();
+// The hosts whose OWN strip has landed on this socket (tab-order.ts stripHost: "" the local kernel, a name for a remote's
+// fresh push; a re-emission adds nothing). The emptiness post judges a member absent only once its host is here: the local
+// kernel's strip lands first and says nothing about a remote host's sessions, so a column opened on a host-prefixed tab
+// read the member as gone ~250 ms before its own host's strip arrived and folded under it (the user 2026-09-14). Add-only
+// for the page's life, like kernelListed: a host that reported stays reported; its later strips speak through `order`.
+const hostsSeen = new Set<string>();
+function readColSets(): ColSets | null {
+  try {
+    if (!window.parent || window.parent === window) return null;
+    const f = (window.parent as any).__rompChatSets;
+    return typeof f === "function" ? (f() ?? null) : null;
+  } catch { return null; }   // cross-origin parent (VS Code): no shell
+}
+function heldHere(id: string): boolean { return isSubId(id) || isProvisionalId(id) || columnHolds(colSets, COL, id); }
+function tabInView(id: string): boolean { return (id === peekId || chatVisible(id)) && heldHere(id); }
 // TAB SECTIONS (tab-groups.ts): the ids the last render folded away under a collapsed section
-// header. Keyboard cycling walks the VISIBLE order, and a folded tab is not visible. The ACTIVE tab
-// can be among them (the user 2026-09-06: its section folds like any other): its header is then its
-// stand-in — focusActiveTab lands there, ←/→ step from its position (neighborOfFolded over the last
-// plan's items, kept here for both), and the pane shows the section's snapshot (renderSnapshot).
+// header. Keyboard cycling walks the VISIBLE order, and a folded tab is not visible. The active tab's
+// section folds like any other, so the active id can be folded away too: its header is then its
+// stand-in (focusActiveTab lands there, the arrows step from its position through neighborOfFolded over
+// the last plan's items, kept here for both), and the pane shows the section at a glance
+// (renderSnapshot) instead of a transcript whose tab is nowhere on the strip.
 let collapsedTabIds = new Set<string>();
 // (a member hidden INSIDE its section by its own flag, the snapshot's Hide, is among them in either fold state;
 // which section a pick of one opens, if any, is unfoldSectionOf's per-holder rule)
+// the strip plan the last render painted (planStrip's items): what the stand-in rules and the section view
+// read between renders (which header holds a folded-away id, which tab is next to it, which section a
+// pick of one opens: unfoldSectionOf's per-holder rule)
 let lastStripItems: StripItem[] = [];
+// the ids the last paint SHOWED (visibleIds less the plan's folded ones): renderTabs's reveal detector compares the next paint's
+// shown set against it and re-arms the idle prefetch when any tab went hidden to shown (null until the first paint)
+let lastShownTabIds: Set<string> | null = null;
 /** Every tab the strip knows — the kernel's order plus any pushed tab not yet in it (a placeholder):
  *  the "does this session still exist" of the pin prune (tab-groups.ts prunePinned). */
 function knownTabIds(): Set<string> { return new Set<string>([...order, ...tabMeta.keys()]); }
@@ -993,6 +1117,10 @@ let draggedGroup: string | null = null;   // a section header mid-drag (reorders
 // named from the first paint (planStrip's `pending`), instead of landing loose and jumping on the frame
 let provisionalTags: string[] = [];
 function visibleOrder(): string[] { return order.filter((id) => tabInView(id) && !collapsedTabIds.has(id)); }
+/** The strip SHOWS this tab right now: in view (the views, another column's holds), not hidden by the #only= filter, and not folded under
+ *  a collapsed section header. The idle prefetch's gate (the user 2026-09-14: hidden tabs are not built until shown; the follow-up after
+ *  PR 1661, low 3, for the folded ones). */
+function stripShowsTab(id: string): boolean { return stripShows(id) && !collapsedTabIds.has(id); }
 // THE PHONE LAYOUT: the kernel's chat page swaps the tab strip for its own session list (#mhdr/#mlist,
 // built by scraping every rendered tab) under EXACTLY this media rule (_CHAT_MOBILE_CSS in kernel.py)
 // — the same string here, so what the CSS hides and what the plan flattens cannot disagree. Sections
@@ -1009,6 +1137,18 @@ fetch(kernelUrl("/palette"), { cache: "no-store" }).then((r) => r.json())
   .then((d) => { if (Array.isArray(d.colors)) paletteColors = d.colors; }).catch(() => { /* menu omits the swatch row */ });
 const mru: string[] = [];             // recency stack, front = most-recently-active (close → return to previous)
 let activeId: string | null = null;
+// UNFOCUSED (T357, the user 2026-09-11): the tab the user was on left the strip on its own (a kernel restart that
+// dropped the remote tabs until their host came back, a host relay down, a session gone). The pane never jumps to
+// ANOTHER session on its own: no active tab, a body that names the session that vanished, the composer disabled with
+// no session name, and focus RESTORED to that same session when its tab returns (the arrival path and applyTabOrder
+// read vanishedId). Only the user's own ✕ keeps the recency fallback, and only a pick by the user moves focus
+// (setActive clears these). pane-focus.ts holds the rule and the words.
+let vanishedId: string | null = null;
+let vanishedWhy: VanishWhy | null = null;
+let vanishedName = "";
+let vanishedByDecline = false;   // the vanished record is a declined first adoption's (hidden by the filter), not the user's own tab: a later visible first arrival may adopt over it (T357)
+/** why the pane is unfocused: a dismissal's reason, or "hidden" (the strip's #only= filter stopped showing the active tab) */
+type VanishWhy = DismissWhy | "hidden";
 let renderingSid: string | null = null;   // the session id syncView is currently building (for per-session fold keys)
 // The SESSION whose transcript DOM is being built — the id preview/image URLs must bake in, host prefix
 // included. Distinct from renderingSid, which is a fold KEY the comment popover retargets to its thread id.
@@ -1028,6 +1168,26 @@ let renderingOwnerSid: string | null = null;
 let renderingIntoThread = false;
 // restore the last-active tab on refresh (persisted via setState); one-shot, applied when its session arrives
 let wantActive: string | null = (() => { try { return ((vscodeApi?.getState?.() || {}) as any).activeId || null; } catch { return null; } })();
+// THE USER'S ACTUAL TRIGGER (T357, the review): a kernel restart RELOADS the page, so no dismissal runs; the persisted
+// choice above is all the pane has, and the local kernel's sessions arrive before a remote host relays again. An
+// outstanding wantActive is treated like a vanished id: the pane stays UNFOCUSED, its body naming the awaited session
+// (the name persisted beside the id, since the page knows nothing else about it yet), adopts nothing until that id
+// arrives (its frame, or the strip re-listing it), and clears the wait when the user picks another tab (setActive). A
+// session that never returns leaves the body standing until a pick: no timer.
+let wantActiveName: string = (() => { try { return String(((vscodeApi?.getState?.() || {}) as any).activeName || ""); } catch { return ""; } })();
+// A persisted id that can never be listed again (a subagent viewer's tab, a provisional create) is not awaited: the
+// body says it is gone and invites a pick (the review's low). A session that ended while the page was away is not
+// knowable up front: it is awaited like any other, and the body stands until a pick.
+let wantActiveGone: string | null = null;
+if (wantActive && (isSubId(wantActive) || isProvisionalId(wantActive))) { wantActiveGone = wantActive; wantActive = null; }
+/** The persisted choice this page restores after a reload: the id and the name the body can show before the strip
+ *  knows it. Written by every activation, a pick or an adoption alike (the review's low: an adopted tab was never
+ *  persisted, so a restart still landed elsewhere). */
+function persistActive(id: string): void {
+  try {
+    vscodeApi?.setState?.({ ...(vscodeApi.getState?.() || {}), activeId: id, activeName: liveSession(id)?.name || tabMeta.get(id)?.name || "" });
+  } catch { /* ignore */ }
+}
 let pendingAnchor: string | null = null; // deep-link target waiting to be scrolled to
 let pendingAnchorIntent: string | null = null; // kind the uuid anchor must honor — sticks with pendingAnchor across render-pass retries (pendingAnchorKind is cleared each pass, this isn't)
 let pendingAnchorT: number | null = null; // time fallback (epoch s) when the uuid can't resolve
@@ -1044,14 +1204,14 @@ let anchorPendingOlder = false; // scrollToAnchor kicked off a loadOlder fetch f
 // or the standing can't-trap backstop expires into the honest failure. While it outlives the
 // immediate landing, a small pane-local notice says so ("finding the passage…") with the ✕ —
 // cancel leaves the reader exactly where they are, scroll fully theirs.
-let seek: { sid: string; uuid: string; kind: string | null } | null = null;
+let seek: { sid: string; uuid: string; kind: string | null; t: number | null; from0: number | null } | null = null;   // t: the anchor turn's own moment when the kernel resolved it (anchorEventT); from0: the session's headFrom when the seek was armed. Both read by the reveal progress line (T336)
 let seekBackstop: number | undefined;
 const SEEK_BACKSTOP_MS = 30_000;
 
-function armSeek(sid: string, uuid: string, kind: string | null): void {
+function armSeek(sid: string, uuid: string, kind: string | null, t: number | null = null): void {
   if (seek && seek.sid === sid && seek.uuid === uuid) return;   // same target mid-seek: idempotent, never a restart
   clearSeek();                                                  // a different target supersedes cleanly
-  seek = { sid, uuid, kind };
+  seek = { sid, uuid, kind, t, from0: sessions.get(sid)?.headFrom ?? null };
   seekBackstop = window.setTimeout(() => failSeek(), SEEK_BACKSTOP_MS);
 }
 
@@ -1059,6 +1219,7 @@ function clearSeek(): void {
   seek = null;
   if (seekBackstop !== undefined) { clearTimeout(seekBackstop); seekBackstop = undefined; }
   document.getElementById("seek-note")?.remove();
+  revealProgressEnd();   // every end of the seek ends the progress line too (T336)
 }
 
 /** Drop the seek's claim on any in-flight older fetch: the chunk (if one is on the wire) arrives as
@@ -1101,6 +1262,7 @@ function showSeekNote(): void {
   if (!seek) return;
   const existing = document.getElementById("seek-note");
   if (seek.sid !== activeId) { existing?.remove(); return; }
+  if (revealProgress && revealProgress.uuid === seek.uuid) { existing?.remove(); return; }   // the progress line has the slot and the ✕ (T336)
   if (existing) return;
   const n = el("div", "");
   n.id = "seek-note";
@@ -1116,6 +1278,105 @@ function showSeekNote(): void {
   n.appendChild(x);
   document.body.appendChild(n);
 }
+// ── reveal progress (T336) ───────────────────────────────────────────────────────────────────────────────
+// The interim progress line while the index wire's fetch-until-resident loop walks back to a far-past anchor
+// (the user 2026-09-10: a distilled summary far back in a long session took a long time to reveal, with nothing
+// saying how far along it was). It hangs off the loop's START (a landing pass that kicked, or is waiting on, an
+// older fetch for the anchor while the index wire's headFrom count is above 0; the anchor turn's own moment rides the
+// seek, from the kernel's anchorEventT, never the card's time; the count of messages loaded is read off the state from the
+// seek's headFrom at its arm) and its END (the loop's own anchor lands,
+// the loop stops asking, the seek is cleared or cancelled, the tab changes), and off nothing else: the
+// one-round-trip window (T323 stage 4b, proto 2) carries no headFrom count, so under it the line never begins.
+// The fraction is the resident span over the span back to the anchor's moment (revealFraction), honest or
+// absent; absent, the line carries the count of older messages loaded and the oldest loaded time. The composer
+// placeholder's dim ink, a thin bar, no motion. It takes the seek note's slot and its ✕ while it shows.
+let revealProgress: { sid: string; uuid: string; anchorT: number | null; from0: number } | null = null;
+function revealProgressBegin(sid: string, uuid: string, anchorT: number | null, from0: number): void {
+  revealProgress = { sid, uuid, anchorT, from0 };
+  hideLandingNotice();                                // one message for the wait, not two
+  document.getElementById("seek-note")?.remove();     // the line takes the seek note's slot (showSeekNote yields to it)
+}
+function revealProgressEnd(): void {
+  revealProgress = null;
+  document.getElementById("reveal-progress")?.remove();
+}
+function revealProgressPaint(): void {
+  const p = revealProgress;
+  if (!p) return;
+  const s = liveSession(p.sid);   // a display path: a skeleton tab shows nothing as current
+  const existing = document.getElementById("reveal-progress");
+  if (!s || p.sid !== activeId) { existing?.remove(); return; }
+  const { oldestT, newestT } = residentSpan(s.events, eventEpoch);
+  const fraction = revealFraction(newestT, oldestT, p.anchorT);
+  // the count is read off the state, never accumulated: the messages among the events the loop has prepended, from the
+  // seek's headFrom at its arm (a tab round trip or a full frame cannot restart it) down to the session's headFrom now
+  const from0 = seek && seek.uuid === p.uuid && seek.from0 != null ? seek.from0 : p.from0;
+  const loaded = messageCount(s.events.slice(0, Math.max(0, from0 - (s.headFrom ?? 0))));
+  let n = existing;
+  if (!n) {   // built once per loop, updated in place: click-safe by construction
+    n = el("div", "");
+    n.id = "reveal-progress";
+    n.setAttribute("role", "status");
+    const label = el("span", "rp-label");
+    label.textContent = REVEAL_LABEL;
+    n.appendChild(label);
+    const dots = metaDots();                          // the loading rule's pulsing dots while no honest fraction exists (count mode)
+    dots.classList.add("rp-dots");
+    n.appendChild(dots);
+    const bar = el("div", "rp-bar");
+    bar.appendChild(el("div", "rp-fill"));
+    n.appendChild(bar);
+    n.appendChild(el("span", "rp-detail"));
+    if (seek && seek.uuid === p.uuid) {               // the seek's ✕, carried over: cancel leaves the reader where they are
+      const x = el("button", "rp-x");
+      x.setAttribute("aria-label", "Stop loading");
+      x.title = "stop loading, stay right here";
+      x.textContent = "✕";
+      x.addEventListener("click", (e) => { e.stopPropagation(); cancelSeek(); });
+      n.appendChild(x);
+    }
+    document.body.appendChild(n);
+  }
+  const bar = n.querySelector(".rp-bar") as HTMLElement;
+  const fill = n.querySelector(".rp-fill") as HTMLElement;
+  const detail = n.querySelector(".rp-detail") as HTMLElement;
+  const dots = n.querySelector(".rp-dots") as HTMLElement;
+  n.dataset.loaded = String(loaded);
+  if (fraction != null) {
+    const shown = revealShownFraction(fraction);          // floored below 1: the bar never reads complete before the event lands
+    n.dataset.fraction = shown.toFixed(3);
+    bar.hidden = false; bar.title = revealPercentWords(fraction);
+    fill.style.width = (shown * 100).toFixed(1) + "%";
+    detail.textContent = "";
+    dots.hidden = true;                                 // the still bar is the motion here
+  } else {
+    delete n.dataset.fraction;
+    bar.hidden = true; bar.title = "";
+    fill.style.width = "0%";
+    detail.textContent = revealCountWords(loaded, oldestT, Date.now());
+    dots.hidden = false;
+  }
+}
+// Once per landing pass, after the attempt: the loop's start and end are read off the pass itself.
+function revealProgressTick(scrolled: boolean, attAnchor: string | null): void {
+  if (revealProgress) {
+    const p = revealProgress;
+    const inFlight = (loadingOlder.has(p.sid) && pendingOlderAnchor.get(p.sid) === p.uuid) || (windowAsks.get(p.sid) ?? []).some((r) => !r.cancelled && r.anchor === p.uuid);   // an older fetch, or a live window ask on this anchor (round eight)
+    // the END: this loop's own anchor landed (another anchor's landing in the same session leaves a loop whose fetch is
+    // still on the wire alone), the tab changed, or the pass neither kicked nor waits on a fetch for the anchor
+    if ((scrolled && attAnchor === p.uuid) || p.sid !== activeId || (!anchorPendingOlder && !inFlight)) { revealProgressEnd(); return; }
+    revealProgressPaint();
+    return;
+  }
+  const s = liveSession(activeId);
+  if (anchorPendingOlder && pendingAnchor && s && (s.headFrom ?? 0) > 0) {   // the index wire's loop, by its own count
+    // the anchor turn's OWN moment, carried on the seek from the kernel's anchorEventT: the card's `t` is the card's newest
+    // activity, later than the turn it points at, and a fraction over it would read more progress than exists
+    revealProgressBegin(activeId!, pendingAnchor, seek && seek.uuid === pendingAnchor ? seek.t : null, s.headFrom ?? 0);
+    revealProgressPaint();
+  }
+}
+// ── end reveal progress ──────────────────────────────────────────────────────────────────────────────────
 // KEEP-OFFSET landing (the user 2026-08-02). A scroll-back loadOlder re-anchors on the row the reader was
 // on — that is POSITION PRESERVATION, not a deep-link: the row must come back at the SAME on-screen offset,
 // with no top-align and no flash. Non-null ⇒ resolve pendingAnchor by id as usual (which renders the window
@@ -1149,13 +1410,13 @@ let landTrail: string[] = [];
 // count is NOT len − winStart + spacer: a unit may own more than one node (the day
 // divider that opens a new day precedes its turn), so anything mapping DOM back to
 // units reads data-unit off the node rather than counting children.
-interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; working?: boolean; uo?: ResizeObserver; uh?: WeakMap<Element, number>; ro?: ResizeObserver; mo?: MutationObserver; }   // working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner)
+interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; pxPerTurn?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; gapUnits?: Map<number, number>; edgeTop?: number; edgeUp?: boolean; gestureScroll?: boolean; working?: boolean; uo?: ResizeObserver; uh?: WeakMap<Element, number>; ro?: ResizeObserver; mo?: MutationObserver; }   // working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner)
 const views = new Map<string, View>();
 
 // Pending pickers (AskUserQuestion / tool-permission) keyed by session id. These
-// live ONLY in the session's tmux pane (Claude Code doesn't write a pending
-// prompt to the transcript until it's answered), so the host captures+parses the
-// pane and pushes them here. Kept OUT of the transcript `events` list so syncView
+// never reach the transcript (Claude Code doesn't write a pending prompt to it until
+// it's answered): the SDK pushes the pending question over the control channel and
+// the kernel forwards it here as askLive. Kept OUT of the transcript `events` list so syncView
 // never clobbers them; rendered into the dedicated #live-ask region instead.
 // The pending prompt per session (its `kind` selects the widget). Kept OUT of the
 // transcript events so syncView can't clobber it. A stored null = awaiting an
@@ -1181,7 +1442,7 @@ const draftStartedAt = new Map<string, number>();
 // 2026-06-16). Empty/false → explicit done (full disc).
 interface LedgerTreeNode { id: string; text: string; depth: number; done: boolean; blocked: boolean; t?: number; mt?: number; current: boolean; derived?: boolean; cleared?: boolean; onpath?: boolean; promptAnchorUuid?: string | null; anchorUuid?: string | null; children?: string[]; summary?: string | null; blockSummary?: string | null; _rec?: number; }   // summary/blockSummary = the distiller's takeaway / decision brief, revealed by the row's ⊕ expander; _rec = render-stamped subtree-rolled-up recency
 interface LedgerRecent { text: string; t: number; }   // tab-hover "Recent": up-to-5 most-recent TOP tasks across live + archive, any status (the user 2026-06-30)
-interface Ledger { summary: string; tree?: LedgerTreeNode[]; current?: { t?: number } | null; recent?: LedgerRecent[]; workingNote?: string; needsInput?: boolean | null; }   // two fields the kernel's build_session puts on the ledger for the section snapshot (tab-snapshot.ts, 2026-09-06): workingNote: the session's postal working note, the snapshot row's second line; needsInput: the feed's needs-you verdict for the session from the kernel's last feed build (null before the first), read by the row's chip and by a header's stand-in pip over its hidden members (makeGroupHead, 2026-09-08). Both optional on the wire, since a remote host's older kernel sends neither
+interface Ledger { summary: string; tree?: LedgerTreeNode[]; current?: { t?: number } | null; recent?: LedgerRecent[]; workingNote?: string; needsInput?: boolean | null; }   // two fields the kernel's build_session puts on the ledger for the section-at-a-glance view (tab-snapshot.ts): workingNote, the session's postal working note (the row's second line); needsInput, the feed's needs-you verdict for the session from the kernel's last feed build (null before the first), the row's "needs you" word, read too by a header's stand-in pip over its hidden members (makeGroupHead). Both optional on the wire: a remote host's older kernel sends neither
 const ledgers = new Map<string, Ledger | null>();
 
 function el(tag: string, cls?: string): HTMLElement {
@@ -1215,6 +1476,7 @@ function md(src: string, repo: string | null = prRepoFor()): string {
     // the sanitizer's verdicts stand and a marked-autolinked GitHub URL is never wrapped twice.
     const clean = sanitizeMd(dirty);   // the sanitized <body>, its math rendered
     linkifyPrRefs(clean, repo);
+    mdImgPostPass(clean);   // a markdown image whose URL failed this page life is parked before the browser fetches it (T291c)
     return clean.innerHTML;
   } catch { const d = document.createElement("div"); d.textContent = src; return d.innerHTML; }
 }
@@ -1229,6 +1491,7 @@ function userMd(src: string, repo: string | null = prRepoFor()): string {
   try {
     const clean = sanitizeMd(userMdHtml(src));   // the sanitized <body>, its math rendered
     linkifyPrRefs(clean, repo);
+    mdImgPostPass(clean);   // a markdown image whose URL failed this page life is parked before the browser fetches it (T291c)
     return clean.innerHTML;
   } catch { const d = document.createElement("div"); d.textContent = src; return d.innerHTML; }
 }
@@ -1491,34 +1754,25 @@ document.addEventListener("click", (e) => {
 //     first cut filled the feed pane, and reading a file cost the cards). The bytes come to the
 //     browser over /file, which is the fix for the original break (the user 2026-08-08): the kernel
 //     used to run an opener on ITS machine, the wrong screen entirely from another device.
-//   • Web dashboard, cards-pane preference set (fileLinkPane: "feed" — gear.js; the user 2026-08-20,
-//     who reads the transcript while a file is up) → hand the open to the SHELL instead, which
-//     brings the feed pane forward and forwards viewFile into it; the feed's initFileView opens the
-//     viewer there, so the chat stays readable and interactive under no modal.
-//   • Web dashboard, Files-pane preference set (fileLinkPane: "pane", 2026-09-03) → the same relay,
-//     aimed at the FILES pane: the viewer as its own column, which stays up beside the chat and the
-//     feed instead of covering either (ui/webview/files.ts).
-//   • Web dashboard, Files pane OPEN (the user 2026-09-04) → the Files pane, whatever the setting says.
-//     The pane being open IS the intent — a click that opened as a modal over the chat while the
-//     pane sat there empty was the bug. The setting decides only where a link goes while the pane is
-//     CLOSED.
+//   • Web dashboard, the Files pane on screen (the one route to it since T404: no setting names a closed pane) → the
+//     open is handed to the SHELL, which brings that pane forward and forwards the click into it
+//     (kernel.py's landing shell; ui/webview/files.ts): the viewer as a column of its own, which stays
+//     up beside the chat and the feed instead of covering either.
 //
-// The route decision is fileLinkRoute (file-route.ts: pure, so the table runs for real in tests). It names
-// the TARGET, "feed", "pane", or "here" (the in-document modal), and a preference relays ONLY when a shell
-// exists to relay to (framed). Standalone /chat has no shell and no other pane, so either preference quietly
-// means "here". The gate lives at THIS end deliberately: the shell forwards whatever arrives (browseFiles'
-// contract), so a message never sent is a click that opens in place; no setting check shell-side can
-// swallow a click. A FOLDER click walks the same ladder through browseRoute (openBrowse below).
+// The route is fileLinkRoute (ui/webview/file-route.ts), pure so the table is testable: an OPEN Files
+// pane takes the click whatever the setting says (the pane being open is the intent); a closed one
+// only when the setting names it; a relay only when a shell exists to relay to (framed). Standalone
+// /chat has no shell and no other pane, so the setting quietly means "here", the in-document modal.
+// The gate lives at THIS end deliberately: the shell forwards whatever arrives, so a message never
+// sent is a click that opens in place, and no setting check shell-side can swallow a click. A FOLDER
+// click walks the same ladder through browseRoute (openBrowse below), so a listing lands where a file would.
 //
-// panesOn is the shell's pane set as the shell last told it — {romp:"panes", on:{chat,feed,files,…}},
-// where on means ON SCREEN: a desktop column toggled on, or on a phone the one tab showing (a po flag
-// left true by a desktop session must not steer a phone's links into a tab nobody is looking at).
-// Posted on every pane toggle (the shell's apply()), on a mobile tab switch or layout flip, and on this
-// iframe's load (kernel.py _LANDING_COLLAPSE_JS / _LANDING_MOBILE_JS), so a chat that boots or reloads
-// after the shell hears it too; the shell's storage/rebind re-applies re-send an unchanged set, which is
-// redundant and harmless. A cache of the owner's state refreshed by the owner's own events, never a
-// per-click guess (no reading the parent's DOM, no polling). Standalone /chat never hears one and reads
-// as all-off, which the framed gate makes moot anyway.
+// panesOn is the shell's pane set as the shell last told it: {romp:"panes", on:{chat,feed,files,...}},
+// posted on every pane toggle (its apply(), the exact event of the set changing), on this iframe's
+// load and on a phone's tab switch (kernel.py _LANDING_COLLAPSE_JS, _LANDING_MOBILE_JS), so a chat that
+// boots or reloads after the shell hears it too. A cache of the shell's state refreshed by the shell's
+// own event, never a per-click guess (no reading the parent's DOM, no polling). Standalone /chat never
+// hears one and reads as all-off, which the framed gate makes moot anyway.
 // `ev` is the click that asked (a middle-click arrives through onMiddleClick), read by openFileClick for
 // the own-tab gesture; a caller with no gesture (a programmatic open) passes none.
 // `at` (Slice 6 of plans/markdown-viewer.md, item 4): the place the link named after its path (a todo's
@@ -1526,34 +1780,26 @@ document.addEventListener("click", (e) => {
 // through openFileClick and to a pane's viewer as the relay's `at` (the shell copies the field, kernel.py; the
 // receiver validates it, file-view.ts readAt); a link with none passes null.
 let panesOn: Record<string, boolean> = {};
+let panesAvail: Record<string, boolean> = {};   // …and which panes EXIST to bring forward (avail: the Files control's setting, T317); absent = available
 function openPath(path: string, sid?: string | null, ev?: MouseEvent | null, at: At | null = null): void {
   if (!vscodeApi) return;
   if (location.protocol === "http:" || location.protocol === "https:") {
     const to = sid || activeId || null;
-    const route = fileLinkRoute(settings.fileLinkPane, window.parent !== window, panesOn.files === true);
-    // The gesture is read FIRST, at this end, on every route: openFileClick opens a Cmd/Ctrl- or middle-clicked
-    // PDF in the browser's own tab inside the click itself, and hands only a plain click, a tab the browser
-    // blocked, or a non-PDF to the route's opener: the viewer in this document for "here", the shell relay
-    // below for a pane. The tab cannot open at the relay's far end: window.open passes a popup blocker only
-    // inside the user's gesture, and a message into another pane's iframe lands outside it. Before this the
-    // relay swallowed the modifier, so the tab was reachable only while the Files pane was closed and no
-    // File-links preference was set (review of the 2026-09-07 fold).
-    // The relay is fire-and-forget by nature: postMessage to a live parent never throws, so there is no
-    // catchable failure here and no honest in-document fallback to offer. The one real loss mode is a
-    // stale shell page from before this relay existed — it has no viewFile arm and WILL swallow the click
-    // until it reloads (a known limitation). The shell arms its pane-restore only on the feed's
-    // viewFileOpened ack, so a swallowed or lost message can never leave a stale armed flag behind either.
-    // The message names its target pane and carries the session's IDENTITY (name + colour, the tab set's
-    // own — nameOf's ladder) for the Files pane, which has no session list to resolve a title-bar chip
-    // from; the feed resolves its own and ignores it. Looked up, never invented: a sid neither list names
-    // sends null, and the receiving resolver falls to the kernel's stub. It carries no gesture: a relayed
-    // open is always the target pane's viewer.
-    const relay = route === "here" ? undefined : (p: string, s: string | null, a: At | null) => {
-      const meta = s ? (sessions.get(s) ?? tabMeta.get(s)) : undefined;
-      window.parent.postMessage({ romp: "viewFile", path: p, sid: s, pane: route,
-        identity: meta && meta.name ? { name: meta.name, color: meta.color ?? null } : null, at: a }, "*");
-    };
-    openFileClick(ev, path, to, relay, at);   // the gesture, then the viewer here or the relay to the pane
+    const route = fileLinkRoute(window.parent !== window, panesOn.files === true, panesAvail.files !== false);
+    // with its gesture, read first: a Cmd/Ctrl- or middle-click on a PDF takes the browser's own tab wherever
+    // the plain click would have landed; a plain click routed to the Files pane is handed to the shell.
+    // `at`: the place the link named after its path (Slice 6: a heading or a line, read off the span by openLinkedPath), through either route
+    openFileClick(ev, path, to, route === "pane" ? () => {
+      // Fire-and-forget by nature: postMessage to a live parent never throws, so there is no catchable
+      // failure here and no honest in-document fallback exists. The message names its target pane and
+      // carries the session's IDENTITY (name and colour, the tab set's own, the way the viewer's resolver
+      // below names a session) for the Files pane, which has no session list to resolve a title-bar chip
+      // from. Looked up, never invented: a sid neither list names sends null, and the pane's resolver
+      // falls to the kernel's stub.
+      const s = to ? (sessions.get(to) ?? tabMeta.get(to)) : undefined;
+      window.parent.postMessage({ romp: "viewFile", path, sid: to, pane: "pane", at,
+        identity: s && s.name ? { name: s.name, color: s.color ?? null } : null }, "*");
+    } : undefined, at);
     return;
   }
   // the host's editor arm reads `line` (extension.ts openFileInEditor, 1-based); a heading or an offset has no editor
@@ -1572,51 +1818,46 @@ function onMiddleClick(a: HTMLElement, fn: (e: MouseEvent) => void): void {
   a.addEventListener("auxclick", (e) => { if (e.button !== 1) return; e.stopPropagation(); fn(e); });
 }
 
-// Where a FOLDER click opens right now: the file-link ladder's verdict for a browse (file-route.ts
-// browseRoute), read live at the click, in one place so its two readers (openBrowse and the tab menu's
-// sub-line, which tells the person where Browse files will land) cannot disagree.
+// Where a FOLDER click opens right now: the file link's ladder asked for a browse (file-route.ts browseRoute),
+// read live at the click. One reader for the click (openBrowse) and one for the tab menu's sub-line, which
+// tells the person where Browse files will land, so the two cannot disagree.
 function browseRouteNow(): BrowseRoute {
   const web = location.protocol === "http:" || location.protocol === "https:";
-  return browseRoute(web, settings.fileLinkPane, window.parent !== window, panesOn.files === true);
+  return browseRoute(web, window.parent !== window, panesOn.files === true, panesAvail.files !== false);
 }
-// Surface the FILE BROWSER at `path` for the session: the statusline's folder, the System-context Directory
-// row, a tab menu's Browse files, a chat-hosted viewer's directory link. The SAME ladder as a file link,
-// with one difference: a framed chat never browses in place (the user 2026-09-06: the folder at the bottom
-// of the chat opened its listing over the transcript; it belongs in the Files pane, or over the feed). The
-// 2026-08-24 pane-local move answered a listing that opened over the FEED CARDS while the user read the
-// chat; the Files pane (2026-09-03) is the surface that complaint was asking for, and the feed route is
-// what the shell already does for a browse. The route names the target; the shell does the pane work at
-// the other end, on this click and nothing else (the folder click is the one gesture that moves a pane):
-//   "pane"   the Files pane is on screen, or the gear's File-links setting names it: the listing opens IN
-//            that pane (files.ts hosts the same browser); a closed pane comes forward and stays. A file
-//            picked from the listing opens there, pane-resident, with the viewer's back button to the listing.
-//   "feed"   the default while the pane is closed: the feed pane's browser, brought forward for the
-//            duration and put back on browseClosed (the shell's feed-lift machinery, unchanged).
-//   "here"   only UNFRAMED (standalone /chat), where neither surface exists: the browser as a modal over
-//            this document, the one place the chat's own overlay (and its CSS mirror in styles.css) shows.
-// Web-only: in VS Code the folder link keeps openFolder (asFolderLink) and the menu row is not built; the
-// webview cannot reach the kernel origin, and the editor has its own explorer.
-// A viewer up over this chat stays where it is when the listing opens in another pane: closing it bought
-// nothing there and, with unsaved edits in the viewer, cost a discard prompt for a click that never needed
-// the edits gone (review 2026-09-07). Only the in-place route closes it first ("browse" means the person
-// wants the listing now, the browser's own rule, in openFileBrowse), and a dirty-edit veto there stands the
-// click down whole. The message carries the session's identity (name + color, nameOf's ladder) for the
-// Files pane, which has no session list to name a picked file's session by (openPath's viewFile does the
-// same); the feed resolves its own and ignores it.
+// Surface the FILE BROWSER at `path` for the session: the folder shown under the chat, the system context
+// card's Directory row, a tab menu's Browse files, a chat-hosted viewer's directory link. The listing goes
+// where a file link would (the ladder above):
+//   "pane"   the Files pane is on screen (no setting names a closed one since T404): the listing opens IN
+//            that pane (files.ts hosts the same browser as a column); a closed pane comes forward and stays.
+//            The message names its target and carries the session's IDENTITY (name and colour, looked up the
+//            way openPath's viewFile looks it up, null when neither list names the sid) for the pane, which
+//            has no session list to name a picked file's session by. Fire-and-forget by nature: postMessage
+//            to a live parent never throws. A viewer up over this chat is left alone: the listing opens
+//            elsewhere, closing it would buy nothing here, and with unsaved edits it would cost a discard
+//            prompt the click never needed.
+//   "here"   the default while the pane is closed, and the only route without a shell (standalone /chat): the
+//            browser as a modal over this chat, as since 2026-08-24 (the user then: it opened over the FEED
+//            cards, the wrong pane). openFileBrowse closes a viewer up over this chat first ("browse" means
+//            the person wants the listing now, the browser's own rule), and a dirty-edit veto there stands
+//            the click down whole.
+//   "editor" VS Code: nothing here. asFolderLink gave the click openFolder instead (the editor has its own
+//            explorer, and the webview cannot reach the kernel origin).
 function openBrowse(path: string, sid?: string | null): void {
   const route = browseRouteNow();
   if (route === "editor") return;
   const to = sid || activeId || null;
   if (route === "here") { openFileBrowse(path || ".", to); return; }
   const s = to ? (sessions.get(to) ?? tabMeta.get(to)) : undefined;
-  window.parent.postMessage({ romp: "browseFiles", path: path || ".", sid: to, pane: route,
+  window.parent.postMessage({ romp: "browseFiles", path: path || ".", sid: to, pane: "pane",
     identity: s && s.name ? { name: s.name, color: s.color ?? null } : null }, "*");
 }
-// The chat hosts its own browser instance for the unframed route. A chat-hosted viewer's directory link posts
-// browseFiles to THIS window (file-view.ts); onRelay hands that ask to openBrowse, so it walks the same ladder
-// as the folder link instead of opening in place. The chat never asks the shell to lift a pane for its own
-// browser, so its close owes the shell no restore (shellRestore false: a browseClosed from here would consume
-// a flag the FEED's relay armed and hide the feed under its own browser).
+// The chat hosts its own browser instance for the "here" route, under its own contract (file-browse.ts
+// BrowseHost). A chat-hosted viewer's directory link posts browseFiles to THIS window (file-view.ts); onRelay
+// hands that ask to openBrowse, so it walks the same ladder as a folder click instead of always opening in
+// place. The chat never asks the shell to lift a pane for its browser, so its close owes the shell no restore
+// (shellRestore false: a browseClosed from here would consume a flag the FEED's relay armed and hide the feed
+// under its own browser). A pick in the chat's own listing opens the viewer here, the default.
 initFileBrowse((m) => vscodeApi?.postMessage(m), {
   shellRestore: false,
   onRelay: (m) => openBrowse(m.path, typeof m.sid === "string" ? m.sid : null),
@@ -1657,7 +1898,7 @@ function inlineFold(head: HTMLElement, turn: HTMLElement, label: string, content
 // event — either way a DOM-only `.open` silently resets whatever the user had opened (e.g. they expand
 // the system-context card, type a message, hit ⏎, and it snaps shut). So we persist open-state in a Set
 // keyed by a stable id (the turn uuid, or the session id for the pinned system card) and reapply it on
-// rebuild — the same trick `expandedGroups` uses for collapsed tool runs. A keyless fold (no stable id)
+// rebuild — the compact-mode tool/notice runs key here too ("tg:" / "ng:"). A keyless fold (no stable id)
 // is just transient, exactly as before. Same-uuid sibling folds share a key → they expand together on
 // rebuild; benign (shows more, never less) and rare.
 const openFolds = new Set<string>();
@@ -1684,57 +1925,172 @@ function foldable(label: string, content: HTMLElement, key?: string): HTMLElemen
   return wrap;
 }
 
-// THE shared "notice card" — informational transcript notices (a backgrounded agent's report, a romp
-// system notice, folded system-reminders) each get their OWN boxed card with a type CHIP, a one-line gist
-// head, and a keyed collapse→expand body. One family, inspired by the postal/teammate cards but distinct:
-// each `variant` carries its own color (agent = accent blue, romp = the swirl + faded-accent, reminder =
-// muted). Distinct from postal (per-peer color) and teammate (dashed neutral). Collapse is KEYED (survives
-// the chat's re-renders via openFolds), unlike the postal/teammate hand-rolled toggle (the user 2026-07-06).
-// `nested` (the user 2026-07-06): the AGENT/REMINDER notices are appended INSIDE the parent user turn that
-// carried the <task-notification>/reminder, so they must NOT bring their own .turn (rail + dot) — a turn
-// nested in a turn drew a SECOND rail + dot, indented another 24px, so the card floated off to the right
-// detached from the timeline. Nested → return the bare card; it sits in the parent turn's rail column under
-// its single dot (connected, like any in-turn card). A standalone notice (romp system) IS its own top-level
-// turn, so it keeps the .turn wrapper + dot.
-type NoticeVariant = "agent" | "romp" | "reminder" | "compact" | "clear" | "peer" | "refusal";
-function noticeCard(o: { variant: NoticeVariant; chip: string; logo?: boolean;
-                        head: string; body: HTMLElement; collapsible?: boolean; key?: string;
-                        nested?: boolean }): HTMLElement {
-  const card = el("div", "notice-card notice-card-" + o.variant + (o.nested ? " notice-nested" : ""));
-  const collapsible = o.collapsible !== false;
-
-  const headEl = el("div", "notice-head");
-  const caret = collapsible ? el("span", "notice-caret") : null;
-  if (caret) headEl.appendChild(caret);
-  const chip = el("span", "notice-chip notice-chip-" + o.variant);
-  if (o.logo) {   // the romp swirl marks a romp notice as "from romp", the way the postal card does
-    const logo = el("img", "notice-chip-logo") as HTMLImageElement;
-    logo.src = mediaSrc("romp-swirl-glyph.svg"); logo.alt = ""; logo.onerror = () => logo.remove();
-    chip.appendChild(logo);
-  }
-  chip.appendChild(document.createTextNode(o.chip));
-  headEl.appendChild(chip);
-  if (o.head) { const h = el("span", "notice-head-text"); h.textContent = o.head; headEl.appendChild(h); }
-  card.appendChild(headEl);
-
-  const hasBody = o.body.childNodes.length > 0;   // gist-only notice → skip the wrapper, render flat
-  if (hasBody) { const bodyEl = el("div", "notice-body"); bodyEl.appendChild(o.body); card.appendChild(bodyEl); }
-
-  if (collapsible && hasBody) {
+// ═══ THE notice — ONE builder for everything that HAPPENED in a session (2026-09-08) ═════════════════
+// The transcript has two shapes. BUBBLES are things SAID into the session (your prompt, a romp nudge or
+// follow-up, the Continue gesture, a queued message): the 14px right-hand family, out of scope here.
+// NOTICES are things that happened — a background agent's report, a compaction, an API error, a peer's
+// mail, a reload, a system reminder — and every one of them is built HERE, by notice(spec); the ~20 bespoke
+// renderers the 2026-09-08 audit found (noticeCard and its siblings: eight head sizes, seven radii, six
+// chip dresses, four fold stores, eleven per-node click listeners) are each a ≤10-line adapter now.
+//   head  = [caret] glyph SOURCE · gist [· meta] [actions], one baseline row; the gist is always a
+//           USER-facing sentence fragment (never the agent-facing body of a romp notice — the kernel
+//           ships `gist` beside it), the meta is counts / durations / exit codes, never a clock (time
+//           stays on the left rail — the user 2026-09-08, decision 1);
+//   body  = folded by default (progressive disclosure), state in openFolds keyed "notice:<key>", toggled
+//           by data-act="noticetoggle" through the document.body delegate — no listener on the node, so
+//           the tail rebuild can never eat a mid-press click (CLAUDE.md click-safety);
+//   density is MECHANICAL: a body or actions → a card; head-only → .notice-slim (the rail-line density);
+//   severity = the rail + the rail dot + the glyph, in the existing status tokens; text is --fg/--dim.
+type NoticeSev = "info" | "romp" | "warn" | "err" | "compact" | "retry" | "needs";
+type NoticeGlyphKind = "romp" | "agent" | "command" | "system" | "peer" | "teammate" | "api" | "compaction"
+  | "clear" | "session" | "power" | "question" | "todo" | "retry" | "branch";
+interface NoticeSpec {
+  src: string | HTMLElement;          // the SOURCE label: "romp" · "background agent" · "system" · a session chip …
+  glyph: NoticeGlyphKind | HTMLElement;   // a named line icon, or a live element for the slot (loader dots, the compacting bar)
+  gist: string | HTMLElement;         // the one-line, user-facing version
+  meta?: string | HTMLElement | null; // counts, durations, exit codes, token wins (tabular) — never a clock
+  acts?: HTMLElement[];               // word buttons (.notice-act, data-act only — the delegate acts, flash() acknowledges)
+  body?: HTMLElement | null;          // the folded detail; an empty body renders flat (gist == body, as before)
+  sev?: NoticeSev;                    // default "info"
+  key?: string;                       // fold key (uuid or a stable id) → openFolds "notice:<key>"
+  open?: boolean;                     // open by DEFAULT (the human is the bottleneck, or nothing is hidden): seeded once, then the user's fold wins
+  nested?: boolean;                   // bare card inside a carrying turn / bubble — no own .turn + rail dot
+  dot?: boolean;                      // false → an off-rail turn (the branch divider); default true
+  rail?: string;                      // an inline rail/dot colour (a peer's identity colour) over the severity's token
+  tip?: string;                       // the head's "why", through the ONE tooltip (setTip), never a native title
+  cls?: string;                       // extra classes on the turn (or the bare card), for CSS hooks a kind still needs
+  live?: boolean;                     // an in-flight row (compacting / clearing / reloading / retrying)
+  group?: { key: string; open: boolean };   // a compact-mode RUN head: the caret + data-gkey toggle rebuilds the view (toggleToolGroup)
+}
+const noticeSeeded = new Set<string>();   // default-OPEN keys already seeded into openFolds (seed once; the user's fold wins after)
+function notice(spec: NoticeSpec): HTMLElement {
+  const sev: NoticeSev = spec.sev || "info";
+  const card = el("div", "notice" + (spec.live ? " notice-live" : "") + (spec.nested ? " notice-nested" : ""));
+  const head = el("div", "notice-head");
+  const body = spec.body && spec.body.childNodes.length ? spec.body : null;
+  const acts = spec.acts || [];
+  const collapsible = !!body;
+  if (spec.group) {
+    // a run's head: the caret reads the run's open state; the delegate rebuilds the view (the expansion
+    // changes which units exist, not a class on this node)
+    const caret = el("span", "notice-caret"); caret.textContent = spec.group.open ? "▾" : "▸";
+    head.appendChild(caret);
+    head.dataset.act = "noticetoggle"; head.dataset.gkey = spec.group.key;
     card.classList.add("notice-collapsible");
-    applyFold(card, "notice-open", o.key);                 // keyed: an expanded card stays open across pushes
-    if (caret) caret.textContent = card.classList.contains("notice-open") ? "▾" : "▸";
-    headEl.addEventListener("click", () => {
-      rememberFold(card, "notice-open", o.key);
-      if (caret) caret.textContent = card.classList.contains("notice-open") ? "▾" : "▸";
-    });
   }
-  if (o.nested) return card;                               // sits inside the parent turn — no own rail/dot
-  const turn = el("div", "turn turn-notice notice-" + o.variant);
-  const d = dot("ring"); d.classList.add("notice-dot", "notice-dot-" + o.variant);
-  turn.appendChild(d);
+  if (collapsible) {
+    const caret = el("span", "notice-caret");
+    head.appendChild(caret);
+    head.dataset.act = "noticetoggle";
+    const fkey = spec.key ? "notice:" + spec.key : undefined;
+    if (fkey) head.dataset.nkey = fkey;
+    if (spec.open && fkey && !noticeSeeded.has(fkey)) { noticeSeeded.add(fkey); openFolds.add(fkey); }
+    applyFold(card, "notice-open", fkey);
+    if (spec.open && !fkey) card.classList.add("notice-open");
+    caret.textContent = card.classList.contains("notice-open") ? "▾" : "▸";
+    card.classList.add("notice-collapsible");
+  }
+  head.appendChild(typeof spec.glyph === "string" ? noticeGlyph(spec.glyph) : spec.glyph);
+  const src = el("span", "notice-src");
+  if (typeof spec.src === "string") src.textContent = spec.src; else src.appendChild(spec.src);
+  head.appendChild(src);
+  const gist = typeof spec.gist === "string" ? el("span", "notice-gist") : spec.gist;
+  if (typeof spec.gist === "string") gist.textContent = spec.gist; else gist.classList.add("notice-gist");
+  head.appendChild(gist);
+  if (spec.meta) {
+    const meta = typeof spec.meta === "string" ? el("span", "notice-meta") : spec.meta;
+    if (typeof spec.meta === "string") meta.textContent = spec.meta; else meta.classList.add("notice-meta");
+    head.appendChild(meta);
+  }
+  if (acts.length) { const box = el("span", "notice-acts"); for (const a of acts) box.appendChild(a); head.appendChild(box); }
+  if (spec.tip) setTip(head, spec.tip);
+  card.appendChild(head);
+  if (body) { const wrap = el("div", "notice-body"); wrap.appendChild(body); card.appendChild(wrap); }
+  const boxed = collapsible || acts.length > 0;   // the density rule: a body or actions → a card; head-only → slim (a run head is slim)
+  if (!boxed) card.classList.add("notice-slim");
+  if (spec.nested) {
+    card.classList.add("notice-sev-" + sev);
+    if (spec.rail) { card.style.setProperty("--notice-rail", spec.rail); card.style.setProperty("--notice-dot", spec.rail); }
+    if (spec.cls) card.classList.add(...spec.cls.split(" ").filter(Boolean));
+    return card;
+  }
+  const turn = el("div", "turn turn-notice notice-sev-" + sev + (boxed ? " notice-boxed" : "") + (spec.cls ? " " + spec.cls : ""));
+  if (spec.rail) { turn.style.setProperty("--notice-rail", spec.rail); turn.style.setProperty("--notice-dot", spec.rail); }
+  if (spec.dot !== false) {
+    // the rail dot wears the severity: the swirl for romp (the timeline's own mark for a romp event), the
+    // severity colour otherwise (.turn-notice > .dot.notice-dot reads --notice-dot)
+    const d = sev === "romp" ? dot("romp") : dot("ring");
+    if (sev !== "romp") d.classList.add("notice-dot");
+    turn.appendChild(d);
+  }
   turn.appendChild(card);
   return turn;
+}
+
+// A word button for a notice's action slot: data-act only (the document.body delegate acts and flash()es),
+// no listener on the node; the caller sets the data-* the handler reads.
+function noticeAct(label: string, act: string, tip?: string): HTMLButtonElement {
+  const b = el("button", "notice-act") as HTMLButtonElement;
+  b.type = "button";
+  b.textContent = label;
+  b.dataset.act = act;
+  if (tip) setTip(b, tip);
+  return b;
+}
+
+// The notice glyphs: 16-unit line icons in the ctxIcon style (stroke currentColor 1.4), 12×12, coloured by
+// the rail. One glyph per SOURCE, so a notice's kind is readable without its colour: romp = the swirl (the
+// brand mark, the one non-stroke glyph) · background agent = a fork (one node → two) · background command =
+// a prompt ">_" · system = a gear · peer = an envelope (ctxIcon's) · teammate = two heads · API = a plug ·
+// compaction = chevrons inward · clear / branch = chevrons apart · session = the stop square · power = the
+// reload/effort mark · question = ? in a circle · to-do = a checkbox · retry = a circular arrow.
+const NOTICE_GLYPHS: Record<Exclude<NoticeGlyphKind, "romp">, string> = {
+  agent: '<path d="M8 2.2 V6.6"/><path d="M8 6.6 L4.2 10.2 V13.8"/><path d="M8 6.6 L11.8 10.2 V13.8"/><circle cx="8" cy="2.2" r="1"/>',
+  command: '<path d="M3 4.2 L7 8 L3 11.8"/><path d="M8.6 12 H13.4"/>',
+  system: '<circle cx="8" cy="8" r="2.3"/><circle cx="8" cy="8" r="5"/><path d="M8 1.6 V3 M8 13 V14.4 M1.6 8 H3 M13 8 H14.4 M3.5 3.5 L4.5 4.5 M11.5 11.5 L12.5 12.5 M3.5 12.5 L4.5 11.5 M11.5 4.5 L12.5 3.5"/>',
+  peer: '<rect x="2" y="4" width="12" height="8" rx="1.5"/><path d="M2.5 5 L8 9 L13.5 5"/>',
+  teammate: '<circle cx="5.6" cy="5.8" r="2.2"/><path d="M1.8 13.2 C1.8 10.6 3.4 9.3 5.6 9.3 C6.5 9.3 7.2 9.5 7.8 9.9"/><circle cx="10.9" cy="6.3" r="1.9"/><path d="M8.5 13.2 C8.5 11 9.5 9.8 10.9 9.8 C12.8 9.8 14.2 11 14.2 13.2"/>',
+  api: '<path d="M5.2 2 V5.4 M10.8 2 V5.4"/><path d="M3.4 5.4 H12.6 V7.6 A4.6 4.6 0 0 1 3.4 7.6 Z"/><path d="M8 12.2 V14.4"/>',
+  compaction: '<path d="M2.6 4 L6.2 8 L2.6 12"/><path d="M13.4 4 L9.8 8 L13.4 12"/>',
+  clear: '<path d="M6.4 4 L2.8 8 L6.4 12"/><path d="M9.6 4 L13.2 8 L9.6 12"/>',
+  branch: '<path d="M6.4 4 L2.8 8 L6.4 12"/><path d="M9.6 4 L13.2 8 L9.6 12"/>',
+  session: '<rect x="4" y="4" width="8" height="8" rx="1.3"/>',
+  power: '<path d="M8 2.4 V8"/><path d="M4.7 4.9 A4.8 4.8 0 1 0 11.3 4.9"/>',
+  question: '<circle cx="8" cy="8" r="6"/><path d="M6.1 6.3 A1.9 1.9 0 1 1 8.7 8.1 C8.1 8.4 8 8.9 8 9.5"/><path d="M8 11.6 V11.8"/>',
+  todo: '<rect x="2.5" y="2.5" width="11" height="11" rx="1.6"/><path d="M5 8.2 L7.2 10.4 L11.2 5.8"/>',
+  retry: '<path d="M13 8 A5 5 0 1 1 11.5 4.4"/><path d="M11.9 1.7 L11.6 4.6 L8.7 4.3"/>',
+};
+function noticeGlyph(kind: NoticeGlyphKind): HTMLElement {
+  const span = el("span", "notice-glyph notice-glyph-" + kind);
+  if (kind === "romp") {
+    const logo = el("img") as HTMLImageElement;
+    logo.src = mediaSrc("romp-swirl-glyph.svg"); logo.alt = ""; logo.onerror = () => logo.remove();
+    span.appendChild(logo);
+    return span;
+  }
+  span.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" '
+    + 'stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + NOTICE_GLYPHS[kind] + "</svg>";
+  return span;
+}
+
+// A live element for the glyph slot (the loader dots, the compacting bar): wide, so the slot fits it.
+function noticeLiveGlyph(inner: HTMLElement): HTMLElement {
+  const span = el("span", "notice-glyph notice-glyph-wide");
+  span.appendChild(inner);
+  return span;
+}
+
+// The fold toggle's tail work when a notice opens: the /clear boundary's body lazy-loads the cleared
+// conversation on FIRST expand (one request per boundary, deduped by the pending map; re-renders hit
+// the cache). Runs from the delegate, so it needs nothing from render time but the data-* on the body.
+function noticeOpened(card: HTMLElement, open: boolean): void {
+  if (!open) return;
+  const cb = card.querySelector(".clear-body") as HTMLElement | null;
+  if (!cb) return;
+  const key = cb.dataset.clearKey || "", sid = cb.dataset.clearSid || "";
+  if (!key || !sid || episodeCache.has(key) || episodePendingKey.get(sid) === key) return;
+  episodePendingKey.set(sid, key);
+  vscodeApi?.postMessage({ type: "loadEpisode", id: sid });
 }
 
 // A backgrounded task's completion (<task-notification>) → an accent-blue notice card. The HEAD is a
@@ -1748,8 +2104,6 @@ function noticeCard(o: { variant: NoticeVariant; chip: string; logo?: boolean;
 // honest, and no dead-end. The pure parse lives in agent-notif.ts (testable); this owns the DOM.
 function renderAgentNotif(a: AgentNotif, outputs?: TaskOutputs, key?: string,
                           opts: { nested?: boolean; preamble?: string } = {}): HTMLElement {
-  const chip = a.kind === "agent" ? "agent" : "task";       // a Bash command is a task, not an "agent"
-  const head = notifHead(a);                                // "Background agent finished · <description>" (the user 2026-09-07)
   const body = el("div", "notice-md md");
   const extra = a.toolUseId && outputs ? outputs[a.toolUseId] : undefined;
   let hasBody = false;
@@ -1761,10 +2115,16 @@ function renderAgentNotif(a: AgentNotif, outputs?: TaskOutputs, key?: string,
     hasBody = true;
   }
   if (opts.preamble) { appendHarnessNote(body, opts.preamble); hasBody = true; }
-  // nested (the default) inside a carrying HUMAN turn — a prompt that arrived with a notification attached;
-  // on its OWN rail (nested: false) when the record was nothing but the notification (renderInjected)
-  return noticeCard({ variant: "agent", chip, head, body, key,
-                      collapsible: hasBody, nested: opts.nested !== false });   // flat when the gist is all there is
+  // the head in the notice grammar: SOURCE = background agent / background command (a Bash command is not an
+  // "agent"), gist = "<name> · finished", meta = the exit code; a failed exit reads in the error severity.
+  // Nested (the default) inside a carrying HUMAN turn — a prompt that arrived with a notification attached
+  // — the card stretches to the column with its own rail dot (no stair-step); on its OWN rail (nested: false)
+  // when the record was nothing but the notification (renderInjected). Flat when the gist is all there is.
+  const failed = /^exit [1-9]/.test(a.detail) || /^(failed|killed|timed out)/i.test(a.status || "");
+  return notice({ src: a.kind === "agent" ? "background agent" : "background command",
+                  glyph: a.kind === "agent" ? "agent" : "command",
+                  gist: notifHead(a), meta: /^exit \d+$/.test(a.detail) ? a.detail : undefined,
+                  sev: failed ? "err" : "info", body: hasBody ? body : null, key, nested: opts.nested !== false });
 }
 
 // The CLI's note-to-the-model paragraph ("[SYSTEM NOTIFICATION - NOT USER INPUT] …"), kept one click away
@@ -1800,7 +2160,10 @@ function renderInjected(ev: Extract<ChatEvent, { kind: "user" }>): HTMLElement {
   for (const { a, i } of notifs) body.appendChild(renderAgentNotif(a, ev.taskOutputs, ev.uuid ? "agn:" + ev.uuid + ":" + i : undefined));
   for (const r of plain) body.appendChild(preEl(r));
   if (ev.preamble) appendHarnessNote(body, ev.preamble);
-  return noticeCard({ variant: h.variant, chip: h.chip, head: h.head, body, key, collapsible: body.childNodes.length > 0 });
+  // the source rows of the vocabulary: background agent / system / a peer's name (injected-source.ts names
+  // the head; the glyph and label follow the source kind)
+  const { label, glyph } = injectedSrc(src);
+  return notice({ src: label, glyph, gist: h.head, body, key });
 }
 
 // ---- path-source pasted images ----
@@ -1891,7 +2254,16 @@ function healPathImgs(): void {
 // the page shim fires romp:wsup when THIS pane's kernel socket reconnects (kernel.py ws.onopen) —
 // the same kernel-is-back event a hostUp is for a federated tunnel; heal everything on it
 window.addEventListener("romp:wsup", () => { retryFailedPreviews(); refreshSettledPreviews(); healPathImgs(); });
-installMdImgHeal();   // markdown-inline <img> failures register for the per-message heal (capture-phase, once)
+installMdImgHeal();   // markdown-inline <img> failures are PARKED (capture-phase, once) and heal on the reconnect-class events (T291c);
+//                       md() and userMd() run mdImgPostPass on their own output, so a re-render parks a known-failed image before it fetches
+// The page's own bundle build, filed once per page load (T291c, the user's 2026-09-09 report could not tell the
+// page's build from the kernel's): the ?v= the kernel stamped on the render.js script this page loaded (the
+// dist_ver it served then; a VS Code webview loads the bundle without one and files 0).
+(() => {
+  const tag = Array.from(document.scripts).map((sc) => sc.getAttribute("src") || "").find((u) => /\/dist\/render\.js(\?|$)/.test(u)) || "";
+  const m = /[?&]v=(\d+)/.exec(tag);
+  vscodeApi?.postMessage({ type: "clientDiag", surface: "chat", what: "pageload", data: { distVer: m ? Number(m[1]) : 0, path: location.pathname } });
+})();
 
 // One image of a user turn: the picture (or its hydration chip) plus, when the
 // on-disk path is known, a caption line — the full absolute path (click → open),
@@ -2009,8 +2381,9 @@ function openLinkedPath(a: HTMLElement, e?: MouseEvent | null): void {
 // reach the body delegate's openpath below, which would open it twice (user-todo-title-links.test.ts
 // drives a bound span through both). A bubble is not rebuilt under a press the way the todo card is.
 function bindPathLink(a: HTMLElement): HTMLElement {
-  a.addEventListener("click", (e) => { e.stopPropagation(); openLinkedPath(a, e); });
+  a.addEventListener("click", (e) => { e.stopPropagation(); filePreviewIntent.cancel(); openLinkedPath(a, e); });
   onMiddleClick(a, (e) => openLinkedPath(a, e));   // the same open as the click: a relative path resolves against the pill's own session
+  armFilePreview(a);   // a hover (or the keyboard's focus) previews the file (T351)
   return a;
 }
 // A user todo's text and its detail link their paths through the same matcher as a transcript, but the
@@ -2035,7 +2408,7 @@ function linkTodoLinePaths(node: HTMLElement, sid: string | null): void {
 }
 function linkTodoDetailPaths(node: HTMLElement, sid: string | null): void {
   linkifyUrls(node);
-  linkifyFileUris(node, undefined, undefined, undefined, undefined, sid, true, { targetSuffix: true });
+  linkifyFileUris(node, undefined, undefined, undefined, undefined, undefined, undefined, sid, true, { targetSuffix: true });
 }
 // The file a todo NAMES (the todo-file follow-on, 2026-09-07): the record's own `file`, the absolute path the
 // kernel resolved when the todo was filed, trails the row's text and the Reply modal's quoted line as a chip —
@@ -2075,6 +2448,226 @@ function todoFileChip(file: string, sid: string | null): HTMLElement {
 function todoLinkChip(link: string): HTMLElement {
   return urlChip(link, "ut-link");
 }
+// A `#slug` right after a path token names a SECTION (the lab team's glossary links, `path#fold`, T351): the token walk
+// marks the path alone, so the slug is the link's next text. It moves into the link (the token reads whole) as data-frag,
+// the file viewer's own convention for the section to land on (file-view-links.ts), and the preview shows that section.
+function absorbFragment(link: HTMLElement): void {
+  const nx = link.nextSibling;
+  if (!nx || nx.nodeType !== 3) return;
+  const m = /^#([a-z0-9][a-z0-9-]*)/.exec(nx.textContent || "");
+  if (!m) return;
+  link.dataset.frag = m[1];
+  link.appendChild(document.createTextNode(m[0]));
+  nx.textContent = (nx.textContent || "").slice(m[0].length);
+}
+
+// ── the GLOSSARY (T351 stage 2, the user 2026-09-11): the team's coinages, linked where they are written ──────────
+// The kernel ships one index per session (its author group's glossary file, parsed and byte-bounded) on its own frame;
+// the matcher is compiled once per index and every message's prose is linked at render time (glossary-links.ts). A
+// term is a LINK to the glossary file's section and nothing more (T375, the user 2026-09-12): it wears the ordinary link
+// dress (.term-link: the link colour, a solid underline, the pointer), its hover rides the ordinary file-link preview
+// (the glossary path with the term's slug as the section, fetched through the slice route and rendered like any file
+// section), and a click opens the glossary file in the viewer at the term's heading. Surfaces: assistant and user text
+// and mail bodies in the chat; never tool heads, the composer or the timeline.
+const glossaries = new Map<string, GlossaryIndex>();        // by session id: the frame's index
+const termMatchers = new Map<string, TermMatcher | null>();  // compiled once per index (dropped when the frame changes)
+function termMatcherFor(sid: string | null): TermMatcher | null {
+  if (!sid) return null;
+  if (!termMatchers.has(sid)) { const ix = glossaries.get(sid); termMatchers.set(sid, ix ? buildMatcher(ix) : null); }
+  return termMatchers.get(sid) || null;
+}
+/** Link the terms in a rendered message body for the session being built (renderingSid), the span carrying the
+ *  glossary path and the term's slug exactly like a path link's absorbed section, so the same hover and click roads
+ *  serve it. Nothing when the session's group has no glossary. */
+function linkTerms(root: HTMLElement, sid: string | null = renderingSid): number {
+  // the message roots (the nudge, continue and tagged-template bubbles' full text, the user bubble, the assistant body,
+  // the mail body) are MARKED
+  // here, matcher or not, so a later index frame re-links exactly them (relinkTerms) and never a tool or subagent
+  // report body; a root nested inside a marked root is the ancestor's to scan, with the ancestor's one seen set
+  // (the review's mediums: every .md in the view was relinked, and a nested body was visited twice)
+  if (root.parentElement?.closest("[data-term-root]")) return 0;
+  root.dataset.termRoot = "1";
+  const m = termMatcherFor(sid);
+  if (!m) return 0;
+  return linkifyTerms(root, m, (e, text) => {
+    const s = el("span", "term-link" + (e.status === "retired" ? " term-retired" : ""));
+    s.textContent = text;
+    s.dataset.term = e.slug; s.dataset.gsid = sid || "";
+    s.dataset.path = m.index.path; s.dataset.frag = e.slug;
+    s.dataset.preview = "markdown";   // the kind, from the index: the kernel parsed this file as the group's glossary (T375)
+    s.tabIndex = 0;
+    armFilePreview(s);   // the ordinary file-link hover: the section at the term's heading, through the slice route (no title: one mechanism)
+    return s;
+  });
+}
+/** A fresh index for a session: drop its matcher and re-link the session's rendered view, so a rewrite of the file
+ *  shows on the next frame, never on a timer (the old links are unwrapped first). */
+document.addEventListener("click", (e) => {
+  const s = (e.target as HTMLElement | null)?.closest?.("span.term-link") as HTMLElement | null;
+  if (!s) return;
+  e.preventDefault(); e.stopPropagation();
+  filePreviewIntent.cancel();
+  openPath(s.dataset.path || "", s.dataset.gsid || activeId, e, s.dataset.frag ? { heading: s.dataset.frag } : null);   // the viewer, at the term's heading (the section rides as the open's `at`, file-view.ts At)
+});
+function relinkTerms(sid: string): void {
+  termMatchers.delete(sid);
+  const v = views.get(sid);
+  if (!v) return;
+  for (const s of Array.from(v.el.querySelectorAll("span.term-link"))) {
+    const t = document.createTextNode(s.textContent || "");
+    s.replaceWith(t);
+    t.parentNode?.normalize();
+  }
+  for (const root of Array.from(v.el.querySelectorAll("[data-term-root]"))) linkTerms(root as HTMLElement, sid);   // the marked roots alone
+}
+
+// ── the file PREVIEW popover (T351, the user 2026-09-11) ──────────────────────────────────────────
+// Hovering a local file link pops up a card with the rendered head of the file, or the section a `path#slug` link
+// names, near-instantly: the kernel keeps the text of recently linked files with a heading index and warms it on the
+// pusher's path, so the hover is one small fetch of already-sliced text (GET /file?slice=1) rendered with the chat's
+// own marked in one call. The card wears the comment popover's vocabulary (comment-pop-size.ts's fractions, the
+// menu-card surface) but is transient: it opens after a dwell, closes on leave (with a grace to cross into it), on
+// Escape, on a scroll, on a click elsewhere and when the link it is anchored to leaves the document, and is never draggable. Progressive
+// disclosure: the link is the gist, the card the summary, "open" the mechanics (the full viewer, scrolled to the
+// section). A link the kernel did not allow to preview (pathPreview absent: outside the session's folder and the
+// user's home, unverified, a secrets-shaped name, not a kind it shows, over the caps) gets the text-only card and
+// NO request. The content shape is the one contract every provider fills (file-preview.ts PreviewContent; stage 2's
+// glossary lookup lands in the same card).
+let filePreviewEl: HTMLElement | null = null;
+let filePreviewSeq = 0;                        // the fetch that may fill the card: a later show retires an earlier answer
+let filePreviewAnchorWatch: MutationObserver | null = null;   // watches the anchored link's own removal (a re-render, a tab pick)
+function hideFilePreview(): void {
+  filePreviewSeq++;
+  if (filePreviewAnchorWatch) { filePreviewAnchorWatch.disconnect(); filePreviewAnchorWatch = null; }
+  if (filePreviewEl) { filePreviewEl.style.display = "none"; filePreviewEl.replaceChildren(); }
+}
+// The card is anchored to a link NODE; a re-render that drops the node (a streaming turn's replaceChildren, a tab pick,
+// a window rebuild) fires no pointerleave, so the card would stand stranded. The closer is the node's own removal
+// (the review): a MutationObserver on the thread sees the link leave the document and cancels the intent. Tab-strip
+// rebuilds are not the event (they run on every push and would close the card on unrelated state).
+function watchFilePreviewAnchor(a: HTMLElement): void {
+  if (filePreviewAnchorWatch) filePreviewAnchorWatch.disconnect();
+  const root = document.getElementById("content") || document.body;
+  filePreviewAnchorWatch = new MutationObserver(() => { if (!a.isConnected) filePreviewIntent.cancel(); });
+  filePreviewAnchorWatch.observe(root, { childList: true, subtree: true });
+}
+const filePreviewIntent = new HoverIntent<HTMLElement>(PREVIEW_DWELL_MS, PREVIEW_GRACE_MS, (a) => showFilePreview(a), () => hideFilePreview());
+function ensureFilePreview(): HTMLElement {
+  if (filePreviewEl && filePreviewEl.isConnected) return filePreviewEl;
+  const p = el("div", "file-preview-pop"); p.id = "file-preview-pop";
+  p.setAttribute("role", "dialog"); p.setAttribute("aria-label", "file preview");
+  p.style.display = "none";
+  p.addEventListener("pointerenter", () => filePreviewIntent.pin());   // inside the card: it stays
+  p.addEventListener("pointerleave", () => filePreviewIntent.unpin());
+  document.body.appendChild(p);
+  filePreviewEl = p;
+  document.getElementById("content")?.addEventListener("scroll", () => filePreviewIntent.cancel(), { passive: true });
+  return p;
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") filePreviewIntent.cancel(); });
+document.addEventListener("pointerdown", (e) => {
+  if (filePreviewEl && filePreviewEl.style.display !== "none" && !filePreviewEl.contains(e.target as Node)) filePreviewIntent.cancel();
+}, true);
+function armFilePreview(a: HTMLElement): void {
+  a.addEventListener("pointerenter", () => filePreviewIntent.enter(a));
+  a.addEventListener("pointerleave", () => filePreviewIntent.leave());
+  a.addEventListener("focus", () => filePreviewIntent.enter(a));     // the keyboard's route to the same card
+  a.addEventListener("blur", () => filePreviewIntent.leave());
+}
+// the comment popover's size (70% × 60% of the pane, capped, never under the minimum), below the link when there is
+// room, else above it, and inside the viewport by the popover edge
+function placeFilePreview(p: HTMLElement, a: HTMLElement): void {
+  p.style.maxHeight = "";   // a term card's content-sized height (showFilePreview) must not outlive it: every show starts from the fractions
+  const pane = (document.getElementById("content") || document.body).getBoundingClientRect();
+  const w = Math.max(CMT_POP_MIN_W, Math.min(pane.width * CMT_POP_THREAD_DEFAULT.w, innerWidth * CMT_POP_CAP_W));
+  const h = Math.max(CMT_POP_MIN_H, Math.min(pane.height * CMT_POP_THREAD_DEFAULT.h, innerHeight * CMT_POP_CAP_H));
+  const r = a.getBoundingClientRect();
+  p.style.width = w + "px"; p.style.height = h + "px";
+  const below = r.bottom + 6 + h <= innerHeight - CMT_POP_EDGE;
+  p.style.top = (below ? r.bottom + 6 : Math.max(CMT_POP_EDGE, r.top - 6 - h)) + "px";
+  p.style.left = Math.max(CMT_POP_EDGE, Math.min(r.left, innerWidth - w - CMT_POP_EDGE)) + "px";
+}
+function renderFilePreview(p: HTMLElement, c: PreviewContent, sid: string | null): void {
+  p.replaceChildren();
+  const head = el("div", "fp-head");
+  const title = el("span", "fp-title"); title.textContent = c.title; title.title = c.title; head.appendChild(title);
+  if (c.subtitle) { const s = el("span", "fp-sub"); s.textContent = c.subtitle; head.appendChild(s); }
+  p.appendChild(head);
+  if (c.note) { const n = el("div", "fp-note"); n.textContent = c.note; p.appendChild(n); }
+  const body = el("div", "fp-body fp-" + c.kind);
+  if (c.body.markdown != null) {
+    body.classList.add("md");
+    body.replaceChildren(...Array.from(previewMdClean(c.body.markdown).childNodes));   // its paths stay text here (the viewer, one click away, links them)
+  }
+  else if (c.body.html != null) { const clean = sanitizeMd(c.body.html); stripRemoteLoads(clean, location.origin, location.href); body.replaceChildren(clean); }   // a provider's own HTML, through the one sanitizer and the same strip
+  else if (c.body.url && c.kind === "image") { const img = el("img", "fp-img") as HTMLImageElement; img.src = c.body.url; img.alt = c.title; body.appendChild(img); }
+  else if (c.body.url && c.kind === "pdf") { const f = el("iframe", "fp-pdf") as HTMLIFrameElement; f.src = c.body.url + "#page=1&toolbar=0"; f.title = c.title; body.appendChild(f); }
+  else if (c.kind === "code") {
+    const pre = el("pre", "fp-code"); const code = el("code", ""); const lang = c.body.lang || "";
+    let html = "";
+    try { html = lang && hljs.getLanguage(lang) ? hljs.highlight(c.body.text || "", { language: lang }).value : ""; } catch { html = ""; }
+    if (html) { code.innerHTML = html; code.className = "hljs language-" + lang; } else code.textContent = c.body.text || "";
+    pre.appendChild(code); body.appendChild(pre);
+  }
+  else { const tx = el("div", "fp-text"); tx.textContent = c.body.text || ""; body.appendChild(tx); }
+  p.appendChild(body);
+}
+// A previewed document renders on the sanitizer's INERT DOM (DOMPurify's own document, no browsing context) and is
+// stripped of every remote load THERE, before its nodes are adopted into the page: an <img>'s src or srcset, a
+// <picture>'s <source>, a <video>'s poster or src, an <audio>, an SVG <image>, in any spelling the URL parser reads
+// as another origin (file-preview.ts stripRemoteLoads). A file the user did not choose to open must never send a
+// request elsewhere on a hover, and a strip AFTER innerHTML raced the browser's fetch and lost (the review): the beacon
+// had fired while the user saw alt text. Images load only from this kernel (the /file route, a relative path, a data:
+// URI). The viewer, opened on purpose, keeps its own rules. Not the chat's md(): its PR links and parked-image heal
+// are the chat's, and a previewed file's `#123` is prose, not the session's pull request.
+function previewMdClean(src: string): HTMLElement {
+  let clean: HTMLElement;
+  try { clean = sanitizeMd(marked.parse(src) as string); }
+  catch { clean = document.createElement("div"); clean.textContent = src; }
+  stripRemoteLoads(clean, location.origin, location.href);
+  return clean;
+}
+function showFilePreview(a: HTMLElement): void {
+  const open = a.dataset.path || "";
+  if (!open) return;
+  const sid = activeId;                          // the kernel resolves a relative path against it and confines by its folder
+  const parsed = parsePreviewLink(open);
+  const path = parsed.path, anchor = a.dataset.frag || parsed.anchor;   // the section: the absorbed #slug, else one inside a file:// URI
+  const kind = a.dataset.preview || null;
+  const p = ensureFilePreview();
+  placeFilePreview(p, a);
+  p.style.display = "";
+  watchFilePreviewAnchor(a);
+  const seq = ++filePreviewSeq;
+  // the acceptance is latency (the user 2026-09-11: how quickly rendered markdown shows): the card stamps the time from
+  // the dwell's end to its rendered content as data-render-ms, and whether the slice came from the kernel's cache as
+  // data-slice-hit, so the served lab reads the measurement off the card instead of timing the page from outside
+  const t0 = performance.now();
+  delete p.dataset.renderMs; delete p.dataset.sliceHit;
+  const stamp = (hit: boolean | null): void => {
+    p.dataset.renderMs = (performance.now() - t0).toFixed(1);
+    if (hit !== null) p.dataset.sliceHit = hit ? "1" : "0";
+  };
+  if (!kind) {                                   // the kernel allowed no preview: text and the way to the file, no request
+    // the card says exactly which condition refused (the kernel's why on the link, T364); a bare file:// link is opened,
+    // never judged (the kernel's path links exclude it by design), and says so; a path link with no verdict at all (an
+    // event built before the kernel judged previews, or a kernel that ships none) says that, not a guess
+    const why = /^file:/i.test(open) ? "file links are opened, not previewed" : (a.dataset.previewWhy || "no preview verdict from the kernel for this link");
+    renderFilePreview(p, textOnlyContent(path, anchor, "shown as text: " + why), sid);
+    stamp(null);
+    return;
+  }
+  if (kind === "image" || kind === "pdf") { renderFilePreview(p, contentFor(path, anchor, kind, sid, null), sid); stamp(null); return; }
+  p.replaceChildren(rompLoaderInner("reading…", { wordmark: false }));   // the loader first (ui/CLAUDE.md), the text the moment it lands
+  fetch(sliceUrl(path, sid, anchor), { credentials: "same-origin" })
+    .then((r) => r.json().then((j) => ({ ok: r.ok, j })).catch(() => ({ ok: false, j: null })))
+    .then(({ ok, j }) => {
+      if (seq !== filePreviewSeq) return;        // the card moved on (another link, a close): this answer is stale
+      renderFilePreview(p, ok ? contentFor(path, anchor, kind, sid, j) : textOnlyContent(path, anchor, (j && j.why) || "could not read the file"), sid);
+      stamp(ok && j ? !!j.hit : null);
+    })
+    .catch(() => { if (seq === filePreviewSeq) { renderFilePreview(p, textOnlyContent(path, anchor, "could not read the file"), sid); stamp(null); } });
+}
 // Make bare file:// URLs AND bare file paths inside a rendered CHAT message clickable (assistant replies +
 // your own bubbles) — a relative `design/foo.md` opens too, resolved against the session's cwd (the user
 // 2026-07-06). marked doesn't autolink these and DOMPurify strips the file: scheme, so without this they read
@@ -2098,13 +2691,27 @@ function todoLinkChip(link: string): HTMLElement {
 // all (an old kernel, a cached payload) keeps today's shape-only linking rather than unlinking history.
 // file:// URIs are explicit absolute paths — never gated on the map. (The gates and the map walk are
 // path-links.ts's; the map is threaded through to it.)
-// `delegated`: leave the spans unbound; the caller's document routes their data-act to the body
-// delegate's openpath (the todo card and its Reply modal, linkTodoDetailPaths); the transcript binds.
-// `walkOpts`: the shared walk's options (path-links.ts PathLinkOptions), for a surface that reads a target after a
-// path (a todo's detail, `targetSuffix`); the transcript's callers pass none, so its walk is exactly as it was.
+const FENCE_WALK: PathLinkOptions = {
+  inPre: true, preVerified: true, unit: ".cl",
+  accept: (tok, ctx) => !ctx.inPre || viewerPathGate(tok, ctx),   // prose keeps the chat's rules; a fenced token takes the viewer's
+};
 function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: string[],
-    pathLinks?: Record<string, string>, pathPins?: Record<string, string>, sid?: string | null, delegated = false, walkOpts?: PathLinkOptions): void {
+    pathLinks?: Record<string, string>, pathPins?: Record<string, string>, pathPreview?: Record<string, string>,
+    pathPreviewWhy?: Record<string, string>, sid?: string | null, delegated = false, walkOpts?: PathLinkOptions): void {
+  // pathPreview (T351): the kernel's word on which of these links a hover may PREVIEW, by kind; the link carries it
+  // as data-preview, and a link without it gets the text-only card with no request. pathPreviewWhy (T364): for a link
+  // it may not, the kernel's exact refusal rides as data-preview-why, the card's words (the four-way guess went)
+  // `delegated`: leave the spans unbound; the caller's document routes their data-act to the body
+  // delegate's openpath (the todo card and its Reply modal, linkTodoDetailPaths); the transcript binds.
+  // `walkOpts`: the shared walk's options (path-links.ts PathLinkOptions), for a surface that reads a target after a
+  // path (a todo's detail, `targetSuffix`); the transcript's callers pass none, so its walk is exactly as it was.
   const bind = delegated ? (a: HTMLElement) => a : bindPathLink;
+  const armPreview = (link: HTMLElement, tok: string, open: string) => {
+    const k = previewKindOf(tok, pathPreview) || previewKindOf(open, pathPreview);
+    if (k) link.dataset.preview = k; else delete link.dataset.preview;
+    const w = !k && pathPreviewWhy ? (pathPreviewWhy[tok] || pathPreviewWhy[open] || "") : "";
+    if (w) link.dataset.previewWhy = w; else delete link.dataset.previewWhy;
+  };
   // A whole-backtick http(s) URL becomes a TAPPABLE link that still looks like code (the user
   // 2026-08-16, on mobile, wanting to tap through to a dashboard link a session sent). Bare URLs
   // and [text](url) already link via marked's gfm autolink + the global anchor click delegate;
@@ -2132,6 +2739,7 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
       const tok = (code.textContent || "").trim();
       if (!verified.has(tok)) continue;
       const link = bind(openPathLink(tok, tok, true, sid));
+      armPreview(link, tok, tok);
       code.replaceChildren(link);                              // the <code> chrome stays; its content is the link
       kernelVerified.add(tok);
       if (previewKind(tok) && !previewable.includes(tok) && !(skipThumbs && skipThumbs.includes(tok))) {
@@ -2140,13 +2748,22 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
       }
     }
   }
-  // The token walk is the shared one (path-links.ts linkifyPathTokens): it marks every path-shaped token
-  // — the kernel's pathLinks verdict narrowing it when the event carries one — and hands back the hits in
-  // document order; this document binds each click (unless delegated) and reads the hits for the figure
-  // pass below.
-  for (const { el: link, open, verified } of linkifyPathTokens(root, sid, pathLinks, walkOpts)) {
+  // The token walk is the shared one (path-links.ts linkifyPathTokens): it marks every path-shaped token, the
+  // kernel's pathLinks verdict narrowing it when the event carries one, and hands back the hits in document
+  // order; this document binds each click (unless delegated) and reads the hits for the figure pass below.
+  // FENCED blocks walk too (the user 2026-09-12, whose session printed a report's path in a ``` block and got dead
+  // text): a path there links under the file viewer's code-aware gate (an import's or require()'s package, a glob's
+  // tail, a substitution, a site name stay text) and ONLY on the kernel's verdict — code is verbatim material, so a
+  // path in it links when the kernel has stat'd the file, never on shape alone as prose may. The block's rows (.cl,
+  // code-block.ts) are the units, as the viewer's rows are, so a highlight's spans never cut a line's path into pieces
+  // the scan cannot see. A fenced hit opens the file and previews on hover like any link, but renders no figure under a
+  // code sample.
+  for (const { el: link, open, verified, inPre } of linkifyPathTokens(root, sid, pathLinks, walkOpts ? { ...FENCE_WALK, ...walkOpts } : FENCE_WALK)) {
     bind(link);
+    armPreview(link, link.textContent || "", open);
+    absorbFragment(link);
     if (verified) kernelVerified.add(open);   // the kernel stat'd it this build
+    if (inPre) continue;                      // no figure under a code sample
     if (previewKind(open) && !previewable.includes(open) && !(skipThumbs && skipThumbs.includes(open))) {
       previewable.push(open);
       mentionAt.set(open, link);
@@ -2196,6 +2813,33 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
   }
 }
 
+// The gist strings a notice and its compact-mode group head share (noticeBrief), so a fold never says
+// something its members would not.
+function interruptGist(cause?: string): string {
+  return cause === "restart" ? "interrupted — kernel restart" : cause === "crash" ? "interrupted — process died" : "interrupted";
+}
+const SETTLE_GIST = "turn settled with no response";
+function retriedGist(n: number): string { return `recovered after ${n} ${n === 1 ? "retry" : "retries"}`; }
+function reconnectingGist(effort?: string): string { return effort ? `Reloading session — applying ${effort} effort…` : "Reloading session…"; }
+// the one-line version of a safeguards model swap (renderModelFallback's gist and the compact run's brief agree):
+// whose safeguards flagged the message, the refusal category when the API named one, which model answered
+// (T279); a 'local' scope swapped only that reply, not the session's model
+function modelFallbackGist(ev: { from?: string; to?: string; category?: string; scope?: string }): string {
+  const from = ev.from ? prettyModel(ev.from) : "";
+  const to = ev.to ? prettyModel(ev.to) : "a fallback model";
+  const cat = (ev.category || "").trim();
+  const local = ev.scope === "local";
+  return `${from || "The model"}'s safeguards flagged this message${cat ? ` (${cat})` : ""} · `
+    + (local ? `this reply came from ${to}` : `switched to ${to}`);
+}
+// the source label + glyph a harness-injected record wears (renderInjected and the group head agree)
+function injectedSrc(src: InjectedSource): { label: string; glyph: NoticeGlyphKind } {
+  if (src.kind === "peer") return { label: src.subagent ? "background agent" : (src.name || "peer"), glyph: "peer" };
+  if (src.kind === "subagent") return { label: "background agent", glyph: "agent" };
+  if (src.kind === "task") return { label: "background command", glyph: "command" };
+  return { label: "system", glyph: "system" };
+}
+
 function renderEvent(ev: ChatEvent, prevEpoch?: number | null, worked?: number | null): HTMLElement {
   if (ev.kind === "user" && ev.hiddenByPending) {   // the kernel's echo of a send OUR bubble draws (T262h): the unit stays, invisible
     const hid = el("div", "turn turn-user turn-echo-hidden"); hid.style.display = "none"; return hid;
@@ -2214,6 +2858,7 @@ function renderEvent(ev: ChatEvent, prevEpoch?: number | null, worked?: number |
   // anchors on its own uuid.
   const anchorUuid = (ev.kind === "tool" && ev.name === "AskUserQuestion" && ev.resultUuid) ? ev.resultUuid : ev.uuid;
   if (anchorUuid) turn.dataset.uuid = anchorUuid; // deep-link anchor (shared with vs_chat)
+  if ((ev as { orphanOf?: string }).orphanOf) turn.dataset.orphanOf = String((ev as { orphanOf?: string }).orphanOf);   // a salvaged reply's note: landable by its record uuid (round 2, item 10)
   // A machine-cut turn's settle record is dropped server-side, but anchors minted AT that settle's
   // uuid (a verdict filed on the cut turn) must still land — the seam that replaced it answers to
   // them (kernel settleUuids → data-uuids, a token list like the postal data-mids).
@@ -2243,16 +2888,8 @@ function renderEvent(ev: ChatEvent, prevEpoch?: number | null, worked?: number |
   return turn;
 }
 
-// Format a worked-duration (seconds) the same way the live work-timer formats its
-// elapsed (elapsedMs): "45s" / "2m 14s" / "1h 03m". Units distinguish it from the
-// HH:MM rail time-markers.
-function durLabel(secs: number): string {
-  secs = Math.max(0, Math.floor(secs));
-  if (secs < 60) return `${secs}s`;
-  const m = Math.floor(secs / 60);
-  if (m < 60) return `${m}m ${secs % 60}s`;
-  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
-}
+// (durLabel — the ONE duration format for the worked footer, the work timer and every notice's meta or
+// countdown — lives in duration.ts since 2026-09-08; strip.ts's fmtReset rides it too.)
 
 function elapsedFooter(secs: number): HTMLElement {
   const f = el("div", "turn-elapsed");
@@ -2442,8 +3079,30 @@ function railLastDotFrom(turn: HTMLElement, hostR: DOMRect): number | null {
 // time window — plus any postal card carrying a hovered message id. Empty
 // groups+mids = clear. Glow is hover-transient, so a re-render that drops it
 // mid-hover self-heals on the next hover tick (the user 2026-06-19).
-function applyGlow(groups: Array<{ sid: string; uuids: string[] }>, mids: string[]) {
+// T318b (the user 2026-09-10): a group also carries `idx` (each uuid's GLOBAL event index in the kernel's chat
+// payload) so a source turn OUTSIDE the resident tail, which has no row here to light, is marked on the ruler's
+// history strip by its position in the unloaded prefix [0, headFrom) instead of painting nothing (glow-history.ts).
+let glowHistory: number[] = [];   // the active view's unloaded glow turns, as fractions of its unloaded prefix
+let glowUnits: number[] = [];     // …and its RESIDENT glow turns with no rendered row, as display units (a spacer's)
+// The display units of hovered uuids that are RESIDENT (in s.events) but have no rendered row: outside the render
+// window they sit inside a spacer, and paintGlowRuler places them by windowSpans; inside the window without a row
+// (folded, off the active path) they have no place and paintGlowRuler drops them. Same lookup as scrollToAnchor's.
+function residentUnits(s: Session, uuids: string[]): number[] {
+  if (!uuids.length) return [];
+  const items = displayItems(s);
+  const out: number[] = [];
+  for (const uuid of uuids) {
+    const idx = s.events.findIndex((e) => e.uuid === uuid);
+    if (idx < 0) continue;
+    let u = items.findIndex((it) => it.kind === "toolgroup" || it.kind === "noticegroup" ? it.indices.includes(idx) : it.kind === "event" && it.index === idx);
+    if (u < 0) u = items.findIndex((it) => itemFirstEvent(it) >= idx);
+    if (u >= 0) out.push(u);
+  }
+  return out;
+}
+function applyGlow(groups: Array<{ sid: string; uuids: string[]; idx?: Record<string, number>; total?: number }>, mids: string[]) {
   document.querySelectorAll(".ext-glow").forEach((n) => n.classList.remove("ext-glow"));
+  glowHistory = []; glowUnits = [];
   const midSet = new Set(mids);
   if (midSet.size) {
     document.querySelectorAll<HTMLElement>(".turn[data-mid]").forEach((n) => {
@@ -2455,9 +3114,21 @@ function applyGlow(groups: Array<{ sid: string; uuids: string[] }>, mids: string
     if (!v) continue;
     const uset = new Set(g.uuids || []);
     if (!uset.size) continue;
+    const lit = new Set<string>();
     v.el.querySelectorAll<HTMLElement>(".turn[data-uuid]").forEach((n) => {
-      if (uset.has(n.dataset.uuid || "")) n.classList.add("ext-glow");   // every row of a matched atom lights
+      const u = n.dataset.uuid || "";
+      if (uset.has(u)) { n.classList.add("ext-glow"); lit.add(u); }   // every row of a matched atom lights
     });
+    // the rest have no row: outside the resident tail they go on the ruler's history strip, resident but outside
+    // the render window on the ruler proper at their spacer's slice (the active view's only, whose #content the
+    // ruler mirrors; other views are display:none)
+    if (g.sid === activeId) {
+      const s = liveSession(g.sid);
+      // proto 2 has no index into the unloaded prefix: the strip shows no marks for it (its hits outside the resident
+      // run have no position to draw at until the head is known, and then everything is resident) (review find R)
+      glowHistory = historyMarks(g.uuids || [], g.idx, lit, s?.proto === 2 ? 0 : (s?.headFrom ?? 0));
+      glowUnits = s ? residentUnits(s, (g.uuids || []).filter((u) => !lit.has(u))) : [];
+    }
   }
   paintGlowRuler();   // mirror the glow as bands on the overview ruler (link_audit's #4)
   paintRailBand();    // one continuous measured band over the rail line (the user 2026-07-02)
@@ -2573,7 +3244,9 @@ function paintRailBand(): void {
 // map CONTENT space → ruler space, so a plain scroll never moves them (they mark absolute transcript
 // position); only a glow change or a #content relayout repaints. v1 is a pure indicator (pointer-events:none
 // so the native scrollbar still works underneath) — the optional click-a-band-to-scroll is intentionally
-// skipped so it can't swallow scrollbar clicks.
+// skipped so it can't swallow scrollbar clicks. T318b (the user 2026-09-10): when the hovered turns include some
+// OUTSIDE the resident tail, the top of the strip is a HISTORY cap marking them by global event index over the
+// unloaded prefix (applyGlow → glowHistory), and the resident scroll maps into what is left below a hairline gap.
 const RULER_W = 10;   // == the webkit scrollbar width (styles.css ::-webkit-scrollbar) so bands sit in its gutter
 let glowRuler: HTMLElement | null = null;
 function ensureGlowRuler(): HTMLElement {
@@ -2589,15 +3262,30 @@ function paintGlowRuler(): void {
   const v = activeId ? views.get(activeId) : null;
   // only the ACTIVE view's glows map onto its #content scroll (other views are display:none → zero rects)
   const glows = (content && v) ? Array.from(v.el.querySelectorAll<HTMLElement>(".turn.ext-glow")) : [];
-  if (!content || !glows.length) { ruler.style.display = "none"; ruler.replaceChildren(); return; }
+  const hist = (content && v) ? glowHistory : [];
+  const units = (content && v) ? glowUnits : [];
+  if (!content || !v || (!glows.length && !hist.length && !units.length)) { ruler.style.display = "none"; ruler.replaceChildren(); return; }
   const rect = content.getBoundingClientRect();
   const scrollH = content.scrollHeight || 1;
   const rulerH = content.clientHeight;          // the strip spans #content's VISIBLE height
+  const capH = hist.length ? HIST_H + HIST_GAP : 0;   // the history cap, when there is history to mark
+  const mapH = Math.max(1, rulerH - capH);            // …and the resident scroll maps into the rest
   // each glowing turn → a [top, bot] span in CONTENT space (scroll-independent: + scrollTop, − content top)
   const segs = glows.map((turn) => {
     const top = turn.getBoundingClientRect().top - rect.top + content.scrollTop;
     return { top, bot: top + turn.offsetHeight };
-  }).sort((a, b) => a.top - b.top);
+  });
+  // T318b: a hovered turn that is resident but outside the render window sits inside a spacer; its span is the
+  // spacer's slice for its unit, so the ruler bands it like a row it cannot see (windowSpans; the geometry is read
+  // here, at paint time, so a window that moved since the hover is placed as it stands now)
+  if (units.length) {
+    const yOf = (e: HTMLElement | null) => e ? e.getBoundingClientRect().top - rect.top + content.scrollTop : 0;
+    const topSp = v.el.querySelector<HTMLElement>(".tx-spacer-top"), botSp = v.el.querySelector<HTMLElement>(".tx-spacer-bot");
+    segs.push(...windowSpans(units, { winStart: v.winStart ?? 0, winEnd: v.winEnd ?? (v.unitTotal ?? 0), unitTotal: v.unitTotal ?? 0,
+                                      topY: yOf(topSp), topH: topSp ? topSp.offsetHeight : 0, botY: yOf(botSp), botH: botSp ? botSp.offsetHeight : 0,
+                                      avg: v.avgTurnH ?? 60 }));
+  }
+  segs.sort((a, b) => a.top - b.top);
   // coalesce contiguous / overlapping turns into ONE band; a multi-segment goal hover → a few disjoint bands
   const bands: Array<{ top: number; bot: number }> = [];
   for (const s of segs) {
@@ -2611,11 +3299,30 @@ function paintGlowRuler(): void {
   ruler.style.height = rulerH + "px";
   ruler.style.left = (rect.right - RULER_W) + "px";
   ruler.replaceChildren();
+  // the strip's words (T323 stage 4b): a proto-2 session shows NO count of older history until the head has been
+  // reached (historyLabel says "older history" and nothing more); an index session's count is its headFrom
+  const sAct = activeId ? liveSession(activeId) : null;
+  const stripLabel = sAct && sAct.proto === 2
+    ? historyLabel(sAct.headKnown === true, sAct.events.length, sAct.headTotal ?? null)
+    : (sAct && (sAct.headFrom ?? 0) > 0 ? (sAct.headFrom ?? 0) + " older" : "");
+  ruler.title = stripLabel; ruler.setAttribute("aria-label", stripLabel);
   for (const b of bands) {
     const band = el("div", "glow-ruler-band");
-    band.style.top = (b.top / scrollH * rulerH) + "px";
-    band.style.height = Math.max(3, (b.bot - b.top) / scrollH * rulerH) + "px";   // min 3px so a short turn still reads
+    band.style.top = (capH + b.top / scrollH * mapH) + "px";
+    band.style.height = Math.max(3, (b.bot - b.top) / scrollH * mapH) + "px";   // min 3px so a short turn still reads
     ruler.appendChild(band);
+  }
+  if (hist.length) {
+    const strip = el("div", "glow-ruler-hist");
+    strip.style.height = HIST_H + "px";
+    for (const hb of historyBands(hist, HIST_H)) {
+      const band = el("div", "glow-ruler-band");
+      band.classList.add("hist");
+      band.style.top = hb.top + "px";
+      band.style.height = hb.height + "px";
+      strip.appendChild(band);
+    }
+    ruler.appendChild(strip);
   }
   ruler.style.display = "";
 }
@@ -2639,14 +3346,38 @@ function eventEpoch(ev: ChatEvent): number | null {
 // Nothing re-reveals a suppressed marker: a stamp marks a time CHANGE and nothing else
 // (the user 2026-07-23) — see paintRailSticky for why the rail no longer needs repeats.
 function timeMarker(epoch: number, prevEpoch: number | null): HTMLElement {
-  const { text, day, hm } = markerLabel(epoch, prevEpoch, Date.now());
   const m = el("div", "time-marker");
-  m.dataset.hm = hm;
-  m.dataset.epoch = String(epoch);   // the top-of-view day-context label reads this (paintRailSticky)
+  m.dataset.epoch = String(epoch);   // the row's own moment; the top-of-view day-context label reads data-day, the walk's mark (stampWalkDay), and falls back to this (paintRailSticky)
+  m.dataset.prev = prevEpoch == null ? "" : String(prevEpoch);   // the raw previous timed row the chain compared against, for the minute tick's repaint (the same reference, so a tick can never stamp what the render suppressed)
   // The gutter shows the TIME and nothing else. The date rides a full-width day divider
-  // instead (dayDividerFor below) — no date word has to fit 47px of rail any more.
-  if (text) m.textContent = day ? hm : text;
+  // instead (dayDividerFor below) — no date word has to fit the 56px slot of rail any more.
+  paintMarker(m, epoch, prevEpoch, Date.now());
   return m;
+}
+
+// The marker's text from its moment, the raw previous timed row's and the clock: ONE writer for the render above and
+// for the rail's minute tick (refreshRelativeMarkers), so the two can never disagree. A row of TODAY reads how long ago
+// (time-marker.ts relativeLabel; T406, the user 2026-09-13), the words they asked for in place of the clock; the exact
+// HH:MM rides its tooltip; and the label is stamped where it CHANGES from the previous timed row's, the rail's
+// same-minute rule at the label's own grain, so two rows an hour apart that both read "2 hours ago" stamp once, like
+// two rows of one minute. Such a marker keeps the `rel` class shown or not, so the tick can stamp it again when the
+// labels part (119 and 120 minutes ago read differently) and can hand it back to the clock time once its day is over
+// (the divider for that day comes with the next render). Any other day: the HH:MM exactly as before, empty when the
+// minute repeats.
+// Every write is guarded by a read (round two of the review): the tick repaints every today marker each minute and most
+// labels do not change, and an unguarded textContent assignment replaces the text node even when the text is the same,
+// four mutation records a minute per marker and the death of any selection the user has laid across a stamp.
+function paintMarker(m: HTMLElement, epoch: number, prevEpoch: number | null, now: number): void {
+  const { text, day, hm } = markerLabel(epoch, prevEpoch, now);
+  const rel = relativeLabel(epoch, now);
+  const isRel = !!rel;
+  const shown = isRel && rel !== (prevEpoch == null ? "" : relativeLabel(prevEpoch, now));
+  const want = isRel ? (shown ? relativeLines(rel) : "") : (text ? (day ? hm : text) : "");
+  const title = shown ? hm : null;
+  if (m.dataset.hm !== hm) m.dataset.hm = hm;
+  if (m.classList.contains("rel") !== isRel) m.classList.toggle("rel", isRel);
+  if (m.textContent !== want) m.textContent = want;
+  if ((m.getAttribute("title") ?? null) !== title) { if (title == null) m.removeAttribute("title"); else m.title = title; }
 }
 
 // The day boundary itself: a hairline rule across the prose column with the date on it
@@ -2654,20 +3385,24 @@ function timeMarker(epoch: number, prevEpoch: number | null): HTMLElement {
 // of a new (non-today) day. Returns null on every other turn.
 //
 // Why it is not in the rail (the user 2026-08-01): the date used to stack on its own row
-// inside the .time-marker, but the gutter is only 47px wide and "Yesterday" measures 52.6px
-// bold, so its "Y" was clipped by the pane's overflow. Nothing that has to FIT a fixed 47px
+// inside the .time-marker, but the marker's slot was only 48px wide and "Yesterday" measures 52.6px
+// bold, so its "Y" was clipped by the pane's overflow. Nothing that has to FIT a fixed slot
 // is safe — `--fs` follows --vscode-chat-font-size, so a bigger chat font re-clips whatever
 // just barely fit at 13px. Out here the label has the whole column and can never be cut off.
 //
 // It must be a SIBLING, never the turn's first child: .dot and .time-marker are absolutely
 // positioned against the TURN's top edge, so a divider inside it would shove the message down
 // and leave the dot stranded up beside the rule.
-function dayDividerFor(epoch: number, prevEpoch: number | null): HTMLElement | null {
-  const { day, date } = markerLabel(epoch, prevEpoch, Date.now());
-  if (!day || !date) return null;
+// Only a FORWARD crossing opens a day, against the walk's high-water mark (time-marker.ts DayWalk, T339): a row stamped
+// earlier than the rows around it draws no divider and never becomes the reference. The date sits CENTERED over the
+// column between two hairlines, and the divider carries its own segment of the rail (styles.css .day-divider::before) so
+// the line runs through it (the user 2026-09-11).
+function dayDividerFor(epoch: number, walk: DayWalk): HTMLElement | null {
+  const date = walk.open(epoch, Date.now());
+  if (!date) return null;
   const d = el("div", "day-divider");
   const lbl = el("span", "day-divider-label"); lbl.textContent = date;
-  d.appendChild(lbl);
+  d.append(el("span", "day-divider-rule"), lbl, el("span", "day-divider-rule"));
   return d;
 }
 
@@ -2743,8 +3478,8 @@ function eventUnitIndex(s: Session): Int32Array {
   const items = displayItems(s);
   for (let u = 0; u < items.length; u++) {
     const it = items[u];
-    if (it.kind === "toolgroup" || it.kind === "retrygroup") { for (const i of it.indices) map[i] = u; }
-    else map[it.index] = u;
+    if (it.kind === "toolgroup" || it.kind === "noticegroup") { for (const i of it.indices) map[i] = u; }
+    else if (it.kind === "event") map[it.index] = u;
   }
   return map;
 }
@@ -2992,7 +3727,10 @@ function paintRailSticky(): void {
   // AT the line, so when a
   // label shows, the slot line drops by the label's height to make that room (the 2026-08-17 first
   // cut floated the label above the sticky without shifting it, and bled into the tab bar).
-  const ep = anchorM ? Number(anchorM.dataset.epoch || 0) : 0;
+  // the WALK's day at that row (data-day, stampWalkDay), not the row's own moment (T342): a stale echo at the top line
+  // used to say "2 days ago" between rows the divider walk keeps under one "Yesterday"; the row's own epoch is the
+  // fallback for a marker no walk stamped
+  const ep = anchorM ? Number(anchorM.dataset.day || anchorM.dataset.epoch || 0) : 0;
   const label = ep && gRect ? dayContext(ep, Date.now()) : "";
   let dayW = 0, dayH = 0;
   if (label) {
@@ -3037,12 +3775,15 @@ function paintRailSticky(): void {
   // (offsets ≥ stamp height), which is realLeads — this branch never runs. Markers at or below the sticky's
   // bottom stay visible — they are the genuine lower stamps, not doubles.
   const g = (anyMarker || marker!).getBoundingClientRect();
-  for (const [m, top] of all) m.style.visibility = top < slotLine + g.height ? "hidden" : "";
-  stamp.textContent = hm;
+  const rel = relativeLabel(Number(marker!.dataset.epoch), Date.now());   // a row of today reads how long ago at the top too, as its own marker does (T406)
+  stamp.classList.toggle("rel", !!rel);
+  stamp.textContent = rel ? relativeLines(rel) : hm;
   stamp.style.left = g.left + "px";
   stamp.style.width = g.width + "px";
   stamp.style.top = slotLine + "px";
   stamp.style.display = "";
+  const stampH = stamp.getBoundingClientRect().height || g.height;   // the sticky's OWN band (two lines for a today label), not the first marker's
+  for (const [m, top] of all) m.style.visibility = top < slotLine + stampH ? "hidden" : "";
   paintDay(slotLine);
 }
 
@@ -3054,8 +3795,29 @@ let railStickyPending = false;
 function scheduleRailSticky(): void {
   if (railStickyPending) return;
   railStickyPending = true;
-  requestAnimationFrame(() => { railStickyPending = false; paintRailSticky(); paintScrollMarks(); updateCommentRail(); });
+  requestAnimationFrame(() => { railStickyPending = false; paintRailSticky(); paintScrollMarks(); updateCommentRail(); if (activeId && hasUnreadOpenThread(activeId)) paintCommentOutlines(activeId); });
 }
+
+// The rail's MINUTE TICK (T406): today's labels age. ONE page-level timer, re-armed to fire just past each clock-minute
+// boundary (the labels are in calendar minutes, so nothing can change between two boundaries), repaints the SHOWN
+// transcript's today markers from the moment and the previous row each stored at render (paintMarker, the same writer):
+// a textContent write only where the text differs, then the sticky's usual rAF repaint. Never a timer per marker.
+// Hidden tabs are skipped and refreshed the moment a switch shows them (the switch below, showActive); a hidden window
+// skips too and catches up on visibilitychange. Cost per fire: one querySelectorAll over the shown transcript's today
+// markers, an integer label each, no layout read of its own (the sticky's paint reads as it always did).
+function refreshRelativeMarkers(root: HTMLElement | null | undefined): void {
+  if (!root) return;
+  const now = Date.now();
+  for (const m of Array.from(root.querySelectorAll<HTMLElement>(".time-marker.rel")))
+    paintMarker(m, Number(m.dataset.epoch), m.dataset.prev ? Number(m.dataset.prev) : null, now);
+  scheduleRailSticky();
+}
+function railMinuteTick(): void {
+  if (!document.hidden && activeId) refreshRelativeMarkers(views.get(activeId)?.el);
+  setTimeout(railMinuteTick, 60000 - (Date.now() % 60000) + 50);   // just past the next boundary
+}
+// (armed, with the visibilitychange catch-up, beside the pre-build's own listener further down: module-level statements
+// here would run inside the source-lifting test harnesses that slice this region, chat-proto2-exec.test.ts)
 
 function renderEventInner(ev: ChatEvent): HTMLElement {
   if (ev.kind === "system") return renderSystem(ev);
@@ -3063,41 +3825,32 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
     // The CLI's stop record is an EVENT, not a message (the user 2026-07-02): render it as a slim rail
     // marker in the compact-divider's language — never a person-blue bubble that reads like typed input.
     if ((ev as any).interruptMarker) {
-      const turn = el("div", "turn turn-interrupt");
-      turn.appendChild(dot("ring"));
-      const line = el("div", "interrupt-line");
-      line.appendChild(el("span", "interrupt-square"));   // the stop button's own glyph, tying cause to effect
       // The seam says WHY when the transcript does (kernel interruptCause, from the resume notice romp
       // itself injected): a kernel-restart/crash cut is not the user pressing stop, and the old blanket
-      // "you stopped this turn" title blamed them for every deploy (the user 2026-07-09).
+      // "you stopped this turn" tip blamed them for every deploy (the user 2026-07-09). A slim SESSION
+      // notice with the stop square as its glyph — cause tied to effect, no italic (the audit's row 12).
       const cause = (ev as any).interruptCause;
-      if (cause === "restart") {
-        line.appendChild(document.createTextNode("interrupted — kernel restart"));
-        line.title = "a romp kernel restart cut this turn; the session was resumed automatically";
-      } else if (cause === "crash") {
-        line.appendChild(document.createTextNode("interrupted — process died"));
-        line.title = "this session's claude process died mid-turn; the session was resumed automatically";
-      } else {
-        line.appendChild(document.createTextNode("interrupted"));
-        line.title = "you stopped this turn here (the stop button / Ctrl+C)";
-      }
-      turn.appendChild(line);
-      return turn;
+      return notice({ src: "session", glyph: "session", gist: interruptGist(cause), cls: "turn-interrupt",
+                      tip: cause === "restart" ? "a romp kernel restart cut this turn; the session was resumed automatically"
+                        : cause === "crash" ? "this session's claude process died mid-turn; the session was resumed automatically"
+                        : "you stopped this turn here (the stop button / Ctrl+C)" });
     }
     // A romp SYSTEM notice (kernel restart/resume, Retry) — flagged server-side (ev.rompSystem) so it's
     // separable from a feed NUDGE, which shares the same author (the user 2026-07-06). It gets its OWN romp
     // notice card (swirl chip + faded-accent box), NOT the gray nudge bubble: it's status, not a prompt.
     if ((ev as any).rompSystem && ev.md) {
-      // strip the invisible <!-- romp-* --> markers, then the leading "[romp]" (the chip already says who it's from)
+      // strip the invisible <!-- romp-* --> markers, then the leading "[romp]" (the source label already says who it's from)
       const text = ev.md.replace(/<!--[\s\S]*?-->/g, "").replace(/^\s*\[romp\]\s*/i, "").trim();
-      const firstLine = (text.split("\n").find((l) => l.trim()) || text).trim();
-      const gist = firstLine.length > 90 ? firstLine.slice(0, 88).replace(/\s+\S*$/, "") + "…" : firstLine;
+      // The head is the kernel's USER-facing gist (ev.gist, lifted from the notice's <!-- romp-gist --> marker —
+      // the user 2026-09-08: the agent-facing body's first sentence, "…Check whether it is still running before
+      // relaunching…", is written to the agent and read wrong as a head); the first line is the fallback for a
+      // notice recorded before the kernel shipped gists. The agent-facing text is the folded body.
+      const gist = (ev as any).gist ? String((ev as any).gist) : gistOf(text);
       const body = el("div", "notice-md md");
       const more = collapseWs(text) !== collapseWs(gist);
       if (more) body.innerHTML = md(text);   // a one-line notice IS its gist — no body repeating the head (T243)
-      return noticeCard({ variant: "romp", chip: "romp", logo: true, head: gist, body,
-                          collapsible: more,
-                          key: ev.uuid ? "rsys:" + ev.uuid : undefined });
+      return notice({ src: "romp", glyph: "romp", sev: "romp", gist, body,
+                      key: ev.uuid ? "rsys:" + ev.uuid : undefined });
     }
     // A harness-INJECTED record the kernel could NAME (ev.source: a background agent's completion, a system
     // notice, a peer's message) → its labelled notice card, never a bubble of any color (the user 2026-09-07).
@@ -3157,10 +3910,11 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
       }
       if (tagged) {
         const tchip = el("div", "romp-tag");
-        tchip.appendChild(document.createTextNode("⚙ " + ev.tag));
+        tchip.appendChild(noticeGlyph("system"));   // the gear line icon at the source-label size (was a ⚙ text glyph)
+        tchip.appendChild(document.createTextNode(ev.tag || ""));
         turn.appendChild(tchip);
       }
-      const bubble = el("div", (romp ? "romp-bubble" : tagged ? "romp-bubble tag-bubble" : injected ? "user-note" : "user-bubble") + " md");
+      const bubble = el("div", (romp ? "romp-bubble" : tagged ? "romp-bubble tag-bubble" : injected ? "notice-md" : "user-bubble") + " md");
       // a mid-turn send sits where the model READ it (T252d): the hover says when it was SENT, once the two differ
       // by more than a minute (both kernel stamps: the atom's landing `ts` and its `sentAt`)
       const sentTip = sentAtLabel(ev.ts, ev.sentAt);
@@ -3200,6 +3954,7 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         bubble.appendChild(head);
         const full = el("div", "nudge-full md");
         full.innerHTML = md(ev.md);
+        linkTerms(full);   // a message root (T351 stage 2): linked at render, like the nudge's full text below
         bubble.appendChild(full);
         bubble.classList.add("nudge-collapsible");
         bubble.dataset.act = "nudgetoggle";   // the stable body delegate, never a per-render listener (CLAUDE.md)
@@ -3222,6 +3977,7 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         if (more) {
           const full = el("div", "nudge-full md");
           full.innerHTML = md(ev.md);
+          linkTerms(full);   // a message root (T351 stage 2): linked at render, like the nudge's full text below
           bubble.appendChild(full);
           bubble.classList.add("nudge-collapsible");
           bubble.dataset.act = "nudgetoggle";   // the stable body delegate, never a per-render listener
@@ -3257,7 +4013,8 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         if (more) {
           const full = el("div", "nudge-full md");
           full.innerHTML = md(raw);
-          linkifyFileUris(full, imgPaths, ev.spacePaths, ev.pathLinks, ev.pathPins);
+          linkifyFileUris(full, imgPaths, ev.spacePaths, ev.pathLinks, ev.pathPins, ev.pathPreview, ev.pathPreviewWhy);
+          linkTerms(full);
           bubble.appendChild(full);
           bubble.classList.add("nudge-collapsible");
           // toggle rides the stable document.body delegate (data-act), NOT a per-render listener —
@@ -3272,8 +4029,9 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         // the user's OWN words keep their line breaks (userMd); a harness-injected note — compact
         // summary, command stdout — shares this branch and stays on the assistant grammar
         bubble.innerHTML = kind === "user" ? userMd(ev.md) : md(ev.md);
-        linkifyFileUris(bubble, imgPaths, ev.spacePaths, ev.pathLinks, ev.pathPins);   // bare file:// URLs in a message → clickable (open in the host's default app)
-        markMentions(bubble);   // a typed "@name" that names a live session wears that session's color
+        linkifyFileUris(bubble, imgPaths, ev.spacePaths, ev.pathLinks, ev.pathPins, ev.pathPreview, ev.pathPreviewWhy);   // bare file:// URLs in a message → clickable (open in the host's default app)
+        linkTerms(bubble);   // the team's coinages, in the user's own words too (T351 stage 2)
+        if (kind === "user") markMentions(bubble);   // in the user's own bubble a typed "@name" that names a live session wears that session's color; a harness note is not the user naming a session
       }
       // images, IN the bubble (part of his message): thumbnail + open/copy caption;
       // a literal path in the typed text becomes the same open-link inline.
@@ -3282,7 +4040,30 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         const mdText = ev.md || "";   // a path present here is already a link in the bubble → drop the caption's repeat
         for (const im of ev.images) bubble.appendChild(userImage(im, !!(im.path && mdText.includes(im.path))));
       }
-      turn.appendChild(bubble);
+      if (injected) {
+        // a harness-injected line the kernel could not name (a compact summary, a /command's stdout): a
+        // SYSTEM notice — gist = its first line, the rest folded — nested in the turn on its own rail dot,
+        // never the old full-width dim box (.user-note, retired 2026-09-08)
+        const plain = (ev.md || "").replace(/<!--[\s\S]*?-->/g, "").trim();
+        const gist = gistOf(plain) || (hasImgs ? "attachment" : "harness note");
+        const more = collapseWs(plain) !== collapseWs(gist) || hasImgs;
+        turn.appendChild(notice({ src: "system", glyph: "system", gist, body: more ? bubble : null, nested: true,
+                                  key: ev.uuid ? "hn:" + ev.uuid : undefined }));
+      } else turn.appendChild(bubble);
+      // The kernel's ECHO of a send the model has not read yet, seen from a window that did not send it (the other
+      // column of a split, another browser): dressed as the sender's own tail bubble is — dashed, captioned
+      // "sending…" — so two views of one session agree on what is pending (the user 2026-09-10: one session in two
+      // columns, solid history in one and a pending bubble in the other). The kernel orders the echo at the turn's
+      // tail for the same reason (_merge_live_atoms); the sender's own window hides this event behind its bubble
+      // (hiddenByPending, above); a never-delivered echo takes the dress below instead.
+      if (!ev.undelivered && !injected && isKernelEchoUuid(ev.uuid)) {   // the backend's "echo:" prefix rides into the payload
+        turn.classList.add("echo");
+        bubble.classList.add("echo-bubble");
+        const note = el("div", "echo-note");
+        note.textContent = "sending…";
+        setTip(note, "On its way to the session. The window that sent it can still cancel it until the session takes it.");
+        turn.appendChild(note);
+      }
       // NEVER-DELIVERED send (kernel ev.undelivered, from the backend's dropped-echo marking): the
       // session's process died holding this message, so it was never seen — say so instead of letting
       // it pose as history (the user 2026-07-29: a two-day-old lost send kept resurfacing mid-chat as
@@ -3296,28 +4077,19 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         bubble.classList.add("undelivered-bubble");
         const note = el("div", "undelivered-note");
         // covers BOTH dropped-echo populations (the copy predated the 2026-08-26 widening and claimed a
-        // process death for every loss): an SDK echo really is a send its CLI died holding, but a tmux
-        // echo settles dropped when the session simply moved past it — a keystroke the pane dropped, or
-        // a delivery the transcript recorded under different text. Say what is KNOWN (it never made the
-        // conversation), not a cause that is only sometimes true.
-        note.title = "This message never made it into the conversation: the session moved on without recording it (a dropped keystroke, a process that died holding it, or a delivery recorded under different text).";
+        // process death for every loss): an echo really is a send its CLI died holding, or the session simply
+        // moved past it (a delivery the transcript recorded under different text). Say what is KNOWN (it never
+        // made the conversation), not a cause that is only sometimes true.
+        setTip(note, "This message never made it into the conversation: the session moved on without recording it (a dropped keystroke, a process that died holding it, or a delivery recorded under different text).");
         const label = el("span", "undelivered-label");
         label.textContent = "never delivered";
         note.appendChild(label);
         if (!romp && !injected && ev.md) {   // restore only the user's own words, not a romp injection's
-          const re = el("button", "undelivered-act") as HTMLButtonElement;
-          re.type = "button";
-          re.textContent = "copy to composer";
-          re.title = "Put the text back in the composer to review and send again";
-          re.dataset.act = "echorestore";
+          const re = noticeAct("copy to composer", "echorestore", "Put the text back in the composer to review and send again");
           (re as any)._etext = ev.md;
           note.appendChild(re);
         }
-        const dx = el("button", "undelivered-act") as HTMLButtonElement;
-        dx.type = "button";
-        dx.textContent = "dismiss";
-        dx.title = "Remove this never-delivered message";
-        dx.dataset.act = "echodismiss";
+        const dx = noticeAct("dismiss", "echodismiss", "Remove this never-delivered message");
         if (ev.uuid) dx.dataset.euuid = ev.uuid;
         if (ev.echoT) dx.dataset.et = String(ev.echoT);
         note.appendChild(dx);
@@ -3356,7 +4128,7 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         // RESTORE-FILES affordance (the user 2026-08-04): put the WORKSPACE back the way it was just
         // before this message — the SDK's file-checkpoint rewind (rewind_files). The conversation is
         // untouched; edit/delete cover that. Same two-click arm as delete (destructive — every miss
-        // fails toward "not restored"); the kernel warns on a refusal (tmux, disconnected).
+        // fails toward "not restored"); the kernel warns on a refusal (disconnected).
         const rf = el("button", "msg-restorefiles") as HTMLButtonElement;
         rf.type = "button";
         rf.textContent = "restore files";
@@ -3394,8 +4166,8 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         const body = el("div", "reminder-body");
         for (const r of plain) body.appendChild(preEl(r));
         const n = plain.length;
-        turn.appendChild(noticeCard({ variant: "reminder", chip: "system",
-          head: `${n} reminder${n > 1 ? "s" : ""}`, body, nested: true,   // rendered inside the carrying user turn
+        turn.appendChild(notice({ src: "system", glyph: "system", gist: `${n} reminder${n > 1 ? "s" : ""}`, body,
+          nested: true,   // rendered inside the carrying user turn, on its own rail dot
           key: ev.uuid ? "rem:" + ev.uuid : undefined }));
       }
     }
@@ -3407,20 +4179,16 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
     // interrupt marker's own language instead of a full assistant bubble (the user 2026-07-09: every
     // kernel-restart cut minted one of these bubbles per session).
     if ((ev as any).interruptSettle) {
-      const turn = el("div", "turn turn-interrupt");
-      turn.appendChild(dot("ring"));
-      const line = el("div", "interrupt-line");
-      line.appendChild(document.createTextNode("no response — turn settled"));
-      line.title = "the model closed the interrupted turn with nothing to add; the real work resumes below";
-      turn.appendChild(line);
-      return turn;
+      return notice({ src: "session", glyph: "session", gist: SETTLE_GIST, cls: "turn-interrupt",
+                      tip: "the model closed the interrupted turn with nothing to add; the real work resumes below" });
     }
     const turn = el("div", "turn turn-assistant");
     turn.appendChild(dot("ring"));
     const body = el("div", "assistant md");
     body.innerHTML = md(ev.md);
     highlight(body);
-    linkifyFileUris(body, undefined, ev.spacePaths, ev.pathLinks, ev.pathPins);   // bare file:// URLs + verified spaced filenames → clickable
+    linkifyFileUris(body, undefined, ev.spacePaths, ev.pathLinks, ev.pathPins, ev.pathPreview, ev.pathPreviewWhy);   // bare file:// URLs + verified spaced filenames → clickable
+    linkTerms(body);   // the team's coinages (T351 stage 2)
     turn.appendChild(body);
     return turn;
   }
@@ -3458,19 +4226,15 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
   if (ev.kind === "branch") {
     // the branch divider: everything above is history shared with the parent session; the label
     // deep-links to the parent AT the branch point (data-uuid there is the cut record itself)
-    const turn = el("div", "turn turn-branchmark");
-    const line = el("div", "branch-divider");
-    const label = el("button", "branch-label") as HTMLButtonElement;
-    label.type = "button";
+    // a slim BRANCH notice whose gist is the jump link (data-act=branchjump, off the rail: no dot, no stamp —
+    // the split is a fact about the history, not a moment in it); the accent hairlines are retired
+    const label = el("span", "notice-gist");
     label.dataset.act = "branchjump";
     if (ev.fromSid) label.dataset.sid = ev.fromSid;
     if (ev.cut) label.dataset.cut = ev.cut;
-    label.textContent = "Branched from " + (ev.fromName || "another session")
-      + " · the conversation above is shared";
-    label.title = "Open " + (ev.fromName || "the parent session") + " at the branch point";
-    line.appendChild(label);
-    turn.appendChild(line);
-    return turn;
+    label.textContent = "Branched from " + (ev.fromName || "another session") + " · the conversation above is shared";
+    setTip(label, "Open " + (ev.fromName || "the parent session") + " at the branch point");
+    return notice({ src: "branch", glyph: "branch", sev: "romp", gist: label, dot: false, cls: "turn-branchmark" });
   }
   if (ev.kind === "reconnecting") return renderReconnecting(ev);
   if (ev.kind === "retrying") return renderRetrying(ev);
@@ -3511,56 +4275,26 @@ function prettyModel(id: string): string {
 // of treating a remote path as local (a silent no-op, since that path doesn't exist here). This pane stays
 // host-BLIND as designed (see federation.ts) — sid is just echoed back opaquely, never parsed here.
 function asFolderLink(elem: HTMLElement, cwd: string, sid?: string): void {
-  if (!cwd) return;
-  // On the web a click BROWSES the folder in the dashboard (the user 2026-08-14) — the affordance
-  // that works from every device, where OS-open acted on the KERNEL's machine (the wrong-machine
-  // class the 📎 picker and file links were cured of). WHERE the listing opens is decided at the
-  // click, not here (openBrowse: the Files pane, the feed pane, or in place only when unframed; the
-  // user 2026-09-06). OS-open survives on the row's right-click menu for the genuinely-local case
-  // (the contextmenu delegate below). In VS Code the browser overlay doesn't exist, so the click
-  // keeps opening the folder host-side.
-  const web = location.protocol === "http:" || location.protocol === "https:";
-  elem.dataset.act = web ? "browseFiles" : "openFolder";   // the act names the intent; openBrowse routes it
-  elem.dataset.cwd = cwd;
-  if (sid) elem.dataset.id = sid;
-  elem.classList.add("folder-link");
-  elem.title = cwd + (elem.dataset.act === "browseFiles"
-    ? "  ·  click to browse this folder" : "  ·  click to open this folder");
+  folderLink(elem, cwd, sid);   // the rule itself lives beside the folder widget (status-widgets.ts folderLink) since T409; kept here for the other folder locations
 }
 
 // Small inline-SVG folder in the romp line-icon style (matches ctxIcon: 16-unit viewBox, currentColor, so it
 // inherits the dim statusline tint / brightens on the folder-link hover) — the monochrome replacement for the
 // 📁 emoji beside the statusline directory (the user 2026-07-15). Trusted constant markup.
 function folderIcon(): HTMLElement {
-  const span = el("span", "status-dir-icon");
-  span.innerHTML = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" '
-    + 'stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">'
-    + '<path d="M2 12.6 a1 1 0 0 1-1-1 V4.4 a1 1 0 0 1 1-1 H5.9 a1 1 0 0 1 0.7 0.3 L7.8 5 '
-    + 'H13 a1 1 0 0 1 1 1 V11.6 a1 1 0 0 1-1 1 Z"/></svg>';
-  return span;
+  return folderIconNode();   // the markup lives beside the folder widget (status-widgets.ts FOLDER_ICON_SVG) since T409
 }
 
 function renderSystem(ev: Extract<ChatEvent, { kind: "system" }>): HTMLElement {
   const turn = el("div", "turn turn-system");
   const key = renderingSid ? "sysctx:" + renderingSid : undefined;
-  const card = el("div", "sys-card");
-  applyFold(card, "open", key);
-
-  const head = el("div", "sys-card-head");
-  const gear = el("span", "sys-gear"); gear.textContent = "⚙"; head.appendChild(gear);
-  const title = el("span", "sys-title"); title.textContent = "System context"; head.appendChild(title);
   const n = (ev.claudemd || []).length;
   const bits: string[] = [];
   if (ev.model) bits.push(prettyModel(ev.model));
-  if (ev.cwd) bits.push("📁 " + (ev.cwd.replace(/\/+$/, "").split("/").pop() || ev.cwd));   // dir basename, glanceable; full path in the row below
+  if (ev.cwd) bits.push(ev.cwd.replace(/\/+$/, "").split("/").pop() || ev.cwd);   // dir basename, glanceable; full path in the row below
   if (n) bits.push(`${n} CLAUDE.md`);
-  const sub = el("span", "sys-sub"); sub.textContent = bits.join(" · "); head.appendChild(sub);
-  const caret = el("span", "sys-caret"); caret.textContent = "▸"; head.appendChild(caret);
-  head.title = "the CLAUDE.md instructions + config this session is running under";
-  head.addEventListener("click", () => rememberFold(card, "open", key));
-  card.appendChild(head);
 
-  const body = el("div", "sys-card-body");
+  const body = el("div");
   const rows: [string, string][] = [];
   if (ev.model) rows.push(["Model", ev.model]);
   if (ev.mode) rows.push(["Permission mode", ev.mode]);
@@ -3597,9 +4331,11 @@ function renderSystem(ev: Extract<ChatEvent, { kind: "system" }>): HTMLElement {
   const note = el("div", "sys-note");
   note.textContent = "Claude Code’s base harness prompt isn’t recorded in the transcript, so it isn’t shown here — this is the CLAUDE.md instructions and session config that were in effect.";
   body.appendChild(note);
-  card.appendChild(body);
-
-  turn.appendChild(card);
+  // the SYSTEM notice at the top of the transcript: gist "System context", meta = model · dir · N CLAUDE.md,
+  // the config grid + CLAUDE.md sub-boxes folded beneath, keyed per session so a send never snaps it shut.
+  // Nested: it is meta, not a conversational turn — it sits OFF the rail (no dot; .turn-system hides the line).
+  turn.appendChild(notice({ src: "system", glyph: "system", gist: "System context", meta: bits.join(" · ") || undefined,
+                            body, key, nested: true, tip: "the CLAUDE.md instructions + config this session is running under" }));
   return turn;
 }
 
@@ -3615,18 +4351,23 @@ function renderAsk(ev: Extract<ChatEvent, { kind: "tool" }>): HTMLElement | null
   // answered = at least one question has a recorded answer (chosen text). Empty chosen = still pending.
   const answered = blocks.some((b) => b.chosen && b.chosen.length > 0);
 
-  const turn = el("div", "turn turn-ask" + (answered ? " answered" : ""));
-  turn.appendChild(dot(answered ? "user" : "ring"));   // answered → the blue user dot, matching the box
-  const card = el("div", "ask-card" + (answered ? " ask-answered" : ""));
-  if (answered) {
-    const tag = el("div", "ask-answered-tag");
-    tag.textContent = "↳ You answered Claude’s question";
-    card.appendChild(tag);
-  } else {
-    const head = el("div", "ask-head");
-    head.textContent = blocks.length > 1 ? `${blocks.length} questions` : "Question";
-    card.appendChild(head);
+  if (!answered) {
+    // PENDING: a slim QUESTION notice — the question itself is the gist (the options live in the red picker
+    // below, renderLiveAsk); several questions fold their list beneath a "N questions" gist
+    const qs = blocks.map((b) => b.question || b.header || "").filter(Boolean);
+    const body = el("div", "notice-md");
+    if (qs.length > 1) for (const q of qs) { const qt = el("div", "ask-qtext"); qt.textContent = q; body.appendChild(qt); }
+    return notice({ src: "question", glyph: "question", gist: qs.length > 1 ? `${qs.length} questions` : (qs[0] || "Question"),
+                    body, key: ev.uuid ? "ask:" + ev.uuid : undefined, cls: "turn-ask",
+                    tip: "the session is waiting on your answer — the picker below takes it" });
   }
+  // ANSWERED: the blue "you answered Claude's question" box — a reply to a popup, dressed as yours
+  const turn = el("div", "turn turn-ask answered");
+  turn.appendChild(dot("user"));   // the blue user dot, matching the box
+  const card = el("div", "ask-card ask-answered");
+  const tag = el("div", "ask-answered-tag");
+  tag.textContent = "↳ You answered Claude’s question";
+  card.appendChild(tag);
   for (const b of blocks) {
     const qel = el("div", "ask-q");
     const qt = el("div", "ask-qtext"); qt.textContent = b.question || b.header || ""; qel.appendChild(qt);
@@ -3711,24 +4452,26 @@ function parseAskRaw(ev: Extract<ChatEvent, { kind: "tool" }>): AskAnswerBlock[]
 // so today's behavior is unchanged when no user todos exist.
 const utDetailOpen = new Set<string>();   // keyed fold: which todo details are expanded — survives re-renders
 function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
-  const turn = el("div", "turn turn-todo");
-  turn.appendChild(dot("ring"));
-  const card = el("div", "todo-card");
+  const key = "todo:" + (renderingSid || "");
   const uts = ev.userTodos || [];
+  // ONE notice for both stores (the notice vocabulary, 2026-09-08; the split card folded into it): the agent's
+  // checklist fills the body first, the waiting-on-you rows follow in the same body, and the head carries the
+  // gist of whichever is there. sev, gist and tip are settled by the branches below and read at the one exit.
+  const body = el("div", "todo-list");
+  let sev: NoticeSev = "info", gist = "", tip: string | undefined;
   // FAIL LOUDLY (the user 2026-07-03): the kernel couldn't read Claude's authoritative task store, so it
-  // surfaces THIS instead of quietly showing a lossy transcript-folded list that could be wrong. No early
-  // return: the waiting-on-you section below renders from a DIFFERENT store (user todos) and must
-  // survive an unreadable task store.
+  // surfaces THIS instead of quietly showing a lossy transcript-folded list that could be wrong. The error
+  // severity rides the rail and dot; the reason reads in the body's own text colour. No early return: the
+  // waiting-on-you section below renders from a DIFFERENT store (user todos) and must survive an unreadable
+  // task store.
   if (ev.error) {
-    card.classList.add("todo-card-error");
-    const head = el("div", "todo-head"); head.textContent = "To-do · unavailable";
-    card.appendChild(head);
-    const msg = el("div", "todo-error-msg"); msg.textContent = ev.error;
-    card.appendChild(msg);
+    sev = "err"; gist = "unavailable";
+    tip = "the task store could not be read, so no list is shown: nothing here is guessed";
+    const msg = el("div", "notice-md"); msg.textContent = ev.error;
+    body.appendChild(msg);
   } else if (ev.tasks.length) {
     const done = ev.tasks.filter((t) => t.status === "completed").length;
-    const head = el("div", "todo-head"); head.textContent = `To-do · ${done}/${ev.tasks.length}`;
-    card.appendChild(head);
+    gist = `${done} of ${ev.tasks.length} done`;
     const row = (t: (typeof ev.tasks)[number]) => {
       const r = el("div", "todo-item todo-" + t.status);
       const mark = el("span", "todo-mark");
@@ -3746,8 +4489,8 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
     // click to expand and click again to re-fold, nothing lost. The fold sits WHERE the bulk lives
     // (finished work precedes current work in the list), keyed per session so the state survives the
     // per-push re-renders (the openFolds idiom); a list with ≤ 2 finished rows stays inline — a fold
-    // hiding two rows costs a click for nothing. The label flip + rows appearing ARE the click's
-    // acknowledgement, immediate and local (no round-trip).
+    // hiding two rows costs a click for nothing. The toggle rides the body delegate (data-act=todofold):
+    // the label flip + rows appearing ARE the click's acknowledgement, immediate and local.
     const onDeck = ev.tasks.filter((t) => t.status === "in_progress" || t.status === "pending");
     const finished = ev.tasks.filter((t) => t.status !== "in_progress" && t.status !== "pending");
     if (finished.length >= 3) {
@@ -3757,21 +4500,12 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       applyFold(doneBox, "todo-open", foldKey);
       const tog = el("button", "todo-fold") as HTMLButtonElement;
       tog.type = "button";
-      const label = () => {
-        const open = doneBox.classList.contains("todo-open");
-        tog.textContent = open ? `hide ${finished.length} completed` : `+ ${finished.length} more completed`;
-        tog.title = open ? "collapse the completed items" : "show the completed items";
-      };
-      label();
-      tog.addEventListener("click", (e) => {
-        e.stopPropagation();
-        rememberFold(doneBox, "todo-open", foldKey);
-        label();
-      });
-      card.appendChild(tog);
-      card.appendChild(doneBox);
-    } else for (const t of finished) card.appendChild(row(t));
-    for (const t of onDeck) card.appendChild(row(t));
+      tog.dataset.act = "todofold"; tog.dataset.nkey = foldKey; tog.dataset.n = String(finished.length);
+      todoFoldLabel(tog, doneBox.classList.contains("todo-open"), finished.length);
+      body.appendChild(tog);
+      body.appendChild(doneBox);
+    } else for (const t of finished) body.appendChild(row(t));
+    for (const t of onDeck) body.appendChild(row(t));
   }
   // "Waiting on you" — open user todos, oldest first. Reply injects the user's answer into the
   // session (anchored to the need it answers) and stamps the todo answered; Dismiss clears it
@@ -3779,9 +4513,9 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
   // this card rebuilds on every push, and a per-render listener eats a mid-press click
   // (the click-safety rule, ui/CLAUDE.md).
   if (uts.length) {
-    const head = el("div", "todo-head ut-head");
+    const head = el("div", "ut-head");
     head.textContent = `Waiting on you · ${uts.length}`;
-    card.appendChild(head);
+    body.appendChild(head);
     for (const t of uts) {
       const row = el("div", "ut-item");
       const line = el("div", "ut-line");
@@ -3836,11 +4570,18 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
         linkifyPrRefs(d, prRepoFor(renderingSid));
         row.appendChild(d);
       }
-      card.appendChild(row);
+      body.appendChild(row);
     }
+    if (!gist) gist = `${uts.length} waiting on you`;   // no checklist to count: the head names the other store
   }
-  turn.appendChild(card);
-  return turn;
+  // OPEN by default (glanceable state, still foldable): the checklist is the point of the card
+  return notice({ src: "to-do", glyph: "todo", sev, gist, body, key, open: true, cls: "turn-todo", tip });
+}
+
+// the completed-bulk fold's label + tip, shared by the render and the delegate's flip
+function todoFoldLabel(tog: HTMLElement, open: boolean, n: number): void {
+  tog.textContent = open ? `hide ${n} completed` : `+ ${n} more completed`;
+  setTip(tog, open ? "collapse the completed items" : "show the completed items");
 }
 
 // A context compaction → one clean teal rail marker (the user 2026-06-14): replaces the raw /compact
@@ -3863,13 +4604,14 @@ function renderCompact(ev: Extract<ChatEvent, { kind: "compact" }>): HTMLElement
   if (ev.trigger === "auto") bits.push("auto");
   else if (ev.trigger === "manual") bits.push("manual");
   if (ev.preTokens) bits.push(ev.postTokens ? `${compactTokens(ev.preTokens)} → ${compactTokens(ev.postTokens)}` : `${compactTokens(ev.preTokens)} freed`);
-  const head = "Context compacted" + (bits.length ? " · " + bits.join(" · ") : "");
   const body = el("div", "notice-md md");
   if (summary) { body.innerHTML = md(summary); highlight(body); }
-  else { const p = el("div", "notice-plain"); p.textContent = "No summary was captured for this compaction."; body.appendChild(p); }
-  // collapsible only when there's a summary to reveal; the "compacted" chip carries identity (no ✦ glyph)
-  return noticeCard({ variant: "compact", chip: "compacted", head, body,
-                      collapsible: !!summary, key: uuid ? "compact:" + uuid : undefined });
+  // a body only when there's a summary to reveal (a boundary with none renders flat — nothing hidden);
+  // the gist says what happened, the meta says why and how much (trigger · token win)
+  return notice({ src: "compaction", glyph: "compaction", sev: "compact", gist: "Context compacted",
+                  meta: bits.join(" · ") || undefined, body: summary ? body : null,
+                  key: uuid ? "compact:" + uuid : undefined,
+                  tip: summary ? undefined : "no summary was captured for this compaction" });
 }
 
 // The /clear boundary card (the user 2026-07-27): the fresh episode opens with a collapsed "Conversation
@@ -3896,14 +4638,15 @@ function fillClearBody(body: HTMLElement, got: { events: ChatEvent[]; truncated?
   }
   const wrap = el("div", "clear-episode");
   let prevEp: number | null = null;
+  const walk = new DayWalk();   // the fold divides days by the chat's own high-water mark (T339)
   for (const e of got.events) {
     try {
       const ep = eventEpoch(e);
-      const prior = prevEp;   // the PREVIOUS event's epoch — chained, so the fold divides days
+      const prior = prevEp;   // the PREVIOUS event's epoch — chained, so the rail's same-minute rule holds
       if (ep != null) {       // rather than re-stamping the full date on every turn in it
-        const dv = dayDividerFor(ep, prior);
+        const dv = dayDividerFor(ep, walk);
         if (dv) wrap.appendChild(dv);
-        prevEp = ep;
+        prevEp = ep; walk.pass(ep);
       }
       wrap.appendChild(renderEvent(e, prior));
     }
@@ -3918,10 +4661,9 @@ function renderClear(ev: Extract<ChatEvent, { kind: "clear" }>): HTMLElement {
   // the boundary settle's own record rides the event: the head counts the dropped cards, hover
   // names them — the drop is visible in the chat too, never only in the feed (the user 2026-07-27)
   const dropped = ev.dropped || [];
-  const head = "Conversation cleared — a fresh one starts here"
-    + (dropped.length ? " · " + dropped.length + " open card" + (dropped.length === 1 ? "" : "s") + " dropped with it" : "");
   const body = el("div", "clear-body");
   body.dataset.clearKey = key;
+  body.dataset.clearSid = sid;   // the fold toggle (noticeOpened, off the delegate) posts loadEpisode for this session
   const cached = episodeCache.get(key);
   if (cached) fillClearBody(body, cached);
   else {
@@ -3932,19 +4674,11 @@ function renderClear(ev: Extract<ChatEvent, { kind: "clear" }>): HTMLElement {
     p.appendChild(document.createTextNode(" Loading the cleared conversation…"));
     body.appendChild(p);
   }
-  const turn = noticeCard({ variant: "clear", chip: "cleared", head, body, collapsible: true, key });
-  if (dropped.length) turn.querySelector(".notice-head")?.setAttribute("title", "dropped: " + dropped.join(", "));
-  // Fetch on FIRST expand (ride the same head click that toggles the fold — noticeCard owns the toggle):
-  // one request per boundary, deduped by the pending map; re-renders hit the cache instead.
-  const headEl = turn.querySelector(".notice-head");
-  headEl?.addEventListener("click", () => {
-    const card = turn.querySelector(".notice-card") || turn;
-    if (!card.classList.contains("notice-open")) return;                  // just collapsed — nothing to load
-    if (episodeCache.has(key) || episodePendingKey.get(sid) === key) return;
-    episodePendingKey.set(sid, key);
-    vscodeApi?.postMessage({ type: "loadEpisode", id: sid });
-  });
-  return turn;
+  // the fetch on FIRST expand rides the same delegated head click that toggles the fold (noticeOpened) —
+  // one request per boundary, deduped by the pending map; re-renders hit the cache instead
+  return notice({ src: "session", glyph: "clear", gist: "Conversation cleared — a fresh one starts here",
+                  meta: dropped.length ? dropped.length + " card" + (dropped.length === 1 ? "" : "s") + " dropped" : undefined,
+                  body, key, tip: dropped.length ? "dropped: " + dropped.join(", ") : undefined });
 }
 
 // chatEpisode: the kernel's one-shot reply to loadEpisode — cache it under the key the expand recorded,
@@ -3980,16 +4714,10 @@ function chatEpisode(m: any): void {
 // clearing bracket; it vanishes the instant the fork lands, when the "Conversation cleared" boundary card
 // (renderClear) takes over as the durable record.
 function renderClearing(): HTMLElement {
-  const turn = el("div", "turn turn-clearing");
-  turn.appendChild(dot("ring"));
-  const line = el("div", "clearing-line");
-  line.appendChild(metaDots());   // the pulsing accent-blue dots — "it's romp, working"
-  const txt = el("span", "clearing-text");
-  txt.textContent = "Clearing conversation…";
-  line.appendChild(txt);
-  line.title = "starting a fresh conversation — the cleared one stays one click away, behind the divider that lands here";
-  turn.appendChild(line);
-  return turn;
+  // the pulsing accent dots in the glyph slot — "it's romp, working"; a slim live SESSION notice
+  return notice({ src: "session", glyph: noticeLiveGlyph(metaDots()), sev: "romp", gist: "Clearing conversation…", live: true,
+                  cls: "turn-clearing",
+                  tip: "starting a fresh conversation — the cleared one stays one click away, behind the divider that lands here" });
 }
 
 // LIVE compaction in progress (the user 2026-07-06): an animated inline element in the chat flow while the
@@ -3999,9 +4727,6 @@ function renderClearing(): HTMLElement {
 // The kernel appends kind:"compacting" BEFORE kind:"queued", so a message sent mid-compaction stacks BELOW
 // this instead of clobbering it. Event-based: it vanishes the instant the session stops compacting.
 function renderCompacting(): HTMLElement {
-  const turn = el("div", "turn turn-compacting");
-  turn.appendChild(dot("ring"));
-  const line = el("div", "compacting-inline");
   const bar = el("span", "compacting-bar");
   const fill = el("span", "compacting-bar-fill");
   // Sweep through the SAME context colormap the statusline/tab compacting bars use (the user 2026-07-07:
@@ -4010,18 +4735,16 @@ function renderCompacting(): HTMLElement {
   // to the wall clock so it resumes seamlessly across the chat's per-push rebuilds (fresh element each time).
   applyCompactSweep(fill, 3200);   // duration MUST match the .compacting-bar-fill @keyframes (ctx-compress 3.2s)
   bar.appendChild(fill);
-  line.appendChild(bar);
-  const txt = el("span", "compacting-text");
-  txt.textContent = "Compacting context…";
-  line.appendChild(txt);
-  line.title = "compacting — compressing the conversation to free up context; any queued message sends once it finishes";
-  turn.appendChild(line);
-  return turn;
+  // the bar rides the glyph slot of a slim live COMPACTION notice; the text is plain --fg (the teal is the
+  // rail + dot + bar, never the words — 1.96:1 as text on cream)
+  return notice({ src: "compaction", glyph: noticeLiveGlyph(bar), sev: "compact", gist: "Compacting context…", live: true,
+                  cls: "turn-compacting",
+                  tip: "compacting — compressing the conversation to free up context; any queued message sends once it finishes" });
 }
 
 // LIVE session reconnect (the user 2026-07-06): an /effort switch has no SDK runtime control, so romp applies
 // it by RECONNECTING the session (resume = the CLI re-reads the transcript) — otherwise invisible in the chat.
-// While the reconnect is pending, an animated "Reloading session: applying <effort> effort…" element shows
+// While the reconnect is pending, an animated "Reloading session — applying <effort> effort…" element shows
 // (the romp-accent pulsing dots, the loader motif), so the user sees the "rereading transcript" step the TUI
 // narrates; it clears the instant the new client connects (kernel drops effortPending). Sibling of the
 // compacting element; appended before the queued bubble.
@@ -4033,32 +4756,19 @@ function renderCompacting(): HTMLElement {
 // pick-held.ts, keyed on the counts: work running names it; none left says the pick applies when this
 // turn finishes (review round 2).
 function renderReconnecting(ev: Extract<ChatEvent, { kind: "reconnecting" }>): HTMLElement {
-  const turn = el("div", "turn turn-reconnecting");
-  turn.appendChild(dot("ring"));
-  const line = el("div", "reconnecting-line");
-  const txt = el("span", "reconnecting-text");
-  if (ev.held) {
-    turn.classList.add("turn-reconnecting-held");
-    txt.textContent = pickHeldLine(ev.held);
-    line.title = pickHeldTitle(ev.held);
-  } else {
-    line.appendChild(metaDots());   // the same pulsing accent-blue dots as the switching-dots badge: "it's romp, working"
-    if (ev.switching) {
-      // the landing's live permission-mode switch is in flight (review round 10): nothing reloads for that round
-      // trip, so the line says the mode change is being applied; the title names any reload that follows for the
-      // other picks riding the same reconnect (pick-held.ts)
-      txt.textContent = "Applying the permission mode change…";
-      line.title = switchingTitle(ev.picks);
-    } else {
-      txt.textContent = ev.effort ? `Reloading session: applying ${ev.effort} effort…` : "Reloading session…";
-      // the title names the change the reload applies (ev.picks: effort, permission mode, fast mode; review round 9),
-      // since the element shows for a fast or mode reload too (round 7's gate) and said "effort" for all of them
-      line.title = reloadingTitle(ev.picks, ev.effort);
-    }
-  }
-  line.appendChild(txt);
-  turn.appendChild(line);
-  return turn;
+  // HELD (ev.held): a still session notice, no loader dots, in pick-held.ts's words: the line names which pick waits
+  // and on what, the title says when it applies; the held class stays as the sheet's hook (fork PR 437, review rounds 1 to 10).
+  if (ev.held) return notice({ src: "session", glyph: "session", sev: "romp", gist: pickHeldLine(ev.held),
+                               cls: "turn-reconnecting turn-reconnecting-held", tip: pickHeldTitle(ev.held) });
+  // the landing's live permission-mode switch is in flight (review round 10): nothing reloads for that round trip, so the
+  // line says the mode change is being applied; the title names any reload that follows for the other picks riding the
+  // same reconnect (pick-held.ts switchingTitle)
+  if (ev.switching) return notice({ src: "session", glyph: noticeLiveGlyph(metaDots()), sev: "romp", gist: "Applying the permission mode change…", live: true,
+                                    cls: "turn-reconnecting", tip: switchingTitle(ev.picks) });
+  // the title names the change the reload applies (ev.picks: effort, permission mode, fast mode; review round 9), since the
+  // notice shows for a fast or mode reload too (round 7's gate) and said "effort" for all of them (pick-held.ts reloadingTitle)
+  return notice({ src: "session", glyph: noticeLiveGlyph(metaDots()), sev: "romp", gist: reconnectingGist(ev.effort), live: true,
+                  cls: "turn-reconnecting", tip: reloadingTitle(ev.picks, ev.effort) });
 }
 
 // LIVE api_retry (the user 2026-07-08): the API returned a retryable error (rate-limit / overload) and the
@@ -4069,27 +4779,19 @@ function renderReconnecting(ev: Extract<ChatEvent, { kind: "reconnecting" }>): H
 // reconnecting elements; event-based, it clears the instant output resumes (then the "Recovered after N
 // retries" note lands above). Appended before the queued bubble.
 function renderRetrying(ev: Extract<ChatEvent, { kind: "retrying" }>): HTMLElement {
-  const turn = el("div", "turn turn-retrying");
-  turn.appendChild(dot("ring"));
-  const line = el("div", "retrying-line");
-  line.appendChild(metaDots());
-  const txt = el("span", "retrying-text");
   const info = ev.info || {};
   const n = info.attempt || ev.retries || 0;
-  let head = n > 1 ? `API retrying — attempt ${n}` : "API retrying";
-  if (n > 1 && info.max) head += ` of ${info.max}`;
-  txt.textContent = head;
-  line.appendChild(txt);
-  // LIVE countdown to the next attempt (the user 2026-07-24). It used to re-derive only on re-render, so it
-  // sat frozen at "next try in ~3s" for the whole backoff — a number that never moves reads as broken, and
-  // says nothing about whether anything is still happening. Now the epoch rides a data attr and
-  // retryingTick() rewrites this span every second, exactly like the API-error card's countdown. `~` is
-  // dropped: a ticking number is precise enough to speak plainly.
+  // meta = the attempt count and the LIVE countdown to the next try (the user 2026-07-24: it used to re-derive
+  // only on re-render, so it sat frozen at "~3s" for the whole backoff). The epoch rides a data attr and
+  // retryingTick() rewrites the span every second, exactly like the API-error card's countdown.
+  const meta = el("span", "notice-meta");
+  if (n > 1) meta.appendChild(document.createTextNode(`attempt ${n}` + (info.max ? ` of ${info.max}` : "")));
   if (info.retryAt) {
+    if (meta.childNodes.length) meta.appendChild(document.createTextNode(" · "));
     const cd = el("span", "retrying-countdown");
     cd.dataset.retryAt = String(info.retryAt);
     cd.textContent = retryingCountdownText(info.retryAt);
-    line.appendChild(cd);
+    meta.appendChild(cd);
   }
   // Stop control (the user 2026-07-24, who wanted the API-error card's stop/resume reach here too). The
   // storm lives INSIDE the CLI's own backoff — the SDK exposes no API to abort or accelerate it (verified
@@ -4098,28 +4800,24 @@ function renderRetrying(ev: Extract<ChatEvent, { kind: "retrying" }>): HTMLEleme
   // AND marks the thread retry-suppressed, so romp's own auto-retry loop won't relapse into the storm
   // afterwards. Once stopped the session lands blocked/interrupted, where the existing card's "Retry now" +
   // resume controls take over — so stop → manual retry → resume is a closed loop across the two states.
-  // Delegated via data-act (never a per-render listener): the transcript tail rebuilds on every kernel push,
-  // and a rebuilt node eats a mid-press click — the "had to click it several times" bug (CLAUDE.md).
-  const stop = el("button", "retrying-stop") as HTMLButtonElement;
-  stop.dataset.act = "stopRetrying";
-  stop.textContent = "Stop retrying";
-  stop.title = "interrupt this stalled turn and stop the backoff — romp's auto-retry stays off for this session until you send a message";
-  line.appendChild(stop);
-  line.title = "the API returned a retryable error (rate-limit / overload); the CLI is backing off and retrying — any message you send lands once it recovers";
-  turn.appendChild(line);
-  // The error behind the backoff, when the payload names it — status code and/or message on its own muted
-  // line (same size as the retrying text: one size per information type), full message in the tooltip.
+  const stop = noticeAct("Stop retrying", "stopRetrying",
+    "interrupt this stalled turn and stop the backoff — romp's auto-retry stays off for this session until you send a message");
+  // The error behind the backoff, when the payload names it — status code and/or message, folded; the request
+  // id belongs in the tooltip, not the line: it is the one thing worth quoting to support and the one thing
+  // nobody reads at a glance (progressive disclosure — gist on the line, mechanics a hover away).
+  let body: HTMLElement | null = null;
   if (info.status || info.error || info.networkDown) {
-    const err = el("div", "retrying-err");
+    body = el("div", "notice-md");
     const status = info.status ? `HTTP ${info.status}` : "";
     const msg = (info.error || "").trim();
-    err.textContent = [status, msg, apiErrorReason(info)].filter(Boolean).join(" — ");
-    // The request id belongs in the tooltip, not the line: it is the one thing worth quoting to support and
-    // the one thing nobody reads at a glance (progressive disclosure — gist on the line, mechanics a hover away).
-    err.title = [msg, info.requestId ? `request ${info.requestId}` : ""].filter(Boolean).join("\n") || "";
-    turn.appendChild(err);
+    body.textContent = [status, msg, apiErrorReason(info)].filter(Boolean).join(" — ");
+    const tipText = [msg, info.requestId ? `request ${info.requestId}` : ""].filter(Boolean).join("\n");
+    if (tipText) setTip(body, tipText);
   }
-  return turn;
+  // the loader dots ride the glyph slot in the RETRYING amber (the state the tab ring shows); the action makes it a card
+  return notice({ src: "API", glyph: noticeLiveGlyph(metaDots()), sev: "retry", gist: "retrying", meta, acts: [stop], body, live: true,
+                  key: ev.uuid ? "retrying:" + ev.uuid : undefined, cls: "turn-retrying",
+                  tip: "the API returned a retryable error (rate-limit / overload); the CLI is backing off and retrying — any message you send lands once it recovers" });
 }
 
 
@@ -4128,7 +4826,7 @@ function renderRetrying(ev: Extract<ChatEvent, { kind: "retrying" }>): HTMLEleme
 // dots beside it already say something is in flight.
 function retryingCountdownText(retryAt: number): string {
   const s = Math.ceil(retryAt - Date.now() / 1000);
-  return s > 0 ? `— next try in ${s}s…` : "— retrying now…";
+  return s > 0 ? `next try in ${durLabel(s)}` : "retrying now…";   // ONE duration format (duration.ts)
 }
 
 // Tick every .retrying-countdown once a second (driven by the same 1s interval as the API-error countdown —
@@ -4147,33 +4845,20 @@ function retryingTick(): void {
 // output, a muted, rail-anchored "Recovered after N retries" note is left where the recovery happened, so the
 // history records that the turn weathered an API storm. Static (no animation, no expand) — a one-line marker.
 function renderRetried(ev: Extract<ChatEvent, { kind: "retried" }>): HTMLElement {
-  const turn = el("div", "turn turn-retried");
-  turn.appendChild(dot("ring"));
-  const line = el("div", "retried-line");
-  const n = ev.retries || 0;
-  const txt = el("span", "retried-text");
-  txt.textContent = `Recovered after ${n} ${n === 1 ? "retry" : "retries"}`;
-  line.appendChild(txt);
-  line.title = "the API returned a retryable error (rate-limit / overload); the CLI backed off and retried, then output resumed";
-  turn.appendChild(line);
-  return turn;
+  return notice({ src: "API", glyph: "retry", gist: retriedGist(ev.retries || 0), cls: "turn-retried",
+                  tip: "the API returned a retryable error (rate-limit / overload); the CLI backed off and retried, then output resumed" });
 }
 
 // The FAILED counterpart of renderRetried (the user 2026-07-25): the CLI exhausted its retry attempts and
 // the turn died. Same slim rail-anchored shape, but in the blocked/red voice — this storm produced nothing,
 // and the note must never read like a recovery. The error text itself follows as the apiErrorNote card.
 function renderRetryGaveUp(ev: Extract<ChatEvent, { kind: "retryGaveUp" }>): HTMLElement {
-  const turn = el("div", "turn turn-retried turn-gaveup");
-  turn.appendChild(dot("red"));
-  const line = el("div", "retried-line");
   const n = ev.retries || 0;
-  const txt = el("span", "retried-text gaveup-text");
-  txt.textContent = `API errors — gave up after ${n} ${n === 1 ? "retry" : "retries"}`;
-  line.appendChild(txt);
-  line.title = "the API kept returning retryable errors" + (ev.errorKind ? ` (${ev.errorKind})` : "")
-    + "; the CLI backed off and retried until its attempts ran out, then ended the turn with no output";
-  turn.appendChild(line);
-  return turn;
+  // the error severity is the rail + red dot; the words stay --fg (a storm that produced nothing must never
+  // read like a recovery, and red TEXT sat at 3.08:1 on cream)
+  return notice({ src: "API", glyph: "api", sev: "err", gist: `gave up after ${n} ${n === 1 ? "retry" : "retries"}`, cls: "turn-retried turn-gaveup",
+                  tip: "the API kept returning retryable errors" + (ev.errorKind ? ` (${ev.errorKind})` : "")
+                    + "; the CLI backed off and retried until its attempts ran out, then ended the turn with no output" });
 }
 
 // The durable red card for a turn that DIED on an API error — the transcript's own error record, worn as
@@ -4182,20 +4867,13 @@ function renderRetryGaveUp(ev: Extract<ChatEvent, { kind: "retryGaveUp" }>): HTM
 // LIVE card (renderApiError, swapped in by the kernel while this record still blocks the session) owns
 // Retry/auto-retry, and once the session has moved on there is nothing left to retry here.
 function renderApiErrorNote(ev: Extract<ChatEvent, { kind: "apiErrorNote" }>): HTMLElement {
-  const turn = el("div", "turn turn-apierror");
-  turn.appendChild(dot("red"));
-  const card = el("div", "apierror-card apierror-note");
-  const head = el("div", "apierror-head");
-  const badge = el("span", "apierror-badge");
-  badge.textContent = ev.status ? `API error · ${ev.status}` : "API error";
-  head.appendChild(badge);
-  card.appendChild(head);
-  const body = el("div", "apierror-body");
+  const body = el("div", "notice-md");
   body.textContent = ev.md || "The turn stopped on an API error.";
-  card.appendChild(body);
-  turn.title = "this turn died on an API error — whatever it was going to say was never produced";
-  turn.appendChild(card);
-  return turn;
+  // the same API card as the live error (renderApiError), without its actions: the LIVE card owns Retry /
+  // auto-retry while the record still blocks the session; once it has moved on there is nothing left to retry
+  return notice({ src: "API", glyph: "api", sev: "err", gist: ev.status ? `error ${ev.status}` : "error", body,
+                  key: ev.uuid ? "apin:" + ev.uuid : undefined, cls: "turn-apierror",
+                  tip: "this turn died on an API error — whatever it was going to say was never produced" });
 }
 
 // A durable, rail-anchored "effort set to X" note at the moment an /effort change took effect (the user
@@ -4203,15 +4881,8 @@ function renderApiErrorNote(ev: Extract<ChatEvent, { kind: "apiErrorNote" }>): H
 // only lasting record of when reasoning effort changed (the synthesized /effort chip self-destructs on the
 // next message). Kernel writes it at the reconnect landing, so its timestamp IS the apply moment.
 function renderEffortApplied(ev: Extract<ChatEvent, { kind: "effortApplied" }>): HTMLElement {
-  const turn = el("div", "turn turn-effort");
-  turn.appendChild(dot("ring"));
-  const line = el("div", "effort-line");
-  const txt = el("span", "effort-text");
-  txt.textContent = `effort set to ${ev.effort}`;
-  line.appendChild(txt);
-  line.title = "reasoning effort is a connect-time setting; the session reconnected to apply it, and this marks when the new level took effect";
-  turn.appendChild(line);
-  return turn;
+  return notice({ src: "session", glyph: "power", gist: `effort set to ${ev.effort}`, cls: "turn-effort",
+                  tip: "reasoning effort is a connect-time setting; the session reconnected to apply it, and this marks when the new level took effect" });
 }
 
 // The durable COMMAND-GESTURE row (the user 2026-08-14): wears the SAME dress as a live command turn —
@@ -4230,31 +4901,29 @@ function renderCmdGesture(ev: Extract<ChatEvent, { kind: "cmdGesture" }>): HTMLE
 
 function renderModelFallback(ev: Extract<ChatEvent, { kind: "modelFallback" }>): HTMLElement {
   // A safeguards refusal the CLI retried on a fallback model: the swap must be visible where it happened
-  // (the user 2026-08-03), as a SOURCED notice in the shared notice-card grammar (T279). The head is the
-  // gist: whose safeguards flagged the message, the refusal category when the API named one, and which
-  // model answered instead. The fold holds the API's explanation (when it sent one) and the CLI's own
-  // line, verbatim. 'local' scope: only that reply (a subagent's or a side question's) came from the
-  // fallback model and the session's model is unchanged, so the head says so instead of "switched".
-  const from = ev.from ? prettyModel(ev.from) : "";
+  // (the user 2026-08-03), as THE notice (T279 filed it as a sourced card; the 2026-09-08 vocabulary pass
+  // builds it through notice()). SOURCE = safeguards, in the WARN severity (rail + dot: a warning about
+  // provenance, never the red API-error dress). The gist is main's head: whose safeguards flagged the
+  // message, the refusal category when the API named one, and which model answered instead — 'local'
+  // scope means only that reply (a subagent's or a side question's) came from the fallback model and the
+  // session's model is unchanged, so it says so instead of "switched". The fold holds the API's
+  // explanation (when it sent one) and the CLI's own line, verbatim, keyed by the record's uuid so the
+  // fold survives re-renders. The full head rides the ONE tooltip (setTip, never a native title): a narrow
+  // pane ellipsizes the gist from the right, which cuts exactly the swap and the category the notice exists
+  // to surface, so the fold's FIRST line restates them too — a compact view never dead-ends.
+  const gist = modelFallbackGist(ev);
+  const from = ev.from ? prettyModel(ev.from) : "the model";
   const to = ev.to ? prettyModel(ev.to) : "a fallback model";
   const cat = (ev.category || "").trim();
-  const local = ev.scope === "local";
-  const head = `${from || "The model"}'s safeguards flagged this message${cat ? ` (${cat})` : ""} · ` +
-    (local ? `this reply came from ${to}` : `switched to ${to}`);
   const body = el("div", "refusal-notice");
-  // the fold's first line restates the swap and the category: a narrow pane ellipsizes the head from the
-  // right, which cuts exactly these two facts, and a compact view must never dead-end (the full head is
-  // the hover too)
   const swapLine = el("div", "refusal-swap");
-  swapLine.textContent = `${from || "the model"} → ${to}${cat ? " · " + cat : ""}`;
+  swapLine.textContent = `${from} → ${to}${cat ? " · " + cat : ""}`;
   body.appendChild(swapLine);
   const expl = (ev.explanation || "").trim();
-  if (expl) { const p = el("div", "refusal-explanation"); p.textContent = expl; body.appendChild(p); }
-  if (ev.md) { const p = el("div", "refusal-cli-line"); p.textContent = ev.md; body.appendChild(p); }
-  const turn = noticeCard({ variant: "refusal", chip: "safeguards", head, body,
-                            collapsible: body.childNodes.length > 0, key: ev.uuid ? "mswap:" + ev.uuid : undefined });
-  turn.querySelector(".notice-head-text")?.setAttribute("title", head);
-  return turn;
+  if (expl) { const p = el("div", "refusal-explanation notice-prose"); p.textContent = expl; body.appendChild(p); }
+  if (ev.md) { const p = el("div", "refusal-cli-line notice-prose"); p.textContent = ev.md; body.appendChild(p); }
+  return notice({ src: "safeguards", glyph: "api", sev: "warn", gist, body, tip: gist,
+                  key: ev.uuid ? "mswap:" + ev.uuid : undefined });
 }
 
 // Compact a token count for the compaction divider: 795232 → "795k", 6514 → "6.5k", 900 → "900".
@@ -4270,16 +4939,13 @@ function compactTokens(n: number): string {
 // When the event carries the stripped quote (ctx), the header is CLICK-EXPANDABLE (the user 2026-07-01): a
 // ▸ disclosure toggles a muted block showing exactly the goal context that rode along with the message — the
 // strip is display-only, and this is where the hidden part can be audited. Expansion survives the chat's
-// re-renders via fuExpanded (keyed by the turn's uuid / queue slot), NOT DOM state that a rebuild would lose.
-const fuExpanded = new Set<string>();
+// re-renders via openFolds (keyed "fu:" + the turn's uuid / queue slot — the ONE fold store since 2026-09-08;
+// this had its own fuExpanded set), NOT DOM state that a rebuild would lose. The toggle rides the body
+// delegate (data-act=futoggle), never a per-node onclick the tail rebuild destroys mid-press.
 function followUpHeader(goal?: string, ctx?: string, key?: string): HTMLElement {
   const h = el("div", "followup-tag");
   const k = key || "";
-  if (ctx && k) {
-    const tri = el("span", "followup-tri");
-    tri.textContent = fuExpanded.has(k) ? "▾" : "▸";
-    h.appendChild(tri);
-  }
+  if (ctx && k) h.appendChild(el("span", "followup-tri"));   // glyph via CSS (▸/▾ follows the wrap's .expanded)
   const lbl = el("span", "followup-lbl"); lbl.textContent = "↩ Follow-up"; h.appendChild(lbl);
   if (goal) { const g = el("span", "followup-goal"); g.textContent = goal; h.appendChild(g); }
   if (!ctx || !k) return h;
@@ -4287,16 +4953,12 @@ function followUpHeader(goal?: string, ctx?: string, key?: string): HTMLElement 
   wrap.appendChild(h);
   const box = el("div", "followup-ctx");
   box.textContent = ctx;
-  box.style.display = fuExpanded.has(k) ? "" : "none";
   wrap.appendChild(box);
   h.classList.add("followup-expandable");
-  h.title = "show the goal context romp sent along with this message";
-  h.onclick = () => {
-    const open = !fuExpanded.has(k);
-    if (open) fuExpanded.add(k); else fuExpanded.delete(k);
-    box.style.display = open ? "" : "none";
-    const tri = h.querySelector(".followup-tri"); if (tri) tri.textContent = open ? "▾" : "▸";
-  };
+  h.dataset.act = "futoggle";
+  h.dataset.nkey = "fu:" + k;
+  applyFold(wrap, "expanded", "fu:" + k);
+  setTip(h, "show the goal context romp sent along with this message");
   return wrap;
 }
 
@@ -4400,7 +5062,7 @@ const pendingGroupNode = new Map<string, { sig: string; node: HTMLElement }>();
 function renderPendingGroup(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
   const sid = renderingSid || activeId || "";
   const sig = JSON.stringify(ev.texts.map((t) => [t.md, !!t.lost, t.qts, t.imgPaths || null])) + "|" + JSON.stringify(ev.held || null)
-    + (ev.held && ev.held.resetsAt ? "|" + Math.floor(Date.now() / 60000) : "");   // a held countdown reads the minute: re-rendered as it ticks
+    + (ev.held && ev.held.resetsAt ? "|" + Math.floor(Date.now() / 60000) : "")   // a held countdown reads the minute: re-rendered as it ticks
   const fresh = renderQueued(ev);
   const cached = pendingGroupNode.get(sid);
   if (cached && cached.node.isConnected !== undefined) {
@@ -4495,7 +5157,7 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
     else if (t.landing) { bubble.classList.add("landing"); bubble.title = "the session has taken this — it joins the conversation as soon as its record lands"; }
     // a queued entry with NO ✕ (the user 2026-07-20): the queue lives inside the session's own CLI —
     // there is no recall — so instead of a cancel that would only ever say "too late", the tooltip says
-    // where the message actually is. (SDK mid-turn forwards and every tmux queued message land here.)
+    // where the message actually is. (SDK mid-turn forwards land here.)
     else if (!t.cancelable && t.idx !== undefined)
       bubble.title = "queued in the session — it can't be recalled, and joins the conversation at the session's next step";
     const isCmd = renderSlashCmd(bubble, t.md);
@@ -4514,13 +5176,12 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
     let xHost: HTMLElement = bubble;   // where the ✕ lives: the nudge's own bubble corner, else the wrapper
     if (t.rompSystem) {
       const text = t.md.replace(/<!--[\s\S]*?-->/g, "").replace(/^\s*\[romp\]\s*/i, "").trim();
-      const firstLine = (text.split("\n").find((l) => l.trim()) || text).trim();
-      const gist = firstLine.length > 90 ? firstLine.slice(0, 88).replace(/\s+\S*$/, "") + "…" : firstLine;
+      const gist = t.gist ? String(t.gist) : gistOf(text);   // the kernel's user-facing gist, as the landed card wears it
       const more = collapseWs(text) !== collapseWs(gist);
       const nb = el("div", "notice-md md");
       if (more) nb.innerHTML = md(text);   // a one-line notice IS its gist — no body repeating the head
-      bubble.appendChild(noticeCard({ variant: "romp", chip: "romp", logo: true, head: gist, body: nb,
-                                      collapsible: more, key: "qromp:" + qkey + ":" + gist.slice(0, 24), nested: true }));
+      bubble.appendChild(notice({ src: "romp", glyph: "romp", sev: "romp", gist, body: nb,
+                                  key: "qromp:" + qkey + ":" + gist.slice(0, 24), nested: true }));
     } else if (t.romp) {
       const tag = el("div", "romp-tag");
       const logo = el("img", "romp-tag-logo") as HTMLImageElement;
@@ -4555,6 +5216,7 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
       xHost = rb;   // the ✕ in the bubble's corner, as a landed bubble would wear it — never floating in the wrapper's gap
     }
     if (!t.romp && !isCmd) bubble.innerHTML = userMd(t.md);   // the user's words, newlines kept — byte-for-byte what the landed bubble shows
+    if (!t.romp && !isCmd) markMentions(bubble);   // and a typed @name chipped, as the landed bubble wears it (renderEventInner). A statement of its own, not a brace around both: tests pin the line above verbatim (chat-md, queued-indicator)
     // An optimistic echo's dragged images render as THUMBNAILS, not just their trailing paths (the
     // user 2026-08-25: composer preview → path-only provisional → thumbnail landing flashed). Same
     // machinery end to end: userImage with the landed form's exact "path:" shape — buildPathImg's
@@ -4565,25 +5227,47 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
     }
     // CANCELABLE — an explicit ✕ on the bubble (the user 2026-07-08; the old whole-bubble click was
     // undiscoverable AND hung on a node every push rebuilds, so mid-press rebuilds silently ate the
-    // click). The ✕ carries data-act="qx" → the ONE document.body delegate (click-safe per CLAUDE.md);
-    // a MESSAGE returns to the composer to re-edit, a slash COMMAND just cancels. Covers both queues:
-    // the backend's own (idx; SDK only — tmux's queue lives inside Claude Code, no recall) and ops
-    // PARKED during compaction/model switches (park; romp-owned on every backend).
-    if (t.cancelable && (t.idx !== undefined || t.park !== undefined || t.optimistic)) {
+    // click). The ✕ carries data-act="qx" → the ONE document.body delegate (click-safe per CLAUDE.md).
+    // Since T373 it is the control of a slash COMMAND and of romp's own queued words alone (a cancel is all
+    // they can take); a MESSAGE has one control, the ✎ below, which rescinds it to the composer. Covers both
+    // queues: the backend's own (idx; the SDK's) and ops PARKED during compaction/model switches (park;
+    // romp-owned on every backend).
+    if (t.cancelable && (isCmd || t.romp) && (t.idx !== undefined || t.park !== undefined || t.optimistic)) {
       const x = el("button", "queued-x");
       x.textContent = "✕";
-      x.title = t.rompSystem ? "cancel this queued notice" : t.romp ? "cancel this queued nudge"
-        : isCmd ? "cancel this queued command" : "cancel this queued message and move it back to the composer";
+      x.title = t.rompSystem ? "cancel this queued notice" : t.romp ? "cancel this queued nudge" : "cancel this queued command";
       x.dataset.act = "qx";
-      if (t.romp) x.dataset.qromp = "1";   // romp's words, not the user's: cancelling never restores it to the composer (T243)
       if (t.idx !== undefined) x.dataset.qidx = String(t.idx);
       if (t.park !== undefined) x.dataset.qpark = String(t.park);
       if (t.optimistic) x.dataset.qopt = "1";   // ✕ before confirmation → cancel-by-body (no park/idx yet)
-      if (t.optimistic && t.qts !== undefined) x.dataset.qts = String(t.qts);   // OUR entry's identity: the ✕ removes this bubble's entry, not the first with its text (a kernel copy's own qts, when it ships one, is its enqueue stamp, not an entry)
-      if (t.sendId) x.dataset.qsid = t.sendId;   // the send's identity on BOTH sides: our entry and the kernel's copy (cancelQueued sendId)
-      if (isCmd) x.dataset.qcmd = "1";
+      if (t.optimistic && t.qts !== undefined) x.dataset.qts = String(t.qts);   // OUR entry's identity: the ✕ removes this bubble's entry, not the first with its text
+      if (t.qid) x.dataset.qid = t.qid;   // the copy's id (T252c): on a kernel copy the ✕ drops the send that owns it (a kernel copy's own qts is its enqueue stamp, not an entry); on ours it rides the cancel, so the kernel removes exactly this copy
       (x as any)._qmd = t.md;   // the bubble's body — the kernel's drift guard + the composer restore read it
       xHost.appendChild(x);
+    }
+    // EDIT (the user 2026-09-08, in place under T306, back to the composer since T373: queued messages go
+    // quickly, and a field on the bubble was more UI than the moment deserves): a message that has not reached
+    // the session is still the user's to change. The ✎ RESCINDS it: it leaves the queue (the same three stages
+    // the ✕ covers: backend queue, parked, optimistic; the same recall gate) and its words, quote citations and
+    // attachments come back into the composer, where they are changed and sent again, or cleared to drop the
+    // message. Romp's own words and slash commands are not edited (their ✕ cancels). Delegated like the ✕
+    // (data-act="qedit"); the message's ONE control, in the ✕'s corner.
+    if (t.cancelable && !t.romp && !isCmd && (t.idx !== undefined || t.park !== undefined || t.optimistic)) {
+      bubble.classList.add("editable");
+      const ed = el("button", "queued-edit");
+      ed.textContent = "✎";
+      ed.title = "edit this queued message — it leaves the queue and comes back into the message box";
+      ed.dataset.act = "qedit";
+      if (t.idx !== undefined) ed.dataset.qidx = String(t.idx);
+      if (t.park !== undefined) ed.dataset.qpark = String(t.park);
+      if (t.optimistic) ed.dataset.qopt = "1";
+      if (t.optimistic && t.qts !== undefined) ed.dataset.qts = String(t.qts);   // OUR entry's identity, as on the ✕: a kernel copy's qts is its enqueue stamp, not an entry (T252c)
+      if (t.qid) ed.dataset.qid = t.qid;   // the copy's id: the cancel names exactly this copy (T252c)
+      (ed as any)._qmd = t.md;
+      (ed as any)._qimgs = t.imgPaths;     // the attachments the bubble shows, back as chips
+      (ed as any)._qpaths = t.paths;       // …and the kernel's record of every attachment the copy carried (images and documents alike)
+      (ed as any)._qgoal = t.goalId ? { itemId: t.goalId, title: t.goal || "" } : null;   // a follow-up's goal, back as its chip
+      xHost.appendChild(ed);
     }
     turn.appendChild(bubble);
   }
@@ -4602,38 +5286,121 @@ function restoreToComposer(text: string) {
   ta.setSelectionRange(ta.value.length, ta.value.length);
 }
 
+// A queued item leaves the queue (T373): the ✕ on a command or on romp's own words cancels it; the ✎ on a MESSAGE
+// rescinds it, and its words, quote citations and attachments come back into the composer for that session, where
+// they are changed and sent again, or cleared to drop the message (a cleared composer is the discard: one control,
+// the user 2026-09-12). Same three stages as before (backend queue, parked, optimistic), the same recall gate, the
+// same authoritative cancelResult, so a rescind on one client clears the bubble on every other exactly as the cancel
+// does. The bubble's owner (a comment thread's popover, or the chat) is the session the item belongs to.
+function rescindQueued(el: HTMLElement, toComposer: boolean): void {
+  if (!activeId || !vscodeApi) return;
+  const qmd = (el as any)._qmd as string | undefined;
+  const sidQ = owningSidOf(el) || activeId;
+  // a bubble owned by another session (a comment thread's popover): the cancel goes out as ever; only the composer half is
+  // refused, with a pointer, since the box is the active session's (the fold's low: the base cancelled here, never a dead end)
+  const restoreHere = toComposer && sidQ === activeId;
+  if (toComposer && !restoreHere) warnToast("open that session's chat to edit its queued message");
+  let ownPaths: string[] | null = null;
+  if (qmd) {
+    // EVERY control drops our own optimistic entry for the text first (the user 2026-08-30). At the
+    // optimistic stage (qopt) that is the whole client half — the kernel may not have pushed its
+    // park yet, and the reconcile would otherwise repaint the bubble the user just cut. And on a
+    // PARKED/backend control it is just as load-bearing: the kernel bubble had been SUPPRESSING our
+    // still-live entry (shownProvisional), so cancelling only the kernel op resurrected the
+    // cancelled message as a dashed bubble until the TTL (caught by this fix's served-page probe).
+    // OUR bubble's control names its entry (data-qts, the press time); a kernel bubble's names none, and
+    // drops the first pending send with the text — the one the kernel's first copy covers.
+    const list = pendingSent.get(sidQ) || [];
+    const qts = el.dataset.qts !== undefined ? Number(el.dataset.qts) : undefined;
+    const qid = el.dataset.qid || undefined;
+    const own = list.find((p) => (qid && p.qid === qid) || (qts !== undefined && p.ts === qts && p.text === qmd) || (!qid && qts === undefined && p.text === qmd));
+    const rec = own ? (own.paths && own.paths.length ? own.paths : own.imgPaths) : null;   // every attachment the press knew (the record; images alone on an older entry), before the entry goes
+    if (rec && rec.length) ownPaths = rec.slice();
+    if (dropPending(list, qmd, qts, qid)) { if (list.length) pendingSent.set(sidQ, list); else pendingSent.delete(sidQ); }
+    echoShownSig.delete(sidQ);
+  }
+  // a PROVISIONAL tab's send has never left the client (T244): forget it from the queue adoption would
+  // re-send, and post no kernel cancel — the kernel has no such session yet, and a miss there would
+  // toast "too late" for a message that was never late. A breadcrumb says which path this took.
+  const provisional = isProvisionalId(sidQ);
+  if (provisional && qmd) forgetProvisionalSend(qmd);
+  const msg: Record<string, unknown> = { type: "cancelQueued", id: sidQ, md: qmd };
+  if (el.dataset.qid) msg.qid = el.dataset.qid;   // the copy's id: the kernel cancels exactly this copy, in whichever queue it sits, never a same-words neighbour by index or body
+  if (qmd && el.dataset.qopt !== "1") noteCancelledQueued(sidQ, qmd, el.dataset.qid || undefined);   // a kernel copy: never held once it vanishes (T262i)
+  if (el.dataset.qidx !== undefined) msg.idx = Number(el.dataset.qidx);
+  if (el.dataset.qpark !== undefined) msg.park = Number(el.dataset.qpark);
+  if (!provisional) vscodeApi.postMessage(msg);
+  else vscodeApi.postMessage({ type: "clientDiag", surface: "chat", what: "cancel-provisional",
+                              data: { mdLen: qmd ? qmd.length : -1, queuedLeft: provisionalQueue.length } });
+  if (restoreHere && qmd) {
+    // the message comes back as it was composed: the typed words into the box, the quote citations and the attachments
+    // as chips (queued-rescind.ts undoes the send's composition by the RECORD: the page's own entry, else the list the
+    // kernel shipped on the copy), a follow-up's goal as its chip. The restore is optimistic — the composer's text and
+    // chips as they stood are stashed so the kernel's cancelResult ok:false undoes all of it (the fold's medium 2: a
+    // refused rescind must not leave a goal or attachments the user never asked for on their next message).
+    const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+    const before = ta ? ta.value : "";
+    const citesBefore = (composerCitations.get(sidQ) || []).slice(), filesBefore = (composerFiles.get(sidQ) || []).slice();
+    const known = ownPaths || ((el as any)._qpaths as string[] | undefined) || ((el as any)._qimgs as string[] | undefined) || null;
+    const back = rescindedComposerState(qmd, known);
+    const goal = (el as any)._qgoal as { itemId: string; title: string } | null | undefined;
+    const armedCites: string[] = [], armedFiles: string[] = [];   // what THIS press puts into the box, by identity: the refusal takes exactly these back
+    if (goal && goal.itemId) { setCitation(sidQ, { itemId: goal.itemId, title: goal.title }); armedCites.push("g:" + goal.itemId); }
+    else if (back.cites.length) { composerCitations.set(sidQ, back.cites.map((c) => ({ title: c.quote.split("\n")[0].slice(0, 80), quote: c.quote, src: c.src }))); persistDrafts(); renderComposerChips(sidQ); for (const c of back.cites) armedCites.push("q:" + c.quote + "\n" + (c.src || "")); }
+    for (const f of back.files) { addComposerFile(sidQ, f); armedFiles.push(f); }
+    restoreToComposer(back.text);
+    // a provisional rescind gets no cancelResult (nothing was posted) — no stash to consume, none kept
+    if (!provisional) pendingCancelRestores.set(activeId + " " + qmd, { before, after: ta ? ta.value : "", cites: citesBefore, files: filesBefore, armedCites, armedFiles });
+  }
+  // Optimistic; the next push rebuilds the queue without it. The GROUP is reflowed in the same breath —
+  // the bubble alone leaves its "1 queued message" header behind, still counting what just went.
+  const bub = el.closest(".queued-bubble") as HTMLElement | null;
+  const grp = bub?.closest(".turn-queued") as HTMLElement | null;
+  // a bubble leaving the tail shrinks it: a bottom reader is written to the new bottom in the same task, so the
+  // move is the pane's own (journaled), never a clamp the follow-mode latch never saw (T262h)
+  const contentX = document.getElementById("content");
+  const wasAtBottom = !!contentX && contentX.scrollHeight > contentX.clientHeight + 2 && atBottom(contentX);
+  const beforeX = contentX ? contentX.scrollTop : 0;   // read BEFORE the removal: the browser clamps a bottom reader at the forced layout, and the write claims that move (see writeScroll)
+  bub?.remove();
+  if (grp) reflowQueuedGroup(grp);
+  if (contentX && wasAtBottom) writeScroll(contentX, contentX.scrollHeight, "queued-x", true, beforeX);
+}
+
 // The composer state around each ✕-click's optimistic restore, keyed `sid + " " + md`, so a FAILED
 // cancel (kernel cancelResult ok:false — the message had already reached the session) can put the
 // composer back exactly as it was IF the user hasn't touched it since (the user 2026-07-20: the
 // restored copy of an un-recallable message is a double-send waiting to happen). An edited draft is
 // never touched — the toast alone covers it.
-const pendingCancelRestores = new Map<string, { before: string; after: string }>();
+const pendingCancelRestores = new Map<string, { before: string; after: string; cites: Citation[]; files: string[]; armedCites: string[]; armedFiles: string[] }>();   // + the chips as they stood and what the press armed, by identity (T373 fold, medium 2; round two, low 1)
+/** A citation's identity for the refusal's bookkeeping: a goal by its item, a quote by its words and source. */
+function citeKey(c: Citation): string { return c.itemId ? "g:" + c.itemId : "q:" + (c.quote || "") + "\n" + (c.src || ""); }
 
 // The refusal card's remedy line, ONE string: renderApiError's initial write and apiRetryTick's
 // per-second re-assert both read it, so the card and the tick can never drift into different words.
 const REFUSAL_REMEDY = "the model's safeguards refused this prompt — rewrite it or drop this thread";
 
+// Every API card's Stop/Resume-all button and countdown re-read the global pause at once (a click here, or
+// the kernel's globalRetryPaused push) — one function, so the two callers can never drift into different words.
+function relabelStopAll(): void {
+  for (const btn of Array.from(document.querySelectorAll(".api-stopall"))) {
+    btn.textContent = globalRetryPaused ? "Resume all auto-retries" : "Stop all auto-retries";
+    setTip(btn as HTMLElement, globalRetryPaused ? "resume auto-retrying globally" : "stop the auto-retry loop for all errors globally");
+  }
+  for (const cd of Array.from(document.querySelectorAll(".api-countdown"))) {
+    cd.textContent = globalRetryPaused ? retryPausedText() : "retrying soon…";
+  }
+}
+
 // The turn stopped on an API error — the session is BLOCKED until retried. A red-dot card at the bottom
 // (so it stands out, the user 2026-06-16) carrying the error text + a red "API error" badge and a Retry
 // button that pastes "retry" into the session to resume the stalled turn.
 function renderApiError(ev: Extract<ChatEvent, { kind: "apiError" }>): HTMLElement {
-  const turn = el("div", "turn turn-apierror");
-  turn.appendChild(dot("red"));
-  const card = el("div", "apierror-card");
-  const head = el("div", "apierror-head");
-  const badge = el("span", "apierror-badge");
-  badge.textContent = ev.status ? `API error · ${ev.status}` : "API error";
-  head.appendChild(badge);
-  // Live countdown to the next AUTO-retry — apiRetryTick() (below) updates this text every second.
-  const countdown = el("span", "apierror-countdown");
+  // Live countdown to the next AUTO-retry — apiRetryTick() (below) updates this text every second; it is the
+  // head's META slot (counts and countdowns live there, never a clock).
+  const countdown = el("span", "notice-meta api-countdown");
   countdown.textContent = "retrying soon…";
-  head.appendChild(countdown);
   // A SPEND-CAP block gets no Retry (the user 2026-07-16, mirroring the feed card's 2026-07-14 call):
-  // retrying can't lift a billing cap, and on a tmux session it's worse than useless — the CLI is parked
-  // on an interactive menu that eats the injected "retry" as navigation keystrokes. There the real
-  // unblock is dismissing that dialog, so the tmux card offers exactly that (the kernel verifies the
-  // menu is up, then sends Esc — cancel, never a billing change). An SDK spend-cap card names the fix
-  // (raise the cap) with no dead button at all.
+  // retrying can't lift a billing cap. The card names the fix (raise the cap) with no dead button at all.
   const st = activeId ? liveSession(activeId)?.status : undefined;
   // A spent MODEL allowance gets no Retry either (the user 2026-08-01): "retry" re-fails until the model
   // changes or its own window resets, so the card names the fix instead of offering a button that cannot work.
@@ -4644,35 +5411,12 @@ function renderApiError(ev: Extract<ChatEvent, { kind: "apiError" }>): HTMLEleme
   // names the real fix (rewrite the ask, or drop this thread).
   const refusal = !!st?.apiRefusal;
   const spendCap = !!st?.apiSpendLimit || !!st?.apiModelLimit || !!st?.apiAuthErr || refusal;
+  const acts: HTMLElement[] = [];
+  // every action is a data-act word button on the button vocabulary; the document.body delegate acts
+  // (apiRetryNow / stopAllRetries) and acknowledges at once — the tail rebuilds on every
+  // push, and the per-node listeners this replaced ate mid-press clicks (CLAUDE.md click-safety)
   if (!spendCap) {
-    const retry = el("button", "apierror-retry") as HTMLButtonElement;
-    retry.textContent = "Retry now";
-    retry.title = "send “retry” into this session right now (also resets the auto-retry countdown)";
-    retry.addEventListener("click", () => {
-      // manual:true → an explicit override that fires even when auto-retry is paused/suppressed for this thread
-      // (the kernel gate is for the auto-loop only); without it "Retry now" was a dead no-op on a suppressed
-      // session (the user 2026-07-06). Acknowledge the click AT ONCE — disable + "Retrying…" — so it never
-      // reads as unresponsive; the next render (a fresh error card, or the turn resuming) restores it.
-      const own = owningSidOf(retry);
-      if (vscodeApi) vscodeApi.postMessage({ type: "apiRetry", id: own, manual: true });
-      if (own) apiRetryNext.set(own, Date.now() + API_RETRY_MS);   // restart the countdown
-      retry.disabled = true;
-      retry.textContent = "Retrying…";
-      setTimeout(() => { if (retry.isConnected) { retry.disabled = false; retry.textContent = "Retry now"; } }, 2500);
-    });
-    head.appendChild(retry);
-  } else if (st?.backend === "tmux" && !refusal) {
-    // (a refusal parks no menu — the Esc-sender below is for the CLI's spend-limit dialog only)
-    const dismiss = el("button", "apierror-retry") as HTMLButtonElement;   // same button chrome, different verb
-    dismiss.textContent = "Dismiss dialog";
-    dismiss.title = "the terminal is showing the spend-limit menu — send Esc to close it (cancels; changes no billing setting)";
-    dismiss.addEventListener("click", () => {
-      if (vscodeApi) vscodeApi.postMessage({ type: "dismissDialog", id: owningSidOf(dismiss) });
-      dismiss.disabled = true;
-      dismiss.textContent = "Dismissing…";
-      setTimeout(() => { if (dismiss.isConnected) { dismiss.disabled = false; dismiss.textContent = "Dismiss dialog"; } }, 2500);
-    });
-    head.appendChild(dismiss);
+    acts.push(noticeAct("Retry now", "apiRetryNow", "send “retry” into this session right now (also resets the auto-retry countdown)"));
   }
   // Global auto-retry pause (the user 2026-06-30) — no per-session off-switch. "Retry now" + sending a message still work.
   const paused = globalRetryPaused;
@@ -4683,29 +5427,16 @@ function renderApiError(ev: Extract<ChatEvent, { kind: "apiError" }>): HTMLEleme
   else if (spendCap) countdown.textContent = "spend limit reached — raise it at claude.ai/settings/usage";   // never "retrying soon…": the tick skips spend-capped threads
   else if (paused) countdown.textContent = retryPausedText();   // a usage-limit pause counts down to the window reset
   else if (suppressed) countdown.textContent = "auto-retry stopped for this session — send a message to resume";
-  const stop = el("button", "apierror-stop") as HTMLButtonElement;
-  stop.textContent = paused ? "Resume all auto-retries" : "Stop all auto-retries";
-  stop.title = paused ? "resume auto-retrying globally" : "stop the auto-retry loop for all errors globally";
-  stop.addEventListener("click", () => {
-    globalRetryPaused = !globalRetryPaused;
-    if (vscodeApi) vscodeApi.postMessage({ type: "setGlobalRetryPaused", value: globalRetryPaused });
-    
-    // Update visuals immediately on all errors
-    for (const btn of Array.from(document.querySelectorAll(".apierror-stop"))) {
-      btn.textContent = globalRetryPaused ? "Resume all auto-retries" : "Stop all auto-retries";
-      (btn as HTMLElement).title = globalRetryPaused ? "resume auto-retrying globally" : "stop the auto-retry loop for all errors globally";
-    }
-    for (const cd of Array.from(document.querySelectorAll(".apierror-countdown"))) {
-      cd.textContent = globalRetryPaused ? retryPausedText() : "retrying soon…";
-    }
-  });
-  head.appendChild(stop);
-  card.appendChild(head);
-  const body = el("div", "apierror-body");
+  const stop = noticeAct(paused ? "Resume all auto-retries" : "Stop all auto-retries", "stopAllRetries",
+    paused ? "resume auto-retrying globally" : "stop the auto-retry loop for all errors globally");
+  stop.classList.add("api-stopall");
+  acts.push(stop);
+  const body = el("div", "notice-md");
   body.textContent = ev.text || "The session stopped on an API error.";
-  card.appendChild(body);
-  turn.appendChild(card);
-  return turn;
+  // OPEN by default: the session is BLOCKED and the actions must show (the human is the bottleneck); the
+  // error severity is the rail + red dot + 6% wash — the words stay --fg (red text sat at 3.08:1 on cream)
+  return notice({ src: "API", glyph: "api", sev: "err", gist: ev.status ? `error ${ev.status}` : "error", meta: countdown, acts, body,
+                  open: true, key: "apierr:" + (ev.uuid || (activeId || "")), cls: "turn-apierror" });
 }
 
 // ── API-error auto-retry ──────────────────────────────────────────────────────────────────────────
@@ -4769,7 +5500,7 @@ function apiRetryTick(): void {
   // live countdown on the NEWEST error card (the live one — older cards in the transcript are settled
   // history and stay static): "retrying in Ns", or during a usage-limit pause the reset-time countdown
   // (the user 2026-07-13). Ticks every second even while paused, so the paused line stays live.
-  const cds = document.querySelectorAll(".apierror-countdown");
+  const cds = document.querySelectorAll(".api-countdown");
   const cd = cds.length ? (cds[cds.length - 1] as HTMLElement) : null;
   if (cd) {
     const active = activeId ? liveSession(activeId) : null;
@@ -4788,10 +5519,9 @@ function apiRetryTick(): void {
       const tries = active?.status.retryTries || 0;
       if (!at) { cd.textContent = "retrying soon…"; } else {
         const left = Math.max(0, Math.ceil((at - now) / 1000));
-        // "in 1750s" is not a readable wait; past a minute it reads in minutes, and the attempt count
-        // explains why the gap has grown (each failure steps the backoff up) rather than looking stuck
-        const when = left >= 90 ? `${Math.round(left / 60)}m` : `${left}s`;
-        cd.textContent = `retrying in ${when}` + (tries > 1 ? ` · ${tries} tries so far` : "");
+        // the ONE duration format (duration.ts): "2m 30s", never "150s"; the attempt count explains why the
+        // gap has grown (each failure steps the backoff up) rather than looking stuck
+        cd.textContent = `retrying in ${durLabel(left)}` + (tries > 1 ? ` · ${tries} tries so far` : "");
       }
     }
   }
@@ -4810,10 +5540,16 @@ function renderTool(ev: Extract<ChatEvent, { kind: "tool" }>): HTMLElement {
   turn.appendChild(d);
 
   const head = el("div", "tool-head");
-  const name = el("span", "tool-name"); name.textContent = ev.name;
+  // the row's label in the user's terms (T418): the model's description when it wrote one, else a phrase derived from the tool's
+  // input ("Read .../kernel/kernel.py", "Edited .../ui/feed.ts +12 -3", "Searched for foo"); a bare Bash shows its command in the
+  // code face; the tool's name is secondary, kept only where no phrase names the action ("Used a tool · Skill")
+  const lbl = toolRowLabel(ev);
+  const name = el("span", "tool-label" + (lbl.code ? " tool-label-code" : "")); name.textContent = lbl.text;
   head.appendChild(name);
-  if (ev.file) head.appendChild(fileLink(ev.file));
-  else if (ev.desc) { const c = el("span", "tool-desc"); c.textContent = ev.desc; head.appendChild(c); }
+  if (lbl.secondary) { const c = el("span", "tool-name tool-secondary"); c.textContent = lbl.secondary; head.appendChild(c); }
+  if (ev.file) head.appendChild(fileLink(ev.file));   // EVERY event with a file keeps its link (round two, medium 2); a label that names the path names it as this link, never twice
+  // An edit's totals are the diff fold's toggle below (+A -R), printed once per row (round two, medium 1); a FAILED edit's error fold
+  // replaces that fold and prints no totals: a failed edit changed nothing (round three, low d). The head carries no totals span.
 
   const ack = ACK_TOOLS.has(ev.name);
   turn.appendChild(head);
@@ -4825,7 +5561,7 @@ function renderTool(ev: Extract<ChatEvent, { kind: "tool" }>): HTMLElement {
     // "error" toggle, the IN/OUT hanging below. The red ✗ rail dot + red tool name (.tool-err) keep it loud.
     if (ev.input || ev.output) {
       const io = el("div", "tool-io tool-io-fold");
-      if (ev.input) io.appendChild(ioRow("IN", ev.input, true));
+      if (ev.input) io.appendChild(ioRow("IN", toolInputText(ev), true));
       if (ev.output) io.appendChild(ioRow("OUT", ev.output, true));
       const n = ev.output ? countLines(ev.output) : 0;
       inlineFold(head, turn, n ? `error · ${n} line${n === 1 ? "" : "s"}` : "error", io, fkey);
@@ -4849,9 +5585,9 @@ function renderTool(ev: Extract<ChatEvent, { kind: "tool" }>): HTMLElement {
       row.append(og, ng, sign, txt);
       pre.appendChild(row);
     }
-    inlineFold(head, turn, `+${add} −${del}`, pre, fkey);
+    inlineFold(head, turn, `+${add} -${del}`, pre, fkey);   // the row's one totals text, the approved shape (+A -R, a hyphen minus); the head prints none beside it (T418 round two)
   } else if (ev.name === "Read") {
-    if (ev.output) inlineFold(head, turn, `${countLines(ev.output)} lines`, preEl(ev.output, fkey && fkey + ":out"), fkey);
+    if (ev.output) { const n = countLines(ev.output); inlineFold(head, turn, `${n} line${n === 1 ? "" : "s"}`, preEl(ev.output, fkey && fkey + ":out"), fkey); }   // "1 line", not "1 lines" (T418, seen in the lab)
   } else if (ev.name === "Skill") {
     // A Skill invocation (the user 2026-07-08): the head names the skill, and the skill's INSTRUCTIONS
     // (ev.skillMd, kernel-joined) are the fold body — DEFAULT COLLAPSED like every tool body. They used
@@ -4912,14 +5648,14 @@ function renderTool(ev: Extract<ChatEvent, { kind: "tool" }>): HTMLElement {
       // user expand survives the running→done re-render.
       if (ev.input) {
         const io = el("div", "tool-io tool-io-fold");
-        io.appendChild(ioRow("IN", ev.input, false));
+        io.appendChild(ioRow("IN", toolInputText(ev), false));
         inlineFold(head, turn, ev.resultUuid ? "no output" : "running…", io, fkey);
       }
     } else {
       // Bash/Grep/Glob/…: output line-count on the head line (right of the command);
       // the command + full output hang below, hidden until clicked.
       const io = el("div", "tool-io tool-io-fold");
-      if (ev.input) io.appendChild(ioRow("IN", ev.input, false));
+      if (ev.input) io.appendChild(ioRow("IN", toolInputText(ev), false));
       io.appendChild(ioRow("OUT", ev.output, false));
       const n = countLines(ev.output);
       inlineFold(head, turn, `${n} line${n === 1 ? "" : "s"}`, io, fkey);
@@ -5007,21 +5743,11 @@ function setPeerDot(peerEl: HTMLElement, on: boolean) {
   else if (!on && has) prev!.remove();
 }
 function refreshPostalDots() {
-  document.querySelectorAll(".postal-service-peer").forEach((p) => setPeerDot(p as HTMLElement, workingSet.has((p.textContent || "").trim())));
+  // the PEER ends only: this session's own end (.notice-src-self) shows its state elsewhere, and a dot that
+  // arrives with the next working frame and leaves on the next rebuild would only flap (T302 review). The name is read
+  // without its muted host prefix (the working set is keyed by the bare name)
+  document.querySelectorAll(".notice-src-peer").forEach((p) => setPeerDot(p as HTMLElement, workingSet.has((p as HTMLElement).dataset.name || (p.textContent || "").trim())));
 }
-
-// A Romp Postal Service message, as a compact identity-coloured card.
-// One-line summary for a postal card: the judge's gist when one exists (the recipient session's caption
-// of this message, joined by msg id — the kernel now fills it for OUTGOING mail too), else the first
-// non-empty line of the body. The fallback is NOT hard-truncated here: a 100-char slice parked its "…"
-// mid-line and wasted the rest (the user 2026-07-25) — CSS clamps the summary to two full lines instead,
-// and the gist replaces it on a later render once the recipient's judge has captioned the message.
-function postalServiceSummary(ev: Extract<ChatEvent, { kind: "postal-service" }>): string {
-  const cap = ev.summary && ev.summary.trim();
-  if (cap) return cap;
-  return (ev.body || "").split("\n").map((s) => s.trim()).find(Boolean) || "";
-}
-const collapseWs = (s: string) => s.replace(/\s+/g, " ").trim();
 
 // The interaction TYPE of a postal message, parsed from its leading intent token → a small chip on the
 // card head, shown in both the compact and expanded views (the user 2026-06-16). There are THREE
@@ -5043,98 +5769,105 @@ function postalServiceIntent(body: string | undefined): { label: string; cls: st
   return m ? (POSTAL_INTENTS[m[1].toUpperCase()] || null) : null;
 }
 
+// The delivery-state icon at the postal head's right edge (T302, the user 2026-09-10): the way messaging apps
+// show sent / delivered / read. The drawings, states and words live in postal-state.ts (DELIVERY_GLYPHS: the
+// circled-check ladder for sent / delivered / read since T337, a clock = parked, a cross = bounced, a return
+// arrow = recalled); this wraps one in its box: 14 px, a 1.5 stroke in the state's colour, round caps and joins,
+// heavier than the envelope glyph at the head's other end (12 px, 1.4) for the reason postal-state.ts gives: a ring
+// with a check inside needs the room, and the stroke is the mark's own specification.
+function clockOf(epochS: number): string {
+  return new Date(epochS * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+function deliveryIcon(d: PostalDelivery): HTMLElement {
+  const span = el("span", "postal-delivery postal-delivery-" + d.state);
+  span.dataset.state = d.state;
+  span.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" '
+    + 'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' + DELIVERY_GLYPHS[d.state] + "</svg>";
+  const title = deliveryTitle(d, clockOf);
+  setTip(span, title);                       // the pane's styled tip on hover…
+  span.setAttribute("role", "img");          // …and the same words for a screen reader: a labelled span is announced
+  span.setAttribute("aria-label", title);    //    only with an image role (the icon has no text)
+  return span;
+}
+
 function renderPostalService(ev: Extract<ChatEvent, { kind: "postal-service" }>): HTMLElement {
-  const turn = el("div", "turn turn-postal-service postal-service-" + ev.direction);
-  if (ev.mid) turn.dataset.mid = ev.mid;   // joins feed-modal handoff hovers to this card
-  const d = dot("ring");
-  d.classList.add("mail");
-  if (ev.color) d.style.background = ev.color.bg;
-  turn.appendChild(d);
-
-  const card = el("div", "postal-service-card");
-  if (ev.color) {
-    card.style.setProperty("--peer-bg", ev.color.bg);
-    card.style.setProperty("--peer-fg", ev.color.fg);
-  }
-
-  const head = el("div", "postal-service-head");
-  const arrow = el("span", "postal-service-arrow");
-  arrow.textContent = ev.direction === "in" ? "↙" : "↗";
-  const verb = el("span", "postal-service-dir");
-  verb.textContent = ev.direction === "in" ? "from" : "to";
-  const peer = el("span", "postal-service-peer");
-  peer.textContent = ev.peer;
-  makeSessionChip(peer, ev.peer); // click the sender/recipient name → go to that session's tab
-  // the romp swirl marks this as a romp-postal-service message (the user 2026-06-23: postal is from romp too)
-  const rlogo = el("img", "postal-service-romp-logo") as HTMLImageElement;
-  rlogo.src = mediaSrc("romp-swirl-glyph.svg"); rlogo.alt = ""; rlogo.title = "Romp Postal Service message"; rlogo.onerror = () => rlogo.remove();
-  head.appendChild(rlogo);
-  head.appendChild(arrow);
-  head.appendChild(verb);
-  head.appendChild(peer);
+  // BOTH ENDS in the head, each in its session's colour (T302, the user 2026-09-10, after seeing old and new
+  // renderings): "from <peer> to <this session>" for incoming, "to <peer> from <this session>" for sent — the
+  // peer's chip in the peer's identity colour, this session's chip in its own. The card's wash of the peer's
+  // colour, which that ruling removed as reading like this session's, is back since 2026-09-11 (the user asked
+  // where the tint had gone): styles.css paints the incoming card's ground from its rail, which is the peer's
+  // colour here (`rail` below), so nothing more is set on the card. Click a name → that session's tab.
+  // T390 (the user 2026-09-12): a session's name is the NAME ITSELF, bold, in the session's identity colour, the way the
+  // awaiting fold names a peer (bg-await-peer): no chip box, no fill, in either theme. The identity colour rides --peer-bg
+  // and the sheet inks the text from it (a relative colour: the cream theme deepens it to read on the card's ground).
+  const peer = el("span", "notice-src-end notice-src-peer");
+  peer.append(...hostPartsNodes(ev.peerHost, ev.peer));   // the host prefix muted, as the tab wears it (the one helper)
+  peer.dataset.name = ev.peer;                            // the bare name the working set is keyed by (refreshPostalDots)
+  if (ev.color) peer.style.setProperty("--peer-bg", ev.color.bg);
+  makeSessionChip(peer, ev.peer);
   setPeerDot(peer, workingSet.has(ev.peer));   // working dot before the peer name if that session is working
-
-  // interaction-type chip (delegation / coordination / question). Prefer the sender's DECLARED kind
-  // (send_message's `kind` param, surfaced by the kernel) — the old leading-token parse of the body is
-  // only a legacy fallback now that the kind rides as an explicit field, not a "DELEGATE:" prefix.
+  // the session that OWNS the transcript being built (a comment popover's parent, a subagent viewer's session),
+  // the same chain every other owner lookup in this file uses; an id the tab set does not know draws no own end
+  const ownId = renderingOwnerSid ?? renderingSid ?? activeId;
+  const own = ownId && sessions.has(ownId) ? sessions.get(ownId) : undefined;
+  const src = el("span", "notice-src-ends");
+  src.appendChild(document.createTextNode(ev.direction === "in" ? "from " : "to "));
+  src.appendChild(peer);
+  if (own && ownId) {
+    // this session's own end: its name (the host label muted, as the tab wears it) in its identity colour; a
+    // narrow head collapses it to its coloured dot (the container query in styles.css) — both colours still show
+    const self = el("span", "notice-src-end notice-src-self");
+    const nm = el("span", "notice-src-name"); nm.append(...hostNameNodes(own.name, ownId));
+    self.appendChild(nm);
+    self.title = own.name;
+    if (own.color) self.style.setProperty("--peer-bg", own.color.bg);
+    src.appendChild(document.createTextNode(ev.direction === "in" ? " to " : " from "));
+    src.appendChild(self);
+  }
+  // the interaction KIND as coloured text, never a chip (chips read as tags now): Delegation / Coordination /
+  // Question in the kind's colour — prefer the sender's DECLARED kind (send_message's `kind` param, surfaced by
+  // the kernel); the old leading-token parse of the body is only a legacy fallback. The postal meta is rigid,
+  // so the word is never truncated.
   const intent = (ev.intent && POSTAL_INTENTS[ev.intent.toUpperCase()]) || postalServiceIntent(ev.body);
-  if (intent) {
-    const ib = el("span", "postal-service-intent postal-service-intent-" + intent.cls);
-    ib.textContent = intent.label;
-    ib.title = "interaction type";
-    head.appendChild(ib);
+  const kind = kindLabel(intent ? intent.cls : null);
+  let meta: HTMLElement | undefined;
+  if (kind && intent) { meta = el("span", "postal-kind postal-kind-" + intent.cls); meta.textContent = kind; }
+  // the delivery state, read once here: it decides the meta below and the icon + dress after the card is built
+  const delivery = deliveryOf(ev);
+  // no recognised kind (a legacy row with neither a declared kind nor a leading token) but a delivery state to show:
+  // an EMPTY meta slot, so the icon always rides in the meta (T313 review find) — one geometry for every card, and
+  // the CSS needs no second path for an icon appended straight to the head
+  if (!meta && delivery) meta = el("span", "postal-meta-empty");
+  // Gist: ALWAYS a one-line summary, the incoming caption, else the first line of the message CLIPPED (gist.ts
+  // postalHead), with the full message one click deeper whenever the gist does not carry all of it (the user
+  // 2026-06-16; T294, the user 2026-09-10, whose one-paragraph sent card had no fold at all). KEYED (the user
+  // 2026-07-25, who watched a card open and snap shut a moment later: a DOM-only toggle died with every push).
+  const { gist: summaryText, body: fullMd } = postalHead(ev);   // gist.ts: the caption, else the CLIPPED first line; the fold whenever the gist does not carry the whole message (T294)
+  let body: HTMLElement | null = null;
+  if (fullMd) { body = el("div", "notice-md md"); body.innerHTML = md(fullMd, postalRepoFor(ev)); highlight(body); linkTerms(body); }   // a mail body links the reader's group's terms (T351 stage 2; the sender's group is a later refinement)
+  // an incoming QUESTION opens by default: a reply is owed, and the whole ask is what you need to read
+  const owed = !!intent && intent.cls === "question" && ev.direction === "in";
+  const turn = notice({ src, glyph: "peer", gist: summaryText, meta, body, open: owed,
+                        key: "postal:" + (ev.mid || ev.uuid || ""), rail: ev.color ? ev.color.bg : undefined,
+                        cls: "turn-postal-service postal-service-" + ev.direction });   // no head tooltip: the kind badge already says coordination, delegation or question (the user 2026-09-12)
+  // the delivery state: an icon at the head's right edge, and — while the message has not landed (handed to the
+  // relay, or parked for an unreachable host) — the SAME provisional dress the user's own pending send wears
+  // (the queued bubble's class and tokens, the T302 amendment): solid again once the receipt says delivered,
+  // relayed or read; bounced keeps its red mark. Incoming: only a parked clock (it waited while you were offline).
+  if (delivery) {
+    // the icon rides INSIDE the meta slot, after the kind word (T313): the meta grows to the head's right edge, so the
+    // icon still sits at that edge, and on a phone-width head the kind word and the icon wrap as ONE unit (an icon
+    // alone on a line of its own was the alternative); the meta always exists when there is an icon (above)
+    turn.querySelector(".notice-meta")?.appendChild(deliveryIcon(delivery));
+    if (ev.direction === "out" && (delivery.state === "sent" || delivery.state === "parked")) {
+      turn.querySelector(".notice")?.classList.add("queued-bubble");
+      turn.classList.add("postal-provisional");   // the bubble's border + padding move the head line: the rail dot follows
+    }
   }
-
-  if (ev.park || ev.status === "parked") {
-    const b = el("span", "postal-service-badge parked");
-    b.textContent = "⏸ parked";
-    head.appendChild(b);
-  } else if (ev.status === "delivered") {
-    const b = el("span", "postal-service-badge delivered");
-    b.textContent = "✓ delivered";
-    head.appendChild(b);
-  }
-
-  // (no in-card time — the rail time-marker to the left of the dot carries it, like every
-  // other event; see renderEvent's rail time-stamp.)
-  card.appendChild(head);
-
-  // Body: ALWAYS lead with a one-line summary — the incoming Haiku caption, or (sent mail / no caption)
-  // the first line of the message — and let a click expand the box to the full message inline (the user
-  // 2026-06-16). Both directions read the same now: a summary that opens on demand, instead of a hover
-  // tooltip (incoming) vs. the whole body always (outgoing).
-  const body = el("div", "postal-service-body md");
-  const fullText = (ev.body || "").trim();
-  const summaryText = postalServiceSummary(ev);
-  const expandable = !!summaryText && !!fullText && collapseWs(fullText) !== collapseWs(summaryText);
-  if (expandable) {
-    const sum = el("div", "postal-service-summary");
-    const caret = el("span", "postal-service-expand-caret"); caret.textContent = "▸"; sum.appendChild(caret);
-    const sumText = el("span", "postal-service-summary-text"); sumText.textContent = summaryText; sum.appendChild(sumText);
-    const full = el("div", "postal-service-full md"); full.innerHTML = md(ev.body, postalRepoFor(ev)); highlight(full);
-    // KEYED expand (the user 2026-07-25: "it expands for like a second and then collapses again") —
-    // the old hand-rolled classList.toggle lived only on this DOM node, and the next kernel push
-    // rebuilds the card, silently closing it. Same openFolds mechanism as every other keyed fold;
-    // keyed by message id when the log resolved one, else the carrying atom.
-    const pkey = "postal:" + (ev.mid || ev.uuid || "");
-    const dress = () => {
-      const open = body.classList.contains("expanded");
-      caret.textContent = open ? "▾" : "▸";
-      sum.title = open ? "click to collapse" : "click to expand the full message";
-    };
-    applyFold(body, "expanded", pkey);
-    dress();
-    sum.addEventListener("click", () => { rememberFold(body, "expanded", pkey); dress(); });
-    body.classList.add("postal-service-expandable");
-    body.appendChild(sum);
-    body.appendChild(full);
-  } else {
-    body.innerHTML = md(ev.body, postalRepoFor(ev));
-    highlight(body);
-  }
-  card.appendChild(body);
-
-  turn.appendChild(card);
+  // an INCOMING message keeps its box (border + rail) even when its one line carries the whole message and there
+  // is nothing to fold; a SENT one stays the slim line (the ruling's density rule for the two directions)
+  if (ev.direction === "in") { turn.classList.add("notice-boxed"); turn.querySelector(".notice")?.classList.remove("notice-slim"); }
+  if (ev.mid) turn.dataset.mid = ev.mid;   // joins feed-modal handoff hovers to this card
   return turn;
 }
 
@@ -5144,67 +5877,29 @@ function renderPostalService(ev: Extract<ChatEvent, { kind: "postal-service" }>)
 // tellable apart from a romp-postal message at a glance while sharing the same collapse affordance (the
 // user 2026-07-05). Before this, these rendered as a blue "you typed this" bubble full of coordination JSON.
 function renderTeammate(ev: Extract<ChatEvent, { kind: "teammate" }>): HTMLElement {
-  const turn = el("div", "turn turn-teammate");
-  const d = dot("ring");
-  d.classList.add("teammate");
-  turn.appendChild(d);
-
-  const card = el("div", "teammate-card");
-
-  const head = el("div", "teammate-head");
-  const tag = el("span", "teammate-tag");
   // the kernel's source (origin-stamped deliveries, CLI 2.1.263): one of THIS session's background agents
   // messaging its parent is labelled so, not as a "teammate" from elsewhere (the user 2026-09-07)
   const fromSub = !!(ev.source && ev.source.subagent);
-  tag.textContent = fromSub ? "background agent" : "teammate";
-  tag.title = fromSub ? "a message from one of this session's background agents — not from you"
-    : "a message from another Claude agent — not from you, not the romp postal service";
-  head.appendChild(tag);
-  // the sending agent name(s) as PLAIN text — no colored session chip (that's the postal card's language)
   const ids = (ev.blocks || []).map((b) => b.id).filter(Boolean);
   if (!ids.length && ev.source && ev.source.name) ids.push(ev.source.name);
-  if (ids.length) {
-    const names = el("span", "teammate-names");
-    names.textContent = ids.length <= 3 ? ids.join(", ") : ids.slice(0, 2).join(", ") + ", +" + (ids.length - 2);
-    names.title = ids.join(", ");
-    head.appendChild(names);
-  }
-  card.appendChild(head);
-
-  // Collapsed summary line → click to expand the full body/bodies (same affordance as the postal card).
-  // Summary = the first block's summary attr, else "N messages" for a multi-agent batch, else the first
-  // non-empty line of the single body.
-  const body = el("div", "teammate-body md");
+  const names = ids.length <= 3 ? ids.join(", ") : ids.slice(0, 2).join(", ") + ", +" + (ids.length - 2);
+  const src = (fromSub ? "background agent" : "teammate") + (names ? " " + names : "");
+  // Gist = the first block's summary attr, else "N messages" for a multi-agent batch, else the first
+  // non-empty line of the single body; the full body/bodies fold beneath — KEYED (the teammate card's
+  // unkeyed classList.toggle was the exact 2026-07-25 postal bug, still live until this)
   const blocks = ev.blocks || [];
   const fullText = blocks.map((b) => b.body || "").join("\n\n").trim();
   const firstSummary = (blocks.find((b) => b.summary && b.summary.trim()) || {}).summary || "";
   let summaryText = firstSummary.trim();
-  if (!summaryText) {
-    summaryText = blocks.length > 1 ? blocks.length + " messages" : (fullText.split("\n").find((l) => l.trim()) || "").slice(0, 140);
-  }
+  if (!summaryText) summaryText = blocks.length > 1 ? blocks.length + " messages" : gistOf(fullText, 140);
   const fullMd = blocks.map((b) => (b.id ? "**" + b.id + "**\n\n" : "") + (b.body || "")).join("\n\n---\n\n");
   const expandable = !!summaryText && !!fullText && collapseWs(fullText) !== collapseWs(summaryText);
-  if (expandable) {
-    const sum = el("div", "teammate-summary");
-    const caret = el("span", "teammate-expand-caret"); caret.textContent = "▸"; sum.appendChild(caret);
-    const sumText = el("span", "teammate-summary-text"); sumText.textContent = summaryText; sum.appendChild(sumText);
-    const full = el("div", "teammate-full md"); full.innerHTML = md(fullMd); highlight(full);
-    sum.title = "click to expand the full message";
-    sum.addEventListener("click", () => {
-      const open = body.classList.toggle("expanded");
-      caret.textContent = open ? "▾" : "▸";
-    });
-    body.classList.add("teammate-expandable");
-    body.appendChild(sum);
-    body.appendChild(full);
-  } else {
-    body.innerHTML = md(fullText || summaryText);
-    highlight(body);
-  }
-  card.appendChild(body);
-
-  turn.appendChild(card);
-  return turn;
+  let body: HTMLElement | null = null;
+  if (expandable) { body = el("div", "notice-md md"); body.innerHTML = md(fullMd); highlight(body); }
+  return notice({ src, glyph: "teammate", gist: summaryText || fullText, body,
+                  key: "tm:" + (ev.uuid || ev.ts || ""), cls: "turn-teammate",
+                  tip: fromSub ? "a message from one of this session's background agents — not from you"
+                    : "a message from another Claude agent — not from you, not the romp postal service" });
 }
 
 // (statusline chips removed — working state shows the spinner, other states show
@@ -5212,8 +5907,14 @@ function renderTeammate(ev: Extract<ChatEvent, { kind: "teammate" }>): HTMLEleme
 
 function bgRgb(): [number, number, number] {
   try {
-    const m = /(\d+)\D+(\d+)\D+(\d+)/.exec(getComputedStyle(document.body).backgroundColor || "");
-    if (m) return [+m[1], +m[2], +m[3]];
+    const parse = (c: string): [number, number, number] | null => { const m = /(\d+)\D+(\d+)\D+(\d+)/.exec(c || ""); return m ? [+m[1], +m[2], +m[3]] : null; };
+    const own = getComputedStyle(document.body).backgroundColor || "";
+    // the picker's lift paints the body TRANSPARENT (styles.css body.picker-lifted) and backs the page with its ::before at
+    // var(--bg): a transparent body is that backing's colour, not black (T345 review: read as black, a light page's
+    // yellow session passed the ring's readability test under the lift and wore an invisible ring after it)
+    const transparent = own === "transparent" || /^rgba\([^)]*,\s*0\)$/.test(own);
+    const c = parse(transparent ? getComputedStyle(document.body, "::before").backgroundColor : own);
+    if (c) return c;
   } catch { /* ignore */ }
   return [30, 30, 30];
 }
@@ -5223,18 +5924,42 @@ function bgRgb(): [number, number, number] {
 // as a dim one (blue) — consistent "faded-ness" regardless of color. Never
 // touches the bright color (only used for at-rest tabs).
 const CLASSIC_FADE_SCALE = 0.9;   // T118 (the user 2026-08-27): +10% brighter faded tab labels under Classic — one tunable knob (half the parked T113 number)
-function fadedColor(hex: string): string {
+// The composer's name overlay fades HALFWAY (T341, the user 2026-09-11: at the strip's full fade the name in the box read
+// too faint; at none it outshone the placeholder). The strength of the one fade rule, not a second colour formula: 0.5
+// covers half the perceptual distance the strip's at-rest label covers. Its host prefix sits at the matching midpoint
+// (styles.css --host-fade on #composer-ph).
+const PH_NAME_FADE = 0.5;
+const LUM_MARGIN = 38;   // the luminance step a colour must stand off the page by to read as its own (the fade's target, the ring's test)
+const lum = (x: number, y: number, z: number) => 0.2126 * x + 0.7152 * y + 0.0722 * z;
+function hexRgb(hex: string): [number, number, number] | null {
   const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
-  if (!m) return hex;
+  if (!m) return null;
   const n = parseInt(m[1], 16);
-  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+// Does an identity colour stand off the page enough to read as a RING around the message box (T345)? The strip's fade
+// asks a one-sided version of this (is the colour brighter than the page by the margin, so a fade has room), which on a
+// light page is true of no colour at all; a ring reads on either side of the page's luminance, so the same margin is
+// applied both ways. A colour within the margin falls back to the accent.
+function identityReadable(hex: string): boolean {
+  const c = hexRgb(hex);
+  if (!c) return false;
   const [br, bgc, bb] = bgRgb();
-  const lum = (x: number, y: number, z: number) => 0.2126 * x + 0.7152 * y + 0.0722 * z;
-  const Lc = lum(r, g, b), Lb = lum(br, bgc, bb), Lt = Lb + 38;
+  return Math.abs(lum(c[0], c[1], c[2]) - lum(br, bgc, bb)) > LUM_MARGIN;
+}
+// `amount` is the fade's strength: 1 (the default) is the strip's at-rest fade, unchanged for tabs; 0.5 is half the way
+// from the identity colour toward the page background. It scales the one blend, so the dim-hue early return holds at every
+// strength and a light page (already past the luminance target) stays a no-op.
+function fadedColor(hex: string, amount = 1): string {
+  const c = hexRgb(hex);
+  if (!c) return hex;
+  const [r, g, b] = c;
+  const [br, bgc, bb] = bgRgb();
+  const Lc = lum(r, g, b), Lb = lum(br, bgc, bb), Lt = Lb + LUM_MARGIN;
   if (Lc <= Lt) return hex; // already dim — leave it
   // Classic fades 10% less far toward the background (T118); Yatharth keeps his full fade.
   const scale = settings.chatTabTheme === "yatharth" ? 1 : CLASSIC_FADE_SCALE;
-  const t = Math.min(0.85, (Lc - Lt) / (Lc - Lb)) * scale;
+  const t = Math.min(0.85, (Lc - Lt) / (Lc - Lb)) * scale * amount;
   const hx = (a: number, c: number) => Math.round(a * (1 - t) + c * t).toString(16).padStart(2, "0");
   return `#${hx(r, br)}${hx(g, bgc)}${hx(b, bb)}`;
 }
@@ -5256,6 +5981,7 @@ function fadedColor(hex: string): string {
 // layers this over it, and federation re-emits the tab strip, the timeline lanes and the feed's groups
 // together so all three surfaces read the same way.
 function commitTabOrder() {
+  if (fedMissing) return;   // an order that never passed through the arrangement is not an arrangement: never written (see fedMissing)
   writeViewOrder(order.slice());
 }
 // Settle the just-closed tabs against the kernel's authoritative list. Gone from it → the close landed, stop
@@ -5332,6 +6058,7 @@ function applyTabOrder(o: any, tabs?: any, report?: OrderReport, live?: any) {
   // older kernel sends no `live` and this is a no-op. One clientDiag row names any id it saves, so a kernel
   // that omits a live session is seen, never silently papered over.
   const liveSet = new Set<string>(Array.isArray(live) ? live.filter((x: any) => typeof x === "string") : []);
+  boardLive = liveSet;
   const omitted = new Set(order.filter((id) => kernelListed.has(id) && !inKernel.has(id) && !liveSet.has(id)));   // all of them first: no fallback onto one going in the same breath
   const keptLive = order.filter((id) => kernelListed.has(id) && !inKernel.has(id) && liveSet.has(id));
   if (keptLive.length && vscodeApi) vscodeApi.postMessage({ type: "clientDiag", surface: "chat", what: "live-omitted-kept", data: { ids: keptLive } });
@@ -5352,12 +6079,46 @@ function applyTabOrder(o: any, tabs?: any, report?: OrderReport, live?: any) {
   // what we hold and re-pushes immediately). First-ever listings are exempt via the kernelListed gate —
   // that is the designed tabs-first boot, whose session frames are already on their way in this very push
   // cycle — so this must run BEFORE the add-only record below. Self-limiting via awaitingFull; the
-  // closingTabs/provisional/detached-host suppressions live inside requestFullSession.
+  // closingTabs/provisional suppressions live inside requestFullSession (the detached-host gate left with the
+  // detached client, 2026-09-15).
   for (const id of kernelOrder) {
-    if (kernelListed.has(id) && !sessions.has(id)) requestFullSession(id, "nobase");   // listed, and this page holds no session entry for it: no base (the why is #1017's vocabulary)
+    // A listed SKELETON holds no session entry by design (upstream's skeleton diet, 2026-09-15: it lives in
+    // skeletonTabs.ids until its full lands on the click road), so it is not this arm's to ask for; the arm keeps
+    // asking for a listed id this page knows nothing about at all.
+    // Never on a RE-EMISSION (federation.ts emitMergedOrder, `reemit`: the stored strip re-served on a view-order write or a host attach): it is no kernel's fresh word, so neither this ask nor the record below reads it (the cold-boot lab, 2026-09-16; the record's comment has the order of events).
+    if (!(report && report.reemit) && kernelListed.has(id) && !sessions.has(id) && !skeletonTabs.ids.has(id)) requestFullSession(id, "nobase");   // listed, and this page holds no session entry for it: no base (the why is #1017's vocabulary)
   }
-  for (const id of kernelOrder) kernelListed.add(id);
+  // The record is the kernel's own word too. On a fresh page the re-emission runs BEFORE the fresh emission of the very push that filled the store (absorbHostReport's writeViewOrder dispatches romp-vieworder synchronously, then its emitMergedOrder(true) follows), so a record taken from it made that fresh strip read as a repeat listing of the active tab, whose full had not landed yet, and the page asked for it a second time under the diet.
+  if (!(report && report.reemit)) for (const id of kernelOrder) kernelListed.add(id);
+  // T357: the tab the user was on is re-listed (a host re-attach, a relay redial) → focus goes back to it; the
+  // skeleton branch of showActive asks for its frame. Another session's tab appearing does nothing here.
+  const back = vanishedId || wantActive;   // …or the tab this page showed before a reload, awaited since boot
+  colSets = readColSets();   // membership is fresh for the restore below (the chat split)
+  if (back && heldHere(back) && restoreIfShown(back)) { /* focus is back on the tab the pane named; nothing more to paint here. Only a tab this column holds (the chat split): another column's session is its owner's to restore, and no record of it is this column's to keep */ }
+  else if (!activeId) showActive();   // the strip changed under an unfocused pane (it may have emptied), or the tab it names is listed but hidden: the body's line and the box's placeholder follow it (the review's low)
+  // The board has been heard on this socket ONLY when this frame is the local kernel's own strip (tab-order.ts localStrip):
+  // a synthetic re-emission is re-served from the manager's store, EMPTY on a fresh page (order []), and another host's
+  // fresh push says nothing about this kernel's sessions. The vanishing tab (the user 2026-09-12): a view-order storage
+  // event from another pane reached a new column between its bundle's registration and its first strip, the re-emitted []
+  // armed this flag, and the render below reported the column's one member gone (colEmpty) while the kernel listed it all
+  // along; the shell closed the column and the tab was in no column until the close backstop toasted. Set after the
+  // restore above, so its render is the first that may post or fall back.
+  const stripFrom = stripHost(report);   // …and per host: this frame is one host's fresh word, or nobody's (a re-emission)
+  if (stripFrom !== null) hostsSeen.add(stripFrom);
+  if (localStrip(report)) tabOrderSeen = true;
   renderTabs();
+  syncTabKeysWithStrip();
+}
+// The hot-key set follows the strip (review, 2026-09-10): a session whose tab is gone loses its "Switch to" command
+// and its chord — there is nothing to switch to — and a renamed one is re-titled, so the shortcuts dialog never
+// says "Switch to <old name>". The pane owns this end because only it knows the strip; the shell hears the writes
+// (storage events) and follows them in its registry. Every column runs it on the same push: the first to write
+// wins, the rest find the set already right.
+function syncTabKeysWithStrip(): void {
+  if (!inRompShell()) return;   // the set exists only under the shell's dispatcher
+  const set = loadTabKeys(localStorage);
+  for (const sid of goneTabKeys(set, order)) { forgetTabKey(localStorage, sid); saveOverride(hotkeyCommandId(sid), null); }
+  for (const [sid, name] of renamedTabKeys(set, (sid) => sessions.get(sid)?.name)) rememberTabKey(localStorage, sid, name);
 }
 // The tabOrder frame's `skeleton` list (2026-09-07): the tabs the kernel is withholding from this page after a
 // redial (skeleton-tabs.ts). Applied BEFORE applyTabOrder — the dispatch calls this first — so the ONE
@@ -5462,9 +6223,10 @@ function flipTabs(mutate: () => void): void {
     });
   });
 }
-function reorderTo(dragId: string, targetId: string, after: boolean) {
+function reorderTo(dragId: string, targetId: string, after: boolean): boolean {   // whether it reordered: a drop that it refused is not a committed drag
+  if (fedMissing || settings.tabsLocked) return false;   // no manager: the strip shows the kernel's seed, not an arrangement — a reorder here would be a lie to keep; or the tabs were locked mid-drag by another window (T395 round one)
   const di = order.indexOf(dragId);
-  if (di < 0) return;
+  if (di < 0) return false;
   order.splice(di, 1);
   const ti = order.indexOf(targetId);
   if (ti < 0) order.push(dragId);
@@ -5472,6 +6234,7 @@ function reorderTo(dragId: string, targetId: string, after: boolean) {
   tabDragJustCommitted = true;   // the next render's permutation is this drag, not the bug (order audit)
   commitTabOrder();
   renderTabs();
+  return true;
 }
 
 // Rich tab hover tooltip (the user 2026-06-23): a CUSTOM DOM tooltip (a native `title` can't colour/bold).
@@ -5502,7 +6265,11 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   // branch row wears the ⎇ glyph in its label slot for the same consistency. Branch is the top-level
   // session field, resident even when the head system event is windowed out of the wire tail (the user
   // 2026-06-30), and the worktree row shows where the work actually lands when that differs.
-  const rows: Array<[string, string]> = [];
+  // a row's optional third member is the VALUE's colour (T372, the user 2026-09-12): a value that wears a colour on
+  // the chat footer's chips wears the SAME colour here, from the one helper the footer calls (metaColor), so the
+  // association learned on the footer is reproduced and the two cannot drift. Model and effort carry the colormap
+  // rank; the permission mode is untinted on the footer too, and the backend carries no tone, so they stay plain.
+  const rows: Array<[string, string, string?]> = [];
   if (s.cwd) rows.push(["📁", s.cwd]);
   if (s.gitBranch) rows.push(["⎇", s.gitBranch]);
   if (s.workTree) rows.push(["Worktree", s.workTree.dir + (s.workTree.branch ? "  ⎇ " + s.workTree.branch : "")]);
@@ -5517,37 +6284,64 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   const pickedOf = (kind: string) => { const p = ((held && held.picked) || {})[kind]; return p ? (kind === "mode" ? prettyMode(p) : p) : undefined; };
   const heldRow = (kind: string, now: string) => held && held.surfaces.includes(kind) ? heldRowValue(now, kind, held, pickedOf(kind)) : now;
   if (s.status.mode) rows.push(["Mode", heldRow("mode", prettyMode(s.status.mode))]);
-  if (s.status.model) rows.push(["Model", s.status.model]);
-  if (s.status.effort) rows.push(["Effort", heldRow("effort", s.status.effort)]);
+  if (s.status.model) rows.push(["Model", s.status.model, metaColor("model", s.status)]);
+  if (s.status.effort) rows.push(["Effort", heldRow("effort", s.status.effort), metaColor("effort", s.status)]);
   // Backend is a plain labelled FIELD now, under the others (the user 2026-07-08 — no longer a coloured
   // "SDK backend" badge at the top of the tooltip; it reads as one of the session's config fields).
-  if (be === "sdk" || be === "tmux" || be === "codex") rows.push(["Backend", backendLabel(be)]);   // the shared names (T288); a tmux session keeps its label whatever the offer setting says
+  if (be) rows.push(["Backend", backendLabel(be)]);
+  // the session's mail state (T356): off means peers cannot see or mail it and its own sends are refused
+  rows.push(["Mail", !s.postalServiceOff ? "on"
+    : s.mailOffWhy === "unreadable" ? "held: this session's record cannot be read, so mail waits until it is repaired"
+    : s.mailOffWhy === "flags" ? "held: the session settings file cannot be read, so mail waits until it is written again"
+    : s.mailOffWhy === "thread" ? "off until the thread is broken out"
+    : "off: this session neither sends nor receives peer mail"]);   // the shared names (T288); a session still running on the retired terminal backend (until stage 3) reads its id, never blank (review find)
   // Billing: whether this tab bills the API key or the Claude login — and WHICH login account (the
-  // user 2026-08-09: shown whenever the backend reports it, one-auth machines included; only a tmux
-  // session, whose CLI env romp does not control, reports nothing). No key material, ever.
-  // The words are billing-label.ts's (one decision for this row, the tab menu's Billing item and the picker's
-  // row; every case runs in billing-label.test.ts): the CLI's own report (authLive) leads once an init has
-  // landed, the intent (auth) stands in before one; a pending switch reads as pending, never as applied fact
-  // (T124); an EXPLICIT pick the CLI contradicted leads with a warning naming what is billed (the user
-  // 2026-08-15). A seeded default the CLI disagrees with is no contradiction (authPicked tells the two
-  // apart): until 2026-09-09 every unpicked session on an apiKeyHelper box read plain "Login", its seeded
-  // intent, because the kernel's live merge never forwarded the CLI's report; had it, the old wording would
-  // have called that seeded default a pick the CLI contradicted (the user 2026-09-09). A pick that names a
-  // side this box cannot bill (the kernel's authPickUnavailable, the reason in authAvail) says so and names
-  // the side the launch went to, from the kernel's own word on the fall (authPickFell, 2026-09-09: never
-  // inferred from the pick alone, since a box with neither side launches as picked; the user 2026-09-08).
-  if (s.status.auth) rows.push(["Billing", billingRowText(s.status)]);
-  for (const [k, v] of rows) {
+  // user 2026-08-09: shown whenever the backend reports it, one-auth machines included). No key material, ever.
+  // When the CLI's own init landed on the OTHER side (authLive — say, a key found via apiKeyHelper
+  // on a session launched for the login), the row carries the live truth beside the intent instead
+  // of wearing the lie (the user 2026-08-15). The account name yields its parenthetical then: it is
+  // not the account being billed.
+  // the row tells the TRUTH in every landing shape (T124: after a switch it showed the pick as
+  // applied fact through the whole reconnect window, and a wrong-side landing read as a quiet
+  // parenthetical): a pending pick says so, a confirmed contradiction leads with the warning.
+  // A HELD billing pick leads every other arm (the fork's settings-pick hold; the words are pick-held.ts's): the
+  // reconnect that applies it waits for the session's live work, so nothing is applying yet and the row says what
+  // runs now and when the pick takes over, never the pending arm's "applying". Upstream's ladder follows as landed.
+  if (s.status.auth) rows.push(["Billing",
+    billingHeld(s.status) ? billingHeldRow(s.status) : s.status.authPending
+      ? (s.status.auth === "key" ? "API key" : "Login") + " (applying — not confirmed yet)"
+      // a STORED login picked, but the init's evidence says the CLI never used its helper and signed in with the
+      // machine's own login (T346): the wrong account, said as such, never shown as the pick applied
+      : (s.status.auth === "login" && s.status.authLogin && s.status.authLoginLive === "")
+        ? `⚠ Login (${loginName(s.status)}) picked, but the CLI signed in with another credential: this session bills that`
+      // the pick names a side this box cannot bill (the kernel's authPickUnavailable, with the reason
+      // in authAvail): the launch went to the other side, and the row says so (the user 2026-09-08)
+      : s.status.authPickUnavailable === s.status.auth
+        ? `⚠ ${s.status.auth === "key" ? "API key" : "Login"} picked, but ${(s.status.auth === "key" ? s.status.authAvail?.keyWhy : s.status.authAvail?.loginWhy) || "this machine cannot bill it"}`
+          // the fall is the kernel's word (authFellTo), never inferred from the pick alone: on a box with
+          // neither side the launch went out as picked and the CLI decided (2026-09-09)
+          + (authFellTo(s.status) ? ` — this session bills ${authFellTo(s.status) === "key" ? "the API key" : "the login"}`
+                                  : " — nothing to fall to, so the launch went out as picked")
+      : s.status.authLive && s.status.authLive !== s.status.auth
+        ? `⚠ ${s.status.auth === "key" ? "API key" : "Login"} picked, but the CLI reports `
+          + `${s.status.authLive === "key" ? "the API key" : "the login"} — this session bills that`
+        : s.status.auth === "key" ? "API key"
+          : (loginName(s.status) ? `Login (${loginName(s.status)})` : "Login")]);
+  for (const [k, v, color] of rows) {
     const r = el("div", "tab-tip-row");
     const ke = el("span", "tab-tip-k"); ke.textContent = k;
     const ve = el("span", "tab-tip-v"); ve.textContent = v;
+    if (color) ve.style.color = color;   // the footer chip's colour, the label stays dim (T372)
     r.appendChild(ke); r.appendChild(ve); tip.appendChild(r);
   }
   // context BATTERY (the same widget as the bottom bar), not a text %
   if (s.status.ctx) {
     const cr = el("div", "tab-tip-row tab-tip-ctx");          // extra vertical room — the battery bar is tall
     const ck = el("span", "tab-tip-k"); ck.textContent = "Context"; cr.appendChild(ck);
-    const bar = ctxBar(); setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone), s.status.ctxOver);
+    // no id on the tip's copy: an id minted per widget put a duplicate #ctx-bar in the document whenever a tip was open, and the 1s
+    // ticker getElementById-resolves the id, so only document order kept it refreshing the statusline's copy (found 2026-08-17);
+    // the id belongs to the statusline SLOT, whose wrapper (ctxBar) mints it
+    const bar = buildCtxBar(compactActiveSession); setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone), s.status.ctxOver);
     cr.appendChild(bar); tip.appendChild(cr);
   }
   // ledger rows, LABELLED + aligned with the rows above (the user 2026-06-23 v3): the summary, then Recent.
@@ -5641,6 +6435,11 @@ let renderPendingWhilePressed = false;
 // before the rebuild. Reset ("") wherever the strip's DOM is changed outside renderTabs — a tab drag's live
 // reorder — so the next render rebuilds whatever the inputs say.
 let tabStripSig = "";
+// THE TAB LOCK (T395, the user 2026-09-12): one setting freezes every way a tab moves (the drag reorder, a drag into another
+// column or the split's edge, the tab menu's Move to rows) until it is cleared. Since T415 the switch is the settings card's
+// (gear.js rs-tablock, the Chat tab's Tab strip section), written through the gear's store and fanned out the gear's way: the
+// same-document signal every consumer listens to (the strip repaints through its signature) and the host relay VS Code's
+// separate panes need. Nothing in this file writes it any more; the strip only reads settings.tabsLocked.
 // Release the press-hold and flush any deferred rebuild. Hoisted so the DRAG handlers can call it
 // too: a native drag swallows the pointerup, so without this a finished drag would leave the strip
 // frozen against pushes until the next unrelated press (see the dragend handler).
@@ -5675,8 +6474,8 @@ function releaseTabStrip(): void {
 // flag's when it wears them), so nothing runs into it unplanned; the flag's phrase rides it on purpose —
 // the flag is a button nested in a role=button header, whose children ARIA lets a tool prune (WebKit
 // does), so the count and the names have a spoken carrier there too; and the header holding the active
-// tab is a labeled group, not a button — it takes no action and no focus, and "button, expanded"
-// promised both.
+// tab is the same button as the rest, marked current: it folds like any other, and folded it is the
+// hidden tab's stand-in.
 function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean, hidden: readonly string[]): HTMLElement {
   // the untagged trail (unlabeled by the user's ruling): on its own row under the per-row setting, else
   // behind the inline divider (the user 2026-09-08: the fork flows inline by default)
@@ -5699,12 +6498,13 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   // in the pane).
   const shown = snapView === name;
   if (shown) head.classList.add("snap-shown");
-  // THE WAY BACK (the 2026-09-06 review: a header click swapped the pane and only a session pick swapped it
-  // back). The header whose snapshot the pane shows, OPEN, holding the tab being read, is the click that put
-  // the section in the pane: a second click puts the transcript back (show-transcript, leaveSnapshot) instead
-  // of folding the section under its reader. The act is derived from the rendered state, as the fold is
-  // (data-folded), and the title says which click this is. Escape does the same from anywhere. An open header the
-  // pane shows WITHOUT the tab being read keeps its fold (toggle-group; round 3).
+  // the tag's colour as the row's --chip-bg (the tab sets the same variable from its identity colour): the shown
+  // row's box wears the selected tab's inset ring in it (styles.css .tab-group-head.snap-shown, T322)
+  if (sec.color) head.style.setProperty("--chip-bg", sec.color);
+  // THE WAY BACK: the header whose section the pane shows, OPEN, holding the tab being read, is the click that
+  // put the section in the pane; a second click puts the transcript back (show-transcript, leaveSnapshot)
+  // instead of folding the section under its reader. Derived from the rendered state, as the fold is, and
+  // the title says which click this is. Escape does the same from anywhere.
   const back = shown && !collapsed && holdsActive;
   if (back) head.dataset.act = "show-transcript";
   const total = sec.ids.length;
@@ -5725,7 +6525,9 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   head.tabIndex = 0;
   head.addEventListener("keydown", (e) => {
     if ((e.target as HTMLElement | null)?.closest(".tab-group-flag, .tab-group-door")) return;
-    // THE STAND-IN's keys (the active tab folded away under THIS header; tab-groups.ts): what a focused tab
+    // THE STAND-IN's keys (the active tab folded away, and THIS header the one planStrip marked for it: with
+    // several folded holders only the first is marked, wears aria-current and the chip's mark, and is where
+    // neighborOfFolded steps from, so only it answers as the tab; tab-groups.ts): what a focused tab
     // answers. ←/→ step to the neighbouring tab on the strip from the header's place, focus following
     // (onTabKey's rule; the window's ←/→ do the same when focus is elsewhere). Enter drops back into the
     // message box while the transcript shows and the box takes input (the mirror of the box's Escape,
@@ -5734,7 +6536,7 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
     // transcript back (show-transcript). Any other header: arrows bubble to the window's ←/→ (they step the
     // ACTIVE tab, focus staying put) and Enter presses, as on any button.
     const aid = activeId;
-    const standIn = !!aid && collapsedTabIds.has(aid) && sec.ids.includes(aid);
+    const standIn = holdsActive && !!aid && collapsedTabIds.has(aid) && sec.ids.includes(aid);
     if (aid && standIn && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
       e.preventDefault();
       const nb = neighborOfFolded(lastStripItems, aid, e.key === "ArrowRight" ? 1 : -1);
@@ -5802,17 +6604,20 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   // folded, the unpinned members; open, the members hidden inside the section (the user 2026-09-08). An open
   // header with nothing hidden carries neither: every member tab wears its own.
   if (hidden.length) {
-    // THE STAND-IN PIP, MEMBER-derived: one pip by the TAB's own state rule with the feed's verdict folded in
+    // THE STAND-IN PIP, MEMBER-derived: one pip by the TAB's own ring rule with the feed's verdict folded in
     // (tab-snapshot.ts standInPip; round 1 of the review: an idle hidden session the feed filed under needs-you
     // showed nothing on the strip): red for a hidden member blocked on you, waiting for you or filed under
-    // needs-you, gold for working, amber for an API error retrying on its own (the tab renders that amber too;
+    // needs-you, yellow for one with something waiting on you (the ask ring, 2026-09-13: a fold must not hide it),
+    // gold for working, amber for an API error retrying on its own (the tab renders that amber too;
     // a red pip there was a false interrupt). After the count and small, so the header still reads as a label;
     // the tooltip names the sessions. Over the HIDDEN members only: a pinned member's own tab shows its state.
     // Not the header's own pip (it wears no state class) and never a tab pip class (the kernel's mobile scrape
-    // keys on those). On an open header the pip is a door too (doorAct: show-group, or the way back while the pane
+    // keys on those). Under the same ring SWITCHES the members' tabs wear (ringSwitch over settings.tabWidgets,
+    // 2026-09-14), so a stand-in never shows a colour no unfolded tab would. On an open header the pip is a door
+    // too (doorAct: show-group, or the way back while the pane
     // shows the section, as the count), pointer only: the count beside it is the keyboard's, and the spoken label
     // carries the pip's phrase without the click.
-    const stand = standInPip(hidden.map((id) => ({ session: sessions.get(id), ledger: ledgers.get(id) })));
+    const stand = standInPip(hidden.map((id) => ({ session: sessions.get(id), ledger: ledgers.get(id) })), ringSwitch(settings.tabWidgets));
     if (stand) {
       const pip = el("span", "tab-group-pip" + (stand.kind === "working" ? "" : " " + stand.kind));
       const said = sectionPipTitle(stand.kind, stand.names);
@@ -5864,8 +6669,9 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
     }
   }
   head.setAttribute("aria-label", spoken);
-  head.draggable = true;
+  head.draggable = !settings.tabsLocked;   // the tab lock (T395) holds the groups too
   head.addEventListener("dragstart", (e) => {
+    if (settings.tabsLocked) { e.preventDefault(); return; }
     draggedGroup = name;
     if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setDragImage(dragImageBlank(), 0, 0); }
     head.classList.add("dragging");
@@ -5913,7 +6719,7 @@ function makeTrailSep(): HTMLElement {
   return sep;
 }
 /** The section header a strip node belongs to: itself for a header, else the nearest header before
- *  it; null past the untagged boundary (the trail's row break) or on a flat strip. */
+ *  it; null past the untagged boundary (the trail's row break, or its divider) or on a flat strip. */
 function sectionHeadOf(node: HTMLElement): HTMLElement | null {
   let n: Element | null = node;
   while (n) {
@@ -5931,7 +6737,7 @@ function sectionHeadOf(node: HTMLElement): HTMLElement | null {
 // the stale pre-outage session it holds underneath. `s.status` may be EMPTY (a skeleton before its first
 // status frame lands): no state → the gray "unknown" ring, the honest "listed, state not yet known". Returns
 // the state so the caller can finish its own chrome (the ✕ title, the gauge).
-function applyTabStatus(tab: HTMLElement, s: { status: Partial<Status> }): ChipState | undefined {
+function applyTabStatus(tab: HTMLElement, s: { id?: string; status: Partial<Status> }): ChipState | undefined {
   const st = s.status.state;
   // the state class — working gold, an on-YOU block alarm-red dashed vs a transient API error's
   // amber auto-retry, awaiting, compacting, closed — is tab-state.ts's rule, shared with the
@@ -5939,6 +6745,15 @@ function applyTabStatus(tab: HTMLElement, s: { status: Partial<Status> }): ChipS
   // strip's signature (renderTabs) so a state whose class changed always repaints
   const stateCls = tabStateClass(s.status);
   if (stateCls) tab.classList.add(stateCls);
+  // …and the RING beside it (the rings-as-widgets change, 2026-09-14): the dashed outline is a WIDGET of the
+  // registry now, one of three with a switch each in the settings (red for a live prompt or an API stop only
+  // you can clear, yellow for a card of the session's under needs-you, in every live state the ask ring of
+  // 2026-09-13 rides working included, amber for an API retry on its own), and the tab wears ONE at a time:
+  // composeTabRing takes every ring class off, then puts on the first switched-on ring whose predicate
+  // holds, red over yellow over amber. The predicates are tab-state.ts's (RING_TEST), shared with the
+  // folded header's pip; the strip's signature reads the inputs (the state, the flags, needsYou) and
+  // settings.tabWidgets, so a card entering or leaving the column, and a switch flipped, always repaint.
+  composeTabRing(tab, s.id || "", s.status, settings.tabWidgets);
   if (s.status.faded) tab.classList.add("at-rest");
   // WORKING shows a yellow dot; AWAITING-BG the same dot in await-green — matching the chip's color, so the
   // tab reads the split at a glance (the user 2026-07-13); BLOCKED (API error) gets NO dot — the dashed
@@ -5949,10 +6764,10 @@ function applyTabStatus(tab: HTMLElement, s: { status: Partial<Status> }): ChipS
   // that added or removed a row and slid the transcript under the reader by a row's height (tabDotClass).
   // Each pip explains itself on hover, the same titles the feed's DOT_TIP speaks (the user 2026-07-22; tab-state.ts
   // tabDotTitle, beside the class rule); the hidden slot and the compacting bar say nothing.
-  const dotCls = tabDotClass(st);
-  if (dotCls) tab.appendChild(el("span", dotCls));
-  const dotTip = dotCls ? tabDotTitle(st) : null;
-  if (dotTip) (tab.lastElementChild as HTMLElement).title = dotTip;
+  // The slot is a WIDGET now (T379, the user 2026-09-12): the dot widget's render is tab-state.ts's rule (tabDotClass,
+  // tabDotTitle), composed here with every other before-the-name widget the user keeps on (tab-widgets.ts, the one
+  // module the strip and the gear's live demos draw from); off in the gear, no slot at all.
+  composeTabWidgets(tab, "before", s.id || "", s.status, settings.tabWidgets);
   // compacting → a tiny animated compaction bar before the name (the tab gets no outline for this state,
   // so the bar IS the cue). A teal fill whose right edge slides left and loops — the same "compression"
   // motion as the statusline ctx-scan bar (.ctx-compress), miniaturised. Replaces the static ⇲ glyph the
@@ -5969,6 +6784,23 @@ function applyTabStatus(tab: HTMLElement, s: { status: Partial<Status> }): ChipS
   return st;
 }
 
+// THE SHELL'S DROP ZONES (the user 2026-09-11, who asked for a tab dragged to the right edge to make a column and
+// onto another column to move it): for the gesture's length the shell (kernel.py _LANDING_SPLIT_JS) mounts hit areas
+// over the other columns and at the right edge, so it hears the drag's start and end from here. The sid and the name
+// ride the message — the shell reads nothing from dataTransfer — and stripH is the strip's bottom in this page's
+// pixels, so the edge zone over THIS pane starts under the strip and leaves it to the live reorder. Nothing is posted
+// outside the shell (standalone, VS Code: no row to split). A drop on a zone moves the session through the shell's
+// __rompMoveTab; this page's dragend then finds no commit and re-renders from the new sets, so the tab is gone here.
+function postTabDrag(on: boolean, id?: string): void {
+  if (!inRompShell()) return;
+  try {
+    if (!on || !id) { window.parent.postMessage({ romp: "tabDrag", on: false }, "*"); return; }
+    const name = tabMeta.get(id)?.name || sessions.get(id)?.name || "";
+    const bar = document.getElementById("tabbar");
+    window.parent.postMessage({ romp: "tabDrag", on: true, sid: id, name, stripH: bar ? bar.getBoundingClientRect().bottom : 0 }, "*");
+  } catch (e) { /* no shell to tell */ }
+}
+
 // Drag-to-reorder (synced with the timeline via the shared session-order file), shared by loaded and skeleton
 // tabs — a skeleton is a real live session, so reordering it is legitimate. Lifted verbatim out of renderTabs.
 function wireTabDrag(tab: HTMLElement, id: string): void {
@@ -5979,12 +6811,14 @@ function wireTabDrag(tab: HTMLElement, id: string): void {
   // visual, browser-style. dragImageBlank must be a rendered DOM node at dragstart (Chromium
   // snapshots it), hence the fixed off-viewport 1px div installed once below.
   tab.addEventListener("dragstart", (e) => {
+    if (fedMissing || settings.tabsLocked) { e.preventDefault(); return; }   // the tab lock (T395) holds it; no manager: the strip is the kernel's seed, not an arrangement — nothing to reorder (see fedMissing)
     draggedId = id; draggedEl = tab; tabDragCommitted = false;
     tabStripSig = "";   // the drag live-reorders the strip's DOM: whatever the order ends up, the next render rebuilds
     if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setDragImage(dragImageBlank(), 0, 0); }
     tab.classList.add("dragging");
     hideTabTip();                        // defect 2 (2026-08-28): the hover popover pinned open through the gesture
     snapshotDragGeometry(tab);           // widths once at dragstart — the virtual hit-test's stable input (dragslot.ts)
+    postTabDrag(true, id);               // the shell mounts its drop zones: the other columns, the right edge (the chat split, 2026-09-11)
   });
   // dragend closes EVERY drag (drop, Escape, released outside). The pointerdown that started the
   // drag latched tabPointerHeld. In Chromium the drag's start fires pointercancel, which releases
@@ -6002,6 +6836,7 @@ function wireTabDrag(tab: HTMLElement, id: string): void {
     tabPointerHeld = false;
     const pending = renderPendingWhilePressed;
     renderPendingWhilePressed = false;
+    postTabDrag(false);                  // the shell's zones go, whatever ended the drag (after its drop, when there was one)
     if (cancelled) flipTabs(() => renderTabs());
     else if (pending) setTimeout(() => renderTabs(), 0);
   });
@@ -6027,7 +6862,7 @@ function makeSkeletonTab(id: string): HTMLElement {
   tab.dataset.id = id;
   tab.dataset.act = "select";   // click → setActive via the stable #tabs delegate (./actions), click-safe as every tab
   tab.addEventListener("keydown", onTabKey);
-  tab.draggable = true;
+  tab.draggable = !fedMissing && !settings.tabsLocked;
   wireTabDrag(tab, id);
   if (color) {
     tab.style.setProperty("--chip-bg", color.bg);
@@ -6036,11 +6871,11 @@ function makeSkeletonTab(id: string): HTMLElement {
   }
   if (id === peekId) tab.classList.add("tab-peek");
   const status = skeletonTabs.status.get(id) as Status | undefined;
-  applyTabStatus(tab, { status: status ?? {} });   // no status yet → the unknown ring, never a pre-outage state
+  applyTabStatus(tab, { id, status: status ?? {} });   // no status yet → the unknown ring, never a pre-outage state
   const label = el("span", "tab-label");
   label.replaceChildren(...hostNameNodes(name, id));
   tab.appendChild(label);
-  if (status) appendTabCtxGauge(tab, { status });
+  if (status) appendTabAfterWidgets(tab, { id, status });
   tab.title = "Not loaded yet — click to load";
   const closeBtn = el("span", "tab-close");
   closeBtn.textContent = "×";
@@ -6062,18 +6897,13 @@ function makeSkeletonTab(id: string): HTMLElement {
 // Drawn AFTER the label by both callers, so the ✕ keeps the tab's right edge. (Defined below makeSkeletonTab
 // on purpose: tab-ctx-gauge.test.ts orders the file's FIRST label append before its first gauge append,
 // and tabs-first.test.ts wants nothing between makePlaceholderTab and renderTabs but the placeholder.)
-function appendTabCtxGauge(tab: HTMLElement, s: { status: Partial<Status> }): void {
-  const st = s.status.state;
-  // Slim vertical context gauge right of the name (the user 2026-08-08): the statusline battery's
-  // fill % + colormap colour, rotated upright and with no % text — so "this session is filling up"
-  // reads at a glance across the whole strip. Skipped while compacting (the compacting bar owns that
-  // moment, and the % is about to be wrong) and on dead tabs. gear → Chat picks WHEN it shows:
-  // only once ≥50% full (the default — a gauge on every quiet tab is clutter; it appears when it
-  // has news), always, or never (the user 2026-08-08 v2, replacing the on/off toggle).
-  if (settings.tabCtx !== "never" && s.status.ctx && st !== "compacting" && st !== "closed") {
-    const pct = Math.max(0, Math.min(100, parseInt(s.status.ctx, 10) || 0));
-    if (settings.tabCtx === "always" || pct >= 50) tab.appendChild(tabCtxGauge(s.status.ctx, pickTone(s.status.ctxColor, s.status.ctxTone)));
-  }
+function appendTabAfterWidgets(tab: HTMLElement, s: { id?: string; status: Partial<Status> }): void {
+  // The after-the-name WIDGETS (T379, the user 2026-09-12): the slim vertical context gauge (the user 2026-08-08: the
+  // statusline battery's fill % + colormap colour, rotated upright, no % text, so "this session is filling up" reads at
+  // a glance across the strip; from half full by default, or always, the gear's Tab widgets section picks; skipped while
+  // compacting and on dead tabs) and the hot-key keycap (when one is assigned), composed from the registry in the
+  // configured order. Drawn AFTER the label by both callers, so the ✕ keeps the tab's right edge.
+  composeTabWidgets(tab, "after", s.id || "", s.status, settings.tabWidgets);
 }
 
 // A loading PLACEHOLDER tab (the user 2026-06-26): name + identity color from the kernel's tabOrder push,
@@ -6128,7 +6958,7 @@ function makePlaceholderTab(id: string): HTMLElement {
 // The empty transcript case was already handled with a "No messages yet." placeholder; this is its
 // missing sibling, one level up: no sessions rather than no messages. Saying so also beats a spinner —
 // it tells a new user the pane is working and what to do next.
-function syncNoSessionsPlaceholder(visibleCount: number, totalCount = 0) {
+function syncNoSessionsPlaceholder(visibleCount: number, totalCount = 0, heldCount = totalCount) {
   const content = document.getElementById("content");
   if (!content) return;
   const existing = document.getElementById("no-sessions");
@@ -6136,33 +6966,18 @@ function syncNoSessionsPlaceholder(visibleCount: number, totalCount = 0) {
     existing?.remove();               // a session arrived → the real view takes over
     return;
   }
-  // sessions exist but the active view hides them all — say THAT, not "no sessions yet"
-  const txt = totalCount > 0
-    ? "Every session is hidden from this view. Reveal one from the + picker, or switch views on the timeline's Show menu."
-    : "No sessions yet. Start one with  romp new <name>  or the + above.";
+  // sessions exist but every one is in another column (the chat split: this column holds none of them), or the
+  // active view hides them all — say THAT, not "no sessions yet"
+  const txt = totalCount > 0 && heldCount === 0
+    ? "Every session is in another column. Drag a tab here, or start one with the + above."
+    : totalCount > 0
+      ? "Every session is hidden from this view. Reveal one from the + picker, or switch views on the timeline's Show menu."
+      : "No sessions yet. Start one with  romp new <name>  or the + above.";
   if (existing) { existing.textContent = txt; return; }   // idempotent: renderTabs runs on every push
   const ph = el("div", "tx-empty");
   ph.id = "no-sessions";
   ph.textContent = txt;
   content.appendChild(ph);
-}
-
-// The tab strip's vertical context gauge: fill height = context-used %, coloured by the SAME
-// server-computed global-colormap RGB the statusline battery / timeline use (setCtxBar), with the
-// same traffic-light fallback for an older kernel that doesn't ship ctxColor. Passive — a click
-// falls through to the tab's own select; the statusline battery keeps the click-to-/compact.
-function tabCtxGauge(ctxStr: string, ctxColor?: number[]): HTMLElement {
-  const pct = Math.max(0, Math.min(100, parseInt(ctxStr, 10) || 0));
-  const g = el("span", "tab-ctx");
-  const fill = el("span", "tab-ctx-fill");
-  fill.style.height = pct + "%";
-  fill.style.background = (ctxColor && ctxColor.length === 3) ? `rgb(${ctxColor.join(",")})`
-    : ctxFallbackColor(pct);   // theme-aware pair (ctx-color.ts): classic keeps main's 60/85 verbatim.
-  // FILLS wear the tone as-is in every theme — readableRgb is for TEXT (re-encoding the warn amber
-  // fill made it a muddy brown on light; the user 2026-08-31, off the live preview)
-  g.appendChild(fill);
-  g.title = `context ${pct}% used`;
-  return g;
 }
 
 // A hairline under EVERY row of tabs (T134, the user 2026-08-27, overturning the survey's
@@ -6203,7 +7018,7 @@ function paintTabRowLines(bar: HTMLElement): void {
   for (const y of bottoms) {
     const line = el("div", "tab-row-line");
     line.style.top = y + "px";
-    bar.appendChild(line);
+    bar.appendChild(line);   // at the row's bottom edge: the strip's 1px row gap is the line's own pixel row (styles.css #tabs, T417)
   }
 }
 // A GROUP KEEPS WITH ITS FIRST TAB (the inline strip, 2026-09-09): a group header, or the untagged
@@ -6274,11 +7089,13 @@ let tabRowObserver: ResizeObserver | null = null;
 // rebuild's replaceChildren sweeps the sentinel out with the tabs, so every call puts it back; the
 // observation is on the element and survives.
 let tabRowSentinel: HTMLElement | null = null;
+let stripFit: (() => void) | null = null;   // the last strip paint's fit of the chip run (fitStripChips), re-run on the strip's resize (T413 round two)
 function ensureTabRowObserver(bar: HTMLElement): void {
   if (!tabRowSentinel) { tabRowSentinel = el("div", "tab-row-sentinel"); tabRowSentinel.setAttribute("aria-hidden", "true"); }
-  if (!tabRowSentinel.isConnected) bar.appendChild(tabRowSentinel);
+  if (!tabRowSentinel.isConnected) bar.insertBefore(tabRowSentinel, bar.firstChild);   // FIRST, never last: the right-end wrapper (.tab-strip-end, T412) stays the strip's last child, the gear
+                                                                                       // with it; the sentinel is absolutely positioned, so its place in the order is free (the pull-in's audit, 2026-09-15)
   if (tabRowObserver) return;
-  tabRowObserver = new ResizeObserver(() => paintTabRowLines(bar));
+  tabRowObserver = new ResizeObserver(() => { stripFit?.(); paintTabRowLines(bar); });   // the fit first: its verdict can change the rows the lines follow
   tabRowObserver.observe(tabRowSentinel);
   // The third event: the document's fonts finishing a load. A web font arriving after first paint
   // (font-display swap; the light theme's face is a later swap again) re-widths every item and moves
@@ -6288,8 +7105,8 @@ function ensureTabRowObserver(bar: HTMLElement): void {
   // pinnedWatchWidth is the same idiom. Events, not timers.
   const fonts = (document as any).fonts;
   if (fonts && typeof fonts.addEventListener === "function") {
-    fonts.addEventListener("loadingdone", () => paintTabRowLines(bar));
-    if (fonts.ready && typeof fonts.ready.then === "function") fonts.ready.then(() => paintTabRowLines(bar));
+    fonts.addEventListener("loadingdone", () => { stripFit?.(); paintTabRowLines(bar); });   // the same shape as the observer's callback: a swapped face re-widths the chips the fit measured
+    if (fonts.ready && typeof fonts.ready.then === "function") fonts.ready.then(() => { stripFit?.(); paintTabRowLines(bar); });
   }
 }
 
@@ -6342,6 +7159,7 @@ function renderTabs() {
   if (tabPointerHeld) { renderPendingWhilePressed = true; return; }   // don't destroy a tab mid-click (see tabPointerHeld)
   const bar = document.getElementById("tabs");
   if (!bar) return;
+  colSets = readColSets();   // the partition (the chat split): which sessions each column holds, read ONCE per render — tabInView, the plan and the signature all read this snapshot
   // TABS-FIRST (the user 2026-06-26): render the WHOLE strip up front, in `order` — the kernel's order
   // verbatim (applyTabOrder), plus any just-arrived tab not yet pushed. An id whose session hasn't landed yet
   // draws as a placeholder (name+color, non-interactive) that fills in when build_session arrives — so tabs
@@ -6351,30 +7169,50 @@ function renderTabs() {
   // placeholder back on screen. Cleared the moment the kernel's list agrees — see ackClosingTabs.
   const ids: string[] = [];
   const seen = new Set<string>();
-  for (const id of order) { if (!seen.has(id) && !closingTabs.has(id)) { seen.add(id); ids.push(id); } }
-  for (const id of tabMeta.keys()) { if (!seen.has(id) && !closingTabs.has(id)) { seen.add(id); ids.push(id); } }   // any pushed tab not yet in `order` (placeholder)
+  for (const id of order) { if (!seen.has(id) && stripLists(id)) { seen.add(id); ids.push(id); } }
+  for (const id of tabMeta.keys()) { if (!seen.has(id) && stripLists(id)) { seen.add(id); ids.push(id); } }   // any pushed tab not yet in `order` (placeholder); stripLists is the one membership rule the restores read too
   auditTabOrder(ids);
+  noteColumnEmptiness(ids);   // a later column none of whose members the kernel lists any more tells the shell (the chat split)
+  noteOrphanState();          // …and state held for a session another column shows is offered to the shell (the chat split)
   // demo/recording view filter (the user 2026-07-14): `#only=<tag>` shows only matching-name tabs; the
   // real sessions keep running, just hidden from this view. No tag → visibleIds === ids (unchanged).
   const only = onlyTag();
-  const nameOf = (id: string) => sessions.get(id)?.name ?? tabMeta.get(id)?.name ?? "";
   // the session VIEWS filter composes here too (the user 2026-08-18): a view-hidden session keeps
-  // its state, drafts and cached transcript — it just loses its tab until revealed
-  const inViewIds = ids.filter(tabInView);
-  const visibleIds = only ? inViewIds.filter((id) => matchesOnly(nameOf(id), only)) : inViewIds;
+  // its state, drafts and cached transcript — it just loses its tab until revealed. ONE predicate (stripShows) builds
+  // this list and answers the deferred checks below, so the two can never disagree (the review's low)
+  const visibleIds = ids.filter((id) => stripShows(id, only));
   // ...and it must govern the CHAT BODY too, not just the bar (the user 2026-07-16). Hiding a
   // non-matching TAB while its transcript keeps rendering leaks precisely what the filter exists to
   // hide: a real session's chat sitting on screen under `#only=api,tests,web`, statusline and all —
-  // found while shooting the demo, with nimbus's transcript filling a "filtered" frame. Re-point the
-  // selection at the first visible session. Deferred so we never re-enter the render we're inside;
-  // setActive is a no-op once activeId is visible, so this settles in one pass.
-  if (activeId && ids.includes(activeId) && !visibleIds.includes(activeId) && visibleIds.length) {
-    const next = visibleIds[0];
-    // re-validate at FIRE time, not schedule time: an activation between the two (a feed click
-    // opening an ephemeral peek, a reveal landing) can have made the active tab visible — bouncing
-    // then would kick the user off the very tab they just opened (the no-flap rule)
-    setTimeout(() => { if (activeId !== next && activeId && !tabInView(activeId)) setActive(next); }, 0);
+  // found while shooting the demo, with nimbus's transcript filling a "filtered" frame.
+  // WHICH filter needs this: visibility is a pure function of the views blob, and captureViews asserts the active
+  // tab's peek before applyTabOrder on every tabOrder frame, so a VIEW that excludes the active tab never reaches
+  // here (the peek keeps it in tabInView). The `#only=` filter is not a peek input: it is applied on top of tabInView
+  // right above, so an only-filtered active tab does reach here. The pane then goes UNFOCUSED naming the hidden tab
+  // (T357: never re-pointed at another session); the check at fire time reads the same predicate visibleIds does
+  // (stripShows), and the tab comes back below when the filter shows it again.
+  // THE ACTIVE TAB MOVED TO ANOTHER COLUMN (the chat split; the user 2026-09-12, whose source column sat on "This tab view
+  // shows no session" after the drag): a tab the user dragged away is not hidden by a view or a filter, so the pane does
+  // not go unfocused naming it (T357 keeps the box for a tab that comes back when the filter lifts; a moved tab lives in
+  // its own column now). The box falls to this column's first visible member — deferred and re-checked at fire time like
+  // the re-point below — and the persisted tab then names a member, so a reload lands here on one of its own.
+  if (activeId && ids.includes(activeId) && !heldHere(activeId) && visibleIds.length) {
+    const moved = activeId, first = visibleIds[0];
+    setTimeout(() => { if (activeId === moved && !heldHere(moved) && stripLists(first) && stripShows(first)) setActive(first); }, 0);
   }
+  else if (activeId && ids.includes(activeId) && !visibleIds.includes(activeId)) {
+    const hid = activeId;
+    setTimeout(() => { if (activeId === hid && !stripShows(hid)) unfocusHiddenByView(hid); }, 0);
+  }
+  if (!activeId && vanishedId && vanishedWhy === "hidden" && visibleIds.includes(vanishedId)) {
+    const back = vanishedId;
+    // the reason re-read too: a teardown queued in between must not be undone. And the strip's MEMBERSHIP (stripLists,
+    // the paint's own rule: order and the placeholders, less a closing tab), not only the predicate: a torn-down tab has
+    // left the strip while its reason may still read "hidden", and stripShows knows the view and the filter, not the
+    // strip (the review's low, and the next review's: the schedule and the fire read ONE membership rule)
+    setTimeout(() => { if (!activeId && vanishedId === back && vanishedWhy === "hidden" && stripLists(back) && stripShows(back)) setActive(back); }, 0);
+  }
+  staleActiveFallback(ids, visibleIds);   // no active tab and none on its way (the chat split): the first visible member, deferred like the re-point
   // TAB SECTIONS (the user 2026-09-04): groups are tags. With sectioning on (per browser — the
   // tag-lens menu's "Group tabs by tag") and some tag holding a visible tab, the strip renders one
   // header per tag in tagOrder holding a visible tab, each tab under EVERY tag it carries (T264b, the
@@ -6393,7 +7231,18 @@ function renderTabs() {
   const plan = planStrip(visibleIds, unions, readTabGroups(unions), activeId, phoneLayout(),
                          provisionalId ? { id: provisionalId, tags: provisionalTags } : null);
   collapsedTabIds = plan.folded;
-  lastStripItems = plan.items;   // before the skip below: the snapshot (stripAftermath → renderSnapshot) and the folded stand-in read the plan from here on either path
+  lastStripItems = plan.items;   // before the skip below: the section view (stripAftermath, renderSnapshot) and the folded stand-in read the plan from here on either path
+  // A REVEAL RE-ARMS THE IDLE PREFETCH, whatever caused the repaint (the user 2026-09-14: hidden tabs are not built until shown, and
+  // shown ones are). The reveal is a STATE change, so it is detected HERE, where the shown set is computed (visibleIds less the plan's
+  // folded ids), never at the callers: a views or lens change of this page's or a peer's (the kernel's tabOrder frame: captureViews,
+  // then applyTabOrder's repaint), another column's holds, the #only= filter lifted or a rename crossing it, a section opened from this
+  // window or a sibling document, the phone/desktop flip emptying the folded set. PR 1671's rounds two and three re-armed call sites one
+  // by one and missed the frame, the flip and the rename; now every renderTabs() is safe by construction. A repaint that reveals nothing
+  // schedules nothing; the first paint arms once (the skeleton frame's own arm coalesces with it: schedulePrebuild is idempotent).
+  // Before the signature skip, whose inputs it does not depend on; the fire-time gate stays stripShowsTab (runPrebuild).
+  const shownNow = visibleIds.filter((id) => !plan.folded.has(id));
+  if (revealedTabs(lastShownTabIds, shownNow).length) schedulePrebuild();
+  lastShownTabIds = new Set(shownNow);
   // AN UNCHANGED STRIP IS NOT REBUILT. The signature is every input the loop below and the controls after
   // it paint: the active and peek tabs, the layout mode, the ids and the visible ids in order, whether the
   // active tab is in view (the all-hidden blank reads it), the strip plan — each section's tag, color and
@@ -6417,7 +7266,7 @@ function renderTabs() {
   // a repaint that never happens.
   const stripSig = JSON.stringify([
     activeId, peekId, phoneLayout(), ids, visibleIds, activeId ? tabInView(activeId) : null, plan.items,
-    settings.tabCtx, settings.stripGroupRows, settings.theme, settings.colormap, titleWithKey("Open a session", "session.new"),
+    settings.tabCtx, settings.stripGroupRows, settings.tabsLocked, settings.theme, settings.colormap, settings.tabWidgets, titleWithKey("Open a session", "session.new"),   // tabWidgets: which widgets a tab carries, their order and options (T379); tabsLocked: the tab lock (T395)
     settings.denseChrome,   // compact tabs: the body class re-heights every item at an unchanged width, an input no observer sees; the rebuild's paint lays the hairlines and keep breaks under the new rows (review round 2 of the keep-with-next change)
     surfaceLens(effViews(), "chat"), unions,
     snapView,   // the section whose snapshot the pane shows (makeGroupHead: the header's mark and its way-back act)
@@ -6426,18 +7275,28 @@ function renderTabs() {
       if (renderKind(skeletonTabs, id, !!s) === "skeleton") {                                              // makeSkeletonTab's reads:
         const m = tabMeta.get(id), kst = skeletonTabs.status.get(id) as Status | undefined;               // the kernel's list + its
         return ["k", m?.name || s?.name, (m?.color || s?.color)?.bg, (m?.color || s?.color)?.fg, id === peekId,   // status frames, never the
-                kst?.state, kst && tabStateClass(kst), !!kst?.faded, kst?.ctx, kst?.ctxColor, kst?.ctxTone, down, note];   // stale session's status
+                kst?.state, kst && tabStateClass(kst), kst?.needsYou === true, !!kst?.faded, kst?.ctx, kst?.ctxColor, kst?.ctxTone, down, note, tabHotkey(id)];   // stale session's status; + the hot-key keycap's chord (T379); + the feed's needs-you verdict, the yellow ring's input (2026-09-13)
       }
       if (!s) { const m = tabMeta.get(id); return ["p", m?.name, m?.color?.bg, m?.color?.fg, m?.emoji, down, note]; }   // makePlaceholderTab's reads
       const st = s.status;
-      return [s.name, s.color?.bg, s.color?.fg, s.emoji ?? tabMeta.get(id)?.emoji, st.state, tabStateClass(st), !!st.faded,
+      return [s.name, s.color?.bg, s.color?.fg, s.emoji ?? tabMeta.get(id)?.emoji, st.state, tabStateClass(st), st.needsYou === true, !!st.faded,
               st.ctx, st.ctxColor, st.ctxTone, !!s.sub, !!(s.userTodos && s.userTodos.length), down, note,
-              ledgers.get(id)?.needsInput === true];   // the feed's needs-you verdict: a header's stand-in pip over its hidden members reads it (tab-snapshot.ts standInPip)
+              ledgers.get(id)?.needsInput === true, tabHotkey(id)];   // the feed's needs-you verdict: a header's stand-in pip over its hidden members reads it (tab-snapshot.ts standInPip); + the hot-key keycap's chord (T379): a rebind repaints; + st.needsYou (2026-09-13): a card entering or leaving needs-you repaints the yellow ring (the state class already carries the red and amber rings' inputs; settings.tabWidgets above carries the switches)
     }),
   ]);
   const mslotEl = document.getElementById("mtag-slot");
   if (stripSig === tabStripSig && !(mslotEl && !mslotEl.firstChild)) { stripAftermath(visibleIds, ids); return; }
   tabStripSig = stripSig;
+  // the strip is about to be REBUILT: the hover tip belongs to a tab node this rebuild discards, and its mouseleave
+  // (the tip's only closer) never fires on a discarded node, so a tip shown for the tab the user just clicked stood
+  // stranded over the page until another tab was hovered and left (T327, found by the tag-overview served lab on
+  // 2026-09-10: its screenshots caught the tip after every pick). The rebuild is the event: hide it here, once, before
+  // the nodes go.
+  hideTabTip();
+  // the rebuild repaints every at-rest label's fade against the page background as it stands (fadedColor reads it live),
+  // and the composer's name overlay wears that same fade (T335): re-sync it on the same event, so a background the host
+  // rewrote (a VS Code colour-theme switch, which fires no romp event) reaches the box when it reaches the strip
+  syncComposerPh();
   // Preserve TAB-MODE keyboard focus across the rebuild (the user 2026-06-29). renderTabs runs on EVERY kernel
   // push (0.5–3s), and replaceChildren() destroys the focused tab — dropping focus out of the strip (often out
   // of the chat iframe entirely), which silently killed ←/→/Enter nav after a send or any push: you were left
@@ -6452,6 +7311,7 @@ function renderTabs() {
   const focusedGroup = (focusedEl?.closest(".tab-group-head") as HTMLElement | null)?.dataset.group;
   const focusedFlag = !!focusedEl?.classList.contains("tab-group-flag");
   const focusedDoor = !!focusedEl?.classList.contains("tab-group-door");   // the open header's count as the door to the pane (makeGroupHead): the flag's rule
+  const focusedGear = !!focusedEl?.closest(".tab-widgets-gear");   // the gear held the keyboard when a push rebuilt the strip (a lock toggle's rebuild finds the focus on the menu's row, and the menu's own Escape refocuses the live gear): the gear keeps the focus, not the active tab (T395 round one, moved by T405; round two, low 6)
   const refocusTab = bar.contains(document.activeElement);
   bar.replaceChildren();
   // A session under several tags has a COPY in each group (T264b, the user 2026-09-08: tags are
@@ -6497,7 +7357,7 @@ function renderTabs() {
     tab.addEventListener("keydown", onTabKey);
     // drag-to-reorder (synced with the timeline via the shared session-order file). A subagent viewer
     // stays put: it is client-only, and a reorder would post its id into the kernel's order.
-    tab.draggable = !s.sub;
+    tab.draggable = !s.sub && !fedMissing && !isProvisionalId(id) && !settings.tabsLocked;   // the tab lock (T395) holds every tab; …and a page without its manager offers no drag at all (fedMissing); a create in flight has no session to move yet (the chat split: a zone's drop would open a column on an id the kernel does not know)
     wireTabDrag(tab, id);   // the dragstart/dragend pair, shared with the skeleton tab (2026-09-07)
     if (s.color) {
       tab.style.setProperty("--chip-bg", s.color.bg);
@@ -6511,7 +7371,7 @@ function renderTabs() {
     // ...and the whole tab dims when that host is unreachable, so a disconnected session reads as one at
     // a glance rather than only on inspection (the user 2026-07-29). The marked "host:" carries the why.
     if (hostIsDown(id)) { tab.classList.add("host-off"); tab.title = hostDownNote(id); }
-    if (s.status.faded && id !== activeId && s.color) {
+    if (s.status.faded && (id !== activeId || snapView) && s.color) {   // in the overview mode the active tab fades like any other (no residual selection cue, T322)
       const full = s.color.bg;
       label.style.color = fadedColor(full);
       // The "host:" prefix declares its OWN color (quiet gray), so the parent's faded color can't inherit
@@ -6538,7 +7398,7 @@ function renderTabs() {
       ut.title = "waiting on you — this session flagged something it needs from you (see the note by its message box)";
       tab.appendChild(ut);
     }
-    appendTabCtxGauge(tab, s);   // the context gauge, shared with the skeleton tab (2026-09-07)
+    appendTabAfterWidgets(tab, s);   // the context gauge and the hot-key keycap, the after-the-name widgets (T379), shared with the skeleton tab (2026-09-07)
     // Rich hover tooltip (custom DOM — a native title can't colour/bold): backend in its own colour, the
     // full dir path, and mode/model/effort/context each on a line (the user 2026-06-23). See showTabTip.
     if (!s.sub) {   // the rich tip reads a real session's dir/branch/model; a viewer has none of them
@@ -6578,6 +7438,8 @@ function renderTabs() {
   add.title = titleWithKey("Open a session", "session.new");
   add.addEventListener("click", () => openPicker());
   bar.appendChild(add);
+  // (THE TAB LOCK's button left the strip 2026-09-13, T405, the user; since T415, 2026-09-14, the lock is a checkbox row in the
+  // settings' Tab strip section, where the strip's gear jumps; its state, its drag rules and its saveSettings road are unchanged.)
   // the shared TAG-ICON filter (the user 2026-08-25): identical across surfaces, opening the one
   // multi-select lens menu — this instance governs the TAB STRIP (actives.chat)
   const tagBtn = tagMenuButton("filter these tabs by tag", (btn) => {
@@ -6601,19 +7463,53 @@ function renderTabs() {
   // flush under the row above (the user 2026-08-25); the box makes every line the controls form
   // as tall as a line the + is on, wherever the strip wraps them
   const tagBox = el("span", "tab-tagbox");
-  tagBox.appendChild(tagBtn);
+  // T413 (the user 2026-09-14): when the strip is not sectioned by tag (the group switch off, or no tag holding a visible tab)
+  // the selected tags show as chips just LEFT of the button (the shared sync builds them, bounded to three and a "+N more" chip;
+  // the none pick draws none, T405 standing); sectioned, the headings carry the tags and the host is fed nothing (the plan's
+  // own reading, no second store read). fitStripChips below hides a run that alone would add a row.
+  const tagChipsHost = el("span", "tab-tagchips");
+  tagBox.append(tagChipsHost, tagBtn);
   // THE BUTTON CONVENTION (the user 2026-08-25): gray alone at rest; accent + the chips of
   // everything selected when narrowed — the shared renderer, identical on every mount
-  const tagChipsHost = el("span", "tab-tagchips");
-  tagChipsHost.setAttribute("style", "display:inline-flex;gap:5px;align-items:center;margin-left:2px;");
-  tagBox.appendChild(tagChipsHost);
-  bar.appendChild(tagBox);
+  // T405 (the user 2026-09-13): the strip's control no longer DISPLAYS what it filters to, no "(no tags)" and no tag chips
+  // beside the button: with Group tabs by tag on the tags show in the strip's sections anyway, and otherwise whoever is
+  // interested clicks the button, which still wears the accent while narrowed. The filter itself is unchanged; the shared
+  // sync runs with no chips host, so it builds no chip (round two, low 3: two chips were built and dropped per paint)
+  // THE STRIP'S RIGHT END (T412, the user 2026-09-13): the tags button and the gear together at the farthest right, on ONE
+  // invisible wrapper pushed by the auto margin (styles.css .tab-strip-end) with the + tab's height as its floor; the tags
+  // control stays the same button with the same convention and menu, and nothing folds into the gear
+  const end = el("span", "tab-strip-end");
+  end.appendChild(tagBox);
+  const settingsReachable = !!((window as any).__rompShowStrip || inRompShell());
+  // THE STRIP'S GEAR (T379, the user 2026-09-12; T405, the user 2026-09-13; T412; T415, the user 2026-09-14): ONE glyph, the
+  // shell's own settings gear (icons.ts GEAR_GLYPH, the character the rail wears at the bottom right of every romp page, read by
+  // the kernel from the same file), a bare glyph after the tags button in the strip's right-end wrapper, dressed exactly as the
+  // rail's (styles.css .tab-widgets-gear mirrors the kernel's .rail-act rules). One click takes the person STRAIGHT to the
+  // settings' Chat tab scrolled to the strip's own "Tab strip" section (gear.js showSection), which holds the tab lock as a
+  // checkbox row above Tab widgets; the menu the gear opened since T405 (the lock's toggle row and the row to Tab widgets) kept nothing
+  // once the lock moved, so it is gone, and the gear is drawn only where a settings card can open: the shell, or a host with its
+  // own gear (__rompShowStrip). The lock's state, its drag rules and its saveSettings road are unchanged (T395). Click-safe:
+  // the strip is rebuilt only when its signature changes.
+  if (settingsReachable) {
+    const gear = el("button", "tab-widgets-gear") as HTMLButtonElement;
+    gear.type = "button";
+    gear.title = "Tab strip settings";
+    gear.setAttribute("aria-label", "Tab strip settings");
+    gear.textContent = GEAR_GLYPH;
+    gear.addEventListener("click", (e) => { e.stopPropagation(); openSettingsOn("chat", "tabstrip"); });
+    end.appendChild(gear);
+  }
+  bar.appendChild(end);
   {
     const v = effViews();
-    syncTagFilter(tagBtn, tagChipsHost, surfaceLens(v, "chat"), viewTagUnion(v), (l) => {
+    // the run is the fit's to feed (round two): three chips, then fewer where the row is short (fitStripChips); the button's own
+    // state syncs in the same call, host or none
+    const feed = (limit: number) => syncTagFilter(tagBtn, plan.sectioned ? null : tagChipsHost, surfaceLens(v, "chat"), unions, (l) => {   // sectioned: the headings carry the tags, no host; else the chips
       postLens({ actives: Object.assign({}, (v || {}).actives, { chat: l }) });
-    });
+    }, "inline", { limit, tagsOnly: true });
+    stripFit = () => fitStripChips(end, tagChipsHost, feed);
   }
+  stripFit();
   // T161 (the user 2026-08-28, Android: no tag control on mobile): the phone chat page hides the whole
   // #tabs strip — and the mount above with it. The kernel's mobile header carries an empty #mtag-slot
   // (left of +); mount the SAME shared button + chips into it ONCE — the slot is kernel-built and never
@@ -6639,7 +7535,7 @@ function renderTabs() {
       mslot.append(mBtn, mChips);
     }
     const mv2 = effViews();
-    syncTagFilter(mslot.children[0] as HTMLElement, mslot.children[1] as HTMLElement,
+    syncTagFilter(mslot.children[0] as HTMLElement, phoneLayout() ? (mslot.children[1] as HTMLElement) : null,   // the chips only where the mount shows (the T405 read): the button's state syncs either way
       surfaceLens(mv2, "chat"), viewTagUnion(mv2), (l) => {
         postLens({ actives: Object.assign({}, (mv2 || {}).actives, { chat: l }) });
       });
@@ -6653,7 +7549,8 @@ function renderTabs() {
     // header has none, when the header takes it; the group gone: the old rule (and focusActiveTab itself
     // lands on the header when the active tab is folded away under it)
     if (h && h.tabIndex >= 0) ((focusedFlag && h.querySelector<HTMLElement>(".tab-group-flag")) || (focusedDoor && h.querySelector<HTMLElement>(".tab-group-door")) || h).focus(); else focusActiveTab();
-  } else if (refocusTab) focusActiveTab();
+  } else if (focusedGear) (bar.querySelector(".tab-widgets-gear") as HTMLElement | null)?.focus();   // not the active tab: Enter again would drop the caret into the composer
+  else if (refocusTab) focusActiveTab();
   // The rebuild destroyed every old tab node: a still-up tip's owner is detached and its mouseleave
   // can never fire. Re-show for the tab under the (unmoved) pointer or close — covers every rebuild
   // source, including one that REMOVED the hovered tab (view-hidden, closed): no tab there → close.
@@ -6665,20 +7562,41 @@ function renderTabs() {
   // shows the session title + caret, expanding to goals / working-on / done. See renderLedger. 2026-06-16)
 }
 /** What follows a strip render whether or not the strip was rebuilt: the no-sessions placeholder, the section
- *  snapshot's refresh (its rows read session state the strip's signature does not carry: a member's last
- *  event, its working note), and the all-hidden blank (all idempotent, all read live state a skipped rebuild
- *  must not leave behind). */
+ *  view's refresh (its rows read session state the strip's signature does not carry: a member's last event,
+ *  its working note), and the all-hidden blank. All are idempotent, and all read live state a skipped
+ *  rebuild must not leave behind: the active view is built lazily, so it can appear between two renders
+ *  whose strips are equal. */
+// the run of selected tags yields rather than add a row (T413): the right end's row is read with the host out of the flow
+// ([hidden], its own display rule in styles.css) and with the run fed at each count from the full three down to one, and the
+// first that keeps the right end on that row with no chip clipped stands; a run that cannot is hidden. The button's accent still
+// says the strip is narrowed. Round two (the manager's read, 2026-09-14): the attribute alone proved inert against the host's
+// author display, so the run added a row at narrow widths and never shrank; and the verdict now follows a resize (the strip's
+// ResizeObserver re-runs stripFit), where before it stood until some other input rebuilt the strip.
+const STRIP_CHIP_LIMIT = 3;
+function fitStripChips(end: HTMLElement, host: HTMLElement, feed: (limit: number) => void): void {
+  if (!end.isConnected) return;   // a paint the observer outlived
+  feed(STRIP_CHIP_LIMIT);
+  if (!host.childElementCount) { host.hidden = false; return; }
+  host.hidden = true;
+  const without = end.offsetTop;
+  host.hidden = false;
+  const fits = () => end.offsetTop === without && host.scrollWidth <= host.clientWidth + 1;
+  if (fits()) return;
+  for (let limit = STRIP_CHIP_LIMIT - 1; limit >= 1; limit--) {
+    feed(limit);
+    if (fits()) return;
+  }
+  host.hidden = true;
+}
 function stripAftermath(visibleIds: readonly string[], ids: readonly string[]): void {
-  syncNoSessionsPlaceholder(visibleIds.length, ids.length);
-  // the section snapshot follows the push (renderTabs runs on every one): a no-op when nothing a row
-  // shows has changed (snapshotModel's same-object return). The section GONE from the plan (its tag
-  // deleted or renamed, its last member hidden or moved out, sectioning turned off) is the event that
-  // ends the view: renderSnapshot clears snapView and hides the host, and the pane goes back to the
-  // active session's transcript HERE (showActive, which re-enables the composer), because no other
-  // caller follows a push with showActive (the 2026-09-06 review: the pane stayed blank, the box disabled).
-  // A row that held focus is hidden with the host, so focus goes to the active tab, as after the user's own
-  // Escape (snapshotHoldsFocus, read before renderSnapshot hides it); the event is the push whose plan dropped
-  // the section.
+  syncNoSessionsPlaceholder(visibleIds.length, ids.length, ids.filter(heldHere).length);   // …and how many this column holds (the chat split's copy)
+  // the section view follows the push (renderTabs runs on every one): a no-op when nothing a row shows has
+  // changed (snapshotModel's same-object return). The section GONE from the plan (its tag deleted or
+  // renamed, its last member hidden or moved out, sectioning turned off) is the event that ends the view:
+  // renderSnapshot clears snapView and hides the host, and the pane goes back to the active session's
+  // transcript HERE (showActive, which re-enables the composer), because no other caller follows a push
+  // with showActive. A row that held focus is hidden with the host, so focus goes to the active tab, as
+  // after the user's own Escape (snapshotHoldsFocus, read before renderSnapshot hides it).
   const shown = snapView;
   const held = shown ? snapshotHoldsFocus() : false;
   if (snapView) renderSnapshot();
@@ -6728,7 +7646,7 @@ function dismissTabMenu() {
 function showSelectionMenu(e: MouseEvent) {
   const content = document.getElementById("content");
   const sel = window.getSelection();
-  const text = sel ? sel.toString() : "";
+  const text = sel ? (mentionCopyText(sel)?.text ?? sel.toString()) : "";   // a chip copies as the @name typed, as Ctrl+C does
   if (!content || !sel || !sel.anchorNode || !content.contains(sel.anchorNode) || !text.trim()) return;
   e.preventDefault();
   dismissTabMenu();
@@ -6765,9 +7683,11 @@ function copyToClipboard(text: string) {
 // Toggle a per-session view flag (feed mute / postal isolation) — the SAME message the timeline lane toggles
 // send, persisted + re-broadcast by the kernel. Optimistically update the local copy so reopening the menu
 // reflects it before the next push (the kernel reconciles).
+const pendingFlags: PendingFlags = new Map();   // the view flags a click flipped here, held against frames built before it (flag-pending.ts)
 function setSessionFlag(id: string, flag: "hideFromFeed" | "postalServiceOff" | "notify", value: boolean) {
   const s = sessions.get(id);
   if (s) s[flag] = value;   // both flags are declared optional booleans on Session — no cast needed
+  notePendingFlag(pendingFlags, id, flag, value);   // a frame built before the kernel applied this cannot flip the row back (flag-pending.ts)
   if (vscodeApi) vscodeApi.postMessage({ type: "setSessionFlag", id, flag, value });
 }
 // Override a session's identity color from the tab menu's swatches (the user 2026-06-29). Optimistically paint
@@ -6782,6 +7702,7 @@ function setSessionColor(id: string, bg: string) {
   const meta = tabMeta.get(id);
   if (meta) meta.color = color;
   renderTabs();
+  if (id === activeId) { syncComposerPh(); updateStatusline(); }   // the box's name and the badge wear the new colour on this very click
   // OPTIMISTIC cross-pane echo (the user 2026-08-08): the tabs repaint on this very click, but the
   // FEED kept the old colour until the kernel's next feed rebuild pushed — a second or two. Tell the
   // other panes kernel-free, on the same host-matched pair settings sync rides: the browser's
@@ -6803,7 +7724,7 @@ function setSessionEmoji(id: string, emoji: string) {
 
 // Small inline-SVG icon for the tab menu's toggle items (trusted constant markup; `off` slashes + dims it,
 // matching the timeline lane toggles). 16-unit viewBox; currentColor so .ctx-icon/.off set the tint.
-function ctxIcon(kind: "feed" | "mail" | "bell" | "bill" | "folder" | "tag" | "pencil" | "smile" | "tab", off: boolean): HTMLElement {
+function ctxIcon(kind: "feed" | "mail" | "bell" | "bill" | "folder" | "tag" | "pencil" | "smile" | "tab" | "key", off: boolean): HTMLElement {
   const span = el("span", "ctx-icon" + (off ? " off" : ""));
   const slash = off ? '<line x1="1.6" y1="14.4" x2="14.4" y2="1.6"/>' : "";
   const body = kind === "feed"
@@ -6816,6 +7737,8 @@ function ctxIcon(kind: "feed" | "mail" | "bell" | "bill" | "folder" | "tag" | "p
           ? '<path d="M2 4.5 A1.2 1.2 0 0 1 3.2 3.3 L6.2 3.3 L7.6 4.9 L12.8 4.9 A1.2 1.2 0 0 1 14 6.1 L14 11.5 A1.2 1.2 0 0 1 12.8 12.7 L3.2 12.7 A1.2 1.2 0 0 1 2 11.5 Z"/>'  // folder (browse files)
         : kind === "tag"
           ? '<path d="M2 3.4 A1.4 1.4 0 0 1 3.4 2 L7.6 2 A1.4 1.4 0 0 1 8.6 2.4 L13.6 7.4 A1.4 1.4 0 0 1 13.6 9.4 L9.4 13.6 A1.4 1.4 0 0 1 7.4 13.6 L2.4 8.6 A1.4 1.4 0 0 1 2 7.6 Z"/><circle cx="5.4" cy="5.4" r="1.1"/>'  // luggage tag (session tags)
+        : kind === "key"
+          ? '<rect x="1.5" y="4" width="13" height="8" rx="1.5"/><line x1="4.5" y1="9.5" x2="11.5" y2="9.5"/>'  // a keycap (the tab's hot key)
         : kind === "pencil"
           ? '<path d="M3 13 L3.6 10.4 L10.8 3.2 A1.3 1.3 0 0 1 12.8 5.2 L5.6 12.4 Z"/><line x1="9.8" y1="4.2" x2="11.8" y2="6.2"/>'  // pencil (rename)
         : kind === "smile"
@@ -6828,14 +7751,95 @@ function ctxIcon(kind: "feed" | "mail" | "bell" | "bill" | "folder" | "tag" | "p
   return span;
 }
 
+// The Billing flyout's ENTRY LIST (T387): one function for the session's picks and the machine-default submenu, so the
+// two menus can never list different billings. Each entry: its label (Login named by the machine's account when known,
+// the key plainly "API key", no fragment of it anywhere), the setAuth value, and why it is greyed here (a side this box
+// cannot bill, the kernel's reason) or "". The stored logins (T346) arrive here: the list grows with them; the default
+// submenu lists the machine's own login and the key only until the kernel takes a stored login as a machine default.
+function billingChoices(st: Status, avail: AuthAvail): Array<{ label: string; value: string; why: string }> {
+  // every login this host knows plus the key (T346, authLoginChoices: the machine's own first, then the stored ones); an
+  // older kernel sends no `logins` and keeps the two-entry list below, the machine's login named by its account
+  if (avail.logins && avail.logins.length) return authLoginChoices(avail);
+  return [{ label: st.authAcct ? `Login (${st.authAcct})` : "Login", value: "login", why: avail.login ? "" : (avail.loginWhy || "no Claude login signed in on this machine") },
+          { label: "API key", value: "key", why: avail.key ? "" : (avail.keyWhy || "no apiKeyHelper configured") }];
+}
+// A flyout placed beside its row (the Billing flyout and its nested default submenu, T387; the side rule the Tags flyout
+// and the model-version submenus follow): PREFER right; fall LEFT when the right edge would clip and the left has room;
+// with room on neither side (a narrow window) drop BELOW the row when it fits there, else ABOVE the row's top, and only
+// when neither fits clamp inside the viewport, never over the row while a place beside or beyond it exists (the T380
+// review: at 560 px it covered its menu and ran 33 px out; at 560 by 420 the clamp pulled the drop-below back over the
+// row). .ctx-menu is position: fixed, so the coordinates are viewport-space. The flyout is in the document already.
+function placeFlyBeside(anchor: HTMLElement, fly: HTMLElement): void {
+  const ir = anchor.getBoundingClientRect();
+  // measure at the window's left edge, where the whole width is available: a flyout whose labels may wrap (the Billing
+  // flyout's, bounded by the window since 2026-09-14) is otherwise measured at its static position and re-flows once
+  // placed, ending flush with the window's right edge instead of 8 px inside it (the served lab at 560 px)
+  fly.style.left = "0px";
+  const sr = fly.getBoundingClientRect();
+  let left: number, top: number = ir.top;
+  if (ir.right + 2 + sr.width <= window.innerWidth - 8) left = Math.round(ir.right + 2);
+  else if (ir.left - 2 - sr.width >= 8) left = Math.round(ir.left) - sr.width - 2;
+  else {
+    left = Math.max(8, Math.min(Math.round(ir.left), window.innerWidth - sr.width - 8));
+    if (ir.bottom + 2 + sr.height <= window.innerHeight - 4) top = ir.bottom + 2;
+    else if (ir.top - 2 - sr.height >= 0) top = ir.top - 2 - sr.height;
+    else top = Math.max(0, Math.min(ir.top, window.innerHeight - sr.height - 4));
+  }
+  fly.style.left = left + "px";
+  fly.style.top = Math.max(0, Math.min(top, window.innerHeight - sr.height - 4)) + "px";
+}
+// The tab menu's ONE flyout gesture (T163 for Tags, the user 2026-08-28; T380 for Billing, the user
+// 2026-09-12): a hover of HOVER_INTENT_MS over the row opens the flyout (the feed's intent debounce:
+// enough to skip a graze, never a wait), a click opens it at once (byClick: a click may focus an input,
+// a hover-open must not steal the keyboard), a second click folds it, leaving the row and the flyout
+// for the same span closes it (native menus' gap tolerance: entering either surface cancels the pending
+// close), and `open` removes any other flyout first so one is up at a time. Timers here are gesture
+// DEFINITIONS (hover intent), not state proxies. No window listener: the timers and the row's own.
+const HOVER_INTENT_MS = 120;
+function wireFlyout(menu: HTMLElement, item: HTMLElement, sel: string, open: (byClick: boolean) => HTMLElement | null): void {
+  let openT: number | null = null;
+  let closeT: number | null = null;
+  const cancel = () => {
+    if (openT != null) { clearTimeout(openT); openT = null; }
+    if (closeT != null) { clearTimeout(closeT); closeT = null; }
+  };
+  const armClose = () => { cancel(); closeT = window.setTimeout(() => { closeT = null; menu.querySelector(sel)?.remove(); }, HOVER_INTENT_MS); };
+  const openNow = (byClick: boolean) => {
+    const fly = open(byClick);
+    if (fly && !fly.dataset.flyWired) {   // leave-tolerance on the flyout itself, wired once per flyout node
+      fly.dataset.flyWired = "1";
+      fly.addEventListener("pointerenter", cancel);
+      fly.addEventListener("pointerleave", armClose);
+    }
+    return fly;
+  };
+  item.addEventListener("pointerenter", () => {
+    cancel();
+    if (menu.querySelector(sel)) return;                         // already open — nothing to intend
+    openT = window.setTimeout(() => { openT = null; openNow(false); }, HOVER_INTENT_MS);
+  });
+  item.addEventListener("pointerleave", armClose);
+  item.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    cancel();
+    const fly = menu.querySelector(sel);
+    if (fly) { fly.remove(); return; }                           // second click folds the flyout
+    openNow(true);
+  });
+}
+
 function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: the group the right-clicked copy sits in (T264b), a plain string so the menu stays id-keyed
   dismissTabMenu();
   closeEmojiPrompt();   // a menu opening closes the emoji picker the last one spawned (the swatches' dismissal rule)
   const menu = el("div", "ctx-menu");
-  // Rename leads ONE top section with the session controls (the user 2026-08-24: it sat alone and
-  // bare above its own divider) — the standard dress like its siblings: icon + the sub-line, which
-  // says what a rename PRESERVES (sessions are uuid-keyed, the name is a label — mailboxes, goals
-  // and history follow the session, per the /rename route's contract).
+  // Four sections, dividers only; the titles live here and in tab-menu-sections.test.ts (the user
+  // 2026-09-11, who asked for the menu regrouped by what each item changes about the session).
+  // ── 1. HOW IT SHOWS: Rename; the colour swatches. Both change the tab's label and tint and nothing
+  // about the session itself (Rename stays first, the 2026-08-24 ruling).
+  // Rename leads (the user 2026-08-24: it sat alone and bare above its own divider) — the standard
+  // dress like its siblings: icon + the sub-line, which says what a rename PRESERVES (sessions are
+  // uuid-keyed, the name is a label — mailboxes, goals and history follow the session, per the /rename
+  // route's contract).
   // id only, never the tab node under the cursor: the menu (on document.body) outlives kernel pushes,
   // but the tab it was opened from does not — renderTabs() swaps the strip on every push, so a node
   // captured here is usually DETACHED by the time Rename is clicked (the click-safety rule).
@@ -6849,24 +7853,25 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     rename.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); startTabRename(id, copy); });
     menu.appendChild(rename);
   }
-  // Move to folder… sits with Rename (the user 2026-09-01: a subproject became its own repo and the
-  // session should follow it) — the same dress, the sub-line saying what a move KEEPS. The dialog does
-  // the rest (showMovePrompt); the kernel wraps the CLI's own relocation. SDK sessions only: a terminal
-  // session has no relocation primitive, so its row says so rather than failing after a click.
-  {
-    const sTm = sessions.get(id);
-    const isTmux = !!(sTm && sTm.status && sTm.status.backend === "tmux");
-    const mv = el("div", "ctx-item ctx-item-toggle" + (isTmux ? " ctx-item-off" : ""));
-    mv.appendChild(ctxIcon("folder", isTmux));
+  // Hot key (the user 2026-09-10): a key combination that switches to this tab, recorded in the shell's
+  // shortcuts dialog (it owns the recorder and the conflict check) — this pane only asks. The chord shows
+  // minified on the tab (the T379 keycap widget, from the same store). ONE row (the user 2026-09-11): while a chord is bound it reads "Update hot key…", and the
+  // recorder it opens both re-records and removes (Backspace, or its Remove button — an unbind in the shared store).
+  if (inRompShell() && typeof (window.parent as any).__rompHotkeyConfigure === "function") {
+    const cur = tabHotkey(id);
+    const hot = el("div", "ctx-item ctx-item-toggle");
+    hot.appendChild(ctxIcon("key", false));
     const bodyEl = el("span", "ctx-item-body");
-    const l = el("span", "ctx-item-label"); l.textContent = "Move to folder…"; bodyEl.appendChild(l);
+    const l = el("span", "ctx-item-label"); l.textContent = cur ? "Update hot key…" : "Hot key…"; bodyEl.appendChild(l);
     const sb = el("span", "ctx-item-sub");
-    sb.textContent = isTmux ? "terminal sessions can't move — start a new one in that folder"
-                            : "the conversation, mail, goals and history stay with the session";
+    sb.textContent = cur ? "now " + miniChord(cur) + " — press a new combination, or remove it" : "press a key combination that switches to this tab";
     bodyEl.appendChild(sb);
-    mv.appendChild(bodyEl);
-    if (!isTmux) mv.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); showMovePrompt(id); });
-    menu.appendChild(mv);
+    hot.appendChild(bodyEl);
+    hot.addEventListener("click", (ev) => {
+      ev.stopPropagation(); dismissTabMenu();
+      try { window.parent.postMessage({ romp: "hotkeyConfigure", sid: id, name: sessions.get(id)?.name || "" }, "*"); } catch (e) { /* no shell to ask */ }
+    });
+    menu.appendChild(hot);
   }
   // Emoji… sits with Rename too (the user 2026-09-06): one glyph before the name on the tab, the same
   // dress as its siblings. The icon IS the current emoji when there is one (so the menu shows what the
@@ -6888,10 +7893,9 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     em.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); showEmojiPrompt(id); });
     menu.appendChild(em);
   }
-  // Colors join Rename in the AESTHETIC section (the user 2026-08-24, the final by-kind grouping:
-  // [Rename + colors] / [feed, mail, bell, billing, Tags] / [Browse]). The swatch row itself is
-  // unchanged (the user 2026-06-29): the identity palette as circles, the current one ringed,
-  // omitted until /palette has loaded.
+  // The colour swatches close the section with Rename (the user 2026-08-24, who grouped the menu by
+  // kind). The swatch row itself is unchanged (the user 2026-06-29): the identity palette as circles,
+  // the current one ringed, omitted until /palette has loaded.
   if (paletteColors.length) {
     const sNow = sessions.get(id);
     const cur = (sNow && sNow.color ? sNow.color.bg : "").toLowerCase();
@@ -6912,41 +7916,8 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     menu.appendChild(row);
   }
   menu.appendChild(el("div", "ctx-sep"));
-  // Feed + Mail per-session toggles (the user 2026-06-26) — the same controls as the timeline lane's feed
-  // checkbox + postal mailbox, here as icon + label + a faint "what it does" sub-line. State from the session.
-  const s = sessions.get(id);
-  const offFeed = !!(s && s.hideFromFeed);
-  const offMail = !!(s && s.postalServiceOff);
-  const onBell = !!(s && s.notify);
-  // the toggles' dress, the row's whole content: the kind's icon (slashed when off), the label and the faint sub-line. Its own
-  // helper so the Hide tab row below can re-dress its one node when the copy's section or state changes under an open menu.
-  const dressToggle = (item: HTMLElement, kind: "feed" | "mail" | "bell" | "tab", off: boolean, lab: string, sub: string) => {
-    const bodyEl = el("span", "ctx-item-body");
-    const l = el("span", "ctx-item-label"); l.textContent = lab; bodyEl.appendChild(l);
-    const sb = el("span", "ctx-item-sub"); sb.textContent = sub; bodyEl.appendChild(sb);
-    item.replaceChildren(ctxIcon(kind, off), bodyEl);
-  };
-  const toggle = (kind: "feed" | "mail" | "bell" | "tab", off: boolean, lab: string, sub: string, fn: () => void) => {
-    const item = el("div", "ctx-item ctx-item-toggle");
-    dressToggle(item, kind, off, lab, sub);
-    item.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); fn(); });
-    menu.appendChild(item);
-    return item;
-  };
-  toggle("feed", offFeed,
-    offFeed ? "Show in feed" : "Hide from feed",
-    offFeed ? "let its prompts make feed cards again" : "stop its prompts making feed cards",
-    () => setSessionFlag(id, "hideFromFeed", !offFeed));
-  toggle("mail", offMail,
-    offMail ? "Rejoin mail" : "Mute mail",
-    offMail ? "reconnect it to the postal service" : "hide from peers — no messages in or out",
-    () => setSessionFlag(id, "postalServiceOff", !offMail));
-  // system-notification bell (the user 2026-07-28) — same flag the timeline lane bell toggles. NOTE the
-  // inverted polarity vs the two above: `notify` true is the ENABLED state, so the icon slashes on !onBell.
-  const bellItem = toggle("bell", !onBell,
-    onBell ? "Stop notifying" : "Notify me",
-    onBell ? "no more system notifications for this session" : "system notification when its work blocks on you or completes",
-    () => setSessionFlag(id, "notify", !onBell));
+  // Shared by the Tags flyout (section 2) and the Hide tab row (section 3): the right-clicked copy's home section, the menu's seat
+  // and its hold. Declared here, above both, since the Tags flyout reads unionFor and holding and assigns refreshTags as it builds.
   // THE RIGHT-CLICKED COPY'S HOME SECTION, TRACKED. `copy` is the group the copy sat in when the menu opened (the
   // tab's dataset.copy; a tab in the untagged trail carries "" there, which names no group, so it reads as no copy);
   // copyNow follows it through the Tags flyout, which leaves this menu open with the copy elsewhere: Move to writes
@@ -7038,180 +8009,10 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // seated-once-and-off-the-page, since the first refresh runs before the menu is mounted at all.
   const hold = pressHold(menu);
   const gone = () => corner !== null && !menu.isConnected;
-  // HIDE TAB (the user 2026-09-09): put this session's tab away inside its group from the menu, with
-  // neither the section's at-a-glance pane nor the Sessions and tags dialog open. The same per-browser,
-  // per-(tab, section) entry the pane's Hide and Show write (tab-groups.ts `hidden`), through the one
-  // prune site, so the strip repaints on TABGROUPS_EVENT and the group's header counts the hidden member
-  // after the "+"; the pane's Show button stays the way back, and the sub-line names where it is, the
-  // group's view (which click opens that view differs by fold state, an open group's count or a folded
-  // group's header, and the guide says so; the sub-line stays short and true in both). Present only while
-  // the strip is sectioned and the right-clicked copy has a home section, and never on the phone layout
-  // (phoneLayout, the gate the Group tabs by tag switch uses: planStrip flattens there, so a hide would
-  // write and show nothing; the refresh and the click read the gate through one helper, rowHome, and the
-  // media rule's flip runs the notifier, so a rotation while the menu is open takes the row off and a click
-  // that lands before the parked refresh writes nothing, round 6): hides do not apply on the flat strip, to
-  // an untagged session, under a tag whose create is still in flight or on the phone, so the row is absent
-  // there. THE ROW FOLLOWS THE COPY,
-  // THE CLICK IS LIVE (rounds 1 and 2): the row is one node with a refresh that reads the copy's section
-  // (homeNow, tracked through the flyout's Move to) and the stored state, dresses it (Hide tab on a shown
-  // copy, Show tab on a hidden one) and seats it after Notify me, or takes it off the menu while the copy
-  // has no section; the Tags flyout calls the refresh after each of its writes (a move, a remove, an add),
-  // since those leave this menu open with the copy elsewhere, so the words never name a group the copy has
-  // left (event-keyed on the write, no timer), and a views arrival while the menu is open runs it too (round 4:
-  // tabMenuViewsHook, set at the end of this build and run by viewsChanged, the one notifier, on every change to
-  // what the strip reads, so a push that takes the copy's tag off the session, renames it or answers its create,
-  // a reconnect that drops an edit in flight, or another pane's hide re-dresses the row in the same event; before,
-  // the row kept naming a group the copy had left), and the refresh ends by seating the menu and the open flyout
-  // again (reseat, above), since the row's coming or going moves what stands below it. The click resolves the
-  // section once more and SETS the state the row promised, the pin row's idiom, for the copy the row NAMED
-  // and no other (round 4: a resolution at the click that names a copy the row did not, which the hook leaves
-  // only to a change between the last arrival and the click, re-dresses the row and writes nothing rather than
-  // hide a copy the user never touched; the same tag under a new name is the same copy, by its id; round 5: the
-  // refused click leaves the menu OPEN with the row re-dressed, so the user sees the new words and clicks again,
-  // while a click that writes dismisses the menu first, as every other row does): a copy already in that
-  // state where it now sits (another pane hid it there) is left as it is, never flipped back. No home at
-  // click time (moved out of every group, or the strip flattened in another pane): the click dismisses and
-  // writes nothing. No kernel round trip: nothing to acknowledge, no pending state, no timer. This reverses the earlier ruling that the pane
-  // was the one door to a hide (2026-09-08); the user asked for the menu door.
-  // (The kernel-side hide-session mechanism stays RETIRED, the user 2026-08-24: the tag system covers
-  // backgrounding, and the kernel migrated its hidden entries into the "archived" tag. revealIn survives
-  // for the picker's tagged-session jump.)
-  {
-    const row = el("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped");   // ctx-sub-capped: its sub-line carries the tag name, which never widens the menu (styles.css)
-    let hidden = false;   // the stored bit the row shows; the click sets its opposite
-    let shown: ReturnType<typeof sectionRef> | null = null;   // the section the row names (round 4): the click writes for that copy or not at all
-    let dressed: string | null = null;   // the words the row shows; null while it is off the menu (round 5)
-    const rowHome = () => (phoneLayout() ? undefined : homeNow());   // the row's own resolution (round 6): none on the phone layout, where the strip is flat and a hide shows nothing; the refresh and the click read the same gate
-    // THE WORDS, then THE PLACEMENT: two steps of one refresh (round 6). The words: the row's resolution, its bit and its sentence, the
-    // node dressed and seated after Notify me, or taken off the menu while the copy has no section. UNCHANGED WORDS: the node stands
-    // (round 5; a rebuild on every arrival dropped a click under way), while the section the row names and its bit follow all the same
-    // (an ack swaps a placeholder id under the same words; the guard compares by the id). The placement (reseat: the menu, then the
-    // open flyout) runs after the words whatever they did, since the flyout's rows change with every build and rebuild while the row's
-    // sentence often stands: the flyout's own build ends in this refresh, so a push that adds a tag, the user's New tag or the trail's
-    // copy places the grown flyout again (round 5 returned before the seat on unchanged words, and a flyout clamped at the pane's bottom
-    // grew past the edge, New tag and Configure tags unreachable; a rename beside new tags seated at the old height, before the rebuild)
-    const refreshHideWords = () => {
-      const home = rowHome();
-      if (!home) { shown = null; if (dressed === null) return; dressed = null; row.remove(); return; }
-      shown = sectionRef(home);
-      hidden = isHidden(tabGroups(), shown, id);
-      const lab = hidden ? "Show tab" : "Hide tab";
-      const sub = hidden ? `back on the strip in ${home.name}` : `hidden in ${home.name}; to show it, open the group's view`;
-      const words = lab + "\n" + sub;
-      if (row.parentNode && words === dressed) return;
-      dressed = words;
-      dressToggle(row, "tab", hidden, lab, sub);
-      row.title = sub;   // the whole sentence as the row's tooltip (round 5): the sub-line elides at long names (ctx-sub-capped) and its instruction went with it
-      if (!row.parentNode) bellItem.after(row);
-    };
-    refreshHideRow = () => { refreshHideWords(); reseat(); };   // the placement after the words, every time (round 6)
-    // THE REFUSED CLICK'S CUE (round 6). A guard that refuses re-dresses the row (the click's own refresh), and the new words are the
-    // acknowledgement. When the words come out the same (a same-named tag under a new id, replaced while the pointer was pressed: the
-    // section the row names changed by its id, its sentence did not), nothing paints, so the row acknowledges on its own: one pulse of
-    // .romp-acted, the sheet's press acknowledgement for every control (ui/CLAUDE.md), taken off on the animation's own end, and the
-    // tooltip says why the click did nothing and what to do. The refresh set the row's section to the one resolved, so a second click
-    // acts. Before, the node stood byte-identical with nothing written and the menu open: a click that did nothing, twice
-    const acknowledge = () => {
-      row.title = `${dressed!.slice(dressed!.indexOf("\n") + 1)}. The group changed just before your click, so it did nothing; click again.`;
-      row.classList.remove("romp-acted");
-      void row.offsetWidth;   // a reflow between the remove and the add, so a second refusal pulses again
-      row.classList.add("romp-acted");
-    };
-    row.addEventListener("animationend", () => row.classList.remove("romp-acted"));
-    row.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      const now = rowHome();
-      if (!now) { dismissTabMenu(); return; }
-      const sec = sectionRef(now), st = tabGroups();
-      // the copy the row named, or nothing (round 4): every change to what the strip reads re-dresses the row (viewsChanged), so the
-      // resolution at the click names the row's copy unless something moved it since the last one; a hide of any other copy would be of one the
-      // user never touched. The same tag under a new name matches by its id (sameSection: the ids when both are local, else the names,
-      // so two remote-only sections are two). The guard runs BEFORE the dismissal (round 5): a refused
-      // click re-dresses the row in place and leaves the menu open, so the new words are seen and a second click acts on them (before,
-      // the menu was already off the page, and the re-dress reached no one); a re-dress that changed no word gives the cue instead (round 6)
-      if (!shown || !sameSection(sec, shown)) {
-        const before = dressed;
-        refreshHideRow();
-        if (dressed !== null && dressed === before) acknowledge();
-        return;
-      }
-      dismissTabMenu();
-      if (isHidden(st, sec, id) === !hidden) return;
-      writeTabGroupsPruned(setHidden(st, sec, id, !hidden));
-    });
-    refreshHideRow();
-  }
-  // Billing submenu (the user 2026-08-09, who wants the login/API-key switch here rather than as a
-  // statusline badge). For EVERY SDK session (st.auth is set; the user 2026-09-08: the picker never
-  // disappears — it once existed only when the machine offered both choices, so a one-auth box had
-  // the fact on the tab hover and no control beside it). The flyout lists BOTH choices always; the one
-  // this box cannot bill (st.authAvail, with the kernel's reason) renders disabled, greyed, the reason
-  // in its hover, and a click on it posts nothing. The session's current pick is check-marked even
-  // when it is the unavailable one: the launch fell to the other side (st.authPickUnavailable, the
-  // kernel's honest record) and the sub-line says so. The key stays labelled plainly 'API key', no
-  // fragment of it anywhere. A pick posts the same setAuth the badge used (the session reconnects to
-  // apply, so the sub-line says "applying…" while st.authPending rides the status). An older kernel
-  // sends no authAvail: its authBoth keeps the old both-or-nothing gate.
-  const st = s ? s.status : null;
-  if (st && st.auth && (st.authAvail || st.authBoth)) {
-    const avail: AuthAvail = st.authAvail || { login: true, key: true };
-    const otherOf = (v: string) => (v === "key" ? "login" : "key");
-    // (no divider: billing sits in the behavior section with the toggles — the by-kind grouping)
-    const item = el("div", "ctx-item ctx-item-toggle ctx-item-billing");
-    item.appendChild(ctxIcon("bill", false));
-    const bodyEl = el("span", "ctx-item-body");
-    const l = el("span", "ctx-item-label"); l.textContent = "Billing"; bodyEl.appendChild(l);
-    const sb = el("span", "ctx-item-sub");
-    // billing-label.ts's words (the hover row's decision, shorter): a pick that did not take says so where
-    // the switch lives (T124), a pick this box cannot bill names the side the launch went to; the CLI's
-    // report otherwise, the intent before any report
-    sb.textContent = billingSubText(st);
-    bodyEl.appendChild(sb);
-    item.appendChild(bodyEl);
-    const caret = el("span", "ctx-caret"); caret.textContent = "▸"; item.appendChild(caret);
-    item.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      const open = menu.querySelector(".ctx-sub");
-      if (open) { open.remove(); return; }                       // second click folds the flyout
-      const sub = el("div", "ctx-menu ctx-sub");
-      // while the billing pick is HELD for live work the check stays on the pick and the side the CLI reports
-      // (what bills meanwhile) wears the running tag: the one menu convention the badge menus follow too
-      // (pick-held.ts heldMenuMarks, review round 5); not held, the check marks the intent as before.
-      // Auth is the one kind whose status field (st.auth) carries the PICK rather than the running value
-      // (authLive is the CLI's report), so when the held payload names no picked value (an older kernel)
-      // the flyout falls back to it, as it did before round 5 (review round 6); the badge kinds' fields
-      // report the running value and have nothing to fall back on, so their menus check no row then.
-      // The side this box cannot bill (c.why, from st.authAvail) stays greyed with its reason, held or not (2026-09-08)
-      const heldAuth = heldMenuMarks("auth", st.pickHeld, st.authLive || "");
-      for (const c of [{ label: st.authAcct ? `Login (${st.authAcct})` : "Login", value: "login", why: avail.login ? "" : (avail.loginWhy || "no Claude login signed in on this machine") },
-                       { label: "API key", value: "key", why: avail.key ? "" : (avail.keyWhy || "no apiKeyHelper configured") }]) {
-        const current = heldAuth ? (heldAuth.current || st.auth) === c.value : st.auth === c.value;
-        const running = !!heldAuth && heldAuth.running === c.value;
-        const opt = el("div", "ctx-item" + (current ? " current" : "") + (running ? " running" : "") + (c.why ? " disabled" : ""));
-        opt.textContent = c.label;
-        if (running) opt.appendChild(runningTag());
-        if (c.why) {   // unavailable here: greyed, the reason on hover, inert (the user 2026-09-08)
-          opt.title = c.why;
-          opt.setAttribute("aria-disabled", "true");
-        }
-        opt.addEventListener("click", (ev2) => {
-          ev2.stopPropagation();
-          if (c.why) return;                                       // a disabled option posts nothing, and the menu stays
-          dismissTabMenu();
-          if (st.auth !== c.value && vscodeApi) vscodeApi.postMessage({ type: "setAuth", id, value: c.value });
-        });
-        sub.appendChild(opt);
-      }
-      // INSIDE the menu node (so dismissTabMenu and the outside-mousedown check cover it), placed
-      // beside the item — .ctx-menu is position:fixed, so the coords are viewport-space, clamped
-      menu.appendChild(sub);
-      const ir = item.getBoundingClientRect();
-      const sr = sub.getBoundingClientRect();
-      sub.style.left = Math.max(0, Math.min(ir.right + 2, window.innerWidth - sr.width - 4)) + "px";
-      sub.style.top = Math.max(0, Math.min(ir.top, window.innerHeight - sr.height - 4)) + "px";
-    });
-    menu.appendChild(item);
-  }
+  // ── 2. WHERE IT BELONGS: Tags (flyout); Move to folder…. Membership and location
+  // are functional: they change what the kernel and the file system know about the session, and the
+  // user placed Move beside Tags. A session's chat COLUMN is placed by dragging its tab (the shell's drop
+  // zones, 2026-09-11), so no menu item for it sits here.
   // TAGS (the user 2026-08-24, overruling the earlier skip: tag editing belongs everywhere a
   // session is in front of you — you might not have the timeline open and still want to organize
   // or dispatch). A compact one-line row — the current tag names as the sub-line — with the
@@ -7367,18 +8168,9 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       row.addEventListener("animationend", () => row.classList.remove("romp-acted"), { once: true });
     };
     // HOVER-INTENT open (T163, the user 2026-08-28: hovering down to Tags should open the submenu
-    // without another click): the feed's 120ms intent debounce — enough to skip a graze, never a
-    // wait. Click still opens instantly (and focuses the input; a hover-open must NOT steal the
-    // keyboard). Leaving is tolerant the way native menus are: the same 120ms lets the pointer
-    // cross the gap into the submenu; entering either surface cancels the close, leaving BOTH
-    // closes. Timers here are gesture DEFINITIONS (hover intent), not state proxies.
-    const HOVER_INTENT_MS = 120;
-    let hoverOpenT: number | null = null;
-    let hoverCloseT: number | null = null;
-    const cancelHoverTimers = () => {
-      if (hoverOpenT != null) { clearTimeout(hoverOpenT); hoverOpenT = null; }
-      if (hoverCloseT != null) { clearTimeout(hoverCloseT); hoverCloseT = null; }
-    };
+    // without another click), the one flyout gesture every tab-menu flyout wears since T380 (Billing
+    // too): wireFlyout below the menu builder holds the definition. Click still opens instantly (and
+    // focuses the input; a hover-open must NOT steal the keyboard).
     const openTagsFly = (focusInput: boolean) => {
       const openFly = menu.querySelector(".ctx-sub-tags");
       if (openFly) return openFly as HTMLElement;
@@ -7453,9 +8245,11 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
         builtSig = flySig();   // the blob these rows are built from
         for (const g of holding()) {                             // one chip per NAME — never a host prefix
           const row = el("div", "ctx-item ctx-item-toggle");
-          const chip = el("span", "ctx-tag-dot"); chip.style.background = g.color || "var(--dim)"; row.appendChild(chip);
           const bodyE = el("span", "ctx-item-body");
-          const lb = el("span", "ctx-item-label"); lb.textContent = g.name; bodyE.appendChild(lb);
+          const lb = el("span", "ctx-item-label");
+          const chip = tagChip(g.name, g.color || null, { inheritSize: true });   // the one tag chip (T321): the row's label IS the tag, at the label's size
+          chip.classList.add("ctx-tag-chip");
+          lb.appendChild(chip); bodyE.appendChild(lb);
           row.appendChild(bodyE);
           row.title = g.name;   // the whole name as the row's tooltip (round 6): the label elides at the flyout's per-row cap; the ✕ keeps its own title (the innermost wins)
           if (g.pending) {
@@ -7488,26 +8282,32 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
         // the user's call (flagged with T264b); the mechanics are unchanged here.
         const home = homeNow();   // read per build: a move or a remove above changes the copy's group (the Hide tab row reads the same)
         for (const g of others) {
-          const row = el("div", "ctx-item ctx-item-toggle");   // no ctx-sub-capped here: a flyout row keeps its natural width up to the sheet's per-row cap (round 5)
-          const chip = el("span", "ctx-tag-dot"); chip.style.background = g.color || "var(--dim)"; row.appendChild(chip);
+          const row = el("div", "ctx-item ctx-item-toggle");
           const bodyE = el("span", "ctx-item-body");
           const lb = el("span", "ctx-item-label");
           const ref = sectionRef(g);   // this row's union by its ref; the click resolves it again (round 7)
+          // the tag inside the sentence is the chip (T321): no swatch-and-name pair anywhere a tag shows
+          const named = () => { const c = tagChip(g.name, g.color || null, { inheritSize: true }); c.classList.add("ctx-tag-chip"); return c; };
           if (home) {
             const from = sectionRef(home);   // the copy's group as this build read it; the move reads the copy's home again at the click
-            lb.textContent = "Move to " + g.name; bodyE.appendChild(lb);
+            lb.append("Move to ", named()); bodyE.appendChild(lb);
             row.appendChild(bodyE);
+            // the tab lock (T395): a move row is a tab move, so it reads held (the label dims, the row answers nothing); the + beside
+            // it still tags (adding is not a move), so it keeps its strength and says so itself (round one, LOW 1)
+            if (settings.tabsLocked) { row.classList.add("ctx-item-locked"); row.setAttribute("aria-disabled", "true"); bodyE.title = "Tabs are locked: the lock is in the settings (Chat, Tab strip)"; }
             const plus = el("button", "ctx-tag-x ctx-tag-plus") as HTMLButtonElement;   // keeps its own title through a carried cue (round 11)
-            plus.type = "button"; plus.textContent = "+"; plus.title = "add this tag too — the session keeps its other tags";
+            plus.type = "button"; plus.textContent = "+";
+            plus.title = "add this tag too (the session keeps its other tags)" + (settings.tabsLocked ? ": adding is not a move, so the lock does not hold it" : "");
             plus.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { build(); return; } aimAdd(live.name); editUnion(live, { add: [id] }); build(); sb.textContent = subText(); });   // the destination gone at the click: the rows rebuilt, its row's removal the answer (round 9)
             row.appendChild(plus);
             // THE MOVE'S SOURCE IS THE COPY'S HOME AT THE CLICK (round 8): homeNow, and it must be the section this build read (sameSection,
             // the Hide tab row's guard's comparison), or the click is refused. Round 7 asked only that the source union still exist, so a
             // push under the press that took the copy out of its group, or re-homed it, passed: the move's remove found no member and its
-            // add posted alone, and the session ended under the destination as well as wherever the push had put it
-            row.addEventListener("click", (e2) => { e2.stopPropagation(); const to = liveUnion(ref), fromNow = homeNow(); if (!to || !fromNow || !sameSection(sectionRef(fromNow), from)) { refuse("other", ref); return; } moveUnion(fromNow, to); build(); sb.textContent = subText(); });
+            // add posted alone, and the session ended under the destination as well as wherever the push had put it.
+            // The tab lock (T395) is checked first: a locked strip answers a move row with nothing, not with the refusal cue.
+            row.addEventListener("click", (e2) => { e2.stopPropagation(); if (settings.tabsLocked) return; const to = liveUnion(ref), fromNow = homeNow(); if (!to || !fromNow || !sameSection(sectionRef(fromNow), from)) { refuse("other", ref); return; } moveUnion(fromNow, to); build(); sb.textContent = subText(); });
           } else {
-            lb.textContent = "+ " + g.name; bodyE.appendChild(lb);
+            lb.append("+ ", named()); bodyE.appendChild(lb);
             row.appendChild(bodyE);
             row.addEventListener("click", (e2) => { e2.stopPropagation(); const live = liveUnion(ref); if (!live) { build(); return; } aimAdd(live.name); editUnion(live, { add: [id] }); build(); sb.textContent = subText(); });   // the tag gone at the click: the rows rebuilt, this row's removal the answer (round 9)
           }
@@ -7535,8 +8335,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           const on = isPinned(tabGroups(), sec, id);
           add(el("div", "ctx-sep"));
           const row = el("div", "ctx-item ctx-item-toggle ctx-item-pin" + (on ? " current" : ""));   // no ctx-sub-capped: the flyout's per-row cap bounds the sub-line (round 5)
-          const chip = el("span", "ctx-tag-dot"); chip.style.background = home.color || "var(--dim)"; row.appendChild(chip);
-          const bodyE = el("span", "ctx-item-body");
+          const bodyE = el("span", "ctx-item-body");   // no swatch (T321): the sub-line names the home tag in words
           const lb = el("span", "ctx-item-label"); lb.textContent = "Show when folded"; bodyE.appendChild(lb);
           const sb2 = el("span", "ctx-item-sub");
           sb2.textContent = on ? `stays on the strip while ${home.name} is folded` : `keep this tab on the strip while ${home.name} is folded`;
@@ -7599,38 +8398,316 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       // from 24 tags on the flyout opened with the session's own rows and their x above the fold, where the hover-open showed them at the
       // top. The input keeps the keyboard; the first keystroke scrolls the caret into view, as the browser does for the field that holds it
       if (focusInput) (sub.querySelector(".ctx-tag-input") as HTMLInputElement | null)?.focus({ preventScroll: true });
-      // leave-tolerance: entering either surface cancels the pending close; leaving both arms it
-      sub.addEventListener("pointerenter", cancelHoverTimers);
-      sub.addEventListener("pointerleave", armHoverClose);
+      // (the leave-tolerance pair lives in wireFlyout, which wires pointerenter and pointerleave on this flyout node once it is returned)
       return sub;
     };
-    const armHoverClose = () => {
-      cancelHoverTimers();
-      hoverCloseT = window.setTimeout(() => {
-        hoverCloseT = null;
-        menu.querySelector(".ctx-sub-tags")?.remove();
-      }, HOVER_INTENT_MS);
-    };
-    tagsItem.addEventListener("pointerenter", () => {
-      cancelHoverTimers();
-      if (menu.querySelector(".ctx-sub-tags")) return;           // already open — nothing to intend
-      hoverOpenT = window.setTimeout(() => { hoverOpenT = null; openTagsFly(false); }, HOVER_INTENT_MS);
-    });
-    tagsItem.addEventListener("pointerleave", armHoverClose);
-    tagsItem.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      cancelHoverTimers();
-      const openFly = menu.querySelector(".ctx-sub-tags");
-      if (openFly) { openFly.remove(); return; }                 // second click folds the flyout
-      openTagsFly(true);
-    });
+    wireFlyout(menu, tagsItem, ".ctx-sub-tags", openTagsFly);
     menu.appendChild(tagsItem);
   }
+  // Move to folder… sits beside Tags (the user 2026-09-01: a subproject became its own repo and the
+  // session should follow it; the user 2026-09-11 placed it here) — the same dress, the sub-line saying what a move KEEPS. The dialog does
+  // the rest (showMovePrompt); the kernel wraps the CLI's own relocation. Every session moves (T331: the
+  // terminal backend, which had no relocation primitive, is no longer offered).
+  {
+    const mv = el("div", "ctx-item ctx-item-toggle");
+    mv.appendChild(ctxIcon("folder", false));
+    const bodyEl = el("span", "ctx-item-body");
+    const l = el("span", "ctx-item-label"); l.textContent = "Move to folder…"; bodyEl.appendChild(l);
+    const sb = el("span", "ctx-item-sub");
+    sb.textContent = "the conversation, mail, goals and history stay with the session";
+    bodyEl.appendChild(sb);
+    mv.appendChild(bodyEl);
+    mv.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); showMovePrompt(id); });
+    menu.appendChild(mv);
+  }
+  menu.appendChild(el("div", "ctx-sep"));
+  // ── 3. WHAT REACHES YOU: Hide from feed / Show in feed; Mute mail / Rejoin mail; Notify me / Stop
+  // notifying; Billing (flyout). Per-session switches on how the session takes part in the dashboard's
+  // surfaces and who pays; the icon-plus-sub-line toggle dress throughout.
+  // Feed + Mail per-session toggles (the user 2026-06-26) — the same controls as the timeline lane's feed
+  // checkbox + postal mailbox, here as icon + label + a faint "what it does" sub-line. State from the session.
+  const s = sessions.get(id);
+  const offFeed = !!(s && s.hideFromFeed);
+  const offMail = !!(s && s.postalServiceOff);
+  const onBell = !!(s && s.notify);
+  // the toggles' dress, the row's whole content: the kind's icon (slashed when off), the label and the faint sub-line. Its own
+  // helper so the Hide tab row below can re-dress its one node when the copy's section or state changes under an open menu.
+  const dressToggle = (item: HTMLElement, kind: "feed" | "mail" | "bell" | "tab", off: boolean, lab: string, sub: string) => {
+    const bodyEl = el("span", "ctx-item-body");
+    const l = el("span", "ctx-item-label"); l.textContent = lab; bodyEl.appendChild(l);
+    const sb = el("span", "ctx-item-sub"); sb.textContent = sub; bodyEl.appendChild(sb);
+    item.replaceChildren(ctxIcon(kind, off), bodyEl);
+  };
+  const toggle = (kind: "feed" | "mail" | "bell" | "tab", off: boolean, lab: string, sub: string, fn: () => void) => {
+    const item = el("div", "ctx-item ctx-item-toggle");
+    dressToggle(item, kind, off, lab, sub);
+    item.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); fn(); });
+    menu.appendChild(item);
+    return item;
+  };
+  toggle("feed", offFeed,
+    offFeed ? "Show in feed" : "Hide from feed",
+    offFeed ? "let its prompts make feed cards again" : "stop its prompts making feed cards",
+    () => setSessionFlag(id, "hideFromFeed", !offFeed));
+  toggle("mail", offMail,
+    offMail ? "Rejoin mail" : "Mute mail",
+    offMail ? "reconnect it to the postal service" : "hide from peers — no messages in or out",
+    () => setSessionFlag(id, "postalServiceOff", !offMail));
+  // system-notification bell (the user 2026-07-28) — same flag the timeline lane bell toggles. NOTE the
+  // inverted polarity vs the two above: `notify` true is the ENABLED state, so the icon slashes on !onBell.
+  // the row's sub-line names the command's chord when one is bound (the user 2026-09-11: where is the key revealed?)
+  const bellKey = keyHint("session.notify");
+  const bellItem = toggle("bell", !onBell,
+    onBell ? "Stop notifying" : "Notify me",
+    (onBell ? "no more system notifications for this session" : "system notification when its work blocks on you or completes")
+      + (bellKey ? " · " + bellKey : ""),
+    () => setSessionFlag(id, "notify", !onBell));
+  // HIDE TAB (the user 2026-09-09): put this session's tab away inside its group from the menu, with
+  // neither the section's at-a-glance pane nor the Sessions and tags dialog open. The same per-browser,
+  // per-(tab, section) entry the pane's Hide and Show write (tab-groups.ts `hidden`), through the one
+  // prune site, so the strip repaints on TABGROUPS_EVENT and the group's header counts the hidden member
+  // after the "+"; the pane's Show button stays the way back, and the sub-line names where it is, the
+  // group's view (which click opens that view differs by fold state, an open group's count or a folded
+  // group's header, and the guide says so; the sub-line stays short and true in both). Present only while
+  // the strip is sectioned and the right-clicked copy has a home section, and never on the phone layout
+  // (phoneLayout, the gate the Group tabs by tag switch uses: planStrip flattens there, so a hide would
+  // write and show nothing; the refresh and the click read the gate through one helper, rowHome, and the
+  // media rule's flip runs the notifier, so a rotation while the menu is open takes the row off and a click
+  // that lands before the parked refresh writes nothing, round 6): hides do not apply on the flat strip, to
+  // an untagged session, under a tag whose create is still in flight or on the phone, so the row is absent
+  // there. THE ROW FOLLOWS THE COPY,
+  // THE CLICK IS LIVE (rounds 1 and 2): the row is one node with a refresh that reads the copy's section
+  // (homeNow, tracked through the flyout's Move to) and the stored state, dresses it (Hide tab on a shown
+  // copy, Show tab on a hidden one) and seats it after Notify me, or takes it off the menu while the copy
+  // has no section; the Tags flyout calls the refresh after each of its writes (a move, a remove, an add),
+  // since those leave this menu open with the copy elsewhere, so the words never name a group the copy has
+  // left (event-keyed on the write, no timer), and a views arrival while the menu is open runs it too (round 4:
+  // tabMenuViewsHook, set at the end of this build and run by viewsChanged, the one notifier, on every change to
+  // what the strip reads, so a push that takes the copy's tag off the session, renames it or answers its create,
+  // a reconnect that drops an edit in flight, or another pane's hide re-dresses the row in the same event; before,
+  // the row kept naming a group the copy had left), and the refresh ends by seating the menu and the open flyout
+  // again (reseat, above), since the row's coming or going moves what stands below it. The click resolves the
+  // section once more and SETS the state the row promised, the pin row's idiom, for the copy the row NAMED
+  // and no other (round 4: a resolution at the click that names a copy the row did not, which the hook leaves
+  // only to a change between the last arrival and the click, re-dresses the row and writes nothing rather than
+  // hide a copy the user never touched; the same tag under a new name is the same copy, by its id; round 5: the
+  // refused click leaves the menu OPEN with the row re-dressed, so the user sees the new words and clicks again,
+  // while a click that writes dismisses the menu first, as every other row does): a copy already in that
+  // state where it now sits (another pane hid it there) is left as it is, never flipped back. No home at
+  // click time (moved out of every group, or the strip flattened in another pane): the click dismisses and
+  // writes nothing. No kernel round trip: nothing to acknowledge, no pending state, no timer. This reverses the earlier ruling that the pane
+  // was the one door to a hide (2026-09-08); the user asked for the menu door.
+  // (The kernel-side hide-session mechanism stays RETIRED, the user 2026-08-24: the tag system covers
+  // backgrounding, and the kernel migrated its hidden entries into the "archived" tag. revealIn survives
+  // for the picker's tagged-session jump.)
+  {
+    const row = el("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped");   // ctx-sub-capped: its sub-line carries the tag name, which never widens the menu (styles.css)
+    let hidden = false;   // the stored bit the row shows; the click sets its opposite
+    let shown: ReturnType<typeof sectionRef> | null = null;   // the section the row names (round 4): the click writes for that copy or not at all
+    let dressed: string | null = null;   // the words the row shows; null while it is off the menu (round 5)
+    const rowHome = () => (phoneLayout() ? undefined : homeNow());   // the row's own resolution (round 6): none on the phone layout, where the strip is flat and a hide shows nothing; the refresh and the click read the same gate
+    // THE WORDS, then THE PLACEMENT: two steps of one refresh (round 6). The words: the row's resolution, its bit and its sentence, the
+    // node dressed and seated after Notify me, or taken off the menu while the copy has no section. UNCHANGED WORDS: the node stands
+    // (round 5; a rebuild on every arrival dropped a click under way), while the section the row names and its bit follow all the same
+    // (an ack swaps a placeholder id under the same words; the guard compares by the id). The placement (reseat: the menu, then the
+    // open flyout) runs after the words whatever they did, since the flyout's rows change with every build and rebuild while the row's
+    // sentence often stands: the flyout's own build ends in this refresh, so a push that adds a tag, the user's New tag or the trail's
+    // copy places the grown flyout again (round 5 returned before the seat on unchanged words, and a flyout clamped at the pane's bottom
+    // grew past the edge, New tag and Configure tags unreachable; a rename beside new tags seated at the old height, before the rebuild)
+    const refreshHideWords = () => {
+      const home = rowHome();
+      if (!home) { shown = null; if (dressed === null) return; dressed = null; row.remove(); return; }
+      shown = sectionRef(home);
+      hidden = isHidden(tabGroups(), shown, id);
+      const lab = hidden ? "Show tab" : "Hide tab";
+      const sub = hidden ? `back on the strip in ${home.name}` : `hidden in ${home.name}; to show it, open the group's view`;
+      const words = lab + "\n" + sub;
+      if (row.parentNode && words === dressed) return;
+      dressed = words;
+      dressToggle(row, "tab", hidden, lab, sub);
+      row.title = sub;   // the whole sentence as the row's tooltip (round 5): the sub-line elides at long names (ctx-sub-capped) and its instruction went with it
+      if (!row.parentNode) bellItem.after(row);
+    };
+    refreshHideRow = () => { refreshHideWords(); reseat(); };   // the placement after the words, every time (round 6)
+    // THE REFUSED CLICK'S CUE (round 6). A guard that refuses re-dresses the row (the click's own refresh), and the new words are the
+    // acknowledgement. When the words come out the same (a same-named tag under a new id, replaced while the pointer was pressed: the
+    // section the row names changed by its id, its sentence did not), nothing paints, so the row acknowledges on its own: one pulse of
+    // .romp-acted, the sheet's press acknowledgement for every control (ui/CLAUDE.md), taken off on the animation's own end, and the
+    // tooltip says why the click did nothing and what to do. The refresh set the row's section to the one resolved, so a second click
+    // acts. Before, the node stood byte-identical with nothing written and the menu open: a click that did nothing, twice
+    const acknowledge = () => {
+      row.title = `${dressed!.slice(dressed!.indexOf("\n") + 1)}. The group changed just before your click, so it did nothing; click again.`;
+      row.classList.remove("romp-acted");
+      void row.offsetWidth;   // a reflow between the remove and the add, so a second refusal pulses again
+      row.classList.add("romp-acted");
+    };
+    row.addEventListener("animationend", () => row.classList.remove("romp-acted"));
+    row.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const now = rowHome();
+      if (!now) { dismissTabMenu(); return; }
+      const sec = sectionRef(now), st = tabGroups();
+      // the copy the row named, or nothing (round 4): every change to what the strip reads re-dresses the row (viewsChanged), so the
+      // resolution at the click names the row's copy unless something moved it since the last one; a hide of any other copy would be of one the
+      // user never touched. The same tag under a new name matches by its id (sameSection: the ids when both are local, else the names,
+      // so two remote-only sections are two). The guard runs BEFORE the dismissal (round 5): a refused
+      // click re-dresses the row in place and leaves the menu open, so the new words are seen and a second click acts on them (before,
+      // the menu was already off the page, and the re-dress reached no one); a re-dress that changed no word gives the cue instead (round 6)
+      if (!shown || !sameSection(sec, shown)) {
+        const before = dressed;
+        refreshHideRow();
+        if (dressed !== null && dressed === before) acknowledge();
+        return;
+      }
+      dismissTabMenu();
+      if (isHidden(st, sec, id) === !hidden) return;
+      writeTabGroupsPruned(setHidden(st, sec, id, !hidden));
+    });
+    refreshHideRow();
+  }
+  // Billing submenu (the user 2026-08-09, who wants the login/API-key switch here rather than as a
+  // statusline badge). For EVERY SDK session (st.auth is set; the user 2026-09-08: the picker never
+  // disappears — it once existed only when the machine offered both choices, so a one-auth box had
+  // the fact on the tab hover and no control beside it). The flyout lists BOTH choices always; the one
+  // this box cannot bill (st.authAvail, with the kernel's reason) renders disabled, greyed, the reason
+  // in its hover, and a click on it posts nothing. The session's current pick is check-marked even
+  // when it is the unavailable one: the launch fell to the other side (st.authPickUnavailable, the
+  // kernel's honest record) and the sub-line says so. The key stays labelled plainly 'API key', no
+  // fragment of it anywhere. A pick posts the same setAuth the badge used (the session reconnects to
+  // apply, so the sub-line says "applying…" while st.authPending rides the status). An older kernel
+  // sends no authAvail: its authBoth keeps the old both-or-nothing gate. The flyout opens on HOVER as
+  // the Tags flyout does, and on click (T380, the user 2026-09-12: one gesture, wireFlyout). Below the
+  // session's choices, behind a rule, ONE entry, "Set default billing" (T387, the user 2026-09-12), opens a
+  // further submenu holding exactly the same entries with the machine's default check-marked
+  // (authAvail.default, the owning kernel's seed, so a remote session's flyout shows ITS host's default);
+  // a click there posts setAuth with scope "machine", which writes the seed every NEW session and every
+  // session with no pick of its own launches on and touches no session that carries its own pick. The
+  // rule and the entry appear only when there is more than one billing to choose from here. No sub-line
+  // under anything: the entries say what they are.
+  const st = s ? s.status : null;
+  if (st && st.auth && (st.authAvail || st.authBoth)) {
+    const avail: AuthAvail = st.authAvail || { login: true, key: true };
+    const otherOf = (v: string) => (v === "key" ? "login" : "key");
+    const wordOf = (v: string) => (v === "key" ? "API key" : "login");
+    // (no divider: billing closes the what-reaches-you section with the toggles — who pays is a per-session switch too)
+    const item = el("div", "ctx-item ctx-item-toggle ctx-item-billing");
+    item.appendChild(ctxIcon("bill", false));
+    const bodyEl = el("span", "ctx-item-body");
+    const l = el("span", "ctx-item-label"); l.textContent = "Billing"; bodyEl.appendChild(l);
+    const sb = el("span", "ctx-item-sub");
+    // a HELD billing pick leads (the fork's settings-pick hold; the words are pick-held.ts's): it waits on the session's live work, nothing applies yet
+    sb.textContent = billingHeld(st) ? billingHeldSub(st) : st.authPending ? "applying…"
+      : (st.auth === "login" && st.authLogin && st.authLoginLive === "")
+        ? "⚠ CLI used another credential"   // the stored login's helper was not used (T346): the init's evidence
+      : st.authPickUnavailable === st.auth
+        // the pick names a side this box cannot bill — the launch went to the other one when it exists
+        ? `⚠ ${wordOf(st.auth)} unavailable` + (authFellTo(st) ? `, billing ${wordOf(authFellTo(st))}` : "")
+      : st.authLive && st.authLive !== st.auth
+        ? `⚠ CLI reports ${st.authLive === "key" ? "API key" : "login"}`   // the pick did not take — say so where the switch lives (T124)
+        : (st.auth === "key" ? "API key" : (loginName(st) ? `Login (${loginName(st)})` : "Login"));
+    bodyEl.appendChild(sb);
+    item.appendChild(bodyEl);
+    const caret = el("span", "ctx-caret"); caret.textContent = "▸"; item.appendChild(caret);
+    const openBillingFly = (): HTMLElement | null => {
+      const already = menu.querySelector(".ctx-sub-billing");
+      if (already) return already as HTMLElement;
+      menu.querySelector(".ctx-sub")?.remove();                    // one flyout at a time
+      const sub = el("div", "ctx-menu ctx-sub ctx-sub-billing");
+      // the ONE list both menus below draw from (T387): the billings this machine can apply, and those ONLY (the user
+      // 2026-09-14: list what is set up, grey nothing; the 2026-09-08 greyed-with-a-reason row is gone). A machine with
+      // nothing to bill shows one inert line naming why, in the reasons' own words.
+      const all = billingChoices(st, avail);
+      const choices = all.filter((c) => !c.why);
+      if (!choices.length) {
+        const none = el("div", "ctx-item ctx-item-none");
+        none.textContent = all.map((c) => c.why).filter(Boolean).join("; ");
+        none.addEventListener("click", (ev2) => { ev2.stopPropagation(); });
+        sub.appendChild(none);
+      }
+      // while the billing pick is HELD for live work the check stays on the pick and the side the CLI reports
+      // (what bills meanwhile) wears the running tag: the one menu convention the badge menus follow too
+      // (pick-held.ts heldMenuMarks, review round 5); not held, the check marks the intent as before.
+      // Auth is the one kind whose status field (st.auth) carries the PICK rather than the running value
+      // (authLive is the CLI's report), so when the held payload names no picked value (an older kernel)
+      // the flyout falls back to it, as it did before round 5 (review round 6); the badge kinds' fields
+      // report the running value and have nothing to fall back on, so their menus check no row then.
+      // A stored login's value is "login:<id>" on both sides (the choice's value and the held pick), so the mark lands on its row.
+      const heldAuth = heldMenuMarks("auth", st.pickHeld, st.authLive || "");
+      for (const c of choices) {
+        const cur = heldAuth ? (heldAuth.current || st.auth) === c.value : authChoiceCurrent(st, c.value);   // held: the pick; else the key, or a login by WHICH login (st.authLogin)
+        const running = !!heldAuth && heldAuth.running === c.value;
+        const opt = el("div", "ctx-item" + (cur ? " current" : "") + (running ? " running" : ""));
+        opt.textContent = c.label;
+        if (running) opt.appendChild(runningTag());
+        opt.addEventListener("click", (ev2) => {
+          ev2.stopPropagation();
+          dismissTabMenu();
+          if (!cur && vscodeApi) vscodeApi.postMessage({ type: "setAuth", id, value: c.value });
+        });
+        sub.appendChild(opt);
+      }
+      // ── Set default billing (T387, the user 2026-09-12) ── below the picks, behind a rule, ONE entry opening a further
+      // submenu with exactly the same entries, the machine's default check-marked. Both the rule and the entry only when
+      // there is more than one billing to choose from HERE (a side this box cannot bill is not a choice), and only from a
+      // kernel that says whether the default is explicit (an older one takes no scoped "auto" and marks no default). No
+      // sub-line anywhere. The submenu rides the same hover-intent road, wired on the Billing flyout itself and appended
+      // inside it, so leaving both closes both and the menu's dismissal covers it; the same placement rule places it.
+      if (choices.length > 1 && avail.default && avail.defaultExplicit !== undefined) {
+        sub.appendChild(el("div", "ctx-sep"));
+        const setDef = el("div", "ctx-item ctx-item-toggle ctx-item-setdefault");
+        const sl = el("span", "ctx-item-label"); sl.textContent = "Set default billing"; setDef.appendChild(sl);
+        const sc = el("span", "ctx-caret"); sc.textContent = "▸"; setDef.appendChild(sc);
+        const openDefaultFly = (): HTMLElement | null => {
+          const open = sub.querySelector(".ctx-sub-default");
+          if (open) return open as HTMLElement;
+          const explicit = !!avail.defaultExplicit;
+          const d = el("div", "ctx-menu ctx-sub ctx-sub-default");
+          const post = (value: string) => { dismissTabMenu(); if (vscodeApi) vscodeApi.postMessage({ type: "setAuth", id, value, scope: "machine" }); };
+          // exactly the entries of the picks above, a stored login among them (the user 2026-09-14; the kernel's scoped arm
+          // takes "login:<id>" as the machine's default since then, where it offered the machine's own login and the key
+          // only). The check sits on the EXPLICIT default only; automatic marks nothing.
+          for (const c of choices) {
+            const cur = explicit && avail.default === c.value;
+            const opt = el("div", "ctx-item" + (cur ? " current" : ""));
+            opt.textContent = c.label;
+            opt.dataset.scope = "machine";   // a MARKER for the labs and the sheet, never read for the wire: post() carries the scope
+            // the picks list one level up dismisses on its current entry too (review): the same gesture, the same answer, nothing posted
+            opt.addEventListener("click", (ev2) => { ev2.stopPropagation(); if (cur) { dismissTabMenu(); return; } post(c.value); });
+            d.appendChild(opt);
+          }
+          if (explicit) {
+            // the way BACK to the helper rule once a default stands (the manager's call for the user, 2026-09-12, open to
+            // their veto): at the end, behind its own rule, only while an explicit default is set, so a set default can be
+            // cleared; the kernel's scoped "auto" (T380) clears the flag and the seed
+            d.appendChild(el("div", "ctx-sep"));
+            const auto = el("div", "ctx-item ctx-item-auto");
+            auto.textContent = "Automatic";
+            auto.dataset.scope = "machine";   // the marker again
+            auto.addEventListener("click", (ev2) => { ev2.stopPropagation(); post("auto"); });
+            d.appendChild(auto);
+          }
+          sub.appendChild(d);
+          placeFlyBeside(setDef, d);
+          return d;
+        };
+        wireFlyout(sub, setDef, ".ctx-sub-default", () => openDefaultFly());
+        sub.appendChild(setDef);
+      }
+      // INSIDE the menu node (so dismissTabMenu and the outside-mousedown check cover it), placed beside the item
+      menu.appendChild(sub);
+      placeFlyBeside(item, sub);
+      return sub;
+    };
+    wireFlyout(menu, item, ".ctx-sub-billing", () => openBillingFly());
+    menu.appendChild(item);
+  }
+  // ── 4. FILES: Browse files (web only). A different kind of thing, it opens another surface; last and
+  // alone behind its own divider (the 2026-08-24 ruling).
   // BROWSE FILES — at the BOTTOM behind its own divider (the user 2026-08-24: it is a different
-  // kind of thing from the toggles above), wearing the standard icon + sub-description dress. It
-  // opens where the folder link opens (openBrowse's ladder: the Files pane, the feed pane, or over
-  // this chat only when unframed), and the sub-line names that place, read when the menu builds.
-  // Web-only: the VS Code webview cannot reach the kernel origin, and the editor has its own explorer.
+  // kind of thing from the switches above), wearing the standard icon + sub-description dress. It opens
+  // where a folder click opens (openBrowse's ladder: the Files pane, or over this chat), and the sub-line
+  // names that place, read when the menu builds. Web-only: the VS Code webview cannot reach the kernel
+  // origin, and the editor has its own explorer.
   if (location.protocol === "http:" || location.protocol === "https:") {
     menu.appendChild(el("div", "ctx-sep"));
     const browse = el("div", "ctx-item ctx-item-toggle");
@@ -7639,7 +8716,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     const l = el("span", "ctx-item-label"); l.textContent = "Browse files"; bodyEl.appendChild(l);
     const where = browseRouteNow();
     const sb = el("span", "ctx-item-sub");
-    sb.textContent = "the session's working tree, " + (where === "pane" ? "in the Files pane" : where === "feed" ? "in the feed pane" : "in a viewer over this chat");
+    sb.textContent = "the session's working tree, " + (where === "pane" ? "in the Files pane" : "in a viewer over this chat");
     bodyEl.appendChild(sb);
     browse.appendChild(bodyEl);
     browse.addEventListener("click", (ev) => {
@@ -7655,8 +8732,25 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
 }
 // A remote host coming or going flips the disconnected marks on its tabs. The federation manager fires
 // this only when the reachable set actually CHANGES (its own /tunnels poll is the event), so this is a
-// repaint per connect/drop, not per poll (the user 2026-07-29).
-window.addEventListener("romp-hosts", () => { renderTabs(); });
+// repaint per connect/drop, not per poll (the user 2026-07-29). The composer's overlay names the active session
+// with the same host span (T328), so it re-syncs on the same event: its mark would otherwise lag the tab's until
+// the next keystroke, resize, rename or tab switch.
+window.addEventListener("romp-hosts", () => { renderTabs(); syncComposerPh(); });
+// a dial attempt to a remote host began or ended (federation.ts dialEvent): the host-down foot's swirl
+// spins while one is in flight, as of the last /tunnels poll, so it repaints on this event and on nothing else
+window.addEventListener("romp:hostDial", () => { syncHostOfflineFoot(); repaintEmptyStateIfUnfocused(); });   // the unfocused body's "reconnecting" follows the dial state too (T357)
+// the `#only=` filter is the location hash, so a LIVE edit of the hash repaints the strip at once: the hidden tab's
+// unfocus and its return both run off this repaint, not off the next kernel frame (T357 later lows). On the dashboard
+// this pane is a same-origin iframe of the shell and the filter lives on the SHELL's URL (only-filter.ts reads
+// window.top), so the listener binds to the window onlyTag reads: the shell's there, this pane's own on a top-level
+// page or under a cross-origin top (the review: the pane's own hash never changes on the dashboard)
+const onOnlyHashChange = (): void => renderTabs();   // the reveal it causes re-arms the idle prefetch inside renderTabs (its detector), like every other repaint
+const onlyHashWindow = onlyWindow();
+onlyHashWindow.addEventListener("hashchange", onOnlyHashChange);
+// a closed split column: the shell removes this pane's iframe, and a listener left on the shell's window would hold the
+// detached pane's document alive for the shell's lifetime (retention is the whole cost: Chromium does not run a removed
+// frame's handler, the review's probe showed): pagehide takes it off again
+window.addEventListener("pagehide", () => onlyHashWindow.removeEventListener("hashchange", onOnlyHashChange));
 window.addEventListener("mousedown", (e) => { if (ctxMenuEl && !ctxMenuEl.contains(e.target as Node)) dismissTabMenu(); }, true);
 // …and says so on the event (preventDefault) when it did close a menu: the snapshot's Escape (leaveSnapshot),
 // a later capture listener on this window, yields to a consumed Escape instead of also leaving the view
@@ -7667,17 +8761,13 @@ window.addEventListener("keydown", (e) => { if (e.key === "Escape" && ctxMenuEl)
 // its footer field invites a paste, and a paste begins with a trip to another window.
 window.addEventListener("mousedown", (e) => { if (emojiPrompt && !emojiPrompt.card.contains(e.target as Node)) closeEmojiPrompt(); }, true);
 window.addEventListener("keydown", (e) => { if (e.key === "Escape" && emojiPrompt) { e.stopPropagation(); e.preventDefault(); closeEmojiPrompt(); } }, true);
-// The menu leaves when the page moves under it, and not when it scrolls within itself (round 8 of the tab menu review): the
-// Tags flyout is capped at the pane's height and scrolls its own rows (.ctx-sub-tags), and a capture listener on the window
-// sees that scroll too, so a wheel over the open flyout closed the menu on the first tick, as did a click's scroll into view
-// (and, until round 9 made the click-open's focus a preventScroll one, the click on the Tags row itself from 24 tags on).
-// A scroll whose target the menu contains is the menu's own and is left alone; the document's scroll is not contained, and a
-// scroll in any other box on the page still dismisses. The selection menu shares this listener and the same rule
+// …but not the menu's own scroll: taller than the window it scrolls inside it (styles.css max-height, 2026-09-13), and a
+// dismissal on that scroll closed it under the pointer the moment a row below the fold was brought into view
 window.addEventListener("scroll", (e) => { if (ctxMenuEl && e.target instanceof Node && ctxMenuEl.contains(e.target)) return; dismissTabMenu(); }, true);
 window.addEventListener("blur", () => dismissTabMenu());
 
 // "Rename" (tab context menu): swap the tab's label for an inline input. Enter
-// or clicking away commits (the host renames the tmux session and confirms with
+// or clicking away commits (the kernel renames the session and confirms with
 // a "renamed" message — the label only changes once that lands), Esc cancels.
 function startTabRename(id: string, copy?: string) {   // `copy`: which copy of a multi-tag session to edit in place (T264b); the first one when it is gone
   const s = sessions.get(id);
@@ -7722,7 +8812,7 @@ function startTabRename(id: string, copy?: string) {   // `copy`: which copy of 
     input.remove();
     fixed?.remove();
     label.style.display = "";
-    tab.draggable = true;
+    tab.draggable = !fedMissing && !settings.tabsLocked;
     renameActive = false;
     if (renderPendingAfterRename) { renderPendingAfterRename = false; renderTabs(); }
     // The bare name, never the display string: the host prefix is this viewer's, and the kernel that
@@ -7744,13 +8834,17 @@ function startTabRename(id: string, copy?: string) {   // `copy`: which copy of 
 // Keyboard nav on a focused tab: ←/→ step prev/next; ↑/↓ jump to the nearest tab
 // in the row above/below (tabs wrap via flex-wrap).
 function onTabKey(e: KeyboardEvent) {
-  if (!activeId || !order.length) return;
+  if (!order.length) return;
+  if (!activeId) {   // from the unfocused pane an arrow lands on the first visible tab (T357)
+    if ((e.key === "ArrowRight" || e.key === "ArrowLeft" || e.key === "ArrowUp" || e.key === "ArrowDown") && pickFirstVisibleTab()) { e.preventDefault(); focusActiveTab(); }
+    return;
+  }
   if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
     e.preventDefault();
     const dir = e.key === "ArrowRight" ? 1 : -1;
     const ord = visibleOrder();                 // never cycle onto a view-hidden session
     const i = ord.indexOf(activeId);
-    if (i < 0) {                                // the active tab is folded away: step from its header
+    if (i < 0) {                                // the active tab is folded away: step from its header's place
       const nb = neighborOfFolded(lastStripItems, activeId, dir);
       if (nb) { setActive(nb); focusActiveTab(); }
       return;
@@ -7835,15 +8929,15 @@ window.addEventListener("keydown", (e) => {
   if (e.key.startsWith("Arrow") && (document.getElementById("romp-fileview") || document.getElementById("romp-filebrowse")
       || document.getElementById("romp-lightbox"))) return;
   if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-    if (!activeId || order.length < 2) return;
+    if (!activeId) { if (pickFirstVisibleTab()) e.preventDefault(); return; }   // from the unfocused pane: the first visible tab (T357)
+    if (order.length < 2) return;
     const dir = e.key === "ArrowRight" ? 1 : -1;
     const ord = visibleOrder();                 // never cycle onto a view-hidden session
     const i = ord.indexOf(activeId);
     if (i < 0) {
       // the active tab folded away under its section header (tab-groups.ts): the header is its stand-in,
-      // so the step starts from the header's place on the strip: onTabKey's and cycleTab's rule (the
-      // 2026-09-06 review: this returned, and the documented stand-in could not step). A view-hidden
-      // active id is not on the strip at all: nothing to step from, as before.
+      // so the step starts from the header's place on the strip (onTabKey's and cycleTab's rule). A
+      // view-hidden active id is not on the strip at all: nothing to step from, as before.
       const nb = collapsedTabIds.has(activeId) ? neighborOfFolded(lastStripItems, activeId, dir) : null;
       if (nb) { e.preventDefault(); setActive(nb); }
       return;
@@ -8012,7 +9106,7 @@ let pickAllowNew = false;
 
 // The session you just created gets its TAB AND COMPOSER IMMEDIATELY, and starts behind them (the user
 // 2026-07-30). This replaced an "Opening session…" modal that covered the pane while the kernel resolved
-// the directory, spawned tmux or connected the SDK, and the first transcript poll came back — seconds you
+// the directory, connected the session, and the first transcript poll came back — seconds you
 // could do nothing with, watching three dots. See ./provisional.ts for why the id carries no colon.
 //
 // `pendingNewSession` is the NAME the created session will arrive under; it is the only join available,
@@ -8046,6 +9140,16 @@ const failedProvisionals = new Set<string>();
 // warn / createDirMissing and lands the dialog at once; this covers a spawn that dies silently. It is
 // deliberately long — the point is that it is no longer what you wait on, the way the old 30s cue was.
 const PROVISIONAL_WAIT_MS = 90_000;
+// The shell's two questions before it moves a tab or closes a column (the chat split; _LANDING_SPLIT_JS moveTab and
+// close, review finds 2026-09-11): whether an id is a session a column can hold (a create in flight and a sub-agent
+// viewer are this page's own, never the store's, though both carry data-id on the strip), and whether this column has
+// a create in flight, or a failed one still holding its text, that would die with the document. Shape checks and a flag
+// read: any column's page answers for any id.
+(window as any).__rompMovableSession = (sid: unknown): boolean => typeof sid === "string" && !!sid && !isProvisionalId(sid) && !isSubId(sid) && !settings.tabsLocked;   // …and nothing moves while the tabs are locked (T395)
+// the REASON behind the answer above (T395 round one): the shell's refusal toast names the padlock for a lock, and says
+// "only an open session" for the rest, instead of one line for both
+(window as any).__rompMoveRefusal = (sid: unknown): string => typeof sid !== "string" || !sid || isProvisionalId(sid) || isSubId(sid) ? "not-open" : settings.tabsLocked ? "locked" : "";
+(window as any).__rompColumnBusy = (): boolean => !!provisionalId || failedProvisionals.size > 0;
 
 function openProvisional(req: CreateReq): void {
   dropProvisional();                       // never two at once: a second create supersedes the first
@@ -8102,12 +9206,14 @@ function dropProvisional(): { queued: string[]; draft: string } {
 // typed into the provisional tab stay two sends, and a ✕ on either removes exactly that one at the kernel.
 // This path used to post the text alone and mint the bubble's id afterwards (2026-09-08 review).
 function adoptProvisional(realId: string): void {
+  claimSession(realId);                    // a session created from a later column belongs to that column (the chat split): claimed BEFORE the switch, so setActive shows it here
   const { queued, draft } = dropProvisional();
   if (draft) drafts.set(realId, draft);    // set BEFORE the switch — setActive fills the box from drafts
   setActive(realId);
   for (const text of queued) {
-    const p = registerOptimistic(realId, text);
-    vscodeApi?.postMessage({ type: "sendMessage", id: realId, text, sendId: p.sendId });
+    const qid = mintQid();                                  // the copy's id, minted here: the real send carries it…
+    vscodeApi?.postMessage({ type: "sendMessage", id: realId, text, qid });
+    registerOptimistic(realId, text, undefined, qid);       // …and the bubble carries over to the tab that now owns it, under the same id
   }
   if (draft) { persistDrafts(); const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null; if (ta) growComposer(ta); }
 }
@@ -8189,6 +9295,116 @@ function revealSelfPane(): void {
     if (window.parent && window.parent !== window) window.parent.postMessage({ romp: "reveal", pane: "chat" }, "*");
   } catch (e) { /* standalone page — no shell to ask */ }
 }
+// Split screen (the user 2026-09-08): the kernel aims a focus at the DASHBOARD, so every chat column's socket
+// receives it, and the feed's click echo reaches every column's storage listener. The shell says which column
+// a session-focus belongs to (__rompChatTarget: the column that HOLDS the session under the partition, 2026-09-11,
+// else the first; with no session named, the one the user last worked in) and the others stand down — one
+// lookup, exactly one taker. Standalone and VS Code have no shell and always act, exactly as before.
+// The name a listed tab wears, from its loaded session or the strip's meta: a skeleton tab (a later column holds every
+// tab but the ones it opened as skeletons) never reaches `sessions`, so a create resolved by the kernel's focus on a
+// running session read no name there and stayed on "opening" until the backstop failed it (review find 2026-09-11).
+function tabName(id: string): string | undefined { return sessions.get(id)?.name ?? tabMeta.get(id)?.name; }
+function focusIsOurs(sid: string): boolean {
+  try {
+    if (!window.parent || window.parent === window) return true;
+    const t = (window.parent as any).__rompChatTarget;
+    if (typeof t !== "function") return true;   // a shell without the split script (an older page): one column
+    const f = t(sid);
+    return !f || f === window.frameElement;
+  } catch (e) { return true; }   // cross-origin parent (VS Code) — not the romp shell
+}
+// …and the HOP the partition adds: a message about a session another column holds is posted into that column's
+// frame (the same shell lookup) and the keyboard follows it. Two callers: setActive, for a pick made here of a
+// session living elsewhere (shown where it lives, the focus moves there: a jump, not a move); and the focus /
+// confirmRevive gates, for a consumed parked reveal the kernel sent to THIS one client (`own`) — the copy they hand
+// over carries no `own`, so it cannot hop again. False when the owner is this frame or there is no shell: the
+// caller then acts locally, exactly as before.
+function forwardToOwner(m: Record<string, unknown>): boolean {
+  try {
+    if (!window.parent || window.parent === window) return false;
+    const t = (window.parent as any).__rompChatTarget;
+    if (typeof t !== "function") return false;
+    const f = t(String(m.id));
+    if (!f || f === window.frameElement || !f.contentWindow) return false;
+    f.contentWindow.postMessage(m, "*");
+    try { f.contentWindow.focus(); } catch (e) { /* the message alone still lands the session */ }
+    return true;
+  } catch (e) { return false; }   // cross-origin parent (VS Code) — not the romp shell
+}
+// A session CREATED from this column's plus button belongs to this column (the chat split): claimed on the shell
+// the moment its provisional resolves to the real id, and the sets re-read so the switch that follows finds it
+// held here. The first column derives (a session no entry lists is already its own), so it claims nothing.
+function claimSession(id: string): void {
+  if (!COL) return;
+  try { const c = (window.parent as any)?.__rompClaimSession; if (typeof c === "function") c(id, COL); } catch (e) { /* no shell */ }
+  colSets = readColSets();
+}
+// EMPTINESS (the chat split): a later column none of whose members the kernel's strip lists any more — ended, or
+// closed from a tab's cross (`ids` excludes closingTabs, so the user's own cross empties the column at once: the
+// acknowledgement) — tells the shell, which prunes the gone ids and closes a column left with none. Once per
+// emptiness: the flag resets when a member is listed again. Waits for the kernel's own first strip (tabOrderSeen), so
+// a page that has not heard the board yet says nothing; `ids` keeps host-down remote tabs and live-omitted ids
+// (T258), and a member the strip omits while the kernel's `live` set still affirms it counts as present (boardLive:
+// on a fresh column retainLiveOmitted has no order to keep it in), so neither a tunnel blip nor a transient read
+// failure closes a column — and a member whose HOST has not reported on this socket yet (hostsSeen) is not judged at all:
+// the local strip lands first and says nothing about a remote host's sessions (the user 2026-09-14, a host-prefixed tab
+// dragged into a new column that folded ~250 ms later). The message names the gone members this page's own ✕ removed (`crossed`): the shell holds
+// ONLY those back in the first column, whose "Couldn't close" backstop is for a cross the kernel refused; a member
+// gone for any other reason is simply the first column's again, shown the moment its strip repaints (the vanishing
+// tab, the user 2026-09-12: a hold over a session the kernel still listed hid it for the backstop and toasted a close
+// nobody asked for).
+let colEmptyPosted = false;
+function noteColumnEmptiness(ids: readonly string[]): void {
+  if (!COL || !colSets || !tabOrderSeen) return;
+  // a create in flight, or a failed one still holding its text, is this column's own tab and in no entry: the column
+  // stays until it resolves (adoptProvisional claims the real id) or its ✕ discards it — closed under it, the queued
+  // text and the draft died with the document (review find 2026-09-11)
+  if (provisionalId || failedProvisionals.size) return;
+  const mine = colSets[COL] || [];
+  // held: a member is listed, or live and not crossed → the latch resets. unknown: none is present but a member's host has
+  // not reported on this socket (chat-columns.ts columnEmptiness) → nothing is said and the latch stands as it was, the
+  // host's strip is the event that decides. empty: every host reported, none lists a member → said once.
+  const verdict = columnEmptiness(mine, ids, boardLive, closingTabs, hostsSeen);
+  if (verdict === "held") { colEmptyPosted = false; return; }
+  if (verdict === "unknown" || colEmptyPosted) return;
+  colEmptyPosted = true;
+  const crossed = mine.filter((id) => closingTabs.has(id));
+  try { window.parent.postMessage({ romp: "colEmpty", gone: mine.slice(), crossed }, "*"); } catch (e) { /* no shell */ }
+}
+// ORPHANED STATE (the chat split, review find 2026-09-11): a draft, citations, attachments or staged messages this page
+// holds for a session it does not show — a column blob written before the partition (a v1 column was a whole chat page,
+// so its blob may hold drafts for many sessions and the migration keeps one), a reused number's blob, another dashboard's
+// write that moved a tab — would be unreachable here: the strip filters the session out, and only a move or a close hands
+// state over. So, once the board has been heard, every such sid is offered to the shell, which takes it
+// (__rompTakeSessionState) and hands it to the column that shows the session when that page can hear it; until then it
+// stays here and the offer repeats on the next render. One message per render while an orphan remains, none otherwise.
+function orphanStateSids(): string[] {
+  const out = new Set<string>();
+  for (const id of [...drafts.keys(), ...composerCitations.keys(), ...composerFiles.keys(), ...Object.keys(stagedMsgs.entries())]) {
+    if (!isProvisionalId(id) && !isSubId(id) && !heldHere(id)) out.add(id);
+  }
+  return [...out];
+}
+function noteOrphanState(): void {
+  if (!colSets || !tabOrderSeen) return;
+  const sids = orphanStateSids();
+  if (!sids.length) return;
+  try { window.parent.postMessage({ romp: "orphanState", sids }, "*"); } catch (e) { /* no shell */ }
+}
+// STALE ACTIVE (the chat split): a skeleton client whose hinted session has ended gets no full frame to adopt, and
+// a column whose wanted tab another column now holds must not sit on nothing. With the kernel's first strip
+// landed, no active tab, no create in flight, the wanted id null, unlisted or held elsewhere, and a visible member,
+// the first visible member is activated — deferred and re-checked at fire time, like the hidden-active re-point.
+function staleActiveFallback(ids: readonly string[], visibleIds: readonly string[]): void {
+  if (colSets === null) return;   // no partition (standalone, the VS Code webview, an older shell): the first arriving frame is adopted, as always
+  // an unfocused pane is a designed state (T357): a tab that left on its own, or the persisted tab awaited after a
+  // reload, keeps the box held for its return; this fallback speaks only when nothing is active, gone or awaited HERE
+  if (activeId || vanishedId || !tabOrderSeen || provisionalId || !visibleIds.length) return;
+  if (wantActive && heldHere(wantActive)) return;   // awaited by this column, listed or not: T357's restore takes it when it comes
+  // a wanted tab another column holds is nobody's to await here (dragged away before the reload): retired, the first visible member takes the box
+  const first = visibleIds[0];
+  setTimeout(() => { if (!activeId && !provisionalId && tabInView(first)) { wantActive = null; setActive(first); } }, 0);
+}
 
 // Full-screen bridge (the user 2026-07-05): the picker is rendered inside the /chat iframe, so its
 // position:fixed;inset:0 only covered the chat PANE — on a short pane the session list couldn't scroll.
@@ -8204,7 +9420,11 @@ function revealSelfPane(): void {
 // VS Code) falls back to that hiding via .pane-gone.
 function liftPaneRect(): DOMRect | null {
   try {
-    const p = window.parent?.document?.getElementById("chat-pane");
+    // THIS column's pane (split screen, the user 2026-09-08): a later column that measured #chat-pane pinned its
+    // transcript at the FIRST column's rect — the 2026-08-08/09 black-hole family in a new form. frameElement is
+    // the iframe the shell wrapped in a .pane; the id lookup stays as the fallback it always was.
+    const own = window.frameElement ? (window.frameElement as HTMLElement).parentElement : null;
+    const p = own || window.parent?.document?.getElementById("chat-pane");
     return p ? p.getBoundingClientRect() : null;
   } catch (e) { return null; }   // cross-origin parent (VS Code) — no shell pane to measure
 }
@@ -8293,14 +9513,9 @@ function dirPrefill(host: string): string {
 // The capability rides in on the local sessionList; assume yes until a kernel says otherwise, so an older
 // kernel that doesn't send it keeps the button it always had.
 let kernelNativeDialogs = true;
-// Whether the + picker OFFERS "Claude Code (tmux)" (T288, the user 2026-09-09): a kernel setting, off by default,
-// carried on the local sessionList reply. It gates the offer alone: an existing tmux session keeps working and
-// keeps its tooltip label whatever it says. Assumed off until a kernel says on (an older kernel sends none).
-let kernelTmuxBackend = false;
 // whether the user clicked a Backend toggle during THIS open of the picker: the sessionList reply, which lands after
-// the open reset the row, re-applies the effective default only while no explicit pick stands (the review's find:
-// a saved tmux default with the setting on landed on Claude Code on the first open, since the reset ran before
-// the reply said the toggle was on offer), and never undoes a pick the user made
+// the open reset the row, re-applies the effective default only while no explicit pick stands, and never undoes a
+// pick the user made
 let pickerBackendPicked = false;
 
 // The two cases are shown differently, because one of them can change and the other cannot. A REMOTE host
@@ -8336,79 +9551,74 @@ function requestSessionList(host: string): void {
 // manager environment carries. The row is ALWAYS there for an SDK session (the user 2026-08-09):
 // segmented BUTTONS when the selected host offers both, and when it offers ONE, the same spot just
 // writes out which it is — informative, never a one-option selector (what the earlier disappearing
-// rule was really against). The row still disappears when the backend toggle says tmux (that CLI
-// lives in the tmux server's environment, which the kernel does not control) and until the host's
-// sessionList reply carries authAvail (an older kernel never answers with one).
+// rule was really against). The row still disappears until the host's sessionList reply carries authAvail
+// (an older kernel never answers with one), and on the Codex pick (Billing is a Claude Code matter).
 let pickerAuthAvail: AuthAvail | null = null;
 
 // the picker's selected Backend chip — the Backend row alone (the Billing, Host and Tags rows wear the
 // same chip grammar, and a selected tag chip must never read as a backend)
 function pickerBackendChoice(): string {
   const beSel = document.querySelector("#picker .picker-backend:not(.picker-host):not(.picker-auth):not(.picker-tags) .picker-be-opt.sel") as HTMLElement | null;
-  return beSel?.dataset.be || effectiveDefaultBackend(loadSettings().backend, kernelTmuxBackend);
+  return beSel?.dataset.be || effectiveDefaultBackend(loadSettings().backend);
 }
 
-// The Backend row offers "Claude Code (tmux)" only while the kernel setting is on (T288): the toggle hides
-// otherwise, and a hidden toggle that was selected hands the selection to the effective default, so the create
-// can never send a backend the picker does not show. Re-run on every open and on the local sessionList reply.
+// The Backend row offers Claude Code and Codex. Until the user picks this open, the selected toggle follows the
+// effective default (a saved default that is no longer offered reads as Claude Code, effectiveDefaultBackend), so
+// the create can never send a backend the picker does not show. Re-run on every open and on the local sessionList reply.
 function syncPickerBackends(): void {
   const wrap = document.querySelector("#picker .picker-backend:not(.picker-host):not(.picker-auth):not(.picker-tags)") as HTMLElement | null;
   if (!wrap) return;
-  const tmuxBtn = wrap.querySelector('.picker-be-opt[data-be="tmux"]') as HTMLElement | null;
-  if (tmuxBtn) tmuxBtn.style.display = kernelTmuxBackend ? "" : "none";
-  // the effective default is re-applied while the user has not picked this open (so a saved tmux default lands
-  // once the reply says the toggle is on offer), and always when the selected toggle went off offer
-  const def = effectiveDefaultBackend(loadSettings().backend, kernelTmuxBackend);
+  const def = effectiveDefaultBackend(loadSettings().backend);
   const cur = wrap.querySelector(".picker-be-opt.sel") as HTMLElement | null;
-  if (!pickerBackendPicked || (!kernelTmuxBackend && cur?.dataset.be === "tmux")) {
-    if (cur?.dataset.be !== def) {
-      wrap.querySelectorAll(".picker-be-opt").forEach((x) => x.classList.toggle("sel", (x as HTMLElement).dataset.be === def));
-      syncPickerAuth(); syncPickerTags();
-    }
+  if (!pickerBackendPicked && cur?.dataset.be !== def) {
+    wrap.querySelectorAll(".picker-be-opt").forEach((x) => x.classList.toggle("sel", (x as HTMLElement).dataset.be === def));
+    syncPickerAuth(); syncPickerTags();
   }
 }
 
-// the backends whose create takes `tags`: the kernel applies parent/tags on an SDK or a Codex create
-// (the tag store keys on the registry sid, not the backend), and a tmux create takes none — a
-// terminal session's id is unknown until it starts, so the kernel refuses tags on one. One predicate
-// for the Tags row's state and for the create handler's payload, so the two cannot disagree about
-// which backend a chip is for.
-function backendTakesTags(be: string): boolean { return be === "sdk" || be === "codex"; }
+// the Tags row (tab groups, 2026-09-04): every offered backend's create takes `tags` (the kernel applies parent/tags
+// on a Claude Code or a Codex create; the tag store keys on the registry sid, not the backend), so the row is never
+// disabled and the create handler always sends the selected chips.
+// The Tags row's option paints as the tag chip itself (T321, the user 2026-09-10): the thin border in the tag's own
+// colour that the tab strip, the feed and the outline draw, and on versus off by the visual the tag toggles already
+// use, the faded chip (tagChip's `off`, TAG_CHIP_OFF_CLASS at 0.45), never a dot and never the Backend row's accent
+// fill. The `sel` class on the button stays the state the create reads; the chip is repainted from it on each click.
+function paintPickerTagChip(b: HTMLButtonElement, u: { name: string; color?: string | null }): void {
+  b.replaceChildren(tagChip(u.name, u.color, { inheritSize: true, off: !b.classList.contains("sel") }));
+}
 
-// the Tags row is for SDK and Codex sessions (tab groups, 2026-09-04): on the tmux pick the row stays
-// in place but disabled behind a short note, and the create handler sends no `tags`. Without this a
-// chip prefilled from a tagged active tab turns every terminal create into a refusal.
 function syncPickerTags(): void {
   const wrap = document.querySelector("#picker .picker-tags") as HTMLElement | null;
   if (!wrap) return;
-  const takes = backendTakesTags(pickerBackendChoice());
-  wrap.classList.toggle("disabled", !takes);
-  wrap.querySelectorAll<HTMLButtonElement>(".picker-be-opt").forEach((b) => { b.disabled = !takes; });
-  const note = wrap.querySelector(".picker-tags-note") as HTMLElement | null;
-  if (note) note.style.display = takes ? "none" : "";
+  // every offered backend takes tags: the chips are always live (the disabled state and its note went with the
+  // terminal backend, T331)
+  wrap.querySelectorAll<HTMLButtonElement>(".picker-be-opt").forEach((b) => { b.disabled = false; });
 }
 
 function syncPickerAuth(): void {
   const wrap = document.querySelector("#picker .picker-auth") as HTMLElement | null;
   if (!wrap) return;
   const a = pickerAuthAvail;
-  // the row's decision is billing-label.ts's (pickerBillingRow, executed in billing-label.test.ts): shown
-  // whenever the host can name what a new session bills (a login, a key of romp's, or a declared key), buttons
-  // when both choices are real, else the single applying choice written out, naming the login account when known
-  const row = pickerBillingRow(a);
-  const show = !pickMode && row.show && pickerBackendChoice() === "sdk";
-  wrap.style.display = show ? "" : "none";
-  if (!show) return;
-  const both = row.both;
+  const show = !pickMode && !!(a && (a.login || a.key)) && pickerBackendChoice() === "sdk";
+  // …or a STORED login this host can bill (T346), when its own login and key are both away
+  const stored = (a && a.logins ? a.logins : []).filter((l) => !l.machine);
+  const showStored = !pickMode && stored.some((l) => l.available !== false) && pickerBackendChoice() === "sdk";
+  wrap.style.display = show || showStored ? "" : "none";
+  if (!show && !showStored) return;
+  if (stored.length) { syncPickerAuthMany(wrap, a!); return; }
+  // back to the two-option row: a many-login host's rebuilt options and dropdown go, the two buttons return
+  wrap.querySelectorAll(".picker-be-opt[data-many]").forEach((x) => x.remove());
+  pickerAuthDropSelect(wrap);
+  const both = !!(a!.login && a!.key);
   wrap.querySelectorAll(".picker-be-opt").forEach((x) => ((x as HTMLElement).style.display = both ? "" : "none"));
   const fixed = wrap.querySelector(".picker-auth-fixed") as HTMLElement | null;
   if (fixed) {
     fixed.style.display = both ? "none" : "";
-    fixed.textContent = row.fixed;
-    // …and the hover says why the OTHER side is not on offer, in the kernel's reason (upstream https://github.com/romp-on/romp/pull/1147, 2026-09-08),
-    // keyed on the helper as upstream keys it (pickerBillingTitle, executed in billing-label.test.ts): with a helper the
-    // login side is explained, without one the key side
-    fixed.title = pickerBillingTitle(a);
+    // one real choice → written out in the buttons' place, naming the login account when known
+    fixed.textContent = both ? "" : (a!.key ? "API key" : (a!.acct ? `Login (${a!.acct})` : "Login"));
+    // …and the hover says why the OTHER side is not on offer (the kernel's reason, 2026-09-08)
+    fixed.title = both ? "" : (a!.key ? `Login unavailable: ${a!.loginWhy || "no Claude login signed in on this machine"}`
+                                      : `API key unavailable: ${a!.keyWhy || "no apiKeyHelper configured"}`);
   }
   if (!both) return;   // the fixed text is the whole row — nothing to seed
   // the Login button's hover names WHICH account (the user 2026-08-09)
@@ -8421,12 +9631,73 @@ function syncPickerAuth(): void {
   }
 }
 
+// The Billing row with SEVERAL logins (T346): one option per login the host knows (the machine's own first, then
+// the stored ones) plus API key, rebuilt from each reply. Up to three choices wear the segmented buttons (shrinking
+// with an ellipsis, the whole label in the hover; an unavailable one greyed and inert with its reason); beyond three
+// the row is one dropdown in the menu vocabulary, rebuilt only when the choice set changes so an open list survives
+// a re-sync. The pick is kept by VALUE across rebuilds; the host's default seeds it, else the first usable choice.
+// One usable choice is written out, as the two-option row does.
+function syncPickerAuthMany(wrap: HTMLElement, a: AuthAvail): void {
+  const choices = authLoginChoices(a);
+  const usable = choices.filter((c) => !c.why);
+  const fixed = wrap.querySelector(".picker-auth-fixed") as HTMLElement | null;
+  wrap.querySelectorAll<HTMLElement>(".picker-be-opt:not([data-many])").forEach((x) => (x.style.display = "none"));
+  const held = pickerAuthChoice();
+  const prev = (held && choices.some((c) => c.value === held && !c.why)) ? held
+    : (a.default && choices.some((c) => c.value === a.default && !c.why)) ? a.default
+    : (usable[0] ? usable[0].value : "");
+  wrap.querySelectorAll(".picker-be-opt[data-many]").forEach((x) => x.remove());
+  if (usable.length <= 1) {
+    pickerAuthDropSelect(wrap);
+    if (fixed) {
+      fixed.style.display = "";
+      fixed.textContent = usable[0] ? usable[0].label : "Login";
+      fixed.title = choices.filter((c) => c.why).map((c) => `${c.label} unavailable: ${c.why}`).join("\n");
+    }
+    return;
+  }
+  if (fixed) { fixed.style.display = "none"; fixed.textContent = ""; fixed.title = ""; }
+  if (choices.length <= 3) {
+    pickerAuthDropSelect(wrap);
+    for (const c of choices) {
+      const b = el("button", "picker-be-opt" + (c.value === prev ? " sel" : "")) as HTMLButtonElement;
+      b.type = "button"; b.textContent = c.label; b.dataset.auth = c.value; b.dataset.many = "1";
+      b.title = c.why ? `${c.label} unavailable: ${c.why}` : `Bill this session to ${c.label}.`;
+      if (c.why) b.disabled = true;
+      b.addEventListener("click", () => wrap.querySelectorAll(".picker-be-opt").forEach((x) => x.classList.toggle("sel", x === b)));
+      wrap.insertBefore(b, fixed);
+    }
+    return;
+  }
+  const sig = choices.map((c) => c.value + "|" + c.label + "|" + c.why).join("\n");
+  let dd = wrap.querySelector("select.picker-auth-select") as HTMLSelectElement | null;
+  if (!dd || dd.dataset.sig !== sig) {
+    if (dd) dd.remove();
+    dd = el("select", "picker-auth-select") as HTMLSelectElement;
+    dd.dataset.sig = sig;
+    dd.title = "Which account this session bills";
+    for (const c of choices) {
+      const o = document.createElement("option");
+      o.value = c.value; o.textContent = c.label + (c.why ? ` (unavailable: ${c.why})` : ""); o.disabled = !!c.why;
+      dd.appendChild(o);
+    }
+    dd.value = prev;
+    wrap.insertBefore(dd, fixed);
+  }
+}
+// the two-option row has no dropdown: drop one a many-login host left behind
+function pickerAuthDropSelect(wrap: HTMLElement): void {
+  wrap.querySelectorAll("select.picker-auth-select").forEach((x) => x.remove());
+}
+
 // the picked billing for the create payload — "" when the row is hidden or written-out (one real
 // choice: the kernel default IS that choice, and a stale .sel from a previously-selected both-offering
 // host must not ride along)
 function pickerAuthChoice(): string {
   const wrap = document.querySelector("#picker .picker-auth") as HTMLElement | null;
   if (!wrap || wrap.style.display === "none") return "";
+  const dd = wrap.querySelector("select.picker-auth-select") as HTMLSelectElement | null;   // several logins (T346)
+  if (dd) return dd.value || "";
   const sel = wrap.querySelector(".picker-be-opt.sel") as HTMLElement | null;
   if (!sel || sel.style.display === "none") return "";
   return sel.dataset.auth || "";
@@ -8676,7 +9947,7 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     dirField.appendChild(dirInput); dirField.appendChild(dirHint);
     dirWrap.appendChild(dirField); dirWrap.appendChild(browseBtn);
     dirWrap.appendChild(dirMenu);
-    // per-session BACKEND picker (the user 2026-06-23): a tmux | SDK segmented toggle, defaulting to the
+    // per-session BACKEND picker (the user 2026-06-23): a Claude Code | Codex segmented toggle, defaulting to the
     // gear's Default backend but overridable for THIS new session. Hidden in pick-mode (like dirWrap).
     const beWrap = el("div", "picker-backend");
     const beLabel = el("span", "picker-backend-label"); beLabel.textContent = "Backend";
@@ -8686,13 +9957,11 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
       b.addEventListener("click", () => { pickerBackendPicked = true; beWrap.querySelectorAll(".picker-be-opt").forEach((x) => x.classList.toggle("sel", x === b)); });
       return b;
     };
-    // the labels come from backend-names.ts (T288): "Claude Code" (the default, no qualifier), "Claude Code (tmux)"
-    // (offered only while the kernel setting is on — syncPickerBackends), "Codex"; the ids are unchanged
+    // the labels come from backend-names.ts (T288): "Claude Code" (the default, no qualifier) and "Codex"; the ids
+    // are unchanged
     beWrap.append(beLabel, mkBe("sdk", backendLabel("sdk"), "The default: romp runs the Claude Code session itself, with the same full chat."),   // first — the de-facto default (the user 2026-07-02)
-                  mkBe("tmux", backendLabel("tmux"), "Drives a Claude Code session in a real terminal pane (tmux); offered while the tmux backend is enabled in the gear."),
                   mkBe("codex", backendLabel("codex"), "Runs an OpenAI Codex agent (the host needs romp-codex-setup + codex login)."));
-    // the billing row exists only for SDK sessions, the Tags row only for backends whose create takes
-    // tags (backendTakesTags) — re-decide both on every backend toggle
+    // the billing row exists only for Claude Code sessions — re-decide it (and the Tags row's paint) on every backend toggle
     beWrap.addEventListener("click", () => { syncPickerAuth(); syncPickerTags(); });
     // per-session BILLING row (the user 2026-08-08): Login | API key buttons when the selected host
     // offers both; with ONE real choice the same spot writes it out as plain text (the user
@@ -8716,17 +9985,11 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     // VISIBLE and editable, never a silent inherit (the user's ruling): a session started beside the
     // one you are looking at joins its group unless you unpick it. Chips in the Backend row's
     // grammar, each toggling on its own (a session may hold several tags); rebuilt per open
-    // (openPicker below), hidden with no tags to offer and in pick-mode. SDK and Codex sessions
-    // (backendTakesTags): on the tmux pick the chips disable behind a note and no `tags` ride the
-    // create (syncPickerTags) — the kernel refuses tags on a terminal create, and a prefilled chip
-    // would turn one into a refusal.
+    // (openPicker below), hidden with no tags to offer and in pick-mode. Every offered backend's create takes
+    // the chips (syncPickerTags paints them).
     const tgWrap = el("div", "picker-backend picker-tags");
     const tgLabel = el("span", "picker-backend-label"); tgLabel.textContent = "Tags";
     tgWrap.appendChild(tgLabel);
-    const tgNote = el("span", "picker-auth-fixed picker-tags-note");   // the Billing row's written-out text style
-    tgNote.textContent = `Tags apply to ${backendLabel("sdk")} and ${backendLabel("codex")} sessions`;   // the shared names (T288)
-    tgNote.style.display = "none";
-    tgWrap.appendChild(tgNote);
     // per-session HOST picker (federation, the user 2026-07-02): local | each attached SSH host — the new
     // session is created BY that host's kernel (over its tunnel) and appears prefixed `host:name`. The
     // options are rebuilt on every open (hosts attach/detach live); the row hides with no hosts attached.
@@ -8766,12 +10029,9 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
       const auth = pickerAuthChoice();
       // tags: the Tags row's selected chips (prefilled from the active tab, edited or not) ride the
       // create as names; the owning kernel resolves them by name, minting a missing one like POST /tag.
-      // SDK and Codex creates (backendTakesTags) — a tmux create carries none (the row is disabled for
-      // it, and the kernel refuses tags on a terminal create)
-      const backend = beSel?.dataset.be || effectiveDefaultBackend(loadSettings().backend, kernelTmuxBackend);
-      const tags = backendTakesTags(backend)
-        ? Array.from(tgWrap.querySelectorAll<HTMLElement>(".picker-be-opt.sel")).map((x) => x.dataset.tag || "").filter(Boolean)
-        : [];
+      // Every offered backend's create takes them (the kernel applies parent/tags on a Claude Code or a Codex create).
+      const backend = beSel?.dataset.be || effectiveDefaultBackend(loadSettings().backend);
+      const tags = Array.from(tgWrap.querySelectorAll<HTMLElement>(".picker-be-opt.sel")).map((x) => x.dataset.tag || "").filter(Boolean);
       startCreate({ name, backend,
                     dir: dirInput.value.trim(), host: hostSel, ...(auth ? { auth } : {}), ...(tags.length ? { tags } : {}) });
     });
@@ -8828,7 +10088,7 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
   if (beWrapEl) {   // reset the backend toggle to the gear default each open (overridable for this session)
     beWrapEl.style.display = pick ? "none" : "";
     pickerBackendPicked = false;   // a fresh open: the row follows the effective default until the user picks
-    const def = effectiveDefaultBackend(loadSettings().backend, kernelTmuxBackend);   // a saved tmux default while it is off → Claude Code
+    const def = effectiveDefaultBackend(loadSettings().backend);   // a saved default no longer offered → Claude Code
     beWrapEl.querySelectorAll(".picker-be-opt").forEach((x) => x.classList.toggle("sel", (x as HTMLElement).dataset.be === def));
     syncPickerBackends();
   }
@@ -8884,13 +10144,12 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     for (const u of unions) {
       const b = el("button", "picker-be-opt" + (preset.has(u.name) ? " sel" : "")) as HTMLButtonElement;
       b.type = "button"; b.dataset.tag = u.name;
-      const d = el("span", "picker-tag-dot"); d.style.background = u.color || "var(--dim)"; b.appendChild(d);
-      b.appendChild(document.createTextNode(u.name));
+      paintPickerTagChip(b, u);   // the tag chip every surface draws, full when selected, faded when not (T321)
       b.title = preset.has(u.name)
         ? `the session you are looking at is in ${u.name} — the new one joins it too unless you unpick this`
         : `put the new session in ${u.name}`;
-      b.addEventListener("click", () => b.classList.toggle("sel"));   // multi-select: each chip on its own
-      tgWrapEl.insertBefore(b, tgWrapEl.querySelector(".picker-tags-note"));   // chips before the tmux note
+      b.addEventListener("click", () => { b.classList.toggle("sel"); paintPickerTagChip(b, u); });   // multi-select: each chip on its own
+      tgWrapEl.appendChild(b);
     }
     syncPickerTags();   // the backend toggle was just reset to the gear default above
   }
@@ -8927,8 +10186,8 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
 // rule: one treatment, parameterized rather than forked. wordmark:false (the user 2026-08-25,
 // POPOVER-ONLY: "don't write the whole text of romp — just the spinning logo") keeps the spinning
 // swirl + dots + caption and drops the R-o-m-p letters; everywhere else keeps the full treatment.
-function rompLoaderInner(caption: string, opts?: { wordmark?: boolean }): HTMLElement {
-  const inner = el("div", "rl-in");
+function rompLoaderInner(caption: string, opts?: { wordmark?: boolean; cls?: string }): HTMLElement {
+  const inner = el("div", "rl-in" + (opts?.cls ? " " + opts.cls : ""));   // cls: a size modifier for an inline placement (rl-sm), scaling the font-size — never a new keyframe
   const word = el("div", "rl-word");
   const swirl = el("img", "rl-o") as HTMLImageElement;
   swirl.src = mediaSrc("romp-swirl-o.svg"); swirl.alt = ""; swirl.onerror = () => swirl.remove();
@@ -8943,9 +10202,8 @@ function rompLoaderInner(caption: string, opts?: { wordmark?: boolean }): HTMLEl
   }
   const dots = el("div", "rl-dots");
   dots.append(el("i", ""), el("i", ""), el("i", ""));
-  const cap = el("div", "revive-cap");
-  cap.textContent = caption;
-  inner.append(word, dots, cap);
+  if (caption) { const cap = el("div", "revive-cap"); cap.textContent = caption; inner.append(word, dots, cap); }
+  else inner.append(word, dots);   // an inline placeholder (the region gap, the first-visit build) carries no caption line
   return inner;
 }
 
@@ -8999,7 +10257,7 @@ function showReviveLoader(id: string, name: string) {
   // revived session continues it seamlessly.
   if (!sessions.has(id)) {
     sessions.set(id, { id, name, color: null, events: [], status: { state: "opening", sinceEpoch: Date.now() } });
-    order.push(id);
+    if (!order.includes(id)) order.push(id);   // a skeleton the strip already carries is not added twice (review find, 2026-09-10)
   }
   renderTabs();
   setActive(id);
@@ -9629,8 +10887,11 @@ function cmtLatchReleased(t: CommentThread, base: CmtLatch): boolean {
 // send; a TRANSIENT nack keeps the optimistic mark + latch alive and the create RE-POSTS when the
 // next session frame for the sid arrives (frames are built from the kernel's parse — a new frame IS
 // the parse catching up). Bounded by attempts, not time; a real refusal or the ack drops the hold.
-const cmtCreateInFlight = new Map<string, { sid: string; uuid: string; exact: string; text: string;
-  name: string; model: string; effort: string; fast: string; color: string; tries: number }>();
+// Keyed by the anchor: one create at a time per passage on this viewer. The held create carries the id
+// the send gesture minted, and every re-post sends it again (commentCreateFrame): the kernel answers a
+// repeat of a create it completed with the same thread, and tells a repeat from a fresh comment in the
+// same words by that id.
+const cmtCreateInFlight = new Map<string, CommentCreate>();
 const CMT_CREATE_MAX_TRIES = 12;
 
 function retryCmtCreates(sid: string): void {
@@ -9643,8 +10904,7 @@ function retryCmtCreates(sid: string): void {
       continue;
     }
     c.tries++;
-    vscodeApi?.postMessage({ type: "commentCreate", id: c.sid, uuid: c.uuid, exact: c.exact,
-      text: c.text, name: c.name, model: c.model, effort: c.effort, fast: c.fast, color: c.color });
+    vscodeApi?.postMessage(commentCreateFrame(c));         // the same gesture again: the same id
   }
 }
 
@@ -9697,6 +10957,10 @@ let pendingCommentAnchor: { sid: string; uuid: string; exact: string;
   model?: string; effort?: string; fast?: string; color?: string } | null = null; // create mode (+ the thread's own picks)
 let pendingAdoptTid: string | null = null;                          // commentCreated ack that beat its frame
 let commentPopPos: { x: number; y: number } | null = null;
+// the size WE set on the open popover (its open geometry, a stored preference, maximize/restore) — the
+// ResizeObserver tells our own sizing from the user's pull by it, so only a pull is remembered (2026-09-10)
+let cmtPopApplied: { w: number; h: number } | null = null;
+let cmtPopPreMax: CmtPopFrac | null = null;     // the size the box had before the last maximize this page-load: restore's target
 
 // the popover's own file picker (the user 2026-08-17: the attach clip, like the chat's) — files
 // ship through the SAME dropFile flow; the droppedPath ack sees the open popover and lands there
@@ -9746,7 +11010,7 @@ function applyCommentMarks(sid: string): void {
   // the rail cue clears first (idempotent re-apply): a thread viewed, resolved, or removed must
   // drop its turn's tint on this very pass, not linger until the next anchor match
   for (const t of Array.from(v.el.querySelectorAll(".turn.cmt-rail-unread"))) t.classList.remove("cmt-rail-unread");
-  if (!threads.length) return;
+  if (!threads.length) { paintCommentOutlines(sid); if (sid === activeId) updateReplyChips(); return; }   // no threads → no boxes, no chips (the last one resolved/deleted)
   for (const [uuid, list] of threadsByAnchor(threads)) {
     const turn = v.el.querySelector(`.turn[data-uuid="${cssEscape(uuid)}"]`) as HTMLElement | null;
     if (!turn) continue;                       // windowed out — the mark returns when the turn does
@@ -9756,6 +11020,100 @@ function applyCommentMarks(sid: string): void {
     // turn is unread, and clicking the rail opens it). Cleared above the moment it's viewed —
     // openCommentPopover drops the unread flag and re-runs this pass.
     turn.classList.toggle("cmt-rail-unread", list.some((t) => !!t.unread && t.status === "open"));
+  }
+  paintCommentOutlines(sid);                   // the unread boxes follow the marks this pass just placed (or unwrapped)
+  // the reply chips MEASURE the marks (above/below the viewport), so they recount after this pass has the
+  // highlights back in the DOM — this is the comments frame's and every transcript rebuild's hook for them
+  if (sid === activeId) updateReplyChips();
+}
+
+/** The needs-you cue on an unread open thread's passage, in the tab strip's idiom (the user 2026-09-12): a dashed stroke
+ *  in var(--st-awaiting-bg), in one of two shapes by the passage's LINE COUNT. One or two rows: a ring on each unread mark
+ *  itself (the .cmt-ring class; it hugs the text, where a box over two lines takes in the first line's un-highlighted head
+ *  and the second's tail). Three or more: ONE box around the WHOLE passage (T310, the user 2026-09-10 — an outline on the
+ *  inline mark paints per fragment, so a wrapped passage read as a stack of dashed boxes, and CSS cannot merge the
+ *  fragments), an absolutely positioned child of the TURN (.cmt-outline, one per thread) sized to the union of the
+ *  thread's mark fragments' client rects, turn-relative: it scrolls with the text and needs no repaint on scroll. Each
+ *  fragment is first cut to every scrolling ancestor between its mark and the turn (a notice body, a wide formula): the
+ *  box sits outside those containers, so an unclipped fragment scrolled out of one would draw over the content below.
+ *  The rows are counted from those same rects, before the clip, so the shape is the passage's and never flips with a
+ *  container's scroll. Repainted where the geometry can move — after every marks pass (each transcript rebuild and
+ *  comments frame), on the rail's rAF scheduler (a re-render, the view's resize observer, every scroll in the pane, inner
+ *  containers' included through the capture-phase listener) and on window resize (which can carry a passage across the
+ *  two-row line: that hook is what swaps the shape) — those two only while the session has an unread open thread
+ *  (hasUnreadOpenThread: a store read, so a scroll frame with nothing to move walks no DOM). The row rule added no hook
+ *  and no layout read: one pass over the rects the union already needs (the user 2026-09-12: zero new machinery). The
+ *  same measure-then-write pass either way, writing only what changed. pointer-events: none on the box, so hover and
+ *  click land on the marks beneath. Both shapes go with the unread bit (styleCommentMark drops the class, and the ring
+ *  with it, when the popover opens or the thread resolves) and with the marks (a windowed-out turn, a deleted thread); a
+ *  hidden view has no boxes to measure and keeps none. */
+/** The cheap gate for the geometry hooks (the rail scheduler fires on every scroll frame, the resize listener on every
+ *  resize): a session with no unread open thread has no box to move, so those paths never walk its DOM (review find,
+ *  T310). Read from the thread store, no DOM. The marks pass calls the painter unconditionally: it is the removal path
+ *  (the last unread thread read, resolved or deleted takes its box with it on that pass). */
+function hasUnreadOpenThread(sid: string): boolean {
+  return (commentThreads.get(sid) || []).some((t) => !!t.unread && t.status === "open");
+}
+
+function paintCommentOutlines(sid: string): void {
+  const v = views.get(sid);
+  if (!v) return;
+  const want = new Map<string, HTMLElement[]>();          // tid -> its unread fragments, document order
+  if (v.el.style.display !== "none") {
+    for (const m of Array.from(v.el.querySelectorAll("mark.cmt-hl.unread")) as HTMLElement[]) {
+      const tid = m.dataset.tid || "";
+      const list = want.get(tid);
+      if (list) list.push(m); else want.set(tid, [m]);
+    }
+  }
+  for (const box of Array.from(v.el.querySelectorAll(".cmt-outline")) as HTMLElement[]) {
+    const tid = box.dataset.tid || "";
+    const marks = want.get(tid);
+    // a box whose thread is no longer unread, or that sits on a turn its marks have left, goes
+    if (!marks || marks[0].closest(".turn") !== box.parentElement) box.remove();
+  }
+  const PAD = 1;                                          // the box sits 1px clear of the glyphs (outline-offset's role)
+  for (const [tid, marks] of want) {
+    const turn = marks[0].closest(".turn") as HTMLElement | null;
+    if (!turn) continue;
+    let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+    // the LINE ROWS the passage spans, from the same rects (the user 2026-09-12): a fragment opens a new row when its top
+    // sits at least half the shorter height from the current row's — fragments split across an inline-code or KaTeX host
+    // share a line, their tops a padding apart; consecutive lines sit a line-height apart — a fraction of the rect's own
+    // height, never a magic pixel count. Counted on every fragment BEFORE the clip: the passage's shape is a fact of its
+    // layout, not of a container's scroll, so the cue never swaps while a notice body scrolls under it.
+    let rows = 0, rowTop = 0, rowH = 0;
+    for (const m of marks) {
+      // a fragment counts only where it can be SEEN: the box lives on the turn, outside any scrolling container between
+      // the mark and the turn (a notice body at its max height, a wide formula), whose clip the fragment's own rect
+      // ignores — so each fragment is cut to every such ancestor first, and a fragment scrolled out of view adds nothing
+      // (review find, T310). The union of what remains is the box; nothing left → no box.
+      let cl = -Infinity, ct = -Infinity, cr = Infinity, cb = Infinity;
+      for (let a = m.parentElement; a && a !== turn; a = a.parentElement) {
+        const cs = getComputedStyle(a);
+        if (cs.overflowX === "visible" && cs.overflowY === "visible") continue;
+        const ar = a.getBoundingClientRect();
+        cl = Math.max(cl, ar.left); ct = Math.max(ct, ar.top); cr = Math.min(cr, ar.right); cb = Math.min(cb, ar.bottom);
+      }
+      for (const q of Array.from(m.getClientRects())) {
+        if (!q.width && !q.height) continue;
+        if (!rows || Math.abs(q.top - rowTop) >= Math.min(q.height, rowH) / 2) { rows++; rowTop = q.top; rowH = q.height; }
+        const ql = Math.max(q.left, cl), qt = Math.max(q.top, ct), qr = Math.min(q.right, cr), qb = Math.min(q.bottom, cb);
+        if (qr <= ql || qb <= qt) continue;              // clipped away by a scrolling ancestor
+        l = Math.min(l, ql); t = Math.min(t, qt); r = Math.max(r, qr); b = Math.max(b, qb);
+      }
+    }
+    // ONE or TWO rows: the ring on each fragment (mark.cmt-hl.unread.cmt-ring) hugs the text, where a box would enclose the
+    // first line's un-highlighted head and the second's tail; THREE or more: one box reads as one thing where a stack of
+    // rings reads as many. No visible fragment at all: neither, until a paint that sees one decides.
+    const ring = rows > 0 && rows <= 2;
+    for (const m of marks) m.classList.toggle("cmt-ring", ring);
+    let box = turn.querySelector(`:scope > .cmt-outline[data-tid="${cssEscape(tid)}"]`) as HTMLElement | null;
+    if (ring || !isFinite(l)) { box?.remove(); continue; }   // ringed, or no visible fragment (a display:none ancestor, or all scrolled out)
+    if (!box) { box = el("div", "cmt-outline"); box.dataset.tid = tid; turn.appendChild(box); }
+    const tr = turn.getBoundingClientRect();
+    const css = { left: (l - tr.left - PAD) + "px", top: (t - tr.top - PAD) + "px", width: (r - l + 2 * PAD) + "px", height: (b - t + 2 * PAD) + "px" };
+    for (const k of ["left", "top", "width", "height"] as const) if (box.style[k] !== css[k]) box.style[k] = css[k];
   }
 }
 
@@ -9822,7 +11180,10 @@ function applyForkSpots(sid: string, v: View): void {
     row.dataset.cut = cut;
     const fk = el("button", "msg-fork") as HTMLButtonElement;
     fk.type = "button";
-    fk.textContent = "fork";
+    // the fork glyph beside the word (T381, the user 2026-09-12: a line from the left branching into two that run
+    // on to the right), the word kept, and Fork in the accessible name; a literal glyph, no sanitize
+    fk.innerHTML = ICON_FORK + '<span class="msg-fork-word">fork</span>';
+    fk.setAttribute("aria-label", "Fork");
     fk.dataset.act = "forkspot";   // delegated (click-safe): the transcript rebuilds on every push
     fk.title = cut
       ? "Fork the session from just below this response — a new parallel session carries the conversation to here; this one is untouched"
@@ -9896,7 +11257,7 @@ function updateCommentRail(): void {
     return tick;
   }));
 }
-window.addEventListener("resize", () => updateCommentRail());
+window.addEventListener("resize", () => { updateCommentRail(); if (activeId && hasUnreadOpenThread(activeId)) paintCommentOutlines(activeId); });
 
 // (The per-turn count badge is GONE — the user 2026-08-17: the highlight does the speaking, and
 // the scroll-rail tick already covers a thread whose rendered text drifted beyond re-matching.)
@@ -9928,6 +11289,10 @@ function ensureCommentMark(turn: HTMLElement, th: CommentThread): void {
     if (!r) return;                             // rendered text drifted — the badge still reaches it
     for (const sl of sliceRanges(nodes.map((t) => t.data.length), r.start, r.end)) {
       const t = nodes[sl.idx];
+      // never BETWEEN a table's cells (T349, the user 2026-09-11: a comment on a table's row broke the table): the
+      // newline text between <td>s and <tr>s is part of the contiguous match, and an inline element there gets its
+      // own anonymous cell, so the columns shifted; each cell's own text is wrapped and the table's boxes stay
+      if (markSkipsParent(t.parentElement?.tagName)) continue;
       const mid = sl.s > 0 ? t.splitText(sl.s) : t;
       if (sl.e - sl.s < mid.data.length) mid.splitText(sl.e - sl.s);
       const m = document.createElement("mark");
@@ -9965,11 +11330,31 @@ function ensureCommentMark(turn: HTMLElement, th: CommentThread): void {
 function styleCommentMark(m: HTMLElement, th: CommentThread): void {
   m.classList.toggle("resolved", th.status === "resolved" || th.status === "merged");
   m.classList.toggle("unread", !!th.unread && th.status === "open");
+  if (!(th.unread && th.status === "open")) m.classList.toggle("cmt-ring", false);   // the ring is the painter's call on an UNREAD mark (paintCommentOutlines, by row count): it goes with the bit, on this same pass
   m.classList.toggle("busy", commentInFlight(th));
   m.title = th.status === "promoted" ? "thread, now the session '" + th.promotedName + "'"
     : th.status === "merged" ? "relayed thread: its discussion was sent back into the session"
     : th.status === "resolved" ? "resolved thread: closed — click to read; a new comment continues the conversation"
     : "thread: click to open";
+}
+
+/** The marks under a click, innermost first: the clicked mark, then each enclosing mark.cmt-hl outward.
+ *  Two threads on the same passage NEST (the user 2026-09-10: one selection commented on twice within
+ *  seconds; ensureCommentMark re-finds the identical range and wraps the second mark inside the first),
+ *  and the delegate hands the click to the innermost — so cmtopen picks over the whole chain
+ *  (pickMarkToOpen), with each mark's unread bit read from the thread store, the source styleCommentMark
+ *  paints the ring from, so the ring you click is the thread that opens. */
+function markChain(start: HTMLElement, sid: string): { el: HTMLElement; tid: string; unread: boolean }[] {
+  const threads = commentThreads.get(sid) || [];
+  const out: { el: HTMLElement; tid: string; unread: boolean }[] = [];
+  for (let m = start.closest("mark.cmt-hl") as HTMLElement | null; m;
+       m = (m.parentElement?.closest("mark.cmt-hl") as HTMLElement | null) || null) {
+    const tid = m.dataset.tid;
+    if (!tid) continue;
+    const th = threads.find((t) => t.tid === tid);
+    out.push({ el: m, tid, unread: !!th?.unread && th.status === "open" });
+  }
+  return out;
 }
 
 /** The comment's identity color (the user 2026-08-17): one of the session palette's colors,
@@ -10125,38 +11510,41 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
     renderingSid = th.tid;
     renderingOwnerSid = sid;   // fold keys are per-thread; file/preview URLs belong to the thread's SESSION
     renderingIntoThread = true;   // same renderer, minus the transcript-coupled hover chrome (see the flag)
-    let prev: number | null = null;
+    let prev: number | null = null;       // the rail's raw previous epoch (the same-minute rule)
+    const walk = new DayWalk();           // the day walk's high-water mark (T339)
     let quoteHost: HTMLElement | null = null;   // the thread's OPENING message — the quote's home
     // the SAME display units the chat renders (the user 2026-08-24, leg C: the popover ignored the
     // compact/hide-thinking setting — thinking blocks and raw tool runs showed regardless of the
     // gear): thinking dropped, consecutive tools folded to the chat's own renderToolGroup line,
-    // expansion keyed by the SHARED expandedGroups store so a toggle survives refills. The group
+    // expansion keyed by the SHARED openFolds store so a toggle survives refills. The group
     // toggle and a settings flip both refill the open popover live (toggleToolGroup / setupSettings
     // → refillOpenCommentPop).
     const items: DisplayItem[] = settings.compact
-      ? compactDisplay(evs.map((e) => e.kind), evs.map((e) => e.kind === "tool" ? e.name : undefined))
+      ? compactDisplay(evs.map((e) => e.kind), evs.map((e) => e.kind === "tool" ? e.name : undefined), evs.map(isFoldableNotice))
       : evs.map((_, i) => ({ kind: "event", index: i } as DisplayItem));
     const thWorking = threadBusy(th.state);
     let relayNoted = !th.relayedT;   // T145: drop the sent-back marker at its place in time, once
     for (const it of items) {
       // a new day opens with the chat's own divider (the parity bundle, 2026-08-26) — same helper,
-      // same placement idiom as appendItem
-      const dayOpen = eventEpoch(evs[itemFirstEvent(it)]);
+      // same placement idiom as appendItem, the unit timed by its anchor member (T339)
+      const anchor = itemAnchor(it, (i) => eventEpoch(evs[i]));
+      const dayOpen = eventEpoch(evs[anchor]);
       if (!relayNoted && dayOpen != null && dayOpen > (th.relayedT || 0)) {
         list.appendChild(cmtRelayedNote(th.relayedT || 0));
         relayNoted = true;
       }
       if (dayOpen != null) {
-        const dv = dayDividerFor(dayOpen, prev);
+        const dv = dayDividerFor(dayOpen, walk);
         if (dv) list.appendChild(dv);
       }
-      if (it.kind === "toolgroup" || it.kind === "retrygroup") {
+      if (it.kind === "toolgroup" || it.kind === "noticegroup") {
         const run = it.indices.map((ix) => evs[ix]);
-        const key = it.kind === "toolgroup" ? toolGroupKey(run[0]) : retryGroupKey(run[0]);
-        const open = expandedGroups.has(key);
+        const key = it.kind === "toolgroup" ? toolGroupKey(run[0]) : noticeGroupKey(run[0]);
+        const open = openFolds.has(key);
         list.appendChild(it.kind === "toolgroup"
           ? renderToolGroup(run as Extract<ChatEvent, { kind: "tool" }>[], prev, key, open)
-          : renderRetryGroup(run as Extract<ChatEvent, { kind: "retried" }>[], prev, key, open));
+          : renderNoticeGroup(run, evs[anchor], prev, key, open));
+        let exit: number | null;   // the epoch the run leaves the walk on (the rail chain and the day mark alike)
         if (open) {
           it.indices.forEach((ix, j) => {   // the run's own members — it.indices already excludes thinking
             const child = renderEvent(evs[ix], prev, turnWorkedSecs(evs, ix, thWorking));
@@ -10164,11 +11552,15 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
             list.appendChild(child);
             const ep = eventEpoch(evs[ix]); if (ep != null) prev = ep;
           });
+          exit = it.kind === "noticegroup" ? eventEpoch(evs[anchor]) : prev;   // a notice run leaves the walk on its anchor, whatever order its members came in (T339)
+          if (it.kind === "noticegroup" && exit != null) prev = exit;
         } else {
-          const ep = eventEpoch(run[run.length - 1]); if (ep != null) prev = ep;
+          exit = eventEpoch(it.kind === "noticegroup" ? evs[anchor] : run[run.length - 1]); if (exit != null) prev = exit;
         }
+        walk.pass(exit);
         continue;
       }
+      if (it.kind === "gap") continue;   // a viewer's list has no gaps; the type says so
       const ev = evs[it.index];
       // the "worked Ns" footer rides exactly as in the chat (the parity bundle) — the same
       // turnWorkedSecs, with the thread session's own busy reading standing in for `working`
@@ -10177,6 +11569,7 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
       if (!quoteHost && ev.kind === "user") quoteHost = node;
       const ep = eventEpoch(ev);
       if (ep != null) prev = ep;
+      walk.pass(ep);
     }
     if (!relayNoted) list.appendChild(cmtRelayedNote(th.relayedT || 0));   // relay at the tail — nothing new after it yet
     renderingIntoThread = false;
@@ -10358,6 +11751,77 @@ function wireEdgeResize(pop: HTMLElement): void {
   });
 }
 
+// ── remembered size + maximize (the user 2026-09-10, who enlarged the box by hand on every open) ── the
+// rules are comment-pop-size.ts's; this is the DOM half. localStorage reads and writes are wrapped so a
+// denied or full store costs the preference, never the popover (file-view.ts's convention).
+function readCmtPopSize(): CmtPopFrac | null {
+  try { return parseCmtPopSize(localStorage.getItem(CMT_POP_SIZE_KEY)); } catch { return null; }
+}
+function saveCmtPopSize(pop: HTMLElement): void {
+  const frac = toCmtPopFrac(pop.offsetWidth, pop.offsetHeight, window.innerWidth, window.innerHeight);
+  try { localStorage.setItem(CMT_POP_SIZE_KEY, JSON.stringify(frac)); } catch { /* storage full or denied */ }
+}
+/** Size the box programmatically and record what it measures: the observer treats that size as ours. */
+function sizeCommentPop(pop: HTMLElement, w: number, h: number): void {
+  pop.style.width = w + "px";
+  pop.style.height = h + "px";
+  cmtPopApplied = { w: pop.offsetWidth, h: pop.offsetHeight };
+}
+// the house line-icon style (16-unit box, 1.4 stroke, round caps): one frame = maximize, two offset frames = restore
+const CMT_MAX_GLYPH = '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>';
+const CMT_RESTORE_GLYPH = '<path d="M5.5 5.5V3.5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2"/>'
+  + '<rect x="2.5" y="5.5" width="8" height="8" rx="1"/>';
+/** "Maximized" is COMPUTED from the live size (within a few px of the cap), never a stored bit that can
+ *  drift: the data-max mark and the button's glyph/title/aria-label follow it (a control changes its own
+ *  label on click — ui/CLAUDE.md). Called at open, after every toggle, and after every user resize. */
+function syncCmtMaxState(pop: HTMLElement): void {
+  const max = isCmtPopMax(pop.offsetWidth, pop.offsetHeight, window.innerWidth, window.innerHeight);
+  if (max) pop.dataset.max = "1"; else delete pop.dataset.max;
+  const btn = pop.querySelector(".cmt-max") as HTMLElement | null;
+  if (!btn) return;
+  btn.innerHTML = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" '
+    + 'stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + (max ? CMT_RESTORE_GLYPH : CMT_MAX_GLYPH) + "</svg>";
+  btn.title = max ? "Restore" : "Maximize";
+  btn.setAttribute("aria-label", max ? "Restore" : "Maximize");
+}
+/** Maximize ⇄ restore — the head's button and a double-click on the title bar both land here. Maximize
+ *  sizes to the cap, centers, and remembers the fraction like any resize; restore goes back to the size
+ *  the box had before the maximize (this page-load), else the mode's own default — the thread's 70%/60%,
+ *  or the create dialog's content size (inline size AND preference dropped) — centered too. */
+function toggleCommentPopMax(): void {
+  const pop = document.getElementById("cmt-pop");
+  if (!pop) return;
+  const W = window.innerWidth, H = window.innerHeight;
+  if (isCmtPopMax(pop.offsetWidth, pop.offsetHeight, W, H)) {
+    if (cmtPopPreMax) {
+      const px = clampCmtPopPx(cmtPopPreMax, W, H);
+      sizeCommentPop(pop, px.w, px.h);
+      saveCmtPopSize(pop);
+    } else if (pop.dataset.mode === "thread") {
+      sizeCommentPop(pop, Math.round(W * CMT_POP_THREAD_DEFAULT.w), Math.round(H * CMT_POP_THREAD_DEFAULT.h));
+      saveCmtPopSize(pop);
+    } else {
+      pop.style.removeProperty("width");
+      pop.style.removeProperty("height");
+      pop.classList.remove("sized");                  // no expressed size any more: the quote clamp comes back…
+      cmtPopApplied = { w: pop.offsetWidth, h: pop.offsetHeight };   // …and reflows the content size, so measure AFTER it
+      try { localStorage.removeItem(CMT_POP_SIZE_KEY); } catch { /* storage denied */ }
+    }
+  } else {
+    // an expressed size only: a content-sized create dialog has nothing to go back to but its content
+    cmtPopPreMax = pop.style.width ? toCmtPopFrac(pop.offsetWidth, pop.offsetHeight, W, H) : null;
+    const cap = cmtPopCapPx(W, H);
+    sizeCommentPop(pop, cap.w, cap.h);
+    saveCmtPopSize(pop);
+    pop.classList.add("sized");
+  }
+  const c = centerCmtPop(pop.offsetWidth, pop.offsetHeight, W, H);
+  pop.style.left = c.left + "px";
+  pop.style.top = c.top + "px";
+  commentPopPos = { x: c.left, y: c.top };             // a later rebuild reopens where the toggle put it, like a drag
+  syncCmtMaxState(pop);
+}
+
 function commentPopTitle(create: boolean, th: CommentThread | null | undefined): string {
   const nm = th?.name || "Thread";
   return create ? "New comment:"
@@ -10396,12 +11860,10 @@ function commentSendFromPop(pop: HTMLElement): void {
     commentThreads.set(create.sid, [...cur0.filter((t) => t.tid !== synth.tid), synth]);
     cmtAwaitBase.set(synth.tid, { ...CMT_LATCH_ZERO });   // the SEND gesture latches the pulse — before any kernel round-trip (T102); released once a frame acknowledges the send (T237)
     applyCommentMarks(create.sid);
-    vscodeApi.postMessage({ type: "commentCreate", id: create.sid, uuid: create.uuid, exact: create.exact,
-      text, name: nm, model: create.model || "", effort: create.effort || "",
-      fast: create.fast || "", color: create.color || "" });
-    cmtCreateInFlight.set(create.uuid, { sid: create.sid, uuid: create.uuid, exact: create.exact,
-      text, name: nm, model: create.model || "", effort: create.effort || "",
-      fast: create.fast || "", color: create.color || "", tries: 0 });
+    // the gesture is stamped once, here; the hold re-posts the same frame while a transient nack stands
+    const held = newCommentCreate(create, text, nm);
+    vscodeApi.postMessage(commentCreateFrame(held));
+    cmtCreateInFlight.set(create.uuid, held);
     return;
   }
   const cur = openCommentThread();
@@ -10485,18 +11947,34 @@ function renderCommentPopover(): void {
     const nb = nameBox;
     nb.addEventListener("input", () => { nb.classList.remove("bad"); commentDrafts.set(nk, nb.value); });
   }
+  // maximize ⇄ restore (the user 2026-09-10), right before the ×; delegated like the × (cmtmax), the
+  // glyph and label painted by syncCmtMaxState once the box has its open size
+  const maxBtn = el("button", "cmt-max") as HTMLButtonElement;
+  maxBtn.type = "button";
+  maxBtn.dataset.act = "cmtmax";
   const closeBtn = el("button", "cmt-x") as HTMLButtonElement;
   closeBtn.type = "button";
   closeBtn.textContent = "×";
   closeBtn.title = "Close (the thread stays on its highlight)";
   closeBtn.dataset.act = "cmtclose";
-  if (nameBox) head.append(title, nameBox, closeBtn);
-  else head.append(title, closeBtn);
+  if (nameBox) head.append(title, nameBox, maxBtn, closeBtn);
+  else head.append(title, maxBtn, closeBtn);
   // DRAG by the header (the user 2026-08-13, who found the popover's spot inconvenient): pointer
   // capture, viewport-clamped, and the position writes through to commentPopPos so a later full
   // rebuild (a status flip) reopens where the user parked it. The header survives in-place
   // refreshes, so a drag is never cut by a comments frame; a full rebuild mid-drag just ends it.
-  head.title = "Drag to move";
+  head.title = "Drag to move · double-click to maximize or restore";
+  // DOUBLE-CLICK on the title bar toggles maximize, a window's title bar (the user 2026-09-10) — the same
+  // toggle as the button. Listened on the BOX and hit-tested at the pointer: the drag below captures the
+  // pointer on every press, and a captured press retargets the click/dblclick it ends in to the box, so a
+  // listener on the head would never hear it. Interactive children of the head (the name box, the two
+  // buttons) keep their own double-click.
+  pop.addEventListener("dblclick", (ev: MouseEvent) => {
+    const at = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
+    if (!at || !at.closest(".cmt-head") || at.closest(".cmt-name, .cmt-x, .cmt-max, button, input")) return;
+    ev.preventDefault();
+    toggleCommentPopMax();
+  });
   // the WHOLE box drags (the user 2026-08-17), not just the header — any grip that isn't an
   // interactive control or selectable text, and never the bottom-right resize corner
   pop.addEventListener("pointerdown", (ev: PointerEvent) => {
@@ -10534,7 +12012,9 @@ function renderCommentPopover(): void {
     quote.title = "the highlighted passage this thread is about";
     pop.appendChild(quote);
   }
-  if (th) {
+  if (th && th.status !== "promoted") {
+    // (a promoted thread gets no list: the kernel ships it with no messages or events — see the
+    // promoted branch below — and an empty list only grew into the box's fixed height)
     const list = el("div", "cmt-msgs");
     fillCommentMsgs(list, th, sid);
     pop.appendChild(list);
@@ -10692,6 +12172,15 @@ function renderCommentPopover(): void {
     crow.append(attach, box, send);
     pop.appendChild(crow);
     if (metaRowPending) pop.appendChild(metaRowPending);   // model/effort under the box, like the chat
+    if (th && th.mailOff && (th.heldMail || 0) > 0) {
+      // T356: a thread's mail is off until it is broken out, but the comment box does not SAY so (the user
+      // 2026-09-11, 3:05 PM PT: not here; the tab hover's Mail row and the Sessions pane tag carry the state quietly).
+      // Only a message actually held in its box is worth a line: the count, and that it lands at the break-out.
+      const held = th.heldMail || 0;
+      const mail = el("div", "cmt-note cmt-mail");
+      mail.textContent = held + (held === 1 ? " message waits in its box and lands" : " messages wait in its box and land") + " at the break-out.";
+      pop.appendChild(mail);
+    }
     if (th && th.status === "open") {
       // the thread is a real session under the hood — its model/effort switch LIVE through the
       // chat's own ops (setModel/setEffort route by sid; be.owns makes the thread reachable).
@@ -10748,10 +12237,32 @@ function renderCommentPopover(): void {
     }
     pop.appendChild(row);
   } else if (th) {
+    // a thread that became its own session (the user 2026-09-10, with a screenshot): the kernel
+    // ships it with no messages or events — the talk lives in the session now — so this view is the
+    // quote, one line saying where the talk went, and the one action, stacked from the top; nothing
+    // here grows into the box's fixed height (the empty list and the .sized quote used to split the
+    // free room between them: a one-line quote ran hundreds of pixels tall over a void, the action
+    // pinned under it). The action wears the shared .cmt-act word-button dress like every other
+    // action in this popover — it wore the composer's send-glyph square (.cmt-send: ~36px wide,
+    // 16px, no border), so "Open the session" wrapped one word per line in an oversized font.
+    const note = el("div", "cmt-note");
+    note.textContent = "The discussion continues there.";
+    pop.appendChild(note);
+    // the break-out flipped its mail on (T356): said once, here, where the user looks after breaking it out — from the
+    // EFFECTIVE state the frame carries, so a mailbox the user toggled off since reads as off (the review's low)
+    const mailOn = el("div", "cmt-note cmt-mail");
+    const held = th.heldMail || 0;
+    mailOn.textContent = !th.mailOff
+      ? "Its mail is on now: peers can reach it and it can send." + (held ? " " + held + (held === 1 ? " held message lands" : " held messages land") + " in a moment." : "")
+      : th.mailOffWhy === "unreadable" ? "Its mail is held: this session's record cannot be read, and mail flows again once the record is repaired."
+      : th.mailOffWhy === "flags" ? "Its mail is held: the session settings file cannot be read, and mail flows again once it is written."
+      : "Its mailbox is off: the lane's mailbox toggle turns peer mail back on.";   // the reason rides the frame: a remedy that fits (T356)
+    pop.appendChild(mailOn);
     const row = el("div", "cmt-actions");
-    const open = el("button", "cmt-send") as HTMLButtonElement;
+    const open = el("button", "cmt-act") as HTMLButtonElement;
     open.type = "button";
     open.textContent = "Open the session";
+    open.title = "Switch to that session";
     open.dataset.act = "cmtopensession";
     open.dataset.tid = th.tid;
     row.appendChild(open);
@@ -10762,10 +12273,38 @@ function renderCommentPopover(): void {
     // resizing the BOX (resize: both) hands the extra room to the quoted context: the .sized class
     // unlocks the quote's clamp; armed only after a real user resize, so the natural size stays tight
     const w0 = pop.offsetWidth, h0 = pop.offsetHeight;
+    // …and REMEMBERS the size (the user 2026-09-10): this observer sees the native grip and the edge
+    // bands alike, so it is the one event every user resize fires — each observation writes the fraction
+    // (comment-pop-size.ts) except the ones that are not the user's: the size WE set (cmtPopApplied —
+    // the open geometry, a stored preference, maximize/restore), a box the WINDOW moved through the
+    // vw/vh caps (re-baselined on resize below: a briefly-small window never rewrites the preference,
+    // the tab strip's rule), and the box leaving the page (a 0×0 box is a close, not a choice).
     const ro = new ResizeObserver(() => {
       if (Math.abs(pop.offsetWidth - w0) > 6 || Math.abs(pop.offsetHeight - h0) > 6) pop.classList.add("sized");
+      if (!pop.isConnected || !pop.offsetWidth || !pop.offsetHeight) return;
+      const a = cmtPopApplied;
+      if (a && Math.abs(pop.offsetWidth - a.w) <= 1 && Math.abs(pop.offsetHeight - a.h) <= 1) return;
+      cmtPopApplied = { w: pop.offsetWidth, h: pop.offsetHeight };
+      saveCmtPopSize(pop);
+      syncCmtMaxState(pop);                          // a pull onto or off the cap flips the toggle's label with it
     });
     ro.observe(pop);
+    const onWin = () => {
+      if (!pop.isConnected) { window.removeEventListener("resize", onWin); return; }
+      cmtPopApplied = { w: pop.offsetWidth, h: pop.offsetHeight };   // the resize event runs before the observer's frame
+    };
+    window.addEventListener("resize", onWin);
+  }
+  // REMEMBERED SIZE (the user 2026-09-10): the fraction of the window the user last dragged the box to,
+  // applied in BOTH modes and re-clamped to the live window (comment-pop-size.ts: the CSS mins as the
+  // floor, the CSS caps and an 8px margin as the cap). With nothing stored, both modes open exactly as
+  // before: the thread geometry below, the create dialog at its content size with no inline size at all.
+  const pref = readCmtPopSize();
+  if (pref) {
+    const sz = clampCmtPopPx(pref, window.innerWidth, window.innerHeight);
+    pop.style.width = sz.w + "px";
+    pop.style.height = sz.h + "px";
+    pop.classList.add("sized");                      // an expressed size: the quote/msgs reflow rules apply from open
   }
   // OPEN GEOMETRY (the user 2026-08-25), THREAD mode: 70% of the chat pane's width with the RIGHT
   // edge on the chat's right edge, 60% of the pane's height — and the size is FIXED from open:
@@ -10775,12 +12314,14 @@ function renderCommentPopover(): void {
   // The CREATE composer keeps its natural size at the selection point — a different gesture.
   if (th && !pop.style.width) { pop.style.width = Math.round(window.innerWidth * 0.7) + "px"; }
   if (th && !pop.style.height) { pop.style.height = Math.round(window.innerHeight * 0.6) + "px"; }
+  cmtPopApplied = { w: pop.offsetWidth, h: pop.offsetHeight };   // whatever it measures now is ours, the content size included
   const r = pop.getBoundingClientRect();
   const defaultX = th ? (window.innerWidth - r.width - 8) : (window.innerWidth - r.width) / 2;
   const px = Math.max(8, Math.min(commentPopPos?.x ?? defaultX, window.innerWidth - r.width - 8));
   const py = Math.max(8, Math.min(commentPopPos?.y ?? 120, window.innerHeight - r.height - 8));
   pop.style.left = px + "px";
   pop.style.top = py + "px";
+  syncCmtMaxState(pop);                              // a stored cap-sized preference opens reading "Restore"
   const msgs = pop.querySelector(".cmt-msgs") as HTMLElement | null;
   if (msgs) msgs.scrollTop = msgs.scrollHeight;
   if (create || hadFocus || !th || !th.msgs.length) (pop.querySelector(".cmt-input") as HTMLTextAreaElement | null)?.focus();
@@ -10876,7 +12417,7 @@ function loadMcpPanel(sid: string, body: HTMLElement): void {
       if (mcpPanelSid !== sid) return;   // panel closed (or reopened for another tab) while loading
       body.textContent = "";
       const servers: any[] = Array.isArray(d?.servers) ? d.servers : [];
-      // FAIL LOUDLY: a refusal (tmux session, disconnected CLI) is named, never an empty list that
+      // FAIL LOUDLY: a refusal (a disconnected CLI) is named, never an empty list that
       // reads as "no servers configured".
       if (d?.error) {
         const e = el("div", "mcp-err"); e.textContent = String(d.error); body.appendChild(e);
@@ -10943,6 +12484,7 @@ function closePicker() {
   const o = document.getElementById("picker");
   if (o) o.style.display = "none";
   signalPickerOverlay(false);   // release the full-window lift — the chat iframe returns to its pane
+  syncComposerPh();             // …and the box re-reads its ring against the page it is back on (T345)
   if (pickMode) {
     if (vscodeApi) vscodeApi.postMessage({ type: "pickResult", id: null });
     pickMode = false;
@@ -11069,7 +12611,7 @@ function renderPicker(items: any[]) {
     if (it.hiddenTab) {   // open as a tab but filtered out of the CURRENT view (tagged) → picking jumps to its view
       time.textContent = "other view";
       time.style.opacity = "0.7";
-    } else if (it.running) {   // a live session (SDK/tmux backend) whose tab is closed → a green "running" badge
+    } else if (it.running) {   // a live session whose tab is closed → a green "running" badge
       time.classList.add("picker-running-badge");
       time.append(el("span", "picker-run-dot"), document.createTextNode("running"));
     } else {
@@ -11214,20 +12756,31 @@ function tailMutations(records: MutationRecord[]): { removedTail: string[]; adde
 // the cap is the default unless the page's localStorage says otherwise (a laptop capturing raises it; T262j)
 const scrollDiagCap = readScrollDiagCap((k) => { try { return localStorage.getItem(k); } catch { return null; } });
 const scrollDiag = new ScrollDiagBudget(scrollDiagCap);
-function scrollDiagRow(kind: "scrollwrite" | "scrollgesture" | "tailchange" | "spacer" | "tailmut" | "unitchange", data: any): void {
+function scrollDiagRow(kind: "scrollwrite" | "scrollgesture" | "tailchange" | "spacer" | "tailmut" | "unitchange" | "regionask" | "landmiss", data: any): void {
   const v = scrollDiag.take(activeId || "", kind, Date.now());
   if (v === "drop") return;
   vscodeApi?.postMessage(v === "cap"
     ? { type: "clientDiag", surface: "chat", what: kind + "-capped", data: { sid: activeId || "", perMinute: scrollDiagCap } }
     : { type: "clientDiag", surface: "chat", what: kind, data });
 }
-function writeScroll(content: HTMLElement, top: number, writer: string, stick = false): void {
-  const before = content.scrollTop;
+// `from`: the scrollTop the caller read BEFORE its own DOM change (the append path). A tail that re-renders SHORTER under a
+// bottom reader (a lone tool turn folding into a group when the next call lands, a queued card replaced by a shorter landed
+// atom) is clamped by the browser at the forced layout, before this write runs: without `from` the write finds the reader
+// already at the new bottom, moves nothing, files no row and owes no echo, and the clamp's own scroll event, still pending,
+// files as a gesture, an unwritten move for a move the pane's re-render caused (the T262h and T262i labs red on the devbox
+// from the one-shot marker on). With `from`, the move is the pane's: the row names it and the pending event is its echo.
+// A gap fill (T386 stage 2) passes its pre-change read the same way: the page appearing in place is the pane's move, never a gesture.
+function writeScroll(content: HTMLElement, top: number, writer: string, stick = false, from?: number): void {
+  const before = from ?? content.scrollTop;
   content.scrollTop = top;
   const after = content.scrollTop;
-  lastScrollWriteAfter = after;
+  if (after !== before) lastScrollWriteAfter = after;   // a write that moved the view owes exactly one scroll event, its echo; one that did not move owes none, and must not eat a later gesture landing near its target (verifier low, round two)
   lastKnownSh = content.scrollHeight;
   if (after !== before) scrollDiagRow("scrollwrite", scrollWriteRow(activeId || "", writer, before, after, stick, content.scrollHeight, content.clientHeight));
+  // a write of #content while a landing settles: a writer the census calls the READER's (landing-settle.ts WRITER_CLASS: a key or a
+  // chord, a link or the chips, the wheel over a notch) is their takeover (round four: their writes read as another mover's and
+  // land-realign undid them), every other writer's move is a sample for the settle rule, which re-lands (T386)
+  if (after !== before && landSettling && !landSettling.done && writer !== "land-on" && writer !== "land-realign") { if (writerIsReader(writer)) settleGesture(); else settleSample(); }
 }
 // EVERY mover of #content goes through writeScroll (T262j, the user 2026-09-08: an unwritten move the journal could
 // not name). scrollBy and scrollIntoView are scrollTop writes expressed differently, so they are expressed as such:
@@ -11268,6 +12821,7 @@ function scrollToAnchor(uuid: string): boolean {
   // answer to it (the user 2026-07-23). `~=` matches one whitespace-separated token, and a message id
   // never contains whitespace.
   let target = (v?.el.querySelector(`.turn[data-uuid="${cssEscape(uuid)}"]`)
+                || v?.el.querySelector(`.turn[data-orphan-of="${cssEscape(uuid)}"]`)
                 || v?.el.querySelector(`.turn[data-mid="${cssEscape(uuid)}"]`)
                 || v?.el.querySelector(`.turn[data-mids~="${cssEscape(uuid)}"]`)
                 || v?.el.querySelector(`.turn[data-uuids~="${cssEscape(uuid)}"]`)) as HTMLElement | null;
@@ -11280,11 +12834,12 @@ function scrollToAnchor(uuid: string): boolean {
     // (renderEvent's data-uuid — the uuid the timeline emits for the decision), which no event
     // carries as its OWN uuid, so a uuid/mid-only lookup missed it and this recovery never ran.
     const idx = s ? s.events.findIndex((e) => e.uuid === uuid || (e as { mid?: string }).mid === uuid
+                                       || (e as { orphanOf?: string }).orphanOf === uuid
                                        || (e as { resultUuid?: string }).resultUuid === uuid
                                        || (((e as { settleUuids?: string[] }).settleUuids || []).includes(uuid))) : -1;
     if (s && idx >= 0) {
       const items = displayItems(s);
-      let u = items.findIndex((it) => it.kind === "toolgroup" || it.kind === "retrygroup" ? it.indices.includes(idx) : it.index === idx);
+      let u = items.findIndex((it) => it.kind === "toolgroup" || it.kind === "noticegroup" ? it.indices.includes(idx) : it.kind === "event" && it.index === idx);
       if (u < 0) u = Math.max(0, items.findIndex((it) => itemFirstEvent(it) >= idx));
       // The anchor can live INSIDE a collapsed tool run: the folded line carries only the run's FIRST
       // uuid, so the re-render below could never surface a mid-run member — the click honest-failed
@@ -11293,18 +12848,35 @@ function scrollToAnchor(uuid: string): boolean {
       // SEE that message: expand the run, so the re-render gives the member its own turn to land on.
       const hit = items[u];
       if (hit && hit.kind === "toolgroup" && hit.indices.includes(idx))
-        expandedGroups.add(toolGroupKey(s.events[hit.indices[0]]));
-      if (hit && hit.kind === "retrygroup" && hit.indices.includes(idx))
-        expandedGroups.add(retryGroupKey(s.events[hit.indices[0]]));
+        openFolds.add(toolGroupKey(s.events[hit.indices[0]]));
+      if (hit && hit.kind === "noticegroup" && hit.indices.includes(idx))
+        openFolds.add(noticeGroupKey(s.events[hit.indices[0]]));
       const working = s.status.state === "working" || s.status.state === "compacting";
       renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working);
       // Re-query with the SAME three selectors the first lookup used. data-mids was missing here, so an
       // unhydrated postal turn (whose message ids live only in data-mids) could be found in the events,
       // have its window rendered — and then still honest-fail "pointer-not-rendered" on the re-query.
       target = (v.el.querySelector(`.turn[data-uuid="${cssEscape(uuid)}"]`)
+                || v.el.querySelector(`.turn[data-orphan-of="${cssEscape(uuid)}"]`)
                 || v.el.querySelector(`.turn[data-mid="${cssEscape(uuid)}"]`)
                 || v.el.querySelector(`.turn[data-mids~="${cssEscape(uuid)}"]`)
                 || v.el.querySelector(`.turn[data-uuids~="${cssEscape(uuid)}"]`)) as HTMLElement | null;
+    } else if (s && s.proto === 2 && (olderOnServer(s) || (s.regions && s.regions.some((r) => r.kind === "gap")))) {
+      // proto 2 (T323 stage 4b): the anchor is outside the resident run — ONE window around it (chatWindow lands it)
+      // a LIVE landing already on the wire is busy (T386 stage 2, low 6: the first stands, the second is refused with a cue; a cancelled one is
+      // not busy, round seven)
+      const live = liveWindowAsk(activeId);
+      if (live && live.anchor === uuid) { anchorPendingOlder = true; landTrail.push("pointer-fetch-waiting"); if (pendingAnchorClick) pulseLandingNotice(); return false; }   // the same landing, still on the wire: this pass's re-attempt waits (no cue: the reader clicked once, round ten); a REAL second click on it re-pulses the notice (round eleven, low b)
+      if (live) { landTrail.push("pointer-fetch-busy"); landToast("still going to the earlier message"); return false; }
+      // an OLDER fetch in flight is no reason to refuse (round nine, medium 1): a proto-2 frame whose tailLo the kernel could not name leaves
+      // the page with no regions and its head asked by loadOlder, and refusing here armed nothing (CI's head-restore road: a loadOlder first,
+      // then the restore's attempt refused and its arm dropped). The fetch is re-pointed onto this anchor, as the index wire's is below, and
+      // chatHead lands it when the page arrives, or re-attempts, which asks the window then. (CI's mid-run road was a different shape: its
+      // restore wrote before any fetch existed and fell to the not-rendered path below, round ten.)
+      if (loadingOlder.has(activeId)) { pendingOlderAnchor.set(activeId, uuid); pendingOlderKeepY.delete(activeId); pendingAnchor = uuid; anchorPendingOlder = true; landTrail.push("pointer-fetch-older"); return false; }
+      if (requestAround(activeId, uuid)) {   // the ask's record holds the anchor (round eight); the older wire's marks below are chatHead's alone
+        pendingAnchor = uuid; anchorPendingOlder = true; landTrail.push("pointer-fetch-window"); return false;
+      }
     } else if (s && (s.headFrom ?? 0) > 0) {
       // The anchor is OLDER than the resident tail — the chat ships only WIRE_TAIL events and streams older
       // history in on demand, so a deep-link to a message past the tail had nothing to match and honest-failed
@@ -11325,7 +12897,15 @@ function scrollToAnchor(uuid: string): boolean {
       }
     }
   }
-  if (!target) { pendingAnchor = uuid; landTrail.push("pointer-not-rendered"); return false; }
+  if (!target) {
+    // no branch could decide (round ten): the diagnostic row names the state the attempt saw, so a CI red on this path identifies itself.
+    // CI's mid-run reload-restore red carried a reload-restore write, then a loadOlder, and no regionask row: an attempt that reached
+    // neither the window branch nor the older wire, whose cause this row would have named; it is unexplained (a reload with its boot frame
+    // parked across it runs no attempt before the frame and lands once it arrives, at both heads)
+    const sm = activeId ? liveSession(activeId) : null;   // the active tab's live session (the display paths read through liveSession)
+    scrollDiagRow("landmiss", { sid: activeId, anchor: uuid.slice(-12), proto: sm ? (sm.proto ?? null) : null, events: sm ? sm.events.length : -1, regions: !!(sm && sm.regions), headKnown: sm ? (sm.headKnown ?? null) : null, headFrom: sm ? (sm.headFrom ?? 0) : null, older: !!(sm && olderOnServer(sm)), noframe: !sm || sm.proto == null, trail: landTrail.slice(-4) });
+    pendingAnchor = uuid; landTrail.push("pointer-not-rendered"); return false;
+  }
   // KIND GUARD — the robust half of "title clicks always land on the originating
   // message". Upstream producers substitute a reply uuid when the prompt line is
   // off the active path (compaction orphans it), so a prompt-intent anchor can
@@ -11360,9 +12940,37 @@ function scrollToAnchor(uuid: string): boolean {
     return true;
   }
   landTrail.push("pointer-exact");
-  landOn(target, uuid);
-  if (pendingAnchorQuote) { highlightCiteSpan(target, pendingAnchorQuote); pendingAnchorQuote = null; }
+  // T386 (the user 2026-09-12): a card's anchor is the FIRST atom of its transcript turn, often a tool call inside a collapsed
+  // group, while the text the card quotes sits atoms later; a landing on the anchor's own top put the reader on the group
+  // with the words far below. The landing aligns on the quoted span when the frame carries one and it is found in the
+  // turn's atoms (the anchor's element and the atoms after it up to the next user turn), else on the turn's first text
+  // atom below a tool or thinking atom, else on the anchor's element as before. The anchor's element is what flashes.
+  const quote = pendingAnchorQuote; pendingAnchorQuote = null;
+  const quoteEl = quote ? highlightCiteSpan(target, quote) : null;
+  landOn(target, uuid, quoteEl ?? firstTextAtomBelow(target), quote);
   return true;
+}
+/** The atoms of the transcript turn the anchor's element opens: itself and the following event elements up to (not
+ *  including) the next user turn. */
+function turnAtomsOf(target: HTMLElement): HTMLElement[] {
+  const out = [target];
+  for (let n = target.nextElementSibling; n; n = n.nextElementSibling) {
+    if (!(n instanceof HTMLElement) || !n.classList.contains("turn") || n.classList.contains("turn-user")) break;
+    out.push(n);
+  }
+  return out;
+}
+/** The first text atom below a tool, tool-group or thinking anchor within its turn (the element the words live in), else
+ *  null. A grouped run of tool calls renders as ONE .turn-toolgroup head carrying the first tool's uuid (renderToolGroup),
+ *  which is the shape a card's anchor takes on a long turn (round one, medium 5): the head counts as a tool atom. */
+function firstTextAtomBelow(target: HTMLElement): HTMLElement | null {
+  if (!isToolOrThinkingAtom(target)) return null;
+  for (const n of turnAtomsOf(target).slice(1)) { const md = n.querySelector(".assistant.md"); if (md) return md as HTMLElement; }
+  return null;
+}
+/** A tool atom, a grouped run of them, or a thinking atom: the shapes a turn opens with before its words. */
+function isToolOrThinkingAtom(n: Element): boolean {
+  return n.classList.contains("turn-tool") || n.classList.contains("turn-toolgroup") || n.classList.contains("turn-thinking");
 }
 
 /** The time-only landing (see landActive): the event whose epoch sits nearest `t` among the
@@ -11382,7 +12990,7 @@ function landNearestMoment(t: number): boolean {
   if (best < 0) return false;
   const uuid = (s.events[best] as { uuid?: string }).uuid || "";
   const items = displayItems(s);
-  let u = items.findIndex((it) => it.kind === "toolgroup" || it.kind === "retrygroup" ? it.indices.includes(best) : it.index === best);
+  let u = items.findIndex((it) => it.kind === "toolgroup" || it.kind === "noticegroup" ? it.indices.includes(best) : it.kind === "event" && it.index === best);
   if (u < 0) u = Math.max(0, items.findIndex((it) => itemFirstEvent(it) >= best));
   const working = s.status.state === "working" || s.status.state === "compacting";
   renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working);
@@ -11391,7 +12999,7 @@ function landNearestMoment(t: number): boolean {
   if (!target) { landTrail.push("time-nearest-miss"); return false; }
   landTrail.push("time-nearest");
   landOn(target as HTMLElement, uuid || undefined);
-  const beforeHead = headEp != null && t < headEp && (s.headFrom ?? 0) > 0;
+  const beforeHead = headEp != null && t < headEp && olderOnServer(s);
   landToast(beforeHead
     ? "that link points at a moment before the loaded history — landed at the oldest loaded message"
     : "that link points at a time, not a message — landed at the closest one");
@@ -11405,9 +13013,10 @@ function landNearestMoment(t: number): boolean {
 // one-shot: when a jump also switches tabs, the tab bar re-renders (possibly
 // wrapping to a SECOND row) and the ledger box for the new session appears — both
 // AFTER the scroll ran. #content shrinks by that growth and the landed turn drifts
-// off its mark. So: re-align whenever the bar/ledger actually resizes, plus two
-// timed retries for late layout (images, markdown), for ~1.2s — canceled the
-// moment the user wheel-scrolls so we never fight a real gesture.
+// off its mark. So the landing SETTLES (landing-settle.ts, the block below): for ~1.2 s every event that can move the
+// target is a sample (the target's or a spacer's box, the boxes above the transcript, any other writer, the first paint
+// and the window's end), a sample off the row re-lands, and the landing yields only to the reader's own gesture, a
+// scroll with their input behind it; the row is filed when the settle ends, with the measured distance.
 // The supporting SPAN (T218): the distiller quoted the sentence its takeaway rests on, the kernel
 // located it in the cited atom, and the landing highlights it INSIDE the (often long, multi-topic)
 // message — the study's most common partial was the right message with the claim buried deep. The
@@ -11415,19 +13024,29 @@ function landNearestMoment(t: number): boolean {
 // never mutated (the click-safety family); a browser without it, or an unfindable quote, keeps
 // today's whole-message landing exactly (the honest-fallback rule).
 let pendingAnchorQuote: string | null = null;
-function highlightCiteSpan(target: HTMLElement, quote: string): void {
+/** Highlight the quoted sentence within the anchor's TURN (its element and the atoms after it, turnAtomsOf: a card's anchor is
+ *  the turn's first atom, the words it quotes may be a later one, T386) and return the element the sentence starts in, for
+ *  the landing to align on; null when the quote is not in the rendered text (no highlight, no guess) or the browser has no
+ *  highlight API. The landing itself is landOn's (one write, settled), no longer a second write from here. */
+function highlightCiteSpan(target: HTMLElement, quote: string): HTMLElement | null {
   try {
     const H = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
-    if (!H || typeof Highlight === "undefined") return;
-    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+    if (!H || typeof Highlight === "undefined") return null;
+    // the words are looked for in the turn's TEXT atoms first, then in its tool and thinking atoms (round one, low 3): a
+    // sentence written through a Write tool and then said in prose must land on the prose, where the card quoted it
+    const atoms = turnAtomsOf(target);
+    const ordered = [...atoms.filter((a) => !isToolOrThinkingAtom(a)), ...atoms.filter((a) => isToolOrThinkingAtom(a))];
     const nodes: Text[] = []; let full = "";
-    for (let n = walker.nextNode(); n; n = walker.nextNode()) { nodes.push(n as Text); full += (n as Text).data; }
+    for (const atom of ordered) {
+      const walker = document.createTreeWalker(atom, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) { nodes.push(n as Text); full += (n as Text).data; }
+    }
     let at = full.indexOf(quote);
     let len = quote.length;
     if (at < 0) {
       const pat = new RegExp(quote.trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"), "i");
       const m = pat.exec(full);
-      if (!m) return;                                    // unfindable in the rendered text → no highlight, no guess
+      if (!m) return null;                               // unfindable in the rendered text → no highlight, no guess
       at = m.index; len = m[0].length;
     }
     const range = document.createRange();
@@ -11438,36 +13057,175 @@ function highlightCiteSpan(target: HTMLElement, quote: string): void {
       if (started && at + len <= end) { range.setEnd(tn, at + len - pos); break; }
       pos = end;
     }
-    if (!started) return;
+    if (!started) return null;
     H.set("cite-span", new (Highlight as unknown as { new(...r: Range[]): unknown })(range));
     window.setTimeout(() => { try { H.delete("cite-span"); } catch { /* gone with a nav */ } }, 6000);
-    const el0 = range.startContainer.parentElement;
-    const content0 = document.getElementById("content");
-    if (el0 && content0) scrollElInto(content0, el0, "center", "land-on");   // land ON the sentence, not the message top (attributed, T262j)
-  } catch { /* highlight is chrome, never load-bearing */ }
+    return range.startContainer.parentElement;
+  } catch { return null; /* highlight is chrome, never load-bearing */ }
 }
 
-function landOn(target: HTMLElement, flashKey?: string) {
+// ── a landing SETTLES before it is called good (T386 stage 1, the user 2026-09-12) ──────────────────────────────────
+// The landing audit had filed a card click's landing as exact while the reader saw the view elsewhere: the landing write
+// put the target at the viewport top, and a write of the page's own then moved it. The served lab named the writer
+// (tests/test_landing_settles_browser.py): the run's REPLACE by the window shrank the transcript, and the follow-mode
+// snap (tail-shrink) wrote the reader back to the bottom, because the landing had left `stick` on; the 250 ms re-align
+// rescued the lab, and the reader's first wheel cancels that re-align. Two things follow. A landing ENDS follow mode
+// unless it put the reader at the bottom (below). And the landing keeps the target aligned until the transcript stops
+// moving under it (landing-settle.ts, the rule): every event that can move the target is a sample (the target's or a
+// spacer's box resizing, the boxes above the transcript resizing, ANY other writer moving #content, two bounded
+// timers); a sample off the row re-lands ("land-realign"); the landing row is filed when the settle ends, with the
+// measured distance and whether it settled, so `ok` alone is never again the whole verdict. One settle in flight: a
+// newer landing supersedes the older's. The walk-forward of a detached window that fits the viewport waits for it.
+let landSettling: { turn: HTMLElement; at: HTMLElement; uuid: string | null; quote: string | null; rowH: number; samples: SettleSample[]; start: number;
+                    gesture: boolean; row: Record<string, unknown> | null; ro: ResizeObserver | null; timers: number[]; done: boolean; clamp: number } | null = null;
+const afterSettle: (() => void)[] = [];   // what waits for the landing to settle (the window's edge check)
+/** When the reader last put a hand on the scroller (ms): a pointer down or a drag on it or its scrollbar, a touch, a wheel, or a
+ *  key outside an editable field. The scroll listener reads it: a gesture-classified scroll within SETTLE_INPUT_MS of it is the
+ *  reader's takeover; one without is the browser's anchoring or another mover, a sample (round two, medium). */
+let settleLastInput = 0;
+/** The pointer HELD on the scroller itself (round three): a scrollbar thumb drag is one pointerdown on the scroller and then
+ *  scrolls with NO pointer moves until the release, so the timed evidence alone undid a grab-then-move drag (the pause past
+ *  SETTLE_INPUT_MS made every scroll a sample, and land-realign wrote the reader back). While the hold stands every scroll is
+ *  the reader's, whatever the clock says; the timed window stays for wheels, keys, touches and drags inside the content. */
+let settleScrollerHeld = false;
+/** The reader's input over #content, for the landing settle (T386): stamps settleLastInput for a wheel, a touch, a key outside an
+ *  editable field or a pointer, and holds settleScrollerHeld while the scrollbar is grabbed. (The older edge's evidence map and its
+ *  latch that once read these inputs retired with the loading pill.) */
+function settleInput(e: Event): void {
+  const c = document.getElementById("content");
+  if (e.type === "pointerup" || e.type === "pointercancel") { settleScrollerHeld = false; return; }
+  if (e.type === "keydown") {
+    const a = document.activeElement;
+    if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT" || (a as HTMLElement).isContentEditable)) return;   // typing scrolls the field, not #content
+  } else {
+    if (e.type === "pointermove" && !(e as PointerEvent).buttons) return;   // a hover is not a hand on the scroller; a drag inside the content is
+    if (!c || !(e.target instanceof Node) || !c.contains(e.target)) return;   // the scroller and its scrollbar (its own box), nothing else
+    if (e.type === "pointerdown") {
+      const pe = e as PointerEvent, cr = c.getBoundingClientRect();
+      if (scrollerGrab(e.target === c, pe.clientX - cr.left, pe.clientY - cr.top, c.clientWidth, c.clientHeight)) settleScrollerHeld = true;
+    }
+  }
+  settleLastInput = Date.now();
+}
+for (const ev of ["pointerdown", "pointermove", "pointerup", "pointercancel", "touchstart", "touchmove", "wheel", "keydown"]) window.addEventListener(ev, settleInput, { capture: true, passive: true });
+// a page put behind another mid-press gets neither pointerup nor pointercancel from Chromium (round four, low 1): the hold ends
+// with the page's focus or visibility as well
+window.addEventListener("blur", () => { settleScrollerHeld = false; });
+document.addEventListener("visibilitychange", () => { settleScrollerHeld = false; });
+function settleEnd(s: NonNullable<typeof landSettling>): void {
+  s.done = true; s.ro?.disconnect(); s.ro = null;
+  for (const t of s.timers) clearTimeout(t);
+  if (landSettling === s) landSettling = null;
+}
+/** A newer landing takes over before this one settled: its deferred row is FILED, not dropped (round one, medium 2: the
+ *  user's own double click lost its first row in the very machinery built to diagnose it), as it stood, with the mark. */
+function settleSupersede(s: NonNullable<typeof landSettling>): void {
+  settleEnd(s);
+  if (s.row) vscodeApi?.postMessage({ ...s.row, ...settleRowFields("gave-up", s.samples, s.rowH), gesture: undefined, settled: false, superseded: true, ...(s.clamp ? { clamp: s.clamp } : {}) });   // superseded, not the reader's takeover
+}
+/** The reader took over: a scroll the classifier calls a gesture (never a write's echo) WITH the reader's input behind it (a
+ *  wheel, a scrollbar drag, a touch swipe, a key; settleInput, round two): the landing yields (round one, medium 1: only a
+ *  wheel or a key ended it before, so a scrollbar drag during the settle was undone by the re-land). */
+function settleGesture(): void { const s = landSettling; if (s && !s.done) { s.gesture = true; settleTick(); } }
+/** The anchor's element by uuid in the active view: the selectors scrollToAnchor lands by. */
+function findTurnEl(uuid: string): HTMLElement | null {
+  const v = activeId ? views.get(activeId) : null; if (!v) return null;
+  const u = cssEscape(uuid);
+  return (v.el.querySelector(`.turn[data-uuid="${u}"]`) || v.el.querySelector(`.turn[data-orphan-of="${u}"]`) || v.el.querySelector(`.turn[data-mid="${u}"]`)
+          || v.el.querySelector(`.turn[data-mids~="${u}"]`) || v.el.querySelector(`.turn[data-uuids~="${u}"]`)) as HTMLElement | null;
+}
+/** The element a settling landing aligns on, re-resolved by uuid when a rebuild replaced the DOM under it (the virtualiser's
+ *  rewindow after a far landing detaches the old nodes; a detached box measures as zeros, which read as a constant miss and
+ *  walked the view up one tab bar's height per re-land in the lab). null when the anchor's turn is gone from the view. */
+function settleResolve(s: NonNullable<typeof landSettling>): HTMLElement | null {
+  // a connected element with a box: measurable. A detached one (the rewindow replaced the DOM) or one with no box (the view
+  // hidden by a tab switch mid-settle: display none measures as zeros, round one low 4) is re-found by uuid, and a turn that
+  // still has no box is treated as gone
+  if (s.at.isConnected && s.at.getClientRects().length) return s.at;
+  const turn = s.uuid ? findTurnEl(s.uuid) : null;
+  if (!turn || !turn.getClientRects().length) return null;
+  s.turn = turn;
+  s.at = (s.quote ? highlightCiteSpan(turn, s.quote) : null) ?? firstTextAtomBelow(turn) ?? turn;
+  s.rowH = settleRowHeight(s.at);   // the swapped element's own row (round one, low 1)
+  s.ro?.observe(s.at); if (s.at !== turn) s.ro?.observe(turn);
+  return s.at;
+}
+/** The row the landing must sit within: the aligned element's own height, capped at a fraction of the viewport (round one,
+ *  low 1: a 600 px miss on a 900 px message read settled), never under a few pixels (withinRow's floor). */
+function settleRowHeight(at: HTMLElement): number {
+  const c = document.getElementById("content");
+  return Math.max(8, Math.min(at.getBoundingClientRect().height, (c ? c.clientHeight : 600) * SETTLE_ROW_VIEWPORT_CAP));
+}
+function settleLand(s: NonNullable<typeof landSettling>, writer: string): void {
+  const c = document.getElementById("content"); const at = settleResolve(s);
+  if (c && at) scrollElInto(c, at, "start", writer);
+}
+function settleFinish(s: NonNullable<typeof landSettling>, fields: { dist: number | null; settled: boolean }): void {
+  settleEnd(s);
+  if (s.row) vscodeApi?.postMessage({ ...s.row, ...fields, ...(s.clamp ? { clamp: s.clamp } : {}) });
+  const q = afterSettle.splice(0);
+  for (const f of q) f();
+}
+/** One measurement of the target against the spot it CAN reach, then the rule's step. Near the tail the scroll clamp stops
+ *  the target short of the viewport top (round one, medium 3: a correct landing within a viewport of the tail read dist 93,
+ *  settled false, and re-landed no-op writes for the whole window); the reachable offset is subtracted, and the row carries
+ *  it as `clamp` so the reader of the audit knows why the target sits where it does. */
+function settleSample(): void {
+  const s = landSettling; if (!s || s.done) return;
+  const c = document.getElementById("content"); if (!c) return;
+  const at = settleResolve(s);
+  if (!at) { settleFinish(s, { dist: null, settled: false }); return; }   // the turn left the view: nothing to align, the row says so
+  const cr = c.getBoundingClientRect(), r = at.getBoundingClientRect();
+  const floor = reachableOffset(r.top - cr.top + c.scrollTop, c.scrollHeight, c.clientHeight);
+  s.clamp = floor;
+  s.samples.push({ at: Date.now() - s.start, dist: (r.top - cr.top) - floor });
+  settleTick();
+}
+function settleTick(): void {
+  const s = landSettling; if (!s || s.done) return;
+  const step = settleStep(s.samples, s.rowH, s.gesture, Date.now() - s.start);
+  if (step === "wait") return;
+  if (step === "realign") { settleLand(s, "land-realign"); return; }
+  settleFinish(s, settleRowFields(step, s.samples, s.rowH));
+}
+function landOn(target: HTMLElement, flashKey?: string, alignOn?: HTMLElement | null, quote?: string | null) {
   // the land and its re-alignments are writes of #content like any other, attributed (T262j): "land-on" for the
-  // landing itself, "land-realign" for each re-land while the boxes above size in
-  const land = (writer: string) => { const c = document.getElementById("content"); if (c) scrollElInto(c, target, "start", writer); };
-  const realign = () => land("land-realign");
+  // landing itself, "land-realign" for each re-land while the transcript settles under it. `alignOn` (T386): the element
+  // whose top goes to the viewport top when it is not the turn's own (the quoted span, or a turn's text below a tool
+  // group); `quote` re-finds that span after a rebuild; the turn is still what flashes
+  const at = alignOn ?? target;
+  settleLastInput = 0; settleScrollerHeld = false;   // the input that caused this landing (a click on a link in the scroller) is not evidence for taking it over (round three, low 4); a hold whose release never reached the page (a press held across an alt-tab) does not outlive the landing (round four, low 1)
+  const land = (writer: string) => { const c = document.getElementById("content"); if (c) scrollElInto(c, at, "start", writer); };
   land("land-on");
+  // a landing is the reader's intent to be AT this message: follow mode ends unless the landing put them at the bottom
+  // (the follow-mode snap otherwise writes them back to the bottom on the next shrink, the T386 double click)
+  { const c = document.getElementById("content"); const v = activeId ? views.get(activeId) : null; if (c && v) v.stick = atBottom(c); }
   if (flashKey == null || flashKey !== flashedAnchor) {   // one flash per navigation (see flashedAnchor)
     if (flashKey != null) flashedAnchor = flashKey;
-    target.classList.add("anchor-flash");
-    setTimeout(() => target.classList.remove("anchor-flash"), 1700);
+    at.classList.add("anchor-flash");                     // the ALIGNED element flashes: the turn may sit above the viewport when the words are aligned (round one, low 2)
+    setTimeout(() => at.classList.remove("anchor-flash"), 1700);
   }
-  const until = Date.now() + 1200;
-  let ro: ResizeObserver | null = null;
-  const stop = () => { ro?.disconnect(); ro = null; window.removeEventListener("wheel", stop); };
+  if (landSettling) settleSupersede(landSettling);   // a newer landing supersedes the older's settle: its row is filed as it stood, marked
+  const landSettle = { turn: target, at, uuid: flashKey ?? null, quote: quote ?? null, rowH: settleRowHeight(at), samples: [] as SettleSample[],
+                       start: Date.now(), gesture: false, row: null as Record<string, unknown> | null, ro: null as ResizeObserver | null, timers: [] as number[], done: false, clamp: 0 };
+  landSettling = landSettle;
   if (typeof ResizeObserver === "function") {
-    ro = new ResizeObserver(() => { if (Date.now() < until) realign(); else stop(); });
+    const ro = new ResizeObserver(() => settleSample());
+    ro.observe(at); if (at !== target) ro.observe(target);
     for (const id of ["tabbar", "ledger"]) { const c = document.getElementById(id); if (c) ro.observe(c); }
+    const v = activeId ? views.get(activeId) : null;
+    if (v) for (const sp of Array.from(v.el.querySelectorAll(".tx-spacer"))) ro.observe(sp);
+    landSettle.ro = ro;
   }
-  window.addEventListener("wheel", stop, { passive: true });
-  setTimeout(() => { if (ro && Date.now() < until + 100) realign(); }, 250);
-  setTimeout(() => { if (ro) realign(); stop(); }, 1200);
+  // the reader's takeover reaches settleGesture through the scroll listener: the classifier's gesture verdict with the reader's
+  // input behind it (settleInput: pointer, touch, wheel or key; round two)
+  // two bounded backstops beside the event samples (round one, low 5): the first paint after the landing's own render, and the
+  // window's end, where the landing is filed as it stands (settled on its row, else unsettled; nothing settles early, round two
+  // low 1). Every other sample is an event: a box resizing, another writer's move, a scroll with no input behind it
+  landSettle.timers.push(window.setTimeout(settleSample, SETTLE_FIRST_PAINT_MS), window.setTimeout(settleSample, SETTLE_MS + 20));
+  // the landing's own first sample, at the write (round two), is taken by the caller once the row is attached (landActive): taken
+  // here, an unmeasurable target finished the settle inside landOn with no row to file, and the caller then posted a row with no
+  // dist or settled key, the shape the audit reserves for an older bundle (round three, low 1)
 }
 
 
@@ -11497,18 +13255,7 @@ function landToast(msg: string) {
 // additive noise-removal, not a key the rest of the UI loses — and overlay consumers
 // that capture Escape (the lightbox, the viewer) still peel first by construction.
 function warnToast(msg: string): HTMLElement {
-  let box = document.getElementById("warn-toasts");
-  if (!box) {
-    box = el("div", "");
-    box.id = "warn-toasts";
-    document.body.appendChild(box);
-    box.addEventListener("click", (e) => {
-      (e.target as HTMLElement | null)?.closest(".warn-toast")?.remove();
-    });
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") for (const w of Array.from(box!.children)) w.remove();
-    });
-  }
+  const box = ensureToastBox();
   const t = el("div", "warn-toast");
   const txt = el("span", "warn-toast-msg");
   txt.textContent = msg;
@@ -11523,18 +13270,45 @@ function warnToast(msg: string): HTMLElement {
   setTimeout(() => t.remove(), 12000);
   return t;   // the toast, for a caller that marks it (ephemeralWarnToast)
 }
-// A toast the page that follows a reload must not repeat. The staged sends' refusal ("Can't send yet") reports a STATE:
-// the session's host is unreachable (hostIsDown, a remote host's tunnel) or its tab is still being created
-// (isProvisionalId). The fresh page shows that state for itself (the host mark and the staged strip; a provisional tab
-// does not survive a reload), so replayed by persistNoticesForReload it would be redundant at best and stale at worst.
-// The mark keeps it out of the replay (reload-notices.ts liveNotices reads only the toasts without it). Toasts that
-// report what HAPPENED to a send or a file stay unmarked, since what they say is as true after the reload as before:
-// the nack (the attachment was not saved, the held message not sent), the dismissal and the other-tab ack (the held
-// message not sent). On this fork the refusal on a disconnected host (this message was not sent and is still in the
-// composer, romp is re-dialing) is marked too (the 2026-09-09 fold; offered upstream as their #1270): it is true on the
-// page that raised it and false on the page that follows, since the core's restart reload fires from the reopened socket,
-// so replayed it would tell a connected page it is disconnected.
+function ensureToastBox(): HTMLElement {
+  let box = document.getElementById("warn-toasts");
+  if (!box) {
+    box = el("div", "");
+    box.id = "warn-toasts";
+    document.body.appendChild(box);
+    box.addEventListener("click", (e) => {
+      (e.target as HTMLElement | null)?.closest(".warn-toast")?.remove();   // the Copy button stops its own click short of here
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") for (const w of Array.from(box!.children)) w.remove();
+    });
+  }
+  return box;
+}
+// A toast the page that follows a reload must not repeat: a refusal that reports a STATE rather than an event. The
+// staged sends' "Can't send yet" says the session's host is unreachable (hostIsDown, a remote host's tunnel) or its tab
+// is still being created (isProvisionalId); the plain send's refusal on a disconnected host (sendComposer's deliver)
+// says the same host is unreachable and that romp is re-dialing it; the send into a tab whose create failed (deliver
+// too) says the session never started; the staging refusals (stageComposer) say a picker is waiting on the composer,
+// an edit of a past message is in progress or attachments are on the composer; the branch jump's
+// refusal (branchjump) says the session is not on this dashboard. The fresh page shows each state for itself (the host
+// mark and the transcript foot, from the kernel's tunnel health, which the page reads afresh into a disconnected set
+// that starts empty; the staged strip; the picker, the attachments and the roster come back from the kernel and the
+// persisted drafts, the refused message among them) or no longer has it (a provisional tab, pending or failed, does not
+// survive a reload; composerEdits and the in-place queued editors are in memory alone, so no edit is in progress on a fresh page, and a
+// "send again" there would post the words as a new message), so kept by persistNoticesForReload and shown again by the
+// page that follows, it would be redundant at best and false at worst; a replay also posts no redial, so the
+// disconnected-host refusal's "re-dialing now" would not be true there. The mark keeps it out of the replay
+// (reload-notices.ts liveNotices reads only the toasts without it).
+// Toasts that report what HAPPENED to a send or a file stay unmarked, since what they say is as true after the reload
+// as before: the nack (the attachment was not saved, the held message not sent), the dismissal and the other-tab ack
+// (the held message not sent).
 function ephemeralWarnToast(msg: string): void { warnToast(msg).dataset.ephemeral = "1"; }
+// The same toast for a CONFIRMATION (review 2026-09-14): the warn toast's border is the error colour, so a routine
+// "done" on it read as a failure. Dressed .note (styles.css: the standard hairline, no tint), otherwise the warn toast's
+// mechanics, the ✕, Esc, the fade and the reload-skip mark, since what it confirms is a state the fresh page reads
+// for itself. For an act that succeeded, never a refusal: those stay warnings.
+function ephemeralNoteToast(msg: string): void { const t = warnToast(msg); t.classList.add("note"); t.dataset.ephemeral = "1"; }
 
 // Tail-windowing (see the View comment): a fresh/rewound view renders only the
 // last WINDOW_TAIL events; scrolling within EXPAND_TRIGGER_PX of the top reveals
@@ -11575,8 +13349,11 @@ function ensureView(id: string): View {
     // tail unit re-rendering shorter outside the append path — moves the transcript's bottom UP, and the browser
     // clamps scrollTop to the new maximum on its own: an unwritten move the follow-mode latch never saw. When the
     // view's RECORDED follow mode held (`stick`, the pre-change truth), the reader is written to the new bottom
-    // through writeScroll — where the clamp left them, so nothing moves twice, but the move is the pane's own,
-    // attributed in the journal, and the latch re-reads from a real scroll event. A scrolled-up reader is untouched.
+    // through writeScroll — where the clamp left them, so nothing moves twice. This write cannot CLAIM the clamp's move:
+    // it writes scrollHeight, the value the clamp already set, and the scroll steps that classify the clamp's event run
+    // before the ResizeObserver steps of the same frame, so the row for that move is the clamp's (a gesture unless a
+    // writer with a pre-change origin claimed it, as the append path does); what this write keeps is the view's saved
+    // position and the latch's record for the next frame. A scrolled-up reader is untouched.
     if (typeof ResizeObserver === "function") {
       let lastH = -1;                                        // -1 = not yet measured (observe fires once on attach)
       const view = v;                                        // the closure's own binding (the outer `v` is a let)
@@ -11680,40 +13457,20 @@ function syncViewInner(id: string, atBottom?: boolean): View {
   // (the user 2026-06-19). Idempotent: leaves an existing placeholder in place; the first real event clears it.
   if (s.events.length === 0) {
     const only = v.el.childNodes.length === 1 ? (v.el.firstChild as HTMLElement) : null;
-    // …and rebuild a placeholder whose STARTING loader outlived its create (the failure flips it to
-    // the couldn't-start notice below — the spinning loader would be a lie on a failed tab)
-    const staleStart = !!only && only.classList?.contains("tx-starting") && failedProvisionals.has(id);
-    if (!only || !only.classList?.contains("tx-empty") || staleStart) {
+    // The placeholder is rebuilt when its KIND changes (pane-placeholder.ts): a viewer's loader gives way to the kernel's
+    // error sentence, the stall past the wait, or "written nothing yet"; a starting tab's loader to the couldn't-start
+    // notice (its create failed); the same kind twice is left alone (no churn on repeated pushes that stay empty).
+    const kind = placeholderKind({ sub: s.sub, failedRevive: failedRevives.get(id) || null,
+                                   provisional: isProvisionalId(id), provisionalFailed: failedProvisionals.has(id) });
+    if (!only || !only.classList?.contains("tx-empty") || !placeholderStands(only, kind)) {
       while (v.el.firstChild) v.el.removeChild(v.el.firstChild);
       const ph = el("div", "tx-empty"); v.el.appendChild(ph);
-      // A PROVISIONAL tab is not empty, it is STARTING — so it wears the romp loader (the repo's rule for
-      // any wait), not the placeholder that tells you to send something. The composer below it is live
-      // either way: anything typed here is held and flushed when the session lands. A FAILED create's
-      // tab says what happened instead (the user 2026-08-08) — the loader would be a lie.
-      if (failedRevives.has(id)) {
-        ph.textContent = failedRevives.get(id) || "";
-        ph.classList.add("tx-revive-failed");
-      } else if (s.sub && s.sub.error) {
-        // the kernel could not open the agent's file: its sentence, loud, in the pane (never a blank)
-        ph.textContent = s.sub.error;
-        ph.classList.add("tx-revive-failed");
-      } else if (s.sub && !s.sub.loaded) {
-        // the viewer's first frame is in flight → the romp loader holds the pane (the wait-state rule)
-        ph.classList.add("tx-starting");
-        ph.appendChild(rompLoaderInner("opening the agent's transcript…"));
-      } else if (s.sub) {
-        ph.textContent = "This agent has written nothing yet.";
-      } else if (isProvisionalId(id) && failedProvisionals.has(id)) {
-        ph.textContent = "This session couldn't start. What you typed is kept in the box below; "
-          + "✕ on the tab discards both.";
-      } else if (isProvisionalId(id)) {
-        ph.classList.add("tx-starting");
-        const sw = el("img", "tx-starting-swirl") as HTMLImageElement;
-        sw.src = mediaSrc("romp-swirl-glyph.svg"); sw.alt = ""; sw.onerror = () => sw.remove();
-        const wm = el("div", "tx-starting-msg");
-        wm.textContent = "Starting " + s.name + "… you can type now; romp sends it when it's up.";
-        ph.append(sw, wm);
-      } else ph.textContent = "No messages yet.";
+      fillPlaceholder(ph, kind, {
+        el, loader: rompLoaderInner, button: () => document.createElement("button"), br: () => document.createElement("br"),
+        swirl: () => { const sw = el("img", "tx-starting-swirl") as HTMLImageElement; sw.src = mediaSrc("romp-swirl-glyph.svg"); sw.alt = ""; sw.onerror = () => sw.remove(); return sw; },
+        text: { error: s.sub?.error, failedRevive: failedRevives.get(id), stall: subagentStallText(), sessionName: s.name },
+        onRetry: () => askSubagent(id),
+      });
     }
     v.rendered = 0; v.stale = false; v.winStart = 0; v.winEnd = 0;
     return v;
@@ -11785,16 +13542,19 @@ function syncViewInner(id: string, atBottom?: boolean): View {
   const unitOf = (n: ChildNode): number =>
     n instanceof HTMLElement && n.dataset.unit != null ? Number(n.dataset.unit) : -1;
   while (v.el.lastChild && unitOf(v.el.lastChild) >= from) v.el.removeChild(v.el.lastChild);
+  const walk = dayWalkBeforeEvent(s.events, from);   // the day walk's high-water mark up to here (T339)
   for (let i = from; i < len; i++) {
-    const prev = prevTimedEpoch(s.events, i);
+    const prev = prevTimedEpoch(s.events, i);   // the rail's raw previous epoch (the same-minute rule)
     const ep = eventEpoch(s.events[i]);
     if (ep != null) {   // a day boundary opens with its divider here too, or the tail append would drop it
-      const dv = dayDividerFor(ep, prev);
+      const dv = dayDividerFor(ep, walk);
       if (dv) { dv.dataset.unit = String(i); v.el.appendChild(dv); }
     }
     const node = renderEvent(s.events[i], prev, turnWorkedSecs(s.events, i, working));
     node.dataset.unit = String(i);   // unit === event in normal mode
     v.el.appendChild(node);
+    walk.pass(ep);
+    stampWalkDay(node, walk);
   }
   patchWorkedFooters(v, s, from, working);
   v.winEnd = total; v.spacerCount = v.winStart ?? 0; v.spacerCountBot = 0; v.unitTotal = total; v.rendered = len;
@@ -11843,6 +13603,44 @@ function prevTimedEpoch(events: ChatEvent[], i: number): number | null {
   return null;
 }
 
+// The epoch a display unit leaves the day walk on (T339): a lone event its own; a notice run its ANCHOR member (the
+// latest, compact.ts itemAnchor); a tool run its first member when collapsed and, when expanded, its HIGH-WATER member
+// (appendItem passes every row of an expanded run, and the walk never rewinds, so the run leaves it on its latest
+// member whatever order the rows came in; the last member only when the run is in order, the review's find). One rule
+// for the walk and for a window's seed, so a window opening mid-transcript decides its first divider as a walk from the
+// top would have.
+function unitExit(s: Session, it: DisplayItem): number | null {
+  if (it.kind === "gap") return null;   // empty space leaves the day walk where it was
+  if (it.kind === "event") return eventEpoch(s.events[it.index]);
+  if (it.kind === "noticegroup") return eventEpoch(s.events[itemAnchor(it, (i) => eventEpoch(s.events[i]))]);
+  const open = openFolds.has(toolGroupKey(s.events[it.indices[0]]));
+  if (!open) return eventEpoch(s.events[it.indices[0]]);
+  let mx: number | null = null;
+  for (const i of it.indices) { const ep = eventEpoch(s.events[i]); if (ep != null && (mx == null || ep > mx)) mx = ep; }
+  return mx;
+}
+// The day the WALK is in at a row (T342, the manager's review of T339): the top-of-view day-context label
+// (paintRailSticky) read the top row's own epoch, so a stale echo at the top line said "2 days ago" between rows the
+// divider walk keeps under one "Yesterday". Every turn a walk appends carries the walk's mark after its unit as
+// data-day on its marker; the label reads that, and the rail's HH:MM stays the row's own. A divider or an untimed
+// row has no marker and is left alone.
+function stampWalkDay(node: HTMLElement, walk: DayWalk): void {
+  const m = node.firstChild as HTMLElement | null;
+  if (walk.mark != null && m && m.nodeType === 1 && m.classList && m.classList.contains("time-marker")) m.dataset.day = String(walk.mark);
+}
+// the day walk's high-water mark a walk from the top would hold before unit `unitStart` (compact units) …
+function dayWalkBefore(s: Session, items: DisplayItem[], unitStart: number): DayWalk {
+  const w = new DayWalk();
+  for (let u = 0; u < unitStart && u < items.length; u++) w.pass(unitExit(s, items[u]));
+  return w;
+}
+// … and before event `i` in normal mode, where every unit is one event
+function dayWalkBeforeEvent(events: ChatEvent[], i: number): DayWalk {
+  const w = new DayWalk();
+  for (let j = 0; j < i && j < events.length; j++) w.pass(eventEpoch(events[j]));
+  return w;
+}
+
 // ── Unified bidirectional virtualization (the user 2026-06-25) ─────────────────────────────────────────
 // Both modes render a window of UNITS [winStart, winEnd): a unit is one event (normal) or one folded
 // compactDisplay item (compact). The hidden head [0, winStart) collapses into a TOP spacer and the hidden
@@ -11854,14 +13652,52 @@ function prevTimedEpoch(events: ChatEvent[], i: number): number | null {
 // The display units for the current mode: every event as its own pass-through (normal), or the folded
 // compactDisplay stream (compact). O(events), cheap (array ops, no DOM).
 function displayItems(s: Session): DisplayItem[] {
+  let out: DisplayItem[];
   if (!settings.compact) {
-    const out: DisplayItem[] = [];
+    out = [];
     for (let i = 0; i < s.events.length; i++) out.push({ kind: "event", index: i });
-    return out;
+  } else {
+    out = compactDisplay(s.events.map((e) => e.kind), s.events.map((e) => e.kind === "tool" ? e.name : undefined), s.events.map(isFoldableNotice));
   }
-  return compactDisplay(s.events.map((e) => e.kind), s.events.map((e) => e.kind === "tool" ? e.name : undefined));
+  return withGapItems(s, out);
 }
-function itemFirstEvent(it: DisplayItem): number { return it.kind === "toolgroup" || it.kind === "retrygroup" ? it.indices[0] : it.index; }
+// T386 stage 2: the history the page does not hold is GAPS between its runs (and before the first), each a display unit of its own
+// placed before the first item of the run below it (`before`: that run's first event index in s.events, the runs' events being
+// s.events in turn order, the tail run last). Without regions (an index session, a head reached at the boot) the list is as before.
+function withGapItems(s: Session, items: DisplayItem[]): DisplayItem[] {
+  const rs = s.regions;
+  if (!rs || !rs.some((r) => r.kind === "gap")) return items;
+  const out: DisplayItem[] = [];
+  let evIdx = 0, ii = 0;
+  for (const r of rs) {
+    if (r.kind === "gap") { out.push({ kind: "gap", lo: r.lo, hi: r.hi, before: evIdx }); continue; }
+    if (r.hi == null) break;                                   // the tail run: everything left is its own
+    const end = evIdx + r.events.length;
+    while (ii < items.length && itemFirstEvent(items[ii]) < end) out.push(items[ii++]);
+    evIdx = end;
+  }
+  while (ii < items.length) out.push(items[ii++]);
+  return out;
+}
+/** The regions' events as one list in turn order (the runs' events, the tail run last): s.events is always this. */
+function eventsFromRegions(s: Session): void {
+  const rs = s.regions;
+  if (!rs) return;
+  const out: ChatEvent[] = [];
+  for (const r of rs) if (r.kind === "run") for (const e of r.events) out.push(e as ChatEvent);
+  s.events = out;
+}
+/** The tail run takes whatever s.events holds past the history runs (a chatTail truncated and appended, an optimistic echo
+ *  injected): the runs' events are s.events, so the tail's slice is the rest. */
+function regionsAbsorbTail(s: Session): void {
+  const rs = s.regions;
+  if (!rs) return;
+  let n = 0;
+  for (const r of rs) if (r.kind === "run" && r.hi != null) n += r.events.length;
+  const tail = rs.find((r): r is Run => r.kind === "run" && r.hi == null);
+  if (tail) tail.events = s.events.slice(n);
+}
+function itemFirstEvent(it: DisplayItem): number { return it.kind === "toolgroup" || it.kind === "noticegroup" ? it.indices[0] : it.kind === "gap" ? it.before : it.index; }
 
 // The display-unit index of the most recent compaction boundary in the loaded events, or 0 if none. The
 // default render window opens at (never below) this unit so pre-compaction history is scrubbed from the
@@ -11877,52 +13713,73 @@ function lastCompactUnit(s: Session, items: DisplayItem[]): number {
 }
 
 // Append one display unit's DOM to v.el (a turn, or a folded toolgroup + its expansion), tagging every node
-// with data-unit = u for the scroll↔unit map. Returns the advanced prevEpoch.
-function appendItem(v: View, s: Session, items: DisplayItem[], u: number, prevEpoch: number | null, working: boolean): number | null {
+// with data-unit = u for the scroll↔unit map. Returns the advanced prevEpoch (the rail's raw chain, for the same-minute
+// rule); `walk` is the day walk's high-water mark, advanced over the unit's exit (unitExit) and never rewound (T339).
+function appendItem(v: View, s: Session, items: DisplayItem[], u: number, prevEpoch: number | null, walk: DayWalk, working: boolean, turns: number[] | null = null): number | null {
   const it = items[u];
-  const tag = (node: HTMLElement): HTMLElement => { node.dataset.unit = String(u); return node; };
+  const nodes: HTMLElement[] = [];   // every node this unit appends: stamped with the walk's day on the way out (T342)
+  const stamped = new Set<HTMLElement>();   // …unless stamped mid-unit: an expanded tool run's rows, each in its own day
+  // …and with the unit's absolute TURN (T386 stage 2, round six): a row names its own place in the transcript, so the fill's
+  // point-naming reads the row, never a uuid lookup into s.events, which a row anchored on a tool_result uuid (an answered
+  // AskUserQuestion) or a word key can never satisfy; turn numbers are the kernel's and do not move when a gap fills
+  const f0 = it.kind === "gap" ? -1 : itemFirstEvent(it);
+  const turnOf = turns && f0 >= 0 && f0 < turns.length ? String(turns[f0]) : null;
+  const tag = (node: HTMLElement): HTMLElement => { node.dataset.unit = String(u); if (turnOf != null) node.dataset.turn = turnOf; nodes.push(node); return node; };
   const adv = (i: number) => { const ep = eventEpoch(s.events[i]); if (ep != null) prevEpoch = ep; };
   // A new day opens with its divider, above whatever unit starts that day (tagged with the same
-  // data-unit so the scroll↔unit map still resolves every node it walks).
-  const dayOpen = eventEpoch(s.events[itemFirstEvent(it)]);
+  // data-unit so the scroll↔unit map still resolves every node it walks). The unit is placed and timed by its ANCHOR
+  // member (compact.ts itemAnchor, T339): a run's latest member, the one in sequence with its neighbours, never a member
+  // stamped earlier than the rows around it.
+  if (it.kind === "gap") { v.el.appendChild(tag(gapElement(s, it, v))); return prevEpoch; }   // empty space: no divider, no epoch (T386 stage 2)
+  const anchor = itemAnchor(it, (i) => eventEpoch(s.events[i]));
+  const dayOpen = eventEpoch(s.events[anchor]);
   if (dayOpen != null) {
-    const dv = dayDividerFor(dayOpen, prevEpoch);
+    const dv = dayDividerFor(dayOpen, walk);
     if (dv) v.el.appendChild(tag(dv));
   }
   if (it.kind === "toolgroup") {
     const first = s.events[it.indices[0]];
     const key = toolGroupKey(first);
     const tools = it.indices.map((i) => s.events[i]) as Extract<ChatEvent, { kind: "tool" }>[];
-    const open = expandedGroups.has(key);
-    v.el.appendChild(tag(renderToolGroup(tools, prevEpoch, key, open)));
+    const open = openFolds.has(key);
+    const head = tag(renderToolGroup(tools, prevEpoch, key, open));
+    v.el.appendChild(head);
     adv(it.indices[0]);
     if (open) {   // expanded → the GROUPED TOOLS, each as its normal turn. Compact mode hides thinking
       // everywhere, so the expansion must too: iterate it.indices (the tools only), NOT the contiguous
       // start..end span, which would surface the thinking that sat between the tools (the user 2026-06-29).
       // it.indices already excludes thinking — compactDisplay skipped it while building the run.
+      // The head is timed by the FIRST member and each row by its own, so the walk passes them one by one and stamps
+      // each with the day it is in THERE (T342 review): a run spanning midnight otherwise put today's mark on
+      // yesterday's rows, and the day label over its 23:58 head went blank.
+      walk.pass(eventEpoch(first)); stampWalkDay(head, walk); stamped.add(head);
       it.indices.forEach((i, j) => {
         const child = renderEvent(s.events[i], prevEpoch, turnWorkedSecs(s.events, i, working));
         child.classList.add("tg-child"); if (j === it.indices.length - 1) child.classList.add("tg-last");
         v.el.appendChild(tag(child)); adv(i);
+        walk.pass(eventEpoch(s.events[i])); stampWalkDay(child, walk); stamped.add(child);
       });
     }
-  } else if (it.kind === "retrygroup") {
-    const notes = it.indices.map((i) => s.events[i]) as Extract<ChatEvent, { kind: "retried" }>[];
-    const key = retryGroupKey(notes[0]);
-    const open = expandedGroups.has(key);
-    v.el.appendChild(tag(renderRetryGroup(notes, prevEpoch, key, open)));
-    adv(it.indices[0]);
+  } else if (it.kind === "noticegroup") {
+    const notes = it.indices.map((i) => s.events[i]);
+    const key = noticeGroupKey(notes[0]);
+    const open = openFolds.has(key);
+    v.el.appendChild(tag(renderNoticeGroup(notes, s.events[anchor], prevEpoch, key, open)));   // timed by the anchor member (T339)
+    adv(anchor);
     if (open) {
       it.indices.forEach((i, j) => {
         const child = renderEvent(s.events[i], prevEpoch, turnWorkedSecs(s.events, i, working));
         child.classList.add("tg-child"); if (j === it.indices.length - 1) child.classList.add("tg-last");
         v.el.appendChild(tag(child)); adv(i);
       });
+      adv(anchor);   // the walk leaves the run on its latest member, whatever order its members came in
     }
   } else {
     v.el.appendChild(tag(renderEvent(s.events[it.index], prevEpoch, turnWorkedSecs(s.events, it.index, working))));
     adv(it.index);
   }
+  walk.pass(unitExit(s, it));   // a no-op for an expanded tool run (every row already passed): one rule with dayWalkBefore
+  for (const n of nodes) if (!stamped.has(n)) stampWalkDay(n, walk);
   return prevEpoch;
 }
 
@@ -11935,12 +13792,24 @@ function renderWindowItems(v: View, s: Session, items: DisplayItem[], unitStart:
   while (v.el.firstChild) v.el.removeChild(v.el.firstChild);
   if (unitStart > 0) v.el.appendChild(el("div", "tx-spacer tx-spacer-top"));
   let prevEpoch = unitStart > 0 && unitStart < total ? prevTimedEpoch(s.events, itemFirstEvent(items[unitStart])) : null;
-  for (let u = unitStart; u < unitEnd; u++) prevEpoch = appendItem(v, s, items, u, prevEpoch, working);
+  const walk = dayWalkBefore(s, items, unitStart);   // the mark a walk from the top would hold here (T339)
+  const turns = s.regions ? turnOfEvents(s) : null;   // once per paint: every row it appends names its turn (round six)
+  for (let u = unitStart; u < unitEnd; u++) prevEpoch = appendItem(v, s, items, u, prevEpoch, walk, working, turns);
   if (unitEnd < total) v.el.appendChild(el("div", "tx-spacer tx-spacer-bot"));
   v.winStart = unitStart; v.winEnd = unitEnd;
   v.spacerCount = unitStart; v.spacerCountBot = total - unitEnd; v.unitTotal = total;
   v.rendered = s.events.length;
+  // a gap unit's height is its own estimate, not the average row (T386 stage 2): the spacers and the scroll→unit map read it
+  const gu = new Map<number, number>();
+  for (let u = 0; u < total; u++) { const it = items[u]; if (it.kind === "gap") gu.set(u, gapHeight(it, v.pxPerTurn)); }   // per TURN, not per display unit (medium 2)
+  v.gapUnits = gu.size ? gu : undefined;
   sizeSpacers(v);
+}
+/** The estimated height of the units [from, to): a gap its own, every other unit the measured average. */
+function hiddenHeight(v: View, from: number, to: number, avg: number): number {
+  let h = 0;
+  for (let u = from; u < to; u++) h += v.gapUnits?.get(u) ?? avg;
+  return Math.max(0, Math.round(h));
 }
 
 // Size the head/tail spacers to (hidden-unit count × avg rendered row height) so the scrollbar spans the
@@ -11954,14 +13823,24 @@ function sizeSpacers(v: View): void {
   if (v.avgTurnH == null) {
     let h = 0, n = 0;
     for (const c of Array.from(v.el.children) as HTMLElement[]) {
-      if (c.classList.contains("tx-spacer")) continue;
+      if (c.classList.contains("tx-spacer") || c.classList.contains("tx-gap")) continue;   // the gap's own estimate must not feed the average that sizes it (T386 stage 2, medium 3)
       h += c.offsetHeight; n++;
     }
     if (h > 0 && n > 0) v.avgTurnH = h / n;
   }
+  if (v.pxPerTurn == null) {   // px per TURN (a gap counts turns, not display units): total rendered height over the rendered turns (a user row starts each)
+    let h = 0, turns = 0;
+    for (const c of Array.from(v.el.children) as HTMLElement[]) {
+      if (c.classList.contains("tx-spacer") || c.classList.contains("tx-gap") || !c.classList.contains("turn")) continue;   // only turn rows: cards and dividers are not turn content (round five)
+      h += c.offsetHeight;   // the whole row, action strip included: a gap stands for rows as they will render, and every user row carries the strip (the regions lab's sizing road: without it the gap ran 16 percent short)
+      if (c.classList.contains("turn-user")) turns++;
+    }
+    if (h > 0 && turns > 0) v.pxPerTurn = h / turns;
+  }
   const avg = v.avgTurnH ?? 60;
   const topBefore = top ? (parseFloat(top.style.height) || 0) : 0, botBefore = bot ? (parseFloat(bot.style.height) || 0) : 0;
-  const topAfter = top ? Math.max(0, Math.round((v.spacerCount ?? 0) * avg)) : 0, botAfter = bot ? Math.max(0, Math.round((v.spacerCountBot ?? 0) * avg)) : 0;
+  const total = v.unitTotal ?? ((v.spacerCount ?? 0) + (v.spacerCountBot ?? 0));
+  const topAfter = top ? hiddenHeight(v, 0, v.spacerCount ?? 0, avg) : 0, botAfter = bot ? hiddenHeight(v, total - (v.spacerCountBot ?? 0), total, avg) : 0;
   if (top) top.style.height = topAfter + "px";
   if (bot) bot.style.height = botAfter + "px";
   // a spacer re-size is a layout change above or below the reader that no pane write accompanies; the browser's
@@ -11980,7 +13859,12 @@ function unitAtScroll(v: View, content: HTMLElement): number {
   const yOf = (e: HTMLElement) => e.getBoundingClientRect().top - cTop + st;   // position in scroll space
   const top = v.el.querySelector(".tx-spacer-top") as HTMLElement | null;
   const topH = top ? top.offsetHeight : 0;
-  if (st < topH) return Math.max(0, Math.floor(st / avg));   // in the top spacer
+  if (st < topH) {   // in the top spacer: walk the hidden units by their own heights (a gap's estimate, else the average)
+    if (!v.gapUnits) return Math.max(0, Math.floor(st / avg));
+    let y = 0;
+    for (let u = 0; u < (v.winStart ?? 0); u++) { y += v.gapUnits.get(u) ?? avg; if (st < y) return u; }
+    return Math.max(0, (v.winStart ?? 1) - 1);
+  }
   let lastUnit = v.winStart ?? 0;
   for (const c of Array.from(v.el.children) as HTMLElement[]) {
     if (c.classList.contains("tx-spacer")) continue;
@@ -12000,10 +13884,20 @@ function unitAtScroll(v: View, content: HTMLElement): number {
 // Stable identity for a collapsed tool run (survives rebuilds) = the first tool's uuid (else its epoch).
 function toolGroupKey(first: ChatEvent): string { return "tg:" + (first.uuid || String(eventEpoch(first) ?? "")); }
 
-// A collapsed run of consecutive tool uses → one rail line: a caret + "3 Edits, 2 Reads" with each
-// tool word bold (matching the non-compact .tool-name, so it reads AS tools). Clicking the line toggles
-// expand → the full non-compact cards (the user 2026-06-14). Carries the rail dot + time-marker + hover
-// wiring like any event so it anchors on the timeline; the dot is a green ✓ disc, red ✗ if any errored.
+// A collapsed run of consecutive tool uses → one rail line: a caret + the head in the user's terms (T418, the user 2026-09-14,
+// the desktop app's shape): "Ran 11 commands, read 4 files, edited 3 files, created 2 files" with the edits' totals ONCE at the
+// end in the diff colours (+37 -0). Clicking the line toggles expand → the full non-compact rows (the user 2026-06-14). Carries
+// the rail dot + time-marker + hover wiring like any event so it anchors on the timeline; the dot is a green ✓ disc, red ✗ if any
+// errored.
+/** The edits' totals of a head, summed over every edit in the group, appended once in the diff colours. */
+function appendTotals(line: HTMLElement, add: number, del: number): void {
+  if (!add && !del) return;
+  const tot = el("span", "tool-totals");
+  const plus = el("span", "tool-plus"); plus.textContent = "+" + add;
+  const minus = el("span", "tool-minus"); minus.textContent = "-" + del;
+  tot.append(" ", plus, " ", minus);
+  line.appendChild(tot);
+}
 function renderToolGroup(tools: Extract<ChatEvent, { kind: "tool" }>[], prevEpoch: number | null, key: string, open: boolean): HTMLElement {
   const turn = el("div", "turn turn-toolgroup" + (open ? " expanded" : ""));
   const anyErr = tools.some((t) => t.isError);
@@ -12011,15 +13905,17 @@ function renderToolGroup(tools: Extract<ChatEvent, { kind: "tool" }>[], prevEpoc
   if (anyErr) d.classList.add("err");
   turn.appendChild(d);
   const line = el("div", "toolgroup-line");
-  line.title = open ? "click to collapse" : "click to expand";
+  // the toggle rides the document.body delegate (data-act=noticetoggle + data-gkey → toggleToolGroup), never
+  // a per-node listener: the tail rebuilds every push, and a rebuilt line ate a mid-press click
+  line.dataset.act = "noticetoggle"; line.dataset.gkey = key;
+  setTip(line, open ? "click to collapse" : "click to expand");
   const caret = el("span", "toolgroup-caret"); caret.textContent = open ? "▾" : "▸"; line.appendChild(caret);
-  if (!open) {   // collapsed → the "3 Edits, 2 Reads" summary; expanded → just the open arrow (the cards say it)
-    toolCounts(tools.map((t) => t.name)).forEach((c, i) => {
-      line.appendChild(document.createTextNode((i ? ", " : " ") + c.count + " "));
-      const w = el("span", "toolgroup-tool"); w.textContent = c.label; line.appendChild(w);   // bold, like .tool-name
-    });
+  if (!open) {   // collapsed → the head by ACTION in the user's terms (T418, the user 2026-09-14, who wanted the rows to read as the desktop app's do): the phrases ordered by the number each prints, the edits' totals once at the end; expanded → just the open arrow (the rows say it)
+    const parts = actionParts(tools);
+    line.appendChild(document.createTextNode(" "));
+    const w = el("span", "toolgroup-head"); w.textContent = parts.text; line.appendChild(w);   // the phrases; the summed totals follow once, in the diff colours
+    appendTotals(line, parts.add, parts.del);
   }
-  line.addEventListener("click", (e) => { e.stopPropagation(); toggleToolGroup(key); });
   turn.appendChild(line);
   const epoch = eventEpoch(tools[0]);
   const anchorUuid = tools[0].uuid ?? null;
@@ -12031,43 +13927,64 @@ function renderToolGroup(tools: Extract<ChatEvent, { kind: "tool" }>[], prevEpoc
   return turn;
 }
 
-// A collapsed run of consecutive retry-recovery notes (T131 follow-up; the user 2026-08-27,
-// seventeen consecutive rows) → one rail line in the same fold grammar as the tool runs: caret +
-// "Recovered after retries ×N", expanding to the individual notes. Key rides expandedGroups like
-// a toolgroup, so the same toggle, persistence-across-rebuilds, and popover-flip machinery apply.
-function retryGroupKey(first: ChatEvent): string { return "rg:" + (first.uuid || String(eventEpoch(first) ?? "")); }
-function renderRetryGroup(notes: Extract<ChatEvent, { kind: "retried" }>[], prevEpoch: number | null, key: string, open: boolean): HTMLElement {
-  const turn = el("div", "turn turn-toolgroup turn-retrygroup" + (open ? " expanded" : ""));
-  turn.appendChild(dot("ring"));
-  const line = el("div", "toolgroup-line");
-  line.title = open ? "click to collapse" : "click to expand";
-  const caret = el("span", "toolgroup-caret"); caret.textContent = open ? "▾" : "▸"; line.appendChild(caret);
-  if (!open) {
-    const w = el("span", "retried-text");
-    w.textContent = ` Recovered after retries ×${notes.length}`;
-    line.appendChild(w);
+// A collapsed run of ≥2 consecutive LOW-STAKES notices (compact.ts noticegroup, 2026-09-08 — generalising
+// the T131 retry-run fold, seventeen consecutive recovery rows): one slim notice head in the vocabulary,
+// "▸ <glyph of the first> <SOURCE> · N notices · <first gist>", expanding to the individual notices. The
+// key rides openFolds like a toolgroup, so the same toggle, persistence-across-rebuilds and popover-flip
+// machinery apply. Which kinds fold is compact.ts's call (isFoldableNotice feeds it).
+function noticeGroupKey(first: ChatEvent): string { return "ng:" + (first.uuid || String(eventEpoch(first) ?? "")); }
+// true for the kinds compact mode may sweep into a noticegroup — the low-stakes, self-similar rows (a
+// recovery, an effort change, a model swap, a reload, an interrupt + its settle, a background report, a
+// system reminder, a romp notice); peers, API errors, compaction/clear boundaries, asks, to-dos and every
+// bubble stay standalone (they are either owed a reply or mark a boundary)
+function isFoldableNotice(ev: ChatEvent): boolean { return isFoldableNoticeShape(ev as any); }   // the one reading lives in compact.ts (shared with the reveal progress count)
+// the head words of a foldable notice, as its own renderer would show them (the gist helpers are shared)
+function noticeBrief(ev: ChatEvent): { src: string; glyph: NoticeGlyphKind; gist: string } {
+  if (ev.kind === "retried") return { src: "API", glyph: "retry", gist: retriedGist(ev.retries || 0) };
+  if (ev.kind === "effortApplied") return { src: "session", glyph: "power", gist: `effort set to ${ev.effort}` };
+  if (ev.kind === "modelFallback") return { src: "safeguards", glyph: "api", gist: modelFallbackGist(ev) };
+  if (ev.kind === "reconnecting") return { src: "session", glyph: "power", gist: reconnectingGist(ev.effort) };
+  if (ev.kind === "assistant") return { src: "session", glyph: "session", gist: SETTLE_GIST };
+  if (ev.kind === "user") {
+    if ((ev as any).interruptMarker) return { src: "session", glyph: "session", gist: interruptGist((ev as any).interruptCause) };
+    if ((ev as any).rompSystem) {
+      const text = (ev.md || "").replace(/<!--[\s\S]*?-->/g, "").replace(/^\s*\[romp\]\s*/i, "").trim();
+      return { src: "romp", glyph: "romp", gist: ev.gist ? String(ev.gist) : gistOf(text) };
+    }
+    if (ev.source) { const { label, glyph } = injectedSrc(ev.source as InjectedSource); return { src: label, glyph, gist: injectedHead(ev.source as InjectedSource).head }; }
   }
-  line.addEventListener("click", (e) => { e.stopPropagation(); toggleToolGroup(key); });
-  turn.appendChild(line);
-  const epoch = eventEpoch(notes[0]);
-  const anchorUuid = notes[0].uuid ?? null;
+  return { src: "session", glyph: "session", gist: "" };
+}
+// `anchor` is the member the run is placed and timed by (compact.ts itemAnchor, T339): its latest, the one in sequence
+// with the rows around it. The head's rail time, data-t, uuid and hover wiring all read it; the words (the source, the
+// glyph, the first gist) stay the first member's, which is what the run reads as.
+function renderNoticeGroup(evs: ChatEvent[], anchor: ChatEvent, prevEpoch: number | null, key: string, open: boolean): HTMLElement {
+  const b = noticeBrief(evs[0]);
+  const turn = notice({ src: b.src, glyph: b.glyph, gist: `${evs.length} notices`, meta: open ? undefined : b.gist,
+                        group: { key, open }, cls: "turn-toolgroup turn-noticegroup" + (open ? " expanded" : ""),
+                        tip: open ? "click to collapse" : "click to expand" });
+  const epoch = eventEpoch(anchor);
+  const anchorUuid = anchor.uuid ?? null;
   if (anchorUuid) turn.dataset.uuid = anchorUuid;
   if (epoch != null) turn.dataset.t = String(epoch);
   if (epoch != null) turn.insertBefore(timeMarker(epoch, prevEpoch ?? null), turn.firstChild);
   const railDot = turn.querySelector(".dot") as HTMLElement | null;
-  if (anchorUuid || epoch != null) wireTurnHover(turn, railDot, anchorUuid, epoch ?? 0, notes[0].tlId ?? null);
+  if (anchorUuid || epoch != null) wireTurnHover(turn, railDot, anchorUuid, epoch ?? 0, anchor.tlId ?? null);
   return turn;
 }
 
 // Toggle a collapsed tool run open/closed and repaint the active view in place (scroll preserved).
 function toggleToolGroup(key: string): void {
-  if (expandedGroups.has(key)) expandedGroups.delete(key); else expandedGroups.add(key);
+  if (openFolds.has(key)) openFolds.delete(key); else openFolds.add(key);
   const content = document.getElementById("content");
   const top = content ? content.scrollTop : 0;
   // the expand/collapse changes the DOM without changing the event set, so mark the view stale to force
   // the compact rebuild past the cache guard (a plain tab switch leaves stale false → reuses the cache).
   if (activeId) { const v = views.get(activeId); if (v) v.stale = true; syncView(activeId); }
-  if (content) writeScroll(content, top, "toolgroup-toggle");
+  // `top` is also the write's origin: a collapse makes the transcript shorter, the browser clamps a bottom reader at the forced
+  // layout before this write runs, and a write that read the clamped value would move nothing, file no row and set no marker,
+  // leaving the clamp's own scroll event to file as a gesture (see writeScroll)
+  if (content) writeScroll(content, top, "toolgroup-toggle", false, top);
   refillOpenCommentPop();   // the popover renders the same units — its copy of this run must flip too
   scheduleRailSticky();
 }
@@ -12082,7 +13999,15 @@ function rerenderAll(): void {
   // (follow mode lands there); a hidden pane has nothing to keep either. showActive restores it after the land.
   const content = document.getElementById("content");
   const av = activeId ? views.get(activeId) : null;
-  const keep = av && av.shown && content && content.clientHeight > 0 && !atBottom(content) ? captureScrollAnchor(content, av) : null;   // follow mode: only a true tail-sitter lands at the bottom
+  const live = !!(av && av.shown && content && content.clientHeight > 0);
+  const bottom = live && atBottom(content!);
+  // Follow mode is re-derived from the true bottom HERE, before the clear (T262 review find, 2026-09-10): an
+  // emptied scroller reads as the bottom (reading scrollHeight forces layout and the browser clamps scrollTop to
+  // the new maximum, 0 once what is left of #content fits), so showActive's re-show rule would put a scrolled-up
+  // reader into follow mode, and the same frame's tail-shrink and box-below observers would then write them to
+  // the bottom over the anchor restored below. One read of the DOM drives both the flag and the keep.
+  if (live) av!.stick = reshowStick(av!.stick, bottom);
+  const keep = live && !bottom ? captureScrollAnchor(content!, av!) : null;   // follow mode: only a true tail-sitter lands at the bottom
   for (const v of views.values()) { while (v.el.firstChild) v.el.removeChild(v.el.firstChild); v.rendered = 0; v.stale = false; v.winStart = 0; v.winEnd = 0; v.avgTurnH = undefined; v.spacerCount = undefined; v.spacerCountBot = undefined; v.unitTotal = undefined; }
   showActive(keep);
   schedulePrebuild(); // rebuild every off-screen view in idle under the new setting, so switches stay instant
@@ -12111,8 +14036,14 @@ function turnWorkedSecs(events: ChatEvent[], i: number, working: boolean): numbe
 // the cached DOM is just revealed.
 // Tell the extension which tab is active, so it can publish it to the romp
 // timeline (which outlines the open lane). activeId may be null (no session).
+let activeTabNonce = 0;   // one per announcement (T416 round two): the kernel echoes it on the relayed activeChat frame, so the feed's pending record clears on the echo of its own switch and never on a stranger's
 function notifyActive() {
-  if (vscodeApi) vscodeApi.postMessage({ type: "activeTab", id: activeId });
+  const nonce = ++activeTabNonce;
+  const gesture = inInputEvent();   // the reader's own switch (a strip click, a hot key) passes the feed's hover-freeze; a kernel-driven one (a focus frame, a re-activation) defers there like a push
+  if (vscodeApi) vscodeApi.postMessage({ type: "activeTab", id: activeId, nonce });
+  // the same fact to the shell, which hands it to this page's feed pane (T416): the feed's current-session section
+  // moves on it without waiting for the kernel's relay of the post above, which then reconciles
+  try { if (window.parent && window.parent !== window) window.parent.postMessage({ romp: "activeTab", id: activeId, nonce, gesture }, "*"); } catch (e) { /* standalone page — no shell */ }
 }
 
 // Move id to the front of the recency stack (most-recently-active).
@@ -12164,14 +14095,21 @@ function schedulePrebuild(): void {
 function cancelPrebuild(): void {
   if (prebuildHandle != null) { cancelIdle(prebuildHandle); prebuildHandle = null; }
 }
-// The pane iframe is display:none (the phone shell parks off-screen panes that way) — the shim's own test,
-// mirrored, so the skeleton prefetch below never spends bytes on a pane nobody can see.
+// The pane iframe is display:none (the phone shell parks off-screen panes that way): the shim's own test, mirrored,
+// so the skeleton prefetch below never spends bytes on a pane nobody can see. Two witnesses, read as their union
+// (paint-gate.ts states the rule): the zero-viewport probe sees a pane hidden since load, and the word this page
+// publishes (window.__rompPaneHidden, chat-visibility.ts) sees one hidden after a first show, which in Chromium
+// keeps its size.
 function paneHidden(): boolean {
-  try { return window.parent !== window && (window.innerWidth === 0 || window.innerHeight === 0); } catch { return false; }
+  try { return (window.parent !== window && (window.innerWidth === 0 || window.innerHeight === 0)) || (window as PaneHiddenHost).__rompPaneHidden === true; } catch { return false; }
 }
 // The prefetch never runs while the browser tab is hidden (nextPrefetch); coming back is the event that re-arms
 // it. (A display:none pane has no event for its CSS flip — it re-arms on the next upsert / click instead.)
 document.addEventListener("visibilitychange", () => { if (!document.hidden) schedulePrebuild(); });
+// the rail's minute tick (T406, refreshRelativeMarkers above): armed once here for the page, re-armed by each fire; a
+// window shown again after minutes hidden catches its today labels up at once rather than at the next boundary
+setTimeout(railMinuteTick, 60000 - (Date.now() % 60000) + 50);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && activeId) refreshRelativeMarkers(views.get(activeId)?.el); });
 
 function runPrebuild(deadline: IdleDeadline): void {
   prebuildHandle = null;
@@ -12181,7 +14119,10 @@ function runPrebuild(deadline: IdleDeadline): void {
   // is already in flight (a 1 MB full ahead of the active tab's 2 KB tail on a slow link delays that tail;
   // one at a time bounds it). The upsert that lands it calls schedulePrebuild, so the chain re-arms itself
   // one tab per idle until the set is empty. A click always wins: same message, awaitingFull dedups.
-  const next = nextPrefetch(skeletonTabs, activeId, awaitingFull, document.hidden || paneHidden(), tabInView);
+  // …and never a tab the strip does not SHOW (the user 2026-09-14: hidden tabs are not built until shown): stripShowsTab is the strip's own
+  // visibility (tabInView for the views and another column's holds, the #only= filter, and a collapsed section's fold); a tab the filter
+  // reveals later is prefetched when the reveal re-arms this chain (onOnlyHashChange), or loads on the switch that shows it
+  const next = nextPrefetch(skeletonTabs, activeId, awaitingFull, document.hidden || paneHidden(), stripShowsTab);
   if (next) requestFullSession(next, "prefetch");
   const viewState = (id: string): ViewState | null => {
     if (skeletonTabs.ids.has(id)) return null;   // a skeleton's stale session must never get its DOM pre-built
@@ -12226,22 +14167,23 @@ function runPrebuild(deadline: IdleDeadline): void {
   renderingOwnerSid = savedOwnerSid;
 }
 
-// THE SECTION SNAPSHOT (tab-snapshot.ts owns the model; the user 2026-09-06). `snapView` is the section
-// the pane is showing — page state like the peek, never stored: a header click sets it (toggle-group),
-// any session pick clears it (setActive). The host is ONE stable node in #content, made once with its
-// delegate installed once (the click-safe rule: the rows are rebuilt from every push that changes one),
-// and `snapModel` is the last model painted — snapshotModel hands it back unchanged when no row differs,
-// and then only the "ago" texts are refreshed in place: no rebuild, nothing moves.
+// A SECTION AT A GLANCE (tab-snapshot.ts owns the model). `snapView` is the section the pane is showing:
+// page state like the peek, never stored. A header click sets it (the #tabs delegate's toggle-group), any
+// session pick clears it (setActive), Escape and the header's second click leave it (leaveSnapshot). The
+// host is ONE stable node under #content, made once with its delegate installed once (the click-safe rule:
+// the rows are rebuilt from every push that changes one), and `snapModel` is the last model painted:
+// snapshotModel hands it back unchanged when no row differs, and then only the "ago" texts are refreshed
+// in place, so a push that changed nothing moves nothing.
 let snapView: string | null = null;
 let snapModel: SnapModel | null = null;
-// The reader's place in the hidden transcript, held across the snapshot (the T249 fold, 2026-09-08). The host is a
-// child of #content, so while the snapshot shows the pane's scroll is the snapshot's, and the #content scroll
-// listener (scroll-keep.ts followReader, which makes the saved spot follow the reader) would record the reveal's
-// clamp and every scroll of a long snapshot as the ACTIVE view's saved spot; leaving the snapshot then landed at
-// the bottom or on the snapshot's offset instead of the line being read. Captured from the view once, in the
-// synchronous pass that hides the views (showActive's snapshot branch: the clamp's scroll event is only queued
-// by then, so the fields still hold the reader's spot); written back when the snapshot hides (hideSnapshot, every
-// exit path), before landActive reads the spot. The hide is the event; the listener keeps upstream's text.
+// The reader's place in the hidden transcript, held across the view. The host is a child of #content, so
+// while the view shows the pane's scroll is the view's, and the #content scroll listener (scroll-keep.ts
+// followReader, which makes the saved spot follow the reader) would record the reveal's clamp and every
+// scroll of a long list as the ACTIVE view's saved spot; leaving would then land at the bottom or on the
+// list's offset instead of the line being read. Captured from the view once, in the synchronous pass that
+// hides the views (showActive's branch: the clamp's scroll event is only queued by then, so the fields
+// still hold the reader's spot); written back when the view hides (hideSnapshot, every exit path), before
+// landActive reads the spot.
 let snapKeep: { v: View; scrollTop: number; stick: boolean } | null = null;
 // THE HIDDEN FOLD's open state (the user 2026-09-08): page state like snapView, never stored, PER SECTION (round 1
 // of the review: one page-wide bit opened the fold in every later section's snapshot too): the names of the
@@ -12274,12 +14216,12 @@ function snapshotHost(): HTMLElement | null {
   delegate(host, { open: once((node) => {
     const id = node.dataset.id;
     if (!id) return;
-    // A ROW WHOSE SESSION LEFT MID-PRESS (the round-2 review): click safety keeps the pressed row until the
-    // release, so a session dismissed between mousedown and mouseup is still under the click, and setActive
-    // on its id put up an "opening…" loader, composer enabled, for a session that never arrives (the strip's
-    // meta lingers until the next tabOrder frame). The row's session must still be on the strip
-    // (tab-snapshot-view.ts rowStillOpen); otherwise nothing moves. The removal is that frame's event, and
-    // the release's flush (releaseTabStrip → renderTabs → renderSnapshot) repaints the rows without it.
+    // A ROW WHOSE SESSION LEFT MID-PRESS: click safety keeps the pressed row until the release, so a session
+    // dismissed between mousedown and mouseup is still under the click, and setActive on its id would put up
+    // an "opening…" loader, composer enabled, for a session that never arrives (the strip's meta lingers
+    // until the next tabOrder frame). The row's session must still be on the strip (tab-snapshot-view.ts
+    // rowStillOpen); otherwise nothing moves. The removal is that frame's event, and the release's flush
+    // (releaseTabStrip → renderTabs → renderSnapshot) repaints the rows without it.
     if (!rowStillOpen(snapModel?.rows.find((r) => r.id === id), sessions.has(id), tabMeta.has(id), closingTabs.has(id))) return;
     setActive(id); focusActiveTab();
   }),
@@ -12297,29 +14239,35 @@ function snapshotHost(): HTMLElement | null {
     const h = document.getElementById("tab-snapshot");
     if (h && snapModel) syncHiddenFold(h, snapModel);
   }) });
-  // CLICK-SAFE (ui/CLAUDE.md; the 2026-09-06 review): the rows are rebuilt by renderTabs on every push that
-  // changes one, and a rebuild between mousedown and mouseup leaves the click with no row under it. A press
-  // on the snapshot latches the STRIP's hold (tabPointerHeld): renderTabs, and renderSnapshot's own rebuild,
-  // wait for the release (pointerup / pointercancel / blur on the window, releaseTabStrip's one path), and
-  // the deferred flush repaints the strip and the snapshot together. One latch for two surfaces one gesture
-  // can span (a press on a row that ends over the strip).
+  // CLICK-SAFE (ui/CLAUDE.md): the rows are rebuilt by renderTabs on every push that changes one, and a rebuild
+  // between mousedown and mouseup leaves the click with no row under it. A press on the view latches the
+  // STRIP's hold (tabPointerHeld): renderTabs, and renderSnapshot's own rebuild, wait for the release
+  // (pointerup / pointercancel / blur on the window, releaseTabStrip's one path), and the deferred flush
+  // repaints the strip and the view together. One latch for two surfaces one gesture can span.
   host.addEventListener("pointerdown", () => { tabPointerHeld = true; });
   return host;
+}
+/** The overview MODE's one switch (T322): the body carries the class (the footer hides by it, the Classic strip's active
+ *  tab is neutralised by it) and so does the strip itself, because the Yatharth theme's neutraliser is a tint rule and
+ *  every tint rule starts with the theme's body class (tab-theme.test.ts), so that rule reads the mode off #tabs. */
+function setSnapMode(on: boolean): void {
+  document.body.classList.toggle("snap-mode", on);
+  document.getElementById("tabs")?.classList.toggle("snap-mode", on);
 }
 function hideSnapshot(): void {
   const host = document.getElementById("tab-snapshot");
   if (host) host.style.display = "none";
+  setSnapMode(false);
   snapModel = null;
-  // the transcript comes back where the reader left it, not where the snapshot's scrolls put the spot (snapKeep)
+  // the transcript comes back where the reader left it, not where the view's scrolls put the spot (snapKeep)
   if (snapKeep) { snapKeep.v.scrollTop = snapKeep.scrollTop; snapKeep.v.stick = snapKeep.stick; snapKeep = null; }
 }
-/** Whether keyboard focus is on the snapshot (a row a keyboard user Tabbed or arrowed onto). THE EXIT HANDS
- *  FOCUS ON (the round-3 review): leaving the view hides the host (hideSnapshot, display none), and hiding the
- *  focused element drops focus to body (the browser's focus fixup); nothing put it anywhere, so the user's
- *  Escape left them on body, arrows and Enter dead until a click. The round-2 rule keeps focus across rows
- *  that change INSIDE the list, not across the view going away, and renderTabs' own refocus reads the strip,
- *  which the host (under #content) is not in. So each exit reads this BEFORE its hide, since after it
- *  activeElement is already body, and when it was on the snapshot hands focus to the active tab once the
+/** Whether keyboard focus is on the view (a row a keyboard user Tabbed or arrowed onto). THE EXIT HANDS
+ *  FOCUS ON: leaving hides the host (hideSnapshot, display none), and hiding the focused element drops focus
+ *  to body (the browser's focus fixup); nothing else would put it anywhere, so the user's Escape would leave
+ *  them on body, arrows and Enter dead until a click. The strip's own refocus reads the strip (bar.contains),
+ *  which the host, under #content, is not in. So each exit reads this BEFORE its hide, since after it
+ *  activeElement is already body, and when it was on the view hands focus to the active tab once the
  *  transcript is back: where the composer's own Escape puts it, and a row pick (tab mode: arrows switch
  *  sessions, Enter drops into the message box). Focus anywhere else is left alone. */
 function snapshotHoldsFocus(): boolean {
@@ -12362,8 +14310,8 @@ installSnapshotEscape(window, {
     || !!(document.getElementById("romp-fileview") || document.getElementById("romp-filebrowse") || document.getElementById("romp-lightbox")),
   leave: leaveSnapshot,
 });
-/** Paint (or refresh) the snapshot of `snapView`. False when that section is not on the strip any more —
- *  snapView is cleared and the caller shows the transcript; the section's absence is the event. */
+/** Paint (or refresh) the view of `snapView`. False when that section is not on the strip any more: snapView
+ *  is cleared and the caller shows the transcript; the section's absence is the event. */
 function renderSnapshot(): boolean {
   if (!snapView) return false;
   const head = lastStripItems.find((it): it is StripHead => "head" in it && it.head.name === snapView);
@@ -12372,7 +14320,7 @@ function renderSnapshot(): boolean {
   if (!host) return false;
   const now = Date.now() / 1000;
   // the plan's `hides` (the members hidden inside the section) ride the model: a row is hidden or shown by them
-  const next = snapshotModel({ ...head.head, hides: head.hides }, (id) => sessions.get(id) ?? null, (id) => ledgers.get(id) ?? null, snapModel);
+  const next = snapshotModel({ ...head.head, hides: head.hides }, (id) => sessions.get(id) ?? null, (id) => ledgers.get(id) ?? null, snapModel, (id) => tabMeta.get(id) ?? null);
   if (next === snapModel && host.childElementCount) {
     // nothing a row shows changed: the times tick in place, the DOM stands
     for (const w of host.querySelectorAll<HTMLElement>(".snap-when[data-t]")) {
@@ -12404,26 +14352,30 @@ function renderSnapshot(): boolean {
   let list = host.querySelector<HTMLElement>(":scope > .snap-list");
   if (!list) {
     const h = document.createElement("h2"); h.className = "snap-head";
-    // the heading's own bar (snap-swatch): the strip's header wears the tag CHIP since T251; this heading keeps
-    // its bar + name pair, whose parts the patch below rewrites in place (the rows' rule: nothing is remade)
-    const sw = el("span", "snap-swatch"); sw.setAttribute("aria-hidden", "true");
-    h.append(sw, el("span", "snap-name"), el("span", "snap-count"));
+    // the heading reads "Overview of <the tag's ordinary chip> <count>" (T322, the user 2026-09-10: a name beside a
+    // little colour bar was not it): the words, a slot the tag chip is placed in (tagChip, the same builder the
+    // strip's row and the tag menu use — never a chip rule of its own), and the count; the patch below rewrites
+    // the slot's chip and the count in place (the rows' rule: nothing else is remade)
+    const of = el("span", "snap-of"); of.textContent = "Overview of";
+    h.append(of, el("span", "snap-chip-slot"), el("span", "snap-count"));
     list = el("div", "snap-list"); list.setAttribute("role", "list");
     // THE HIDDEN FOLD: a real button for its head (data-act="toggle-hidden" on the host's delegate; Enter and
-    // Space are its own), the strip's caret glyph, the count, and the needs-you chip in the row's own red; its
-    // list is a second keyed list. Shown only while something is hidden (syncHiddenFold).
+    // Space are its own), the strip's caret glyph, the count, and the needs-you chip in the row's own red (the
+    // SHARED status chip's dress, .chip.chip-blocked, since T322b retired the pane's own outlined pill; the
+    // words stay this fold's, hiddenFoldWords); its list is a second keyed list. Shown only while something is
+    // hidden (syncHiddenFold).
     const fold = el("div", "snap-hidden");
     const fh = document.createElement("button"); fh.type = "button"; fh.className = "snap-hidden-head"; fh.dataset.act = "toggle-hidden";
     const caret = el("span", "tab-group-caret"); caret.textContent = "▸"; caret.setAttribute("aria-hidden", "true");
-    fh.append(caret, el("span", "snap-hidden-text"), el("span", "snap-flag needs snap-hidden-needs"));
+    fh.append(caret, el("span", "snap-hidden-text"), el("span", "chip chip-blocked snap-hidden-needs"));
     const hl = el("div", "snap-list snap-hidden-list"); hl.setAttribute("role", "list");
     fold.append(fh, hl);
     host.replaceChildren(h, list, fold);
   }
   const hlist = host.querySelector<HTMLElement>(".snap-hidden-list")!;
   const part = (cls: string) => host.querySelector<HTMLElement>(".snap-head > ." + cls)!;
-  part("snap-swatch").style.background = next.color || "";
-  part("snap-name").textContent = next.name;
+  const chip = tagChip(next.name, next.color, { inheritSize: true }); chip.classList.add("snap-chip");
+  part("snap-chip-slot").replaceChildren(chip);
   part("snap-count").textContent = words.count;
   // a MOVED row: insertBefore detaches and re-attaches its node, which blurs it (the browser's focus fixup); the
   // same event puts focus back on it (the strip's refocus rule, by node instead of by id). A row that CHANGED
@@ -12522,14 +14474,18 @@ function fillSnapshotRow(btn: HTMLElement, r: SnapRow, now: number): void {
   btn.setAttribute("aria-label", words.label);
   btn.title = words.title;
   btn.replaceChildren();
-  const pip = el("span", "snap-pip" + (r.pip ? " " + r.pip : "")); pip.setAttribute("aria-hidden", "true");
+  const pip = el("span", "snap-pip" + (r.pip ? " " + r.pip : "")); pip.setAttribute("aria-hidden", "true");   // a dot says nothing aloud: its phrase rides the label
   btn.appendChild(pip);
   const em = tabEmojiNode(r.emoji); if (em) btn.appendChild(em);
   const name = el("span", "snap-sess"); name.replaceChildren(...hostNameNodes(r.name, r.id));   // a remote "host:" prefix as quiet metadata, the tab's rule (host-prefix.ts), not part of the bold name
   if (r.color) name.style.color = r.color.bg;
   btn.appendChild(name);
-  if (r.needsYou) { const f = el("span", "snap-flag needs"); f.textContent = "needs you"; btn.appendChild(f); }
-  else if (r.waiting) { const f = el("span", "snap-flag"); f.textContent = "waiting"; btn.appendChild(f); }
+  // the state in words, when the row says one: the SHARED status chip (status-chip.ts), the same words and dress the
+  // bar under the transcript wears for the session you are reading — Blocked (API error when that is the state) on
+  // you, "Awaiting 3 agents" / "Awaiting watch" / the peer's name for background work (T322b, the user 2026-09-10:
+  // a grey outlined pill of the row's own reading "waiting" was not it). The model picks the chip (tab-snapshot.ts
+  // snapshotRow); the pip stays beside it: the strip's colour language says the state, the chip says what.
+  if (r.chip) btn.appendChild(statusChip(r.chip));
   if (r.todos) {
     const td = el("span", "snap-todo"); td.setAttribute("aria-hidden", "true");   // spoken by the label
     const g = el("span", "tab-usertodo"); g.textContent = "⚑"; td.appendChild(g);
@@ -12554,6 +14510,91 @@ function fillSnapshotRow(btn: HTMLElement, r: SnapRow, now: number): void {
 // `keep` (review find, 2026-09-08): a caller that must EMPTY the view before showing it (rerenderAll on a
 // settings change) captures the reader's anchor first and hands it here — by the time this runs there is
 // no DOM left to capture from and the emptied box no longer overflows. undefined = capture here.
+// The empty body's line (pane-focus.ts emptyStateParts, T357): which session vanished and why, its name dressed the way
+// the strip dresses it (host prefix, identity colour), "reconnecting" when its host is dialing; or the plain invitation.
+/** The strip's MEMBERSHIP: the ids renderTabs paints a tab for (the kernel's order, plus a pushed tab not yet in it, a
+ *  placeholder), less a tab the user just closed. One rule for the paint and for every restore's fire-time check (the
+ *  review of T357's later lows: the schedule read visibleIds, built over order AND tabMeta, while the timer read order
+ *  alone, so a placeholder-only tab painted while its restore declined). */
+function stripLists(id: string): boolean {
+  return !closingTabs.has(id) && (order.includes(id) || tabMeta.has(id));
+}
+/** The unfocused pane's restore of the tab it names or awaits (T357): only a tab the strip LISTS and SHOWS takes focus
+ *  back. A listed tab the view or the #only= filter hides leaves the pane unfocused with the name-free line (vanished as
+ *  "hidden"), and renderTabs's schedule restores it when the filter shows it again. The review measured the leak this
+ *  closes: applyTabOrder's restore had no visibility predicate, so every routine tabOrder push re-focused a filtered-out
+ *  session for one animation frame, its cached transcript on screen, before renderTabs's deferred unfocus put the body
+ *  back (1 frame of 70 per push). */
+function restoreIfShown(id: string): boolean {
+  if (!stripLists(id)) return false;
+  if (stripShows(id)) { setActive(id); return true; }
+  if (!activeId) { vanishedId = id; vanishedWhy = "hidden"; vanishedName = sessions.get(id)?.name || tabMeta.get(id)?.name || vanishedName || wantActiveName || ""; }
+  return false;
+}
+/** Does the strip show `id` right now: in the tab view (a peek counts) AND matching the `#only=` filter — the one
+ *  predicate renderTabs's visibleIds is built from, read again at fire time so a deferred check judges the strip as
+ *  it is, not as it was scheduled. `only` may be passed by a caller that read the hash once for many ids. */
+function stripShows(id: string, only: string | null = onlyTag()): boolean {
+  if (!tabInView(id)) return false;
+  return !only || matchesOnly(sessions.get(id)?.name ?? tabMeta.get(id)?.name ?? "", only);
+}
+
+// The strip's #only= filter stopped showing the active tab (T357, the review's probe: web persisted, `#only=api`, a
+// reload): the same rule as a dismissal — the pane goes UNFOCUSED naming the session the filter hides, its transcript
+// leaves the screen, and it never re-points itself at another session. renderTabs restores it when the filter shows
+// it again.
+function unfocusHiddenByView(id: string): void {
+  if (activeId !== id) return;
+  stashActiveDraft(id);
+  activeId = null; vanishedId = id; vanishedWhy = "hidden"; vanishedName = sessions.get(id)?.name || tabMeta.get(id)?.name || ""; vanishedByDecline = false;   // the user's own tab: no arrival may adopt over it
+  loadComposerFor(null);
+  renderTabs();
+  showActive();
+}
+function paintEmptyState(empty: HTMLElement): void {
+  const awaited = !vanishedId && wantActive ? wantActive : null;   // the persisted tab, not listed yet after a reload
+  const gone = !vanishedId && !awaited && wantActiveGone ? wantActiveGone : null;   // a persisted id that can never be listed again
+  const named = vanishedId || awaited || gone;
+  // a name over a raw sid on EVERY branch: the name carried, the persisted one, the strip's last known, else "a
+  // session" (the review's low: the dismissal branch fell to the id)
+  const nameOf = (id: string, carried = "") => carried || wantActiveName || tabMeta.get(id)?.name || sessions.get(id)?.name || "a session";
+  const v = vanishedId && vanishedWhy && vanishedWhy !== "close"
+    ? { name: nameOf(vanishedId, vanishedName), why: vanishedWhy, dialing: hostIsDialing(vanishedId), declined: vanishedByDecline }
+    : awaited ? { name: nameOf(awaited), why: "awaited" as const, dialing: hostIsDialing(awaited) }
+    : gone ? { name: nameOf(gone), why: "gone" as const, dialing: false }
+    : null;
+  const parts = emptyStateParts(v, order.length > 0);
+  empty.replaceChildren(document.createTextNode(parts.head));
+  if (parts.name != null) {
+    const b = el("b", "empty-state-name");
+    b.replaceChildren(...hostNameNodes(parts.name, named));
+    const c = named ? tabMeta.get(named)?.color?.bg : null;
+    if (c) b.style.color = c;
+    empty.appendChild(b);
+  }
+  empty.appendChild(document.createTextNode(parts.tail));
+  empty.classList.toggle("unfocused", !!v);
+  empty.dataset.vanished = named || "";
+}
+// The body's "reconnecting" is the federation manager's dial state: re-painted on its change event (the romp:hostDial
+// listener beside syncHostOfflineFoot calls this), so a redial that starts a moment after the paint says so (the
+// review), never a timer.
+function repaintEmptyStateIfUnfocused(): void {
+  if (activeId) return;
+  const e = document.getElementById("empty-state");
+  if (e) paintEmptyState(e);
+}
+
+/** From the unfocused pane a keyboard step lands on the first visible tab: a user gesture, allowed (the review's medium:
+ *  the cycle and the arrows returned early on no active tab, silently). */
+function pickFirstVisibleTab(): boolean {
+  if (activeId) return false;
+  const first = visibleOrder()[0];
+  if (!first) return false;
+  setActive(first);
+  return true;
+}
+
 function showActive(keep?: { uuid: string; y: number } | null) {
   const content = document.getElementById("content");
   if (!content) return;
@@ -12564,23 +14605,24 @@ function showActive(keep?: { uuid: string; y: number } | null) {
   renderLiveAsk(); // swap in the active session's pending picker (or hide if none)
   renderBgTasks(); // swap in the active session's background-task box (or hide if none)
   let empty = document.getElementById("empty-state");
-  // THE SECTION SNAPSHOT (the user 2026-09-06): while snapView names a section, the pane shows its
-  // sessions instead of any transcript — every view hidden, the composer disabled with a placeholder
-  // that says what to do (a message typed here has no session to go to), the statusline blank
-  // (updateStatusline). activeId is untouched: the kernel's active hint, the MRU and the drafts still
-  // point at the session being read, and its header wears the mark. renderSnapshot answers false when
-  // the section is gone from the strip (a tag deleted, its last member hidden) — then the transcript.
+  // A SECTION AT A GLANCE: while snapView names a section, the pane shows its sessions instead of any
+  // transcript: every view hidden, the composer disabled with a placeholder that says what to do (a message
+  // typed here has no session to go to), the statusline blank (updateStatusline). activeId is untouched: the
+  // kernel's active hint, the MRU and the drafts still point at the session being read, and its header wears
+  // the mark. renderSnapshot answers false when the section is gone from the strip (a tag deleted, its last
+  // member hidden): then the transcript.
+  const wasSnap = document.body.classList.contains("snap-mode");   // read before renderSnapshot's gone-section path can clear it
   if (snapView && renderSnapshot()) {
+    setSnapMode(true);   // the overview is a mode: the message box goes, no tab is selected (styles.css, T322)
     for (const v of views.values()) v.el.style.display = "none";
     // the reader's place (snapKeep; once per visit): the hide above only queues the clamp's scroll event, so the
     // view's fields still hold what the reader's last scroll recorded
     const av = activeId ? views.get(activeId) : null;
     if (av && !snapKeep) snapKeep = { v: av, scrollTop: av.scrollTop, stick: av.stick };
-    // THE ACTIVE CHANGED UNDER THE SNAPSHOT (the round-2 review, 2026-09-08): the session being read closed while
-    // the snapshot showed (dismissSession hands activeId to the MRU survivor and comes back here with snapView set),
-    // so the held spot names a view followReader no longer writes to. The old view gets its spot back and the new
-    // active's is held from now, read before the snapshot's next scroll event: leaving lands the survivor where its
-    // reader left it, not on the snapshot's offset or at the bottom. The active change is the event.
+    // THE ACTIVE CHANGED UNDER THE VIEW: the session being read closed while the view showed (dismissSession
+    // hands activeId to the MRU survivor and comes back here with snapView set), so the held spot names a view
+    // followReader no longer writes to. The old view gets its spot back and the new active's is held from now,
+    // read before the view's next scroll event: leaving lands the survivor where its reader left it.
     if (av && snapKeep && snapKeep.v !== av) {
       snapKeep.v.scrollTop = snapKeep.scrollTop; snapKeep.v.stick = snapKeep.stick;
       snapKeep = { v: av, scrollTop: av.scrollTop, stick: av.stick };
@@ -12593,6 +14635,11 @@ function showActive(keep?: { uuid: string; y: number } | null) {
     if (sendBtn) sendBtn.disabled = true;
     updateStatusline();
     return;
+  }
+  setSnapMode(false);   // a session's transcript: the message box and the selected tab are back
+  if (wasSnap) {   // the box was measured while the footer was display:none (a pick's draft swap): measure it now it has a layout box
+    const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+    if (ta) growComposer(ta);
   }
   hideSnapshot();
   const s = activeId ? liveSession(activeId) : null;
@@ -12613,34 +14660,52 @@ function showActive(keep?: { uuid: string; y: number } | null) {
       const what = meta?.name ? "“" + meta.name + "”" : (hostOf(activeId) ? "a session on " + hostOf(activeId) : "“session”");
       // A SKELETON active (2026-09-07) — a running session this page holds no current copy of — takes this
       // same branch: every view hidden, the loader up (this IS the click acknowledgement, before any kernel
-      // round trip), but it is LOADING, not opening: "opening" would claim a start that is not happening.
+      // round trip). The word: "opening" ONLY for a provisional tab (a session being created — the one start
+      // that is happening); every other tab whose payload has not landed — a skeleton, a placeholder the strip
+      // listed, a new split column's own session on its way, a federated id — is LOADING (the user 2026-09-11,
+      // who read a new column's "opening" as a session being created).
       const skeleton = skeletonTabs.ids.has(activeId);
       skeletonLoading = skeleton ? activeId : null;   // latched for upsert (see the declaration)
-      if (skeleton) wait.appendChild(rompLoaderInner("loading " + what + "…"));
-      else wait.appendChild(rompLoaderInner("opening " + what + "…"));
+      if (isProvisionalId(activeId)) wait.appendChild(rompLoaderInner("opening " + what + "…"));
+      else wait.appendChild(rompLoaderInner("loading " + what + "…"));
       content.appendChild(wait);
       if (empty) empty.style.display = "none";
+      // a pick that lands here from the section view (a row's "opening…" session): the view disabled the box
+      // with its own placeholder, and this branch never touched the composer, so the box takes input for the
+      // picked session again; the first session frame's showActive sets its closed/live state
+      const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+      if (ta) { ta.disabled = false; setComposerAskMode(); }   // the resting form, or the picker's answer form with its tint: one owner (2026-09-10)
+      const sendBtn = document.getElementById("composer-send") as HTMLButtonElement | null;
+      if (sendBtn) sendBtn.disabled = false;
       // …and ask for it NOW. Every path that lands on a skeleton active comes through here — the click
       // (setActive), the teardown's MRU fallback (dismissSession), a strip that re-lists the tab we are on
       // (noteSkeletonTabOrder) — and nothing else would load it: the idle prefetch skips the active tab by
       // design. AFTER notifyActive above, so `activeTab` precedes `needFull` on the wire and the kernel builds
       // this tab first; the awaitingFull guard makes it one ask per outstanding load.
       if (skeleton) requestFullSession(activeId, "skeleton-click");
-      // the composer follows the pick (the 2026-09-06 review): a snapshot row's "opening…" session, or a
-      // loading tab picked from a closed one, must not keep the last state's disabled box and its placeholder:
-      // the pick named THIS session. The box takes input for it now (a send carries the id the kernel
-      // already knows), and the first frame's showActive sets its closed/live state.
+    } else {
+      // UNFOCUSED, or no tab at all (T357): the body says which session vanished and that a pick is the way on; the
+      // box takes no input and names no session (a pick re-enables it: the skeleton branch above, or the session
+      // frame's own showActive through setComposerAskMode)
+      if (!empty) { empty = el("div", "empty-state"); empty.id = "empty-state"; content.appendChild(empty); }
+      paintEmptyState(empty);
+      empty.style.display = "";
       const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
-      if (ta) { ta.disabled = false; ta.placeholder = composerRestingPlaceholder(); }
+      if (ta) { ta.disabled = true; ta.placeholder = order.length ? "Pick a tab to start" : "Click + to add a session"; syncComposerPh(); }
       const sendBtn = document.getElementById("composer-send") as HTMLButtonElement | null;
-      if (sendBtn) sendBtn.disabled = false;
-    } else if (!empty) {
-      empty = el("div", "empty-state"); empty.id = "empty-state";
-      empty.textContent = "No session open — click + to add one.";
-      content.appendChild(empty);
-    } else { empty.style.display = ""; }
+      if (sendBtn) sendBtn.disabled = true;
+    }
     document.body.style.removeProperty("--active-accent"); // no session → neutral window border
     updateStatusline();
+    // Take the leaving tab's go-to-bottom and reply chips down with it. They were measured against ITS transcript,
+    // and a tab left at the top of a long one fires none of the chips' events on the switch: no scroll clamp
+    // (scrollTop is 0 and stays 0) and no #content resize (the pane's height is the body minus its siblings; hiding
+    // the views changes only its scroll extent). Left up, a stale chip is a click into the wrong tab: the reply
+    // chip's anchor is looked up in the entering tab's view and lands as the couldn't-locate toast when the full
+    // arrives. With no live session under the active tab, updateJumpBtn's gate hides its chip without a measure and
+    // re-reads the reply chips, whose own gate hides them and clears their signature. The branch's last statement,
+    // after its state is settled (skeleton-tabs-wiring.test.ts pins the order).
+    updateJumpBtn();
     return;
   }
   document.getElementById("tab-loading")?.remove();   // the payload landed — the real view takes over in place
@@ -12657,7 +14722,11 @@ function showActive(keep?: { uuid: string; y: number } | null) {
     const closed = s.status.state === "closed" && !failedProvisionals.has(activeId!);
     const viewer = !!s.sub;   // a SUBAGENT VIEWER is read-only by nature: there is no session behind it to message
     composer.disabled = closed || viewer;
-    composer.placeholder = closed ? "Session closed — read-only" : composerRestingPlaceholder();
+    // The placeholder and the "answering" tint have ONE owner (setComposerAskMode): this render used to write the
+    // resting form here and leave the tint, so the name overlay drew its named text over the tinted native text
+    // — two copies a hair apart, a blur (the user 2026-09-10). A closed session's box says so and answers nothing.
+    if (closed) { composer.placeholder = "Session closed — read-only"; composer.classList.remove("answering"); syncComposerPh(); }
+    else setComposerAskMode();
     const sendBtn = document.getElementById("composer-send") as HTMLButtonElement | null;
     if (sendBtn) sendBtn.disabled = closed || viewer;   // read-only session/viewer → the explicit send button is dead too
     // ONE read-only cue for the viewer: the statusline's dim line. The whole message box (input + send)
@@ -12668,6 +14737,7 @@ function showActive(keep?: { uuid: string; y: number } | null) {
   // tint the whole-window border with the active session's identity color
   if (s.color && s.color.bg) document.body.style.setProperty("--active-accent", s.color.bg);
   else document.body.style.removeProperty("--active-accent");
+  syncComposerPh();   // the box names the session it now messages, in that session's colour
   syncHostOfflineFoot();   // the tab we just switched to may sit on an unreachable host
   touchMru(activeId!); // record activation order so close returns to the previous tab
   const v = ensureView(activeId!);
@@ -12681,6 +14751,12 @@ function showActive(keep?: { uuid: string; y: number } | null) {
   // decision, and a restore over its landing would undo the jump the reader asked for (review find, 2026-09-08)
   const navigating = !!pendingAnchor || pendingAnchorT != null || (!!seek && seek.sid === activeId);
   const reshow = keepPlaceAcrossShow(v, v.el.style.display !== "none", content.clientHeight > 0, navigating);
+  // the true bottom decides follow mode at a re-show (T262): the recorded flag can lag the reader (a scroll
+  // that landed during a pending build is not recorded), and a stale `stick` sent a bottom reader to a saved
+  // spot a screen above on every full show — the snap-up the journal filed as `land-saved`
+  // (gated the way the keep below is: a caller that emptied the DOM first, rerenderAll, read the true bottom
+  // before the clear and hands its keep in; the emptied scroller here would read as the bottom for anyone)
+  if (reshow && keep === undefined) v.stick = reshowStick(v.stick, atBottom(content));
   const keepAnchor = reshow ? (keep !== undefined ? keep : (!atBottom(content) ? captureScrollAnchor(content, v) : null)) : null;   // follow mode: off the true bottom keeps its place
   // Bound the switch. A view the user scrolled to the top of has had its window expanded to the WHOLE
   // transcript (winStart crept to 0 via lazy-expand), and compact mode renders the whole folded stream —
@@ -12696,6 +14772,7 @@ function showActive(keep?: { uuid: string; y: number } | null) {
     v.rendered = 0; v.winStart = 0; v.avgTurnH = undefined; v.stick = true;   // → firstBuild rebuilds the tail, lands at bottom
   }
   for (const [vid, vv] of views) vv.el.style.display = vid === activeId ? "" : "none";
+  if (!reshow) refreshRelativeMarkers(v.el);   // a tab shown after minutes hidden: its today labels catch up before the eye lands (T406; the minute tick skips hidden tabs)
   renderSubHead();   // the viewer's header above its transcript (hidden for every real session)
   updateStatusline();
   // The transcript BUILD is the only expensive part of a switch. A view already built for the current
@@ -12716,11 +14793,7 @@ function showActive(keep?: { uuid: string; y: number } | null) {
     // deferred build replacing this view's children — the content event — and that build always
     // runs (or the next syncView rebuilds), so the loader cannot trap.
     const ld = el("div", "tx-loading");
-    const sw = document.createElement("img"); sw.className = "tx-loading-swirl";
-    sw.src = mediaSrc("romp-swirl-glyph.svg"); sw.alt = ""; sw.onerror = () => sw.remove();
-    const wm = el("span", "tx-loading-wordmark"); wm.textContent = "romp";
-    const dots = el("span", "tx-loading-dots"); dots.append(el("i"), el("i"), el("i"));
-    ld.append(sw, wm, dots);
+    ld.appendChild(rompLoaderInner("", { wordmark: true, cls: "rl-sm" }));   // the ONE standard loader (the .rl-* swirl + RompAnta wordmark + accent dots), scaled for the inline slot
     v.el.appendChild(ld);
   }
   if (pendingBuildRaf != null) cancelAnimationFrame(pendingBuildRaf);
@@ -12744,10 +14817,18 @@ function showActive(keep?: { uuid: string; y: number } | null) {
 // screen). When the direct restore misses, the deep-link land takes over with the kept offset: it renders a
 // window AROUND the anchor's unit (or fetches older history and re-lands on arrival) and writes "keep-offset",
 // the anchor's exact on-screen position — the same machinery a jump into folded history uses.
+// True only while keepPlaceAcrossWindow lands the reader's own row across a rebuild (T366): the one window ask that is no
+// navigation. The reload restore arms the same keep offset (the reader's saved place, which they want back), the durable
+// seek, a card, a notch and a deep link arm an anchor of their own; every one of those lands (verifier medium 1: keying
+// the refusal on the keep offset refused the reload restore too, and a reader reloaded while reading older history lost
+// their place)
+let relandAsk = false;
 function keepPlaceAcrossWindow(content: HTMLElement, v: View, keep: { uuid: string; y: number }): boolean {
   if (restoreScrollAnchor(content, v, keep)) return true;
   pendingAnchor = keep.uuid; pendingAnchorKeepY = keep.y;
-  const landed = scrollToAnchor(keep.uuid);
+  relandAsk = true;
+  let landed = false;
+  try { landed = scrollToAnchor(keep.uuid); } finally { relandAsk = false; }
   if (!anchorPendingOlder) { pendingAnchor = null; pendingAnchorKeepY = null; }   // an older-history fetch keeps them armed for chatHead's re-land
   return landed;
 }
@@ -12808,6 +14889,8 @@ function landActive(content: HTMLElement | null, v: View): void {
   // and never dead-ending. If the moment predates the loaded history, the oldest loaded message is
   // the nearest reachable point — the note names that too (fail loudly, land nearest).
   if (!scrolled && !att.anchor && att.t != null) scrolled = landNearestMoment(att.t);
+  revealProgressTick(scrolled, att.anchor);   // the reveal loop's progress line begins, repaints or ends on this pass, decided BEFORE the
+                                         // seek note: the pass that ends the loop without landing gets its note (and ✕) back at once (T336)
   if (seek && att.anchor === seek.uuid) {
     if (scrolled) clearSeek();             // the landing event — the indicator dies with the seek
     else showSeekNote();                   // outlived the immediate landing → say the search is on
@@ -12820,15 +14903,19 @@ function landActive(content: HTMLElement | null, v: View): void {
   // unanchorable — so they honest-fail with a toast rather than a clock-nearest guess (which often landed on
   // an unrelated turn anyway — the 'retry'-message bug). The old time tier-2 (scrollToNearestT) is GONE: the
   // last time-based navigation removed, per "no time heuristics". WORK/REPLY intent never had a tier-2 either.
-  pendingAnchor = null; pendingAnchorIntent = null; pendingAnchorT = null; pendingAnchorKind = null; pendingAnchorKeepY = null;
+  pendingAnchor = null; pendingAnchorIntent = null; pendingAnchorT = null; pendingAnchorKind = null; pendingAnchorKeepY = null; pendingAnchorClick = false;
   // Diagnostics: log every landing attempt; a deep-link that couldn't resolve announces itself loudly
   // instead of impersonating a successful jump.
   if (att.anchor || att.t != null) {
-    vscodeApi?.postMessage({
+    const row: Record<string, unknown> = {
       type: "locateDiag", id: activeId, ok: scrolled, trail: landTrail.slice(),
       anchor: att.anchor ?? undefined, anchorT: att.t ?? undefined, kind: att.kind ?? undefined,
       keep: att.keep || undefined,
-    });
+    };
+    // an exact landing's row waits for the landing to SETTLE and goes out with the measured distance (T386); every
+    // other outcome (a miss, a fetch in flight, a keep-offset restore) files at once, as before
+    if (scrolled && landSettling && !landSettling.done && landTrail[landTrail.length - 1] === "pointer-exact") { landSettling.row = row; settleSample(); }   // the row attached, then the write-time sample: a takeover in the first frames files the landing as it stood, an unmeasurable one files settled false (rounds two and three)
+    else vscodeApi?.postMessage(row);
     // A keep-offset restore is NOT a user navigation — nobody asked to locate anything, so a failed one must
     // not raise "couldn't locate this in the transcript" at a reader who only scrolled. It still gets its
     // audit row above (trail + keep), which is where a lost position is diagnosed from.
@@ -12856,7 +14943,17 @@ function landActive(content: HTMLElement | null, v: View): void {
         // deep-link land, whose window-around-unit and fetch-older paths bring the anchor turn back to its exact
         // offset (review find, 2026-09-08)
         writeScroll(content, rs.top, "reload-restore");
-        if (rs.anchor) { pendingAnchor = rs.anchor.uuid; pendingAnchorKeepY = rs.anchor.y; }
+        if (rs.anchor) {
+          pendingAnchor = rs.anchor.uuid; pendingAnchorKeepY = rs.anchor.y;
+          // …and run that land NOW (T374, the verifier of 2026-09-12 executed the gap on both heads): this pass made its own
+          // landing attempt above, before the restore armed anything, and the next pass comes only with a frame that changes
+          // the run, which an idle session never sends, so a saved row outside the fresh window (mid-run: its raw top not in
+          // the top band, no older ask either) parked the reader at a raw pixel offset for good. Resident → lands here;
+          // outside the run → asks its window here (chatWindow lands it on arrival, the arm stays for that reply).
+          landTrail = [];
+          const landedNow = scrollToAnchor(rs.anchor.uuid);
+          if (landedNow || !anchorPendingOlder) { pendingAnchor = null; pendingAnchorKeepY = null; }
+        }
       }
     }
     else if (!v.shown || v.stick) writeScroll(content, content.scrollHeight, "land-bottom", true);
@@ -12884,6 +14981,10 @@ function landActive(content: HTMLElement | null, v: View): void {
 // one tab on another's position; review find, 2026-09-08) — is taken out the moment the page loads (one reload,
 // one restore) and is consumed by landActive's first show of that tab.
 const RELOAD_SCROLL_KEY = "romp:reloadScroll";
+// A page's `ready` (proto 2) can lose the race to the kernel's connect push (the pusher fires from the socket's open, the bundle evaluates
+// later); the KERNEL serves no chat frame to a socket before its ready since round eleven, so the first frame here is in the wire the
+// handshake declared and the reload restore's attempt reaches the window branch. (A page-side wait keyed on the page's own send was tried
+// and misjudged a ready delayed below the page as an old kernel's silence.)
 let pendingReloadScroll: ReloadScroll | null = (() => {
   try {
     const raw = sessionStorage.getItem(RELOAD_SCROLL_KEY);
@@ -12907,7 +15008,7 @@ function persistScrollForReload(): void {
 // was already empty). Their texts ride THIS tab's sessionStorage (reload-notices.ts; per tab for the scroll record's
 // reason) and the fresh page shows them again once,
 // after the loss toast. The core's synchronous hook alone writes them: a navigation of the user's own (pagehide) says
-// nothing twice, the way the loss toast fires once and not on every load (tests/test_ship_reship.py ReloadLossToast),
+// nothing twice, the way the loss toast fires once and not on every load (tests/test_ship_reship_served.py ReloadLossToast),
 // while the scroll record rides both as before. This fork's list also carries the reload core's release note
 // (reload-notices.ts releasedNotices: the core's 60 s backstop released a pane hold that never ended, kernel.py
 // _RELOAD_CORE_JS; none when the reload fired on the hold's own event), so the fresh page says why it reloaded over the wait.
@@ -12932,12 +15033,15 @@ function captureScrollAnchor(content: HTMLElement, v: View): { uuid: string; y: 
   return null;
 }
 
-function restoreScrollAnchor(content: HTMLElement, v: View, a: { uuid: string; y: number } | null): boolean {
+function restoreScrollAnchor(content: HTMLElement, v: View, a: { uuid: string; y: number } | null, from?: number): boolean {
   if (!a) return false;
   const el = v.el.querySelector(`[data-uuid="${cssEscape(a.uuid)}"]`) as HTMLElement | null;
   if (!el) return false;
   const yNow = el.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
-  writeScroll(content, yNow - a.y, "anchor-restore");   // the anchor turn keeps its exact on-screen offset
+  // `from` is the caller's scrollTop read BEFORE its DOM change: a reader a few pixels off the bottom whose tail came back shorter
+  // was clamped by the browser at the forced layout, and the restore computes the very value the clamp left, so without the
+  // origin the write moved nothing, filed no row and set no marker, and the clamp's event filed as a gesture (see writeScroll)
+  writeScroll(content, yNow - a.y, "anchor-restore", false, from);   // the anchor turn keeps its exact on-screen offset
   return true;
 }
 
@@ -12961,12 +15065,36 @@ function syncHostOfflineFoot(): void {
   if (!activeId || !hostIsDown(activeId)) { existing?.remove(); return; }
   const host = String(activeId).slice(0, String(activeId).indexOf(":"));
   const text = host + " is disconnected — this is the last romp got from it. Reconnecting.";
-  if (existing) { if (existing.textContent !== text) existing.textContent = text; return; }
-  const note = el("div", "tx-hostoff");
-  note.id = "host-offline-foot";
-  note.textContent = text;
-  note.title = hostDownNote(activeId);   // the one place that note is worded — host-prefix.ts
-  content.appendChild(note);
+  // The swirl after "Reconnecting" spins only while romp is actually trying to reach the host (the user
+  // 2026-09-10, who wanted it dynamic and honest: trying right now, not a spinner because something is wrong).
+  // hostIsDialing reads what federation publishes (host-prefix.ts hostDialLive): the kernel's /tunnels row
+  // saying `dialing` (an ssh dial spawned and unconfirmed, or its health request to the host in flight;
+  // the browser never dials a host the kernel reports down, so the kernel's word is the one that matters
+  // here) or this page's relay socket in its CONNECTING state. Federation's romp:hostDial event, on the
+  // row's change and on the socket's dial, open and close, is what repaints this foot; between attempts
+  // (the kernel waiting out its backoff) the swirl sits still. It sits AFTER the sentence as the gist's flex
+  // SIBLING in the head (the postal delivery icon's convention), never inside the gist: that span ellipsizes
+  // on a narrow pane and would clip the swirl first, the one dynamic cue. The rebuild is keyed on the state
+  // too, so a repaint with nothing changed leaves the DOM alone.
+  const dialing = hostIsDialing(activeId);
+  const key = text + (dialing ? " |dialing" : "");
+  if (existing && existing.dataset.text === key) return;
+  existing?.remove();
+  // a slim SESSION notice in the warn severity at the transcript's tail (the audit's row 35 — it was a
+  // centred italic line, the one row outside the vocabulary); off the rail, so the prose-column indent
+  const foot = el("div", "notice-foot");
+  foot.id = "host-offline-foot";
+  foot.dataset.text = key;
+  const card = notice({ src: "session", glyph: "api", sev: "warn", gist: text, nested: true, live: dialing,
+                        tip: hostDownNote(activeId) });   // the one place that note is worded — host-prefix.ts
+  if (dialing) {
+    const swirl = el("img", "host-dial-swirl") as HTMLImageElement;   // the romp-loader motif (the placeholder tab's mini swirl)
+    swirl.src = mediaSrc("romp-swirl-glyph.svg"); swirl.alt = ""; swirl.onerror = () => swirl.remove();
+    const gistEl = card.querySelector(".notice-head .notice-gist");
+    if (gistEl) gistEl.after(swirl); else card.querySelector(".notice-head")?.appendChild(swirl);
+  }
+  foot.appendChild(card);
+  content.appendChild(foot);
 }
 
 function appendActive() {
@@ -12990,9 +15118,11 @@ function appendActive() {
   // Follow-mode pins the bottom only when there is something new to follow (T262, the user 2026-09-08): a
   // status-only tail changes no content, and pinning on it snapped a reader wheeling up from the tail of a
   // busy session back down within the first 80 px, frame after frame. Decision in scroll-keep.ts followTail.
-  if (stick && followTail(distBefore, heightBefore, content.scrollHeight)) writeScroll(content, content.scrollHeight, "append-stick", true);
+  // …passing the scrollTop read BEFORE the re-render: a tail that came back SHORTER was clamped by the browser at the forced
+  // layout, and the write must claim that move as its own (see writeScroll), else the clamp's pending scroll event files as a gesture
+  if (stick && followTail(distBefore, heightBefore, content.scrollHeight)) writeScroll(content, content.scrollHeight, "append-stick", true, before);
   else if (stick) { /* near the bottom, nothing new: the reader stays where they are */ }
-  else if (!(v && restoreScrollAnchor(content, v, anchor))) writeScroll(content, before, "append-raw");
+  else if (!(v && restoreScrollAnchor(content, v, anchor, before))) writeScroll(content, before, "append-raw", false, before);   // the same origin as the stick write: a shorter tail is claimed, not a gesture
   scheduleRailSticky();
   updateJumpBtn();   // appends can cross the overflow boundary either way — re-read the chip's truth
 }
@@ -13010,10 +15140,13 @@ if (typeof ResizeObserver === "function") {
   const c = document.getElementById("content");
   if (c) ro.observe(c);
 }
-// the sticky rail stamp tracks the scroll it annotates (passive: it only measures, never blocks the scroll)
+// the sticky rail stamp tracks the scroll it annotates (passive: it only measures, never blocks the scroll). CAPTURE,
+// so a scroll INSIDE the pane reaches it too — a notice body at its max height, a wide formula: scroll events do not
+// bubble, and the unread comment boxes (paintCommentOutlines, on this same scheduler) must follow marks that move
+// inside such a container and be cut to it (review find, T310). The other painters here are signature-guarded.
 {
   const c = document.getElementById("content");
-  if (c) c.addEventListener("scroll", scheduleRailSticky, { passive: true });
+  if (c) c.addEventListener("scroll", scheduleRailSticky, { passive: true, capture: true });
 }
 // ── jump to newest (the user 2026-08-31) ─────────────────────────────────────────────────────────
 // Scrolled-up reading leaves follow mode, and the send gate keeps it that way — this chip is the
@@ -13038,9 +15171,15 @@ jumpBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none"
 function updateJumpBtn(): void {
   const c = document.getElementById("content");
   if (!c || c.clientHeight <= 0) { jumpBtn.hidden = true; return; }   // hidden pane measures 0 — no chip
+  // No live session under the active tab (a loading or skeleton tab's loader, or the no-sessions copy): nothing to
+  // go to the bottom of, so the set decides before the measure does. The loader's min-height (60vh, styles.css)
+  // overflows a pane under 60vh + 18px, and the measure alone would paint the chip over it (skeleton-tabs-wiring.test.ts).
+  // The reply chips still get their re-read: their own gate hides them over a loader and clears their signature.
+  if (!liveSession(activeId)) { jumpBtn.hidden = true; updateReplyChips(); return; }
   const off = c.scrollHeight > c.clientHeight + 2 && !atBottom(c);   // the chip: shown the moment the reader leaves the true bottom
   jumpBtn.hidden = !off;
   if (off) jumpBtn.style.bottom = (Math.max(0, window.innerHeight - c.getBoundingClientRect().bottom) + 8) + "px";
+  updateReplyChips();   // the reply chips stack on this chip's slot and count against this scroll position — same events, same measure
 }
 jumpBtn.onclick = () => {
   const c = document.getElementById("content");
@@ -13059,6 +15198,112 @@ jumpBtn.onclick = () => {
   }
 }
 window.addEventListener("resize", updateJumpBtn);
+// ── replies ready (the user 2026-09-08) ──────────────────────────────────────────────────────────
+// A reply lands on a comment you scrolled away from, and you forget to come back: the mark's ring and the
+// rail tick say so only where you happen to be looking. Two chips stacked ABOVE the jump chip — "↑ 2 replies
+// unread" / "↓ 1 reply unread" — count the unread landed replies (the kernel's unread bit on an open thread,
+// isReplyReady: the mark's own .unread rule) whose marks sit wholly above / below the viewport; a mark on
+// screen counts in neither. Each chip exists only while its count is > 0. Click = land the NEAREST one in
+// that direction through the chat's own scroll-to-uuid route (scrollToAnchor → landOn's one flash, the rail
+// tick's and the notch's route) and pulse the mark itself — and NOT mark it read: opening the thread does,
+// as today. Same dress and home as #jump-bottom (body-level, fixed, bottom-left, the menu-card vocabulary),
+// placed by measurement over the jump chip's slot so the three never overlap. The box is created once and
+// its two chips update IN PLACE (label, tip, data-tid/uuid), so a re-render can never eat a click (the
+// delegate rides the stable box). Every input is an event the chat already listens for: the jump chip's
+// own update (scroll, resize, the content ResizeObserver, tab switch, append — updateJumpBtn's tail), the
+// comments frame and every transcript rebuild (applyCommentMarks' tail), plus the pane's own size (a pane
+// measuring 0 drops the chips like the jump chip). No timers, no polling; a signature skips unchanged paints.
+const replyChips = el("div", "reply-chips");
+replyChips.id = "reply-chips";
+replyChips.hidden = true;
+const replyChevron = (dir: Dir): string => '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"'
+  + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="'
+  + (dir === "above" ? "6 14.5 12 8.5 18 14.5" : "6 9.5 12 15.5 18 9.5") + '"/></svg>';   // the jump chip's stemless chevron, up or down
+const replyChip = (dir: Dir): HTMLButtonElement => {
+  const b = el("button", "reply-chip") as HTMLButtonElement;
+  b.type = "button";
+  b.id = "reply-" + dir;
+  b.dataset.act = "replyjump";
+  b.dataset.dir = dir;
+  b.hidden = true;
+  b.innerHTML = replyChevron(dir) + '<span class="reply-chip-label"></span>';
+  replyChips.appendChild(b);
+  return b;
+};
+const replyAbove = replyChip("above");
+const replyBelow = replyChip("below");
+let replyChipSig = "";
+function dressReplyChip(b: HTMLButtonElement, dir: Dir, chip: ReadyChip | null): void {
+  b.hidden = !chip;
+  if (!chip) return;
+  (b.querySelector(".reply-chip-label") as HTMLElement).textContent = chipLabel(chip.count);
+  b.dataset.tid = chip.nearest.tid;
+  b.dataset.uuid = chip.nearest.uuid;
+  b.setAttribute("aria-label", chipAria(dir, chip.count));
+  setTip(b, chipTip(dir, chip.count, chip.nearest.line));   // the one styled tip; the text swaps per update, wired once
+}
+function updateReplyChips(): void {
+  const c = document.getElementById("content");
+  const s = activeId ? liveSession(activeId) : null;   // a skeleton tab's stale session shows no chips (skeleton-tabs-wiring.test.ts)
+  const v = activeId ? views.get(activeId) : null;
+  const H = c ? c.clientHeight : 0;
+  const ready = activeId ? (commentThreads.get(activeId) || []).filter(isReplyReady) : [];
+  // no pane to measure, the read-only subagent viewer (no threads can live there), or nothing unread → no chips
+  if (!c || !s || !v || H <= 0 || s.sub || !ready.length) { replyChips.hidden = true; replyChipSig = ""; return; }
+  const cr = c.getBoundingClientRect();
+  const marks: ReadyMark[] = [];
+  let evUnit: Int32Array | null = null;
+  for (const th of ready) {
+    const turn = v.el.querySelector(`.turn[data-uuid="${cssEscape(th.anchorUuid)}"]`) as HTMLElement | null;
+    const line = replyLine(th);
+    if (turn) {
+      // the mark's own box; the turn's when the rendered text drifted past re-matching (the tick's fallback too)
+      const node = (turn.querySelector(`mark.cmt-hl[data-tid="${cssEscape(th.tid)}"]`) as HTMLElement | null) || turn;
+      const r = node.getBoundingClientRect();
+      marks.push({ tid: th.tid, uuid: th.anchorUuid, line, ...placeMark(r.top - cr.top, r.bottom - cr.top, H) });
+    } else {
+      // windowed out: which side of the rendered window the anchor lies on IS its direction (event order,
+      // translated to display units like the notches), a tier farther than any rendered mark
+      const idx = s.events.findIndex((e) => e.uuid === th.anchorUuid);
+      if (!evUnit) evUnit = eventUnitIndex(s);
+      marks.push({ tid: th.tid, uuid: th.anchorUuid, line,
+        ...placeWindowed(idx >= 0 ? evUnit[idx] : -1, v.winStart, v.winEnd ?? v.winStart) });
+    }
+  }
+  const { above, below } = readyChips(marks);
+  // the slot: the jump chip's own bottom measure, lifted over the jump chip while it shows (its real height —
+  // the coarse-pointer media query makes it taller — plus the stack gap)
+  const bottom = Math.max(0, window.innerHeight - cr.bottom) + 8 + (jumpBtn.hidden ? 0 : jumpBtn.offsetHeight + 6);
+  const sig = activeId + "|" + (above ? above.count + ":" + above.nearest.tid : "") + "|" + (below ? below.count + ":" + below.nearest.tid : "") + "|" + bottom;
+  if (sig === replyChipSig) return;
+  replyChipSig = sig;
+  dressReplyChip(replyAbove, "above", above);
+  dressReplyChip(replyBelow, "below", below);
+  replyChips.hidden = !above && !below;
+  replyChips.style.bottom = bottom + "px";
+}
+{
+  const c = document.getElementById("content");
+  if (c) {
+    document.body.appendChild(replyChips);
+    // the click is delegated on the stable box (click-safe by construction), keyed off data-act; the press
+    // pulse is the delegate's own
+    delegate(replyChips, {
+      replyjump: (elx) => {
+        const tid = elx.dataset.tid, uuid = elx.dataset.uuid;
+        if (!tid || !uuid || !activeId) return;
+        flashedAnchor = null;                  // fresh navigation → landOn's one flash on the turn
+        if (scrollToAnchor(uuid)) {
+          applyCommentMarks(activeId);         // a re-windowed anchor turn gets its highlight back before the pulse
+          const m = views.get(activeId)?.el.querySelector(`mark.cmt-hl[data-tid="${cssEscape(tid)}"]`) as HTMLElement | null;
+          if (m) flash(m);                     // …and the mark itself pulses once (.romp-acted) — the thing you came for
+        }
+        // deliberately NO commentSeen here: the chip brings you to the reply; reading it is opening the thread
+      },
+    });
+    if (typeof ResizeObserver === "function") new ResizeObserver(updateReplyChips).observe(c);   // a pane measuring 0 drops the chips
+  }
+}
 // The per-view saved spot FOLLOWS the reader (T249, the user 2026-09-07). landActive lands every show no
 // anchor scrolled on `v.stick ? bottom : v.scrollTop`, and until now those were written only by a tab
 // switch (the tab being LEFT), the jump button, the box-resize compensation and the nav trail — never by
@@ -13081,8 +15326,15 @@ window.addEventListener("resize", updateJumpBtn);
     followReader(activeId ? views.get(activeId) : null, c.scrollTop, atBottom(c), pendingBuildRaf != null);
     // the scroll nobody's code asked for is the user's (T262): filed so a recording lines up with the journal;
     // a write's own echo (within a pixel of the value written) is consumed here and never read as a gesture
-    if (classifyScroll(c.scrollTop, lastScrollWriteAfter) === "write-echo") lastScrollWriteAfter = null;
-    else scrollDiagRow("scrollgesture", { sid: activeId || "", top: c.scrollTop, gesture: true, sh: c.scrollHeight, ch: c.clientHeight });
+    const cls = classifyScroll(c.scrollTop, lastScrollWriteAfter);
+    const gv = activeId ? views.get(activeId) : null;
+    if (gv) gv.gestureScroll = cls === "gesture";   // read once by the edge check this event runs next (T366): a write's echo is no gesture
+    if (cls === "gesture") { if (gestureEvidence(settleLastInput, Date.now(), settleScrollerHeld)) settleGesture(); else settleSample(); }          // the reader took over, by any input (a scrollbar drag, a touch swipe, a wheel): a settling landing yields (T386 round one, medium 1)
+    // …a gesture with a reader's input behind it (round two, medium): the browser's own scroll anchoring (a node inserted or a spacer
+    // re-estimated above the viewport) moves scrollTop with no write and no input, and the classifier calls that a gesture too; for
+    // the settle it is a sample, or the landing that was and stayed exact filed settled false
+    lastScrollWriteAfter = null;   // one-shot: the first event after a write consumes its marker, echo or not (a gesture that lands within a pixel of an older write's target is a gesture)
+    if (cls !== "write-echo") scrollDiagRow("scrollgesture", { sid: activeId || "", top: c.scrollTop, gesture: true, sh: c.scrollHeight, ch: c.clientHeight });
     lastKnownSh = c.scrollHeight;   // sh/ch: a clamp reads top == sh - ch after sh dropped (T262e)
   }, { passive: true });
 }
@@ -13193,7 +15445,7 @@ if (typeof ResizeObserver === "function") {
       const h = entries[0]?.contentRect?.height ?? 0;
       const content = document.getElementById("content");
       const v = activeId ? views.get(activeId) : null;
-      if (content && lastH >= 0 && content.clientHeight > 0 && v && v.shown && followBoxBelow(v.stick, h - lastH)) {
+      if (content && !snapView && lastH >= 0 && content.clientHeight > 0 && v && v.shown && followBoxBelow(v.stick, h - lastH)) {   // a transcript rule: it stands down while the overview owns #content (the footer's hide is not a box below the reader, T322)
         writeScroll(content, content.scrollHeight, "box-below", true);
         v.scrollTop = content.scrollTop;                      // keep the per-view saved position in sync
       }
@@ -13291,7 +15543,7 @@ function virtualizeToViewport(): void {
   const s = liveSession(activeId);
   if (!v || !content || !s) return;
   const total = v.unitTotal ?? 0;
-  const moreOnServer = (s.headFrom ?? 0) > 0;   // older history not yet resident (wire tail-windowing)
+  const moreOnServer = olderOnServer(s);   // older history not yet resident (wire tail-windowing; proto 2: the head not reached)
   if (total === 0 || ((v.winStart ?? 0) === 0 && (v.winEnd ?? total) >= total && !moreOnServer)) return; // everything rendered + resident
   // CHEAP pre-check first (this runs on EVERY scroll): is the viewport comfortably inside the rendered band?
   // Only when it nears a rendered edge do we pay the precise unit walk + re-render. Without this, every scroll
@@ -13304,14 +15556,23 @@ function virtualizeToViewport(): void {
   const topH = topEl ? topEl.offsetHeight : 0;
   const renderedBottom = botEl ? botEl.getBoundingClientRect().top - cRectTop + content.scrollTop : content.scrollHeight;
   const st = content.scrollTop, vh = content.clientHeight;
+  // the gesture's direction (T366): an older-history ask needs an upward or unchanged move OF THE READER'S OWN; a reader
+  // heading DOWN never asks, whatever the spacer estimate says about the top band (chat-window.ts olderRequestAllowed).
+  // The page's compensating writes (a re-window's, a land's) move scrollTop too and echo as scroll events, so the
+  // direction is read only on a gesture event (the scroll listener marks it) and the last verdict holds across the page's
+  // own writes: a one-write jump to the top asks once at the head as it always did (verifier medium 2)
+  const gesture = v.gestureScroll === true;
+  v.gestureScroll = undefined;
+  if (gesture) v.edgeUp = olderRequestAllowed(v.edgeTop, st);
+  v.edgeTop = st;
+  const upward = v.edgeUp !== false;
   // At the top of the RESIDENT events with older history still on the server → fetch the previous chunk
   // (loadOlder → chatHead). winStart 0 ⇒ no top spacer left to expand into; topH is 0 so this is "near 0".
-  if (moreOnServer && (v.winStart ?? 0) === 0 && st < topH + edgePx) { requestOlder(activeId, v, content); return; }
+  if (moreOnServer && (v.winStart ?? 0) === 0 && st < topH + edgePx && upward) { requestOlder(activeId, v, content); return; }
   const nearTopEdge = (v.winStart ?? 0) > 0 && st < topH + edgePx;
   const nearBotEdge = (v.winEnd ?? total) < total && st + vh > renderedBottom - edgePx;
   if (!nearTopEdge && !nearBotEdge) return;   // window comfortably covers the viewport
   revirtBusy = true;
-  showLoadingPill();
   // Defer one frame so the pill paints before the (possibly heavy) render, then re-anchor on the focus unit.
   requestAnimationFrame(() => {
     try {
@@ -13335,7 +15596,6 @@ function virtualizeToViewport(): void {
       if (activeId) applyCommentMarks(activeId);   // the re-window rebuilt turns — re-anchor highlights
       scheduleRailSticky();
     } finally {
-      hideLoadingPill();
       revirtBusy = false;   // always release, even if a render threw — a wedged flag = no more loading
     }
   });
@@ -13345,20 +15605,129 @@ function virtualizeToViewport(): void {
   if (c) c.addEventListener("scroll", virtualizeToViewport, { passive: true });
 }
 
-// A small "Loading earlier messages…" pill at the top-center of the chat pane, shown while a window
+// A small "Loading earlier messages…" pill at the top-center of the CHAT SECTION, shown while a window
 // expand/jump is rendering so a scroll into un-rendered history reads as loading-in-progress, not frozen
-// (the user 2026-06-25). Lives in the chat iframe's body; idempotent.
-let loadingPillEl: HTMLElement | null = null;
-function showLoadingPill(): void {
-  if (!loadingPillEl) {
-    loadingPillEl = document.createElement("div");
-    loadingPillEl.className = "tx-loading-pill";
-    loadingPillEl.textContent = "Loading earlier messages…";
-    document.body.appendChild(loadingPillEl);
-  }
-  loadingPillEl.style.display = "";
+// (the user 2026-06-25). Anchored to the section, never the viewport (T365, the user 2026-09-12, whose strip
+// wraps onto several rows: the viewport-fixed pill sat on the tabs): the first show inserts a zero-height
+// .tx-loading-anchor right before #content, which the page's flex column places exactly where the transcript
+// starts, below the tab strip and the ledger box, so the pill's top follows the strip's bottom by layout
+// alone, whatever the row count and however it changes while the pill shows. Idempotent; no pointer events.
+let landingNoticeEl: HTMLElement | null = null;
+let pendingAnchorClick = false;   // the landing this pass attempts was armed by the reader's click (a focus frame), not by a pass's own re-attempt
+/** A real second click on the anchor a landing is already on the wire for: the notice pulses once (the page has no other feedback for it). */
+let pulseEnd: (() => void) | null = null;   // the live pulse's one-shot end handler, held so a hide that cuts the animation can remove it (the tidy after PR 1642, low 2: a cut pulse left one dead closure on the reused element per cancel)
+function pulseLandingNotice(): void {
+  const n = landingNoticeEl; if (!n || n.style.display === "none") return;
+  if (pulseEnd) { n.removeEventListener("animationend", pulseEnd); pulseEnd = null; }
+  n.classList.remove("pulse"); void n.offsetWidth; n.classList.add("pulse");
+  const end = () => { n.classList.remove("pulse"); if (pulseEnd === end) pulseEnd = null; };
+  pulseEnd = end;
+  n.addEventListener("animationend", end, { once: true });   // one-shot: the class leaves on the animation's own end, so a later landing that re-shows this one element replays nothing (the follow-up after PR 1584, low 1)
 }
-function hideLoadingPill(): void { if (loadingPillEl) loadingPillEl.style.display = "none"; }
+let landingNoticeSid: string | null = null;
+// the landing's state lives in ONE RECORD PER ASK (WindowAsk, beside requestAround below; round eight): no per-session slot here
+/** The ONE notice (T386 stage 2, the user 2026-09-12): "Going to the message from 7:41 AM, click to stay here", at the pill's old
+ *  anchor before #content, while a landing's window is on the wire; a scroll-driven gap fill shows the glyph inside the gap and no
+ *  notice. Clicking it is the ONLY cancel: the reader's own scroll during the wait does not cancel the landing. */
+function showLandingNotice(sid: string, t: number | null | undefined): void {
+  if (revealProgress) return;   // the reveal progress line is the one message for that wait (T336)
+  const content = document.getElementById("content");
+  if (!content || !content.parentNode) return;
+  if (!landingNoticeEl) {
+    landingNoticeEl = document.createElement("div");
+    landingNoticeEl.className = "tx-landing-notice";
+    landingNoticeEl.title = "stay where you are; the messages still load into place";
+    landingNoticeEl.addEventListener("click", () => cancelLanding());
+  }
+  landingNoticeEl.textContent = landingNotice(t, clockOf);
+  landingNoticeSid = sid;
+  if (!landingNoticeEl.isConnected) {   // the first show, or a rebuild that dropped the anchor
+    const anchor = document.createElement("div");
+    anchor.className = "tx-loading-anchor";
+    anchor.appendChild(landingNoticeEl);
+    content.parentNode.insertBefore(anchor, content);
+  }
+  landingNoticeEl.classList.remove("pulse");   // a pulse cut short by the hide (no animationend) must not replay on this re-show (low 1)
+  landingNoticeEl.style.display = "";
+}
+function hideLandingNotice(): void {
+  if (landingNoticeEl) {
+    if (pulseEnd) { landingNoticeEl.removeEventListener("animationend", pulseEnd); pulseEnd = null; }   // a pulse the hide cuts short never fires animationend: its handler leaves with it (low 2)
+    landingNoticeEl.classList.remove("pulse");
+    landingNoticeEl.style.display = "none";
+  }
+  landingNoticeSid = null;
+}
+/** The notice's click: the pending target and the notice go, the reply still inserts its run when it arrives (nothing is thrown
+ *  away) and the view is not moved; the reader stays where they are, including where the pre-jump put them. */
+function cancelLanding(): void {
+  const sid = landingNoticeSid;
+  if (!sid) return;   // no notice showing: nothing to cancel
+  const rec = liveWindowAsk(sid);   // the notice is the live ask's
+  const target = rec?.anchor;
+  hideLandingNotice();
+  // the cancel marks ITS record and consumes only that record's origin and held gap (round eight): the reply still comes and fills in
+  // place, a cancelled landing is not busy (round seven, medium 3: the live-ask gate frees now, so the reader's next click asks), the
+  // reader stays where they are, and a later dead end never restores this landing's origin; the gap's glyph goes unless a page ask of
+  // its own is on the wire for it
+  if (rec) { rec.cancelled = true; rec.origin = null; rec.gap = null; }
+  // the glyphs follow the truth, not the held record: every gap of the view that no ask names any more sheds its glyph (CI's page kept one
+  // on a gap the record no longer matched, round seven)
+  const gv = views.get(sid);
+  if (gv) for (const g of Array.from(gv.el.querySelectorAll(".tx-gap.tx-gap-loading")) as HTMLElement[]) { if (!gapHasAsk(sid, { lo: Number(g.dataset.lo), hi: Number(g.dataset.hi) })) g.classList.remove("tx-gap-loading"); }
+  landTrail.push("cancelled");
+  vscodeApi?.postMessage({ type: "locateDiag", id: sid, ok: false, trail: landTrail.slice(), anchor: target ?? pendingAnchor ?? undefined, anchorT: pendingAnchorT ?? undefined, kind: pendingAnchorKind ?? undefined, cancelled: true });
+  pendingAnchor = null; pendingAnchorIntent = null; pendingAnchorT = null; pendingAnchorKind = null; pendingAnchorKeepY = null; anchorPendingOlder = false;
+  clearSeek();
+}
+/** The view jumps STRAIGHT to where the target will be (the user 2026-09-12): the anchor's time against the runs' times picks the
+ *  gap it falls in and its place inside it (chat-regions.ts gapFraction), so the reader sees the loading glyph in the empty space
+ *  the words will fill. With no time, or a gap not on screen, the view does not move until the reply. */
+function preJumpIntoGap(sid: string, t: number | null | undefined, rec: WindowAsk | null): void {
+  const s = sessions.get(sid), v = views.get(sid), content = document.getElementById("content");
+  if (t == null || !s || !s.regions || !v || !content || sid !== activeId) { landTrail.push(t == null ? "pre-jump-notime" : "pre-jump-noview"); return; }
+  const rs = s.regions;
+  for (let i = 0; i < rs.length; i++) {
+    const r = rs[i];
+    if (r.kind !== "gap") continue;
+    const above = i > 0 && rs[i - 1].kind === "run" ? (rs[i - 1] as Run).events : null;
+    const below = i + 1 < rs.length && rs[i + 1].kind === "run" ? (rs[i + 1] as Run).events : null;
+    let tBefore: number | null = null, tAfter: number | null = null;
+    if (above) for (let k = above.length - 1; k >= 0 && tBefore == null; k--) tBefore = eventEpoch(above[k] as ChatEvent);
+    if (below) for (let k = 0; k < below.length && tAfter == null; k++) tAfter = eventEpoch(below[k] as ChatEvent);
+    if ((tBefore != null && t < tBefore) || (tAfter != null && t > tAfter)) continue;
+    const frac = gapFraction(t, tBefore, tAfter);
+    if (rec) { rec.gap = { lo: r.lo, hi: r.hi }; rec.origin = content.scrollTop; }   // the ask's own record: the gap wears the glyph while its window is on the wire (gapHasAsk), the origin is restored if its reply cannot land (T386 stage 2, low 2; per ask, round eight)
+    const g = v.el.querySelector(`.tx-gap[data-lo="${r.lo}"][data-hi="${r.hi}"]`) as HTMLElement | null;
+    let y: number;
+    if (g) {
+      if (!g.classList.contains("tx-gap-loading")) { g.classList.add("tx-gap-loading"); g.appendChild(gapGlyph()); }
+      y = g.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop + frac * g.offsetHeight;
+    } else {
+      // the gap sits inside a spacer: its place is the hidden units' heights before it (the walk unitAtScroll takes), and the
+      // re-window the write provokes renders it with its glyph
+      const items = displayItems(s);
+      const idx = items.findIndex((it) => it.kind === "gap" && it.lo === r.lo && it.hi === r.hi);
+      if (idx < 0) { landTrail.push("pre-jump-noitem"); return; }
+      const avg = v.avgTurnH ?? 60, own = hiddenHeight(v, idx, idx + 1, avg);
+      if (idx < (v.winStart ?? 0)) y = hiddenHeight(v, 0, idx, avg) + frac * own;
+      else { const bot = v.el.querySelector(".tx-spacer-bot") as HTMLElement | null; y = content.scrollHeight - (bot ? bot.offsetHeight : 0) + hiddenHeight(v, v.winEnd ?? idx, idx, avg) + frac * own; }
+    }
+    v.stick = false;   // a navigation's move ends follow mode (else the re-window the write provokes lands the reader back at the bottom)
+    writeScroll(content, y, "land-guess");
+    v.scrollTop = content.scrollTop;
+    landTrail.push("pre-jump");
+    return;
+  }
+  landTrail.push("pre-jump-nogap");   // the anchor's time falls in no gap (it is in a run, or the runs' times bracket it out)
+}
+// the served labs read the session's regions on demand (a gap inside a spacer has no element to read): kind, span, and a run's event count
+if (typeof window !== "undefined") (window as any).__rompRegions = (sid?: string): unknown => { const s = sessions.get(sid || activeId || ""); return s?.regions ? s.regions.map((r) => r.kind === "gap" ? { kind: "gap", lo: r.lo, hi: r.hi } : { kind: "run", lo: r.lo, hi: r.hi, n: r.events.length, first: keyOf(r.events[0] as { uuid?: string; key?: string }) ?? null, last: keyOf(r.events[r.events.length - 1] as { uuid?: string; key?: string }) ?? null }) : null; };
+if (typeof window !== "undefined") (window as any).__rompTurnUnderTop = (): number | null => { const sid = activeId || ""; const s = sessions.get(sid), v = views.get(sid), c = document.getElementById("content"); if (!s || !v || !c) return null; return turnUnderTop(v, s, displayItems(s), turnOfEvents(s), c, c.scrollTop); };   // the lab reads the point under the viewport top as a turn (round five)
+(window as any).__rompLandTrail = (): string[] => landTrail.slice();   // the landing trail so far, for a served lab's payload (round eight: CI's reload restore parked with no window ask; the trail names the branch it took)
+(window as any).__rompAskState = (sid?: string): unknown => { const id = sid || activeId || ""; const s = sessions.get(id); return { loadingOlder: loadingOlder.has(id), gapLoading: gapLoading.size, gapKeys: Array.from(gapLoading), landingGaps: Array.from(windowAsks.values()).reduce((n, a) => n + a.filter((r) => !r.cancelled && !!r.gap).length, 0), asks: (windowAsks.get(id) ?? []).map((r) => ({ anchor: r.anchor.slice(-6), nav: r.nav, cancelled: r.cancelled, gap: r.gap, origin: r.origin })), hasGap: !!(s && s.regions && s.regions.some((r) => r.kind === "gap")), olderOnServer: !!(s && olderOnServer(s)) }; };
+// the served geometry lab shows the notice on demand: its real showings last the span of a fetch, too brief to measure against the strip
+if (typeof window !== "undefined") (window as any).__rompLoadingPill = (on: boolean): void => { if (on) showLandingNotice(activeId || "", null); else hideLandingNotice(); };
 
 // ---- ledger box (rolling per-session digest, just below the tabs) ----
 
@@ -13394,18 +15763,12 @@ const COLORMAPS: Record<string, Array<[number, number, number]>> = {
 function selectedStops(): Array<[number, number, number]> {
   return COLORMAPS[(settings.colormap || "").toLowerCase()] || COLORMAPS.aurora;   // settings updated + rerenderAll on change
 }
-function ramp(v: number): [number, number, number] {
-  const STOPS = selectedStops();
-  v = Math.max(0, Math.min(1, v));
-  const x = v * (STOPS.length - 1), i = Math.floor(x), fr = x - i;
-  if (i >= STOPS.length - 1) return STOPS[STOPS.length - 1];
-  const a = STOPS[i], b = STOPS[i + 1];
-  return [Math.round(a[0] + (b[0] - a[0]) * fr), Math.round(a[1] + (b[1] - a[1]) * fr), Math.round(a[2] + (b[2] - a[2]) * fr)];
-}
+function ramp(v: number): [number, number, number] { return rampOn(v, selectedStops()); }   // the arithmetic is status-controls.ts rampOn (the kernel's cm.ramp), over the selected map
 // Arm a compaction "sweep" fill (the tab bar bar + the statusline battery scan) so it (a) does NOT restart
 // every render and (b) mirrors the context colormap as it compresses.
-//   (a) renderTabs()/updateStatusline() recreate the element on every kernel push (0.5–3s backstop + one per
-//       stream event); a plain CSS animation resets to frame 0 each time, so it visibly hiccups/jumps (the
+//   (a) renderTabs()/updateStatusline() recreate the element on every kernel push (cycles at least 1.0 s apart
+//       under the pusher's minimum interval, a watched chat tab's stream event at once, plus the 0.5–3s
+//       backstop); a plain CSS animation resets to frame 0 each time, so it visibly hiccups/jumps (the
 //       user 2026-07-02: the tab bar restarted while the timeline's — a persistent repositioned overlay —
 //       stayed smooth). A NEGATIVE animation-delay of -(now mod duration) makes the phase a pure function of
 //       the wall clock, so a freshly-built element resumes exactly where the destroyed one was — seamless
@@ -13586,15 +15949,16 @@ function renderLedger() {
 // re-render (keyed by session id / row id — renderBgTasks never writes them, so the idle↔working flip
 // cannot close an open box); every toggle is DELEGATED to the stable #bg-tasks container so a rebuild
 // mid-click never drops it. textContent only (command/output are untrusted).
-// The fold is the user's alone: bgFoldOpen starts EMPTY, so a box appears as its header line, and only the
-// header click and the Awaiting chip open it; a reload starts it closed again. Open, the LIST shows about six
-// rows and scrolls beyond (styles.css, the .bg-list cap): seven agents in flight fit under the box's 340px
-// cap without scrolling, so an open box covered a phone's transcript (the user 2026-09-08, who folds it by
-// hand and wanted it smaller when open); the header keeps the counts.
-const bgExpanded = new Set<string>();   // row ids whose details are open
-const bgFoldOpen = new Set<string>();   // session ids whose list is expanded
+// the box's fold + each row's detail fold key into openFolds ("bgfold:<sid>" / "bgrow:<id>") — the ONE fold
+// store since 2026-09-08 (these had their own bgFoldOpen / bgExpanded sets)
 const BG_RANK: Record<string, number> = { failed: 3, running: 2, completed: 1 };
-const BG_LEFTOVER_TITLE = "Also running";   // tracked tasks the wait does not name (a dev server the session keeps around)
+// T394 (the user 2026-09-12, from a screenshot of the fold with a section for tasks merely also running): a tracked task the kernel's rows do
+// not name is still a command or an agent, and what set it apart was a JUDGE'S VERDICT (the closer audited its launch without a
+// wait), not a kind. So it lists in its kind's section, dimmed, with the verdict as a muted suffix on the row (kept running, not
+// waited on), and the header counts it with every listed row by kind, naming how many wear the verdict; the section of its own, whose title said nothing of
+// that, is gone. One hue per kind for the dot and the caption word (the sheet: bg-kind-*), status overriding for failed and
+// completed rows.
+const BG_KEPT_WORD = "· kept running, not waited on";
 // ── SUBAGENT VIEWER (plans/subagent-transcripts.md, 2026-09-05) ─────────────────────────────────
 // The arrow on an Agent head (or an agent bg-task row) opens the agent's whole transcript as a PEEK tab:
 // a client-only pseudo-session in `sessions`/`order` with id `<parentId>/agent/<agentId>`, fed by the
@@ -13616,9 +15980,46 @@ function openSubagentView(parentId: string, agentId: string, anchorUuid: string 
     });
     if (!order.includes(id)) order.push(id);
     vscodeApi?.postMessage({ type: "openSubagent", id: parentId, agentId });
+    armSubagentWait(id);   // the frame is expected within SUBAGENT_OPEN_WAIT_MS (T355)
   } else if (anchorUuid && cur.sub) cur.sub.anchorUuid = anchorUuid;
   setActive(id);
 }
+
+// The viewer's ask, with its wait (T355): the frame is expected on this socket within SUBAGENT_OPEN_WAIT_MS; past that the
+// pane shows the stall and a retry in place of the loader (a frame that never arrives left "opening…" up for good).
+function askSubagent(id: string): void {
+  const s = sessions.get(id);
+  if (!s || !s.sub) return;
+  vscodeApi?.postMessage({ type: "openSubagent", id: s.sub.parentId, agentId: s.sub.agentId });
+  armSubagentWait(id);
+}
+function armSubagentWait(id: string): void {
+  const s = sessions.get(id);
+  if (!s || !s.sub) return;
+  const p = s.sub;
+  p.loaded = false; p.stalled = false; p.askedAt = Date.now();
+  const asked = p.askedAt;
+  window.setTimeout(() => {
+    const cur = sessions.get(id);
+    if (!cur || !cur.sub || cur.sub.askedAt !== asked) return;   // answered, retried or closed meanwhile
+    if (!subagentStalled(cur.sub.loaded, Date.now() - asked)) return;
+    cur.sub.stalled = true;
+    const v = views.get(id);
+    if (v) { v.rendered = 0; v.stale = true; }
+    if (activeId === id) showActive();
+  }, SUBAGENT_OPEN_WAIT_MS);
+}
+// A connection coming back: the reconnected kernel holds no viewer registry for this client, so every viewer STILL WAITING
+// (no frame yet, or stalled) asks again; a viewer that has its answer keeps it (a re-ask would put the loader back over
+// "written nothing yet"). The reconnect-class events this pane can see: the local socket's romp:wsup, a remote host's relay
+// socket reopening (romp:hostRelayUp: a remote kernel's restart fires that and not wsup, the 2026-09-01 finding the upload
+// re-ship records), and the extension's pipeState up (the VS Code webview never sees wsup).
+function reaskWaitingSubagents(host?: string): void {
+  for (const [id, s] of sessions)
+    if (s.sub && (!s.sub.loaded || s.sub.stalled) && (host === undefined || hostOf(s.sub.parentId) === host)) askSubagent(id);
+}
+window.addEventListener("romp:wsup", () => reaskWaitingSubagents(""));   // the local kernel's own viewers (a host's relay
+//                                                                            reopening re-asks in the romp:hostRelayUp listener below)
 
 function closeSubagentView(id: string): void {
   const p = subParts(id);
@@ -13644,7 +16045,7 @@ function applySubagentFrame(m: any): void {
   const id = subTabId(parentId, agentId);
   const s = sessions.get(id);
   if (!s || !s.sub) { vscodeApi?.postMessage({ type: "closeSubagent", id: parentId, agentId }); return; }
-  s.sub.loaded = true;
+  s.sub.loaded = true; s.sub.stalled = false;   // answered, late or not: no re-ask puts the loader back over it (T355)
   s.sub.error = m.error ? String(m.error) : null;
   s.sub.running = !!m.running;
   s.sub.truncated = !!m.truncated;
@@ -13715,6 +16116,10 @@ function renderSubHead(): void {
   const parts = subHeadParts(s.sub.meta, s.sub.running);
   const typ = el("span", "sub-head-type"); typ.textContent = "· " + parts.type; line.appendChild(typ);
   const state = el("span", "sub-head-state " + parts.state); state.textContent = "· " + parts.state; line.appendChild(state);
+  // what the agent is itself waiting on (2026-09-10), from the PARENT's awaited rows — the same nested
+  // `waits` its box draws under this agent's row; re-rendered when those rows change (awaitChanged)
+  const tail = subWaitTail(s.sub.running, liveSession(s.sub.parentId)?.status.awaitingItems, s.sub.agentId);
+  if (tail) { const w = el("span", "sub-head-waits"); w.textContent = "· " + tail; line.appendChild(w); }
   const pin = el("span", "sub-head-pin" + (pinnedSubs.has(s.id) ? " pinned" : ""));
   pin.dataset.act = "pinSubagent"; pin.dataset.id = s.id;
   pin.innerHTML = pinIconSvg();
@@ -13733,7 +16138,7 @@ function renderBgTasks() {
   const host = document.getElementById("bg-tasks");
   if (!host) return;
   host.replaceChildren();
-  const s = activeId && !snapView ? liveSession(activeId) : null;   // (snapView: the pane shows a section's snapshot, not this session; liveSession: never a skeleton's stale copy)
+  const s = activeId && !snapView ? liveSession(activeId) : null;   // (snapView: the pane shows a section, not this session)
   const tasks: BgTask[] = (s && s.bgTasks && s.bgTasks.tasks) || [];
   // Keyed on CONTENT, never the chip state (the user 2026-08-30, paraphrased: even while working, anything
   // the session has in flight shows at the chat bottom). The rows ride awaitingItems in both turn states;
@@ -13750,20 +16155,40 @@ function renderBgTasks() {
   // (awaitingTaskIds — an exact launch-id match; the ids' PRESENCE, never the chip state); the status DOT
   // keeps its own meaning (yellow = the row is running)
   const awaited = new Set<string>(s.status.awaitingTaskIds || []);
+  // the JUDGE's verdict on the tracked tasks, shipped (kernel _bg_split's services, bgServiceIds, in every turn state): a task
+  // the closer audited past its launch without a wait is furniture the session keeps running. Only that verdict earns the
+  // kept-running word (T394 round one: inferring it from a missing row called a placed task under a stamped top, and every
+  // agent, kept running mid-turn, when the kernel simply enumerates no rows for them then)
+  const services = new Set<string>(s.status.bgServiceIds || []);
   host.classList.toggle("bg-awaited", !!why || tasks.some((t) => awaited.has(t.id)));
-  const open = bgFoldOpen.has(sid);
+  const open = openFolds.has("bgfold:" + sid);
   const groups = groupRows(items);
   const awPeers = s.status.awaitingPeers || [];
-  const itemIds = new Set<string>(items.map((it) => it.id || "").filter(Boolean));
+  const itemIds = rowIds(items);   // the rows AND what nests under them (an agent's own waits name their tasks too)
   const leftovers = tasks.filter((t) => !itemIds.has(t.id));   // tracked tasks the wait does not name (services)
+  const kept = leftovers.map((t) => taskRowSpec(t, awaited.has(t.id), services.has(t.id)));   // …as rows of their KIND (T394): the judge's services dimmed, the verdict as a suffix
+  const keptN = kept.filter((row) => row.kept).length;   // the header counts the rows that WEAR the verdict, none other (round one, medium 1)
+  // every row the list shows, by kind (round two, medium): the kernel's rows AND the tracked tasks they do not name, so a box
+  // whose only row is a placed command or a finished one reads "In the background · 1 command", never a separator with nothing after it
+  const counted: AwaitRow[] = [...items, ...kept.map((row) => ({ kind: row.kind || "commands", id: row.id, label: row.label }))];
   // the header dot: await-green while waiting, like the chip; otherwise the worst tracked status, so a
   // failed task is glanceable while collapsed (running-yellow when nothing tracked has failed)
-  const worst = tasks.reduce((w, t) => (BG_RANK[t.status] || 0) > (BG_RANK[w] || 0) ? t.status : w, "running");
+  // seeded from the tasks' own statuses (round two, low 2): seeded "running", a completed-only box wore the running gold and
+  // the header's completed tint matched nothing
+  const worst = tasks.reduce((w, t) => (BG_RANK[t.status] || 0) > (BG_RANK[w] || 0) ? t.status : w, tasks.length ? (tasks[0].status || "running") : "running");
   const head = el("div", "bg-fold-head " + (why ? "bg-await" : "bg-" + worst) + (open ? " open" : ""));
   head.dataset.act = "bg-fold"; head.dataset.id = sid;
   const car = el("span", "bg-caret"); car.textContent = open ? "▾" : "▸"; head.appendChild(car);   // ▸ closed → ▾ open (expands DOWNWARD beneath the header)
   head.appendChild(el("span", "bg-dot"));
   const lab = el("span", "bg-fold-label");
+  // THE HEADER'S RULE (T394 round three, lows 1 and 2; round four): the leading word is the wait and its count is the awaited rows
+  // (the chip's number); the breakdown after the separator counts every TOP-LEVEL row the list shows, by kind, awaited or not, a
+  // peer row as a peer; "N kept running" is the subset of those rows wearing the judge's verdict, never a further partition. So
+  // "Awaiting 2 · 1 agent · 2 commands · 1 kept running" is a session waiting on two of three listed rows, one of them a command
+  // the judge called furniture. An agent's OWN waits, drawn as sub-rows under it, are the agent's and stay out of the count, as
+  // they stay out of the chip's (the session waits on the agent, the agent on them). The one-kind idle header and the peer-named
+  // one keep the wait's own words and add the breakdown only when the list shows rows beyond the wait's (else the word, or the
+  // names, already count them all).
   if (why) {
     // IDLE, waiting on the rows — the chip reads Awaiting and the header agrees with it in number: ONE rule
     // words both (awaitWord). The kernel's why leads with the verb ("waiting on a background command: …");
@@ -13782,17 +16207,17 @@ function renderBgTasks() {
         lab.appendChild(nm);
       });
       lab.append(" · " + why.replace(/^delegated to [^;]*;\s*/i, "").replace(/^(waiting on|awaiting)\s+/i, ""));
+      if (kept.length) lab.append(" · " + listBreakdown(counted, keptN));   // every listed row counted, the peer rows as peers (round four): the names alone count them otherwise
     } else if (groups.length > 1) {
-      lab.textContent = "Awaiting " + word + " · " + awaitBreakdown(items);   // mixed kinds: the number, then the breakdown
+      lab.textContent = "Awaiting " + word + " · " + listBreakdown(counted, keptN);   // mixed kinds: the number, then every listed row by kind, then the kept rows
     } else {
-      lab.textContent = "Awaiting" + (word ? " " + word : "") + " · " + why.replace(/^(waiting on|awaiting)\s+/i, "");
+      lab.textContent = "Awaiting" + (word ? " " + word : "") + " · " + why.replace(/^(waiting on|awaiting)\s+/i, "") + (kept.length ? " · " + listBreakdown(counted, keptN) : "");   // the rows beyond the wait's counted too, by kind, the kept subset after (round three, low 3)
     }
   } else {
     // WORKING (or idle with nothing awaited — a service the session keeps around): the same rows, worded
-    // as what they are, no idle note. The breakdown counts the in-flight rows, or the tracked tasks when
-    // the kernel names none (they are shell tasks by construction — _bg_split never makes an agent a service).
-    const counted: AwaitRow[] = items.length ? items : leftovers.map((t) => ({ kind: "commands", id: t.id, label: t.summary }));
-    lab.textContent = "In the background · " + awaitBreakdown(counted);
+    // as what they are, no idle note. The header counts every row the list shows (T394): the in-flight rows by
+    // kind, then the tracked tasks the kernel names no row for, counted with them by kind, the rows wearing the verdict named after.
+    lab.textContent = "In the background · " + listBreakdown(counted, keptN);
   }
   head.appendChild(lab);
   host.appendChild(head);
@@ -13813,15 +16238,30 @@ function renderBgTasks() {
   }
   const taskById = new Map<string, BgTask>(tasks.map((t) => [t.id, t]));
   const peerByName = new Map<string, PeerIdent>(awPeers.map((p) => [p.name, p]));
-  const headers = groups.length + (leftovers.length ? 1 : 0) >= 2;   // group headers only when there is more than one group to tell apart
+  // the sections, one per KIND in display order: a kind the kernel's rows bring, or one only a kept row brings (T394)
+  const sections: { kind: string; rows: AwaitRow[] }[] = [...ROW_KINDS, "other"]
+    .filter((k) => groups.some((g) => g.kind === k) || kept.some((row) => row.kind === k))
+    .map((k) => ({ kind: k, rows: (groups.find((g) => g.kind === k) || { rows: [] as AwaitRow[] }).rows }));
+  const headers = sections.length >= 2;   // group headers only when there is more than one group to tell apart
   const list = el("div", "bg-list");
-  for (const g of groups) {
+  for (const g of sections) {
     if (headers) { const gh = el("div", "bg-group-head"); gh.textContent = GROUP_TITLE[g.kind] || "Other"; list.appendChild(gh); }
-    for (const it of g.rows) list.appendChild(bgRow(awaitRowSpec(it, taskById.get(it.id || ""), peerByName), sid));
-  }
-  if (leftovers.length) {
-    if (headers) { const gh = el("div", "bg-group-head"); gh.textContent = BG_LEFTOVER_TITLE; list.appendChild(gh); }
-    for (const t of leftovers) list.appendChild(bgRow(taskRowSpec(t, awaited.has(t.id)), sid));
+    for (const it of g.rows) {
+      list.appendChild(bgRow(awaitRowSpec(it, taskById.get(it.id || ""), peerByName), sid));
+      // what THIS row's agent is in turn waiting on (kernel `waits`, 2026-09-10): its own background commands
+      // or subagents, as indented sub-rows in the same row vocabulary — dot · label · elapsed · STATUS · Stop
+      // — under a small dim "waiting on" on the first. ONE level is drawn; a sub-row with waits of its own
+      // says so in its label ("· waiting on 1 command") rather than opening a third indent. The header and
+      // the chip never count these: the session waits on the agent, the agent waits on them.
+      const waits = (it.waits || []).filter((w) => w && w.kind);
+      waits.forEach((w, i) => {
+        const spec = awaitRowSpec(w, taskById.get(w.id || ""), peerByName);
+        spec.sub = i === 0 ? "first" : "rest";
+        spec.deeper = waitsNote(w) || null;
+        list.appendChild(bgRow(spec, sid));
+      });
+    }
+    for (const row of kept) if (row.kind === g.kind) list.appendChild(bgRow(row, sid));   // the kept rows of this kind, after the awaited ones
   }
   // the plain-words note on what the state means — for the idle wait only, where the state is not obvious
   // from the header; "In the background" says all a working session needs (2026-09-06)
@@ -13856,11 +16296,18 @@ interface BgRowSpec {
   command?: string | null;    // the fold: an agent's prompt, a command's command line, a watch's predicate
   output?: string | null;     // the fold: a command's output tail (never an agent's — its output file IS the transcript; the arrow is the way in)
   peer?: PeerIdent | null;    // a peer row: the name in identity colour
+  kind?: string | null;       // the row's kind (agents | commands | watches | peer | timer): its section, and the hue of its dot and caption (T394)
+  kept?: boolean;             // a tracked task the judge called a service (kernel bgServiceIds: audited past its launch without a wait), still running: dimmed, the verdict as a muted suffix (T394)
+  sub?: "first" | "rest" | null;   // a NESTED row — what the agent above it waits on (2026-09-10): indented; "first" wears the "waiting on" label, "rest" its blank twin so the dots align
+  deeper?: string | null;     // a nested row that has waits of its own: their count, said in the label ("waiting on 1 command") — the box draws one level
 }
 
-function taskRowSpec(t: BgTask, awaited: boolean): BgRowSpec {
+function taskRowSpec(t: BgTask, awaited: boolean, service: boolean): BgRowSpec {
   const status = t.status || "running";
+  // its kind's section; the kept-running word only on a task the judge called a service (the kernel's verdict, never inferred
+  // from a missing row) and only while it runs: a completed or failed task is finished, not kept (round one, medium 2 and low 1)
   return { id: t.id, status, caption: status, label: t.summary || "Background task", awaited,
+           kind: t.agentId ? "agents" : "commands", kept: service && status === "running",
            agentId: t.agentId || null, stopId: status === "running" ? t.id : null,
            command: t.command || null, output: t.agentId ? null : (t.output || "(no output captured)") };
 }
@@ -13870,33 +16317,46 @@ function taskRowSpec(t: BgTask, awaited: boolean): BgRowSpec {
 function awaitRowSpec(it: AwaitRow, tracked: BgTask | undefined, peerByName: Map<string, PeerIdent>): BgRowSpec {
   const running = !!tracked && (tracked.status || "running") === "running";
   const id = it.id || it.agentId || "";
+  // Stop's handle: the tracked task's id while it runs, else the row's own id when the kernel marks the row
+  // stoppable (a task in the SDK's live lifecycle set — stop_task resolves that id; 2026-09-10). A subagent's
+  // own command is never a tracked task (the parent transcript never saw its launch), so without the flag
+  // the nested rows would have no Stop at all.
+  const stopId = running ? tracked!.id : (it.stoppable && id ? id : null);
   if (it.kind === "agents") {
-    return { id, status: "running", caption: "running", label: it.label || (tracked && tracked.summary) || "background agent",
+    return { id, status: "running", caption: "running", kind: "agents", label: it.label || (tracked && tracked.summary) || "background agent",
              agentId: it.agentId || (tracked && tracked.agentId) || null, since: it.since,
-             stopId: running ? tracked!.id : null, command: (tracked && tracked.command) || null, output: null };
+             stopId, command: (tracked && tracked.command) || null, output: null };
   }
   if (it.kind === "commands") {
     const status = (tracked && tracked.status) || "running";
-    return { id, status, caption: status, label: it.label || (tracked && tracked.summary) || "background command", since: it.since,
-             stopId: running ? tracked!.id : null, command: (tracked && tracked.command) || null,
+    return { id, status, caption: status, kind: "commands", label: it.label || (tracked && tracked.summary) || "background command", since: it.since,
+             stopId, command: (tracked && tracked.command) || null,
              output: tracked ? (tracked.output || "(no output captured)") : null };
   }
   if (it.kind === "watches") {
-    return { id, status: "armed", caption: "armed", label: it.label || "a watch", since: it.since,
+    return { id, status: "armed", caption: "armed", kind: "watches", label: it.label || "a watch", since: it.since,
              watchId: it.watchId || null, command: it.detail || null };
   }
   if (it.kind === "peer") {
-    return { id, status: "waiting", label: it.label || "a peer", peer: peerByName.get(it.label || "") || null };
+    return { id, status: "waiting", kind: "peer", label: it.label || "a peer", peer: peerByName.get(it.label || "") || null };
   }
-  return { id, status: "waiting", caption: it.kind === "timer" ? "timer" : null, label: it.label || it.kind, since: it.since };
+  return { id, status: "waiting", caption: it.kind === "timer" ? "timer" : null, kind: it.kind, label: it.label || it.kind, since: it.since };
 }
 
 function bgRow(t: BgRowSpec, sid: string): HTMLElement {
-  const tOpen = bgExpanded.has(t.id);
+  const tOpen = openFolds.has("bgrow:" + t.id);
   const foldable = !!(t.command || t.output);
-  const row = el("div", "bg-task bg-" + (t.status || "running") + (t.awaited ? " bg-awaited" : "") + (tOpen && foldable ? " open" : ""));
+  const row = el("div", "bg-task bg-" + (t.status || "running") + (t.kind ? " bg-kind-" + t.kind : "") + (t.kept ? " bg-kept" : "")
+                     + (t.awaited ? " bg-awaited" : "") + (t.sub ? " bg-sub" : "") + (tOpen && foldable ? " open" : ""));
   const rh = el("div", "bg-head" + (foldable ? "" : " bg-flat"));
   if (foldable) { rh.dataset.act = "bg-toggle"; rh.dataset.id = t.id; }   // the row header toggles; clicks in the detail body don't collapse it
+  if (t.sub) {
+    // a NESTED row: the small dim "waiting on" leads the first sub-row; the rest carry its blank twin (same
+    // width) so every sub-row's dot sits on one line under the agent above
+    const on = el("span", "bg-waits-on" + (t.sub === "first" ? "" : " bg-waits-blank"));
+    on.textContent = t.sub === "first" ? "waiting on" : "";
+    rh.appendChild(on);
+  }
   rh.appendChild(el("span", "bg-dot"));
   const sum = el("span", "bg-sum");
   if (t.peer) {
@@ -13905,6 +16365,11 @@ function bgRow(t: BgRowSpec, sid: string): HTMLElement {
     if (t.peer.color && t.peer.color.bg) sum.style.color = t.peer.color.bg;
   } else sum.textContent = t.label || "Background task";
   rh.appendChild(sum);
+  if (t.kept) { const kw = el("span", "bg-kept-word"); kw.textContent = BG_KEPT_WORD; rh.appendChild(kw); }   // the judge's verdict, muted, beside the label (T394)
+  if (t.deeper) {
+    // the level the box does not draw, counted in words (the meta rung, like the elapsed time)
+    const dp = el("span", "bg-deeper"); dp.textContent = "· waiting on " + t.deeper; rh.appendChild(dp);
+  }
   if (t.agentId) {
     // an AGENT row: the same open-transcript arrow the Agent tool head wears (plans/subagent-transcripts.md).
     // Nested inside the bg-toggle row; the body delegate's closest-[data-act] lookup finds the arrow first,
@@ -13994,6 +16459,74 @@ function composerRestingPlaceholder(): string {
   return "Message this session…  (⏎ send · ⇧⏎ newline · ⌘⏎ stage · ↑ history · / for commands)";
 }
 
+// ── the resting placeholder names the session (the user 2026-09-09) ────────────────────────────────────
+// "Message this session…" reads "Message <name>…", the name BOLD and in the session's identity colour — the
+// colour its tab label and timeline lane wear — so the box says who you are about to message; with the chat
+// split into columns every column is a different session behind a same-looking box. A native placeholder is
+// plain text, so the styled form is an OVERLAY (#composer-ph) painted over the empty box exactly where the
+// first line of text would sit; the native placeholder stays for assistive tech and goes transparent beneath
+// it (.ph-on). It mirrors whatever the placeholder says (composer-placeholder.ts): the resting forms take the
+// name, the closed notice and a picker's "add your own answer…" show natively, and the overlay hides the
+// moment the box holds text. Re-synced by every writer of the box's value or placeholder — never polled.
+function syncComposerPh(): void {
+  const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+  const box = document.getElementById("composer");
+  if (!ta || !box) return;
+  let ph = document.getElementById("composer-ph");
+  if (!ph) {
+    ph = el("div", ""); ph.id = "composer-ph"; ph.setAttribute("aria-hidden", "true"); box.appendChild(ph);
+    ph.classList.add("name-faded");   // the strip's at-rest class: a remote host's prefix fades with the name it precedes (styles.css .name-faded .host-prefix; T335)
+    // The box's LAYOUT moves the textarea too, not only its value: a quote chip seeded by a highlight, a dropped
+    // file or a staged note adds a row above it (the user 2026-09-10: the name overlay sat on top of the chip
+    // row). Every such change resizes #composer, so its ResizeObserver re-places the overlay — event-based,
+    // whatever code path added the row. The overlay is absolutely positioned, so re-placing it never resizes
+    // the box back (no observer loop).
+    try { new ResizeObserver(() => syncComposerPh()).observe(box); } catch (e) { /* tests: no ResizeObserver in the DOM shim */ }
+  }
+  // the session's name and colour: the LIVE session when its tab is loaded, else what the strip itself knows of the
+  // tab (tabMeta: a skeleton's or a placeholder's name and colour) — never a stale pre-outage session (skeleton-tabs-wiring)
+  const live = liveSession(activeId);
+  const meta = activeId ? tabMeta.get(activeId) : undefined;
+  const colorBg = (live?.color?.bg || meta?.color?.bg) || null;
+  // the box's FOCUS ring wears the session's identity colour (T345, the user 2026-09-11: the thin border around the focused
+  // box should be the colour of the session you are messaging): published here, the one place that knows the active
+  // session's colour, as a variable on the box for the focus rule (styles.css #composer-input:focus) to read; the accent
+  // stays the fallback for a session with no colour, or one too close to the page's luminance to read as a ring
+  const ring = colorBg && identityReadable(colorBg) ? colorBg : "";
+  if (box.style.getPropertyValue("--composer-identity") !== ring) {
+    if (ring) box.style.setProperty("--composer-identity", ring); else box.style.removeProperty("--composer-identity");
+  }
+  const parts = phParts(ta.placeholder, live?.name || meta?.name || "", activeId);   // the sid tells a remote host's prefix from a name (host-prefix.ts)
+  const show = parts.kind === "named" && !ta.value && !ta.disabled && ta.offsetParent !== null;
+  ph.style.display = show ? "" : "none";
+  ta.classList.toggle("ph-on", show);
+  if (!show || parts.kind !== "named") return;
+  ph.replaceChildren();
+  ph.appendChild(document.createTextNode(parts.before));
+  if (parts.host) {
+    // a remote session's "host:" is metadata, not part of the name (T328, the user 2026-09-10: the box read the whole
+    // "host:name" bold in the identity colour): the tab label's own renderer paints it (host-prefix.ts hostNameNodes),
+    // the quiet .host-prefix span, marked when the host's link is down, and only the name below is bold and coloured
+    ph.appendChild(hostNameNodes(parts.host + parts.name, activeId)[0]);
+  }
+  // the name HALFWAY between its identity colour and an inactive tab label's level (T335, the user 2026-09-10: at the full
+  // colour it stood out brighter than every other word of the faded placeholder; T341, the user 2026-09-11: at the strip's
+  // full fade it read too faint): the strip's own perceptual fade of the identity colour (fadedColor) at half strength,
+  // the weight kept; the host span fades in tandem through the strip's own class on the overlay, at the matching midpoint
+  const nm = el("b", "composer-ph-name"); nm.textContent = parts.name;
+  if (colorBg) nm.style.color = fadedColor(colorBg, PH_NAME_FADE); else nm.style.removeProperty("color");
+  ph.appendChild(nm);
+  ph.appendChild(document.createTextNode(parts.after));
+  // where the box's own first line sits: inside its border and padding, in its font (offsets are relative to
+  // #composer, the overlay's positioned parent)
+  const cs = getComputedStyle(ta);
+  const num = (v: string) => parseFloat(v) || 0;
+  ph.style.left = (ta.offsetLeft + num(cs.borderLeftWidth) + num(cs.paddingLeft)) + "px";
+  ph.style.top = (ta.offsetTop + num(cs.borderTopWidth) + num(cs.paddingTop)) + "px";
+  ph.style.width = Math.max(0, ta.clientWidth - num(cs.paddingLeft) - num(cs.paddingRight)) + "px";
+  ph.style.fontFamily = cs.fontFamily; ph.style.fontSize = cs.fontSize; ph.style.lineHeight = cs.lineHeight;
+}
+
 // How a message typed into the NORMAL composer should be routed while a live picker is up — the picker's
 // dropped inline "add your own" field, now served by the composer (the user 2026-07-09). null → no active
 // free-text path, so the composer sends a normal message as usual (a permission Allow/Deny prompt, or an
@@ -14032,6 +16565,7 @@ function setComposerAskMode() {
     ta.placeholder = composerRestingPlaceholder();
     ta.classList.remove("answering");
   }
+  syncComposerPh();
 }
 
 // Render the widget matching the active session's pending prompt. It lives at the BOTTOM of the transcript
@@ -14043,6 +16577,8 @@ function renderLiveAsk() {
   const host = document.getElementById("live-ask");
   const footer = document.getElementById("footer");
   const content = document.getElementById("content");
+  const topBefore = content ? content.scrollTop : 0;   // read BEFORE any change below (the re-parent, the card's emptying, the render): a card re-rendered SHORTER under a
+                                                       // bottom reader is clamped at the first forced layout, and a read after it names the clamped value as the origin (round three, low 1)
   if (!host) return;
   // Keep the picker the LAST child of #content so it sits beneath the active thread even if a thread was
   // appended after it (e.g. switching to a never-seen session while a picker is up).
@@ -14058,7 +16594,7 @@ function renderLiveAsk() {
   // inline "add your own" field, and the NORMAL composer becomes that field (see composerAnswersAsk /
   // sendComposer). So you keep every control in view and can still type a free-text answer.
   if (footer) footer.style.display = "";
-  if (!activeId || skeletonTabs.ids.has(activeId) || !liveAsks.has(activeId) || snapView) {   // a skeleton's pre-outage picker is stale — hidden until the tab loads (2026-09-07); snapView: the pane shows a section's snapshot, not this session
+  if (!activeId || skeletonTabs.ids.has(activeId) || !liveAsks.has(activeId) || snapView) {   // a skeleton's pre-outage picker is stale — hidden until the tab loads (2026-09-07); snapView: the pane shows a section, not this session
     host.style.display = "none";
     liveTextValue = "";
     setComposerAskMode();   // no picker → the composer's normal placeholder + behavior
@@ -14067,25 +16603,24 @@ function renderLiveAsk() {
   host.style.display = "";
   const ask = liveAsks.get(activeId) ?? null;
   setComposerAskMode();   // picker with a free-text path → the composer becomes "add your own answer…"
-  if (!ask) renderUnknownCard();
-  else if (ask.kind === "multi") renderMultiCard(ask);
+  if (!ask) { host.style.display = "none"; setComposerAskMode(); return; }   // no typed ask (the kernel clears instead): nothing to draw
+  if (ask.kind === "multi") renderMultiCard(ask);
   else if (ask.kind === "submit") renderSubmitCard(ask);
   else renderSingleCard(ask);
-  renderAskPreview();   // focus-aware: the FOCUSED option's own preview (SDK) or the single scraped one (tmux)
+  renderAskPreview();   // focus-aware: the FOCUSED option's own preview
   // Reveal the picker if the user is parked at the bottom — it's part of the scroll flow now, so new/taller
   // pickers would otherwise land below the fold. Never yank a user who has scrolled UP to read context.
   const v = activeId ? views.get(activeId) : undefined;
-  if (content && (!v || v.stick)) writeScroll(content, content.scrollHeight, "liveask-reveal", true);
+  if (content && (!v || v.stick)) writeScroll(content, content.scrollHeight, "liveask-reveal", true, topBefore);
 }
 
 // The focused option's side-by-side preview box, reproduced VERBATIM in a monospace block (the user
 // 2026-06-13). The TUI draws it to the RIGHT of the options; the chat rail is narrow, so it sits BELOW the
 // card and scrolls sideways if wider than the rail. FOCUS-AWARE (the user 2026-06-22): on a single-select
 // card it shows the CURRENTLY-FOCUSED option's preview, so ↑/↓ swaps the picture like the terminal —
-// instantly when the option carries its OWN preview (the SDK backend sends one per option), else from
-// ParsedAsk.preview (the one the tmux scrape captured for the focused row, which paintLiveAskFocus keeps
-// current by nudging the terminal cursor). REPLACES rather than appends, so stepping never stacks
-// duplicates. textContent, never innerHTML: the pane text is untrusted terminal output.
+// instantly, from the option's OWN preview (the SDK sends one per option; ParsedAsk.preview stands in only
+// for an older kernel's single preview). REPLACES rather than appends, so stepping never stacks
+// duplicates. textContent, never innerHTML: the preview is untrusted tool output.
 function renderAskPreview() {
   const host = document.getElementById("live-ask"); if (!host) return;
   const card = host.querySelector(".ask-card") as HTMLElement | null; if (!card) return;
@@ -14338,46 +16873,10 @@ function insertClipboardText(text: string) {
   inp.dispatchEvent(new Event("input", { bubbles: true })); // keep liveTextValue/draft sync
   inp.focus();
 }
-// Safeguard: the session is awaiting input but the parser can't map the screen to
-// a known widget (an unrecognized prompt, a free-text editor, etc.). Warn loudly
-// so a prompt is never silently missed — and offer a best-effort text input in
-// case it IS a plain text prompt.
-function renderUnknownCard() {
-  const card = askCard("ask-live-unknown");
-  const warn = el("div", "ask-warn");
-  warn.textContent = "⚠ Waiting on a prompt the panel can’t read — answer it in the terminal.";
-  card.appendChild(warn);
-  // Free text goes through the NORMAL message box below now (composerAnswersAsk → "text" → askText); no
-  // separate inline input (the user 2026-07-09).
-  const hint = el("div", "ask-custom-hint-text");
-  hint.textContent = "…or, if it’s a text prompt, type it in the message box below + ⏎.";
-  card.appendChild(hint);
-}
-
 function paintLiveAskFocus() {
   const rows = document.querySelectorAll("#live-ask .ask-live-opt");
   rows.forEach((r, i) => r.classList.toggle("focus", i === liveAskFocus));
-  renderAskPreview();   // step the preview to the newly-focused option (instant for per-option SDK previews)
-  // tmux scrape path: the focused option has no preview of its own, but the ask carries the one scraped for
-  // the cursor row — so nudge the TERMINAL cursor onto this option, and the next scrape captures ITS preview.
-  // That's the only way to "see the other ones" without selecting (the user 2026-06-22). Debounced in
-  // navLiveAsk so a fast ↑↑↑ only drives the final option. SDK options carry their own preview → no nudge.
-  const ask = activeId ? liveAsks.get(activeId) : null;
-  if (ask && ask.kind === "single") {
-    const opts = singleOptions(ask);
-    const o = opts[Math.max(0, Math.min(liveAskFocus, opts.length - 1))];
-    if (o && !o.preview && ask.preview) navLiveAsk(o.n);
-  }
-}
-
-// Move the TUI cursor to `target` WITHOUT selecting, so the tmux-scraped preview follows ↑/↓. Debounced so
-// a fast keyboard sweep drives only the final option; NOT sendingGuard'd (it's navigation, not a commit).
-let navTimer: ReturnType<typeof setTimeout> | undefined;
-function navLiveAsk(target: number) {
-  if (!activeId || !vscodeApi) return;
-  const id = activeId;
-  if (navTimer) clearTimeout(navTimer);
-  navTimer = setTimeout(() => { navTimer = undefined; vscodeApi?.postMessage({ type: "navAsk", id, target }); }, 110);
+  renderAskPreview();   // step the preview to the newly-focused option (instant: every option carries its own)
 }
 
 // Single-select keyboard: ↑/↓ highlight (preview follows), Enter confirms, number jumps to + confirms.
@@ -14439,22 +16938,17 @@ function sendTextLiveAsk(text: string) {
 // Animated Claude-Code-style "working" line (sparkle + rotating gerund).
 function elapsedMs(sinceMs: number | null): string {
   if (!sinceMs) return "";
-  const s = Math.max(0, Math.floor((Date.now() - sinceMs) / 1000));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${s % 60}s`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
+  return durLabel((Date.now() - sinceMs) / 1000);   // the ONE duration format (duration.ts) — was its own "1h 3m"
 }
 
 // Right side of the status line: "Opus 4.8 xhigh" (model + effort) — the context %
-// is shown separately as a battery bar (ctxBar). Sourced from the @claude-model /
-// @claude-effort / @claude-context tmux vars. Shown in EVERY state, not just working.
-// Each value is a little dropdown: picking an entry has the host inject the matching
-// /model or /effort slash command into the session's pane; the label then updates
-// when the TUI's statusline republishes the tmux vars (meta-pending bridges the gap).
-type MetaKind = "mode" | "model" | "effort" | "fast";
+// is shown separately as a battery bar (ctxBar). Sourced from the session's own row
+// (the kernel publishes model, effort and context per session). Shown in EVERY state, not just working.
+// Each value is a little dropdown: picking an entry has the kernel apply the matching
+// /model or /effort setting to the session; the label then updates
+// when the session republishes the value (meta-pending bridges the gap).
 // One dropdown entry. `sub` is the second line for a choice whose consequence is not obvious from its
-// label; `sdkOnly` drops the entry on a tmux session, whose backend cannot apply it.
+// label; `sdkOnly` drops the entry on a backend that cannot apply it (Codex).
 interface MetaChoice { label: string; value: string; sub?: string; sdkOnly?: boolean; color?: number[] | null;
   versions?: { label: string; value: string; learned?: boolean }[]; default?: string }   // model families only (the
   // user 2026-08-25). `default` is the family's remembered version pin, else the family ALIAS; `learned`
@@ -14470,6 +16964,14 @@ const EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[
 // run: an empty model menu beats offering another vendor's models (docs/codex.md).
 const CODEX_MODEL_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
 const CODEX_EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
+// The effort menus list the ladder TOP-DOWN (the user 2026-09-14): the highest effort first, the lowest
+// last, the way the model menu already leads with the most capable family. The kernel serves `efforts`
+// low→high because its rank ramp (position → colour) and the gear's settings selects read that order, and
+// neither moves; the display order is derived HERE, once, for every menu these arrays feed (the statusline,
+// a thread's popover, the comment-create chips). Each row carries its own color/tone, so nothing recolours,
+// and the ✓ matches by value (isCurrentMeta), so it follows its row.
+const effortDisplayOrder = (efforts: { label: string; value: string; color?: number[] | null }[]): { label: string; value: string; color?: number[] | null }[] =>
+  [...efforts].reverse();
 // Why the Codex list is empty, when it is: the payload's `codex.error` (the app-server client not up yet,
 // a failed model list, no live Codex session). A Codex menu with no list shows it in place of a
 // blank menu. "" while a list is held or the field is absent.
@@ -14494,9 +16996,9 @@ function loadModelChoices(): void {
   fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }).then((d) => {
     if (typeof d.rev === "number") { if (d.rev < modelChoicesRev) return; modelChoicesRev = d.rev; }
     if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models, { label: "Default", value: "default" }); }
-    if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...d.efforts); }
+    if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...effortDisplayOrder(d.efforts)); }
     if (d.codex && Array.isArray(d.codex.models)) { CODEX_MODEL_CHOICES.length = 0; CODEX_MODEL_CHOICES.push(...d.codex.models); }
-    if (d.codex && Array.isArray(d.codex.efforts)) { CODEX_EFFORT_CHOICES.length = 0; CODEX_EFFORT_CHOICES.push(...d.codex.efforts); }
+    if (d.codex && Array.isArray(d.codex.efforts)) { CODEX_EFFORT_CHOICES.length = 0; CODEX_EFFORT_CHOICES.push(...effortDisplayOrder(d.codex.efforts)); }
     if (d.codex) CODEX_MODELS_ERROR = typeof d.codex.error === "string" ? d.codex.error : "";
     if (d.commentDefaults) adoptCommentDefaults(d.commentDefaults);
     if (onModelChoicesLoaded) onModelChoicesLoaded();   // once per APPLIED read: a response the rev check dropped never fires it
@@ -14535,40 +17037,7 @@ function modelChoiceLabel(value: string): { label: string; color?: number[] | nu
   }
   return { label: value };
 }
-// Permission mode. A tmux session has no slash command for it — the host cycles shift+tab the right
-// number of times (the user 2026-06-16) — so the four CYCLE modes are all that backend can reach.
-// An SDK session sets it outright over the control channel (set_permission_mode), which is what makes
-// Bypass offerable there and only there: on tmux the click would land on a mode the cycle cannot
-// express, and _cycle_mode would drop it. `sdkOnly` is the filter, applied in toggleMetaMenu.
-// Permission-mode GLYPHS (the user 2026-08-28): each mode gets a small line icon beside its text —
-// the statusline badge and the picker rows carry it, always WITH the label (an icon alone is a
-// riddle). House icon style (the tag-glyph convention): 16-unit viewBox, stroke currentColor 1.4,
-// round caps/joins. The vocabulary: the GATE is a shield — Normal is the shield as-is, Bypass is
-// the shield slashed (the gate removed); Accept edits is the pencil (edits pre-approved); Auto is
-// the bolt (it decides at speed); Plan is the route pin-to-pin (look before touching); Don't ask
-// (renderable, not offerable) is the crossed speech bubble (it will never raise a question).
-const MODE_ICONS: Record<string, string> = {
-  default: '<path d="M8 2 L13 4 V8 C13 11.4 10.8 13.2 8 14 C5.2 13.2 3 11.4 3 8 V4 Z"/>',
-  acceptedits: '<path d="M3.5 12.5 L4.1 10.1 L10.9 3.3 A1.35 1.35 0 0 1 12.8 5.2 L6 12 L3.5 12.5 Z"/><path d="M9.9 4.3 L11.8 6.2"/>',
-  auto: '<path d="M8.8 2 L4.2 9 H7.4 L6.9 14 L11.8 6.8 H8.3 Z"/>',
-  plan: '<circle cx="4" cy="12" r="1.5"/><circle cx="12" cy="4" r="1.5"/><path d="M5.2 10.8 C7.5 9.5 8.5 6.5 10.8 5.2" stroke-dasharray="2 1.6"/>',
-  bypasspermissions: '<path d="M8 2 L13 4 V8 C13 11.4 10.8 13.2 8 14 C5.2 13.2 3 11.4 3 8 V4 Z"/><path d="M3.2 13 L12.8 3"/>',
-  dontask: '<path d="M3 3.5 H13 V10 H8.5 L5.5 12.8 V10 H3 Z"/><path d="M3.2 12.6 L12.8 2.6"/>',
-};
-// the modes that REMOVE the gate rather than move it read in a red hue on the yatharth themes
-// (the user 2026-08-31) — CSS-scoped to .chat-theme-yatharth so classic renders untouched
-function riskyMode(mode: string | undefined): boolean {
-  const k = (mode || "").toLowerCase().replace(/[\u2019' -]/g, "");
-  return k === "bypasspermissions" || k === "bypass" || k === "dontask";
-}
 
-function modeIconSvg(mode: string | undefined): string {
-  // accepts wire values AND display labels (metaButton receives prettyMode's text)
-  const raw = (mode || "default").toLowerCase().replace(/[\u2019' -]/g, "");
-  const k = raw === "normal" || raw === "" ? "default" : raw;
-  const body = MODE_ICONS[k] ?? MODE_ICONS.default;
-  return '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + body + "</svg>";
-}
 
 // Every mode wears a one-phrase sub-line (T140, the user 2026-08-28: where taglines exist under
 // some entries, add analogous ones saying what the other modes are — and 'Accept edits' reads
@@ -14587,8 +17056,8 @@ const MODE_CHOICES: MetaChoice[] = [
 ];
 // Fast mode (the CLI's /fast — Opus-only research preview): a two-state toggle offered as the same
 // dropdown shape as the other badges. The badge exists only when the session REPORTS a fast state
-// (st.fast, from the SDK init's fast_mode_state) — a session that can't run it, or a tmux session
-// whose statusline doesn't publish it yet, shows no dead control. The options speak the BADGE's two
+// (st.fast, from the SDK init's fast_mode_state) — a session that doesn't report a fast state shows no
+// dead control. The options speak the BADGE's two
 // words — Fast/Slow, never On/Off (the user 2026-08-11: a badge reading "Slow" opened a menu of
 // "On"/"Off", two vocabularies for one toggle; prettyFast is the one wording, the values stay the
 // wire's on/off).
@@ -14596,44 +17065,6 @@ const FAST_CHOICES: { label: string; value: string }[] = [
   { label: "Fast", value: "on" },
   { label: "Slow", value: "off" },
 ];
-// Per-session billing (the user 2026-08-08) — the Claude login vs the API key behind Claude Code's
-// apiKeyHelper — is no longer a statusline badge: the SWITCHING control lives in the tab's
-// right-click menu (showTabMenu's Billing flyout, the user 2026-08-09), on every SDK session since
-// 2026-09-08 (both choices listed, the one this box cannot bill greyed with the reason; it was gated
-// on st.authBoth before), and still labelled plainly 'API key' — no fragment of the key, not even a
-// last-4 tail, is shipped or shown (2026-08-08, evening). The tab hover's Billing row keeps carrying
-// the fact everywhere.
-// the fast-mode state ("on"/"off"/"cooldown") → the badge label. ONE WORD (the user 2026-08-10, on a
-// phone-width statusline), but the WORD carries the state: off reads "Slow", not a second "Fast" —
-// tint alone (orange on, dim off) didn't say which side the toggle was on (the user 2026-08-11).
-// ON keeps the CLI's fast orange (metaColor); the picker's ✓ names the state on click.
-function prettyFast(f: string | undefined): string {
-  const s = (f || "").toLowerCase();
-  return s === "cooldown" ? "Cooldown"   // rate-limited: the CLI resumes fast mode when the limit resets
-    : s === "on" ? "Fast" : "Slow";
-}
-// Whether the session's MODEL can run fast mode at all (the CLI's /fast is an Opus-only research
-// preview). Gated HERE, on the model, because the CLI is no help: fast_mode_state arrives "off" with
-// an EMPTY fast_mode_disabled_reason on a non-Opus session (verified 2026-08-10 against 2.1.226 on a
-// fable session), so state alone would leave a dead toggle on every model /fast refuses (the user
-// 2026-08-10). Unknown/default stays visible: the account default may be Opus, and hiding a live
-// control is worse than a rare dead one.
-function fastAvailable(st: Status): boolean {
-  const m = (st.model || "").toLowerCase();
-  return !m || m === "default" || m.includes("opus");
-}
-// the @claude-permission-mode var → a short readable badge label
-function prettyMode(m: string | undefined): string {
-  switch ((m || "").toLowerCase()) {
-    case "plan": return "Plan";
-    case "acceptedits": return "Accept";   // one word everywhere the mode renders (T140)
-    case "auto": return "Auto";
-    case "dontask": return "Don’t ask";
-    case "bypasspermissions": return "Bypass";
-    case "sandboxed": return "Sandboxed";
-    default: return "Normal";   // default / normal / unknown
-  }
-}
 const CODEX_MODE_CHOICES: MetaChoice[] = [
   { label: "Sandboxed", value: "sandboxed", sub: "commands stay sandboxed; escalation is denied" },
   { label: "Auto", value: "auto", sub: "approved commands run unsandboxed as you; the rest denied" },
@@ -14651,11 +17082,6 @@ function metaChoices(kind: MetaKind, st: Status): MetaChoice[] {
     if (kind === "effort") return CODEX_EFFORT_CHOICES;
   }
   return META_CHOICES[kind];
-}
-// the live value of a meta kind for the active session
-function metaCurrent(kind: MetaKind, st: Status): string {
-  return (kind === "model" ? st.model : kind === "effort" ? st.effort : kind === "fast" ? st.fast
-    : st.mode) || "";
 }
 
 // Does a menu entry name this value of its kind? Effort and fast match exactly ("cooldown" marks neither fast
@@ -14699,8 +17125,8 @@ function runningTag(): HTMLElement {
   return tag;
 }
 
-// "<sessionId>:<kind>" → set when the user picks a value, cleared when the tmux
-// var actually changes (or after 20s, if the TUI rejected/ignored the command).
+// "<sessionId>:<kind>" → set when the user picks a value, cleared when the session
+// republishes the value (or after 20s, if the CLI rejected/ignored the command).
 const metaPending = new Map<string, { was: string; until: number }>();
 function isMetaPending(kind: MetaKind, st: Status): boolean {
   if (!activeId) return false;
@@ -14738,37 +17164,78 @@ function settleMetaHold(sid: string, kind: MetaKind, held: boolean): void {
   if (metaHeldLast.delete(key)) metaPending.delete(key);
 }
 
-// Three pulsing accent-blue dots shown IN the model badge while a /model switch resolves (the user
-// 2026-07-03) — the romp loader's dot motif, so a wait always reads as "something's happening, it's
-// romp". Cleared the instant syncMetaControls sees modelPending drop and the real name lands.
-function metaDots(): HTMLElement {
-  const d = el("span", "meta-dots");
-  d.appendChild(el("i"));
-  d.appendChild(el("i"));
-  d.appendChild(el("i"));
-  return d;
+// THE CHAT'S LIVE HALF OF THE STATUS CONTROLS (T415 part two): status-controls.ts builds the badges and the battery for the chat's
+// line, the popovers and the settings card's preview alike; the chat hands it what only the chat has, as hooks: the picker a badge
+// click opens (toggleMetaMenu), the sub-second pending heuristic (isMetaPending), the battery's /compact click and the compaction
+// sweep's colormap animation (applyCompactSweep reads the chat's colormap setting). The wrappers keep every call site as it was.
+// The pending hook also carries this fork's two reload flags (review round 7 of the settings-pick hold): the kernel reports the
+// reload of a mode or fast pick as st.modePending / st.fastPending, and the badge wears the dim pulse for them as it does for the
+// module's own modelPending / effortPending, which the module ORs in before it calls the hook.
+const META_HOOKS: MetaHooks = {
+  onPress: (kind, btn, forSid) => toggleMetaMenu(kind, btn, forSid),
+  pending: (kind, st) => { const s = st as Status; return (kind === "mode" && !!s.modePending) || (kind === "fast" && !!s.fastPending) || isMetaPending(kind, s); },
+};
+function metaButton(kind: MetaKind, text: string, forSid?: string | null): HTMLElement { return buildMetaButton(kind, text, forSid, META_HOOKS); }
+function syncMetaControls(meta: HTMLElement, st: Status, forSid?: string | null): void {
+  // the hold is settled for every kind BEFORE the module's pass: on the frame where a hold ends, the module reads the local
+  // loader (isMetaPending, through META_HOOKS.pending) for a pick armed during the hold, so a settle that ran only in the
+  // post-pass painted the dots or the pulse for that one frame and cleared them on the next sync (review round 6: the hold-end
+  // frame retires the loader, the event, not the timer). settleMetaHold is idempotent, so applyHeldMarks's own call stays.
+  for (const kind of ["mode", "model", "effort", "fast"] as MetaKind[]) settleMetaHold(forSid || activeId || "", kind, !!st.pickHeld && st.pickHeld.surfaces.includes(kind));
+  syncMetaControlsWith(meta, st, forSid, META_HOOKS);
+  applyHeldMarks(meta, st, forSid ?? null);   // this fork's post-pass: the held pick's override, mark and tip (below); both passes run inside this one call, so no frame paints the state between them
 }
-
-function metaButton(kind: MetaKind, text: string, forSid?: string | null): HTMLElement {
-  const btn = el("span", "meta-btn");
-  btn.dataset.kind = kind;
-  if (forSid) btn.dataset.sid = forSid;   // a popover's badges name their thread; the chat's carry no session (metaAnchor)
-  if (kind === "mode") {   // the permission glyph, always beside its text (never instead of it)
-    const ico = el("span", "meta-ico mode-ico");
-    ico.innerHTML = modeIconSvg(text);   // refreshed by the sync loop below from st.mode
-    btn.appendChild(ico);
-    btn.classList.toggle("mode-risky", riskyMode(text));   // kept live by the sync loop
+// A pick HELD for the session's live work (st.pickHeld names the kinds; 2026-09-09) is neither
+// resolving nor reloading: the kernel reports the value the session RUNS for that kind, so the label
+// shows it, a small mark beside it says a change waits, and the tip names the pick and what it waits
+// on. Neither the loader dots nor the dim pulse: both claimed a change in progress, and the badge
+// disagreed with the chat's waiting line beside it (review round 2). A fork-only pass over the badges
+// the shared renderer (status-controls.ts, T415) has just synced: the module knows no hold (a preview
+// never has one), so this undoes its pending dress on a held kind, restores the running value where the
+// module put the loader dots (the kernel reports modelPending beside a held model pick), and sets the
+// mark and the tip; the module sets the standing tip once at build, and this pass re-sets it every sync
+// as the fork's loop did, so a hold's end restores it (metaTip).
+function applyHeldMarks(meta: HTMLElement, st: Status, forSid: string | null): void {
+  for (const b of Array.from(meta.querySelectorAll(".meta-btn")) as HTMLElement[]) {
+    const kind = b.dataset.kind as MetaKind;
+    const held = !!st.pickHeld && st.pickHeld.surfaces.includes(kind);
+    settleMetaHold(forSid || activeId || "", kind, held);   // the hold-cleared frame retires a loader armed during it
+    if (held) {
+      b.classList.remove("meta-pending");
+      const label = b.querySelector(".meta-label") as HTMLElement | null;
+      if (label && label.querySelector(".meta-dots")) {
+        const disp = kind === "mode" ? prettyMode(st.mode) : kind === "fast" ? prettyFast(st.fast) : metaCurrent(kind, st);
+        label.textContent = disp;
+        label.style.color = metaColor(kind, st);   // the module's dots pass cleared the tint; the running value wears its rank colour
+      }
+    }
+    b.classList.toggle("meta-held", held);
+    const mark = b.querySelector(".meta-held-mark") as HTMLElement | null;
+    if (held && !mark) {
+      const m = el("span", "meta-held-mark");
+      m.textContent = "•";
+      m.setAttribute("aria-hidden", "true");   // decoration: the pick's words are in the chat's held line and the tip
+      b.insertBefore(m, b.querySelector(".meta-caret"));
+    } else if (!held && mark) {
+      mark.remove();
+    }
+    setTip(b, held && st.pickHeld ? badgeHeldTip(kind, st.pickHeld) : metaTip(kind));   // idempotent: tip.ts wires once
   }
-  const label = el("span", "meta-label");
-  label.textContent = text;
-  btn.appendChild(label);
-  const caret = el("span", "meta-caret");
-  caret.textContent = "▾";
-  btn.appendChild(caret);
-  // the styled tip (tip.ts), not a native title — every tooltip wears the one .romp-tip dress
-  setTip(btn, metaTip(kind));
-  btn.addEventListener("click", (e) => { e.stopPropagation(); toggleMetaMenu(kind, btn, forSid ?? null); });
-  return btn;
+}
+// Context "battery": a small bar that FILLS with the context-used %, recolors as it fills, with the % written inside (the shared
+// renderer draws it); CLICK → /compact the session, same as the timeline's battery click. The chat's bar keeps its id: the lighter
+// in-place refresh finds it by id.
+function ctxBar(): HTMLElement { const bar = buildCtxBar(compactActiveSession); bar.id = "ctx-bar"; return bar; }
+function setCtxBar(bar: HTMLElement, ctxStr: string | undefined, compacting = false, ctxColor?: number[], ctxOver = false): void {
+  setCtxBarWith(bar, ctxStr, compacting, ctxColor, ctxOver, (scan, fresh) => applyCompactSweep(scan, 3200, fresh));
+}
+function compactActiveSession(bar: HTMLElement): void {
+  const s = activeId ? liveSession(activeId) : null;
+  if (!s || !vscodeApi) return;
+  // awaiting: the pane's keyboard belongs to the prompt; compacting/closed: nothing to do
+  if (s.status.state === "needsInput" || s.status.state === "awaiting" || s.status.state === "compacting" || s.status.state === "closed") return;
+  vscodeApi.postMessage({ type: "compactSession", id: activeId });
+  bar.classList.add("ctx-clicked");   // immediate cue; the real compacting state takes over via the poll
 }
 
 // A badge's standing tip; syncMetaControls restores it when a hold on that kind ends.
@@ -14788,82 +17255,7 @@ function nonClassicChoiceTone(choice: { color?: number[] | null; tone?: number[]
   return picked && picked.length === 3 ? readableRgb(picked) : (picked as number[] | undefined);
 }
 
-function metaColor(kind: MetaKind, st: Status): string {
-  // fast ON wears the CLI's own fast-mode orange (--fast, a status color) so the badge reads the same
-  // here as in the Claude Code TUI; off/cooldown stay the default gray.
-  if (kind === "fast") return (st.fast || "").toLowerCase() === "on" ? "var(--fast)" : "";
-  const c0 = kind === "model" ? pickTone(st.modelColor, st.modelTone)
-    : kind === "effort" ? pickTone(st.effortColor, st.effortTone) : undefined;
-  const c = c0 && c0.length === 3 ? readableRgb(c0) : c0;
-  return (c && c.length === 3) ? `rgb(${c[0]},${c[1]},${c[2]})` : "";
-}
 
-// Build or refresh the model/effort buttons inside #spinner-meta. Called from
-// updateStatusline (fresh container) and the 1s ticker (label refresh in place).
-function syncMetaControls(meta: HTMLElement, st: Status, forSid?: string | null) {
-  // order left→right: mode · model · effort · fast — the mode selector sits LEFT of the model name
-  // (the user 2026-06-16); fast exists only when the session reports it (SDK init) AND the model can
-  // run it (fastAvailable). Billing moved to the tab's right-click menu (the user 2026-08-09) — no
-  // badge here.
-  const fast = st.fast && fastAvailable(st) ? st.fast : "";   // reported AND the model can run it — else no dead control
-  const want = [st.mode ? "mode" : "", st.model ? "model" : "", st.effort ? "effort" : "", fast ? "fast" : ""].filter(Boolean).join();
-  const btns = Array.from(meta.querySelectorAll(".meta-btn")) as HTMLElement[];
-  if (btns.map((b) => b.dataset.kind).join() !== want) {
-    meta.replaceChildren();
-    if (st.mode) meta.appendChild(metaButton("mode", prettyMode(st.mode), forSid));
-    if (st.model) meta.appendChild(metaButton("model", st.model, forSid));
-    if (st.effort) meta.appendChild(metaButton("effort", st.effort, forSid));
-    if (fast) meta.appendChild(metaButton("fast", prettyFast(fast), forSid));
-  }
-  for (const b of Array.from(meta.querySelectorAll(".meta-btn")) as HTMLElement[]) {
-    const kind = b.dataset.kind as MetaKind;
-    const disp = kind === "mode" ? prettyMode(st.mode) : kind === "fast" ? prettyFast(st.fast)
-      : metaCurrent(kind, st);
-    const label = b.querySelector(".meta-label") as HTMLElement | null;
-    if (kind === "mode") {
-      const ico = b.querySelector(".mode-ico") as HTMLElement | null;
-      if (ico) ico.innerHTML = modeIconSvg(st.mode);
-      b.classList.toggle("mode-risky", riskyMode(st.mode));
-    }
-    // A switching MODEL shows animated dots, not the stale/premature name (the user 2026-07-03): the
-    // server drives it (st.modelPending) — event-based, cleared the instant the new model actually lands —
-    // and the local click heuristic (isMetaPending) covers the sub-second before the first server push.
-    // model resolves live; effort reconnects to apply (--effort is connect-time) — both drive the switching-
-    // dots from the server (st.modelPending / st.effortPending), with isMetaPending covering the sub-second
-    // before the first server push (the user 2026-07-06).
-    // A pick HELD for the session's live work (st.pickHeld names the kinds; 2026-09-09) is neither
-    // resolving nor reloading: the kernel reports the value the session RUNS for that kind, so the label
-    // shows it, a small mark beside it says a change waits, and the tip names the pick and what it waits
-    // on. Neither the loader dots nor the dim pulse: both claimed a change in progress, and the badge
-    // disagreed with the chat's waiting line beside it (review round 2).
-    const held = !!st.pickHeld && st.pickHeld.surfaces.includes(kind);
-    settleMetaHold(forSid || activeId || "", kind, held);   // the hold-cleared frame retires a loader armed during it
-    const pending = !held && ((kind === "model" && !!st.modelPending) || (kind === "effort" && !!st.effortPending)
-      || (kind === "mode" && !!st.modePending) || (kind === "fast" && !!st.fastPending)   // the reload of a mode or fast pick (review round 7): the dim pulse
-      || isMetaPending(kind, st));
-    const showDots = pending && (kind === "model" || kind === "effort");   // both apply via a resolve/reconnect the server tracks
-    if (label) {
-      if (showDots) {
-        if (!label.querySelector(".meta-dots")) label.replaceChildren(metaDots());
-      } else if (label.textContent !== disp || label.firstElementChild) {
-        label.textContent = disp;
-      }
-      label.style.color = showDots ? "" : metaColor(kind, st);   // tint the model name / effort by the colormap rank
-    }
-    b.classList.toggle("meta-pending", pending);
-    b.classList.toggle("meta-held", held);
-    const mark = b.querySelector(".meta-held-mark") as HTMLElement | null;
-    if (held && !mark) {
-      const m = el("span", "meta-held-mark");
-      m.textContent = "•";
-      m.setAttribute("aria-hidden", "true");   // decoration: the pick's words are in the chat's held line and the tip
-      b.insertBefore(m, b.querySelector(".meta-caret"));
-    } else if (!held && mark) {
-      mark.remove();
-    }
-    setTip(b, held && st.pickHeld ? badgeHeldTip(kind, st.pickHeld) : metaTip(kind));   // idempotent: tip.ts wires once
-  }
-}
 
 let metaMenuEl: HTMLElement | null = null;
 function closeMetaMenu() {
@@ -14917,7 +17309,7 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
   };
   let subEl: HTMLElement | null = null;
   const closeSub = () => { subEl?.remove(); subEl = null; };
-  // An sdkOnly entry is dropped on tmux rather than shown-and-refused: the backend cannot apply it,
+  // An sdkOnly entry is dropped on Codex rather than shown-and-refused: the backend cannot apply it,
   // and a menu that lists a mode you can't have is worse than one that doesn't. Codex sessions read
   // their own vocabulary via metaChoices (docs/codex.md) before the same filter.
   const rows = metaChoices(kind, s.status).filter((c) => !c.sdkOnly || s.status.backend === "sdk");
@@ -15085,80 +17477,9 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
 document.addEventListener("click", () => closeMetaMenu());
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMetaMenu(); });
 
-// Context "battery": a small bar that FILLS with the context-used %, recolors as it
-// fills (green → amber → red), with the % written inside. Replaces the plain "40%".
-// CLICK → /compact the session, same as the timeline's battery click.
-function ctxBar(): HTMLElement {
-  // No id here: this builder serves BOTH the statusline and the tab tip, and an id minted per widget put a
-  // duplicate #ctx-bar in the document whenever a tip was open — the 1s ticker getElementById-resolves the
-  // id, and only document order kept it refreshing the statusline's copy rather than the tip's (found
-  // 2026-08-17). The id belongs to the statusline SLOT, so its call site mints it.
-  const bar = el("span", "ctx-bar");
-  bar.appendChild(el("span", "ctx-fill"));
-  bar.appendChild(el("span", "ctx-text"));
-  bar.appendChild(el("span", "ctx-scan"));   // compacting: teal rectangle whose right edge compresses leftward (as on the timeline)
-  bar.addEventListener("click", () => {
-    const s = activeId ? liveSession(activeId) : null;
-    if (!s || !vscodeApi) return;
-    // awaiting: the pane's keyboard belongs to the prompt; compacting/closed: nothing to do
-    if (s.status.state === "needsInput" || s.status.state === "awaiting" || s.status.state === "compacting" || s.status.state === "closed") return;
-    vscodeApi.postMessage({ type: "compactSession", id: activeId });
-    bar.classList.add("ctx-clicked");   // immediate cue; the real compacting state takes over via the poll
-  });
-  return bar;
-}
-function setCtxBar(bar: HTMLElement, ctxStr: string | undefined, compacting = false, ctxColor?: number[], ctxOver = false) {
-  // Compacting: hide the fill/% (the number is about to be wrong anyway) and run
-  // the scanning bar instead, mirroring the timeline's battery. No ctx% needed.
-  bar.classList.toggle("ctx-compacting", compacting);
-  if (compacting) {
-    bar.classList.remove("ctx-clicked");   // the click's pulse cue did its job
-    bar.style.display = "";
-    bar.title = "compacting context…";
-    const scan = bar.querySelector(".ctx-scan") as HTMLElement | null;
-    if (scan) {
-      // setCtxBar runs on BOTH the fresh bar updateStatusline builds AND the reused #ctx-bar the lighter
-      // in-place refresh keeps — so phase-sync ONLY a fresh scan (no `swept` flag yet); re-seeding a reused
-      // one every refresh restarted its animation, the jump the user saw (2026-07-02). The gradient still
-      // (re)applies either way (recolors without restarting).
-      const fresh = !scan.dataset.swept;
-      if (fresh) scan.dataset.swept = "1";
-      applyCompactSweep(scan, 3200, fresh);   // ctx-compress runs 3.2s
-    }
-    return;
-  }
-  // left compacting → clear the arm flag so the NEXT episode re-seeds the phase on this (possibly reused) bar
-  const scanOff = bar.querySelector(".ctx-scan") as HTMLElement | null;
-  if (scanOff) delete scanOff.dataset.swept;
-  if (!ctxStr) { bar.style.display = "none"; return; }
-  bar.style.display = "";
-  const pct = Math.max(0, Math.min(100, parseInt(ctxStr, 10) || 0));
-  const fill = bar.querySelector(".ctx-fill") as HTMLElement | null;
-  const txt = bar.querySelector(".ctx-text") as HTMLElement | null;
-  // The GLOBAL colormap (the user 2026-06-26): the kernel computes the fill color server-side (ctxColor =
-  // ramp(context%) on the selected map, bright = full) so the chat battery matches the timeline + usage bars.
-  // Fall back to the old traffic-light if an older kernel didn't ship a color.
-  const fillBg = (ctxColor && ctxColor.length === 3) ? `rgb(${ctxColor.join(",")})`
-    : ctxFallbackColor(pct);   // theme-aware pair; fills stay un-re-encoded (see tabCtxGauge's note)
-  if (fill) { fill.style.width = pct + "%"; fill.style.background = fillBg; }
-  // ctxOver: the kernel clamps the CLI's "0-100+" percentage at 100 — past it the tokens exceed the
-  // CURRENT model's window (a 1M→200k model switch does this instantly). Say so: a silent 100% right
-  // after picking a smaller model reads as a broken gauge (the user 2026-09-02).
-  if (txt) txt.textContent = ctxOver ? "100%+" : pct + "%";
-  bar.title = ctxOver
-    ? "context exceeds this model's window — the next turn compacts or trims; click to /compact now"
-    : `context ${pct}% used — click to /compact`;
-}
 
-const CHIP_LABEL: Record<ChipState, string> = {
-  working: "Working", ready: "Ready", needsInput: "Blocked",
-  awaiting: "Blocked",   // the legacy name for needsInput — an older remote kernel still sends it
-  awaitingBg: "Awaiting",   // idle, waiting on background work it dispatched — the romp await-green, not working-yellow (the user 2026-07-13; recolored from straw 2026-07-22)
-  idle: "Idle", closed: "Closed", compacting: "Compacting", clearing: "Clearing", blocked: "API error",
-  retrying: "API retrying…",   // a live session stalled on an API rate-limit/overload auto-retry (api 2026-06-23)
-  interrupting: "Interrupting…",   // stop sent, turn not yet settled (the user 2026-07-02) — clears to READY on its own
-  opening: "Opening…",             // spawned, transcript not on disk yet — the first record clears it (the user 2026-08-05)
-};
+// CHIP_LABEL, the state words, lives in status-chip.ts since T322b (the user 2026-09-10): the tag overview's rows wear
+// the same chip as this bar, so the words and the classes have one home the two import (imported above).
 
 // A stop/interrupt button that lives beside the state badge in the statusline (the user 2026-06-19):
 // it sends the SAME interrupt the composer's Ctrl+C does (host → Esc into the pane) — a less fiddly way
@@ -15214,14 +17535,15 @@ function updateStatusline() {
   if (activeId && !s) {
     // the tab is a loading placeholder (its session payload hasn't arrived) — the statusline said
     // whatever the PREVIOUS tab said, or a spawn stub's "Working" over a broken clock (the user
-    // 2026-08-05, who wanted "opening" and animated dots until it's ready). A skeleton tab is a RUNNING
-    // session whose transcript is on its way, not one being opened: its line says so, the word the
-    // tab's own loader uses (review find 2026-09-08: "Opening session" over a "loading" tab)
-    const loading = skeletonTabs.ids.has(activeId) || skeletonLoading === activeId;
-    sl.replaceChildren(openingLine(loading ? "Loading session" : "Opening session"));
+    // 2026-08-05, who wanted "opening" and animated dots until it's ready). "Opening" ONLY for a
+    // provisional tab (a session being created); every other id whose payload has not landed — a skeleton,
+    // a placeholder, a new split column's session on its way — is a RUNNING session, and its line says so,
+    // the word the tab's own loader uses (review find 2026-09-08: "Opening session" over a "loading" tab;
+    // the user 2026-09-11, who read a new column's "Opening session" as a create)
+    sl.replaceChildren(openingLine(isProvisionalId(activeId) ? "Opening session" : "Loading session"));
     return;
   }
-  if (!s) return;
+  if (!s) { sl.replaceChildren(); return; }   // no tab at all, or the UNFOCUSED pane (T357): the line says nothing, not the last session's chips
   sl.replaceChildren();
   if (s.sub) {
     // a subagent viewer has no session state, model or context to show — the header above the
@@ -15231,6 +17553,13 @@ function updateStatusline() {
     sl.appendChild(ro);
     return;
   }
+  // The line's WIDGETS (T409, the user 2026-09-13): the configured set in its order, from the registry the settings rows
+  // render from (status-widgets.ts, the Chat tab's Status line section). The LEFT slot leads the line (the session's
+  // name on its identity colour, off by default: the tab above already names it); the RIGHT slot leads the right
+  // cluster below (the folder and the branch by default, the host of a remote session on request), ahead of the
+  // controls that are always there. A widget that renders nothing adds nothing.
+  const rec = statusRecordOf(s, activeId || "");
+  composeStatusWidgets(sl, "left", rec, settings.statusWidgets);
   // Left: the state chip — WORKING gets a sine color-pulse + elapsed timer; idle
   // states get the plain chip (no timer). Right: model + effort · ctx%, always.
   if (s.status.state === "working") {
@@ -15252,37 +17581,20 @@ function updateStatusline() {
     // #bg-tasks box below and scrolls it into view — the chip used to be the one status word on the
     // pane you could not click through. data-act on the stable #statusline delegate (click-safe across
     // the per-push rebuild); the delegate's .romp-acted pulse acknowledges the press.
-    const chip = el("button", "chip chip-awaitingBg chip-btn") as HTMLButtonElement;
+    // the chip itself is the SHARED status chip (status-chip.ts chipWords + statusChip, T322b): `chip chip-awaitingBg`
+    // wearing "Awaiting <word>" — the KIND rides the label so a glance says WHAT is awaited (the user 2026-08-15;
+    // tooltips are dead on the touch PWA), by ONE rule (awaitWord, agreeing in number, T225): "Awaiting agent" /
+    // "Awaiting command" / "Awaiting watch" for one, "Awaiting 3 agents" for several of a kind, "Awaiting 4" when
+    // the kinds are mixed; a single named peer's NAME in its identity colour on the .chip-peer-name backing (the
+    // user 2026-08-26). The tag overview's rows build theirs from the same two calls, so the two cannot drift. This
+    // bar adds what only it has: the button, the per-kind hook and the tip (the breakdown "2 agents · 1 command ·
+    // 1 watch" rides there).
+    const chip = statusChip(chipWords(s.status), "button") as HTMLButtonElement;
+    chip.classList.add("chip-btn");
     chip.type = "button";
     chip.dataset.act = "awaitingChip";
-    // the KIND rides the label so a glance says WHAT is awaited (the user 2026-08-15) — tooltips are
-    // dead on the touch PWA, so the word must be visible; the subject stays in the #bg-tasks box. ONE
-    // rule words it (awaitWord): "Awaiting agent" / "Awaiting command" / "Awaiting watch" for one,
-    // "Awaiting 3 agents" for several of a kind, "Awaiting 4" when the kinds are mixed — the
-    // breakdown ("2 agents · 1 command · 1 watch") rides the tooltip.
     const chipItems = s.status.awaitingItems || [];
     chip.classList.add("chip-awaiting-" + (s.status.awaitingKind || "untyped"));   // per-kind hook, one hue today
-    const chipPeers = s.status.awaitingPeers || [];
-    const chipWord = awaitWord(s.status.awaitingKind, s.status.awaitingCount, chipItems);
-    if (chipPeers.length && groupRows(chipItems).every((g) => g.kind === "peer")) {
-      // the pill names the actual session (the user 2026-08-26): "Awaiting <name>", the NAME itself
-      // in the peer's identity colour — the dot it launched with retired the same day (round two:
-      // it read stupid). The name sits on an always-on ~85% black backing (.chip-peer-name), mostly
-      // opaque so ANY identity colour reads against any chip hue (their green-on-green example),
-      // translucent enough that the chip's own colour still glows through around it. Several peers
-      // keep the one-line rule as a count, names on the tooltip.
-      chip.append(CHIP_LABEL.awaitingBg + " ");
-      if (chipPeers.length === 1) {
-        const nm = el("span", "chip-peer-name");
-        // the HOUSE session-reference idiom (the user 2026-08-26, round three — one undifferentiated
-        // string read wrong): the shared renderer, so the host prefix wears .host-prefix (italic
-        // gray) and the NAME text takes the identity colour — the card headers' own treatment,
-        // never a restyled copy
-        nm.replaceChildren(...hostPartsNodes(chipPeers[0].host, chipPeers[0].name));
-        if (chipPeers[0].color && chipPeers[0].color.bg) nm.style.color = chipPeers[0].color.bg;
-        chip.appendChild(nm);
-      } else chip.append(chipWord || chipPeers.length + " peers");
-    } else chip.textContent = CHIP_LABEL.awaitingBg + (chipWord ? " " + chipWord : "");   // agrees in number (T225); the plain words of slice 2
     // the tip: the per-kind breakdown when there are rows, the kernel's why, and what the click does
     setTip(chip, [awaitBreakdown(chipItems), s.status.awaitingWhy || "idle, waiting on background work it dispatched",
                   "click to see what it's waiting on"].filter(Boolean).join("\n"));
@@ -15305,9 +17617,7 @@ function updateStatusline() {
   } else if (s.status.state === "opening") {
     sl.appendChild(openingLine());             // spawned, transcript not on disk yet — dots until the first record
   } else {
-    const chip = el("span", `chip chip-${s.status.state}`);
-    chip.textContent = CHIP_LABEL[s.status.state] ?? (s.status.state[0].toUpperCase() + s.status.state.slice(1).toLowerCase());
-    sl.appendChild(chip);
+    sl.appendChild(statusChip(chipWords(s.status)));   // the shared chip (status-chip.ts): `chip chip-<state>`, the state's words in sentence case
   }
 
   // The right-side cluster — dir · branch · mode/model/effort/fast badges · ctx battery — grouped in ONE
@@ -15316,38 +17626,17 @@ function updateStatusline() {
   // at the LEFT edge (justify only reaches the row holding the auto margin) — the user 2026-08-10, on a
   // phone, wanted the wrapped controls to stay clustered on the right.
   const right = el("span", "sl-right");
-  // The session's working directory (the current one — a tab-menu move changes it), leading the right-side
-  // cluster — just left of the mode/model/effort controls (the user 2026-06-23). Basename only; full path
-  // on hover. Empty (rare, no cwd) it's a zero-width spacer.
-  const dir = el("span", "status-dir");
-  if (s.cwd) {
-    dir.appendChild(folderIcon());
-    dir.appendChild(document.createTextNode(" " + (s.cwd.replace(/\/+$/, "").split("/").pop() || s.cwd)));
-    // Click → run the configured folder opener for this dir (default: the OS opener — Finder / xdg-open —
-    // overridable via ROMP_OPEN_FOLDER or ~/.config/romp/open-folder, e.g. open in Ghostty). asFolderLink wires
-    // the data-act caught by the document-level openFolder delegate, so the per-push rebuild can't drop it.
-    // activeId rides along so a REMOTE session's click SSHes out instead of no-op'ing on a local path (2026-07-03).
-    asFolderLink(dir, s.cwd, activeId || undefined);
-  }
-  right.appendChild(dir);
-  // The session's git branch, just right of the dir — only when known and only if the user has OPTED IN
-  // (Settings → Chat → "Show git branch"; off by default — the user 2026-08-10, trimming the statusline
-  // for narrow panes; it shipped on by default 2026-06-23). Read from the TOP-LEVEL session field,
-  // never the head system event: that event is windowed out of the wire tail on any >250-event session, which
-  // used to blank the branch on most sessions (the user 2026-06-30).
-  if (loadSettings().showBranch === true && ((s.workTree && s.workTree.branch) || s.gitBranch)) {
-    const br = el("span", "status-branch");
-    const liveBr = (s.workTree && s.workTree.branch) || s.gitBranch;
-    br.textContent = "⎇ " + liveBr;
-    br.title = s.workTree ? `worktree ${s.workTree.dir} — git branch: ${liveBr}` : "git branch: " + liveBr;
-    right.appendChild(br);
-  }
+  // The right slot's widgets lead the cluster (T409): the working directory (the current one; a tab-menu move changes
+  // it), by name with the full path on hover and a click that opens it, then the git branch when known (the worktree's
+  // when the session runs in one; read from the TOP-LEVEL session fields, never the head system event, which is
+  // windowed out of the wire tail on any long session), then, on request, the host of a remote session. Each is a row
+  // in the settings; the folder's row carries the Full path option.
+  composeStatusWidgets(right, "right", rec, settings.statusWidgets);
   const meta = el("span", "spinner-meta");
   meta.id = "spinner-meta";
   syncMetaControls(meta, s.status);
   right.appendChild(meta);
-  const bar = ctxBar();
-  bar.id = "ctx-bar";   // the statusline slot's id — the 1s ticker refreshes THIS copy in place (the tab tip's carries none)
+  const bar = ctxBar();   // the wrapper mints the statusline slot's id: the 1s ticker refreshes THIS copy in place (the tab tip's carries none)
   setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone), s.status.ctxOver);
   right.appendChild(bar);
   // stop/interrupt button — at the FAR RIGHT of the statusline (the user 2026-08-28; it sat
@@ -15360,6 +17649,12 @@ function updateStatusline() {
       || s.status.state === "retrying" || s.status.state === "blocked") right.appendChild(stopButton(s.status.state));
   sl.appendChild(right);
   pruneTip();   // a rebuilt statusline tears tip anchors (the stop button) out mid-hover — drop the orphan (PR #763 item 8; the feed's render does the same)
+}
+
+/** The slice of a session's record the status-line widgets read (status-widgets.ts): the top-level fields the wire
+ *  carries on every push, and the host a remote session's id names (hostOf), "" for a local one. */
+function statusRecordOf(s: Session, id: string): StatusRecord {
+  return { id, name: s.name, color: s.color, cwd: s.cwd || "", gitBranch: s.gitBranch || "", workTree: s.workTree || null, host: hostOf(id) };
 }
 
 // Unsent composer text, per session — a draft belongs to the tab it was typed
@@ -15506,14 +17801,18 @@ window.addEventListener("romp:hostRelayUp", (e) => {
   // event a remote kernel's restart produces (it fires neither romp:wsup nor hostUp), so settled previews
   // make their one attempt here as well
   refreshSettledPreviews();
+  reaskWaitingSubagents(h);   // …and that host's subagent viewers still waiting ask again (T355: a remote kernel's restart; an empty host is the local one)
   // …and the tab this pane is LOOKING AT, when that host owns it (T246, the user 2026-09-07): the relay's
   // open is the moment the remote kernel holds a FRESH client for this pane — after that kernel restarted,
-  // one with no active tab at all. Its pusher keys only a client's active tab on the live change key (the
-  // backend's stream, its queue, the snapshot row); every other session is served from the file-stat
-  // cache, so the session the user was watching streamed nothing until their next send moved a file
-  // input. The pane shim's local socket re-arms the LOCAL kernel with its ?active= connect hint on every
-  // dial; the relay has no hint, so the same fact is re-sent here as the activeTab message every tab
-  // switch sends (notifyActive; routeOutbound strips the host prefix). Decision in relay-active.ts.
+  // one with no active tab at all. Its pusher builds and flushes a client's active tab first; every tab is
+  // served from its cached build while its complete signature (_chat_build_sig: the backend's live tail,
+  // its queue, the snapshot row, every side file) holds. Under the key of the time, which keyed no
+  // in-memory input for a background tab, the session the user was watching streamed nothing until their
+  // next send moved a file input; today a missing hint costs the watched tab its place at the head of the
+  // build order and the first flush. The pane shim's local socket re-arms the LOCAL kernel with its ?active=
+  // connect hint on every dial; the relay has no hint, so the same fact is re-sent here as the activeTab
+  // message every tab switch sends (notifyActive; routeOutbound strips the host prefix). Decision in
+  // relay-active.ts.
   if (activeTabToReannounce(activeId, h)) notifyActive();
 });
 
@@ -15624,32 +17923,34 @@ try { for (const text of takeReloadNotices(sessionStorage)) warnToast(text); } c
 // strip shows an "Editing message" pill whose ✕ (or Esc in the box) cancels back to normal sending.
 const composerEdits = new Map<string, { uuid: string; orig: string }>();
 
-// STAGED messages (the user 2026-08-15): compose against a highlight, ⌘/Ctrl+⏎ to HOLD it — citation
-// chips and all — clear the box and keep reading; repeat. Nothing sends until the next plain send
-// (the stack flushes first, in stage order, the typed message last) or the strip's Send now.
-// Deliberately NOT the queue and never called "queued": queued is romp's injection-side wait (sent,
-// pending injection); staged is user-side — unsent by choice, each message keeping the context it was
-// written against so the batch reads as quote → comment, quote → comment. Per-tab, persisted with the
-// drafts (a reload or tab switch never drops a stack). The pure stack rules live in staged-messages.ts,
-// executed by its test; this file owns the strip DOM and the send routing.
+// STAGED messages (the user 2026-08-15): compose against a highlight, ⌘/Ctrl+⏎ to HOLD it, citation
+// chips and all, clear the composer and keep reading; repeat. Nothing sends until the next plain send
+// or the strip's Send now, and the release is ONE message: the staged items in stage order, each as the
+// quote it was written against and then its comment, the typed message last, so the run reads
+// quote, comment, quote, comment, wrap-up, and the agent takes it in one turn (stagedPosts in
+// staged-messages.ts says which items still go on their own). Deliberately NOT the queue and never
+// called "queued": queued is romp's injection-side wait (sent, pending injection); staged is user-side,
+// unsent by choice. Per-tab, persisted with the drafts (a reload or tab switch never drops a stack).
+// The pure stack rules and the body live in staged-messages.ts, executed by its test; this file owns
+// the strip DOM and the send routing.
 const stagedMsgs = new StagedStack();
 const stagedOpen = new Set<string>();   // sid:index of staged chips expanded to their full text
-// The strip folded to its head line (the user 2026-09-08, whose twelve staged comments filled the page):
-// a page-lifetime Set of session ids, empty (list shown) at load and written only by the head's caret or
-// label click, so a fold is the user's and a reload shows the list again. The head keeps the count and
-// Send now either way.
-const stagedFolded = new Set<string>();
-// The list's kept scroll offset, PER TAB (review round 1, 2026-09-09): the strip holds one tab's list at a
-// time, so the offset is stored under the sid that built the list the strip holds (strip.dataset.sid) and
-// reused only for that sid. Read off whatever list was in the strip, it carried the leaving tab's offset
-// onto the entering tab's list on a switch and hid that tab's first items.
+// The strip collapsed to its head line: a page-lifetime Set of session ids, empty (list shown) at load,
+// written by the head's caret or label click and cleared when the stack empties, so a collapse is the
+// user's and belongs to the stack they collapsed (the next stack starts shown, its first item in view),
+// and a reload shows the list again. The head keeps the count and Send now either way.
+const stagedCollapsed = new Set<string>();
+// The list's kept scroll offset, PER TAB: the strip holds one tab's list at a time, so the offset is
+// stored under the sid that built the list the strip holds (strip.dataset.sid) and reused only for
+// that sid. Read off whatever list was in the strip, it would carry the leaving tab's offset onto the
+// entering tab's list on a switch and hide that tab's first items.
 const stagedScroll = new Map<string, number>();
 try { stagedMsgs.restore(((vscodeApi?.getState?.() || {}) as any).staged); } catch { /* ignore */ }
 
-// One routing owner for a user message (deliver speaks it through flushStaged, which folds the staged
-// run and the typed message into one body): a goal chip rides askFollowUp, quote chips wrap client-side,
-// a bare message is a plain send with the optimistic bubble (chip sends have their own kernel-side echo).
-function routeUserMessage(sid: string, text: string, cites: Citation[] | undefined, imgPaths?: string[]): void {
+// One routing owner for a user message (deliver speaks it through flushStaged, once per post of the
+// release): a goal chip rides askFollowUp, quote chips wrap client-side, a bare message is a plain send
+// with the optimistic bubble (chip sends have their own kernel-side echo).
+function routeUserMessage(sid: string, text: string, cites: Citation[] | undefined, imgPaths?: string[], paths?: string[]): void {
   if (!vscodeApi) return;
   const goalCite = cites?.find((c) => c.itemId);
   const quoteCites = cites ? cites.filter((c) => c.quote) : [];
@@ -15659,14 +17960,16 @@ function routeUserMessage(sid: string, text: string, cites: Citation[] | undefin
   // md (send-pending.ts): the quote branch echoes the COMPOSED body, which is byte-identical to what
   // lands (quoteReplyBody IS the send path); the follow-up echoes the typed words, which is what the
   // kernel ships as the landed event's md once it strips the goal wrapper (_split_followup).
-  // Every branch posts the bubble's own `sendId` (registered FIRST, so the id exists to post): the kernel
-  // carries it on the queue entry, the echo and the landed record, and the reconcile matches this bubble
-  // on it (send-pending.ts). The follow-up goes through the kernel's own wrapping path, which carries the
-  // id onto the parked op or queue entry it makes of the wrapped body, so the bubble's ✕ cancels exactly
-  // that entry (review round 2, 2026-09-08); its bubble keeps the text match as well.
-  if (goalCite?.itemId) { const p = registerOptimistic(sid, text, imgPaths); vscodeApi.postMessage({ type: "askFollowUp", itemId: goalCite.itemId, text, sid, sendId: p.sendId }); }
-  else if (quoteCites.length) { const body = quoteReplyBody(quoteCites, text); const p = registerOptimistic(sid, body, imgPaths); vscodeApi.postMessage({ type: "sendMessage", id: sid, text: body, sendId: p.sendId }); }
-  else { const p = registerOptimistic(sid, text, imgPaths); vscodeApi.postMessage({ type: "sendMessage", id: sid, text, sendId: p.sendId }); }
+  // The copy's id is minted at the press and rides the post (`qid`), and the entry registered right after wears
+  // the same one: the kernel queues or parks the copy under it, so the two never have to be paired by text
+  // (send-pending.ts). The post still goes first: the paint that follows can never cost the send.
+  const qid = mintQid();
+  // `paths`: every attachment the trailing line carries, on the frame (the kernel keeps it beside the copy's id and ships
+  // it on the queued copy) and on the record, so a rescind gives back exactly what went out (T373 fold, medium 1)
+  const att = paths && paths.length ? { paths } : {};
+  if (goalCite?.itemId) { vscodeApi.postMessage({ type: "askFollowUp", itemId: goalCite.itemId, text, sid, qid, ...att }); registerOptimistic(sid, text, imgPaths, qid, paths); }
+  else if (quoteCites.length) { const body = quoteReplyBody(quoteCites, text); vscodeApi.postMessage({ type: "sendMessage", id: sid, text: body, qid, ...att }); registerOptimistic(sid, body, imgPaths, qid, paths); }
+  else { vscodeApi.postMessage({ type: "sendMessage", id: sid, text, qid, ...att }); registerOptimistic(sid, text, imgPaths, qid, paths); }
   // One breadcrumb per composer send (client-diag.jsonl): sid, when, how long, which route — never the
   // text. A send that "vanished" can then be traced from the press through the kernel's own logs
   // instead of reconstructed from memory.
@@ -15674,63 +17977,66 @@ function routeUserMessage(sid: string, text: string, cites: Citation[] | undefin
     data: { sid, ts: Date.now(), len: text.length, route: goalCite?.itemId ? "followup" : quoteCites.length ? "quote" : "plain" } });
 }
 
-/** Release the tab's staged stack as ONE message (the user 2026-09-08, who wanted staged comments to
- *  land as one message, not a series): stagedPosts (staged-messages.ts, executed by its test) folds the
- *  staged items in stage order and then the typed message, when the send carries one, into a single body,
- *  so one post makes one bubble and one turn. Two kinds of item still go on their own, at their place in
- *  stage order: a staged item citing a GOAL (the kernel wraps one goal per message, askFollowUp; a typed
- *  goal follow-up carries the run inside its text and the goal wraps the lot) and a SLASH COMMAND, staged
- *  or typed (the kernel fires a command only at the head of its own text; folded in, a typed /clear was
- *  prose the agent read and a staged /compact took the comments after it as its argument: review round 1,
- *  2026-09-09). With nothing staged the typed message routes exactly as before. Deliver's guards (host
- *  down, provisional) run before this in the send path; Send now re-checks reachability itself. Returns
- *  how many staged items went. */
-function flushStaged(sid: string, typed?: { text: string; cites?: Citation[]; imgPaths?: string[] }): number {
-  const batch = stagedMsgs.takeAll(sid);
-  for (const p of stagedPosts(batch, typed)) routeUserMessage(sid, p.text, p.cites as Citation[] | undefined, p.imgPaths);
-  if (batch.length) { persistDrafts(); renderStagedStrip(sid); }
-  return batch.length;
+/** Release the tab's staged stack as ONE message: stagedPosts (staged-messages.ts, executed by its test)
+ *  composes the staged items in stage order and then the typed message, when the send carries one, into
+ *  a single body, so one post makes one bubble and one turn. Two kinds of item still go on their own, at
+ *  their place in stage order: an item citing a GOAL (the kernel wraps one goal per message, askFollowUp;
+ *  a typed goal follow-up carries the run inside its text and the goal wraps the lot) and a SLASH
+ *  COMMAND, staged or typed (the kernel fires a command only at the head of its own text: after another
+ *  section a typed /clear would be prose the agent read, and ahead of one a staged /compact would take
+ *  the comments after it as its argument). With nothing staged the typed message routes exactly as
+ *  before. Deliver's guards (host down, provisional) run before this in the send path; Send now
+ *  re-checks reachability itself. Returns how many staged items went. */
+function flushStaged(sid: string, typed?: { text: string; cites?: Citation[]; imgPaths?: string[]; paths?: string[] }): number {
+  const run = stagedMsgs.takeAll(sid);
+  for (const p of stagedPosts(run, typed)) routeUserMessage(sid, p.text, p.cites as Citation[] | undefined, p.imgPaths, p.paths);
+  if (run.length) { persistDrafts(); renderStagedStrip(sid); }
+  return run.length;
 }
 
-function renderStagedStrip(id: string | null, opts?: { reveal?: "last" }): void {
+  // every exit path re-places the name overlay: a row above the textarea coming or going moves the box's first line
+  // (the user 2026-09-10); the ResizeObserver on #composer is the backstop, this is the exact event
+  function renderStagedStrip(id: string | null, opts?: { reveal?: "last" }): void { renderStagedStripInner(id, opts); syncComposerPh(); }
+  function renderStagedStripInner(id: string | null, opts?: { reveal?: "last" }): void {
   const strip = document.getElementById("composer-staged");
   if (!strip) return;
   // the list's scroll position survives the rebuild: expanding or discarding an item re-renders the
   // strip, and a fresh list would start at the top, away from the item just clicked. The offset is kept
   // under the tab that built the list it is read from (stagedScroll), so a switch never carries one tab's
   // place onto another's list and a tab comes back to its own; an emptied list forgets it. The STAGE path
-  // passes reveal: "last" instead and the new item scrolls into view: with the kept offset, every item
-  // staged past the fourth landed below the list's edge, out of sight (review round 1, 2026-09-09).
-  const prevList = strip.querySelector(".staged-list") as HTMLElement | null;
-  if (prevList && strip.dataset.sid) stagedScroll.set(strip.dataset.sid, prevList.scrollTop);
+  // passes reveal: "last" instead and the new item scrolls into view: with only the kept offset, every
+  // item staged past the fourth would land below the list's edge, out of sight.
+  const prev = strip.querySelector(".staged-list");
+  if (prev && strip.dataset.sid) stagedScroll.set(strip.dataset.sid, prev.scrollTop);
   strip.replaceChildren();
-  const list = id ? stagedMsgs.list(id) : [];
-  if (!id || !list.length) { if (id) stagedScroll.delete(id); delete strip.dataset.sid; strip.style.display = "none"; return; }
+  const items = id ? stagedMsgs.list(id) : [];
+  if (!id || !items.length) { if (id) { stagedScroll.delete(id); stagedCollapsed.delete(id); } delete strip.dataset.sid; strip.style.display = "none"; return; }
   strip.dataset.sid = id;
   strip.style.display = "flex";
-  const folded = stagedFolded.has(id);
+  const collapsed = stagedCollapsed.has(id);
   const head = el("div", "staged-head");
-  // the fold caret (the user 2026-09-08): the head line alone when folded, the count still on it
-  const car = el("button", "staged-fold") as HTMLButtonElement;
-  car.textContent = folded ? "▸" : "▾";
-  car.setAttribute("aria-expanded", folded ? "false" : "true");
-  car.setAttribute("aria-label", folded ? "Show the staged messages" : "Hide the staged messages");
+  // the caret: the head line alone when collapsed, the count still on it; a real button so the keyboard
+  // reaches it, and its state is spoken (aria-expanded) as well as drawn
+  const caret = el("button", "staged-caret") as HTMLButtonElement;
+  caret.textContent = collapsed ? "▸" : "▾";
+  caret.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  caret.setAttribute("aria-label", collapsed ? "Show the staged messages" : "Hide the staged messages");
   const lbl = el("span", "staged-lbl");
-  lbl.textContent = list.length + " staged — sends with your next message";
+  lbl.textContent = items.length + " staged — sends with your next message";
   lbl.title = "⌘⏎ (or Ctrl+⏎) stages what you've typed, quote chips and all, without sending. "
     + "A plain send releases them as one message, in order, with your new message last; a card follow-up or a slash command goes on its own, in its place. "
     + "Send now releases them alone.";
-  const toggleFold = (ev: Event) => {
+  const toggleCollapse = (ev: Event) => {
     ev.stopPropagation();
-    if (stagedFolded.has(id)) stagedFolded.delete(id); else stagedFolded.add(id);
+    if (stagedCollapsed.has(id)) stagedCollapsed.delete(id); else stagedCollapsed.add(id);
     // the rebuild destroys the caret that had focus, so the keyboard user stays on the new one (dropped
-    // to body, the next Enter was the bare-area Enter that focuses the composer; review round 1, 2026-09-09)
-    const had = document.activeElement === car;
+    // to body, the next Enter would be the bare-area Enter that focuses the composer)
+    const had = document.activeElement === caret;
     renderStagedStrip(id);
-    if (had) (strip.querySelector(".staged-fold") as HTMLElement | null)?.focus();
+    if (had) (strip.querySelector(".staged-caret") as HTMLElement | null)?.focus();
   };
-  car.addEventListener("click", toggleFold);
-  lbl.addEventListener("click", toggleFold);
+  caret.addEventListener("click", toggleCollapse);
+  lbl.addEventListener("click", toggleCollapse);
   const go = el("button", "staged-go");
   go.textContent = "Send now";
   go.addEventListener("click", () => {
@@ -15741,15 +18047,14 @@ function renderStagedStrip(id: string | null, opts?: { reveal?: "last" }): void 
     }
     flushStaged(id);
   });
-  head.append(car, lbl, go);
+  head.append(caret, lbl, go);
   strip.appendChild(head);
-  if (folded) return;
-  // the items sit in their own scrolling list UNDER the head (the user 2026-09-08, whose twelve staged
-  // comments filled the page below the strip and pushed the transcript out of view): about four items
-  // show and the rest scroll (.staged-list in styles.css), the head with its count and Send now stays
-  // outside the scroll, and the composer below keeps its place. An expanded item grows inside the scroll.
-  const box = el("div", "staged-list");
-  list.forEach((s, i) => {
+  if (collapsed) return;
+  // the items sit in their own scrolling list UNDER the head: about four items show and the rest scroll
+  // (.staged-list in styles.css), the head with its count and Send now stays outside the scroll, and the
+  // composer below keeps its place. An expanded item grows inside the scroll.
+  const list = el("div", "staged-list");
+  items.forEach((s, i) => {
     const chip = el("div", "staged-chip");
     // each staged reply keeps the CONTEXT it was written against visible inside its own dotted box
     // (the user 2026-08-15): one small context chip per quote, independently expandable — clicking
@@ -15797,10 +18102,10 @@ function renderStagedStrip(id: string | null, opts?: { reveal?: "last" }): void 
     x.addEventListener("click", (ev) => { ev.stopPropagation(); stagedMsgs.removeAt(id, i); persistDrafts(); renderStagedStrip(id); });
     row.append(mark, label, hint, x);
     chip.appendChild(row);
-    box.appendChild(chip);
+    list.appendChild(chip);
   });
-  strip.appendChild(box);
-  box.scrollTop = opts?.reveal === "last" ? box.scrollHeight : (stagedScroll.get(id) || 0);
+  strip.appendChild(list);
+  list.scrollTop = opts?.reveal === "last" ? list.scrollHeight : (stagedScroll.get(id) || 0);
 }
 
 function beginComposerEdit(sid: string, uuid: string, orig: string): void {
@@ -15827,7 +18132,8 @@ function fireRewindDelete(sid: string, uuid: string): void {
 function cancelComposerEdit(sid: string): void {
   if (!composerEdits.delete(sid)) return;
   if (sid !== activeId) return;
-  clearComposerBox?.();   // the composer's one clear path: the menus see the box go empty
+    clearComposerBox?.();   // the composer's one clear path: the menus see the message box go empty
+    syncComposerPh();       // …and the name overlay comes back over the emptied box (2026-09-09)
   drafts.delete(sid); persistDrafts();
   renderComposerChips(sid);
 }
@@ -15836,7 +18142,10 @@ function cancelComposerEdit(sid: string): void {
 // with the cited title + an ✕; clicking the ✕ dismisses it, clicking the pill itself opens an AUDIT preview
 // of the exact prompt romp will send (the user 2026-07-01). It lives ABOVE the textarea (a textarea can't
 // host inline DOM), so it reads as attached-but-separate context, not typed text.
-function renderComposerChips(id: string | null): void {
+// every exit path re-places the name overlay: a row above the textarea coming or going moves the box's first line
+// (the user 2026-09-10); the ResizeObserver on #composer is the backstop, this is the exact event
+function renderComposerChips(id: string | null): void { renderComposerChipsInner(id); syncComposerPh(); }
+function renderComposerChipsInner(id: string | null): void {
   const strip = document.getElementById("composer-chips");
   if (!strip) return;
   closeCitePreview();   // the chip is being rebuilt (or removed) → drop any open audit popover for the old chip
@@ -15896,7 +18205,10 @@ function renderComposerChips(id: string | null): void {
 // imgRequest data-URL flow in the VS Code webview (the sandbox can't reach the kernel origin) — and any
 // other file wears a compact ext + name chip. Click opens the file (the same openFile the path links
 // use); the ✕ removes just that attachment. Rendered per session, like the citation chips beside it.
-function renderComposerFiles(id: string | null): void {
+// every exit path re-places the name overlay: a row above the textarea coming or going moves the box's first line
+// (the user 2026-09-10); the ResizeObserver on #composer is the backstop, this is the exact event
+function renderComposerFiles(id: string | null): void { renderComposerFilesInner(id); syncComposerPh(); }
+function renderComposerFilesInner(id: string | null): void {
   const strip = document.getElementById("composer-files");
   if (!strip) return;
   // the held-send state rides the send button (see sendOnShip): dimmed + titled while a "wait for
@@ -16092,11 +18404,8 @@ function setCitation(id: string, cite: Citation): void {
   if (id === activeId) { renderComposerChips(id); focusComposer(); }
 }
 
-// The outgoing body for QUOTE citations (the user 2026-07-13) is quoteReplyBody in staged-messages.ts,
-// imported above: the highlighted text rides ahead of the typed message as a markdown quote block, one
-// section per stacked chip, and the chip's audit preview shows the same body (one function, no drift).
-// It moved there with the one-message fold (2026-09-08) so the staged batch composes from the same
-// function and the test executes both.
+// quoteReplyBody, the outgoing body for QUOTE citations, lives in staged-messages.ts: the live send, the
+// staged release and the chip's audit preview compose from that one function, and its test executes it.
 
 // HIGHLIGHT-TO-REPLY (the user 2026-07-13): selecting text in the chat transcript seeds the composer chip
 // as reply context, exactly like a distilled-summary click — but quote-flavored. Event-based on
@@ -16286,6 +18595,38 @@ const sessionMru: string[] = [];
     const m = tabMeta.get(id);
     return { id, name: m?.name || id, bg: m?.color?.bg || "", fg: m?.color?.fg || "" };
   });
+// DRAFTS TRAVEL with a moved tab (the chat split, the user 2026-09-11): the shell calls this on the SOURCE page,
+// synchronously (same origin, so the transfer is race-free), for the session leaving this column. The composer's
+// text is stashed first when the tab is active; then everything persistDrafts writes for the session — the draft,
+// its citations, attachments and staged messages — leaves this page's maps and blob in the same call and is returned,
+// so the target's adopt is the only copy. null when nothing was held. An active tab's box is emptied here: the
+// re-point that follows the move must not re-stash the moved text under a session this column no longer shows.
+(window as any).__rompTakeSessionState = (sid: string): { draft: string; citations: Citation[]; files: string[]; staged: StagedMsg[] } | null => {
+  if (typeof sid !== "string" || !sid) return null;
+  const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+  if (sid === activeId && ta) { if (ta.value) drafts.set(sid, ta.value); else drafts.delete(sid); }
+  const draft = drafts.get(sid) ?? "", citations = composerCitations.get(sid) ?? [], files = composerFiles.get(sid) ?? [], staged = stagedMsgs.takeAll(sid);
+  drafts.delete(sid); composerCitations.delete(sid); composerFiles.delete(sid);
+  if (sid === activeId) { if (ta) { ta.value = ""; growComposer(ta); } renderComposerChips(sid); renderComposerFiles(sid); renderStagedStrip(sid); }
+  persistDrafts();
+  if (!draft && !citations.length && !files.length && !staged.length) return null;
+  return { draft, citations, files, staged };
+};
+// …and the TARGET page's half: what the source held, into the maps (joined onto anything already here, never over
+// it), persisted, and into the box when the tab is active. The shell posts it on a new column's load or at once.
+function adoptSessionState(sid: unknown, state: unknown): void {
+  if (typeof sid !== "string" || !sid || !state || typeof state !== "object") return;
+  const st = state as { draft?: unknown; citations?: unknown; files?: unknown; staged?: unknown };
+  if (typeof st.draft === "string" && st.draft) drafts.set(sid, [drafts.get(sid) ?? "", st.draft].filter(Boolean).join("\n\n"));
+  if (Array.isArray(st.citations) && st.citations.length) composerCitations.set(sid, [...(composerCitations.get(sid) ?? []), ...(st.citations as Citation[])]);
+  if (Array.isArray(st.files) && st.files.length) {
+    const paths = (st.files as unknown[]).filter((p): p is string => typeof p === "string" && !!p);
+    if (paths.length) composerFiles.set(sid, [...(composerFiles.get(sid) ?? []), ...paths]);
+  }
+  if (Array.isArray(st.staged) && st.staged.length) stagedMsgs.restore({ [sid]: [...stagedMsgs.list(sid), ...st.staged] });
+  persistDrafts();
+  if (activeId === sid) loadComposerFor(sid);
+}
 function noteMru(id: string): void {
   const i = sessionMru.indexOf(id);
   if (i >= 0) sessionMru.splice(i, 1);
@@ -16298,10 +18639,15 @@ function noteMru(id: string): void {
 // "now", the sessions map for liveness, and a land that pre-seeds the per-tab scroll restore (views)
 // BEFORE setActive — so the entering tab's own restore applies the remembered spot — then re-asserts
 // it once the pane is visible (a same-tab jump returns early from setActive and needs the direct set).
+// While the section at a glance shows, #content's scroll is the view's list, not the reader's spot in
+// the hidden transcript: "now" records the spot the view holds for the active tab (snapKeep), so a pick
+// from the view leaves a trail entry that walks back to the line being read (tab-snapshot-pane.test.ts).
 const navHist = new NavHistory({
   now: () => {
     const c = document.getElementById("content");
-    return activeId && c ? { sid: activeId, top: c.scrollTop } : null;
+    if (!activeId || !c) return null;
+    const kept = snapKeep && snapKeep.v === views.get(activeId) ? snapKeep.scrollTop : null;   // the view up: the held spot
+    return { sid: activeId, top: kept ?? c.scrollTop };
   },
   alive: (sid) => sessions.has(sid),
   apply: (spot) => {
@@ -16313,8 +18659,14 @@ const navHist = new NavHistory({
   },
 });
 
-function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: string) {
+function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: string, anchorEventT?: number) {
   noteMru(id);
+  // A PICK OF A SESSION ANOTHER COLUMN HOLDS (the chat split): the picker, an at-mention, a transcript link, the
+  // trail and the shell's switcher all land here; the session is shown where it lives and the focus moves there —
+  // a jump, not a move (only a move command, the drag or a create changes which column holds a session). The same
+  // fields ride the hop and the owner's own focus gate takes it. Ahead of the peek and the
+  // drafts swap below, so this page's box and strip never change hands for a session it does not show.
+  if (colSets && !heldHere(id) && forwardToOwner({ type: "focus", id, anchor, anchorT, anchorKind, anchorEventT })) return;
   // EPHEMERAL PEEK (see peekId): an out-of-view target opens as the peek; activating anything else
   // drops it. Before the already-active early-return, so a re-focus of a hidden session re-asserts
   // its peek even when nothing else changes.
@@ -16326,9 +18678,9 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
     const p = subParts(id);
     if (p) { openSubagentView(p.parentId, p.agentId, null); return; }
   }
-  // A session pick ends the section snapshot (the user 2026-09-06), and brings the picked tab on
-  // screen: a tab folded away under its section header (a snapshot card, a feed deep link, ←/→ from
-  // the header) opens its section — the gesture named that session, so the strip follows it.
+  // A session pick ends the section view (the header put it up; the pick names a session) and brings the
+  // picked tab on screen: a tab folded away under its header (a row of the view, a feed deep link, the
+  // arrows from the header) opens its section, since the gesture named that session.
   const leavingSnap = snapView !== null;
   snapView = null;
   if (collapsedTabIds.has(id)) unfoldSectionOf(id);   // per holder: see unfoldSectionOf
@@ -16374,15 +18726,22 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
   pendingAnchor = anchor ?? null;
   if (anchor) flashedAnchor = null;        // a fresh navigation re-arms the one-per-navigation flash
   pendingAnchorIntent = anchor ? (anchorKind ?? null) : null;
-  if (anchor) armSeek(id, anchor, anchorKind ?? null);   // durable until land / ✕ / backstop (see armSeek)
+  if (anchor) armSeek(id, anchor, anchorKind ?? null, anchorEventT ?? null);   // durable until land / ✕ / backstop (see armSeek)
+  else if (anchorT != null) {              // a time-only navigation supersedes a seek (and the reveal progress line with it)…
+    releaseSeekFetch(id);                  // …and drops the loop's claim on any in-flight older fetch, so the chunk that lands next is a
+    if (seek && seek.sid !== id) releaseSeekFetch(seek.sid);   // pure prepend and never re-pursues the abandoned anchor (review find)
+    clearSeek();
+  }
   activeId = id;
-  try { vscodeApi?.setState?.({ ...(vscodeApi.getState?.() || {}), activeId: id }); } catch { /* ignore */ }
+  vanishedId = null; vanishedWhy = null; vanishedName = ""; wantActive = null; wantActiveGone = null; vanishedByDecline = false;   // any activation ends the unfocused state (T357)
+  persistActive(id);   // the name rides beside the id: after a reload the unfocused body names the awaited tab before its host relays (T357)
   renderTabs();
   showActive();
   schedulePrebuild(); // warm the OTHER tabs in idle (MRU-first) so the next switch is instant
 }
 
 function cycleTab(dir: number) {
+  if (pickFirstVisibleTab()) return;            // from the unfocused pane: the first visible tab (T357)
   const ord = visibleOrder();                   // never cycle onto a view-hidden session
   if (!ord.length || !activeId) return;
   const i = ord.indexOf(activeId);
@@ -16434,7 +18793,36 @@ function upsert(msg: any) {
     emptyFrameDiagSent.add(msg.id);
     vscodeApi?.postMessage({ type: "clientDiag", surface: "chat", what: "empty-session-frame", data: { id: msg.id, held: prev.events.length } });
   }
-  const events = kept && prev ? prev.events : (msg.events || (prev ? prev.events : []));
+  let events: ChatEvent[] = kept && prev ? prev.events : (msg.events || (prev ? prev.events : []));
+  pendingFullWhy.delete(msg.id);
+  // T386 stage 2: a proto-2 full frame is the TAIL run (the kernel names its first turn, tailLo); history runs the page holds whose
+  // spans end at or before it stay, and s.events is the runs' events in turn order. No full frame merges by reason any more: the
+  // tail is always resident, so no re-attach exists.
+  let regions: Region[] | undefined = kept && prev ? prev.regions : undefined;
+  if (!kept && msg.proto === 2 && Array.isArray(msg.events)) {
+    const tailLo: number | null = typeof msg.tailLo === "number" ? msg.tailLo : (msg.headKnown ? 0 : null);
+    if (tailLo != null) {
+      // the frame's tail run joins the regions the page holds: history wholly above it stays; a held run starting at or past it is
+      // superseded (the frame carries everything from there); a held run STRADDLING it (the held tail, when the kernel's cut moved
+      // down after an append and the frame's tail is the few turns past the cut) keeps its part before the frame's start, minus
+      // the keys the frame carries, and the two touch, so insertRun makes them one run (the merge-base merged such a frame into
+      // the held run; dropping the held tail here blanked 640 events to 2 in the landing lab, 2026-09-13)
+      const frameKeys = new Set((events as Array<{ uuid?: string; key?: string }>).map((e) => keyOf(e)).filter((k): k is string => !!k));
+      const held: Run[] = [];
+      for (const r of (prev?.regions ? runsOf(prev.regions) : [])) {
+        if (!r.events.length) continue;
+        if (r.hi != null && r.hi <= tailLo) { held.push(r); continue; }
+        if (r.lo >= tailLo) continue;
+        const before = r.events.filter((e) => !frameKeys.has(keyOf(e as { uuid?: string; key?: string }) ?? ""));
+        if (before.length) held.push({ kind: "run", lo: r.lo, hi: tailLo, events: before });   // emptied by the frame's own keys: nothing of it is left to hold
+      }
+      regions = insertRun(regionsFromRuns(held), { kind: "run", lo: tailLo, hi: null, events: events.slice() });
+      const all: ChatEvent[] = [];
+      for (const r of regions) if (r.kind === "run") for (const e of r.events) all.push(e as ChatEvent);
+      events = all;
+    }
+  }
+  const hasGap = !!regions && regions.some((r) => r.kind === "gap");
   const s: Session = {
     id: msg.id,
     name: msg.name,
@@ -16456,7 +18844,15 @@ function upsert(msg: any) {
     githubRepo: ("githubRepo" in msg) ? (msg.githubRepo ?? null) : (prev ? prev.githubRepo : null),
     // A trimmed full send carries headFrom/headTotal; a whole-transcript send omits them (headFrom 0).
     headFrom: kept && prev ? prev.headFrom : (msg.headFrom ?? 0),
-    headTotal: kept && prev ? prev.headTotal : (msg.headTotal ?? events.length),
+    headTotal: kept && prev ? prev.headTotal : (msg.proto === 2 ? (regions ? (hasGap ? null : events.length) : (msg.headTotal ?? null)) : (msg.headTotal ?? events.length)),
+    // the uuid-anchored wire (T323 stage 4b): the frame says its shape (proto 2); a frame without it is an index frame
+    proto: kept && prev ? prev.proto : (msg.proto === 2 ? 2 : undefined),
+    headKnown: kept && prev ? prev.headKnown : (msg.proto === 2 ? (regions ? !hasGap || regions[0].kind === "run" : !!msg.headKnown) : undefined),
+    firstUuid: kept && prev ? prev.firstUuid : (msg.proto === 2 ? (regions ? (keyOf(events[0] as { uuid?: string; key?: string } | undefined) ?? null) : (msg.firstUuid ?? keyOf(events[0] as { uuid?: string; key?: string } | undefined) ?? null)) : undefined),
+    lastUuid: kept && prev ? prev.lastUuid : (msg.proto === 2 ? (msg.lastUuid ?? null) : undefined),
+    regions,
+    pageTurns: typeof msg.pageTurns === "number" ? msg.pageTurns : (prev ? prev.pageTurns : undefined),
+    tailLo: regions ? turnsBeforeTail(regions) : (kept && prev ? prev.tailLo : (typeof msg.tailLo === "number" ? msg.tailLo : (msg.headKnown ? 0 : null))),   // the merged tail's start, not the frame's alone
     bgTasks: ("bgTasks" in msg) ? msg.bgTasks : (prev ? prev.bgTasks : undefined),
     // open user todos (plans/user-todos.md): an empty array is a real value (all cleared) that
     // must not fall back to prev — the "in msg" form, like bgTasks. The split card itself renders
@@ -16467,6 +18863,7 @@ function upsert(msg: any) {
     pinnedNotes: ("pinnedNotes" in msg) ? msg.pinnedNotes : (prev ? prev.pinnedNotes : undefined),
     hideFromFeed: ("hideFromFeed" in msg) ? !!msg.hideFromFeed : (prev ? prev.hideFromFeed : undefined),
     postalServiceOff: ("postalServiceOff" in msg) ? !!msg.postalServiceOff : (prev ? prev.postalServiceOff : undefined),
+    mailOffWhy: ("mailOffWhy" in msg) ? String(msg.mailOffWhy || "") : (prev ? prev.mailOffWhy : undefined),   // why the mail is off (T356): thread, isolation, an unreadable record, the settings file unreadable (flags)
     notify: ("notify" in msg) ? !!msg.notify : (prev ? prev.notify : undefined),
   };
   sessions.set(msg.id, s);
@@ -16474,6 +18871,7 @@ function upsert(msg: any) {
   // watches transcript+states only) — the freshest tabOrder meta wins over it, pending guard included
   const tm = tabMeta.get(msg.id);
   if (tm) applyMetaToSession(s, tm, pendingTabMeta.get(msg.id));
+  applyFrameFlags(s, msg, pendingFlags, msg.id);   // the flags the frame carries, under the click's pending guard: a frame built before a click cannot revert them (flag-pending.ts)
   reconcileRewind(s);       // pending-rewind overlay + the editable-bubble set, from the fresh payload
   reconcileHeldCopies(s);   // a queued copy the kernel no longer lists but has not landed keeps its slot (T262i)
   reconcileOptimistic(s);   // re-assert (or retire) any in-flight optimistic sends across the rebuild
@@ -16522,16 +18920,23 @@ function upsert(msg: any) {
     if (v) v.stale = true;
   }
   if ("ledger" in msg) ledgers.set(msg.id, msg.ledger ?? null);
-  if (!existed) order.push(msg.id);
+  adoptArrival(order, msg.id, existed);   // once: its tabOrder frame usually carried it already (tab-order.ts)
   // The torn-down session is BACK while its hand-over note still holds the box: the user has done nothing
   // since (a click into the box, a tab switch or the ✕ would have retired it), so put them back exactly
   // where they were — its tab active, its kept draft in the box. Merely retiring the note here left the
   // fallback tab active with the box unheld, and the next blind keystroke landed there after all (the
-  // T236 harness, omission path: the tab is re-listed within seconds). setActive clears the note.
-  if (composerNoteSid === msg.id) setActive(msg.id);
-  const adopted = !activeId;
-  if (adopted) { activeId = msg.id; loadComposerFor(msg.id, true); }   // adopted as the only tab → its draft too (T236: the once-per-page restore below never covers a session that LEFT and came back)
-  if (wantActive && msg.id === wantActive) { wantActive = null; setActive(msg.id); }   // restore persisted tab on arrival
+  // T236 harness, omission path: the tab is re-listed within seconds). restoreIfShown retires the note through setActive,
+  // and only when the strip shows the tab: a tab the view or the filter hides keeps the box held for it.
+  if (composerNoteSid === msg.id) restoreIfShown(msg.id);   // …through the one restore rule: a tab the view or the filter hides takes no focus (the review's low)
+  colSets = readColSets();   // membership for the restores and the adoption below (the chat split): fresh, not the last render's — a later column's socket carries every session's frames, and only a member may take the box
+  // T357: the session the user was on is back (its host re-attached, the relay redialed) → its focus is restored;
+  // and while it is away, an arrival of ANY OTHER session adopts nothing — the pane stays unfocused
+  if (vanishedId === msg.id && heldHere(msg.id)) restoreIfShown(msg.id);   // …if the strip shows it: hidden by the view or the filter, the pane stays unfocused (applyTabOrder's rule); and only when this column holds it (the chat split)
+  const wouldAdopt = !activeId && (!vanishedId || vanishedByDecline) && !wantActive && !wantActiveGone && heldHere(msg.id);   // …nor while the persisted tab is awaited after a reload, nor while the body says it is gone: a pick, not an arrival, moves on (T357); and only a session this column holds (the chat split, 2026-09-11): another column's session neither adopts here nor leaves a declined record; membership is the append above
+  const adopted = wouldAdopt && stripShows(msg.id);   // …and never a session the view or the #only= filter hides (the review's low: the adopt wrote activeId past the rule's visibility half; membership is the append above)
+  if (adopted) { activeId = msg.id; assertPeekFor(msg.id); loadComposerFor(msg.id, true); persistActive(msg.id); vanishedId = null; vanishedWhy = null; vanishedName = ""; wantActive = null; wantActiveGone = null; vanishedByDecline = false; }   // persisted like a pick: a restart lands here again; the peek asserted like a pick's, so a view-hidden first arrival has a tab (the review's lows)   // adopted as the only tab → its draft too (T236: the once-per-page restore below never covers a session that LEFT and came back) An adoption ends the unfocused state exactly as setActive does (the review's high: a declined record left standing beside the adopted tab would hand its session to applyTabOrder's restore the moment the filter lifted, and the pane jumped to a session the user never had).
+  else if (wouldAdopt && !vanishedId) { vanishedId = msg.id; vanishedWhy = "hidden"; vanishedName = sessions.get(msg.id)?.name || tabMeta.get(msg.id)?.name || ""; vanishedByDecline = true; }   // a DECLINED adoption records the session as restoreIfShown does, so renderTabs's schedule restores it when the filter shows it (the review's low: under a filter matching no live session the body showed the generic line and lifting the filter restored nothing); the record yields to a later VISIBLE first arrival (vanishedByDecline), since nothing was chosen, and is taken on FIRST sight only: a later hidden arrival never overwrites it, so which session the lift restores does not change between builds (the review's low)
+  if (wantActive && msg.id === wantActive && stripLists(msg.id) && heldHere(msg.id)) { wantActive = null; restoreIfShown(msg.id); }   // restore persisted tab on arrival, if the strip shows it (else unfocused as hidden, restored when shown) — while this column holds it (a want for a tab moved away is retired by staleActiveFallback)
   renderTabs();                                   // a new id appended to `order` above → strip repaints in kernel order
   // Active tab: a content refresh appends + preserves scroll (appendActive); a new tab or a fork
   // lands at the bottom/anchor (showActive). This is what keeps new pushes from snapping to bottom.
@@ -16554,6 +18959,10 @@ function upsert(msg: any) {
     }
     renderBgTasks();
     renderPinnedNotes();   // a full frame on an existing tab (a client behind the tail) carries the field too
+  } else if (!activeId) {
+    // no tab is active (the awaited tab after a reload, the unfocused pane): the arriving view stays hidden and the
+    // body paints its line over the boot loader — nothing adopted it above (T357)
+    showActive();
   }
   // A non-active session's view is left to sync lazily when it's next shown.
   // The session the user just created has ARRIVED: the provisional tab hands over its queued messages
@@ -16582,12 +18991,12 @@ function update(msg: any) {
     appendActive();
     renderLedger(); // refresh the summary box (ages + any new items) as the active session works
     renderPinnedNotes();
-    if (awaitKey(s.status) !== before) renderBgTasks();   // the box rides the chip's own frame (T225; see chatTail)
   } else {
     const v = views.get(msg.id);
     if (v) v.stale = true; // re-render its current turn when it's next shown
     schedulePrebuild(); // rebuild the now-stale off-screen view in idle, before the user switches to it
   }
+  if (awaitKey(s.status) !== before) awaitChanged(msg.id);   // the box rides the chip's own frame (T225; see chatTail)
 }
 
 // DELTA-send (the user 2026-06-25): the kernel keeps the whole transcript resident in the browser but, once
@@ -16607,31 +19016,22 @@ function notifyShell(kind: string, text: string, sid?: string): void {
 // base). ONE ask per desync: the pusher runs every 0.5-3s and would otherwise re-ask on every rejected
 // delta until the reply lands. Cleared in upsert(), so the next gap can ask again.
 const awaitingFull = new Set<string>();
+const pendingFullWhy = new Map<string, NeedFullWhy>();   // sid → why this client asked (kept for the reconnect's diagnostics; every full frame merges into the held runs, T386 stage 2)
 const emptyFrameDiagSent = new Set<string>();   // sids whose empty session frame was filed once (see upsert / frame-merge.ts)
 // `why` is a one-word diagnostic the kernel ignores (2026-09-07): gap = a delta past what we hold; nobase = a
 // delta for a session we hold nothing of; skeleton-click = the active tab is a skeleton; prefetch = the idle
 // chain; skeleton-delta = a delta for a tab held as skeleton (a contract violation). The return-to-tab harness
 // counts asks by it — a nobase on a reconnect row means the skeleton branch missed a frame type.
-type NeedFullWhy = "gap" | "nobase" | "skeleton-click" | "prefetch" | "skeleton-delta";
+type NeedFullWhy = "gap" | "nobase" | "skeleton-click" | "prefetch" | "skeleton-delta";   // (reattach retired with the detached client, T386 stage 2)
 function requestFullSession(id: string, why: NeedFullWhy): void {
   if (!id || awaitingFull.has(id)) return;
   // The kernel never knew a client-minted id; and a tab the user just closed must not be resurrected by
   // its own goodbye traffic — the kernel keeps listing + talking about it for a push or two after the ✕
   // (the same reason renderTabs skips closingTabs ids on both passes).
   if (isProvisionalId(id) || closingTabs.has(id)) return;
-  // A remote session's re-ask can only be answered by its OWNING kernel (needFull pops that kernel's
-  // per-client echat/dedup latch — routeOutbound sends it there by the id's host prefix). A DETACHED host
-  // (closeRemote is tearing its tabs down with synthesized `closed` frames, and its ids may briefly ride
-  // stale tabMeta) or a DOWN host can't answer, so asking would only queue dropWarn noise — suppress, the
-  // same way closingTabs suppresses. The reattach opens a fresh remote socket whose connect push re-sends
-  // every session in full anyway, which is the heal this ask would have requested.
-  const h = hostOf(id);
-  if (h) {
-    const fed = (window as any).__rompFed;
-    if (!fed || typeof fed.hosts !== "function" || fed.hosts().indexOf(h) < 0 || hostIsDown(id)) return;
-  }
   awaitingFull.add(id);
   vscodeApi?.postMessage({ type: "needFull", id, why });
+  pendingFullWhy.set(id, why);   // the reason, for upsert's merge-or-replace decision when the answer lands (round 2, item 3)
 }
 // A needFull whose REPLY is lost with the socket must not latch its slot forever: only upsert clears
 // awaitingFull, so an ask in flight across a drop would suppress every later re-ask for that sid — the
@@ -16645,6 +19045,7 @@ function requestFullSession(id: string, why: NeedFullWhy): void {
 // nothing, its reconnect is a brand-new client whose connect push heals by itself.)
 window.addEventListener("romp:wsdown", () => awaitingFull.clear());
 window.addEventListener("romp:wsup", () => awaitingFull.clear());
+window.addEventListener("romp:wsup", () => pendingFullWhy.clear());   // …and the reasons parked with them
 // …and the same socket-open resets what this page learned on the dead one: the fulls it received there (so the
 // new socket's skeleton list may re-list them — they are stale after the outage; skeleton-tabs.ts) and the
 // one-per-reconnect diagnostic row noteSkeletonTabOrder posts.
@@ -16653,6 +19054,22 @@ let skeletonDiagArmed = true;
 // event, which fires at onopen while the dead socket's last frames may still be draining from the FIFO)
 // A send still unconfirmed at the socket's down edge may never have reached the kernel: say so on its bubble
 window.addEventListener("romp:wsdown", () => markPendingLost("connection"));
+window.addEventListener("romp:wsdown", () => onWireDown());
+/** The wire went down with asks in flight: the browser's socket (romp:wsdown) or the VS Code pane's pipe (the pipeState frame's down edge;
+ *  the pane never sees romp:wsdown, and a kernel restart mid-landing left its live record, its notice and every later click refused for the
+ *  pane's life, round nine). One clear for both. */
+function onWireDown(): void {
+  // the socket died with asks in flight (a blip, the watchdog's abandon, a tunnel flap): their replies come on no socket, so clear EVERY
+  // in-flight ask's state (T386 stage 2, medium 1), not the glyph alone, or a landing's gap stays unable to ask for the page's life and its
+  // notice stands forever. gapLoading and its glyphs, the landing's held gap, the older-ask set, and the notice all go; a landing in flight
+  // is told once the jump was lost. A gap met again on the healed socket asks anew.
+  const liveLanding = !!landingNoticeSid || Array.from(windowAsks.values()).some((a) => a.some((r) => !r.cancelled && !!r.gap));   // a jump the reader already cancelled owes no toast (round four, low 1)
+  gapLoading.clear(); windowAsks.clear(); loadingOlder.clear();   // every window ask's record too (round eight): its reply comes on no socket, and a cancelled one left standing would eat the next landing on its anchor
+  document.querySelectorAll("#content .tx-gap-loading").forEach((g) => g.classList.remove("tx-gap-loading"));
+  hideLandingNotice();
+  pendingAnchor = null; anchorPendingOlder = false;
+  if (liveLanding) { landTrail.push("wsdown-lost"); landToast("the connection dropped before the jump; scroll to it again"); }
+}
 
 function chatTail(msg: any) {
   // A tail for a tab held as SKELETON (2026-09-07) violates the contract — the kernel sends such a tab status
@@ -16674,7 +19091,21 @@ function chatTail(msg: any) {
     return;
   }
   // msg.from is a GLOBAL transcript index; the resident events are the tail [headFrom, …) → map to local.
-  const from = (msg.from | 0) - (s.headFrom || 0);
+  // A proto-2 tail (T323 stage 4b) names the last unchanged event by uuid instead: the suffix starts after it.
+  let from = (msg.from | 0) - (s.headFrom || 0);
+  if (typeof msg.afterUuid === "string") {
+    const kernelEvents = s.events.filter((e) => !isOptimistic(e) && !isHeldGroup(e));
+    const at = indexOfUuid(kernelEvents as { uuid?: string }[], msg.afterUuid);
+    if (at < 0) {
+      // the anchor is not resident: a gap between the held run and the kernel's tail. The page asks the full frame; upsert merges it into
+      // the held runs (the regions: no client is ever detached, T386 stage 2)
+      requestFullSession(msg.id, "gap");
+      return;
+    }
+    from = at + 1;
+    const inc = (msg.events || []) as ChatEvent[];
+    s.lastUuid = inc.length ? (keyOf(inc[inc.length - 1] as { uuid?: string; key?: string }) ?? s.lastUuid) : keyOf(kernelEvents[at] as { uuid?: string; key?: string }) ?? s.lastUuid;
+  }
   // The kernel's coordinate space ends at ITS OWN events — our injected optimistic bubbles are not in it.
   // Comparing `from` against the inflated length masked a genuine 1-event gap (the repair below never
   // fired, PR #107's desync class), and a delta starting exactly one past kernel truth landed BEYOND
@@ -16694,7 +19125,8 @@ function chatTail(msg: any) {
     // socket happened to drop and a fresh connect re-sent the whole session (the user 2026-07-28, whose tab
     // went stale twice in one afternoon: locate-audit.jsonl recorded six pointer-not-rendered misses, then
     // pointer-exact on the SAME anchor the moment a kernel restart forced a reconnect).
-    // So ASK for the full session — the one message that closes this desync class whatever opened it.
+    // So ASK for the full session — the one message that closes this desync class whatever opened it; upsert merges the frame into
+    // the held runs (the regions, T386 stage 2: the tail run always resident, the history runs above it kept).
     requestFullSession(msg.id, "gap");
     return;
   }
@@ -16711,10 +19143,15 @@ function chatTail(msg: any) {
   // EQUAL to the length and syncView's no-op fast path skips the repaint — the retired turn stayed on screen
   // for good (the user 2026-07-24: a ✕'d queued message left its "1 queued message" element behind). Mark the
   // view stale so the window is rebuilt from the events that actually remain.
+  regionsAbsorbTail(s);                            // the tail run is s.events past the history runs (T386 stage 2)
   const shrank = s.events.length < wasLen;
   if (typeof msg.total === "number") s.headTotal = msg.total;
+  if (s.proto === 2 && s.headKnown && !(s.regions && s.regions.some((r) => r.kind === "gap"))) s.headTotal = s.events.reduce((n, e) => n + (isOptimistic(e) || isHeldGroup(e) ? 0 : 1), 0);   // the WHOLE is resident (no gap): its count (T386 stage 2, low 7: a mid-transcript gap holds older history, so the resident count is not the total)
   const before = awaitKey(s.status);
   if (msg.status) s.status = msg.status;
+  // the per-session view flags ride the tail beside the status (2026-09-11): a bell flipped in another column or
+  // browser reaches this caught-up copy on the flip, not on the next full frame
+  applyFrameFlags(s, msg, pendingFlags, msg.id);   // under the click's pending guard (flag-pending.ts): a tail built before a click cannot flip its row back
   if ("pinnedNotes" in msg) s.pinnedNotes = msg.pinnedNotes;   // the pinned-notes strip's seam (2026-09-08): the userTodos shape below
   // the top-level userTodos seam rides every delta (kernel _send_chat), like status: the chat's
   // steady state is chatTail frames, so a caught-up client that only merged the field from full
@@ -16735,7 +19172,6 @@ function chatTail(msg: any) {
     // rendered only from the full-session path, so the chip read "Awaiting agents" with no box until a
     // transcript change happened to send a full frame (31s+ in the user's shot; never, in the quiet lab).
     // Render the box from the SAME frame, keyed on the awaited fields CHANGING — never on the per-second ticks.
-    if (awaitKey(s.status) !== before) renderBgTasks();
   } else {
     // The SAME rule as the active tab: repaint from the exact changed point. Marking the view stale routed
     // the idle rebuild — and, when idle never came, the click itself — through a full 80-unit window
@@ -16751,12 +19187,256 @@ function chatTail(msg: any) {
     }
     schedulePrebuild(); // rebuild the now-stale off-screen view in idle, before the user switches to it (an incremental repaint now)
   }
+  if (awaitKey(s.status) !== before) awaitChanged(msg.id);   // (see the comment above: the box, keyed on the awaited fields changing)
 }
 
 // Older history streaming in from a loadOlder request (scroll-back past the loaded tail, the user 2026-06-25).
 // The kernel replies with the previous chunk; PREPEND it to the resident tail (lowering headFrom) and re-
 // anchor on the row the user was at, so the older content appears ABOVE without the view jumping.
 const loadingOlder = new Set<string>();                 // sessions with a loadOlder in flight
+
+// ── history regions (T386 stage 2): runs the page holds, gaps it asks for by turn span ──────────────────────────
+/** A window or a page becomes a run among the session's regions; s.events follows (the runs' events in turn order). */
+function insertRegionRun(s: Session, lo: number, hi: number, events: ChatEvent[]): void {
+  const rs = s.regions ?? regionsFromRuns([{ kind: "run", lo: s.tailLo ?? 0, hi: null, events: s.events.slice() }]);
+  s.regions = insertRun(rs, { kind: "run", lo, hi, events });
+  eventsFromRegions(s);
+  const hasGap = s.regions.some((r) => r.kind === "gap");
+  s.headKnown = !hasGap || s.regions[0].kind === "run";
+  s.firstUuid = keyOf(s.events[0] as { uuid?: string; key?: string } | undefined) ?? null;
+  s.headTotal = hasGap ? null : s.events.reduce((n, e) => n + (isOptimistic(e) || isHeldGroup(e) ? 0 : 1), 0);
+}
+const gapLoading = new Set<string>();                                        // "sid:lo:hi" of the page asks in flight
+const gapKey = (sid: string, lo: number, hi: number): string => sid + ":" + lo + ":" + hi;
+function gapHasAsk(sid: string, gap: { lo: number; hi: number }): boolean {
+  for (const r of windowAsks.get(sid) ?? []) if (!r.cancelled && r.gap && r.gap.lo === gap.lo && r.gap.hi === gap.hi) return true;   // a live landing's window on the wire for this gap (the pre-jump; per ask, round eight)
+  for (const k of gapLoading) {   // a page ask whose span lies inside the gap
+    const [ksid, a, b] = k.split(":");
+    if (ksid === sid && Number(a) >= gap.lo && Number(b) <= gap.hi) return true;
+  }
+  return false;
+}
+/** The romp loading glyph at a size read at a glance (the swirl as the o of the wordmark, the three accent dots): the mark of a gap
+ *  whose page is on the wire; never the small pill. */
+function gapGlyph(): HTMLElement {
+  const w = el("div", "tx-gap-glyph");
+  w.appendChild(rompLoaderInner("", { wordmark: true, cls: "rl-sm" }));   // the ONE standard loader, scaled for the inline gap (the .rl-* swirl as the wordmark's o, spun by rl-spin)
+  return w;
+}
+/** A gap in the thread: empty space of the gap's estimated height (overflow-anchor none, so the browser never anchors on it), the
+ *  glyph while a page of it is on the wire, watched by the one observer that asks when it enters the viewport. */
+function gapElement(s: Session, it: { lo: number; hi: number }, v: View): HTMLElement {
+  const g = el("div", "tx-gap");
+  g.dataset.lo = String(it.lo); g.dataset.hi = String(it.hi); g.dataset.sid = s.id;
+  g.style.height = gapHeight(it, v.pxPerTurn) + "px";   // per TURN, not per display unit (medium 2): the rendered gap element too, not only the spacer map
+  if (gapHasAsk(s.id, it)) { g.classList.add("tx-gap-loading"); g.appendChild(gapGlyph()); }
+  gapObserver?.observe(g);
+  return g;
+}
+// ONE observer over the gap elements (an event, not a scroll poll): a gap entering the viewport asks for the page nearest the edge it
+// entered by (its top above the viewport's top: the reader met its bottom, scrolling up; else its top)
+const gapObserver: IntersectionObserver | null = (() => {
+  if (typeof IntersectionObserver !== "function" || typeof document === "undefined") return null;
+  const root = document.getElementById("content");
+  if (!root) return null;
+  return new IntersectionObserver((entries) => {
+    for (const en of entries) {
+      if (!en.isIntersecting) continue;
+      const g = en.target as HTMLElement;
+      const sid = g.dataset.sid || "", lo = Number(g.dataset.lo), hi = Number(g.dataset.hi);
+      if (!sid || !(hi > lo) || !g.isConnected) continue;
+      const rootTop = en.rootBounds ? en.rootBounds.top : root.getBoundingClientRect().top;
+      requestTurns(sid, { lo, hi }, en.boundingClientRect.top < rootTop ? "bottom" : "top");
+    }
+  }, { root, threshold: 0 });
+})();
+/** Ask for the page of a gap nearest the viewport's edge (chat-regions.ts pagesToAsk); one request per gap in flight. */
+function requestTurns(sid: string, gap: { lo: number; hi: number }, edge: "top" | "bottom"): void {
+  const s = sessions.get(sid);
+  if (!s || s.proto !== 2 || !s.regions || gapHasAsk(sid, gap)) return;
+  const span = pagesToAsk(gap, edge, s.pageTurns ?? 16);
+  if (!(span.hi > span.lo)) return;
+  gapLoading.add(gapKey(sid, span.lo, span.hi));
+  scrollDiagRow("regionask", { sid, lo: span.lo, hi: span.hi, edge, why: "gap-scroll", notice: landingNoticeSid === sid });
+  const v = views.get(sid);
+  const g = v ? (v.el.querySelector(`.tx-gap[data-lo="${gap.lo}"][data-hi="${gap.hi}"]`) as HTMLElement | null) : null;
+  if (g && !g.classList.contains("tx-gap-loading")) { g.classList.add("tx-gap-loading"); g.appendChild(gapGlyph()); }
+  vscodeApi?.postMessage({ type: "loadTurns", id: sid, lo: span.lo, hi: span.hi });
+}
+/** A gap's page arrived: the run is inserted and the view rebuilt with the reader's row where it was. An empty or missing page
+ *  still closes its span (an empty run), so the gap never asks for it again. */
+function chatTurns(msg: any): void {
+  const span = Array.isArray(msg.span) && msg.span.length === 2 ? msg.span as [number, number] : null;
+  if (span) gapLoading.delete(gapKey(msg.id, span[0], span[1]));
+  const s = sessions.get(msg.id);
+  if (!s) return;
+  if (!span || !(span[1] > span[0])) {
+    // an OLDER host's page reply carries no span (or an empty one): the gap cannot be placed, so tell the reader and free the gap
+    // instead of dropping it silently (T386 stage 2, low 2). A scroll-driven fill shows no notice, so no toast beyond the row.
+    if (Array.isArray(msg.events) && !span) {
+      landTrail.push("turns-nospan");
+      vscodeApi?.postMessage({ type: "locateDiag", id: msg.id, ok: false, trail: landTrail.slice(), kind: "nospan" });
+      for (const k of Array.from(gapLoading)) if (k.startsWith(msg.id + ":")) gapLoading.delete(k);   // the ask cannot be told by span, so free every page ask of this session (round four, low 4)
+      const vv = views.get(msg.id); if (vv) vv.el.querySelectorAll(".tx-gap-loading").forEach((g) => g.classList.remove("tx-gap-loading"));
+    }
+    return;
+  }
+  stripOptimistic(s);
+  insertRegionRun(s, span[0], span[1], (msg.events || []) as ChatEvent[]);
+  reconcileOptimistic(s);
+  const v = views.get(msg.id);
+  if (v) { v.rendered = 0; v.winStart = 0; v.winEnd = 0; v.spacerCount = undefined; v.spacerCountBot = undefined; v.unitTotal = undefined; v.edgeTop = undefined; v.edgeUp = undefined; v.stale = true; }
+  if (msg.id !== activeId) { schedulePrebuild(); return; }
+  fillInPlace(msg.id, v);
+}
+/** A fill moves nothing (the user 2026-09-12): the content appears in place and scrollTop does not change. The rebuild's window is
+ *  chosen around the row the reader was looking at and that row is written back to its offset, ONE attributed write (gap-fill),
+ *  with the scrollTop read before the rebuild as the write's origin (the browser's own anchoring, kept on for #content, may have
+ *  moved it already; the row still names the move as the pane's). */
+/** The turn of every event: a run's events in order, a user row starting each turn from the run's lo; rows before the run's first user
+ *  row (head cards) sit on lo. The regions' own numbering, so a point in the thread can be named as a turn and a fraction (T386). */
+function turnOfEvents(s: Session): number[] {
+  const out: number[] = new Array(s.events.length).fill(0);
+  if (!s.regions) return out;
+  let i = 0;
+  for (const r of runsOf(s.regions)) {
+    const first = s.events[i] as { kind?: string } | undefined;
+    // a run opening mid-turn (the wire tail sliced below a user row) starts AT lo and its first user row begins lo + 1 (round six, low);
+    // a run at the HEAD opens with the head cards, which precede turn 0, so its first user row IS turn 0 (the answered-question road
+    // read 101 for turn 100 after a head fill); every other window is turn-aligned and opens with a user row
+    let t = (first && first.kind === "user") || r.lo === 0 ? r.lo - 1 : r.lo;
+    for (let k = 0; k < r.events.length && i < s.events.length; k++, i++) {
+      const e = s.events[i] as { kind?: string };
+      if (e && e.kind === "user") t++;
+      out[i] = Math.max(r.lo, t);
+    }
+  }
+  return out;
+}
+/** The point under the viewport top as a TURN (fractional) before a rebuild: a rendered gap element under the top gives lo plus the
+ *  fraction into it; a rendered row gives its turn; a point in the top spacer walks the hidden units by their own heights (a gap's
+ *  estimate, else the average) to the unit it falls in. Null when nothing can be named. */
+function turnUnderTop(v: View, s: Session, items: DisplayItem[], turns: number[], content: HTMLElement, top: number): number | null {
+  const cTop = content.getBoundingClientRect().top, st = content.scrollTop;
+  for (const c of Array.from(v.el.children) as HTMLElement[]) {
+    if (c.classList.contains("tx-spacer")) continue;
+    const y0 = c.getBoundingClientRect().top - cTop + st, h = c.offsetHeight, y1 = y0 + h;
+    if (!(top >= y0 && top < y1) || h <= 0) continue;
+    if (c.classList.contains("tx-gap")) { const lo = Number(c.dataset.lo), hi = Number(c.dataset.hi); return lo + (hi - lo) * ((top - y0) / h); }
+    const tr = c.dataset.turn;   // the row's own turn, stamped at its paint (round six): by position, never a uuid lookup
+    if (tr != null && tr !== "") return Number(tr) + (top - y0) / h;
+  }
+  const spacer = v.el.querySelector(".tx-spacer-top") as HTMLElement | null;
+  const topH = spacer ? spacer.offsetHeight : 0;
+  if (top < topH) {
+    const avg = v.avgTurnH ?? 60; let y = 0;
+    for (let u = 0; u < (v.winStart ?? 0) && u < items.length; u++) {
+      const it = items[u]; const h = it.kind === "gap" ? (v.gapUnits?.get(u) ?? gapHeight(it, v.pxPerTurn)) : avg;
+      if (top < y + h) { if (it.kind === "gap") return it.lo + (it.hi - it.lo) * ((top - y) / h); const f = itemFirstEvent(it); return f >= 0 && f < turns.length ? turns[f] : null; }
+      y += h;
+    }
+  }
+  return null;
+}
+/** The scroll position that puts turn `t` (fractional) under the viewport top after a rebuild: a rendered gap holding it gives its top
+ *  plus the fraction; a rendered row of that turn gives its top; a hidden unit walks the spacer estimates. Null when the turn is nowhere. */
+function yOfTurn(v: View, s: Session, items: DisplayItem[], turns: number[], content: HTMLElement, t: number): number | null {
+  const cTop = content.getBoundingClientRect().top, st = content.scrollTop, whole = Math.floor(t);
+  for (const c of Array.from(v.el.children) as HTMLElement[]) {
+    if (c.classList.contains("tx-gap")) { const lo = Number(c.dataset.lo), hi = Number(c.dataset.hi); if (t >= lo && t < hi) return c.getBoundingClientRect().top - cTop + st + c.offsetHeight * ((t - lo) / (hi - lo)); }
+  }
+  for (const c of Array.from(v.el.children) as HTMLElement[]) {
+    const tr = c.dataset.turn; if (tr == null || tr === "" || Number(tr) !== whole) continue;   // the row names its turn (round six)
+    return c.getBoundingClientRect().top - cTop + st + c.offsetHeight * Math.min(1, Math.max(0, t - whole));
+  }
+  const avg = v.avgTurnH ?? 60; let y = 0;
+  for (let u = 0; u < (v.winStart ?? 0) && u < items.length; u++) {
+    const it = items[u]; const h = it.kind === "gap" ? (v.gapUnits?.get(u) ?? gapHeight(it, v.pxPerTurn)) : avg;
+    if (it.kind === "gap" && t >= it.lo && t < it.hi) return y + h * ((t - it.lo) / (it.hi - it.lo));
+    if (it.kind !== "gap") { const f = itemFirstEvent(it); if (f >= 0 && f < turns.length && turns[f] === whole) return y; }
+    y += h;
+  }
+  return null;
+}
+function fillInPlace(sid: string, v: View | undefined): void {
+  const content = document.getElementById("content"), s = sessions.get(sid);
+  if (!content || !v || !s || sid !== activeId) { showActive(); return; }
+  const topBefore = content.scrollTop;
+  const keep = captureScrollAnchor(content, v);
+  // a row anchors the fill when it INTERSECTS the viewport, whatever the sign of its top (round four, medium 1: a partially visible
+  // top row, the normal state after any wheel, is an anchor too); a reader with no row on screen (a jump to the head, a cancelled
+  // head-gap landing, a place inside a gap) is anchored on the POINT under the viewport top as a turn and a fraction into its gap
+  // (round five, medium B: the plan's own rule, the content change, not the view's own coordinates, which read as a tautology)
+  const keepVisible = !!keep && keep.y < content.clientHeight - 1;
+  const items = displayItems(s);
+  const turnsNow = turnOfEvents(s);
+  const pointBefore = turnUnderTop(v, s, items, turnsNow, content, topBefore);
+  let u = -1;
+  if (keepVisible && keep) {
+    const idx = s.events.findIndex((e) => e.uuid === keep.uuid);
+    u = idx >= 0 ? items.findIndex((it) => it.kind === "toolgroup" || it.kind === "noticegroup" ? it.indices.includes(idx) : it.kind === "event" && it.index === idx) : -1;
+    if (u < 0 && idx >= 0) u = Math.max(0, items.findIndex((it) => itemFirstEvent(it) >= idx));
+    // an anchor row no event uuid names (an answered AskUserQuestion anchored on its tool_result uuid) still names its TURN: the unit
+    // holding that turn is the window's centre (round six, medium: a uuid lookup left u at -1 and the view re-synced in a stale item space)
+    if (u < 0) { const rowEl = v.el.querySelector(`.turn[data-uuid="${cssEscape(keep.uuid)}"]`) as HTMLElement | null; const tr = rowEl?.dataset.turn; if (tr) u = unitOfTurn(items, turnsNow, Number(tr)); }
+  } else {
+    // no row on screen: render the window around the unit holding the point's TURN in the NEW items (the unit index the old view held
+    // is in the old item space; a wide window inserted above shifts every index, and rendering around the stale one left the reader's
+    // turn unrendered and the point unmappable, round five)
+    if (pointBefore != null) u = unitOfTurn(items, turnsNow, Math.floor(pointBefore));
+    if (u < 0) u = unitAtScroll(v, content);
+  }
+  v.stick = false;   // a fill never follows the tail: the reader is where they are
+  if (u >= 0) renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), s.status.state === "working" || s.status.state === "compacting");
+  else syncView(sid);
+  // a visible row that survived the rebuild goes back to its exact offset; otherwise (no row on screen, or the anchor row gone: a turn
+  // anchored on a resultUuid or a word key no event carries, round five medium A) the point under the viewport top is put back by its
+  // turn; with no way to name the point, the reader keeps their scrollTop (the head stays at zero)
+  const row = keepVisible && keep ? (v.el.querySelector(`.turn[data-uuid="${cssEscape(keep.uuid)}"]`) as HTMLElement | null) : null;
+  let y: number;
+  if (row && keep) y = row.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop - keep.y;
+  else {
+    const mapped = pointBefore != null ? yOfTurn(v, s, items, turnsNow, content, pointBefore) : null;
+    y = mapped != null ? mapped : topBefore;
+  }
+  writeScroll(content, y, "gap-fill", false, topBefore);
+  // a fill that leaves NO row on screen (the window rendered elsewhere than the point: the unit search missed, the mapped y fell
+  // outside the window) re-windows once around the named point and puts it back (round six, medium)
+  if (pointBefore != null && !rowOnScreen(v, content)) {
+    const u2 = unitOfTurn(items, turnsNow, Math.floor(pointBefore));
+    if (u2 >= 0) {
+      renderWindowItems(v, s, items, Math.max(0, u2 - WINDOW_RADIUS), Math.min(items.length, u2 + WINDOW_RADIUS), s.status.state === "working" || s.status.state === "compacting");
+      const y2 = yOfTurn(v, s, items, turnsNow, content, pointBefore);
+      writeScroll(content, y2 != null ? y2 : topBefore, "gap-fill", false, topBefore);
+    }
+  }
+  if (activeId) applyCommentMarks(activeId);
+  scheduleRailSticky();
+}
+
+// The display unit holding an absolute turn: the gap whose [lo, hi) contains it, else the LAST run unit whose first event's turn is
+// at or below it (a turn's later units, its tool runs, begin in the same turn; equality on the first unit alone missed a turn whose
+// user row is folded into a group). -1 when no unit reaches the turn. (T386 stage 2, round six)
+function unitOfTurn(items: DisplayItem[], turns: number[], t: number): number {
+  let u = -1;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.kind === "gap") { if (t >= it.lo && t < it.hi) return i; if (it.lo > t) break; continue; }
+    const f = itemFirstEvent(it); if (f < 0 || f >= turns.length) continue;
+    if (turns[f] <= t) u = i; else break;
+  }
+  return u;
+}
+
+// Whether any turn row intersects the viewport (the fill's post-check: a window rendered away from the point shows the reader nothing)
+function rowOnScreen(v: View, content: HTMLElement): boolean {
+  const cTop = content.getBoundingClientRect().top, ch = content.clientHeight;
+  for (const c of Array.from(v.el.children) as HTMLElement[]) {
+    if (!c.classList.contains("turn")) continue;
+    const r = c.getBoundingClientRect(); if (r.bottom - cTop > 0 && r.top - cTop < ch && r.height > 0) return true;
+  }
+  return false;
+}
 const pendingOlderAnchor = new Map<string, string>();   // sid → the uuid to re-anchor on when the chunk lands
 // sid → the on-screen y that uuid must come back to. PRESENT ⇒ the fetch was a scroll-back (requestOlder) and
 // the arrival is POSITION PRESERVATION; ABSENT ⇒ it was a deep-link (fetchOlderForAnchor) and the arrival is a
@@ -16765,15 +19445,34 @@ const pendingOlderAnchor = new Map<string, string>();   // sid → the uuid to r
 const pendingOlderKeepY = new Map<string, number>();
 function chatHead(msg: any) {
   loadingOlder.delete(msg.id);
-  hideLoadingPill();
   const forget = (sid: string) => { pendingOlderAnchor.delete(sid); pendingOlderKeepY.delete(sid); };
   const s = sessions.get(msg.id);
   if (!s) { forget(msg.id); return; }
+  if (msg.fault) {
+    // the kernel could not answer this time (T402 round two, low 3): the wait ends, nothing is re-based, the next scroll asks again; a
+    // deep link's fetch stands its landing down at once with the same word as a window's fault (round four, low 2), not at the backstop
+    const deepLink = pendingOlderAnchor.has(msg.id) && !pendingOlderKeepY.has(msg.id);   // a deep link's fetch (fetchOlderForAnchor), not a scroll-back's
+    forget(msg.id);
+    if (msg.id === activeId && deepLink && anchorPendingOlder) { pendingAnchor = null; anchorPendingOlder = false; landTrail.push("head-fault"); landToast("the history could not be loaded just now"); clearSeek(); }
+    return;
+  }
   const before = msg.before | 0, from = msg.from | 0;
-  if (before !== (s.headFrom ?? 0)) { forget(msg.id); return; }   // stale / overlapping → ignore
   const older = (msg.events || []) as ChatEvent[];
-  if (older.length) s.events = older.concat(s.events);
-  s.headFrom = from;
+  if (typeof msg.beforeUuid === "string") {
+    // proto 2 (T323 stage 4b): the reply names the resident oldest; a stale one (the oldest moved on) is ignored,
+    // a missing anchor is the honest end of the search, and `more: false` is the head: the count exists from here
+    if (msg.missing) { forget(msg.id); requestFullSession(msg.id, "gap"); return; }   // the anchor is gone from the transcript (a /clear, a fork): re-base (a FAULT never reaches here: it returned above)
+    const next = prependHead(s.events as { uuid?: string }[], msg.beforeUuid, older as { uuid?: string }[]);
+    if (!next) { forget(msg.id); return; }
+    s.events = next as ChatEvent[];
+    s.firstUuid = keyOf(s.events[0] as { uuid?: string; key?: string } | undefined) ?? null;
+    if (msg.more === false) { s.headKnown = true; s.headTotal = s.events.reduce((n, e) => n + (isOptimistic(e) || isHeldGroup(e) ? 0 : 1), 0); }
+  } else {
+    if (before !== (s.headFrom ?? 0)) { forget(msg.id); return; }   // stale / overlapping → ignore
+    if (msg.missing) { forget(msg.id); return; }                    // the index wire's fault reply (T402 round two, low 2): the head is not reached, the wait just ends
+    if (older.length) s.events = older.concat(s.events);
+    s.headFrom = from;
+  }
   const v = views.get(msg.id);
   if (msg.id !== activeId) { forget(msg.id); if (v) v.stale = true; return; }
   // re-anchor: reset the active view so it re-windows around the saved row (now further down s.events), and
@@ -16791,6 +19490,9 @@ function chatHead(msg: any) {
     pendingAnchorKeepY = keepY ?? null;
   }
   showActive();
+  // the prepend RESTORES the row itself (round ten, low 1): a landing that already filed its row does not re-land on the re-render, so a
+  // refreshed keep offset alone left the inserted rows pushing the opened message down (top 8 to 356); after the re-render the row under
+  // the viewport top goes back to its offset, the page's own move (anchor-restore, the append path's writer for the same job)
 }
 
 // Fetch the next older history chunk re-anchored on `uuid` (a deep-link target past the resident tail), so
@@ -16799,12 +19501,11 @@ function chatHead(msg: any) {
 // when there's nothing older to fetch (headFrom 0) or a fetch is already in flight.
 function fetchOlderForAnchor(sid: string, uuid: string): boolean {
   const s = sessions.get(sid);
-  if (!s || (s.headFrom ?? 0) <= 0 || loadingOlder.has(sid)) return false;
+  if (!s || !olderOnServer(s) || loadingOlder.has(sid)) return false;
   pendingOlderAnchor.set(sid, uuid);
   pendingOlderKeepY.delete(sid);   // a DEEP-LINK: land it properly (top-align + flash), not offset-preserved
   loadingOlder.add(sid);
-  showLoadingPill();
-  vscodeApi?.postMessage({ type: "loadOlder", id: sid, before: s.headFrom });
+  vscodeApi?.postMessage({ type: "loadOlder", id: sid, before: s.proto === 2 ? s.firstUuid : s.headFrom });
   return true;
 }
 
@@ -16823,7 +19524,7 @@ function fetchOlderForAnchor(sid: string, uuid: string): boolean {
 // its own offset, and the fetch becomes invisible again — which is all it was ever supposed to be.
 function requestOlder(sid: string, v: View, content: HTMLElement): void {
   const s = sessions.get(sid);
-  if (!s || (s.headFrom ?? 0) <= 0 || loadingOlder.has(sid)) return;
+  if (!s || !olderOnServer(s) || loadingOlder.has(sid)) return;
   const keep = captureScrollAnchor(content, v);
   const anchor = keep?.uuid
     || (v.el.querySelector(".turn[data-uuid]") as HTMLElement | null)?.dataset.uuid
@@ -16832,17 +19533,160 @@ function requestOlder(sid: string, v: View, content: HTMLElement): void {
   // top) 0 restores the fallback row to the top, which is where it already is.
   if (anchor) { pendingOlderAnchor.set(sid, anchor); pendingOlderKeepY.set(sid, keep?.y ?? 0); }
   loadingOlder.add(sid);
-  showLoadingPill();
-  vscodeApi?.postMessage({ type: "loadOlder", id: sid, before: s.headFrom });
+  vscodeApi?.postMessage({ type: "loadOlder", id: sid, before: s.proto === 2 ? s.firstUuid : s.headFrom });
 }
+
+// ── the uuid-anchored wire's other two requests (T323 stage 4b, proto 2) ──────────────────────────────────
+// Older history exists on the server: for an index session while headFrom > 0; for a proto-2 session until the
+// head has been reached (headKnown). A proto-2 client never holds a count before that, so nothing shows one.
+function olderOnServer(s: Session): boolean {
+  if (s.proto === 2) return !s.regions && s.headKnown !== true;   // with regions the head gap is an element that asks for itself (T386 stage 2)
+  return (s.headFrom ?? 0) > 0;
+}
+// A deep-link anchor past the resident run: ONE round trip for a window around it (chatWindow), instead of the
+// index wire's fetch-older-until-resident loop. False when nothing can be asked (an index session, a request in flight).
+// sid -> the window was asked by a NAVIGATION (a card, a notch, a deep link, a seek, a reload's restore of the reader's
+// saved place: every anchor landing but one), not by the keep-offset RE-LAND of the reader's own row across a rebuild
+// (relandAsk), the one ask that exists only to keep their row on screen and must never move them off the live run (T366:
+// a window landing mid-flick detached a reader; a navigation's window may, a re-land's never); `named` says the ask was a
+// CLICK of the reader's (a card, a lane, a deep link, a notch, a reply chip, a comment tick: any anchor landing with no keep
+// offset), which the strip names as the message they opened, with its time when the frame carried one; the reload restore
+// of their own saved place arms a keep offset and keeps the plain sentence (verifier low, round two)
+// …and every one of those marks, with the pre-jump's origin and gap and the notice's cancel, lives in ONE RECORD PER ASK (T386 stage 2,
+// round eight; the manager's rule, T402's keyed asks in the regions' form): round seven freed the busy gate at the notice's cancel, so
+// two window asks of one session can be on the wire, and every mark kept in a per-session slot collided (a second cancel overwrote the
+// first's, a cancelled ask's origin outlived it, a cancelled mark whose reply never came ate the next landing on its anchor). A reply
+// resolves to its own record, the OLDEST on its anchor (the kernel answers in order), and to nothing else; the cancel marks only its
+// record; a fresh ask on the same anchor supersedes a cancelled twin; the records expire with the socket-death clear.
+interface WindowAsk { anchor: string; nav: boolean; named: boolean; t: number | null; kind: string | null; origin: number | null; gap: { lo: number; hi: number } | null; cancelled: boolean; }
+const windowAsks = new Map<string, WindowAsk[]>();   // sid → the window asks on the wire, oldest first
+function windowAsksOf(sid: string): WindowAsk[] { let a = windowAsks.get(sid); if (!a) { a = []; windowAsks.set(sid, a); } return a; }
+/** The live (not cancelled) ask of a session, if one is on the wire: the busy gate and the notice are its. */
+function liveWindowAsk(sid: string): WindowAsk | null { const a = windowAsks.get(sid); if (!a) return null; for (let i = a.length - 1; i >= 0; i--) if (!a[i].cancelled) return a[i]; return null; }
+/** The record a reply resolves to, removed: the OLDEST on the reply's anchor, or the oldest of all when the reply names none; null when no ask stands. */
+function takeWindowAsk(sid: string, anchor: string | undefined): WindowAsk | null {
+  const a = windowAsks.get(sid); if (!a || !a.length) return null;
+  const i = anchor == null ? 0 : a.findIndex((r) => r.anchor === anchor);
+  if (i < 0) return null;
+  const [rec] = a.splice(i, 1); if (!a.length) windowAsks.delete(sid); return rec;
+}
+function requestAround(sid: string, uuid: string): boolean {
+  const s = sessions.get(sid);
+  if (!s || s.proto !== 2 || loadingOlder.has(sid) || liveWindowAsk(sid)) return false;   // an older fetch or a LIVE window ask in flight: busy (a cancelled ask is not)
+  const nav = !relandAsk;
+  const kind = pendingAnchorKind ?? pendingAnchorIntent ?? null;
+  const arr = windowAsksOf(sid);
+  for (let i = arr.length - 1; i >= 0; i--) if (arr[i].cancelled && arr[i].anchor === uuid) arr.splice(i, 1);   // a fresh ask on the anchor supersedes a cancelled twin: its reply, if it still comes, lands this ask
+  const rec: WindowAsk = { anchor: uuid, nav, named: nav && pendingAnchorKeepY == null, t: nav ? (pendingAnchorT ?? null) : null, kind: nav ? kind : null, origin: null, gap: null, cancelled: false };   // t and kind ride to the adoption (T386)
+  // every window ask leaves a diagnostic row (T366: the rows of the report had the reply's landing but nothing said
+  // which pass asked for the window): the landing trail so far, the anchor's kind, whether a keep-offset restore asked;
+  // under the same per-minute budget as the other scroll rows (verifier low 5)
+  const cAsk = document.getElementById("content");
+  scrollDiagRow("regionask", { sid, why: "landing", nav, kind, keep: pendingAnchorKeepY != null, reland: relandAsk, trail: landTrail.slice(-4), notice: landingNoticeSid === sid, atBottom: !!cAsk && atBottom(cAsk) });   // the T366 window-ask row, renamed with the regions (T386 stage 2)
+  // the one notice and the jump into the gap (T386 stage 2); a re-land shows nothing. Neither may lose the ask: a throw here would leave
+  // no record and no ask, never a live record with no ask on the wire (which would refuse every later landing as busy)
+  if (nav) { try { showLandingNotice(sid, pendingAnchorT); preJumpIntoGap(sid, pendingAnchorT, rec); } catch (e) { landTrail.push("pre-jump-threw"); } }
+  arr.push(rec);   // the record and the ask are one step: nothing between them can strand a record without its ask
+  vscodeApi?.postMessage({ type: "loadAround", id: sid, uuid });
+  return true;
+}
+function chatWindow(msg: any) {
+  // the reply resolves to ITS OWN ask's record and to nothing else (round eight): the oldest record on the reply's anchor. With no record
+  // (the socket-death clear expired it, or a duplicate) the window is merged in place and nothing else moves.
+  const rec = takeWindowAsk(msg.id, typeof msg.anchor === "string" ? msg.anchor : undefined);
+  const s = sessions.get(msg.id);
+  if (!rec) {
+    if (s && !msg.missing && !msg.fault && Array.isArray(msg.span) && (msg.events || []).length) {
+      stripOptimistic(s); insertRegionRun(s, Math.max(0, msg.span[0]), msg.span[1], (msg.events || []) as ChatEvent[]); reconcileOptimistic(s);
+      const v0 = views.get(msg.id);
+      if (v0) { v0.rendered = 0; v0.winStart = 0; v0.winEnd = 0; v0.spacerCount = undefined; v0.spacerCountBot = undefined; v0.unitTotal = undefined; v0.edgeTop = undefined; v0.edgeUp = undefined; v0.stale = true; }
+      if (msg.id === activeId) fillInPlace(msg.id, v0); else schedulePrebuild();
+    }
+    landTrail.push("window-stray");
+    return;
+  }
+  const cancelled = rec.cancelled;
+  const wasLanding = !cancelled && landingNoticeSid === msg.id;   // the notice is the LIVE ask's: a cancelled ask's reply leaves it standing for a later live ask
+  if (wasLanding) hideLandingNotice();
+  const anchorUuid: string | undefined = rec.anchor;
+  if (!s) return;
+  const ask = { nav: rec.nav, named: rec.named, t: rec.t, kind: rec.kind };
+  const preJumpOrigin = rec.origin;   // a live ask's pre-jump origin, put back when its reply cannot land; the cancel consumed a cancelled ask's
+  if (msg.fault) {
+    // the kernel could not answer THIS TIME (T402 round two, low 3; the merge into the regions dropped this branch and round seven restored
+    // it): a fault is no verdict on the anchor, so the reader is not told the message is gone; the landing stands down with its own word,
+    // the pre-jump is undone, the seek ends, and the next click asks again. A CANCELLED ask's fault is silent.
+    if (msg.id === activeId && (pendingAnchor === anchorUuid || cancelled || wasLanding)) {
+      pendingAnchor = null; anchorPendingOlder = false;
+      const cRestore = document.getElementById("content");
+      if (preJumpOrigin != null && cRestore) writeScroll(cRestore, preJumpOrigin, "land-cancel", false, cRestore.scrollTop);
+      if (!cancelled) {
+        landTrail.push("window-fault");
+        vscodeApi?.postMessage({ type: "locateDiag", id: msg.id, ok: false, trail: landTrail.slice(), anchor: anchorUuid, kind: "fault", error: typeof msg.error === "string" ? msg.error.slice(0, 200) : undefined });
+        landToast("the history could not be loaded just now");
+        clearSeek();
+      }
+    }
+    return;
+  }
+  if (msg.missing || !(msg.events || []).length || !Array.isArray(msg.span)) {
+    // T386 stage 2, medium 2: no span is an OLDER kernel's reply (it speaks the pre-regions window protocol); a missing is the honest
+    // end of a deep link. Either way the pre-jump moved the reader, so the notice comes down; a span-less reply says the host is older,
+    // a missing says the anchor is gone; neither is silent (the notice's cancel is the only silence).
+    if (msg.id === activeId && (pendingAnchor === anchorUuid || cancelled || wasLanding)) {
+      pendingAnchor = null; anchorPendingOlder = false;
+      const nospan = !msg.missing && Array.isArray(msg.events) && msg.events.length > 0 && !Array.isArray(msg.span);   // an older host sends EVENTS with no span; an empty span-less window from a current host is a missing (round five, low 3)   // a real missing (a /clear, a fork, a rewind, an anchor past the floor) carries no span key either: test missing FIRST (round four, medium 3)
+      const from = preJumpOrigin;
+      const cRestore = document.getElementById("content");
+      if (from != null && cRestore) writeScroll(cRestore, from, "land-cancel", false, cRestore.scrollTop);   // the pre-jump moved the reader; put them back where they were (low 2)
+      if (!cancelled) {
+        landTrail.push(nospan ? "window-nospan" : "window-missing");
+        vscodeApi?.postMessage({ type: "locateDiag", id: msg.id, ok: false, trail: landTrail.slice(), anchor: anchorUuid, kind: nospan ? "nospan" : "missing" });   // the honest end files its row (low 2)
+        landToast(nospan ? "this session's host is an older version; open it there to jump" : "couldn't locate this in the transcript");
+        clearSeek();   // the honest end ends the seek (main's branch did; the merge lost it, round seven)
+      }
+    }
+    return;
+  }
+  // T386 stage 2: the window becomes a RUN among the session's regions by its turn span; the gaps on either side shrink or split and
+  // a touching run merges (chat-regions.ts insertRun). The tail run is never detached, so there is no strip, no re-attach, no walk.
+  stripOptimistic(s);
+  insertRegionRun(s, Math.max(0, msg.span[0]), msg.span[1], (msg.events || []) as ChatEvent[]);
+  reconcileOptimistic(s);
+  const v = views.get(msg.id);
+  if (v) { v.rendered = 0; v.winStart = 0; v.winEnd = 0; v.spacerCount = undefined; v.spacerCountBot = undefined; v.unitTotal = undefined; v.edgeTop = undefined; v.edgeUp = undefined; v.stale = true; }
+  if (msg.id !== activeId) { schedulePrebuild(); return; }
+  const target = typeof msg.anchor === "string" ? msg.anchor : anchorUuid;
+  // a NAVIGATION's window lands (the ask's own mark, as before the regions: landActive clears the landing's mark while the ask is in
+  // flight, so that mark cannot be the key); the notice's click stands the landing down and the window appears in place instead
+  if (target && ask.nav && !cancelled) {
+    // the landing re-armed on the window's anchor, so the click's time and kind ride through (T386: the landing row keeps the datum that ties it to the click)
+    pendingAnchor = target; pendingAnchorIntent = null; pendingAnchorT = ask.t; pendingAnchorKind = ask.kind; flashedAnchor = null; pendingAnchorKeepY = null; anchorPendingOlder = false;
+    showActive();
+    return;
+  }
+  fillInPlace(msg.id, v);   // nobody is going to this window (the notice was clicked, or the ask was the page's own): it appears in place
+}
+
+// ── (the detached client's way back, review find M, retired with T386 stage 2: no window detaches a client; a full frame merges into the held runs) ──
 
 // The awaiting fields the #bg-tasks box renders from (renderBgTasks — the header words, the rows, the awaited-row outline) — one
 // key per status, so a status-only frame re-renders the box exactly when THESE change (the chip's own
 // flip is one of them) and never on the per-second ticks that touch nothing the box shows.
+// The awaited fields of session `sid` changed (awaitKey moved on a frame): re-render what reads them — the
+// active pane's box, and the subagent viewer's header when the active tab is a viewer INTO that session
+// (its "· waiting on …" tail reads the parent's nested rows, 2026-09-10). The box renders only for the
+// active real session (renderBgTasks reads activeId), so calling it for a viewer tab is a no-op.
+function awaitChanged(sid: string): void {
+  if (sid === activeId) renderBgTasks();
+  const a = activeId ? liveSession(activeId) : null;
+  if (a && a.sub && a.sub.parentId === sid) renderSubHead();
+}
+
 function awaitKey(st: Status | undefined): string {
   if (!st) return "";
   return JSON.stringify([st.state, st.awaitingWhy || "", st.awaitingKind || "", st.awaitingCount ?? null,
-                         st.awaitingTasks || [], st.awaitingTaskIds || [], st.awaitingItems || [],
+                         st.awaitingTasks || [], st.awaitingTaskIds || [], st.bgServiceIds || [], st.awaitingItems || [],   // the verdict repaints the box (round two, low 1)
                          (st.awaitingPeers || []).map((p) => [p.host || "", p.name || ""])]);
 }
 
@@ -16853,7 +19697,15 @@ function statusOnly(msg: any) {
   // skeleton for every tab within a cycle.
   if (onStatus(skeletonTabs, msg.id, msg.status) === "skeleton") { scheduleRenderTabs(); return; }
   const s = sessions.get(msg.id);
-  if (!s) { requestFullSession(msg.id, "nobase"); return; }   // a status push for a session we don't hold is PROOF of desync, the same signal as chatTail's missing base (see there)
+  if (!s) {
+    // A status for a session this page holds NOTHING of, which the set does not list: a skeleton tab's whose strip has
+    // not landed. The kernel sends a status frame for a sid it holds as a skeleton and for no other, and the shim's
+    // FIFO carries a newer strip to the END of the burst, behind the statuses between two strips (a later chat column's
+    // open sends two: the pusher cycle its handshake woke and the ready arm's connect push). Held for the strip
+    // (skeleton-tabs.ts holdStatus), never chatTail's no-base ask, which asked for every withheld tab's full and loaded
+    // the whole board into a column opened as a view of one session, one ask per withheld tab (2026-09-11).
+    holdStatus(skeletonTabs, msg.id, msg.status); return;
+  }
   const before = awaitKey(s.status);
   s.status = msg.status || s.status;
   renderTabs();                          // status-only push → repaint the chip; order is untouched
@@ -16863,8 +19715,8 @@ function statusOnly(msg: any) {
     // this one payload, but the box was rendered only by the full-session frame path, so a status-only
     // flip to Awaiting left the chip on and the box absent until the next transcript change or tab
     // switch (31s+ observed). Same frame, same data — re-render the box when its fields changed.
-    if (awaitKey(s.status) !== before) renderBgTasks();
   }
+  if (awaitKey(s.status) !== before) awaitChanged(msg.id);
 }
 
 // The ✕'s own path: drop the tab now, THEN remember the close (see closingTabs). The order matters and
@@ -16970,9 +19822,9 @@ function renderComposerNote(sid: string, why: DismissWhy, name: string): void {
   }
   const x = el("button", "composer-chip-x");
   x.setAttribute("aria-label", "Dismiss");
-  x.title = "dismiss";
+  setTip(x, "dismiss");
   x.textContent = "✕";
-  x.addEventListener("click", () => clearComposerNote());
+  x.dataset.act = "composerNoteX";   // the document.body delegate clears the note (click-safe, no per-node listener)
   note.append(msg, x);
   box.insertBefore(note, box.firstChild);
   composerNoteSid = sid;
@@ -17009,7 +19861,7 @@ function flashComposerNote(): void {
 function dismissSession(id: string, why: DismissWhy, doomed?: ReadonlySet<string>): void {
   if (peekId === id) peekId = null;   // its tab is going — the peek goes with it
   const wasActive = activeId === id;
-  const name = sessions.get(id)?.name || tabMeta.get(id)?.name || id;   // read before the maps forget it
+  const name = sessions.get(id)?.name || tabMeta.get(id)?.name || "a session";   // read before the maps forget it; never a raw sid in a line the user reads (T357)
   if (wasActive) stashActiveDraft(id);   // FIRST: what is on screen belongs to this id, whatever happens next
   sessions.delete(id);
   onDismiss(skeletonTabs, id);   // a tab that left the strip (✕, the kernel's omission, a host drop) has nothing left to load (2026-09-07)
@@ -17030,16 +19882,30 @@ function dismissSession(id: string, why: DismissWhy, doomed?: ReadonlySet<string
   const oi = order.indexOf(id); if (oi >= 0) order.splice(oi, 1);
   const mi = mru.indexOf(id); if (mi >= 0) mru.splice(mi, 1);   // before the fallback read below — never the dead id
   renderTabs();                          // tab removed from `order` above → repaint without it
+  if (!wasActive && vanishedId === id) {
+    // the tab the UNFOCUSED pane names is torn down while not active: the body's line follows the reason (the review's
+    // low: it kept the view's name-free line after the tab was gone; the vanished write below is the active tab's alone).
+    // A DECLINED record's session (never the user's; hidden by a filter meant to keep the frame clean) takes its record
+    // with it instead, so the frame never paints that session's name (the review's medium), and the next hidden arrival
+    // may be recorded on first sight
+    if (vanishedByDecline) { vanishedId = null; vanishedWhy = null; vanishedName = ""; vanishedByDecline = false; }
+    else { vanishedWhy = why; vanishedName = name; }
+    repaintEmptyStateIfUnfocused();
+  }
   if (wasActive) {
-    // MRU: return to the previously-active tab, not the positional neighbor — one still on the strip (the
-    // dead id left `mru` above; an id `order` no longer carries would bind the box to a tab nobody can see,
-    // and the next keystroke would file under it) and not one this same teardown takes next.
+    // Where the box goes (pane-focus.ts focusAfterDismiss; T357, the user 2026-09-11): only the user's OWN ✕ hands it
+    // to the recency fallback — MRU, then the first tab still on the strip (the dead id left `mru` above; an id `order`
+    // no longer carries would bind the box to a tab nobody can see), never one this same teardown takes next — since
+    // they closed the tab and the box changing hands is the one case they already know. Every other departure (a
+    // kernel restart that dropped the remote tabs until their host came back, a host relay down, a session gone)
+    // leaves the pane UNFOCUSED: activeId null with the strip still showing, the body naming what vanished, and focus
+    // restored to THAT session when its tab returns — never to another session on the pane's own initiative (the
+    // user ended up typing to a box they had not chosen). The arrival path guards its adoption on vanishedId.
     const home = hostOf(id);   // "" for a local id, and then no sibling rule: every local tab would "share" it
-    const goingToo = (x: string) => (doomed?.has(x) ?? false) || (why === "hostDrop" && !!home && hostOf(x) === home);
-    // …and with no recency left (the user only ever looked at this one tab), the first tab still on the
-    // strip: leaving activeId null with tabs showing read "No session open" under a visible strip, and
-    // handed the box to whichever session frame happened to arrive next (the harness caught both, T236).
-    activeId = mru.find((x) => order.includes(x) && !goingToo(x)) || order.find((x) => !goingToo(x)) || null;
+    const goingToo = (x: string) => (doomed?.has(x) ?? false) || (why === "hostDrop" && !!home && hostOf(x) === home) || !heldHere(x);   // …nor a tab another column holds (the chat split): it is nobody's fallback here
+    const next = focusAfterDismiss(why, mru, order, goingToo);
+    activeId = next.activeId;
+    if (next.unfocused) { vanishedId = id; vanishedWhy = why; vanishedName = name; vanishedByDecline = false; }   // the user's own tab went: no arrival may adopt over it (the review's high)
     loadComposerFor(activeId);   // the strip was showing the CLOSED session's chip/thumbnails/draft — swap in the new active tab's (usually none)
     // The box just changed hands under the user. Their own ✕ is the one case they already know; for every
     // other reason BLUR it — a keystroke a moment later must not land in the survivor's session unnoticed
@@ -17074,6 +19940,46 @@ function pipeBanner(up: boolean, queued: number): void {
 // hid). An event gets a transient cue; the steady state stays on the surfaces already carrying it; no pixel
 // of transcript is spent. hostDownNote is still the one place that note is worded — see host-prefix.ts.)
 
+// A kernel-served page whose federation manager never came up (2026-09-10; frame-listener.ts federationMissing
+// says why): every frame below arrives RAW, no arrangement applied, so the strip would show the kernel's seed order
+// and a drag would write that seed over the browser's arrangement for every other pane. Fail loudly instead: ONE
+// reload to recover, then — retried or recovered — one clientDiag row with what the browser recorded about fetching
+// federation.js each time (the measurement that tells a failed fetch from a bundle that failed to evaluate), and past
+// a failed retry a banner with the reload in hand; the arrangement writer and the drag stand down for as long as the
+// page is in this state (commitTabOrder, reorderTo). The retry is counted in a sessionStorage marker that also carries
+// the first pass's load entry: once per document life, so a bundle that keeps failing cannot loop (blocked storage
+// means no retry at all, since it could not be counted), and the row is filed by the pass that STAYS up — a row posted
+// right before a reload never left the page.
+const fedMissing = federationMissing(window as any);
+{
+  const FED_RETRY = fedRetryKey(location);   // per document: two chat columns of one tab must not share a retry (frame-listener.ts)
+  const entry = fedMissing ? federationLoadEntry(typeof performance !== "undefined" ? (performance.getEntriesByType("resource") as any[]) : []) : null;
+  let first: { load: unknown } | null = null;
+  try { const m = sessionStorage.getItem(FED_RETRY); if (m) first = JSON.parse(m); } catch { /* blocked or corrupt: no earlier pass */ }
+  if (fedMissing && !first) {
+    let counted = false;
+    try { sessionStorage.setItem(FED_RETRY, JSON.stringify({ load: entry })); counted = true; } catch { /* blocked storage */ }
+    if (counted) location.reload();
+  }
+  if (fedMissing && (first || !(() => { try { return !!sessionStorage.getItem(FED_RETRY); } catch { return false; } })())) {
+    vscodeApi?.postMessage({ type: "clientDiag", surface: "chat", what: "federation-missing", data: { load: entry, first: first ? first.load : null } });
+    try { sessionStorage.removeItem(FED_RETRY); } catch { /* */ }   // the incident is filed: the marker goes with it, so the next load gets its own retry (a shell reload, a build drift)
+    // the bar sits IN FLOW above the strip, never over it: the strip's tabs still select, open their menu and close —
+    // only the order is wrong here — and a fixed bar across the top hid exactly those (the host-offline bar removed
+    // on 2026-07-29; styles.css keeps the note)
+    const bar = Object.assign(document.createElement("div"), { id: "rfed" });
+    bar.appendChild(document.createTextNode("Part of this pane failed to load, so its session tabs are out of order and can't be dragged. "));
+    const btn = Object.assign(document.createElement("button"), { type: "button", textContent: "Reload" });
+    btn.addEventListener("click", () => { location.reload(); });
+    bar.appendChild(btn);
+    const strip = document.getElementById("tabbar");
+    if (strip && strip.parentNode) strip.parentNode.insertBefore(bar, strip); else document.body.prepend(bar);
+  }
+  if (!fedMissing && first) {   // the retry fixed it: the incident is still filed, and the marker clears for the next one
+    vscodeApi?.postMessage({ type: "clientDiag", surface: "chat", what: "federation-missing", data: { recovered: true, first: first.load } });
+    try { sessionStorage.removeItem(FED_RETRY); } catch { /* */ }
+  }
+}
 // every frame's synchronous handling time is measured (perf-telemetry.ts: one clientDiag row a
 // minute, read by `romp perf client`); the handler itself is unchanged
 // …and handed the merged frames by direct call from federation.js when this page has it (frame-listener.ts)
@@ -17087,21 +19993,49 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
   }
   // the shell's palette / shell-focus chords: the chat owns the nav trail, the shell just asks
   if (m.romp === "chatNav") { navHist.go(m.dir === 1 ? 1 : -1); return; }
-  // the shell's pane set — which panes are on, by key — the cache openPath routes file links by (panesOn
-  // above; the shell posts it on every toggle and on this iframe's load). Whole-set replace: a key the
-  // shell stopped naming must not linger as on.
+  // a moved tab's drafts (the chat split): the shell took them from the source page (__rompTakeSessionState) and
+  // hands them to this page, the session's column now — into the maps, persisted, and into the box when it is active
+  if (m.romp === "adopt") { adoptSessionState(m.sid, m.state); return; }
+  // the shell closed a later column whose members the kernel's strip no longer lists (colEmpty): they return to this,
+  // the first column, but the kernel may still list one closed from its own cross for a push or two — held back here
+  // (closingTabs, retired by the kernel's next strip as any ✕ is) so no tab flashes into this strip on its way out. The
+  // shell names ONLY the ids that page's own cross removed (colEmpty's `crossed`): the backstop behind this hold toasts
+  // "Couldn't close", which is right for a refused cross and wrong for anything else (the vanishing tab, 2026-09-12)
+  if (m.romp === "closing") { if (Array.isArray(m.ids)) for (const id of m.ids) { if (typeof id === "string" && id) closingTabs.set(id, Date.now()); } renderTabs(); return; }
+  // the shell's palette, or a chord bound to it: flip the ACTIVE session's bell — the same per-session override the
+  // tab menu's bell row writes (setSessionFlag "notify"), so the kernel's next push repaints the row; a toast names
+  // the new state, since the icon in that menu is the flip's only other witness (the user 2026-09-11, who wanted the
+  // bell on a key). A quiet note, not a warning: it confirms (review 2026-09-14). A placeholder tab has no session to
+  // flag yet; nothing happens.
+  if (m.romp === "notifyToggle") {
+    const s = activeId && !isProvisionalId(activeId) ? liveSession(activeId) : undefined;   // a skeleton's copy is stale: no flag blind
+    if (s && activeId) {
+      const on = !s.notify;
+      setSessionFlag(activeId, "notify", on);
+      ephemeralNoteToast((on ? "Notifications enabled for " : "Notifications disabled for ") + (s.name || activeId.slice(0, 8)));
+    }
+    return;
+  }
+  // the shell's pane set, which panes are on screen by key: the cache openPath routes file links by (panesOn
+  // above; the shell posts it on every toggle, on this iframe's load and on a phone's tab switch). Whole-set
+  // replace: a key the shell stopped naming must not linger as on.
   if (m.romp === "panes") {
     if (m.on && typeof m.on === "object") {
       const on: Record<string, boolean> = {};
       for (const k of Object.keys(m.on)) on[k] = m.on[k] === true;
       panesOn = on;
     }
+    // which panes exist to bring forward (the Files control's setting): whole-set replace as well
+    const avail: Record<string, boolean> = {};
+    if (m.avail && typeof m.avail === "object") for (const k of Object.keys(m.avail)) avail[k] = m.avail[k] !== false;
+    panesAvail = avail;
     return;
   }
-  // the pipe's down edge is the VS Code twin of the shim's romp:wsdown: it clears awaitingFull (an ask lost
-  // with the pipe must not suppress the re-ask after the reconnect's resync; see requestFullSession) and
-  // unconfirmed sends say so (markPendingLost)
-  if (m.type === "pipeState") { if (!m.up) awaitingFull.clear(); if (!m.up) markPendingLost("connection"); pipeBanner(!!m.up, Number(m.queued) || 0); return; }
+  // the pipe's down edge is the VS Code twin of the shim's romp:wsdown: unconfirmed sends say so (markPendingLost), and it
+  // clears awaitingFull (an ask lost with the pipe must not suppress the re-ask after the reconnect's resync; see
+  // requestFullSession; onWireDown clears the chat wire's window asks, not this set)
+  if (m.type === "pipeState" && m.up) reaskWaitingSubagents();   // the extension's reconnect-class event (it never sees romp:wsup), T355
+  if (m.type === "pipeState") { if (!m.up) { awaitingFull.clear(); markPendingLost("connection"); onWireDown(); } pipeBanner(!!m.up, Number(m.queued) || 0); return; }   // the pane's down edge clears the in-flight asks as the socket's does (round nine, medium 2)
   // any kernel message proves the kernel is reachable again — heal previews whose fetch died in a
   // restart window (preview.ts retryFailedPreviews; a no-op when nothing failed). federation's
   // tunnel poll rides this same path: it dispatches {type:"hostUp"} on a host's down→up transition,
@@ -17124,21 +20058,30 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     // limit-driven pause → the usage window's reset epoch (seconds); manual pause / unknown → null
     globalRetryResumeAt = typeof m.resumeAt === "number" ? m.resumeAt : null;
     globalRetryReason = typeof m.reason === "string" ? m.reason : "";   // "spend" → raise-your-cap text, no countdown
-    for (const btn of Array.from(document.querySelectorAll(".apierror-stop"))) {
-      btn.textContent = globalRetryPaused ? "Resume all auto-retries" : "Stop all auto-retries";
-      (btn as HTMLElement).title = globalRetryPaused ? "resume auto-retrying globally" : "stop the auto-retry loop for all errors globally";
-    }
-    for (const cd of Array.from(document.querySelectorAll(".apierror-countdown"))) {
-      cd.textContent = globalRetryPaused ? retryPausedText() : "retrying soon…";
-    }
+    relabelStopAll();
   }
   else if (m.type === "chatTail") chatTail(m);
   else if (m.type === "chatHead") chatHead(m);
+  else if (m.type === "chatWindow") chatWindow(m);   // proto 2: a window around a deep-link anchor (T323 stage 4b)
+  else if (m.type === "chatTurns") chatTurns(m);     // proto 2 (T386 stage 2): a gap's page, asked by turn span
   else if (m.type === "chatEpisode") chatEpisode(m);
   else if (m.type === "subagent") applySubagentFrame(m);
   else if (m.type === "update") update(m);
   else if (m.type === "wsup") { onSocketUp(skeletonTabs); skeletonDiagArmed = true; }   // the shim's socket-flip marker, in FRAME order: the dead socket's frames may still be draining from the FIFO when onopen fires (review find 2026-09-07)
   else if (m.type === "status") statusOnly(m);
+  else if (m.type === "glossary" && typeof m.id === "string") {   // the session's glossary index (T351 stage 2): a new one re-links the view
+    glossaries.set(m.id, m as GlossaryIndex);
+    relinkTerms(m.id);
+  }
+  else if (m.type === "focus" && !focusIsOurs(m.id)) {
+    // another chat column's (split screen): the shell named the column that holds the session. A consumed parked
+    // push-tap reveal rides `own` (the kernel sent it to THIS one client, _consume_pending_reveal): it is handed to
+    // the owner once — the copy carries no `own`, so it cannot hop again; anything else the owner received on its own
+    // socket. A create this focus answers (a running session under the requested name) retires here too, so the
+    // provisional tab goes in the creating column while the owner shows the session.
+    if (m.own) { const copy = { ...m }; delete copy.own; forwardToOwner(copy); }
+    if (focusResolvesProvisional(m.id, tabName(m.id), pendingNewSession, provisionalId)) resolveProvisionalToExisting(m.id);
+  }
   else if (m.type === "focus") {
     revealSelfPane();   // every focus is someone jumping HERE — on mobile, come forward (incl. from a remote kernel)
     closingTabs.delete(m.id);   // an explicit reveal outranks a pending close-suppression: closing a tab and
@@ -17151,7 +20094,7 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     // a create naming a RUNNING session is answered by this focus, never by a new session (see
     // resolveProvisionalToExisting): the pending tab is done — retire it before the switch below, so the
     // real tab is what stays active, and a warn that follows finds no create pending and toasts
-    if (focusResolvesProvisional(m.id, sessions.get(m.id)?.name, pendingNewSession, provisionalId)) resolveProvisionalToExisting(m.id);
+    if (focusResolvesProvisional(m.id, tabName(m.id), pendingNewSession, provisionalId)) resolveProvisionalToExisting(m.id);
     if (revivePending && m.id === revivePending) clearReviveLoader();   // the revive landed — the loader's success event
     assertPeekFor(m.id);   // an out-of-view focus peeks even on the already-active fast path below (setActive is skipped there)
     // `live` (the user 2026-07-08): land on the LIVE TAIL. A blocked card's picker/permission prompt IS the
@@ -17159,6 +20102,11 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     // showActive scrolls there; and cover the ALREADY-ACTIVE case, where setActive early-returns (activeId ===
     // id, no anchor) and would otherwise leave a scrolled-up chat parked in history, not at the prompt.
     if (m.live) { const v = views.get(m.id); if (v) v.stick = true; }
+    // the jump landed on the tab already shown: announce it again, anchored or not (an anchored jump onto the shown tab
+    // takes setActive's path but a column that does not hold the session forwards it and announces nothing here), so a
+    // feed that moved its section on the click gets the kernel's echo and settles its pending record (T416 rounds two
+    // and three)
+    if (activeId === m.id) notifyActive();
     if (m.live && activeId === m.id) {
       // one frame LATER, not now: when this focus is what un-hid the pane (the shell's reveal lands a
       // task after revealSelfPane's postMessage), the pane is still display:none here and scrollHeight
@@ -17169,8 +20117,10 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
         const c = document.getElementById("content"); if (c) writeScroll(c, c.scrollHeight, "focus-live", true);
       });
     } else {
+      pendingAnchorClick = typeof m.anchor === "string";   // a click of the reader's arms this landing (round eleven): the pass after it clears the mark
       pendingAnchorQuote = typeof (m as { anchorQuote?: string }).anchorQuote === "string" ? (m as { anchorQuote?: string }).anchorQuote! : null;   // the supporting span (T218) — consumed by the landing
-      setActive(m.id, m.anchor, typeof m.anchorT === "number" ? m.anchorT : undefined, typeof m.anchorKind === "string" ? m.anchorKind : undefined);
+      setActive(m.id, m.anchor, typeof m.anchorT === "number" ? m.anchorT : undefined, typeof m.anchorKind === "string" ? m.anchorKind : undefined,
+                typeof m.anchorEventT === "number" ? m.anchorEventT : undefined);   // the anchor turn's own moment, when the kernel resolved it (T336)
     }
     // A feed card click that resolved to a live goal → seed the composer citation chip (the user 2026-07-01).
     if (m.cite && typeof m.cite.itemId === "string" && typeof m.cite.title === "string") setCitation(m.id, { itemId: m.cite.itemId, title: m.cite.title });
@@ -17195,6 +20145,7 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     if (m.gesture === "flag" && typeof m.sid === "string" && typeof m.flag === "string" && m.sid && m.flag) {
       // a tab-menu flag: repaint the local copy to the value the kernel still paints (the frame carries it —
       // what the next push shows), not to a value recorded at the click, which a second click made wrong
+      dropPendingFlag(pendingFlags, m.sid, m.flag as SessionFlag);   // the click's expectation ends here, not after three frames
       const s = sessions.get(m.sid);
       if (s && typeof m.value === "boolean") (s as any)[m.flag] = m.value;
     }
@@ -17219,6 +20170,13 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     // stand until an unrelated repaint. Cheap — one tail-window rebuild, at warn (gesture) rate.
     const wv = activeId ? views.get(activeId) : null;
     if (wv) { wv.stale = true; appendActive(); }
+  }
+  else if (m.type === "spendCeiling" && typeof m.text === "string" && m.text) {
+    // the spend guard's word (T350): a session crossed the hourly spend ceiling, or fell back under it. Its OWN type,
+    // never `warn`: a warn arriving while a create is in flight is read above as that create's verdict, and this
+    // sentence is about another session entirely. The durable record is the shell's bell (the row rides the problem
+    // ring); this is the moment's toast.
+    warnToast(m.text);
   }
   // `err` is the LOUD channel, deliberately distinct from `warn` (the user 2026-07-29): a warn toast fades
   // after 12s, which is right for "that name has a bad character" and wrong for "the message you just typed
@@ -17252,7 +20210,7 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
   // session was already asked to raise its question again.
   else if (m.type === "askLost" && typeof m.text === "string") warnToast(m.text);
   else if (m.type === "cancelResult" && typeof m.id === "string") {
-    const key = m.id + " " + (typeof m.md === "string" ? m.md : "");
+    const key = m.id + " " + (typeof m.md === "string" ? m.md : "");   // the same separator the rescind stores under (a NUL byte sat here, unreadable in any text view, so no refusal ever found its stash; the T373 fold lab caught it)
     const stash = pendingCancelRestores.get(key);
     pendingCancelRestores.delete(key);
     if (!m.ok) {
@@ -17267,6 +20225,21 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
         if (ta && ta.value === stash.after) {
           ta.value = stash.before;
           ta.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        // the chips the rescind armed go, typed or not: a goal, quote chips or attachments the user never asked for must not
+        // ride their next message (the T373 fold's medium 2). Only what the PRESS put in, and only if it was not already there
+        // before it: a file or chip the user added since the pencil stays, as their typed words do (round two's low 1); a
+        // chip the press displaced (a goal chip replaces the strip) comes back. Persisted with the draft.
+        if (stash.armedCites.length || stash.armedFiles.length) {
+          const beforeC = new Set(stash.cites.map(citeKey)), armedC = new Set(stash.armedCites);
+          const cites = (composerCitations.get(m.id) || []).filter((c) => !(armedC.has(citeKey(c)) && !beforeC.has(citeKey(c))));
+          for (const c of stash.cites) if (!cites.some((x) => citeKey(x) === citeKey(c))) cites.push(c);
+          if (cites.length) composerCitations.set(m.id, cites); else composerCitations.delete(m.id);
+          const beforeF = new Set(stash.files), armedF = new Set(stash.armedFiles);
+          const files = (composerFiles.get(m.id) || []).filter((f) => !(armedF.has(f) && !beforeF.has(f)));
+          for (const f of stash.files) if (!files.includes(f)) files.push(f);
+          if (files.length) composerFiles.set(m.id, files); else composerFiles.delete(m.id);
+          persistDrafts(); renderComposerChips(m.id); renderComposerFiles(m.id);
         }
       }
       // …and put the BUBBLE back (the user 2026-07-24). The ✕ deletes it optimistically, but a miss means the
@@ -17313,9 +20286,6 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
       kernelNativeDialogs = m.nativeDialogs;
       applyBrowseState(pickerHost());
     }
-    // the tmux backend's offer (T288): the LOCAL kernel's setting; the Backend row follows it while the picker
-    // is on screen (the reply lands after the open), and an older kernel that sends none leaves the row as it was
-    if (typeof m.tmuxBackend === "boolean" && !from) { kernelTmuxBackend = m.tmuxBackend; syncPickerBackends(); }
     // the selected host's billing choices ride its own list reply — this is what arms (or hides) the
     // picker's Billing row (the user 2026-08-08); an older kernel sends none and the row stays away
     pickerAuthAvail = (m.authAvail && typeof m.authAvail === "object") ? m.authAvail : null;
@@ -17364,8 +20334,14 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
         closeTabLocally(m.id);   // same optimistic drop as the in-page ✕ — this path used to sit and wait
       });
   }
+  else if (m.type === "confirmRevive" && m.id && !focusIsOurs(m.id)) {
+    // another chat column's prompt (split screen): one dialog, in the column that holds the session; a consumed
+    // reveal's prompt (`own`, sent to this one client) is handed there once, the copy without `own`
+    if (m.own) { const copy = { ...m }; delete copy.own; forwardToOwner(copy); }
+  }
   else if (m.type === "confirmRevive" && m.id) {
     revealSelfPane();   // the dead-session prompt is drawn in THIS pane — useless if the pane isn't showing
+    notifyActive();   // the jump reached a closed session and no tab changed: the tab standing is re-announced, so a pane that moved on the jump (the feed's section, T416) comes back
     const nm = String(m.name || "");
     showConfirm(`“${nm}” is closed — revive it?`,
       "Revive restarts the session and resumes its conversation. Read-only just shows the transcript.",
@@ -17403,7 +20379,7 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
   else if (m.type === "renamed" && m.id && typeof m.name === "string") {
     notePendingMeta(pendingTabMeta, m.id, { name: m.name });   // kernel truth — hold it against a push built pre-rename
     const s = sessions.get(m.id);
-    if (s && s.name !== m.name) { s.name = m.name; renderTabs(); }
+    if (s && s.name !== m.name) { s.name = m.name; renderTabs(); syncTabKeysWithStrip(); if (m.id === activeId) { syncComposerPh(); updateStatusline(); } }   // the box, the badge and a hot key's title name the session as it is now called
   }
   else if (m.type === "emojiSet" && m.id && typeof m.emoji === "string") {
     // the kernel's confirm for setSessionEmoji (the renamed shape): "" = cleared. Held against a push
@@ -17562,19 +20538,6 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
       }
     }
   }
-  // The ✕ End's kill didn't take (or couldn't be confirmed) — the kernel's typed reply. The warn said
-  // "Try again", but closingTabs was hiding the very tab to retry on for up to CLOSE_ACK_MS, and then
-  // the backstop fired a SECOND toast for the same failure. This frame is the failure EVENT: toast
-  // once, release the suppression NOW (the tab returns as a placeholder — the id still rides tabMeta
-  // since the kernel kept listing it), and re-ask so it fills back in alive. The deleted entry keeps
-  // ackClosingTabs silent for this failure; the backstop stays for closes whose failure has no event
-  // (a socket lost mid-close). Delete BEFORE the re-ask — requestFullSession suppresses closing ids.
-  else if (m.type === "endFailed" && typeof m.id === "string") {
-    if (typeof m.text === "string" && m.text) warnToast(m.text);
-    closingTabs.delete(m.id);
-    requestFullSession(m.id, "nobase");   // the End dropped our copy, so the tab is a placeholder with no base (the why is #1017's vocabulary)
-    renderTabs();
-  }
   else if (m.type === "closed") {
     // A session died on its own (or the kernel confirms our close) — or its HOST dropped: federation's
     // closeRemote synthesizes one `closed` per sid, STAMPED `hostDrop` because it is not the session's
@@ -17589,7 +20552,7 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     dismissSession(m.id, m.hostDrop === true ? "hostDrop" : "end");
   }
   // any payload that rebuilt transcript DOM must get its highlights re-applied (marks live IN that DOM)
-  if (m && m.id && (m.type === "session" || m.type === "chatTail" || m.type === "chatHead" || m.type === "chatEpisode"))
+  if (m && m.id && (m.type === "session" || m.type === "chatTail" || m.type === "chatHead" || m.type === "chatWindow" || m.type === "chatTurns" || m.type === "chatEpisode"))
     applyCommentMarks(String(m.id));
   // a refused create (warn) must hand the popover back — the draft is intact, the button un-sticks.
   // FULL rebuild: the in-place refresh path deliberately never touches the composer, so it would
@@ -17649,6 +20612,7 @@ function growComposer(ta: HTMLTextAreaElement) {
   ta.style.height = "auto";
   const cap = composerManualH ?? 120;                      // dragged cap, else the default ~6-line cap
   ta.style.height = Math.min(ta.scrollHeight, cap) + "px";
+  syncComposerPh();   // every programmatic write of the box's value comes through here: the overlay follows the box
 }
 
 // One slash command from the kernel's /commands (the Agent SDK's get_server_info): the name (no leading "/"),
@@ -17659,26 +20623,29 @@ interface SlashCmd { name: string; description?: string; argumentHint?: string; 
 // composer is wired, and a no-op while no card is up. mentionRosterChanged calls it on every roster change.
 let refreshMentionCard: (() => void) | null = null;
 // Empty the message box (set by setupComposer): the ONE path every clear takes, so the @-mention card and
-// the slash menu see the box go empty. A bare `ta.value = ""` fires no input event, and with the card up a
-// Send click or Cmd/Ctrl+Enter left it open over the empty box, where the next Enter inserted a stale
-// "@name " (review find, 2026-09-07). cancelComposerEdit clears from outside the composer's closure by it.
+// the slash menu see it go empty. A bare `ta.value = ""` fires no input event, so with the card up a Send
+// click or Cmd/Ctrl+Enter would leave it open over the emptied composer, where the next Enter inserts a stale
+// "@name ". cancelComposerEdit clears from outside the composer's closure through it.
 let clearComposerBox: (() => void) | null = null;
 
 // The roster as the @-mention surfaces see it: every session the webview holds, hidden ones included, by
-// id, name, color, emoji and state. renderTabs compares it on every kernel push; a change re-ranks the open
-// card and re-dresses the transcript's chips, and a NAME the roster did not hold before re-marks the
-// bubbles, so a peer whose frame lands after the active transcript rendered gets its chip (the connect push
-// sends the active tab first). The strip's own signature covers the visible tabs only, so a session in
-// another view renamed, recolored or changing state never reached these surfaces through it (review find,
-// 2026-09-07).
+// id, name, color, emoji and state. renderTabs compares it on every kernel push; a change re-ranks the open card
+// and re-dresses the transcript's chips, and a NAME the roster did not hold before re-marks the bubbles, so
+// a peer whose frame lands after the active transcript rendered gets its chip (the connect push sends the
+// active tab first). The strip's own signature covers the visible tabs only, so a session in another view
+// renamed, recolored or changing state would never reach these surfaces through it. The cost is one JSON
+// row per session per push, nothing at dozens of sessions, and on a change one query per view for the chips
+// once any chip exists (mentionChipsMade: a transcript with no chip is never walked). A subagent viewer is a
+// tab, not a session (s.sub): nothing behind it takes mail, so its row names nothing here or on the card.
 let mentionRosterSig = "";
 let mentionNames = new Set<string>();
+let mentionChipsMade = 0;   // chips markMentions has made, ever; zero means no view holds one to re-dress
 function mentionRosterChanged(): void {
   const rows: unknown[] = [];
   const names = new Set<string>();
   for (const [id, s] of sessions) {
     rows.push([id, s.name, s.color?.bg, s.color?.fg, s.emoji ?? tabMeta.get(id)?.emoji, s.status.state]);
-    if (s.status.state !== "closed" && s.name) names.add(s.name);
+    if (s.status.state !== "closed" && !s.sub && s.name) names.add(s.name);
   }
   const sig = JSON.stringify(rows);
   if (sig === mentionRosterSig) return;
@@ -17691,28 +20658,30 @@ function mentionRosterChanged(): void {
   if (fresh) remarkMentions();
 }
 
-// A chip's dress from the session it names: the identity color and, as its title, the name and the state.
-// The chip is keyed by the session's id (data-sid) and re-dressed on every roster change, so a rename or a
-// state change reaches a chip rendered long before (the sent text itself stays as typed). A session gone
-// reads Closed and keeps its last color, so the reader still sees who was meant.
+// A chip's dress from the session it names: the identity colour as the NAME's own colour (--chip-bg, the
+// tab label's foreground idiom; the sheet paints it on the awaiting chip's dark backing, .chip-peer-name's
+// declarations) and, as its title, the name and the state. The chip is keyed by the session's id (data-sid)
+// and re-dressed on every roster change, so a rename or a state change reaches a chip rendered long before
+// (the chip's text stays the name as typed). A session gone reads Closed and keeps its last colour, so the
+// reader still sees who was meant.
 function dressMentionChip(chip: HTMLElement, s: Session | null): void {
-  if (!s) { chip.title = (chip.textContent || "").replace(/^@/, "") + " · " + CHIP_LABEL.closed; return; }
-  if (s.color) { chip.style.setProperty("--chip-bg", s.color.bg); chip.style.setProperty("--chip-fg", s.color.fg); }
+  if (!s) { chip.title = (chip.textContent || "") + " · " + CHIP_LABEL.closed; return; }
+  if (s.color) chip.style.setProperty("--chip-bg", s.color.bg);
   chip.title = s.name + " · " + (CHIP_LABEL[s.status.state] || s.status.state);
 }
 function refreshMentionChips(): void {
+  if (!mentionChipsMade) return;
   const byName = new Map<string, Session>();
-  for (const s of sessions.values()) if (s.status.state !== "closed" && s.name) byName.set(s.name, s);
+  for (const s of sessions.values()) if (s.status.state !== "closed" && !s.sub && s.name) byName.set(s.name, s);
   for (const v of views.values()) {
     for (const chip of Array.from(v.el.querySelectorAll<HTMLElement>(".mention-chip[data-sid]"))) {
       let s = sessions.get(chip.dataset.sid || "") || null;
       // The keyed session gone, or closed, while a live one carries the name: the text names THAT one now (the
       // name is what postal resolves), so the chip re-keys as soon as the namesake is live. Membership in the map
-      // is not the test: a closed session stays in it until its tab is dismissed, and a chip keyed on that read
-      // "Closed" beside a live namesake, then flipped when the tab went, with nothing new about the mention
-      // (review find, 2026-09-07).
+      // is not the test: a closed session stays in it until its tab is dismissed, and a chip keyed on that would
+      // read "Closed" beside a live namesake, then flip when the tab went, with nothing new about the mention.
       if (!s || s.status.state === "closed") {
-        const again = byName.get((chip.textContent || "").replace(/^@/, ""));
+        const again = byName.get(chip.textContent || "");   // the chip's text is the bare name (the token as typed rides data-token)
         if (again) { chip.dataset.sid = again.id; s = again; }
       }
       dressMentionChip(chip, s);
@@ -17726,13 +20695,17 @@ function remarkMentions(): void {
   for (const v of views.values()) for (const b of Array.from(v.el.querySelectorAll<HTMLElement>("[data-mentions]"))) markMentions(b);
 }
 
-// A typed "@name" that names a live session wears that session's identity color (the user 2026-09-07):
-// the reader sees who was meant, and a hover says how that session is doing. A quiet chip, the tab's
-// own dress, with no link behavior; a word that names nothing stays plain text. Text nodes only, never
+// A typed "@name" that names a live session becomes a chip reading the bare NAME in that session's
+// identity colour (the user 2026-09-07; the @ dropped and the awaiting chip's dress adopted 2026-09-10,
+// the user, who wanted the two chips to look the same: the name in its colour on a dark backing, no
+// fill): the reader sees who was meant, and a hover says how that session is doing. The token as typed
+// rides data-token, so what was SENT is still on the element; a word that names nothing stays plain
+// text, and the chip carries no link behaviour. Text nodes only, never
 // inside code, a fenced block, a link or a chip already made, so a path or an email address is left
 // alone. The same boundary rule as the composer's trigger (composer-mention.ts mentionSegments). Exact
 // names only: postal's direct match is exact, so a hand-typed "@API" for the session "api" is not a name
-// its mail tools would take, and the chip must not say it is (review find, 2026-09-07).
+// its mail tools would take, and the chip must not say it is. The user's own bubbles: the landed one and
+// the optimistic echo of a send (renderEventInner, the echo's paint), never a harness note.
 function markMentions(root: HTMLElement): void {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const texts: Text[] = [];
@@ -17742,7 +20715,7 @@ function markMentions(root: HTMLElement): void {
   if (!texts.length) return;
   root.dataset.mentions = "1";   // a bubble remarkMentions revisits when a new name joins the roster
   const live = new Map<string, Session>();
-  for (const s of sessions.values()) if (s.status.state !== "closed" && s.name) live.set(s.name, s);
+  for (const s of sessions.values()) if (s.status.state !== "closed" && !s.sub && s.name) live.set(s.name, s);
   if (!live.size) return;
   const lookup = (w: string) => live.get(w) || null;
   for (const t of texts) {
@@ -17752,14 +20725,79 @@ function markMentions(root: HTMLElement): void {
     for (const sg of segs) {
       if (!sg.hit) { frag.appendChild(document.createTextNode(sg.text)); continue; }
       const chip = el("span", "mention-chip");
-      chip.textContent = sg.text;
+      // the name without its "@", through the house session-reference renderer, as the awaiting chip
+      // names its peer: a remote "host:" prefix wears .host-prefix (quiet, italic) and only the NAME
+      // takes the identity colour; textContent still reads the whole "host:name" the roster keys by
+      chip.replaceChildren(...hostNameNodes(sg.text.slice(1), sg.hit.id));
+      chip.dataset.token = sg.text;          // the mention as typed and sent, for anyone reading the element
       chip.dataset.sid = sg.hit.id;
       dressMentionChip(chip, sg.hit);
       frag.appendChild(chip);
+      mentionChipsMade++;
     }
     t.replaceWith(frag);
   }
 }
+
+// A copy over a chip: the chip's text is the bare name, so the browser's own copy (and the selection menu's
+// Copy) would paste "ask api" for a message sent as "ask @api", and the pasted word no longer names the
+// session (the picker put the @ there so that it would). Every chip the selection covers WHOLE gets its "@"
+// back for the moment the clipboard is read, and the DOM is then as it was: insertData and deleteData on the
+// chip's first text node move a live range's offsets and move them back, so the visible selection does not
+// change (the transcript's observers watch child lists, not character data). Whole means the range reaches
+// the chip's first character and its last (Range.comparePoint on the chip's text nodes): a double-clicked
+// chip word counts, a run of letters inside a chip does not and copies as rendered. Every range is read (a
+// multi-select holds several and sel.toString() concatenates them). A selection with no whole chip is left
+// to the browser in both flavours, including a copy inside the composer (the document's selection holds no
+// chip then). The rich flavour is the ranges' own markup with each chip's hover titles (live status text, on the
+// chip and on a down host's prefix) and data attributes dropped, so a paste keeps the chip's class and text and
+// nothing about the session behind it.
+// The Comment/Quote seed (transcriptSelection) keeps reading the rendered text: a thread's quoted passage
+// anchors on what the transcript shows.
+function mentionCopyText(sel: Selection): { text: string; html: string } | null {
+  const firsts = new Set<Text>();
+  for (let i = 0; i < sel.rangeCount; i++) {
+    const r = sel.getRangeAt(i);
+    if (r.collapsed) continue;
+    const c = r.commonAncestorContainer;
+    const scope = c instanceof Element ? c : c.parentElement;
+    if (!scope) continue;
+    const own = scope.closest(".mention-chip");
+    const chips = own ? [own] : Array.from(scope.querySelectorAll(".mention-chip"));
+    for (const chip of chips) {
+      const texts: Text[] = [];
+      const walker = document.createTreeWalker(chip, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) texts.push(n as Text);
+      if (!texts.length) continue;
+      const first = texts[0], last = texts[texts.length - 1];
+      if (r.comparePoint(first, 0) === 0 && r.comparePoint(last, last.length) === 0) firsts.add(first);
+    }
+  }
+  if (!firsts.size) return null;
+  for (const t of firsts) t.insertData(0, "@");
+  try {
+    const scratch = document.createElement("div");
+    for (let i = 0; i < sel.rangeCount; i++) scratch.appendChild(sel.getRangeAt(i).cloneContents());
+    // class and text travel; the hover titles and the ids do not: the chip's own, and the reconnect note a down
+    // host's prefix span wears (hostNameNodes sets it), so the chip's descendants are stripped with it
+    for (const c of Array.from(scratch.querySelectorAll<HTMLElement>(".mention-chip, .mention-chip *"))) {
+      c.removeAttribute("title");
+      for (const k of Object.keys(c.dataset)) delete c.dataset[k];
+    }
+    return { text: sel.toString(), html: scratch.innerHTML };
+  } finally {
+    for (const t of firsts) t.deleteData(0, 1);
+  }
+}
+document.addEventListener("copy", (e) => {
+  const sel = window.getSelection();
+  if (!e.clipboardData || !sel) return;
+  const out = mentionCopyText(sel);
+  if (!out) return;                        // no whole chip in the selection: the browser's own copy
+  e.preventDefault();
+  e.clipboardData.setData("text/plain", out.text);
+  e.clipboardData.setData("text/html", out.html);
+});
 
 // Composer: Enter sends the message to the active session as its next prompt,
 // Shift+Enter inserts a newline; the box auto-grows a few lines.
@@ -17771,22 +20809,24 @@ function setupComposer() {
   // ⌘/Ctrl+⏎ — STAGE the box instead of sending (the user 2026-08-15): the text and its citation
   // chips move to the staged strip, the box clears, focus stays for the next highlight-and-comment.
   // The states that already own the box refuse loudly rather than staging a lie: a picker answer
-  // answers NOW or sends normally; an edit replaces a past message; attachments ride a normal send.
+  // answers NOW or sends normally; an edit replaces a past message, or a queued one; attachments ride a
+  // normal send.
+  // Each refusal reports a state, not an event, so it does not ride a reload (ephemeralWarnToast).
   const stageComposer = () => {
     if (!activeId) return;
     const typed = ta.value.trim();
     // context stages ALONE (the user 2026-08-23): select a passage, ⌘⏎ with an empty box, repeat —
     // then one typed message flushes the whole run. Nothing at all → nothing to stage.
     if (!typed && !(composerCitations.get(activeId) || []).some((c) => c.quote)) return;
-    if (composerAnswersAsk()) { warnToast("A picker is waiting on this box — answer it, or send normally."); return; }
-    if (composerEdits.has(activeId)) { warnToast("An edit replaces a past message — send it normally."); return; }
-    if ((composerFiles.get(activeId) || []).length) { warnToast("Attachments can't be staged — send them with a normal message."); return; }
+    if (composerAnswersAsk()) { ephemeralWarnToast("A picker is waiting on this box — answer it, or send normally."); return; }
+    if (composerEdits.has(activeId)) { ephemeralWarnToast("An edit replaces a past message — send it normally."); return; }
+    if ((composerFiles.get(activeId) || []).length) { ephemeralWarnToast("Attachments can't be staged — send them with a normal message."); return; }
     stagedMsgs.push(activeId, { text: typed, cites: (composerCitations.get(activeId) || []).slice() });
     composerCitations.delete(activeId); renderComposerChips(activeId);   // the chips now live on the staged item
     drafts.delete(activeId); draftStartedAt.delete(activeId);
     clearBox();
     persistDrafts();
-    renderStagedStrip(activeId, { reveal: "last" });   // the new item scrolls into view (review round 1, 2026-09-09)
+    renderStagedStrip(activeId, { reveal: "last" });   // the new item is the one event that moves the list: show it
   };
   const sendComposer = (opts?: { pastShipGate?: boolean }) => {
     const typed = ta.value.trim();
@@ -17874,6 +20914,10 @@ function setupComposer() {
         // the refusal itself is DEMAND: ask the kernel to re-dial that host's tunnel right now,
         // so "romp is re-dialing" below is literally true at the moment it is read (2026-08-16)
         vscodeApi?.postMessage({ type: "redial", host });
+        // The refusal reports a state (the host's reach): the page that follows a reload reads it from the kernel's
+        // tunnel health and shows it as the tab mark and the transcript foot, a replay posts no redial to make
+        // "re-dialing now" true, and the message is in the persisted draft. So it does not ride one
+        // (ephemeralWarnToast).
         ephemeralWarnToast(host + " is disconnected, so this wasn't sent. It's still in the box — romp is "
           + "re-dialing the link now; send again when it's back.");
         return;
@@ -17881,13 +20925,16 @@ function setupComposer() {
       if (isProvisionalId(sid)) {
         // a FAILED create's tab: there is no pending spawn to queue onto, and never a session to send
         // to — refuse loudly and leave the text exactly where it is (the box is the only copy)
+        // The refusal reports a state (a tab with no session behind it) that the page following a
+        // reload does not have, since a provisional tab does not survive one, so it does not ride one
+        // (ephemeralWarnToast).
         if (sid !== provisionalId) {
-          warnToast("“" + (sessions.get(sid)?.name || "this session") + "” never started, so there's "
+          ephemeralWarnToast("“" + (sessions.get(sid)?.name || "this session") + "” never started, so there's "
             + "nowhere to send this. It stays in the box — create the session again to use it.");
           return;
         }
         provisionalQueue.push(text);
-        registerOptimistic(sid, text, attached.filter((p) => previewKind(p) === "img"));
+        registerOptimistic(sid, text, attached.filter((p) => previewKind(p) === "img"), undefined, attached);
         sendOnShip.delete(sid);                       // a send happened — any held one is superseded
         histWalk.delete(sid);                         // …and the history walk starts fresh
         if (attached.length) { composerFiles.delete(sid); if (sid === activeId) renderComposerFiles(sid); }
@@ -17896,18 +20943,18 @@ function setupComposer() {
         return;
       }
       lastSent.set(activeId, text);   // remembered for a possible Ctrl+C restore
-      // STAGED first (the user 2026-08-15): the held run releases in stage order, each message with the
-      // context it was written against, and the message being typed right now lands LAST — the reading
-      // the user composed: quote → comment, quote → comment, then the wrap-up. Since 2026-09-08 (the
-      // user, who wanted staged comments to land as one message, not a series) the run and the typed
-      // message are ONE body, one post, one bubble: flushStaged folds them and routes the result. The
-      // guards above (host down, provisional) have already passed, so nothing staged can be half-lost here.
+      // The STAGED run and this message go together (the user 2026-08-15): the held items in stage order,
+      // each with the context it was written against, and the message being typed right now last, the
+      // reading the user composed: quote, comment, quote, comment, then the wrap-up. flushStaged composes
+      // them into one message (stagedPosts says which items still go alone) and routes every post through
+      // routeUserMessage; with nothing staged that is this message as itself. The guards above (host down,
+      // provisional) have already passed, so nothing staged can be half-lost here.
       // A pending citation chip → send as a FOLLOW-UP on that goal (the user 2026-07-01): askFollowUp wraps the
       // text with the goal's context + the romp-goal-id marker (kernel side), so the goal reopens (done→working,
       // unless cleared) and the chat renders the ↩ Follow-up header — the same path the Follow-up button uses,
       // just seeded by the click. A QUOTE chip (highlighted transcript text, the user 2026-07-13) has no goal:
       // it wraps client-side (quoteReplyBody) into a plain message. No chip → plain sendMessage. The three
-      // branches live in routeUserMessage — ONE routing owner, shared with the staged flush above.
+      // branches live in routeUserMessage, the ONE routing owner.
       // Inside it, `sid` is what ROUTES this to the owning kernel in a federated dashboard (the user
       // 2026-07-29): federation keys routing off `id`/`sid` only, and an `itemId` ("‹sid›:‹goal›") can't
       // be one — its own colon would read the session uuid as a host. Without the sid a follow-up on a
@@ -17915,7 +20962,7 @@ function setupComposer() {
       // uuid — nothing sent, no error, the card flashing to Working and back. The kernel keeps deriving
       // its sid from itemId, so this is inert locally; every other card op carries the sid the same way.
       const cites = composerCitations.get(activeId);
-      flushStaged(sid, { text, cites, imgPaths: attached.filter((p) => previewKind(p) === "img") });
+      flushStaged(sid, { text, cites, imgPaths: attached.filter((p) => previewKind(p) === "img"), paths: attached });
       // (a citation follow-up/quote has its own kernel-side echo path; the optimistic bubble covers the plain send)
       if (cites) { composerCitations.delete(activeId); renderComposerChips(activeId); }   // consumed on send
       sendOnShip.delete(sid);                       // a send happened — any held one is superseded
@@ -18003,12 +21050,13 @@ function setupComposer() {
   try {
     new ResizeObserver(() => {
       if (ta.placeholder.startsWith("Message this session…")) ta.placeholder = composerRestingPlaceholder();
+      syncComposerPh();
     }).observe(ta);
   } catch (e) { /* tests: no ResizeObserver in the DOM shim */ }
 
   // ── slash-command autocomplete (the user 2026-06-29) ── a "/" at the START of the box opens a filterable,
   // arrow-navigable menu of THIS session's slash commands (name + description + arg hint), sourced from the
-  // kernel's /commands (the Agent SDK's get_server_info, per-cwd — works for tmux + SDK alike). Enter/Tab/click
+  // kernel's /commands (the Agent SDK's get_server_info, per-cwd, for every backend). Enter/Tab/click
   // FILLS "/name " so you add arguments then send yourself; Esc closes. The list is fetched per active session
   // and cached; while the kernel warms its (slow) probe the menu shows the romp loader. Modeled on the VS Code
   // client's command palette + the terminal UI.
@@ -18173,12 +21221,12 @@ function setupComposer() {
   ta.addEventListener("blur", () => window.setTimeout(closeSlash, 120));   // close when leaving (a row's mousedown keeps focus, so it fires only on a real leave)
   window.addEventListener("resize", positionSlash);
 
-  // ── @-mention autocomplete (the user 2026-09-07) ── an "@" opening a word, plus one or more characters,
-  // offers the live sessions whose names match (composer-mention.ts holds the rules and runs under test;
-  // this is the DOM). A pick fills "@name " in place of the typed query, plain text, the name an agent's
+  // ── @-MENTION autocomplete (the user 2026-09-07): an "@" opening a word, plus one or more characters,
+  // lists the live sessions whose names match (composer-mention.ts holds the rules and runs under test;
+  // this is the DOM). A pick puts "@name " in place of the typed query, plain text, the name an agent's
   // mail tools take, so the receiving agent reads it literally. The card sits just ABOVE the composer,
-  // left-aligned with the box, like the slash menu: a textarea exposes no caret geometry short of a
-  // mirror element, and the box is one to four lines tall, so the top edge is never far from the caret.
+  // left-aligned with it, like the slash menu: a textarea exposes no caret geometry short of a mirror
+  // element, and the composer is one to a few lines tall, so its top edge is never far from the caret.
   // It never takes focus: rows pick on mousedown, through ONE listener on the card itself, so a repaint
   // between mousedown and mouseup (a kernel push renaming a session) cannot lose the pick (the click-safe
   // rule); the row's index resolves against the list painted at that moment.
@@ -18189,21 +21237,22 @@ function setupComposer() {
   let mAt: MentionQuery | null = null;   // the token the open card is about
   // Escape latches the card closed for THIS "@" (its index in the text) until that "@" is gone, the slash
   // menu's rule: typing more of the same query after an Esc must not re-pop it, and neither may a caret
-  // that leaves the token and comes back (review find, 2026-09-07: the latch cleared on any caret move off
-  // the token). The latch holds on the bare "@" too (the query backspaced away and retyped is the same "@";
-  // the slash latch holds on a bare "/"), and it follows the "@" through edits before it (Home, a word,
-  // End: the same token, still dismissed), so only deleting the "@", or the whitespace that opens its
-  // word, re-arms (review find, 2026-09-07: both re-popped the card).
+  // that leaves the token and comes back. The latch holds on the bare "@" too (the query backspaced away
+  // and retyped is the same "@"; the slash latch holds on a bare "/"), and it follows the "@" through
+  // edits before it (Home, a word, End: the same token, still dismissed), so only deleting the "@", or
+  // the whitespace that opens its word, re-arms.
   let mDismissedAt = -1;
-  let mLatchText = "";     // the box as the latch last saw it; the diff against it is how the latch follows its "@"
+  let mLatchText = "";     // the text as the latch last saw it; the diff against it is how the latch follows its "@"
   // an IME composition in progress: its keystrokes and its interim text are the IME's, not the card's
   let mComposing = false;
   // the sessions a mention can name: every live session the webview knows, the one being written to
-  // excluded by rankMentions; hidden (background) sessions included, since mail reaches them like any other
+  // excluded by rankMentions; hidden (background) sessions included, since mail reaches them like any other;
+  // a closed session, a tab still being created and a subagent viewer (a read-only tab, s.sub, with no
+  // session behind it) cannot take mail, so none of them is listed
   const mentionRoster = (): MentionCandidate[] => {
     const out: MentionCandidate[] = [];
     for (const [id, s] of sessions) {
-      if (s.status.state === "closed" || isProvisionalId(id)) continue;
+      if (s.status.state === "closed" || s.sub || isProvisionalId(id)) continue;
       out.push({ id, name: s.name, emoji: s.emoji ?? tabMeta.get(id)?.emoji, color: s.color });
     }
     return out;
@@ -18223,17 +21272,18 @@ function setupComposer() {
   // list stays closed for that "@" until it is deleted, not until its query is.
   const mentionAtOpens = (text: string, start: number): boolean =>
     start >= 0 && start < text.length && text[start] === "@" && (start === 0 || /\s/.test(text[start - 1]));
-  // Keep the latch on its "@" as the text changes. The box hands over no edit deltas, so each read diffs the text
-  // against the last one seen: the edit replaced prev[start, oldEnd) with the text between the same start and its
-  // new end. Wholly before the "@", it moved the "@" by what the edit added or removed; covering the "@", it
-  // deleted it; wholly after, the "@" stands. Then the "@" must still open a word where it sits, or the latch is
-  // off. The region comes from the caret when it can: after an edit the caret sits at the edit's end, and the text
-  // after the caret is then what followed the region, so the edit ends at the caret and starts at the smallest
-  // edit consistent with that (a longer one retyped identical text, which reads as unchanged). A caret elsewhere
-  // (an undo restores a selection) falls back to the longest common prefix and suffix, which alone reads a
-  // deletion beside repeated text as the later of the two ("@b @bb" less "@b " or less " @b" is "@bb" either
-  // way, and the later region is the "@" itself). The diff reads the text, not the keystrokes: a selection
-  // replaced by text that puts an "@" back where the old one stood reads as that "@", unchanged, as the reader sees it.
+  // Keep the latch on its "@" as the text changes. The textarea hands over no edit deltas, so each read diffs
+  // the text against the last one seen: the edit replaced prev[start, oldEnd) with the text between the same
+  // start and its new end. Wholly before the "@", it moved the "@" by what it added or removed; covering the
+  // "@", it deleted it; wholly after, the "@" stands. Then the "@" must still open a word where it sits, or the
+  // latch is off. The region comes from the caret when it can: after an edit the caret sits at the edit's end,
+  // and the text after the caret is then what followed the region, so the edit ends at the caret and starts at
+  // the smallest edit consistent with that (a longer one retyped identical text, which reads as unchanged). A
+  // caret elsewhere (an undo restores a selection) falls back to the longest common prefix and suffix, which
+  // alone reads a deletion beside repeated text as the later of the two ("@b @bb" less "@b " or less " @b" is
+  // "@bb" either way, and the later region is the "@" itself). The diff reads the text, not the keystrokes: a
+  // selection replaced by text that puts an "@" back where the old one stood reads as that "@", unchanged,
+  // as the reader sees it.
   const followLatch = (text: string, caret: number): void => {
     const prev = mLatchText;
     mLatchText = text;
@@ -18252,9 +21302,9 @@ function setupComposer() {
   };
   const pickMention = (c: MentionCandidate) => {
     // The card is about mAt; the pick replaces the token the caret ends NOW, and the two must agree. Splicing
-    // the cached token against a caret the card had not followed repeated the draft between them ("ask @ro",
-    // Ctrl+A, Enter gave "ask @romp ask @ro"; review find, 2026-09-07). The selectionchange listener below
-    // closes the card on such a move, but it is asynchronous, so a pick can land first: nothing to replace.
+    // the cached token against a caret the card had not followed would repeat the draft between them ("ask
+    // @ro", Ctrl+A, Enter would give "ask @romp ask @ro"). The selectionchange listener below closes the card
+    // on such a move, but it is asynchronous, so a pick can land first: then there is nothing to replace.
     const at = caretMention();
     if (!at || !mAt || at.start !== mAt.start || at.query !== mAt.query) { closeMention(); return; }
     const token = mentionToken(c, activeId);
@@ -18263,9 +21313,9 @@ function setupComposer() {
     ta.focus();
     // Through the browser's own editing command where it works, so the pick sits on the textarea's undo
     // stack (Ctrl+Z puts the typed "@ro" back) and fires the input event the draft bookkeeping listens to;
-    // assigning ta.value drops the undo history (review find, 2026-09-07), so that is the fallback, with
-    // the same input event dispatched by hand. execCommand is deprecated, but every engine keeps it for
-    // exactly this and reports false where it does not apply.
+    // assigning ta.value drops the undo history, so that is the fallback, with the same input event
+    // dispatched by hand. execCommand is deprecated, but every engine keeps it for exactly this and reports
+    // false where it does not apply.
     ta.setSelectionRange(at.start, caret);
     let done = false;
     try { done = typeof document.execCommand === "function" && document.execCommand("insertText", false, token); } catch { done = false; }
@@ -18287,7 +21337,7 @@ function setupComposer() {
       row.setAttribute("aria-selected", i === mSel ? "true" : "false");
       if (c.emoji) { const em = el("span", "mention-emoji"); em.textContent = c.emoji; row.appendChild(em); }
       const nm = el("span", "mention-name");
-      nm.replaceChildren(...hostNameNodes(c.name, c.id));   // remote "host:" prefix = quiet metadata
+      nm.replaceChildren(...hostNameNodes(c.name, c.id));   // a remote "host:" prefix renders as quiet metadata
       if (c.color?.bg) nm.style.color = c.color.bg;   // the name in the session's identity color, the tab's own dress
       row.appendChild(nm);
       row.addEventListener("mousemove", () => { if (mSel !== i) { mSel = i; paintMention(); } });   // hover highlights; the pick is the card's listener
@@ -18312,18 +21362,18 @@ function setupComposer() {
     document.body.appendChild(mPop);
   };
   const updateMention = () => {
-    if (mComposing) return;                                    // the IME owns the box until compositionend, which runs this again
+    if (mComposing) return;                                    // the IME owns the text until compositionend, which runs this again
     followLatch(ta.value, ta.selectionStart);                  // the Esc latch stands while its "@" does, wherever an edit moved it
     const at = caretMention();
     if (!at) { closeMention(); return; }                       // no "@query" at the caret (a space typed, the caret moved, a selection): closed
-    if (mDismissedAt === at.start) return;                     // Esc'd this "@": stays closed until it is gone
+    if (mDismissedAt === at.start) { closeMention(); return; }   // Esc'd this "@": no card for it until it is gone
     const all = rankMentions(at.query, mentionRoster(), activeId);
     const items = all.slice(0, MENTION_MAX_ROWS);
     if (!items.length) { closeMention(); return; }             // nothing matches: no card, the "@word" is ordinary text
     // The highlight follows the SESSION, not the row number: a roster re-rank under an open card (a rename, a
-    // session gone or arrived; pushes land every few seconds) moved a different name under the kept index, and
-    // an Enter within reaction time picked it (review find, 2026-09-07). A new query starts at the best match;
-    // a highlighted session that left the list falls back to the first row.
+    // session gone or arrived; pushes land every few seconds) would move a different name under the kept index,
+    // and an Enter within reaction time would pick it. A new query starts at the best match; a highlighted
+    // session that left the list falls back to the first row.
     const same = !!mAt && mAt.start === at.start && mAt.query === at.query;
     const keep = same ? mItems[mSel]?.id : undefined;
     const idx = keep ? items.findIndex((c) => c.id === keep) : -1;
@@ -18333,8 +21383,8 @@ function setupComposer() {
     paintMention();
   };
   refreshMentionCard = () => { if (mPop) updateMention(); };
-  // Empty the box: the one path for every clear (a send, a stage, a picker answer, an edit, /mcp, a cancelled
-  // edit), so the menus see it go empty; see clearComposerBox. The drag height snaps back with it.
+  // Empty the message box: the one path for every clear (a send, a stage, a picker answer, an edit, /mcp, a
+  // cancelled edit), so the menus see it go empty; see clearComposerBox. The drag height snaps back with it.
   const clearBox = () => {
     ta.value = ""; composerManualH = null; ta.style.height = "";
     updateSlash(); updateMention();
@@ -18355,9 +21405,9 @@ function setupComposer() {
     return true;
   };
   // A caret move without an edit changes which token the caret ends. selectionchange fires on the text
-  // control itself for every one (a click, Home/End, PageUp, Ctrl+A, a drag; Chromium, Firefox, Safari 17),
+  // control itself for every one (a click, Home/End, PageUp, Ctrl+A, a drag) in every current engine,
   // asynchronously, so the card follows the caret wherever it goes; an allowlist of arrow, Home and End
-  // keyups used to stand here and missed Ctrl+A and PageUp (review find, 2026-09-07).
+  // keyups would miss Ctrl+A and PageUp.
   ta.addEventListener("selectionchange", updateMention);
   ta.addEventListener("compositionstart", () => { mComposing = true; });
   ta.addEventListener("compositionend", () => { mComposing = false; updateMention(); });
@@ -18459,8 +21509,8 @@ function setupComposer() {
     // lets Enter fall through to the textarea's native newline on touch.
     // An IME's commit Enter (isComposing; keyCode 229 on engines that report the composition that way) is the
     // composition's, not a send or a stage. The mention card declines it above so the IME can take it, and so
-    // must the two Enter branches here, or the commit sends the box with the half-composed text (review find,
-    // 2026-09-07; the type-from-anywhere handler's guard). Left to the browser, the keystroke commits the text.
+    // must the two Enter branches here, or the commit sends the half-composed text (the type-from-anywhere
+    // handler's guard). Left to the browser, the keystroke commits the text.
     if (e.key === "Enter" && (e.isComposing || e.keyCode === 229)) return;
     // ⌘⏎ / Ctrl+⏎ stages (the user 2026-08-15) — and focus STAYS in the box, because the whole point
     // is highlighting the next spot and typing again. Checked before the plain-Enter send below.
@@ -18478,6 +21528,7 @@ function setupComposer() {
     }
   });
   ta.addEventListener("input", () => {
+    syncComposerPh();   // typed text hides the overlay; an emptied box shows it again
     // a MANUAL edit ends any history walk (the user 2026-08-17): the text becomes an ordinary
     // draft, and recall stays away from drafts. The recall's own synthetic dispatch is fenced.
     if (!recalling && activeId) histWalk.delete(activeId);
@@ -18521,31 +21572,38 @@ function setupComposer() {
   ta.addEventListener("dragleave", () => ta.classList.remove("drop-target"));
   ta.addEventListener("drop", (e) => {
     e.preventDefault(); e.stopPropagation();
-    ta.classList.remove("drop-target");
-    const dt = e.dataTransfer;
-    if (!dt) return;
-    const remote = hostOf(activeId || "");
-    const uris = (dt.getData("text/uri-list") || "").split(/\r?\n/).filter((u) => u && !u.startsWith("#"));
-    const fromUri = (u: string) => addComposerFile(activeId, decodeURIComponent(u.replace(/^file:\/\//, "")));
-    const files = Array.from(dt.files || []);
-    if (!files.length) {
-      // a path-only drag (no File objects) can't be shipped — a browser can't read file:// bytes.
-      // For a remote session that is a dead end, and it must be said, not silently mis-attached.
-      for (const u of uris) if (u.startsWith("file://")) {
-        if (remote) warnToast("That drag carried only this machine's path, which " + remote
-          + " can't read — drop the file itself (or paste it) and the bytes will be shipped over.");
-        else fromUri(u);
-      }
-      return;
-    }
-    files.forEach((f, i) => {
-      if (!remote) {
-        const p = (f as any).path as string | undefined;
-        if (p) { addComposerFile(activeId, p); return; }
-        if (uris[i] && uris[i].startsWith("file://")) { fromUri(uris[i]); return; }
-      }
-      shipFileToHost(f);
-    });
+    ta.classList.remove("drop-target"); paneDropOver(false);
+    if (e.dataTransfer) acceptDroppedTransfer(e.dataTransfer);
+  });
+  // The WHOLE pane takes a file drop (the user 2026-09-12: an image dropped beside the box replaced the page with the
+  // image — the browser's default for an unhandled drop navigates the pane, or the shell, to the file). A drop anywhere
+  // in this document lands the file in the box of the session this column shows; each split column is its own document,
+  // so each column is its own drop area. While an OS file drag is over the pane, the pane wears a dashed ring and the box
+  // its drop-target outline, so the landing spot reads. Only OS FILE drags (`types` holds "Files"): a tab drag, a text
+  // selection and the strip's own drags carry none and keep their handlers. The box's own listeners above stop
+  // propagation, so a drop on it is taken once. Enter/leave are counted rather than trusted one by one: a dragleave fires
+  // at every element edge inside the document (and its relatedTarget is not reliable across browsers), so the ring is
+  // dropped only when the count falls to zero — the pointer has left the pane — or a drop lands. The shell and the other
+  // panes REFUSE a file drag instead (kernel _LANDING_FOCUS_JS, _shim), so a miss never navigates anywhere.
+  let dragDepth = 0;
+  const paneDropOver = (on: boolean): void => {
+    if (!on) dragDepth = 0;
+    document.body.classList.toggle("drop-over", on);
+    ta.classList.toggle("drop-target", on);
+  };
+  document.addEventListener("dragenter", (e) => { if (!fileDrag(e)) return; dragDepth++; paneDropOver(true); });
+  document.addEventListener("dragover", (e) => {
+    if (!fileDrag(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    if (!dragDepth) { dragDepth = 1; paneDropOver(true); }
+  });
+  document.addEventListener("dragleave", (e) => { if (!fileDrag(e)) return; if (--dragDepth <= 0) paneDropOver(false); });
+  document.addEventListener("drop", (e) => {
+    if (!fileDrag(e)) return;
+    e.preventDefault();
+    paneDropOver(false);
+    if (e.dataTransfer) acceptDroppedTransfer(e.dataTransfer);
   });
 
   // Cmd+V a copied file (Finder "Copy") or a clipboard screenshot → insert its
@@ -18660,6 +21718,41 @@ function setupComposer() {
 // agent on THAT machine, so bytes saved on any other kernel would hand the agent
 // a path that does not exist there (the user 2026-08-09).
 const SHIP_MAX_BYTES = 50 * 1024 * 1024;   // payload ceiling for shipped attachment bytes
+// An OS file drag: `types` holds "Files" (a dragged tab, a text selection, the strip's own drags carry none).
+function fileDrag(e: DragEvent): boolean {
+  return !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+}
+
+// What a drop hands the active session's box — from the box itself, or from anywhere in the pane (setupComposer). Best path
+// source first, but ONLY for a session this machine owns: File.path (Electron, when exposed), then text/uri-list file://
+// entries (explorer drags), else the bytes go to the owning kernel, which saves them and posts the saved path back
+// ("droppedPath"). A REMOTE host's session (hostOf) never takes the path branches: a path on this machine means nothing on
+// that kernel's disk (the user 2026-08-11); its drops ship the BYTES, the same dropFile route federation carries.
+function acceptDroppedTransfer(dt: DataTransfer): void {
+  const remote = hostOf(activeId || "");
+  const uris = (dt.getData("text/uri-list") || "").split(/\r?\n/).filter((u) => u && !u.startsWith("#"));
+  const fromUri = (u: string) => addComposerFile(activeId, decodeURIComponent(u.replace(/^file:\/\//, "")));
+  const files = Array.from(dt.files || []);
+  if (!files.length) {
+    // a path-only drag (no File objects) can't be shipped — a browser can't read file:// bytes.
+    // For a remote session that is a dead end, and it must be said, not silently mis-attached.
+    for (const u of uris) if (u.startsWith("file://")) {
+      if (remote) warnToast("That drag carried only this machine's path, which " + remote
+        + " can't read — drop the file itself (or paste it) and the bytes will be shipped over.");
+      else fromUri(u);
+    }
+    return;
+  }
+  files.forEach((f, i) => {
+    if (!remote) {
+      const p = (f as any).path as string | undefined;
+      if (p) { addComposerFile(activeId, p); return; }
+      if (uris[i] && uris[i].startsWith("file://")) { fromUri(uris[i]); return; }
+    }
+    shipFileToHost(f);
+  });
+}
+
 function shipFileToHost(f: File, sidAt: string | null = activeId) {
   if (f.size > SHIP_MAX_BYTES) {
     // an oversize file must be REFUSED VISIBLY, never dropped silently (the user
@@ -18702,19 +21795,19 @@ function applyChatScheme(s: RompSettings): void {
   // the overall theme (T113 promoted 2026-08-28): the shared applier toggles the strip-aesthetic
   // and light-theme classes from s.theme. Applies live — onExternalSettingsChange re-runs this.
   applyTheme(document, s);
-  // compact tabs and agents (the user 2026-09-08): a body class the strip's and the #bg-tasks box's dense
-  // rules key on (styles.css body.dense-chrome). Same two moments as the scheme and the theme, so the gear's
-  // flip re-sizes both surfaces at once through the cascade. The box is not rebuilt; the strip is, by the
-  // renderTabs() that follows this in onExternalSettingsChange (settings.denseChrome is in its signature), so
-  // the rebuild's paint lays the row hairlines and keep breaks under the re-heighted items (review round 2 of
-  // the keep-with-next change: the cascade alone left them at the old row bottoms)
+  installPostalWash(document);   // once: the observers; every later call re-measures the ground (a theme just applied)
+  // compact tabs and agents (the user 2026-09-08): a body class the strip's and the #bg-tasks panel's dense
+  // rules key on (styles.css body.dense-chrome). The same two moments as the scheme and the theme, so the
+  // gear's flip repaints both surfaces at once through the cascade. The panel is not rebuilt; the strip is, by
+  // the renderTabs() that follows this in onExternalSettingsChange (settings.denseChrome is in its signature),
+  // so the rebuild's paint lays the row hairlines and keep breaks under the re-heighted items.
   applyDenseChrome(document, s);
 }
 function setupSettings(): void {
   applyChatScheme(settings);   // the persisted pick applies at startup — it survives reloads
   // renderTabs too: the tab strip reads settings (the context gauge toggle) but rerenderAll only
   // rebuilds the transcript views, so without it a gear change waited for the next kernel push.
-  onExternalSettingsChange((s) => { settings = s; applyChatScheme(s); renderTabs(); rerenderAll(); refillOpenCommentPop(); });
+  onExternalSettingsChange((s) => { settings = s; applyChatScheme(s); renderTabs(); updateStatusline(); rerenderAll(); refillOpenCommentPop(); });   // updateStatusline: the line's widgets follow a gear switch live (T409), as the strip's do
 }
 
 // The feed's click echo (feed.ts focusEcho — the user 2026-08-24, "clicking into a not-shown
@@ -18727,6 +21820,7 @@ window.addEventListener("storage", (e) => {
     const v = JSON.parse(e.newValue);
     const sid = typeof v.sid === "string" ? v.sid : "";
     if (!sid || (!sessions.has(sid) && !tabMeta.has(sid))) return;
+    if (!focusIsOurs(sid)) return;   // another chat column's (split screen): the echo reaches every column's listener
     revealSelfPane();
     closingTabs.delete(sid);
     assertPeekFor(sid);
@@ -18742,7 +21836,15 @@ window.addEventListener("storage", (e) => {
 // changes flySig, so the hook rebuilds the flyout inside the write and the row's own build() after it is a second pass over
 // the same blob (the pin row's comment says why it stays)
 window.addEventListener("storage", (e) => { if (e.key === TABGROUPS_KEY) { renderTabs(); viewsChanged(); } });
+// …and so does the shell's write of which sessions each column holds (the chat split): the tab of a session moved
+// away is simply gone from this strip and a session moved here appears; an equal signature skips the rebuild (the
+// source's own dragend render already read the new sets in the same task)
+window.addEventListener("storage", (e) => { if (e.key === "romp-chat-cols") renderTabs(); });
 window.addEventListener(TABGROUPS_EVENT, () => { renderTabs(); viewsChanged(); });
+// a hot key bound or removed (the shell's dialog writes the bindings store; this document's own Remove does too)
+// repaints the tabs' badges — the store's key doubles as the same-document event name
+window.addEventListener("storage", (e) => { if (e.key === KEYS_EVENT) renderTabs(); });
+window.addEventListener(KEYS_EVENT, () => renderTabs());
 // …and so does crossing the phone/desktop boundary (an iPad rotation): renderTabs samples
 // phoneLayout() per render, and the kernel's CSS swaps the strip for its scraped session list the
 // instant the same media rule flips — so the DOM kept the desktop plan (folded tabs absent from the
@@ -18764,12 +21866,12 @@ setupSettings();
   delegate(host, {
     "bg-fold": (el) => {   // the count header → show/hide the task list
       const id = el.dataset.id; if (!id) return;
-      if (bgFoldOpen.has(id)) bgFoldOpen.delete(id); else bgFoldOpen.add(id);
+      if (openFolds.has("bgfold:" + id)) openFolds.delete("bgfold:" + id); else openFolds.add("bgfold:" + id);
       renderBgTasks();
     },
     "bg-toggle": (el) => {   // a task row → show/hide its command + output
       const id = el.dataset.id; if (!id) return;
-      if (bgExpanded.has(id)) bgExpanded.delete(id); else bgExpanded.add(id);
+      if (openFolds.has("bgrow:" + id)) openFolds.delete("bgrow:" + id); else openFolds.add("bgrow:" + id);
       renderBgTasks();
     },
     "bg-stop": (el) => {   // stop this ONE task; the row disappears on its terminal lifecycle event
@@ -18795,7 +21897,7 @@ setupSettings();
   delegate(sl, {
     "awaitingChip": () => {
       if (!activeId) return;
-      bgFoldOpen.add(activeId);   // the box's own fold state — the chip and the header toggle share it
+      openFolds.add("bgfold:" + activeId);   // the box's own fold state — the chip and the header toggle share it
       renderBgTasks();
       document.getElementById("bg-tasks")?.scrollIntoView({ block: "nearest" });
     },
@@ -18883,69 +21985,21 @@ setupSettings();
     // a rebuilt node eats a mid-press click (the "had to click it several times" class; CLAUDE.md).
     // The md body rides along so the kernel can verify it's still cancelling the RIGHT entry even if
     // the queue shifted between the push and the click.
-    qx: (el) => {
-      if (!activeId || !vscodeApi) return;
-      const qmd = (el as any)._qmd as string | undefined;
-      const sidQ = owningSidOf(el) || activeId;
-      if (qmd) {
-        // EVERY ✕ drops our own optimistic entry for the text first (the user 2026-08-30). At the
-        // optimistic stage (qopt) that is the whole client half — the kernel may not have pushed its
-        // park yet, and the reconcile would otherwise repaint the bubble the user just cut. And on a
-        // PARKED/backend ✕ it is just as load-bearing: the kernel bubble had been SUPPRESSING our
-        // still-live entry (shownProvisional), so cancelling only the kernel op resurrected the
-        // cancelled message as a dashed bubble until the TTL (caught by this fix's served-page probe).
-        // OUR bubble's ✕ names its entry (data-qts, the press time); a kernel bubble's ✕ names none, and
-        // drops the first pending send with the text — the one the kernel's first copy covers.
-        const list = pendingSent.get(sidQ) || [];
-        const qts = el.dataset.qts !== undefined ? Number(el.dataset.qts) : undefined;
-        if (dropPending(list, qmd, qts, el.dataset.qsid)) { if (list.length) pendingSent.set(sidQ, list); else pendingSent.delete(sidQ); }
-        echoShownSig.delete(sidQ);
-      }
-      // a PROVISIONAL tab's send has never left the client (T244): forget it from the queue adoption would
-      // re-send, and post no kernel cancel — the kernel has no such session yet, and a miss there would
-      // toast "too late" for a message that was never late. A breadcrumb says which path this ✕ took.
-      const provisional = isProvisionalId(sidQ);
-      if (provisional && qmd) forgetProvisionalSend(qmd);
-      const msg: Record<string, unknown> = { type: "cancelQueued", id: sidQ, md: qmd };
-      if (el.dataset.qsid) msg.sendId = el.dataset.qsid;   // the kernel removes exactly this send's entry (queued or parked)
-      if (qmd && el.dataset.qopt !== "1") noteCancelledQueued(sidQ, qmd, el.dataset.qsid || undefined);   // a kernel copy: never held once it vanishes (T262i); by the send id the copy carries (qsid), the one identity on this wire
-      if (el.dataset.qidx !== undefined) msg.idx = Number(el.dataset.qidx);
-      if (el.dataset.qpark !== undefined) msg.park = Number(el.dataset.qpark);
-      if (!provisional) vscodeApi.postMessage(msg);
-      else vscodeApi.postMessage({ type: "clientDiag", surface: "chat", what: "cancel-provisional",
-                                  data: { mdLen: qmd ? qmd.length : -1, queuedLeft: provisionalQueue.length } });
-      if (qmd && el.dataset.qcmd !== "1" && el.dataset.qromp !== "1") {
-        // a message returns to the composer; a command just cancels. The restore is optimistic — stash
-        // the composer's before/after so the kernel's cancelResult ok:false can undo it (untouched only).
-        const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
-        const before = ta ? ta.value : "";
-        restoreToComposer(qmd);
-        // a provisional ✕ gets no cancelResult (nothing was posted) — no stash to consume, none kept
-        if (!provisional) pendingCancelRestores.set(activeId + " " + qmd, { before, after: ta ? ta.value : "" });
-      }
-      // Optimistic; the next push rebuilds the queue without it. The GROUP is reflowed in the same breath —
-      // the bubble alone leaves its "1 queued message" header behind, still counting what just went.
-      const bub = el.closest(".queued-bubble") as HTMLElement | null;
-      const grp = bub?.closest(".turn-queued") as HTMLElement | null;
-      // a bubble leaving the tail shrinks it: a bottom reader is written to the new bottom in the same task, so the
-      // move is the pane's own (journaled), never a clamp the follow-mode latch never saw (T262h)
-      const contentX = document.getElementById("content");
-      const wasAtBottom = !!contentX && contentX.scrollHeight > contentX.clientHeight + 2 && atBottom(contentX);
-      bub?.remove();
-      if (grp) reflowQueuedGroup(grp);
-      if (contentX && wasAtBottom) writeScroll(contentX, contentX.scrollHeight, "queued-x", true);
-    },
-    // a comment highlight or its turn badge (the user 2026-08-13): open the thread's popover at the
-    // click. Delegated — marks and badges are re-created on every transcript rebuild — and so is
-    // every popover BUTTON below: the popover's conversation refreshes on comments frames, and a
-    // per-render listener would eat the mid-press click (the click-safety rule).
+    qx: (el) => rescindQueued(el, false),       // ✕: a command's or romp's own queued words leave the queue
+    qedit: (el) => rescindQueued(el, true),     // ✎: a message leaves the queue and comes back into the composer (T373)
     cmtopen: (elx) => {
-      const tid = elx.dataset.tid;
-      if (!tid || !activeId) return;
-      const r = elx.getBoundingClientRect();
+      if (!activeId) return;
+      // the ring you click opens the thread that owns the ring (the user 2026-09-10): two threads on one
+      // passage nest their marks, the delegate lands on the innermost, and the outer thread's unread ring
+      // could never be opened from itself — pick over the chain instead (markChain / pickMarkToOpen)
+      const chain = markChain(elx, activeId);
+      const tid = pickMarkToOpen(chain);
+      if (!tid) return;
+      const r = (chain.find((m) => m.tid === tid)?.el || elx).getBoundingClientRect();
       openCommentPopover(activeId, tid, Math.min(r.left, window.innerWidth - 380), r.bottom + 6);
     },
     cmtclose: () => closeCommentPop(),
+    cmtmax: () => toggleCommentPopMax(),   // maximize ⇄ restore; the head's double-click lands in the same function
     // Interrupt the THREAD's own turn (T138): the sid rides the button (the thread's session),
     // never activeId — the exact owner-scoping class queued-x/Retry were fixed for. The gesture
     // itself ENDS the exchange with no reply record coming, so the T102 send-latch clears on THIS
@@ -19015,11 +22069,12 @@ setupSettings();
       if (tid) setActive(tid);
     },
     // a branch divider (child side) or branch chip (parent side): jump to the other end of the
-    // branch, landing on the branch-point turn via the deep-link anchor machinery
+    // branch, landing on the branch-point turn via the deep-link anchor machinery. The refusal
+    // reports a state (the roster), not an event, so it does not ride a reload (ephemeralWarnToast).
     branchjump: (elx) => {
       const sid = elx.dataset.sid;
       if (!sid) return;
-      if (!sessions.get(sid)) { warnToast("That session isn't on this dashboard right now."); return; }
+      if (!sessions.get(sid)) { ephemeralWarnToast("That session isn't on this dashboard right now."); return; }
       setActive(sid, elx.dataset.cut || undefined);
     },
     // a below-response fork spot: the row carries its own cut ("" = whole conversation)
@@ -19067,7 +22122,7 @@ setupSettings();
     // second time (the 2026-09-07 review, round 2).
     // …and the pinned-notes strip (2026-09-08), whose spans are delegated the same way. This line is lifted
     // verbatim by two tests (its trailing comma stripped), so nothing may follow the handler on it.
-    openpath: (elx, ev) => { if (elx.closest(".todo-card, #ut-reply-prompt, #pinned-notes")) openLinkedPath(elx, ev as MouseEvent); },
+    openpath: (elx, ev) => { if (elx.closest(".turn-todo, #ut-reply-prompt, #pinned-notes")) openLinkedPath(elx, ev as MouseEvent); },
     uttoggle: (elx) => {
       const tid = elx.dataset.tid; if (!tid) return;
       const open = !utDetailOpen.has(tid);
@@ -19121,6 +22176,56 @@ setupSettings();
       vscodeApi?.postMessage({ type: "userTodoDismiss", id: sid, todoId: tid });
       elx.closest(".ut-item")?.remove();
     },
+    // THE notice fold (notice(), 2026-09-08): every notice head — agent report, romp notice, compaction,
+    // clear, postal, teammate, API error, model swap, system context, a compact-mode run — toggles here,
+    // keyed through openFolds (data-nkey) so the state survives the tail rebuild; the eleven per-node
+    // listeners this replaced each died with the node they were hung on (CLAUDE.md click-safety). A
+    // compact-mode RUN (data-gkey: a tool / retry / notice group) rebuilds the view instead — its expansion
+    // changes which units exist, not just a class.
+    // the live API card's actions (renderApiError). Retry now: manual:true → an explicit override that fires
+    // even when auto-retry is paused/suppressed for this thread (the kernel gate is for the auto-loop only);
+    // without it "Retry now" was a dead no-op on a suppressed session (the user 2026-07-06). Acknowledge the
+    // click AT ONCE — disable + "Retrying…" — so it never reads as unresponsive; the next render (a fresh
+    // error card, or the turn resuming) restores it.
+    apiRetryNow: (el) => {
+      const b = el as HTMLButtonElement;
+      const own = owningSidOf(b);
+      if (vscodeApi) vscodeApi.postMessage({ type: "apiRetry", id: own, manual: true });
+      if (own) apiRetryNext.set(own, Date.now() + API_RETRY_MS);   // restart the countdown
+      b.disabled = true;
+      b.textContent = "Retrying…";
+      setTimeout(() => { if (b.isConnected) { b.disabled = false; b.textContent = "Retry now"; } }, 2500);
+    },
+    stopAllRetries: () => {
+      globalRetryPaused = !globalRetryPaused;
+      if (vscodeApi) vscodeApi.postMessage({ type: "setGlobalRetryPaused", value: globalRetryPaused });
+      relabelStopAll();   // update visuals immediately on every error card
+    },
+    // the to-do card's completed-bulk fold (renderTodo): flip the box, keep the state in openFolds, relabel
+    todofold: (el) => {
+      const box = el.parentElement?.querySelector(".todo-done") as HTMLElement | null;
+      if (!box) return;
+      rememberFold(box, "todo-open", el.dataset.nkey || undefined);
+      todoFoldLabel(el, box.classList.contains("todo-open"), Number(el.dataset.n) || 0);
+    },
+    // the follow-up header's goal-context disclosure (followUpHeader): keyed in openFolds like every fold
+    futoggle: (el) => {
+      const wrap = el.closest(".followup-wrap") as HTMLElement | null;
+      if (wrap) rememberFold(wrap, "expanded", el.dataset.nkey || undefined);
+    },
+    // the composer hand-over note's ✕ (renderComposerNote) — delegated, like every ✕ on a rebuilt surface
+    composerNoteX: () => clearComposerNote(),
+    noticetoggle: (el) => {
+      const gkey = el.dataset.gkey;
+      if (gkey) { toggleToolGroup(gkey); return; }
+      const card = el.closest(".notice") as HTMLElement | null;
+      if (!card) return;
+      rememberFold(card, "notice-open", el.dataset.nkey || undefined);
+      const open = card.classList.contains("notice-open");
+      const caret = el.querySelector(".notice-caret");
+      if (caret) caret.textContent = open ? "▾" : "▸";
+      noticeOpened(card, open);
+    },
   });
 })();
 (() => {
@@ -19132,13 +22237,11 @@ setupSettings();
     // is consistent: tab focused → Enter drops into the message box; Escape there returns to the tabs.
     select: (el) => { const id = el.dataset.id; if (id) { setActive(id); focusActiveTab(); } },
     // a section header (tab groups): fold or open that group — the new state is the opposite of the
-    // one the header RENDERED (data-folded), never a toggle of the stored bit: the active tab's
-    // section renders open whatever the store says, so a stored toggle there inverted the click. The
-    // write notifies (TABGROUPS_EVENT) and the listener re-renders — one render path for a local
-    // toggle and a sibling pane's alike.
-    // …and shows the section in the pane (the user 2026-09-06): the snapshot of its sessions, whether
-    // the click folded or opened it — "look at this group", one rule for both states. snapView is set
-    // BEFORE the write so the write's own render paints it; showActive swaps the pane.
+    // one the header RENDERED (data-folded), never a toggle of the stored bit (a header can render a
+    // state the store does not hold). The write notifies (TABGROUPS_EVENT) and the listener re-renders:
+    // one render path for a local toggle and a sibling pane's alike. The same click shows the section at
+    // a glance in the transcript's place (snapView; showActive paints it), open or folded: the user
+    // looks at the group they just folded or opened, and a session pick puts a transcript back.
     "toggle-group": (el) => {
       const name = el.dataset.group;
       if (!name) return;
@@ -19214,7 +22317,14 @@ setupSettings();
   // so the click — dispatched immediately after pointerup, before the timer — fires against the live node first.
   tabs.addEventListener("pointerdown", () => { tabPointerHeld = true; });
   window.addEventListener("pointerup", releaseTabStrip);
-  window.addEventListener("pointercancel", releaseTabStrip);
+  // pointercancel arrives in TWO shapes. A touch that became a scroll: the press is over, release. The start of a
+  // drag: the browser cancels the pointer the moment a drag-and-drop operation begins (dragstart, then pointercancel,
+  // the same tick), and the press is NOT over — the drag is the press, and the hold must outlive it, as the dragend
+  // handlers (wireTabDrag, makeGroupHead) assume when they release it themselves. Releasing here let any kernel push
+  // that landed mid-drag rebuild #tabs under the gesture (the drag had blanked the strip's signature), detaching the
+  // dragged node: the live reorder stopped, and the drop moved nothing (2026-09-11, a rename pushed mid-drag in the
+  // served lab). The drag state the dragstart handlers set is the tell; a drag of ours in flight keeps the hold.
+  window.addEventListener("pointercancel", () => { if (draggedId || draggedGroup) return; releaseTabStrip(); });
   window.addEventListener("blur", releaseTabStrip);
   // Track the pointer over the strip (the timeline's _ptr): after a rebuild, rehoverTabTip hit-tests this
   // position to restore — or close — a tip whose owner the rebuild destroyed. Cleared on leave so a stale
@@ -19247,6 +22357,11 @@ setupSettings();
   // pushed past a row's end wraps to the next row mid-drag; siblings FLIP to their new rects
   // (flipTabs). The no-op guard (already sitting immediately before the reference node) is what
   // keeps a pointer resting inside one slot from churning the DOM on every dragover tick.
+  // The tick on which the element under the pointer CHANGES is a dragenter tick, not a dragover one, and Chromium
+  // takes that tick's drop operation from the dragenter — which the live reorder makes happen under a still pointer,
+  // since its insert slides a new element under the cursor. Accepted here while a drag of ours is in flight, so a
+  // release right after a hop drops instead of cancelling (drag-accept.ts has the account; 2026-09-11).
+  acceptDragEnter(tabs, () => !!(draggedId || draggedGroup));
   tabs.addEventListener("dragover", (e) => {
     if (draggedGroup) {
       // a GROUP drag (tab groups): the target is the section under the pointer — its header, or
@@ -19290,9 +22405,14 @@ setupSettings();
     const others = Array.from(tabs.querySelectorAll<HTMLElement>(".tab[data-id], .tab-group-head, .tab-group-sep")).filter((t) => t !== dragged);
     const isBreak = (n: Element | null) => !!n && n.classList.contains("tab-group-break");
     const before = (t: HTMLElement) => { let p = t.previousElementSibling; while (p && p === dragged) p = p.previousElementSibling; return p; };
-    const boxes = others.map((t) => ({ id: t.dataset.id || " head:" + (t.dataset.group || ""),
+    // the row openers: a break itself, and a HEADER a break precedes (the break before a named group is not in
+    // `others`, so its header carries the opening). The trail's first tab follows its break but is not one: the break
+    // (in `others`, zero width) already opened the trail's row, and marking the tab too put two openers on that row —
+    // which the simulation now tolerates (dragslot.ts: a zero-width box fills nothing), but one opener per row is the
+    // strip's own shape (the user 2026-09-11, whose drops on the untagged row all landed at its head in the themed strip)
+    const boxes = others.map((t) => ({ id: t.dataset.id || "\0head:" + (t.dataset.group || ""),
                                        w: isBreak(t) ? 0 : (t.dataset.id ? dragGeom!.widths.get(t.dataset.id) : undefined) ?? t.getBoundingClientRect().width,
-                                       br: isBreak(t) || isBreak(before(t)) }));
+                                       br: isBreak(t) || (t.classList.contains("tab-group-head") && isBreak(before(t))) }));
     const br = tabs.getBoundingClientRect();
     const idx = dragSlotIndex(boxes, dragGeom.containerW, dragGeom.gapX, dragGeom.rowH,
                               e.clientX - br.left, e.clientY - br.top);
@@ -19355,8 +22475,8 @@ setupSettings();
     const next = nextIn ?? (prevIn ? null : walk(dragged.nextElementSibling, fwd, false));
     // committed only when a reorder actually ran: with no neighbour to name the slot (a group holding
     // only this session's copies) dragend takes the cancel path and FLIPs the copy home
-    if (prev?.dataset?.id) { reorderTo(draggedId, prev.dataset.id, true); tabDragCommitted = true; }
-    else if (next?.dataset?.id) { reorderTo(draggedId, next.dataset.id, false); tabDragCommitted = true; }
+    if (prev?.dataset?.id) tabDragCommitted = reorderTo(draggedId, prev.dataset.id, true);
+    else if (next?.dataset?.id) tabDragCommitted = reorderTo(draggedId, next.dataset.id, false);   // a refused reorder is a cancelled drag: dragend FLIPs the strip home
   });
 })();
 (() => {
@@ -19410,18 +22530,11 @@ setupSettings();
     },
   });
 })();
+// The chat page's hidden word for the kernel's pane shim (chat-visibility.ts): the chat gates no paint, so this
+// is the one place it measures its own visibility. Once, at top level, over the page's body.
+watchChatVisibility(document.body, browserChatVisibilityDeps());
 // right-click a selection in the transcript → Reply (quote it) / Copy
 document.getElementById("content")?.addEventListener("contextmenu", showSelectionMenu);
-// The chat page's word for the kernel's pane shim (chat-visibility.ts): the shim gates its stale banner on
-// its zero-viewport probe OR the word a pane publishes (paint-gate.ts publishPaneHidden), and in Chromium the
-// probe misses a pane the shell hides AFTER the user has looked at it (the iframe keeps its size), the phone
-// shell's every tab switch away from the chat. The chat gates no paint, so it has none of paint-gate.ts's
-// wiring; this is the same two measures (the tab's visibility, an IntersectionObserver over the page's body)
-// published on their own events, never on a timer and never from the shell's panes message (panesOn above is
-// a routing cache; the fork's earlier hold read the shell's word and steer 2 of the 2026-09-08 fold replaced
-// that with each frame's own visibility). Standalone /chat and the VS Code webview publish too; nothing reads
-// it there.
-watchChatVisibility(document.body, browserChatVisibilityDeps());
 // The chat document hosts the viewer itself (openPath), so it boots the viewer's listener with the
 // same WS poster the feed hands it: Edit/Save round-trips and the GitHub-link ask ride post(), and
 // the kernel's replies come back as window MessageEvents via the pane shim — either document, one
@@ -19434,4 +22547,4 @@ setFileViewIdentity((id) => {
   const s = sessions.get(id) ?? tabMeta.get(id);
   return s && s.name ? { name: s.name, color: s.color ?? null } : hostStub(id);
 });
-if (vscodeApi) vscodeApi.postMessage({ type: "ready" });
+if (vscodeApi) vscodeApi.postMessage({ type: "ready", proto: 2 });   // proto 2: the uuid-anchored chat wire (T323 stage 4b); an older kernel ignores the field and sends index frames

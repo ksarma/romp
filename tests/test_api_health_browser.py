@@ -11,7 +11,7 @@ shim installed before load: it never opens on its own, so the first two phases s
 socket a refused connection gives, without the real socket's close-and-redial every two seconds; the third
 phase opens it, feeds it frames, drops it and watches the redial, the way a kernel behind a dropped tunnel
 would. Skips LOUDLY without the extension's node deps or a browser (CI installs none), the way
-tests/test_awaiting_box_sync.py does.
+tests/test_awaiting_box_sync_served.py does.
 
 Synthetic only: an invented sid family, the notes-api demo's session names, no real data."""
 import functools
@@ -68,14 +68,15 @@ const R = await page.evaluate((SID) => {
   const R = { err: {} };
   window.__realShellSend = window.__rompShellSend;             // the page's own binding, before the steps stub it
   const step = (name, fn) => { try { fn(); } catch (e) { R.err[name] = String(e && e.stack || e); } };
-  const el = document.getElementById("rail-api"), txt = el.querySelector(".ah-text");
+  const el = document.getElementById("rail-api");   // T301: a dot alone, its state on data-dot; no text beside it
   const tip = () => document.getElementById("ah-tip");
   const back = document.getElementById("ru-back");
   const disp = (n) => getComputedStyle(n).display;
   const row = (i) => ({ sid: SID + i, name: ["web", "api", "tests", "docs"][i], color: null, kind: "blocked",
                         cls: "529", status: 529, since: 1700000000 + i, suppressed: false });
   const frame = (over) => Object.assign({ type: "apiHealth", state: "degraded", cls: "529", reason: "",
-    text: "overloaded · 1 waiting", waiting: 1, retrying: 0, blocked: 1, since: 1700000000, tmux: 0,
+    text: "overloaded · 1 waiting", waiting: 1, retrying: 0, blocked: 1, since: 1700000000,
+    tmux: 0,     // an older kernel's frame still carries the terminal count; the page draws no line for it (T331)
     sessions: [row(1)], seq: 1 }, over || {});
   window.__frame = frame; window.__row = row;                 // the driver's later phases reuse them
   const bg = (n) => n ? getComputedStyle(n).backgroundColor : "";
@@ -87,7 +88,7 @@ const R = await page.evaluate((SID) => {
   R.role = el.getAttribute("role"); R.tabindex = el.getAttribute("tabindex");
   // 2. the first frame reveals it and names the state for a screen reader
   window.__rompApiHealth(frame());
-  R.firstFrameDisplay = disp(el); R.firstFrameText = txt.textContent; R.ariaLabel = el.getAttribute("aria-label");
+  R.firstFrameDisplay = disp(el); R.firstFrameDot = el.getAttribute("data-dot"); R.firstFrameText = el.textContent.trim(); R.ariaLabel = el.getAttribute("aria-label");
   step('hover', () => {
   // 3. the hover surface is inert: no button, no data-act; a growing frame re-anchors it above the rail
   el.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false, clientX: el.getBoundingClientRect().left + 10 }));
@@ -112,6 +113,35 @@ const R = await page.evaluate((SID) => {
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   R.kbClosed = tip().style.display === "none" && !back.classList.contains("on");
   R.kbFocusBack = document.activeElement === el;
+  });
+  step('inside', () => {
+  // 4b. the cell sits inside the spend readout (T301 review): its click must not reach the readout's own click (the
+  // spend modal), the readout's tip yields while the dot's shows and comes back when the pointer slides onto the
+  // figures, and the readout's repaint (a move of the cell) keeps focus and a focus-shown hover
+  const ru = document.getElementById("rail-usage"); let bubbled = 0; ru.addEventListener("click", () => { bubbled++; });
+  let hid = 0, shown = 0; window.__rompUsageTipHide = () => { hid++; }; window.__rompUsageTipShow = () => { shown++; };
+  ru.appendChild(el);
+  el.click();
+  R.insideOpened = tip().style.display === "block" && tip().classList.contains("ru-modal"); R.insideBubbled = bubbled;
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  el.focus(); el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  R.insideKbOpened = tip().classList.contains("ru-modal"); R.insideKbBubbled = bubbled;
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  el.blur();
+  const hid0 = hid;   // the focus above showed the hover once already (and hid the readout's tip then)
+  el.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false, clientX: el.getBoundingClientRect().left + 10 }));
+  R.usageTipHidOnEnter = hid - hid0;
+  el.dispatchEvent(new MouseEvent("mouseleave", { relatedTarget: ru }));
+  R.usageTipBackOnLeave = shown; R.dotTipHiddenAfterLeave = tip().style.display === "none";
+  el.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false, clientX: el.getBoundingClientRect().left + 10 }));
+  el.dispatchEvent(new MouseEvent("mouseleave", { relatedTarget: document.body }));
+  R.usageTipBackOnLeaveOutside = shown;
+  el.focus();
+  R.focusShown = tip().style.display === "block" && !tip().classList.contains("ru-modal");
+  window.__rompApiCellMoving(true); document.body.appendChild(el); ru.appendChild(el); el.focus({ preventScroll: true }); window.__rompApiCellMoving(false);
+  R.movedKeptFocus = document.activeElement === el; R.movedKeptHover = tip().style.display === "block" && !tip().classList.contains("ru-modal");
+  el.blur();
+  R.blurHidesAfterMove = tip().style.display === "none";
   });
   step('usage', () => {
   // 5. an open usage modal is closed first, explicitly, so the shared backdrop never serves two modals
@@ -207,11 +237,11 @@ const R = await page.evaluate((SID) => {
   R.lightDotOpacity = getComputedStyle(el.querySelector(".ah-dot")).opacity;
   });
   step('lightState', () => {
-  // 11. light theme, degraded and paused: the detail's headline dot wears the rail dot's color (a bare light rule
+  // 11. light theme, degraded and paused: the detail's machine-line dot wears the rail dot's color (a bare light rule
   //     would outrank the state rules and paint it the label gray)
   window.__rompApiHealth(frame({ seq: 8 }));
   el.click();                                              // pin the detail (the row step closed it)
-  const head = () => tip().querySelector(".ah-head .ah-dot");
+  const head = () => tip().querySelector('.ah-mline[data-host=""] .ah-dot');   // this machine's line dot (T316: the head row is gone)
   R.lightDegraded = { rail: bg(el.querySelector(".ah-dot")), head: bg(head()), headOpacity: getComputedStyle(head()).opacity };
   window.__rompApiHealth(frame({ state: "paused", reason: "limit", text: "paused · usage limit · 1 waiting", since: 1700000010, seq: 8 }));
   R.lightPaused = { rail: bg(el.querySelector(".ah-dot")), head: bg(head()) };
@@ -270,7 +300,7 @@ await step2('rightButton', async () => {
   //     mouse event: it goes first, and each press records that it landed on the card.
   await page.evaluate(() => { const b = document.getElementById("romp-boot"); if (b) b.remove();
     window.__rompApiHealth(window.__frame({ seq: 9 })); document.getElementById("rail-api").click(); });
-  const head = () => page.evaluate(() => { const r = document.querySelector("#ah-tip .ah-head").getBoundingClientRect(); return { x: r.left + 8, y: r.top + r.height / 2 }; });
+  const head = () => page.evaluate(() => { const r = document.querySelector("#ah-tip .ah-mline").getBoundingClientRect(); return { x: r.left + 8, y: r.top + r.height / 2 }; });
   const inside = (b) => page.evaluate(([x, y]) => document.getElementById("ah-tip").contains(document.elementFromPoint(x, y)), [b.x, b.y]);
   const box = await head();
   R.rightInside = await inside(box);
@@ -297,14 +327,38 @@ await step2('pressFocus', async () => {
   // 16. a keyboard press on the pause button: the button is disabled at once, and a disabled element cannot hold
   //     focus, so focus would fall to BODY, where the card's Tab trap no longer sees the keys and a Shift+Tab walks
   //     out of the aria-modal dialog. Focus moves to the card before the disable; the trap holds.
+  //     #ah-tip is ONE stable node whose content every render replaces (kernel.py creates it once; hide() and close()
+  //     keep HIST), and the reopen's open() runs render() BEFORE load(false): the open paints the PREVIOUS read's error
+  //     line synchronously (or the pending row, when the previous open's read had not landed yet), and only the read's
+  //     render replaces it. A wait keyed on the error line's presence was met by that stale paint at once, and the read's
+  //     render then landed INSIDE the press: the Space's keydown went to the old pause button, render() replaced the
+  //     card's content and moved focus to the new pause button by its data-act key, and the keyup found a button that
+  //     had taken no keydown, so the button's native click never fired: nothing was sent, the disabled wait ran out
+  //     (CI 2026-09-15, three failures from one cause; reproduced deterministically by releasing the read between the
+  //     keydown and the keyup at the old step). The wait keys on the read's render REPLACING the open's paint: the node
+  //     the open painted is marked right after the Enter, and the wait ends when the query returns a node without the
+  //     mark; the Tab and the Space then land after the read. The read is slowed by 1.5 s on purpose: pressReadBeforeTab
+  //     below can only be true at the Tab because the wait outlasted the delay, so a wait keyed on the stale paint again
+  //     fails this step every time. A lab road that reads a stable node's content right after a trigger is a timing
+  //     claim (the repo rule); this one reads the replacement.
+  const slowReads = new Set();   // every read this step slows, until it has landed
+  await page.route("**/api-health", (route) => { const p = (async () => { await new Promise((r) => setTimeout(r, 1500)); await route.continue(); })(); slowReads.add(p); return p.finally(() => slowReads.delete(p)); });
   await page.evaluate(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     window.__sent3 = []; window.__rompShellSend = (o) => { window.__sent3.push(o); return true; };
     window.__rompApiHealth(window.__frame({ state: "paused", reason: "limit", text: "paused · usage limit · 1 waiting", since: 1700000010, seq: 12 }));
     document.getElementById("rail-api").focus(); });
   await page.keyboard.press("Enter");
+  // the open's synchronous paint: the retained read's error line, or the pending row when the previous open's read had
+  // not landed by this Enter (the reopen then drops it and reads again). Marked, so the wait below cannot be met by it.
+  R.pressOpenPaint = await page.evaluate(() => { const n = document.querySelector("#ah-tip .ah-err, #ah-tip .ah-bars, #ah-tip .ah-wait"); if (n) n.setAttribute("data-lab-open-paint", "1"); return n ? ["ah-err", "ah-bars", "ah-wait"].find((c) => n.classList.contains(c)) : null; });
+  await page.waitForFunction(() => { const n = document.querySelector("#ah-tip .ah-err, #ah-tip .ah-bars, #ah-tip .ah-wait"); return !!n && !n.hasAttribute("data-lab-open-paint"); }, null, { timeout: 8000 });
+  // the marked paint is gone at the Tab only because the wait saw the read's render: with the read 1.5 s slow, no wait
+  // keyed on the open's own content could have let the Tab go this late
+  R.pressReadBeforeTab = await page.evaluate(() => !document.querySelector("#ah-tip [data-lab-open-paint]"));
   await page.keyboard.press("Tab");
   R.pressFocusBefore = await active();
   await page.keyboard.press("Space");
+  await page.waitForFunction(() => { const b = document.querySelector("#ah-tip button[data-act=pause]"); return !!(b && b.disabled); }, null, { timeout: 8000 });
   R.pressSent = await page.evaluate(() => window.__sent3.map((o) => o.type + ":" + String(o.value)));
   R.pressFocusAfter = await active();
   R.pressButton = await page.evaluate(() => { const b = document.querySelector("#ah-tip button[data-act=pause]"); return { disabled: b.disabled, label: b.textContent }; });
@@ -318,6 +372,13 @@ await step2('pressFocus', async () => {
   await page.keyboard.press("Tab");
   R.pressAnswerTab = await active();
   await page.keyboard.press("Escape");
+  // the step ends only once every read it slowed has landed: no delayed render leaks into the next step, and no
+  // handler is pending when the route comes off. Playwright empties the page's route list at the unroute call; a
+  // handler that completes while the list is empty switches interception off, which makes the server continue any
+  // other in-flight route itself, and that route's own continue then throws "Route is already handled" out of the
+  // process (seen on the first launch of this fix, and again as a race between two slowed reads).
+  await Promise.all([...slowReads]);
+  await page.unrouteAll({ behavior: "wait" });
 });
 // phase 3: the shell socket itself. The shim stands in for the kernel's end: the driver opens the socket shellWS
 // dialed at load, feeds it frames, presses through the REAL __rompShellSend, drops the socket and waits for the
@@ -348,7 +409,7 @@ await step2('socket', async () => {
   await open(1);
   R.sock1Ready = (await sock(1)).sent;
   await feed(1, PAUSED);
-  R.sockPainted = await page.evaluate(() => document.getElementById("rail-api").querySelector(".ah-text").textContent);
+  R.sockPainted = await page.evaluate(() => document.getElementById("rail-api").getAttribute("data-dot"));
   await page.evaluate(() => { document.getElementById("rail-api").click(); });
   await press();
   R.sockPressSent = (await sock(1)).sent;
@@ -431,15 +492,17 @@ class ServedCell(unittest.TestCase):
         self.assertTrue(self.R["preFrameHidden"], "the markup ships the attribute")
         self.assertEqual(self.R["preFrameDisplay"], "none", "and the attribute must actually hide it: %r" % self.R)
         self.assertEqual(self.R["firstFrameDisplay"], "flex", "the first frame reveals the cell")
-        self.assertEqual(self.R["firstFrameText"], "overloaded · 1 waiting")
+        self.assertEqual(self.R["firstFrameDot"], "errors", "a degraded frame paints the errors dot (T301)")
+        self.assertEqual(self.R["firstFrameText"], "", "a dot alone: no word beside it")
 
     def test_the_driver_hit_no_script_error(self):
         self.assertEqual(self.R["err"], {})
 
-    def test_the_light_theme_gives_the_ok_dot_the_label_color(self):
-        # .ah-dot's dark label gray at .55 blends into the light rail (about 1.4:1), so the ok glyph would vanish
-        self.assertEqual(self.R["lightDot"], "rgb(93, 87, 78)", "errors: %r" % self.R.get("err"))
-        self.assertEqual(self.R["lightDotOpacity"], "0.55")
+    def test_the_light_theme_gives_the_fine_dot_its_accent(self):
+        # T301: an ok frame with no history read yet is the FINE dot, the theme's accent (the light clay, not the dark
+        # sky blue); the quiet gray (rgb(93, 87, 78), the light label colour) is pinned in tests/test_api_health_hosts.py
+        self.assertEqual(self.R["lightDot"], "rgb(194, 65, 12)", "errors: %r" % self.R.get("err"))
+        self.assertEqual(self.R["lightDotOpacity"], "1")
 
     def test_an_emptied_usage_cell_takes_no_gap(self):
         # renderRows empties #rail-usage on a login-only machine; as a zero-width flex item it would still pay the
@@ -448,7 +511,7 @@ class ServedCell(unittest.TestCase):
 
     def test_the_cell_is_a_keyboard_reachable_button_that_names_its_state(self):
         self.assertEqual((self.R["role"], self.R["tabindex"]), ("button", "0"))
-        self.assertEqual(self.R["ariaLabel"], "API overloaded · 1 waiting")
+        self.assertEqual(self.R["ariaLabel"], "API health: errors")
         self.assertTrue(self.R["kbOpened"], "Enter opens the pinned detail: %r" % self.R.get("err"))
         self.assertTrue(self.R["kbFocusInTip"], "focus moves into the detail")
         self.assertEqual(self.R["tipRole"], "dialog")
@@ -508,13 +571,32 @@ class ServedCell(unittest.TestCase):
         self.assertEqual(self.R["rowDead"], {"hintBefore": "", "open": True, "hint": "Not sent: the dashboard is disconnected. Try again."},
                          "errors: %r" % self.R.get("err"))
 
+    def test_a_click_inside_the_spend_readout_opens_the_detail_and_never_reaches_the_readout_s_own_click(self):
+        self.assertTrue(self.R["insideOpened"])
+        self.assertEqual(self.R["insideBubbled"], 0, "the click did not bubble to #rail-usage (the spend modal)")
+        self.assertTrue(self.R["insideKbOpened"])
+        self.assertEqual(self.R["insideKbBubbled"], 0)
+
+    def test_the_readout_s_tip_yields_to_the_dot_s_and_comes_back_when_the_pointer_slides_onto_the_figures(self):
+        self.assertEqual(self.R["usageTipHidOnEnter"], 1, "the dot's show hides the readout's tip")
+        self.assertEqual(self.R["usageTipBackOnLeave"], 1, "a leave onto the readout asks for its tip back")
+        self.assertTrue(self.R["dotTipHiddenAfterLeave"])
+        self.assertEqual(self.R["usageTipBackOnLeaveOutside"], 1, "a leave out of the readout asks for nothing")
+
+    def test_the_readout_s_repaint_moves_the_cell_without_losing_focus_or_a_focus_shown_hover(self):
+        self.assertTrue(self.R["focusShown"])
+        self.assertTrue(self.R["movedKeptFocus"], "focus is put back after the move")
+        self.assertTrue(self.R["movedKeptHover"], "the blur the move caused was not the user's")
+        self.assertTrue(self.R["blurHidesAfterMove"], "a real blur still hides it")
+
     def test_the_light_theme_keeps_the_head_dot_s_state_colors(self):
         # a bare light rule on the dot would outrank the state rules, so the detail's headline dot would read the
         # label gray while the rail's id-scoped dot kept amber and red
-        amber, red, gray = "rgb(230, 126, 34)", "rgb(229, 72, 77)", "rgb(93, 87, 78)"
-        self.assertEqual(self.R["lightDegraded"], {"rail": amber, "head": amber, "headOpacity": "1"}, "errors: %r" % self.R.get("err"))
+        # T301: degraded and paused are both the ERRORS dot (the blocked red); ok is the fine dot (the accent)
+        red, accent = "rgb(229, 72, 77)", "rgb(194, 65, 12)"
+        self.assertEqual(self.R["lightDegraded"], {"rail": red, "head": red, "headOpacity": "1"}, "errors: %r" % self.R.get("err"))
         self.assertEqual(self.R["lightPaused"], {"rail": red, "head": red})
-        self.assertEqual(self.R["lightOkHead"], {"head": gray, "headOpacity": "0.55"})
+        self.assertEqual(self.R["lightOkHead"], {"head": accent, "headOpacity": "1"})
 
     def test_the_driver_s_second_phase_hit_no_error(self):
         self.assertEqual(self.R["err2"], {})
@@ -522,8 +604,9 @@ class ServedCell(unittest.TestCase):
     def test_tab_cycles_within_the_open_dialog(self):
         self.assertTrue(self.R["tabOpened"], "errors: %r" % self.R.get("err2"))
         self.assertEqual(self.R["tabAria"], "true")
-        self.assertEqual(self.R["tabSeq"], ["BUTTON.pause", "DIV.reveal", "SPAN.usage", "SPAN.log", "BUTTON.pause", "DIV.reveal"])
-        self.assertEqual(self.R["tabBack"], ["BUTTON.pause", "SPAN.log", "SPAN.usage"])
+        # T316: the detail's three range chips sit between the waiting rows and the footer links
+        self.assertEqual(self.R["tabSeq"], ["BUTTON.pause", "DIV.reveal", "BUTTON.range:hour", "BUTTON.range:day", "BUTTON.range:week", "SPAN.usage"])
+        self.assertEqual(self.R["tabBack"], ["BUTTON.range:week", "BUTTON.range:day", "BUTTON.range:hour"])
 
     def test_enter_on_a_row_opens_its_session_and_space_on_a_footer_link_runs_it(self):
         self.assertEqual(self.R["rowFocused"], "DIV.reveal", "errors: %r" % self.R.get("err2"))
@@ -534,8 +617,10 @@ class ServedCell(unittest.TestCase):
         self.assertTrue(self.R["usageClosedTip"])
 
     def test_a_keyboard_press_on_the_pause_button_keeps_focus_inside_the_dialog(self):
+        self.assertIn(self.R["pressOpenPaint"], ("ah-err", "ah-wait"), "the reopen paints synchronously, the retained read's line or the pending row: the wait keys on its replacement")
+        self.assertTrue(self.R["pressReadBeforeTab"], "the read's render replaced the open's paint before the Tab (the read is slowed 1.5 s: only the wait gets the Tab this late)")
         self.assertEqual(self.R["pressFocusBefore"], "BUTTON.pause", "errors: %r" % self.R.get("err2"))
-        self.assertEqual(self.R["pressSent"], ["setGlobalRetryPaused:false"], "Space ran the button once")
+        self.assertEqual(self.R["pressSent"], ["setGlobalRetryPaused:false"], "Space ran the button once, on the read's render, with the read slowed by 1.5 s")
         self.assertEqual(self.R["pressButton"], {"disabled": True, "label": "Stop all auto-retries"}, "acknowledged")
         self.assertEqual(self.R["pressFocusAfter"], "DIV", "focus is on the card, inside the dialog, not on BODY")
         self.assertEqual(self.R["pressShiftTab"], "SPAN.log", "the trap still applies: Shift+Tab wraps to the last control")
@@ -557,7 +642,7 @@ class ServedCell(unittest.TestCase):
         self.assertEqual(R["shellSendRestored"], "function", "the shell's own send survives the driver's stubs")
         self.assertEqual(R["sockRedialed"], 2, "a close redials")
         self.assertEqual(R["sock1Ready"], [ready], "the open sends ready")
-        self.assertEqual(R["sockPainted"], "paused · usage limit · 1 waiting", "a frame on the socket paints the cell")
+        self.assertEqual(R["sockPainted"], "errors", "a frame on the socket paints the cell (T301: a paused frame is the errors dot)")
         self.assertEqual(R["sockPressSent"], [ready, pressed], "the press rode the real socket")
         self.assertEqual(R["sockAcked"], {"disabled": True, "label": "Stop all auto-retries", "acted": True, "hint": ""})
         self.assertEqual(R["sockDropped"], {"disabled": False, "label": "Resume all auto-retries", "acted": False,

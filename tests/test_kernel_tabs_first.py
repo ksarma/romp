@@ -1,12 +1,15 @@
 """TABS-FIRST (the user 2026-06-26): the tabOrder push carries name+color per tab so the client can paint the
-WHOLE strip as placeholders up front (no one-by-one pop-in). The one emit site — the periodic/connect _push,
-through the _tab_list_tmux collapse guard — sends a `tabs` list of {id, name, color} alongside the sid `order`,
-plus the `live` sids the guard's map affirms for the cycle (T258: the pane keeps a live sid the order omits).
-The WS 'ready' handler used to send a second tabOrder from a raw liveness read; it is gone (2026-09-03: the
-shim re-sends `ready` on a reconnect once the bundle has sent its own, and an omitted id is an authoritative
-teardown on the client), so a fresh chat client's strip comes from the connect push's guarded frame.
+WHOLE strip as placeholders up front (no one-by-one pop-in). Every strip sender (_push, on its cycle and as
+the connect push a `ready` triggers; _push_session_now; _confirm_close_now) hands a `tabs` list of {id, name,
+color} alongside the sid `order` to _send_tab_order, the one frame builder's caller. The `ready` handler
+sends no strip of its own, whichever app's renderer posted it.
+Each sender hands the builder the cycle's liveness map (_live_map(); the fork's per-sender collapse guard left
+with the tmux backend 2026-09-11), and the frame carries the `live` sids that map affirms (T258: the
+pane keeps a live sid the order omits).
+
 """
 import inspect
+import json
 import os
 import unittest
 from romp_load import load_source
@@ -32,10 +35,8 @@ class TabsFirst(unittest.TestCase):
                       "the periodic push builds a name+color+emoji list per tab")
         # 2026-09-07: the frame itself moved into _tab_order_frame — the ONE builder (T258: it carries the
         # affirmed-live sids; and a reconnecting client's skeleton list) — so the pusher hands its order + meta
-        # + liveness to _send_tab_order, which builds the frame per client. The liveness it hands over is the
-        # frame's `live` set (T258), fed from the collapse guard's map the whole chat block trusts this cycle
-        # (chat_tmux): on a carried cycle it lists the carried sids as live, consistent with `order`
-        self.assertIn('_send_tab_order(c, tab_order, tab_meta, chat_tmux)', src,
+        # + liveness to _send_tab_order, which builds the frame per client
+        self.assertIn('_send_tab_order(c, tab_order, tab_meta, live_map)', src,
                       "and ships it as the tabs field alongside the sid order, through the one strip builder")
         self.assertIn('fr = {"type": "tabOrder", "order": list(order), "tabs": tabs, "selfHost": _self_host(),\n'
                       '          **_views_payload(), "live": sorted({str(x) for x in live})}',
@@ -54,47 +55,66 @@ class TabsFirst(unittest.TestCase):
         self.assertEqual(frame["selfHost"], km._self_host())
         self.assertEqual(frame["live"], ["11111111-2222-3333-4444-555555555555"], "the live set rides the same frame (T258)")
         self.assertEqual(sorted(frame), ["live", "order", "selfHost", "tabs", "type", "views"])
-        # the three senders share the one spelling: the pusher's tabs-first send, the off-cycle session push
-        # and the close confirmation all hand their order + meta + liveness to _send_tab_order, the builder's
-        # ONE caller (2026-09-07: it builds the frame per client, so a reconnecting client's skeleton list can
-        # ride it); the WS 'ready' handler sends no strip of its own (2026-09-03, kept under #1017 by the
-        # 2026-09-09 ruling), so a fourth inline dict would drop the field again
+        # the three senders share the one spelling: the pusher's tabs-first send (the connect push a `ready`
+        # triggers included), the off-cycle session push and the close confirmation all hand their order + meta +
+        # liveness to _send_tab_order, the builder's ONE caller (2026-09-07: it builds the frame per client,
+        # so a reconnecting client's skeleton list can ride it); a fourth inline dict would drop the field again
         text = open(KPATH).read()
         self.assertEqual(text.count('_send_client(c, ("taborder",), _tab_order_frame(tab_order, tab_meta, live, c))'), 1)
         self.assertEqual(text.count("_tab_order_frame(tab_order, tab_meta, live, c)"), 1, "the builder's one caller: _send_tab_order")
-        # ...the three call sites each naming the liveness map its sender trusted: the pusher's guarded map for
-        # the cycle (chat_tmux), the off-cycle push's guarded read (tmux), the close confirmation's guarded read
-        # (guarded); never a raw _tmux_sessions(). The prefix count includes the def line, hence the 4
-        self.assertEqual(text.count("def _send_tab_order(c, tab_order, tab_meta, live):"), 1)
-        self.assertEqual(text.count("_send_tab_order(c, tab_order, tab_meta, "), 4, "the def line and the three call sites")
-        self.assertEqual(text.count("_send_tab_order(c, tab_order, tab_meta, chat_tmux)"), 1)
-        self.assertEqual(text.count("_send_tab_order(c, tab_order, tab_meta, tmux)"), 1)
-        self.assertEqual(text.count("_send_tab_order(c, tab_order, tab_meta, guarded)"), 1)
+        self.assertEqual(text.count("_send_tab_order(c, tab_order, tab_meta, live_map)"), 3)
         self.assertEqual(text.count("_send_tab_order(client, _o, _tabs, _tm)"), 0,
                          "the WS 'ready' handler sends no strip of its own (2026-09-03; kept under #1017 by the 2026-09-09 "
-                         "ruling): the guarded push is the only tabOrder source, so upstream's connect-time hand-off has no home here")
+                         "ruling): the pusher's push is the only tabOrder source, so upstream's connect-time hand-off has no home here")
         self.assertEqual(text.count('{"type": "tabOrder"'), 1, "the literal lives in _tab_order_frame alone")
-        self.assertIn("_send_tab_order(c, tab_order, tab_meta, ", inspect.getsource(km._push_session_now))
-        self.assertIn("_send_tab_order(c, tab_order, tab_meta, tmux)", inspect.getsource(km._push_session_now),
-                      "the off-cycle push hands the builder its own guarded read")
-        self.assertIn("_send_tab_order(c, tab_order, tab_meta, ", inspect.getsource(km._confirm_close_now))
-        self.assertIn("_send_tab_order(c, tab_order, tab_meta, guarded)", inspect.getsource(km._confirm_close_now),
-                      "the close confirmation hands the builder its own guarded read")
+        self.assertIn("_send_tab_order(c, tab_order, tab_meta, live_map)", inspect.getsource(km._push_session_now))
+        self.assertIn("_send_tab_order(c, tab_order, tab_meta, live_map)", inspect.getsource(km._confirm_close_now))
+
+    def _ready(self, app):
+        """One `ready` from a renderer of `app`, the connect push stubbed as a marker: the types of the frames
+        the handler put on the socket, in order, and the client's dedup slots afterwards. The slots read the
+        same frames a second way: a strip sent through _send_client records its ("taborder",) key there."""
+        # the liveness reads a strip built at ready would make: pinned, so should such a strip return, these
+        # tests fail the same way whatever this machine runs
+        saved = (km._live_map, km._alive_sessions, km._send_feed_now)
+        km._live_map = lambda: {}
+        km._alive_sessions = lambda now, live_map: []
+        # the fork's connect-time feed serve (T3) is stubbed too: about 90 modules load the kernel under the shared
+        # romp_kernel module object, so a sibling's cached feed frame could let it send a `feed` frame and skip
+        # the stubbed connect push, and the marker below would not appear (an ordering red in the 2026-09-15 sweep)
+        km._send_feed_now = lambda c: False
+        try:
+            sent = []
+            h = object.__new__(km.Handler)
+            h._push_one = lambda c: sent.append({"type": "_pushed"})   # the connect push, as a marker
+            client = {"app": app, "wid": "w1", "alive": True, "send": lambda s: sent.append(json.loads(s))}
+            km.Handler._dispatch_ws(h, {"type": "ready"}, client)
+        finally:
+            km._live_map, km._alive_sessions, km._send_feed_now = saved
+        return [m["type"] for m in sent], client.get("sent", {})
 
     def test_connect_ready_handler_sends_no_tab_order_of_its_own(self):
-        # the connect push (_push_one → _push, guarded) is the ONLY tabOrder source; the handler's own,
-        # unguarded frame is gone (tests/test_feed_delta.py ReadyHandshake runs the handler). Upstream's
-        # T258 spelled that frame through the builder (`_frame = _tab_order_frame(_o, _tabs, _tm)`) and #1017
-        # respelled it as a hand-off (`_send_tab_order(client, _o, _tabs, _tm)`, 2026-09-07); the fork removed
-        # the block on 2026-09-03 and the 2026-09-09 ruling on skeleton tabs under READY_GATE_CAP keeps it out
-        # (a redial's skeleton set is resolved by the pusher's strip: tests/test_chat_skeleton_reconnect_gate.py),
-        # so none of the spellings has a home here
+        # The strip a chat page gets at `ready` is the connect push's: _push lists living plus kept-open tabs
+        # through the ("taborder",) slot. The ready arm used to send a second strip from a liveness read of its
+        # own (living sessions only), and the client closes every tab a later frame omits without affirming it
+        # live, so every read-only reopened tab the push had just listed went down at each ready.
+        types, slots = self._ready("chat")
+        self.assertEqual(types, ["_pushed", "caps"],
+                         "the connect push, then the caps frame: no strip from the handler itself")
+        self.assertNotIn(("taborder",), slots, "and none attempted through the strip's dedup slot")
+
+    def test_connect_ready_handler_source_carries_no_strip_spelling(self):
+        # The source-pin twin of the executed test above (the fork's pin, kept under its own name): none of the
+        # spellings the ready arm's own strip ever had is in the kernel, and the arm's body between its test and
+        # the parked-reveal step resets the tails and runs the connect push, with no hand-off to the strip builder
+        # and no resolve of its own (the pusher's _resolve_reconnect fills a redial's skeleton set; the fork removed
+        # the arm's strip on 2026-09-03 and keeps it out under READY_GATE_CAP: tests/test_chat_skeleton_reconnect_gate.py)
         text = open(KPATH).read()
         self.assertNotIn('{"type": "tabOrder", "order": _o, "tabs": _tabs, "views": _views_client()}', text)
         self.assertNotIn('_frame = _tab_order_frame(_o, _tabs, _tm)', text)
         self.assertNotIn('_send_tab_order(client, _o, _tabs, _tm)', text,
-                         "#1017's respelling of that frame (2026-09-07) has no home here either: the 2026-09-09 ruling keeps "
-                         "the fork's handler strip-less, and the pusher's _resolve_reconnect fills a redial's skeleton set")
+                         "the connect-time hand-off spelling has no home here either: the handler is strip-less, and the "
+                         "pusher's _resolve_reconnect fills a redial's skeleton set")
         self.assertNotIn('_tabs = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])}', text,
                          "no tab_meta list is built in the handler")
         i = text.index('if msg and msg.get("type") == "ready":')
@@ -102,7 +122,28 @@ class TabsFirst(unittest.TestCase):
         self.assertNotIn('"tabOrder"', handler, "no frame of that type from the handler itself (the comment may name it)")
         self.assertNotIn("_send_tab_order(", handler, "...and no hand-off to the strip builder")
         self.assertNotIn("_resolve_reconnect(", handler, "...nor a resolve: the pusher's strip resolves a redial's set")
-        self.assertIn("self._push_one(client)", handler, "the guarded push still runs on `ready`")
+        self.assertIn("_client_reset_chat_base(client)", handler, "the arm forgets the tails this renderer is believed to hold")
+        self.assertIn("self._push_one(client)", handler, "the connect push still runs on `ready`")
+
+    def test_a_feed_clients_ready_yields_no_tab_order_frame(self):
+        # The strip the ready arm used to send went to every app's socket, not only a chat's. The feed page has
+        # no tabOrder handler, but every pane's federation layer writes an inbound strip into the stored
+        # arrangement (federation.ts absorbHostReport), so a strip for a feed client would prune the kept-open
+        # tabs from that store again, and the chat case above would not notice.
+        types, slots = self._ready("feed")
+        self.assertEqual(types, ["_pushed", "caps"], "a feed client's ready: the connect push, then caps, no strip")
+        self.assertNotIn(("taborder",), slots)
+
+    def test_a_timeline_clients_ready_yields_no_tab_order_frame(self):
+        types, slots = self._ready("timeline")
+        self.assertEqual(types, ["_pushed", "caps"], "a timeline client's ready: the connect push, then caps, no strip")
+        self.assertNotIn(("taborder",), slots)
+
+    def test_no_living_only_ordered_reader_remains(self):
+        # The ready arm's strip was the one reader of a living-only ordered list; chat tabs and timeline lanes
+        # read _chat_tab_sessions and _timeline_sessions, each through _ordered. With that strip gone the
+        # reader had no caller, so it goes too: a strip rebuilt from it would drop every kept-open tab again.
+        self.assertFalse(hasattr(km, "_ordered_alive"), "no module-level living-only ordered reader")
 
     def test_name_color_shape_matches_the_client_color_type(self):
         # _name_color returns {bg,fg} or None — exactly the render.ts Color the placeholder applies.

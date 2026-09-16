@@ -425,9 +425,9 @@ class _TraceWorld(_Wire):
 
     def setUp(self):
         super().setUp()
-        self._saved3 = (km._tmux_sessions, km._cwd_of, km.Sessions.__dict__["backend_for"],
+        self._saved3 = (km._live_map, km._cwd_of, km.Sessions.__dict__["backend_for"],
                         km._send_or_park, km._edit_trace, km._reject_trace)
-        km._tmux_sessions = lambda: {SID: {}}
+        km._live_map = lambda: {SID: {}}
         km._cwd_of = lambda s: self.root if s == SID else ""
         self.reached, self.parked, self.traced, self.reject_traced, self.order = [], [], [], [], []
         world = self
@@ -445,7 +445,7 @@ class _TraceWorld(_Wire):
                 return True
         km.Sessions.backend_for = staticmethod(lambda sid: _FakeBE())
 
-        def fake_send_or_park(be, sid, text, echo=None, user_todo=None):
+        def fake_send_or_park(be, sid, text, echo=None, qid=None, user=False, paths=None, user_todo=None):
             self.parked.append((sid, text))
             return True
         km._send_or_park = fake_send_or_park
@@ -462,7 +462,7 @@ class _TraceWorld(_Wire):
         km._reject_trace = counted_reject_trace
 
     def tearDown(self):
-        km._tmux_sessions, km._cwd_of, bf, km._send_or_park, km._edit_trace, km._reject_trace = self._saved3
+        km._live_map, km._cwd_of, bf, km._send_or_park, km._edit_trace, km._reject_trace = self._saved3
         km.Sessions.backend_for = bf
         super().tearDown()
 
@@ -1065,10 +1065,10 @@ class _SendWorld(_Harness):
         self._saved2 = (km._name_of, km._sdk, km._send_or_park)
         km._name_of = lambda sid: "web" if sid == SID else None
         km._sdk = lambda: None
-        self.injected, self.send_result = [], True
+        self.injected, self.send_result = [], False      # False: handed over now (True parked, None refused; 2026-09-15)
 
-        def fake_send_or_park(be, sid, text, echo=None, user_todo=None):
-            self.injected.append({"sid": sid, "text": text, "echo": echo, "user_todo": user_todo, "be": be})
+        def fake_send_or_park(be, sid, text, echo=None, qid=None, user=False, paths=None, user_todo=None):
+            self.injected.append({"sid": sid, "text": text, "echo": echo, "user": user, "user_todo": user_todo, "be": be})
             return self.send_result
         km._send_or_park = fake_send_or_park
         self.tid = km._add_user_todo(SID, "Need a look at the findings report", self.fp)
@@ -1101,7 +1101,8 @@ class TheSendOp(_SendWorld):
         self.assertEqual(inj["text"], km._file_comments_message(self.fp, ONE, 0, 0, True, True))
         self.assertTrue(inj["text"].startswith("[obsidian-diff] I left 1 comment on %s.\n" % self.fp))
         self.assertEqual(inj["user_todo"], self.tid, "the todo id rides the send for the park path")
-        self.assertEqual(inj["echo"], "human", "a tmux-owned session gets the kernel-side echo, as the todo Reply does")
+        self.assertIsNone(inj["echo"], "no kernel-side echo since the tmux backend's removal: the backend echoes inside send()")
+        self.assertIs(inj["user"], True, "the message is the user's send (T315), as the todo Reply's is")
         self.assertEqual(self.todo()["resolved"]["kind"], "answered", "delivered now → stamped now")
         s = self.seen()
         self.assertEqual(s["request"]["verb"], "log-send")
@@ -1115,7 +1116,7 @@ class TheSendOp(_SendWorld):
                          "the watermark reaches the log as the number the host's log-send takes (number|null)")
 
     def test_a_parked_send_is_queued_and_stamps_later(self):
-        self.send_result = "parked"
+        self.send_result = True                                # parked (upstream's contract, 2026-09-15)
         r = self.send()
         self.assertEqual(r["type"], "fileCommentsSent")
         self.assertIs(r["queued"], True)
@@ -1124,11 +1125,17 @@ class TheSendOp(_SendWorld):
         self.assertIs(self.seen()["request"]["args"]["queued"], True, "the log says it was queued")
 
     def test_a_refused_send_fails_the_op_and_logs_nothing(self):
-        self.send_result = False
+        self.send_result = None                                # refused: no running backend took it
         r = self.send()
         self.assertEqual(r["type"], "fileCommentsSendFailed")
         self.assertEqual(r["reqId"], 9)
-        self.assertIn("didn't take it", r["error"])
+        # ruling 3 of the pull-in (2026-09-15): the op fails with _USER_TODO_UNDELIVERED_WARN itself, the
+        # viewer's own "saved with the file" sentence having retired with that literal shape; both wordings
+        # share "didn't take it", so the pin names the constant and the clause only the retired one carried
+        self.assertEqual(r["error"], km._USER_TODO_UNDELIVERED_WARN,
+                         "ruling 3: a backend refusal fails the op with the todo constant's own text")
+        self.assertNotIn("Your comments are saved with the file", r["error"],
+                         "ruling 3: the viewer's retired undelivered sentence is gone from the reply")
         self.assertNotIn("resolved", self.todo())
         self.assertIsNone(self.seen(), "no send entry for a message that never went")
 
@@ -1428,21 +1435,24 @@ class TheTodoReplyIsUnchanged(_SendWorld):
         self.assertIn("has ended", self.sent[0]["text"])
         self.assertNotIn("resolved", self.todo())
 
-    def test_a_truthy_send_stamps_a_parked_one_waits_a_refused_one_warns(self):
+    def test_a_handed_over_send_stamps_a_parked_one_waits_a_refused_one_warns(self):
         self.reply()
         self.assertEqual(self.injected[0]["text"], "Re: Need a look at the findings report — Go with the session cookie for now.")
         self.assertEqual(self.injected[0]["user_todo"], self.tid)
         self.assertEqual(self.todo()["resolved"]["kind"], "answered")
         self.assertEqual(self.sent, [])
         tid2 = km._add_user_todo(SID, "Need the staging port")
-        self.send_result = "parked"
+        self.send_result = True                                # parked
         self.reply(tid=tid2, text="8080")
         self.assertNotIn("resolved", km._user_todos()[SID][1])
         self.assertEqual(self.sent, [])
-        self.send_result = False
+        self.send_result = None                                # refused
         self.reply(tid=tid2, text="8080")
         self.assertNotIn("resolved", km._user_todos()[SID][1])
-        self.assertIn("Couldn't deliver", self.sent[-1]["text"])
+        self.assertEqual(self.sent[-1], {"type": "warn", "text": km._USER_TODO_UNDELIVERED_WARN},
+                         "ruling 3 (2026-09-15): a refused handover warns with the todo constant's own text")
+        self.assertNotIn("Your comments are saved with the file", self.sent[-1]["text"],
+                         "ruling 3: the viewer's retired undelivered sentence never reaches the todo Reply")
 
 
 class TheSaveLogsTheEdit(_Wire):

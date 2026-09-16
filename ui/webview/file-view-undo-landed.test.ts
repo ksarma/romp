@@ -348,7 +348,7 @@ async function open(p: string, t: TestContext): Promise<Open> {
   assert.ok(wrap, "the viewer is up");
   const body = wrap.querySelector(".fileview-body")!;
   const acts = wrap.querySelector(".fileview-acts")!;
-  const btn = (label: string) => { const b = acts.querySelectorAll("button").find((x) => x.textContent === label); assert.ok(b, "the " + label + " button"); return b!; };
+  const btn = (label: string) => { const b = acts.querySelectorAll("button").find((x) => x.textContent === label || x.getAttribute("aria-label") === label); assert.ok(b, "the " + label + " button"); return b!; };   // a word button by its text (Save, Cancel), a glyph (Edit; T367) by its aria-label
   const b: Btns = { edit: btn("Edit"), save: btn("Save"), cancel: btn("Cancel") };
   assert.ok(seam, "the probe action was mounted with the ctx");
   return { fv, ctx: seam!, wrap, body, b };

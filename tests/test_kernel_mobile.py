@@ -21,12 +21,11 @@ km = load_source("romp_kernel_mobile", os.path.join(BIN, "romp-kernel"))
 
 
 def _mobile_js():
-    """The phone shell script AS THE PAGE RUNS IT. _landing() splices the layout probe's media query into the
-    template's __MOBILE_MQ__ placeholder before serving, so an executed harness must splice the same way or the
-    probe's matchMedia(__MOBILE_MQ__) throws at top level (the 2026-09-09 fold review, ruling 3: teach the harness
-    the page's contract, never widen the probe's guard). One helper for every executor class, so the next one is
-    a one-line adoption; HarnessSplicesLikeThePage pins that the harness and the page cannot drift apart."""
-    return km._LANDING_MOBILE_JS.replace("__MOBILE_MQ__", json.dumps(km._MOBILE_MQ))
+    """The phone shell script AS THE PAGE RUNS IT: the served template itself. _landing() splices the layout probe's
+    media query inline when the template is built (json.dumps(_MOBILE_MQ) in the template string), so there is no
+    placeholder left for an executor to fill and the harness runs the template as served. Kept as the ONE door every
+    executor class reads the script through, so a future splice is a one-line adoption here and nowhere else."""
+    return km._LANDING_MOBILE_JS
 
 
 class LandingShell(unittest.TestCase):
@@ -67,14 +66,14 @@ class LandingShell(unittest.TestCase):
         self.assertIn("data-act=net data-keycmd=net.open aria-label='Remote kernels'", html)
         self.assertIn("<rect x='1' y='3' width='9' height='4' rx='1' fill='currentColor'/>", html)   # the used-bar fill
         self.assertNotIn(">Gear</button>", html)
-        self.assertIn("{romp:'openSettings'}", km._LANDING_MOBILE_JS)   # same path as the desktop gear
+        self.assertIn("window.__rompOpenSettings&&window.__rompOpenSettings();", km._LANDING_MOBILE_JS)   # same path as the desktop gear: the settings iframe
         self.assertIn("__rompOpenNet", km._LANDING_MOBILE_JS)           # opens the shell's remotes panel
         self.assertIn("window.__rompOpenNet=open", km._LANDING_REMOTES_JS)
         self.assertIn("__rompUsagePanel", km._LANDING_MOBILE_JS)        # the tooltip's bars as a modal
         self.assertIn("window.__rompUsagePanel=function", km._LANDING_USAGE_JS)
         self.assertIn("#ru-tip.ru-modal", html)                         # centered placement for the panel
         # the lifted-fullscreen settings iframe must override the mobile display:none
-        self.assertIn("body.settings-open #f-feed{display:block;position:fixed", html)
+        self.assertIn("body.settings-open #f-settings{display:block;position:fixed", html)
 
     def test_mobile_restart_button_reuses_the_rail_refresh_kernel_restart(self):
         # the user 2026-07-22: there was no restart-kernel affordance on mobile (the rail's own ↻ is hidden
@@ -87,28 +86,6 @@ class LandingShell(unittest.TestCase):
         self.assertIn("fetch('/restart',{method:'POST'})", km._LANDING_SETTINGS_JS)
         self.assertIn("rf.onclick=function(){rf.style.pointerEvents='none';rf.style.opacity='0.5';window.__rompRestart();}", km._LANDING_SETTINGS_JS)
         self.assertIn("restart:function(){try{window.__rompRestart", km._LANDING_MOBILE_JS)   # the bar routes to it
-
-    def test_view_relay_moves_the_phone_to_feed_and_its_close_returns_to_chat(self):
-        # The fileLinkPane relay (2026-08-20) opens a chat file-link's viewer in the Feed pane, so on
-        # a phone the open half switches to the Feed tab — and the close half must come BACK, or the
-        # user is stranded on Feed after every file read (review, same day). viewFileClosed returns
-        # to Chat because the relay only ever fires from a chat click; it is not gated on the desktop
-        # was-off flag, because the tab switch happened regardless of the pane's desktop state. The
-        # browser handoff posts no viewFileClosed at all (file-view.ts suppresses it), so heading
-        # from the viewer into the file browser correctly STAYS on the Feed tab.
-        js = km._LANDING_SETTINGS_JS
-        opened = js.split("if(m.romp==='viewFile')")[1].split("if(m.romp==='viewFileOpened')")[0]
-        self.assertIn("window.__rompMobileTab&&window.__rompMobileTab('feed')", opened)
-        closed = js.split("if(m.romp==='viewFileClosed')")[1]
-        self.assertIn("window.__rompMobileTab&&window.__rompMobileTab('chat')", closed)
-        self.assertLess(closed.index("__rompMobileTab"), closed.index("__rompFeedWasOffView"),
-                        "the return precedes (and is not conditioned on) the pane-restore check")
-        # the FILES route (fileLinkPane "pane", 2026-09-03) switches the phone to the Files tab and has NO
-        # return trip: the pane stays up with the file (closing the viewer shows its recent list), so the
-        # user leaves it the way they leave any tab
-        pane = js.split("if(m.romp==='viewFile'&&m.pane==='pane')")[1].split("else if(m.romp==='viewFile')")[0]
-        self.assertIn("window.__rompMobileTab&&window.__rompMobileTab('files')", pane)
-        self.assertNotIn("viewFileClosed", pane)
 
     def test_mobile_bar_reservation_collapses_while_the_keyboard_is_open(self):
         # the user 2026-07-22: focusing the composer opened the keyboard and left a dead black band between
@@ -149,8 +126,8 @@ class LandingShell(unittest.TestCase):
         # the desktop shell is the flex pane row (chat | fleet | feed | timeline)
         self.assertIn(".col{display:flex", html)
         self.assertIn("src=/chat", html)
-        self.assertIn("src=/feed", html)
-        self.assertIn("src=/timeline", html)
+        self.assertIn("data-src=/feed", html)   # optional panes load from data-src (the Panes setting)
+        self.assertIn("data-src=/timeline", html)
 
     def test_the_shell_leaves_a_hair_of_slack_down_the_right_edge(self):
         # The panes tiled flush to the window, so whatever sat hard right inside one — a feed card's
@@ -200,7 +177,9 @@ class LandingShell(unittest.TestCase):
         # carries id=f-timeline inside #tl-pane, and the old stale-id splitter bug must not regress.
         html = km._landing()
         self.assertIn("id=f-timeline", html)                      # the iframe carries this id
-        self.assertIn("<div class=pane id=tl-pane><iframe id=f-timeline src=/timeline></iframe></div>", html)
+        # data-src, not src (the user 2026-09-10): the band is an optional pane, loaded by the pane controller
+        # only where this browser's gear shows it (tests/test_pane_state_broadcast.py OptionalPanes)
+        self.assertIn("<div class=pane id=tl-pane><iframe id=f-timeline data-src=/timeline></iframe></div>", html)
         self.assertNotIn("getElementById('t')", km._LANDING_JS)   # the stale id is gone
 
     def test_mobile_switcher_is_isolated_in_its_own_script(self):
@@ -218,7 +197,8 @@ class LandingShell(unittest.TestCase):
         # +1 2026-09-08: the reload core (T265, _reload_core) ahead of the build-staleness banner script, which
         # registers as its refused fallback — its own script so a banner throw cannot take the reload with it
         # +1: the bottom bar's API health cell (_LANDING_APIH_JS), after the usage script whose backdrop it shares
-        self.assertEqual(html.count("<script>"), 20)
+        # +1 2026-09-08: the chat split columns (_LANDING_SPLIT_JS), after the pane controller it leans on
+        self.assertEqual(html.count("<script>"), 21)
 
     def test_bottom_bar_is_text_only_and_compact(self):
         html = km._landing()
@@ -377,12 +357,24 @@ class ChatSessionPicker(unittest.TestCase):
         self.assertIn("if(!wd){wd=document.createElement('span');wd.className='workdot';", js)   # in-place form: one dot node, created once, classes toggled (2026-08-19)  # gold dot when working
         # awaitingBg is read off the desktop tab's own green dot (no tab-working class on an awaiting tab)
         self.assertIn("awaitbg:!!t.querySelector('.tab-dot.await')", js)
+        # the ASK RING (2026-09-13; a widget with a switch since 2026-09-14): the desktop tab's ring-waiting-on-you class
+        # (something of the session's is waiting on you) is scraped beside the dots, and the picker paints it on the row (a
+        # yellow bar at the left edge) and the current chip (its border goes dashed yellow), off the same status token the
+        # desktop ring wears — so the phone's list says which sessions need you without a tap through each, and a ring
+        # switched off in the settings (no class on the tab) leaves the phone plain too
+        self.assertIn("ask:t.classList.contains('ring-waiting-on-you'),", js)
+        self.assertNotIn("'tab-ask'", js)
+        self.assertIn("row.classList.toggle('ask',!!s.ask);", js)
+        self.assertIn("cur.classList.toggle('ask',!!(act&&act.ask));", js)
         self.assertIn("wd.classList.toggle('await',!s.working&&!!s.awaitbg);", js)  # green dot when awaiting (in-place toggle form, 2026-08-19)
         self.assertNotIn(".mrow .dot{", css)              # the old identity/grey dot is gone
         self.assertNotIn("dot.style.background=s.bg", js)  # ...and nothing paints identity onto a dot
         # the dots are the SAME status colors desktop uses (styles.css --st-working-bg gold, --st-awaitbg-bg green)
         self.assertIn(".mrow .workdot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--st-working-bg,#e0b020)}", css)
         self.assertIn(".mrow .workdot.await{background:var(--st-awaitbg-bg,#54B204)}", css)
+        self.assertIn(".mrow.ask{border-left:3px solid var(--st-ask-bg,#f5d33f);padding-left:9px}", css)   # the ask ring's mark on a row (2026-09-13)
+        self.assertIn("#mcur.ask{border-color:var(--st-ask-bg,#f5d33f);border-style:dashed}", css)
+        self.assertLess(css.index("#mcur.colored{"), css.index("#mcur.ask{"), "the ring's border wins over the identity colour: declared after")
         self.assertNotIn("'• ')+s.name", js)              # the '• ' text-bullet prefix on rows is gone
         # the current-session header uses the same gold/green status dot, not the text bullet either
         self.assertIn("#mcur .wd{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--st-working-bg,#e0b020)}", css)
@@ -542,19 +534,6 @@ console.log(JSON.stringify(out));
 """
 
 
-class HarnessSplicesLikeThePage(unittest.TestCase):
-    """The executed harnesses run the fork's template spliced the way the served page is, and neither can drift
-    from the other on the layout probe's media query (the 2026-09-09 fold review, ruling 3)."""
-
-    def test_the_harness_script_carries_the_pages_media_query_and_no_placeholder(self):
-        probe = "var MQ=(window.matchMedia&&matchMedia(%s))||null;" % json.dumps(km._MOBILE_MQ)
-        js = _mobile_js()
-        self.assertNotIn("__MOBILE_MQ__", js, "the harness must splice the placeholder as _landing() does")
-        self.assertIn(probe, js, "the spliced probe line reads the page's media query")
-        self.assertIn(probe, km._landing(), "the served page carries the same spliced probe line")
-        self.assertIn("__MOBILE_MQ__", km._LANDING_MOBILE_JS, "the template keeps the placeholder the page splices")
-
-
 class MobileFitExecutes(unittest.TestCase):
     """The installed iPhone app came back from the background with the chat pane filling only the
     top ~60% of the screen: the composer mid-screen, a keyboard-tall blank band under it, the tab
@@ -576,7 +555,7 @@ class MobileFitExecutes(unittest.TestCase):
             r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
         finally:
             os.unlink(path)
-        # The harness runs the template spliced the way the page does (_mobile_js above; the 2026-09-09 fold review).
+        # The harness runs the template as the page serves it (_mobile_js above: no placeholder is left to splice).
         assert r.returncode == 0, "the mobile script threw: " + r.stderr[:800]
         cls.out = json.loads(r.stdout.strip().splitlines()[-1])
 
@@ -755,7 +734,7 @@ class MobileBellExecutes(unittest.TestCase):
             r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
         finally:
             os.unlink(path)
-        # Spliced the way the page does (_mobile_js above).
+        # The template as the page serves it (_mobile_js above).
         assert r.returncode == 0, "the shell scripts threw: " + r.stderr[:1200]
         cls.out = json.loads(r.stdout.strip().splitlines()[-1])
 
