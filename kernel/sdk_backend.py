@@ -9688,6 +9688,12 @@ class SdkSession:
             #     rateLimits}.
             # We accept BOTH spellings (plus the old guesses) because the two surfaces genuinely differ and
             # either may reach us; `error` arrives as a dict on the transcript side and a string on the wire.
+            # The installed CLI's own schema (SDKAPIRetryMessage in the 2.1.266 binary; tests/test_api_health.py's
+            # frames since 2.1.257) names the wire fields attempt / max_retries / retry_delay_ms / error_status
+            # (null for a connection error) / error (the category STRING: "overloaded", "rate_limit",
+            # "authentication_failed", "server_error", "unknown") / no_response. Until 2026-09-16 the reads below
+            # skipped `attempt` (the local storm count stood in) and the string `error` (the card's reason stayed
+            # blank on every live storm): both are read first now.
             d = msg.data if isinstance(msg.data, dict) else {}
             _now = time.time()
 
@@ -9708,12 +9714,12 @@ class SdkSession:
             # The human string: the transcript's error.formatted ("529 Overloaded") is the best of these;
             # error.message carries the raw JSON envelope, so it is the last resort.
             _err = (_e.get("formatted") or _e.get("message") if _e else None) \
-                or _pick("display_message", "message", want=(str,))
+                or _pick("error", "display_message", "message", want=(str,))
             _status = _pick("status_code", "error_status", "status") \
                 or (_e.get("status") if isinstance(_e.get("status"), (int, str)) else None)
             _net = d.get("is_network_down", d.get("isNetworkDown", _e.get("isNetworkDown")))
             self.retry_info = {
-                "attempt": _pick("retry_attempt", "retryAttempt", "number", want=(int,)) or self.retry_count,
+                "attempt": _pick("attempt", "retry_attempt", "retryAttempt", "number", want=(int,)) or self.retry_count,
                 "max": _pick("max_retries", "maxRetries", want=(int,)),
                 "status": _status,
                 "error": _err[:300] if isinstance(_err, str) else None,

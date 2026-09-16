@@ -45,11 +45,12 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `tests/test_host_transport.py` decide what a red means. It puts that same SDK venv
   on `sys.path` at import (the kernel's own idiom), and every worker imports every
   collected module before it runs a test, so over the whole directory the SDK is
-  importable in each worker from then on: the `_HAVE_SDK`-gated classes above RUN,
-  and five of their cases (OptionsAssembly, FastModeReportedState, ApiRetryState
-  twice, ReconnectReconcilesInflight) fail against the installed SDK exactly as
-  under the `PYTHONPATH` recipe; the module alone, or beside one that leaves the path
-  alone, skips them and reads green (diagnosed 2026-09-16). Its cases that build SDK
+  importable in each worker from then on: the `_HAVE_SDK`-gated classes above RUN
+  (the module alone, or beside one that leaves the path alone, skips them). Five of
+  their cases (OptionsAssembly, FastModeReportedState, ApiRetryState twice,
+  ReconnectReconcilesInflight) were red against the installed SDK that way until
+  2026-09-16 and pass both ways now; judge the module both ways, plain and under the
+  `PYTHONPATH` recipe. Its cases that build SDK
   options with a `can_use_tool` callback raise
   `claude_agent_sdk.types.CanUseToolShadowedWarning` (a `UserWarning` subclass); a
   worker ships the warning to the controller, whose venv cannot import the class, and

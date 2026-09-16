@@ -10,15 +10,16 @@ Two layers:
     AskUserQuestion -> it surfaces as an askLive picker -> the UI answers ->
     PermissionResultAllow(updated_input={questions, answers}) goes back.
 
-xdist ordering hazard (the pull-in review, 2026-09-16): in the full suite under -n 4 five cases here went red
-(OptionsAssembly, FastModeReportedState, ApiRetryState twice, ReconnectReconcilesInflight; one of them with
-`RuntimeError: There is no current event loop in thread 'MainThread'`). Every one is green when this module runs
-alone, and green when this module and tests/test_postal_via_dedupe.py run alone together under -n 4. The sibling is
-tests/test_host_transport.py: its import puts romp's SDK venv on sys.path, and every xdist worker imports every
-collected module before it runs a test, so in the full sweep the _HAVE_SDK gate below opens and the SDK-gated cases
-RUN instead of skipping; these five fail against the installed SDK exactly as under tests/README.md's PYTHONPATH
-recipe for this module (diagnosed 2026-09-16, in the same review; that module's header and the README carry the
-detail). A red in one of those classes under the full sweep is judged by this module alone:
+The SDK-gated classes RUN in the full suite (the pull-in review, 2026-09-16): tests/test_host_transport.py's import
+puts romp's SDK venv on sys.path, and every xdist worker imports every collected module before it runs a test, so
+under -n 4 the _HAVE_SDK gate below opens in every worker and the gated cases run against the installed SDK exactly
+as under tests/README.md's PYTHONPATH recipe for this module; alone, on a machine without the venv, they skip, and a
+skip reads green. Five cases were red that way (OptionsAssembly's ultracode seed, FastModeReportedState's refused
+ask, ApiRetryState twice, ReconnectReconcilesInflight): two stale pins from before the code they read moved, a class
+with no current event loop for the settle to schedule on, a fake whose init streamed at connect, and one real defect
+(the api_retry detail dropped the wire's `error` string). All five were re-pinned or fixed on 2026-09-16; each case's
+comment says which. Judge this module BOTH ways before calling it green, plain and with the README's PYTHONPATH
+recipe:
     python -m pytest tests/test_sdk_backend.py -q                (or -k <ClassName> for one class)
 The postal module's PeerRoutePrefersDirect red under -n 4 is a different import-time leak (ROMP_POSTAL_PEERS, set at
 module level by tests/test_kernel_tunnels.py); its own header says so.
@@ -625,8 +626,9 @@ class LiveTail(unittest.TestCase):
         self.assertFalse(be2.set_fast("no-such-sid", "on"))
 
     def test_fast_mode_is_never_remembered_as_the_seed_for_new_sessions(self):
-        # Fast mode draws credits at a higher rate and has its own rate limit, so it stays per-session —
-        # the same call ultracode makes, and the reason romp never spreads it to every new session.
+        # Fast mode draws credits at a higher rate and has its own rate limit, so it stays per-session and
+        # never seeds the next new session. An effort pick does seed it, ultracode included (set_effort since
+        # 2026-08-14); until 2026-09-16 this comment said ultracode was held back the same way.
         d = tempfile.mkdtemp()
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
         sid = be.spawn("a", d)
@@ -3831,19 +3833,23 @@ class OptionsAssembly(unittest.TestCase):
         with open(pb) as f:
             self.assertEqual(json.load(f), {"ultracode": True}, "b's file is untouched by a's fast mode")
 
-    def test_ultracode_is_a_choice_everywhere_but_never_the_seeded_default(self):
+    def test_ultracode_is_a_choice_everywhere_and_the_latest_pick_seeds_new_sessions(self):
         self.assertIn("ultracode", sb.EFFORT_LEVELS, "the SDK backend accepts the pick")
         with open(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin", "romp-kernel")) as f:
             self.assertIn('("low", "medium", "high", "xhigh", "max", "ultracode")', f.read(),
                           "the effort dropdown (kernel EFFORT_CHOICES) offers ultracode")
-        # per-session by design (the CLI: "this session only") — picking it must not seed NEW sessions
+        # Every pick is the new-session seed, ultracode included (set_effort; the user 2026-08-14, whose new
+        # sessions opened at max under the old never-remember guard). The CLI's "this session only" holds per
+        # session through the launch shape spawn hands each new one (--effort xhigh plus the ultracode settings
+        # key). Until 2026-09-16 this case still pinned the retired guard (the seed never ultracode) and was red
+        # whenever the SDK was importable.
         be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
         sid = "11111111-2222-3333-4444-555555555555"
         sb.write_reg(self.d, sid, {"sid": sid, "name": "n", "cwd": self.d})
         self.assertTrue(be.set_effort(sid, "ultracode"))
-        self.assertNotEqual(sb.read_sdk_defaults(self.d).get("effort"), "ultracode",
-                            "ultracode never becomes the default for the next new session")
-        self.assertEqual(sb.read_reg(self.d, sid)["effort"], "ultracode", "but THIS session keeps it")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("effort"), "ultracode",
+                         "the latest pick seeds the next new session, ultracode too")
+        self.assertEqual(sb.read_reg(self.d, sid)["effort"], "ultracode", "and THIS session keeps it")
 
     def test_raises_max_buffer_size_well_above_the_1mb_default(self):
         # A single >1MB stdout message (a big Read / grep result / echoed image) would otherwise crash the
@@ -3977,12 +3983,17 @@ class FastModeReportedState(unittest.TestCase):
         self.assertTrue(sess.fast_opt, "and the persisted ask is untouched by the report")
 
     def test_an_opted_in_session_the_cli_refuses_reports_the_reason(self):
-        # e.g. fast mode asked for on a session whose model isn't Opus: we say on, the CLI says off.
+        # e.g. fast mode asked for on a session whose model isn't Opus: we say on, the CLI says off. The refusal
+        # ANSWERS the armed ask (_adopt_fast_state's refused_ask, 2026-08-11): the opt-in clears rather than staying
+        # armed on disk, and the badge shows the CLI's verdict with its reason; the warn toast and the flagless
+        # relaunch are LiveTail.test_a_refusal_answering_the_users_ask_warns_clears_it_and_restores_the_badge's.
+        # Until 2026-09-16 this case still pinned the opt-in as unchanged (its 2026-08-07 shape) and was red
+        # whenever the SDK was importable.
         sess = self._sess(fast=True)
         self._init(sess, {"fast_mode_state": "off", "fast_mode_disabled_reason": "model_not_allowed"})
         snap = sess.snapshot()
-        self.assertTrue(sess.fast_opt, "romp's opt-in is unchanged — the user did ask for it")
-        self.assertEqual(snap["fast"], "off", "but the CLI's verdict is what the badge shows")
+        self.assertFalse(sess.fast_opt, "the refusal answers the ask: the opt-in clears instead of staying armed")
+        self.assertEqual(snap["fast"], "off", "the CLI's verdict is what the badge shows")
         self.assertEqual(snap["fastReason"], "model_not_allowed")
 
     def test_cooldown_is_reported_verbatim(self):
@@ -4037,6 +4048,26 @@ class FastModeReportedState(unittest.TestCase):
 class ApiRetryState(unittest.TestCase):
     """An api_retry storm (API rate-limit/overload) must surface as a distinct 'retrying' state, not a
     silent 'working', so a stall reads as an API issue (the user 2026-06-23). Cleared on real output."""
+
+    def setUp(self):
+        # the settle (a ResultMessage) schedules the context refresh on the CURRENT loop, as it does inside the
+        # session's own loop in production; give this thread one to schedule onto (never run to completion: the
+        # coroutine is irrelevant here) so _on_message can be driven synchronously. Without it Python 3.12's
+        # get_event_loop raises "no current event loop" once any earlier set_event_loop in the process
+        # (FastModeReportedState's tearDown, an asyncio.run) has marked the policy, so the bare-payload case
+        # below was red whenever the SDK was importable (2026-09-16).
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+
+    def tearDown(self):
+        pending = asyncio.all_tasks(self._loop)
+        for t in pending:
+            t.cancel()   # cancelled before its first step: the coroutine never runs, and the loop closes with
+            #              nothing pending (no destroyed-task warning at collection)
+        if pending:
+            self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        asyncio.set_event_loop(None)
+        self._loop.close()
 
     def test_api_retry_shows_retrying_then_clears(self):
         d = tempfile.mkdtemp()
@@ -4094,6 +4125,31 @@ class ApiRetryState(unittest.TestCase):
         sess._on_message(_sdk.ResultMessage("success", 1, 1, False, 1, "fsid"),
                          _sdk.AssistantMessage, _sdk.ResultMessage, _sdk.SystemMessage)
         self.assertIsNone(sess.snapshot()["retryInfo"])
+
+    def test_the_installed_clis_wire_frame_fills_the_attempt_and_the_error(self):
+        # the frame the CLI itself emits (its embedded SDKAPIRetryMessage schema, read from the 2.1.266 binary):
+        # attempt / max_retries / retry_delay_ms / error_status (null for a connection error) / error (a category
+        # STRING such as "overloaded" or "rate_limit") / no_response (optional). Until 2026-09-16 the detail read
+        # neither `attempt` (the local tally stood in) nor the string `error` (the card's reason stayed blank on
+        # every live storm); tests/test_api_health.py's ring read both all along.
+        d = tempfile.mkdtemp()
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        sess = sb.SdkSession(be, {"sid": "r4", "name": "n", "cwd": d, "mode": "acceptEdits"})
+        sess.inflight = 1
+        sess._on_message(_sdk.SystemMessage("api_retry", {"attempt": 4, "max_retries": 10, "retry_delay_ms": 2000,
+                                                          "error_status": 529, "error": "overloaded"}),
+                         _sdk.AssistantMessage, _sdk.ResultMessage, _sdk.SystemMessage)
+        info = sess.snapshot()["retryInfo"]
+        self.assertEqual(info["attempt"], 4, "the CLI's own attempt number, not the local tally (1 here)")
+        self.assertEqual((info["max"], info["status"]), (10, 529))
+        self.assertEqual(info["error"], "overloaded", "the wire's category string is the card's reason")
+        sess._on_message(_sdk.SystemMessage("api_retry", {"attempt": 5, "max_retries": 10, "retry_delay_ms": 4000,
+                                                          "error_status": None, "error": "unknown"}),
+                         _sdk.AssistantMessage, _sdk.ResultMessage, _sdk.SystemMessage)
+        info = sess.snapshot()["retryInfo"]
+        self.assertEqual(info["attempt"], 5)
+        self.assertIsNone(info["status"], "a connection error has no HTTP status: null on the wire, None here")
+        self.assertEqual(info["error"], "unknown")
 
 
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
@@ -4518,10 +4574,14 @@ class ReconnectReconcilesInflight(unittest.TestCase):
             async def get_context_usage(self): return {"percentage": 2, "model": "claude-x"}
 
             async def receive_messages(self):
-                yield _sdk.SystemMessage("init", {"session_id": self.options.session_id or "fsid"})
+                # the CLI's init opens a TURN (one per turn, none on a turn-less connect: _on_message's init
+                # branch says so), so the fake streams it with the first dequeued turn. Streamed at connect, the
+                # SECOND client's init read as a turn the CLI started (a turn frame at inflight 0 counts as one
+                # since 2026-09-08) and held inflight at 1: red whenever the SDK was importable (2026-09-16).
                 while True:
                     turn = await self._turnq.get()
                     StallClient.received.append(turn["message"]["content"][0]["text"])
+                    yield _sdk.SystemMessage("init", {"session_id": self.options.session_id or "fsid"})
                     await _aio.sleep(3600)           # stall this turn forever (never a ResultMessage)
 
         _sdk.ClaudeSDKClient = StallClient

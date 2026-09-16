@@ -15,10 +15,10 @@ Under pytest-xdist the worker ships that warning to the controller, whose venv c
 unserialize_warning_message raises ModuleNotFoundError, the node goes down and the run ends in INTERNALERROR.
 tests/conftest.py's pytest_configure ignores the warning by message prefix, so an -n run no longer needs
 -p no:warnings. (2) Every module the same xdist worker collects after this one sees claude_agent_sdk importable:
-tests/test_sdk_backend.py's _HAVE_SDK gate opens and its SDK-gated cases run instead of skipping, and five of them
-(OptionsAssembly, FastModeReportedState, ApiRetryState twice, ReconnectReconcilesInflight) fail against the
-installed SDK exactly as they do under tests/README.md's PYTHONPATH recipe for that module (diagnosed 2026-09-16;
-read as a load flake before). Judge either module by itself: `python3 -m pytest tests/test_host_transport.py -q`,
+tests/test_sdk_backend.py's _HAVE_SDK gate opens and its SDK-gated cases run instead of skipping. Five of them
+(OptionsAssembly, FastModeReportedState, ApiRetryState twice, ReconnectReconcilesInflight) were red against the
+installed SDK that way until 2026-09-16 (stale pins, a missing event loop, a fake's init timing and one real defect
+in the api_retry detail, all fixed then); they pass both ways now. Judge either module by itself: `python3 -m pytest tests/test_host_transport.py -q`,
 `python3 -m pytest tests/test_sdk_backend.py -q`.
 """
 import asyncio

@@ -1455,8 +1455,8 @@ class BuildSessionSeam(unittest.TestCase):
                 self.assertEqual(got[0]["pinnedNotes"], notes)
 
     def test_both_chat_tail_senders_carry_the_two_fields_by_source(self):
-        # the wire-seams pin over BOTH senders (tests/test_pinned_notes.py WireSeams reads the index wire's
-        # alone): the proto-2 sender is its own function since the 2026-09-15 pull-in, so a seam line dropped
+        # the wire-seams pin over BOTH senders (tests/test_pinned_notes.py WireSeams reads both too since
+        # 2026-09-16): the proto-2 sender is its own function since the 2026-09-15 pull-in, so a seam line dropped
         # from it would leave every index-wire case green while every real page went stale
         for fn in (km._send_chat_locked, km._send_chat_proto2):
             with self.subTest(fn=fn.__name__):
