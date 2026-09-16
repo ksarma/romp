@@ -429,8 +429,10 @@ class ServedSettingsTabs(unittest.TestCase):
         self.assertEqual([x["tab"] for x in g["pills"]], ["general", "chat", "feed", "sessions", "automation", "tasks", "debug"], table)
         self.assertEqual([x["text"] for x in g["pills"]], ["General", "Chat", "Feed", "Sessions", "Automation", "Task tracking", "Debug"], table)
         self.assertEqual(g["shown"], ["general"], "the ask for General shows General alone" + table)
-        self.assertEqual(g["heads"]["general"], ["Account", "Panes", "Appearance", "Permissions", "This machine", "Keyboard shortcuts"], table)
-        self.assertEqual(g["heads"]["chat"], ["Display", "Comments", "Thinking", "Chat history", "Tab strip", "Tab widgets", "Status line"], "Transcript is Display; the text scheme and the strip row joined it; Thinking creates, so it is Chat's; the Status line section follows Tab widgets (T409)" + table)
+        # "Files" after "Panes": this fork's section of General (Pictures from the web in files, File comments), kept when T404
+        # was adopted (ruling 15 a of the 2026-09-15 pull-in); T404 removed only its File links row. Upstream's card has no such head.
+        self.assertEqual(g["heads"]["general"], ["Account", "Panes", "Files", "Appearance", "Permissions", "This machine", "Keyboard shortcuts"], table)
+        self.assertEqual(g["heads"]["chat"], ["Display", "Comments", "Thinking", "Waiting on you", "Chat history", "Tab strip", "Tab widgets", "Status line"], "Transcript is Display; the text scheme and the strip row joined it; Thinking creates, so it is Chat's; Waiting on you is this fork's User todos section, after Thinking and before Chat history (ruling 15 a of the 2026-09-15 pull-in); the Status line section follows Tab widgets (T409)" + table)
         self.assertEqual(g["heads"]["debug"], ["Judging bands", "Diagnostics"], "Updates went to General" + table)
         self.assertEqual(g["heads"]["tasks"], ["Task tracking", "Judges"], "the master switch, then the judges (T404 PR 2)" + table)
         self.assertEqual(g["heads"]["automation"], ["Nudges"], table)

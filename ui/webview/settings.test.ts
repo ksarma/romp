@@ -8,7 +8,7 @@ const store: Record<string, string> = {};
   setItem: (k: string, v: string) => { store[k] = v; },
   removeItem: (k: string) => { delete store[k]; },
 };
-import { loadSettings, saveSettings, DEFAULT_SETTINGS, FIGURE_HOSTS_DEFAULT, figureHosts, figureHostName, fileLinkPane, paneSet, OPTIONAL_PANES } from "./settings";
+import { loadSettings, saveSettings, DEFAULT_SETTINGS, FIGURE_HOSTS_DEFAULT, figureHosts, figureHostName, paneSet, OPTIONAL_PANES } from "./settings";
 
 test("loadSettings returns defaults when nothing is stored", () => {
   delete store["romp:settings"];
@@ -51,20 +51,6 @@ test("stripGroupRows defaults OFF (the user 2026-09-08): the strip flows inline;
   assert.equal(loadSettings().stripGroupRows, true, "the opt-in round-trips");
   store["romp:settings"] = JSON.stringify({});
   assert.equal(loadSettings().stripGroupRows, false, "a store from before the key reads as off");
-  delete store["romp:settings"];
-});
-
-// Where a chat file-link click opens on the web (the user 2026-08-20): "chat" is the default —
-// upstream's design, the viewer over the pane you clicked — and "feed" is the opt-in that relays
-// the open into the Feed pane so the transcript stays readable while the file is up.
-test("fileLinkPane defaults to chat; a foreign stored value reads as the default, never breaks the click", () => {
-  assert.equal(DEFAULT_SETTINGS.fileLinkPane, "chat");
-  store["romp:settings"] = JSON.stringify({ fileLinkPane: "feed" });
-  assert.equal(loadSettings().fileLinkPane, "feed", "the opt-in round-trips");
-  store["romp:settings"] = JSON.stringify({ fileLinkPane: "pane" });
-  assert.equal(loadSettings().fileLinkPane, "pane", "the Files pane opt-in (2026-09-03) round-trips too");
-  store["romp:settings"] = JSON.stringify({ fileLinkPane: "purple" });
-  assert.equal(loadSettings().fileLinkPane, "chat", "a corrupt entry may cost the preference, never the click");
   delete store["romp:settings"];
 });
 
@@ -178,25 +164,16 @@ test("Compact tabs and agents defaults OFF (the user 2026-09-08); the opt-in rou
   delete store["romp:settings"];
 });
 
-// Where a chat file-link click opens on the web (the Files pane, a column of its own, or the viewer over
-// the pane you clicked): OFF by default, so a dashboard that never turns it on changes nothing. Only the
-// literal "pane" opts in; anything else a store might hold reads as the default, so a corrupt entry may
-// cost the preference, never the click (tabCtxMode's normalization idiom). Read at click time
-// (render.ts openPath through file-route.ts fileLinkRoute).
-test("File links open in defaults to the pane you clicked; the Files pane opt-in round-trips, and a foreign value reads as the default", () => {
-  assert.equal(DEFAULT_SETTINGS.fileLinkPane, "chat");
-  delete store["romp:settings"];
-  assert.equal(loadSettings().fileLinkPane, "chat", "a fresh install opens in place");
-  saveSettings({ fileLinkPane: "pane" });
-  assert.equal(loadSettings().fileLinkPane, "pane", "the opt-in survives a reload (localStorage)");
-  store["romp:settings"] = JSON.stringify({ compact: true });
-  assert.equal(loadSettings().fileLinkPane, "chat", "a store written before the key reads as the default");
-  store["romp:settings"] = JSON.stringify({ fileLinkPane: "purple" });
-  assert.equal(loadSettings().fileLinkPane, "chat", "a foreign stored value normalizes to the default");
-  assert.equal(fileLinkPane("pane"), "pane");
-  assert.equal(fileLinkPane("feed"), "feed", "the feed route is a target here (F3): this fork keeps three values, and its own test above round-trips it");
-  assert.equal(fileLinkPane(undefined), "chat");
-  delete store["romp:settings"];
+// The file-links preference is GONE (T404, the user 2026-09-13): where a chat file link opens follows whether the Files pane
+// is open (file-route.ts fileLinkRoute takes no setting). A store that still carries the old key reads without it and the next
+// save leaves it behind, the T317-era filesControl key's way.
+test("fileLinkPane: no such setting; a stored value is dropped, never read", () => {
+  assert.equal((DEFAULT_SETTINGS as unknown as Record<string, unknown>).fileLinkPane, undefined);
+  store["romp:settings"] = JSON.stringify({ fileLinkPane: "pane" });
+  assert.equal((loadSettings() as unknown as Record<string, unknown>).fileLinkPane, undefined, "an old store's value is not read");
+  saveSettings({ compact: false });
+  assert.equal(JSON.parse(store["romp:settings"]).fileLinkPane, undefined, "…and the next save leaves it behind");
+  assert.equal(loadSettings().compact, false);
 });
 
 // The optional dashboard panes (the user 2026-09-10): Sessions (key timeline), Outline (key fleet) and Feed

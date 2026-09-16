@@ -72,7 +72,7 @@ test("every existing control keeps its id and sits in exactly one pane, by the a
             "General: Account, Panes (with the Files control), Appearance, Permissions, This machine, Keyboard shortcuts");
   assert.match(G, /<b>Allow file editing<\/b>/, "the permission row's name (T404)");
   assert.match(G, /<label class="rs-row rs-panes-row"><input type=checkbox id=rs-filesctl>' \+[^\n]*\n\s*'<span><b>Files<\/b>'/, "the Files row reads Files, like Sessions, Outline and Feed above it (T407), and is a Panes row like them, so the off-dashboard hide takes it (T404's tidy)");
-  assert.match(GEAR, /delete o\.filesControl; return o;/, "load() drops the T317-era dead key (T404's tidy); fileLinkPane is a live key on this fork (F3, the File links row), so it is not dropped");
+  assert.match(GEAR, /delete o\.filesControl; delete o\.fileLinkPane;/, "load() drops both dead keys, so neither survives a gear save (T404's tidy)");
   assert.match(ps.chat, /The summaries are output tokens the session pays for, which is why this row sits under Chat and not Display\./, "the Thinking row says why it is Chat's (T404's tidy)");
   // the popover stays inside the card (the T408 read): a row whose popover would run past the card's bottom opens it above
   const CSS2 = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.css"), "utf8");
@@ -88,9 +88,8 @@ test("every existing control keeps its id and sits in exactly one pane, by the a
   assert.match(CSS2, /#rsettings \.rs-row\.rs-up:hover \.rs-sub, #rsettings \.rs-widget\.rs-up:hover \.rs-sub \{ top: auto; bottom: 100%; margin-top: 0; margin-bottom: 2px; \}/, "the up rule outranks the hover rule by one class");
   assert.doesNotMatch(GEAR, /Files control in the dashboard bar/, "the old words are gone from the gear");
   assert.match(G, /<b>Updates install automatically <span class=rs-mixed hidden><\/span><\/b>/, "the updates row's name (T404)");
-  // this fork keeps the File links setting (F3: the three-valued route the user kept, 2026-08-20 and 2026-09-06); upstream's T404 removed it
-  assert.match(GEAR, /<select id=rs-filelink /, "the file-links setting stays: its select is on the card");
-  assert.equal((GEAR.match(/fileLinkPane/g) || []).length, 6, "the live key is named where the fork reads and writes it: load()'s defaults, the row's change handler and the open paint's fill");
+  assert.doesNotMatch(GEAR, /id=rs-filelink\b|File links open in/, "the file-links setting is gone: the route follows the open Files pane (T404)");
+  assert.equal((GEAR.match(/fileLinkPane/g) || []).length, 1, "the dead key is named once, where load() drops it");
   assert.doesNotMatch(GEAR, /id=rs-activeonly\b|id=rs-collapsegaps\b|>Sessions pane</, "the Sessions-pane rows left settings: the pane carries them (T404)");
   assert.doesNotMatch(GEAR, /data-pane=appearance\b|\['appearance', 'Appearance'\]/, "no Appearance pane or pill remains");
   // Chat: Display (the transcript rows, the text scheme, the strip's one-group-per-row), Comments, Thinking, Tab widgets

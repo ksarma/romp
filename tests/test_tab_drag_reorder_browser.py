@@ -118,6 +118,15 @@ const settle = async () => {
   await page.waitForFunction((n) => document.querySelectorAll("#tabs .tab[data-id]").length >= n, cfg.count, { timeout: 30000 });
   await page.waitForTimeout(800);
 };
+// The WRAP layout this lab drives (the tag group on its own row, the untagged trail behind a row break) is upstream's
+// default (stripGroupRows true, T264). This fork's default is OFF (settings.ts DEFAULT_SETTINGS; the user 2026-09-08, whose
+// eleven tag groups became eleven rows): the groups follow one another inline, the strip here is one row, and every drag
+// would land at its origin. So the lab seeds the key the way the user would set it, in the romp:settings store (the theme
+// switch below uses the same idiom), from an init script so it is in place before the first load and again on the reload.
+// The inline layout's drag has its own coverage: ui/webview/dragslot.test.ts, tab-drag-live.test.ts,
+// tab-row-keep-browser.test.ts, tests/test_tab_groups_rows_served.py.
+await page.addInitScript(() => { let s = {}; try { s = JSON.parse(localStorage.getItem("romp:settings") || "{}") || {}; } catch (e) {}
+                                 s.stripGroupRows = true; try { localStorage.setItem("romp:settings", JSON.stringify(s)); } catch (e) {} });
 await page.goto(cfg.chat);
 await settle();
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -244,6 +253,7 @@ await drag("classic: trail, 1st tab to the 3rd slot (right part of the 3rd)", tr
 await drag("classic: trail, 4th tab to the 2nd slot (left part of the 2nd)", trail, 3, trail, 1, 0.25);
 await drag("classic: group row, 1st tab to the 3rd slot (right part of the 3rd)", 0, 0, 0, 2, 0.75);
 // 2. the YATHARTH theme, set as the user sets it: the theme key of this browser's settings store, read at boot
+// (the wrap seed rides this reload too: the init script above runs on every load, so the store keeps stripGroupRows true)
 await page.evaluate(() => { let s = {}; try { s = JSON.parse(localStorage.getItem("romp:settings") || "{}") || {}; } catch (e) {}
                             s.theme = "yatharth"; localStorage.setItem("romp:settings", JSON.stringify(s)); });
 await page.reload();

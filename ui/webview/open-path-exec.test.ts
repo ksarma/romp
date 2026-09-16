@@ -35,7 +35,7 @@ const COLOR = { bg: "#123456", fg: "#ffffff" };
 
 type Hooks = {
   vs: unknown[]; up: Array<[unknown, string]>; tabs: Array<[string, string | null]>; views: Array<[string, string | null | undefined]>;
-  tabOpens: boolean; settings: { fileLinkPane: unknown }; framed: boolean; protocol: string; vscodeApi: boolean;
+  tabOpens: boolean; framed: boolean; protocol: string; vscodeApi: boolean;
   activeId: string | null;
 };
 type Api = { openPath: (p: string, sid?: string | null, ev?: unknown) => void; onShellMessage: (m: unknown) => void; panesOn: () => Record<string, boolean> };
@@ -69,7 +69,7 @@ function lift(): (h: Hooks, route: typeof fileLinkRoute) => Api {
 }
 
 function world(over: Partial<Hooks> = {}) {
-  const H: Hooks = { vs: [], up: [], tabs: [], views: [], tabOpens: true, settings: { fileLinkPane: "chat" }, framed: true,
+  const H: Hooks = { vs: [], up: [], tabs: [], views: [], tabOpens: true, framed: true,
     protocol: "http:", vscodeApi: true, activeId: SID, ...over };
   return { H, api: lift()(H, fileLinkRoute) };   // the real ladder (file-route.ts) under the lifted caller
 }
@@ -92,17 +92,17 @@ test("the shell's panes message fills the cache, and a click while the Files pan
   assert.deepEqual(api.panesOn(), { chat: true, timeline: true, fleet: false, feed: true, files: true });
   api.openPath("/repo/notes-api/src/app.py", SID, { mod: false });
   assert.deepEqual(H.views, [], "the viewer here is not opened");
-  assert.deepEqual(H.up, [[{ romp: "viewFile", path: "/repo/notes-api/src/app.py", sid: SID, pane: "pane", identity: { name: "web", color: COLOR }, at: null }, "*"]],
-    "one message up, naming the target pane, with the name and colour the tab strip shows for the session, and the open's target (null: a plain click names no line or heading)");
+  assert.deepEqual(H.up, [[{ romp: "viewFile", path: "/repo/notes-api/src/app.py", sid: SID, pane: "pane", at: null, identity: { name: "web", color: COLOR } }, "*"]],
+    "one message up, naming the target pane, with the name and colour the tab strip shows for the session");
   // the identity is LOOKED UP, never invented: a session only the tab set names sends its name with no colour;
   // a sid neither list names sends null, and the pane falls to the kernel's stub
   api.openPath("/repo/notes-api/README.md", SID_TAB, { mod: false });
-  assert.deepEqual(relayed(H)[1], { romp: "viewFile", path: "/repo/notes-api/README.md", sid: SID_TAB, pane: "pane", identity: { name: "api", color: null }, at: null });
+  assert.deepEqual(relayed(H)[1], { romp: "viewFile", path: "/repo/notes-api/README.md", sid: SID_TAB, pane: "pane", at: null, identity: { name: "api", color: null } });
   api.openPath("/repo/notes-api/README.md", SID_NONE, { mod: false });
-  assert.deepEqual(relayed(H)[2], { romp: "viewFile", path: "/repo/notes-api/README.md", sid: SID_NONE, pane: "pane", identity: null, at: null });
+  assert.deepEqual(relayed(H)[2], { romp: "viewFile", path: "/repo/notes-api/README.md", sid: SID_NONE, pane: "pane", at: null, identity: null });
   // no sid on the click: the active session's, as the in-place open resolves it
   api.openPath("/repo/notes-api/notes.md", null, { mod: false });
-  assert.deepEqual(relayed(H)[3], { romp: "viewFile", path: "/repo/notes-api/notes.md", sid: SID, pane: "pane", identity: { name: "web", color: COLOR }, at: null });
+  assert.deepEqual(relayed(H)[3], { romp: "viewFile", path: "/repo/notes-api/notes.md", sid: SID, pane: "pane", at: null, identity: { name: "web", color: COLOR } });
   assert.deepEqual(H.views, [], "none of them opened here");
 });
 
@@ -127,33 +127,20 @@ test("the cache is replaced WHOLE by each message: a pane the shell stops naming
   assert.equal(H.up.length, 1, "and routes by it");
 });
 
-test("the Files pane off: the setting decides; 'pane' hands the click up (the shell brings the pane forward), anything else opens in place", () => {
-  const { H, api } = world({ settings: { fileLinkPane: "pane" } });
+test("the Files pane off: the click opens in place; the pane coming on screen hands the next click up (T404: no setting)", () => {
+  const { H, api } = world();
   api.onShellMessage(PANES_ON({ chat: true, feed: true, files: false }));
   api.openPath("/repo/notes-api/src/app.py", SID, { mod: false });
-  assert.deepEqual(relayed(H), [{ romp: "viewFile", path: "/repo/notes-api/src/app.py", sid: SID, pane: "pane", identity: { name: "web", color: COLOR }, at: null }]);
-  assert.deepEqual(H.views, []);
-  // the setting is read at CLICK time: flipped back, the next click opens here
-  H.settings.fileLinkPane = "chat";
-  api.openPath("/repo/notes-api/src/app.py", SID, { mod: false });
-  assert.deepEqual(H.views, [["/repo/notes-api/src/app.py", SID]]);
-  H.settings.fileLinkPane = "purple";                      // a foreign stored value is the default
+  assert.deepEqual(H.views, [["/repo/notes-api/src/app.py", SID]], "closed: in place, over the pane you clicked");
+  assert.deepEqual(H.up, []);
   api.openPath("/repo/notes-api/README.md", SID, { mod: false });
   assert.equal(H.views.length, 2);
-  assert.equal(H.up.length, 1, "no further relay");
-  // and an open pane overrides the setting the other way
+  assert.equal(H.up.length, 0, "nothing relayed while the pane is closed");
+  // an open pane takes the click, read at CLICK time
   api.onShellMessage(PANES_ON({ chat: true, files: true }));
-  api.openPath("/repo/notes-api/README.md", SID, { mod: false });
-  assert.equal(H.up.length, 2, "on screen: the pane takes it whatever the setting says");
-  // T317 (upstream's filesAvail, the panes arm's second set): the Files control hidden in the gear leaves the on bit stale, and
-  // the pane setting has no pane to bring forward, so the click opens here; the control back, the pane takes it again
-  api.onShellMessage({ romp: "panes", on: { chat: true, files: true }, avail: { files: false } });
-  api.openPath("/repo/notes-api/README.md", SID, { mod: false });
-  assert.equal(H.up.length, 2, "nothing relayed: no pane to bring forward");
-  assert.equal(H.views.length, 3, "opened here instead");
-  api.onShellMessage({ romp: "panes", on: { chat: true, files: true }, avail: { files: true } });
-  api.openPath("/repo/notes-api/README.md", SID, { mod: false });
-  assert.equal(H.up.length, 3, "the control back: the pane takes it");
+  api.openPath("/repo/notes-api/src/app.py", SID, { mod: false });
+  assert.deepEqual(relayed(H), [{ romp: "viewFile", path: "/repo/notes-api/src/app.py", sid: SID, pane: "pane", at: null, identity: { name: "web", color: COLOR } }]);
+  assert.equal(H.views.length, 2, "not opened here");
 });
 
 test("the gesture is read FIRST: a Cmd/Ctrl- or middle-clicked PDF takes its own tab whichever pane the plain click would have landed in; a blocked tab falls through to the route", () => {
@@ -175,13 +162,13 @@ test("the gesture is read FIRST: a Cmd/Ctrl- or middle-clicked PDF takes its own
   assert.deepEqual(H.views, [["/repo/notes-api/docs/spec.pdf", SID]]);
 });
 
-test("no shell to relay to (standalone /chat) or no web host (VS Code): the cache and the setting never route a click away", () => {
-  const solo = world({ framed: false, settings: { fileLinkPane: "pane" } });
+test("no shell to relay to (standalone /chat) or no web host (VS Code): the cache never routes a click away", () => {
+  const solo = world({ framed: false });
   solo.api.onShellMessage(PANES_ON({ files: true }));
   solo.api.openPath("/repo/notes-api/src/app.py", SID, { mod: false });
-  assert.deepEqual(solo.H.views, [["/repo/notes-api/src/app.py", SID]], "unframed: in place, whatever the cache or setting says");
+  assert.deepEqual(solo.H.views, [["/repo/notes-api/src/app.py", SID]], "unframed: in place, whatever the cache says");
   assert.deepEqual(solo.H.up, []);
-  const code = world({ protocol: "vscode-webview:", settings: { fileLinkPane: "pane" } });
+  const code = world({ protocol: "vscode-webview:" });
   code.api.onShellMessage(PANES_ON({ files: true }));
   code.api.openPath("/repo/notes-api/src/app.py", SID, { mod: false });
   assert.deepEqual(code.H.vs, [{ type: "openFile", path: "/repo/notes-api/src/app.py", id: SID }], "the host editor, by the extension's message");

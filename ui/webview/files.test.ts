@@ -5,7 +5,7 @@
 // inside the listener), and the pane's own open and close-edge functions (openHere, onBodyChange, lifted
 // from files.ts with esbuild at run time, the chat-exact-tail-exec.test.ts idiom) over stubs for the viewer,
 // the store and the shell. The shell's own relay arms run in tests/test_pane_state_broadcast.py and, lifted from
-// kernel.py's landing shell, in the relay case below (this fork's feed route rides beside the Files pane's). Synthetic rows: the notes-api demo world, placeholder sids, TESTHOST for a remote host.
+// kernel.py's landing shell, in the relay case below (a click naming no pane is not the shell's since T404). Synthetic rows: the notes-api demo world, placeholder sids, TESTHOST for a remote host.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -69,8 +69,8 @@ function liftPane(over: Partial<PaneHooks> = {}): { H: PaneHooks; api: PaneApi }
 
 
 test("the pane hosts the shared viewer and takes the shell's relay WHOLE: its own contract, not the default open", () => {
-  // initFileView's second argument replaces the default relay branch — the feed's viaRelay + ack —
-  // for this document; the pane owes the shell no pane restore, it stays up
+  // initFileView's second argument replaces the default relay branch for this document: the relay carries
+  // the session's identity, which the pane caches before opening, and the open enters the Recent list
   assert.match(SRC, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\), \(m\) => \{\n\s*openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\), typeof m\.todoId === "string" \? m\.todoId : null, readAt\(m\.at\)\);\n\}, \{/,
     "…and the link's target the relay carries, validated by the viewer's readAt (it crossed a frame; Slice 6 of plans/markdown-viewer.md; a section rides as its heading arm, so the relay's frag slot is not read here)");
   // …and the third argument is the pane's opener for a link inside the shown file (file-view-links.test.ts pins its shape)
@@ -83,51 +83,38 @@ test("the pane hosts the shared viewer and takes the shell's relay WHOLE: its ow
   // presence first: indexOf's -1 for an ABSENT guard is less than any index, so the ordering check alone
   // stayed green with the dispatch deleted (the 2026-09-03 review)
   assert.ok(relayBranch.indexOf(guard) >= 0, "the dispatch guard is present");
-  assert.ok(relayBranch.indexOf("viaRelay = true;") >= 0, "the feed's arm is present");
-  assert.ok(relayBranch.indexOf(guard) < relayBranch.indexOf("viaRelay = true;"),
-    "a document's own contract takes the message before the feed's arms run");
-  const code = SRC.replace(/^\s*\/\/.*$/gm, "");   // the header names the feed's contract to say the pane has none; the code must not touch it
-  assert.doesNotMatch(code, /viaRelay|viewFileOpened|viewFileClosed|__rompFeedWasOff/, "none of the feed route's restore machinery");
+  assert.ok(relayBranch.indexOf("openFileView(m.path") >= 0, "the default open is present");
+  assert.ok(relayBranch.indexOf(guard) < relayBranch.indexOf("openFileView(m.path"),
+    "a document's own contract takes the message before the default open runs");
   // not a feed consumer: no frame parsing of any kind
   assert.doesNotMatch(SRC, /m\.type === "feed"|feedDelta|userTodoRows|ledgers|\.asks\b|needFullFeed/);
   assert.match(SRC, /vscodeApi\?\.postMessage\(\{ type: "ready" \}\)/, "the ready handshake lifts the shim's hold");
 });
 
-// executed: the relay branch of initFileView's listener, EXTRACTED from file-view.ts (plain JS inside the
-// TS listener, so it runs as written) with the feed's arms — openFileView, viaRelay, the shell ack — stubbed.
-// With onRelay the message is taken whole and the function RETURNS before any of them; without it the feed
-// route runs exactly as before. Deleting the guard turns the first case into the second.
+// executed: the relay branch of initFileView's listener, lifted from file-view.ts (plain JS inside the TS
+// listener, so it runs as written) with openFileView stubbed. With onRelay the message is taken whole and
+// the branch returns before the default open; without it the default open runs exactly as before.
 test("the relay guard, executed: onRelay takes the message and short-circuits the default open", () => {
   const branch = VIEW.split('if (m.romp === "viewFile"')[1].split("} else if")[0];
-  const body = 'var viaRelay = false; (function () { if (m.romp === "viewFile"' + branch + "} })(); return viaRelay;";
+  const body = '(function () { if (m.romp === "viewFile"' + branch + "} })();";
   // readAt (file-view.ts): the receiver's validation of the relay's `at` (Slice 6 of plans/markdown-viewer.md); a stand-in here
   // that passes an object through and refuses the rest, so the branch's call shape is what is under test, not the validator
   const readAt = (x: unknown) => (x && typeof x === "object" ? x : null);
-  const fn = new Function("m", "onRelay", "openFileView", "window", "readAt", body) as
-    (m: unknown, onRelay: ((m: unknown) => void) | undefined, open: (p: string, sid: string | null, opts: unknown) => boolean, w: unknown, readAt: (x: unknown) => unknown) => boolean;
-  const run = (m: unknown, onRelay: ((m: unknown) => void) | undefined, verdict = true) => {
-    const opened: Array<[string, string | null, unknown]> = [], posted: unknown[] = [];
-    const win = { parent: { postMessage: (x: unknown) => posted.push(x) } };   // embedded: parent !== window
-    const viaRelay = fn(m, onRelay, (p, sid, opts) => { opened.push([p, sid, opts]); return verdict; }, win, readAt);
-    return { opened, posted, viaRelay };
+  const fn = new Function("m", "onRelay", "openFileView", "readAt", body) as
+    (m: unknown, onRelay: ((m: unknown) => void) | undefined, open: (p: string, sid: string | null, opts: unknown) => boolean, readAt: (x: unknown) => unknown) => void;
+  const run = (m: unknown, onRelay: ((m: unknown) => void) | undefined) => {
+    const opened: Array<[string, string | null, unknown]> = [];
+    fn(m, onRelay, (p, sid, opts) => { opened.push([p, sid, opts]); return true; }, readAt);
+    return opened;
   };
   const identity = { name: "web", color: { bg: "#123456", fg: "#ffffff" } };
   const msg = { romp: "viewFile", path: "/repo/notes-api/src/app.py", sid: SID, identity };
   const taken: unknown[] = [];
-  const pane = run(msg, (m) => taken.push(m));
-  assert.deepEqual(taken, [msg], "the pane's contract gets the message WHOLE — identity included");
-  assert.deepEqual(pane.opened, [], "the feed's open never runs");
-  assert.equal(pane.viaRelay, false, "…nor its relay flag");
-  assert.deepEqual(pane.posted, [], "…nor its viewFileOpened ack");
-  const feed = run(msg, undefined);
-  assert.deepEqual(feed.opened, [["/repo/notes-api/src/app.py", SID, { at: null }]], "no contract of its own: the feed route opens, with no target");
-  const aimed = run({ ...msg, at: { heading: "results" } }, undefined);
-  assert.deepEqual(aimed.opened, [["/repo/notes-api/src/app.py", SID, { at: { heading: "results" } }]], "…and with the relay's target, read through readAt (C1)");
-  assert.equal(feed.viaRelay, true);
-  assert.deepEqual(feed.posted, [{ romp: "viewFileOpened" }], "and acks the shell so it arms its pane restore");
-  const veto = run(msg, undefined, false);
-  assert.equal(veto.viaRelay, false, "a dirty-edit veto opens nothing and earns no ack");
-  assert.deepEqual(veto.posted, []);
+  assert.deepEqual(run(msg, (m) => taken.push(m)), [], "the default open never runs");
+  assert.deepEqual(taken, [msg], "the pane's contract gets the message WHOLE, identity included");
+  assert.deepEqual(run(msg, undefined), [["/repo/notes-api/src/app.py", SID, { at: null }]], "no contract of its own: the default open, with no target");
+  assert.deepEqual(run({ ...msg, at: { heading: "results" } }, undefined), [["/repo/notes-api/src/app.py", SID, { at: { heading: "results" } }]],
+    "…and with the relay's target, read through readAt (C1)");
   const junk: unknown[] = [];
   run({ romp: "viewFile", path: "" }, (m) => junk.push(m));
   run({ romp: "viewFile", path: 42 }, (m) => junk.push(m));
@@ -263,11 +250,12 @@ test("wired and vocabulary-clean: esbuild entries, no federation import, no flee
   }
 });
 
-// executed: the shell's relay arms, EXTRACTED from kernel.py's landing shell (the file-view.test.ts
-// flag-algebra idiom) and run against a shimmed window/document — a `pane:"pane"` click drives the
-// Files branch and never touches the feed's flags; the same click without `pane` still takes the feed route
-test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane forward and forwards identity; the feed route is untouched", () => {
-  const start = KERNEL.indexOf("if(m.romp==='viewFile'&&m.pane==='pane'){");   // the viewer's pane arm leads the files arms (#1305 as landed, 2026-09-15); the fork's feed route is its else branch
+// executed: the shell's relay arms, EXTRACTED from kernel.py's landing shell and run against a shimmed
+// window/document: a `pane:"pane"` click drives the Files branch and never touches the feed; a click naming
+// no pane (or the retired "feed" value) matches no arm and is not the shell's since T404 (the chat opens those
+// in place; this fork's feed route retired with it, option c, 2026-09-15)
+test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane forward and forwards identity; a click naming no pane is not the shell's", () => {
+  const start = KERNEL.indexOf("if(m.romp==='viewFile'&&m.pane==='pane'){");   // the viewer's pane arm leads the files arms (#1305 as landed, 2026-09-15); the feed route that was its else branch retired with T404 (option c)
   const stop = KERNEL.indexOf("// The dashboard's one id", start);   // the comment after the listener's close (2026-09-09 fold)
   assert.ok(start >= 0 && stop > start, "arm anchors not found — re-anchor this extraction");
   let arms = KERNEL.slice(start, stop).trimEnd();
@@ -286,7 +274,7 @@ test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane fo
       // a loaded page: the pane arms forward at once (a page still loading would hold the message for its load event)
       getElementById: (id: string) => (id in posted ? { contentWindow: { postMessage: (x: unknown) => posted[id].push(x) }, contentDocument: { readyState: "complete" } } : null),
     };
-    const send = (m: unknown) => { armsFn(win, doc, m); return { toggles, tabs, posted, pend: win.__rompFeedWasOffViewPend, from: win.__rompFilesTabFrom }; };
+    const send = (m: unknown) => { armsFn(win, doc, m); return { toggles, tabs, posted, from: win.__rompFilesTabFrom }; };
     return { send, win };
   };
   const run = (m: unknown) => shell().send(m);
@@ -302,15 +290,14 @@ test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane fo
   const fromTodo = run({ romp: "viewFile", pane: "pane", path: "docs/design.md", sid: SID, identity, todoId: "t1" });
   assert.deepEqual(fromTodo.posted["f-files"], [{ romp: "viewFile", path: "docs/design.md", sid: SID, identity, todoId: "t1", at: null, frag: null }]);
   // a todo link's target after its path (Slice 6 of plans/markdown-viewer.md): the forwarder copies `at` WHOLE, whatever
-  // its shape (the receiver validates it, file-view.ts readAt; files.ts hands readAt(m.at) to the open); both forwarders
-  // rebuild the message field by field, so a field not copied is dropped in transit
+  // its shape (the receiver validates it, file-view.ts readAt; files.ts hands readAt(m.at) to the open); the forwarder
+  // rebuilds the message field by field, so a field not copied is dropped in transit
   for (const at of [{ heading: "results" }, { line: 12 }, { offset: 400 }, { bogus: 1 }]) {
     const aimed = run({ romp: "viewFile", pane: "pane", path: "docs/report.md", sid: SID, identity, todoId: "t1", at });
     assert.deepEqual((aimed.posted["f-files"][0] as any).at, at, "the Files branch forwards at " + JSON.stringify(at));
-    const feedAimed = run({ romp: "viewFile", pane: "feed", path: "docs/report.md", sid: SID, at });
-    assert.deepEqual(feedAimed.posted["f-feed"], [{ romp: "viewFile", path: "docs/report.md", sid: SID, at, frag: null }], "the feed branch forwards at too (and upstream's frag slot, null on a click that named none)");
+    const unnamed = run({ romp: "viewFile", path: "docs/report.md", sid: SID, at });
+    assert.deepEqual(unnamed.posted, { "f-files": [], "f-feed": [], "f-chat": [] }, "a click naming no pane forwards nothing, target or not: no arm is its (T404)");
   }
-  assert.equal(pane.pend, undefined, "the feed's was-off stash is never armed by the Files route");
   // MOBILE (one tab at a time): the relay brings the Files tab forward and remembers the tab the click came
   // from; the Files pane's viewer close (files.ts posts filesViewerClosed) puts that tab back, once
   const phone = shell({ mobile: true, tab: "chat" });
@@ -338,13 +325,15 @@ test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane fo
   // no identity on the relay (an older chat bundle): the forward carries null, and files.ts falls to the stub
   const bare = run({ romp: "viewFile", pane: "pane", path: "/repo/notes-api/README.md", sid: SID });
   assert.equal((bare.posted["f-files"][0] as any).identity, null);
-  // the feed route: a click with pane:"feed" (or none) takes the else branch exactly as before
+  // a click naming no pane, or the retired "feed" value (this fork's File links setting, retired with T404, option c,
+  // 2026-09-15): no arm matches, so the shell forwards nothing, switches no tab and toggles no pane; the chat opens those
+  // in place (upstream's rule, kernel.py's pane-arm comment)
   for (const m of [{ romp: "viewFile", pane: "feed", path: "/p", sid: SID }, { romp: "viewFile", path: "/p", sid: SID }]) {
-    const feed = run(m);
-    assert.deepEqual(feed.posted["f-feed"], [{ romp: "viewFile", path: "/p", sid: SID, at: null, frag: null }]);   // the feed arm forwards the target and upstream's frag slot, no identity and no todoId
-    assert.deepEqual(feed.posted["f-files"], []);
-    assert.deepEqual(feed.tabs, ["feed"]);
-    assert.equal(feed.pend, false, "the feed pane was on, so nothing is stashed — but the stash IS written by this route");
+    const none = run(m);
+    assert.deepEqual(none.posted, { "f-files": [], "f-feed": [], "f-chat": [] }, "nothing forwarded for " + JSON.stringify(m));
+    assert.deepEqual(none.tabs, [], "no tab switch");
+    assert.deepEqual(none.toggles, [], "no pane toggle");
+    assert.equal(none.from, undefined, "nothing remembered");
   }
   // the quote-seed forward: the chat frame gets the message whole
   const seed = run({ type: "editorSelection", text: "the auth check", sid: SID, src: "src/app.py:12" });

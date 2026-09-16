@@ -68,9 +68,9 @@ TODO_TARGET = ("A line or a section written after a path in a todo's text or det
                "at its top, with a notice naming the section.")
 RAW_WAIT = ("The Raw view has no sections, so when you read Markdown in Raw the file opens at its top and lands on the "
             "section, or shows the notice, once you click **Rendered**.")
-WAITING = ("click it and the file opens in the Files pane, which comes forward if it was closed; a line or a section "
-           "written after the path (`docs/report.md:12`, `docs/report.md#results`) opens the file at it (for a section, "
-           "once the file is in its Rendered view; see Files).")
+WAITING = ("click it and the file opens in the Files pane when that pane is on screen, and otherwise in a viewer over "
+           "this pane; a line or a section written after the path (`docs/report.md:12`, `docs/report.md#results`) opens "
+           "the file at that place (for a section, once the file is in its Rendered view; see Files).")
 
 
 class TheGuideSaysSo(unittest.TestCase):
@@ -134,7 +134,7 @@ class TheGuideSaysSo(unittest.TestCase):
         raw = _read("docs", "guide.md")
         self.assertIn("The folder under the chat (the session's working directory) opens a\nlisting of that folder by "
                       "the same rule", raw)
-        self.assertIn("otherwise over the feed. Pick a file in the listing and\nit opens where the listing is.", raw)
+        self.assertIn("otherwise over the chat. Pick a file in the listing and\nit opens where the listing is.", raw)
         self.assertLess(raw.index("it opens where the listing is."), raw.index("click one to open it again, and the file"))
 
 
@@ -214,13 +214,13 @@ class TheViewerDoesIt(unittest.TestCase):
         self.assertIn("function linkTodoLinePaths(node: HTMLElement, sid: string | null): void {\n  linkifyUrls(node);\n"
                       "  linkifyPathTokens(node, sid, undefined, { targetSuffix: true });\n}", render)
         self.assertIn("function linkTodoDetailPaths(node: HTMLElement, sid: string | null): void {\n  linkifyUrls(node);\n"
-                      "  linkifyFileUris(node, undefined, undefined, undefined, undefined, sid, true, { targetSuffix: true });\n}", render)
+                      "  linkifyFileUris(node, undefined, undefined, undefined, undefined, undefined, undefined, sid, true, { targetSuffix: true });\n}", render)
         waiting = _read("ui", "webview", "waiting.ts")
         self.assertIn("function linkTodoPaths(node: HTMLElement, sid: string): void {\n  linkifyUrls(node);", waiting)
         self.assertIn("\n  if (!framed) return;\n  linkifyPathTokens(node, sid, undefined, { targetSuffix: true });\n}", waiting)
-        # the shell rebuilds the relay's message field by field, so the target is copied on both branches
+        # the shell rebuilds the relay's message field by field, so the target is copied on the Files branch
         shell = _read("kernel", "kernel.py")
-        self.assertEqual(shell.count("at:m.at||null"), 2, "the Files branch and the feed branch forward the target")
+        self.assertEqual(shell.count("at:m.at||null"), 1, "the Files branch forwards the target (the feed branch retired with T404, 2026-09-15)")
         # the viewer's notice for a section the file does not have
         self.assertIn("noteBar('No section named \"' + shown + '\" in this file.');", self.viewer)
 

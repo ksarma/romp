@@ -52,7 +52,7 @@ class SettingsSectionsTest(unittest.TestCase):
         h = _gear_src()
         where = {
             "general": ["rs-billing", "rs-login-btn", "rs-panes-sec", "rs-pane-timeline", "rs-pane-fleet", "rs-pane-feed", "rs-filesctl",
-                        "rs-filelink", "rs-figurehosts", "rs-filecomments",   # this fork's Files section (the D2 default keeps the three-valued File links setting)
+                        "rs-figurehosts", "rs-filecomments",   # this fork's Files section: figure hosts and file comments
                         "rs-theme", "rs-cmap", "rs-pal", "rs-fileedit", "rs-conserve", "rs-updates"],
             "chat": ["rs-compact", "rs-dense", "rs-chatscheme", "rs-striprows", "rs-cmtmodel", "rs-cmteffort", "rs-cmtfast", "rs-thinksum", "rs-usertodos", "rs-widgets", "rs-swidgets"],   # rs-usertodos: this fork's Waiting on you section
             "feed": ["rs-feedcollapsed"],
@@ -88,7 +88,7 @@ class SettingsSectionsTest(unittest.TestCase):
         # button before the version (T290)
         ge = panes["general"]
         self.assertTrue(ge.index(">Account<") < ge.index("id=rs-login-btn") < ge.index("id=rs-panes-sec") < ge.index("id=rs-pane-feed") < ge.index("id=rs-filesctl")
-                        < ge.index("data-section=files>Files<") < ge.index("id=rs-filelink") < ge.index("id=rs-figurehosts") < ge.index("id=rs-filecomments")   # this fork's Files section, right after Panes
+                        < ge.index("data-section=files>Files<") < ge.index("id=rs-figurehosts") < ge.index("id=rs-filecomments")   # this fork's Files section, right after Panes
                         < ge.index("data-section=appearance>Appearance<") < ge.index("id=rs-theme") < ge.index("id=rs-pal") < ge.index(">Permissions<") < ge.index("id=rs-fileedit")
                         < ge.index(">This machine<") < ge.index("id=rs-conserve") < ge.index("id=rs-updates") < ge.index(">Keyboard shortcuts<"))
         self.assertIn("<b>Allow file editing</b>", ge)
@@ -102,7 +102,7 @@ class SettingsSectionsTest(unittest.TestCase):
                         < ch.index("data-section=statusline"))   # the Status line section follows Tab widgets (T409); the badge and branch checkboxes left Display for it
         for gone in ("id=rs-badge", "id=rs-branch"):
             self.assertNotIn(gone, ch, gone + " left the Chat tab: the Status line section's rows are the controls (T409)")
-        for gone in ("id=rs-activeonly", "id=rs-collapsegaps", ">Sessions pane<", "data-pane=appearance"):   # not rs-filelink: this fork keeps the setting (the D2 default)
+        for gone in ("id=rs-filelink", "File links open in", "id=rs-activeonly", "id=rs-collapsegaps", ">Sessions pane<", "data-pane=appearance"):
             self.assertNotIn(gone, h, gone + " is gone from the gear (T404)")
         de = panes["debug"]
         self.assertTrue(de.index(">Judging bands<") < de.index("id=rs-judges-index") < de.index(">Diagnostics<") < de.index("id=ra-open") < de.index("id=rs-log-open") < de.index("id=rsver"))
@@ -111,29 +111,6 @@ class SettingsSectionsTest(unittest.TestCase):
         # the old Context gauge row is gone: its WHEN is the Context bar widget's option in the Chat tab's Tab widgets section
         self.assertNotIn("id=rs-tabctx", h)
 
-
-    def test_file_links_pane_pref_sits_in_generals_files_section_and_round_trips(self):
-        # "File links open in" (the user 2026-08-20): where a chat file-link click opens on the
-        # web — over the chat you clicked (the default, upstream's design) or in the Feed pane,
-        # so the transcript stays readable while the file is up. Since the tabbed card (T400, T404,
-        # the 2026-09-15 pull-in) the row is a "Files" section of the General pane, right after
-        # Panes, beside the figure hosts and the file comments; render.ts openPath reads the stored value.
-        h = _gear_src()
-        # bounded by the section heads on either side of it in the General pane
-        self.assertTrue(h.index("data-section=files>Files<") < h.index("id=rs-filelink") < h.index("data-section=appearance>Appearance<"))
-        # the default's label names the folder exception (2026-09-07): a folder's listing never covers the
-        # chat, so with this option it opens in the Feed pane (ui/webview/file-route.ts browseRoute)
-        self.assertIn("<option value=chat>The pane you clicked (folders: the Feed pane)</option>", h)
-        self.assertIn("<option value=feed>The Feed pane</option>", h)
-        # the row's description covers the folder click too, and says where the first option sends it
-        self.assertIn("Where a file or folder clicked in the chat opens.", h)
-        self.assertIn("it never covers the chat: with the first option it opens in the Feed pane.", h)
-        # the third value (2026-09-03): the Files pane, the viewer as its own column
-        self.assertIn("<option value=pane>The Files pane</option>", h)
-        # a webview-local pref (the rs-backend route): persisted in romp:settings, no kernel op
-        self.assertIn("s.fileLinkPane = fl.value", h)
-        self.assertIn("fl.value = s.fileLinkPane === 'feed' || s.fileLinkPane === 'pane' ? s.fileLinkPane : 'chat'", h)
-        self.assertIn("fileLinkPane: 'chat'", h)   # the stored default is today's behavior
 
     def test_the_sdk_backend_is_labelled_plain_sdk(self):
         # the backends as the user reads them (T288, the user 2026-09-09): "Claude Code" (the default, no

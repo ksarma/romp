@@ -2758,7 +2758,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   whose roads differ by the second), `warm.parse`, `warm.boot`,
   `producer`, `revive`, `rewind.migration`, `rewind.holds`, `move`,
   `remote-ws`, `federation.push`, `federation.pull`, `federation.ask`,
-  `ask-poll`; `none` means the build ran on a thread with no mark, which
+  `ask-poll`, `todo.lost` (the SDK backend's lost-answer seam, whose landed
+  check parses the transcript), `file-comments` (a file-comments op's
+  thread, whose send's working check can index a restored turn's lazy
+  atoms); `none` means the build ran on a thread with no mark, which
   should not happen: the kernel's thread census (every Thread, Timer and
   pool construction site in the kernel, the judge and the two session
   backends, walked by the ast, and every kernel callback the backends are

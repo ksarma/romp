@@ -3,11 +3,11 @@
 // Raw view at that row; `docs/report.md#nowhere` opens the file and the notice bar names the section it could not
 // find; a bare path opens as it always did. The chat's own code runs the click: render.ts's openPath, openLinkedPath,
 // linkTodoLinePaths and linkTodoDetailPaths and its body delegate's openpath handler, lifted verbatim and transpiled
-// over a prelude that stands in for the chat's module state (its tabs, its settings, its pane set), installed over the
+// over a prelude that stands in for the chat's module state (its tabs, its pane set), installed over the
 // Files pane's real bundle (the shared viewer, the real walk with `targetSuffix`, the real linkTarget, the real
 // fileLinkRoute and openFileClick), the idiom file-view-links-browser.test.ts set for the chat's anchor opener. Two
 // pages: an unframed one, where the route is "here" and the viewer opens in the document, and one inside an iframe of a
-// recording parent, where the File-links preference names the Files pane and the click posts the shell's viewFile relay
+// recording parent, where the Files pane is on screen and the click posts the shell's viewFile relay
 // with `at`. Skips LOUDLY without a playwright browser (CI installs none). Synthetic values only: the notes-api world, a
 // placeholder session id, an invented report.
 import { test } from "node:test";
@@ -55,7 +55,7 @@ function liftRender(name: string): string {
   return RENDER.slice(at, end + 3);
 }
 /** The chat's click over the Files bundle: a prelude for the module state the lifted code reads, then the code itself. The
- *  route and the pane set are read at CLICK time off window.__route and window.__filesOn, so one page runs both routes. */
+ *  pane set is read at CLICK time off window.__filesOn, so one page runs both routes. */
 function chatScript(): string {
   const bodyMap = RENDER.slice(RENDER.indexOf("delegate(document.body, {"), RENDER.indexOf("delegate(tabs, {"));
   const ln = bodyMap.split("\n").find((l) => /^\s*openpath: /.test(l));
@@ -67,11 +67,11 @@ function chatScript(): string {
     `const activeId: string | null = ${JSON.stringify(SID)};`,
     `const sessions = new Map<string, { name: string; color: { bg: string; fg: string } | null }>([[${JSON.stringify(SID)}, { name: "api", color: { bg: "#123456", fg: "#ffffff" } }]]);`,
     "const tabMeta = new Map<string, { name: string; color: { bg: string; fg: string } | null }>();",
-    'const settings = { get fileLinkPane() { return (window as any).__route || "here"; } };',
     "const panesOn: Record<string, boolean> = { get files() { return !!(window as any).__filesOn; } } as any;",
+    "const panesAvail: Record<string, boolean> = {};",
     "const fileLinkRoute = P.fileLinkRoute, openFileClick = P.openFileClick, linkifyUrls = P.linkifyUrls, linkifyPathTokens = P.linkifyPathTokens, linkTarget = P.linkTarget, delegate = P.delegate;",
     // the detail's linker is the transcript's figure pass; its walk is what is under test, so the pass is the walk alone here
-    "const linkifyFileUris = (node: HTMLElement, _a: unknown, _b: unknown, _c: unknown, _d: unknown, sid: string | null, _delegated: boolean, walkOpts?: unknown) => { linkifyPathTokens(node, sid, undefined, walkOpts); };",
+    "const linkifyFileUris = (node: HTMLElement, _a: unknown, _b: unknown, _c: unknown, _d: unknown, _e: unknown, _f: unknown, sid: string | null, _delegated: boolean, walkOpts?: unknown) => { linkifyPathTokens(node, sid, undefined, walkOpts); };",
     liftRender("openPath"), liftRender("openLinkedPath"), liftRender("linkTodoLinePaths"), liftRender("linkTodoDetailPaths"),
     "const openpath: (elx: HTMLElement, ev: Event) => void = " + handler + ";",
     "delegate(document.body, { openpath });",
@@ -203,14 +203,14 @@ test("in a browser: a todo's text links its targets; a heading target opens the 
   });
 });
 
-test("in a browser, framed, with File links set to the Files pane: the click posts the shell's viewFile relay with `at` (a heading, a line, null for a bare path) and opens nothing in place", async (t) => {
+test("in a browser, framed, with the Files pane on screen: the click posts the shell's viewFile relay with `at` (a heading, a line, null for a bare path) and opens nothing in place", async (t) => {
   await inBrowser(t, async (page) => {
     await page.goto("http://romp.test/framed");
     const inner = page.frameLocator("#f-files");
     const frame = page.frame({ url: /\/files$/ });
     assert.ok(frame, "the Files page is framed");
     await frame.waitForFunction(() => !!(window as any).__rompProbe && !!(window as any).__linkLine);
-    await frame.evaluate(() => { (window as any).__route = "pane"; (window as any).__filesOn = true; (window as any).__linkLine("t-line"); });
+    await frame.evaluate(() => { (window as any).__filesOn = true; (window as any).__linkLine("t-line"); });
     assert.deepEqual(await linkInfo(frame, "#t-line .file-uri-link"), EXPECT);
     for (const text of [REL + "#results", REL + ":" + ROW]) await inner.locator("#t-line .file-uri-link", { hasText: text }).click();
     await inner.locator("#t-line .file-uri-link", { hasText: /^docs\/report\.md$/ }).click();

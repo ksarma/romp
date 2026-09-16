@@ -99,8 +99,8 @@ test("the card: the comment popover's size and surface, transient; closes on Esc
 test("open carries the section anchor to the viewer through both routes, and the viewer lands on it", () => {
   // this fork's At (file-view.ts): a line, an offset or a heading through one `at` option, on every route
   assert.match(RENDER, /function openPath\(path: string, sid\?: string \| null, ev\?: MouseEvent \| null, at: At \| null = null\): void \{/);
-  assert.match(RENDER, /window\.parent\.postMessage\(\{ romp: "viewFile", path: p, sid: s, pane: route,\s*\n\s*identity: [^\n]*, at: a \}, "\*"\);/, "the pane route names the target");
-  assert.match(RENDER, /openFileClick\(ev, path, to, relay, at\);/, "…and so does the viewer-here route: one call carries the gesture, the relay (or none) and the target");
+  assert.match(RENDER, /window\.parent\.postMessage\(\{ romp: "viewFile", path, sid: to, pane: "pane", at,\s*\n\s*identity: [^\n]* \}, "\*"\);/, "the pane route names the target");
+  assert.match(RENDER, /\} : undefined, at\);/, "…and so does the viewer-here route: one call carries the gesture, the relay (or none) and the target");
   assert.ok(!RENDER.includes('"fp-open"'), "no card carries an open control (T369 for the file cards, T375 for the last one): the link's own click hands the anchor over, pinned above");
   assert.match(FILEVIEW, /open\?: \(path: string, sid: string \| null, at: At \| null\) => void, at\?: At \| null\): void \{/);
   assert.match(FILEVIEW, /if \(open\) open\(path, sid \?\? null, at \?\? null\); else openFileView\(path, sid, \{ at: at \?\? null \}\);/);

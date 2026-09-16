@@ -196,7 +196,7 @@ class TheGuideSaysSo(unittest.TestCase):
         # tests/test_files_pane.py reads the opening paragraph's folder lines with their hard wraps; nothing here touched them
         self.assertIn("The folder under the chat (the session's working directory) opens a\nlisting of that folder by "
                       "the same rule", self.raw)
-        self.assertIn("otherwise over the feed. Pick a file in the listing and\nit opens where the listing is.", self.raw)
+        self.assertIn("otherwise over the chat. Pick a file in the listing and\nit opens where the listing is.", self.raw)
         # the Edit paragraph's lines before the widened sentence keep their hard wraps byte for byte
         self.assertIn("the panel says when the file changed under you. The session's own track-edit keeps working\n"
                       "throughout. A file with CR or CRLF line endings", self.raw)

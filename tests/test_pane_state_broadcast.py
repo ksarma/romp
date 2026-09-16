@@ -261,14 +261,14 @@ class Broadcast(unittest.TestCase):
             self.assertIn("<iframe id=f-%s " % k, html, "no iframe for pane key %r" % k)
 
     def test_the_files_relay_still_brings_a_closed_pane_forward(self):
-        # the receiving end is unchanged: the setting "pane" on a CLOSED Files pane opens it (idempotent on an
-        # open one, per the guard above) and forwards the click — nothing here touches the feed route's
-        # was-off / ack / restore machinery
+        # the receiving end is unchanged: a viewFile naming the pane on a CLOSED Files pane opens it (idempotent on an
+        # open one, per the guard above) and forwards the click; nothing here touches the feed's browser route (its
+        # was-off flag and browseClosed restore)
         js = km._LANDING_SETTINGS_JS
         head = "if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');"
-        branch = js.split(head)[1].split("else if(m.romp==='viewFile')")[0]
+        branch = js.split(head)[1].split("if(m.romp==='filesViewerClosed')")[0]
         self.assertIn("window.__rompPaneToggle&&window.__rompPaneToggle('files',true)", branch)
-        for tok in ("__rompFeedWasOff", "viewFileOpened", "viewFileClosed"):
+        for tok in ("__rompFeedWasOff", "'f-feed'", "browseClosed"):
             self.assertNotIn(tok, "\n".join(l for l in branch.splitlines() if not l.lstrip().startswith("//")))
 
 
@@ -773,16 +773,12 @@ class RelayArms(unittest.TestCase):
         self.assertEqual(n["tabs"], [])
         self.assertEqual(len(n["files"]), 1, "the forward still happens")
 
-    def test_a_view_file_naming_no_pane_takes_the_feed_route(self):
-        # not this arm's: on this kernel a viewFile naming no pane is the feed route's (the cards-pane preference,
-        # the else branch), which forwards path, sid and the link's place into the feed and switches a phone's tab;
-        # the Files pane hears nothing and the feed, already on, is not toggled
+    def test_a_view_file_naming_no_pane_is_not_relayed(self):
+        # the chat opens in place for "here"; a message with no target is not this arm's and goes nowhere
         n = self.out["noPane"]
         self.assertEqual(n["files"], [])
-        self.assertEqual(n["feed"], [{"romp": "viewFile", "path": "/p", "sid": SID, "at": None, "frag": None}])   # at: the fork's place; frag: T351's section, on the feed arm too
+        self.assertEqual(n["feed"], [])
         self.assertEqual(n["toggles"], [])
-        self.assertEqual(n["tabs"], ["feed"])
-        self.assertEqual(n["from"], "undef", "the Files route's memory is not touched")
 
     def test_a_click_before_the_files_page_has_loaded_is_delivered_on_its_load_once(self):
         # the dashboard just opened (or a phone's hidden iframe boots late): a postMessage into a document whose
@@ -842,7 +838,7 @@ class RelayArms(unittest.TestCase):
     def test_the_feeds_browse_relay_and_the_quote_seed_forward_are_untouched(self):
         b = self.out["browse"]
         self.assertEqual(b["feed"], [{"romp": "browseFiles", "path": "/repo/notes-api", "sid": SID}])
-        self.assertEqual(b["tabs"], [], "the relay switches no tab: the feed's phone switch rides its browseOpened ack (review round 2)")
+        self.assertEqual(b["tabs"], ["feed"], "the feed's browser still switches a phone to the Feed tab")
         self.assertEqual(b["files"], [])
         s = self.out["seed"]
         self.assertEqual(s["chat"], [{"type": "editorSelection", "text": "the auth check", "sid": SID, "src": "src/app.py:12"}])
@@ -925,22 +921,6 @@ class PaneEnabledReader(unittest.TestCase):
         self.assertEqual(out["falsy"], [True, True, True, True])
         self.assertEqual(out["corrupt"], [True, True, True, True])
         self.assertEqual(out["notObject"], [True, True, True, True])
-
-
-
-class Copy(unittest.TestCase):
-    """The setting's help text says the rule: an open Files pane takes file links; the setting decides
-    where they go while it is closed."""
-
-    def test_gear_and_guide_say_the_open_pane_wins(self):
-        ui = os.path.join(os.path.dirname(HERE), "ui", "webview")
-        gear = open(os.path.join(ui, "gear.js")).read()
-        # "both": a file and a folder, since the folder click joined the ladder (2026-09-07)
-        self.assertIn("While the Files pane is open, both open there. When it is closed, a file opens", gear)
-        guide = open(os.path.join(os.path.dirname(HERE), "docs", "guide.md")).read()
-        self.assertIn("While the pane is open, a file\nlink clicked in the chat opens here. When it is closed, the gear's **File\nlinks open in** setting decides where a link opens", guide)
-        settings = open(os.path.join(ui, "settings.ts")).read()
-        self.assertIn("while the Files pane is CLOSED", settings)
 
 
 if __name__ == "__main__":

@@ -39,7 +39,7 @@ type World = {
 function openPathIn(w: World) {
   const hostPosts: Posted[] = [], shellPosts: Posted[] = [], clicks: unknown[][] = [];
   const code = transpile(lift("openPath") + "\nreturn openPath;");
-  const fn = new Function("vscodeApi", "location", "activeId", "fileLinkRoute", "settings", "window", "panesOn", "sessions", "tabMeta", "openFileClick", code) as
+  const fn = new Function("vscodeApi", "location", "activeId", "fileLinkRoute", "window", "panesOn", "panesAvail", "sessions", "tabMeta", "openFileClick", code) as
     (...a: unknown[]) => (path: string, sid?: string | null, ev?: unknown, at?: unknown) => void;
   const parent = { postMessage: (m: Posted, _o: string) => { shellPosts.push(m); } };
   const win: Record<string, unknown> = { parent: w.framed ? parent : null };
@@ -47,7 +47,7 @@ function openPathIn(w: World) {
   hideEdges(win);                                                  // parent non-enumerable (ui/test-dom-shim.ts): a failing assertion over the window dumps primitives, never the cycle
   const openPath = fn(
     { postMessage: (m: Posted) => { hostPosts.push(m); } }, { protocol: w.protocol }, SID,
-    () => w.route, { fileLinkPane: w.route }, win, { files: true },
+    () => w.route, win, { files: true }, {},
     new Map([[SID, { name: "api", color: { bg: "#123456", fg: "#ffffff" } }]]), new Map(),
     (...a: unknown[]) => { clicks.push(a); },
   );
@@ -111,8 +111,8 @@ test("openLinkedPath reads the link's target through linkTarget and hands it to 
     ["/repo/notes-api/docs/report.md", null, null, null],
   ]);
   assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null, e, linkTarget\(a\)\);/);
-  assert.match(RENDER, /openFileClick\(ev, path, to, relay, at\);/);
-  assert.match(RENDER, /identity: meta && meta\.name \? \{ name: meta\.name, color: meta\.color \?\? null \} : null, at: a \}, "\*"\);/);
+  assert.match(RENDER, /\} : undefined, at\);/);
+  assert.match(RENDER, /pane: "pane", at,\n\s*identity: s && s\.name \? \{ name: s\.name, color: s\.color \?\? null \} : null \}, "\*"\);/);
 });
 
 // ── the window stand-in is a projection (ui/test-dom-shim.ts): a failing assertion over it dumps primitives, never a cycle through parent ──

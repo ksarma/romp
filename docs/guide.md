@@ -426,10 +426,10 @@ credential, a pick between two designs. Each row names its session and shows
 how long the todo has waited. Reply sends your answer straight into that
 session, waking it if it has gone quiet; Dismiss clears the todo without a
 reply. A file path in a todo's text or its detail is a link: click it and the
-file opens in the Files pane, which comes forward if it was closed; a line or a
-section written after the path (`docs/report.md:12`, `docs/report.md#results`)
-opens the file at it (for a section, once the file is in its Rendered view; see
-Files). Absolute
+file opens in the Files pane when that pane is on screen, and otherwise in a
+viewer over this pane; a line or a section written after the path
+(`docs/report.md:12`, `docs/report.md#results`) opens the file at that place
+(for a section, once the file is in its Rendered view; see Files). Absolute
 paths, `~/`, `./` and `../` paths and `file://` URIs link as they are; any other
 relative path links only when its last segment has a file extension
 (`notes/plan.md`, not `notes/plan`). A todo that names its file also shows the
@@ -453,13 +453,12 @@ brings them back. The file the todo named is still on disk.
 
 The Files pane holds the file viewer in a column of its own, beside the chat
 and the feed, so an open file covers neither. While the pane is open, a file
-link clicked in the chat opens here. When it is closed, the gear's **File
-links open in** setting decides where a link opens; set it to **The Files
-pane** and the pane comes forward on its own and stays up until you close the
-file; on a phone, closing the file takes you back to the tab you came from.
+link clicked in the chat opens here. When it is closed, a link opens over the
+pane you clicked; there is no setting to decide otherwise, the open pane is the
+rule. On a phone, closing the file takes you back to the tab you came from.
 The folder under the chat (the session's working directory) opens a
-listing of that folder by the same rule: in this pane while it is open or when
-the setting names it, otherwise over the feed. Pick a file in the listing and
+listing of that folder by the same rule: in this pane while it is open,
+otherwise over the chat. Pick a file in the listing and
 it opens where the listing is. The **Directory** row of the **System context** card and
 **Browse files** on a tab's right-click menu open the same listing. Selecting
 a passage in it puts the quote in the chat's composer, as it does from the
