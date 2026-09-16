@@ -21,7 +21,7 @@ const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-down-marker-'));
 after(() => fs.rmSync(stateDir, { recursive: true, force: true }));   // one leaked dir per run otherwise
 process.env.ROMP_STATE_DIR = stateDir;       // baked at require time (STATE_ROOT)
 delete process.env.ROMP_SUPERVISED;
-const { ensureDecision, downMarkerHeld, clearDownMarker, stopTrigger, DOWN_MARKER } =
+const { ensureDecision, downMarkerHeld, clearDownMarker, stopTrigger, DOWN_MARKER, shutdownGrace, SHUTDOWN_GRACE_MS } =
   require(path.join(__dirname, '..', 'bin', 'romp-manager'));
 
 test('the marker lives under the state root as down-by-romp, the path bin/romp and romp-service write', () => {
@@ -79,11 +79,12 @@ function freePorts(n) {
 }
 
 // The escalation cases below run a REAL manager with a stand-in kernel that swallows SIGTERM;
-// ROMP_SHUTDOWN_GRACE_MS shortens the 5s grace so each stays bounded. The stand-in writes its pid to
+// ROMP_SHUTDOWN_GRACE_MS shortens the 8 s grace so each stays bounded (graceEnv: the raw text on the
+// manager's launch environment, '1000' unless a case passes one). The stand-in writes its pid to
 // the ready file once its handler is installed (a SIGTERM before that would simply kill it), so a
 // respawn is told apart from the kernel it replaced. Every wait below is for an EVENT (the manager's
 // exit, a kernel's death, a fresh kernel reporting ready), bounded only by the test's own timeout.
-function stubbornManager(managerPort, servePort) {
+function stubbornManager(managerPort, servePort, graceEnv) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-stubborn-'));
   fs.mkdirSync(path.join(dir, 'state'));
   // the manager's write doors take the serve token (writeGate); the stand-in state root carries one,
@@ -96,7 +97,7 @@ function stubbornManager(managerPort, servePort) {
   const env = Object.assign({}, process.env, {
     ROMP_CLI_SCOPE: '0',
     ROMP_STATE_DIR: path.join(dir, 'state'), ROMP_MANAGER_PORT: String(managerPort), ROMP_SERVE_PORT: String(servePort),
-    ROMP_SERVE_BIN: serve, ROMP_SHUTDOWN_GRACE_MS: '1000', ROMP_TEST_READY: ready,
+    ROMP_SERVE_BIN: serve, ROMP_SHUTDOWN_GRACE_MS: graceEnv === undefined ? '1000' : graceEnv, ROMP_TEST_READY: ready,
   });
   delete env.ROMP_SUPERVISED;
   delete env.ROMP_SERVE_TOKEN;   // the file above is the token; an inherited env value would outrank it
@@ -134,6 +135,47 @@ function stubbornManager(managerPort, servePort) {
   };
   return h;
 }
+
+// The grace's ONE contract (pull-in review round 2, 2026-09-16): the manager used to read
+// ROMP_SHUTDOWN_GRACE_MS through `Number(x) || 8000`, which took an exponent, hex, whitespace, a sign
+// and a leading zero, while `romp down` read a plain decimal from its own shell; a grace in such a form
+// ran the manager past the CLI's poll, and the CLI reported a manager that would not stop. Both readers
+// take a plain whole number of milliseconds, one to nine digits, above zero, and anything else is the
+// 8000 default (bin/romp mirrors the regex).
+test('shutdownGrace: a plain whole number of milliseconds is the grace; an exponent, hex, padded, signed, fractional, zero, empty or ten-digit form is the 8000 default', () => {
+  assert.equal(shutdownGrace('12000'), 12000);
+  assert.equal(shutdownGrace('1'), 1);
+  assert.equal(shutdownGrace('999999999'), 999999999, 'nine digits, the most the contract takes (under setTimeout\'s bound)');
+  for (const [raw, why] of [
+    ['2e4', 'an exponent'], ['1e3', 'an exponent'], ['0x2ee0', 'hex (12000 to Number())'], [' 8000', 'leading whitespace'], ['8000 ', 'trailing whitespace'],
+    ['08000', 'a leading zero'], ['+8000', 'a sign'], ['-8000', 'a negative'], ['8000.5', 'a fraction'], ['8000.0', 'a whole value in fraction form'],
+    ['0', 'zero'], ['', 'empty'], [undefined, 'unset'], ['Infinity', 'a word Number() takes'], ['1000000000', 'ten digits'], ['8_000', 'a separator'],
+  ]) {
+    assert.equal(shutdownGrace(raw), 8000, `${why} (${JSON.stringify(raw)}) falls to the default`);
+  }
+  assert.equal(SHUTDOWN_GRACE_MS, shutdownGrace(process.env.ROMP_SHUTDOWN_GRACE_MS), 'the manager runs with the parsed value of its own environment');
+});
+
+// GET /status carries the grace the manager runs with: the authoritative value `romp down` sizes its
+// poll for the manager's exit from (bin/romp, step 4 of down), so a knob set only where the manager was
+// launched reaches the CLI, and a rejected form reaches it as the default the manager applies, never as
+// the text on the environment.
+test('/status carries manager.shutdownGraceMs: the parsed grace under an accepted form, 8000 under a rejected one', async () => {
+  const [mp, sp, mp2, sp2] = await freePorts(4);
+  const h = stubbornManager(mp, sp);                 // '1000', the escalation cases' grace
+  const h2 = stubbornManager(mp2, sp2, '1e3');       // an exponent: Number() read 1000 here, the contract reads nothing
+  try {
+    await h.readyKernel();
+    const st = JSON.parse((await h.req('/status', 'GET')).body);
+    assert.equal(st.manager.shutdownGraceMs, 1000, JSON.stringify(st));
+    await h2.readyKernel();
+    const st2 = JSON.parse((await h2.req('/status', 'GET')).body);
+    assert.equal(st2.manager.shutdownGraceMs, 8000, JSON.stringify(st2));
+  } finally {
+    h.cleanup();
+    h2.cleanup();
+  }
+});
 
 // shutdownAll's escalation: the manager used to exit 800ms after one SIGTERM, so a kernel that
 // ignored the signal outlived it, still holding its port and its sessions under a `romp down`

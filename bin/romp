@@ -2317,22 +2317,37 @@ PYEOF
         #    for it to leave: the manager answers /stop first and exits once its kernels have left, or
         #    once the grace it grants them (SHUTDOWN_GRACE_MS, 8 s unless ROMP_SHUTDOWN_GRACE_MS says
         #    otherwise, then SIGKILL) plus 200 ms has run out, so the poll's bound is that grace plus a
-        #    margin for the exit. The grace is read the way the manager reads it (a whole number of
-        #    milliseconds above zero, else its 8000 default), the margin is 2 s and the bound at least
-        #    10 s, counted in quarter-second polls, so the real wall time is never under the bound (each
-        #    poll also spawns the control client). The bound used to be 28 polls (7 s) against the 8 s
-        #    grace (raised from 5 s without the poll following), so a kernel that used its exit budget
-        #    made the down report a manager that would not stop, exit 1 and take the marker back
-        #    (pull-in review round 1, 2026-09-16).
+        #    margin for the exit. The grace has ONE authoritative source: the value the manager runs
+        #    with, which its status answer carries (manager.shutdownGraceMs), read off the answer this
+        #    step fetches anyway. Only when the field is absent (a manager from before it carried one)
+        #    or not in shape is the grace read from ROMP_SHUTDOWN_GRACE_MS in THIS shell, with the
+        #    bound then floored at 10 s. Both readers accept one shape, the manager's own contract
+        #    (bin/romp-manager, SHUTDOWN_GRACE_MS): a plain whole number of milliseconds, one to nine
+        #    digits, above zero; any other form (an exponent, hex, a sign, a fraction, whitespace, a
+        #    leading zero) is the manager's 8000 default, here as there. The margin is 2 s, counted in
+        #    quarter-second polls, so the real wall time is never under the bound (each poll also
+        #    spawns the control client). The bound used to be 28 polls (7 s) against the 8 s grace
+        #    (raised from 5 s without the poll following), so a kernel that used its exit budget made
+        #    the down report a manager that would not stop, exit 1 and take the marker back (pull-in
+        #    review round 1, 2026-09-16); then it was sized from this shell's environment alone, which
+        #    a manager started by a bare `romp up` or `--foreground` from a shell that set the knob need
+        #    not share, and the manager's Number() read took forms (2e4, 0x2ee0) this read did not
+        #    (round 2, 2026-09-16). _dn_mpolls also bounds the kernel-drain poll in step 5.
         _dn_mport="${ROMP_MANAGER_PORT:-7432}"
-        _dn_grace="${ROMP_SHUTDOWN_GRACE_MS:-}"
-        if [[ "$_dn_grace" =~ ^[0-9]{1,9}(\.[0-9]+)?$ ]]; then _dn_grace="${_dn_grace%%.*}"; else _dn_grace=""; fi
-        if [[ -z "$_dn_grace" ]] || (( 10#$_dn_grace == 0 )); then _dn_grace=8000; fi
-        _dn_mpolls=$(( (10#$_dn_grace + 2000 + 249) / 250 ))
-        if (( _dn_mpolls < 40 )); then _dn_mpolls=40; fi
-        _dn_mgr=""
-        if "${ROMP_MANAGER_BIN:-romp-manager}" status >/dev/null 2>&1; then
+        _dn_mgr="" _dn_grace=""
+        if _dn_mst="$("${ROMP_MANAGER_BIN:-romp-manager}" status 2>/dev/null)"; then
             _dn_mgr=1
+            _dn_grace="$(DN_ST="$_dn_mst" python3 -c 'import json, os; g = (json.loads(os.environ["DN_ST"]).get("manager") or {}).get("shutdownGraceMs"); print(g if isinstance(g, int) and not isinstance(g, bool) else "")' 2>/dev/null || true)"
+        fi
+        if [[ "$_dn_grace" =~ ^[1-9][0-9]{0,8}$ ]]; then
+            _dn_mpolls=$(( (10#$_dn_grace + 2000 + 249) / 250 ))
+        else
+            _dn_grace="${ROMP_SHUTDOWN_GRACE_MS:-}"
+            [[ "$_dn_grace" =~ ^[1-9][0-9]{0,8}$ ]] || _dn_grace=8000
+            _dn_mpolls=$(( (10#$_dn_grace + 2000 + 249) / 250 ))
+            if (( _dn_mpolls < 40 )); then _dn_mpolls=40; fi
+        fi
+        if [[ -n "$_dn_mgr" ]]; then
             # The stop, with its answer kept. The control client exits 3 when the manager ANSWERED and
             # refused (its write gate: HTTP 401, the manager does not hold the serve token this romp sent,
             # so it runs under another state root or is another romp's, or this romp SENT NONE because it
@@ -2474,10 +2489,20 @@ PYEOF
                 exit 1
             fi
             _dn_kpid="$_dn_cpid"
-            # the poll ends on the event the port closes; its bound is the kernel's own drain (about
-            # 2s in _graceful_term) with room for the exit
+            # the poll ends on the event the port closes; its bound is the manager poll's (_dn_mpolls,
+            # step 4): a kernel's exit budgets (the drain, the checkpoint and assembly writes;
+            # EXIT_GRACE_S in kernel/kernel.py) are shares of the SIGTERM grace it was spawned under,
+            # ROMP_SHUTDOWN_GRACE_MS less 0.5 s, so a manager-spawned kernel may use 7.5 s of an 8 s
+            # grace, and a bare one, with no manager to pass the value down, assumes 5 s; the bound
+            # sized from that grace, with its margin, covers a kernel that uses its whole budget. The
+            # poll used to be a fixed 24 x 0.25 s under a comment that called the drain about 2 s: a
+            # kernel already draining on its parent-death watchdog's thread (its manager gone; the
+            # SIGTERM handler proper holds the accept loop, this road does not) kept answering
+            # /healthz for its whole budget, past the 6 s the poll gave it, and the down reported a
+            # kernel that would not stop, exit 1 and took the marker back (pull-in review round 2,
+            # 2026-09-16)
             if kill -TERM "$_dn_kpid" 2>/dev/null; then
-                for _ in $(seq 1 24); do _dn_kalive || break; sleep 0.25; done
+                for _ in $(seq 1 "$_dn_mpolls"); do _dn_kalive || break; sleep 0.25; done
             fi
             if _dn_kalive; then
                 _romp_down_release "$_dn_state" "$_dn_kport" "" "a kernel still answers on :$_dn_kport (pid $_dn_kpid)"

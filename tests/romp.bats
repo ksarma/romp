@@ -1482,6 +1482,7 @@ MOCK
 # reach a port that could be the machine's own kernel.
 
 start_down_kernel() {   # $1 = the /down reply body; $2 = "" | ignore-term | exit-after-down | refuse-401 | no-pid
+                        #      | hold-term (holds its SIGTERM for 7.5 s on a thread beside the accept loop, then leaves)
                         #      | exit-before-confirm (leaves before answering the second POST /down)
                         #      | exit-before-version (answers every POST /down, leaves before answering GET /version)
                         #      | refuse-second-401 (accepts the first POST /down, answers 401 to every later one)
@@ -1489,7 +1490,7 @@ start_down_kernel() {   # $1 = the /down reply body; $2 = "" | ignore-term | exi
     export ROMP_SERVE_TOKEN="test-token-DO-NOT-USE"
     rm -f "$TEST_DIR/kport" "$TEST_DIR/kpid"
     python3 - "$TEST_DIR" "$ROMP_SERVE_TOKEN" "${2:-}" <<'PY' &
-import http.server, json, os, signal, sys
+import http.server, json, os, signal, sys, threading
 tdir, tok, mode = sys.argv[1], sys.argv[2], sys.argv[3]
 ndown = 0     # POST /down requests so far: the quiesce is the first, the probe's confirmation the second
 def note(line):
@@ -1497,9 +1498,17 @@ def note(line):
         f.write(line + "\n")
 def on_term(signum, frame):
     # the kernel's stop door (the manager's stopKernel sends exactly this): a real kernel drains and
-    # exits; the ignore-term variant records the ask and stays, the way a wedged one would
+    # exits; the ignore-term variant records the ask and stays, the way a wedged one would; hold-term
+    # drains for 7.5 s (a manager-spawned kernel's whole exit budget under the 8 s grace) on a thread
+    # beside the accept loop, so the port keeps answering until the exit, the way a kernel already
+    # draining on its parent-death watchdog's thread does (the SIGTERM handler proper holds the loop,
+    # so a hold on this thread would close the port at once and prove nothing about the poll's bound)
     if mode == "ignore-term":
         note("SIGTERM ignored")
+        return
+    if mode == "hold-term":
+        note("SIGTERM held")
+        threading.Timer(7.5, lambda: os._exit(0)).start()
         return
     note("SIGTERM")
     os._exit(0)
@@ -2089,8 +2098,10 @@ STUB
     # grants them (SHUTDOWN_GRACE_MS, 8 s by default) plus 200 ms has run out; `romp down` polled for it 28
     # times a quarter second, 7 s nominal, a bound from when the grace was 5 s, so a kernel that used its
     # exit budget made the down report a manager that would not stop, exit 1 and take the marker back. The
-    # poll is sized from the grace now, read the way the manager reads it (ROMP_SHUTDOWN_GRACE_MS, else
-    # 8000) plus a 2 s margin, at least 10 s. Driven with a REAL manager under a 12 s grace and a kernel
+    # poll is sized from the grace now, the manager's own word (manager.shutdownGraceMs on the status answer
+    # the down fetches; review round 2: ROMP_SHUTDOWN_GRACE_MS read from the down's shell, floored at 10 s, is
+    # the fallback for a manager without the field) plus a 2 s margin; this shell exports the knob, so the
+    # manager and the fallback read the same value. Driven with a REAL manager under a 12 s grace and a kernel
     # that holds its SIGTERM for 11.5 s and then leaves on its own, just before the SIGKILL: the manager
     # exits about 11.6 s after the stop, past the old bound (about 8.5 s of wall time, the control client's
     # startup on top of each sleep) and inside the new one (56 polls, 14 s nominal).
@@ -2130,6 +2141,87 @@ FAKE
     [ "$status" -ne 0 ]
     MGR_PID=""
     [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]
+}
+
+@test "romp down: the grace set on the manager's launch line alone, never in this shell, sizes the poll, read off the manager's /status" {
+    command -v node >/dev/null 2>&1 || skip "node not available"
+    command -v curl >/dev/null 2>&1 || skip "curl not available"
+    # Pull-in review round 2 (2026-09-16): the round 1 fix read ROMP_SHUTDOWN_GRACE_MS from the down's own shell,
+    # but a manager started by a bare `romp up` or `--foreground` reads it from the shell that launched IT, and
+    # /status carried no grace, so a grace raised only there still made the down report a manager that would
+    # not stop, exit 1 and take the marker back. The manager's status answer carries shutdownGraceMs now, the
+    # value it runs with, and the down sizes its poll from that field; the variable in the down's shell is the
+    # fallback for a manager without the field. Here the knob is on the manager's launch line ALONE, 20 s, and
+    # unset in this shell: a kernel that holds its SIGTERM for 19.5 s and then leaves on its own has the manager
+    # exit about 19.6 s after the stop, past the fallback's bound (40 polls, about 12.5 s of wall time) and
+    # inside the one the field gives (88 polls, 22 s nominal).
+    local bin; bin="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)"
+    unset ROMP_SHUTDOWN_GRACE_MS                     # the down's shell knows nothing of the manager's grace
+    local fake="$TEST_DIR/fake-serve"
+    cat > "$fake" <<'FAKE'
+#!/usr/bin/env bash
+# a kernel that uses most of a 20 s grace: SIGTERM starts a 19.5 s drain, then a clean exit of its own
+sleep 600 & bg=$!
+trap 'kill "$bg" 2>/dev/null; sleep 19.5; exit 0' TERM
+wait "$bg"
+FAKE
+    chmod +x "$fake"
+    local mport kport; free_port mport kport
+    export ROMP_MANAGER_PORT=$mport ROMP_SERVE_PORT=$kport ROMP_KERNEL_PORT=$kport   # the kernel probe goes where the fake serve would listen
+    export ROMP_MANAGER_BIN="$bin/romp-manager"
+    ROMP_SHUTDOWN_GRACE_MS=20000 ROMP_SERVE_BIN="$fake" node "$bin/romp-manager" up >/dev/null 2>&1 &
+    MGR_PID=$!
+    local i st
+    for i in $(seq 1 30); do curl -fsS "http://127.0.0.1:$mport/status" >/dev/null 2>&1 && break; sleep 0.1; done
+    st="$(curl -fsS "http://127.0.0.1:$mport/status")"
+    # the premise: a kernel is up under the manager, the manager's word on its grace is the launch line's, and
+    # this shell holds no copy of it
+    MGR_ST="$st" python3 -c 'import json, os; d = json.loads(os.environ["MGR_ST"]); assert d["kernels"] and d["kernels"][0].get("pid"), d; assert d["manager"]["shutdownGraceMs"] == 20000, d["manager"]'
+    [ -z "${ROMP_SHUTDOWN_GRACE_MS:-}" ]
+    local t0=$SECONDS
+    run run_romp down --now
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"the manager and its kernels are stopping"* ]]
+    run grep -q 'still running' <<< "$output"      # never the false failure
+    [ "$status" -ne 0 ]
+    (( SECONDS - t0 >= 19 ))                        # the down outlasted the kernel's hold: the poll was the manager's grace, not this shell's
+    # the manager is gone: its port answers nothing and the process has exited
+    run curl -fsS "http://127.0.0.1:$mport/status"
+    [ "$status" -ne 0 ]
+    for i in $(seq 1 30); do kill -0 "$MGR_PID" 2>/dev/null || break; sleep 0.1; done
+    run kill -0 "$MGR_PID"
+    [ "$status" -ne 0 ]
+    MGR_PID=""
+    [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]
+}
+
+@test "romp down: a kernel with no manager that drains for its whole budget beside a live accept loop is polled past that budget: exit 0, stopped, the marker kept" {
+    # Pull-in review round 2 (2026-09-16): the round 1 fix sized the manager poll from the grace; the kernel-drain
+    # poll on the direct-SIGTERM road (step 5 of down) still ran a fixed 24 x 0.25 s under a comment that called
+    # the drain about 2 s, while a kernel's exit budgets are shares of ROMP_SHUTDOWN_GRACE_MS (7.5 s of an 8 s
+    # grace). The real SIGTERM handler holds the accept loop, so /healthz stops answering at once and the short
+    # poll ended on that event; a kernel already draining on its parent-death watchdog's thread keeps answering,
+    # so the fake holds its SIGTERM for 7.5 s on a background thread (a main-thread hold would not fail before
+    # the fix). The poll is the manager poll's bound now (no manager here and so no field: the fallback, 40
+    # polls, 10 s nominal); it used to give up at about 6 s and report a kernel that would not stop.
+    start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0.3}' hold-term
+    mock_service 3
+    mock_manager 1
+    unset ROMP_SHUTDOWN_GRACE_MS                      # the bare kernel's road: nothing passed a grace down
+    local kpid; kpid="$(cat "$TEST_DIR/kpid")"
+    local t0=$SECONDS
+    run run_romp down --now
+    [ "$status" -eq 0 ]
+    grep -q '^SIGTERM held$' "$TEST_DIR/kget"            # asked through its own door; the drain ran beside the port
+    [[ "$output" == *"[romp] down: a kernel was running on :$ROMP_KERNEL_PORT (pid $kpid) with no manager; stopped it. \`romp up\` starts it again"* ]]
+    run grep -q 'still running' <<< "$output"          # never the false failure
+    [ "$status" -ne 0 ]
+    (( SECONDS - t0 >= 7 ))                            # the down outlasted the drain: polled past the old 6 s bound
+    kernel_port_closed
+    KERNEL_PID=""
+    [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]         # a real down: the marker stays
+    run grep -q '^/down token=ok {"cancel": true}$' "$TEST_DIR/kreq"   # no release: the stop landed
+    [ "$status" -ne 0 ]
 }
 
 @test "romp down: a kernel with no manager (a bare romp-serve) is stopped through its own door, and the line says so" {

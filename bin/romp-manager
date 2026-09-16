@@ -386,13 +386,26 @@ function restartGate(st, now, opts) {
 const STORM_OPTS = { coalesceMs: RESTART_COALESCE_MS, stormWindowMs: STORM_WINDOW_MS,
   stormMax: STORM_MAX, stormCooldownMs: STORM_COOLDOWN_MS };
 
-// How long a kernel gets to leave on SIGTERM before SIGKILL: a bound on the kernel's own drain (about
-// 2s, _graceful_term in kernel/kernel.py), so one still there at 5s is wedged. The manager used to
-// exit 800ms after one SIGTERM and escalate to nothing, so a kernel that ignored the signal outlived
-// it, keeping its port and its sessions under a `romp down` marker that said otherwise. The env seam
-// is for the unit tests, which cannot sit through 5s.
-const SHUTDOWN_GRACE_MS = Number(process.env.ROMP_SHUTDOWN_GRACE_MS) || 8000;   // 8 s (was 5; the kernel's exit
-// budgets are shares of this value, passed down in specEnv, so a kernel never assumes more grace than it gets)
+// How long a kernel gets to leave on SIGTERM before SIGKILL: 8 s, with ROMP_SHUTDOWN_GRACE_MS overriding it
+// (was 5 s). The kernel's exit budgets (its drain and checkpoint windows, _graceful_term in kernel/kernel.py)
+// are shares of this value, passed down in specEnv, so a kernel never assumes more grace than it gets, and
+// one still there when the grace runs out is wedged. The manager used to exit 800ms after one SIGTERM and
+// escalate to nothing, so a kernel that ignored the signal outlived it, keeping its port and its sessions
+// under a `romp down` marker that said otherwise. The env seam is for the unit tests, which cannot sit
+// through the 8 s, and for an install whose kernels need longer.
+// ONE contract for the value, shared with `romp down`: a plain whole number of milliseconds, one to nine
+// digits, above zero. Any other form (an exponent, hex, a sign, a fraction, whitespace, a leading zero, empty)
+// is the 8000 default, never a Number() coercion. bin/romp sizes its poll for this manager's exit from the
+// value the manager runs with, read off GET /status (manager.shutdownGraceMs), and falls back to reading
+// ROMP_SHUTDOWN_GRACE_MS from its own shell only when the field is absent; the two readers accepting the
+// same shape is what keeps the fallback honest (pull-in review round 2, 2026-09-16: Number() took 2e4 and
+// 0x2ee0 where the CLI's read did not, so a grace in such a form outran the poll). Nine digits also keeps
+// the value under setTimeout's bound (2^31-1 ms; a longer delay fires at once, a SIGKILL right behind the
+// SIGTERM).
+function shutdownGrace(raw) {
+  return /^[1-9][0-9]{0,8}$/.test(raw == null ? '' : String(raw)) ? Number(raw) : 8000;
+}
+const SHUTDOWN_GRACE_MS = shutdownGrace(process.env.ROMP_SHUTDOWN_GRACE_MS);
 
 // SIGTERM a kernel and, when it is still there once the grace has run out, SIGKILL it and say so.
 // Every stop and every restart goes through here: a kernel that ignores its SIGTERM under `romp
@@ -931,7 +944,9 @@ function startManager() {
     if (req.method === 'GET' && url.pathname === '/status') {
       return json(200, {
         ok: true,
-        manager: { pid: process.pid, controlPort: CONTROL_PORT, stale: managerStale() },
+        // shutdownGraceMs: the grace this manager runs with (SHUTDOWN_GRACE_MS, its contract above), the
+        // authoritative value `romp down` sizes its poll for the manager's exit from
+        manager: { pid: process.pid, controlPort: CONTROL_PORT, stale: managerStale(), shutdownGraceMs: SHUTDOWN_GRACE_MS },
         kernels: [...kernels].map(([id, r]) => ({ id, port: r.spec.port, pid: r.child.pid, restarts: r.restarts, upSec: Math.round((Date.now() - r.startedAt) / 1000) })),
       });
     }
@@ -1088,7 +1103,7 @@ module.exports = { restartGate, quietGate, quietTick, loadSpecs, specEnv, fileSt
                    kernelToken, serveToken, readTokenFile, acceptedTokens, mintServeTokenIfAbsent, writeGate, fetchBusy, resetDrainNotices, queueQuietRestart, clearPendingQuiet,
                    staleManagerYields, startManager,
                    retiredCredentialNames, retiredCredentialMessage, exitLine, auditSigterm,
-                   ensureDecision, downMarkerHeld, clearDownMarker, DOWN_MARKER,
+                   ensureDecision, downMarkerHeld, clearDownMarker, DOWN_MARKER, shutdownGrace, SHUTDOWN_GRACE_MS,
                    quietWindowRow, auditQuietWindow,
                    // the SIGTERM wiring, for tests that seed `kernels` with a stand-in child or point
                    // ROMP_SERVE_BIN at a stand-in launcher

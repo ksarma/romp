@@ -1561,8 +1561,10 @@ it run every time:
   no manager, or outlived the manager's SIGTERM) must first be confirmed as
   this romp's: `POST /down` with a wait of 0 under the serve token must answer
   200 naming a pid, and `GET /version` must name the same pid. That pid is
-  sent the manager's own stop signal (SIGTERM) and polled for up to six
-  seconds to leave. Any other answer (a rejected token, a 200 without a pid, a
+  sent the manager's own stop signal (SIGTERM) and polled to leave for the
+  manager poll's bound (the manager's grace read off its status answer plus
+  two seconds, or the fallback floored at ten seconds). Any other answer (a
+  rejected token, a 200 without a pid, a
   pid `GET /version` disagrees with, another HTTP code, no answer) leaves the
   kernel alone: `romp down` releases the hold, removes the marker, appends a
   superseding `down-failed` row to `restart-audit.jsonl`, prints
