@@ -28120,7 +28120,10 @@ EXIT_PRIME_BUDGET_S = float(os.environ.get("ROMP_EXIT_PRIME_BUDGET_S", "%.3f" % 
 EXIT_CKPT_WRITE_BUDGET_S = float(os.environ.get("ROMP_EXIT_CKPT_WRITE_BUDGET_S", "%.3f" % (0.35 * _EXIT_SHARE_S)))   # its fold checkpoint writes
 EXIT_ASM_BUDGET_S = float(os.environ.get("ROMP_EXIT_ASM_BUDGET_S", "%.3f" % (0.20 * _EXIT_SHARE_S)))   # the exit's assembly-document writes, bounded
 EXIT_DRAIN_BUDGET_S = float(os.environ.get("ROMP_EXIT_DRAIN_BUDGET_S", "%.3f" % (0.35 * _EXIT_SHARE_S)))   # the SDK drain (0.1 to 0.9 s measured with session hosts on)
-# the three above plus the 2 s SDK drain stay under the manager's 5 s SIGTERM grace with margin for one slow file:
+# the four budgets above stay under the SIGTERM grace this kernel was spawned with, with margin for one slow file (the 0.5 s
+# above). The manager's grace is 8 s by default (SHUTDOWN_GRACE_MS in bin/romp-manager; ROMP_SHUTDOWN_GRACE_MS overrides it),
+# and the manager passes it through to the kernel it spawns, so the budgets are shares of it; a bare kernel, with no
+# ROMP_SHUTDOWN_GRACE_MS in its environment, keeps its own 5 s assumption (EXIT_GRACE_S above). Why the budgets are bounded:
 # the first exit under the bounded path (2026-09-11, 1:19 PM Pacific) still met the SIGKILL, its checkpoint writes unbounded,
 # and the restart lost its cut row
 
@@ -72451,7 +72454,7 @@ def _drain_and_exit(reason, signum=None, what="SIGTERM", audit=None):
     _phases = {}                          # the exit's phase timings, for the cut row (the restart-path work, 2026-09-11)
     _prime_t0, _primed, _skipped = time.monotonic(), 0, 0
     for _s in _drain_sessions:            # every RESIDENT leaf's folds current, so each leaves a cursor for the next kernel;
-        if time.monotonic() - _prime_t0 > EXIT_PRIME_BUDGET_S:   # bounded: the SDK drain keeps its 2 s under the manager's 5 s grace
+        if time.monotonic() - _prime_t0 > EXIT_PRIME_BUDGET_S:   # bounded: every exit budget is a share of the SIGTERM grace this kernel was spawned with (the manager's 8 s default, ROMP_SHUTDOWN_GRACE_MS overriding it and passed through; a bare kernel assumes 5 s), so the SDK drain's share still fits under the grace
             _skipped += 1; continue
         _primed += 1 if _prime_leaf_folds(_s["path"]) else 0
     if _skipped:
