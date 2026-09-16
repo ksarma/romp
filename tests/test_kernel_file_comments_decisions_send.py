@@ -170,9 +170,10 @@ class TheDecisionsOnlySend(unittest.TestCase):
         km._sdk = lambda: None
         self.injected = []
 
-        def fake_send_or_park(be, sid, text, echo=None, user_todo=None):
-            self.injected.append({"sid": sid, "text": text, "echo": echo, "user_todo": user_todo})
-            return True
+        # the kernel's call shape: _send_or_park(be, sid, body, user=True, user_todo=stamp_tid) in _deliver_todo_reply
+        def fake_send_or_park(be, sid, text, echo=None, qid=None, user=False, paths=None, user_todo=None):
+            self.injected.append({"sid": sid, "text": text, "echo": echo, "user": user, "user_todo": user_todo})
+            return False   # handed over now: the kernel stamps the todo here (True parked, None refused; 2026-09-15)
         km._send_or_park = fake_send_or_park
         self.tid = km._add_user_todo(SID, "Need a look at the findings report", self.fp)
 

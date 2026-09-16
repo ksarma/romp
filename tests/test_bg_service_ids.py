@@ -34,7 +34,8 @@ TASKS = [{"tid": "tu_cmd_1", "type": "shell", "desc": "Build the docs site"},
 class BgServiceIds(unittest.TestCase):
     def setUp(self):
         self._split, self._norm = km._bg_split, km._bg_live_norm
-        km._bg_live_norm = lambda sid, path: list(TASKS)
+        # the fork keeps its liveness hand-off (PLAN2 2c item 3, the C4 variant): the readers call _bg_live_norm(sid, path, live=...)
+        km._bg_live_norm = lambda sid, path, live=None: list(TASKS)
         # the judge's split: the awaited launches and the services, as _bg_split answers it
         km._bg_split = lambda sid, path, tasks: ([t for t in tasks if t["tid"] in ("tu_cmd_1", "tu_agent_1", "")],
                                                  [t for t in tasks if t["tid"] == "tu_svc_1"])
@@ -49,7 +50,8 @@ class BgServiceIds(unittest.TestCase):
     def test_the_status_ships_the_ids_in_every_turn_state(self):
         src = inspect.getsource(km.build_session)
         self.assertIn('"bgServiceIds": _bg_service_ids(sid, sess["path"], live_map),', src, "shipped unconditionally, beside the awaited ids, over the build's own liveness snapshot")
-        self.assertIn('"awaitingTaskIds": (_awaiting_task_ids(sid, sess["path"]) if awaiting_why else []),', src, "the awaited ids still ride a wait only")
+        # the awaited ids read over the fork's live= hand-off (PLAN2 2c item 3); upstream's line carries no live= keyword
+        self.assertIn('"awaitingTaskIds": (_awaiting_task_ids(sid, sess["path"], live=tm) if awaiting_why else []),', src, "the awaited ids still ride a wait only")
 
 
 if __name__ == "__main__":

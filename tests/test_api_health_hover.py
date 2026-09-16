@@ -271,7 +271,7 @@ class OneClock(unittest.TestCase):
         names = ("_sdk_backend", "load_source", "_sdk_import_notice", "_ensure_sdk_on_path", "_model_catalog_boot",
                  "_claude_bin", "_mark_boot", "_sdk_problem")
         saved = {n: getattr(km, n) for n in names}
-        saved_jd = (km.jd._LOGIN_AUTH_ENV_FN, km.jd._USAGE_REFRESH_FN, km.jd._UNPICKED_AUTH_FN)
+        saved_jd = (km.jd._LOGIN_AUTH_ENV_FN, km.jd._USAGE_REFRESH_FN)
         problems = []
         try:
             km._sdk_backend = None
@@ -288,7 +288,7 @@ class OneClock(unittest.TestCase):
         finally:
             for n in names:
                 setattr(km, n, saved[n])
-            km.jd._LOGIN_AUTH_ENV_FN, km.jd._USAGE_REFRESH_FN, km.jd._UNPICKED_AUTH_FN = saved_jd
+            km.jd._LOGIN_AUTH_ENV_FN, km.jd._USAGE_REFRESH_FN = saved_jd
         self.assertEqual(problems, [], "the construction ran clean")
         self.assertNotIn("model catalog boot:", err.getvalue(),
                          "...and so did the catalog leg: no swallowed traceback under the boot's own except (T296b)")

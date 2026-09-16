@@ -186,15 +186,14 @@ class RefusesForeignDriveOps(_ForeignDriveFixture):
         # is typed text for the ops in _TYPED_NAME_OPS (renameSession, forkSession, commentPromote, commentCreate);
         # for compact and sendCommand it is the target, kept in the row under its own key so the row still says
         # which session was addressed, and
-        # a sendCommand's text stays its cmd (review round 8, 2026-09-09). tmux is off, the comment threads' store
-        # empty and the roster clear, so the name resolves to nothing and the unknown refusal answers.
+        # a sendCommand's text stays its cmd (review round 8, 2026-09-09). The comment threads' store is empty
+        # and the roster clear, so the name resolves to nothing and the unknown refusal answers.
         import pathlib
         with tempfile.TemporaryDirectory() as d:
             saved = km.jd.STATE
             km.jd.STATE = pathlib.Path(d)
             try:
-                with mock.patch.object(km._TMUX, "available", lambda: False), \
-                     mock.patch.object(km, "_thread_names", lambda: {}), \
+                with mock.patch.object(km, "_thread_names", lambda: {}), \
                      mock.patch.dict(km._remotes, {}, clear=True):
                     for msg in ({"type": "compact", "name": "web-2"},
                                 {"type": "sendCommand", "name": "web-2", "cmd": "/model opus"},
@@ -245,9 +244,8 @@ class RefusesForeignDriveOps(_ForeignDriveFixture):
             saved = km.jd.STATE
             km.jd.STATE = pathlib.Path(d)
             try:
-                with mock.patch.object(km._TMUX, "available", lambda: False):
-                    for msg in msgs:
-                        self.assertTrue(km._drive(msg, self.client), msg)
+                for msg in msgs:
+                    self.assertTrue(km._drive(msg, self.client), msg)
                 rows = [json.loads(x) for x in (pathlib.Path(d) / "undelivered.jsonl").read_text().splitlines()]
             finally:
                 km.jd.STATE = saved
@@ -335,9 +333,9 @@ class TypedNameOpsClassifyEveryAcceptedOp(_ForeignDriveFixture):
     # `name` is the session ADDRESSED (the timeline keys these by session name): the row's target, never its text
     TARGET = {"compact": "the session to compact", "sendCommand": "the session the command goes to"}
     # every other op the front door accepts: `name` means nothing to its handler, and a refusal keeps none
-    NAMELESS = ("sendMessage", "rewindSend", "rewindDelete", "interrupt", "compactSession", "dismissDialog", "answerAsk",
-                "navAsk", "toggleAsk", "submitAsk", "addCustomAsk", "cancelAsk", "askText", "cancelQueued", "dismissEcho",
-                "apiRetry", "editQueued", "setModel", "setEffort", "setMode", "setFast", "setAuth", "endSession", "moveSession",
+    NAMELESS = ("sendMessage", "rewindSend", "rewindDelete", "interrupt", "compactSession", "answerAsk",
+                "toggleAsk", "submitAsk", "addCustomAsk", "cancelAsk", "askText", "cancelQueued", "dismissEcho",
+                "apiRetry", "setModel", "setEffort", "setMode", "setFast", "setAuth", "endSession", "moveSession",
                 "stopTask", "rewindFiles", "mcpAction", "commentReply", "commentResolve", "commentDelete", "commentSeen",
                 "userTodoAnswer", "userTodoDismiss", "unpinNote", "commentMerge", "askFollowUp")
     # what the front door needs beside `type` to read a message as a drive op: an id for the id ops, nothing for
@@ -464,8 +462,7 @@ class TypedNameOpsClassifyEveryAcceptedOp(_ForeignDriveFixture):
             def rows():
                 return [json.loads(x) for x in records.read_text().splitlines()] if records.exists() else []
             try:
-                with mock.patch.object(km._TMUX, "available", lambda: False), \
-                     mock.patch.object(km, "_thread_names", lambda: {}), \
+                with mock.patch.object(km, "_thread_names", lambda: {}), \
                      mock.patch.dict(km._remotes, {}, clear=True):
                     for op in sorted(accepted):
                         door = self.FRONT_DOOR.get(op) or ({} if op in self.TARGET else {"id": THEIRS})

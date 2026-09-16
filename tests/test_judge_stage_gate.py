@@ -3417,7 +3417,8 @@ class IndexReaders(_Gate):
         jd._judge_ctx.stage_incomplete = False
         self.assertEqual(self._tasks(path), tasks)                       # the hit
         self.assertFalse(jd._judge_ctx.stage_incomplete, "a good read marks nothing")
-        cf.write_text(json.dumps({"key": [[["stale", 1]], ""], "v": 6, "tasks": []}))   # the current version (v6, T252d): only the key is stale
+        cf.write_text(json.dumps({"key": [[["stale", 1]], ""], "capKey": json.loads(cf.read_text()).get("capKey"),   # the current version (v9 with capKey, T358; v6 was T252d) and the
+                                  "v": 9, "tasks": []}))                                                    # published capKey: ONLY the key is stale
         self.assertEqual(self._tasks(path), tasks, "a stale key is a plain miss")
         self.assertFalse(jd._judge_ctx.stage_incomplete)
         cf.unlink()

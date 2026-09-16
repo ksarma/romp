@@ -92,10 +92,14 @@ class CardTime(unittest.TestCase):
             {top: "completed"})
         card = self._card(top)
         self.assertEqual(card["t"], NOW - 600, "card time = COMPLETION (mt), not the 8h-ago mint")
-        self.assertNotIn("trgb", card, "the built card carries no tint (stamped at serialization since 2026-09-07)")
+        # the built card carries the tint again since the 2026-09-15 pull-in: upstream's T368 fold (_feed_fold_card) stamps
+        # trgb per build from the memo entry's _ageT (PLAN2 2c item 4); the fork's _stamp_trgb copy still serves the whole
+        # frame, so the wire check below stays
+        self.assertEqual(card["trgb"], list(km.cm.age_rgb(NOW - card["t"])),
+                         "the recency tint follows completion, not mint")
         wire = next(a for a in json.loads(km._feed_body(km.build_feed(NOW)))["asks"] if a["itemId"] == top)
         self.assertEqual(wire["trgb"], list(km.cm.age_rgb(NOW - card["t"])),
-                         "the recency tint follows completion, not mint (whole frames only; deltas strip it)")
+                         "the whole frame's copy (_stamp_trgb) carries the same tint; deltas strip it")
 
     def test_completed_card_time_ignores_a_no_op_rejudge_touch_of_the_umbrella(self):
         # An hours-old completed card must NOT jump to "moments ago" when a later no-op re-judge re-touches

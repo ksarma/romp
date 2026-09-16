@@ -53,17 +53,22 @@ class DisconnectBanner(unittest.TestCase):
                       'restartAnnounced=0;', js)   # T217: the announced-restart latch spends inside the gate
         self.assertIn('if(!ann)armStale(pendingWhy||"reconnect");', js)
         # the flip as a FRAME too (upstream 2026-09-07): enqueue() follows the dispatch, and the onopen body closes
-        # after it; the fork's ready re-send below sits above both (the resolved shim's order)
+        # after it; upstream's ready re-post below sits above both (the resolved shim's order)
         self.assertIn('try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}\nenqueue({type:"wsup"});}', js)
-        # …and re-sends the bundle's connect handshake, so the kernel's connect push resyncs this socket
-        # at once instead of on the pusher's next cycle (2026-09-02) — ONLY once the bundle has sent its own
-        # and the flush did not just carry it (the 2026-09-03 review: a redial that completed before the
-        # bundle had loaded said `ready` for it, and the frame went to a page with no listener); sent raw so
-        # the shim's re-send never counts as the bundle's (pane-shim-stale.test.ts runs both rules)
-        self.assertIn('if(bundleReady&&!flushedReady)ws.send(JSON.stringify({type:"ready"}));', js)
-        self.assertIn('if(m&&m.type==="ready")bundleReady=true;', js)
+        # ...and re-posts the bundle's OWN ready message (readyMsg, the bytes the bundle sent), so the kernel's connect
+        # push resyncs this socket at once instead of on the pusher's next cycle: ONLY while the bundle has sent its
+        # ready (bundleReady), no caps frame has answered one yet (readyAcked: the kernel's word, sent by the ready arm
+        # alone after its own pushes, that it processed the ready and served the page whole) and the flush did not
+        # just carry it (readyQueued). The fork's raw re-send on every reconnect (2026-09-02, `flushedReady`) retired
+        # for upstream's readyMsg re-post under readyAcked (the 2026-09-15 pull-in; upstream's romp-on/romp#1404,
+        # #1642 and #1724): a redial whose ready a caps frame answered dials with `&reconnect=1` instead and is ready
+        # from the kernel's accept, so the socket carries no second ready for the bundle's listener to double
+        self.assertIn('if(bundleReady&&!readyAcked&&!readyQueued&&readyMsg)ws.send(readyMsg);readyQueued=false;', js)
+        self.assertIn('if(m&&m.type==="ready"){bundleReady=true;readyProto=(m.proto===2?2:1);readyMsg=s;}', js)
+        self.assertIn('if(msg&&msg.type==="caps")readyAcked=true;', js)
         self.assertIn('if(m&&m.type==="ready")readyQueued=true;', js)
         self.assertNotIn('send({type:"ready"});', js, "the unconditional re-send is gone")
+        self.assertNotIn("flushedReady", js, "the fork's per-reconnect re-send went with its latch")
         self.assertNotIn("if(everConnected){location.reload();return;}", js,
                          "the silent auto-reload-on-reconnect is replaced by a reload PROMPT")
         self.assertNotIn("ws.onclose=function(){setTimeout(function(){location.reload();},1500);};", js,

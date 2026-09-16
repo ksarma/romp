@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """The kernel's user-todo slot on a parked send, the ws park arm's look into the backend queue by the copy's id,
 and the cancel paths that carry no copy id, driven through the functions (2026-09-08; re-aimed 2026-09-15 with
-the upstream pull-in): a parked ANSWER carries its todo id as the op's fifth slot (the fourth is the copy's
-press-time id, or None when only a todo rides: _op_qid, _op_todo), the drain hands only a real todo id to the
+the upstream pull-in): a parked ANSWER carries its todo id as the op's seventh slot (the fourth is the copy's
+press-time id, or None when only a todo rides, the fifth the user's word, the sixth the attachment list:
+_op_qid, _op_todo), the drain hands only a real todo id to the
 backend and stamps only the real answers, a park cancel whose id names no parked op looks in the backend queue by
 that id before answering the miss (4e Q4: a fork-only arm riding the fork-only feed hold), an id-less cancel keeps
 the index/body reading in the ws park arm and in SdkSession.unqueue, a feed-button follow-up parks bare, and the
@@ -38,11 +39,10 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 km = load_source("romp_kernel_queuedsends", os.path.join(BIN, "romp-kernel"))
 sbk = load_source("romp_sdk_backend_queuedsends", os.path.join(BIN, "romp_sdk_backend.py"))
 
-# The ACCOUNT gate and the tmux PROMPT HOLD are separate axes (tests/test_kernel_limit_queue.py,
-# tests/test_kernel_parked_ops_liveness.py): off here, as in tests/test_kernel_send_park.py. The stub takes the
-# chat build's `usage=` keyword too, so a build path reaching the limit branch never trips on it.
+# The ACCOUNT gate (_limit_hold, tests/test_kernel_limit_queue.py) is a separate axis from the park and drain paths
+# this module covers: off here, as in tests/test_kernel_send_park.py. The stub takes the chat build's `usage=`
+# keyword too, so a build path reaching the limit branch never trips on it.
 km._limit_hold = lambda sid, usage=None: None
-km._TMUX_PROMPT_HOLD_S = 0.0
 
 SID = "11111111-2222-3333-4444-bbbbbbbbbb22"        # this module's own synthetic sid
 QID = "echo:" + "a" * 32                            # a copy id in the kernel's own echo form (_CLIENT_QID_RE)

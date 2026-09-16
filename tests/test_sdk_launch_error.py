@@ -101,7 +101,9 @@ class MissingDependencyIsReportedForEverySession(unittest.TestCase):
         self.assertIn("romp-sdk-setup", err["text"],
                       "the user needs the command to run, not the name of a python module")
         self.assertNotIn("ModuleNotFoundError", err["text"])
-        self.assertIn("tmux", err["text"], "say what still works — tmux sessions are unaffected")
+        # the tmux clause left this text with that backend on this fork (2026-09-11); upstream's text at the tip still says
+        # tmux sessions are unaffected, a stale claim there. The pin follows the resolved text's remedy clause.
+        self.assertIn("messages are being kept", err["text"], "say what happens to the sends meanwhile")
 
     def test_a_healthy_install_reports_nothing(self):
         self.assertIsNone(_backend(self.state, missing=False).launch_error(SID))
@@ -148,7 +150,8 @@ class VenvBuiltForAnotherInterpreter(unittest.TestCase):
         self.assertIn("ROMP_PYTHON=" + interp, text, "the interpreter is still there: point romp at it")
         self.assertIn("restart", text)
         self.assertNotIn("romp-sdk-setup", text, "one remedy, the one that fits")
-        self.assertIn("tmux", text)
+        # the tmux clause left with that backend on this fork (2026-09-11; upstream's text is stale on it): the sends' fate instead
+        self.assertIn("messages are being kept, not sent", text)
 
     def test_recorded_interpreter_gone_names_the_rebuild(self):
         self._cfg(os.path.join(self.state, "gone", "python3.99"))
@@ -488,7 +491,9 @@ class OneVerdictForEverySurface(unittest.TestCase):
             self.assertNotIn("romp-sdk-setup", text, "the user just ran it")
             self.assertNotIn("3.99", text)
         self.assertTrue(refusal.startswith("Session not created:"))
-        self.assertIn("tmux", card)
+        # the tmux clause left with that backend on this fork (2026-09-11; upstream's text is stale on it): the card's own
+        # remedy clause instead (the refusal above never says what happens to the sends)
+        self.assertIn("messages are being kept, not sent. Restart romp", card)
 
     def test_the_verdict_is_cached_on_the_disk_state_and_the_probe_runs_once_per_state(self):
         self._venv("3.99")

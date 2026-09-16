@@ -212,7 +212,7 @@ class ParkedRules(unittest.TestCase):
     def test_every_hook_event_the_kernel_registers_has_a_neutral_answer(self):
         src = open(os.path.join(BIN, "romp_sdk_backend.py")).read()
         start = src.index("hooks={\"Stop\"")
-        block = src[start:src.index("permission_mode=sess.mode", start)]
+        block = src[start:src.index('permission_mode=shape["mode"]', start)]
         events = set(__import__("re").findall(r'"([A-Z][A-Za-z]+)": \[HookMatcher', block))
         self.assertTrue(events, "the kernel's hook table was found")
         self.assertTrue(events <= set(sh.HOOK_NEUTRAL_OUTPUT), "missing neutral answers: %r" % (events - set(sh.HOOK_NEUTRAL_OUTPUT)))

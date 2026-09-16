@@ -8492,6 +8492,12 @@ class PostalPeerTunnels(unittest.TestCase):
 
     R = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 50001, "bus_port": 50002}
 
+    def tearDown(self):
+        # The flag-off case below sets ROMP_POSTAL_PEERS and never restores it, and _postal_peers_on() reads the
+        # variable at call time: under xdist the stale "0" reached every later module on the same worker (the
+        # remote-identity absorb case notifies the bus only with peers on). Mirrors CheckinMechanics.tearDown.
+        os.environ.pop("ROMP_POSTAL_PEERS", None)
+
     def test_flag_off_keeps_the_reverse_forward(self):
         os.environ["ROMP_POSTAL_PEERS"] = "0"          # peer mode is the DEFAULT now; 0 = legacy scheme
         argv = km._tunnel_argv(dict(self.R))

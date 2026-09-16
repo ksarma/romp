@@ -2,10 +2,12 @@
 """Cards first on a cold kernel (2026-09-12): the first push after a boot sends the feed frame to the feed panes before
 it builds the chat pages and the timeline; a warm kernel takes no extra step. Hermetic: a temp state root, stubbed
 builders, fake clients; no kernel, no sessions."""
+import io
 import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -135,6 +137,88 @@ class FeedFirstColdPush(unittest.TestCase):
         chat_c = self._client("chat")
         km._push([chat_c])
         self.assertEqual(km._wire_stats["feed_first"], 0)
+
+    # This fork's feed pane takes the feed's own itemId deltas (FEED_DELTA_CAP; _send_feed / _feed_delta, no twin upstream), and
+    # every reader of _feed_wire takes [3] as the body minus `now` and [5] as _feed_parts' FOUR parts. Upstream's _feed_first built
+    # the tuple from _delta_parts (the view-delta slot's three-part split) with the whole frame as the body: the `ready` serve
+    # recorded that split as a cap client's base, the pusher's next _feed_delta raised unpacking it, and a feed pane on a cold
+    # kernel heard nothing after its first frame (the pull-in, 2026-09-15; tests/test_feed_focus_served.py is the served twin,
+    # 13 tracebacks in its lab before the fix). The three cases below pin the early pass on the fork's path.
+
+    def _delta_client(self):
+        """A feed pane that announced FEED_DELTA_CAP: records every frame, decoded and raw."""
+        c = {"app": "feed", "alive": True, "sent": {}, "caps": {km.FEED_DELTA_CAP}, "frames": [], "raw": []}
+        def send(s, c=c):
+            c["raw"].append(s); c["frames"].append(json.loads(s)); self.seq.append((c["app"], json.loads(s).get("type")))
+        c["send"] = send
+        return c
+
+    def _wire(self, feed):
+        """The pusher's wire forms for a build, as the send stage makes them (tests/test_feed_delta.py's _wire)."""
+        parts = km._feed_parts(feed); sig = km._feed_sig(parts)
+        body = km._LazyWire(lambda: km._feed_body(feed), km._feed_est(parts), "feed_body")
+        return km._feed_ms_lazy(body, feed.get("now")), sig, parts
+
+    def _renamed(self):
+        feed2 = json.loads(json.dumps(FEED)); feed2["asks"][0]["title"] = "a renamed card"; feed2["buildId"] = 2
+        return feed2
+
+    def _one_build(self):
+        """_cached_feed as the real one behaves while a build stands: the SAME object on every call, so _push's send stage
+        finds the early pass's tuple in _feed_wire and reuses it. The setUp stub copies per call, which makes the send stage
+        re-encode the tuple and hid what the early pass left in it (the three cases below passed on the broken shape with it)."""
+        src = [json.loads(json.dumps(FEED))]
+        km._cached_feed = lambda now, live_map, sig, connect=False: src[0]
+        return src
+
+    def test_the_early_frame_puts_a_delta_client_on_the_forks_feed_delta_path(self):
+        self._one_build()
+        c = self._delta_client()
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            km._push([c], connect=True)
+        self.assertEqual(km._wire_stats["feed_first"], 1)
+        self.assertNotIn("Traceback", err.getvalue(), err.getvalue())
+        w = km._feed_wire
+        self.assertEqual(len(w[5]), 4, "the fork's _feed_parts tuple: cards, ledgers, the rest, its json")
+        self.assertEqual(set(w[5][0]), {"g1"}); self.assertIsNone(w[5][1], "no ledgers on the early frame")
+        self.assertEqual(w[4], km._feed_sig(w[5]), "the signature is the parts' tuple")
+        self.assertEqual([f["type"] for f in c["frames"]], ["feed"], "one full frame; the regular section's re-send dedups")
+        self.assertEqual(c["raw"][0].count('"now"'), 1, "the body is kept minus `now`, so the clock is spliced in once")
+        self.assertIs(c["efeed"], w[5], "the frame the client holds is the delta stream's base")
+        ms, sig, parts = self._wire(self._renamed())            # the next send with a change is a delta, not a raise
+        km._send_feed(c, self._renamed(), ms, sig, parts)
+        self.assertEqual(c["frames"][-1]["type"], "feedDelta")
+        self.assertEqual([a["itemId"] for a in c["frames"][-1]["asks"]], ["g1"])
+
+    def test_a_ready_serve_after_the_early_pass_rebases_a_delta_client_on_the_parts(self):
+        # the `ready` handshake of a pane that dialled during the cold push serves _feed_wire with no build (_send_feed_now)
+        # and records [5] as the client's base: four parts, so the pane's first pusher frame after it is a delta
+        self._one_build()
+        km._push([self._client("feed")])                       # the early pass ran for a legacy pane; _feed_wire is the cold build's
+        self.assertEqual(km._wire_stats["feed_first"], 1)
+        c = self._delta_client()
+        self.assertTrue(km._send_feed_now(c))
+        self.assertIs(c["efeed"], km._feed_wire[5]); self.assertEqual(len(c["efeed"]), 4)
+        self.assertEqual(c["frames"][-1]["type"], "feed")
+        self.assertGreaterEqual(c["frames"][-1]["now"], int(time.time()) - 5, "stamped with the clock as of the serve")
+        ms, sig, parts = self._wire(self._renamed())
+        km._send_feed(c, self._renamed(), ms, sig, parts)
+        self.assertEqual(c["frames"][-1]["type"], "feedDelta")
+        self.assertEqual([a["itemId"] for a in c["frames"][-1]["asks"]], ["g1"])
+
+    def test_the_pushers_next_cycle_sends_a_delta_client_a_delta_not_a_traceback(self):
+        # the failure's shape in the lab: every pusher send to the pane after the early frame raised inside _feed_delta
+        # (`not enough values to unpack (expected 4, got 3)`), caught per client and written to stderr, so the pane's frames
+        # simply stopped. Here the build changes between two pushes and the second must reach the pane as a feedDelta.
+        src = self._one_build()
+        c = self._delta_client()
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            km._push([c], connect=True)
+            src[0] = dict(FEED, asks=[dict(FEED["asks"][0], title="a renamed card"), {"itemId": "g2", "sid": S2, "title": "another"}])
+            km._push([c])
+        self.assertNotIn("Traceback", err.getvalue(), err.getvalue())
+        self.assertEqual([f["type"] for f in c["frames"]], ["feed", "feedDelta"])
+        self.assertEqual(sorted(a["itemId"] for a in c["frames"][-1]["asks"]), ["g1", "g2"])
 
     def test_the_early_pass_precedes_the_chat_section_in_the_source(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()

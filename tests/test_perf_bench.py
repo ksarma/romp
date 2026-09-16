@@ -1307,7 +1307,7 @@ class CycleScopeParity(unittest.TestCase):
         self.pusher_try = body.split("\n    try:\n", 1)[1].split("\n    finally:\n", 1)[0]
         self.pusher_finally = body.split("\n    finally:\n", 1)[1].split("\n\n\n", 1)[0]
         tool = Path(TOOL).read_text()
-        self.scope = tool.split("\n    def scope(tmux):", 1)[1].split("\n    def unscope():", 1)[0]
+        self.scope = tool.split("\n    def scope(live_map):", 1)[1].split("\n    def unscope():", 1)[0]
         self.unscope = tool.split("\n    def unscope():", 1)[1].split("\n    def new_cycle():", 1)[0]
         self.new_cycle = tool.split("\n    def new_cycle():", 1)[1].split("\n    def ", 1)[0]
 

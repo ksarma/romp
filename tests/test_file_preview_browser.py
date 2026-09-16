@@ -342,7 +342,10 @@ class ServedFilePreview(unittest.TestCase):
             self.assertEqual((sec["title"], sec["sub"]), ("guide.md", "#fold-rules"))
             self.assertIn("fp-section", sec["kind"]); self.assertIn("A fold keeps the summary", sec["text"])
             self.assertNotIn("intro paragraph", sec["text"], "the section alone"); self.assertNotIn("after the fold rules", sec["text"])
-            self.assertIn("Glossary", sec["text"]); self.assertNotIn("[[", sec["text"], "the wikilink rendered as its text")
+            # ruling 14 (one grammar, the 2026-09-15 pull-in): the preview card renders through md-config.ts, whose decision 2
+            # shows an unresolved wikilink outside a file document as a dead span KEEPING its brackets; upstream's md-wiki.ts
+            # (the twin, which rendered [[Glossary]] as its plain text) is in the tree and unreferenced
+            self.assertIn("[[Glossary]]", sec["text"], "the wikilink rendered as a dead span with its brackets (md-config.ts decision 2)")
             self.assertIn("md-callout-title", sec["html"], "the callout's label rendered (md-config.ts, the one grammar: CALLOUT_TITLE_CLASS; md-wiki.ts is unreferenced)")
             # latency (the acceptance, the user 2026-09-11): the guide was warmed on the pusher's path so its slice is a hit,
             # and a cached markdown slice renders well inside the near-instant band; the cold one (its time rewritten after

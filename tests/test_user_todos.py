@@ -1861,7 +1861,10 @@ class LostAnswerReopens(_StoreSandbox):
         # the callback must ride CONSTRUCTION (the boot reseed fires drop marks from __init__,
         # before any post-construction attribute assignment could arm it)
         src = inspect.getsource(km._sdk_locked)
-        self.assertIn("todo_lost=_user_todo_answer_lost", src)
+        # Re-pinned 2026-09-15 (the pull-in): the hand-off wears the thread's default stage mark, as push_session's does
+        # (upstream's T401 (5a) census: _user_todo_answer_lost parses the transcript on the backend's own thread, so the
+        # mark rides the hand-off, not a decorator on the def). What the text pins is unchanged: the wire is construction-time.
+        self.assertIn('todo_lost=_stage_default("todo.lost")(_user_todo_answer_lost)', src)
 
     def test_a_sid_outside_the_48h_window_still_gets_the_landed_check(self):
         # round 3: the check resolved its session via _sessions(now) — discover's DEFAULT 48h

@@ -171,10 +171,13 @@ class KernelWiring(unittest.TestCase):
         # pick as a literal prompt, while the chat statusline's setModel op landed it (review find, 2026-09-11).
         # The vouch is the OWNING backend's: the same text on an SDK sid stays the CLI's, verbatim.
         cx = FakeBackend(); cx._owned = {"sid-codex"}
-        saved, saved_name, saved_sid_of = km._codex, km._name_of, km._sid_of
+        saved, saved_name, saved_sid_of, saved_resolve = km._codex, km._name_of, km._sid_of, km._resolve_sid
         km._codex = lambda: cx
         km._name_of = lambda sid: "web"
         km._sid_of = lambda who: "sid-codex" if who == "web" else who   # the lane menu keys its ops by session NAME
+        # the fork's by-name door (E1): _drive resolves a by-name op through _resolve_sid(named, door=True), never _sid_of;
+        # the tuple is (sid, live, store_unreadable)
+        km._resolve_sid = lambda named, door=False: ("sid-codex", None, False) if named == "web" else (None, None, False)
         try:
             self.assertTrue(self._route({"type": "sendCommand", "name": "web", "cmd": "/model gpt-5-test"}))
             self.assertTrue(self._route({"type": "sendMessage", "id": "sid-codex", "text": "/model gpt-5-test"}))
@@ -185,7 +188,7 @@ class KernelWiring(unittest.TestCase):
             self.assertEqual(self.be.calls, [("send", "sid-sdk", "/model gpt-5-test")],
                              "an SDK session's gpt-… is not its vocabulary: the CLI answers it, as before")
         finally:
-            km._codex, km._name_of, km._sid_of = saved, saved_name, saved_sid_of
+            km._codex, km._name_of, km._sid_of, km._resolve_sid = saved, saved_name, saved_sid_of, saved_resolve
             km._model_switch_pending.pop("sid-codex", None)       # the pick's switching-dots stamp — don't leak it
 
     def test_a_dead_codex_lanes_model_pick_is_refused_to_the_client_not_on_stderr_alone(self):

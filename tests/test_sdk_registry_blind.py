@@ -92,6 +92,20 @@ def _name(sid, name="web"):
     (jd.NAMES / sid).write_text(name + "\t/tmp\t\t\n")
 
 
+def _door_name(sid, name="web"):
+    """The same names entry where the client doors read it. kernel.py binds NAMES at import (`NAMES = jd.STATE /
+    "names"`), so _Root's jd._rebind_state moves jd.NAMES under the test root and leaves _names_parts (the routes'
+    _resolve_sid and _kernel_knows) reading the import-time registry, while the blindness check (_sdk_records_blind)
+    reads jd.NAMES, which _name serves. The fork's by-name doors (_control_target's gate, the fork's PR 433, kept
+    beside upstream's unowned route in the 2026-09-15 pull-in) refuse a sid the kernel does not know with a 404
+    before the route reaches _UNOWNED.send, so a send case that wants upstream's ok:false refusal registers the sid
+    here too. Returns the path: the caller unlinks it, since this registry outlives the test root."""
+    km.NAMES.mkdir(parents=True, exist_ok=True)
+    p = km.NAMES / sid
+    p.write_text(name + "\t/tmp\t\t\n")
+    return p
+
+
 def _marker_write(sid, t=NOW - 50, by="other"):
     """A death marker another road or process wrote (a REAL file, never a stub of _death_stamp_due)."""
     gd = jd.STATE / "gone"; gd.mkdir(parents=True, exist_ok=True)
@@ -700,12 +714,14 @@ class MetaCommandRefused(_Root):
         self.assertNotIn(SID, km._model_switch_pending, "no switching dots on a dead lane")
 
     def test_the_lane_menus_command_op_refuses_the_same_way(self):
-        saved = km._sid_of
-        km._sid_of = lambda who: SID if who == "web" else who      # the lane menu keys its ops by session NAME
+        saved = km._resolve_sid
+        # the lane menu keys its ops by session NAME; the fork's WS door resolves it through the doors' read
+        # (_resolve_sid(named, door=True), the fork's PR 433; a 3-tuple since the tmux backend's removal), not _sid_of
+        km._resolve_sid = lambda who, door=False: (SID, None, False) if who == "web" else (who, None, False)
         try:
             warns = self._drive({"type": "sendCommand", "name": "web", "cmd": "/effort high"})
         finally:
-            km._sid_of = saved
+            km._resolve_sid = saved
         self.assertTrue(warns and "not delivered" in warns[0]["text"], warns)
         self.assertEqual(km._pending_ops, {})
 
@@ -761,6 +777,7 @@ class SendRouteRefuses(_Root):
 
     def test_post_send_answers_a_refusal_as_ok_false_with_the_reason(self):
         _name(SID)                                   # a names-only sid: no backend owns it
+        self.addCleanup(_door_name(SID).unlink, missing_ok=True)   # ...and the kernel's doors know it (the fork's E1 gate)
         saved = km.Sessions.__dict__["backend_for"]
         km.Sessions.backend_for = staticmethod(lambda sid: km._UNOWNED)
         try:
@@ -775,6 +792,7 @@ class SendRouteRefuses(_Root):
 
     def test_post_send_refuses_each_meta_command_by_sid_and_by_name(self):
         _name(SID)
+        self.addCleanup(_door_name(SID).unlink, missing_ok=True)   # the kernel's doors know the sid (the fork's E1 gate)
         saved = (km.Sessions.__dict__["backend_for"], dict(km._pending_ops), dict(km._model_switch_pending))
         km.Sessions.backend_for = staticmethod(lambda sid: km._UNOWNED)
         km._pending_ops.clear(); km._model_switch_pending.clear()
@@ -785,8 +803,11 @@ class SendRouteRefuses(_Root):
                     self.assertEqual((code, resp.get("ok")), (200, False), (text, resp))
                     self.assertIn("the command was not delivered", resp["error"])
                 code, resp = self._post("/send", {"name": "ghost", "text": "/model opus"})   # a name no live session answers to
-            self.assertEqual((code, resp.get("ok")), (200, False), resp)
-            self.assertIn("ghost", resp["error"])
+            # the fork's by-name door (_control_target's gate, the fork's PR 433, kept beside upstream's unowned route in the
+            # 2026-09-15 pull-in) refuses a name the kernel does not know as a 404 naming it, before the route reaches
+            # _UNOWNED.send; upstream's gate-less route answered this case 200 ok:false with the name in the error
+            self.assertEqual((code, resp.get("ok")), (404, False), resp)
+            self.assertIn("no live session named 'ghost'", resp["error"])
             self.assertEqual(km._pending_ops, {}, "nothing parked for the dead lane")
             self.assertEqual(km._model_switch_pending, {}, "no switching dots stamped")
         finally:

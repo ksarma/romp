@@ -17,9 +17,11 @@ ROMP_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 # A throwaway clone the REAL install.sh can run from, at $1: install.sh reads the clone it lives in,
 # so a copy of it there, next to a bin/romp it can see, installs THAT clone — and the links it writes
 # name that clone's vendor/track-changents/. vendor/ is a symlink to the real one (never a copy: the
-# uninstaller must not write under vendor/, and this would show it). Never the repo copy of either
-# script: romp-uninstall tears down the login service and kills the manager of the clone it lives
-# in, and that would be the developer's live romp (it was, 2026-07-27).
+# uninstaller must not write under vendor/, and this would show it). bin/romp-serve is a link too:
+# install.sh's preflight runs `bin/romp-serve --print-python` (the issue 1600 python floor) and links
+# nothing when that stops, and romp-serve resolves its own symlink back to the real clone before the
+# pick. Never the repo copy of either script: romp-uninstall tears down the login service and kills
+# the manager of the clone it lives in, and that would be the developer's live romp (it was, 2026-07-27).
 throwaway_clone() {
     local clone="$1"
     mkdir -p "$clone/bin" "$clone/vscode-extension"
@@ -27,6 +29,7 @@ throwaway_clone() {
     cp "$ROMP_DIR/bin/romp-uninstall" "$clone/bin/romp-uninstall"
     chmod +x "$clone/install.sh" "$clone/bin/romp-uninstall"
     ln -s "$ROMP_DIR/bin/romp" "$clone/bin/romp"
+    ln -s "$ROMP_DIR/bin/romp-serve" "$clone/bin/romp-serve"
     ln -s "$ROMP_DIR/vendor" "$clone/vendor"
     cat > "$clone/bin/romp-service" <<EOF
 #!/usr/bin/env bash

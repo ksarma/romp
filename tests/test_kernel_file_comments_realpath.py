@@ -189,9 +189,10 @@ class TheSendThroughTheLink(_LinkedWorld):
         km._sdk = lambda: None
         self.injected = []
 
-        def fake_send_or_park(be, sid, text, echo=None, user_todo=None):
-            self.injected.append({"sid": sid, "text": text, "user_todo": user_todo})
-            return True
+        # the kernel's call shape: _send_or_park(be, sid, body, user=True, user_todo=stamp_tid) in _deliver_todo_reply
+        def fake_send_or_park(be, sid, text, echo=None, qid=None, user=False, paths=None, user_todo=None):
+            self.injected.append({"sid": sid, "text": text, "user": user, "user_todo": user_todo})
+            return True    # parked (upstream's contract); this send carries no todo, the case reads the body and the log only
         km._send_or_park = fake_send_or_park
 
     def tearDown(self):

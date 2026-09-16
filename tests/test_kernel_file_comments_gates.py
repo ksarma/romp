@@ -114,10 +114,11 @@ class _World(unittest.TestCase):
         self._saved2 = (km._name_of, km._sdk, km._send_or_park)
         km._name_of = lambda sid: "web" if sid == SID else None
         km._sdk = lambda: None
-        self.injected, self.send_result = [], True
+        self.injected, self.send_result = [], False      # False: handed over now (True parked, None refused; 2026-09-15)
 
-        def fake_send_or_park(be, sid, text, echo=None, user_todo=None):
-            self.injected.append({"sid": sid, "text": text, "echo": echo, "user_todo": user_todo})
+        # the kernel's call shape: _send_or_park(be, sid, body, user=True, user_todo=stamp_tid) in _deliver_todo_reply
+        def fake_send_or_park(be, sid, text, echo=None, qid=None, user=False, paths=None, user_todo=None):
+            self.injected.append({"sid": sid, "text": text, "echo": echo, "user": user, "user_todo": user_todo})
             return self.send_result
         km._send_or_park = fake_send_or_park
         self.tid = km._add_user_todo(SID, "Need a look at the findings report", self.fp)

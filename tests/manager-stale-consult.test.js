@@ -30,6 +30,7 @@ function inChild(script, extraEnv) {
   const root = tmpRoot('romp-mgr-stale-child-');
   const env = Object.assign({}, process.env, { ROMP_STATE_DIR: root, ROMP_SERVE_PORT: '1', ROMP_MANAGER_PORT: '1', ROMP_SUPERVISED: '1' }, extraEnv || {});
   delete env.XDG_STATE_HOME;
+  delete env.ROMP_SERVE_TOKEN;   // an inherited env token would outrank the file the manager mints and the child reads back (as tests/manager-down.test.js does)
   const r = spawnSync(process.execPath, ['-e', script], { env, encoding: 'utf8', timeout: 20000 });
   return { root, status: r.status, stderr: r.stderr, stdout: r.stdout, rows: auditRows(root) };
 }
@@ -55,9 +56,13 @@ test('a stale supervised manager asked to restart one kernel (/restart) exits fo
     const m = require(COPY);
     ${standIn}
     m.startManager();
+    // The fork's manager gates every non-GET door behind the serve token (PR 685's writeGate in bin/romp-manager, the
+    // X-Romp-Token header; upstream's manager has no such gate): startManager mints <ROMP_STATE_DIR>/serve-token when
+    // none is there, so read it back and present it, as tests/manager-down.test.js does with its stand-in token.
+    const token = fs.readFileSync(path.join(process.env.ROMP_STATE_DIR, 'serve-token'), 'utf8').trim();
     const http = require('http');
     setTimeout(() => {
-      const req = http.request({ host: '127.0.0.1', port: ${port}, method: 'POST', path: '/restart?kernel=main' }, (res) => {
+      const req = http.request({ host: '127.0.0.1', port: ${port}, method: 'POST', path: '/restart?kernel=main', headers: { 'X-Romp-Token': token } }, (res) => {
         let body = ''; res.on('data', (c) => body += c); res.on('end', () => fs.writeFileSync(path.join(process.env.ROMP_STATE_DIR, 'verdict.json'), body));
       });
       req.on('error', (e) => { fs.writeFileSync(path.join(process.env.ROMP_STATE_DIR, 'verdict.json'), JSON.stringify({ error: String(e) })); process.exit(4); });

@@ -159,8 +159,10 @@ class JudgeSettings(unittest.TestCase):
 
     def test_ws_handlers_exist(self):
         ksrc = inspect.getsource(km)
-        for t in ("setJudgeModel", "setIndexModel", "setJudgeEffort", "setIndexEffort", "setJudgeFast"):
+        for t in ("setJudgeModel", "setIndexModel", "setJudgeEffort", "setIndexEffort"):
             self.assertIn('msg.get("type") == "%s"' % t, ksrc)
+        # the fork's setJudgeFast handler sits in upstream's per-tier tuple since the 2026-09-15 pull-in (T300: one Fast box per tier)
+        self.assertIn('msg.get("type") in ("setJudgeFast", "setDistillFast", "setIndexFast")', ksrc)
 
     # ---- fast judging: the toggle's setter, read through the judge (the argv, /version and socket-op cases are
     # FastJudging's below, the kernel setting's own class since upstream's #1292 landed) ----

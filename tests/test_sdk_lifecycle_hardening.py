@@ -50,6 +50,14 @@ def _backend(d=None):
     return sb.SdkBackend(d or tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None)
 
 
+def _hosts_off(state_dir):
+    """A test that runs the real connect loop with a stand-in client drives the plain-child road: hosts OFF explicitly,
+    since they are on by default (T348) and a bare state dir would send the connect to a real host spawn (and upstream's
+    hook-timeout loop under session_hosts_on() would set .timeout on the dict HookMatcher stand-in)."""
+    os.makedirs(state_dir, exist_ok=True)
+    open(os.path.join(state_dir, "session-hosts"), "w").write("off")
+
+
 def _pid_max() -> int:
     """Fake pids above this can never be a live process on the box (T276c) — the reaper's liveness poll and
     os.getpgid then answer deterministically for them on every runner."""
@@ -2012,6 +2020,7 @@ class CrashHeal(unittest.TestCase):
         saved = sys.modules.get("claude_agent_sdk")
         sys.modules["claude_agent_sdk"] = fake
         d = tempfile.mkdtemp()
+        _hosts_off(d)                                       # hosts are on by default (T348): the plain-child road with the stand-in client
         try:
             be = _backend(d)
             be.cli_scope = True     # set after construction, so the settle probe never spawns systemd-run
@@ -2318,6 +2327,7 @@ class CrashHeal(unittest.TestCase):
                 sys.modules["claude_agent_sdk"] = saved
 
     def _session_for_amain(self, d, be):
+        _hosts_off(d)                                   # hosts are on by default (T348): the plain-child road with the stand-in client
         reg = {"sid": self.SID, "name": "web", "mode": "acceptEdits", "alive": True, "cwd": d}
         sb.write_reg(Path(d), self.SID, reg)
         return sb.SdkSession(be, dict(reg))

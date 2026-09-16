@@ -99,6 +99,14 @@ SID = "11111111-2222-3333-4444-aaaaaaaaaa11"        # this module's own syntheti
 FSID = "11111111-2222-3333-4444-ffffffffff11"       # the CLI's own session id, announced by the init
 
 
+def _hosts_off(state_dir):
+    """A class that drives the connect loop with a fake client tests the plain-child road: hosts OFF explicitly, since
+    they are on by default (T348) and a bare state dir would send the connect to a real host spawn (and upstream's
+    hook-timeout loop under session_hosts_on() would set .timeout on this module's dict HookMatcher stand-in)."""
+    os.makedirs(state_dir, exist_ok=True)
+    open(os.path.join(state_dir, "session-hosts"), "w").write("off")
+
+
 # ---- message doubles: the SDK's shapes, by class name (msg_to_atom / _on_message key on them) ----
 class _TextBlock:
     def __init__(self, text): self.text = text
@@ -220,6 +228,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self._saved_refresh = sb.SdkSession._do_refresh_usage
         sb.SdkSession._do_refresh_usage = _noop_refresh
         self.state = tempfile.mkdtemp()
+        _hosts_off(self.state)                                  # hosts are on by default (T348): this class drives the plain-child road with a fake client
         self.cwd = os.path.join(self.state, "proj")
         os.makedirs(self.cwd)
         self.lines = []
@@ -1396,33 +1405,39 @@ class QueueEntryWire(unittest.TestCase):
 
 
 class TheKernelCarriesTheTodoAndTheQid(unittest.TestCase):
-    def test_backend_send_passes_the_todo_to_a_backend_that_keeps_it_and_the_qid_to_one_whose_send_takes_it(self):
-        """_backend_send(be, sid, text, user_todo=None, qid=None): a user-todo ANSWER's id rides as user_todo= to a
-        backend that declares queue_carries_todos; the copy's own id rides as qid= only to a backend whose send
-        SIGNATURE names the parameter (_takes_qid, upstream's #1224 gate: a flag beside it is not the gate); a
-        plain two-argument send gets the text alone. The qid half's twin is tests/test_queued_copy_press_id.py::
-        ParkedSendCarriesItsPressId::
-        test_handed_over_now_the_id_reaches_a_backend_that_identifies_its_copies_and_not_one_that_does_not."""
+    def test_send_with_id_passes_the_todo_to_a_send_whose_signature_names_it_and_the_qid_to_one_that_takes_it(self):
+        """_send_with_id(be, sid, text, qid=None, user=False, paths=None, user_todo=None): a user-todo ANSWER's id
+        rides as user_todo= only to a backend whose send SIGNATURE names the parameter, and the copy's own id rides
+        as qid= only to a send that names qid (_takes_kw and _takes_qid, upstream's #1224 gate: the signature is the
+        gate, never a flag beside it and never what a **kw sink would swallow; the fork's queue_carries_todos flag
+        and _backend_send retired with the 2026-09-15 pull-in, ruling 2); a plain two-argument send gets the text
+        alone. The qid half's twin is tests/test_queued_copy_press_id.py::ParkedSendCarriesItsPressId::
+        test_handed_over_now_the_id_reaches_a_backend_that_identifies_its_copies_and_not_one_that_does_not.
+        (Until the re-aim this case was
+        test_backend_send_passes_the_todo_to_a_backend_that_keeps_it_and_the_qid_to_one_whose_send_takes_it.)"""
         calls = []
-        class _Keeps:                       # SdkBackend's shape: the todo flag and a send whose signature takes qid
-            queue_carries_todos = True
+        class _Keeps:                       # SdkBackend's shape: a send whose signature names user_todo and qid
             def send(self, sid, text, user_todo=None, qid=None):
                 calls.append(("keeps", text, user_todo, qid)); return True
-        class _TodoOnly:                    # the flag without the parameter: no qid, whatever **kw would swallow
-            queue_carries_todos = True
+        class _TodoOnly:                    # names the todo and not the id: the answer's id rides, the copy's does not
+            def send(self, sid, text, user_todo=None):
+                calls.append(("todo-only", text, user_todo)); return True
+        class _Sink:                        # a **kw sink names neither: nothing rides, whatever it would swallow
             def send(self, sid, text, **kw):
-                calls.append(("todo-only", text, kw)); return True
+                calls.append(("sink", text, kw)); return True
         class _Plain:
             def send(self, sid, text):
                 calls.append(("plain", text)); return True
         q1, q2 = "echo:" + "1" * 32, "echo:" + "2" * 32
-        km._backend_send(_Keeps(), SID, "hi", None, q1)
-        km._backend_send(_Keeps(), SID, "ans", "ut-1", q2)
-        km._backend_send(_TodoOnly(), SID, "ans", "ut-1", q2)
-        km._backend_send(_Plain(), SID, "hi", None, q1)
+        km._send_with_id(_Keeps(), SID, "hi", q1)
+        km._send_with_id(_Keeps(), SID, "ans", q2, user_todo="ut-1")
+        km._send_with_id(_TodoOnly(), SID, "ans", q2, user_todo="ut-1")
+        km._send_with_id(_Sink(), SID, "ans", q2, user_todo="ut-1")
+        km._send_with_id(_Plain(), SID, "hi", q1)
         self.assertEqual(calls, [("keeps", "hi", None, q1),
                                  ("keeps", "ans", "ut-1", q2),
-                                 ("todo-only", "ans", {"user_todo": "ut-1"}),
+                                 ("todo-only", "ans", "ut-1"),
+                                 ("sink", "ans", {}),
                                  ("plain", "hi")])
 
 

@@ -235,10 +235,13 @@ SHIM
     ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" end --when-idle web
     [ "$status" -eq 2 ]
     [[ "$output" == *"usage: romp end"* ]]
+    # `romp send --tag <label> <session> <text>` is the documented leading form since upstream's 2026-09-12
+    # change (bin/romp pre-parses the tag ahead of the session slot), so it is neither usage nor a session
+    # named --tag: the label is taken and the POST goes out, here to a port nothing answers on
     ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" send --tag kick web hello there
-    [ "$status" -eq 2 ]
-    [[ "$output" == *"usage: romp send <session> [--tag <label>] <text>"* ]]
-    [[ "$output" != *"kernel not reachable"* ]]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp send: kernel not reachable on :1"* ]]
+    [[ "$output" != *"usage: romp send"* ]]
     # --tag is end's session name and --now is send's: neither verb owns the other's flag
     start_fake_kernel '{"ok": true}'
     run "$ROMP_SCRIPT" end --tag

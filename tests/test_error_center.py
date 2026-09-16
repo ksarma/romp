@@ -384,14 +384,14 @@ class ErrorCenterWiring(unittest.TestCase):
         # every kind's toggle AND entry chip explains itself (not just show/hide)
         self.assertIn("var DESC={conn:", html)
         self.assertIn("b.title='Show or hide these entries. '+KINDLBL[k]+': '+DESC[k]", html)
-        # the undelivered kind's description covers the whole kind, the five causes the kind files, as the text
-        # lists them: no session by that id, a record that would not read, a live session list the tmux probe did
-        # not answer for, a comment threads' store that would not read while a session name was resolved (the WS
-        # by-name door's refusal, round 7's addition, which the round-7 text missed), a goals file that could not
-        # be read or written, with the dialog that announced the entry saying which. The torn record is the
-        # resolution's door read (_resolve_sid, _unreadable_dormant_named, ahead of the miss path), the failed scan
-        # and the store are the miss path's (_named_miss), and the first and the last cause are on neither (rounds
-        # 9 to 11; round 9's comment had the miss path reading the scan before the torn record, its order then).
+        # the undelivered kind's description covers the whole kind, the four causes the kind files, as the text
+        # lists them: no session by that id, a record that would not read, a comment threads' store that would not
+        # read while a session name was resolved (the WS by-name door's refusal, round 7's addition, which the
+        # round-7 text missed), a goals file that could not be read or written, with the dialog that announced the
+        # entry saying which. The torn record is the resolution's door read (_resolve_sid, _unreadable_dormant_named,
+        # ahead of the miss path), the store is the miss path's (_named_miss), and the first and the last cause are
+        # on neither (rounds 9 to 11). A fifth cause, a live session list the tmux probe did not answer for, left
+        # with the tmux backend (the 2026-09-15 pull-in: the scan-failed verdict had no input once _LiveMap was gone).
         # The on-disk row: a typed message is kept verbatim, and a refused reply, interrupt, end or compact (the
         # drive gate's refusals of the ops that carry no text; a compact by name carries its session's name as
         # the target, never as text) files a row with no text; only the goals-file gesture refusals (clear, drop,
@@ -400,10 +400,10 @@ class ErrorCenterWiring(unittest.TestCase):
         # (ui/webview/undelivered-err.test.ts) reads the same prefix off kernel.py
         self.assertIn('undelivered:"something you sent never reached a session. Either the kernel it was addressed '
                       'to has no session by that id', html)
-        self.assertIn("or it holds a record for that session that would not read, or it could not read the live "
-                      "session list (tmux did not answer; the same send works once it does), or it could not read the "
+        self.assertIn("or it holds a record for that session that would not read, or it could not read the "
                       "comment threads' store while resolving a session name, or it could not read or write the "
                       "session's goals file; the dialog that announced it says which", html)
+        self.assertNotIn("tmux did not answer", html, "the live-list cause left with the tmux probe")
         self.assertIn("A message you typed is kept verbatim in undelivered.jsonl under ~/.local/state/romp, and a "
                       "refused reply, interrupt, end or compact files a row there with no text; a clear, drop or undo "
                       "refused over the goals file writes nothing there", html)

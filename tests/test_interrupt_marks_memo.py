@@ -7,8 +7,9 @@ records are tool_result-only harness lines that can never be an interrupt record
 and the user-todo floor's call was a second full scan over the very turns the card's badge had just read.
 
 The gate drops the atoms the file adapter marked text-less (author None) before the text scan; exact,
-because author_of returns None on no other shape. build_feed hands its badge read into the floor. The
-memo keys on the parse object's identity plus the machineCut stamp, per (sid, parse family).
+because author_of returns None on no other shape. The feed's per-session entry (_feed_session_entry, the
+T368 memo the 2026-09-15 pull-in adopted; the loop body of build_feed before it) hands its badge read into
+the floor. The memo keys on the parse object's identity plus the machineCut stamp, per (sid, parse family).
 
 Synthetic fixtures only: placeholder UUIDs, invented prompt text, hostname-free paths.
 """
@@ -172,7 +173,8 @@ class AuthorNoneAtomsAreSkipped(unittest.TestCase):
 
 class FloorReusesTheBadgeRead(unittest.TestCase):
     """_user_todo_idle takes the caller's interrupt read instead of scanning the same turns again;
-    an unknown (None) read still computes, and build_feed hands its badge value through."""
+    an unknown (None) read still computes, and the feed's per-session entry (_feed_session_entry) hands
+    its badge value through."""
 
     def setUp(self):
         self.saved = (km._compacting_now, km._backend_queued, km._backend_rewind_pending, km._last_state,
@@ -219,8 +221,10 @@ class FloorReusesTheBadgeRead(unittest.TestCase):
         finally:
             km._interrupt_suppresses_nudge = saved
 
-    def test_build_feed_hands_its_badge_read_to_the_floor(self):
-        src = inspect.getsource(km.build_feed)
+    def test_the_feed_entry_hands_its_badge_read_to_the_floor(self):
+        # the floor call and the badge read live in _feed_session_entry since T368 (the per-session card memo,
+        # the 2026-09-15 pull-in): build_feed only folds the entries
+        src = inspect.getsource(km._feed_session_entry)
         self.assertIn("interrupted=_intr_read", src, "the floor call carries the badge's own read")
         self.assertIn("sess_interrupted, _intr_read = False, None", src,
                       "a raised badge read hands the floor None (compute), never False (idle)")
@@ -517,7 +521,10 @@ class MemoAcrossTheCycle(_MemoHarness):
         after = km._PERF_STATS.snapshot()["memos"]["intrMarks"]
         self.assertEqual(after["hit"], before["hit"] + 1)
         self.assertEqual(after["entries"], len(km._intr_marks_memo))
-        self.assertEqual(set(after), {"hit", "miss", "evict", "entries"})
+        # the fork's three counters and the entries gauge, plus upstream's (T401 (3), the 2026-09-15 pull-in): restored
+        # and refused (the persisted marks loaded at boot, or refused as stale), persisted (the disk mirror's rows) and
+        # computeMs (the tallies' cost, whole milliseconds on /perf)
+        self.assertEqual(set(after), {"hit", "miss", "evict", "restored", "refused", "computeMs", "entries", "persisted"})
 
 
 class CounterBumpsAreAtomic(unittest.TestCase):
