@@ -14,7 +14,8 @@ the difference, not a constant.
 
 Hermetic: a temp state root and Claude config dir, the fake CLI as ROMP_CLAUDE_BIN, no scopes, the SDK venv
 symlinked into the temp state root (the kernel looks for it there); skipped where that venv is absent (CI).
-Every process the test starts is killed by it. Synthetic ids only.
+Every process the test starts is killed by it. Synthetic ids only. A third case, collected everywhere, pins that a skip
+raised in setUp stays a clean skip (its class docstring names the defect).
 """
 import json
 import os
@@ -29,6 +30,7 @@ import unittest
 import urllib.request
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -55,16 +57,22 @@ def _free_port():
 @unittest.skipUnless(HAVE_SDK, "no SDK venv (or no matching python) on this machine; the served host test needs the real SDK client in the kernel")
 class ServedRestart(unittest.TestCase):
     def setUp(self):
+        # every attribute the sweep reads exists BEFORE the cleanup that reads them is registered: setUp can end early with a
+        # skip (lab_dist.copy_dist raises unittest.SkipTest by design on a checkout without the extension's node_modules) or
+        # an error, and unittest runs the registered cleanups either way, on the instance as setUp left it (the pull-in's
+        # review round 2, 2026-09-16: the cleanup ran before self.kernels existed and every skipped case was also an error)
+        self.kernels = []
+        self.klogs = []
+        self.sid = str(uuid.uuid4())
         self.lab = tempfile.mkdtemp(prefix="host-served-")
-        self.addCleanup(self._sweep)
         self.state = os.path.join(self.lab, "xdg", "romp")
+        self.addCleanup(self._sweep)
         self.claude = os.path.join(self.lab, "claude")
         self.cwd = os.path.join(self.lab, "proj")
         for d in ("names", "sdk", "states", "timeline"):
             os.makedirs(os.path.join(self.state, d), exist_ok=True)
         os.makedirs(self.cwd, exist_ok=True)
         os.symlink(SDKVENV, os.path.join(self.state, "sdkvenv"))
-        self.sid = str(uuid.uuid4())
         Path(self.state, "names", self.sid).write_text("web\t%s\t#9cd2ff\t#0c1a2e\n" % self.cwd)
         Path(self.state, "sdk", self.sid + ".json").write_text(json.dumps(
             {"sid": self.sid, "name": "web", "cwd": self.cwd, "mode": "bypassPermissions", "effort": "high", "lastSid": self.sid, "alive": True}))
@@ -72,36 +80,44 @@ class ServedRestart(unittest.TestCase):
         self.dist = os.path.join(self.lab, "dist")
         lab_dist.copy_dist(self.dist)   # a lab copy under the harness lock: the kernel must never rebuild bundles in the shared checkout
         self.fake_log = os.path.join(self.lab, "fake-cli.log")
-        self.kernels = []
-        self.klogs = []
 
     def _sweep(self):
-        lease = self._lease()
+        """Kill what the case started and remove its lab. Runs on the instance as setUp left it, whole or not (a skip or an
+        error partway through setUp), so every attribute read here has a default and a lease that cannot be read is no lease."""
+        lab = getattr(self, "lab", None)
+        lease = None
+        if getattr(self, "state", None) and getattr(self, "sid", None):
+            try:
+                lease = self._lease()
+            except (OSError, ValueError):   # a lease mid-write, or gone between the exists and the read
+                lease = None
         for pid in ((lease or {}).get("pid"), ((lease or {}).get("holder") or {}).get("pid")):
             if isinstance(pid, int):
                 try:
                     os.kill(pid, signal.SIGKILL)
                 except (ProcessLookupError, PermissionError):
                     pass
-        for k in self.kernels:
+        for k in getattr(self, "kernels", ()):
             if k.poll() is None:
                 try:
                     os.killpg(k.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
                 k.wait(timeout=10)
+        if not lab:
+            return
         # whatever the hosts left: every process whose environment carries this lab's state root
         for p in Path("/proc").glob("[0-9]*"):
             try:
                 env = (p / "environ").read_bytes()
             except OSError:
                 continue
-            if self.lab.encode() in env and int(p.name) != os.getpid():
+            if lab.encode() in env and int(p.name) != os.getpid():
                 try:
                     os.kill(int(p.name), signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-        shutil.rmtree(self.lab, ignore_errors=True)
+        shutil.rmtree(lab, ignore_errors=True)
 
     def _env(self):
         env = _lab.kernel_env(self.lab, self.claude, self.dist, self.port, self.token,
@@ -218,6 +234,34 @@ class ServedRestart(unittest.TestCase):
         self.assertNotEqual(lease2["pid"], lease1["pid"], "a NEW CLI process: the old one was cut and reaped")
         self.assertNotEqual((lease2.get("holder") or {}).get("kind"), "host")
         self.assertEqual(self._events("host.attached"), [], "no host, no attach")
+
+
+class ASkipInSetUpStaysASkip(unittest.TestCase):
+    """A cleanup registered before its attributes existed made every skip an error (the pull-in's review round 2,
+    2026-09-16). ServedRestart.setUp registered _sweep right after the lab was minted and set self.kernels last, after
+    lab_dist.copy_dist, which raises unittest.SkipTest by design on a checkout without the extension's node_modules;
+    unittest runs the cleanups after a skipped setUp too, so _sweep read self.kernels on an instance that had none and each
+    skipped case was ALSO reported as an error (2 skipped, 2 errors). The pin runs ONE case of the served class through a
+    unittest result object with the copy stubbed to skip and the class's SDK gate lifted for that run, so it reaches setUp
+    whatever this machine has: one skip carrying the stub's reason, no error, no failure, and the lab removed. Collected
+    everywhere: it needs no SDK venv, no node_modules and starts no kernel."""
+
+    def test_a_skip_raised_in_setup_leaves_the_case_a_clean_skip(self):
+        reason = "the pin's stand-in for a checkout without the extension's node_modules"
+
+        def refuse(dest):
+            raise unittest.SkipTest(reason)
+        case = ServedRestart("test_with_hosts_on_the_turn_survives_the_restart_and_with_hosts_off_it_is_cut")
+        result = unittest.TestResult()
+        with patch.object(lab_dist, "copy_dist", refuse), \
+                patch.object(ServedRestart, "__unittest_skip__", False, create=True), \
+                patch.object(ServedRestart, "__unittest_skip_why__", "", create=True):
+            unittest.TestSuite([case]).run(result)
+        self.assertEqual(result.testsRun, 1)
+        self.assertEqual([why for _t, why in result.skipped], [reason], "the run reached setUp and the stub skipped it")
+        self.assertEqual(result.errors, [], "the cleanup ran clean on the half-built instance:\n" + "\n".join(tb for _t, tb in result.errors))
+        self.assertEqual(result.failures, [])
+        self.assertFalse(os.path.exists(case.lab), "the sweep reached its end and removed the lab")
 
 
 if __name__ == "__main__":
