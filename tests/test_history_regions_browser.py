@@ -80,6 +80,16 @@ await page.evaluate((f) => { window.postMessage(f, "*"); }, tail);
 // the landing's event: the tail run's last key (the page's regions report, the source the assertion reads) becomes the posted second
 // event's; the last RENDERED row is the reader's window far above the tail and never carries it (a wait on it was a 10-s sleep)
 await page.waitForFunction((u) => { const rs = (typeof window.__rompRegions === "function" && window.__rompRegions()) || []; return rs.length > 0 && rs[rs.length - 1].kind === "run" && rs[rs.length - 1].last === u; }, tail.events[1].uuid, { timeout: 10000 }).catch(() => {});
+// The tail's PAINT settles before anything reads the page. The wait above returns on the regions (the tail applies at once); the
+// paint runs on the next animation frame and is not one frame's work: its layout moves the scrollTop under the reader with no
+// write (the browser's own adjustment, which the page files as a scroll gesture), the scroll handler's edge check then re-windows
+// the view (a spacer row, an anchor-restore write that puts the row back) and the write's echo lands a frame later. The reads
+// below and road 2b's gesture baseline raced that chain: here it closes 45 ms after the landing and the reads take 49 ms, the same
+// under a four-fold CPU throttle; a runner quick on evaluate round trips read the baseline first and counted two gestures across
+// the below-fill, the paint's and the reader's jump (CI). The event is the page's scroll journal going quiet on its own frame
+// clock: paint until a paint files no new scroll row (bounded).
+const scrollRows = () => page.evaluate(() => window.__sent.filter((m) => m.what === "scrollgesture" || m.what === "scrollwrite" || m.what === "spacer" || m.what === "tailchange" || m.what === "tailmut").length);
+for (let i = 0, prev = await scrollRows(); i < 20; i++) { await painted(); const n = await scrollRows(); if (n === prev) break; prev = n; }
 const live = await state(); const regionsLive = await regions(); const rowLive = await rowAtTop();
 // ROAD 2b (T386 stage 2, low 8): a fill BELOW the viewport. The head gap still stands above the filled run; a jump to the transcript
 // top puts the reader at the gap's TOP edge, the edge met by scrolling DOWN, so the gap asks for its top page (lo 0), which fills in
