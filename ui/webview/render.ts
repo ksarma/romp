@@ -15766,8 +15766,9 @@ function selectedStops(): Array<[number, number, number]> {
 function ramp(v: number): [number, number, number] { return rampOn(v, selectedStops()); }   // the arithmetic is status-controls.ts rampOn (the kernel's cm.ramp), over the selected map
 // Arm a compaction "sweep" fill (the tab bar bar + the statusline battery scan) so it (a) does NOT restart
 // every render and (b) mirrors the context colormap as it compresses.
-//   (a) renderTabs()/updateStatusline() recreate the element on every kernel push (0.5–3s backstop + one per
-//       stream event); a plain CSS animation resets to frame 0 each time, so it visibly hiccups/jumps (the
+//   (a) renderTabs()/updateStatusline() recreate the element on every kernel push (cycles at least 1.0 s apart
+//       under the pusher's minimum interval, a watched chat tab's stream event at once, plus the 0.5–3s
+//       backstop); a plain CSS animation resets to frame 0 each time, so it visibly hiccups/jumps (the
 //       user 2026-07-02: the tab bar restarted while the timeline's — a persistent repositioned overlay —
 //       stayed smooth). A NEGATIVE animation-delay of -(now mod duration) makes the phase a pure function of
 //       the wall clock, so a freshly-built element resumes exactly where the destroyed one was — seamless

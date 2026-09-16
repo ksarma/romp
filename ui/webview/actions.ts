@@ -1,9 +1,11 @@
 // Click-safe, always-acknowledged actions for the romp dashboard.
 //
 // WHY THIS EXISTS — the "I had to click it several times" bug.
-// The dashboard re-renders on every kernel push: a 0.5–3s backstop poll, PLUS an
-// immediate push on each SDK stream event and on every hook /tick (turn ended,
-// prompt landed, postal message). Surfaces that rebuild their DOM wholesale
+// The dashboard re-renders on every kernel push: cycles at least 1.0 s apart under
+// the pusher's minimum interval (a stream event or echo for the chat tab being
+// watched pushes at once; a hook /tick for a turn ended, a prompt landed or a
+// postal message wakes the next cycle), plus a 0.5–3s backstop poll for changes
+// with no event. Surfaces that rebuild their DOM wholesale
 // (renderTabs()'s `#tabs`.replaceChildren(), the sessions list's
 // `#fleet-list`.replaceChildren()) DESTROY and recreate the very node you are
 // clicking. A native `click` fires on the nearest common ancestor of the mousedown
