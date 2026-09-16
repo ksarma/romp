@@ -1178,7 +1178,6 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 .snap-hidden-head:hover .tab-group-caret { color: var(--accent); }
 .snap-hidden-head:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .snap-hidden.open .tab-group-caret { transform: rotate(90deg); }
-.snap-hidden-needs { font-weight: 400; letter-spacing: 0; }
 .snap-hidden-list { margin-top: 2px; }
 
 /* ---------- ledger: rolling per-session digest, just below the tabs ---------- */

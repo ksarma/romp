@@ -326,19 +326,20 @@ test("adoptSessionState joins every slice onto what is already here, persists on
 // the board, and noteColumnEmptiness posted colEmpty for a member the kernel never stopped listing. The world below
 // lifts the real applyTabOrder, ackClosingTabs, noteColumnEmptiness and stripLists, with the strip pass renderTabs
 // runs before the post (order, then pushed tabs not yet in it, each through stripLists; chat-split.test.ts pins the
-// real lines) and stubs for the teardown, the restore and the body.
+// real lines) and stubs for the teardown, the restore and the body. The no-base re-ask is recorded (HOOKS.asked), so the
+// arm's re-emission gate runs here too (the cold-boot lab, 2026-09-16; tab-ghost-heal.test.ts pins its shape).
 const U = "11111111-2222-3333-4444-555555555509";
 const T3 = [{ id: WEB, name: "web" }, { id: API, name: "api" }, { id: TESTS, name: "tests" }];
 const T2 = [{ id: WEB, name: "web" }, { id: TESTS, name: "tests" }];
-type StripHooks = { posts: Record<string, unknown>[]; renders: string[][]; dismissed: [string, string][]; toasts: string[]; shown: number };
+type StripHooks = { posts: Record<string, unknown>[]; renders: string[][]; dismissed: [string, string][]; toasts: string[]; shown: number; asked: [string, string][] };
 type StripApi = {
   frame: (o: string[], tabs: { id: string; name: string }[], report: { reemit?: boolean; freshHost?: string } | undefined, live: string[]) => void;
   cross: (id: string) => void;
   tick: (ms: number) => void;
-  state: () => { tabOrderSeen: boolean; order: string[]; tabMeta: string[]; closing: string[]; colEmptyPosted: boolean; hostsSeen: string[] };
+  state: () => { tabOrderSeen: boolean; order: string[]; tabMeta: string[]; closing: string[]; colEmptyPosted: boolean; hostsSeen: string[]; kernelListed: string[] };
 };
 function stripWorld(o: { col: string; sets: ColSets | null; wantActive?: string | null }): { api: StripApi; HOOKS: StripHooks; W: { sets: ColSets | null } } {
-  const HOOKS: StripHooks = { posts: [], renders: [], dismissed: [], toasts: [], shown: 0 };
+  const HOOKS: StripHooks = { posts: [], renders: [], dismissed: [], toasts: [], shown: 0, asked: [] };
   const W = { sets: o.sets };
   const PARENT = { postMessage(m: Record<string, unknown>) { HOOKS.posts.push(m); }, __rompChatSets: () => W.sets };
   const win = hideEdges({ parent: PARENT, frameElement: { id: "f-chat-" + o.col } });
@@ -351,7 +352,7 @@ function stripWorld(o: { col: string; sets: ColSets | null; wantActive?: string 
     const failedProvisionals = new Set(); let colEmptyPosted = false; let boardLive = new Set(); const hostsSeen = new Set();
     const readColSets = () => W.shell.sets;
     const syncTabKeysWithStrip = () => {};   // per-tab hot keys (2026-09-10): none in these worlds
-    const requestFullSession = () => {};   // this fork's no-base re-ask for a listed tab the page holds no session entry for (#1017's vocabulary): not this test's subject
+    const requestFullSession = (id, why) => { HOOKS.asked.push([id, why]); };   // this fork's no-base re-ask for a listed tab the page holds no session entry for (#1017's vocabulary): recorded, so its re-emission gate is run below; the real one's own suppressions (awaitingFull, a closing or provisional tab) are not in these worlds
     const peekId = null; const chatVisible = () => true;
     const tabMeta = new Map(), sessions = new Map(), pendingTabMeta = new Map(), closingTabs = new Map(), kernelListed = new Set(); const order = [];
     const skeletonTabs = { ids: new Set() };   // upstream skeleton diet (2026-09-15): the lifted re-ask arm skips a listed skeleton; none in these worlds
@@ -369,7 +370,7 @@ function stripWorld(o: { col: string; sets: ColSets | null; wantActive?: string 
       frame: (o, tabs, report, live) => applyTabOrder(o, tabs, report, live),
       cross: (id) => { closingTabs.set(id, Date.now()); dismissSession(id, "close"); renderTabs(); },
       tick: (ms) => { clock += ms; },
-      state: () => ({ tabOrderSeen, order: order.slice(), tabMeta: [...tabMeta.keys()], closing: [...closingTabs.keys()], colEmptyPosted, hostsSeen: [...hostsSeen].sort() }),
+      state: () => ({ tabOrderSeen, order: order.slice(), tabMeta: [...tabMeta.keys()], closing: [...closingTabs.keys()], colEmptyPosted, hostsSeen: [...hostsSeen].sort(), kernelListed: [...kernelListed].sort() }),
     };
   `;
   const make = new Function("W", "window", prelude + js + epilogue) as (w: unknown, win: unknown) => StripApi;
@@ -456,4 +457,30 @@ test("the user's own cross empties the column at once and is named (crossed), so
   b.api.frame([WEB, API, TESTS], T3, { freshHost: "" }, [WEB, API, TESTS]);
   b.api.cross(API); b.api.cross(TESTS);
   assert.deepEqual(b.HOOKS.posts, [{ romp: "colEmpty", gone: [API, TESTS], crossed: [API, TESTS] }], "two crosses: both named");
+});
+
+test("the no-base re-ask reads no re-emission (the cold-boot lab, 2026-09-16): a strip flagged reemit asks no full for a listed id this page holds no session for and records nothing into kernelListed; the same strip as the kernel's fresh word asks once per such id and records", () => {
+  const w = stripWorld({ col: "2", sets: { "2": [API] } });
+  w.api.frame([WEB, API], T3.slice(0, 2), { freshHost: "" }, [WEB, API]);   // the kernel's first strip: first-ever listings, the tabs-first boot
+  assert.deepEqual(w.HOOKS.asked, [], "a first listing is never asked for: its session frames are on their way in the same push");
+  assert.deepEqual(w.api.state().kernelListed, [WEB, API].sort(), "…and every id is recorded");
+  w.api.frame([WEB, API, TESTS], T3, { reemit: true }, [WEB, API, TESTS]);   // federation.ts emitMergedOrder: the stored strip re-served (a view-order write, a host attach), one id more
+  assert.deepEqual(w.HOOKS.asked, [], "a re-emission is no kernel's fresh word: no id is asked for, listed before or not");
+  assert.deepEqual(w.api.state().kernelListed, [WEB, API].sort(), "…and it records nothing: the id it carries first stays unlisted");
+  w.api.frame([WEB, API, TESTS], T3, { freshHost: "" }, [WEB, API, TESTS]);   // the local kernel's own strip
+  assert.deepEqual(w.HOOKS.asked, [[WEB, "nobase"], [API, "nobase"]], "the fresh strip asks once per id an earlier strip listed and this page holds no session for; the id the re-emission carried first is a first listing here, not asked for");
+  assert.deepEqual(w.api.state().kernelListed, [WEB, API, TESTS].sort(), "…and records the strip");
+  assert.deepEqual(w.HOOKS.posts, [], "the member is listed throughout: nothing said about emptiness");
+});
+
+test("the cold-boot order on a fresh page: the re-emission of the very push that filled the store runs BEFORE its fresh emission, so the fresh strip is the first listing and asks for no second full", () => {
+  const w = stripWorld({ col: "2", sets: { "2": [API] } });
+  w.api.frame([WEB, API, TESTS], T3, { reemit: true }, [WEB, API, TESTS]);   // absorbHostReport's writeViewOrder dispatches romp-vieworder synchronously: the re-emission lands first
+  assert.deepEqual(w.HOOKS.asked, []);
+  assert.deepEqual(w.api.state().kernelListed, [], "nothing recorded from the re-emission");
+  w.api.frame([WEB, API, TESTS], T3, { freshHost: "" }, [WEB, API, TESTS]);   // …then the same push's fresh emission
+  assert.deepEqual(w.HOOKS.asked, [], "the fresh strip reads as the first listing it is: no re-ask for the active tab, whose full has not landed (a record taken from the re-emission made this strip read as a repeat and asked a second full under the diet)");
+  assert.deepEqual(w.api.state().kernelListed, [WEB, API, TESTS].sort());
+  w.api.frame([WEB, API, TESTS], T3, { freshHost: "" }, [WEB, API, TESTS]);
+  assert.deepEqual(w.HOOKS.asked, [[WEB, "nobase"], [API, "nobase"], [TESTS, "nobase"]], "a later fresh strip of ids listed before, with no session entry here, asks once each: the arm itself is intact");
 });

@@ -12,13 +12,22 @@
 //    which under T317b opened the viewer inside a display:none pane on a default install. The case that pinned that
 //    bring-forward, "Files pane closed: Enter on a Reply-modal link brings the pane forward AND moves focus there; Escape
 //    closes the viewer, the modal and its text stay", retires here by name, twin T317b plus T404
-//    (https://github.com/romp-on/romp/pull/1596); its focus and Escape assertions live on in the Files-pane-open case.
+//    (https://github.com/romp-on/romp/pull/1596); its browser assertions (the focus hand-off, Escape, the return trip into
+//    the box) live on in the Files-pane-open case, and the Reply modal's focus-return listener is pinned at source and
+//    executed in waiting-reply-focus.test.ts (the pull-in's fixer round 7w, R5).
 // 2. A click whose pressed node a re-render replaced mid-press never fires (ui/CLAUDE.md, click safety):
 //    with a Dismiss armed on another row the document pointerdown listener disarmed and re-rendered
 //    synchronously, and a feed frame between mousedown and mouseup rebuilt the list — either dropped the
 //    click on a detail link, and on Reply. The pane now HOLDS re-renders while a pointer is pressed on the
 //    list and flushes after the release, a tick later so the click fires against the still-present node
 //    (the tab strip's and the timeline's idiom, render.ts / romp-timeline-view.js).
+// 3. The shared file BROWSER over this pane (the pull-in's review, round 1): the viewer's title has a directory half that posts
+//    browseFiles to its own window, and only a document that installed initFileBrowse hears it. waiting.ts installs it under
+//    the chat's and the Files pane's contract: the listing replaces the viewer (file-browse.ts's one-directional stack) and asks
+//    the kernel for the folder over this pane's socket, a pick opens the viewer here, and the close tells the shell nothing
+//    (shellRestore false: this pane never asked the shell to lift a pane). The browser leg drives it from a row's link; a
+//    listing reached through the Reply modal's own link sits under the modal's backdrop (styles.css: .picker-overlay 1000,
+//    #romp-filebrowse 890, the chat's order too), a shared stacking question this file does not pin.
 //
 // The shell stand-in is the kernel's own: _LANDING_COLLAPSE_JS (the po state, the body classes, the panes
 // broadcast), the landing CSS rule that hides a pane, _LANDING_FOCUS_JS, _LANDING_ESC_JS and the Files-pane
@@ -88,6 +97,11 @@ test("openTodoPath routes by the shell's word: the Files pane on screen takes th
   assert.match(WAITING, /if \(m\.avail && typeof m\.avail === "object"\) for \(const k of Object\.keys\(m\.avail\)\) avail\[k\] = m\.avail\[k\] !== false;\n\s*panesAvail = avail;/);
   assert.match(WAITING, /\ninitFileView\(\(m\) => vscodeApi\?\.postMessage\(m\)\);\n/);
   assert.match(WAITING, /\nsetFileViewIdentity\(\(id\) => \{ const r = rows\.find\(\(x\) => x\.sid === id\); return r && r\.name \? \{ name: r\.name, color: r\.color \} : hostStub\(id\); \}\);\n/);
+  // the shared browser is booted beside it under the chat's and the Files pane's contract (a pick opens the viewer here, the
+  // close owes the shell nothing): the viewer's directory link posts to this window and only this listener hears it (the
+  // pull-in's review round 1; the browser leg below drives the click). Pinned at source too: CI installs no browsers.
+  assert.match(WAITING, /import \{ initFileBrowse \} from "\.\/file-browse";/);
+  assert.match(WAITING, /\ninitFileBrowse\(\(m\) => vscodeApi\?\.postMessage\(m\), \{ shellRestore: false \}\);\n/);
   // the Reply modal's Escape stands aside while the viewer is up over this pane, and takes the keyboard back once it is gone
   const modal = WAITING.slice(WAITING.indexOf("function showReply("), WAITING.indexOf("// ── render"));
   assert.match(modal, /const onKey = \(e: KeyboardEvent\) => \{\n\s*if \(e\.key !== "Escape"\) return;\n\s*if \(document\.getElementById\("romp-fileview"\)\) \{ setTimeout\(\(\) => \{ if \(overlay\.isConnected && !document\.getElementById\("romp-fileview"\)\) input\.focus\(\); \}, 0\); return; \}\n\s*e\.stopPropagation\(\); close\(\);\n\s*\};/);
@@ -182,6 +196,13 @@ ${relayJs()}
 </body></html>`;
 const WAITING_HTML = `<!DOCTYPE html><html><head><meta charset=utf-8></head><body>
 <div id=waiting-head></div><div id=waiting-list></div><script src=/dist/waiting.js></script></body></html>`;
+// the same page with the chat's stylesheet, as _waiting_page links it (the .ut-* dress, and the overlays stack as served), and a
+// poster stand-in where the served page's pane shim defines acquireVsCodeApi (inline, ahead of the bundle, as kernel.py does):
+// every message the pane posts lands on its window.__posted. Inline on purpose: an addInitScript with a pathname guard never
+// reaches this frame in Firefox, which runs it once on the iframe's initial about:blank and then reuses that window
+const WAITING_CSS_HTML = WAITING_HTML.replace("<meta charset=utf-8>", "<meta charset=utf-8><link href=/dist/styles.css rel=stylesheet>"
+  + "<script>window.acquireVsCodeApi=function(){return{postMessage:function(m){(window.__posted=window.__posted||[]).push(m);}};};</script>");
+const styles = () => fs.readFileSync(path.join(UI, "styles.css"), "utf8");
 const FILES_HTML = `<!DOCTYPE html><html><head><meta charset=utf-8></head><body class=fileview-pane>
 <div id=files-empty></div><script src=/dist/files.js></script></body></html>`;
 
@@ -191,8 +212,11 @@ try { pw = requireCjs("playwright"); } catch { pw = null; }
 type Todo = { id: string; text: string; age: number; detail: string };
 // `panes`: the ?panes= set the shell opens with (the default leaves the Files pane off, as a fresh install does);
 // `filesControl`: the gear's Files control shown (romp:settings.showFilesControl, written into the shell's store before its
-// scripts run, the way the gear would have left it); absent, the fresh-install default, hidden
-type Boot = { panes?: string; filesControl?: boolean };
+// scripts run, the way the gear would have left it); absent, the fresh-install default, hidden;
+// `kernel`: the pane's page carries a poster stand-in (acquireVsCodeApi, the name the served pane shim defines; every message
+// the pane posts lands on its window.__posted, read back by posted()) and the chat's stylesheet, so the file browser's ask and
+// the overlays' stacking can be read; absent, the pane posts into nothing, as before
+type Boot = { panes?: string; filesControl?: boolean; kernel?: boolean };
 async function boot(browser: any, todos: Todo[], opts: Boot = {}) {
   const errors: string[] = [];
   const served: string[] = [];
@@ -211,7 +235,8 @@ async function boot(browser: any, todos: Todo[], opts: Boot = {}) {
     const html = (b: string) => route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: b });
     const js = (b: string) => route.fulfill({ status: 200, contentType: "application/javascript", body: b });
     if (u.pathname === "/shell") return html(SHELL_HTML);
-    if (u.pathname === "/waiting") return html(WAITING_HTML);
+    if (u.pathname === "/waiting") return html(opts.kernel ? WAITING_CSS_HTML : WAITING_HTML);
+    if (u.pathname === "/dist/styles.css") return route.fulfill({ status: 200, contentType: "text/css; charset=utf-8", body: styles() });
     if (u.pathname === "/files") return html(FILES_HTML);
     if (u.pathname === "/dist/waiting.js") return js(waitingJs);
     if (u.pathname === "/dist/files.js") return js(filesJs);
@@ -261,7 +286,15 @@ async function boot(browser: any, todos: Todo[], opts: Boot = {}) {
     await page.mouse.down();
     await page.mouse.up();
   };
-  return { page, W, F, feed, state, boxFocused, press, errors, served };
+  // what the pane posted to its kernel stand-in (opts.kernel), and the browse messages the SHELL's window received: the two
+  // the file browser can send up (browseFiles, a relay ask; browseClosed, the feed's restore), recorded from here on
+  const posted = () => page.evaluate(() => ((((document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow as any).__posted) || []) as any[]);
+  await page.evaluate(() => {
+    const w = window as any; w.__shellSaw = [];
+    window.addEventListener("message", (e) => { const m = (e as MessageEvent).data || {}; if (m.romp === "browseFiles" || m.romp === "browseClosed") w.__shellSaw.push(m.romp); });
+  });
+  const shellSaw = () => page.evaluate(() => (window as any).__shellSaw as string[]);
+  return { page, W, F, feed, state, boxFocused, press, posted, shellSaw, errors, served };
 }
 
 // the two ways the Files pane is not on screen: its control hidden (a fresh install: the shell closes the pane and refuses
@@ -353,6 +386,70 @@ for (const name of ["firefox", "chromium"]) {
       await page.waitForFunction(() => (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow!.document.hasFocus(), null, { timeout: 10000 });
       s = await state();
       assert.equal(s.waitingActive, "ut-reply-input", "focus returns to the box, not the body behind the overlay");
+      assert.deepEqual(errors, [], "no script error in any frame");
+    } finally { await browser.close(); }
+  });
+
+  test(`in ${name}: the viewer's folder link opens the file BROWSER over the Waiting pane, the listing asks the kernel over this pane's socket, a pick opens the viewer here, and neither close reaches the shell`, async (t) => {
+    if (!pw) { t.skip("playwright is not installed under vscode-extension: the browser legs need it (CI installs no browsers)"); return; }
+    let browser: any;
+    try { browser = await pw[name].launch(); }
+    catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
+    try {
+      // the fresh-install default (the Files pane off: the route is here), the pane's poster stand-in and the chat's stylesheet
+      const { page, W, state, posted, shellSaw, errors, served } = await boot(browser, [{ id: "t1", text: "Pick the layout", age: 120, detail: DETAIL }], { kernel: true });
+      // a row's fold and its link: the viewer over this pane, no modal in this flow
+      await W.locator(".ut-text.ut-has-detail").click();
+      await W.locator(".ut-detail.open .file-uri-link").click();
+      await W.locator("#romp-fileview").waitFor({ timeout: 10000 });
+      assert.equal(served.length, 1, "the viewer fetched the file");
+      const dir = W.locator("#romp-fileview .fileview-dir-link");
+      assert.equal(await dir.textContent(), "docs/", "the title's directory half");
+      assert.equal(await dir.getAttribute("title"), "Browse this file's folder");
+      await dir.click();
+      await W.locator("#romp-filebrowse").waitFor({ timeout: 10000 });
+      await W.locator("#romp-fileview").waitFor({ state: "detached", timeout: 10000 });   // the one-directional stack: the listing replaces the viewer
+      let s = await state();
+      assert.equal(s.viewerHere, false);
+      assert.equal(s.filesShown, false, "the Files pane stays off: the ask stayed in this window");
+      assert.equal(s.waitingHas, true, "the keyboard stayed in this document, in " + name);
+      const asks = (await posted()).filter((m: any) => m.type === "listDir");
+      assert.deepEqual(asks, [{ type: "listDir", path: "docs", sid: SID, reqId: 1, hidden: false }], "one listDir over this pane's socket, for the file's folder and session");
+      assert.deepEqual(await shellSaw(), [], "the shell heard nothing: no relay went up");
+      // the listing is the topmost surface at its centre (the browser's backdrop over the rows, styles.css), a live click target
+      assert.equal(await page.evaluate(() => {
+        const d = (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow!.document;
+        const card = d.querySelector("#romp-filebrowse .filebrowse")!.getBoundingClientRect();
+        const hit = d.elementFromPoint(card.left + card.width / 2, card.top + card.height / 2);
+        return !!hit && !!hit.closest("#romp-filebrowse");
+      }), true, "a click at the card's centre lands on the browser");
+      // the kernel's listing, as the pane shim would dispatch it: the rows render; a file row picked opens the viewer HERE (the
+      // default openFile), over the listing
+      await page.evaluate(([sid, reqId]: [string, number]) => {
+        const f = document.getElementById("f-waiting") as HTMLIFrameElement;
+        f.contentWindow!.postMessage({ type: "dirListing", reqId, sid, base: "docs", parent: ".", entries: [
+          { name: "img", isDir: true, isLink: false, size: 0, mtime: 1700000000 },
+          { name: "design.md", isDir: false, isLink: false, size: 24, mtime: 1700000000, viewable: true },
+        ] }, "*");
+      }, [SID, asks[0].reqId] as [string, number]);
+      const row = W.locator('#romp-filebrowse .fb-row[data-act="file"]');
+      await row.waitFor({ timeout: 10000 });
+      assert.equal(await row.locator(".fb-name").textContent(), "design.md");
+      assert.equal(await W.locator('#romp-filebrowse .fb-row[data-act="dir"] .fb-name').textContent(), "img/");
+      await row.click();
+      await W.locator("#romp-fileview").waitFor({ timeout: 10000 });
+      assert.equal(served.length, 2, "the pick fetched the file: the viewer here");
+      assert.match(served[1], /path=docs%2Fdesign\.md/); assert.match(served[1], /sid=11111111-2222/, "the listing's session rides the pick");
+      s = await state();
+      assert.equal(s.viewerHere, true);
+      assert.equal(await W.locator("#romp-filebrowse").count(), 1, "the listing stays under the viewer");
+      // Escape closes the viewer (topmost), the next the listing; neither close reaches the shell
+      await page.keyboard.press("Escape");
+      await W.locator("#romp-fileview").waitFor({ state: "detached", timeout: 10000 });
+      assert.equal(await W.locator("#romp-filebrowse").count(), 1, "the listing is still up after the viewer's close");
+      await page.keyboard.press("Escape");
+      await W.locator("#romp-filebrowse").waitFor({ state: "detached", timeout: 10000 });
+      assert.deepEqual(await shellSaw(), [], "no browseClosed: this pane's close owes the shell nothing (shellRestore false)");
       assert.deepEqual(errors, [], "no script error in any frame");
     } finally { await browser.close(); }
   });

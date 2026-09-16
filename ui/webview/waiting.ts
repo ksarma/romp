@@ -33,6 +33,7 @@ import { linkTarget, type LinkTarget } from "./path-links";   // a todo link's t
 import { linkifyUrls, urlChip, installUrlLinkOpener } from "./url-links";   // a URL in a todo's text is a link, and a todo's own `link` is a chip (the user 2026-09-08)
 import { fileLinkRoute } from "./file-route";   // where a todo's file link opens: the OPEN Files pane, else over this pane (T404's ladder, the chat's)
 import { initFileView, openFileView, setFileViewIdentity, hostStub } from "./file-view";   // the shared viewer, hosted over this pane when the Files pane is not on screen (the feed hosts one the same way)
+import { initFileBrowse } from "./file-browse";   // and the shared file browser beside it: the viewer's directory link posts its ask to this window, so this document hosts the listing too
 
 type Color = { bg: string; fg: string } | null;
 interface UserTodo { id: string; text: string; createdT: number; detail?: string; file?: string; link?: string }
@@ -647,6 +648,16 @@ window.addEventListener("resize", live.catchUp);
 // identity the relay would carry to the Files pane; a sid no row names falls to the kernel's 8-character stub.
 initFileView((m) => vscodeApi?.postMessage(m));
 setFileViewIdentity((id) => { const r = rows.find((x) => x.sid === id); return r && r.name ? { name: r.name, color: r.color } : hostStub(id); });
+// The shared file BROWSER beside the viewer (file-browse.ts initFileBrowse): the viewer's title has a directory half ("Browse
+// this file's folder") that posts {romp:"browseFiles"} to its OWN window, and only a document that installed the browser hears
+// it; with the viewer alone installed the link over this pane did nothing (the 2026-09-15 pull-in's review, round 1). The
+// Files pane's and the chat's contract, not the feed's default: a pick in the listing opens the viewer here (openFile unset)
+// and the close tells the shell nothing (shellRestore false). This pane never asks the shell to lift a pane for its browser,
+// so its close owes no browseClosed; one from here would consume the flag the FEED's relay arms on the shell (kernel.py's
+// browseClosed arm, __rompFeedWasOff) and hide the feed under its own browser. Reached from the Reply modal's own link the
+// listing sits under the modal's backdrop (styles.css: .picker-overlay 1000 over #romp-filebrowse 890, the order the chat's
+// Reply modal shares); a row's links have no modal over them.
+initFileBrowse((m) => vscodeApi?.postMessage(m), { shellRestore: false });
 
 render();
 vscodeApi?.postMessage({ type: "ready" });   // the kernel serves the cached feed frame at once (the ready handshake)
