@@ -1369,6 +1369,9 @@ async function openReal(browser: any, mode: "chat" | "feed" | "pane", width: num
 const SEL = { down: 'button[aria-label="Smaller text"]', up: 'button[aria-label="Larger text"]', reset: ".fileview-size-reset", root: ".fileview" };
 const rectOf = (page: any, sel: string) => page.evaluate((s: string) => { const r = (document.querySelector(s) as HTMLElement).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; }, sel);
 const sizeOf = (page: any) => page.evaluate((s: string) => (document.querySelector(s) as HTMLElement).dataset.fvText, SEL.root);
+/** The text-size buttons ride the zoom glyph's flyout (upstream T367: shut until the glyph is pressed, and shut again by any
+ *  press outside it): open it when it is shut, so a press on A+, A- or the readout lands on a shown button. */
+const openZoom = async (page: any) => { if (await page.evaluate(() => { const m = document.querySelector(".fileview .fileview-zoom-menu") as HTMLElement | null; return !m || m.hidden; })) await page.click(".fileview .fileview-zoom-btn"); };
 
 test("the real-module page inlines its file table with `<` escaped: two script elements whatever the notes hold, the table parsing back to the same texts (a bare JSON.stringify let a note's `</script>` end the harness script before the fetch stub)", () => {
   const count = (s: string, re: RegExp) => (s.match(re) || []).length;
@@ -1492,15 +1495,17 @@ test("in a browser, the real module: A− and A+ never move when the readout app
       const { page, errors } = await openReal(browser, mode, 900);
       const rects = () => page.evaluate((q: typeof SEL) => {
         const r = (s: string) => { const b = (document.querySelector(s) as HTMLElement).getBoundingClientRect(); return { left: b.left, top: b.top, width: b.width }; };
-        return { down: r(q.down), up: r(q.up), reset: r(q.reset), vis: getComputedStyle(document.querySelector(q.reset)!).visibility, text: document.querySelector(q.reset)!.textContent };
+        // T367: the readout at the default is dimmed text wearing fileview-size-default (the fork's slot emptied by visibility retired)
+        return { down: r(q.down), up: r(q.up), reset: r(q.reset), dim: document.querySelector(q.reset)!.classList.contains("fileview-size-default"), text: document.querySelector(q.reset)!.textContent };
       }, SEL);
+      await openZoom(page);   // T367: the three ride the glyph's flyout; open, so the rectangles are boxes and the presses land
       const r0 = await rects();
-      assert.equal(await sizeOf(page), "100"); assert.equal(r0.vis, "hidden", mode + ": the slot is empty at the default");
+      assert.equal(await sizeOf(page), "100"); assert.equal(r0.dim, true, mode + ": the readout reads dimmed at the default (nothing to reset)"); assert.equal(r0.text, "100%", mode + ": ...and says the default");
       assert.ok(r0.reset.width > 40, mode + ": ...and has its width already: " + r0.reset.width);
       const at = { x: r0.down.left + 6, y: r0.down.top + 6 };   // a point inside A−, kept for the second press
       await page.mouse.click(at.x, at.y);
       let r1 = await rects();
-      assert.equal(await sizeOf(page), "90"); assert.equal(r1.vis, "visible", mode + ": the readout appears"); assert.equal(r1.text, "90%");
+      assert.equal(await sizeOf(page), "90"); assert.equal(r1.dim, false, mode + ": the readout fills (the dimmed dress leaves)"); assert.equal(r1.text, "90%");
       near(r1.down.left, r0.down.left, mode + ": A− did not move"); near(r1.up.left, r0.up.left, mode + ": A+ did not move"); near(r1.reset.left, r0.reset.left, mode + ": the slot was there all along");
       await page.mouse.click(at.x, at.y);
       assert.equal(await sizeOf(page), "80", mode + ": the second press at the same point is a second step, not the reset");
@@ -1550,6 +1555,7 @@ test("in a browser, the real module: A− and A+ never move when the readout app
       await page.mouse.move(pBox.left + 2, pBox.top + 8); await page.mouse.down(); await page.mouse.move(pBox.left + 220, pBox.top + 8, { steps: 5 }); await page.mouse.up();
       const s1 = await page.evaluate(() => ({ sels: (window as any).__sels, chars: getSelection()!.toString().length }));
       assert.ok(s1.chars > 0, mode + ": a passage is selected (" + s1.chars + " chars)"); assert.equal(s1.sels, 1, mode + ": the lift over the body ran the selection hooks once");
+      await openZoom(page);   // the drag's mousedown in the body shut the flyout
       const up = await rectOf(page, SEL.up);
       await page.mouse.click(up.left + 6, up.top + 6);
       const s2 = await page.evaluate(() => ({ sels: (window as any).__sels, chars: getSelection()!.toString().length }));
@@ -1565,6 +1571,7 @@ test("in a browser, the real module: A− and A+ never move when the readout app
       assert.match(s3.lastUp, /fileview-(dir|base|name)/, mode + ": the lift landed on the bar's path: " + s3.lastUp);
       assert.ok(s3.chars > 0 && s3.anchorInBody, mode + ": a passage anchored in the body is selected (" + s3.chars + " chars)");
       assert.equal(s3.sels, 2, mode + ": released over the bar's path, the drag settles: the hooks ran");
+      await openZoom(page);   // shut again by the second drag; it reopens under the glyph, so the same point is A+
       await page.mouse.click(up.left + 6, up.top + 6);
       const s4 = await page.evaluate(() => ({ sels: (window as any).__sels, lastUp: (window as any).__lastUp as string }));
       assert.equal(await sizeOf(page), "90", mode + ": A+ stepped again"); assert.match(s4.lastUp, /fileview-btn/);
@@ -1607,6 +1614,7 @@ test("in a browser, the real module: a selection overlapping a comment highlight
       assert.notEqual(bare.text, text0, mode + ": ...and the selection did not survive it on its own (" + bare.text.length + " of " + text0.length + " chars): the round-2 measurement, reproduced");
       // the same repaint through the viewer's step: the selection stands, every character of it
       assert.equal(await pick(false), text0);
+      await openZoom(page);
       let up = await rectOf(page, SEL.up);
       await page.mouse.click(up.left + 6, up.top + 6);
       assert.equal(await sizeOf(page), "115", mode + ": the step happened");
@@ -1624,6 +1632,7 @@ test("in a browser, the real module: a selection overlapping a comment highlight
       assert.equal(r.text, text0, mode + ": the selection survives the resize");
       // backwards (the anchor after the focus, a drag made leftwards): the direction is kept across the step
       assert.equal(await pick(true), text0);
+      await openZoom(page);
       up = await rectOf(page, SEL.up);
       await page.mouse.click(up.left + 6, up.top + 6);
       assert.equal(await sizeOf(page), "130");
@@ -1659,6 +1668,7 @@ test("in a browser, the real module: a selection holding a picture alone (anchor
       assert.equal(await pick(), "", mode + ": a selection around the picture holds no text");
       let r = await read();
       assert.deepEqual([r.collapsed, r.anchor, r.focus], [false, 0, 1], mode + ": ...and is not collapsed: the figure is what it holds");
+      await openZoom(page);
       const up = await rectOf(page, SEL.up);
       await page.mouse.click(up.left + 6, up.top + 6);
       assert.equal(await sizeOf(page), "115", mode + ": the step happened");
@@ -1695,6 +1705,7 @@ test("in a browser, the real module, the Raw view: a drag from a row's first col
       });
       const rect = (i: number) => page.evaluate((i: number) => { const r = (document.querySelectorAll(".fileview-body .fv-cl .fv-ct")[i] as HTMLElement).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; }, i);
       const survives = async (what: string, before: { text: string; anchorRow: number; focusRow: number; anchorOffset: number; focusOffset: number }) => {
+        await openZoom(page);   // a drag or a triple-click in the body shut the flyout
         const up = await rectOf(page, SEL.up);
         const size0 = Number(await sizeOf(page));
         await page.mouse.click(up.left + 6, up.top + 6);
@@ -1742,6 +1753,7 @@ test("in a browser, the real module, the Raw view: a drag from a row's first col
       });
       const forced = await read();
       assert.equal(forced.text, "def main():\n    return 1", mode + ": the drag's shape, set directly");
+      await openZoom(page);
       const up = await rectOf(page, SEL.up);
       await page.mouse.click(up.left + 6, up.top + 6);
       const r = await read();
@@ -1793,7 +1805,7 @@ test("in a browser, the real module: an end on a text-less line boundary keeps i
         for (const trigger of ["step", "resize"] as const) {
           const paints0 = (await read(page)).paints;
           if (trigger === "step") {
-            const up = await rectOf(page, SEL.up); const size0 = Number(await sizeOf(page));
+            await openZoom(page); const up = await rectOf(page, SEL.up); const size0 = Number(await sizeOf(page));
             await page.mouse.click(up.left + 6, up.top + 6);
             assert.ok(Number(await sizeOf(page)) > size0, mode + ": " + what + ": the step happened");
           } else {
@@ -1864,7 +1876,7 @@ test("in a browser, the real module: an end on a text-less line boundary keeps i
         assert.deepEqual([triple.anchorOffset, triple.anchorLine, triple.anchorInMark, triple.focusLine], [0, 1, true, 2], mode + ": from the highlight's first character to the second line's start");
         await forced(page, "the triple-clicked line", triple);
         // plain prose away from the highlight: the paint leaves it standing, and the viewer does not touch it (the same node)
-        const step = async () => { const paints0 = (await read(page)).paints; const up = await rectOf(page, SEL.up); await page.mouse.click(up.left + 6, up.top + 6); await page.waitForFunction((n: number) => (window as any).__paints > n, paints0, { timeout: 5000 }); };
+        const step = async () => { const paints0 = (await read(page)).paints; await openZoom(page); const up = await rectOf(page, SEL.up); await page.mouse.click(up.left + 6, up.top + 6); await page.waitForFunction((n: number) => (window as any).__paints > n, paints0, { timeout: 5000 }); };
         const same = () => page.evaluate(() => { const s = getSelection()!; return s.anchorNode === (window as any).__n && s.focusNode === (window as any).__n; });
         await page.evaluate(() => { const done = Array.from(document.querySelectorAll(".fileview-md p")).pop()!.firstChild as Text; (window as any).__n = done; getSelection()!.setBaseAndExtent(done, 1, done, 4); });
         let r = await read(page);

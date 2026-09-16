@@ -62,15 +62,20 @@ test("the kernel talking about a session this client doesn't hold triggers the S
     "statusOnly holds a status for a session this page holds nothing of, for the skeleton strip, and asks for no full (#1529)");
 });
 
-test("the re-ask stands down for closing tabs, provisional ids, and unreachable remote hosts", () => {
+test("the re-ask stands down for closing tabs and provisional ids", () => {
   // A tab the user just closed must not be resurrected by its own goodbye traffic (the kernel keeps
   // listing + talking about it for a push or two after the ✕); the kernel never knew a client-minted
-  // provisional id; and a DETACHED host's teardown (closeRemote's synthesized closed fan-out) or a down
-  // host must not turn into an ask-forever loop — the reattach's fresh connect re-sends everything anyway.
+  // provisional id. Both gates are the fork's (upstream's requestFullSession, taken at the 2026-09-15 pull-in,
+  // asks with no gate) and sit inside requestFullSession so every ask key inherits them. The third gate this
+  // case pinned, the detached-host and down-host suppression (`fed.hosts().indexOf(h) < 0 || hostIsDown(id)`),
+  // is RETIRED: it guarded the detached client's reattach (closeRemote's synthesized closed fan-out), which left
+  // with T386 stage 2, so the pull-in's ruling 16 (2026-09-15) took the gate out with the client; the function's
+  // body is pinned to read no host.
   assert.match(RENDER, /if \(isProvisionalId\(id\) \|\| closingTabs\.has\(id\)\) return;/,
     "provisional + mid-close suppression, inside requestFullSession so every ask key inherits it");
-  assert.match(RENDER, /fed\.hosts\(\)\.indexOf\(h\) < 0 \|\| hostIsDown\(id\)\) return;/,
-    "detached (not attached) and down hosts are suppressed the same way closingTabs is");
+  const askFn = RENDER.split("function requestFullSession(")[1].split("\n}")[0];
+  assert.doesNotMatch(askFn, /hostIsDown|fed\.hosts\(\)|hostOf\(/,
+    "requestFullSession reads no host: the detached-host gate retired with the detached client (T386 stage 2; the 2026-09-15 pull-in), and upstream's function never had one");
 });
 
 test("awaitingFull cannot wedge across a reconnect — the socket edge clears it", () => {
