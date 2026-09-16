@@ -186,7 +186,10 @@ test("in a browser, wrapping every figure on the page leaves it as the browser l
     const control = await measure(page);
     assert.ok(Math.abs(control.plot.width - 300) < 0.5, "control: the plot collapses to its natural width (" + control.plot.width + ")");
     assert.ok(Math.abs(control.logo.left - 20) < 0.5, "control: the logo jumps to the left edge (" + control.logo.left + ")");
-    assert.ok(control["p-logo"].height > before["p-logo"].height + 20, "control: the prose is pushed below the logo (" + control["p-logo"].height + " vs " + before["p-logo"].height + ")");
+    // the shift is the control's tall first line (the 60 px logo on the baseline plus the strut's descent) less the text lines the
+    // full width saves once the prose stops flowing beside the logo, so its size follows the box's sans-serif (19 px under DejaVu
+    // Sans; more under a narrower font): the pin asks for more than 10 px, a paragraph that grew, not a font's wrap count
+    assert.ok(control["p-logo"].height > before["p-logo"].height + 10, "control: the prose is pushed below the logo, the paragraph grows by more than 10 px (" + control["p-logo"].height + " vs " + before["p-logo"].height + ")");
     assert.ok(Math.abs(control.centered.left - 20) < 0.5, "control: the centered figure jumps left (" + control.centered.left + ")");
     await controlWrap(page, false);
     sameScene(await measure(page), before, "the control undone");

@@ -60,7 +60,10 @@ function blankFacts(): Facts[] {
 }
 const rowTop = (page: any) => page.evaluate(() => { const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect(); const rows = Array.from(document.querySelectorAll(".fileview-md pre code > .cl")); const r = rows[3].getBoundingClientRect(); return { top: r.top - br.top, height: r.height, scrollTop: body.scrollTop }; });
 const click = async (page: any, label: string, until: string) => { await page.locator("#romp-fileview .fileview-btn", { hasText: new RegExp("^" + label + "$") }).click(); await page.waitForFunction((s: string) => !!document.querySelector(s), until, { timeout: 5000 }); await frames(page, 3); };
-const scaleTo150 = async (page: any) => { for (let i = 0; i < 3; i++) await page.click('button[aria-label="Larger text"]'); await page.waitForFunction(() => getComputedStyle(document.querySelector(".fileview-md")!).getPropertyValue("--fv-scale").trim() === "1.5", null, { timeout: 5000 }); await frames(page, 2); };
+/** The text-size buttons ride the zoom glyph's flyout (upstream T367: shut until the glyph is pressed, and shut again by any
+ *  press outside it): open it when it is shut, so a press on A+, A- or the readout lands on a shown button. */
+const openZoom = async (page: any) => { if (await page.evaluate(() => { const m = document.querySelector(".fileview .fileview-zoom-menu") as HTMLElement | null; return !m || m.hidden; })) await page.click(".fileview .fileview-zoom-btn"); };
+const scaleTo150 = async (page: any) => { await openZoom(page); for (let i = 0; i < 3; i++) await page.click('button[aria-label="Larger text"]'); await page.waitForFunction(() => getComputedStyle(document.querySelector(".fileview-md")!).getPropertyValue("--fv-scale").trim() === "1.5", null, { timeout: 5000 }); await frames(page, 2); };
 
 test("every row of a 1200-line fence is exactly the code's line-height, at 100 and 150 percent, four-digit numbers included; the number never breaks", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {

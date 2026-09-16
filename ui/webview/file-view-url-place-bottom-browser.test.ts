@@ -61,7 +61,10 @@ test("in a browser, the URL viewer: the Rendered/Raw round trip from the end of 
 // left scrollTop where it was while the text above the passage grew (the root's inline padding moves with the ch, so the browser's
 // own scroll anchoring stands down), and the top block was an earlier paragraph; A- then brought the layout back and the reader
 // with it, so the case pins BOTH stops: the top block after A+ and after A-. Two cells, the chat modal and the pane.
-const stepSize = async (page: any, larger: boolean) => { await page.locator('#romp-fileview button[aria-label="' + (larger ? "Larger" : "Smaller") + ' text"]').click(); await frames(page, 3); };
+// T367: A- and A+ ride the zoom glyph's flyout, hidden until the glyph is pressed and closed again by any mousedown outside it, so a
+// step opens the flyout first whenever it is closed (a press inside it leaves it open, so the second step finds it open).
+const openZoom = async (page: any) => { const menu = page.locator("#romp-fileview .fileview-zoom-menu"); if (await menu.isHidden()) { await page.locator("#romp-fileview .fileview-zoom-btn").click(); await menu.waitFor({ state: "visible", timeout: 4000 }); } };
+const stepSize = async (page: any, larger: boolean) => { await openZoom(page); await page.locator('#romp-fileview button[aria-label="' + (larger ? "Larger" : "Smaller") + ' text"]').click(); await frames(page, 3); };
 const sizeOf = (page: any): Promise<string | undefined> => page.evaluate(() => (document.querySelector(".fileview") as HTMLElement).dataset.fvText);
 
 test("in a browser, the URL viewer: the reader scrolled to a passage keeps its top block across A+ and then A-, chat and pane, as the local viewer does", { timeout: 180000 }, async (t) => {

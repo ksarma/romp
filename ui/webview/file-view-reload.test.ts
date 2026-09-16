@@ -659,7 +659,7 @@ test("changed on disk: while editing no HEAD runs and the editor's entry takes t
   focusWindow(); await settle();
   assert.equal(readBar(wrap).text, CHANGED);
   const acts = wrap.querySelector(".fileview-acts")!;
-  acts.querySelectorAll("button").find((x) => x.textContent === "Edit")!.click(); await settle();
+  acts.querySelectorAll("button").find((x) => x.textContent === "Edit" || x.getAttribute("aria-label") === "Edit")!.click(); await settle();
   assert.equal(ctx.editing(), true, "the editor is up"); assert.equal(ed.mounted, 1);
   assert.equal(barOf(wrap), null, "the editor's entry took the bar (enterEdit: a notice over the read view goes as the editor takes the body)");
   const n = heads();
@@ -1050,7 +1050,7 @@ test("changed on disk (PR review round 2): the deletion's words survive the edit
   assert.equal(readBar(wrap).text, "Deleted on disk.", "the deletion's words");
   const acts = wrap.querySelector(".fileview-acts")!;
   const mounted = ed.mounted;
-  acts.querySelectorAll("button").find((x) => x.textContent === "Edit")!.click(); await settle();
+  acts.querySelectorAll("button").find((x) => x.textContent === "Edit" || x.getAttribute("aria-label") === "Edit")!.click(); await settle();
   assert.equal(ctx.editing(), true, "the editor is up over the text the reader has"); assert.equal(ed.mounted, mounted + 1);
   assert.equal(barOf(wrap), null, "the editor's entry took the bar with the other notices");
   const n = heads();

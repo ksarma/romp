@@ -296,6 +296,9 @@ async function inBrowser(t: any, host: "files" | "chat" | "feed", body: (h: Harn
   }
 }
 const rowTexts = (page: any) => page.evaluate(() => Array.from(document.querySelectorAll("#romp-fileview code.hljs .fv-cl")).map((r) => r.textContent));
+/** The text-size buttons ride the zoom glyph's flyout (upstream T367: shut until the glyph is pressed, and shut again by any
+ *  press outside it): open it when it is shut, so a press on A+, A- or the readout lands on a shown button. */
+const openZoom = async (page: any) => { if (await page.evaluate(() => { const m = document.querySelector("#romp-fileview .fileview-zoom-menu") as HTMLElement | null; return !m || m.hidden; })) await page.click("#romp-fileview .fileview-zoom-btn"); };
 /** The next page the context opens (a new tab from an anchor or window.open, opener or not), and its URL once loaded. */
 async function nextTab(h: Harness, act: () => Promise<unknown>): Promise<string> {
   const [tab] = await Promise.all([h.ctx.waitForEvent("page", { timeout: 10000 }), act()]);
@@ -333,13 +336,13 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     // ── a text-size step (A+; the viewer restyles and repaints its marks, keeping the selection): the links stand, the rows read
     //    as before, the selection survives the repaint, and the click that follows still opens the file ──
     await page.evaluate(() => { const l = document.querySelector("#romp-fileview .file-uri-link")!; getSelection()!.selectAllChildren(l.parentElement!); });
-    await page.locator("#romp-fileview .fileview-size", { hasText: "A+" }).click(); await settle();
+    await openZoom(page); await page.locator("#romp-fileview .fileview-size", { hasText: "A+" }).click(); await settle();
     assert.match((await page.locator("#romp-fileview .fileview-size-reset").textContent()) || "", /115/, "one step up from 100%");
     assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => l.text), links.map((l) => l.text), "the links stand at the new size");
     assert.deepEqual(await rowTexts(page), APP_TEXT.split("\n").slice(0, -1), "every row still reads as the file's line");
     assert.equal(await page.evaluate(() => !getSelection()!.isCollapsed), true, "the repaint kept the selection");
     await page.evaluate(() => getSelection()!.removeAllRanges());
-    await page.locator("#romp-fileview .fileview-size-reset").click(); await settle();   // back to 100% for the row-in-view checks below
+    await openZoom(page); await page.locator("#romp-fileview .fileview-size-reset").click(); await settle();   // back to 100% for the row-in-view checks below
     // Still the one fetch: a text-size step repaints from the text on hand (textSizeControl's step reads the place, restyles, seats;
     // nothing there fetches). Asserted here, apart from the click below, so a stray second fetch names its moment: one red
     // run under 34 concurrent browser legs and 16 CPU burners (the Slice 2 review, round 3) found app.py at served[1] and

@@ -195,7 +195,7 @@ test("in a browser (review round 2): the changed-on-disk bar's Reload clicked, t
       await fb.evaluate(() => { const w = window as any; w.__status = { ...w.__status, trackedBy: null, store: null, storePath: null, storeMtimeNs: null }; });
       await fb.click("body", { position: { x: 5, y: 5 } });
       await openReport(fb);
-      await fb.locator(".fileview-acts button", { hasText: /^Edit$/ }).click();
+      await fb.locator(".fileview-acts button[aria-label='Edit']").click();
       await fb.waitForFunction(() => !!document.querySelector(".fileview-body textarea.fileview-editor"), null, { timeout: 10000 }); await frames(fb, 2);
       await fb.evaluate(() => { const ta = document.querySelector(".fileview-body textarea.fileview-editor") as HTMLTextAreaElement; ta.focus(); ta.value = ta.value + "\nedited\n"; ta.dispatchEvent(new Event("input")); });
       const n0: number = await fb.evaluate(() => (window as any).__posted.length);

@@ -633,7 +633,7 @@ test("in a browser, at 900 and 380 px (review round 4): a record's folds met by 
       assert.equal(before.open, true, what + ": the fold is open at the leave");
       assert.equal(await page.evaluate(paraShown, "Paragraph 25"), true, what + ": Paragraph 25 shows");
       if (via === "edit") {
-        await page.evaluate(() => { const b = Array.from(document.querySelectorAll(".fileview-acts button")).find((x) => x.textContent === "Edit") as HTMLElement; b.click(); });
+        await page.evaluate(() => { const b = Array.from(document.querySelectorAll(".fileview-acts button")).find((x) => x.textContent === "Edit" || x.getAttribute("aria-label") === "Edit") as HTMLElement; b.click(); });
         await page.waitForFunction(() => !!document.querySelector(".fileview-body textarea"), null, { timeout: 5000 });
         assert.equal(await page.evaluate(() => localStorage.getItem("romp:fileviewFmt")), JSON.stringify({ md: "raw" }), what + ": Edit saved the Raw preference");
       }
@@ -663,7 +663,7 @@ test("in a browser, at 900 and 380 px (review round 4): a record's folds met by 
       await page.click(DET + " > summary"); await frames(page, 2);
       await page.evaluate(putAbove, ["Paragraph 25", 20]); await frames(page, 2);
       const before: FoldRead = await page.evaluate(readFold, DET);
-      await page.evaluate(() => { const b = Array.from(document.querySelectorAll(".fileview-acts button")).find((x) => x.textContent === "Edit") as HTMLElement; b.click(); });
+      await page.evaluate(() => { const b = Array.from(document.querySelectorAll(".fileview-acts button")).find((x) => x.textContent === "Edit" || x.getAttribute("aria-label") === "Edit") as HTMLElement; b.click(); });
       await page.waitForFunction(() => !!document.querySelector(".fileview-body textarea"), null, { timeout: 5000 });
       await reopen(page, { rendered: true });
       const after: FoldRead = await page.evaluate(readFold, DET);
@@ -760,7 +760,7 @@ test("in a browser, at 900 px (review round 5): a record's folds held past a Raw
     await hookLeaves(page);
     await page.click(DET + " > summary"); await frames(page, 2);
     await page.evaluate(putAbove, ["Paragraph 25", 20]); await frames(page, 2);
-    await page.evaluate(() => { const b = Array.from(document.querySelectorAll(".fileview-acts button")).find((x) => x.textContent === "Edit") as HTMLElement; b.click(); });
+    await page.evaluate(() => { const b = Array.from(document.querySelectorAll(".fileview-acts button")).find((x) => x.textContent === "Edit" || x.getAttribute("aria-label") === "Edit") as HTMLElement; b.click(); });
     await page.waitForFunction(() => !!document.querySelector(".fileview-body textarea"), null, { timeout: 5000 });
     let p0: number = await page.evaluate(() => (window as any).__paints);
     await page.evaluate(() => { (window as any).FV.closeFileView(); });
@@ -804,7 +804,7 @@ test("in a browser, at 900 px (review round 6): a record's folds carried on by a
       await page.evaluate(putAbove, ["Paragraph 5", 20]); await frames(page, 2);
       const before: FoldRead = await page.evaluate(readFold, sel);
       assert.equal(before.open, false, what + ": shut as authored at the Rendered read");
-      await page.evaluate(() => { const b = Array.from(document.querySelectorAll(".fileview-acts button")).find((x) => x.textContent === "Edit") as HTMLElement; b.click(); });
+      await page.evaluate(() => { const b = Array.from(document.querySelectorAll(".fileview-acts button")).find((x) => x.textContent === "Edit" || x.getAttribute("aria-label") === "Edit") as HTMLElement; b.click(); });
       await page.waitForFunction(() => !!document.querySelector(".fileview-body textarea"), null, { timeout: 5000 });
       let p0: number = await page.evaluate(() => (window as any).__paints);
       await page.evaluate(() => { (window as any).FV.closeFileView(); });

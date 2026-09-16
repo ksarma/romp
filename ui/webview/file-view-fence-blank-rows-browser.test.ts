@@ -102,12 +102,16 @@ test("a blank fence row, a row after blank rows and a row the edge cuts above al
   });
 });
 
+/** The text-size buttons ride the zoom glyph's flyout (upstream T367: shut until the glyph is pressed, and shut again by any
+ *  press outside it): open it when it is shut, so a press on A+, A- or the readout lands on a shown button. */
+const openZoom = async (page: any) => { if (await page.evaluate(() => { const m = document.querySelector(".fileview .fileview-zoom-menu") as HTMLElement | null; return !m || m.hidden; })) await page.click(".fileview .fileview-zoom-btn"); };
+
 test("the same at 150 percent on pane 900, where a blank row's height differs most between the views", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const rp = bundleReaderPlace();
     const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: NOTE } });
     await page.addScriptTag({ content: rp });
-    for (let i = 0; i < 3; i++) await page.click('button[aria-label="Larger text"]');
+    await openZoom(page); for (let i = 0; i < 3; i++) await page.click('button[aria-label="Larger text"]');
     await page.waitForFunction(() => getComputedStyle(document.querySelector(".fileview-md")!).getPropertyValue("--fv-scale").trim() === "1.5", null, { timeout: 5000 }); await frames(page, 2);
     await roundTrips(page, "pane 900px at 150 percent", errors, SCENES.filter((s) => s.row === 8 || s.row === 4));
     await page.close();

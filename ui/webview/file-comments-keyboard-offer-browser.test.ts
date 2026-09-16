@@ -73,6 +73,9 @@ const offeredAtSelection = (page: any, what: string): Promise<void> => waitFor(p
   const r = sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect();
   return Math.abs(parseFloat(f.style.left) - Math.min(Math.max(8, r.right + 6), window.innerWidth - 90)) < 0.01;
 }, what);
+/** The text-size buttons ride the zoom glyph's flyout (upstream T367: shut until the glyph is pressed, and shut again by any
+ *  press outside it): open it when it is shut, so a press on A+, A- or the readout lands on a shown button. */
+const openZoom = async (page: any) => { if (await page.evaluate(() => { const m = document.querySelector(".fileview .fileview-zoom-menu") as HTMLElement | null; return !m || m.hidden; })) await page.click(".fileview .fileview-zoom-btn"); };
 
 test("in a browser, the real module and panel: after a drag, Shift+ArrowLeft three times shrinks the selection and the float follows it to the shrunk selection's rect; a text-size step leaves it hidden; Ctrl+A hides it and offers nothing; in the list (380px) and margin (900px) layouts", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
@@ -100,7 +103,7 @@ test("in a browser, the real module and panel: after a drag, Shift+ArrowLeft thr
       // a text-size step: onRendered hides the float on the reflow, and nothing re-offers it (the selection's nodes stand, so the seam
       // re-seats nothing; a re-seat of the same ends would be no new offer either)
       const paints: number = await page.evaluate(() => (window as any).__paints);
-      await page.click('.fileview-bar button[aria-label="Larger text"]');
+      await openZoom(page); await page.click('.fileview-bar button[aria-label="Larger text"]');
       await page.waitForFunction((n: number) => (window as any).__paints > n, paints, { timeout: 10000 });
       await frames(page, 4);
       s = await scene(page);

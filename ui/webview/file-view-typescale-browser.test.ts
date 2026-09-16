@@ -95,7 +95,11 @@ const lum = (c: number[]): number => { const f = (v: number) => { v /= 255; retu
 const ratio = (a: number[], b: number[]): number => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
 const near = (a: number, b: number, what: string, tol = 1) => assert.ok(Math.abs(a - b) < tol, what + ": " + a + " vs " + b);
 
+/** The text-size buttons ride the zoom glyph's flyout (upstream T367: shut until the glyph is pressed, and shut again by any
+ *  press outside it): open it when it is shut, so the A+ press lands on a shown button. */
+const openZoom = async (page: any) => { if (await page.evaluate(() => { const m = document.querySelector(".fileview-zoom-menu") as HTMLElement | null; return !m || m.hidden; })) await page.click(".fileview-zoom-btn"); };
 const stepUp = async (page: any) => {
+  await openZoom(page);
   await page.click('button[aria-label="Larger text"]');
   await page.waitForFunction(() => getComputedStyle(document.querySelector(".fileview-md")!).getPropertyValue("--fv-scale").trim() === "1.15", null, { timeout: 5000 });
   await frames(page, 2);

@@ -398,7 +398,7 @@ function unregisteredEditor(t: TestContext): void {
   t.after(() => { win.__rompEditor = saved; tag.remove(); doc.head.replaceChildren(); });
 }
 const button = (wrap: El, label: string): El => {
-  const b = wrap.querySelectorAll("button").find((x) => x.textContent === label);
+  const b = wrap.querySelectorAll("button").find((x) => x.textContent === label || x.getAttribute("aria-label") === label);
   assert.ok(b, "a " + label + " button"); return b!;
 };
 

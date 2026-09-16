@@ -219,9 +219,19 @@ function selectInBody(): string {
   const s = document.getSelection()!; s.removeAllRanges(); s.addRange(r);
   return s.toString();
 }
+/** T367: A- and A+ ride the zoom glyph's flyout, hidden until the glyph is pressed and closed by any mousedown outside it. When it is
+ *  closed, a MOUSE click on the glyph's rectangle opens it (the scenes are about a mouse hand-over, so the glyph is pressed the same way;
+ *  the glyph is mouse-focused, and the step's paint reads the mouse-focused A+ or A- it hands the keyboard from). */
+async function openZoomByMouse(page: any): Promise<void> {
+  const at = await page.evaluate(() => { const m = document.querySelector(".fileview-zoom-menu") as HTMLElement; if (!m.hidden) return null; const r = (document.querySelector(".fileview-zoom-btn") as HTMLElement).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  if (!at) return;
+  await page.mouse.click(at.x, at.y);
+  await page.waitForFunction(() => !(document.querySelector(".fileview-zoom-menu") as HTMLElement).hidden, null, { timeout: 4000 });
+}
 /** A mouse click on the bar's A+ (a text-size step: the paint hands the keyboard to the body, reading a mouse-focused holder). */
 async function clickTextUp(page: any): Promise<void> {
   const b = await paints(page);
+  await openZoomByMouse(page);
   const at = await page.evaluate(() => { const x = Array.from(document.querySelectorAll(".fileview-bar button")).find((e) => (e.textContent || "").trim() === "A+") as HTMLElement; const r = x.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
   await page.mouse.click(at.x, at.y);
   await painted(page, b);
@@ -241,6 +251,7 @@ async function keyScenes(page: any, what: string): Promise<void> {
   ring(await ringOf(page), what + ", ArrowDown after the mouse click on A+");
   // a mouse click on A- hands over ringless again; a Ctrl+C over a selection in the body is a chord and lifts nothing
   const b = await paints(page);
+  await openZoomByMouse(page);
   const dn = await page.evaluate(() => { const x = Array.from(document.querySelectorAll(".fileview-bar button")).find((e) => (e.textContent || "").trim() === "A\u2212") as HTMLElement; const r = x.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
   await page.mouse.click(dn.x, dn.y);
   await painted(page, b);

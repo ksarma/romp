@@ -467,7 +467,7 @@ const blocks = (o: Open): El[] => { const md = o.body.querySelector(".fileview-m
 const rows = (o: Open): El[] => { const code = o.body.querySelector("code.hljs"); assert.ok(code, "the Raw view is up"); return code!.children.filter((c) => c.classes.includes("fv-cl")); };
 /** The block or row at the body's top edge, by the layout: its rect top less the edge. */
 const topOf = (el: El): number => el.getBoundingClientRect().top - EDGE;
-const btn = (o: Open, label: string): El => { const b = o.wrap.querySelector(".fileview-acts")!.querySelectorAll("button").find((x) => x.textContent === label); assert.ok(b, "the " + label + " button"); return b!; };
+const btn = (o: Open, label: string): El => { const b = o.wrap.querySelector(".fileview-acts")!.querySelectorAll("button").find((x) => x.textContent === label || x.getAttribute("aria-label") === label); assert.ok(b, "the " + label + " button"); return b!; };   // a word button by its text (Save, Cancel), a glyph (Edit; T367) by its aria-label
 const FIXTURE_WORDS = ["Paragraph", "Preface", "Report", "words", "report", "line", "value_"];
 
 // ── the record and its two pure functions ─────────────────────────────────────────────────────────

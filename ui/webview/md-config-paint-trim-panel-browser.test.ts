@@ -71,6 +71,8 @@ const reflowed = async (page: any, paints: number): Promise<void> => {
   await page.waitForFunction((n: number) => (window as any).__paints > n, paints, { timeout: 10000 });
   await frames(page, 4);
 };
+/** T367: A+ rides the zoom glyph's flyout, hidden until the glyph is pressed and closed by any mousedown outside it: open it when it is closed. */
+const openZoom = async (page: any): Promise<void> => { const menu = page.locator(".fileview-zoom-menu"); if (await menu.isHidden()) { await page.click(".fileview-zoom-btn"); await menu.waitFor({ state: "visible", timeout: 4000 }); } };
 
 /** A page of the Files pane at `width`, the report open with `comments` in the kernel's status, the REAL panel opened and its pass
  *  painted (the marks stand in the body; the trim runs inside the pass), then its cards placed where the aside stands beside the
@@ -130,6 +132,7 @@ test("in a browser, the real panel: the paint pass trims its marks once (no padd
     assert.deepEqual(r1.paddingOnly, [], "no blank mark of zero width stands after the reflow (the panel re-trimmed in the hook)");
     // (3) a text-size step: a reflow too, the same holds
     await keepMarks(page);
+    await openZoom(page);
     await page.click('button[aria-label="Larger text"]');
     await reflowed(page, r1.paints);
     const r2 = await read(page);

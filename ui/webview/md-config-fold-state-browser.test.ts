@@ -161,7 +161,7 @@ test("Files pane: the folds the person opened or closed stand as chosen across t
     assert.deepEqual(await heights(page), chosenHeights, "the folds are laid out at the heights they had before the paint");
 
     // the editor takes the body (Edit; the Rendered view is left for Raw) and hands it back (Cancel, nothing changed), then Rendered again
-    await bar(page, "Edit").click();
+    await page.locator("#romp-fileview .fileview-bar button[aria-label='Edit']").click();
     await page.waitForSelector("#romp-fileview .fileview-cm textarea", { timeout: 15000 });
     await bar(page, "Cancel").click();
     await settle(page);
