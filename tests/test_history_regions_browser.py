@@ -32,6 +32,14 @@ const rowAtTop = () => page.evaluate(() => {
   return null;
 });
 const regions = () => page.evaluate(() => (typeof window.__rompRegions === "function" ? window.__rompRegions() : null));   // the session's regions (a gap inside a spacer has no element); the base has no hook and its roads still run to their own red
+// The kernel's wire settles before any road runs. The pusher's cycle after the connect push's full frame sends this socket ONE
+// status-only chatTail (an empty suffix anchored at the list's last key), and the page truncates after that anchor when it applies
+// it, as for every tail. On a pusher that cycles on its wakes that frame lands ~0.1 s after the connect push; on one that holds a
+// minimum interval between cycles it lands ~2 s after, inside the roads: its application files a scroll gesture and a scroll write
+// (road 2 counts gestures across the fill) and, after road 3's post, cuts the synthetic tail away (measured 10 to 55 ms after the
+// post). DRIVER_HEAD's frame log records every chatTail with its source, so the wait is on that event; the settled wire then dedups
+// the same tail for a minute, longer than the roads take.
+await page.waitForFunction(() => (window.__bootFrames || []).some((f) => f.type === "chatTail" && f.source === "socket"), null, { timeout: 15000 }).catch(() => {});
 // ROAD 1: the boot holds the tail; one gap from the head to the tail's start, no ask
 const bootRegions = await regions(), turnsBefore = await sentOf("loadTurns");
 // ROAD 2: a jump to just above the resident run's first turn (into the gap's bottom edge, the edge a reader scrolling up meets; scrollTop 0
@@ -69,7 +77,9 @@ const tail = { type: "chatTail", id: cfg.sid, afterUuid: regionsFilled ? regions
   { uuid: "11111111-2222-3333-4444-" + pad(2 * k), kind: "user", md: "question number " + k + " about the notes api", ts: new Date((cfg.base + 2 * k) * 1000).toISOString() },
   { uuid: "22222222-3333-4444-5555-" + pad(2 * k + 1), kind: "assistant", md: "Answer " + k + ": the handler reads the note by id and returns it.", ts: new Date((cfg.base + 2 * k + 1) * 1000).toISOString() }] };
 await page.evaluate((f) => { window.postMessage(f, "*"); }, tail);
-await page.waitForFunction((u) => { const ts = Array.from(document.querySelectorAll("#content .turn[data-uuid]")); return ts.length && ts[ts.length - 1].dataset.uuid === u; }, tail.events[1].uuid, { timeout: 10000 }).catch(() => {});
+// the landing's event: the tail run's last key (the page's regions report, the source the assertion reads) becomes the posted second
+// event's; the last RENDERED row is the reader's window far above the tail and never carries it (a wait on it was a 10-s sleep)
+await page.waitForFunction((u) => { const rs = (typeof window.__rompRegions === "function" && window.__rompRegions()) || []; return rs.length > 0 && rs[rs.length - 1].kind === "run" && rs[rs.length - 1].last === u; }, tail.events[1].uuid, { timeout: 10000 }).catch(() => {});
 const live = await state(); const regionsLive = await regions(); const rowLive = await rowAtTop();
 // ROAD 2b (T386 stage 2, low 8): a fill BELOW the viewport. The head gap still stands above the filled run; a jump to the transcript
 // top puts the reader at the gap's TOP edge, the edge met by scrolling DOWN, so the gap asks for its top page (lo 0), which fills in

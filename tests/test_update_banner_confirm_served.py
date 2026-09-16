@@ -1553,7 +1553,10 @@ def _covers(a, b, tol=0.5):
 class Browser(unittest.TestCase):
     """One driver run per leg over the scratch page; each test reads one facet per leg that ran. Skips
     loudly without playwright or a browser (CI installs none); a leg that fails to launch skips its own
-    run and the *_ran tests say so. Four legs: Chromium, Firefox and WebKit as installed, and Firefox
+    run and the *_ran tests say so, as "optional:" when ROMP_SERVED_TESTS_ENGINES names the engines the
+    runner installed and the leg's is not among them (CI's served job names chromium; tests/conftest.py
+    leaves such a skip a skip under ROMP_SERVED_TESTS_REQUIRE=1 and turns every other skip in this file
+    into a failure). Four legs: Chromium, Firefox and WebKit as installed, and Firefox
     under Gecko's own switch for the WebKit focus rule (a press does not focus a button, so the mousedown
     on the confirm or Cancel blurs the armed label to nothing before the click: the value macOS Firefox
     shipped until 2021 and Safari's rule to this day; Playwright's Linux WebKit is the GTK port, which
@@ -1578,6 +1581,11 @@ class Browser(unittest.TestCase):
         # "1" a driver reports can only have come from the explicit hand-off (DeadPorts says why; the
         # drivers are spawned once here, before any test method, so the base is built here)
         base = dict(os.environ, **{k: "2" for k in DEAD_PORTS})
+        # the engines this runner says it installed (CI's served job: chromium); a leg for any other engine
+        # that fails to launch is an "optional:" skip, the one shape ROMP_SERVED_TESTS_REQUIRE=1 leaves a skip
+        # (tests/conftest.py); with the variable unset every failed launch keeps the loud reason
+        declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
+        engines = [e.strip() for e in declared.split(",") if e.strip()]
         for leg, engine, launch in cls.LEGS:
             cfg = os.path.join(lab, leg + ".json")
             with open(cfg, "w") as f:
@@ -1585,7 +1593,10 @@ class Browser(unittest.TestCase):
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=600,
                                env=dict(base, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg, **DEAD_PORTS))
             if p.returncode == 3:
-                cls.skipped[leg] = "no playwright %s on this box (CI installs none): %s" % (engine, p.stderr.strip()[:200])
+                reason = "no playwright %s on this box (CI installs none): %s" % (engine, p.stderr.strip()[:200])
+                if engines and engine not in engines:
+                    reason = "optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s): %s" % (engine, declared, reason)
+                cls.skipped[leg] = reason
                 continue
             if p.returncode != 0:
                 raise AssertionError("%s driver failed:\n%s%s" % (leg, p.stdout[-3000:], p.stderr[-3000:]))
@@ -1595,7 +1606,8 @@ class Browser(unittest.TestCase):
             cls.R[leg] = json.loads(line[len("RESULT:"):])
         shutil.rmtree(lab, ignore_errors=True)
         if not cls.R:
-            raise unittest.SkipTest("; ".join(cls.skipped.values()))
+            # no leg ran: the loud reasons first, so an "optional:" one never hides a declared engine's failed launch
+            raise unittest.SkipTest("; ".join(sorted(cls.skipped.values(), key=lambda r: r.startswith("optional:"))))
 
     def test_the_driver_hit_no_script_error(self):
         for engine, r in self.R.items():

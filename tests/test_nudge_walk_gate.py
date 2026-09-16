@@ -70,6 +70,7 @@ class _FakeBackend:
 class _Base(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)                  # cleanups run last in, first out: the seams go back, then the dir
         td = Path(self.td.name)
         self.saved = {k: getattr(km, k) for k in (
             "_alive_sessions", "_wait_for_graph", "_session_flag", "_compacting_now", "_api_error",
@@ -80,6 +81,12 @@ class _Base(unittest.TestCase):
         self.saved_jd = {k: getattr(jd, k) for k in ("STATE", "GOALDIR", "EPIDIR", "parsed_session", "_segs",
                                                      "plan_units", "load_goals", "load_goals_shared")}
         self.saved_backend = km.Sessions.backend_for
+        self.shared_off_before = jd._SHARED_OFF[0]
+        # The seams above go back through a cleanup, not tearDown: unittest skips tearDown when setUp raises and runs
+        # the cleanups regardless, so a setUp that fails after the rebind below cannot leave jd.STATE naming this
+        # test's directory for every later test in the process (conftest's shared-state guard). The 3.10 CI leg of
+        # 2026-09-16 turned one KeyError in this setUp into fifteen guard errors that way.
+        self.addCleanup(self._restore)
         jd.STATE = td
         jd.GOALDIR = td / "goals"; jd.GOALDIR.mkdir(parents=True)
         jd.EPIDIR = td / "episodes"; jd.EPIDIR.mkdir(parents=True)
@@ -89,7 +96,7 @@ class _Base(unittest.TestCase):
         # the shared cache's switch and poison counter are process-wide (one judge module per worker):
         # another module's deliberate frozen-write test leaves the counter raised, so the writer check
         # below is a DELTA over this test, and the switch is on for the test and restored after it
-        self.shared_off_before = jd._SHARED_OFF[0]
+        # (saved with the other seams above)
         jd._SHARED_OFF[0] = False
         self.poisoned_before = jd.shared_store_stats().get("poisoned", 0)
         self.fb = _FakeBackend()
@@ -139,10 +146,17 @@ class _Base(unittest.TestCase):
             jd._PARSE_CACHE[sid] = (("fixture", self.parse_gen), sess)
             return sess
         jd.parsed_session = _parsed
-        jd._PARSE_CACHE.pop(SID, None)
+        # the store's own drop, never _PARSE_CACHE.pop(SID, None): the store is an OrderedDict subclass whose slots
+        # are (fsid, cut, leaf) tuples, and a bare sid is not a key of its own. Python 3.11+ answers that pop with
+        # the default and drops nothing; 3.10's OrderedDict.pop dispatches to the overridden __contains__ and
+        # __getitem__ (which read the bare sid as the newest slot) and then to the inherited __delitem__, which
+        # raises KeyError on it (the 3.10 CI leg, 2026-09-16)
+        jd.parse_cache_drop(SID)
         self.gid = SID + ":g1"
 
-    def tearDown(self):
+    def _restore(self):
+        """Every process-wide seam setUp moved goes back the way it was found: a cleanup registered in setUp before
+        the first rebind, so it runs whether setUp finished or not; the temp dir's own cleanup runs after it."""
         journal = jd._overrides_dir() / (SID + ".jsonl")     # under the test's STATE, resolved before it is restored
         for k, v in self.saved.items():
             setattr(km, k, v)
@@ -152,13 +166,12 @@ class _Base(unittest.TestCase):
         km._SESSION_STAMP_CACHE.clear(); km._autonudge_cache.clear()
         jd._shared_clear()
         km._nudge_gate_memo.clear(); km._nudge_deleg_memo.clear()
-        jd._PARSE_CACHE.pop(SID, None)
+        jd.parse_cache_drop(SID)                              # the store's own drop (see setUp)
         jd._SHARED_OFF[0] = self.shared_off_before
         try:
             journal.unlink()
         except OSError:
             pass
-        self.td.cleanup()
 
     # ── fixtures ──
     def _toggle(self, enabled):
