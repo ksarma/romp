@@ -9,6 +9,19 @@ Two layers:
     This exercises the headline path: a user turn -> the model calls
     AskUserQuestion -> it surfaces as an askLive picker -> the UI answers ->
     PermissionResultAllow(updated_input={questions, answers}) goes back.
+
+xdist ordering hazard (the pull-in review, 2026-09-16): in the full suite under -n 4 five cases here went red
+(OptionsAssembly, FastModeReportedState, ApiRetryState twice, ReconnectReconcilesInflight; one of them with
+`RuntimeError: There is no current event loop in thread 'MainThread'`). Every one is green when this module runs
+alone, and green when this module and tests/test_postal_via_dedupe.py run alone together under -n 4. The sibling is
+tests/test_host_transport.py: its import puts romp's SDK venv on sys.path, and every xdist worker imports every
+collected module before it runs a test, so in the full sweep the _HAVE_SDK gate below opens and the SDK-gated cases
+RUN instead of skipping; these five fail against the installed SDK exactly as under tests/README.md's PYTHONPATH
+recipe for this module (diagnosed 2026-09-16, in the same review; that module's header and the README carry the
+detail). A red in one of those classes under the full sweep is judged by this module alone:
+    python -m pytest tests/test_sdk_backend.py -q                (or -k <ClassName> for one class)
+The postal module's PeerRoutePrefersDirect red under -n 4 is a different import-time leak (ROMP_POSTAL_PEERS, set at
+module level by tests/test_kernel_tunnels.py); its own header says so.
 """
 import asyncio
 import inspect
@@ -10728,6 +10741,129 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.assertEqual(flags, [False])
         self.be.send(self.SID, "still here")
         self._wait(lambda: c2.writes == ["still here"], "the feeder serves the landed client")
+
+
+class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
+    """The same pick road with session hosts ON: the default since T348 and the road every session on a deployed box
+    runs (the pull-in review's fresh-2, 2026-09-16, a coverage gap: every pick class wrote hosts off, so the hold, its
+    arm and the landing had no executed case on the hosted road). The parent's cases run again here unchanged: the
+    hold's arm, the served check and the landing read no transport state, so the hosted road must leave every one of
+    their assertions standing. What differs: the connect enters _host_transport_for (stubbed to a fake transport, since
+    no host process runs here), the fake client's __aenter__ runs the transport's connect the way ClaudeSDKClient does,
+    and that connect delivers a host's hello to the REAL hello handler (_on_host_hello: under a host the fresh-CLI stamp
+    and the launch login are decided there, not at the connect); the hosted options road sets `timeout` on every hook
+    matcher, so the SDK stand-in's HookMatcher takes attributes (the parent's dict stand-in refuses one). The fake
+    transport records what a real HostTransport.close would send (`end` once the handshake completed, `detach` for a
+    connect that never did): a pick's reconnect ends the host's CLI through that close, and the composed case below
+    reads it. Not asserted anywhere: that the hello landed the launched shape (the connect-landed call stamps it after
+    the SDK handshake, on both roads). The real host is driven in tests/test_session_host.py (HostProcess's pick case)."""
+
+    class _Client(SettingsPickThroughTheLoop._Client):
+        instances = []
+        spawn_gate = {}
+        mode_gate = {}
+        refuse_modes = False
+
+        def __init__(self, options=None, transport=None):
+            super().__init__(options, transport)
+            self.transport = transport
+
+        async def __aenter__(self):
+            await super().__aenter__()                  # the spawn window (a gated test picks during it)
+            if self.transport is not None:
+                await self.transport.connect()          # the attach and the hello, inside the SDK's connect
+            return self
+
+        async def __aexit__(self, *a):
+            await super().__aexit__(*a)
+            if self.transport is not None:
+                await self.transport.close()
+            return False
+
+    class _Matcher:
+        """An attribute-capable HookMatcher stand-in: _options sets `timeout` on every matcher under a host."""
+
+        def __init__(self, **kw):
+            self.timeout = None
+            self.__dict__.update(kw)
+
+    class _Transport:
+        """What the loop reads of a HostTransport, plus the frame a real one would send at the close."""
+
+        def __init__(self, hello, on_hello):
+            self._hello, self._on_hello = hello, on_hello
+            self.hello = None
+            self.exit_info = None
+            self.ack_offset = -1
+            self._init_pending = True
+            self.detach_mode = False
+            self.end_grace = 120.0
+            self.sent = []
+
+        async def connect(self):
+            self.hello = self._hello
+            self._on_hello(self.hello)                  # HostTransport.connect: the kernel's handler, once the frame arrived
+            self._init_pending = False                  # the fake client's handshake completes at once
+
+        async def close(self):
+            # HostTransport.close's rule: a kernel leaving, or a connect that never completed, detaches; else `end`
+            self.sent.append("detach" if (self.detach_mode or self._init_pending) else "end")
+
+    def setUp(self):
+        super().setUp()
+        open(os.path.join(self.state, "session-hosts"), "w").write("on")   # the parent wrote off; this class runs the default
+        sys.modules["claude_agent_sdk"].HookMatcher = self._Matcher
+        self.hosted = []                                # the fake transports, one per connect, in order
+        be = self.be
+
+        async def transport_for(sess, opts, msg_classes):
+            n = len(self.hosted) + 1                    # every connect spawns: a fresh host, a fresh CLI identity
+            hello = {"host": {"pid": 7000 + n, "start": "h%d" % n, "version": "test"},
+                     "cli": {"pid": 4300 + n, "start": "c%d" % n, "fsid": self.FSID, "spawnedAt": 1700000000 + n, "login": ""},
+                     "journal": {"next": 0}, "parked": [], "inflight": 0}
+            t = self._Transport(hello, lambda h, sess=sess: be._on_host_hello(sess, h))
+            sess._host_is_attach = False
+            sess._host = t
+            self.hosted.append(t)
+            return t
+        be._host_transport_for = transport_for
+
+    def _cli(self):
+        return (sb.read_reg(self.be.state_dir, self.SID) or {}).get("spawnedAtCli")
+
+    def test_a_held_pick_under_a_host_ends_the_hosts_cli_at_the_settle_and_a_fresh_host_lands_it(self):
+        """The composed hosted case: a live subagent holds an effort pick; the settle that finds the sets empty arms
+        the reconnect; the teardown asks the host to END its CLI (the close in end mode, never a detach, which would
+        leave the old CLI running beside the new one); the fresh host's hello stamps the fresh CLI; the landing stamps
+        the pick, records it once and closes the spawn window."""
+        s, c1 = self.s, self._connect()
+        t1 = self.hosted[0]
+        self.assertIs(s._host, t1)
+        self.assertEqual(self._cli(), "4301:c1", "the first hello stamped the fresh CLI")
+        asyncio.run(s._subagent_start_hook({"agent_id": "a1", "agent_type": "general-purpose"}, None, None))
+        self.assertTrue(self.be.set_effort(self.SID, "low"))
+        self._wait(lambda: s._reconnect_when_idle, "the request ran on the loop")
+        self.assertTrue(s._reconnect_held_for_work)
+        self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["effort"])
+        self.assertEqual(t1.sent, [], "the host is not asked to end while the work lives")
+        self.assertEqual(len(self.hosted), 1)
+        asyncio.run(s._subagent_stop_hook({"agent_id": "a1", "agent_type": "general-purpose"}, None, None))
+        self._turn(c1)                                  # the delivery turn: its settle finds the sets empty and arms
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client
+                   and s._launching is None and s._effort_pending == "", "the reconnect landed on the fresh host")
+        self._settled("the landing")
+        self.assertEqual(t1.sent, ["end"], "the reconnect's teardown asked the host to end its CLI, never a detach")
+        self.assertTrue(c1.torn_down)
+        self.assertEqual(len(self.hosted), 2, "one fresh host for the reconnect")
+        self.assertIs(s._host, self.hosted[1])
+        self.assertEqual(self.hosted[1].sent, [], "the fresh host is attached")
+        self.assertEqual(self._cli(), "4302:c2", "the fresh host's hello stamped its CLI")
+        self.assertEqual(self._Client.instances[1].options.effort, "low", "the fresh host was spawned with the pick")
+        self.assertEqual(s._launched_effort, ("low", False), "stamped by the landing, after the handshake")
+        self.assertEqual(self._applied(), ["low"], "the applied record, once, at the landing")
+        self.assertFalse(s._reconnect_held_for_work)
+        self.assertIsNone(s.snapshot()["pickHeld"])
+        self.assertEqual(s.snapshot()["effort"], "low")
 
 
 class WorkflowProgressShapeIsLoud(unittest.TestCase):

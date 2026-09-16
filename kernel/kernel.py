@@ -42599,7 +42599,9 @@ def _feed_memo_forget(alive_sids):
             _FEED_MEMO_STATS["bytes"] -= _feed_memo.pop(k)[2]
         _FEED_MEMO_STATS["evict"] += len(gone)
         _FEED_MEMO_STATS["entries"] = len(_feed_memo)
-    for k in [k for k in _SUBAGENT_DIRS_MEMO if k not in alive_sids]:   # the key's walk memo leaves with the session
+    # The walk memo has no lock (a peer build's _subagent_dirs_ident inserts while this walks it), so the keys are
+    # snapshotted before the filter: an insert mid-walk raised RuntimeError, dictionary changed size during iteration.
+    for k in [k for k in list(_SUBAGENT_DIRS_MEMO) if k not in alive_sids]:   # the key's walk memo leaves with the session
         _SUBAGENT_DIRS_MEMO.pop(k, None)
     return len(gone)
 

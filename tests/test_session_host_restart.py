@@ -36,8 +36,9 @@ BIN = os.path.join(ROOT, "bin")
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment (named runner variables, never the whole environment)
-from dist_copy import copy_dist   # noqa: E402
-EXT_DIST = os.path.join(ROOT, "vscode-extension", "dist")
+# the checkout's ONE build of the bundles, copied under the harness lock (tests/lab_dist.py); never a lock-free copy of
+# the shared checkout's dist by hand (the pull-in's review round 1, 2026-09-16)
+import lab_dist
 FAKE = os.path.join(HERE, "fixtures", "fake_claude.py")
 SDKVENV = os.path.expanduser("~/.local/state/romp/sdkvenv")
 # the kernel must run on the python the SDK venv was built for (its lib/python3.X names it), not on whatever
@@ -69,10 +70,7 @@ class ServedRestart(unittest.TestCase):
             {"sid": self.sid, "name": "web", "cwd": self.cwd, "mode": "bypassPermissions", "effort": "high", "lastSid": self.sid, "alive": True}))
         self.port, self.token = _free_port(), "testtok-host"
         self.dist = os.path.join(self.lab, "dist")
-        if os.path.isdir(EXT_DIST):
-            copy_dist(EXT_DIST, self.dist)       # a lab copy: the kernel must never rebuild bundles in the shared checkout
-        else:
-            os.makedirs(self.dist, exist_ok=True)
+        lab_dist.copy_dist(self.dist)   # a lab copy under the harness lock: the kernel must never rebuild bundles in the shared checkout
         self.fake_log = os.path.join(self.lab, "fake-cli.log")
         self.kernels = []
         self.klogs = []

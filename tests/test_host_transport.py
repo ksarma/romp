@@ -5,6 +5,21 @@ the six-method Transport pin, the spec-tracks-the-SDK pin, and the backend wirin
 
 Hermetic: temp state roots, a fake host server inside the test (an asyncio Unix server speaking the
 frame protocol), synthetic ids, no real CLI. Tests needing the SDK skip without it.
+
+Two effects on the rest of a pytest process, both from the import block below that puts romp's SDK venv on
+sys.path when claude_agent_sdk is not already importable (the kernel's own _ensure_sdk_on_path idiom; CI has no
+venv and the SDK-gated cases skip). (1) The cases that build the SDK's options with a can_use_tool callback raise
+claude_agent_sdk.types.CanUseToolShadowedWarning, a UserWarning subclass the SDK emits when the callback is set
+beside a permission mode or an allowed_tools entry that auto-approves a tool before the callback is consulted.
+Under pytest-xdist the worker ships that warning to the controller, whose venv cannot import the class: xdist's
+unserialize_warning_message raises ModuleNotFoundError, the node goes down and the run ends in INTERNALERROR.
+tests/conftest.py's pytest_configure ignores the warning by message prefix, so an -n run no longer needs
+-p no:warnings. (2) Every module the same xdist worker collects after this one sees claude_agent_sdk importable:
+tests/test_sdk_backend.py's _HAVE_SDK gate opens and its SDK-gated cases run instead of skipping, and five of them
+(OptionsAssembly, FastModeReportedState, ApiRetryState twice, ReconnectReconcilesInflight) fail against the
+installed SDK exactly as they do under tests/README.md's PYTHONPATH recipe for that module (diagnosed 2026-09-16;
+read as a load flake before). Judge either module by itself: `python3 -m pytest tests/test_host_transport.py -q`,
+`python3 -m pytest tests/test_sdk_backend.py -q`.
 """
 import asyncio
 import importlib.util

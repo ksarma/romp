@@ -17,6 +17,7 @@ import io
 import json
 import os
 import re
+import sys
 import tempfile
 import threading
 import time
@@ -596,6 +597,51 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["pusher"]["wakes"], 16000)
         self.assertEqual(snap["sends"]["full"]["chat"]["count"], 16000)
         self.assertEqual(snap["http"]["GET /p"]["count"], 16000)
+
+
+class ProcessStatsFallback(unittest.TestCase):
+    """_process_stats reads VmRSS from /proc/self/status; a platform without /proc (macOS) gets
+    ru_maxrss, which the kernel there reports in bytes and Linux in KB, so only the darwin branch
+    scales. Both branches are driven here: /proc is made to fail on every platform, and the
+    platform name and the rusage read are patched so the figure is exact."""
+
+    class _Usage:
+        ru_maxrss = 2048 * 1024                              # bytes on darwin, KB on linux
+
+    def _stats(self, platform):
+        real_open = open
+
+        def no_proc(path, *a, **kw):
+            if path == "/proc/self/status":
+                raise FileNotFoundError(path)
+            return real_open(path, *a, **kw)
+        import resource
+        with mock.patch("builtins.open", side_effect=no_proc), \
+                mock.patch.object(resource, "getrusage", return_value=self._Usage()), \
+                mock.patch.object(sys, "platform", platform):
+            return km._process_stats()
+
+    def test_without_proc_rss_comes_from_ru_maxrss(self):
+        st = self._stats("linux")
+        self.assertIsInstance(st["rss_kb"], int)
+        self.assertEqual(st["rss_kb"], 2048 * 1024, "linux reports ru_maxrss in KB: taken as is")
+        for k in ("threads", "cpu_s", "pid"):
+            self.assertIn(k, st)
+        self.assertEqual(st["pid"], os.getpid())
+
+    def test_on_darwin_ru_maxrss_is_bytes_and_is_scaled_to_kb(self):
+        st = self._stats("darwin")
+        self.assertEqual(st["rss_kb"], 2048, "ru_maxrss // 1024")
+
+    def test_with_proc_present_the_fallback_is_not_used(self):
+        import resource
+        with mock.patch.object(resource, "getrusage", side_effect=AssertionError("fallback taken")):
+            try:
+                with open("/proc/self/status"):
+                    pass
+            except OSError:
+                self.skipTest("no /proc on this platform")
+            self.assertGreater(km._process_stats()["rss_kb"], 0, "VmRSS read from /proc")
 
 
 class WakeCounting(unittest.TestCase):

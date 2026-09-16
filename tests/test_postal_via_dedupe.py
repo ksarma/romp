@@ -10,6 +10,16 @@ where the duplicate read as a FALSE ambiguity, or worse picked the relay hop a d
 already covers), and the agent list (the doubled '[remote]' rows).
 
 Synthetic hosts, ids, and bus ids throughout; hermetic state dir; no sockets.
+
+Under pytest-xdist over the whole tests/ directory (-n 4) PeerRoutePrefersDirect's
+test_resolve_recipient_lands_direct_with_no_ambiguity_error is red ('error' != 'relay') while this module alone is
+green (8 passed), and so is this module beside tests/test_sdk_backend.py under -n 4. The leaked global is the
+environment: tests/test_kernel_tunnels.py sets ROMP_POSTAL_PEERS=0 at module level, every xdist worker imports every
+collected module before it runs a test, and the service's peers_on() reads the variable at call time, so
+resolve_recipient consults no peer route and answers an error where the relay is expected (diagnosed 2026-09-16;
+reproduced with no xdist by running that module before this one in one pytest process). Judge a red here by the
+module alone: `python3 -m pytest tests/test_postal_via_dedupe.py -q`. The postal modules that set ROMP_POSTAL_PEERS=1
+in setUp do not see the leak; this one reads the default.
 """
 import os
 import tempfile

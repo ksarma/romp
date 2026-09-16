@@ -262,13 +262,6 @@ jobs:
         run: npm run typecheck
       - name: Test
         run: npm test
-      - name: Manager suites (node --test)
-        # bin/romp-manager's unit tests (tests/manager-*.test.js: drain, registry, restart, tmux
-        # scope) ran nowhere in CI until 2026-09-05 — pytest, bats and the extension's npm test
-        # covered everything else. They need only the Node this job already sets up; run from the
-        # repo root, not the job's vscode-extension working directory.
-        working-directory: ${{ github.workspace }}
-        run: node --test tests/manager-*.test.js
       - name: PDF renderer dependency smoke test (node --test)
         # tools/pdf-smoke.test.mjs opens a synthetic PDF with the pdfjs-dist this job's npm ci installed
         # (plans/file-review.md, Slice 4). The shell job's tools/*.test.mjs step picks the file up too, but

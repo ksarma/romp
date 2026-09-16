@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The per-session host (T315, stage 4 of the restart-surviving sessions program): the pure pieces
 (frames, the journal, the parked table, the neutral hook answers) and the host as a real process driving
-the fake CLI (tests/fixtures/fake_claude.py) while this test plays the kernel over the Unix socket.
+the fake CLI (tests/fixtures/fake_claude.py) while this test plays the kernel over the Unix socket; one case
+(HostProcess's pick case) lets the REAL backend loop play the kernel instead, for a settings pick on the hosted road.
 
 Hermetic: a temp state root per test, the fake CLI on a temp path, no scopes (the host is a plain child
 here), every process killed by the test, synthetic ids. The host runs on its built-in pipe transport when
@@ -17,10 +18,12 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import types
 import unittest
 import uuid
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 from unittest import mock
 from romp_load import load_source
@@ -361,6 +364,122 @@ class KernelSide:
             self.s.close()
         except OSError:
             pass
+
+
+class _PickSdk:
+    """A claude_agent_sdk stand-in for HostProcess's pick case: the REAL backend loop runs against a REAL host, and
+    this client drives the REAL HostTransport the loop hands it the way ClaudeSDKClient does (the plain test venv has
+    no SDK package). Its connect is the attach and the hello (the kernel's handler runs inside it); the initialize the
+    fake CLI answers clears the transport's initialize gate, so the transport's close sends `end`, not the `detach` a
+    connect that never completed sends; the loop's queued turns go out as `in` frames; the host's records come back as
+    the message classes the loop dispatches on (system, assistant, result; every other record type is dropped)."""
+
+    class Options:
+        def __init__(self, **kw):
+            self.session_id = self.resume = None
+            for k, v in kw.items():
+                setattr(self, k, v)
+
+    class HookMatcher:
+        def __init__(self, **kw):
+            self.timeout = None                  # _options sets it on every matcher under a host; a dict stand-in refuses that
+            self.__dict__.update(kw)
+
+    class TextBlock:
+        def __init__(self, text):
+            self.text = text
+
+    class SystemMessage:
+        def __init__(self, data):
+            self.subtype, self.data, self.uuid = data.get("subtype"), data, data.get("uuid") or str(uuid.uuid4())
+
+    class AssistantMessage:
+        def __init__(self, data):
+            m = data.get("message") or {}
+            self.content = [_PickSdk.TextBlock(str(c.get("text", ""))) for c in (m.get("content") or [])
+                            if isinstance(c, dict) and c.get("type") == "text"]
+            self.model = m.get("model") or "fake-model"
+            self.uuid = data.get("uuid") or str(uuid.uuid4())
+            self.parent_tool_use_id = data.get("parent_tool_use_id")
+            self.stop_reason, self.error = m.get("stop_reason") or "end_turn", None
+
+    class ResultMessage:
+        def __init__(self, data):
+            self.uuid = data.get("uuid") or str(uuid.uuid4())
+            self.subtype, self.is_error = data.get("subtype") or "success", bool(data.get("is_error"))
+            self.num_turns, self.session_id = int(data.get("num_turns") or 1), data.get("session_id")
+            self.duration_ms, self.duration_api_ms = int(data.get("duration_ms") or 0), int(data.get("duration_api_ms") or 0)
+            self.total_cost_usd, self.usage = float(data.get("total_cost_usd") or 0.0), data.get("usage") or {}
+            self.result, self.parent_tool_use_id = data.get("result"), None
+            self.model_usage = self.api_error_status = self.rate_limit_info = None
+
+    class PermissionResultAllow:
+        def __init__(self, behavior="allow", **kw):
+            self.behavior = behavior
+
+    class PermissionResultDeny:
+        def __init__(self, behavior="deny", **kw):
+            self.behavior = behavior
+
+    class ClaudeSDKClient:
+        instances = []
+
+        def __init__(self, options=None, transport=None):
+            self.options, self.transport = options, transport
+            self.torn_down = False
+            self._records = None
+            type(self).instances.append(self)
+
+        async def __aenter__(self):
+            t = self.transport
+            await t.connect()                    # the attach; the hello reaches the kernel's handler in here
+            rid = "init-" + uuid.uuid4().hex[:8]
+            await t.write(json.dumps({"type": "control_request", "request_id": rid,
+                                      "request": {"subtype": "initialize", "hooks": {}}}) + "\n")
+            self._records = t.read_messages()    # ONE reader for the transport's life: the generator resumes below
+            async for data in self._records:
+                if isinstance(data, dict) and data.get("type") == "control_response" \
+                        and str((data.get("response") or {}).get("request_id")) == rid:
+                    break                        # the initialize's answer: the gate the transport's close reads is open
+            return self
+
+        async def __aexit__(self, *a):
+            self.torn_down = True
+            await self.transport.close()         # `end` after a completed handshake, `detach` otherwise
+            return False
+
+        async def query(self, prompt, session_id="default"):
+            async for turn in prompt:
+                await self.transport.write(json.dumps(turn) + "\n")
+
+        async def interrupt(self):
+            pass
+
+        async def get_context_usage(self):
+            return {"percentage": 1, "model": "fake-model"}
+
+        async def get_server_info(self):
+            return {}
+
+        async def receive_messages(self):
+            kinds = {"system": _PickSdk.SystemMessage, "assistant": _PickSdk.AssistantMessage, "result": _PickSdk.ResultMessage}
+            async for data in self._records:
+                cls = kinds.get(data.get("type")) if isinstance(data, dict) else None
+                if cls is not None:
+                    yield cls(data)
+
+    @classmethod
+    def install(cls):
+        """Put the stand-in where the loop imports claude_agent_sdk from; returns the module it displaced (or None)."""
+        m = types.ModuleType("claude_agent_sdk")
+        m.__spec__ = ModuleSpec("claude_agent_sdk", loader=None)
+        for name in ("ClaudeSDKClient", "HookMatcher", "TextBlock", "SystemMessage", "AssistantMessage", "ResultMessage",
+                     "PermissionResultAllow", "PermissionResultDeny"):
+            setattr(m, name, getattr(cls, name))
+        m.ClaudeAgentOptions = cls.Options
+        saved = sys.modules.get("claude_agent_sdk")
+        sys.modules["claude_agent_sdk"] = m
+        return saved
 
 
 class HostProcess(unittest.TestCase):
@@ -862,6 +981,125 @@ class HostProcess(unittest.TestCase):
         k.send({"t": "end", "grace": 10})
         k.recv_until(lambda f: f.get("t") == "exit")
         k.close()
+
+    def test_a_pick_held_for_live_work_asks_the_host_to_end_its_cli_at_the_settle_and_a_fresh_host_lands_it(self):
+        """The settings-pick hold on the HOSTED road, end to end (the pull-in review's fresh-2, 2026-09-16: no hold case
+        ran with hosts on, the default every deployed session runs). The real backend loop, hosts on, spawns a real
+        host with this file's fake CLI behind it through _host_transport_for, and _PickSdk's client drives the real
+        HostTransport. A live subagent holds an effort pick; the settle of a turn that finds the sets empty arms the
+        reconnect; the teardown's close asks the host to END its CLI (the exit frame's cause is `end`; the host removes
+        its lease and leaves: never a detach, which would keep the old CLI running beside the new one); the next connect
+        spawns a fresh host and lands the pick there. Not asserted: that the hello landed the shape (the connect-landed
+        call stamps it after the handshake, on both roads). A private synthetic sid; every process the backend starts is
+        ended by the test and killed by its cleanup if it is not."""
+        sid = "7c0e5d1a-3b2f-4e6d-9a8b-000000000315"
+        saved_site = os.environ.get("ROMP_SDK_SITE")
+        os.environ["ROMP_SDK_SITE"] = os.path.join(self.state, "no-sdk-here")   # the spawned host inherits it: the pipe transport
+
+        def restore_site():
+            if saved_site is None:
+                os.environ.pop("ROMP_SDK_SITE", None)
+            else:
+                os.environ["ROMP_SDK_SITE"] = saved_site
+        self.addCleanup(restore_site)
+        saved_sdk = _PickSdk.install()
+        self.addCleanup(lambda: sys.modules.__setitem__("claude_agent_sdk", saved_sdk) if saved_sdk is not None
+                        else sys.modules.pop("claude_agent_sdk", None))
+        _PickSdk.ClaudeSDKClient.instances = []
+        saved_refresh = sb.SdkSession._do_refresh_usage
+
+        async def _noop_refresh(self_):
+            pass
+        sb.SdkSession._do_refresh_usage = _noop_refresh
+        self.addCleanup(setattr, sb.SdkSession, "_do_refresh_usage", saved_refresh)
+        journal = Path(os.environ["XDG_STATE_HOME"]) / "romp" / "overrides" / (sid + ".jsonl")   # the pick's override
+        self.addCleanup(lambda: journal.unlink(missing_ok=True))
+        Path(self.state, "session-hosts").write_text("on")
+        cwd = os.path.join(self.state, "proj")
+        os.makedirs(cwd)
+        lines = []
+        be = sb.SdkBackend(self.state, FAKE, lambda *a, **k: None, log=lambda m, **k: lines.append(str(m)))
+        procs = []
+        real_spawn = be._spawn_host
+
+        def spawn(sess, spec_path, secret_env=None):
+            p = real_spawn(sess, spec_path, secret_env)
+            procs.append(p)
+            return p
+        be._spawn_host = spawn
+        self.addCleanup(lambda: [self._kill_group(p) for p in procs])
+        reg = {"sid": sid, "name": "web", "mode": "default", "effort": "high", "alive": True, "cwd": cwd}
+        sb.write_reg(self.state, sid, reg)
+        s = sb.SdkSession(be, dict(reg))
+        be.sessions[sid] = s
+
+        def stop():
+            if s.thread.is_alive():
+                s.shutdown()
+            if s.thread.ident is not None:
+                s.thread.join(timeout=30)
+        self.addCleanup(stop)
+
+        def wait(pred, what, timeout=45.0):
+            end = time.time() + timeout
+            while time.time() < end:   # loop-ok: a bounded poll
+                if pred():
+                    return
+                time.sleep(0.02)
+            self.fail("timed out waiting for %s; hosts %d; log tail %r" % (what, len(procs), lines[-10:]))
+
+        def settled(what):
+            done = threading.Event()   # a barrier behind the loop's current step (the pick class's _settled says why)
+            s.loop.call_soon_threadsafe(done.set)
+            self.assertTrue(done.wait(10.0), "timed out at the barrier for %s; log tail %r" % (what, lines[-10:]))
+
+        def cli_of(client):
+            c = client.transport.hello["cli"]
+            return "%s:%s" % (c["pid"], c["start"])
+        clients = _PickSdk.ClaudeSDKClient.instances
+        s.start()
+        wait(lambda: s.client is not None and s._launched_effort is not None, "the first connect landed on a host")
+        settled("the first landing")
+        self.assertEqual(len(procs), 1, "one host, spawned by the backend")
+        t1 = clients[0].transport
+        self.assertIsInstance(t1, sb._ht().HostTransport, "the real transport over the host's socket")
+        self.assertEqual(sb.read_reg(self.state, sid).get("spawnedAtCli"), cli_of(clients[0]), "the hello stamped the fresh CLI")
+        self.assertEqual(((sb.read_lease(self.state, sid) or {}).get("holder") or {}).get("pid"), procs[0].pid, "the host holds the lease")
+        asyncio.run(s._subagent_start_hook({"agent_id": "a1", "agent_type": "general-purpose"}, None, None))
+        self.assertTrue(be.set_effort(sid, "low"))
+        wait(lambda: s._reconnect_when_idle, "the request ran on the loop")
+        self.assertTrue(s._reconnect_held_for_work)
+        self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["effort"])
+        time.sleep(0.3)
+        self.assertIsNone(t1.exit_info, "the host was not asked to end while the work lives")
+        self.assertIsNone(procs[0].poll())
+        asyncio.run(s._subagent_stop_hook({"agent_id": "a1", "agent_type": "general-purpose"}, None, None))
+        be.send(sid, "carry on sleep=0.1")     # a turn through the host to the fake CLI: its settle finds no live work and arms
+        wait(lambda: len(clients) == 2 and clients[1] is s.client and s._launching is None and s._effort_pending == "",
+             "the reconnect landed on a fresh host")
+        settled("the second landing")
+        self.assertEqual((t1.exit_info or {}).get("cause"), "end", "the teardown asked the host to end its CLI: its exit frame says so")
+        self.assertTrue(clients[0].torn_down)
+        self.assertEqual(procs[0].wait(timeout=15), 0, "the ended host left")
+        self.assertTrue(any("the CLI exited (end, code 0)" in l for l in lines), lines[-10:])
+        self.assertEqual(len(procs), 2, "a fresh host for the reconnect")
+        self.assertIsNone(procs[1].poll())
+        self.assertEqual(((sb.read_lease(self.state, sid) or {}).get("holder") or {}).get("pid"), procs[1].pid, "the fresh host holds the lease")
+        self.assertNotEqual(cli_of(clients[1]), cli_of(clients[0]), "a fresh CLI under the fresh host")
+        self.assertEqual(sb.read_reg(self.state, sid).get("spawnedAtCli"), cli_of(clients[1]), "the fresh host's hello stamped it")
+        self.assertEqual(clients[1].options.effort, "low", "the fresh host was spawned with the pick")
+        self.assertEqual(s._launched_effort, ("low", False), "stamped by the landing, after the handshake")
+        states = Path(self.state, "states", sid + ".jsonl")
+        self.assertEqual([json.loads(l)["effortApplied"] for l in states.read_text().splitlines() if "effortApplied" in l], ["low"],
+                         "the applied record, once, at the landing")
+        self.assertIsNone(s.snapshot()["pickHeld"])
+        self.assertEqual([l for l in lines if "in a handler on a" in l], [], "every record the host relayed was handled")
+        # the session's end takes the same close in end mode: the fresh host ends its CLI and leaves too
+        s.shutdown()
+        s.thread.join(timeout=30)
+        self.assertFalse(s.thread.is_alive(), "the session thread ended")
+        self.assertEqual(procs[1].wait(timeout=20), 0, "the fresh host ended with the session")
+        self.assertIsNone(sb.read_lease(self.state, sid), "no lease left behind")
 
 
 if __name__ == "__main__":

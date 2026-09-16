@@ -1217,7 +1217,10 @@ class AnswerBody(unittest.TestCase):
 class BuildSessionSeam(unittest.TestCase):
     """The chat payload: the top-level `userTodos` field (the upsert merge seam) AND the split-card
     `todo` event that carries the same rows — the chatTail wire re-sends changed EVENTS only, so a
-    row change must be an event change or a caught-up client never hears of it."""
+    row change must be an event change or a caught-up client never hears of it. Both chatTail
+    senders, the index wire's (_send_chat_locked) and the proto-2 uuid-anchored wire's
+    (_send_chat_proto2, the one every real page rides), carry the field and its pinnedNotes twin
+    on every delta, the empty-suffix status-only tail included."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -1389,10 +1392,11 @@ class BuildSessionSeam(unittest.TestCase):
         # the chat wire's steady state is chatTail deltas: a caught-up client that only merged
         # full session frames kept a stale top-level field (the tab glyph's read, next slice)
         rows = [{"id": "ut-aaaaaaaa", "text": "Need the auth-scheme decision", "createdT": NOW}]
+        notes = [{"id": "pn-aaaaaaaa", "text": "the staging port is 8443", "createdT": NOW}]
         evs = [{"uuid": "u1", "kind": "user", "text": "wire the login routes"},
                {"uuid": "a1", "kind": "todo", "tasks": [], "userTodos": rows}]
         m = {"type": "session", "id": SID, "events": evs, "status": {"state": "idle"},
-             "userTodos": rows}
+             "userTodos": rows, "pinnedNotes": notes}   # set on the message: a dropped seam cannot hide behind the [] default
         got = []
         c = {"send": lambda s: got.append(json.loads(s)), "sent": {},
              "echat": {SID: ("u1", 0)}}                # caught up from event 0 → the delta path
@@ -1401,6 +1405,64 @@ class BuildSessionSeam(unittest.TestCase):
         self.assertEqual(got[0]["type"], "chatTail", "the caught-up client got the delta")
         self.assertEqual(got[0]["userTodos"], rows,
                          "the field rides the delta — byte-stable store values, dedup-safe")
+        self.assertEqual(got[0]["pinnedNotes"], notes, "the pinned-notes strip's field rides the same delta")
+
+    def test_the_proto2_chat_tail_delta_carries_both_fields(self):
+        # the proto-2 twin of the case above (review round 1 of the 2026-09-15 pull-in): every real page says
+        # proto 2 in its ready (T323 stage 4b), so upstream's _send_chat_proto2 is the sender the seam serves
+        # in production, and the index-wire case alone left it unexecuted. The client's base is the {first,
+        # last} uuids of its tail run; a change inside or right after the run is a chatTail {afterUuid, events}
+        # that must carry the two top-level fields, or a caught-up tab's glyph and strip go stale
+        rows = [{"id": "ut-aaaaaaaa", "text": "Need the auth-scheme decision", "createdT": NOW}]
+        notes = [{"id": "pn-aaaaaaaa", "text": "the staging port is 8443", "createdT": NOW}]
+        evs = [{"uuid": "u1", "kind": "user", "text": "wire the login routes"},
+               {"uuid": "a1", "kind": "todo", "tasks": [], "userTodos": rows}]
+        m = {"type": "session", "id": SID, "events": evs, "status": {"state": "idle"},
+             "userTodos": rows, "pinnedNotes": notes}
+        got = []
+        c = {"send": lambda s: got.append(json.loads(s)), "sent": {}, "proto": 2,
+             "echat": {SID: {"first": "u1", "last": "u1"}}}   # the base ends on the last TRANSCRIPT event: the todo
+        km._send_chat(c, m, None, 1, False)                  # card is an overlay that rides the suffix (_last_anchor)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["type"], "chatTail", "the caught-up proto-2 client got the uuid-anchored delta")
+        self.assertEqual(got[0]["afterUuid"], "u1")
+        self.assertEqual([e["uuid"] for e in got[0]["events"]], ["a1"], "the suffix after the held run")
+        self.assertEqual(got[0]["userTodos"], rows, "the field rides the proto-2 delta")
+        self.assertEqual(got[0]["pinnedNotes"], notes, "and so does the pinned-notes strip's")
+
+    def test_the_status_only_tail_with_an_empty_suffix_carries_both_fields(self):
+        # change_from at the total: no event changed, only the status, a view flag or a store did. Both wires
+        # send a chatTail with an EMPTY suffix for that, and the two fields ride it the same way, so a todo or
+        # a note written between two pushes with no transcript change still reaches a caught-up tab
+        rows = [{"id": "ut-aaaaaaaa", "text": "Need the auth-scheme decision", "createdT": NOW}]
+        notes = [{"id": "pn-aaaaaaaa", "text": "the staging port is 8443", "createdT": NOW}]
+        evs = [{"uuid": "u1", "kind": "user", "text": "wire the login routes"},
+               {"uuid": "a1", "kind": "assistant", "text": "starting on the open routes"}]
+        m = {"type": "session", "id": SID, "events": evs, "status": {"state": "idle"},
+             "userTodos": rows, "pinnedNotes": notes}
+        for proto, base in ((2, {"first": "u1", "last": "a1"}), (1, ("u1", 0))):
+            with self.subTest(proto=proto):
+                got = []
+                c = {"send": lambda s, got=got: got.append(json.loads(s)), "sent": {}, "echat": {SID: base}}
+                if proto == 2:
+                    c["proto"] = 2                       # an index client carries no proto key (the ready sets it)
+                km._send_chat(c, m, None, len(evs), False)   # change_from == total: nothing after the held run
+                self.assertEqual(len(got), 1)
+                self.assertEqual(got[0]["type"], "chatTail")
+                self.assertEqual(got[0]["events"], [], "the status-only tail carries no events")
+                self.assertEqual(got[0]["status"], {"state": "idle"})
+                self.assertEqual(got[0]["userTodos"], rows)
+                self.assertEqual(got[0]["pinnedNotes"], notes)
+
+    def test_both_chat_tail_senders_carry_the_two_fields_by_source(self):
+        # the wire-seams pin over BOTH senders (tests/test_pinned_notes.py WireSeams reads the index wire's
+        # alone): the proto-2 sender is its own function since the 2026-09-15 pull-in, so a seam line dropped
+        # from it would leave every index-wire case green while every real page went stale
+        for fn in (km._send_chat_locked, km._send_chat_proto2):
+            with self.subTest(fn=fn.__name__):
+                src = inspect.getsource(fn)
+                self.assertIn('"userTodos": m.get("userTodos") or []', src)
+                self.assertIn('"pinnedNotes": m.get("pinnedNotes") or []', src)
 
 
 class DriveOps(_StoreSandbox):

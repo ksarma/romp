@@ -41,7 +41,8 @@ does (holding the staging window open long enough to matter):
   6. the copy leaves out a staging file the harness did not write, and survives a staged builder running
      outside the lock (the defence-in-depth half);
   7. the lock and the marker are left out of a VSIX (.vscodeignore) and of git (.gitignore);
-  8. no test module builds or copies dist on its own any more (a text ratchet over tests/*.py).
+  8. no test module builds or copies dist on its own any more, nor through upstream's lock-free twin (a text ratchet
+     over tests/*.py).
 Hermetic: the fake checkout lives under the run's temp root and no real esbuild runs. Synthetic names only.
 """
 import contextlib
@@ -2224,6 +2225,12 @@ class Packaging(unittest.TestCase):
 # copy step (shutil.copytree with copy_ignore, which leaves out the lock and the marker as well as the staging names;
 # upstream's copy_dist takes no ignore and would copy both into every lab) and does not call the twin; a later offer
 # may add an ignore parameter to upstream's copy_dist, after which lab_dist can call it and the twin stops being a twin.
+# The twin is refused as a CALLER too (the pull-in's review round 1, 2026-09-16, item 4): outside _TWIN_CALLERS below
+# (the same two files), a `dist_copy` import in any spelling, or a `copy_dist(` call not prefixed `lab_dist.`, is an
+# offence. Until then the ratchet read esbuild.js and copytree alone, so tests/test_session_host_restart.py (upstream's
+# kernel-restart lab, in the tree since the 2026-09-15 pull-in) copied the shared checkout's dist through the twin
+# outside the harness lock and nothing turned red (a copy racing a peer's staged build lands a silent mix of old and
+# new files). It calls lab_dist.copy_dist(dist) now, and "called by no test class" is held by the ratchet.
 _ESBUILD_TEXT_READERS = {
     # these two drive the harness, which requires the config under node through lab_dist (the reader writes
     # module.exports to a file; require.main is not the module, so nothing builds): the derivation tests and the
@@ -2234,9 +2241,9 @@ _ESBUILD_TEXT_READERS = {
     # there, the argv the kernel passes to a recording fake matched); neither reads the real file past build_mode,
     # neither runs it
     "test_bundle_build_mode.py", "test_kernel_bundle_vendor_inputs.py",
-    # upstream's copy primitive and its guard, called by no fork class, kept side by side so later folds of both
-    # merge clean (the fold that brought them, 2026-09-15; the header above): dist_copy.py's docstring names esbuild.js,
-    # test_dist_copy_staging.py's docstrings and its synthetic shapes do; neither runs a build
+    # upstream's copy primitive and its guard, called by no test class (_TWIN_CALLERS below holds it so), kept side by
+    # side so later folds of both merge clean (the fold that brought them, 2026-09-15; the header above): dist_copy.py's
+    # docstring names esbuild.js, test_dist_copy_staging.py's docstrings and its synthetic shapes do; neither runs a build
     "dist_copy.py", "test_dist_copy_staging.py",
     # test_landing_bundles_built.py (upstream's, the same fold) requires ./esbuild.js under node and builds IN MEMORY
     # (write: false) to compare the emitted basenames with the landing html's tags: nothing is written to dist and
@@ -2252,17 +2259,27 @@ _ESBUILD_TEXT_READERS = {
 _TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py",             # test_github_repo copies a repo, never dist
                  "test_perf_bench.py",                                  # upstream's copies kernel/ into a scratch checkout, never dist
                  # upstream's copy primitive and its guard (the same entry as above): dist_copy.py IS a copytree over
-                 # dist for upstream's own labs, called by none of the fork's; test_dist_copy_staging.py copies a
+                 # dist for upstream's own labs, called by none here (_TWIN_CALLERS); test_dist_copy_staging.py copies a
                  # scratch tree to prove the staging names are skipped, never the extension's dist
                  "dist_copy.py", "test_dist_copy_staging.py"}
 _KEY_READERS = {"test_kernel_bundle_staleness.py",                     # imports lab_dist for the input parity pin
                 "test_kernel_bundle_vendor_inputs.py"}                 # and for the BUILD_TIMEOUT pin; neither serves
+# the only files that may import upstream's dist_copy or call copy_dist without the lab_dist. prefix (the header above,
+# 2026-09-16): dist_copy.py defines it; test_dist_copy_staging.py drives it over a scratch tree and writes the call into
+# its synthetic modules as text
+_TWIN_CALLERS = {"dist_copy.py", "test_dist_copy_staging.py"}
+_TWIN_IMPORT = re.compile(r"^\s*(?:from\s+(?:tests\.|\.)?dist_copy\s+import\b"       # from [tests.]dist_copy import copy_dist
+                          r"|import\s+(?:tests\.)?dist_copy\b"                          # import [tests.]dist_copy [as x]
+                          r"|from\s+(?:tests|\.)\s+import\b[^\n]*\bdist_copy\b)", re.M)  # from tests import x, dist_copy
+_TWIN_CALL = re.compile(r"(?<!lab_dist\.)\bcopy_dist\s*\(")                             # any prefix but lab_dist., or none
 
 
 def offences(name, src):
     """What the ratchet holds against one test module's text: any mention of esbuild.js (a build by any
     argv shape, a prebuilt variable included) outside the text readers; any copytree outside the tree
-    copiers; and, for every module but the harness's own test, a copytree whose source names dist."""
+    copiers; for every module but the harness's own test, a copytree whose source names dist; and, outside
+    the twin's own two files, an import of upstream's dist_copy in any spelling or a copy_dist( call not
+    prefixed lab_dist. (the lock-free twin is no lab's door)."""
     found = []
     if "esbuild.js" in src and name not in _ESBUILD_TEXT_READERS:
         found.append("esbuild.js")
@@ -2270,6 +2287,11 @@ def offences(name, src):
         found.append("copytree(")
     if name != "test_lab_dist.py" and re.search(r"\bcopytree\s*\([^,]*\b(dist|DIST|EXT)\b", src):
         found.append("copytree(dist")
+    if name not in _TWIN_CALLERS:
+        if _TWIN_IMPORT.search(src):
+            found.append("dist_copy")
+        if _TWIN_CALL.search(src):
+            found.append("copy_dist(")
     return found
 
 
@@ -2277,8 +2299,9 @@ class ServedModulesUseTheHelper(unittest.TestCase):
 
     def test_no_test_module_builds_or_copies_dist_on_its_own(self):
         """The ownership holds only while every served lab goes through the helper. This is a TEXT ratchet
-        over tests/*.py (the guarantee itself lives in lab_dist): a module that mentions esbuild.js or calls
-        copytree, in any spelling, is an offender unless the allowlists above name it and say why.
+        over tests/*.py (the guarantee itself lives in lab_dist): a module that mentions esbuild.js, calls
+        copytree or reaches upstream's dist_copy, in any spelling, is an offender unless the allowlists above
+        name it and say why.
 
         The rule it holds: EVERY served module goes through lab_dist.copy_dist, including a module that
         arrives from upstream through a fold still carrying the old `node esbuild.js` + copytree block.
@@ -2297,9 +2320,9 @@ class ServedModulesUseTheHelper(unittest.TestCase):
             found = offences(name, _read(path))
             if found:
                 offenders.append((name, found))
-        self.assertEqual(offenders, [], "build and copy dist through lab_dist.copy_dist; a module that names "
-                                        "esbuild.js or copies a tree that is not dist is added to the allowlists "
-                                        "in test_lab_dist.py, with its reason")
+        self.assertEqual(offenders, [], "build and copy dist through lab_dist.copy_dist, never through upstream's "
+                                        "dist_copy; a module that names esbuild.js or copies a tree that is not dist "
+                                        "is added to the allowlists in test_lab_dist.py, with its reason")
 
     def test_the_ratchet_catches_every_shape_of_the_old_block(self):
         """The shapes a copy-paste or a rewrite could take, each flagged: the base shape the served modules
@@ -2315,6 +2338,19 @@ class ServedModulesUseTheHelper(unittest.TestCase):
         for shape in shapes:
             self.assertTrue(offences("test_synthetic_served.py", shape), shape)
         self.assertEqual(offences("test_synthetic_served.py", "import lab_dist\nlab_dist.copy_dist(dist)\n"), [])
+        # the twin as a caller (2026-09-16): the kernel-restart lab's shape before its conversion, every import spelling,
+        # a call through any prefix but lab_dist. or through none; the twin and its guard keep theirs
+        self.assertEqual(offences("test_synthetic_served.py", "from dist_copy import copy_dist\nif os.path.isdir(EXT_DIST):\n"
+                                                              "    copy_dist(EXT_DIST, self.dist)\n"), ["dist_copy", "copy_dist("])
+        for spelling in ("from tests.dist_copy import copy_dist\n", "import dist_copy\n", "import tests.dist_copy as dc\n",
+                         "from tests import dist_copy\n", "from . import lab_dist, dist_copy\n",
+                         "try:\n    from dist_copy import copy_dist\nexcept ImportError:\n    copy_dist = None\n"):
+            self.assertEqual(offences("test_synthetic_served.py", spelling), ["dist_copy"], spelling)
+        self.assertEqual(offences("test_synthetic_served.py", "_lab.copy_dist(dist)\n"), ["copy_dist("])
+        self.assertEqual(offences("test_synthetic_served.py", "copy_dist(EXT_DIST, dist)\n"), ["copy_dist("])
+        self.assertEqual(offences("test_synthetic_served.py", "lab_dist.copy_prebuilt(src, dist)\n"), [])
+        self.assertEqual(offences("test_dist_copy_staging.py", "from tests.dist_copy import copy_dist\ncopy_dist(src, dst)\n"), [])
+        self.assertEqual(offences("dist_copy.py", "def copy_dist(src, dst):\n"), [])
         self.assertEqual(offences("test_github_repo.py", "shutil.copytree(main, backup, symlinks=True)\n"), [])
         self.assertEqual(offences("test_github_repo.py", "shutil.copytree(os.path.join(EXT, 'dist'), lab)\n"), ["copytree(dist"],
                          "a tree copier is still refused the extension's dist")
@@ -2332,7 +2368,7 @@ class ServedModulesUseTheHelper(unittest.TestCase):
                 continue
             if "\nimport lab_dist\n" in _read(p):
                 served.append(p)
-        self.assertGreaterEqual(len(served), 70, "the served labs import the helper (22 of the fork's plus the 48 upstream modules the 2026-09-15 pull-in converted)")
+        self.assertGreaterEqual(len(served), 71, "the served labs import the helper (22 of the fork's plus the 49 upstream modules the 2026-09-15 pull-in converted, the kernel-restart lab among them in its review round 1)")
         for p in served:
             self.assertIn("lab_dist.copy_dist(", _read(p), os.path.basename(p))
 

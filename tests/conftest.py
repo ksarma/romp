@@ -77,6 +77,25 @@ def pytest_unconfigure(config):
     _remove_run_dirs(report=True)
 
 
+def pytest_configure(config):
+    """One warning filter, registered here so every run and every xdist worker carries it (2026-09-16):
+    claude_agent_sdk.types.CanUseToolShadowedWarning, a UserWarning subclass the SDK emits when a client is
+    built with can_use_tool set beside a permission mode or an allowed_tools entry that auto-approves a tool
+    before the callback is consulted. tests/test_host_transport.py and tests/test_session_host.py put romp's
+    SDK venv on sys.path and drive that path; under pytest-xdist the worker ships the warning to the
+    controller, whose venv has no claude_agent_sdk, and xdist's unserialize_warning_message imports the
+    warning's module to rebuild it: ModuleNotFoundError, the node goes down, the run ends in INTERNALERROR
+    (before this every -n run needed -p no:warnings). Matched on the MESSAGE PREFIX with the base category,
+    never on the class: pytest parses each filterwarnings entry every time it applies them (configure,
+    collection, each test), and an entry naming a class it cannot import is dropped with a
+    PytestConfigWarning, which is every worker until the emitting module inserts the venv path, the
+    controller always and CI always. A module-level warnings.filterwarnings in the emitting module does not
+    hold either: pytest wraps collection and each test in catch_warnings, which restores the filter list on
+    exit. addinivalue_line appends to the ini list, so an ini file added later merges with this line. Both
+    of the SDK's message forms ("...: permission_mode ..." and "... for: <tools>") start with the prefix."""
+    config.addinivalue_line("filterwarnings", "ignore:can_use_tool will not be invoked:UserWarning")
+
+
 # No test's git reads the developer's configuration (2026-09-06). Fixture repos are built by `git
 # init` + `git commit` in temp dirs, and those commands honoured the developer's global config: a
 # global core.hooksPath ran their pre-commit hook on every seed commit, an LFS filter would run on

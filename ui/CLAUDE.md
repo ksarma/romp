@@ -89,6 +89,10 @@ the agents' working gold and the watches' awaiting green. That is a kind, not a 
 status still overrides it where it means something (a failed row's dot is the blocked red,
 a completed row's the dim ink). The light theme's accent is an orange, so `--kind-command`
 carries its own blue there (`#356890`).
+A second exception, the user's choice of 2026-09-10 (T301): the rail's API-health dot wears
+the accent in its FINE state (`.ah-dot[data-dot=fine]` in the kernel's served CSS, through
+`var(--accent)`, so the light theme's orange there too); its other two states keep status
+colors (errors the blocked red, no API traffic the label gray `--dim`).
 
 ### Loading/waiting states: show the romp loader FIRST
 Anytime something is loading, parsing, or otherwise making the user wait, the FIRST

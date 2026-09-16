@@ -41,6 +41,31 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `PYTHONPATH=~/.local/state/romp/sdkvenv/lib/python3.12/site-packages python3 -m
   pytest tests/test_sdk_backend.py -q` (the venv `bin/romp-sdk-setup` creates;
   match the python version to it).
+  Under pytest-xdist (`python3 -m pytest tests/ -n 4`) two import-time effects of
+  `tests/test_host_transport.py` decide what a red means. It puts that same SDK venv
+  on `sys.path` at import (the kernel's own idiom), and every worker imports every
+  collected module before it runs a test, so over the whole directory the SDK is
+  importable in each worker from then on: the `_HAVE_SDK`-gated classes above RUN,
+  and five of their cases (OptionsAssembly, FastModeReportedState, ApiRetryState
+  twice, ReconnectReconcilesInflight) fail against the installed SDK exactly as
+  under the `PYTHONPATH` recipe; the module alone, or beside one that leaves the path
+  alone, skips them and reads green (diagnosed 2026-09-16). Its cases that build SDK
+  options with a `can_use_tool` callback raise
+  `claude_agent_sdk.types.CanUseToolShadowedWarning` (a `UserWarning` subclass); a
+  worker ships the warning to the controller, whose venv cannot import the class, and
+  xdist's `unserialize_warning_message` takes the run down with an INTERNALERROR.
+  `conftest.py`'s `pytest_configure` ignores it by MESSAGE prefix
+  (`ignore:can_use_tool will not be invoked:UserWarning`): pytest re-parses the
+  entries at every application, and one naming a class it cannot import is dropped
+  with a PytestConfigWarning (every worker until the venv path is inserted, the
+  controller always, CI always); a module-level `warnings.filterwarnings` does not
+  survive pytest's per-test `catch_warnings`. So `-p no:warnings` is no longer part of an
+  `-n` run. One more import-time leak reaches the postal suite the same way:
+  `tests/test_kernel_tunnels.py` sets `ROMP_POSTAL_PEERS=0` at module level and the
+  postal service reads it per call, so `test_postal_via_dedupe.py`'s
+  PeerRoutePrefersDirect resolve case answers an error instead of a relay in any run
+  that collects both. A red in one of these under `-n` is judged by the module
+  alone: `python3 -m pytest tests/<module>.py -q`.
 - **`*.bats`** — the shell surfaces: `bin/romp`, the launch chain, hooks,
   postal CLI. Keep them GNU/BSD-portable (CI runs bats on ubuntu).
   Run: `bats tests/*.bats`.
@@ -185,12 +210,14 @@ through it, and a plain fetch in a `forbid_background` clone, spawn no
 maintenance or gc child.
 
 **A served-page class copies the built `vscode-extension/dist/` with
-`tests.dist_copy.copy_dist`, never `shutil.copytree`.** Under `pytest -n` a
-sibling class's build renames or removes its staging files
+`lab_dist.copy_dist` (the locked shape the fork keeps, described above), never
+`shutil.copytree` and never `tests.dist_copy.copy_dist` directly.** Under
+`pytest -n` a sibling class's build renames or removes its staging files
 (`.<name>.tmp-<pid>-<n>`, `stagingPath` in `esbuild.js`) between the listing
 and the copy, and a plain copytree raises `shutil.Error` before the class's
-first test; `copy_dist` skips that shape. `tests/test_dist_copy_staging.py`
-pins the copy and refuses a raw copytree of dist in any test module.
+first test; the copy skips that shape. `tests/test_dist_copy_staging.py` pins
+the copy and refuses a raw copytree of dist in any test module, and
+`tests/test_lab_dist.py` refuses a `dist_copy` caller outside its allowlist.
 
 **No test report shows a process-environment value or a credential-shaped
 token.** An assertion whose container is an environment mapping prints the

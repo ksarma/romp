@@ -234,6 +234,48 @@ class NamesMemoSweep(unittest.TestCase):
                          "the retired entries are gone; the live one and the peer's insert stand")
 
 
+# ── race 4: the feed memo's forget walked the subagent-walk memo while a peer build inserted ──
+class FeedMemoForgetSweep(unittest.TestCase):
+    """_feed_memo_forget drops a departed session's walk memo (_SUBAGENT_DIRS_MEMO) outside _feed_memo_lock, and the
+    writer (_subagent_dirs_ident, from a build on another thread) takes no lock either, so the sweep's walk of the
+    dict met a peer's insert: RuntimeError, dictionary changed size during iteration, on 3.12 and 3.14t (the pull-in
+    review, round 1, item 5). The fix snapshots the keys before the filter. Staged the way race 3 is: a stale key's
+    hash, taken when the sweep tests it against the alive set, inserts the peer's fresh entry once."""
+
+    def setUp(self):
+        with km._feed_memo_lock:
+            self._saved = (dict(km._feed_memo), dict(km._FEED_MEMO_STATS), dict(km._FEED_MEMO_STATS["miss_by"]))
+            km._feed_memo.clear()
+            km._FEED_MEMO_STATS.update(entries=0, bytes=0, evict=0)
+        self._saved_walk = dict(km._SUBAGENT_DIRS_MEMO)
+        km._SUBAGENT_DIRS_MEMO.clear()
+
+    def tearDown(self):
+        with km._feed_memo_lock:
+            km._feed_memo.clear(); km._feed_memo.update(self._saved[0])
+            km._FEED_MEMO_STATS.clear(); km._FEED_MEMO_STATS.update(self._saved[1])
+            km._FEED_MEMO_STATS["miss_by"] = self._saved[2]
+        km._SUBAGENT_DIRS_MEMO.clear()
+        km._SUBAGENT_DIRS_MEMO.update(self._saved_walk)
+
+    def test_a_peer_insert_mid_forget_neither_aborts_the_sweep_nor_spares_a_departed_entry(self):
+        def peer_insert():
+            km._SUBAGENT_DIRS_MEMO[PEER] = ("/x/peer/subagents", ("/x/peer/subagents",), (None,))
+        trigger = _PeerInsertsOnHash("stale-1", peer_insert)
+        km._SUBAGENT_DIRS_MEMO[trigger] = ("/x/s1/subagents", ("/x/s1/subagents",), (None,))
+        km._SUBAGENT_DIRS_MEMO["stale-2"] = ("/x/s2/subagents", ("/x/s2/subagents",), (None,))
+        km._SUBAGENT_DIRS_MEMO[SID] = ("/x/live/subagents", ("/x/live/subagents",), (None,))
+        km._feed_memo_put("stale-1", ("k",), "[]")
+        km._feed_memo_put(SID, ("k",), "[]")
+        trigger.armed = True
+        gone = km._feed_memo_forget({SID})      # was: RuntimeError, dictionary changed size during iteration
+        self.assertFalse(trigger.armed, "the staged insert fired during the sweep")
+        self.assertEqual(gone, 1, "one memo entry departed")
+        self.assertEqual(set(km._feed_memo), {SID})
+        self.assertEqual(set(map(str, km._SUBAGENT_DIRS_MEMO)), {SID, PEER},
+                         "the departed sessions' walk memos are gone; the live one and the peer's insert stand")
+
+
 # ── race 5: two passes over the parked comment creates ──
 class ParkedCreates(unittest.TestCase):
     def setUp(self):

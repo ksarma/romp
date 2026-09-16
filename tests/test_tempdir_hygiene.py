@@ -152,8 +152,9 @@ class PrivateTempRoot(unittest.TestCase):
         self.assertEqual(os.path.dirname(sh.stdout.strip()), root, "a shell's mktemp -d lands in it")
 
     def test_the_handed_temp_dir_is_recorded_once_and_the_roots_nest_under_it(self):
-        # The one sanctioned way out of the root (tests/test_kernel_socket_deliver._socket_dir, for
-        # a socket path that would not fit sun_path) goes to the dir the RUN was handed, never to a
+        # The one sanctioned way out of the root (tests/test_host_transport.py's two reads, in
+        # TransportOverSocket._path and BackendHostRules._be, for an AF_UNIX socket path that
+        # would not fit sun_path) goes to the dir the RUN was handed, never to a
         # literal system path. Recorded once: serially the root sits directly in it; in an xdist
         # worker the worker's root sits inside the controller's and the record is still the dir
         # above both — a worker that re-recorded its own gettempdir() would name the controller's
@@ -181,7 +182,8 @@ class PrivateTempRoot(unittest.TestCase):
         for path in sorted(glob.glob(os.path.join(HERE, "*.bats")) + glob.glob(os.path.join(HERE, "*.bash"))):
             bad += _shell_pins(open(path, encoding="utf-8").read(), os.path.relpath(path, ROOT))
         self.assertEqual(bad, [], "temp paths take the process temp dir (the private root); a test that "
-                         "must leave it falls back to ROMP_TESTS_SYSTEM_TMPDIR — see _socket_dir")
+                         "must leave it falls back to ROMP_TESTS_SYSTEM_TMPDIR, as "
+                         "tests/test_host_transport.py's two socket dirs do")
 
 
 # The literal-directory rule, one function per language. Python: the `dir` argument of a tempfile

@@ -535,6 +535,13 @@ class TheFallIsCarriedInStatus(_OptionsHarness):
         self.assertTrue(s._launched_keyed)
         self.assertEqual(self.be.pick_fall("login"), "key")
 
+    def test_the_webview_reads_the_carried_fall_on_both_surfaces(self):
+        src = (Path(HERE).parent / "ui" / "webview" / "render.ts").read_text()
+        self.assertIn("authPickFell?: string;", src)
+        self.assertIn("function authFellTo(st: Status): string", src)
+        self.assertIn("authFellTo(s.status)", src, "the tab hover")
+        self.assertIn("authFellTo(st)", src, "the Billing sub-line")
+
 
 def _picker_backend(key):
     """A backend stand-in for the kernel's picker tests (_auth_avail over stubbed probes): key_available from the
