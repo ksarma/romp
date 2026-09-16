@@ -31,6 +31,8 @@ import { publishPaneHidden } from "./paint-gate";   // a second line: the one ab
 import { linkifyPathTokens, openPathLink } from "./path-links";
 import { linkTarget, type LinkTarget } from "./path-links";   // a todo link's target after its path (Slice 6 of plans/markdown-viewer.md)
 import { linkifyUrls, urlChip, installUrlLinkOpener } from "./url-links";   // a URL in a todo's text is a link, and a todo's own `link` is a chip (the user 2026-09-08)
+import { fileLinkRoute } from "./file-route";   // where a todo's file link opens: the OPEN Files pane, else over this pane (T404's ladder, the chat's)
+import { initFileView, openFileView, setFileViewIdentity, hostStub } from "./file-view";   // the shared viewer, hosted over this pane when the Files pane is not on screen (the feed hosts one the same way)
 
 type Color = { bg: string; fg: string } | null;
 interface UserTodo { id: string; text: string; createdT: number; detail?: string; file?: string; link?: string }
@@ -117,11 +119,11 @@ function dropTodo(sid: string, tid: string): void {
 // open it), through this same function, so a path reads and opens the same wherever in the todo it was
 // written. The matcher is the one a chat body gets (path-links.ts), marked with the todo's own session
 // so a relative path resolves against the cwd the todo was written from: the kernel's _resolve_open_path,
-// on the /file the viewer fetches. Only when the shell frames this pane: the click goes to the Files pane
-// through the shell's viewFile relay, and a pane opened on its own has nowhere to send it, so the text
-// stays plain rather than a link that does nothing (ui/CLAUDE.md, every control acknowledges). The
-// matcher binds nothing; the click is the delegate's openpath in the list and one delegate on the Reply
-// modal's box (showReply). A link inside the one-line text sits inside the fold's own click target
+// on the /file the viewer fetches. Only when the shell frames this pane: the click opens the file in the
+// Files pane while that pane is on screen, else in the viewer over this pane (openTodoPath, T404's route);
+// a pane opened on its own keeps the text plain rather than a link (the 2026-09-07 decision; ui/CLAUDE.md,
+// every control acknowledges). The matcher binds nothing; the click is the delegate's openpath in the list
+// and one delegate on the Reply modal's box (showReply). A link inside the one-line text sits inside the fold's own click target
 // (.ut-text, data-act uttoggle): the delegate routes a click to the NEAREST data-act (actions.ts), so the
 // link opens the file and the fold stays put, and a click on the text beside it still folds
 // (user-todo-title-links.test.ts drives both through the real delegate).
@@ -165,8 +167,16 @@ function fileChip(file: string, sid: string): HTMLElement {
 function linkChip(link: string): HTMLElement {
   return urlChip(link, "wt-link");
 }
-// The click: {romp:"viewFile", pane:"pane"} — the shell's Files-pane branch brings that pane forward and
-// forwards this whole message into it (kernel.py's landing shell; files.ts opens the viewer). The
+// The click opens the file where the chat's file links open (ui/webview/file-route.ts fileLinkRoute; T404, adopted
+// 2026-09-15: the route follows the OPEN Files pane, and no setting names a closed one). With the Files pane on
+// screen and its control shown, the relay below; otherwise the shared viewer over THIS pane (openFileView, hosted
+// here the way the feed hosts it), so the file never opens where nobody can see it. The inputs are the shell's own
+// word, {romp:"panes", on, avail}, cached below the way render.ts caches it: upstream's T317b made the shell refuse
+// to bring the Files pane forward while the gear's Files control is hidden (the fresh-install default), and a relay
+// sent regardless opened the viewer inside a display:none pane (waiting-pane-browser.test.ts pins both arms, in
+// Firefox and Chromium).
+// The relay, {romp:"viewFile", pane:"pane"}: the shell's Files-pane branch forwards this whole message into that
+// pane (kernel.py's landing shell; files.ts opens the viewer). The
 // identity is the row's own chip (name + colour — the pane has no session list to name the file's
 // session by; a row with no name sends null and the viewer falls to the kernel's stub); todoId names the
 // user todo the file was opened from, so the viewer can tie its work back to it; `at` is the target the link
@@ -180,18 +190,29 @@ function linkChip(link: string): HTMLElement {
 // contentWindow.focus(), which also moves the shell's focus ring). No text field loses anything: the link
 // already held this document's focus (a click focuses the tabIndex span; Enter came from it). The pane
 // must be ON SCREEN first: Firefox refuses to focus the window of a display:none frame (Chromium does not,
-// which hid this), and the shell's relay brings the pane forward only when the posted message reaches it,
-// a task after this call. So this pane brings it forward itself, through the shell's own pane toggle
-// (window.__rompPaneToggle, the call the relay makes — the relay's then finds nothing to change), and
-// focuses after that; a shell without the toggle gets the focus call as before (the review's round 3;
-// waiting-pane-browser.test.ts drives this in Firefox and Chromium with the pane closed). Alt+Left comes
+// which hid this). The route above sends the relay only while the pane is on screen; the shell's own pane
+// toggle (window.__rompPaneToggle, the call the relay makes) is still asked first, a backstop for a word
+// that went stale between the shell's broadcast and the click (an open pane finds nothing to change), and
+// the focus follows; a shell without the toggle gets the focus call alone (the review's round 3;
+// waiting-pane-browser.test.ts drives this in Firefox and Chromium with the pane on screen). Alt+Left comes
 // back; an open Reply modal then takes the focus back into its box (showReply). The iframe check is against
 // the PARENT document's HTMLIFrameElement: an element of another document is never an instance of this
-// document's constructor, so a check against this one's would focus nothing. Plain JS in the body — no
-// cast, no annotation — because user-todo-links.test.ts executes it as it stands; the shell's toggle is
-// typed on Window below for that reason (palette-main.ts's chatPost reveals-then-focuses the same way).
+// document's constructor, so a check against this one's would focus nothing. Plain JS in the body: no cast,
+// no annotation, because user-todo-links.test.ts, waiting-link-focus.test.ts and waiting-pane-browser.test.ts
+// execute it as it stands, handing it rows, window, todoLinkRoute and openFileView by name; the shell's toggle
+// is typed on Window below for that reason (palette-main.ts's chatPost reveals-then-focuses the same way).
+// The shell's pane set as it last told this pane, {romp:"panes", on:{key:bool}, avail:{files:bool}}, posted into every
+// pane iframe on its load and on every toggle (kernel.py _LANDING_COLLAPSE_JS): a cache of the shell's own event, never a
+// per-click guess (render.ts panesOn and panesAvail, the same two names and the same whole-set replace). No word yet
+// reads as all off, so the viewer opens here rather than in a pane nobody can see.
+let panesOn: Record<string, boolean> = {};
+let panesAvail: Record<string, boolean> = {};
+function todoLinkRoute(): "pane" | "here" {
+  return fileLinkRoute(framed, panesOn.files === true, panesAvail.files !== false);
+}
 declare global { interface Window { __rompPaneToggle?: (key: string, to?: boolean) => void } }
 function openTodoPath(path: string, sid: string, todoId: string, at: LinkTarget | null = null): void {
+  if (todoLinkRoute() === "here") { openFileView(path, sid, { todoId, at }); return; }   // no Files pane on screen: the viewer over this pane
   const r = rows.find((x) => x.sid === sid);
   const identity = r && r.name ? { name: r.name, color: r.color } : null;
   try { window.parent.postMessage({ romp: "viewFile", pane: "pane", path, sid, identity, todoId, at }, "*"); } catch { /* not in the shell */ }
@@ -255,7 +276,16 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   const actions = el("div", "confirm-actions");
   const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
   const send = el("button", "picker-action confirm-btn"); send.textContent = "Send";
-  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  // Escape while the viewer is up OVER THIS PANE (openTodoPath's "here" arm) is the viewer's: this capture listener stands
+  // aside, the viewer's own document-level handler closes it (file-view.ts onKey, bubble phase), and the modal stays with its
+  // text; the keyboard then comes back into the box a tick later, once the viewer's card is gone (its close leaves the focus
+  // on the body, behind this overlay). The next Escape closes the modal. With the file in the Files pane the key never
+  // reaches this document (the focus moved there, openTodoPath).
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key !== "Escape") return;
+    if (document.getElementById("romp-fileview")) { setTimeout(() => { if (overlay.isConnected && !document.getElementById("romp-fileview")) input.focus(); }, 0); return; }
+    e.stopPropagation(); close();
+  };
   // A link in the quoted detail moves focus to the Files pane (openTodoPath). When focus comes back —
   // Alt+Left, a click into this pane — the document's focus has been reset to its body, BEHIND this
   // overlay, where Tab would walk the covered rows before reaching the box. The modal is the topmost thing
@@ -308,7 +338,7 @@ function rowEl(w: Waiting, now: number): HTMLElement {
   // the one-line ask; detail one click away, and the row SAYS there is more (user-todo-hint.ts)
   const txt = el("span", "ut-text");
   txt.textContent = w.todo.text;
-  linkTodoPaths(txt, w.sid);   // a path in the line opens in the Files pane, as one in the detail does
+  linkTodoPaths(txt, w.sid);   // a path in the line opens the file (openTodoPath), as one in the detail does
   linkifyPrRefs(txt, repoBySid.get(w.sid) || null);
   const key = foldKey(w.sid, w.todo.id);
   const hint = utDetailHint(w.todo.detail, openDetail.has(key));
@@ -346,7 +376,7 @@ function rowEl(w: Waiting, now: number): HTMLElement {
   if (hint) {
     const d = el("div", "ut-detail" + (openDetail.has(key) ? " open" : ""));
     d.textContent = w.todo.detail || "";
-    linkTodoPaths(d, w.sid);   // a path in the detail opens in the Files pane (the delegate's openpath)
+    linkTodoPaths(d, w.sid);   // a path in the detail opens the file (the delegate's openpath)
     linkifyPrRefs(d, repoBySid.get(w.sid) || null);   // then `#123` → its PR page; each linker skips the other's anchors
     item.appendChild(d);
   }
@@ -512,6 +542,21 @@ listenForFrames(perfFrameHandler("waiting", (m) => vscodeApi?.postMessage(m), (e
   }
 }));
 window.addEventListener("romp-hosts", () => render());   // a host's link changed → the chips' down-marks repaint
+// the shell's pane set, which panes are on screen by key (panesOn above; the shell posts it on this iframe's load and on
+// every toggle): the cache openTodoPath routes a todo's file link by. Whole-set replace, as render.ts does: a key the
+// shell stopped naming must not linger as on.
+window.addEventListener("message", (e: MessageEvent) => {
+  const m = e.data;
+  if (!m || m.romp !== "panes") return;
+  if (m.on && typeof m.on === "object") {
+    const on: Record<string, boolean> = {};
+    for (const k of Object.keys(m.on)) on[k] = m.on[k] === true;
+    panesOn = on;
+  }
+  const avail: Record<string, boolean> = {};
+  if (m.avail && typeof m.avail === "object") for (const k of Object.keys(m.avail)) avail[k] = m.avail[k] !== false;
+  panesAvail = avail;
+});
 window.addEventListener("storage", (e: StorageEvent) => { if (e.key === "romp:settings") { applyTheme(document, loadSettings()); render(); } });
 applyTheme(document, loadSettings());
 installSettingsSync();
@@ -595,6 +640,13 @@ const live = liveRefresher({ hidden: paneHidden, pass: () => {
 setInterval(live.tick, 15000);
 document.addEventListener("visibilitychange", live.catchUp);
 window.addEventListener("resize", live.catchUp);
+
+// The shared viewer this pane hosts over itself (openTodoPath's "here" arm; file-view.ts initFileView, as the feed's boot
+// does): the same poster the feed hands it, so Edit/Save and the GitHub-link ask ride this socket and the kernel's replies
+// come back as window MessageEvents through the pane shim. The session chip names the file's session from the rows, the
+// identity the relay would carry to the Files pane; a sid no row names falls to the kernel's 8-character stub.
+initFileView((m) => vscodeApi?.postMessage(m));
+setFileViewIdentity((id) => { const r = rows.find((x) => x.sid === id); return r && r.name ? { name: r.name, color: r.color } : hostStub(id); });
 
 render();
 vscodeApi?.postMessage({ type: "ready" });   // the kernel serves the cached feed frame at once (the ready handshake)

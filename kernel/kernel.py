@@ -9512,8 +9512,8 @@ def _user_todo_answer_lost(sid, tid, text, wait=False, nonce=None):
     reopen); and a byte-identical text already in the transcript reads as landed (same body =
     the same todo answered in the same words — the stamp is true anyway)."""
     if not wait:
-        threading.Thread(target=_user_todo_answer_lost, args=(sid, tid, text, True, nonce),
-                         name="user-todo-lost", daemon=True).start()
+        threading.Thread(target=_stage_marked("todo.lost")(_user_todo_answer_lost), args=(sid, tid, text, True, nonce),
+                         name="user-todo-lost", daemon=True).start()   # marked (T401 (5a)): the landed check parses
         return None
     sid = str(sid)
     try:
@@ -20523,7 +20523,10 @@ def _sdk_locked():
                 # a drop-marked user-todo ANSWER reopens its ask (docs/adr/0001's silent-loss
                 # class). CONSTRUCTOR-wired on purpose: the boot echo reseed fires drop marks
                 # from __init__, before any post-construction assignment could arm the seam.
-                todo_lost=_user_todo_answer_lost,
+                todo_lost=_stage_default("todo.lost")(_user_todo_answer_lost),   # the thread's default mark, as push_session's:
+                #   _user_todo_answer_lost parses the transcript (the landed check), and the backend fires the seam from a
+                #   thread of its own (the boot echo reseed inside __init__, a session's loop); the push_session comment
+                #   above says why the mark rides the hand-off and not a decorator on the def (T401 (5a))
                 boot_phase=_mark_boot,   # censusDone / attachDone land on the boot row and release the judges' first pass
                 # the API-health aggregator's boot clock: this kernel's own _STARTED, which the aggregator
                 # truncates to the millisecond (the precision of every stamp in the payload) and serves as
@@ -55154,7 +55157,8 @@ def _file_comments_reply(client, msg, op, fail_type, after=None):
                 after(m, rep)
             except Exception:
                 sys.stderr.write("file-comments %s follow-up failed: %s\n" % (m.get("type"), traceback.format_exc()))
-    threading.Thread(target=_run, daemon=True).start()
+    threading.Thread(target=_stage_marked("file-comments")(_run), daemon=True).start()   # marked (T401 (5a)): a send's
+    #   working check (_send_or_park, _working_now) can index a restored turn's lazy atoms, a build the census counts
 
 
 def _file_comments_after(msg, rep):
@@ -56325,19 +56329,24 @@ def _feed_first(now, live_map, targets, connect):
     if feed_src is None:
         return False
     feed = dict(feed_src)                            # the copy the send stage would make; no ledgers yet (no session build ran)
-    feed_parts = _delta_parts("feed", feed)
-    if feed_parts is not None:
-        feed_sig = _parts_sig(feed_parts)
-        feed_ms = _LazyWire(lambda f=feed: json.dumps(f, default=_wire_default_in("_push feed")), _parts_est(feed_parts), "feed_body")
-    else:
-        s_ = json.dumps(feed, default=_wire_default_in("_push feed"))
-        feed_ms, feed_sig = _LazyWire(None, len(s_), text=s_), _dedup_sig(feed, s_)
-        _wire_bump("feed_sig_fallback")
-    _feed_wire = (feed_src, feed.get("ledgers"), feed, feed_ms, feed_sig, feed_parts)
+    # The wire tuple in the FORK's shape, exactly as _push's feed send stage builds it (the fork's feed delta path:
+    # _feed_parts, _feed_sig, a _feed_body minus `now`; no twin upstream). Upstream's text built it from _delta_parts (the
+    # view-delta slot's split) with the whole frame as the body and left it in _feed_wire, where _send_feed_now recorded
+    # that split as a FEED_DELTA_CAP client's base at `ready`, so the pusher's next _feed_delta unpacked it as the fork's
+    # four parts and raised on every cycle: a feed pane on a cold kernel heard nothing after its first frame
+    # (tests/test_feed_focus_served.py step (h), the Clear's frame never arrived, 2026-09-15).
+    feed_parts = _feed_parts(feed)
+    feed_sig = _feed_sig(feed_parts)
+    feed_body = _LazyWire(lambda f=feed: _feed_body(f), _feed_est(feed_parts), "feed_body")
+    feed_ms = _feed_ms_lazy(feed_body, feed.get("now"))
+    _feed_wire = (feed_src, feed.get("ledgers"), feed, feed_body, feed_sig, feed_parts)
     for c in targets:
         if c["app"] == "feed":
             try:
-                _send_slot(c, "feed", feed, feed_ms, feed_sig, feed_parts)
+                if FEED_DELTA_CAP in (c.get("caps") or ()):   # the two delta protocols, as in _push's send stage
+                    _send_feed(c, feed, feed_ms, feed_sig, feed_parts)
+                else:
+                    _send_slot(c, "feed", feed, feed_ms, feed_sig)
             except Exception:
                 sys.stderr.write("push feed-first send: %s\n" % traceback.format_exc())
     _wire_bump("feed_first")
@@ -65375,7 +65384,7 @@ _UPD_JS = (
     # "the manager did not answer"; the running push is what flips this window into the wait
     "function arm(){var t=label(),seq=++arms;plain=plainRects();armed=true;lbl.textContent=t;face();lbl.hidden=false;cf.hidden=false;cx.hidden=false;dm.hidden=true;"
     "try{lbl.focus({preventScroll:true});}catch(e){}box.classList.add('rup-arm');fit();wireFrames();window.addEventListener('resize',refit);"
-    "fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){if(seq!==arms||(d&&d.state==='running'))return;note(d);if(armed){lbl.textContent=label();face();fit();}})"
+    "fetch('/update-check',{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('/update-check answered HTTP '+r.status);return r.json();}).then(function(d){if(seq!==arms||(d&&d.state==='running'))return;note(d);if(armed){lbl.textContent=label();face();fit();}})"
     "['catch'](function(e){});}"
     # The armed row is laid over the plain row it replaced, measured, never assumed (fit, review round
     # 4 of the confirm step, 2026-09-10; rounds 2 and 3 widened the label until its right edge reached

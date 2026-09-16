@@ -2387,6 +2387,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       srcBtn.hidden = !(isSvgImage && objUrl !== null);
       srcBtn.classList.toggle("on", svgSource);
       srcBtn.setAttribute("aria-pressed", String(svgSource));
+      viewGroup.hidden = !(segBtns.some(([, b]) => !b.hidden) || !textSize.trigger.hidden || !srcBtn.hidden || !outlineBtn.hidden);   // the media branch decides the Source button after the group's first sync above, so the group is re-read here: the SVG Source view is the one media control in the view group (T367's grouping)
       if (objUrl === null) return;            // the romp loader holds the body until the bytes land
       viewError = null;                       // a media view paints below (the SVG Source view, the chunk's pages, the frame or the picture before whenShown; a kept frame stands): no pane shows once it does (Slice 7, item 3)
       // a target on a picture or a PDF (a heading, a line, an offset) is judged by the landing, not here: landMedia, over a body

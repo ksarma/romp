@@ -17259,7 +17259,7 @@ class SdkBackend:
         if not reg:
             return False
         s = self.sessions.get(sid)
-        word = self.login_display(login_id) if login_id else side   # the stored login's display label (T346), else the side word
+        value = self.login_display(login_id) if login_id else side   # the stored login's display label (T346), else the side word; `value` is spent
         # the seed for the NEXT new session, like model/effort: every pick, the unchanged ones below included (review
         # round 1); the guards decide only whether THIS session reconnects. Until the user sets the machine's default
         # EXPLICITLY (set_auth_default, the Billing flyout's Default group, T380): from then on a per-session pick is
@@ -17291,7 +17291,7 @@ class SdkBackend:
                 self._update_reg(sid, auth=side, authLogin=login_id, authPending=True, apiKeyAuth=None)
             if launching_pick == pick:
                 s._withdraw_held_pick("auth")   # a differing billing pick made during this spawn is moot (set_effort's note)
-            self._log("auth (%s): set to %s; already applying, no new request" % (s.name, word))
+            self._log("auth (%s): set to %s; already applying, no new request" % (s.name, value))
         elif s and launched_pick == pick and (launching_pick is None or launching_pick == pick):
             # UNCHANGED, set_effort's guard for billing: the CLI this session runs launched on this side
             # (_launched_auth, the side _connect_landed stamped: "key" only when the box's apiKeyHelper billed
@@ -17313,7 +17313,7 @@ class SdkBackend:
                 s._auth_pending = ""
                 self._update_reg(sid, auth=side, authLogin=login_id, authPending=False)
                 s._withdraw_held_pick("auth")
-                self._log("auth (%s): set to %s; the pending %s pick is withdrawn" % (s.name, word, reverted))
+                self._log("auth (%s): set to %s; the pending %s pick is withdrawn" % (s.name, value, reverted))
             else:
                 if (s.auth != side or (getattr(s, "auth_login", "") or "") != login_id
                         or reg.get("auth") != side or SdkBackend.reg_login(reg) != login_id):
@@ -17323,7 +17323,7 @@ class SdkBackend:
                 if s._auth_pending or reg.get("authPending"):
                     s._auth_pending = ""
                     self._update_reg(sid, authPending=False)
-                self._log("auth (%s): set to %s; unchanged, no reconnect" % (s.name, word))
+                self._log("auth (%s): set to %s; unchanged, no reconnect" % (s.name, value))
         else:
             # authPending: the applying reconnect hasn't completed → badge dots. Locked RMW; see set_effort.
             # apiKeyAuth=None: the persisted CLI report described the process this reconnect replaces,
@@ -17349,13 +17349,13 @@ class SdkBackend:
                 if s.loop is None or s.ended:
                     s.auth_live = ""
                 s.request_reconnect(pick="auth")
-                self._log("auth (%s): set to %s; %s" % (s.name, word, outcome))
+                self._log("auth (%s): set to %s; %s" % (s.name, value, outcome))
         if s:
             # Acknowledge the pick in the chat exactly as set_effort does: the reconnect writes no
             # transcript record, so without a synthesized chip an idle session's auth change shows
             # nothing at all. One chip, every path; its word is the stored login's display label (T346),
             # else the side word.
-            self._ack_cmd_chip(sid, "/auth", "/auth " + word, s.resume_sid)
+            self._ack_cmd_chip(sid, "/auth", "/auth " + value, s.resume_sid)
         return True
 
     def set_auth_default(self, value: str) -> bool:

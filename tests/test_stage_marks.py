@@ -114,6 +114,7 @@ CALLBACK_ALLOW = {
     ("SdkBackend", "notify", "_send_to_app"): "a frame to the app over its socket",
     ("SdkBackend", "poke", "_wake_kernel"): "sets the kernel's wake event",
     ("SdkBackend", "push", "_pusher_wake.set"): "sets the pusher's wake event",
+    ("SdkBackend", "push_live", "_pusher_wake_live"): "records the changed tail's sid and sets the pusher's wake event",
     ("SdkBackend", "log", "_backend_log"): "a stderr line through the exit log",
     ("SdkBackend", "boot_phase", "_mark_boot"): "a boot-row stamp (censusDone, attachDone)",
     ("CodexBackend", "notify", "_send_to_app"): "a frame to the app over its socket",
@@ -399,15 +400,19 @@ class StageMarksCensus(unittest.TestCase):
         assignment on the constructed backend (round two, low 1: login_ok, postal_restore, rewind_resolved_cb). The one that
         builds (the one-session push) is wrapped `_stage_default("push.session")` at both hand-off sites, never decorated on
         the def (its WS-handler and spawn callers keep their own marks) and never a plain mark (the Codex backend calls it
-        synchronously under a request's route, round two's medium); every other handed callable is listed with the reason
-        it can build nothing."""
+        synchronously under a request's route, round two's medium); the SDK backend's todo_lost seam (_user_todo_answer_lost,
+        whose landed check parses the transcript, fired from the constructor's boot echo reseed and a session's loop) is
+        wrapped `_stage_default("todo.lost")` at its hand-off the same way; every other handed callable is listed with the
+        reason it can build nothing."""
         rows = callback_census(SOURCES["kernel.py"])
         bad = [r for r in rows if r[4] not in ("marked", "allowed")]
         self.assertEqual(bad, [], "callables handed to a backend that can build or hydrate under no mark")
         marked = sorted((ctor, param, src) for _, ctor, param, src, v in rows if v == "marked")
         self.assertEqual(marked, [("CodexBackend", "push_session", '_stage_default("push.session")(_push_session_now)'),
-                                  ("SdkBackend", "push_session", '_stage_default("push.session")(_push_session_now)')],
-                         "the one-session push is the callable that builds: the thread's default mark at both hand-offs")
+                                  ("SdkBackend", "push_session", '_stage_default("push.session")(_push_session_now)'),
+                                  ("SdkBackend", "todo_lost", '_stage_default("todo.lost")(_user_todo_answer_lost)')],
+                         "the callables that build: the one-session push at both hand-offs and the SDK's todo_lost seam, "
+                         "each the thread's default mark")
         by_attr = sorted(param for _, ctor, param, src, v in rows if ctor == "SdkBackend" and v == "allowed"
                          and param in ("login_ok", "postal_restore", "rewind_resolved_cb"))
         self.assertEqual(by_attr, ["login_ok", "postal_restore", "rewind_resolved_cb"], "the attribute hand-offs are rows: %s" % rows)

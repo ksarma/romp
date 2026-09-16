@@ -6081,7 +6081,10 @@ function applyTabOrder(o: any, tabs?: any, report?: OrderReport, live?: any) {
   // cycle — so this must run BEFORE the add-only record below. Self-limiting via awaitingFull; the
   // closingTabs/provisional/detached-host suppressions live inside requestFullSession.
   for (const id of kernelOrder) {
-    if (kernelListed.has(id) && !sessions.has(id)) requestFullSession(id, "nobase");   // listed, and this page holds no session entry for it: no base (the why is #1017's vocabulary)
+    // A listed SKELETON holds no session entry by design (upstream's skeleton diet, 2026-09-15: it lives in
+    // skeletonTabs.ids until its full lands on the click road), so it is not this arm's to ask for; the arm keeps
+    // asking for a listed id this page knows nothing about at all.
+    if (kernelListed.has(id) && !sessions.has(id) && !skeletonTabs.ids.has(id)) requestFullSession(id, "nobase");   // listed, and this page holds no session entry for it: no base (the why is #1017's vocabulary)
   }
   for (const id of kernelOrder) kernelListed.add(id);
   // T357: the tab the user was on is re-listed (a host re-attach, a relay redial) → focus goes back to it; the
