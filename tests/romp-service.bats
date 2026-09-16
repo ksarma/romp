@@ -863,6 +863,103 @@ EOF
     [ "$status" -ne 0 ]
 }
 
+# ─── the clean-shell install: `env -i HOME=... PATH=... romp-service install` ──────────────────
+# write_unit bakes every set instance variable and PATH, so a re-install that must not carry a session's ROMP_* ports
+# into the unit runs from a clean shell, and a clean shell has no XDG_RUNTIME_DIR or DBUS_SESSION_BUS_ADDRESS, which
+# systemctl --user needs to find the user manager: the install wrote the unit and died at daemon-reload ("Failed to
+# connect to bus: No medium found"), systemd kept the loaded definition, and the manager's next respawn ran without
+# the new Environment line while the file on disk read as installed (review find, 2026-09-16). The install now derives
+# both from the uid when absent, reports a reload that fails in its own words, and shows the LOADED unit's Environment.
+# The fake systemctl sits on PATH, the only road a clean shell has to it, and records each call's argv with the two
+# variables as it saw them; a fake loginctl beside it keeps the best-effort enable-linger off the box's own logind.
+# NEVER the real systemctl here: the recipe would act on the box's own manager.
+_clean_shell_bin() {   # $1 what `show -p Environment` prints; $2 non-empty: daemon-reload fails as it does without a bus
+    local dir="$TEST_DIR/fakebin" calls="$TEST_DIR/systemctl-calls" reload='exit 0'
+    [ -z "${2:-}" ] || reload='echo "Failed to connect to bus: No medium found" >&2; exit 1'
+    mkdir -p "$dir"
+    cat > "$dir/systemctl" <<EOF
+#!/bin/sh
+echo "\$* | XDG_RUNTIME_DIR=\${XDG_RUNTIME_DIR-unset} DBUS_SESSION_BUS_ADDRESS=\${DBUS_SESSION_BUS_ADDRESS-unset}" >> "$calls"
+case "\$2" in
+  daemon-reload) $reload ;;
+  show) echo "$1" ;;
+  *) exit 0 ;;
+esac
+EOF
+    printf '#!/bin/sh\necho "loginctl $*" >> "%s"\nexit 0\n' "$calls" > "$dir/loginctl"
+    chmod +x "$dir/systemctl" "$dir/loginctl"
+    printf '%s' "$dir"
+}
+
+@test "install (Linux) from a clean shell (env -i HOME PATH): the bus variables are derived from the uid, daemon-reload precedes the start, the loaded Environment is shown" {
+    local fakebin; fakebin="$(_clean_shell_bin 'Environment=PATH=/usr/bin:/bin ROMP_DIR=/opt/romp ROMP_SUPERVISED=1 MALLOC_ARENA_MAX=2')"
+    # the recipe as the deploy note gives it, HOME and PATH only (nothing of this suite's environment: no
+    # ROMP_SERVICE_NO_LOAD, no ROMP_SYSTEMD_DIR, no ROMP_MANAGER_BIN), but for the platform override and the fake bin
+    # first on PATH
+    run env -i HOME="$HOME" PATH="$fakebin:$PATH" ROMP_OS_OVERRIDE=Linux "$SVC" install
+    [ "$status" -eq 0 ]
+    local unit="$HOME/.config/systemd/user/romp-manager.service" calls="$TEST_DIR/systemctl-calls"
+    [[ "$output" == *"Installed systemd --user service: $unit"* ]]
+    # the LOADED unit's Environment is shown, for the deploy to read against the file
+    [[ "$output" == *"Loaded unit (systemctl --user show -p Environment): Environment=PATH=/usr/bin:/bin ROMP_DIR=/opt/romp ROMP_SUPERVISED=1 MALLOC_ARENA_MAX=2"* ]]
+    [[ "$output" != *"does not carry"* ]]
+    [ -f "$unit" ]
+    grep -q '^Environment=MALLOC_ARENA_MAX=2$' "$unit"
+    # both variables reached systemctl on every call, derived from the uid at the paths systemd places them
+    local uid; uid="$(id -u)"
+    grep -qxF -- "--user daemon-reload | XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" "$calls"
+    grep -qxF -- "--user enable --now romp-manager.service | XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" "$calls"
+    grep -qxF -- "--user show -p Environment romp-manager.service | XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" "$calls"
+    # the reload precedes the start: a start under an unreloaded definition is the old unit
+    local rl st
+    rl="$(grep -n -- '^--user daemon-reload ' "$calls" | head -1 | cut -d: -f1)"
+    st="$(grep -n -- '^--user enable --now romp-manager.service ' "$calls" | head -1 | cut -d: -f1)"
+    [ -n "$rl" ]
+    [ -n "$st" ]
+    [ "$rl" -lt "$st" ]
+    # the enable-linger went to the fake loginctl, never the box's logind
+    grep -q '^loginctl enable-linger ' "$calls"
+    # neither variable is baked into the unit, and no instance variable is: the clean shell's purpose is kept
+    run grep -q 'XDG_RUNTIME_DIR\|DBUS_SESSION_BUS_ADDRESS\|ROMP_MANAGER_PORT\|ROMP_SERVE_PORT' "$unit"
+    [ "$status" -ne 0 ]
+    run grep -q 'unset' "$calls"
+    [ "$status" -ne 0 ]
+}
+
+@test "install (Linux): a shell that has the bus variables keeps its own values; only an absent one is derived" {
+    local fakebin; fakebin="$(_clean_shell_bin 'Environment=MALLOC_ARENA_MAX=2')"
+    run env -i HOME="$HOME" PATH="$fakebin:$PATH" XDG_RUNTIME_DIR=/nonexistent/rt ROMP_OS_OVERRIDE=Linux "$SVC" install
+    [ "$status" -eq 0 ]
+    grep -qxF -- '--user daemon-reload | XDG_RUNTIME_DIR=/nonexistent/rt DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/rt/bus' "$TEST_DIR/systemctl-calls"
+    rm -f "$TEST_DIR/systemctl-calls"
+    run env -i HOME="$HOME" PATH="$fakebin:$PATH" DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/bus ROMP_OS_OVERRIDE=Linux "$SVC" install
+    [ "$status" -eq 0 ]
+    grep -qxF -- "--user daemon-reload | XDG_RUNTIME_DIR=/run/user/$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/bus" "$TEST_DIR/systemctl-calls"
+}
+
+@test "install (Linux): a daemon-reload that fails is loud in the install's own words, and nothing is started" {
+    # before this, set -e ended the install on systemctl's line alone: no romp-service line said the unit on disk was
+    # not the loaded one, and the file diff the deploy checks read as installed
+    local fakebin; fakebin="$(_clean_shell_bin 'Environment=PATH=/usr/bin' reload-fails)"
+    run env -i HOME="$HOME" PATH="$fakebin:$PATH" ROMP_OS_OVERRIDE=Linux "$SVC" install
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Failed to connect to bus: No medium found"* ]]     # systemctl's own reason stays visible
+    [[ "$output" == *"systemd did NOT reload it"* ]]
+    [[ "$output" == *"next respawn runs under it"* ]]
+    [[ "$output" != *"Installed systemd --user service"* ]]
+    [ -f "$HOME/.config/systemd/user/romp-manager.service" ]              # the file is written; the message says so
+    run grep -q -- 'enable --now' "$TEST_DIR/systemctl-calls"
+    [ "$status" -ne 0 ]
+}
+
+@test "install (Linux): a loaded Environment without the unit's MALLOC_ARENA_MAX line is named as an older definition" {
+    local fakebin; fakebin="$(_clean_shell_bin 'Environment=PATH=/usr/bin:/bin ROMP_DIR=/opt/romp ROMP_SUPERVISED=1')"
+    run env -i HOME="$HOME" PATH="$fakebin:$PATH" ROMP_OS_OVERRIDE=Linux "$SVC" install
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Loaded unit (systemctl --user show -p Environment): Environment=PATH=/usr/bin:/bin ROMP_DIR=/opt/romp ROMP_SUPERVISED=1"* ]]
+    [[ "$output" == *"does not carry MALLOC_ARENA_MAX=2"* ]]
+}
+
 # ─── stop / start: the supervisor halves of `romp down` / `romp up` ──────────────────────────
 # A stop has to go THROUGH the supervisor: the manager exiting on its own is a crash to
 # Restart=always / KeepAlive and it respawns within seconds. ROMP_SYSTEMCTL stubs systemctl the

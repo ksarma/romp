@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 import uuid
 from pathlib import Path
@@ -46,6 +47,105 @@ class Frames(unittest.TestCase):
         self.assertEqual(got, [{"t": "ping"}])
         got = fr.feed(sh.encode_frame({"t": "in", "data": "x"})[5:] + b"\n\n")
         self.assertEqual(got, [{"t": "in", "data": "x"}])
+
+
+class SpawnSecrets(unittest.TestCase):
+    """A key or login token lives in the process environment only, never in a file (the fork's rule, 2026-09-05):
+    a stored login's CLAUDE_CODE_OAUTH_TOKEN leaves the spawn spec before hosts/<sid>/spawn.json is written and
+    rides bin/romp-session-host's process environment instead (the pull-in review's item 1, 2026-09-16). Every
+    assertion here is a presence check: no test output ever carries a token's value."""
+
+    def setUp(self):
+        self.state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.state, True)
+        self.tok = "synthetic-login-token-" + uuid.uuid4().hex
+
+    def test_the_credential_names_leave_the_spec_env_and_are_returned_for_the_hosts_environment(self):
+        spec = {"sid": SID, "env": {"ROMP_SID": SID, "CLAUDE_CODE_OAUTH_TOKEN": self.tok, "ANTHROPIC_AUTH_TOKEN": "synthetic-bearer"}}
+        secrets = sb.split_spawn_secrets(spec)
+        self.assertEqual(spec["env"], {"ROMP_SID": SID}, "every credential name is gone from the spec; the rest stays")
+        self.assertEqual(sorted(secrets), ["ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"])
+        self.assertTrue(secrets["CLAUDE_CODE_OAUTH_TOKEN"] == self.tok, "the returned value is the login's token")
+        for name in sb.AUTH_ENV_NAMES:
+            self.assertNotIn(name, json.dumps(spec), "no credential name survives in the spec")
+        self.assertEqual(sb.split_spawn_secrets({"sid": SID}), {}, "a spec with no env: nothing to move")
+        plain = {"env": {"ROMP_SID": SID, "PATH": "/usr/bin"}}
+        self.assertEqual(sb.split_spawn_secrets(plain), {})
+        self.assertEqual(plain["env"], {"ROMP_SID": SID, "PATH": "/usr/bin"}, "a key-billed launch's overlay is untouched")
+
+    def _spawn(self, cli_scope, secret_env, which=None):
+        """_spawn_host with subprocess.Popen replaced: returns (argv, kwargs) of the one launch."""
+        d = Path(self.state) / "hosts" / SID
+        d.mkdir(parents=True, exist_ok=True)
+        spec_path = d / "spawn.json"
+        spec_path.write_text("{}")
+        me = types.SimpleNamespace(cli_scope=cli_scope)
+        sess = types.SimpleNamespace(sid=SID, name="web")
+        seen = {}
+
+        def fake_popen(argv, **kw):
+            seen["argv"], seen["kw"] = list(argv), kw
+            return types.SimpleNamespace(pid=4242, poll=lambda: None)
+        with mock.patch.object(sb.subprocess, "Popen", fake_popen), \
+             mock.patch.object(sb.shutil, "which", lambda name: which):
+            sb.SdkBackend._spawn_host(me, sess, spec_path, secret_env)
+        return seen["argv"], seen["kw"]
+
+    def test_spawn_host_hands_the_token_to_the_host_through_its_environment_never_the_command_line(self):
+        argv, kw = self._spawn(False, {"CLAUDE_CODE_OAUTH_TOKEN": self.tok})
+        self.assertTrue(argv[1].endswith(os.path.join("bin", "romp-session-host")), "a plain child runs the launcher")
+        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"], "the token is in the host's environment")
+        self.assertTrue(kw["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == self.tok)
+        self.assertIn("PATH", kw["env"], "the kernel's own environment is inherited beside it")
+        self.assertFalse(any(self.tok in a for a in argv), "the token never rides the command line")
+        self.assertTrue(kw.get("start_new_session") and kw.get("close_fds"), "the detached launch is unchanged")
+
+    def test_a_scoped_launch_carries_the_environment_through_systemd_run(self):
+        argv, kw = self._spawn(True, {"CLAUDE_CODE_OAUTH_TOKEN": self.tok}, which="/usr/bin/systemd-run")
+        self.assertEqual(argv[0], "systemd-run")
+        self.assertIn("--scope", argv, "a scope runs the command as systemd-run's own child, in its environment")
+        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"])
+        self.assertFalse(any(self.tok in a for a in argv), "no --setenv, no value on the command line")
+
+    def test_a_launch_with_no_secrets_hands_the_host_the_kernels_environment_and_no_bearer(self):
+        with mock.patch.dict(os.environ, {"ROMP_TEST_MARKER": "1"}):
+            for name in sb.AUTH_ENV_NAMES:
+                os.environ.pop(name, None)
+            argv, kw = self._spawn(False, None)
+        self.assertEqual(kw["env"].get("ROMP_TEST_MARKER"), "1", "the kernel's environment, as a plain Popen inherited it")
+        for name in sb.AUTH_ENV_NAMES:
+            self.assertNotIn(name, kw["env"], "a key-billed launch's host gets no bearer to hand its CLI")
+
+    def test_the_host_launch_writes_a_stored_login_spawn_json_without_the_token_and_hands_it_to_the_host(self):
+        """The real _host_transport_for, on its spawn road, over a stub kernel: the login's token is in the options'
+        env (the compose put it there, as for a kernel child), spawn.json on disk carries no credential name, and
+        _spawn_host receives exactly the moved variables."""
+        ht = sb._ht()
+        handed = {}
+
+        def spawn_host(sess, spec_path, secret_env=None):
+            handed["secrets"] = dict(secret_env or {})
+            handed["spec_path"] = Path(spec_path)
+            ht.host_sock(self.state, SID).touch()                    # the launcher "served" its socket
+            return types.SimpleNamespace(pid=4242, poll=lambda: None, returncode=None)
+        me = types.SimpleNamespace(state_dir=self.state, code_version="abc12345", cli_scope=False,
+                                   _host_recently_ended={}, _lock=__import__("threading").Lock(), _host_spawning=set(),
+                                   _holder_ident=sb.SdkBackend._holder_ident, _spawn_host=spawn_host,
+                                   _new_host_transport=lambda sess, sock, offset: ("transport", str(sock), offset),
+                                   _log=lambda *a, **k: None)
+        sess = types.SimpleNamespace(sid=SID, name="web", _options_login="login-rec-1", _host=None, _host_is_attach=False)
+        opts = types.SimpleNamespace(cli_path="/x/romp-cli-scope", cwd=self.state,
+                                     env={"ROMP_SID": SID, "CLAUDE_CODE_OAUTH_TOKEN": self.tok}, permission_mode="default")
+        t = asyncio.run(sb.SdkBackend._host_transport_for(me, sess, opts, ()))
+        self.assertEqual(t[0], "transport", "the spawn road handed back the new transport")
+        written = json.loads(handed["spec_path"].read_text())
+        self.assertEqual(handed["spec_path"], Path(self.state) / "hosts" / SID / "spawn.json")
+        self.assertEqual(written["env"], {"ROMP_SID": SID}, "the file carries the overlay minus every credential name")
+        self.assertEqual(written["login"], "login-rec-1", "the login IDENTIFIER stays in the file")
+        self.assertNotIn(self.tok, handed["spec_path"].read_text(), "the token's value is nowhere in the file")
+        self.assertEqual(sorted(handed["secrets"]), ["CLAUDE_CODE_OAUTH_TOKEN"], "the host gets the moved variable")
+        self.assertTrue(handed["secrets"]["CLAUDE_CODE_OAUTH_TOKEN"] == self.tok)
+        self.assertEqual(opts.env.get("CLAUDE_CODE_OAUTH_TOKEN"), self.tok, "the options object is untouched (spawn_spec copied)")
 
 
 class JournalRules(unittest.TestCase):
@@ -285,10 +385,13 @@ class HostProcess(unittest.TestCase):
         p.write_text(json.dumps(spec)); p.chmod(0o600)
         return str(p), spec
 
-    def _start(self, sdk=False, **over):
+    def _start(self, sdk=False, host_env=None, **over):
         spec_path, spec = self._spec(**over)
         env = dict(os.environ, PYTHONUNBUFFERED="1")
         env.pop("ROMP_SDK_SITE", None)
+        for name in sb.AUTH_ENV_NAMES:          # the host's environment carries a credential only when a test hands one
+            env.pop(name, None)
+        env.update(host_env or {})
         if sdk:
             env["ROMP_SDK_SITE"] = str(SDK_SITE)
         else:
@@ -693,6 +796,60 @@ class HostProcess(unittest.TestCase):
         again = k2.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "control_request")
         self.assertEqual(again["data"]["request_id"], req["data"]["request_id"], "re-sent from the table although its journal write failed")
         k2.close()
+
+    def _env_probe_cli(self):
+        """A CLI stand-in that records whether CLAUDE_CODE_OAUTH_TOKEN is set in ITS environment (presence only,
+        never the value) and then becomes the fake CLI. Returns (cli_path, the record's path)."""
+        seen = os.path.join(self.state, "cli-env-seen")
+        probe = os.path.join(self.state, "cli-env-probe.py")
+        with open(probe, "w") as f:
+            f.write("#!%s\nimport os, sys\n" % sys.executable)
+            f.write("open(%r, 'w').write('present' if os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') else 'absent')\n" % seen)
+            f.write("os.execv(%r, [%r, %r] + sys.argv[1:])\n" % (sys.executable, sys.executable, FAKE))
+        os.chmod(probe, 0o755)
+        return probe, seen
+
+    def _one_turn(self, sock):
+        k, hello = self._attach(sock)
+        k.send({"t": "in", "data": self._user("hi sleep=0.1")})
+        k.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "result")
+        return k
+
+    def test_a_token_in_the_hosts_environment_reaches_the_cli_and_is_nowhere_the_host_writes(self):
+        """The environment road under a host (the pull-in review's item 1): spawn.json carries no token, the host's
+        process environment does, and the CLI the host spawns sees it, the way a kernel child sees the compose's env."""
+        probe, seen = self._env_probe_cli()
+        tok = "synthetic-login-token-" + uuid.uuid4().hex
+        host, sock, spec = self._start(host_env={"CLAUDE_CODE_OAUTH_TOKEN": tok}, cli_path=probe)
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", json.dumps(spec), "the spec the host read carries no token")
+        k = self._one_turn(sock)
+        self.assertEqual(open(seen).read(), "present", "the CLI inherited the token from the host's environment")
+        journal = list(sh.read_journal_dir(os.path.join(self.state, "hosts", SID)))
+        blob = json.dumps(self._hostlog()) + json.dumps([r for _, r in journal]) + json.dumps(k.frames)
+        blob += (Path(self.state) / "hosts" / SID / "spawn.json").read_text() + sb.read_lease(self.state, SID).__repr__()
+        self.assertNotIn(tok, blob, "the token's value is in no file the host writes, no frame, no lease")
+        k.close()
+
+    def test_without_a_token_in_the_hosts_environment_the_cli_gets_none(self):
+        probe, seen = self._env_probe_cli()
+        host, sock, spec = self._start(cli_path=probe)
+        k = self._one_turn(sock)
+        self.assertEqual(open(seen).read(), "absent", "no token anywhere: the probe reads the CLI's real environment")
+        k.close()
+
+    @unittest.skipUnless(SDK_SITE, "the SDK venv is not on this machine; the pipe transport covered the host")
+    def test_the_sdk_transport_hands_the_hosts_environment_to_the_cli_too(self):
+        """The road a real install takes: the SDK's SubprocessCLITransport merges the host's environment under the
+        spec's overlay, so the token rides there as well."""
+        probe, seen = self._env_probe_cli()
+        tok = "synthetic-login-token-" + uuid.uuid4().hex
+        host, sock, spec = self._start(sdk=True, host_env={"CLAUDE_CODE_OAUTH_TOKEN": tok}, cli_path=probe)
+        k = self._one_turn(sock)
+        self.assertEqual([r["transport"] for r in self._hostlog() if r["kind"] == "cli-spawned"], ["sdk"])
+        self.assertEqual(open(seen).read(), "present")
+        k.send({"t": "end", "grace": 10})
+        k.recv_until(lambda f: f.get("t") == "exit")
+        k.close()
 
     @unittest.skipUnless(SDK_SITE, "the SDK venv is not on this machine; the pipe transport covered the host")
     def test_the_sdk_transport_drives_the_fake_cli_the_same_way(self):

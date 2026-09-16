@@ -7689,14 +7689,6 @@ def _overlap(a, b):
     return len(ta & tb) / float(min(len(ta), len(tb)))
 
 
-def _top_of(nodes, nid):
-    seen = set()
-    while nid in nodes and nodes[nid].get("parentId") and nid not in seen:
-        seen.add(nid)
-        nid = nodes[nid]["parentId"]
-    return nid if nid in nodes else None
-
-
 def _seg_trigger_author(seg):
     atoms = seg.get("atoms") or []
     trig = next((a for a in atoms if a.get("uuid") == seg.get("trigger")), None) or (atoms[0] if atoms else None)

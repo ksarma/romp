@@ -2315,9 +2315,21 @@ PYEOF
         #    the service's word: one may still answer on the control port (started outside the service,
         #    or one the service did not take down). Stop it through its own /stop, then poll, bounded,
         #    for it to leave: the manager answers /stop first and exits once its kernels have left, or
-        #    once the grace it grants them (SHUTDOWN_GRACE_MS, 5s, then SIGKILL) has run out, so the
-        #    poll's bound is that grace plus the exit.
+        #    once the grace it grants them (SHUTDOWN_GRACE_MS, 8 s unless ROMP_SHUTDOWN_GRACE_MS says
+        #    otherwise, then SIGKILL) plus 200 ms has run out, so the poll's bound is that grace plus a
+        #    margin for the exit. The grace is read the way the manager reads it (a whole number of
+        #    milliseconds above zero, else its 8000 default), the margin is 2 s and the bound at least
+        #    10 s, counted in quarter-second polls, so the real wall time is never under the bound (each
+        #    poll also spawns the control client). The bound used to be 28 polls (7 s) against the 8 s
+        #    grace (raised from 5 s without the poll following), so a kernel that used its exit budget
+        #    made the down report a manager that would not stop, exit 1 and take the marker back
+        #    (pull-in review round 1, 2026-09-16).
         _dn_mport="${ROMP_MANAGER_PORT:-7432}"
+        _dn_grace="${ROMP_SHUTDOWN_GRACE_MS:-}"
+        if [[ "$_dn_grace" =~ ^[0-9]{1,9}(\.[0-9]+)?$ ]]; then _dn_grace="${_dn_grace%%.*}"; else _dn_grace=""; fi
+        if [[ -z "$_dn_grace" ]] || (( 10#$_dn_grace == 0 )); then _dn_grace=8000; fi
+        _dn_mpolls=$(( (10#$_dn_grace + 2000 + 249) / 250 ))
+        if (( _dn_mpolls < 40 )); then _dn_mpolls=40; fi
         _dn_mgr=""
         if "${ROMP_MANAGER_BIN:-romp-manager}" status >/dev/null 2>&1; then
             _dn_mgr=1
@@ -2326,7 +2338,7 @@ PYEOF
             # so it runs under another state root or is another romp's, or this romp SENT NONE because it
             # found no token to send; HTTP 503, the manager cannot read its own token file), and 1 for no
             # answer at all (a timeout, a connection error), which the poll below handles as before. A
-            # refusal is final: seven seconds of polling would not change it, and a manager that refused
+            # refusal is final: polling for the manager to leave would not change it, and a manager that refused
             # this romp's token is not this romp's to stop, so the hold is released, the marker taken back,
             # and the answer said with the status, the manager's own words and the remedy (review round 1,
             # 2026-09-10: the answer used to be discarded and the refusal reported as a manager that would
@@ -2385,7 +2397,7 @@ PYEOF
                 echo "romp down: the manager on :$_dn_mport refused the stop ($_dn_mhttp). $_dn_mfix The kernel keeps running." >&2
                 exit 1
             fi
-            for _ in $(seq 1 28); do
+            for _ in $(seq 1 "$_dn_mpolls"); do
                 "${ROMP_MANAGER_BIN:-romp-manager}" status >/dev/null 2>&1 || break
                 sleep 0.25
             done

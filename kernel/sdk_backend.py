@@ -5340,6 +5340,21 @@ def startup_auth_env() -> dict:
         return dict(_STARTUP_AUTH_ENV)
 
 
+def split_spawn_secrets(spec: dict) -> dict:
+    """Move every credential-named variable (AUTH_ENV_NAMES) out of a host spawn spec's env overlay and
+    return them. The spec is written to hosts/<sid>/spawn.json, and a key or login token lives in the
+    process environment only, never in a file (the fork's rule, 2026-09-05; the pull-in review's item 1,
+    2026-09-16): the launch hands the returned variables to bin/romp-session-host through its process
+    environment instead (_spawn_host), and the host's CLI inherits them from there, so a stored login's
+    CLAUDE_CODE_OAUTH_TOKEN and the machine's boot-claimed login tokens reach the CLI exactly as they do
+    for a kernel child, with no file holding them. Every other field stays in the spec. The spec's env is
+    spawn_spec's own copy, so the options object the kernel-child road launches from is untouched."""
+    env = spec.get("env")
+    if not isinstance(env, dict):
+        return {}
+    return {name: env.pop(name) for name in AUTH_ENV_NAMES if name in env}
+
+
 
 def _expected_auth() -> str:
     """The box-wide INTENDED auth, declared in the manager's environment (service.env):
@@ -8534,9 +8549,13 @@ class SdkSession:
                         # the CLI's own scope unit, while its pid is alive to read; before `self.client = client`
                         # so the handshake-then-push adjacency the opening-state pin protects stays intact (it
                         # needs only the client's pid, not the assignment). A kernel child only: under a host the
-                        # client's transport is the host's socket with no local process to read, and the CLI's
-                        # scope is the host's own (romp-host-<sid8>-<t>.scope, _spawn_host), which the OOM
-                        # attribution does not read yet, so the read's "could not be recorded" line says nothing
+                        # client's transport is the host's socket with no local process to read. The hosted CLI
+                        # still runs through bin/romp-cli-scope (the spec's cli_path) in a romp-session-<sid8>-<pid>-<t>
+                        # scope of its own, a sibling of the host's romp-host-<sid8>-<t> scope (_spawn_host), not
+                        # inside it; its pid arrives in the host's hello (cli.pid, _on_host_hello), which the OOM
+                        # attribution does not read yet (fork debt: an OOM kill of a hosted CLI lands in the CLI's own
+                        # scope's memory.events and is attributed to no unit), so the read here would only say "could
+                        # not be recorded"
                         self._record_cli_scope(client)
                     self.client = client
                     # The handshake IS the "this session is open" event (snapshot `connected`, the flip
@@ -12228,14 +12247,16 @@ class SdkBackend:
             spec = ht.spawn_spec(opts, sess.sid, sess.name, self.state_dir, self.code_version, ht.session_host_grace_s(self.state_dir))
             spec["login"] = str(getattr(sess, "_options_login", "") or "")   # the login IDENTIFIER this launch bills, echoed
             #   in every hello as cli.login, so the kernel that first sees the CLI stamps the login the launch used (never a
-            #   token or key: those ride the env overlay, and the hello never carries them)
+            #   token or key: those ride the host's process environment, and the hello never carries them)
+            secrets = split_spawn_secrets(spec)    # the credential names leave the overlay BEFORE the file is written: a
+            #   login token rides the host's environment (_spawn_host), never spawn.json (the fork's secrets rule)
             spec_path = ht.write_spawn_spec(self.state_dir, sess.sid, spec)
             sock = ht.host_sock(self.state_dir, sess.sid)
             try:
                 sock.unlink()
             except OSError:
                 pass
-            proc = self._spawn_host(sess, spec_path)
+            proc = self._spawn_host(sess, spec_path, secrets)
             deadline = time.time() + ht.SOCKET_WAIT_S
             while not sock.exists():                          # loop-ok: a bounded wait on the socket appearing
                 if proc.poll() is not None:
@@ -12267,18 +12288,27 @@ class SdkBackend:
                                 on_exit=lambda ex, s=sess: self._host_ended(s, ex),
                                 on_fault=lambda f, s=sess: self._log("host (%s): fault %s: %s" % (s.name, f.get("kind"), f.get("text")), problem=True))
 
-    def _spawn_host(self, sess, spec_path):
+    def _spawn_host(self, sess, spec_path, secret_env=None):
         """Start bin/romp-session-host detached: in a transient scope of its own on Linux when scopes are on
-        (outside the service cgroup, like the CLI's), a plain new-session child elsewhere."""
+        (outside the service cgroup, like the CLI's), a plain new-session child elsewhere. `secret_env` is the
+        launch's credential overlay (split_spawn_secrets: a stored login's CLAUDE_CODE_OAUTH_TOKEN, the machine's
+        boot-claimed login tokens), handed to the host through its process environment and never through the
+        spec file or the command line: a scope runs its command as systemd-run's own child with this
+        environment, and both of the host's transports (session_host.py) build the CLI's environment from the
+        host's own with the spec's overlay on top, exactly as the SDK merges this process's environment for a
+        kernel child. This process's environment carries no bearer (startup_auth_env claimed them at boot), so a
+        key-billed launch's host inherits none."""
         ht = _ht()
         launcher = str(Path(__file__).resolve().parent.parent / "bin" / "romp-session-host")
         argv = [sys.executable, launcher, str(spec_path)]
         if self.cli_scope and shutil.which("systemd-run"):
             argv = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit=" + ht.host_scope_unit(sess.sid),
                     "--description=romp session host %s" % sess.sid] + argv
+        env = dict(os.environ)
+        env.update(secret_env or {})
         errlog = open(str(Path(spec_path).parent / "host.stderr"), "ab")
         return subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errlog,
-                                start_new_session=True, close_fds=True)
+                                start_new_session=True, close_fds=True, env=env)
 
     @staticmethod
     def _holder_ident(lease) -> str:

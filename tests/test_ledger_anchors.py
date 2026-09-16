@@ -2,9 +2,12 @@
 old nearest-time heuristic (the user 2026-06-19). Both build_session (the ledger) and build_feed (the cards)
 resolve a node's (promptAnchorUuid, anchorUuid) through the ONE shared helper km._node_anchor_uuids, so they
 cannot drift apart. This pins the helper's resolution and the shared-call anti-drift property."""
+import json
 import os
 import re
 import unittest
+from datetime import datetime, timezone
+from pathlib import Path
 from romp_load import load_source
 import tempfile
 
@@ -14,6 +17,7 @@ BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+jd = km.jd                              # the kernel's judge: the one object build_feed reads stores through
 
 
 class NodeAnchorResolution(unittest.TestCase):
@@ -254,6 +258,153 @@ class SegJump(unittest.TestCase):
         src = inspect.getsource(km.build_session) + inspect.getsource(km._feed_session_entry)   # T368: the feed's loop body
         self.assertEqual(src.count('_seg_jump(seg["atoms"])'), 2)
         self.assertNotIn("= r or w", src)
+
+
+class FeedWarmResolveBumpsTheLedgerRevision(unittest.TestCase):
+    """The feed's WARM resolve of a node's anchors bumps _node_anchor_rev for the session it builds, through the
+    `sid=fsid` argument on _feed_session_entry's _node_anchor_uuids call (2026-09-09). The 2026-09-15 upstream pull-in's
+    merge dropped that argument once, the fixer round restored it, and no executed case failed without it (review round
+    1, tests-1): the argument is the whole of what these cases pin. Three memo keys read the revision, each taken BEFORE
+    its walk: build_session's ledger memo (`_lkey`'s third component), the chat build's signature
+    (`sig.append(_node_anchor_rev.get(sid, 0))`) and the feed entry's own `anchors` component (_feed_session_key). A
+    warm resolve that CHANGES the table's entry must move all three, or a memoized tree whose cold nodes read the older
+    entry is served as current. Driven through the REAL build_feed over a hermetic two-session board (the notes-api demo
+    world): `web`, whose parse is warm the way a chat build or _warm_fleet_bg leaves it, so the feed's cache-only read
+    resolves its node's segment; `api`, whose parse is cold and whose node names a segment no parse holds, so every
+    resolve of it is cold and writes nothing. Private synthetic sids (the goal-store fixture rule: load_goals replays the
+    per-sid override journal, so a shared placeholder sid can be re-flagged by another module's rows); the state root,
+    the memo, the anchor tables and the parse cache are restored in tearDown."""
+
+    SIDS = ("7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c01", "7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c02")
+    WEB, API = SIDS
+    NAME_OF = {WEB: "web", API: "api"}
+    COLOR_OF = {WEB: "#1EA1EB", API: "#E67E22"}
+    GOAL_OF = {WEB: "wire the notes-api web client", API: "add the notes-api list endpoint"}
+    NOW = 1781100000
+    T0 = NOW - 3600
+
+    @staticmethod
+    def _iso(t):
+        return datetime.fromtimestamp(t, timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def _transcript(self, sid):
+        """One user message and its reply: the segment web's trail names (uuids u1 and a1)."""
+        u = {"type": "user", "timestamp": self._iso(self.T0), "uuid": "u1", "parentUuid": None, "promptSource": "typed",
+             "message": {"role": "user", "content": "start on: " + self.GOAL_OF[sid]}}
+        a = {"type": "assistant", "timestamp": self._iso(self.T0 + 40), "uuid": "a1", "parentUuid": "u1",
+             "message": {"role": "assistant", "content": [{"type": "text", "text": "On it."}], "stop_reason": "end_turn"}}
+        return json.dumps(u) + "\n" + json.dumps(a) + "\n"
+
+    def _mint(self, sid, seg_id, prompt_uuid):
+        """One top-level goal minted the way the planner mints (apply_plan), rolled up and saved."""
+        s = {"rompUuid": sid, "seq": 0, "placementsV": jd.PLACEMENTS_V, "nodes": {}, "placements": {}, "status": {}}
+        jd.apply_plan(s, seg_id, self.T0, [{"do": "mint", "why": "the request that opened the session",
+                                            "text": self.GOAL_OF[sid]}], [], prompt_uuid=prompt_uuid)
+        jd.rollup_status(s, session_closed=False)
+        jd.save_goals(sid, s)
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        td = Path(self.td.name)
+        proj, names = td / "projects", td / "names"
+        names.mkdir()
+        self.tpath = {}
+        for sid in self.SIDS:
+            cdir = td / ("launch-" + self.NAME_OF[sid])
+            cdir.mkdir()
+            pdir = proj / re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(str(cdir)))
+            pdir.mkdir(parents=True)
+            tp = pdir / (sid + ".jsonl")
+            tp.write_text(self._transcript(sid))
+            (names / sid).write_text("%s\t%s\t%s\n" % (self.NAME_OF[sid], cdir, self.COLOR_OF[sid]))
+            self.tpath[sid] = tp
+        self.saved = (jd.STATE, jd.PROJECTS, km.NAMES, km._GLOBAL_CLAUDE_MD)
+        with km._feed_memo_lock:
+            self.saved_memo = (dict(km._feed_memo), json.loads(json.dumps(km._FEED_MEMO_STATS)))
+            km._feed_memo.clear()                     # every case starts with the memo cold and its counters at zero
+            for k in ("hit", "miss", "evict", "derived", "entries", "bytes"):
+                km._FEED_MEMO_STATS[k] = 0
+            for k in km._FEED_MEMO_STATS["miss_by"]:
+                km._FEED_MEMO_STATS["miss_by"][k] = 0
+        self.saved_anchors = (dict(km._node_anchor_last), dict(km._node_anchor_rev))
+        km._node_anchor_last.clear()
+        km._node_anchor_rev.clear()
+        # The kernel's judge is one module object for every test module in the process: this board builds over ITS
+        # root and nothing else (_rebind_state moves GOALDIR and every derived dir with it; test_feed_session_memo's idiom).
+        jd._rebind_state(td)
+        jd.PROJECTS = proj
+        km.NAMES = jd.NAMES
+        km._GLOBAL_CLAUDE_MD = td / "no-global-claude.md"
+        km._live_scope.names = None
+        km._live_scope.snapshot = None
+        jd._discover_cache.clear()
+        # api: a node whose trail names a segment no parse holds. web: the REAL segment id, read off the parse this call
+        # warms (the same _parse a chat build and _warm_fleet_bg fill the cache through; the feed reads it cache-only).
+        self._mint(self.API, "s1", None)
+        ps = km._parse(str(self.tpath[self.WEB]), self.WEB, self.NOW)
+        seg = next(sg for turn in ps["turns"] for sg in km.em.segments(turn) if sg.get("trigger") == "u1")
+        self._mint(self.WEB, seg["id"], "u1")
+        self.live = {sid: {"state": "idle", "since": self.NOW - 100, "model": "", "effort": "", "context": None,
+                           "compactPct": None, "color": None} for sid in self.SIDS}
+
+    def tearDown(self):
+        with km._feed_memo_lock:
+            km._feed_memo.clear()
+            km._feed_memo.update(self.saved_memo[0])
+            km._FEED_MEMO_STATS.clear()
+            km._FEED_MEMO_STATS.update(self.saved_memo[1])
+        km._node_anchor_last.clear()
+        km._node_anchor_last.update(self.saved_anchors[0])
+        km._node_anchor_rev.clear()
+        km._node_anchor_rev.update(self.saved_anchors[1])
+        for sid in self.SIDS:
+            jd.parse_cache_drop(sid)
+        jd._rebind_state(self.saved[0])
+        jd.PROJECTS, km.NAMES, km._GLOBAL_CLAUDE_MD = self.saved[1:]
+        km._live_scope.names = None
+        km._live_scope.snapshot = None
+        jd._discover_cache.clear()
+        self.td.cleanup()
+
+    @staticmethod
+    def _rows(feed):
+        return {r["id"]: r for c in feed["asks"] for r in (c.get("tree") or [])}
+
+    def test_a_warm_resolve_in_the_feed_bumps_the_revision_of_the_session_it_builds(self):
+        self.assertIsNotNone(km._parse_cached(str(self.tpath[self.WEB])), "web's parse is warm: the feed's read finds it")
+        self.assertEqual([km._node_anchor_rev.get(s, 0) for s in self.SIDS], [0, 0])
+        rows = self._rows(km.build_feed(self.NOW, self.live))
+        web, api = rows[self.WEB + ":g1"], rows[self.API + ":g1"]
+        self.assertEqual((web["promptAnchorUuid"], web["anchorUuid"]), ("u1", "a1"),
+                         "web's node resolved WARM through the feed: the table's entry changed")
+        self.assertEqual(km._node_anchor_last.get(self.WEB + ":g1"), ("u1", "a1"))
+        self.assertIsNone(api["anchorUuid"], "api's node resolved cold: nothing written for it")
+        self.assertEqual(km._node_anchor_rev.get(self.WEB, 0), 1,
+                         "the revision the ledger memo, the chat signature and the feed key read rose by one for web")
+        self.assertEqual(km._node_anchor_rev.get(self.API, 0), 0, "and not for the peer, whose resolve wrote nothing")
+
+    def test_the_feed_key_sees_the_bump_once_then_settles(self):
+        # The key takes `anchors` BEFORE the derivation (stat-then-read), so the build that learns the anchor stores a
+        # key one revision behind: the next build re-derives web once, attributed to `anchors`, and the one after hits.
+        # The same one-build lag build_session's ledger memo and the chat signature document for their reads.
+        km.build_feed(self.NOW, self.live)                         # web's rev 0 -> 1 during the derivation
+        b = km._feed_memo_report()
+        km.build_feed(self.NOW, self.live)
+        a = km._feed_memo_report()
+        self.assertEqual((a["derived"] - b["derived"], a["hit"] - b["hit"]), (1, 1), "web re-derives, api hits")
+        self.assertEqual({k: a["miss_by"][k] - b["miss_by"].get(k, 0) for k in a["miss_by"]
+                          if a["miss_by"][k] != b["miss_by"].get(k, 0)}, {"anchors": 1})
+        km.build_feed(self.NOW, self.live)
+        c = km._feed_memo_report()
+        self.assertEqual((c["derived"] - a["derived"], c["hit"] - a["hit"]), (0, 2), "settled: the same anchors bump nothing")
+        self.assertEqual(km._node_anchor_rev.get(self.WEB, 0), 1)
+
+    def test_the_three_memo_keys_read_the_one_revision(self):
+        # the readers the bump exists for, each keyed on _node_anchor_rev before its walk (upstream's text at the tip)
+        src = open(os.path.join(BIN, "romp-kernel")).read()
+        self.assertIn("_lkey = (_seams_sig, _ck, _node_anchor_rev.get(sid, 0))", src)   # build_session's ledger memo
+        self.assertIn("sig.append(_node_anchor_rev.get(sid, 0))", src)                    # the chat build's signature
+        self.assertIn("anchors = _node_anchor_rev.get(fsid, 0)", src)                      # the feed entry's key component
 
 
 if __name__ == "__main__":

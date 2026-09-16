@@ -2082,6 +2082,56 @@ STUB
     [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]
 }
 
+@test "romp down: a manager whose kernel uses most of its SIGKILL grace is polled past that grace: exit 0, the manager gone, the marker kept" {
+    command -v node >/dev/null 2>&1 || skip "node not available"
+    command -v curl >/dev/null 2>&1 || skip "curl not available"
+    # Pull-in review round 1 (2026-09-16): the manager exits once its kernels have left, or once the grace it
+    # grants them (SHUTDOWN_GRACE_MS, 8 s by default) plus 200 ms has run out; `romp down` polled for it 28
+    # times a quarter second, 7 s nominal, a bound from when the grace was 5 s, so a kernel that used its
+    # exit budget made the down report a manager that would not stop, exit 1 and take the marker back. The
+    # poll is sized from the grace now, read the way the manager reads it (ROMP_SHUTDOWN_GRACE_MS, else
+    # 8000) plus a 2 s margin, at least 10 s. Driven with a REAL manager under a 12 s grace and a kernel
+    # that holds its SIGTERM for 11.5 s and then leaves on its own, just before the SIGKILL: the manager
+    # exits about 11.6 s after the stop, past the old bound (about 8.5 s of wall time, the control client's
+    # startup on top of each sleep) and inside the new one (56 polls, 14 s nominal).
+    local bin; bin="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)"
+    export ROMP_SHUTDOWN_GRACE_MS=12000
+    local fake="$TEST_DIR/fake-serve"
+    cat > "$fake" <<'FAKE'
+#!/usr/bin/env bash
+# a kernel that uses most of its grace: SIGTERM starts an 11.5 s drain, then a clean exit of its own
+sleep 600 & bg=$!
+trap 'kill "$bg" 2>/dev/null; sleep 11.5; exit 0' TERM
+wait "$bg"
+FAKE
+    chmod +x "$fake"
+    local mport kport; free_port mport kport
+    export ROMP_MANAGER_PORT=$mport ROMP_SERVE_PORT=$kport ROMP_KERNEL_PORT=$kport   # the kernel probe goes where the fake serve would listen
+    export ROMP_MANAGER_BIN="$bin/romp-manager"
+    ROMP_SERVE_BIN="$fake" node "$bin/romp-manager" up >/dev/null 2>&1 &
+    MGR_PID=$!
+    local i st
+    for i in $(seq 1 30); do curl -fsS "http://127.0.0.1:$mport/status" >/dev/null 2>&1 && break; sleep 0.1; done
+    st="$(curl -fsS "http://127.0.0.1:$mport/status")"
+    # the premise: a kernel is up under the manager, so the stop has something to grant the grace to
+    MGR_ST="$st" python3 -c 'import json, os; ks = json.loads(os.environ["MGR_ST"])["kernels"]; assert ks and ks[0].get("pid"), ks'
+    local t0=$SECONDS
+    run run_romp down --now
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"the manager and its kernels are stopping"* ]]
+    run grep -q 'still running' <<< "$output"      # never the false failure
+    [ "$status" -ne 0 ]
+    (( SECONDS - t0 >= 11 ))                        # the down outlasted the kernel's hold: polled past the old bound
+    # the manager is gone: its port answers nothing and the process has exited
+    run curl -fsS "http://127.0.0.1:$mport/status"
+    [ "$status" -ne 0 ]
+    for i in $(seq 1 30); do kill -0 "$MGR_PID" 2>/dev/null || break; sleep 0.1; done
+    run kill -0 "$MGR_PID"
+    [ "$status" -ne 0 ]
+    MGR_PID=""
+    [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]
+}
+
 @test "romp down: a kernel with no manager (a bare romp-serve) is stopped through its own door, and the line says so" {
     # the dashboard's remote Start and the update and restart fallbacks leave `nohup romp-serve` on a
     # host with no manager and no login service. The manager's absence is not the kernel's: taking
@@ -2425,7 +2475,7 @@ PY
     command -v node >/dev/null 2>&1 || skip "node not available"
     # Review round 1 (2026-09-10): the manager's write gate answers /stop 401 when this romp's token is not
     # one it holds (another state root, another romp's manager) and 503 when it cannot read its own token
-    # file. `romp down` discarded the answer, polled status for seven seconds and printed "a manager is still
+    # file. `romp down` discarded the answer, polled status for its whole bound and printed "a manager is still
     # running ... Stop it by hand", hiding both the refusal and the remedy. The stand-in here is the control
     # port: it answers /status like a running manager, refuses /stop with the given status and the manager's
     # own body, records every request, and stays up (a refused stop stops nothing).

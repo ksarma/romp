@@ -1129,7 +1129,13 @@ class TheSendOp(_SendWorld):
         r = self.send()
         self.assertEqual(r["type"], "fileCommentsSendFailed")
         self.assertEqual(r["reqId"], 9)
-        self.assertIn("didn't take it", r["error"])
+        # ruling 3 of the pull-in (2026-09-15): the op fails with _USER_TODO_UNDELIVERED_WARN itself, the
+        # viewer's own "saved with the file" sentence having retired with that literal shape; both wordings
+        # share "didn't take it", so the pin names the constant and the clause only the retired one carried
+        self.assertEqual(r["error"], km._USER_TODO_UNDELIVERED_WARN,
+                         "ruling 3: a backend refusal fails the op with the todo constant's own text")
+        self.assertNotIn("Your comments are saved with the file", r["error"],
+                         "ruling 3: the viewer's retired undelivered sentence is gone from the reply")
         self.assertNotIn("resolved", self.todo())
         self.assertIsNone(self.seen(), "no send entry for a message that never went")
 
@@ -1443,7 +1449,10 @@ class TheTodoReplyIsUnchanged(_SendWorld):
         self.send_result = None                                # refused
         self.reply(tid=tid2, text="8080")
         self.assertNotIn("resolved", km._user_todos()[SID][1])
-        self.assertIn("Couldn't deliver", self.sent[-1]["text"])
+        self.assertEqual(self.sent[-1], {"type": "warn", "text": km._USER_TODO_UNDELIVERED_WARN},
+                         "ruling 3 (2026-09-15): a refused handover warns with the todo constant's own text")
+        self.assertNotIn("Your comments are saved with the file", self.sent[-1]["text"],
+                         "ruling 3: the viewer's retired undelivered sentence never reaches the todo Reply")
 
 
 class TheSaveLogsTheEdit(_Wire):

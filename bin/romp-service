@@ -50,6 +50,19 @@ SYSTEMD_DIR="${ROMP_SYSTEMD_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user}
 NO_LOAD="${ROMP_SERVICE_NO_LOAD:-}"
 LAUNCHCTL="${ROMP_LAUNCHCTL:-launchctl}"
 SYSTEMCTL="${ROMP_SYSTEMCTL:-systemctl}"
+# systemctl --user finds the user manager through XDG_RUNTIME_DIR (its bus is $XDG_RUNTIME_DIR/bus) or through
+# DBUS_SESSION_BUS_ADDRESS; a login shell has both, a clean shell has neither. The re-install that keeps a session's
+# ROMP_* variables and PATH out of the unit (`env -i HOME=... PATH=... romp-service install`; write_unit bakes every
+# set instance variable) wrote the unit and then died at daemon-reload ("Failed to connect to bus: No medium found"),
+# so systemd kept the definition it had loaded and the manager's next respawn ran without the new line while the file
+# on disk read as installed (review find, 2026-09-16). Derive both from the uid when absent, at the paths systemd
+# places them; neither is baked into the unit (write_unit writes PATH, ROMP_DIR, ROMP_SUPERVISED, MALLOC_ARENA_MAX,
+# the env-file line and the set instance variables, nothing else), so the clean shell stays clean.
+_user_bus_env() {
+    [[ -n "${XDG_RUNTIME_DIR:-}" ]] || export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+}
+if [[ "$os" == Linux ]]; then _user_bus_env; fi
 # `romp down` leaves this marker (time + command) so a stopped kernel reads as stopped on purpose,
 # not crashed: `romp status` and the status verb below say so, and `romp-manager ensure` (the
 # supervised start a remote update runs on a far host) refuses to bring the manager back while it
@@ -584,9 +597,27 @@ case "${1:-status}" in
       Linux)
         write_unit
         if [[ -z "$NO_LOAD" ]]; then
-            "$SYSTEMCTL" --user daemon-reload
+            # The reload is what makes the written unit the LOADED one: without it Restart=always respawns the manager
+            # under the old definition. Its failure is said in the install's own words (the unit is on disk, systemd
+            # does not have it), not left to systemctl's line alone under set -e.
+            if ! "$SYSTEMCTL" --user daemon-reload; then
+                echo "romp-service: the unit was written to $UNIT but systemd did NOT reload it (systemctl --user daemon-reload failed): the loaded definition is still the old one, and the manager's next respawn runs under it." >&2
+                echo "  Is the user manager reachable from this shell? XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR. Re-run the install, or run systemctl --user daemon-reload by hand." >&2
+                exit 1
+            fi
             "$SYSTEMCTL" --user enable --now romp-manager.service
             loginctl enable-linger "$(id -un)" 2>/dev/null || true   # survive logout (best-effort)
+            # The loaded definition, for the deploy to read against the file: the Environment the next respawn gets.
+            # The unit's own MALLOC_ARENA_MAX line missing from it is the stale state above, so it is named.
+            _loaded="$("$SYSTEMCTL" --user show -p Environment romp-manager.service 2>/dev/null || true)"
+            if [[ -n "$_loaded" ]]; then
+                echo "  Loaded unit (systemctl --user show -p Environment): $_loaded"
+                if ! grep -qw 'MALLOC_ARENA_MAX=2' <<<"$_loaded"; then
+                    echo "romp-service: the loaded unit does not carry MALLOC_ARENA_MAX=2, which the file just written has: systemd kept an older definition; run systemctl --user daemon-reload and check again." >&2
+                fi
+            else
+                echo "  (the loaded unit's Environment could not be read: systemctl --user show -p Environment romp-manager.service printed nothing)"
+            fi
         fi
         echo "  Installed systemd --user service: $UNIT"
         echo "  romp-manager now auto-starts at login — just open the browser."
