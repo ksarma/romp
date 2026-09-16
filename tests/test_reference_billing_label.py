@@ -120,6 +120,20 @@ class TheReferenceQuotesEachReading(_Pins):
         # (render.ts's contradicted reading)
         self.assertNotQuoted("(CLI reports", REFERENCE, self.DOC)
 
+    def test_no_retired_seeding_rule_lingers(self):
+        # ROMP_EXPECTED_AUTH is read by the per-init mismatch check and the boot log only. The rule that the
+        # declaration SEEDED what an unpicked session bills (the picker's default, the Billing row's fallback
+        # before the CLI reported, the side a set-aside key pick fell to) retired with the 2026-09-15 upstream
+        # pull-in, T346/T380's default-auth and login model being its twins; the reference's billing section
+        # described it in these words and must not again (the pull-in's review round 1, item 1).
+        for phrase in ("declares (see below)",                 # "to the side `ROMP_EXPECTED_AUTH` declares (see below)"
+                       "seeds what an unpicked session",       # "the declaration seeds what an unpicked session is taken to bill"
+                       "read the declared side",               # "the row's fallback and the picker's choice both read the declared side"
+                       "fell to the declared side",            # "a remembered key pick ... already fell to the declared side"
+                       "whatever the box declares",            # "an unpicked session bills the key whatever the box declares"
+                       "decides the unpicked default again"):  # "the declaration decides the unpicked default again"
+            self.assertNotQuoted(phrase, REFERENCE, self.DOC, "the retired seeding rule, the declaration deciding an unpicked session's billing")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -645,8 +645,8 @@ default that names the side this box cannot bill is set aside at spawn and the
 unpicked rule below decides instead, in both directions: a remembered login
 pick on a machine with no login seeds new sessions on the API key when a
 helper is configured, exactly as a remembered key pick on a helper-less machine
-already fell to the declared side, else the login, and the set-aside is said
-once per process as a problem row. An explicit pick that names the missing
+already fell to the login, and the fall is said once per process as a problem
+row. An explicit pick that names the missing
 side (a session picked "login" on a box that later lost its login) launches on
 the other side when one exists and says so once per session start, on the tab
 menu's Billing sub-line as `⚠ login unavailable, billing API key` and in the
@@ -675,12 +675,9 @@ The login is named by its account (the email the credential store records);
 the key option is labelled plainly `API key`. No fragment of the key, not even
 a last-4 tail, ever reaches a browser or a screen, and romp never sees the key
 at all. A new session defaults to the last pick made anywhere, and before any
-pick to the key when a helper is configured; with neither, to the side
-`ROMP_EXPECTED_AUTH` declares (see below); when that side is the key, the
-picker's Billing row writes `API key` out even when the box has no Claude login
-to show beside it. A remembered
-key pick on a box whose settings carry no helper leaves new sessions unpicked,
-and the kernel log says so once, naming the settings file to configure.
+pick to the key when a helper is configured. A remembered key pick on a box
+whose settings carry no helper leaves new sessions unpicked, and the kernel
+log says so once, naming the settings file to configure.
 
 A tab not yet loaded after a reconnect shows "Not loaded yet — click to load"
 as its hover tooltip, until its transcript arrives. The strip's skeleton tabs
@@ -713,28 +710,17 @@ The auth check compares each session's landing against a declaration of the
 box's design. `ROMP_EXPECTED_AUTH=key` (or `login`) in `service.env` (the
 declaration) says which side the box's sessions are meant to bill: a session
 landing on the declared side is quiet, and one landing on the other side is
-flagged, naming the declaration. An undeclared box (the variable unset, or any
-other value) compares each landing against what that session was launched for
-and stays quiet when they agree. With a helper configured, an unpicked session
-bills the key whatever the box declares, and the declaration is checked against
-the CLI's report at each init, never applied as a label (`ROMP_EXPECTED_AUTH=key`
-describes such a box truthfully and stays quiet; `ROMP_EXPECTED_AUTH=login`
-flags every unpicked session's keyed landing in the Log panel, and the session
-keeps billing the key); without a helper, the declaration seeds what an
-unpicked session is *taken* to bill: the Billing row's fallback before the CLI
-has reported and the picker's written-out choice both read the declared side,
-where they read the login before. The spend pause's reading of a session that
-reports nothing, a Claude Code session before
-its init has landed, reads only whether a helper is configured, never the
-declaration: such a session is taken to bill the key on a box with a helper and
-the login on a box without one. One explicit gear **Billing** pick supersedes
-the declaration from then on: the remembered pick becomes the box's expectation
+flagged, naming the declaration. On a box with a helper every session without
+a login pick bills the key, so `ROMP_EXPECTED_AUTH=key` describes such a box
+truthfully. An undeclared box (the variable unset, or any other value)
+compares each landing against what that session was launched for and stays
+quiet when they agree. One explicit gear **Billing** pick supersedes the
+declaration from then on: the remembered pick becomes the box's expectation
 and the env var goes inert (it described the unpicked design), so re-seeded
 spawns are judged against your pick, never against stale doctrine. The one
 exception is an API-key pick remembered from a box that no longer holds a
-key: it is set aside at spawn, so it seeds nothing, and the declaration
-decides the unpicked default again (the per-init check still judges each
-landing against the pick).
+key: it is set aside at spawn, so it seeds nothing (the per-init check still
+judges each landing against the pick).
 
 The kernel also checks, once at boot and before anything is spawned, that no
 retired key path is still configured. A `service.env` that still carries a key
@@ -1563,8 +1549,9 @@ it run every time:
     manager's state root or set `ROMP_SERVE_TOKEN`; on a 503 it says to repair
     the manager's file.
   - The manager takes the stop and is polled until it leaves; the poll's bound
-    is seven seconds, the manager's own five-second grace for its kernels (it
-    sends SIGKILL to one still there) plus its exit. One still answering after
+    is the manager's own grace for its kernels (`SHUTDOWN_GRACE_MS`, 8 s unless
+    `ROMP_SHUTDOWN_GRACE_MS` says otherwise; it sends SIGKILL to one still
+    there) plus a margin for its exit. One still answering after
     that: `romp down` releases the hold, removes the marker, prints
     `romp down: a manager is still running on :<port> (pid <pid>)`, which says
     to stop it by hand and run `romp down` again, and exits 1.
@@ -1653,7 +1640,8 @@ A kernel restart ends every session's CLI. On `romp refresh`, the manager's
 restart-all, `romp down` or a service stop, the kernel receives SIGTERM and drains: it
 closes each CLI, and a CLI still running when the drain's bound expires gets
 SIGTERM, then SIGKILL. The manager does the same to the kernel: one still
-running five seconds after the manager's SIGTERM, on a restart as on a stop,
+running eight seconds after the manager's SIGTERM (`SHUTDOWN_GRACE_MS`, 8000 ms
+unless `ROMP_SHUTDOWN_GRACE_MS` says otherwise), on a restart as on a stop,
 gets SIGKILL, so no kernel outlives the stop that was meant for it. A crash respawn has no drain: the kernel died without
 running one, its CLIs are orphaned, and the next kernel's boot reaper
 terminates them (see below). The CLI's harness background tasks do not all end
