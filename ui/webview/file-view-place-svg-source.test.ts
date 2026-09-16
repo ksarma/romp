@@ -7,9 +7,11 @@
 // toggle and the group query touch, modelled on file-view-text-size.test.ts's; the stand-in hides its edges with the
 // shared rule, ui/test-dom-shim.ts): the view group that holds the Source button is shown after an SVG's first paint and
 // stays shown after Source on and after Source off. renderBody syncs the group before its media branch decides the Source
-// button, so the group is re-read after that branch (the 2026-09-15 upstream pull-in's fixer round 2; upstream's tip has
-// the same order); the browser leg fails without that re-read, but CI runs npm test before any browser is installed, so
-// this case is the pin where CI runs (the pull-in's review round 1). Synthetic fixtures only.
+// button, so the group is re-read after that branch: the fork's fix (c260d885f, the 2026-09-15 upstream pull-in's fixer
+// round 2), recorded in upstream/2026-09-16-svg-source-group-resync.md. Upstream's tip 14f1548a9 has the original order,
+// the sync before the media branch and no re-read, so there the group stays hidden after an SVG's first paint and the
+// Source button with it; the browser leg fails without the re-read, but CI runs npm test before any browser is installed,
+// so this case is the pin where CI runs (the pull-in's review round 1). Synthetic fixtures only.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
