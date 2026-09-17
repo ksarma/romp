@@ -159,13 +159,15 @@ test("executed: metaRowMarks checks the picked row and tags the running row whil
   // the row-mark rule lifted from render.ts (metaCurrent through metaRowMarks) and run against statuses, with
   // heldMenuMarks supplied from pick-held.ts, so the classes the menu draws are executed, not only pinned
   const requireCjs = createRequire(__filename);
-  // metaCurrent moved to status-controls.ts with the badges (T415 part two); the marks are render.ts's
+  // metaCurrent and effortBadgeText are lifted from status-controls.ts together (T415 part two moved the badges there, and metaCurrent reads the effort through effortBadgeText since the Codex effort button); the marks are render.ts's
   const cur0 = MODULE.indexOf("export function metaCurrent(kind: MetaKind, st: MetaStatus): string {");
   const cur1 = MODULE.indexOf("\n}\n", cur0) + 3;
+  const eff0 = MODULE.indexOf("export function effortBadgeText(st: MetaStatus): string {");
+  const eff1 = MODULE.indexOf("\n}\n", eff0) + 3;
   const start = RENDER.indexOf("function matchesMeta(kind: MetaKind, current: string, value: string): boolean {");
   const end = RENDER.indexOf("\n}\n", RENDER.indexOf("function metaRowMarks(")) + 3;
-  assert.ok(cur0 > 0 && cur1 > cur0 && start > 0 && end > start, "the slice anchors moved; re-anchor");
-  const js = requireCjs("esbuild").transformSync(MODULE.slice(cur0, cur1).replace(/^export /, "") + "\n" + RENDER.slice(start, end), { loader: "ts" }).code;
+  assert.ok(cur0 > 0 && cur1 > cur0 && eff0 > 0 && eff1 > eff0 && start > 0 && end > start, "the slice anchors moved; re-anchor");
+  const js = requireCjs("esbuild").transformSync(MODULE.slice(cur0, cur1).replace(/^export /, "") + "\n" + MODULE.slice(eff0, eff1).replace(/^export /, "") + "\n" + RENDER.slice(start, end), { loader: "ts" }).code;
   const api = new Function("heldMenuMarks", js + "\nreturn { metaRowMarks, isCurrentMeta, matchesMeta };")(heldMenuMarks);
   const held = { surfaces: ["effort", "mode"], subagents: 1, tasks: 0, picked: { effort: "max", mode: "bypassPermissions" } };
   const st = { effort: "high", mode: "default", model: "Opus 5", fast: "off", pickHeld: held };
