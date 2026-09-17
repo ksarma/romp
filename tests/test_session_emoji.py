@@ -560,8 +560,11 @@ class Frames(unittest.TestCase):
         self.assertEqual(ksrc.count('"emoji": _name_emoji(s["sid"])'), 3,
                          "all three tab_meta builders (the pusher, the per-session push, the tabOrder frame)")
         self.assertIn('"emoji": _name_emoji(sid),', inspect.getsource(km.build_session))
-        self.assertIn('"emoji": _name_emoji(sid),', inspect.getsource(km._session_rows),
+        row_src = inspect.getsource(km._session_listing_row)    # the GET /sessions row since upstream #1752
+        self.assertIn('"emoji": _name_emoji(sid),', row_src,       # (_session_rows is a one-liner over it)
                       "GET /sessions rows carry it for `romp emoji <session>`")
+        self.assertIn('"bg": "", "fg": "", "emoji": "",', row_src,
+                      "the minimal row a failing helper falls back to keeps the field, empty")
 
     def test_the_ws_op_confirms_or_warns_through_the_one_validator(self):
         ksrc = Path(BIN, "romp-kernel").read_text()

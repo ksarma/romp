@@ -49,18 +49,27 @@ postal bus, tests) converges in place with the kernel left up: the served bundle
 postal change restarts the bus alone, and no turn is cut. A converge to `main` in
 this mode comes no sooner than 25 minutes after the last deploy restart, so a busy `main` costs
 at most one restart per batch of merges. The one command that waits for a quiet window is
-`romp refresh --quiet`. Reloads are separate from that control and happen in every
-mode: a page the kernel serves reloads itself when the kernel serving it restarts or serves a
-newer build than the page runs, once any gesture in progress has ended and any file still
-shipping has settled, and the notification center's one line says which happened. The banner that
-reads "A newer romp build is available" appears only where the page cannot reload itself, such as
-a host that forbids it; the VS Code panes keep their own prompt, because their bundle comes from
-the installed extension. A chat page with an attachment still uploading first finishes the
-upload, then reloads. The message waiting on the upload is sent if that session's tab is the
-active one; otherwise it stays in that tab's composer with the file attached, and a notice says
-so. A notice still on screen when the page reloads, that one or a failed save's, is shown again
-on the fresh page. If the upload has not finished within a minute, the page reloads anyway and
-reports the lost attachment on the next load.
+`romp refresh --quiet`. Reloads are separate from that control and the same in every mode: a
+page the kernel serves never reloads on its own. A restart onto the same build is invisible to an
+open page: it reconnects, and no line appears. When the kernel serves a newer build than the page
+runs, the page offers the reload on one persistent line, "A newer romp build is ready.", with
+**Reload** and **Not now**; Not now is remembered per build in that browser, so the same build
+never asks again and a later one does. The explicit gestures keep their reload: the update
+banner's **Update** click reloads once the new kernel is up, the rail's restart reloads nothing
+for an unchanged build and offers the reload for a changed one, and the Reload buttons are
+clicks. An accepted reload waits for any gesture in progress and for a chat tab's own hold: a
+message held behind an upload, or an attachment still uploading, which is waited for until it
+finishes or its acknowledgement can no longer arrive. A held message that has not gone out after
+a minute stops holding the page: the reload goes ahead, and the fresh page says why. That minute
+bounds any other hold a tab may raise; the upload itself, and a message queued while the page's
+connection is down, are never cut short and end only on their own event. Once the fresh page is
+up, the notification center's one line says what happened. The message waiting on the upload is
+sent if that session's tab is the active one; otherwise it stays in that tab's composer with the
+file attached, and a notice says so. A notice still on screen when the page reloads, that one or
+a failed save's, is shown again on the fresh page. A page running without the reload machinery,
+such as one loaded before it existed, shows the older line "A newer romp build is available"
+instead, once; the VS Code panes keep their own prompt, because their bundle comes from the
+installed extension. [What survives a restart](#what-survives-a-restart) has the detail.
 
 **User todos.** A session can flag a decision or an input it needs from you and keep working
 meanwhile. Each open todo is listed under *Waiting on you* on the card at the bottom of that
@@ -2443,9 +2452,8 @@ variables bound this:
   A kernel nobody is listening on is still `kernel not reachable`, exit `1`,
   with nothing sent and curl's own exit code named on the line; a refusal the
   kernel wrote is its own words, exit `1`. Widen it on a slow box. There is no
-  off:
-  a send with no bound would hang the script that runs it. Each command reads
-  it from its own environment, so it can be set for one call.
+  off: a send with no bound would hang the script that runs it. Each command
+  reads it from its own environment, so it can be set for one call.
 
 ## Kernel performance counters
 

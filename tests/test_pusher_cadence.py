@@ -454,9 +454,11 @@ class SdkBackendSites(unittest.TestCase):
 
     def test_every_live_tail_site_carries_its_sid(self):
         # the sites that follow a change to ONE sid's live tail (_stash_live / _touch_live): a streamed
-        # atom, the send echo, an unqueued echo, a dismissed echo, the dropped-echo flags, a command chip
+        # atom, the send echo, an unqueued echo, a dismissed echo, the dropped-echo flags, a refused echo
+        # (mark_echo_refused: a gate-refused send's flags, the same wake after its _touch_live), a command chip
         live_sites = {"_forward": "sess.sid", "send": "sid", "unqueue": "sid", "dismiss_echo": "sid",
-                      "_mark_dropped_echoes": "sid", "_ack_cmd_chip": "sid", "retire_live_work": "sid"}
+                      "_mark_dropped_echoes": "sid", "mark_echo_refused": "sid", "_ack_cmd_chip": "sid",
+                      "retire_live_work": "sid"}
         for name, arg in live_sites.items():
             src = inspect.getsource(getattr(sb.SdkBackend, name))
             self.assertIn("self._wake_push_live(%s)" % arg, src, name)

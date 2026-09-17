@@ -279,6 +279,42 @@ class Actions(unittest.TestCase):
         finally:
             (km._route_meta_command, km.Sessions.backend_for, km._send_or_park, km._host_for_sid, km._postal_shaped) = saved
 
+    def test_the_doors_remote_arm_relays_the_far_kernels_answer_with_its_status_and_names_the_host(self):
+        # the 2026-09-17 fold's ruling on this door (item 5, under the fork's 2026-09-10 rule for the by-name doors): a far
+        # kernel's answer is relayed, never guessed. Upstream's arm folded every non-200 to None, so a card's Send again to a
+        # remote session read "isn't answering" for a far 404 that was an answer. The door answers (ok, error, queued) alone,
+        # so the far status rides in the error text (_remote_refusal); status 0 (the call never landed) keeps the not-answering
+        # sentence; a 200 with ok false is the far refusal verbatim. Synthetic: the far host is TESTHOST, the forward is stubbed.
+        saved = (km._host_for_sid, km._remote_forward_answer)
+        calls = []
+        def far(st, res, text):
+            def stub(r, path, body, method="POST"):
+                calls.append((r.get("host"), path, body, method)); return st, res, text
+            return stub
+        try:
+            km._host_for_sid = lambda sid: {"host": "TESTHOST", "local_port": 1, "token": "", "sids": [sid]}
+            km._remote_forward_answer = far(404, {"ok": False, "error": "no session named api"}, '{"ok": false, "error": "no session named api"}')
+            ok, err, queued = _REAL_DELIVER(SID, "hello")
+            self.assertEqual((ok, queued), (False, False))
+            self.assertIn("no session named api", err, "the far gate's reason, verbatim"); self.assertIn("TESTHOST", err, "the far host named")
+            self.assertNotIn("isn't answering", err, "a far 404 is an answer, not a dead tunnel")
+            self.assertEqual(calls[-1], ("TESTHOST", "/send", {"id": SID, "text": "hello"}, "POST"), "the door forwards the session's own id and the text")
+            km._remote_forward_answer = far(503, None, "not found\nthe far kernel's second line")
+            ok, err, queued = _REAL_DELIVER(SID, "hello")
+            self.assertEqual((ok, queued), (False, False))
+            self.assertIn("503", err, "a non-JSON body: the status"); self.assertIn("not found", err, "and the body's first line")
+            self.assertNotIn("second line", err); self.assertIn("TESTHOST", err); self.assertNotIn("isn't answering", err)
+            km._remote_forward_answer = far(0, None, "")
+            ok, err, queued = _REAL_DELIVER(SID, "hello")
+            self.assertEqual((ok, queued), (False, False))
+            self.assertIn("isn't answering", err, "status 0: the call never landed"); self.assertIn("TESTHOST", err)
+            km._remote_forward_answer = far(200, {"ok": False, "error": "E"}, '{"ok": false, "error": "E"}')
+            self.assertEqual(_REAL_DELIVER(SID, "hello"), (False, "E", False), "a 200 with ok false: its refusal verbatim, no host coda")
+            km._remote_forward_answer = far(200, {"ok": True, "queued": True}, '{"ok": true, "queued": true}')
+            self.assertEqual(_REAL_DELIVER(SID, "hello"), (True, "", True), "delivered far, with the far queued")
+        finally:
+            (km._host_for_sid, km._remote_forward_answer) = saved
+
     def test_a_second_click_while_the_first_delivery_is_in_flight_is_refused_not_delivered_twice(self):
         # round three, low c: the pane re-arms on every push and a push the delivery causes can land before the answer
         import threading

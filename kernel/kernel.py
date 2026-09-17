@@ -12377,14 +12377,21 @@ def _converge_declined_shutting_down(kind, phase, sha):
     read: the running kernel decided a converge, a peer's push restarted it a second later, and the dying kernel's
     request killed its two-second-old successor). One audit row (`main-converge-declined`, why shutting-down, `phase`
     before-pull with the target it did not pull, or after-pull with the checkout it moved) and one count on /perf
-    (memos.convergeDeclined), so a deploy read sees the decline where it used to see a second sigterm."""
+    (memos.convergeDeclined), so a deploy read sees the decline where it used to see a second sigterm.
+    The decline runs inside the fork's confirm-step guard (_main_converge_guarded), whose finally clears the in-flight
+    flag, so it also latches an outcome for the banner's poll (the 2026-09-17 fold, item 11): the no-manager path's shape,
+    `updated` with the sha the row names (else the checkout's, so the ending stays visible when neither drift slot held
+    one) and `why` the sentence said here, never `failed` (a decline is not a failure, and Update is not re-shown for it);
+    without the latch a window polling /update-check read neither running nor an ending until its next reload."""
     _CONVERGE_DECLINED[0] += 1
     _audit_restart_request("main-converge-declined", tag=kind, why="shutting-down", phase=phase, sha=sha)
     if phase == "before-pull":
-        _converge_say("main is at %s but this kernel is leaving: no pull, no restart asked; the next kernel converges on its own"
-                      % (sha or "?")[:8])
+        why = ("main is at %s but this kernel is leaving: no pull, no restart asked; the next kernel converges on its own"
+               % (sha or "?")[:8])
     else:
-        _converge_say("main converged on disk while this kernel was leaving: no restart asked; the successor's own answer is checked against the disk")
+        why = "main converged on disk while this kernel was leaving: no restart asked; the successor's own answer is checked against the disk"
+    _converge_say(why)
+    _main_converge_outcome(updated=_sha8(sha) or _sha8(_checkout_sha()), why=why)
     return True
 
 
@@ -27369,7 +27376,6 @@ def _notice_cards(now, cleared):
             out.append({
                 "itemId": item_id, "sid": sid, "name": _name_of(sid) or sid[:8], "color": _name_color(sid),
                 "text": r.get("title") or "", "t": t, "live": False,
-                "trgb": list(cm.age_rgb(now - t, _colormap())),   # the age colour stamped here: this attach is post-loop, no fold pops a private field
                 "turnId": item_id, "origin": None,
                 "followupPending": None, "waitingOn": None,
                 "summary": None, "blockSummary": None, "background": None, "summaryAnchorUuid": None, "warns": None,
@@ -62924,9 +62930,12 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--vscode-for
 # its ack and 'held-send' while the ship gate holds a send, and the pane calls __rompReload.ended() when the last ack
 # lands or the gate clears, so the hold ends on its own event like every gesture hold. A pane-reported word ('upload',
 # 'held-send', any word busyHere returns that is not one of the core's own five gesture words) ends only when its owner
-# delivers the event, and an upload that never acks or nacks would pin an accepted reload on the old build for good;
-# the fork keeps its toast replay across the reload (render.ts persistNoticesForReload, reload-notices.ts liveNotices)
-# and its DEADLINE as that backstop. The clock is the pane word's, and a gesture anywhere leaves it alone, in the word's
+# delivers the event. The upload word holds until its own end (the user's ruling, 2026-09-17, following upstream: after
+# a Reload click with an upload in flight the page holds until the upload ends or its ack can no longer arrive, which is
+# when render.ts drops the word), so it sits in NOCLOCK beside the shim's 'sends' and defers a release like one; the
+# DEADLINE clocks 'held-send' and any later pane word, and the fork keeps its toast replay across the reload (render.ts
+# persistNoticesForReload, reload-notices.ts liveNotices) as the release note's road. The clock is the pane word's, and
+# a gesture anywhere leaves it alone, in the word's
 # own pane included (the fold's review, UI-2, and the verification that found the own-pane gap): busyHere answers a
 # window's gesture before its pane word, so busy() reads the two apart, each window's busyHere for the gesture and its
 # paneHere (the window's __rompPaneBusy alone) for the word, and records the first CLOCKED pane word it finds in
@@ -62949,7 +62958,7 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--vscode-for
 # F1/UI-1) and defers a release like a gesture: the word is true only while this pane's socket is not open, so a reload
 # fired over it, on its own clock or on a sibling pane's, would land on a kernel that is not answering the page and
 # take the queued prompt with it; the flush in ws.onopen is its only end, and the shim redials every 1.5 s, so a live
-# kernel ends the hold within seconds, and a clocked word beside it (the chat pane's upload past its 60 s) is released
+# kernel ends the hold within seconds, and a clocked word beside it (the chat pane's held send past its 60 s) is released
 # at once on that flush. busy() ranks the word it reports: a gesture anywhere first (the fold-4 review's K1: with a
 # deadline on the word, a first-match walk released the chat pane's word over a later pane's drag; a gesture has an
 # ending event and no deadline, so it is the word to report and the one to wait for), then a no-deadline word, then the
@@ -62967,7 +62976,7 @@ RELOAD_OFFER_BEHIND_MSG = ("A newer romp build is ready; this page is behind the
 _RELOAD_CORE_JS = r"""/*reload-core*/(function(){if(window.__rompReload)return;
 var LOADED=__LOADEDVER__,BOOT=__ROMP_BOOT__,CODE=__ROMP_CODE__,FRESH_HOLD_MS=60000,NOTNOW_KEY='romp:reloadNotNow',holdTimer=null,holdDue=0,holdStart=0,holdDiag=false,freshSince=0,lastStamps=[],ptr=0,pan=false,drag=false,owed=null,fired=false,refusedFor=null,restarted=0;
 var WORDS={offer:__OFFER_MSG__,behind:__OFFER_BEHIND__},seen={dv:0,code:''},offered=null,behindSeen=false,notNow=null;   /* 2026-09-16: WORDS is the offer's one sentence and its sharpened form (RELOAD_OFFER_MSG, RELOAD_OFFER_BEHIND_MSG), read by every surface through the offer state's text; seen is the newest served build this page has met (a dv above its own, a code identity other than its own); offered is the standing offer; behindSeen latches an unknownOp refusal on this page's socket; notNow is the build the user declined, read once from storage */
-var DEADLINE=60000,heldKind='',heldT=0,heldTimer=null,overdueNote='',paneWord='',GESTURE={pointer:1,pan:1,drag:1,selection:1,typing:1},NOCLOCK={sends:1};/*fork: the pane hold's backstop (the comment above); paneWord: the first clocked pane word busy() found; NOCLOCK: the pane words with no deadline, which defer a release like a gesture; holdTimer above is upstream's fresh-window backstop, heldTimer is this clock's*/
+var DEADLINE=60000,heldKind='',heldT=0,heldTimer=null,overdueNote='',paneWord='',GESTURE={pointer:1,pan:1,drag:1,selection:1,typing:1},NOCLOCK={sends:1,upload:1};/*fork: the pane hold's backstop (the comment above); paneWord: the first clocked pane word busy() found; NOCLOCK: the pane words with no deadline, which defer a release like a gesture ('sends' since the fold's review; 'upload' since the user's 2026-09-17 ruling, following upstream: the hold ends only with the upload, the word render.ts drops when the last ack lands or the ship gives up); holdTimer above is upstream's fresh-window backstop, heldTimer is this clock's*/
 function shell(){try{var p=window.parent;if(p&&p!==window&&p.__rompReload)return p.__rompReload;}catch(e){}return null;}
 function editing(){try{var a=document.activeElement;if(!a)return false;var tag=(a.tagName||'').toUpperCase();
 var textual=tag==='TEXTAREA'||(tag==='INPUT'&&/^(text|search|url|email|number|password|tel)$/i.test(a.type||'text'))||!!a.isContentEditable;

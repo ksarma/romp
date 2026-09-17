@@ -133,6 +133,40 @@ class ConvergeWhileLeaving(unittest.TestCase):
         self.assertEqual(row.get("sha"), self.target, "the row names the checkout it moved")
         self.assertEqual(git(self.checkout, "rev-parse", "--short=8", "HEAD"), self.target, "the checkout moved; the successor boots on it")
 
+    def test_a_declined_converge_latches_an_outcome_for_the_banners_poll_and_never_a_failure(self):
+        """The 2026-09-17 fold's ruling (item 11): the decline runs inside the fork's confirm-step guard, whose finally clears
+        the in-flight flag, so without a latched outcome a banner polling /update-check read neither running nor an ending.
+        The decline latches the no-manager path's shape: `updated` (the sha the row names, else the checkout's) and `why`
+        (the sentence the console line carries), never `failed` (a decline is not a failure; Update is not re-shown for it)."""
+        said = []
+        saved_slot = km._MAIN_CONVERGE_OUTCOME[0]
+        try:
+            with mock.patch.object(km, "_converge_say", side_effect=lambda text: said.append(text)):
+                km._TERMINATING[0] = True                      # the before-pull decline
+                self._converge()
+                before = km._MAIN_CONVERGE_OUTCOME[0]
+                self.assertIsInstance(before, dict, "the decline before the pull latched an outcome: %r" % (before,))
+                self.assertEqual(before["failed"], "", "a decline is not a failure")
+                self.assertEqual(before["why"], said[-1], "the slot's why is the console line's sentence")
+                self.assertIn("this kernel is leaving", before["why"])
+                self.assertEqual(before["updated"], self.target, "the sha the row names, so the ending is visible to the poll")
+                self.assertFalse(km._MAIN_CONVERGE_INFLIGHT[0], "the guard's finally still clears the in-flight flag")
+                km._TERMINATING[0] = False                     # the after-pull decline: the signal lands mid-pull
+                real = km.subprocess.run
+                def run(cmd, *a, **kw):
+                    if isinstance(cmd, (list, tuple)) and "fetch" in cmd:
+                        km._TERMINATING[0] = True
+                    return real(cmd, *a, **kw)
+                with mock.patch.object(km.subprocess, "run", side_effect=run):
+                    self._converge()
+                after = km._MAIN_CONVERGE_OUTCOME[0]
+                self.assertIsInstance(after, dict, "the decline after the pull latched one too: %r" % (after,))
+                self.assertEqual((after["failed"], after["why"]), ("", said[-1]))
+                self.assertIn("while this kernel was leaving", after["why"])
+                self.assertEqual(after["updated"], self.target, "the checkout it moved")
+        finally:
+            km._MAIN_CONVERGE_OUTCOME[0] = saved_slot
+
     def test_a_running_kernel_still_asks_its_restart(self):
         km._TERMINATING[0] = False
         self._converge()

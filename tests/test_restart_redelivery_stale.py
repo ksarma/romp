@@ -85,6 +85,9 @@ class Fixture(unittest.TestCase):
             def _wake_push(self):
                 pass
 
+            def _wake_push_live(self, sid):
+                pass                      # the fork's cause-carrying wake (the arm's tail and mark_echo_refused wake with the sid): a stub needs no cause
+
             def _touch_live(self, sid):
                 pass
 

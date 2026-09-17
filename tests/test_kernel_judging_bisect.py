@@ -1,29 +1,38 @@
 #!/usr/bin/env python3
-"""_run_judging bisects instead of scanning (round-4 item B, 2026-09-07), with output identical to the
-full scan it replaces.
+"""_run_judging answers what the reference scan answered, on upstream's judging band memo (romp-on/romp pull
+1798, folded 2026-09-17) as it did on the fork's bisect (round-4 item B, 2026-09-07), and the gloss keeps its bisect and
+its NaN guard.
 
-Two scans made the function 15% of a timeline build: the gloss comprehension re-filtered every
-same-(sid, judge) artifact mark per usage row, and the horizon filter visited every retained row (a
-31-day cache) to keep the 48 h it plots. Both lists are sorted by t, so both answers are a prefix
-boundary: the gloss is the last mark with t <= end + 1 (bisect_right on the mark times), and the
-first row that can pass the horizon filter is the first with t >= t0 - 1 (bisect_left on the row
-times), because the writer stamps t after recv, so every row's run end is at most t + 1.
+The fork's bisect started the horizon walk at bisect_left over the row times, backed off by a 2 s slack, when the
+reader's order fact held (`monotone` on the `_JudgeUsageSnapshot` the reader returned, `hi` the running maximum, one
+stderr line at the transition, a full scan otherwise). Upstream's memo covers the same purpose with no ordering
+assumption: a cursor over the leading rows each verified to end before the horizon, per-row entry reuse validated on
+the gloss by value, keyed on the identity of the reader's live list and shifted by its `pruned` count. The two cannot
+coexist (the cursor needs the same list object across builds, and the fork's snapshot copy per read reset it every
+build), so the bisect, the snapshot class, the slack and the reader's flag retired at the fold and _judge_usage_rows
+returns its live list under the fork's lock. What stands of the fork's change is the gloss's bisect (bisect_right on
+the sorted mark times: the newest same-judge mark with t <= end + 1, ties to the last) and its NaN guard (a NaN run
+end passes the horizon filter, since NaN < t0 is False, and bisect_right on NaN would answer the newest mark where
+the scan's <= matched none).
 
-The horizon bisect needs three facts of the row list, and the READER verifies them as rows arrive
-instead of the consumer trusting the writer: every row's t is a number, no t is more than S = 2 s
-below the largest t before it (the writer's pool threads can land two same-second rows in either
-order), and no row's run end (recv, else sent, else t) exceeds t + 1. With the bisect backed off by
-S, every row it leaves behind ended before t0. The result is the `monotone` flag on the snapshot
-_judge_usage_rows returns; a file that breaks any of the three takes today's full scan exactly, and
-the reader says so once on stderr.
+Two classes pin what holds now. RunJudgingBisect compares the kernel's answer with a private copy of the pre-bisect
+function, list for list, in the same order: a mixed file with live runs, the horizon edges, empty and missing files,
+growth between calls (the memo's cursor at work), more than the row cap, the gloss rule and its NaN case. SourcePins
+pins the shared reader call and the gloss's bisect_right at source. The memo's own contract (entry identity, the
+cursor, prunes and rotations, the wire bound, the /perf block) is tests/test_judging_band_memo.py's.
 
-Three classes: ReaderOrderFlag pins the flag the reader derives (ordered, within-slack and past-slack
-disorder, NaN and non-numeric t, a run end past t + 1, empty and missing files, growth and rewrites,
-the flag travelling with its snapshot); RunJudgingBisect pins the kernel's answer against a private
-copy of the pre-bisect function on both paths (a mixed file with live runs, the horizon edges,
-disorder at the horizon, a non-monotone file, growth between calls, more than the row cap, the
-access-count proof that the walk starts at the horizon and that a bare list walks from the head, the
-gloss rule and its NaN case); SourcePins pins the shared reader call and the two bisects at source.
+Retired at the fold with twin tests/test_judging_band_memo.py (the catch-up fold's ruling 4, 2026-09-17; a retirement
+is never silent), each named: the ReaderOrderFlag class whole (nine cases on the reader's `monotone` flag and `hi`
+running maximum: the ordered file, disorder within and past the slack, a non-numeric t, a NaN t or run end named on
+stderr, a run end past t + 1, empty and missing files, growth and rewrites, the flag travelling with its snapshot);
+RunJudgingBisect.test_a_non_monotone_file_takes_the_full_scan_and_matches (the flag's fallback path; its NaN rows are
+test_a_nan_run_end_borrows_no_gloss's claim); test_disorder_within_the_slack_at_the_horizon_is_bisected_exactly (the
+slack); test_the_walk_starts_at_the_horizon_when_the_flag_holds (the access-count proof of the horizon start; twin
+Cursor.test_rows_before_the_horizon_are_not_read_again); test_a_bare_list_or_an_unflagged_snapshot_walks_from_the_head
+(the unflagged walk over `_JudgeUsageSnapshot`, which is gone); _Base._check's `snap.monotone` assertion and its
+`expect_monotone` parameter; SourcePins' bisect_left assert and its assert that the gloss comprehension text is gone
+(upstream's gloss comment quotes the comprehension it replaced), the case renamed for what it pins; and the
+_CountingRow helper the two access-count cases used.
 Synthetic rows only (placeholder ids); the fsids here are private to this module."""
 import contextlib
 import io
@@ -52,7 +61,7 @@ T0 = 1_781_100_000          # the horizon; rows sit around it
 
 
 def _reference_run_judging(t0, alive_sids, semantic, rows, runs, now):
-    """Today's _run_judging (main at 1e829313), verbatim except that the rows, the in-flight runs and
+    """The pre-bisect _run_judging (main at 1e829313), verbatim except that the rows, the in-flight runs and
     `now` are parameters. Every equivalence test compares the kernel's answer with this one."""
     by = {}
     for mk in semantic:
@@ -117,23 +126,6 @@ def _mark(t, sid=SID_A, judge="captioner", text="", kind="segment"):
     return {"judge": judge, "sid": sid, "t": t, "kind": kind, "text": text}
 
 
-class _CountingRow(dict):
-    """A row that records every field access in a shared list — the proof of which rows a walk touched."""
-    __slots__ = ("box",)
-
-    def __init__(self, box, *a, **k):
-        super().__init__(*a, **k)
-        self.box = box
-
-    def get(self, k, d=None):
-        self.box.append(k)
-        return dict.get(self, k, d)
-
-    def __getitem__(self, k):
-        self.box.append(k)
-        return dict.__getitem__(self, k)
-
-
 class _FrozenTime:
     """The kernel module's `time` global with time() pinned: _run_judging's `now` for the live-run spans
     must equal the reference's. Scoped to the kernel module, not the process."""
@@ -152,7 +144,8 @@ class _Base(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         self.saved = jd.STATE
         jd.STATE = Path(self.td.name)
-        km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
+        km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[], pruned=0)
+        km._judging_band = None                            # the band memo starts cold; a test's own calls warm it
         self._time = km.time
         km.time = _FrozenTime(km.time, float(T0 + 3600))
 
@@ -160,7 +153,8 @@ class _Base(unittest.TestCase):
         km.time = self._time
         jd.STATE = self.saved
         jd._active.clear()                               # the in-flight registry is module-level
-        km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
+        km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[], pruned=0)
+        km._judging_band = None
         self.td.cleanup()
 
     def _write(self, rows, mode="w"):
@@ -180,144 +174,24 @@ class _Base(unittest.TestCase):
         if json.dumps(got) != json.dumps(ref):
             self.assertEqual(got, ref)
 
-    def _check(self, t0, semantic, expect_monotone=True):
-        """The kernel's answer equals the reference, list for list, in the same order; and the reader's
-        flag for the file is what the test expects (so each test knows which path it exercised)."""
+    def _check(self, t0, semantic):
+        """The kernel's answer equals the reference, list for list, in the same order (stderr swallowed: the
+        row-cap trim says so once)."""
         with contextlib.redirect_stderr(io.StringIO()):
             got = km._run_judging(t0, ALIVE, semantic)
-            snap = km._judge_usage_rows()
         self._same(got, self._reference(t0, semantic))
-        self.assertIs(snap.monotone, expect_monotone)
         return got
 
 
-class ReaderOrderFlag(_Base):
-    """The reader keeps the three facts the bisect needs, once per appended row, and hands them out with
-    the snapshot they describe."""
-
-    def test_a_time_ordered_file_reads_monotone(self):
-        self._write([_row(T0 - 100), _row(T0 - 100, judge="planner"), _row(T0 + 5), _row(T0 + 9)])
-        snap = km._judge_usage_rows()
-        self.assertIsInstance(snap, list)
-        self.assertEqual(len(snap), 4)
-        self.assertIs(snap.monotone, True, "ties and increases keep the order fact")
-        self.assertIs(km._JUDGE_USAGE_CACHE["monotone"], True)
-
-    def test_disorder_within_the_slack_keeps_the_flag(self):
-        # the writer's race: two pool threads finishing in the same second append in either order
-        self._write([_row(T0 - 100), _row(T0 - 101), _row(T0 + 5), _row(T0 + 3), _row(T0 + 4)])
-        self.assertIs(km._judge_usage_rows().monotone, True, "1 s and 2 s below the running maximum")
-        self.assertEqual(km._JUDGE_USAGE_CACHE["hi"], T0 + 5, "the running maximum, not the tail's t")
-
-    def test_disorder_past_the_slack_clears_the_flag_and_says_so_once(self):
-        self._write([_row(T0 + 10), _row(T0 + 7)])
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            snap = km._judge_usage_rows()
-        self.assertIs(snap.monotone, False, "3 s below the running maximum")
-        lines = [ln for ln in err.getvalue().splitlines() if "time-order fact" in ln]
-        self.assertEqual(len(lines), 1, err.getvalue())
-        self.assertIn("row 2 of the log", lines[0])
-        self.assertIn("3.0 s below the running maximum", lines[0])
-        self._write([_row(T0 + 6), _row(T0 + 20)], mode="a")          # more rows, in and out of order
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            self.assertIs(km._judge_usage_rows().monotone, False)
-        self.assertEqual(err.getvalue(), "", "the line is written at the transition only")
-        self._write([_row(T0 + 1)])                                    # a rewrite: a new list, a new fact
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            self.assertIs(km._judge_usage_rows().monotone, True)
-        self.assertEqual(err.getvalue(), "")
-
-    def test_a_row_without_a_numeric_t_clears_the_flag(self):
-        for bad in ({"judge": "captioner", "fsid": SID_A, "sent": T0 + 1.0, "recv": T0 + 2.0},
-                    {"t": "1781100000", "judge": "captioner", "fsid": SID_A},
-                    {"t": None, "judge": "captioner", "fsid": SID_A}):
-            km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
-            self._write([_row(T0 - 100), bad, _row(T0 + 5)])
-            self.assertIs(km._judge_usage_rows().monotone, False, bad)
-
-    def test_a_nan_t_or_a_nan_run_end_clears_the_flag_and_names_it(self):
-        # NaN compares False against everything: a NaN t would pass `t < hi - S` and a NaN end would
-        # fail `end <= t + 1` only incidentally. Both are named, and the line says which
-        for bad, reason in (({"t": float("nan"), "judge": "captioner", "fsid": SID_A,
-                              "sent": T0 + 1.0, "recv": T0 + 2.0}, "t is not a number"),
-                            (_row(T0 + 5, recv=float("nan")), "run end is not a number"),
-                            (_row(T0 + 5, recv=None, sent=float("nan")), "run end is not a number")):
-            km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
-            self._write([_row(T0 - 100), bad, _row(T0 + 9)])
-            err = io.StringIO()
-            with contextlib.redirect_stderr(err):
-                snap = km._judge_usage_rows()
-            self.assertIs(snap.monotone, False, bad)
-            self.assertEqual(len(snap), 3, "the row itself stays in the list")
-            self.assertIn("row 2 of the log breaks the time-order fact (%s)" % reason, err.getvalue())
-
-    def test_a_run_end_more_than_one_second_past_t_clears_the_flag(self):
-        # the fact that lets the bisect skip rows with t < t0 - 1: their run ended before t0. A row that
-        # breaks it (t stamped BEFORE its recv) is exactly the row the bisect would lose, so it costs the
-        # file the fast path instead
-        self._write([_row(T0 - 100), _row(T0 - 50, recv=T0 - 50 + 1.5)])
-        self.assertIs(km._judge_usage_rows().monotone, False)
-        km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
-        self._write([_row(T0 - 100), _row(T0 - 50, recv=T0 - 50 + 1.0)])
-        self.assertIs(km._judge_usage_rows().monotone, True, "exactly t + 1 is within the bound")
-        km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
-        self._write([_row(T0 - 100), _row(T0 - 50, recv=None, sent=T0 - 50 + 1.5)])
-        self.assertIs(km._judge_usage_rows().monotone, False, "without recv the end is sent")
-        km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
-        self._write([_row(T0 - 100), _row(T0 - 50, recv=None, sent=None)])
-        self.assertIs(km._judge_usage_rows().monotone, True, "without either the end is t itself")
-
-    def test_an_empty_or_missing_file_is_monotone(self):
-        snap = km._judge_usage_rows()
-        self.assertEqual((list(snap), snap.monotone), ([], True), "no file")
-        self._write([])
-        snap = km._judge_usage_rows()
-        self.assertEqual((list(snap), snap.monotone), ([], True), "empty file")
-
-    def test_growth_keeps_the_flag_and_an_inverted_append_clears_it_until_a_rewrite(self):
-        self._write([_row(T0 - 100), _row(T0 - 90)])
-        self.assertIs(km._judge_usage_rows().monotone, True)
-        self._write([_row(T0 - 90), _row(T0 + 7)], mode="a")           # an append in order
-        snap = km._judge_usage_rows()
-        self.assertEqual((len(snap), snap.monotone), (4, True))
-        self._write([_row(T0 + 6)], mode="a")                          # a pool thread's 1 s inversion: kept
-        snap = km._judge_usage_rows()
-        self.assertEqual((len(snap), snap.monotone), (5, True))
-        self._write([_row(T0 + 3)], mode="a")                          # 4 s below the maximum: cleared
-        with contextlib.redirect_stderr(io.StringIO()):
-            snap = km._judge_usage_rows()
-        self.assertEqual((len(snap), snap.monotone), (6, False))
-        self._write([_row(T0 + 8)], mode="a")                          # order resumes; the fact does not
-        self.assertIs(km._judge_usage_rows().monotone, False,
-                      "one break anywhere in the list keeps the full scan for that list")
-        self._write([_row(T0 + 1), _row(T0 + 2)])                      # rotated / rewritten: a new list
-        snap = km._judge_usage_rows()
-        self.assertEqual((len(snap), snap.monotone), (2, True), "a reset re-derives the fact")
-
-    def test_the_flag_describes_the_snapshot_it_came_with(self):
-        # the flag and the rows are read under the reader's one lock; a later append that clears the
-        # cache's flag does not reach back into an earlier snapshot
-        self._write([_row(T0 - 100), _row(T0 - 90)])
-        earlier = km._judge_usage_rows()
-        self._write([_row(T0 - 95)], mode="a")
-        with contextlib.redirect_stderr(io.StringIO()):
-            later = km._judge_usage_rows()
-        self.assertEqual((earlier.monotone, len(earlier)), (True, 2))
-        self.assertEqual((later.monotone, len(later)), (False, 3))
-
-
 class RunJudgingBisect(_Base):
-    """The kernel's _run_judging answers exactly what the full scan answered, on the bisect path and on
-    the fallback, over every shape the two bisects can meet."""
+    """The kernel's _run_judging answers exactly what the full scan answered, over every shape the horizon
+    filter, the memo's cursor and the gloss's bisect can meet."""
 
     def _mixed_world(self):
         rows = [
             _row(T0 - 40000, judge="planner"),                        # far before the horizon
-            _row(T0 - 3, judge="captioner"),                          # t < t0 - 1: the bisect skips it
-            _row(T0 - 1, recv=T0 - 0.5),                              # t = t0 - 1, ends before t0: examined, dropped
+            _row(T0 - 3, judge="captioner"),                          # t < t0 - 1: ends before t0, dropped
+            _row(T0 - 1, recv=T0 - 0.5),                              # t = t0 - 1, ends before t0: dropped
             _row(T0 - 1, recv=float(T0), judge="closer"),             # t = t0 - 1, ends AT t0: kept
             _row(T0, sid=SID_DEAD),                                   # dead session
             _row(T0 + 10, sid=SID_B, judge="gister"),                 # a family alias (gister -> captioner)
@@ -368,17 +242,17 @@ class RunJudgingBisect(_Base):
         self.assertEqual([(m["judge"], m["t"], m["text"]) for m in live],
                          [("grouper", T0 + 3000, "a mark at now + 1: included for the live run")])
         self.assertNotIn(("closer", T0 - 50), by_start)
-        self.assertNotIn(("captioner", T0 - 3 + 0.5 - 3.25), by_start, "t < t0 - 1 is neither examined nor kept")
+        self.assertNotIn(("captioner", T0 - 3 + 0.5 - 3.25), by_start, "t < t0 - 1 ends before t0: not kept")
         self.assertIn(("closer", T0 - 3.25), by_start, "t = t0 - 1 ending at t0 is kept")
 
     def test_rows_exactly_at_the_horizon(self):
-        # every boundary the bisect at t0 - 1 can meet, for an integer and a fractional t0
+        # every boundary the horizon filter (end < t0) can meet, for an integer and a fractional t0
         for t0 in (T0, T0 + 0.5):
             with self.subTest(t0=t0):
                 km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
                 rows = [                                            # in t order, as the writer appends
-                    _row(int(t0) - 4, recv=int(t0) - 4 + 0.9998),   # below the bisect point t0 - 3: skipped
-                    _row(int(t0) - 3, recv=int(t0) - 3 + 0.9998),   # at the bisect point: examined, dropped
+                    _row(int(t0) - 4, recv=int(t0) - 4 + 0.9998),   # well below the horizon: dropped
+                    _row(int(t0) - 3, recv=int(t0) - 3 + 0.9998),   # below the horizon: dropped
                     _row(int(t0) - 2, recv=int(t0) - 2 + 0.9998),   # the writer's measured max recv - t
                     _row(int(t0) - 1, recv=int(t0) - 1 + 0.9998),   # t = int(recv), recv just under t0
                     _row(int(t0) - 1, recv=float(int(t0))),         # t = int(recv), recv == int(t0)
@@ -390,7 +264,7 @@ class RunJudgingBisect(_Base):
                 ]
                 self._write(rows)
                 got = self._check(t0, [])
-                # the row below the bisect point is dropped by both; from there on the filter decides
+                # every row ending before t0 is dropped by both; from there on the filter decides
                 self.assertTrue(all(m["t1"] >= t0 for m in got))
                 self.assertEqual(len(got), sum(1 for m in self._reference(t0, []) if m["t1"] >= t0))
 
@@ -406,36 +280,6 @@ class RunJudgingBisect(_Base):
         finally:
             jd._active_end(rid)
         self.assertEqual(self._check(T0, []), [])
-
-    def test_a_non_monotone_file_takes_the_full_scan_and_matches(self):
-        rows, marks = self._mixed_world()
-        rows.insert(6, _row(T0 + 5, judge="planner"))                # a late-landing row: t 5 s below the maximum
-        rows.append(_row(T0 + 9, sid=SID_B))                         # and again at the tail
-        rows.append({"t": float("nan"), "judge": "captioner", "fsid": SID_A,     # a NaN t: the span is
-                     "sent": T0 + 700.0, "recv": T0 + 702.0, "ms": 5})           # its sent/recv as before
-        rows.append(_row(T0 + 800, sid=SID_B, sent=T0 + 797.0, recv=float("nan")))   # a NaN recv: kept, NaN t1
-        self._write(rows)
-        got = self._check(T0, marks, expect_monotone=False)
-        self.assertIn(("planner", T0 + 5 + 0.5 - 3.25), {(m["judge"], m["sent"]) for m in got},
-                      "a late row inside the horizon is kept: the fallback is today's scan")
-        tail = [(m["t"], m["t1"] != m["t1"], m["text"]) for m in got[-2:]]
-        self.assertEqual(tail, [(T0 + 700.0, False, "caption before the point row"), (T0 + 797.0, True, "")])
-        # the file a bisect would get wrong: an in-horizon row at the head, older rows after it.
-        # bisect_left on t at t0 - 1 over [T0+5, T0-100, T0-50, T0+6] lands at index 3 and would lose
-        # the first row; the flag is clear for this list, so the walk starts at the head
-        km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
-        self._write([_row(T0 + 5), _row(T0 - 100), _row(T0 - 50), _row(T0 + 6)])
-        got = self._check(T0, [], expect_monotone=False)
-        self.assertEqual([m["t1"] for m in got], [T0 + 5.5, T0 + 6.5], "both in-horizon rows, in file order")
-
-    def test_disorder_within_the_slack_at_the_horizon_is_bisected_exactly(self):
-        # rows 2 s out of order straddling the horizon, the flag holding. bisect_left on t at t0 - 3 over
-        # [t0-2, t0-4, t0, t0-2, t0+3, t0+1] lands at index 2: the two rows it leaves behind both ended
-        # before t0, the late row at index 3 is examined and dropped, the late row at index 5 is kept
-        self._write([_row(T0 - 2, recv=T0 - 1.5), _row(T0 - 4, recv=T0 - 3.5), _row(T0, recv=T0 + 0.5),
-                     _row(T0 - 2, recv=T0 - 1.5), _row(T0 + 3, recv=T0 + 3.5), _row(T0 + 1, recv=T0 + 1.5)])
-        got = self._check(T0, [])
-        self.assertEqual([m["t1"] for m in got], [T0 + 0.5, T0 + 3.5, T0 + 1.5], "kept rows, in file order")
 
     def test_a_file_that_grows_between_two_calls(self):
         rows, marks = self._mixed_world()
@@ -458,67 +302,16 @@ class RunJudgingBisect(_Base):
         self.assertEqual(len(got), km._JUDGING_ROW_CAP)
         self.assertEqual(got[-1]["t"], T0 + n - 1 + 0.5 - 3.25, "the newest survive the trim")
 
-    def test_the_walk_starts_at_the_horizon_when_the_flag_holds(self):
-        # the proof the bisect is what runs: 2000 rows before the horizon are touched a handful of times
-        # (the bisect's probes) when the flag holds, and once each when it does not. The reader is
-        # replaced with a snapshot of counting rows, the way test_timeline_bars_resilience replaces it.
-        box = []
-        before = [_CountingRow(box, _row(T0 - 5000 + i)) for i in range(2000)]
-        inside = [_row(T0 + i) for i in range(5)]
-        saved = (km._judge_usage_rows, jd.active_runs)
-        jd.active_runs = lambda: []
-        try:
-            for flag, bound, cmp in ((True, 64, self.assertLess), (False, 2000, self.assertGreaterEqual)):
-                snap = km._JudgeUsageSnapshot(before + inside)
-                snap.monotone = flag
-                km._judge_usage_rows = lambda: snap
-                del box[:]
-                got = km._run_judging(T0, ALIVE, [_mark(T0 + 2, text="g")])
-                reads = len(box)                          # before the reference walks the same rows
-                self.assertEqual(got, _reference_run_judging(T0, ALIVE, [_mark(T0 + 2, text="g")],
-                                                             before + inside, [], km.time.time()))
-                self.assertEqual(len(got), 5)
-                cmp(reads, bound, "flag=%r: %d field reads on the 2000 rows before the horizon" % (flag, reads))
-        finally:
-            km._judge_usage_rows, jd.active_runs = saved
-
     def test_a_nan_run_end_borrows_no_gloss(self):
         # a NaN recv passes the horizon filter (NaN < t0 is False) and reaches the gloss with end + 1 =
         # NaN. The scan's m["t"] <= NaN was False for every mark, so the span had kind "run" and no text;
-        # bisect_right(times, NaN) would return the newest mark. The NaN end also clears the reader's
-        # flag (it is not <= t + 1), so this is the fallback path, matched to the reference
+        # bisect_right(times, NaN) would return the newest mark. The gloss's guard (the fork's, kept on
+        # upstream's memo at the 2026-09-17 fold) answers no mark, matched to the reference
         marks = [_mark(T0 + 1, text="a caption"), _mark(T0 + 9, text="the newest")]
         self._write([_row(T0 + 5), _row(T0 + 6, recv=float("nan"))])
-        got = self._check(T0, marks, expect_monotone=False)
+        got = self._check(T0, marks)
         self.assertEqual([(m["text"], m["kind"]) for m in got], [("a caption", "segment"), ("", "run")])
         self.assertNotEqual(got[1]["t1"], got[1]["t1"], "the span carries its NaN end, as before")
-
-    def test_a_bare_list_or_an_unflagged_snapshot_walks_from_the_head(self):
-        # the reader's test doubles (test_timeline_bars_resilience hands _run_judging plain lists) and a
-        # snapshot whose flag was never assigned carry no order fact, so the walk starts at the head even
-        # when the rows are in order and a bisect WOULD have skipped the ones before the horizon
-        box = []
-        before = [_CountingRow(box, _row(T0 - 5000 + i)) for i in range(300)]
-        inside = [_row(T0 + i) for i in range(3)]
-        marks = [_mark(T0 + 1, text="g")]
-        ref = _reference_run_judging(T0, ALIVE, marks, before + inside, [], km.time.time())
-        unflagged = km._JudgeUsageSnapshot(before + inside)          # the slot exists; nothing assigned it
-        with self.assertRaises(AttributeError):
-            unflagged.monotone
-        saved = (km._judge_usage_rows, jd.active_runs)
-        jd.active_runs = lambda: []
-        try:
-            for label, rows in (("plain list", list(before + inside)), ("unflagged snapshot", unflagged)):
-                km._judge_usage_rows = lambda rows=rows: rows
-                del box[:]
-                got = km._run_judging(T0, ALIVE, marks)
-                reads = len(box)
-                self.assertEqual(got, ref, label)
-                self.assertEqual(len(got), 3, label)
-                self.assertGreaterEqual(reads, 2 * len(before),
-                                        "%s: every row before the horizon was examined (%d field reads)" % (label, reads))
-        finally:
-            km._judge_usage_rows, jd.active_runs = saved
 
     def test_gloss_bisect_answers_the_prefix_scan(self):
         # the gloss rule in isolation: the most recent same-judge mark with t <= end + 1, ties resolved
@@ -526,9 +319,9 @@ class RunJudgingBisect(_Base):
         marks = [_mark(T0 + 10, text="third"), _mark(T0 + 10, text="fourth"), _mark(T0 + 5, text="first"),
                  _mark(T0 + 9, text="second"), _mark(T0 + 11, text="too late for row one")]
         self._write([_row(T0 + 9, recv=T0 + 9.0),           # end + 1 = T0 + 10: the tied marks qualify
-                     _row(T0 + 8, recv=T0 + 8.5),           # (an inversion: the fallback path, same answer)
+                     _row(T0 + 8, recv=T0 + 8.5),           # (an inversion: the memo assumes no order, same answer)
                      _row(T0 + 4, recv=T0 + 4.0)])          # end + 1 = T0 + 5: exactly the first mark
-        got = self._check(T0, marks, expect_monotone=False)
+        got = self._check(T0, marks)
         self.assertEqual([m["text"] for m in got], ["fourth", "second", "first"])
         km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
         self._write([_row(T0 + 4, recv=T0 + 4.0), _row(T0 + 8, recv=T0 + 8.5), _row(T0 + 9, recv=T0 + 9.0),
@@ -539,13 +332,14 @@ class RunJudgingBisect(_Base):
 
 
 class SourcePins(unittest.TestCase):
-    def test_no_scan_comprehension_remains_and_the_shared_reader_stays(self):
+    def test_the_shared_reader_and_the_gloss_bisect_stay_at_source(self):
+        # the shared incremental reader (never a per-build read of the log) and the gloss's bisect_right. The
+        # horizon bisect_left and the assert that no gloss comprehension text remains retired at the fold (the
+        # module docstring): the memo's cursor replaced the one, and upstream's gloss comment quotes the other
         import inspect
         src = inspect.getsource(km._run_judging)
         self.assertIn("_judge_usage_rows()", src)
-        self.assertNotIn("if m[\"t\"] <=", src, "the gloss comprehension is gone")
         self.assertIn("bisect_right", src)
-        self.assertIn("bisect_left", src)
 
 
 if __name__ == "__main__":
