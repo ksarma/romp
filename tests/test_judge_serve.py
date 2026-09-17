@@ -413,6 +413,47 @@ class Roads(Harness):
         self.assertEqual((third["op"], third["seq"]), ("done", 3), "nothing was queued: no done for seq 2, the next pass answers")
         c.send({"op": "quit"}); c.proc.wait(timeout=60); self.assertEqual(c.proc.returncode, 0)
 
+    def test_a_pass_sent_on_its_predecessors_done_line_is_never_refused_busy_while_that_thread_exits(self):
+        """The busy gate keys on the DONE LINE, the protocol's end of a pass, never on the pass thread's exit. A thread is alive
+        through its teardown after its last statement, and on a free-threaded interpreter, where no GIL holds the loop's thread
+        behind the exiting one, that teardown outlives the done line by more than a request's round trip: the request that
+        followed a done read busy (the free-threaded cell: a KeyError on tierStarts on the line after a done, twice, and the
+        busy test's third pass), and the kernel kills a child that answers anything but the pass's done. In process, with a
+        pass body that lingers AFTER its done line, every interpreter shows the race; the loop's gate must not."""
+        from unittest import mock
+        r_in, w_in = os.pipe(); r_out, w_out = os.pipe()
+        inp, req_w = os.fdopen(r_in, "r"), os.fdopen(w_in, "w", buffering=1)
+        out, ans_r = os.fdopen(w_out, "w", buffering=1), os.fdopen(r_out, "r")
+        saved = sys.stdout, sys.stderr, jd.em._SET_STAGE_FN[0], jd.em._READ_STAGE_FN[0]
+
+        def restore():
+            sys.stdout, sys.stderr = saved[0], saved[1]
+            jd.em.set_stage_provider(saved[2]); jd.em.set_read_stage_provider(saved[3])
+            for fh in (inp, out, ans_r):
+                fh.close()
+        self.addCleanup(restore)
+        self.addCleanup(req_w.close)                           # first (LIFO): the end of input ends the loop if a step failed
+        fault = os.environ.pop("ROMP_JUDGE_SERVE_FAULT", None)
+        if fault is not None:
+            self.addCleanup(os.environ.__setitem__, "ROMP_JUDGE_SERVE_FAULT", fault)
+        lines = queue.Queue()
+        threading.Thread(target=_Child._pump, args=(ans_r, lines.put), daemon=True).start()
+
+        def lingering_pass(req, emit):
+            emit({"op": "done", "seq": req.get("seq"), "tierStarts": 0})
+            time.sleep(0.5)                                    # the thread outlives its own done line, as a teardown does
+
+        with mock.patch.object(jd, "_serve_pass", lingering_pass):
+            t = threading.Thread(target=jd.serve, args=(inp, out), name="serve-under-test", daemon=True); t.start()
+            self.assertEqual(json.loads(lines.get(timeout=30))["op"], "ready")
+            for seq in (1, 2, 3):                                # each request follows its predecessor's done line at once
+                req_w.write(json.dumps({"op": "pass", "seq": seq, "now": NOW, "mayStart": False}) + "\n")
+                self.assertEqual(json.loads(lines.get(timeout=30)), {"op": "done", "seq": seq, "tierStarts": 0},
+                                 "the pass that follows a done line answers with its own done (the base read the exiting thread as busy)")
+            req_w.write(json.dumps({"op": "quit"}) + "\n")
+            t.join(30.0)
+        self.assertFalse(t.is_alive(), "the loop ended on quit")
+
     def test_a_tier_that_raises_is_counted_and_the_pass_still_answers(self):
         root = self.state_root("raise"); c = self.child(root, ROMP_JUDGE_SERVE_FAULT="raise:triage")
         self.assertEqual(c.line()["op"], "ready")
