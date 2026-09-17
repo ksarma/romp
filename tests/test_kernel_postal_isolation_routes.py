@@ -70,7 +70,13 @@ class RouteGates(unittest.TestCase):
         self.src = open(os.path.join(BIN, "romp-kernel")).read()
 
     def test_send_refuses_postal_shaped_mail_to_isolated_targets(self):
-        self.assertIn('if _postal_shaped(body["text"]) and _postal_isolated(sid):', self.src)
+        # the gate sits in the one delivery door (_deliver_text, T370) that POST /send and a notice card's /send action both take
+        self.assertIn('if _postal_shaped(text) and _postal_isolated(sid):', self.src)
+        # the slice runs to the next route: the fork's by-name doors (_control_target, the isolation gate, the remote arm through
+        # _remote_forward_answer and its refusal answer) precede the door line, which begins about 4800 characters into the
+        # route (the 2026-09-17 fold, item 5), so a fixed 3000-character window read short of it
+        route = self.src.split('u.path == "/send"')[1].split('u.path in ("/fork-comment"')[0]
+        self.assertIn('ok, err, queued = _deliver_text(sid, body["text"])', route, "the route takes the door for the local arms")
 
     def test_deliver_refuses_isolated_targets_outright_and_parks(self):
         self.assertIn('if _postal_isolated(sid):', self.src)

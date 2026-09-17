@@ -67,7 +67,7 @@ type Hooks = {
   notes: Record<string, string>; keyHint: string; lens: unknown; unions: TagUnion[]; tips: unknown[];
   aftermaths: [number, number][]; rowPaints: number; tagSyncs: number; placeholders: number;
   groupsRaw: string | null;   // the stored tab-groups blob the plan reads (localStorage's, in the page)
-  phone: boolean;             // the phone layout: the plan is the flat strip there
+  phone: boolean;             // the phone layout: the plan sections as on the desktop and folds nothing there
   heads: HeadCall[];          // every group header the paint minted, in order
   planStrip: typeof planStrip; parseTabGroups: typeof parseTabGroups; headWords: typeof headWords; revealedTabs: typeof revealedTabs;
   tabStateClass: typeof tabStateClass; tabRingId: typeof tabRingId; RING_ORDER: typeof RING_ORDER; tabDotClass: typeof tabDotClass; tabDotTitle: typeof tabDotTitle; sectionPip: typeof sectionPip; sectionPipMembers: typeof sectionPipMembers; sectionPipTitle: typeof sectionPipTitle;
@@ -99,7 +99,8 @@ function lift(): (hooks: Hooks) => Api {
     let vanishedId = null, vanishedWhy = null;   // the unfocused pane's memory of what vanished and why (T357)
     let collapsedTabIds = new Set(), draggedGroup = null, provisionalId = null, provisionalTags = [];
     // stripGroupRows OFF: this fork's default (W1, the user 2026-09-08: the groups flow inline), so the break site is never
-    // reached whatever FakeEl reports; tabWidgets is upstream's T379 registry input (every widget on, no options)
+    // reached whatever FakeEl reports (and the plan's packed bit after the gate's childElementCount operand is never read);
+    // tabWidgets is upstream's T379 registry input (every widget on, no options)
     let settings = { tabCtx: "over50", stripGroupRows: false, theme: "classic", colormap: "aurora", tabWidgets: { on: {}, order: [], opts: {} } };
     // the strip's other readers on this fork, inert: the hover tip's owner (tabTipOwner, null: no tip up) and the feed's
     // per-session ledgers (empty: no needs-you verdict); the section view's readers (lastStripItems, snapView) and its
@@ -307,7 +308,7 @@ test("the sectioned strip: every input a group header paints repaints it, once, 
     ["the active tab's section (unfoldable while it holds it)", () => { H.groupsRaw = groups({ collapsed: ["backend"] }); api.renderTabs(); api.set({ activeId: "a" }); }],
     ["a provisional tab's tags (it sections under its future home)", () => { api.set({ provisionalId: "p", provisionalTags: ["frontend"] }); }],
     ["sectioning switched off", () => { H.groupsRaw = groups({ on: false }); }],
-    ["the phone layout (the flat strip there)", () => { H.groupsRaw = groups({}); api.renderTabs(); H.phone = true; }],
+    ["the phone layout (nothing folds there: the folded section opens)", () => { H.groupsRaw = groups({ collapsed: ["backend"] }); api.renderTabs(); H.phone = true; }],
   ];
   for (const [what, change] of changes) repaintsOnce(H, api, what, change);
 });

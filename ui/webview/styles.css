@@ -606,7 +606,12 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
    load, the three events that run the pass (the painter's fourth, the tab drag's own insert, lays the
    lines only, since the pass stands down while the dragged tab is in the strip: the drag's virtual
    layout reads the breaks as row openers); they are this same item, styled by this rule, and no rule
-   names .tab-keep-break on its own. */
+   names .tab-keep-break on its own.
+   Under the setting the one header no break precedes is a folded one right after another folded header
+   (tab-groups.ts planStrip `packed`, the user 2026-09-16): a run of folded groups, each only its header,
+   shares one row instead of a row apiece, wrapping like tabs when the run is wider than the strip; an
+   open group and the trail keep their own rows. Two packed headers sit as two tabs do — the strip's column gap apart,
+   their own 7px paddings between the labels — and each header's box is its own click target. */
 .tab-group-break { flex: 0 0 100%; height: 0; margin: 0; padding: 0; pointer-events: none; }
 /* (the settings gear + modal live on the TIMELINE now — see ui/romp-timeline-view.js) */
 
@@ -961,13 +966,14 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    .cite-preview) and overscroll-behavior contain the staged list's, so a wheel at the end does not scroll the page behind. The
    foot scrolls with the rows (the flat structure the rows' insertBefore(nrow) scheme relies on); place() reads the flyout's height
    after layout, so the capped box is what it seats. The capped box is usable because the window's scroll listener that dismisses
-   the menu when the page moves under it ignores a scroll whose target the menu contains (render.ts, beside dismissTabMenu's other
-   listeners; round 8): without that exemption the flyout's own scroll closed the menu on the first wheel tick and on a click's
+   the menu when the page moves under it ignores a scroll whose target the menu contains (ctx-menu.ts showMenuCard's per-open
+   scroll listener; round 8): without that exemption the flyout's own scroll closed the menu on the first wheel tick and on a click's
    scroll into view. The click that opens the flyout focuses the New tag input without scrolling the box (round 9), so the flyout
    opens at its top with the session's own rows in view. tab-hide-browser.test measures the thirty-tag flyout inside the pane,
-   reaches Configure tags by scrolling, and drives the scroll through render.ts's own listeners in both engines. No structural rule
+   reaches Configure tags by scrolling, and drives the scroll through the builder's own dismissal listener in both engines. No structural rule
    (nothing holds the box open; the rows size its width, as before). */
 .ctx-sub-tags { max-height: calc(100dvh - 8px); overflow-y: auto; overscroll-behavior: contain; }
+.ctx-item-danger .ctx-item-label { color: var(--vscode-errorForeground, #f48771); }   /* a destructive row wears the confirm button's danger colour (the Sessions pane's Delete) */
 /* identity-color swatches (the user 2026-06-29): the romp palette as circles, the current one ringed. A grid
    so 9 colors wrap to a tidy block instead of one long row. */
 /* Billing submenu (the user 2026-08-09: the login/API-key switch lives here now, not the statusline).
@@ -1818,6 +1824,12 @@ button.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1p
    clustered on the right edge instead of restarting at the left (the user 2026-08-10, on a phone;
    flat statusline children right-justify only the row holding the auto margin). Same 10px column gap
    the statusline uses between siblings, so the wide-pane look is unchanged. */
+.sl-left {   /* the state chip, its timer and the stop button: one row that keeps its parts on one line (the user 2026-09-16); the right cluster wraps below it whole */
+  flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 4px 10px;   /* shrinkable: a 280px pane with a named-peer Awaiting chip wraps the chip's words instead of overflowing (round two of PR 1803) */
+}
+.sl-left > .stop-btn { flex: none; }   /* the button stays whole beside its badge; the row's own nowrap keeps it on the chip's line */
+.sl-left > .chip { min-width: 0; }   /* the chip gives way before the unit overflows the line (round three of PR 1803) */
+.sl-left .chip-peer-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }   /* a peer label is one unbreakable word (TESTHOST:integration-tests): it truncates with an ellipsis, as .chip-session does, and its full text leads the chip's tip. No floor: with the kernel's real timer the label keeps about 60 px (seven characters) at 240 px, and a floor that bound would overflow the line on a narrower pane (a 55 px floor by 15 px at 220), the very overflow this rule removes */
 .sl-right {
   margin-left: auto; min-width: 0;
   display: inline-flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px 10px;

@@ -80,7 +80,13 @@ test("appendActive snaps only when the user is already near the bottom of OVERFL
 // first turn visible at the viewport top (stable data-uuid) and puts THAT element back at its exact
 // offset after the rebuild; the raw scrollTop remains only as the eviction fallback.
 test("a scrolled-up append restores by turn ANCHOR (data-uuid), raw scrollTop only as fallback", () => {
-  const fn = RENDER.slice(RENDER.indexOf("function appendActive"), RENDER.indexOf("window.addEventListener(\"resize\", scheduleRestamp)"));
+  // the slice ends at the next top-level function after appendActive; both anchors are read by name and must be found
+  // first (an absent one reads -1 and the slice runs to the end of render.ts, so the two pins below go over-broad)
+  const fnStart = RENDER.indexOf("function appendActive"), fnEnd = RENDER.indexOf("function updateJumpBtn(");
+  assert.ok(fnStart > -1, "the start anchor function appendActive is in render.ts");
+  assert.ok(fnEnd > -1, "the end anchor function updateJumpBtn( is in render.ts (the next top-level function after appendActive)");
+  assert.ok(fnEnd > fnStart, "the end anchor follows the start anchor");
+  const fn = RENDER.slice(fnStart, fnEnd);
   assert.match(fn, /const anchor = !stick && v \? captureScrollAnchor\(content, v\) : null;/,
     "the anchor is captured BEFORE the rebuild, only when scrolled up");
   assert.match(fn, /else if \(!\(v && restoreScrollAnchor\(content, v, anchor, before\)\)\) writeScroll\(content, before, "append-raw", false, before\);/,

@@ -902,11 +902,15 @@ def canon_dir(raw: str) -> tuple[str, str]:
     return true_case(os.path.realpath(p)), ""
 
 
-def known_fsids(state_dir: Path, sid: str, reg: dict | None = None) -> set[str]:
+def known_fsids(state_dir: Path, sid: str, reg: dict | None = None, faults: list | None = None) -> set[str]:
     """Every transcript fsid romp has on record for `sid`: the sid itself, the reg's lastSid, each
     /clear episode head (episodes/<sid>.jsonl, fsid per row) and both ends of every resume fork
     (states/<sid>.jsonl resumeFork rows). These are the files that share the session's project slug and
-    that romp's episode/lineage readers derive from the stored cwd — the set a move has to carry."""
+    that romp's episode/lineage readers derive from the stored cwd — the set a move has to carry. A ledger
+    that is not there contributes nothing; one that IS there but would not read (EACCES, EIO, EMFILE, a
+    directory in its place) contributes nothing either, and its name is appended to `faults` when the
+    caller passes a list, so a memo over this answer can tell an absent record from a transient miss
+    (SdkBackend.known_fsids)."""
     out = {str(sid)}
     reg = reg if reg is not None else (read_reg(state_dir, sid) or {})
     if reg.get("lastSid"):
@@ -915,7 +919,9 @@ def known_fsids(state_dir: Path, sid: str, reg: dict | None = None) -> set[str]:
                       ("states", lambda r: [(r.get("resumeFork") or {}).get(k) for k in ("from", "to")])):
         try:
             lines = (Path(state_dir) / sub / (str(sid) + ".jsonl")).read_text().splitlines()
-        except OSError:
+        except OSError as e:
+            if faults is not None and e.errno not in (errno.ENOENT, errno.ENOTDIR):
+                faults.append(sub)
             continue
         for line in lines:
             try:
@@ -3263,6 +3269,36 @@ def read_reg_for_rmw(state_dir: Path, sid: str) -> "dict | None":
     return {} if _reg_absent_for_write(_reg_path(state_dir, sid)) else None
 
 
+REG_REV = [0]   # the registry's revision: advanced by every write and removal of a registration file in this process. One write
+#                 path (write_reg) carries the bump: this backend never unlinks a registration (a dead session's reg stays, alive
+#                 false), so a write is the only way the table moves; tests/test_sessions_listing.py enumerates the writers. The
+#                 kernel's /sessions listing is keyed on the ROWS revision below, not this one (plans/sessions-route-from-the-cycle.md).
+
+
+def reg_rev() -> int:
+    return REG_REV[0]
+
+
+REG_ROWS_FIELDS = ("lastSid", "threadOf", "alive")   # the registration fields the kernel's /sessions rows read: lastSid on every row
+#                                                       (jd._sdk_last_sid), a comment thread's threadOf and alive (thread_sessions)
+REG_ROWS_REV = [0]   # the registry's ROWS revision: advanced only when one of those fields changes for a registration (or the
+_REG_ROWS_SEEN = {}  #  registration is first written in this process), so the listing keyed on it rebuilds once per change the rows
+#                       can see and never on the per-cycle writes of other fields (2026-09-15: keyed on REG_REV, the listing rebuilt
+#                       every cycle, 778 builds in 776 s of a boot, 767 of them on registry writes no row read).
+
+
+def reg_rows_rev() -> int:
+    return REG_ROWS_REV[0]
+
+
+def _reg_rows_note(sid: str, reg: dict) -> None:
+    t = tuple(repr(reg.get(f)) for f in REG_ROWS_FIELDS)
+    if _REG_ROWS_SEEN.get(sid) != t:
+        _REG_ROWS_SEEN[sid] = t
+        REG_ROWS_REV[0] += 1
+
+
+
 def write_reg(state_dir: Path, sid: str, reg: dict) -> None:
     p = _reg_path(state_dir, sid)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -3274,6 +3310,9 @@ def write_reg(state_dir: Path, sid: str, reg: dict) -> None:
     try:
         tmp.write_text(json.dumps(reg))
         os.replace(tmp, p)
+        REG_REV[0] += 1                                 # the table moved (after the publish, so a reader that took the revision
+        _reg_rows_note(sid, reg)                        #  before its read misses on its next check); the rows revision only on a
+        #                                                  change to a field the rows read
     finally:
         try:                                        # never leave a stray temp on a failed write
             os.unlink(tmp)
@@ -3407,6 +3446,84 @@ BOOT_RESUME_CONCURRENCY = max(1, int(os.environ.get("ROMP_BOOT_RESUME_CONCURRENC
 # Backstop ONLY (never the mechanism): a CLI that wedges before init would otherwise hold its slot
 # forever and trap the whole sweep — after this long the sweep proceeds anyway, loudly.
 BOOT_RESUME_SLOT_S = float(os.environ.get("ROMP_BOOT_RESUME_SLOT_S", "180"))
+# The re-delivery AGE LINE (2026-09-12). The boot and dead-spawn re-delivery arm (_mark_dropped_echoes) re-feeds
+# a human send whose text the transcript scan cannot find. That scan is only as good as its reading of the
+# transcript, and a landing it cannot see is re-fed at EVERY restart, forever: a kernel whose scan read only
+# native user records (never the queued_command attachment a mid-turn feed lands as) and only the last 2 MB of
+# the file re-fed 194 sends across 13 sessions at one restart and 264 at the next, the same texts each time,
+# some three days old, one text landing six times (measured 2026-09-12). A send older than this at the restart
+# is not re-fed and not scanned (a mark-less echo streams the whole transcript): it takes the flag path
+# (dropped, kept in the chat as never-delivered) and ONE notice card per session per restart (dropped_sends_card,
+# plans/notice-cards.md) names each dropped message with a Send again button, so nothing drops silently and the
+# session itself is never told (the user 2026-09-15, who wanted the drop on the feed, not injected into the
+# session). The queue proper (reg['queue'], sends never fed) is NOT under this line: those are the person's
+# words waiting their turn, however long the kernel was down. Seconds; 0 switches the line off.
+REDELIVER_MAX_AGE_S = float(os.environ.get("ROMP_REDELIVER_MAX_AGE_S", "1800"))
+
+
+DROPPED_SENDS_KEY = "dropped-sends"      # the card's key AND its producer label (plans/notice-cards.md, the first consumer)
+DROPPED_SENDS_ACTIONS_MAX = 4            # the kernel's cap on one notice's actions (NOTICE_ACTIONS_MAX): a fifth is a refusal
+DROPPED_SENDS_LABEL_MAX = 60             # the kernel's cap on an action label (NOTICE_ACTION_LABEL_MAX)
+DROPPED_SENDS_LINE_CHARS = 240           # each listed message's text, collapsed to one line of at most this many characters
+DROPPED_SENDS_LIST_MAX = 40              # messages listed in the body one by one; past it the rest are counted
+
+
+def _one_line(text, n: int) -> str:
+    """`text` with its whitespace collapsed, cut to `n` characters with an ellipsis: a message quoted inside a list item."""
+    t = " ".join(str(text or "").split())
+    return t if len(t) <= n else t[: max(1, n - 1)].rstrip() + "\u2026"
+
+
+def dropped_sends_card(name: str, stale: list, now: float, max_age_s: float):
+    """The NOTICE CARD (plans/notice-cards.md, the first consumer) for the typed sends the restart's re-delivery arm
+    dropped as past the age line: (title, body, actions) for SdkBackend.post_notice. In the user's terms throughout:
+    what was dropped, how old, why, and the way back; the user sees this on the feed, the session never does (the
+    user 2026-09-15, who rejected the notice this replaced). `stale` is the dropped atoms in send order (_echo_text, t).
+    The actions fit the kernel's cap of four and its one-shot mark (a card that dismisses on its action runs ONE
+    action, whichever button): one message gets Send again; two or three get one button each plus Send all again,
+    which re-sends them as one message in send order; more get Send all again alone, and each message is still
+    restorable from the chat, where it stands marked never delivered. A typed command (a leading slash) gets no
+    button, because the kernel refuses a stored action whose text begins with one: the body says to type it again."""
+    when = lambda t: time.strftime("%Y-%m-%d %H:%M", time.localtime(int(t or 0)))
+    n = len(stale)
+    one = n == 1
+    to = (" to %s" % name) if name else ""
+    title = "%d message%s you typed%s before the restart %s not re-sent" % (n, "" if one else "s", to, "was" if one else "were")
+    texts = [str(a.get("_echo_text") or "") for a in stale]
+    cmds = [t for t in texts if t.lstrip().startswith("/")]
+    resend = [t for t in texts if not t.lstrip().startswith("/")]
+    lines = ["The restart on %s found %s already older than %s, the age past which nothing is re-sent on its own (a "
+             "message that old is often no longer wanted). %s in the chat marked never delivered."
+             % (when(now), "this message" if one else "these messages", _gap_text(int(max_age_s)),
+                "It stays" if one else "Each stays"), ""]
+    for a in stale[:DROPPED_SENDS_LIST_MAX]:
+        lines.append("- %s: %s" % (when(a.get("t")), _one_line(a.get("_echo_text"), DROPPED_SENDS_LINE_CHARS)))
+    if n > DROPPED_SENDS_LIST_MAX:
+        lines.append("- and %d more, in the chat" % (n - DROPPED_SENDS_LIST_MAX))
+    tail = []
+    if len(resend) == 1:
+        tail.append("Send again re-sends %s as you typed it." % ("it" if one else "that one"))
+    elif len(resend) > 1:
+        tail.append("Send again re-sends one message as you typed it; Send all again re-sends them as one message, in order."
+                    if len(resend) + 1 <= DROPPED_SENDS_ACTIONS_MAX else
+                    "Send all again re-sends them as one message, in order; to re-send one alone, restore it from the chat.")
+    if cmds:
+        tail.append("A typed command is not re-sent from here; type it again if you still want it.")
+    if tail:
+        lines += ["", " ".join(tail)]
+    body = "\n".join(lines)
+    actions = []
+    if len(resend) == 1:
+        actions.append({"label": "Send again", "route": "/send", "body": {"text": resend[0]}})
+    elif len(resend) > 1:
+        if len(resend) + 1 <= DROPPED_SENDS_ACTIONS_MAX:
+            for t in resend:
+                actions.append({"label": _one_line("Send again: " + t, DROPPED_SENDS_LABEL_MAX), "route": "/send",
+                                "body": {"text": t}})
+        actions.append({"label": "Send all again", "route": "/send", "body": {"text": "\n\n".join(resend)}})
+    return title, body, actions
+
+
 # The UserPromptSubmit hook's WALL-TIME CAP (2026-09-12). The SDK runs SdkSession._prompt_submit_hook
 # for every prompt a session receives and REFUSES the prompt when the hook misses the CLI's own hook
 # deadline (about 30 s), instead of failing open — under a host load of 100 to 300 on 64 cores the
@@ -8447,7 +8564,7 @@ class SdkSession:
                 self._note_turn_opener(fed_text_opener(item), fresh)   # who this turn is for (the Stop hook stamps it)
                 if item.startswith(RENAME_PING_HEAD):
                     self._ping_feeding = True       # hold feeds until this turn's first streamed message
-                self._mark("working")
+                self._mark_producing()              # the one gate: a text fed under a standing prompt leaves the prompt's state
                 self.backend._poke()
                 yield {"type": "user",
                        "message": {"role": "user", "content": [{"type": "text", "text": item}]}}
@@ -9008,6 +9125,20 @@ class SdkSession:
                 if isinstance(v, (int, float)) and not isinstance(v, bool):
                     row[kk] = int(v)
         return row
+
+    def _mark_producing(self) -> None:
+        """The ONE writer of the "working" state (PR 1739 round two, 2026-09-15): the turn feeder's pop, the stream's
+        re-assert and the ask sites' settle all come here, and it YIELDS while the backend holds a pending ask for this
+        session. The permission and picker marks set _cli_working False and the running snapshot reads the log's last line
+        while an ask is parked, so any writer of "working" running under a standing prompt put every needs-you reader out:
+        a parallel tool's result, an assistant chunk or a subagent's stream on the wire, or a text fed into the session
+        while it stood on the prompt (the composer's message, a peer's postal message, a nudge, a scheduled prompt). The
+        record of the user's session read permission, working, three times in thirteen seconds with pendingAsk true. The
+        text still feeds (the composer's message during a prompt is deliberate); only the state mark waits for the answer,
+        and the ask site's settle marks it then, through this same gate, once the ask is cleared."""
+        if self.backend._pending_ask.get(self.sid) is not None:
+            return
+        self._mark("working")
 
     def _mark(self, state: str) -> None:
         """Persist a lifecycle STATE to states/<sid>.jsonl AND track whether the CLI is producing.
@@ -10214,7 +10345,7 @@ class SdkSession:
             finally:
                 self.backend._clear_ask(self)
                 if self.inflight:
-                    self._mark("working")
+                    self._mark_producing()
         if decision == "remember":
             return PermissionResultAllow(behavior="allow", updated_permissions=list(context.suggestions))
         if decision == "allow":
@@ -10256,7 +10387,7 @@ class SdkSession:
             finally:
                 self.backend._clear_ask(self)
                 if self.inflight:
-                    self._mark("working")
+                    self._mark_producing()
         if choice == "1":
             return PermissionResultAllow(behavior="allow")
         if choice == "2":
@@ -10276,7 +10407,7 @@ class SdkSession:
         finally:
             self.backend._clear_ask(self)
             if self.inflight:
-                self._mark("working")
+                self._mark_producing()
         return build_answers(questions, picks)
 
     async def _ask_one(self, question: dict, qi: int, total: int):
@@ -10671,9 +10802,33 @@ class SdkSession:
         self.backend._log("cron dedupe (%s): blocked a replayed schedule fire — its %s slot was "
                           "already delivered (a fresh process re-fires passed slots on resume)"
                           % (self.name, when), problem=False)
+        self._mark_refused_aside(prompt, "replayed schedule slot")   # beside the verdict, never under the cap
         return {"decision": "block",
                 "reason": "This scheduled prompt already ran for its %s slot — skipping the "
                           "duplicate." % when}
+
+    def _mark_refused_aside(self, prompt: str, why: str):
+        """Flag the echo wearing a prompt the gate REFUSED (SdkBackend.mark_echo_refused) on a thread of its own,
+        OUTSIDE the hook's cap, and return that thread (None when the backend carries no mark). The verdict is
+        decided by the time this runs and must not wait on it: the mark is a reg write, and awaited under
+        _prompt_submit_hook's wait_for a stalled write ran the cap out AFTER the block was decided, which the hook
+        answers {}: a decided block turned into an allow, and the replayed schedule fired anyway (the pull request
+        review, 2026-09-14). A dedicated thread rather than the loop's executor, because the stall this guards
+        against is that pool wedged on reg reads and the mark must not queue behind it; and not a task on the
+        loop, whose close would cancel the write unstarted. A failure is one log line and never touches the
+        verdict."""
+        mark = getattr(self.backend, "mark_echo_refused", None)
+        if not callable(mark):
+            return None
+
+        def run():
+            try:
+                mark(self.sid, prompt, why)
+            except Exception as e:
+                self.backend._log("cron dedupe (%s): refused-echo mark failed: %s" % (self.name, e))
+        t = threading.Thread(target=run, name="romp-refused-mark:" + self.sid[:8], daemon=True)
+        t.start()
+        return t
 
     # ---- subagent tracking (the transparency tmux never had) ----
 
@@ -11776,6 +11931,7 @@ class SdkBackend:
         self._notify = notify              # notify(app, msg) -> push to clients (kernel._send_to_app)
         self._poke_cb = poke               # wake the kernel's producer/judges (optional)
         self._owns_memo: dict = {}         # sid -> ((reg mtime_ns, size), owns?) — see owns()
+        self._known_fsids_memo: dict = {}  # sid -> ((reg, episodes, states) stat keys, frozenset of fsids) — see known_fsids()
         self._push_cb = push               # wake the kernel's PUSHER → immediate chat push (live tail)
         self._push_live_cb = push_live     # push_live(sid): the same wake carrying WHICH session's live tail
         #   changed (kernel _pusher_wake_live): the pusher's minimum cycle interval exempts a watched tab's
@@ -11928,6 +12084,16 @@ class SdkBackend:
         for reg in regs:
             if reg.get("alive") and not self._lease_survives(reg["sid"]):
                 self._heal_stale_awaiting(reg["sid"])
+        # The dropped-sends notice cards the reseed below has to post have no door yet: the kernel wires on_notice on
+        # this CLASS after the constructor returns (type(_sdk_backend).on_notice = staticmethod(post_notice)), so a post
+        # from inside __init__ found no door, the held sends past the age line were flagged dropped and stale with no
+        # card, and the flags took them out of every later boot's selection: on the boot road the card was never
+        # posted (the 2026-09-17 fold's kernel review, item 3). The reseed PARKS each card here (the flag writes, the
+        # queue re-add and the mirror write stay synchronous, as before) and the kernel posts them through
+        # post_boot_notices() once the door is wired. The door is not a constructor argument on purpose: its session
+        # check re-enters the kernel's construction lock (Sessions.live() through _sdk()), which the boot thread holds
+        # through this constructor, so a synchronous post from here would deadlock the boot.
+        self._boot_notices: list | None = []
         self._reseed_echoes(regs)   # unlanded input echoes survive the restart (reg['echoes'] mirror)
         # Boot reconcile (reconcile=True: the KERNEL passes it at boot; tests and ad-hoc constructions
         # opt in explicitly): recover what the previous kernel's death left behind — reap orphaned
@@ -15325,6 +15491,9 @@ class SdkBackend:
                     e["fsid"] = str(a.get("_echo_fsid") or "")
                 if a.get("_landed"):
                     e["landed"] = True            # the boot/spawn scan found its record: prune_live retires it
+                for flag in ("stale", "refused"):
+                    if a.get(flag):
+                        e[flag] = True            # WHY it was dropped (the age line / the prompt gate), for the chat
                 snap.append(e)
         try:
             self._update_reg(sid, echoes=snap)
@@ -15369,6 +15538,9 @@ class SdkBackend:
                         self.forget_fed(reg["sid"], atom.get("uuid"))   # its landing will never come (T252c)
                 if e.get("todo"):
                     atom["_todo"] = str(e["todo"])   # the loss-reopen seam survives the restart too
+                for flag in ("stale", "refused"):
+                    if e.get(flag):
+                        atom[flag] = True                # the reason rides with the flag (2026-09-12)
                 if isinstance(e.get("off"), int) and not isinstance(e.get("off"), bool):
                     atom["_echo_off"], atom["_echo_fsid"] = e["off"], str(e.get("fsid") or "")
                 if e.get("landed"):
@@ -15380,22 +15552,28 @@ class SdkBackend:
                 _texts = _queue_texts(reg.get("queue"))     # dict-aware: an answer's {"text","todo"} entry is a position too
                 try:
                     self._mark_dropped_echoes(reg["sid"], [{"md": t, "qid": (m or {}).get("qid")}
-                                                           for t, m in zip(_texts, queue_meta_from_reg(reg))])
+                                                           for t, m in zip(_texts, queue_meta_from_reg(reg))],
+                                              park=getattr(self, "_boot_notices", None))   # the boot road: the card waits for
+                    #                                                                          the door (post_boot_notices)
                 except Exception as e:                   # bookkeeping over the live tail, as at the spawn half: said, never a
                     self._log("dropped-echo marking (%s) failed: %s: %s" % (reg["sid"][:8], type(e).__name__, e))   # boot fault
 
-    def _mark_dropped_echoes(self, sid: str, queued_texts, refeed: bool = True) -> None:
+    def _mark_dropped_echoes(self, sid: str, queued_texts, refeed: bool = True, park: list | None = None) -> None:
         """A fresh CLI is spawning for this sid, or the kernel just booted: whatever process held any
         earlier send is gone. An input echo whose text is neither in the surviving queue (about to be
         delivered to the new CLI) nor landed in the transcript has no holder left — its send is provably
         LOST. Flag it `dropped`, so the chat renders "never delivered" with restore/dismiss instead of a
         sent-looking bubble that rides the live tail with a stale timestamp forever (the user 2026-07-29:
         a two-day-old lost send kept resurfacing mid-chat, hopping turns as new ones landed, posing as
-        history). Event-based — keyed on the spawn/boot that orphaned the send, never on age — and
-        self-correcting: an echo whose text actually LANDED still prunes by text on the next build, so a
-        premature flag can never stick to a delivered message; and one the transcript scan below FINDS
-        is not flagged in the first place (2026-09-06). The flag rides the registry mirror
-        (_persist_echoes), so it survives further restarts.
+        history). Keyed on the spawn/boot that orphaned the send, and since 2026-09-12 on the send's AGE
+        at that event (REDELIVER_MAX_AGE_S, thirty minutes by default): a human send inside the line is
+        re-delivered below; one older than it is marked never delivered and offered back to the user on a
+        notice card with a Send again button (dropped_sends_card, plans/notice-cards.md); the session is
+        never told (the user 2026-09-15, who wanted the drop on the feed). Self-correcting: an echo
+        whose text actually LANDED still prunes by text on the next build, so a premature flag can never
+        stick to a delivered message; and one the transcript scan below FINDS is not flagged in the
+        first place (2026-09-06). The flag rides the registry mirror (_persist_echoes), so it survives
+        further restarts.
 
         A HUMAN send the transcript has OUTRUN — its text never landed, and a later genuine-human input
         did (_input_landed_after) — takes the flag path even under refeed (2026-09-11): the composer's
@@ -15409,7 +15587,12 @@ class SdkBackend:
         re-feed would land the message a second time in a conversation that genuinely kept the first,
         exactly the duplicate that branch refuses by design. The loss still surfaces in full (the dropped
         flag, the todo-reopen seam); only the queue re-add is withheld. Boot and dead-spawn callers keep
-        the default: no client survived there to be writing anything."""
+        the default: no client survived there to be writing anything.
+
+        `park` (the boot reseed, from inside __init__): a list the notice card's POST is appended to as a
+        zero-argument callable instead of being posted here, because the kernel wires the door on this class
+        only after the constructor returns; post_boot_notices posts them then. Everything else (the flags,
+        the queue re-add, the mirror write, the wake) runs here as for every other caller."""
         # The surviving queue, by identity where it has one (T252c, third review): `queued_texts` is the queue's
         # copies as {"md", "qid"} (a caller with texts alone gives id-less copies). An echo whose uuid a queued
         # copy wears is queued; an echo whose text is queued only under OTHER ids is not — by text alone, the
@@ -15434,10 +15617,13 @@ class SdkBackend:
                      and not a.get("_landed") and not _queued(a)]
         if not newly:
             return
-        # RE-DELIVER, don't just flag (the user 2026-08-23, their strongest point in the restart
-        # audit: a typed prompt queued at 11:20 was silently discarded by the 11:25 restart, and
-        # losing input to a restart is the one thing this must never do). A HUMAN send whose loss is
-        # proven — and whose text a direct transcript scan (_text_landed) confirms never landed, as a
+        # RE-DELIVER, don't just flag, up to the AGE LINE (the user 2026-08-23, in the restart audit,
+        # who wanted a typed prompt queued at 11:20 and silently discarded by the 11:25 restart to have
+        # survived it; and 2026-09-13, reviewing the line, who accepted thirty minutes as the bound and
+        # wants what falls past it offered back through a card the kernel makes). The rule since then:
+        # typed input inside the line is re-fed; past it, it is marked never delivered and comes back
+        # through that card (the `if stale:` block below), so nothing a restart held goes unsaid. A HUMAN send inside the
+        # line whose loss is proven — and whose text a direct transcript scan (_text_landed) confirms never landed, as a
         # user record or as the queued_command attachment of a mid-turn splice — goes back into the
         # queue in send order, exactly like the surviving queue, recreating the pre-restart state:
         # the LIVE session's _pending when one is running (its mirror rewrites reg['queue'] on every
@@ -15453,10 +15639,18 @@ class SdkBackend:
         # romp-authored echoes (nudges) keep the flag path: re-delivering one could double-nudge,
         # and its content is regenerable machinery, not the user's words. A refeed=False caller
         # (the resumable reconnect — docstring above) keeps EVERY echo on the flag path.
-        redeliver, landed, outrun = [], set(), set()
+        redeliver, landed, outrun, stale = [], set(), set(), []
+        now = time.time()
         if refeed:
             for a in sorted(newly, key=lambda x: x.get("t") or 0):
                 if a.get("author") != "human":
+                    continue
+                # The AGE LINE (REDELIVER_MAX_AGE_S) runs BEFORE the scans: a send older than it at this restart is
+                # not re-fed whatever the transcript says, and is not scanned either (2026-09-12: a scan that could
+                # not see a landing re-fed the same days-old texts at every restart; the line ends that at one).
+                t0 = int(a.get("t") or 0)
+                if REDELIVER_MAX_AGE_S > 0 and t0 and now - t0 > REDELIVER_MAX_AGE_S:
+                    stale.append(a)
                     continue
                 seen = self._text_landed(sid, a["_echo_text"], a.get("t"),
                                          a.get("_echo_off"), a.get("_echo_fsid"))
@@ -15531,16 +15725,29 @@ class SdkBackend:
                                 self._log("%s: re-delivering a typed send the dead CLI was holding: %.80r"
                                           % (sid[:8], a["_echo_text"]))
         rekeyed = {a["_echo_text"] for a in redeliver}
+        stale_ids = {id(a) for a in stale}
         for a in newly:
             if a["_echo_text"] in rekeyed:
                 continue                                   # now in the queue → renders as queued, prunes on landing
             if a["_echo_text"] in landed:
                 continue                                   # landed, un-pruned → the next build's prune_live
             a["dropped"] = True
+            if id(a) in stale_ids:
+                a["stale"] = True                          # past the age line at the restart: the card says so
             if hasattr(self, "forget_fed"):
                 self.forget_fed(sid, a.get("uuid"))   # its landing will never come (T252c)
             with self._live_lock:
                 self._touch_live(sid)                  # a flag write outside the lock: still a change to the tail
+            if a.get("_todo"):
+                # a user-todo ANSWER lost its holder: hand the id it carries to the kernel so the
+                # ask can visibly return (round 2, 2026-08-22: the drop was detected but nothing
+                # could tie it back). The kernel checks the transcript first: a landed-but-unpruned
+                # echo at kernel death is COMMON and means delivered, not lost. Above the stale skip
+                # on purpose: a send past the age line was never scanned here, so its ask returns
+                # through the kernel's own check while the card below offers the text back.
+                self._todo_lost(sid, a["_todo"], a["_echo_text"])
+            if id(a) in stale_ids:
+                continue                                   # counted in the one summary row below, not one row each
             if a["_echo_text"] in outrun:
                 self._log("%s: a send never reached its conversation (the CLI took a later message while "
                           "still holding it) — kept in the chat as never-delivered, not re-sent: %.80r"
@@ -15548,14 +15755,79 @@ class SdkBackend:
             else:
                 self._log("%s: a send never reached its CLI (the process died holding it) — kept in the chat "
                           "as never-delivered: %.80r" % (sid[:8], a["_echo_text"]), problem=True)
-            if a.get("_todo"):
-                # a user-todo ANSWER lost its holder: hand the id it carries to the kernel so the
-                # ask can visibly return (round 2, 2026-08-22: the drop was detected but nothing
-                # could tie it back). The kernel checks the transcript first: a landed-but-unpruned
-                # echo at kernel death is COMMON and means delivered, not lost.
-                self._todo_lost(sid, a["_todo"], a["_echo_text"])
+        if stale:
+            # The NOTICE CARD (plans/notice-cards.md, the first consumer): one per session per restart or spawn, under one
+            # key, so a later restart that drops more is a new revision (new information) and a second call in this boot
+            # posts nothing (the flags above take the same sends out of `newly`). needsYou: re-sending the user's own words
+            # is their call. The session is NOT told (the user 2026-09-15, who rejected the injected notice this replaces):
+            # the card is the surface, the problem row below is the error centre's. A failed post is said there, never
+            # swallowed and never turned back into a session notice.
+            oldest = min(int(a.get("t") or 0) for a in stale)
+            sess_map = getattr(self, "sessions", None)   # getattr: bound-method test doubles skip __init__
+            live = None
+            if sess_map is not None:
+                with self._lock:
+                    live = sess_map.get(sid)
+            name = str(getattr(live, "name", "") or "")
+            if not name:
+                with self._reg_lock:
+                    reg = read_reg(self.state_dir, sid)
+                name = str((reg or {}).get("name") or "")
+            title, body, acts = dropped_sends_card(name, stale, now, REDELIVER_MAX_AGE_S)
+            count = len(stale)
+
+            def post_card():
+                """The POST and the problem row that says its outcome: run here, or parked for the kernel (`park`)."""
+                post = getattr(self, "post_notice", None)     # a bare stand-in in tests may carry no door; the backend always does
+                if callable(post):
+                    row, err = post(sid, DROPPED_SENDS_KEY, title, body, producer=DROPPED_SENDS_KEY, needs_you=True,
+                                    actions=acts, dismiss_on_action=True, t=int(now))
+                else:
+                    row, err = None, "no notice door on this backend"
+                self._log("%s: %d send(s) older than the re-delivery age line (%s) at the restart were not re-fed; the "
+                          "oldest was from %s; kept in the chat as never-delivered and %s"
+                          % (sid[:8], count, _gap_text(int(REDELIVER_MAX_AGE_S)),
+                             time.strftime("%Y-%m-%d %H:%M", time.localtime(oldest)),
+                             ("offered back on a card (key=%s rev=%s)" % (row.get("key"), row.get("rev"))) if row else
+                             ("the card offering them back could not be posted: %s" % err)), problem=True)
+            if park is not None:
+                park.append(post_card)                    # the boot reseed, inside __init__: no door yet (post_boot_notices)
+            else:
+                post_card()
         self._persist_echoes(sid)
         self._wake_push_live(sid)
+
+    def mark_echo_refused(self, sid: str, text: str, reason: str = "") -> int:
+        """The prompt gate REFUSED `text` for this session (_prompt_submit_gate's block: a replayed schedule slot).
+        The CLI will not run it, so no record will ever land it — and an echo left pending would read as a lost
+        send at the next restart and be re-fed (2026-09-12). Flag every unlanded echo wearing the text dropped AND
+        refused: kept in the chat as never-delivered, never re-delivered, both flags riding the mirror. Matched
+        under echo_keys like every other echo reader. Returns the count flagged (0: nothing wore the text)."""
+        want = set(echo_keys(text))
+        if not want:
+            return 0
+        hit = []
+        with self._live_lock:
+            d = self._live.get(sid) or {}
+            for a in d.values():
+                et = a.get("_echo_text")
+                if not et or a.get("command") or a.get("dropped") or a.get("_landed"):
+                    continue
+                if want & set(echo_keys(et)):
+                    a["dropped"] = True
+                    a["refused"] = True
+                    if reason:
+                        a["refusedWhy"] = str(reason)[:200]
+                    hit.append(a.get("uuid"))
+            if hit:
+                self._touch_live(sid)
+        if hit:
+            if hasattr(self, "forget_fed"):
+                for u in hit:
+                    self.forget_fed(sid, u)                # its landing will never come (T252c)
+            self._persist_echoes(sid)                      # the flags ride the restart mirror at once
+            self._wake_push_live(sid)                      # this sid's live tail changed: the cause-carrying wake
+        return len(hit)
 
     def _text_landed(self, sid: str, text: str, t: int | None = None, off=None, fsid=None, cursor=None):
         """Did `text` land in the sid's transcript? The re-delivery guard: the echo prune is lazy (a landed
@@ -17668,6 +17940,53 @@ class SdkBackend:
         self._owns_memo[sid] = (key, ok)
         return ok
 
+    def known_fsids(self, sid: str) -> set[str]:
+        """Every transcript fsid this backend has on record for `sid`: the module's known_fsids over this
+        backend's state dir (the sid, the reg's lastSid, each /clear episode head, both ends of every resume
+        fork). The kernel's GET /sessions/by-fsid reads it to answer which live session has owned a given
+        transcript id: a session's postal MCP server is a child started with the CLI and keeps the
+        CLAUDE_CODE_SESSION_ID of that moment for its whole life, a /clear mints a new transcript id under
+        the same sid, and these records are the authority on which session the prior id belonged to
+        (2026-09-15: every message a post-/clear session sent through its tools arrived unattributed).
+        Memoized per sid on the (mtime_ns, size, inode) of its three records — the reg, episodes/<sid>.jsonl
+        and states/<sid>.jsonl, None for one that is absent — because that route asks this for EVERY live
+        session and thread on every ask, and the bus asks per postal command from every post-/clear session
+        for the rest of its CLI's life (and per 30 s heartbeat until its bus confirms the session local; for
+        the whole life in legacy singleton mode): unmemoized, each ask re-read and re-parsed
+        every session's whole states ledger (a row per state change; the largest run to thousands) on the
+        kernel's HTTP threads. Unchanged records cost three stats. The reg is rewritten by rename and the
+        ledgers only ever grow, so the key misses exactly when a record changes. A read that FAULTED on a
+        record the stat found (EMFILE, EIO, a torn reg) is answered but not memoized, by owns()'s rule
+        (review find on #933): latching the partial set would 404 the session's own prior transcript until
+        one of its records next changed, and the next call re-reads instead. The line that says so is keyed
+        per sid in the problem ring, so a record that stays unreadable counts on one entry instead of
+        appending one per ask (the ring's sequence is the feed's cache key)."""
+        paths = (_reg_path(self.state_dir, sid),
+                 Path(self.state_dir) / "episodes" / (str(sid) + ".jsonl"),
+                 Path(self.state_dir) / "states" / (str(sid) + ".jsonl"))
+        key = []
+        for p in paths:
+            try:
+                st = p.stat()
+                key.append((st.st_mtime_ns, st.st_size, st.st_ino))
+            except OSError:
+                key.append(None)
+        key = tuple(key)
+        hit = self._known_fsids_memo.get(sid)
+        if hit is not None and hit[0] == key:
+            return set(hit[1])
+        reg = read_reg_for_rmw(self.state_dir, sid)     # {} = genuinely absent; None = there but would not read
+        faults: list = []
+        out = known_fsids(self.state_dir, sid, reg if reg is not None else {}, faults=faults)
+        if reg is None or faults:
+            self._known_fsids_memo.pop(sid, None)        # would not read: do not latch; re-read next call
+            self._log("known_fsids(%s): a record the stat found would not read (%s) — answered, not cached"
+                      % (sid[:8], ", ".join(["reg"] * (reg is None) + faults)),
+                      problem=True, key=("known_fsids", sid))
+        else:
+            self._known_fsids_memo[sid] = (key, frozenset(out))
+        return out
+
     def ensure_scheduled(self) -> int:
         """Keep a CLI process ALIVE for every session with ARMED SESSION TIMERS (reg sessionCrons, the
         Stop hook's record of CronCreate/ScheduleWakeup//loop arms). Session-scoped timers exist only in
@@ -17889,6 +18208,44 @@ class SdkBackend:
         return s.resolve_ask(kind, payload)    # the DELIVERY outcome, not mere routing (T214)
 
     # ---- callbacks used by sessions ----
+    def post_notice(self, sid, key, title, body="", **kw):
+        """A producer inside the backend posts a NOTICE CARD (T370, plans/notice-cards.md) through the kernel's one door: the
+        class-level hook the kernel wires at boot (type(_sdk_backend).on_notice = staticmethod(post_notice)), resolved with
+        getattr and a callable check because this module never imports the kernel and its tests bind methods onto bare
+        stand-in classes that carry no hooks. Returns post_notice's (row, error); with no door wired, (None, why), said,
+        never a silent drop. The first consumer is the dropped-sends producer (PR 1496): one notice per session per boot,
+        needsYou true, a Send-again action per message and Dismiss."""
+        door = getattr(type(self), "on_notice", None)
+        if not callable(door):
+            return None, "no notice door is wired on this backend (the kernel wires on_notice at boot)"
+        try:
+            return door(sid, key, title, body, **kw)
+        except Exception as e:                       # a producer's post never takes the backend down with it
+            return None, "the notice could not be posted (%s)" % e
+
+    def post_boot_notices(self):
+        """The kernel's call once it has wired the notice door (on_notice) on this class: post the notice cards the boot echo
+        reseed PARKED (_reseed_echoes runs inside __init__, before the door exists; _mark_dropped_echoes' `park`), each with
+        the problem row that says its outcome. On a thread of its own, because the kernel calls this while it still holds its
+        construction lock and the door's session check can re-enter that lock (post_notice's Sessions.live() through _sdk()):
+        the thread waits the lock out where a synchronous post would deadlock the boot (the todo_lost seam's shape,
+        _user_todo_answer_lost). A post that raises is one problem row, never the thread's death. The parked list is taken
+        whole, so a second call posts nothing; a backend with nothing parked starts no thread. Returns the thread, or None
+        (the kernel ignores it; a test joins it)."""
+        parked, self._boot_notices = list(getattr(self, "_boot_notices", None) or []), None
+        if not parked:
+            return None
+
+        def run():
+            for post in parked:
+                try:
+                    post()
+                except Exception as e:
+                    self._log("dropped-sends card: the boot post failed: %s: %s" % (type(e).__name__, e), problem=True)
+        th = threading.Thread(target=run, name="sdk-boot-notices", daemon=True)
+        th.start()
+        return th
+
     def _emit_ask(self, sess: SdkSession, ask: dict):
         # STORE the ask (not just a bool): the kernel's _ask_poll replays it to chat clients each tick, so a
         # blocked SDK session still shows its prompt to a client that connects/refocuses/reloads AFTER the ask
@@ -17987,9 +18344,16 @@ class SdkBackend:
         if not atom.get("_echo_text") and not atom.get("command") and not atom.get("isApiError") \
                 and getattr(sess, "_first_out_t", None) is None and getattr(sess, "inflight", 0):
             sess._first_out_t = time.time()   # the turn's FIRST streamed work atom — turns.jsonl's firstOutT (T304)
+        # …but never over a PARKED ASK (the user 2026-09-15, a session blocked on an Allow prompt that showed neither the
+        # tab's dashed ring nor a Blocked card while the picker stayed up): the permission and picker marks set
+        # _cli_working False, and the running snapshot reads the LOG's last line while an ask is parked, so an assistant
+        # chunk, a subagent's stream or a parallel tool's result landing during the ask appended "working" after
+        # "permission" and every needs-you reader went dark (the record: permission, working, three times in thirteen
+        # seconds, pendingAsk true). The gate is _mark_producing, the module's ONE writer of "working"; the feeder's pop and
+        # the ask sites' settle take the same door.
         if not atom.get("_echo_text") and not atom.get("command") and not atom.get("isApiError") \
                 and not sess._cli_working:
-            sess._mark("working")   # (an isApiError settle is the turn DYING, not producing — never 'working')
+            sess._mark_producing()  # the one gate (a parked ask holds the state; an isApiError settle is the turn DYING, not producing)
         self._wake_push_live(sess.sid)
 
     def _wake_push(self):

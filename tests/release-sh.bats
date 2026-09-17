@@ -64,6 +64,15 @@ case "\$1 \$2" in
   # the merge as a no-op would let the bump path "pass" while proving nothing.
   # `gh pr create` prints the PR URL; the script reads the NUMBER off its tail and addresses
   # every later call by that number (a fork-headed branch is unresolvable by name — see below).
+  # STUB_RELEASE_422 = refuse the first N \`release create\` calls the way GitHub refuses a body over
+  # its ceiling (HTTP 422 "body is too long"), then accept; the script's short-body fallback rides it.
+  "release create")
+      n=\$(( \$(cat "$TEST_DIR/creates" 2>/dev/null || echo 0) + 1 )); echo "\$n" > "$TEST_DIR/creates"
+      if [ "\$n" -le "\${STUB_RELEASE_422:-0}" ]; then
+          echo "HTTP 422: Validation Failed (https://api.github.com/repos/romp-on/romp/releases)" >&2
+          echo "body is too long (maximum is 125000 characters)" >&2
+          exit 1
+      fi ;;
   "pr create")  echo "https://github.com/romp-on/romp/pull/4242" ;;
   "pr merge")   if [ "\${STUB_PR_STATE:-MERGED}" = "MERGED" ]; then
                     git -C "$REPO" push -q "\${STUB_MERGE_REMOTE:-origin}" HEAD:main
@@ -114,11 +123,14 @@ STUB
     grep -q "pr create" "$GH_LOG"
     grep -q "pr merge" "$GH_LOG"
     # The version PR carries its tier label at creation: a required upstream check holds an
-    # unlabeled PR red. The label is the tier-0 label as it exists upstream (`tests-only`; both
-    # checks read it as `docs` until the maintainers rename it, and `gh` resolves the name on the
-    # server). Under the tier policy the VERSION PR is held anyway until the maintainers decide its
-    # tier; the pin is that the release path names a real, existing label.
-    grep -q "pr create .*--label tests-only" "$GH_LOG"
+    # unlabeled PR red. The label is `docs`, tier 0 as the repository names it (docs and fix are one
+    # tier that merges on green; the pre-rename spelling `tests-only` exists only as a body alias, and
+    # `gh` resolves the label name on the server, so naming a label the repository lacks fails the
+    # cut one step after the version branch is pushed, as v0.16.0's first cut did on 2026-09-16).
+    grep -q "pr create .*--label docs" "$GH_LOG"
+    # And the body says the tier too, the road a contributor who cannot label uses, so the tier
+    # workflow can re-apply the label should its name move again.
+    grep -q "Tier: docs" "$GH_LOG"
     # BY NUMBER, never by branch name (the user 2026-08-01): every PR here is fork-headed, because
     # rulesets block branch pushes upstream — and `gh pr merge <branch> --repo <upstream>` cannot
     # resolve a branch that lives on the fork. It failed with "no pull requests found for branch
@@ -281,6 +293,43 @@ STUB
 }
 
 # ── publishing ────────────────────────────────────────────────────────
+
+@test "release: a generated-notes body GitHub refuses falls back to a short body, never a tag without a release" {
+    # v0.16.0 (2026-09-16): about nine hundred pull requests in the range, GitHub's generated notes
+    # ran past its 125000-character ceiling (HTTP 422), the tag was pushed and the release was not created.
+    git -C "$REPO" tag v0.0.9                          # a previous release, so the notes have a range
+    _stub_gh
+    STUB_RELEASE_422=1 run "$REPO/scripts/release.sh" --skip-macos --skip-tests
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"generated notes were refused"* ]]
+    [[ "$output" == *"published."* ]]
+    [ "$(grep -c "release create v0.1.0" "$GH_LOG")" -eq 2 ]
+    grep -q -- "release create v0.1.0 .*--generate-notes --notes-start-tag v0.0.9" "$GH_LOG"
+    grep -q -- "release create v0.1.0 .*--notes romp v0.1.0" "$GH_LOG"
+    grep -q -- "pull requests merged since v0.0.9. The full list: https://github.com/romp-on/romp/compare/v0.0.9...v0.1.0" "$GH_LOG"
+    run git -C "$TEST_DIR/origin.git" tag -l
+    [ "$output" = "v0.1.0" ]
+}
+
+@test "release: a range with more merged pull requests than the ceiling allows skips the generated notes" {
+    git -C "$REPO" tag v0.0.9
+    # two merged pull requests since the previous tag, simulated as first-parent merge commits
+    for i in 1 2; do
+        git -C "$REPO" switch -q -c "pr-$i"
+        echo "$i" > "$REPO/pr-$i.txt"; git -C "$REPO" add -A; git -C "$REPO" commit -qm "pr $i"
+        git -C "$REPO" switch -q main
+        git -C "$REPO" merge -q --no-ff -m "Merge pull request #$i" "pr-$i"
+    done
+    git -C "$REPO" push -q origin main
+    _stub_gh
+    ROMP_RELEASE_NOTES_MAX_PRS=1 run "$REPO/scripts/release.sh" --skip-macos --skip-tests
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"2 pull requests since v0.0.9, more than 1"* ]]
+    [ "$(grep -c "release create v0.1.0" "$GH_LOG")" -eq 1 ]
+    run grep -q -- "--generate-notes" "$GH_LOG"
+    [ "$status" -ne 0 ]
+    grep -q -- "2 pull requests merged since v0.0.9" "$GH_LOG"
+}
 
 @test "release: pushes the tag and publishes the release" {
     _stub_gh

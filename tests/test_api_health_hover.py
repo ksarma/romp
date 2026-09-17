@@ -19,7 +19,9 @@ in the head, the divider and the boot's row; that clock is the float, to the mil
 clamped past the restored tail, so the restart row is the newest row however close the previous kernel's last
 transition came to this start; the aggregator owns that stamp (truncated with floor, so its whole seconds are
 /version's started) and serves it as bootAt, so bootAt, the seeded stateSince and the restart row are one number
-clamp or not; and a restored row with a null t is skipped, never the whole history.
+clamp or not; a restored row with a null t is skipped, never the whole history; and the construction, once it has wired
+the notice door on the backend's class, calls the backend's post_boot_notices exactly once (the dropped-sends cards the
+boot reseed parked for that door).
 
 Synthetic only: a private synthetic sid, invented key material assembled at run time, a fixed epoch."""
 import hashlib
@@ -210,6 +212,48 @@ class Payload(unittest.TestCase):
         self.assertNotIn('out["bootAt"]', inspect.getsource(km.Handler.do_GET), "the route stamps no second number")
 
 
+_JD_WIRES = ("_LOGIN_AUTH_ENV_FN", "_USAGE_REFRESH_FN", "_DEFAULT_AUTH_FN", "_DEFAULT_LOGIN_FN", "_API_HEALTH_NOTE_FN")
+#   the judge-module names kernel/kernel.py's _sdk_locked assigns (its `jd._..._FN =` lines), the set
+#   _sdk_locked_for_real saves before the call and puts back after it; a wire the kernel adds joins this tuple
+
+
+def _sdk_locked_for_real(recorder):
+    """The kernel's _sdk_locked run for REAL, with the backend module it loads swapped for `recorder`: the class the
+    construction builds in SdkBackend's place and then wires, the way it wires the live backend. The names the construction
+    reaches for (the module loader, the path check, the catalog cache and refresh, the binary lookup, the boot mark, the
+    problem report) are stubbed for the call and put back; the kernel's singleton slot too, and the FIVE wires the
+    construction sets on the judge module (_JD_WIRES: _LOGIN_AUTH_ENV_FN, _USAGE_REFRESH_FN, _DEFAULT_AUTH_FN,
+    _DEFAULT_LOGIN_FN, _API_HEALTH_NOTE_FN) go back to their SAVED values, never a literal None. That module object is
+    one per process (the loader re-executes a loaded name into the same object, so every kernel copy in the worker
+    shares it): a wire left pointing at this module's kernel copy reached every later test in the worker, and a saved
+    value put back keeps the order of modules out of it. Returns (backend, problems, stderr): what _sdk_locked
+    returned, the problem rows it filed, the text it wrote."""
+    fake = types.SimpleNamespace(SdkBackend=recorder, startup_auth_env=lambda *a, **k: {})
+    names = ("_sdk_backend", "load_source", "_sdk_import_notice", "_ensure_sdk_on_path", "_model_catalog_boot",
+             "_claude_bin", "_mark_boot", "_sdk_problem")
+    saved = {n: getattr(km, n) for n in names}
+    saved_jd = {n: getattr(km.jd, n) for n in _JD_WIRES}
+    problems = []
+    try:
+        km._sdk_backend = None
+        km.load_source = lambda name, path: fake
+        km._sdk_import_notice = lambda: True         # the import notice runs before that load; quiet here
+        km._ensure_sdk_on_path = lambda: True
+        km._model_catalog_boot = lambda _async=True: False   # the boot's one catalog call (T296): stubbed whole
+        km._claude_bin = lambda: "/bin/true"
+        km._mark_boot = lambda *a, **k: None
+        km._sdk_problem = problems.append
+        err = io.StringIO()
+        with redirect_stderr(err):
+            be = km._sdk_locked()
+    finally:
+        for n in names:
+            setattr(km, n, saved[n])
+        for n, v in saved_jd.items():
+            setattr(km.jd, n, v)
+    return be, problems, err.getvalue()
+
+
 class OneClock(unittest.TestCase):
     """The head's since, the boot's restart row and the payload's bootAt read ONE clock, the kernel's own start
     (_STARTED), passed to the backend at construction. An aggregator seeding itself from its own clock ran seconds
@@ -256,41 +300,20 @@ class OneClock(unittest.TestCase):
         self.assertNotIn("b.why===RESTART_WHY", HIST)
 
     def test_the_kernel_builds_the_backend_with_its_own_start_as_boot_at(self):
-        """_sdk_locked run for real, with the backend module it loads swapped for a recorder: the construction passes
-        the kernel's _STARTED itself, the float, as boot_at. The names the construction reaches for (the module
-        loader, the path check, the catalog cache and refresh, the binary lookup, the boot mark, the problem report)
-        are stubbed for the call and put back; the kernel's singleton slot and the judge module's three wires too."""
+        """_sdk_locked run for real (_sdk_locked_for_real), with the backend module it loads swapped for a recorder: the
+        construction passes the kernel's _STARTED itself, the float, as boot_at."""
         built = []
 
         class _Recorder:
             def __init__(self, *a, **kw):
                 built.append(kw)
 
-        fake = types.SimpleNamespace(SdkBackend=_Recorder, startup_auth_env=lambda *a, **k: {})
-
-        names = ("_sdk_backend", "load_source", "_sdk_import_notice", "_ensure_sdk_on_path", "_model_catalog_boot",
-                 "_claude_bin", "_mark_boot", "_sdk_problem")
-        saved = {n: getattr(km, n) for n in names}
-        saved_jd = (km.jd._LOGIN_AUTH_ENV_FN, km.jd._USAGE_REFRESH_FN)
-        problems = []
-        try:
-            km._sdk_backend = None
-            km.load_source = lambda name, path: fake
-            km._sdk_import_notice = lambda: True         # the import notice runs before that load; quiet here
-            km._ensure_sdk_on_path = lambda: True
-            km._model_catalog_boot = lambda _async=True: False   # the boot's one catalog call (T296): stubbed whole
-            km._claude_bin = lambda: "/bin/true"
-            km._mark_boot = lambda *a, **k: None
-            km._sdk_problem = problems.append
-            err = io.StringIO()
-            with redirect_stderr(err):
-                be = km._sdk_locked()
-        finally:
-            for n in names:
-                setattr(km, n, saved[n])
-            km.jd._LOGIN_AUTH_ENV_FN, km.jd._USAGE_REFRESH_FN = saved_jd
+        wire_before = km.jd._API_HEALTH_NOTE_FN   # the one of the five judge wires that leaked (round 3 item 1)
+        self.addCleanup(lambda: self.assertIs(
+            km.jd._API_HEALTH_NOTE_FN, wire_before, "the judge module's api-health wire is back at its pre-call value"))
+        be, problems, err = _sdk_locked_for_real(_Recorder)
         self.assertEqual(problems, [], "the construction ran clean")
-        self.assertNotIn("model catalog boot:", err.getvalue(),
+        self.assertNotIn("model catalog boot:", err,
                          "...and so did the catalog leg: no swallowed traceback under the boot's own except (T296b)")
         self.assertEqual(len(built), 1, "one backend built")
         self.assertIsInstance(be, _Recorder)
@@ -447,6 +470,42 @@ class OneClock(unittest.TestCase):
         ah = sb.ApiHealth(d, boot_at=T0 + 0.7, log=lines.append)
         self.assertAlmostEqual(ah.boot_stamp, T0 + 0.701, delta=1e-6)
         self.assertEqual(len([ln for ln in lines if "not before this boot" in ln]), 1, lines)
+
+
+class TheBootRoadCall(unittest.TestCase):
+    """The construction calls the backend's post_boot_notices ONCE, after it has wired the notice door (on_notice) on the
+    backend's class. The constructor's boot echo reseed runs inside __init__, before that door exists, so it PARKS the
+    dropped-sends notice cards of the held sends past the age line, and this call is the only road that posts them: with
+    the three lines gone (the getattr, the guard, the call) a stale boot flags the sends and posts nothing, every test
+    green (the 2026-09-17 fold's kernel review, round 2 item 1; the backend's half is tests/test_restart_redelivery_stale.py's
+    TheBootRoad, which calls the method itself). Pinned by execution here, through the real _sdk_locked with a recorder
+    backend that reads the door at call time the way the backend's post_notice resolves it (getattr on the class), and by
+    text in tests/test_notice_card_store.py. No fail-loud backstop in _boot_reconcile: that thread starts inside the
+    constructor and runs beside the kernel's wiring, so a non-empty parked list there is a boot in progress, not a skipped
+    call, and two drainers would race."""
+
+    def test_the_kernel_posts_the_parked_boot_notices_once_after_wiring_the_door(self):
+        seen = []
+
+        class _Recorder:
+            def __init__(self, *a, **kw):
+                pass
+
+            def post_boot_notices(self):
+                seen.append(getattr(type(self), "on_notice", None))   # the door as post_notice resolves it, or None
+                return None                                             # nothing parked: no thread (the kernel ignores it)
+
+        wire_before = km.jd._API_HEALTH_NOTE_FN   # the one of the five judge wires that leaked (round 3 item 1)
+        self.addCleanup(lambda: self.assertIs(
+            km.jd._API_HEALTH_NOTE_FN, wire_before, "the judge module's api-health wire is back at its pre-call value"))
+        be, problems, err = _sdk_locked_for_real(_Recorder)
+        self.assertEqual(problems, [], "the construction ran clean")
+        self.assertIsInstance(be, _Recorder)
+        self.assertEqual(len(seen), 1, "post_boot_notices fired exactly once (none: the parked cards stay parked; twice: a second drainer)")
+        self.assertIs(seen[0], km.post_notice,
+                      "...with the kernel's door already on the class at call time: a call before the wiring finds None, and the "
+                      "backend's post_notice answers every parked card with no door and posts nothing")
+        self.assertIs(type(be).on_notice, km.post_notice, "the door stays wired after the call")
 
 
 class StateFileRows(unittest.TestCase):

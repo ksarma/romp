@@ -10,6 +10,7 @@
 // it reads moved, a gesture touched it, or the 15 s live pass aged it. Its column and
 // order are re-applied on every render regardless.
 import { distillText, distillInputs, applyDistillLine, distillPending, distillStaleNote } from "./distiller-line";
+import { openContextMenu, CtxItem } from "./ctx-menu";   // the one menu builder (the v0.16.0 tidy): the card menu's card, dismissal and keys
 import { delegate } from "./actions";
 import { paintHeld, paintReleased, publishPaneHidden } from "./paint-gate";
 import { linkifyPrRefs, setLinkedText, senderPrRepo, installPrLinkOpener } from "./pr-links";
@@ -32,7 +33,10 @@ import { initStrip } from "./strip";
 import { installSettingsSync, loadSettings, onExternalSettingsChange } from "./settings";
 import { applyTheme } from "./theme";
 import { hostsGear, openGear } from "./gear-host";
-import { canPreview } from "./preview";
+import { canPreview, fileUrl } from "./preview";
+import { sanitizeMd } from "./md-sanitize";
+import { Marked } from "marked";
+import { stripRemoteLoads } from "./file-preview";
 import { initFileView, setFileViewIdentity, hostStub } from "./file-view";
 import { initFileBrowse, openFileBrowse } from "./file-browse";
 import { VIEW_STATE_KEY, parseViewState, serializeViewState, pruneViewState, capViewState, type FeedViewState, threadKey, threadKeys } from "./feed-view-state";
@@ -118,6 +122,14 @@ interface AskItem {
               toName?: string; toSid?: string;    // parkedHandoff adds to*
               count?: number;   // userTodos (the idle-escalation floor, plans/user-todos.md): how many open asks the floored card presents — the badge treats them as already counted
               mid?: string; frm?: string; to?: string; origin?: string; body?: string; gist?: string };   // quarantine (held peer mail) adds these; gist = the bus's 90-char collapse for the compact card line
+  // a NOTICE CARD (T370, plans/notice-cards.md): a producer's card the kernel made without a judge; the flavour object
+  // discriminates the family the way blocked.state does the kernel-made ones. The face shows the title (text), the producer
+  // beside the session, the body (markdown through the sanitizer), the attachment (an image inline, pinned as posted), and
+  // the action buttons the kernel executes against its allowlist; Clear dismisses it through cleared.jsonl like every card
+  notice?: { producer: string; key: string; rev: number; body: string;
+             attachment: { path: string; kind: string | null; allowed: boolean; why: string; pin: string | null } | null;
+             actions: { label: string; route: string; body: Record<string, unknown> }[];
+             expiresAt: number | null; dismissOnAction: boolean; acted?: boolean } | null;   // acted: the one-shot action ran (a card back from Undo carries no actions)
   summary?: string | null;                         // distiller's key takeaway for a COMPLETED goal → the done card's one auto-written line (kernel asks.append); null until produced
   distillState?: "completed" | "blocked" | null;   // the GENUINE resolution state the distiller line keys on, so the brief/takeaway rides the real block instead of the transient `column` (which recheck/rejudging flicker to working) — the user 2026-07-21; absent from older/remote payloads → fall back to column
   blockSummary?: string | null;                    // block-distiller's decision brief for a BLOCKED goal → the blocked card's one auto-written line (kernel 466393c); null until produced
@@ -1026,13 +1038,8 @@ function ensureHeader() {
 // clicked value sticky across pushes until the kernel's payload agrees, so the bell never flickers
 // back while the rebuild lands.
 const pendingNotify = new Map<string, boolean>();   // itemId -> clicked value, until the payload confirms
-let cardMenuEl: HTMLElement | null = null;
-
-function dismissCardMenu(): void { if (cardMenuEl) { cardMenuEl.remove(); cardMenuEl = null; } }
-window.addEventListener("mousedown", (e) => { if (cardMenuEl && !cardMenuEl.contains(e.target as Node)) dismissCardMenu(); }, true);
-window.addEventListener("keydown", (e) => { if (e.key === "Escape") dismissCardMenu(); }, true);
-window.addEventListener("scroll", dismissCardMenu, true);
-window.addEventListener("blur", () => dismissCardMenu());
+// (the menu's card, its dismissal on a press outside, Escape, a scroll or the window's blur, and its keys are the shared
+// builder's: ctx-menu.ts openContextMenu)
 
 // the same drawn bell as the chat tab menu's toggle icon (16-unit viewBox, currentColor, slash = off)
 function cardBellSvg(off: boolean): string {
@@ -1114,46 +1121,20 @@ function rearmLatches(reply: LatchReply): number {
 }
 
 function showCardMenu(e: MouseEvent, card: HTMLElement): void {
-  dismissCardMenu();
   const it = (card as any)._it as AskItem | undefined;   // the freshest payload copy (updateAskCard stashes it)
   if (!it) return;
   const on = cardNotifyOn(it);
-  const menu = el("div", "ctx-menu");
-  const item = el("div", "ctx-item ctx-item-toggle");
   const icon = el("span", "ctx-icon" + (on ? "" : " off"));
   icon.innerHTML = cardBellSvg(!on);
-  const body = el("span", "ctx-item-body");
-  const lab = el("span", "ctx-item-label"); lab.textContent = on ? "Stop notifying" : "Notify me";
-  const sub = el("span", "ctx-item-sub");
-  sub.textContent = on ? "no more system notifications for this card"
-    : "system notification when this card blocks on you or completes";
-  body.append(lab, sub);
-  item.append(icon, body);
-  item.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    dismissCardMenu();
-    setCardNotify(card, it, !on);
-  });
-  menu.appendChild(item);
+  const items: CtxItem[] = [{ icon, label: on ? "Stop notifying" : "Notify me",
+    sub: on ? "no more system notifications for this card" : "system notification when this card blocks on you or completes",
+    pick: () => setCardNotify(card, it, !on) }];
   // Browse the session's working tree. Only the sid rides: the feed payload doesn't carry cwd, and
   // "." lets the OWNING kernel resolve it authoritatively (_resolve_open_path) rather than this pane
   // scraping another pane's state. Gated on canPreview() (web only): the VS Code webview can't reach
   // the kernel origin, and the editor has its own explorer.
-  if (canPreview()) {
-    const browse = el("div", "ctx-item");
-    browse.textContent = "Browse files";
-    browse.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      dismissCardMenu();
-      openFileBrowse(".", it.sid);
-    });
-    menu.appendChild(browse);
-  }
-  document.body.appendChild(menu);
-  cardMenuEl = menu;
-  const r = menu.getBoundingClientRect();   // at the cursor, clamped inside the pane
-  menu.style.left = Math.max(0, Math.min(e.clientX, window.innerWidth - r.width - 4)) + "px";
-  menu.style.top = Math.max(0, Math.min(e.clientY, window.innerHeight - r.height - 4)) + "px";
+  if (canPreview()) items.push({ label: "Browse files", pick: () => openFileBrowse(".", it.sid) });
+  openContextMenu(e.clientX, e.clientY, items);   // at the cursor, clamped inside the pane (the shared card)
 }
 
 function makeAskCard(it: AskItem): HTMLElement {
@@ -1410,7 +1391,15 @@ function makeAskCard(it: AskItem): HTMLElement {
   // 2026-07-26). Editing happens in the Edit modal, never inline. Only on a quarantine card.
   const qbody = el("div", "fask-qbody");
   qbody.style.display = "none";
-  main.append(row1, row2, row3, secs, qbody, awaitSpin, checklist, delegations);   // no expand button — body click opens the modal
+  // NOTICE CARD (T370): the producer label beside the session name, then the body, the attachment and the actions, all
+  // hidden until updateAskCard finds it.notice. The body is the sanitizer's inert DOM adopted (never innerHTML), the
+  // attachment an image the kernel already judged and pinned, the actions buttons the kernel executes (noticeAction).
+  const nprod = el("span", "fask-nprod"); nprod.style.display = "none";
+  row2.appendChild(nprod);
+  const nbody = el("div", "fask-nbody"); nbody.style.display = "none";
+  const nattach = el("div", "fask-nattach"); nattach.style.display = "none";
+  const nactions = el("div", "fask-nactions"); nactions.style.display = "none";
+  main.append(row1, row2, row3, secs, qbody, nbody, nattach, nactions, awaitSpin, checklist, delegations);   // no expand button — body click opens the modal
   card.append(main);
   // Follow-up lives in the modal now (the user 2026-06-10), not on the card.
 
@@ -1552,6 +1541,7 @@ function makeAskCard(it: AskItem): HTMLElement {
   a._jauthBadge = jauthBadge;
   a._cont = cont;
   a._qApprove = qApprove; a._qDeny = qDeny; a._qBody = qbody;
+  a._nProd = nprod; a._nBody = nbody; a._nAttach = nattach; a._nActions = nactions;
   a._delegations = delegations;
   a._checklist = checklist;
   a._distill = distill;
@@ -2037,6 +2027,33 @@ function applySections(a: any, it: AskItem, distillShown: boolean): void {
 // per-card update gate, feed-card-gate.ts): a card is repainted when its object is a new one or a
 // board-level input it reads changed, and left alone otherwise. Everything this function reads outside
 // `it` is therefore in that key — an input added here is added there.
+// A notice card's body (T370): markdown through the chat's renderer and the one sanitizer, remote loads stripped on the
+// inert DOM BEFORE adoption (no request ever starts). Should the sanitizer itself fail (no DOM to build it on, as in a
+// document stand-in), the body falls to PLAIN TEXT: nothing unsanitized ever reaches the page, and the card still says its
+// words; the served lab reads the rendered form.
+// a plain renderer of its own: the chat's markdown module carries the math grammar and KaTeX, which the feed bundle
+// must not (feed-bundle pins); a notice body is prose, code and links
+const noticeMarked = new Marked({ gfm: true, breaks: true });
+function noticeBodyNodes(md: string): Node[] {
+  try {
+    const clean = sanitizeMd(noticeMarked.parse(md) as string);
+    stripRemoteLoads(clean, (typeof window !== "undefined" && window.location ? window.location.origin : ""), "");
+    return Array.from(clean.childNodes);
+  } catch (e) {
+    return [document.createTextNode(md)];
+  }
+}
+
+// A notice card's action buttons let go on EVERY push, gated or not (the review of PR 1757, medium 2): a click on a down
+// socket is dropped and never answered (a kernel restart), and the card gate skips an unchanged card's update, so a latch
+// that waited for the card's own update or the kernel's answer read "Send again…" for good. The kernel's noticeActionDone
+// and the next push both re-arm; a success on a dismissing card takes the card off at once (the noticeActionDone handler).
+function rearmNoticeButtons(card: any): void {
+  const acts = card._nActions as HTMLElement | undefined;
+  if (!acts || !card._it?.notice) return;
+  for (const b of Array.from(acts.querySelectorAll("button")) as HTMLButtonElement[]) { b.disabled = false; b.textContent = (b as any)._idle || b.textContent; }
+}
+
 function updateAskCard(card: HTMLElement, it: AskItem) {
   const a = card as any;
   a._it = it;   // the freshest payload copy — the right-click bell menu reads this, never a stale closure; and the gate's identity
@@ -2662,6 +2679,58 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   // clear — the next kernel push removes the card on success, or re-renders it (buttons re-enabled)
   // if the bus refused (e.g. the recipient is no longer live; the warn toast says why).
   // Human-in-the-loop is the whole point of directed trust.
+  // NOTICE CARD (T370, plans/notice-cards.md): the producer beside the name; the body through the markdown sanitizer with
+  // remote loads stripped BEFORE adoption; an image attachment inline from the file route with its pin (the picture as
+  // posted), only where the page can reach the kernel (canPreview) and only when the kernel allowed it; the actions as
+  // buttons that latch on the click and re-arm on the kernel's noticeActionDone (a refusal is toasted; a success with
+  // dismissOnAction leaves at once on the answer). A card back from Undo with its action spent carries no actions and
+  // `acted`, so no button shows. Rebuilt only when the notice's own fields change (the rev key).
+  const nt = it.notice || null;
+  const nProd = a._nProd as HTMLElement, nBody = a._nBody as HTMLElement, nAttach = a._nAttach as HTMLElement, nActions = a._nActions as HTMLElement;
+  for (const e of [nProd, nBody, nAttach, nActions]) e.style.display = nt ? "" : "none";
+  if (nt) {
+    const nkey = JSON.stringify([nt.key, nt.rev, nt.producer, nt.body, nt.attachment, nt.actions, it.sid]);
+    if ((a._nKey as string | undefined) !== nkey) {
+      a._nKey = nkey;
+      nProd.textContent = nt.producer ? "via " + nt.producer : "";
+      nProd.title = nt.producer ? "posted by " + nt.producer + " (revision " + nt.rev + ")" : "";
+      nBody.replaceChildren();
+      if (nt.body && nt.body.trim()) nBody.append(...noticeBodyNodes(nt.body));
+      nBody.style.display = nt.body && nt.body.trim() ? "" : "none";
+      nAttach.replaceChildren();
+      const att = nt.attachment;
+      let canPrev = false;
+      try { canPrev = canPreview(); } catch (e) { canPrev = false; }   // no location (a document stand-in): no fetch, the file's name instead
+      if (att && att.allowed && att.kind === "image" && canPrev) {
+        const img = el("img", "fask-nimg") as HTMLImageElement;
+        img.src = fileUrl(att.path, it.sid) + (att.pin ? "&pin=" + encodeURIComponent(att.pin) : "");
+        img.alt = att.path.split("/").pop() || "attachment";
+        img.title = att.path;
+        nAttach.appendChild(img);
+      } else if (att && att.allowed) {
+        const f = el("span", "fask-nfile"); f.textContent = att.path.split("/").pop() || att.path; f.title = att.path + " (" + (att.kind || "file") + ")";
+        nAttach.appendChild(f);
+      }
+      nAttach.style.display = nAttach.childNodes.length ? "" : "none";
+      nActions.replaceChildren();
+      for (const act of nt.actions || []) {
+        const b = el("button", "fdismiss fnact") as HTMLButtonElement;
+        b.textContent = act.label; (b as any)._idle = act.label;
+        b.onclick = (ev: Event) => {
+          ev.stopPropagation();
+          vscodeApi?.postMessage({ type: "noticeAction", itemId: it.itemId, sid: it.sid, route: act.route, body: act.body });
+          b.disabled = true; b.textContent = act.label + "…";
+        };
+        nActions.appendChild(b);
+      }
+      nActions.style.display = (nt.actions || []).length ? "" : "none";
+    }
+    // re-armed from the payload on EVERY update (the review of PR 1757, medium 2): a click on a down socket is dropped and
+    // never answered, so a latch that waited for noticeActionDone alone read "Send again…" for good; the quarantine card's
+    // shape, disabled = false on every update, and the kernel's answer or the next push both let go
+  } else {
+    a._nKey = undefined;
+  }
   const isQuar = it.blocked?.state === "quarantine";
   const qBody = a._qBody as HTMLElement;
   qBody.style.display = isQuar ? "" : "none";
@@ -4941,6 +5010,7 @@ function reconcileCol(listEl: HTMLElement, entries: Entry[], globalDesired: Set<
       // try, not recorded as painted.
       const ik = cardInputsKey(e.ask, gate);
       if (cardNeedsUpdate(card as any, e.ask, ik)) { updateAskCard(card, e.ask); (card as any)._ik = ik; }
+      rearmNoticeButtons(card as any);   // outside the gate: an identical push (the same card object) still lets a latched action go (T370)
     } else if (e.kind === "sess") {
       // grouped-mode session header — keyed per (column, sid): one session can head a run in EVERY column
       key = "s:" + listEl.id + ":" + e.sid;
@@ -5133,6 +5203,7 @@ function reconcileFocusCol(listEl: HTMLElement, entries: Entry[], gate: GateEnv,
       // re-sent the card or a board-level input it reads changed
       const ik = cardInputsKey(e.ask, gate);
       if (cardNeedsUpdate(card as any, e.ask, ik)) { updateAskCard(card, e.ask); (card as any)._ik = ik; }
+      rearmNoticeButtons(card as any);   // outside the gate: an identical push (the same card object) still lets a latched action go (T370)
     } else if (e.kind === "group") {
       key = "f:g:" + e.group.turnId;
       card = fsGroupEls.get(e.group.turnId) || makeGroupCard(e.group);
@@ -6624,6 +6695,26 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
     if (rearmLatches({ kind: "revive", id: m.id })) {
       feedToast("Couldn't revive " + String(m.name || m.id) + ": " + String(m.text || "unknown error"));
     }
+  } else if (m.type === "noticeActionDone" && typeof m.itemId === "string" && m.itemId) {
+    // the kernel's answer to a notice card's action (T370). A refusal: the latched buttons let go and the reason is said
+    // (the card stays). A success on a card that dismisses on its action: the kernel cleared it, so the card leaves NOW and
+    // no button re-arms (round four, high: re-armed, it invited a second click that delivered the words again before the
+    // push that removes the card landed). A success on a card that stays: its buttons let go.
+    const twins = cardTwins(m.itemId);
+    const dismisses = twins.some((c) => !!((c as any)._it?.notice?.dismissOnAction));
+    if (m.ok && dismisses) {
+      pendingCleared.add(m.itemId);   // a push already in flight must not paint it back before the kernel's rebuild lands
+      for (const c of twins) c.dispatchEvent(new MouseEvent("mouseleave"));   // removed under the pointer: the card's own leave logic (freezeLeave, the hover highlight off or back to the pin), as the clear paths dispatch it (round six, low)
+      for (const c of twins) { c.remove(); if (askEls.get(m.itemId) === c) askEls.delete(m.itemId); if (fsAskEls.get(m.itemId) === c) fsAskEls.delete(m.itemId); }
+      dropDismissed([m.itemId]);
+    } else {
+      for (const c of twins) {
+        for (const b of Array.from(((c as any)._nActions as HTMLElement | undefined)?.querySelectorAll("button") || []) as HTMLButtonElement[]) {
+          b.disabled = false; b.textContent = (b as any)._idle || b.textContent;
+        }
+      }
+    }
+    if (!m.ok) feedToast("The card's action was refused: " + String(m.error || "unknown error"));
   } else if (m.type === "retryRefused" && typeof m.sid === "string" && m.sid) {
     // the backend could not take the manual retry's send: the Retry this page latched lets go, and says why
     if (rearmLatches({ kind: "retry", sid: m.sid })) feedToast(String(m.text || "Couldn't retry: the kernel refused it."));

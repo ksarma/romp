@@ -648,7 +648,13 @@ test("pinned: the wiring the lifted slices cannot reach: showActive's branch, th
   assert.match(SHOW, /if \(av && snapKeep && snapKeep\.v !== av\) \{\s*\n\s*snapKeep\.v\.scrollTop = snapKeep\.scrollTop; snapKeep\.v\.stick = snapKeep\.stick;\s*\n\s*snapKeep = \{ v: av, scrollTop: av\.scrollTop, stick: av\.stick \};\s*\n\s*\}/, "the active changed under the view (the session being read closed): the survivor's place is held instead");
   assert.match(SHOW, /if \(ta\) \{ ta\.disabled = true; ta\.placeholder = "Pick a session above to write to it"; \}/);
   assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? liveSession\(activeId\) : null;/, "a transcript showing: the view hidden, its place written back");
-  const loading = SHOW.slice(SHOW.indexOf("if (activeId && (tabMeta.has(activeId) || hostOf(activeId))) {"), SHOW.indexOf("} else if (!empty) {"));
+  // the loading branch of the no-session path, to the else branch that follows it (searched from the branch's own start:
+  // a bare `} else {` is not unique in render.ts). Both anchors are read by name and must be found first: an absent one
+  // reads -1 and the slice goes vacuous (the old end, `} else if (!empty) {`, left showActive and the slice ran to SHOW's end)
+  const loadAt = SHOW.indexOf("if (activeId && (tabMeta.has(activeId) || hostOf(activeId))) {"), loadEnd = SHOW.indexOf("} else {", loadAt);
+  assert.ok(loadAt > -1 && loadEnd > loadAt,
+    "the loading branch's anchors (if (activeId && (tabMeta.has(activeId) || hostOf(activeId))) { and its } else {) are in showActive's slice, in that order: an absent one reads -1 and the slice goes vacuous");
+  const loading = SHOW.slice(loadAt, loadEnd);
   assert.match(loading, /if \(ta\) \{ ta\.disabled = false; setComposerAskMode\(\); \}/, "a pick that lands on a still-loading tab takes the box back from the view's disabled state (the placeholder through its one owner, 2026-09-10)");
   assert.match(RENDER, /if \(snapView\) \{ sl\.replaceChildren\(\); return; \}/, "no session's statusline chip under a section list");
   assert.match(RENDER, /if \(!activeId \|\| skeletonTabs\.ids\.has\(activeId\) \|\| !liveAsks\.has\(activeId\) \|\| snapView\) \{/, "no live ask card under it");
@@ -666,7 +672,10 @@ test("pinned: the wiring the lifted slices cannot reach: showActive's branch, th
   assert.ok(TABS_DELEGATE_AT > 0 && ACTS_AT > TABS_DELEGATE_AT && !RENDER.slice(TABS_DELEGATE_AT + 1, ACTS_AT).includes("delegate("), "the header acts sit on the #tabs delegate");
   assert.ok(!RENDER.includes('"group-active"'), "the no-op act is gone: every header folds");
   // the tab menu's closer marks the Escape it consumed, so the view's Escape yields to it
-  assert.match(RENDER, /window\.addEventListener\("keydown", \(e\) => \{ if \(e\.key === "Escape" && ctxMenuEl\) \{ dismissTabMenu\(\); e\.preventDefault\(\); \} \}, true\);/);
+  const CTX = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "ctx-menu.ts"), "utf8");   // the tab menu's closer is the shared builder's since v0.16.0
+  assert.match(CTX, /const onKey = \(e: KeyboardEvent\) => \{ if \(e\.key === "Escape"\) \{ e\.preventDefault\(\); closeContextMenu\(\); \} \};/);
+  assert.match(CTX, /document\.addEventListener\("keydown", onKey, true\);/, "at the capture phase, ahead of the view's own Escape");
+  assert.match(RENDER, /ctxMenuEl = showMenuCard\(menu, e\.clientX, e\.clientY, \{ onClose: onTabMenuClosed \}\);/);
   // the window's arrows and the host's next/prev commands step from the header's place too
   assert.match(RENDER, /const nb = collapsedTabIds\.has\(activeId\) \? neighborOfFolded\(lastStripItems, activeId, dir\) : null;\s*\n\s*if \(nb\) \{ e\.preventDefault\(\); setActive\(nb\); \}/, "the window's arrows");
   assert.match(RENDER, /const nb = neighborOfFolded\(lastStripItems, activeId, dir > 0 \? 1 : -1\);\s*\n\s*if \(nb\) setActive\(nb\);/, "cycleTab (nextTab / prevTab)");

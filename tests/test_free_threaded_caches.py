@@ -234,46 +234,42 @@ class NamesMemoSweep(unittest.TestCase):
                          "the retired entries are gone; the live one and the peer's insert stand")
 
 
-# ── race 4: the feed memo's forget walked the subagent-walk memo while a peer build inserted ──
-class FeedMemoForgetSweep(unittest.TestCase):
-    """_feed_memo_forget drops a departed session's walk memo (_SUBAGENT_DIRS_MEMO) outside _feed_memo_lock, and the
-    writer (_subagent_dirs_ident, from a build on another thread) takes no lock either, so the sweep's walk of the
-    dict met a peer's insert: RuntimeError, dictionary changed size during iteration, on 3.12 and 3.14t (the pull-in
-    review, round 1, item 5). The fix snapshots the keys before the filter. Staged the way race 3 is: a stale key's
-    hash, taken when the sweep tests it against the alive set, inserts the peer's fresh entry once."""
+# ── race 4: the subagents walk memo's forget walked the memo while a peer build inserted ──
+class SubagentTreesForgetSweep(unittest.TestCase):
+    """_subagent_trees_forget drops the walk memo's roots (_SUBAGENT_TREES) no alive session owns, under no lock, and the
+    writer (_subagent_tree, from a build on another thread) takes none either, so a walk of the live dict would meet a
+    peer's insert: RuntimeError, dictionary changed size during iteration, on 3.12 and 3.14t. The fork staged this race
+    on its sid-keyed walk memo (_SUBAGENT_DIRS_MEMO, evicted by _feed_memo_forget; the pull-in review, round 1, item 5,
+    with the 2026-09-16 snapshot fix); upstream's root-keyed memo (romp-on/romp pull 1788) replaced that memo, and its
+    forget walks list(_SUBAGENT_TREES) and pops with a default, so the case re-aimed at it at the 2026-09-17 catch-up
+    fold (ruling 9; the eviction rule itself is tests/test_subagent_tree_memo.py's). Staged the way race 3 is: a stale
+    root's hash, taken when the sweep tests it against the owned set, inserts the peer's fresh root once."""
 
     def setUp(self):
-        with km._feed_memo_lock:
-            self._saved = (dict(km._feed_memo), dict(km._FEED_MEMO_STATS), dict(km._FEED_MEMO_STATS["miss_by"]))
-            km._feed_memo.clear()
-            km._FEED_MEMO_STATS.update(entries=0, bytes=0, evict=0)
-        self._saved_walk = dict(km._SUBAGENT_DIRS_MEMO)
-        km._SUBAGENT_DIRS_MEMO.clear()
+        self._saved = (dict(km._SUBAGENT_TREES), dict(km._SUBAGENT_TREE_STATS))
+        km._SUBAGENT_TREES.clear()
+        km._SUBAGENT_TREE_STATS["evict"] = 0
 
     def tearDown(self):
-        with km._feed_memo_lock:
-            km._feed_memo.clear(); km._feed_memo.update(self._saved[0])
-            km._FEED_MEMO_STATS.clear(); km._FEED_MEMO_STATS.update(self._saved[1])
-            km._FEED_MEMO_STATS["miss_by"] = self._saved[2]
-        km._SUBAGENT_DIRS_MEMO.clear()
-        km._SUBAGENT_DIRS_MEMO.update(self._saved_walk)
+        km._SUBAGENT_TREES.clear(); km._SUBAGENT_TREES.update(self._saved[0])
+        km._SUBAGENT_TREE_STATS.clear(); km._SUBAGENT_TREE_STATS.update(self._saved[1])
 
-    def test_a_peer_insert_mid_forget_neither_aborts_the_sweep_nor_spares_a_departed_entry(self):
+    def test_a_peer_insert_mid_forget_neither_aborts_the_sweep_nor_spares_a_departed_root(self):
+        live_path = "/x/live/%s.jsonl" % SID
+        live, peer = str(km._subagents_dir(live_path)), str(km._subagents_dir("/x/peer/%s.jsonl" % PEER))
+
         def peer_insert():
-            km._SUBAGENT_DIRS_MEMO[PEER] = ("/x/peer/subagents", ("/x/peer/subagents",), (None,))
-        trigger = _PeerInsertsOnHash("stale-1", peer_insert)
-        km._SUBAGENT_DIRS_MEMO[trigger] = ("/x/s1/subagents", ("/x/s1/subagents",), (None,))
-        km._SUBAGENT_DIRS_MEMO["stale-2"] = ("/x/s2/subagents", ("/x/s2/subagents",), (None,))
-        km._SUBAGENT_DIRS_MEMO[SID] = ("/x/live/subagents", ("/x/live/subagents",), (None,))
-        km._feed_memo_put("stale-1", ("k",), "[]")
-        km._feed_memo_put(SID, ("k",), "[]")
+            km._SUBAGENT_TREES[peer] = ((peer,), (None,))
+        trigger = _PeerInsertsOnHash("/x/s1/stale-1/subagents", peer_insert)
+        km._SUBAGENT_TREES[trigger] = ((str(trigger),), (None,))
+        km._SUBAGENT_TREES["/x/s2/stale-2/subagents"] = (("/x/s2/stale-2/subagents",), (None,))
+        km._SUBAGENT_TREES[live] = ((live,), (None,))
         trigger.armed = True
-        gone = km._feed_memo_forget({SID})      # was: RuntimeError, dictionary changed size during iteration
+        km._subagent_trees_forget([{"sid": SID, "path": live_path}])   # over the live dict: RuntimeError, changed size
         self.assertFalse(trigger.armed, "the staged insert fired during the sweep")
-        self.assertEqual(gone, 1, "one memo entry departed")
-        self.assertEqual(set(km._feed_memo), {SID})
-        self.assertEqual(set(map(str, km._SUBAGENT_DIRS_MEMO)), {SID, PEER},
-                         "the departed sessions' walk memos are gone; the live one and the peer's insert stand")
+        self.assertEqual(set(map(str, km._SUBAGENT_TREES)), {live, peer},
+                         "the departed roots are gone; the owned one and the peer's insert stand")
+        self.assertEqual(km._SUBAGENT_TREE_STATS["evict"], 2, "one evict per departed root")
 
 
 # ── race 5: two passes over the parked comment creates ──
@@ -368,6 +364,162 @@ class JudgeUsageReader(unittest.TestCase):
         self.assertIsNone(t1.box["exc"]); self.assertIsNone(t2.box["exc"])
         self.assertEqual((len(got[1]), len(got[2])), (5, 5), "was: 10 — the chunk appended twice")
         self.assertEqual(len(km._JUDGE_USAGE_CACHE["rows"]), 5)
+
+
+# ── race 6, the walkers: the roll-up's walk and the band's cursor slice against the reader's left prune ──
+class JudgeUsageWalkers(unittest.TestCase):
+    """Three consumers of the reader's LIVE rows list (returned without a copy since the judging band memo keys its cursor
+    on the list's identity) against the reader's left prune, which shifts every index in place under _JUDGE_USAGE_LOCK on
+    whichever thread reads the log. The /analytics roll-up walks a snapshot taken under the lock (the 2026-09-17 fold's
+    kernel review, item 5: a walk over the live list counted 33 rows short when a prune landed under it), the timeline's
+    attach walk (_attach_run_usage) walks the same snapshot (round 2 of that review, item 2: round 1 covered the roll-up
+    alone, and a bare walk here matched 33 of 1,000 marks to a neighbour's call under the same prune), and the band's
+    cursor takes the prune count, the boundary check and the slice under ONE hold (item 6: a prune landing between the
+    check and the slice began the slice past the verified boundary, and one frame lost the rows in between). Each test
+    parks the walker at the one step its race is about, runs the reader's prune from a second thread that takes the lock
+    itself, and asserts the walk's result against the rows present when the walk began."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self._saved = (jd.STATE, dict(km._JUDGE_USAGE_CACHE), km._judging_band, jd.active_runs)
+        jd.STATE = Path(self.td.name)
+        jd.active_runs = lambda: []
+        km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[], pruned=0)
+        km._judging_band = None
+        self.R = km._JUDGE_USAGE_RETAIN
+
+    def tearDown(self):
+        jd.STATE, saved, km._judging_band, jd.active_runs = self._saved
+        km._JUDGE_USAGE_CACHE.update(saved)
+        self.td.cleanup()
+
+    @staticmethod
+    def _row(t, **kw):
+        r = {"judge": "captioner", "fsid": SID, "t": t, "sent": t - 5, "recv": t, "ms": 5000, "in": 10, "out": 5, "cost": 0.01}
+        r.update(kw)
+        return r
+
+    def _write(self, rows, mode="w"):
+        with open(jd.STATE / "judge-usage.jsonl", mode) as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+
+    def _prune_from_a_second_thread(self, row):
+        """The reader's own prune, from another thread that takes _JUDGE_USAGE_LOCK itself: append `row` to the log (its t
+        past the retention floor of the leading rows) and read. Returns the thread."""
+        def go():
+            self._write([row], mode="a")
+            km._judge_usage_rows()
+        return _run(go)
+
+    def test_the_roll_up_counts_the_rows_present_at_the_walks_start_under_a_prune(self):
+        base = 1781100000
+        self._write([self._row(base + i) for i in range(1000)])
+        live = km._judge_usage_rows()
+        self.assertEqual(len(live), 1000)
+        entered, gate = threading.Event(), threading.Event()
+
+        class _Parks(dict):
+            """Row 500 of the walk: its first read parks the walker, with rows on either side of it still to count."""
+            armed = True
+
+            def get(self, *a):
+                if _Parks.armed:
+                    _Parks.armed = False
+                    entered.set()
+                    gate.wait(WAIT)
+                return dict.get(self, *a)
+        live[500] = _Parks(live[500])
+        got = {}
+        t1 = _run(lambda: got.__setitem__("u", km._judge_usage(0)))
+        self.assertTrue(entered.wait(WAIT), "the walker reached row 500")
+        t2 = self._prune_from_a_second_thread(self._row(base + 33 + self.R))    # newest - RETAIN passes the first 33 rows
+        t2.join(WAIT)
+        self.assertIsNone(t2.box["exc"])
+        self.assertEqual((len(live), km._JUDGE_USAGE_CACHE["pruned"]), (1000 - 33 + 1, 33), "the prune and the append landed under the walk")
+        gate.set()
+        t1.join(WAIT)
+        self.assertIsNone(t1.box["exc"])
+        self.assertEqual(got["u"]["total"]["calls"], 1000, "was: 968, the walk skipped the 33 rows the prune shifted under its index")
+        self.assertEqual(got["u"]["total"]["in"], 10 * 1000)
+        self.assertEqual(got["u"]["byJudge"]["captioner"]["calls"], 1000)
+
+    def test_the_attach_walk_matches_every_mark_to_its_own_call_under_a_prune(self):
+        """The timeline's attach walk (_attach_run_usage): one mark per logged call, the walker parked at row 500 while the
+        reader's prune drops the first 33 rows and appends one. Over the live list the walk resumed at its index and skipped
+        the 33 rows the prune shifted under it, so 33 marks took a neighbour's call (the greedy match within 180s) and the last
+        33 matched nothing; over the snapshot every mark carries its own call. The parked row is wrapped inside the cache's
+        rows, not through a list the reader returned, so the case holds if the reader ever returns a copy."""
+        base = 1781100000
+        self._write([self._row(base + i) for i in range(1000)])
+        self.assertEqual(len(km._judge_usage_rows()), 1000)
+        entered, gate = threading.Event(), threading.Event()
+
+        class _Parks(dict):
+            """Row 500 of the walk: its first read parks the walker, with rows on either side of it still to attach."""
+            armed = True
+
+            def get(self, *a):
+                if _Parks.armed:
+                    _Parks.armed = False
+                    entered.set()
+                    gate.wait(WAIT)
+                return dict.get(self, *a)
+        c = km._JUDGE_USAGE_CACHE
+        c["rows"][500] = _Parks(c["rows"][500])
+        judging = [{"sid": SID, "judge": "captioner", "t": base + i, "kind": "segment", "text": "m%d" % i} for i in range(1000)]
+        t1 = _run(lambda: km._attach_run_usage(judging, 0, {SID}))
+        self.assertTrue(entered.wait(WAIT), "the walker reached row 500")
+        t2 = self._prune_from_a_second_thread(self._row(base + 33 + self.R))    # newest - RETAIN passes the first 33 rows
+        t2.join(WAIT)
+        self.assertIsNone(t2.box["exc"])
+        self.assertEqual((len(c["rows"]), c["pruned"]), (1000 - 33 + 1, 33), "the prune and the append landed under the walk")
+        gate.set()
+        t1.join(WAIT)
+        self.assertIsNone(t1.box["exc"])
+        self.assertEqual(sum(1 for mk in judging if mk["ms"] == 5000), 1000,
+                         "was: 967, the walk skipped the 33 rows the prune shifted under its index and the last 33 marks matched nothing")
+        self.assertEqual([mk["recv"] for mk in judging], [base + i for i in range(1000)],
+                         "every mark carries its OWN call's response time, none a neighbour's")
+
+    def test_the_bands_cursor_takes_the_count_the_check_and_the_slice_under_one_hold(self):
+        R, NOW = self.R, 1_800_000_000
+        base = NOW - R - 100                                      # three rows the next append pushes out of retention
+        self._write([self._row(base + i) for i in range(3)] + [self._row(base + 50 + i) for i in range(40)]
+                    + [self._row(NOW - 1000 + i) for i in range(5)])
+        c = km._JUDGE_USAGE_CACHE
+        km._judge_usage_rows()
+        entered, gate = threading.Event(), threading.Event()
+
+        class _ParksOnSlice(list):
+            """The reader's live list whose one ARMED slice read (the band's `rows[skip:]`) parks the thread taking it; the
+            reader's own reads (an index, an append, the left prune) run as on a plain list."""
+            armed = False
+
+            def __getitem__(self, i):
+                if isinstance(i, slice) and _ParksOnSlice.armed:
+                    _ParksOnSlice.armed = False
+                    entered.set()
+                    gate.wait(WAIT)
+                return list.__getitem__(self, i)
+        c["rows"] = live = _ParksOnSlice(c["rows"])              # the same object across builds: the memo keys on it
+        t0 = NOW - 86400
+        first = km._run_judging(t0, {SID}, [])
+        self.assertEqual([e["t1"] for e in first], [NOW - 1000 + i for i in range(5)])
+        mb = km._judging_band
+        self.assertEqual((mb[0] is live, mb[1]), (True, 43), "the cursor covers the 43 leading pre-horizon rows")
+        _ParksOnSlice.armed = True
+        got = {}
+        t1 = _run(lambda: got.__setitem__("out", km._run_judging(t0 + 1, {SID}, [])))
+        self.assertTrue(entered.wait(WAIT), "the band passed its boundary check and reached its slice")
+        t2 = self._prune_from_a_second_thread(self._row(base + 3 + R))    # newest - RETAIN passes the first three rows
+        time.sleep(SETTLE)                                        # the writer's chance: the lock, or the unguarded live list
+        gate.set()
+        t1.join(WAIT); t2.join(WAIT)
+        self.assertIsNone(t1.box["exc"]); self.assertIsNone(t2.box["exc"])
+        self.assertEqual((len(live), c["pruned"]), (3 + 40 + 5 + 1 - 3, 3), "the prune and the append landed")
+        self.assertEqual([e["t1"] for e in got["out"]], [NOW - 1000 + i for i in range(5)],
+                         "the frame carries every horizon row present at the read: was three short, the slice begun past the boundary")
 
 
 # ── race 7: the postal sender memo is one tuple, rebound whole ──

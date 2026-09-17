@@ -49,18 +49,28 @@ postal bus, tests) converges in place with the kernel left up: the served bundle
 postal change restarts the bus alone, and no turn is cut. A converge to `main` in
 this mode comes no sooner than 25 minutes after the last deploy restart, so a busy `main` costs
 at most one restart per batch of merges. The one command that waits for a quiet window is
-`romp refresh --quiet`. Reloads are separate from that control and happen in every
-mode: a page the kernel serves reloads itself when the kernel serving it restarts or serves a
-newer build than the page runs, once any gesture in progress has ended and any file still
-shipping has settled, and the notification center's one line says which happened. The banner that
-reads "A newer romp build is available" appears only where the page cannot reload itself, such as
-a host that forbids it; the VS Code panes keep their own prompt, because their bundle comes from
-the installed extension. A chat page with an attachment still uploading first finishes the
-upload, then reloads. The message waiting on the upload is sent if that session's tab is the
-active one; otherwise it stays in that tab's composer with the file attached, and a notice says
-so. A notice still on screen when the page reloads, that one or a failed save's, is shown again
-on the fresh page. If the upload has not finished within a minute, the page reloads anyway and
-reports the lost attachment on the next load.
+`romp refresh --quiet`. Reloads are separate from that control and the same in every mode: a
+page the kernel serves never reloads on its own. A restart onto the same build is invisible to an
+open page: it reconnects, and no line appears. When the kernel serves a newer build than the page
+runs, the page offers the reload on one persistent line, "A newer romp build is ready.", with
+**Reload** and **Not now**; Not now is remembered per build in that browser, so the same build
+never asks again and a later one does. The explicit gestures keep their reload: the update
+banner's second click, on **Restart**, reloads once the new kernel is up (the first, **Update**,
+only arms the confirm), the rail's restart reloads nothing
+for an unchanged build and offers the reload for a changed one, and the Reload buttons are
+clicks. An accepted reload waits for any gesture in progress and for a chat tab's own hold: a
+message held behind an upload, or an attachment still uploading, which is waited for until it
+finishes or its acknowledgement can no longer arrive. A held message that has not gone out after
+a minute stops holding the page: the reload goes ahead, and the fresh page says why. That minute
+bounds any other hold a tab may raise; the upload itself, and a message queued while the page's
+connection is down, are never cut short and end only on their own event. Once the fresh page is
+up, the notification center's one line says what happened. The message waiting on the upload is
+sent if that session's tab is the active one; otherwise it stays in that tab's composer with the
+file attached, and a notice says so. A notice still on screen when the page reloads, that one or
+a failed save's, is shown again on the fresh page. A page running without the reload machinery,
+such as one loaded before it existed, shows the older line "A newer romp build is available"
+instead, once; the VS Code panes keep their own prompt, because their bundle comes from the
+installed extension. [What survives a restart](#what-survives-a-restart) has the detail.
 
 **User todos.** A session can flag a decision or an input it needs from you and keep working
 meanwhile. Each open todo is listed under *Waiting on you* on the card at the bottom of that
@@ -147,7 +157,7 @@ These are for scripting and for agents rather than daily use:
 | `romp api-health` | The API-health signal as JSON (see [The API-health signal](#the-api-health-signal)): per-credential, per-model-family retry and give-up rates over rolling windows, with a derived state |
 | `romp restart-metrics [--json] [--window day\|week] [--anchor D] [--since D] [--until D] [--tz Z] [--no-live]` | What kernel restarts do to the sessions (see [Restart metrics](#restart-metrics)): turns cut per restart and per window, outage and reconcile times, quiet-window waits, orphans and reaps, crash heals, redo cost, turn latency, per-session and kernel memory and CPU; a text summary per window, or the whole document as JSON |
 | `romp mail …` | The postal service from the shell (below) |
-| `romp send <session> [--tag <label>] <text>` | Hand a session a message, on either backend. Anything a script, cron job, or launcher composes SHOULD carry a tag (one word, letters/digits/dashes, up to 24 chars): the chat then renders it as machine-sent under that label instead of as the user's typed words. Raw POST /send callers pass it as the JSON `tag` field (`{name, text, tag}`; a malformed tag fails the whole send, loudly); `--tag` is the CLI's equivalent. Both resolve to the `<!-- romp-tag: <label> -->` marker in the delivered text. An unknown session is refused with the kernel's reason and exit 1; a session the kernel knows whose backend refuses it (an ended Claude Code session addressed by id, an ended comment thread by id or name) is refused the same way, with the kernel's reason, and the message is not delivered; a session an attached machine runs, addressed by the name that machine lists or by its id, receives it through that machine's kernel, whose refusal is relayed in its words |
+| `romp send <session> [--tag <label>] <text>` | Hand a session a message, on either backend. Anything a script, cron job, or launcher composes SHOULD carry a tag (one word, letters/digits/dashes, up to 24 chars): the chat then renders it as machine-sent under that label instead of as the user's typed words. Raw POST /send callers pass it as the JSON `tag` field (`{name, text, tag}`; a malformed tag fails the whole send, loudly); `--tag` is the CLI's equivalent. Both resolve to the `<!-- romp-tag: <label> -->` marker in the delivered text. An unknown session is refused with the kernel's reason and exit 1; a session the kernel knows whose backend refuses it (an ended Claude Code session addressed by id, an ended comment thread by id or name) is refused the same way, with the kernel's reason, and the message is not delivered; a session an attached machine runs, addressed by the name that machine lists or by its id, receives it through that machine's kernel, whose refusal is relayed in its words. A kernel that took the request but answered late is exit 3: the message may already have been delivered, so do not retry blindly (`ROMP_KERNEL_HTTP_TIMEOUT_S`, under Messages across a restart) |
 | `romp new --model <id> <name>` | Model for the Claude Code session: a family alias such as `fable` (follows the family's newest release) or a full id such as `claude-fable-5` (a pin); re-asserted if `<name>` already runs |
 | `romp new --effort <level> <name>` | Reasoning effort for the Claude Code session (`high`, `ultracode`, ...); re-asserted if `<name>` already runs |
 | `romp new --env NAME=VALUE <name>` | A per-session env var for the Claude Code session, repeatable; a re-run against a running `<name>` replaces the whole set; vars not re-named are dropped |
@@ -155,9 +165,9 @@ These are for scripting and for agents rather than daily use:
 | `romp new --in <tag> <name>` | Put the new Claude Code or Codex session in `<tag>`, so its tab lands in that group (repeatable; a name that does not exist yet creates the tag). Applies to `<name>` if it already runs. The kernel echoes `tags` (the session's tags) and, per `--in`, the stored name it landed as (`tagsApplied`, beside `tagsRequested`): a name the store trimmed or clamped prints as "applied as"; a missing echo, or a tag the kernel refused, prints a warning |
 | `romp new --no-inherit <name>` | Run inside a romp session, `romp new` sends that session's stable id (`ROMP_SID`) as the new session's `parent` (marked `parentAuto`), and the kernel copies the parent's tags onto the child; inside a comment thread, the parent is the session the thread belongs to. This flag withholds the parent, so the new session starts outside them. A kernel that never ran the calling session creates the session untagged and echoes `parentIgnored`, which the CLI reports in one line. Raw POST /new callers pass `parent` (a live name or a known sid; an unknown one is a 400 unless `parentAuto` is set) and `tags` (a list of names); opening a name that already runs never inherits; a name that is being registered by another request right now is a 409 whose `error` says which door holds it |
 | `romp tag [<name>] [--add <session>…] [--remove <session>…] [--color <hex>] [--rename <new>] [--delete] [--host <kernel>]` | Session tags. Bare, it lists them; with a name, it merges one tag (created on first use). A tagged session leaves the untagged view, and its tab sits in that tag's section of the strip. `--host` edits an attached kernel's tag |
-| `romp interrupt <session>` | Interrupt whatever turn a session is taking; the session stays open. A session an attached machine runs, addressed by the name that machine lists or by its id, is interrupted by that machine's kernel. An unknown session is refused with the kernel's reason and exit 1 |
+| `romp interrupt <session>` | Interrupt whatever turn a session is taking; the session stays open. A session an attached machine runs, addressed by the name that machine lists or by its id, is interrupted by that machine's kernel. An unknown session is refused with the kernel's reason and exit 1; a kernel that took the request but answered late is exit 3 (it may already have acted: do not retry blindly) |
 | `romp compact <session> [--wait] [--timeout <s>]` | Compact a session's context in place (Claude's `/compact`: summarize the history, keep the session's name, id, mailbox, and watches): the alternative to ending and recreating a long-lived session, and the external hand a session needs since it cannot `/compact` itself mid-turn. Quiet session → compacts now; open turn → queued, fires alone the moment the turn ends (the same safe path the chat's compact button uses). `--wait` blocks until the compaction has started and cleared, polling the kernel's own `compacting` signal on the `/sessions` rows (also the field to point a `romp watch` predicate at for scripted recycling); exits 1 honestly on timeout. A remote session's compaction is requested on its own kernel; `--wait` can't follow it from here and says so |
-| `romp end <session>\|self [--now\|--when-idle]` | End a session, at once by default. `--when-idle` ends it once its current turn settles, so the closing reply lands first; a session an attached machine runs, addressed by the name that machine lists or by its id, is ended by that machine's kernel, and `--when-idle` waits on the session's settle there. `self` names the calling session (from inside a session) and defaults to `--when-idle`, which `--now` overrides. An unknown session is refused with the kernel's reason and exit 1 |
+| `romp end <session>\|self [--now\|--when-idle]` | End a session, at once by default. `--when-idle` ends it once its current turn settles, so the closing reply lands first; a session an attached machine runs, addressed by the name that machine lists or by its id, is ended by that machine's kernel, and `--when-idle` waits on the session's settle there. `self` names the calling session (from inside a session) and defaults to `--when-idle`, which `--now` overrides. An unknown session is refused with the kernel's reason and exit 1; a kernel that took the request but answered late is exit 3 (it may already have acted: do not retry blindly) |
 | `romp move <session> <dir>` | Move a session's working directory to `<dir>` (the folder must already exist); the conversation, name, mail and history stay with the session. Quiet session → moves now; open turn → queued, fires when the turn ends. See [Moving a session to another folder](#moving-a-session-to-another-folder) |
 | `romp emoji <session> [<emoji>\|--clear]` | Put one emoji before the session's name on its tab; `--clear` removes it, and an empty argument is a usage error, not a clear; with no argument, print the current one (an empty line when there is none). Exactly one emoji is accepted; a refusal prints the kernel's reason. A live session is named by name or id, a dormant one by id, for setting, clearing and reading alike. A read by an id that has a record on this machine comes from the names registry and works with the kernel stopped; any other read (a name, or the id of a session an attached machine owns) goes through the kernel's `GET /emoji?target=`, which forwards to the owning machine as the set does. See [A session's tab emoji](#a-sessions-tab-emoji) |
 | `romp checkin <host>` / `romp checkout <host>` | Publish this machine to an attached hub, or withdraw it. The hub files this machine under the name it declares only when that name is a machine name (letters, digits, dots, hyphens or underscores, starting with a letter or digit, at most 128 characters). Any other declared name is refused with a 400 that states the rule and echoes nothing, is recorded nowhere, and is said once on both machines: on the hub, one stderr line and one Log entry under the `refused` kind, naming the value as a clipped repr; on this machine, one stderr line, one dial-log record and one Log entry carrying the hub's reason, after which the same name is not re-sent until it, or the hub's kernel, changes. A hub's `POST /tunnels/trust` for a host it has never seen (the remembered-hosts entry that tiers relayed mail by origin) holds the wider rule that registry's writers share, a machine name or an ssh alias (letters, digits, dots, hyphens, underscores, at-signs, colons or square brackets, not starting with a hyphen, at most 255 characters), because a hub keys an attached peer by its ssh alias and carries that alias when you set trust between two of your machines; anything else is refused the same way, on the hub, with nothing recorded. `ROMP_HOST_NAME` (the kernel) and `ROMP_POSTAL_HOST` (the postal bus) override the declared name only when they clear the same rule; an unusable value (a space, an at-sign, a trailing newline) is set aside once, on stderr or in the bus log, and the derived name (the short hostname, else the platform's machine name, else a minted id) is used |
@@ -237,6 +247,10 @@ the text under `caption`. A record's own `id` field is not the session's: it
 identifies the turn within it. There is no `summaries/` directory; an older
 layout had one, and reading it fails silently, since a missing directory just
 yields nothing rather than an error.
+
+### Notice cards: a feed card without a judge
+
+`romp card --key <key> --title <text> [--body <markdown> | --body-file <path>] [--session <name>] [--attach <path>] [--needs-you] [--expires <seconds>] [--producer <label>]` posts a **notice card** to the feed: a card the kernel makes from what you hand it, with no judge involved (design: plans/notice-cards.md). Inside a session the card belongs to that session; `--session <name>` names another. The `--key` is the card's stable name and is required: a second post under the same key is a **revision** of the card (it replaces the earlier one on the board, and shows again even if you had dismissed the earlier one, since it carries new information, and its number counts the archived posts of the key too, so a dismissed card's id is never minted again); a different key is a new card. `--needs-you` files it under Blocked, else under Completed. `--attach` names an image, a PDF or a text file the card shows inline or by name; the kernel judges the path the way the file preview does (your home or the session's folder, no secrets-shaped names, the size caps) and keeps a pinned copy of an image as posted. A card leaves the board on your dismissal (Clear; Undo restores it, copying its rows back out of the archive when the retention pass has already moved them), on a revision, or at `--expires` seconds from the post. The kernel keeps every post in `notices/<session>.jsonl` under the state directory and archives dismissed, expired and superseded rows to `notices-archive/`; a session shows at most fifty live keys at once, the oldest superseded past that. The same door is `POST /notice` on the kernel (the `/watch` shape: `{"id"|"name", "key", "title", "body"?, "attachment"?, "needsYou"?, "expiresAt"?, "producer"?}`), and producers inside romp use it for cards such as the messages dropped at a restart.
 
 ### Moving a session to another folder
 
@@ -1638,23 +1652,50 @@ in that session's scope and keeps running. Either way the next kernel boot runs
 
 ### What survives a restart
 
-A kernel restart ends every session's CLI. On `romp refresh`, the manager's
-restart-all, `romp down` or a service stop, the kernel receives SIGTERM and drains: it
-closes each CLI, and a CLI still running when the drain's bound expires gets
-SIGTERM, then SIGKILL. The manager does the same to the kernel: one still
+A kernel restart does not end a hosted session's CLI. By default every session's
+CLI runs under a per-session host process (the section on hosts below): on `romp
+refresh`, the manager's restart-all, `romp down` or a service stop, the kernel
+receives SIGTERM and drains by detaching from every host. The host keeps the CLI
+and its turn, journals what it says and parks what it asks, and the next kernel
+attaches by the lease and replays what it missed, so the turn is never cut and
+the session is told nothing. A session running as a plain kernel child (the
+`session-hosts` setting written `off`, or a session from before hosts that has
+not respawned since) is closed by the drain as before: a CLI still running when
+the drain's bound expires gets SIGTERM, then SIGKILL, and that session resumes
+with its history and is told what was cut: its in-flight turn, if it had one, and
+each background task, with a request to check whether each is still running
+before relaunching it. The manager does the same to the kernel: one still
 running eight seconds after the manager's SIGTERM (`SHUTDOWN_GRACE_MS`, 8000 ms
 unless `ROMP_SHUTDOWN_GRACE_MS` says otherwise), on a restart as on a stop,
-gets SIGKILL, so no kernel outlives the stop that was meant for it. A crash respawn has no drain: the kernel died without
-running one, its CLIs are orphaned, and the next kernel's boot reaper
-terminates them (see below). The CLI's harness background tasks do not all end
-with it. Its timers and monitors live inside the CLI process and end when it
-does. A background shell is a separate process the CLI started, and a CLI
-killed by SIGKILL runs no cleanup, so its shells are re-parented and may keep
-running. The session resumes with its history and is told what was cut: its
-in-flight turn, if it had one, and each background task, with a request to
-check whether each is still running before relaunching it. A kernel restart has
-never touched work a session deliberately detached: a tmux server it started
-itself, `setsid` children and other processes that outlive their shell.
+gets SIGKILL, so no kernel outlives the stop that was meant for it. A crash
+respawn has no drain: the kernel died without running one; a hosted CLI keeps
+running under its host and is attached at the next boot, a plain child is
+orphaned and the next kernel's boot reaper terminates it (see below). The CLI's
+harness background tasks do not all end with a plain child. Its timers and
+monitors live inside the CLI process and end when it does. A background shell is
+a separate process the CLI started, and a CLI killed by SIGKILL runs no cleanup,
+so its shells are re-parented and may keep running. A kernel restart has never
+touched work a session deliberately detached: a tmux server it started itself,
+`setsid` children and other processes that outlive their shell.
+
+The dashboard page stays on screen across a restart. Its panes reconnect as they
+do after a dropped socket (the watched tab rebuilt whole, the other tabs as
+skeletons that fill on demand), and a restart onto the same build is invisible
+beyond that: no reload, no line. When the kernel serves a newer build than the
+page loaded (a restart onto a new build, or a converge in place), the page offers
+a reload rather than taking one: one line near the top of the window, "A newer
+romp build is ready.", with **Reload** and **Not now**. Reload keeps drafts, scroll
+position, the active tab and the notification center, and lands the fresh page on
+the chat diet; Not now is kept per build, so the same build never asks again and a
+later one does. The old page keeps working against the new kernel meanwhile: the
+chat wire is negotiated per version, an action the new kernel does not know in the
+old page's form falls back to the older path, and when that happens the line says
+the page is behind the kernel. The rail's restart button follows the same rule
+(an unchanged build reloads nothing, a changed one is offered); the update
+banner's second click, on **Restart**, which posts the update after **Update** armed
+it, still reloads once the new kernel is up. A kernel that must force a reload for correctness can send the page
+`reloadRequired`, honoured through the same holds a reload always waits on (a
+held pointer, a draft, an upload in flight); nothing sends it today.
 
 A terminal session from before 2026-09-11, when Romp's terminal (tmux) backend
 was removed, is detached work of that kind from then on. One still running when
@@ -2370,6 +2411,51 @@ same amount. The raise on the session side separates the tiers: the wrapper
 writes it in the session's own process, after the kernel has spawned it, so the
 kernel keeps its own. None of this subsection applies on the launchd path.
 
+### Messages across a restart
+
+A message sent to a session while its CLI is busy waits in the kernel's queue
+for that session; one the CLI has taken but not yet written to the transcript
+is the CLI's to land. A restart ends the CLI, so at the next boot, and at any
+fresh spawn for the session, the kernel checks every message the dead CLI was
+holding: one that reached the transcript is left alone, and one that did not is
+put back into the session's queue behind whatever is already waiting, in send
+order, so the session reads it as if the restart had not happened. Two
+variables bound this:
+
+- `ROMP_REDELIVER_MAX_AGE_S=<seconds>` is the age line on that re-delivery;
+  the default is `1800`, thirty minutes. A message older than this at the
+  restart is not re-fed: it is kept in the chat marked never delivered, where
+  it can be restored or dismissed, and a notice card (the section above) is
+  posted for the session, under Blocked, one per session per restart, naming
+  how many messages were dropped and, for each, its time and its text. The
+  card offers **Send again** for each message (up to three; with two or more
+  there is also **Send all again**, which re-sends them as one message in
+  order, and with four or more that is the only button), and one click spends
+  the card, so a message not re-sent from it is restored from the chat
+  instead; a typed command gets no button. Clearing the card lets them go.
+  The session itself is not told anything. The line exists
+  because a landing the kernel's transcript scan cannot see would otherwise be
+  re-fed at every restart, for days (measured 2026-09-12: the same texts re-fed
+  at two restarts in one night, one of them landing six times). It applies
+  only to messages the CLI was holding, never to the queue proper: a message
+  still waiting its turn is delivered however long the kernel was down. `0`
+  switches the line off, and every unlanded message is re-fed whatever its
+  age. The kernel reads it once, when it starts, so set it where the kernel's
+  service sees it (`service.env`, then a restart).
+- `ROMP_KERNEL_HTTP_TIMEOUT_S=<seconds>` is how long `romp send`, `romp
+  interrupt`, `romp end` and the first message of `romp new -m` wait for the
+  kernel's answer; the default is `10`. A kernel that took the request but
+  answered late (mid-restart, or under load) is exit `3`, with a line saying
+  the message may already have been delivered and not to retry blindly
+  (`romp new -m` says to check the session before sending it again). This `3`
+  is the kernel's late answer, not the manager control client's `3`, which
+  means the manager answered and refused (The manager's control port, above).
+  A kernel nobody is listening on is still `kernel not reachable`, exit `1`,
+  with nothing sent and curl's own exit code named on the line; a refusal the
+  kernel wrote is its own words, exit `1`. Widen it on a slow box. There is no
+  off: a send with no bound would hang the script that runs it. Each command
+  reads it from its own environment, so it can be set for one call.
+
 ## Kernel performance counters
 
 `GET /perf` returns one JSON document of counters the kernel keeps at all
@@ -2411,6 +2497,89 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   blocks flat while rss climbs points at the allocator, blocks climbing at an
   object graph, a `caches` gauge climbing at that cache. `romp perf` prints
   them on a `memory` line with the window's deltas beside the levels.
+- `heap`: where that resident size sits at the moment of the read, so a
+  large `process.rss_kb` can be attributed live, without a restart or a
+  debugger (the lag investigation, 2026-09-15, had to attribute a 5-6 GiB
+  resident size from cumulative byte counters and lab runs). Every value is
+  a GAUGE, the occupancy at the read and not a count since boot, with one
+  exception named below. `allocatedBlocks` is the number of memory blocks
+  the interpreter's object allocator holds at the read, of any size
+  (`sys.getallocatedblocks`; 0 on a build that cannot count them); `gc` is
+  the collector's `enabled`, its `counts` (the young generation's
+  allocations since its last collection, then how many times each younger
+  generation was collected since the older's last) and `thresholds` as
+  lists, and `stats` (per generation: `collections`, `collected`,
+  `uncollectable`), which is cumulative by nature; `tracing` says whether a tracemalloc tracer runs in
+  this process. Then the caches that hold session content: `hydrated` (the
+  lazy bodies read on demand: `entries`, and `bytes`, the records' length on
+  disk, which `capBytes` bounds, a proxy that locates the holder without
+  sizing it: decoded bodies usually weigh more, but escaped text can make the
+  disk bytes exceed the decoded storage),
+  `assemblyEntries` (the assembly cache's entries), `parseSlots` (the one
+  parse store's slots, one per session, cut and leaf), `lazyIndexes` (the
+  lazy indexes alive, a weak count), `materializedLruSlots` (the
+  materialized-atom LRU's slots, not the atoms: on a kernel whose LRU holds
+  its atom lists weakly a collected list's slots stay until they expire, so
+  this is an upper bound on the live materialized atoms; where the LRU holds
+  the lists strongly the two are equal; it is the same read as
+  `asmIndex.resident`, repeated here so the holders sit together),
+  `judgeUsageRows` (the judge-usage reader's rows in memory), `builtChat`
+  (`tabs` cached, their `events`, the cached payloads' event counts, a count
+  and not bytes, the occupancy measure of that cache, and `serializedBytes`, the sum over the
+  cached JSON strings, which only the index wire, a proto-1 client, stores,
+  so under the shipped wire it reads 0), `imgCache` (`entries` and `bytes`
+  of the preview data URLs; the cache has no cap, so this gauge is
+  O(entries) over whatever it holds, a refused file counting as an entry of
+  zero bytes). These occupancy gauges attribute a resident size to its
+  holders; they do not sum to it. The transcript record cache, the largest
+  resident holder when the kernel is large, is not among them: its occupancy
+  already rides this response under `recordCache` (`entries` and `bytes`
+  against `budgetBytes`), so a resident size these gauges leave unaccounted
+  for is read there first. The block reads a length or a counter per
+  cache, under the cache's own lock where its readers take one and over a
+  copied value list otherwise; it walks no object graph, collects nothing,
+  evicts nothing, fills nothing and reads no file. A gauge this process
+  cannot read (an accessor the runtime lacks, a container the source has not
+  got, a cached entry of a shape the gauge does not know) is `null`, said
+  once on stderr.
+- `gc`: the interpreter's garbage collections, counted and timed (2026-09-16:
+  pusher cycles stalled for 9-33 s and a profile of the process caught a 9.2 s
+  generation-2 collection charged to whichever stage happened to be running,
+  with no counter in the kernel to tie the one to the other; the collector's
+  own stats carry no durations). A `gc.callbacks` hook the kernel installs
+  once at boot times every collection from its start to its stop callback,
+  wall time on whichever thread triggered it. The hook never waits on the
+  kernel's own locks (`gc_event` in `kernel/kernel.py` says why: a collection
+  can run inside a locked region of the very thread that holds the lock).
+  `gen` maps each generation (`"0"`, `"1"`, `"2"`; a full collection is
+  generation 2) to `collections` (how many ran since the counters started),
+  `msSum`, `msMax` and `msLast` (their summed, largest and last pause) and
+  `collectedLast` (the objects the last one freed). `thresholds` and `counts`
+  are `gc.get_threshold()` and `gc.get_count()`, repeated from `heap.gc` so
+  the block reads on its own (how near the next collection is); `frozen`
+  counts the objects moved out of the collector's reach by `gc.freeze`, which
+  it never scans; `errors` counts callback failures (counted, never raised
+  into the collector; the first in the process is said once on stderr, a
+  line prefixed `perf: gc hook:`, the rest counted only); `hooked` says
+  whether the kernel's `gc.callbacks` hook is installed, so zeros with
+  `hooked` false mean no hook, not no collections. To read a slow cycle: find
+  its row in `pusher.stageRing` (or `jobs.stageRing`) and read the row's `gc`
+  (`null` when the cycle closed without an opening mark): `n0`, `n1` and
+  `n2`, the collections per generation that ran anywhere in the process
+  while the cycle was open, on whichever thread triggered them (a collection
+  holds the interpreter lock for its whole pause, so the cycle waited on it
+  either way), and `ms2`, the generation-2 milliseconds among them; the
+  young generations' pauses are in `gen.0` and `gen.1` only. A row whose
+  `n2` is 1 and whose `ms2` is most of
+  `s` x 1000 spent its time in the collector, not in the stage that was
+  running, and the stage's own `ms` overstates it by that much. A collection
+  inside overlapping pusher and jobs windows shows in both rings' rows, so
+  neither ring sums to `gen.collections`. `heap.gc` beside it carries the
+  collector's own gauges and its cumulative `stats`; the pauses live only
+  here. A collector accessor this runtime lacks reads `null`, said once on
+  stderr, as in `heap`; the tallies themselves need none. The kernel-samples
+  rows carry the same generation-2 tallies as `gcGen2Collections` and
+  `gcGen2MsSum`, cumulative, to difference per interval beside `rssKb`.
 - `jobs`: the jobs thread, which runs the housekeeping (the sweeps, the
   reminder walk, the interrupt tick, the persists, the pause and retry
   family) off the pusher since 2026-09-13, so no browser frame waits on a
@@ -2464,7 +2633,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   cycle at once. `ROMP_PUSH_MIN_INTERVAL=<seconds>` in the kernel's
   environment overrides it; 0 removes the bound.
   `firstCycle` and `stageRing` (T397): the boot's first pusher cycle's stage
-  split and the newest cycles' splits, each `{s, t, stages}` with, per stage,
+  split and the newest cycles' splits, each `{s, t, stages, gc}` (`gc` is the
+  cycle's own collections, described under `gc` above) with, per stage,
   its wall `ms` (one decimal), the reader's `bytes` off disk and the assembly
   cut's `hydrated` bytes ON THE PUSHER'S THREAD since the previous stage
   boundary (another thread's reads in the window, the judges' first pass or
@@ -2502,7 +2672,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   finishes its first LAST, so `stages` carries both splits (a key both own,
   `jobs.other`, is summed); a jobs pass still open ten minutes after the
   pusher's first cycle closed has the row written without it, marked
-  `jobsFirstPassPending`. The row also carries `parse`, the assembly's road counters at
+  `jobsFirstPassPending`. The row's `gc` carries each first split's collector
+  delta on its own, `firstCycle` and `firstPass` (each the split row's `gc`,
+  the shape the `stageRing` rows carry, or `null`), never summed: the tallies
+  are process-wide, so a collection inside both windows is in both deltas and
+  a sum would count it twice; the key is absent when neither split has one.
+  The row also carries `parse`, the assembly's road counters at
   the first cycle's end (T398): `serve`, `fold`, `restore` (with
   `restore:afterDemote`, the restores taken over an entry the gates demoted
   instead of a whole parse, and `restore:chainRefused`, a document that stood
@@ -2563,7 +2738,22 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   chain walk; the restore falls to the whole parse, at boot
   and after a demotion alike, and `seeded:chainRefused` counts the same
   refusal by the chain-membership and file-rewound readers, which then walk
-  the file cold, T402), `full` with
+  the file cold, T402), `foreign:<reason>` (the judges' walk over ANOTHER
+  session's leaf refused that session's document quietly for the reason named,
+  the document standing for its owner: a reader that does not own a document
+  never notes it and never unlinks it, 2026-09-15; `foreign:refusedStanding` is
+  that reader's cold walk under a standing refusal mark), `seeded:asmDocMemo` (a
+  seeded walk whose document decode was served from the per-process memo, keyed
+  on the document file's size and mtime: a leaf named by several sessions'
+  episode rows decodes its document once per boot, not once per naming session;
+  every stat check and the guard read still run per walk, a document is
+  memoized only once those checks passed, and an owner's fallback drops it;
+  the memo is reported under `asmCheckpoint.asmDocMemo` with `entries`, `bytes`
+  as the documents' RESIDENT weight, each file's compressed size times
+  `multiple`, the measured 10 a decoded document weighs against its gzipped
+  bytes, and `capBytes`, a ceiling on that weight of MemTotal / 512 floored at
+  64 MiB, `ROMP_ASM_DOC_MEMO_CAP_MB`; unrelated to `checkpoints.docMemo`, the
+  fold documents' read memo), `full` with
   `full:demoted` (an entry the gates demoted, the `g:<reason>` beside it:
   `descent` when the new leaf does not chain to the old through the delta,
   `rewrite` when the leaf's record entry was replaced by a from-zero read
@@ -2663,7 +2853,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
 - `stacks`: every live thread's stack, keyed `"<ident> <kind>"`. The kind
   is the thread's name up to the naming convention's colon (`sdk` and
   `sdk-intr` for a session's threads, `codex` for a Codex session's worker,
-  `end-host` for a session's end hook, `port-up` for a dial's port watch, `peer` for a postal peer loop), the
+  `end-host` for a session's end hook, `port-up` for a dial's port watch, `peer` for a postal peer loop,
+  `romp-refused-mark` for the refused-echo mark a cut-off boot re-delivery writes aside), the
   target function for a thread the code left unnamed (`_ask_poll`,
   `_parent_watch`, `_update_check_loop`, `_tunnel_supervisor`,
   `serve_forever`, ...), `handler` for the HTTP server's request threads,
@@ -2758,10 +2949,22 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   handed, since a backend runs those on threads of its own) holds every
   thread marked or listed as a pure I/O helper and every handed callback
   marked or listed, and a `none` row on a live `/perf` names a thread or a
-  callback the census missed), `resident` (the
-  process-wide LRU, `cap` atoms across every session: the machine's memory
-  over 32 KiB, never under 500,000; eviction drops the memo, never a field in
-  place), `evictions`, and `restoredTurns`.
+  callback the census missed), `resident` (the entries in the
+  process-wide LRU, `cap` of them across every session: the machine's memory
+  over 32 KiB, never under 500,000; the LRU holds each turn's atom list by a
+  weak reference, so a tree nobody holds any more keeps nothing resident but
+  entries that expire, and `resident` counts those too until they do:
+  before this (measured 2026-09-15) a strong reference kept every superseded
+  generation's atoms, and its whole index behind them, resident until they
+  aged past the cap, about 1.2 GiB on a box whose LRU sat exactly at its cap
+  of a million entries, and live atoms evicted by stale ones were rebuilt),
+  `evictions` (a live entry past the cap: its slot's memo dropped, never a
+  field in place), `expired` (an entry whose list has been collected, dropped
+  when it reaches the cap or when a live list registers a slot under the id the
+  dead one held, no slot touched either way), `released` (entries popped the moment the
+  assembly entry that owned their index was dropped or replaced, rather than
+  a million entries later at the cap), `rowDecodes` (document rows decoded,
+  a build's or a light read's), `userFacts` (below), and `restoredTurns`.
 - `skillLoadIndex`: the judge's skill-load boot pass (the tops older stores minted from
   the harness's own skill load): `filesRead` and `bytesRead` (transcripts read raw this
   boot, appended tails only once the persisted index holds a file), `filesIndexed`, and
@@ -2864,7 +3067,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `watch`, `subagents`, `usage`, `offer`, `auth`, `downtime`, `debug`,
   `interrupting`, `closer`, `todos`, `queued`, `peers`, plus `cold` for a
   session with no entry) to the re-derivations it caused; a miss with several moved
-  components counts under each. The nudge records, the key on hand, the
+  components counts under each. Nudge facts invalidate only entries that read
+  the changed node's count, failure state or displayed history. The key on hand, the
   host-suspension spans and the debug mode are board-wide inputs: a change
   to one re-derives every session. The clock is not a component of the key:
   a card's clock-derived fields either leave the memoized entry and are
@@ -2924,10 +3128,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   session per pass); or the guard order in `_episode_boundary_check` regressed.
   `romp perf` prints the rate on the `goals` line.
 - `memos`: the identity memos on the goal-store path. `pass` is the
-  judge pass's stat-keyed store memo (`hit`, `miss`, `fail`, `evict`, `punch`,
-  `live`, `snap`, and its occupancy `entries`, `bytes`); `shared` is the
-  pusher's shared read-only store cache (`hit`, `miss`, `compare_miss`,
-  `refuse`, `dup`,
+  judge pass's stat-keyed store memo (`hit`, `miss`, `compare_miss` for a
+  store whose bytes moved under an unchanged stat, `fail`, `evict`, `punch`,
+  `skip` for the files a pass stepped over because the compaction sweep ruled
+  their store unowned, `live`, `snap`, its occupancy `entries`, `bytes`, and
+  `unowned`, the stores currently ruled out, a gauge); `shared` is the pusher's
+  shared read-only store cache (`hit`, `miss`, `compare_miss`, `refuse`, `dup`,
   `absent`, `corrupt`, `unreadable_journal`, `evict`, `fallback`, `poisoned`,
   with `entries`, `bytes` and `off`); `chain` is the write-moment chain memo
   (`hit`, `miss`, `populate`, `bypass`). The compaction
@@ -2939,7 +3145,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   until the file changes) or a read that failed (read again next pass), either
   way out of the snapshot and served live; `evict` counts entries dropped for
   files gone from the directory or for stores no discovered session owns;
-  `punch` entries copied so a user gesture could be applied to them; `live` and
+  `punch` entries copied so a user gesture could be applied to them; `skip` the
+  files a pass stepped over because the sweep ruled their store unowned, and
+  `unowned` how many stand ruled out; `live` and
   `snap` the feed's store reads served live through the shared cache against
   those served from the pass snapshot; `entries` and `bytes` are the memoized
   files and their summed size. In `shared`, `compare_miss` is an identity that
@@ -2956,7 +3164,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   a rewound-away branch, a hit served a memoized check, a miss built one, a
   populate stored one (a build that failed is a miss with no populate), and a
   bypass built without memoizing because an input file could not be stat'd.
-  `nudgeWalk` is the auto-nudge walk's
+  `convergeDeclined` counts the main
+  converges that asked no restart because this kernel was already leaving (the
+  exit path held the lock: before the pull, the row's `phase` is before-pull
+  with the target it did not pull, and the next kernel converges on its own;
+  after the pull, after-pull with the checkout it moved, which the successor
+  boots on; either way a `main-converge-declined` row stands in the
+  restart-audit ledger where a second sigterm used to); `sessionsListing` is
+  the kept GET /sessions listing (`built` by the pusher's cycle when its key
+  moved, `served` to requests from memory, `requestBuilt` once before the first
+  cycle, `faultBuilt` per request while a cycle's build failed and the kept
+  listing may be stale, `missBy` the key input that moved: rows, names, notes
+  or registry). `nudgeWalk` is the auto-nudge walk's
   parse gate (T401): `looks`, `skippedParses` (a session whose files are
   unchanged since its last completed look and whose clock legs, noted by that
   look with the instant each could flip, have not come due; the skip repeats
@@ -3030,7 +3249,7 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `spendTree` is the spend guard's memo of each live
   session's subagents tree (`entries`, `bytes`, `bound`, a sixty-fourth of
   the machine's memory or `ROMP_SPEND_GUARD_TREE_MEMO_BYTES`, and the
-  reads since boot: `dirStats`, `fileStats`, `entryStats` (the per-entry
+  reads since boot: `served` (passes that served an idle session's standing file list from the memo with no stat, plans/spend-guard-events.md), `dirStats`, `fileStats`, `entryStats` (the per-entry
   stats a listing performs), `listings`, `loaded`, `loadFailed`, `dropped`
   (paths outside the root a load discarded), `written`, `writeFailed` (a
   memo write that raised, a read-only directory or a full disk, said once a
@@ -3065,7 +3284,23 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the boot's first cycle, since its first pass lists every alive session's
   tree (4.2 s on one boot, 60 trees of 16,752 agent transcripts in 1,542
   directories, the largest 2,581 files) and a runaway spend is minutes,
-  not the first cycle (T401 follow-up); `nudgeGate` is the auto-nudge walk's
+  not the first cycle (T401 follow-up); `subagentTree` is the memo of each
+  subagents directory tree the builds read (the sidecar map, the agent-file
+  lookup, the feed key's subagents component): per root, the directories in
+  walk order and each one's identity (inode, mtime, size, ctime) taken before
+  it was listed, served while every identity stands because a directory
+  entry's creation, removal or renaming moves its parent's stamps and every
+  parent is in the list, with `hit` and `miss` (trees vouched for by one stat
+  per known directory against trees walked), `evict` (roots dropped because
+  no alive session's transcript names them, on every jobs pass and, as a
+  belt, after each feed build and from the tracking-off frame), `dirStats`
+  (the stats validations paid), `walkMs` and `validateMs` (the time in each,
+  every thread), and the gauges `roots` (entries) and `dirs` (directories
+  held); a directory stamped within the last two seconds, or one whose
+  listing failed, is stored unvouched and walked again until it is quiet and
+  lists cleanly, the racy-stamp rule, since a filesystem stamps with a
+  coarser clock than the wall clock and a failure moves no stamp;
+  `nudgeGate` is the auto-nudge walk's
   planner-placement gate, derived once per (parse, store) and served while
   both stand, and on this fork while `cleared.jsonl` stands too, its stat a
   fourth term of the key since the plan units read that file live (`served`,
@@ -3307,6 +3542,19 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `segs_miss` count the segments served and derived. `dead_serve`,
   `dead_miss` and `dead_failed_serve` are the dead-lane memo's outcomes on the
   same block, so one block carries every lane.
+  `judgingBand` is the timeline's judging band memo: a completed judge run's
+  entry is held under its usage row while the row and the gloss it borrowed
+  stand, so an unchanged entry is the same object build after build and the
+  bars fill re-encodes only what changed, and a cursor skips the retained
+  rows each verified to end before the horizon. `builds` and their wall
+  `ms`; `rows_skipped` and `rows_visited` per build; `entries_reused` and
+  `entries_minted`; `resets`, a cursor dropped for a rotated log, a left
+  prune the reader did not count or a horizon moved back; `compact_reused`,
+  `compact_minted` and `compact_ms` for the compact wire form's own identity
+  memo; and the gauges `entries` and `compact` (the two memos' held
+  entries), `bytes` (their containers, estimated) and `bound`, the band's
+  wire cap (20,000 entries): only entries that reach the frame are held, so
+  a judge storm's rows never widen the memo.
   Four memos cover the chat build's per-build fixed costs, each keyed on the
   inputs it reads and evicted by the pusher with the tab set (a comment thread
   built this cycle is kept, like its fold prefix). `chatMergeSets` is the
@@ -3483,6 +3731,36 @@ lazy atoms (a page hydrates its own turns), memoized in a bounded cache
 `key` unique within its list (the uuid, or `uuid#n` for a second event built
 from one record); the notes romp adds (a retry recovered, an effort change, an
 orphan reply) carry synthetic uuids keyed by their second and ordinal.
+
+### The judges' own process: `romp-judge --serve`
+
+Stage three of the process split (plans/judges-process.md) moves the judge pass into one long-lived child, `romp-judge
+--serve`, that the kernel starts at boot and speaks to over a line protocol on the child's stdin and stdout (JSON, one
+object per line). The child announces `{"op":"ready","pid","judgeVersion","protocolVersion"}` once; the kernel sends
+`{"op":"pass","seq","now","mayStart"}` per producer wake and `{"op":"quit"}` to end; the child answers exactly one
+`{"op":"done","seq","wallMs","tierStarts","tierCpuMs","workerCpuMs","failures","recovered","recordCache","asmCheckpoint",
+"parses","goalIo"}` per pass. Every counter on it is a PER-PASS figure: `wallMs`, `tierCpuMs` and `workerCpuMs` are the
+pass's own, `failures` its tier crashes, and the four blocks (`recordCache` and `asmCheckpoint` from the event model,
+`parses` as the parse store's misses and hits, `goalIo` as the goal-store loads, saves and writes) are the DIFFERENCES
+against the previous pass's snapshot for every counter, so the kernel can feed its `/perf` counters per pass, while each
+block's GAUGES ride as their current values: in `recordCache` the keys `entries`, `bytes` (the cache's contents now),
+`budgetBytes` and `countCap` (its caps); in `asmCheckpoint` the key `asmDocMemo` (the document memo's size and cap);
+`parses` and `goalIo` carry counters only. `asmCheckpoint.restoreMs` is a counter like its neighbours (the restore's parts
+since boot, as described above), so the line carries the pass's own restore time. A non-numeric value (a name) rides as
+current too. `recovered` is the child's judge-module recovery flag (the once-per-storm
+edge `consume_judge_recovery` reads), consumed by the child and acted on by the kernel, which re-arms its given-up cards on
+it as the in-process pass does. `mayStart` is the
+kernel's composite gate, the same predicate the in-process pass reads (the Task tracking switch, a live session, retries not
+paused), evaluated on the kernel side; the child gates on it and on nothing else, and an absent field reads false: no tier,
+no kernel-initiated model call, still an answer. The pass body is ONE function, `run_pass` in kernel/judge.py, that the
+in-process producer and the child both call: both tiers in parallel under one evidence frame, a barrier, the tier threads'
+CPU and failures accounted under a lock, the frame ended in a finally. One pass at a time: a `pass` arriving before the
+previous `done` is answered `{"op":"error","reason":"busy"}` and dropped, never queued; a malformed line answers
+`malformed`, an unknown op `unknownOp`, and the loop continues. Every stderr line of the child carries the prefix
+`romp-judge: `; the child's file descriptor 1 is redirected onto its stderr for the whole process and the protocol is
+written to the saved descriptor, so no print, direct write or child process can reach the channel. The kernel's side (the
+request, the hard bound, the restart count, the switch that defaults to the in-process loop) is described with the producer
+above once it lands.
 
 ## The file preview popover
 
@@ -4115,6 +4393,25 @@ tunnel is down). The merge happens in the browser and follows the federation
 rule: per-host maps in, one line per machine out, the worst state wins for the
 dot, and no count or clock is ever added to or compared with another kernel's.
 
+Three more relays of one call to an attached host sit beside it, all behind the
+local token, all forwarding the remote's own token, all bounded at ten seconds
+(a peer that accepts and never answers is reported as not answering then, and
+the tunnel is re-dialed). `GET /remote/<host>/sessions` reads the peer's own
+session roster: 200 with `{ok, host, sessions}` (each row the public shape with
+its identity colors, nothing of this kernel's added), 404 in prose for an
+unknown host, the peer's own status and prose for a refusal or an older build
+without the route, 502 in prose for a dead tunnel or a body that is not a list.
+`POST /remote/<host>/new` and `POST /remote/<host>/send` relay a control call
+that lands on that machine: a session spawned there, and its briefing sent
+before this kernel's poll has learned the new id (a `POST /send` here would
+route it nowhere). The body must be a JSON object and crosses as sent; the
+peer validates and answers for itself, and its status and JSON verdict are
+mirrored (its 400 or 409 arrives as a 400 or 409 with its words). Every answer
+this side writes is JSON `{ok, error}`: 404 for a path that names no host
+(`/remote/new`), for an op other than `new` and `send`, or for an unknown host;
+400 for a body that is not a JSON object (the peer is never reached); 502 for
+a dead tunnel or a peer that answered without a JSON verdict.
+
 ### The ledger
 
 Every attempt is also folded, the moment it lands, into `ledger`, a per-bucket
@@ -4500,7 +4797,17 @@ And the manager writes a `quiet-window` row to `restart-audit.jsonl` when a
 parked deploy refresh applies (`since`, `waitedS`, `reason` as the gate's
 verdict, `backstop` when the fifteen-minute cap fired, `coalesced`, `mode`,
 `lastInflight`, `misses`, and the park's drain-hold counts); it is a note, not
-a request, and the kernel's restart-reason walk passes it over.
+a request, and the kernel's restart-reason walk passes it over. Three more
+manager notes sit beside it: `restart-folded` (a restart request that arrived
+while a restart was in flight and its successor not yet spawned rode that
+restart: `trigger`, `into` the pid signaled), `restart-trailing` (a request
+during the successor's boot, kept as one trailing restart: `trigger`, `after`
+the successor's pid) and `restart-trailing-current` (the successor answered
+and its own `restart_pending` verdict said it runs the disk's code, so the
+trail was dropped). The kernel's own `main-converge-declined` row (a converge
+that found its kernel leaving, `phase` before-pull or after-pull) is the same
+kind. None of the four signals a kernel, and the kernel's restart-reason walk
+passes them over as it does the quiet-window note.
 
 The two host registries there, `remotes.json` (attached and checked-in
 machines, each row with that machine's serve token) and `remotes-known.json`
@@ -4775,6 +5082,40 @@ Where to read it: `/version` carries `taskTracking` at the top level and in `set
 `settingsGt` as `task-tracking`; `/perf` carries `judge.tierStarts`, the count of judge tier threads started, flat while
 off. `kernel/judge.py` `MODEL_CALLERS` is the census of every judge that makes a model call, each declaring its relation
 to the switch; an ast test holds it to the module's call sites, and the entry point refuses an undeclared name.
+
+## The judges' process (stage three)
+
+`~/.local/state/romp/judges-process` reading `on` moves the judges' passes out of the kernel into one long-lived
+`romp-judge --serve` child (plans/judges-process.md): each producer wake sends one `pass` line over the child's stdin and
+reads one `done` line from its stdout; the kernel's bookkeeping (the episode boundary tick, the goals snapshot, the
+compact, the recovery re-arm, the generation bump) stands around the request in the loop's order. Absent, or anything
+but `on`, the tiers run in the kernel as before and no child starts; a file that cannot be read or decoded reads as
+off and says so once (a sync notice). Effective on the next pass; the child is ended on the pass where the switch
+turns off.
+
+Bounds and counters, all on `/perf` under `judge`:
+
+- `JUDGE_CHILD_PASS_HARD_S` (900 s): a child that answers nothing by then, a partial line included, is killed and the
+  pass counted `passesLost`; it comes back on the next wake (`childRestarts`). A line that is not the pass's own `done`
+  and a `ready` with a protocol version the kernel does not speak are handled the same way.
+- `childFallbacks`: after three passes lost in a row from fresh starts the judges run in the kernel until the switch
+  file is written again, said as a sync notice.
+- `orphansSwept`: a child left by a kernel that is gone (its pid record under the state root, one per kernel pid as
+  `judge-child.<pid>.json`, names a parent that answers no signal) is ended at the next kernel's boot and again at its
+  first request, so the goal stores keep one writer. On Linux the child also dies with its parent by construction (a
+  parent-death signal, asked for between fork and exec through a pointer the kernel bound at import, so the forked child
+  does no work of its own); the kernel's exit road ends it first in every case: the quit and the SIGTERM go out at once,
+  even with a pass in flight (that pass is lost and counted), and the bounded waits (a tenth of the manager's SIGTERM
+  grace before the kill, a twentieth after) run on their own thread beside the exit's stages, which already spend the
+  grace less a margin; after its cut row the exit joins that thread with what the grace has left and kills outright
+  whatever still stands,
+  so the exit stays inside the grace whatever the child does. A boot sweep that cannot list the state root leaves the
+  sweep unmarked and the first request retries it.
+- On the child road `parses.judge` and the `goals` block read zero: the judges' parses and store writes happen in the
+  child, and their per-pass figures ride its done line as `judge.child.parses` and `judge.child.goalIo`.
+- `cpu_ms_sum` counts the child's tier and worker CPU as it counts the in-process tiers and pools; `cpu_ms_child_workers`
+  is the workers' share alone; `child` is the last done line (its wall, tier starts, CPU, failures, record cache and
+  checkpoint blocks); `tierStarts` is counted at the request, so a long pass reads it during the pass.
 
 ## Switches
 

@@ -1,12 +1,17 @@
-"""The dashboard reloads ITSELF on a kernel restart and on a newer served bundle (T265).
+"""The dashboard OFFERS a reload on a newer build and never reloads itself; a restart of the same build is invisible.
 
-The user's ruling of 2026-09-08 supersedes their 2026-07-13 preference for a banner the reader clicks. The reload
-core (kernel.py _RELOAD_CORE_JS, window.__rompReload on every kernel-served page) runs here for REAL: node executes
-the IIFE between its anchors with fakes for document, window, location, sessionStorage and fetch, one process per
-scenario (the core installs once per window), and the scenario reads its state back by name. Pinned alongside:
-the wiring (the shim's raise, the shim's reconnect, the shell's socket, the stale banner's poll and fallback, the
-pages that embed the core) and the remote exclusion (federation drops remote keepalives, so a REMOTE kernel's
-restart or bundle never reaches the core). Synthetic values only."""
+Three rulings, each superseding the last: 2026-07-13 (a banner the reader clicks), 2026-09-08 (T265: the page reloads
+itself on a restart and on a newer bundle, never mid-gesture) and 2026-09-16 (the page never reloads itself: a same-build
+restart owes nothing and says nothing, a newer build is one persistent line with Reload and Not now, Not now is kept per
+build, an unknownOp refusal sharpens the wording, explicit gestures keep their reload, and a kernel that must force a
+reload sends reloadRequired). The reload core (kernel.py _RELOAD_CORE_JS, window.__rompReload on every kernel-served
+page) runs here for REAL: node executes the IIFE between its anchors with fakes for document, window, location,
+sessionStorage, localStorage and fetch, one process per scenario (the core installs once per window), and the scenario
+reads its state back by name; the offer hook's calls are recorded (OFFERS). The idle holds are exercised on an ACCEPTED
+offer (R.accept(), the user's Reload click) or on the forced request. Pinned alongside: the wiring (the shim's raise,
+the shim's reconnect, the shell's socket, the stale banner as the offer's home, the pages that embed the core) and the
+remote exclusion (federation drops remote keepalives, so a REMOTE kernel's restart or bundle never reaches the core).
+Synthetic values only."""
 import json
 import os
 import shutil
@@ -27,7 +32,7 @@ km = load_source("romp_kernel_autoreload", os.path.join(BIN, "romp-kernel"))
 # The browser the core thinks it runs in. `var` at module scope shadows node's globals; the core's own
 # `document.addEventListener` calls land in LISTENERS so a scenario can emit the gesture events by name.
 HARNESS = r"""
-var LISTENERS = {}, STORE = {}, REMOVED = [], FETCHES = [], RELOADS = 0, REFUSE = false, PERSISTED = 0, WLISTENERS = {};
+var LISTENERS = {}, STORE = {}, LOCAL = {}, OFFERS = [], REMOVED = [], FETCHES = [], RELOADS = 0, REFUSE = false, PERSISTED = 0, WLISTENERS = {};
 var SEL = { rangeCount: 0, isCollapsed: true, toString: function () { return ""; } };
 var COMPOSER = { tagName: "TEXTAREA", value: "" };              // the chat composer, one editable among any
 var FOCUSED = true;                                             // document.hasFocus()
@@ -60,6 +65,10 @@ var sessionStorage = {
   setItem: function (k, v) { STORE[k] = v; }, getItem: function (k) { return k in STORE ? STORE[k] : null; },
   removeItem: function (k) { delete STORE[k]; }
 };
+var localStorage = {                                            // the Not now's home: per build, across this browser's pages
+  setItem: function (k, v) { LOCAL[k] = v; }, getItem: function (k) { return k in LOCAL ? LOCAL[k] : null; },
+  removeItem: function (k) { delete LOCAL[k]; }
+};
 var VERSION = null;
 function fetch(u) { FETCHES.push(u); return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve(VERSION); },
   headers: { get: function (k) { return k === "X-Romp-Boot" ? HEALTH_BOOT : null; } } }); }   // ok and status: the core checks them before the body; the boot header: the restart button's poll
@@ -68,21 +77,30 @@ function wemit(t) { (WLISTENERS[t] || []).forEach(function (f) { f({}); }); }
 function tick() { return new Promise(function (r) { setTimeout(r, 0); }); }
 function state() {
   var R = window.__rompReload;
-  return { reloads: RELOADS, fired: R.fired(), owed: R.owed(), waiting: R.waiting, persisted: PERSISTED, removed: REMOVED, refusedFor: R.refusedFor(),
-           released: R.released(), stored: STORE["romp:reloaded"] ? JSON.parse(STORE["romp:reloaded"]) : null, fetches: FETCHES.length };
+  return { reloads: RELOADS, fired: R.fired(), owed: R.owed(), offered: R.offered(), waiting: R.waiting, persisted: PERSISTED, removed: REMOVED.slice(), refusedFor: R.refusedFor(),
+           released: R.released(), stored: STORE["romp:reloaded"] ? JSON.parse(STORE["romp:reloaded"]) : null, reason: STORE["romp:reloadReason"] ? JSON.parse(STORE["romp:reloadReason"]) : null,
+           notNow: LOCAL["romp:reloadNotNow"] ? JSON.parse(LOCAL["romp:reloadNotNow"]) : null, fetches: FETCHES.length };
 }
 function out(o) { process.stdout.write("RESULT:" + JSON.stringify(o) + "\n"); }
 """
 
 
-def run_core(scenario, v=7, boot="1.1", code="abc1234"):
+OFFER = "A newer romp build is ready."
+BEHIND = "A newer romp build is ready; this page is behind the kernel and some actions fall back to older paths until you reload."
+
+
+def run_core(scenario, v=7, boot="1.1", code="abc1234", local=None):
+    """`local`: what this browser's localStorage holds before the page loads (a Not now from an earlier page)."""
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node not installed")
     d = tempfile.mkdtemp(prefix="reload-core-")
     path = os.path.join(d, "core.js")
     with open(path, "w") as f:
-        f.write(HARNESS + km._reload_core_js(v, boot, code) + "\n(async function(){\n" + scenario + "\n})();\n")
+        f.write(HARNESS + ("LOCAL = %s;\n" % json.dumps({k: json.dumps(v_) for k, v_ in (local or {}).items()}))
+                + km._reload_core_js(v, boot, code)
+                + "\nif(window.__rompReload)window.__rompReload.offer=function(o){OFFERS.push(o);};\n"   # the offer hook, as the shell or a standalone pane installs one
+                + "(async function(){\n" + scenario + "\n})();\n")
     r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
     shutil.rmtree(d, ignore_errors=True)
     if r.returncode != 0:
@@ -93,15 +111,21 @@ def run_core(scenario, v=7, boot="1.1", code="abc1234"):
 
 
 class ReloadCoreExecuted(unittest.TestCase):
-    def test_a_newer_dv_reloads_at_once_when_idle_and_persists_first(self):
+    def test_a_newer_dv_is_offered_and_the_accepted_offer_reloads_at_once_when_idle_and_persists_first(self):
         s = run_core("""
 var R = window.__rompReload;
 R.noteDv(7); var same = state();          // the page's own build
 R.noteDv(5); var older = state();         // an OLDER token (a rolled-back peer) is not drift
-R.noteDv(8);
-out({ same: same, older: older, after: state() });""")
-        self.assertEqual(s["same"]["reloads"], 0)
-        self.assertEqual(s["older"]["reloads"], 0)
+R.noteDv(8); var offered = state();       // a newer one: the offer, and nothing else (2026-09-16)
+R.accept();                               // the user's Reload
+out({ same: same, older: older, offered: offered, offers: OFFERS, after: state() });""")
+        self.assertEqual(s["same"]["reloads"], 0); self.assertIsNone(s["same"]["offered"])
+        self.assertEqual(s["older"]["reloads"], 0); self.assertIsNone(s["older"]["offered"])
+        o = s["offered"]
+        self.assertEqual(o["reloads"], 0, "a newer build is offered, never taken")
+        self.assertIsNone(o["owed"], "nothing owed: no hold, no backstop, no line")
+        self.assertEqual(o["offered"], {"dv": 8, "code": "", "behind": False, "text": OFFER})
+        self.assertEqual(s["offers"], [{"dv": 8, "code": "", "behind": False, "text": OFFER}, None], "the hook saw the offer, then its retirement at the accept")
         a = s["after"]
         self.assertEqual(a["reloads"], 1)
         self.assertTrue(a["fired"])
@@ -109,58 +133,70 @@ out({ same: same, older: older, after: state() });""")
         self.assertEqual(a["stored"]["detail"], "8")
         self.assertEqual(a["stored"]["from"], 7)
         self.assertEqual(a["stored"]["path"], "/", "the marker names the page that reloaded")
+        self.assertEqual(a["reason"], {"reason": "build", "path": "/", "t": a["reason"]["t"]}, "the durable record for the chat pane's diet is written by the accepted reload")
         self.assertEqual(a["persisted"], 1, "the pane's persist hook ran before the reload")
         self.assertIn(["settings-open", "picker-open"], a["removed"], "the lifted modals close")
 
-    def test_a_restart_is_a_reopen_against_a_new_boot_id_never_a_blip(self):
+    def test_a_restart_is_a_reopen_against_a_new_boot_id_and_the_boot_id_alone_owes_nothing(self):
         s = run_core("""
 var R = window.__rompReload;
 VERSION = { boot: "1.1", dist_ver: 7 }; R.checkBoot(); await tick(); await tick(); var blip = state();
 VERSION = { boot: "2.2", dist_ver: 7 }; R.checkBoot(); await tick(); await tick();
-out({ blip: blip, after: state() });""")
+out({ blip: blip, restarted: R.restarted(), after: state(), offers: OFFERS });""")
         self.assertEqual(s["blip"]["reloads"], 0, "the same kernel answered: a socket blip, not a restart")
         self.assertEqual(s["blip"]["fetches"], 1)
-        self.assertEqual(s["after"]["reloads"], 1)
-        self.assertEqual(s["after"]["stored"]["reason"], "restart")
-        self.assertEqual(s["after"]["stored"]["detail"], "2.2")
+        self.assertEqual(s["restarted"], 1, "the new boot id is a restart, counted")
+        self.assertEqual(s["after"]["reloads"], 0, "and owes nothing by itself (2026-09-16)")
+        self.assertIsNone(s["after"]["owed"]); self.assertIsNone(s["after"]["offered"]); self.assertEqual(s["offers"], [])
 
-    def test_a_restart_with_an_unchanged_build_never_reloads(self):
-        """Invisible restarts (the user 2026-09-14): a new boot id with the SAME code identity is a restart of the code this
-        page already runs; the board stays on screen and the shim's redial carries the diet; no reload is owed."""
+    def test_a_restart_with_an_unchanged_build_never_reloads_and_never_offers(self):
+        """Invisible restarts (the user 2026-09-14, restated 2026-09-16 as the ruling's first point): a new boot id with the
+        SAME code identity and dist_ver is a restart of the build this page already runs; the board stays on screen, the
+        shim's redial carries the diet, no reload is owed, no offer stands, no hold and no line."""
         s = run_core("""
 var R = window.__rompReload;
+var held = 0; R.held = function () { held++; };
 VERSION = { boot: "2.2", dist_ver: 7, code_ident: "abc1234" }; R.checkBoot(); await tick(); await tick();
-out({ after: state(), restarted: R.restarted() });""", code="abc1234")
+VERSION = { boot: "2.2", dist_ver: 7, code_ident: "abc1234" }; R.checkBoot(); await tick(); await tick();   // the poll after the restart
+out({ after: state(), restarted: R.restarted(), offers: OFFERS, held: held, timers: TIMERS.length });""", code="abc1234")
         self.assertEqual(s["after"]["reloads"], 0, "the same build restarted: nothing to reload onto")
-        self.assertIsNone(s["after"]["owed"])
-        self.assertEqual(s["restarted"], 1, "the restart was seen and counted")
+        self.assertIsNone(s["after"]["owed"]); self.assertIsNone(s["after"]["offered"])
+        self.assertEqual(s["offers"], [], "no offer: nothing newer is served")
+        self.assertEqual(s["held"], 0, "no hold, so no notification-center line"); self.assertEqual(s["timers"], 0, "no backstop armed")
+        self.assertEqual(s["restarted"], 1, "the restart was seen and counted once; the poll after it is not another")
 
-    def test_a_restart_with_a_changed_build_reloads_once_the_reconnected_pane_has_its_first_frame(self):
+    def test_a_restart_onto_a_changed_build_is_offered_and_the_accepted_reload_waits_for_the_reconnected_panes_first_frame(self):
         s = run_core("""
 var R = window.__rompReload;
 window.__rompFreshPending = true;                       // the shim's redial is awaiting its resync frame
 window.__rompFreshPendingSince = Date.now();
-VERSION = { boot: "2.2", dist_ver: 7, code_ident: "def5678" }; R.checkBoot(); await tick(); await tick(); var held = state();
+VERSION = { boot: "2.2", dist_ver: 7, code_ident: "def5678" }; R.checkBoot(); await tick(); await tick(); var offered = state();
+R.accept(); var held = state();
 window.__rompFreshPending = false; R.ended(); await tick(); await tick();
-out({ held: held, after: state() });""", code="abc1234")
-        self.assertEqual(s["held"]["reloads"], 0, "owed but held: the reload must land on a warm kernel")
-        self.assertEqual(s["held"]["owed"]["reason"], "restart")
+out({ offered: offered, held: held, after: state() });""", code="abc1234")
+        self.assertEqual(s["offered"]["reloads"], 0, "a changed build is offered, never taken (2026-09-16)")
+        self.assertIsNone(s["offered"]["owed"])
+        self.assertEqual(s["offered"]["offered"], {"dv": 0, "code": "def5678", "behind": False, "text": OFFER}, "the offer names the code identity that changed")
+        self.assertEqual(s["held"]["reloads"], 0, "accepted but held: the reload must land on a warm kernel")
+        self.assertEqual(s["held"]["owed"], {"reason": "build", "detail": "def5678"})
         self.assertEqual(s["held"]["waiting"], "fresh")
         self.assertEqual(s["after"]["reloads"], 1, "the resync frame is the ending event")
-        self.assertEqual(s["after"]["stored"]["reason"], "restart")
-        self.assertEqual(s["after"]["stored"]["detail"], "2.2")
+        self.assertEqual(s["after"]["stored"]["reason"], "build")
+        self.assertEqual(s["after"]["stored"]["detail"], "def5678")
 
-    def test_a_version_without_a_code_identity_still_reloads_on_a_restart(self):
-        # an older kernel's /version (or a fetch that lost the field): the fail-safe is today's reload, never a silent stale page
+    def test_a_version_without_a_code_identity_decides_nothing_on_a_restart(self):
+        # a kernel whose /version carries no identity (one from before 2026-09-14; a body that lost the field) says nothing about
+        # the build: the dist_ver stands alone, and a restart never reloads (2026-09-16; before it the fail-safe was a reload)
         s = run_core("""
 var R = window.__rompReload;
 VERSION = { boot: "2.2", dist_ver: 7 }; R.checkBoot(); await tick(); await tick();
-out({ after: state() });""", code="abc1234")
-        self.assertEqual(s["after"]["reloads"], 1)
-        self.assertEqual(s["after"]["stored"]["reason"], "restart")
+out({ after: state(), restarted: R.restarted(), offers: OFFERS });""", code="abc1234")
+        self.assertEqual(s["after"]["reloads"], 0); self.assertIsNone(s["after"]["offered"]); self.assertEqual(s["offers"], [])
+        self.assertEqual(s["restarted"], 1)
 
     def test_the_fresh_hold_is_read_from_the_panes_the_shell_holds_and_a_pane_that_never_arms_it_holds_nothing(self):
-        """The shell's walk over its panes, executed over two fakes of busyHere: the chat pane holds while its flag stands, the
+        """The shell's walk over its panes, executed over two fakes of busyHere (the reload accepted from the offer the changed build
+        stood): the chat pane holds while its flag stands, the
         other pane never does, and the chat pane's ending event fires the reload. A pin, green at the round-one head: the walk
         existed there. The round-two medium (the shim arming the hold in every pane, the Files page never clearing it) has its
         red in ui/webview/pane-shim-stale.test.ts, which runs the real shim; the fakes here stand in for what that shim does."""
@@ -169,13 +205,13 @@ var R = window.__rompReload;
 var chat = { pending: true, since: Date.now() };
 IFRAMES = [pane(function () { return ''; }),                                                            // a Files pane: nothing to wait for
            pane(function () { return chat.pending && Date.now() - chat.since < 60000 ? 'fresh' : ''; })];  // the chat pane's busyHere, the core's own rule
-VERSION = { boot: "2.2", dist_ver: 7, code_ident: "def5678" }; R.checkBoot(); await tick(); await tick(); var held = state();
+VERSION = { boot: "2.2", dist_ver: 7, code_ident: "def5678" }; R.checkBoot(); await tick(); await tick(); R.accept(); var held = state();
 chat.pending = false; R.ended(); await tick(); await tick();
 out({ held: held, after: state() });""", code="abc1234")
         self.assertEqual(s["held"]["reloads"], 0)
         self.assertEqual(s["held"]["waiting"], "fresh", "the walk found the chat pane's hold")
         self.assertEqual(s["after"]["reloads"], 1, "the chat pane's frame ended it")
-        self.assertEqual(s["after"]["stored"]["detail"], "2.2")
+        self.assertEqual(s["after"]["stored"]["detail"], "def5678", "the record names the build the page lands on")
 
     def test_a_fresh_hold_older_than_the_bound_no_longer_holds_and_the_backstop_runs_the_walk_once_more(self):
         """A frame that never comes must not hold a deploy's reload forever (the round-two review): the hold is read with its
@@ -184,7 +220,7 @@ out({ held: held, after: state() });""", code="abc1234")
         s = run_core("""
 var R = window.__rompReload;
 window.__rompFreshPending = true; window.__rompFreshPendingSince = Date.now();
-VERSION = { boot: "2.2", dist_ver: 7, code_ident: "def5678" }; R.checkBoot(); await tick(); await tick(); var held = state();
+VERSION = { boot: "2.2", dist_ver: 7, code_ident: "def5678" }; R.checkBoot(); await tick(); await tick(); R.accept(); var held = state();
 var armed = TIMERS.map(function (t) { return t.ms; });
 R.tryFire(); var armedAgain = TIMERS.length;                                     // a second walk while held arms no second timer
 window.__rompFreshPendingSince = Date.now() - 60001;                              // the bound passes with the flag still up
@@ -196,11 +232,11 @@ out({ held: held, armed: armed, armedAgain: armedAgain, after: state() });""", c
         self.assertTrue(59000 <= s["armed"][0] <= 60000, "armed for the window's edge, a minute from the stamp: %r" % s["armed"])
         self.assertEqual(s["armedAgain"], 1)
         self.assertEqual(s["after"]["reloads"], 1, "the backstop's walk fired the reload once the hold was older than the bound")
-        self.assertEqual(s["after"]["stored"]["reason"], "restart")
+        self.assertEqual(s["after"]["stored"]["reason"], "build")
         t = run_core("""
 var R = window.__rompReload;
 window.__rompFreshPending = true; window.__rompFreshPendingSince = Date.now() - 60001;   // a stale flag: some earlier redial's, never cleared
-VERSION = { boot: "2.2", dist_ver: 7, code_ident: "def5678" }; R.checkBoot(); await tick(); await tick();
+VERSION = { boot: "2.2", dist_ver: 7, code_ident: "def5678" }; R.checkBoot(); await tick(); await tick(); R.accept();
 out({ after: state(), timers: TIMERS.length });""", code="abc1234")
         self.assertEqual(t["after"]["reloads"], 1, "a flag older than the bound holds nothing")
         self.assertEqual(t["timers"], 0)
@@ -216,15 +252,15 @@ var t0 = Date.now() - 60000;                                                    
 IFRAMES = [pane(function () { return ''; }, 0),                                  // a Files pane
            pane(function () { return 'fresh'; }, t0),                             // the first chat column, its own stamp at the bound
            pane(function () { return 'fresh'; }, t0 + 40000)];                    // the second, dropped 40 s later, inside its own bound
-VERSION = { boot: "2.2", dist_ver: 7, code_ident: "def5678" }; R.checkBoot(); await tick(); await tick();
+VERSION = { boot: "2.2", dist_ver: 7, code_ident: "def5678" }; R.checkBoot(); await tick(); await tick(); R.accept();
 out({ after: state(), timers: TIMERS.length });""", code="abc1234")
         self.assertEqual(s["after"]["reloads"], 1, "the page's bound is the first column's, not the last's")
-        self.assertEqual(s["after"]["stored"]["reason"], "restart")
+        self.assertEqual(s["after"]["stored"]["reason"], "build")
         t = run_core("""
 var R = window.__rompReload;
 var t0 = Date.now() - 30000;
 IFRAMES = [pane(function () { return 'fresh'; }, t0), pane(function () { return 'fresh'; }, t0 + 20000)];
-VERSION = { boot: "2.2", dist_ver: 7, code_ident: "def5678" }; R.checkBoot(); await tick(); await tick(); var held = state();
+VERSION = { boot: "2.2", dist_ver: 7, code_ident: "def5678" }; R.checkBoot(); await tick(); await tick(); R.accept(); var held = state();
 IFRAMES[0].contentWindow.__rompReload.busyHere = function () { return ''; };     // the first column's frame lands
 R.ended(); await tick(); await tick(); var stillHeld = state();
 out({ held: held, stillHeld: stillHeld, timers: TIMERS.length });""", code="abc1234")
@@ -239,7 +275,7 @@ out({ held: held, stillHeld: stillHeld, timers: TIMERS.length });""", code="abc1
 var R = window.__rompReload;
 var chat = { hold: 'fresh' };
 IFRAMES = [pane(function () { return chat.hold; }, Date.now())];
-R.noteDv(8); var first = state();                                              // held on the drop
+R.noteDv(8); R.accept(); var first = state();                                              // held on the drop
 CLOCK += 5000; chat.hold = ''; document.activeElement = COMPOSER; COMPOSER.value = "a draft";
 R.ended(); await tick(); await tick(); var typingHeld = state();               // the frame landed; the draft holds
 CLOCK += 65000; TIMERS.shift().f(); await tick(); await tick();                // the backstop: still typing
@@ -260,7 +296,7 @@ out({ first: first, typingHeld: typingHeld, after: state() });""")
 var R = window.__rompReload;
 IFRAMES = [pane(function () { return 'typing'; }, 0)];
 IFRAMES[0].contentWindow.__rompDiag = function (what, data) { DIAG.push({ what: what, data: data }); };
-R.noteDv(8); var held = state();
+R.noteDv(8); R.accept(); var held = state();
 var armed = TIMERS.map(function (t) { return t.ms; });
 CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick(); var afterOne = { diag: DIAG.slice(), timers: TIMERS.length, state: state() };
 CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick(); var afterTwo = { diag: DIAG.slice(), state: state() };
@@ -284,7 +320,7 @@ out({ held: held, armed: armed, afterOne: afterOne, afterTwo: afterTwo, after: s
 var R = window.__rompReload;
 IFRAMES = [pane(function () { return 'sends'; }, 0)];
 IFRAMES[0].contentWindow.__rompDiag = function (what, data) { DIAG.push({ what: what, data: data }); };
-R.noteDv(8);
+R.noteDv(8); R.accept();
 IFRAMES[0].contentWindow.__rompReload.busyHere = function () { return ''; }; R.ended(); await tick(); await tick();
 CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick();
 out({ diag: DIAG.length, after: state() });""")
@@ -292,14 +328,14 @@ out({ diag: DIAG.length, after: state() });""")
         self.assertEqual(t["diag"], 0, "a hold that ended before the bound files nothing")
 
     def test_a_second_reason_for_the_same_wait_files_no_second_breadcrumb(self):
-        # round four, low 2: a restart arriving while the build reload is held is the same wait, not a new one; the latch clears
-        # only when the owed request itself changes
+        # round four, low 2: a forced request arriving while the accepted reload is held is the same wait, not a new one; the latch
+        # clears only when the owed request itself changes
         u = run_core("""
 var R = window.__rompReload;
 IFRAMES = [pane(function () { return 'typing'; }, 0)];
 IFRAMES[0].contentWindow.__rompDiag = function (what, data) { DIAG.push({ what: what, data: data }); };
-R.noteDv(8); CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick();
-R.request("restart", "2.2"); CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick();
+R.noteDv(8); R.accept(); CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick();
+R.request("required", "a forced request inside the same wait"); CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick();
 out({ diag: DIAG.length, owed: state().owed });""")
         self.assertEqual(u["owed"]["reason"], "build", "the first request stands")
         self.assertEqual(u["diag"], 1, "a second reason for the same wait files no second row")
@@ -309,7 +345,7 @@ out({ diag: DIAG.length, owed: state().owed });""")
         v = run_core("""
 var R = window.__rompReload;
 IFRAMES = [pane(function () { return 'typing'; }, 0)];
-R.noteDv(8); CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick(); var none = DIAG.length;
+R.noteDv(8); R.accept(); CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick(); var none = DIAG.length;
 IFRAMES[0].contentWindow.__rompDiag = function () { throw new Error("a door that throws"); };
 CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick(); var thrown = DIAG.length;
 IFRAMES[0].contentWindow.__rompDiag = function (what, data) { DIAG.push({ what: what, data: data }); };
@@ -329,7 +365,7 @@ var R = window.__rompReload;
 var t0 = Date.now();
 var a = pane(function () { return 'fresh'; }, t0);                              // its frame never comes
 IFRAMES = [a];
-R.noteDv(8); var first = state();
+R.noteDv(8); R.accept(); var first = state();
 document.activeElement = COMPOSER; COMPOSER.value = "a draft that spans the bound";        // the draft begins inside the minute
 CLOCK += 65000; TIMERS.shift().f(); await tick(); await tick(); var afterBound = state();   // the window ended; typing holds
 CLOCK += 5000; var tB = Date.now(); var b = pane(function () { return 'fresh'; }, tB); IFRAMES = [a, b];   // a second column drops now
@@ -351,16 +387,12 @@ out({ first: first, afterBound: afterBound, held: held, fired: fired, sinceB: Da
 var R = window.__rompReload;
 var t0 = Date.now();
 IFRAMES = [pane(function () { return 'fresh'; }, t0)];
-R.noteDv(8);
+R.noteDv(8); R.accept();
 CLOCK += 40000; IFRAMES.push(pane(function () { return 'fresh'; }, Date.now()));   // a second column drops inside the window
 CLOCK += 20000; TIMERS.shift().f(); await tick(); await tick();
 out({ after: state() });""")
         self.assertEqual(t["after"]["reloads"], 1, "a drop inside the running window joins it and ends with it: one minute for the page")
 
-    @unittest.expectedFailure   # pull-in 2026-09-15: this fork's pane-word backstop (fork PR 567, R2) releases a clocked upload at its own 60 s
-    #                             deadline, inside upstream's fresh window (both bounds 60 s), so at the 65 s edge the reload fires over the
-    #                             upload this test expects held; the two bounds' composition is the fold owner's product call (K2-D's FLAG 1,
-    #                             PT-B's FLAG). Remove this mark with the decision.
     def test_a_panes_fresh_answer_does_not_mask_its_upload_at_the_windows_edge(self):
         """The round-four review's high, pre-existing: a pane answering fresh was read as fresh alone, so at the page window's edge
         the reload fired over that pane's upload or queued sends. The walk asks a fresh pane again for its other holds."""
@@ -368,15 +400,12 @@ out({ after: state() });""")
 var R = window.__rompReload;
 var t0 = Date.now();
 IFRAMES = [pane(function () { return 'fresh'; }, t0),                                            // column A
-           pane(function () { return 'fresh'; }, t0 + 20000, function () { return CLOCK - t0 > 5000 ? 'upload' : ''; })];   // column B: an upload begins after the first walk
-R.noteDv(8); var held = state();
-CLOCK += 65000; liveTimers().pop().f(); await tick(); await tick(); var atEdge = state();          // the window's edge: the upload's first sighting
+           pane(function () { return 'fresh'; }, t0 + 20000, function () { return 'upload'; })];   // column B, an upload in flight
+R.noteDv(8); R.accept(); var held = state();
+CLOCK += 65000; liveTimers().pop().f(); await tick(); await tick(); var atEdge = state();          // the window's edge
 IFRAMES[1].contentWindow.__rompReload.busyHere = function () { return ''; }; R.ended(); await tick(); await tick();
 out({ held: held, atEdge: atEdge, after: state() });""")
-        # this fork's pane-word backstop (fork PR 567, R2) releases an upload 60 s after its FIRST sighting, so an upload
-        # present from the first walk would be released at the 65 s edge; the upload here is first seen by the edge walk,
-        # which is the test's point: a fresh answer does not mask a pane's other hold (the 2026-09-15 pull-in)
-        self.assertEqual(s["held"]["waiting"], "fresh", "the fresh answer alone holds from the first walk")
+        self.assertEqual(s["held"]["waiting"], "upload", "the upload outranks the fresh answer from the first walk")
         self.assertEqual(s["atEdge"]["reloads"], 0, "at the edge the upload still holds")
         self.assertEqual(s["atEdge"]["waiting"], "upload")
         self.assertEqual(s["after"]["reloads"], 1, "the upload's end lets the reload go")
@@ -389,7 +418,7 @@ out({ held: held, atEdge: atEdge, after: state() });""")
 var R = window.__rompReload;
 IFRAMES = [pane(function () { return 'fresh'; }, Date.now())];
 document.activeElement = COMPOSER; COMPOSER.value = "a draft";
-R.noteDv(8);
+R.noteDv(8); R.accept();
 var delays = [];
 for (var i = 0; i < 5; i++) { CLOCK += 65000; var t = liveTimers().pop(); delays.push(t ? t.ms : null); if (t) t.f(); await tick(); await tick(); }
 out({ delays: delays, timers: TIMERS.length, after: state() });""")
@@ -404,7 +433,7 @@ out({ delays: delays, timers: TIMERS.length, after: state() });""")
 var R = window.__rompReload;
 IFRAMES = [{ contentWindow: { __rompReload: { busyHere: function () { throw new Error("detached"); } }, __rompFreshPendingSince: 0 } },
            pane(function () { return 'upload'; }, 0)];
-R.noteDv(8); var held = state();
+R.noteDv(8); R.accept(); var held = state();
 IFRAMES[1].contentWindow.__rompReload.busyHere = function () { return ''; }; R.ended(); await tick(); await tick();
 out({ held: held, after: state() });""")
         self.assertEqual(s["held"]["waiting"], "upload", "the second pane's hold is read past the first pane's throw")
@@ -455,7 +484,7 @@ var R = window.__rompReload;
 var bad = pane(function () { return 'typing'; }, 0); Object.defineProperty(bad.contentWindow, "__rompDiag", { get: function () { throw new Error("detached"); } });
 var good = pane(function () { return ''; }, 0); good.contentWindow.__rompDiag = function (what, data) { DIAG.push({ what: what, data: data }); };
 IFRAMES = [bad, good];
-R.noteDv(8); CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick();
+R.noteDv(8); R.accept(); CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick();
 out({ diag: DIAG.length });""")
         self.assertEqual(s["diag"], 1, "the next pane's door took the row")
 
@@ -466,7 +495,7 @@ var R = window.__rompReload;
 var bad = pane(function () { return 'typing'; }, 0); bad.contentWindow.__rompDiag = function () { throw new Error("a door that throws"); };
 var good = pane(function () { return ''; }, 0); good.contentWindow.__rompDiag = function (what, data) { DIAG.push({ what: what, data: data }); };
 IFRAMES = [bad, good];
-R.noteDv(8); CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick();
+R.noteDv(8); R.accept(); CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick();
 out({ diag: DIAG.length });""")
         self.assertEqual(s["diag"], 1, "the next pane's door took the row on the same pass")
 
@@ -475,7 +504,7 @@ out({ diag: DIAG.length });""")
         s = run_core("""
 var R = window.__rompReload;
 IFRAMES = [pane(function () { return 'typing'; }, 0)];
-R.noteDv(8);
+R.noteDv(8); R.accept();
 CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick();                 // no door yet
 CLOCK += 60000; TIMERS.shift().f(); await tick(); await tick();                 // still none
 IFRAMES[0].contentWindow.__rompDiag = function (what, data) { DIAG.push({ what: what, data: data }); };
@@ -506,39 +535,44 @@ out({ diag: DIAG });""")
         s = run_core("""
 var R = window.__rompReload;
 window.__rompFreshPending = true;                                                  // a flag with no stamp: never a hold
-R.noteDv(8); var unstamped = state();
+R.noteDv(8); R.accept(); var unstamped = state();
 out({ unstamped: unstamped });""")
         self.assertEqual(s["unstamped"]["reloads"], 1, "a flag without a stamp holds nothing")
         t = run_core("""
 var R = window.__rompReload;
 IFRAMES = [pane(function () { return ''; })];
 window.__rompFreshPending = true; window.__rompFreshPendingSince = Date.now();
-R.noteDv(8); var held = state();
+R.noteDv(8); R.accept(); var held = state();
 window.__rompFreshPending = false; R.ended(); await tick(); await tick();
 out({ held: held, after: state() });""")
         self.assertEqual(t["held"]["waiting"], "fresh")
         self.assertEqual(t["held"]["owed"]["reason"], "build")
         self.assertEqual(t["after"]["reloads"], 1)
 
-    def test_restarted_counts_restarts_and_a_second_restart_inside_one_hold_files_the_latest_boot(self):
-        # lows b and c of the round-two review: BOOT re-latches so the polls after a restart do not count again; the record
-        # names the boot the page lands on
+    def test_restarted_counts_restarts_and_one_changed_build_across_two_restarts_is_one_offer(self):
+        # lows b and c of the round-two review: BOOT re-latches so the polls after a restart do not count again; since 2026-09-16
+        # the same changed build seen across two boots is ONE offer (the hook is not called again), and the accepted reload's
+        # record names the build, not a boot
         s = run_core("""
 var R = window.__rompReload;
 R.noteVersion({ boot: "2.2", dist_ver: 7, code_ident: "abc1234" }); R.noteVersion({ boot: "2.2", dist_ver: 7, code_ident: "abc1234" });
 var one = R.restarted();
-R.noteVersion({ boot: "3.3", dist_ver: 7, code_ident: "abc1234" }); var two = R.restarted();
+R.noteVersion({ boot: "3.3", dist_ver: 7, code_ident: "abc1234" }); var two = R.restarted(); var quiet = state();
 window.__rompFreshPending = true; window.__rompFreshPendingSince = Date.now();
 var heldCalls = 0; R.held = function () { heldCalls++; };
-R.noteVersion({ boot: "4.4", dist_ver: 7, code_ident: "def5678" }); R.noteVersion({ boot: "5.5", dist_ver: 7, code_ident: "def5678" });
-var owed = state().owed;
+R.noteVersion({ boot: "4.4", dist_ver: 7, code_ident: "def5678" }); var offersAfterOne = OFFERS.length;
+R.noteVersion({ boot: "5.5", dist_ver: 7, code_ident: "def5678" }); var offersAfterTwo = OFFERS.length; var offered = state();
+R.accept(); var owed = state().owed;
 window.__rompFreshPending = false; R.ended(); await tick(); await tick();
-out({ one: one, two: two, owed: owed, heldCalls: heldCalls, after: state() });""", code="abc1234")
+out({ one: one, two: two, quiet: quiet, offersAfterOne: offersAfterOne, offersAfterTwo: offersAfterTwo, offered: offered, owed: owed, heldCalls: heldCalls, after: state() });""", code="abc1234")
         self.assertEqual(s["one"], 1, "two polls of one restarted kernel count one restart")
         self.assertEqual(s["two"], 2, "a further boot id counts again")
-        self.assertEqual(s["owed"]["detail"], "5.5", "the held request names the latest boot")
-        self.assertEqual(s["heldCalls"], 1, "one wait, announced once: the second restart moves the detail, not the reason (round three, low 2)")
-        self.assertEqual(s["after"]["stored"]["detail"], "5.5")
+        self.assertIsNone(s["quiet"]["offered"], "the same build across two restarts offers nothing")
+        self.assertEqual([s["offersAfterOne"], s["offersAfterTwo"]], [1, 1], "one changed build, one offer, whatever the boot count")
+        self.assertEqual(s["offered"]["offered"]["code"], "def5678"); self.assertEqual(s["offered"]["reloads"], 0)
+        self.assertEqual(s["owed"], {"reason": "build", "detail": "def5678"}, "the accepted request names the build")
+        self.assertEqual(s["heldCalls"], 1, "one wait, announced once")
+        self.assertEqual(s["after"]["stored"]["detail"], "def5678")
 
     def test_both_held_maps_render_the_fresh_wording_when_run(self):
         """The held hooks executed (round three, low 3): the pane's (installed by the shim on a standalone page, rendering into
@@ -589,9 +623,10 @@ process.stdout.write("RESULT:" + JSON.stringify(OUT) + "\\n");
     def test_the_settings_restart_button_hands_the_new_kernels_answer_to_the_reload_core(self):
         """Round three, low 5b: the rail's restart button polled /healthz until a NEW boot id answered and then reloaded the page
         unconditionally, an exception to the ruling. Now the flip drops the splash and hands the decision to the reload core:
-        the same code restarted reloads nothing (the panes redial), a changed build owes the reload as any restart does. The
-        button's function is sliced from the served landing and run over the harness's fetch (a /healthz answering with the
-        boot header, then /version), the core baked beside it."""
+        the same code restarted reloads nothing (the panes redial), a changed build is OFFERED (2026-09-16: the user asked for
+        a restart, not a reload; the ↻ keeps no reload of its own). The button's function is sliced from the served landing
+        and run over the harness's fetch (a /healthz answering with the boot header, then /version), the core baked beside
+        it. tests/test_kernel_refresh_button.py pins the button's source."""
         html = km._landing()
         a = html.index("window.__rompRestart=function(){")
         fn = html[a:html.index("var rf=document.getElementById('rail-refresh');", a)]
@@ -610,16 +645,18 @@ out({ polls: polls, splash: SPLASH, fetches: FETCHES, restarted: R.restarted(), 
         self.assertIn("/version", same["fetches"], "the flip asked the core, which read /version")
         self.assertEqual(same["restarted"], 1, "the core counted the restart")
         self.assertEqual(same["after"]["reloads"], 0, "the same code restarted: the board stays")
-        self.assertIsNone(same["after"]["owed"])
+        self.assertIsNone(same["after"]["owed"]); self.assertIsNone(same["after"]["offered"])
         self.assertEqual(same["splash"][-1], "+gone", "the splash the button raised is dropped when the new kernel answers")
         changed = run_core(fn + """
 var R = window.__rompReload;
 HEALTH_BOOT = "9.9"; VERSION = { boot: "9.9", dist_ver: 7, code_ident: "def5678" };
-window.__rompRestart(); await tick(); TIMERS.shift().f(); await tick(); await tick(); await tick(); await tick();
-out({ after: state() });""", code="abc1234")
-        self.assertEqual(changed["after"]["reloads"], 1, "a changed build reloads through the core, as any restart does")
-        self.assertEqual(changed["after"]["stored"]["reason"], "restart")
-        self.assertEqual(changed["after"]["stored"]["detail"], "9.9")
+window.__rompRestart(); await tick(); TIMERS.shift().f(); await tick(); await tick(); await tick(); await tick(); var offered = state();   // the first tick: this fork's button arms the poll once the POST /restart answered (X5)
+R.accept(); await tick();
+out({ offered: offered, after: state() });""", code="abc1234")
+        self.assertEqual(changed["offered"]["reloads"], 0, "a changed build is offered through the core, not taken (2026-09-16)")
+        self.assertEqual(changed["offered"]["offered"]["code"], "def5678"); self.assertIsNone(changed["offered"]["owed"])
+        self.assertEqual(changed["after"]["reloads"], 1, "the user's Reload takes it")
+        self.assertEqual(changed["after"]["stored"], {"reason": "build", "detail": "def5678", "from": 7, "path": "/", "t": changed["after"]["stored"]["t"]})
 
     def test_the_code_identity_changes_with_the_bytes_of_the_kernel_code(self):
         """Low d of the round-two review: a dirty tree reads the same git sha before and after an edit, so the identity the core
@@ -695,16 +732,19 @@ out({ after: state() });""", code="abc1234")
         s = run_core("""
 var R = window.__rompReload;
 R.noteVersion({ boot: "1.1", dist_ver: 7 }); var quiet = state();
-R.noteVersion({ boot: "1.1", dist_ver: 9 });
-out({ quiet: quiet, after: state() });""")
-        self.assertEqual(s["quiet"]["reloads"], 0)
+R.noteVersion({ boot: "1.1", dist_ver: 9 }); var offered = state();
+R.accept();
+out({ quiet: quiet, offered: offered, after: state() });""")
+        self.assertEqual(s["quiet"]["reloads"], 0); self.assertIsNone(s["quiet"]["offered"])
+        self.assertEqual(s["offered"]["offered"]["dv"], 9, "the poll's dist_ver is the same signal as the keepalive's dv")
+        self.assertEqual(s["offered"]["reloads"], 0)
         self.assertEqual(s["after"]["stored"]["reason"], "build")
 
     def test_a_held_pointer_arms_and_the_pointerup_fires(self):
         s = run_core("""
 var R = window.__rompReload;
 emit("pointerdown");
-R.noteDv(8); var held = state();
+R.noteDv(8); R.accept(); var held = state();
 emit("pointerup"); var atOnce = state(); await tick();
 out({ held: held, atOnce: atOnce, after: state() });""")
         self.assertEqual(s["held"]["reloads"], 0)
@@ -716,7 +756,7 @@ out({ held: held, atOnce: atOnce, after: state() });""")
     def test_a_drag_in_flight_arms_and_dragend_fires(self):
         s = run_core("""
 var R = window.__rompReload;
-emit("dragstart"); R.noteDv(8); var held = state(); emit("dragend"); await tick();
+emit("dragstart"); R.noteDv(8); R.accept(); var held = state(); emit("dragend"); await tick();
 out({ held: held, after: state() });""")
         self.assertEqual(s["held"]["waiting"], "drag")
         self.assertEqual(s["held"]["reloads"], 0)
@@ -726,7 +766,7 @@ out({ held: held, after: state() });""")
         s = run_core("""
 var R = window.__rompReload;
 SEL = { rangeCount: 1, isCollapsed: false, toString: function () { return "some words"; } };
-R.noteDv(8); var held = state();
+R.noteDv(8); R.accept(); var held = state();
 SEL = { rangeCount: 1, isCollapsed: true, toString: function () { return ""; } }; emit("selectionchange"); await tick();
 out({ held: held, after: state() });""")
         self.assertEqual(s["held"]["waiting"], "selection")
@@ -737,7 +777,7 @@ out({ held: held, after: state() });""")
         s = run_core("""
 var R = window.__rompReload;
 document.activeElement = COMPOSER; COMPOSER.value = "half a thought";
-R.noteDv(8); var held = state();
+R.noteDv(8); R.accept(); var held = state();
 COMPOSER.value = "half a thought, more"; emit("input"); await tick(); var typing = state();
 COMPOSER.value = ""; emit("input"); await tick();
 out({ held: held, typing: typing, after: state() });""")
@@ -746,7 +786,7 @@ out({ held: held, typing: typing, after: state() });""")
         self.assertEqual(s["after"]["reloads"], 1, "an emptied composer releases it")
         s2 = run_core("""
 var R = window.__rompReload;
-document.activeElement = COMPOSER; COMPOSER.value = "draft"; R.noteDv(8);
+document.activeElement = COMPOSER; COMPOSER.value = "draft"; R.noteDv(8); R.accept();
 document.activeElement = null; emit("focusout"); await tick();
 out({ after: state() });""")
         self.assertEqual(s2["after"]["reloads"], 1, "a blurred composer releases it (the draft is persisted already)")
@@ -754,31 +794,36 @@ out({ after: state() });""")
     def test_a_window_blur_releases_every_hold(self):
         s = run_core("""
 var R = window.__rompReload;
-emit("pointerdown"); emit("dragstart"); R.noteDv(8); var held = state(); wemit("blur"); await tick();
+emit("pointerdown"); emit("dragstart"); R.noteDv(8); R.accept(); var held = state(); wemit("blur"); await tick();
 out({ held: held, after: state() });""")
         self.assertEqual(s["held"]["reloads"], 0)
         self.assertEqual(s["after"]["reloads"], 1)
 
-    def test_a_refused_reload_falls_back_to_the_banner_hook(self):
+    def test_a_refused_reload_puts_the_offer_back(self):
+        # a page whose parent forbids location.reload: the accepted offer returns as an offer (the line with its Reload), the user
+        # may try again, and nothing re-attempts on its own; a strictly newer build is a new offer
         s = run_core("""
 var R = window.__rompReload; var refused = [];
 R.refused = function (o) { refused.push(o); }; REFUSE = true;
-R.noteDv(8); var first = state();
-emit("pointerup"); await tick(); emit("selectionchange"); await tick(); R.noteVersion({ boot: "1.1", dist_ver: 8 }); var again = state(); var shownAfterAgain = refused.length;
-R.noteDv(9); var newer = state();
-out({ refused: refused, first: first, again: again, shownAfterAgain: shownAfterAgain, newer: newer });""")
+R.noteDv(8); R.accept(); var first = state();
+emit("pointerup"); await tick(); emit("selectionchange"); await tick(); R.noteVersion({ boot: "1.1", dist_ver: 8 }); var again = state();
+R.accept(); var retried = state();
+REFUSE = false; R.noteDv(9); var newer = state(); R.accept();
+out({ refused: refused, first: first, again: again, retried: retried, newer: newer, after: state(), offers: OFFERS });""")
         f = s["first"]
         self.assertEqual(f["reloads"], 1, "the reload was attempted")
-        self.assertFalse(f["fired"], "…and stood down when the host threw")
+        self.assertFalse(f["fired"], "…and stood down when the parent threw")
         self.assertEqual(f["waiting"], "refused")
         self.assertEqual(f["refusedFor"], "build:8", "the refusal latches for this build")
         self.assertEqual(f["stored"], None, "no marker and no un-lifted modal for a reload that never happened")
         self.assertEqual(f["removed"], [])
+        self.assertIsNone(f["owed"], "nothing owed any more"); self.assertEqual(f["offered"]["dv"], 8, "the offer is back")
         self.assertEqual(s["refused"][0], {"reason": "build", "detail": "8"})
         self.assertEqual(s["again"]["reloads"], 1, "gesture ends and the poll do not re-attempt the refused build")
-        self.assertEqual(s["shownAfterAgain"], 1, "the banner is shown once for that build")
-        self.assertEqual(s["newer"]["reloads"], 2, "a strictly newer build re-arms and tries again (and is refused again on this host)")
-        self.assertEqual(len(s["refused"]), 2)
+        self.assertEqual(s["retried"]["reloads"], 2, "the user's second Reload tries again (refused again here)")
+        self.assertEqual(s["newer"]["offered"]["dv"], 9, "a strictly newer build is a new offer")
+        self.assertEqual(s["after"]["reloads"], 3); self.assertTrue(s["after"]["fired"])
+        self.assertEqual([o and o["dv"] for o in s["offers"]], [8, None, 8, None, 8, 9, None], "offer, accept; back, accept; back, replaced by 9 in place; accepted")
 
     def test_the_fresh_page_announces_once_from_the_marker(self):
         s = run_core("""
@@ -796,6 +841,11 @@ var R = window.__rompReload;
 STORE["romp:reloaded"] = JSON.stringify({ reason: "build", detail: "9", from: 6, t: 1 });
 out({ first: R.announce(null) });""")
         self.assertEqual(s2["first"], "Reloaded onto build 7: a newer romp build was served.")
+        s2b = run_core("""
+var R = window.__rompReload;
+STORE["romp:reloaded"] = JSON.stringify({ reason: "required", detail: "a wire change", from: 6, t: 1 });
+out({ first: R.announce(null) });""")
+        self.assertEqual(s2b["first"], "Reloaded onto build 7: the kernel asked for a reload (a wire change).", "the safety valve's reload says so")
         s3 = run_core("""
 var R = window.__rompReload;
 STORE["romp:reloaded"] = JSON.stringify({ reason: "build", detail: "9", from: 6, path: "/feed", t: 1 });
@@ -830,22 +880,26 @@ out({ held: held, after: state() });""")
         self.assertEqual(s["held"]["waiting"], "pointer", "a pane's held pointer holds the shell's reload")
         self.assertEqual(s["after"]["reloads"], 1)
         self.assertEqual(s["after"]["persisted"], 11, "the shell and every pane persisted before the reload")
-        # a pane under a same-origin shell forwards: its own core never fires
+        # a pane under a same-origin shell forwards every decision: its proposal, the accept, the dismiss, the behind and the
+        # forced request; its own core never offers and never fires (ONE offer for the top document)
         s2 = run_core("""
 var shellReqs = [];
-window.parent = { __rompReload: { request: function (r, d) { shellReqs.push([r, d]); }, tryFire: function () { shellReqs.push(["tryFire"]); } } };
+window.parent = { __rompReload: { request: function (r, d) { shellReqs.push([r, d]); }, propose: function (dv, code) { shellReqs.push(["propose", dv, code]); },
+  accept: function () { shellReqs.push(["accept"]); }, dismiss: function () { shellReqs.push(["dismiss"]); }, behind: function () { shellReqs.push(["behind"]); },
+  tryFire: function () { shellReqs.push(["tryFire"]); } } };
 var R = window.__rompReload;
-R.noteDv(8); emit("pointerup"); await tick();
-out({ shellReqs: shellReqs, inShell: R.inShell(), after: state() });""")
+R.noteDv(8); R.accept(); R.dismiss(); R.behind(); R.require("a wire change"); emit("pointerup"); await tick();
+out({ shellReqs: shellReqs, inShell: R.inShell(), after: state(), offers: OFFERS });""")
         self.assertTrue(s2["inShell"])
-        self.assertEqual(s2["shellReqs"], [["build", "8"], ["tryFire"]])
+        self.assertEqual(s2["shellReqs"], [["propose", 8, ""], ["accept"], ["dismiss"], ["behind"], ["required", "a wire change"], ["tryFire"]])
         self.assertEqual(s2["after"]["reloads"], 0, "the top document reloads, never the pane alone")
+        self.assertIsNone(s2["after"]["offered"]); self.assertEqual(s2["offers"], [], "the pane's own hook is never called")
 
     def test_a_panes_queued_sends_hold_the_reload_until_its_flush(self):
         s = run_core("""
 var R = window.__rompReload; var queued = 1;
 window.__rompPaneBusy = function () { return queued ? "sends" : ""; };   // the shim: everConnected && queue.length > queuedDiag
-R.noteVersion({ boot: "2.2" }); var held = state();
+R.noteDv(8); R.accept(); var held = state();                            // the offer accepted while the pane's queue holds
 queued = 0; R.ended(); await tick();                                    // the shim's ws.onopen flush
 out({ held: held, after: state() });""")
         self.assertEqual(s["held"]["reloads"], 0, "a prompt typed during the outage sits in the pane's queue: the shell's earlier reopen must not take the page down")
@@ -860,16 +914,16 @@ out({ held: held, after: state() });""")
 var R = window.__rompReload; var held = []; R.held = function (b, o) { held.push([b, o && o.reason]); };
 var busyReason = "upload";
 window.__rompPaneBusy = function () { return busyReason; };
-R.noteVersion({ boot: "2.2" });                       // owed, held on the pane's upload
+R.noteDv(8); R.accept();                              // accepted, held on the pane's upload
 R.ended(); await tick(); R.ended(); await tick();     // re-asks while the same hold stands: no second line
 busyReason = "held-send"; R.ended(); await tick();    // the reason changed: one line for it
 busyReason = ""; R.ended(); await tick();             // idle: fires
 out({ held: held, reloads: RELOADS, waiting: R.waiting });""")
-        self.assertEqual(s["held"], [["upload", "restart"], ["held-send", "restart"]], "once per hold reason, with the owed request")
+        self.assertEqual(s["held"], [["upload", "build"], ["held-send", "build"]], "once per hold reason, with the owed request")
         self.assertEqual(s["reloads"], 1)
         s2 = run_core("""
 var R = window.__rompReload; var held = []; R.held = function (b) { held.push(b); };
-emit("pointerdown"); R.noteVersion({ boot: "2.2" });   // a held pointer: a gesture hold, no line
+emit("pointerdown"); R.noteDv(8); R.accept();           // a held pointer: a gesture hold, no line
 var during = state();
 emit("pointerup"); await tick();
 out({ held: held, during: during, reloads: RELOADS });""")
@@ -881,7 +935,7 @@ out({ held: held, during: during, reloads: RELOADS });""")
         s = run_core("""
 var R = window.__rompReload;
 emit("pointerdown"); emit("pointercancel");       // the touch became a scroll: the browser cancels the pointer, the finger is still down
-R.noteDv(8); var panning = state();
+R.noteDv(8); R.accept(); var panning = state();
 emit("pointerup"); await tick(); var stillPanning = state();   // no pointerup comes for a cancelled pointer, but even one must not release the pan
 emit("touchend"); await tick();
 out({ panning: panning, stillPanning: stillPanning, after: state() });""")
@@ -894,7 +948,7 @@ out({ panning: panning, stillPanning: stillPanning, after: state() });""")
         s = run_core("""
 var R = window.__rompReload;
 SEL = { rangeCount: 1, isCollapsed: false, toString: function () { return "an old highlight"; } };
-FOCUSED = false; R.noteDv(8);
+FOCUSED = false; R.noteDv(8); R.accept();
 out({ after: state() });""")
         self.assertEqual(s["after"]["reloads"], 1, "a highlight left in a pane the user is not in is not a gesture being made")
 
@@ -902,7 +956,7 @@ out({ after: state() });""")
         s = run_core("""
 var R = window.__rompReload;
 var pickerInput = { tagName: "INPUT", type: "text", value: "new-sess" };
-document.activeElement = pickerInput; R.noteDv(8); var held = state();
+document.activeElement = pickerInput; R.noteDv(8); R.accept(); var held = state();
 var sel = { tagName: "SELECT", value: "x" }; document.activeElement = sel; emit("focusout"); await tick();
 out({ held: held, after: state() });""")
         self.assertEqual(s["held"]["waiting"], "typing", "the new-session picker's name box holds like the composer")
@@ -912,35 +966,44 @@ out({ held: held, after: state() });""")
     def test_a_foreign_parent_leaves_the_pane_to_reload_itself(self):
         s = run_core("""
 Object.defineProperty(window, "parent", { get: function () { throw new Error("cross-origin"); } });
-var R = window.__rompReload; R.noteDv(8);
+var R = window.__rompReload; R.noteDv(8); R.accept();
 out({ inShell: R.inShell(), after: state() });""")
         self.assertFalse(s["inShell"])
         self.assertEqual(s["after"]["reloads"], 1, "an iframe in another app reloads itself")
 
 
 class UploadHoldExecuted(unittest.TestCase):
-    """The chat pane's hold for a file still shipping (T272, upstream #1123) and the fork's deadline behind it. render.ts
+    """The chat pane's hold for a file still shipping (T272, upstream #1123) and the fork's deadline behind the words that clock. render.ts
     wraps the shim's window.__rompPaneBusy and answers 'upload' while a ship awaits its ack and 'held-send' while the
     ship gate holds a send, and calls __rompReload.ended() when the last ack lands or the gate clears, so the hold ends
     on its own event like every gesture hold. The core defers a reload it owes while the pane's word is up, holds a
-    shell's reload from a pane, and fires when the ending event lands and nothing else holds. The fork's own fold-4
+    shell's reload from a pane, and fires when the ending event lands and nothing else holds. Since the 2026-09-16 ruling
+    (upstream #1771) a reload is owed only on the user's Reload of an offered build (R.noteDv(8); R.accept() here) or
+    on the forced request (R.require()); a standing offer runs no clock and arms no timer (ReloadOfferExecuted
+    below), so every case here arms its hold on one of those two paths. The fork's own fold-4
     route to the same end (window.__rompReloadHold read as a 'ships' hold, re-checked on a 500 ms timer) was
     superseded by this one at the 2026-09-09 fold; its DEADLINE stays, re-expressed inside upstream's shape as the
     backstop the fold's ruling asked for (romp-general, 2026-09-09): a pane word that has blocked an owed reload
     for 60 s is released, one console line names the word and the seconds, and the reload fires with a note the
-    pane's pre-reload hook reads through released() and persists among the toasts the fresh page replays. The
+    pane's pre-reload hook reads through released() and persists among the toasts the fresh page replays. Which words
+    clock: 'held-send' and any later pane word. 'upload' does not, since the user's ruling of 2026-09-17 (item 23 of the
+    catch-up fold, following upstream): after a Reload click with an upload in flight the page holds until the upload ends
+    or its ack can no longer arrive (render.ts drops the word when the last ack lands or the ship gives up), so the word
+    sits in NOCLOCK beside the shim's 'sends', is reported ahead of a clocked word and defers a release past the deadline
+    like a gesture; ReloadCoreExecuted's composition case at the fresh window's edge and the upload case below pin the
+    hold, and the fork's reload-anyway-at-60-s for that word retired with them as the twin. The
     clock is the pane word's, and a gesture anywhere leaves it alone, the word's own pane included (the fold's review,
     UI-2, and the verification that found the own-pane gap): busy() reads each window's gesture (busyHere) and its
     pane word (paneHere, the window's __rompPaneBusy alone) apart, so the word is seen behind a gesture in the shell,
     a sibling pane or the pane that owns it; the clock starts when the word first blocks an owed reload, gesture or
     not, runs while the same word stays up, and zeroes when the word drops to nothing or another clocked word replaces
     it, so a hold released and re-raised gets its own 60 s (the fold-4 review's F1) and a user's clicks, drags,
-    selections and typing during a wedged upload, in that pane or any other, never restart its 60 s; past the
+    selections and typing during a wedged held send, in that pane or any other, never restart its 60 s; past the
     deadline a gesture defers the release to its own ending event, and the first tryFire with nothing deferring fires
     at once. A gesture anywhere outranks every pane word for the word reported (K1) and has no deadline; the shim's
     'sends' (a prompt queued for a socket that is down) has no deadline either (NOCLOCK; the fold's review, F1/UI-1),
     since a reload over it would land on a kernel not answering the page and lose the prompt: it is reported ahead of
-    a clocked word and defers a release past the deadline like a gesture, so a chat pane's upload beside a sibling
+    a clocked word and defers a release past the deadline like a gesture, so a chat pane's held send beside a sibling
     pane's 'sends' clocks from its first sight and is released only when the flush ends the 'sends'. An older pane
     core without paneHere is read through its busyHere word. A refused reload with a release note pending persists once more without the release
     note (the fold's review, F2).
@@ -962,41 +1025,43 @@ function runDue() { TIMERS.filter(function (t) { return t.due <= NOW; }).forEach
 
     def test_a_hold_that_ends_early_lands_the_reload_at_once_with_no_deadline_line(self):
         s = run_core(self.FAKES + """
-var R = window.__rompReload; var shipping = 1;
-window.__rompPaneBusy = function () { return shipping ? "upload" : ""; };   // render.ts: a ship awaits its ack
-VERSION = { boot: "2.2", dist_ver: 7 }; R.checkBoot(); await tick(); await tick(); var held = state(); var heldArmed = armed();
+var R = window.__rompReload; var gated = 1;
+window.__rompPaneBusy = function () { return gated ? "held-send" : ""; };   // render.ts: the ship gate holds a send (the clocked word; an upload never clocks since the user's 2026-09-17 ruling)
+R.noteDv(8); R.accept(); var held = state(); var heldArmed = armed();   // the user's Reload on an offered build: the reload is owed (2026-09-16)
 emit("pointerup"); await tick(); var reasked = state(); var reaskedArmed = armed();   // a gesture's ending event re-asks and finds the hold still up
-R.ended(); await tick(); var endedEarly = state();          // an ending event with the ship still pending: still held
-NOW += 20000; shipping = 0; R.ended(); await tick();        // the last ack landed 20 s in: endReloadHoldIfIdle calls ended()
+R.ended(); await tick(); var endedEarly = state();          // an ending event with the gate still holding: still held
+NOW += 20000; gated = 0; R.ended(); await tick();           // the gate cleared 20 s in: endReloadHoldIfIdle calls ended()
 out({ held: held, heldArmed: heldArmed, reasked: reasked, reaskedArmed: reaskedArmed, endedEarly: endedEarly, after: state(), armed: armed(), warns: WARNS });""")
         self.assertEqual(s["held"]["reloads"], 0, "held: no reload now")
-        self.assertEqual(s["held"]["waiting"], "upload")
-        self.assertEqual(s["held"]["owed"]["reason"], "restart", "armed, not dropped")
+        self.assertEqual(s["held"]["waiting"], "held-send")
+        self.assertEqual(s["held"]["owed"]["reason"], "build", "armed (the accepted offer), not dropped")
         self.assertEqual(s["heldArmed"], [60000, 60000], "one timer, the deadline's: no 500 ms re-check")   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
         self.assertEqual(s["reasked"]["reloads"], 0, "a gesture's end re-asks; the ship still holds")
-        self.assertEqual(s["reasked"]["waiting"], "upload")
+        self.assertEqual(s["reasked"]["waiting"], "held-send")
         self.assertEqual(s["reaskedArmed"], [60000, 60000], "the same word keeps its one timer: a re-ask stacks no second")   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
-        self.assertEqual(s["endedEarly"]["reloads"], 0, "an ending event while a ship is still pending finds the hold still up")
-        self.assertEqual(s["after"]["reloads"], 1, "the ack's ending event reloads at once")
+        self.assertEqual(s["endedEarly"]["reloads"], 0, "an ending event while the gate still holds finds the hold still up")
+        self.assertEqual(s["after"]["reloads"], 1, "the gate's ending event reloads at once")
         self.assertEqual(s["after"]["waiting"], "")
-        self.assertEqual(s["after"]["stored"]["reason"], "restart")
+        self.assertEqual(s["after"]["stored"]["reason"], "build")
         self.assertEqual(s["after"]["persisted"], 1, "the pane persisted before the reload, as always")
         self.assertEqual(s["after"]["released"], "", "no release note: the hold ended on its own event")
         self.assertEqual(s["armed"], [60000], "the deadline timer is disarmed with the hold")   # upstream's backstop walk timer stands (the 2026-09-15 pull-in)
         self.assertEqual(s["warns"], [], "no deadline line")
 
     def test_a_hold_with_no_end_lands_the_reload_at_the_deadline_and_says_which_word_in_the_console_and_the_note(self):
-        # the fold's ruling (romp-general, 2026-09-09): an upload that never acks or nacks must not pin the page on the
-        # old build for good; the deadline is the only exit besides ended(), and it is loud: one console line naming the
+        # the fold's ruling (romp-general, 2026-09-09): a held send or a later pane word that never ends must not pin the page on
+        # the old build for good once the user has asked for the reload (the accepted offer); the deadline is the only exit besides ended(), and it is loud: one console line naming the
         # word, and a note the pane's pre-reload hook reads (released()) into the toasts the fresh page replays
-        # the shim's 'sends' is not among the words: it has no deadline (the next test)
-        for kind, subject in (("upload", "An upload"), ("held-send", "A message held behind an upload"), ("later-word", "A 'later-word' hold")):
+        # the shim's 'sends' is not among the words: it has no deadline (the next test). Nor is 'upload' since the user's 2026-09-17
+        # ruling (following upstream): its subtest retired here, twin ReloadCoreExecuted.test_a_panes_fresh_answer_does_not_mask_its_upload_at_the_windows_edge
+        # (upstream's hold case) and test_an_upload_hold_with_no_end_never_reloads_and_leaves_no_timer_no_line_and_no_note below
+        for kind, subject in (("held-send", "A message held behind an upload"), ("later-word", "A 'later-word' hold")):
             with self.subTest(kind=kind):
                 s = run_core(self.FAKES + """
 var R = window.__rompReload; var NOTE = null;
 window.__rompPaneBusy = function () { return %s; };                          // the hold never ends
 window.__rompPersistForReload = function () { PERSISTED++; NOTE = R.released(); };   // render.ts persistNoticesForReload reads the note here
-R.noteVersion({ boot: "2.2", dist_ver: 7 }); var held = state(); var heldArmed = armed();
+R.noteDv(8); R.accept(); var held = state(); var heldArmed = armed();
 NOW += 59000; runDue(); var under = state(); var underWarns = WARNS.length;
 NOW += 1000; runDue();
 out({ held: held, heldArmed: heldArmed, under: under, underWarns: underWarns, after: state(), note: NOTE, warns: WARNS, armed: armed() });""" % json.dumps(kind))
@@ -1008,7 +1073,7 @@ out({ held: held, heldArmed: heldArmed, under: under, underWarns: underWarns, af
                 self.assertEqual(s["underWarns"], 0)
                 self.assertEqual(s["after"]["reloads"], 1, "60 s: reloads anyway")
                 self.assertEqual(s["after"]["waiting"], "")
-                self.assertEqual(s["after"]["stored"]["reason"], "restart")
+                self.assertEqual(s["after"]["stored"]["reason"], "build")
                 self.assertEqual(s["after"]["persisted"], 1)
                 self.assertEqual(len(s["warns"]), 1, s["warns"])
                 self.assertIn("'%s' hold did not end within 60 s" % kind, s["warns"][0], "the console line names the word")
@@ -1026,7 +1091,7 @@ out({ held: held, heldArmed: heldArmed, under: under, underWarns: underWarns, af
 var R = window.__rompReload; var queued = 1; var NOTES = [];
 window.__rompPaneBusy = function () { return queued ? "sends" : ""; };               // the shim: everConnected && queue.length > queuedDiag
 window.__rompPersistForReload = function () { PERSISTED++; NOTES.push(R.released()); };
-R.noteVersion({ boot: "2.2", dist_ver: 7 }); var held = state(); var heldArmed = armed();
+R.noteDv(8); R.accept(); var held = state(); var heldArmed = armed();
 NOW += 60000; runDue(); var atDeadline = state();
 NOW += 600000; R.tryFire(); emit("pointerup"); await tick(); var later = state();     // ten minutes on: the poll and a gesture's end re-ask
 queued = 0; R.ended(); await tick();                                                  // the flush in ws.onopen is the ending event
@@ -1044,34 +1109,63 @@ out({ held: held, heldArmed: heldArmed, atDeadline: atDeadline, later: later, af
         self.assertEqual(s["warns"], [], "no console line")
         self.assertEqual(s["armed"], [60000])   # upstream's backstop walk timer (the 2026-09-15 pull-in)
 
+    def test_an_upload_hold_with_no_end_never_reloads_and_leaves_no_timer_no_line_and_no_note(self):
+        # The user's ruling (2026-09-17, following upstream; item 23 of the catch-up fold): after a Reload click with an
+        # upload in flight the page holds until the upload ends or its ack can no longer arrive. render.ts answers 'upload'
+        # while a ship awaits its ack and drops the word when the last ack lands or the ship gives up, so the word's own end
+        # is the only exit: no deadline, no console line, no note. The fork's reload-anyway-at-60-s for this word retired
+        # (its subtest of the deadline case above; twin upstream's composition case in ReloadCoreExecuted).
+        s = run_core(self.FAKES + """
+var R = window.__rompReload; var shipping = 1; var NOTES = [];
+window.__rompPaneBusy = function () { return shipping ? "upload" : ""; };            // render.ts: a ship awaits its ack
+window.__rompPersistForReload = function () { PERSISTED++; NOTES.push(R.released()); };
+R.noteDv(8); R.accept(); var held = state(); var heldArmed = armed();
+NOW += 60000; runDue(); var atDeadline = state();
+NOW += 600000; R.tryFire(); emit("pointerup"); await tick(); var later = state();     // ten minutes on: the poll and a gesture's end re-ask
+shipping = 0; R.ended(); await tick();                                                // the last ack landed, or the ship gave up: the word's own end
+out({ held: held, heldArmed: heldArmed, atDeadline: atDeadline, later: later, after: state(), notes: NOTES, warns: WARNS, armed: armed() });""")
+        self.assertEqual(s["held"]["reloads"], 0)
+        self.assertEqual(s["held"]["waiting"], "upload", "the word is reported like any pane word")
+        self.assertEqual(s["heldArmed"], [60000], "no timer: the word has no deadline")   # upstream's backstop walk timer alone
+        self.assertEqual(s["atDeadline"]["reloads"], 0, "60 s in: still held, no reload over the upload")
+        self.assertEqual(s["atDeadline"]["waiting"], "upload")
+        self.assertEqual(s["later"]["reloads"], 0, "eleven minutes in: still held")
+        self.assertEqual(s["later"]["waiting"], "upload")
+        self.assertEqual(s["after"]["reloads"], 1, "the upload's end lets the reload go")
+        self.assertEqual(s["after"]["released"], "", "no release note")
+        self.assertEqual(s["notes"], [""], "the pane persisted once, before the reload, and read no note")
+        self.assertEqual(s["warns"], [], "no console line")
+        self.assertEqual(s["armed"], [60000])   # upstream's backstop walk timer
+
     def test_a_hold_released_and_re_raised_does_not_inherit_the_old_clock(self):
         # The fold-4 review's F1 (2026-09-08): the clock was set on the first sight of the hold and never cleared, so a
         # ship raised after an earlier episode had cleared was reloaded out at once as soon as the FIRST sight was
         # 60 s old, with the console line naming that stale age. The clock counts consecutive time the word has been
-        # THE blocker: tryFire zeroes it whenever anything else answers (another hold, or nothing).
+        # THE blocker: tryFire zeroes it whenever anything else answers (another hold, or nothing). The clocked word here is
+        # 'held-send' (the ship gate holding a send): an upload never clocks since the user's 2026-09-17 ruling.
         episode = """
-var R = window.__rompReload; var shipping = 1;
-window.__rompPaneBusy = function () { return shipping ? "upload" : ""; };
-R.noteVersion({ boot: "2.2", dist_ver: 7 }); var first = state(); var firstArmed = armed();       // the first episode: held
-NOW += 5000; shipping = 0; COMPOSER.value = "a draft"; document.activeElement = COMPOSER;
-R.ended(); await tick(); var typing = state(); var typingArmed = armed();                          // the ack lands; the composer holds now
-NOW += 61000; shipping = 1; document.activeElement = null; emit("focusout"); await tick();        // a new ship, then the blur
+var R = window.__rompReload; var gated = 1;
+window.__rompPaneBusy = function () { return gated ? "held-send" : ""; };
+R.noteDv(8); R.accept(); var first = state(); var firstArmed = armed();       // the first episode: held
+NOW += 5000; gated = 0; COMPOSER.value = "a draft"; document.activeElement = COMPOSER;
+R.ended(); await tick(); var typing = state(); var typingArmed = armed();                          // the gate clears; the composer holds now
+NOW += 61000; gated = 1; document.activeElement = null; emit("focusout"); await tick();           // a new held send, then the blur
 var reheld = state(); var reheldArmed = armed(); var reheldWarns = WARNS.length;
 """
         s = run_core(self.FAKES + episode + """
-shipping = 0; R.ended(); await tick();
+gated = 0; R.ended(); await tick();
 out({ first: first, firstArmed: firstArmed, typing: typing, typingArmed: typingArmed, reheld: reheld, reheldArmed: reheldArmed,
       reheldWarns: reheldWarns, after: state(), warns: WARNS, armed: armed() });""")
-        self.assertEqual(s["first"]["waiting"], "upload")
+        self.assertEqual(s["first"]["waiting"], "held-send")
         self.assertEqual(s["firstArmed"], [60000, 60000])   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
         self.assertEqual(s["typing"]["reloads"], 0)
         self.assertEqual(s["typing"]["waiting"], "typing", "the hold cleared; the composer is what holds now")
-        self.assertEqual(s["typingArmed"], [60000], "a gesture word has no deadline: the upload's timer went with its clock")   # upstream's backstop walk timer (the 2026-09-15 pull-in)
-        self.assertEqual(s["reheld"]["reloads"], 0, "the new ship is 0 s old: it holds, whatever the first sighting's age")
-        self.assertEqual(s["reheld"]["waiting"], "upload")
+        self.assertEqual(s["typingArmed"], [60000], "a gesture word has no deadline: the held send's timer went with its clock")   # upstream's backstop walk timer (the 2026-09-15 pull-in)
+        self.assertEqual(s["reheld"]["reloads"], 0, "the new held send is 0 s old: it holds, whatever the first sighting's age")
+        self.assertEqual(s["reheld"]["waiting"], "held-send")
         self.assertEqual(s["reheldArmed"], [60000, 60000], "a full 60 s for the new episode")   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
         self.assertEqual(s["reheldWarns"], 0)
-        self.assertEqual(s["after"]["reloads"], 1, "the second episode ends on its own ack")
+        self.assertEqual(s["after"]["reloads"], 1, "the second episode ends on its own gate clear")
         self.assertEqual(s["warns"], [], "no deadline line in either episode")
         self.assertEqual(s["armed"], [60000])   # upstream's backstop walk timer stands (the 2026-09-15 pull-in)
         # the second episode runs its own full 60 s, and the console line measures it, not the page's first sighting
@@ -1080,7 +1174,7 @@ NOW += 59000; runDue(); var under = state(); var underWarns = WARNS.length;
 NOW += 1000; runDue();
 out({ under: under, underWarns: underWarns, after: state(), warns: WARNS, armed: armed() });""")
         self.assertEqual(s2["under"]["reloads"], 0, "59 s into the second episode: still held")
-        self.assertEqual(s2["under"]["waiting"], "upload")
+        self.assertEqual(s2["under"]["waiting"], "held-send")
         self.assertEqual(s2["underWarns"], 0)
         self.assertEqual(s2["after"]["reloads"], 1, "60 s into the second episode: reloads anyway")
         self.assertEqual(len(s2["warns"]), 1, s2["warns"])
@@ -1089,34 +1183,35 @@ out({ under: under, underWarns: underWarns, after: state(), warns: WARNS, armed:
         self.assertEqual(s2["armed"], [60000])   # upstream's backstop walk timer stands (the 2026-09-15 pull-in)
 
     def test_a_change_of_word_starts_that_words_own_clock(self):
-        # the shim's 'sends' (a prompt queued for the reopen) gives way to the pane's 'upload' (a re-ship awaiting its ack):
-        # two holds; 'sends' has no clock (the fold's review, F1/UI-1), and the upload's timer is its own full 60 s from
+        # the shim's 'sends' (a prompt queued for the reopen) gives way to the pane's 'held-send' (a send held behind the ship
+        # gate; an upload never clocks since the user's 2026-09-17 ruling): two holds; 'sends' has no clock (the fold's
+        # review, F1/UI-1), and the held send's timer is its own full 60 s from
         # the change of word, not measured from the first sight of the page's hold
         s = run_core(self.FAKES + """
 var R = window.__rompReload; var word = "sends";
 window.__rompPaneBusy = function () { return word; };
-R.noteVersion({ boot: "2.2" }); var queued = state(); var queuedArmed = armed();
-NOW += 30000; word = "upload"; R.ended(); await tick(); var shipping = state(); var shippingArmed = armed();   // the flush is the ending event; the re-ship holds now
-NOW += 59000; runDue(); var under = state(); var underWarns = WARNS.length;                                   // 89 s after the first sight, 59 s into the upload's
+R.noteDv(8); R.accept(); var queued = state(); var queuedArmed = armed();
+NOW += 30000; word = "held-send"; R.ended(); await tick(); var shipping = state(); var shippingArmed = armed();   // the flush is the ending event; the held send holds now
+NOW += 59000; runDue(); var under = state(); var underWarns = WARNS.length;                                   // 89 s after the first sight, 59 s into the held send's
 NOW += 1000; runDue();
 out({ queued: queued, queuedArmed: queuedArmed, shipping: shipping, shippingArmed: shippingArmed, under: under, underWarns: underWarns, after: state(), warns: WARNS });""")
         self.assertEqual(s["queued"]["waiting"], "sends")
         self.assertEqual(s["queuedArmed"], [60000], "a 'sends' hold arms no timer: it has no deadline")   # upstream's backstop walk timer, armed on every held request; the fork's clock arms none for this word (the 2026-09-15 pull-in)
         self.assertEqual(s["shipping"]["reloads"], 0)
-        self.assertEqual(s["shipping"]["waiting"], "upload")
-        self.assertEqual(s["shippingArmed"], [60000, 60000], "the upload's own timer, a full 60 s from the change of word")   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
-        self.assertEqual(s["under"]["reloads"], 0, "59 s into the upload's clock: held")
+        self.assertEqual(s["shipping"]["waiting"], "held-send")
+        self.assertEqual(s["shippingArmed"], [60000, 60000], "the held send's own timer, a full 60 s from the change of word")   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
+        self.assertEqual(s["under"]["reloads"], 0, "59 s into the held send's clock: held")
         self.assertEqual(s["underWarns"], 0)
         self.assertEqual(s["after"]["reloads"], 1)
         self.assertEqual(len(s["warns"]), 1, s["warns"])
-        self.assertIn("'upload' hold did not end within 60 s", s["warns"][0], "the word released is the one that ran out, at its own age")
+        self.assertIn("'held-send' hold did not end within 60 s", s["warns"][0], "the word released is the one that ran out, at its own age")
 
     def test_a_gesture_word_has_no_deadline(self):
         # a reload mid-draft or mid-drag is what the core exists to prevent; the deadline is for the words whose ending
         # event belongs to a machine (an ack, a flush), not to the user
         s = run_core(self.FAKES + """
 var R = window.__rompReload;
-document.activeElement = COMPOSER; COMPOSER.value = "half a thought"; R.noteDv(8); var held = state(); var heldArmed = armed();
+document.activeElement = COMPOSER; COMPOSER.value = "half a thought"; R.noteDv(8); R.accept(); var held = state(); var heldArmed = armed();
 NOW += 600000; R.tryFire(); emit("input"); await tick(); var later = state();
 emit("dragstart"); COMPOSER.value = ""; document.activeElement = null; emit("input"); await tick(); var dragging = state();
 NOW += 600000; R.tryFire(); var stillDragging = state();
@@ -1134,13 +1229,13 @@ out({ held: held, heldArmed: heldArmed, later: later, dragging: dragging, stillD
 
     def test_a_panes_hold_holds_the_shells_reload_and_its_ending_event_releases_it(self):
         s = run_core(self.FAKES + """
-var R = window.__rompReload; var paneHold = "upload";
+var R = window.__rompReload; var paneHold = "held-send";   // the clocked word (an upload never clocks since the user's 2026-09-17 ruling)
 IFRAMES = [{ contentWindow: { __rompReload: { busyHere: function () { return paneHold; } } } }];
-R.request("restart", "2.2"); var held = state(); var heldArmed = armed();
+R.require("a wire change"); var held = state(); var heldArmed = armed();
 paneHold = ""; R.tryFire();            // the pane's ended() reaches the shell's tryFire (the core forwards to shell())
 out({ held: held, heldArmed: heldArmed, after: state(), armed: armed(), warns: WARNS });""")
         self.assertEqual(s["held"]["reloads"], 0)
-        self.assertEqual(s["held"]["waiting"], "upload", "a pane's upload hold holds the shell's reload")
+        self.assertEqual(s["held"]["waiting"], "held-send", "a pane's held send holds the shell's reload")
         self.assertEqual(s["heldArmed"], [60000, 60000], "the shell runs the deadline clock on the pane's word; no re-check")   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
         self.assertEqual(s["after"]["reloads"], 1)
         self.assertEqual(s["armed"], [60000])   # upstream's backstop walk timer (the 2026-09-15 pull-in)
@@ -1148,15 +1243,15 @@ out({ held: held, heldArmed: heldArmed, after: state(), armed: armed(), warns: W
         # the shell's deadline releases a pane's word too, and the pane's hook reads the note from the shell
         s2 = run_core(self.FAKES + """
 var R = window.__rompReload; var NOTE = null;
-var pane = { __rompReload: { busyHere: function () { return "upload"; }, released: function () { return window.__rompReload.released(); } },
+var pane = { __rompReload: { busyHere: function () { return "held-send"; }, released: function () { return window.__rompReload.released(); } },
              __rompPersistForReload: function () { PERSISTED += 10; NOTE = pane.__rompReload.released(); } };
 IFRAMES = [{ contentWindow: pane }];
-R.request("restart", "2.2");
+R.require("a wire change");
 NOW += 60000; runDue();
 out({ after: state(), note: NOTE, warns: WARNS });""")
         self.assertEqual(s2["after"]["reloads"], 1)
         self.assertEqual(s2["after"]["persisted"], 11, "the shell and the pane persisted before the reload")
-        self.assertIn("An upload had not finished after 60 s", s2["note"])
+        self.assertIn("A message held behind an upload had not finished after 60 s", s2["note"])
         self.assertEqual(len(s2["warns"]), 1)
 
     def test_a_pane_in_a_shell_reads_the_shells_release_note(self):
@@ -1181,11 +1276,11 @@ out({ own: R.released() });""")
         # once more, so the note the pane read LAST is empty and the next load replays no reload that never happened.
         s = run_core(self.FAKES + """
 var R = window.__rompReload; REFUSE = true; var NOTES = [];
-window.__rompPaneBusy = function () { return "upload"; };
+window.__rompPaneBusy = function () { return "held-send"; };                             // the clocked word (an upload never clocks since the user's 2026-09-17 ruling)
 window.__rompPersistForReload = function () { PERSISTED++; NOTES.push(R.released()); };   // render.ts persistNoticesForReload reads the note at each persist
-R.noteDv(8);
+R.noteDv(8); R.accept();
 NOW += 60000; runDue(); var refused = state(); var refusedArmed = armed(); var refusedNotes = NOTES.slice();
-REFUSE = false; R.noteDv(9); var again = state(); var againArmed = armed();          // a strictly newer build re-arms: a fresh clock, no instant release
+REFUSE = false; R.noteDv(9); R.accept(); var again = state(); var againArmed = armed();   // a strictly newer build is offered again (the refused accept put the offer back) and accepted: a fresh clock, no instant release
 NOW += 59000; runDue(); var under = state();
 NOW += 1000; runDue();
 out({ refused: refused, refusedArmed: refusedArmed, refusedNotes: refusedNotes, again: again, againArmed: againArmed, under: under, after: state(), notes: NOTES, warns: WARNS });""")
@@ -1193,11 +1288,11 @@ out({ refused: refused, refusedArmed: refusedArmed, refusedNotes: refusedNotes, 
         self.assertEqual(s["refused"]["waiting"], "refused")
         self.assertEqual(s["refused"]["released"], "", "a refused reload carries no release note forward")
         self.assertEqual(len(s["refusedNotes"]), 2, "the panes persisted before the attempt and once more after the refusal")
-        self.assertIn("An upload had not finished after 60 s", s["refusedNotes"][0], "the note rode the persist before the attempt, as it must for a reload that lands")
+        self.assertIn("A message held behind an upload had not finished after 60 s", s["refusedNotes"][0], "the note rode the persist before the attempt, as it must for a reload that lands")
         self.assertEqual(s["refusedNotes"][-1], "", "the last persist read no note: the stored toasts drop it")
         self.assertEqual(s["refusedArmed"], [])
         self.assertEqual(s["again"]["reloads"], 1, "the newer build finds the same word up and waits for it")
-        self.assertEqual(s["again"]["waiting"], "upload")
+        self.assertEqual(s["again"]["waiting"], "held-send")
         self.assertEqual(s["againArmed"], [60000, 60000], "…on a clock of its own")   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
         self.assertEqual(s["under"]["reloads"], 1)
         self.assertEqual(s["after"]["reloads"], 2, "the second deadline reloads (and this host takes it)")
@@ -1205,27 +1300,28 @@ out({ refused: refused, refusedArmed: refusedArmed, refusedNotes: refusedNotes, 
         self.assertEqual(len(s["notes"]), 3, "the second deadline's reload persisted once, with its own note")
         self.assertIn("after 60 s", s["notes"][2])
 
-    def test_a_gesture_in_a_later_pane_outranks_an_upload_hold_past_its_deadline(self):
+    def test_a_gesture_in_a_later_pane_outranks_a_held_send_past_its_deadline(self):
         # The fold-4 review's K1 (2026-09-08): busy() returned the first pane's word without reading the panes behind
         # it, and past the deadline tryFire traded that word for a fire, so the shell reloaded while a later pane was
         # mid-gesture (the chat pane is the landing's first iframe, so this was the live ordering). busy() returns any
         # gesture from the shell or any pane first, and a pane word only when nothing else holds. Re-aimed at the fold's
         # review (UI-2, 2026-09-09): the gesture defers the release, it does not reset the upload's clock; the gesture's
-        # end is the first gesture-free tryFire past the deadline, and the reload fires there at once.
+        # end is the first gesture-free tryFire past the deadline, and the reload fires there at once. The clocked word is
+        # 'held-send' since the user's 2026-09-17 ruling (an upload never clocks; it holds like the shim's 'sends').
         for gesture in ("drag", "pointer", "selection", "typing"):
             with self.subTest(gesture=gesture):
                 s = run_core(self.FAKES + """
-var R = window.__rompReload; var chatHold = "upload", paneGesture = "";
+var R = window.__rompReload; var chatHold = "held-send", paneGesture = "";
 IFRAMES = [{ contentWindow: { __rompReload: { busyHere: function () { return chatHold; } } } },
            { contentWindow: { __rompReload: { busyHere: function () { return paneGesture; } } } }];
-R.request("restart", "2.2"); var held = state(); var heldArmed = armed();
+R.require("a wire change"); var held = state(); var heldArmed = armed();
 NOW += 61000; paneGesture = %s; runDue();                  // the deadline has passed, and a later pane is mid-gesture
 var mid = state(); var midArmed = armed(); var midWarns = WARNS.length;
 NOW += 30000; R.tryFire(); var still = state(); var stillArmed = armed();   // the poll re-asks mid-gesture: still deferred, no fresh clock
 paneGesture = ""; R.tryFire();                            // the gesture's ending event calls the shell's tryFire
 out({ held: held, heldArmed: heldArmed, mid: mid, midArmed: midArmed, midWarns: midWarns, still: still, stillArmed: stillArmed,
       after: state(), warns: WARNS, armed: armed() });""" % json.dumps(gesture))
-                self.assertEqual(s["held"]["waiting"], "upload")
+                self.assertEqual(s["held"]["waiting"], "held-send")
                 self.assertEqual(s["heldArmed"], [60000, 60000])   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
                 self.assertEqual(s["mid"]["reloads"], 0, "never mid-gesture, whatever the first pane says")
                 self.assertEqual(s["mid"]["waiting"], gesture, "the gesture is the reason reported, not the pane's word")
@@ -1233,23 +1329,24 @@ out({ held: held, heldArmed: heldArmed, mid: mid, midArmed: midArmed, midWarns: 
                 self.assertEqual(s["midWarns"], 0, "no release while the gesture is up")
                 self.assertEqual(s["still"]["reloads"], 0, "30 s further into the gesture: still deferred")
                 self.assertEqual(s["still"]["waiting"], gesture)
-                self.assertEqual(s["stillArmed"], [60000], "no fresh clock: the upload's clock ran on through the gesture")   # upstream's backstop walk timer stands (the 2026-09-15 pull-in)
+                self.assertEqual(s["stillArmed"], [60000], "no fresh clock: the held send's clock ran on through the gesture")   # upstream's backstop walk timer stands (the 2026-09-15 pull-in)
                 self.assertEqual(s["after"]["reloads"], 1, "the gesture's end is the first gesture-free tryFire past the deadline: the reload fires at once, with no fresh 60 s")
                 self.assertEqual(s["after"]["waiting"], "")
                 self.assertEqual(len(s["warns"]), 1, s["warns"])
-                self.assertIn("'upload' hold did not end within 91 s", s["warns"][0], "the line measures the upload's whole wait, the gesture included")
+                self.assertIn("'held-send' hold did not end within 91 s", s["warns"][0], "the line measures the held send's whole wait, the gesture included")
                 self.assertEqual(s["armed"], [60000])   # upstream's backstop walk timer stands (the 2026-09-15 pull-in)
 
-    def test_intermittent_gestures_in_another_pane_do_not_restart_a_wedged_uploads_clock(self):
+    def test_intermittent_gestures_in_another_pane_do_not_restart_a_wedged_held_sends_clock(self):
         # The fold's review (UI-2, 2026-09-09): with the clock zeroed by every gesture, a click or a selection in the
         # feed pane every 50 s restarted the wedged upload's 60 s each time, and the reload the backstop exists to land
         # never fired while the user was active. The clock is the pane word's: each gesture defers the fire, and the
-        # first gesture-free tryFire past the deadline releases the word, however many gestures came before it.
+        # first gesture-free tryFire past the deadline releases the word, however many gestures came before it. The clocked
+        # word is 'held-send' since the user's 2026-09-17 ruling (an upload never clocks).
         s = run_core(self.FAKES + """
-var R = window.__rompReload; var chatHold = "upload", paneGesture = "";
+var R = window.__rompReload; var chatHold = "held-send", paneGesture = "";
 IFRAMES = [{ contentWindow: { __rompReload: { busyHere: function () { return chatHold; } } } },
            { contentWindow: { __rompReload: { busyHere: function () { return paneGesture; } } } }];
-R.request("restart", "2.2"); var held = state(); var heldArmed = armed();
+R.require("a wire change"); var held = state(); var heldArmed = armed();
 var trace = [];
 function mark() { trace.push({ t: (NOW - 5000000) / 1000, waiting: R.waiting, reloads: RELOADS, armed: armed().length }); }
 for (var round = 0; round < 4; round++) {                             // a gesture every 50 s, each held for 15 s
@@ -1258,23 +1355,24 @@ for (var round = 0; round < 4; round++) {                             // a gestu
   NOW += 5000; paneGesture = ""; R.tryFire(); mark();                  // t = 65, 130, ...: the gesture's ending event
 }
 out({ held: held, heldArmed: heldArmed, trace: trace, after: state(), warns: WARNS, armed: armed() });""")
-        self.assertEqual(s["held"]["waiting"], "upload")
+        self.assertEqual(s["held"]["waiting"], "held-send")
         self.assertEqual(s["heldArmed"], [60000, 60000])   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
         self.assertEqual(s["trace"][0], {"t": 60, "waiting": "pointer", "reloads": 0, "armed": 1}, "60 s, mid-gesture: deferred, the fork's clock spent and not re-armed; upstream's backstop walk timer stands (the 2026-09-15 pull-in)")
         self.assertEqual(s["trace"][1], {"t": 65, "waiting": "", "reloads": 1, "armed": 1}, "65 s: the gesture's end is the first gesture-free tryFire past 60 s, and the reload fires")   # upstream's backstop walk timer stands after the fire (the 2026-09-15 pull-in)
         self.assertEqual([e["reloads"] for e in s["trace"]], [0, 1, 1, 1, 1, 1, 1, 1], "one reload; the later gestures find it already fired")
         self.assertEqual(s["after"]["reloads"], 1)
         self.assertEqual(len(s["warns"]), 1, s["warns"])
-        self.assertIn("'upload' hold did not end within 65 s", s["warns"][0], "the line measures the upload's wait from its first sight")
+        self.assertIn("'held-send' hold did not end within 65 s", s["warns"][0], "the line measures the held send's wait from its first sight")
         self.assertEqual(s["armed"], [])
 
-    def test_a_gesture_in_the_uploads_own_page_does_not_restart_its_clock(self):
+    def test_a_gesture_in_the_held_sends_own_page_does_not_restart_its_clock(self):
         # The fold's verification of UI-2 (2026-09-09, finding A): busyHere answers a window's own gesture before its
         # pane word, and busy() read only busyHere per window, so a click, a selection, a drag or a draft in the page
         # that OWNS the wedged upload hid the word: paneWord read '', clock() unclocked, and the word got a fresh 60 s
         # when the gesture ended (a reload at 125 s, its line saying 60 s). busy() now reads each window's gesture and
         # its pane word apart (paneHere), so the clock runs through a gesture in the word's own page too: the deadline
         # timer fires into the gesture and defers, and the gesture's end releases at once, the line naming the whole wait.
+        # The clocked word is 'held-send' since the user's 2026-09-17 ruling (an upload never clocks).
         gestures = {
             "pointer": ('emit("pointerdown");', 'emit("pointerup");'),
             "drag": ('emit("dragstart");', 'emit("dragend");'),
@@ -1287,17 +1385,17 @@ out({ held: held, heldArmed: heldArmed, trace: trace, after: state(), warns: WAR
             with self.subTest(gesture=gesture):
                 s = run_core(self.FAKES + """
 var R = window.__rompReload; var NOTE = null;
-window.__rompPaneBusy = function () { return "upload"; };                          // render.ts: a ship awaits an ack that never comes
+window.__rompPaneBusy = function () { return "held-send"; };                       // render.ts: the ship gate holds a send behind a ship that never acks
 window.__rompPersistForReload = function () { PERSISTED++; NOTE = R.released(); };
-R.noteDv(8); var held = state(); var heldArmed = armed();
+R.noteDv(8); R.accept(); var held = state(); var heldArmed = armed();
 NOW += 30000; %s                                                                    // 30 s: the gesture starts in this page (a start is no re-ask)
 NOW += 30000; runDue(); var mid = state(); var midArmed = armed(); var midWarns = WARNS.length;   // 60 s: the deadline timer fires into the gesture
 NOW += 5000; %s await tick(); var after = state(); var afterArmed = armed();       // 65 s: the gesture's ending event
 NOW += 60000; runDue(); R.tryFire(); var much = state();                            // 125 s: nothing left to fire
 out({ held: held, heldArmed: heldArmed, mid: mid, midArmed: midArmed, midWarns: midWarns, after: after, afterArmed: afterArmed,
       much: much, note: NOTE, warns: WARNS, armed: armed() });""" % (start, end))
-                self.assertEqual(s["held"]["waiting"], "upload")
-                self.assertEqual(s["heldArmed"], [60000, 60000], "the upload's clock from its first sight")   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
+                self.assertEqual(s["held"]["waiting"], "held-send")
+                self.assertEqual(s["heldArmed"], [60000, 60000], "the held send's clock from its first sight")   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
                 self.assertEqual(s["mid"]["reloads"], 0, "never mid-gesture")
                 self.assertEqual(s["mid"]["waiting"], gesture, "the gesture is the word reported while it lives")
                 self.assertEqual(s["midArmed"], [60000], "the deadline timer fired into the gesture and is not re-armed")   # upstream's backstop walk timer (the 2026-09-15 pull-in)
@@ -1306,73 +1404,75 @@ out({ held: held, heldArmed: heldArmed, mid: mid, midArmed: midArmed, midWarns: 
                 self.assertEqual(s["after"]["waiting"], "")
                 self.assertEqual(s["afterArmed"], [60000], "no fresh clock")   # upstream's backstop walk timer stands (the 2026-09-15 pull-in)
                 self.assertEqual(len(s["warns"]), 1, s["warns"])
-                self.assertIn("'upload' hold did not end within 65 s", s["warns"][0], "the line measures the upload's whole wait, the gesture in its own page included")
-                self.assertEqual(s["note"], "An upload had not finished after 65 s, so the page reloaded without waiting longer.")
+                self.assertIn("'held-send' hold did not end within 65 s", s["warns"][0], "the line measures the held send's whole wait, the gesture in its own page included")
+                self.assertEqual(s["note"], "A message held behind an upload had not finished after 65 s, so the page reloaded without waiting longer.")
                 self.assertEqual(s["much"]["reloads"], 1, "one reload")
                 self.assertEqual(s["armed"], [])
 
-    def test_a_gesture_in_the_pane_that_owns_the_upload_does_not_restart_its_clock_through_the_shell(self):
+    def test_a_gesture_in_the_pane_that_owns_the_held_send_does_not_restart_its_clock_through_the_shell(self):
         # the same through a shell (finding A's shell configuration): the chat pane is the landing's first iframe, and
-        # its busyHere answers its own gesture before its 'upload'; the shell reads the pane's word through paneHere
+        # its busyHere answers its own gesture before its 'held-send'; the shell reads the pane's word through paneHere
+        # (the clocked word since the user's 2026-09-17 ruling: an upload never clocks)
         s = run_core(self.FAKES + """
 var R = window.__rompReload; var chatGesture = "";
-var chat = { __rompReload: { busyHere: function () { return chatGesture || "upload"; }, paneHere: function () { return "upload"; } } };
+var chat = { __rompReload: { busyHere: function () { return chatGesture || "held-send"; }, paneHere: function () { return "held-send"; } } };
 IFRAMES = [{ contentWindow: chat }, { contentWindow: { __rompReload: { busyHere: function () { return ""; }, paneHere: function () { return ""; } } } }];
-R.request("restart", "2.2"); var held = state(); var heldArmed = armed();
+R.require("a wire change"); var held = state(); var heldArmed = armed();
 NOW += 30000; chatGesture = "pointer";                                              // 30 s: a click in the chat pane, where the upload lives
 NOW += 30000; runDue(); var mid = state(); var midArmed = armed(); var midWarns = WARNS.length;   // 60 s: the timer fires into it
 NOW += 5000; chatGesture = ""; R.tryFire(); var after = state(); var afterArmed = armed();        // 65 s: the pane's pointerup, its ended() reaching the shell's tryFire
 NOW += 60000; runDue(); R.tryFire(); var much = state();
 out({ held: held, heldArmed: heldArmed, mid: mid, midArmed: midArmed, midWarns: midWarns, after: after, afterArmed: afterArmed, much: much, warns: WARNS, armed: armed() });""")
-        self.assertEqual(s["held"]["waiting"], "upload")
+        self.assertEqual(s["held"]["waiting"], "held-send")
         self.assertEqual(s["heldArmed"], [60000, 60000])   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
         self.assertEqual(s["mid"]["reloads"], 0)
         self.assertEqual(s["mid"]["waiting"], "pointer", "the pane's gesture is the word reported")
         self.assertEqual(s["midArmed"], [60000], "fired into the gesture, not re-armed")   # upstream's backstop walk timer (the 2026-09-15 pull-in)
         self.assertEqual(s["midWarns"], 0)
-        self.assertEqual(s["after"]["reloads"], 1, "the gesture's end releases at once: the shell read 'upload' behind the pane's gesture, so the clock ran on")
+        self.assertEqual(s["after"]["reloads"], 1, "the gesture's end releases at once: the shell read 'held-send' behind the pane's gesture, so the clock ran on")
         self.assertEqual(s["afterArmed"], [60000])   # upstream's backstop walk timer stands (the 2026-09-15 pull-in)
         self.assertEqual(len(s["warns"]), 1, s["warns"])
-        self.assertIn("'upload' hold did not end within 65 s", s["warns"][0])
+        self.assertIn("'held-send' hold did not end within 65 s", s["warns"][0])
         self.assertEqual(s["much"]["reloads"], 1)
         self.assertEqual(s["armed"], [])
         # an older pane core without paneHere is read through its busyHere word: it clocks when no gesture is up in it,
         # and a gesture there still hides its word (that pane keeps the pre-fix behaviour: a fresh 60 s at the gesture's end)
         s2 = run_core(self.FAKES + """
 var R = window.__rompReload; var chatGesture = "";
-IFRAMES = [{ contentWindow: { __rompReload: { busyHere: function () { return chatGesture || "upload"; } } } }];
-R.request("restart", "2.2"); var held = state(); var heldArmed = armed();
+IFRAMES = [{ contentWindow: { __rompReload: { busyHere: function () { return chatGesture || "held-send"; } } } }];
+R.require("a wire change"); var held = state(); var heldArmed = armed();
 NOW += 30000; chatGesture = "pointer";
 NOW += 30000; runDue(); var mid = state(); var midArmed = armed();
 NOW += 5000; chatGesture = ""; R.tryFire(); var after = state(); var afterArmed = armed();
 NOW += 60000; runDue(); var much = state();
 out({ held: held, heldArmed: heldArmed, mid: mid, midArmed: midArmed, after: after, afterArmed: afterArmed, much: much, warns: WARNS });""")
-        self.assertEqual(s2["held"]["waiting"], "upload", "no gesture up: the busyHere word is the pane word")
+        self.assertEqual(s2["held"]["waiting"], "held-send", "no gesture up: the busyHere word is the pane word")
         self.assertEqual(s2["heldArmed"], [60000, 60000], "and it clocks")   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
         self.assertEqual(s2["mid"]["waiting"], "pointer")
         self.assertEqual(s2["midArmed"], [60000])   # upstream's backstop walk timer stands (the 2026-09-15 pull-in)
         self.assertEqual(s2["after"]["reloads"], 0, "the older pane's word was hidden by its own gesture, so its clock restarted at the gesture's end (the fallback keeps that pane's pre-fix behaviour)")
-        self.assertEqual(s2["after"]["waiting"], "upload")
+        self.assertEqual(s2["after"]["waiting"], "held-send")
         self.assertEqual(s2["afterArmed"], [60000, 60000])   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
         self.assertEqual(s2["much"]["reloads"], 1)
         self.assertIn("within 60 s", s2["warns"][0])
 
-    def test_an_upload_beside_a_sibling_panes_sends_clocks_and_never_releases_over_it(self):
+    def test_a_held_send_beside_a_sibling_panes_sends_clocks_and_never_releases_over_it(self):
         # The fold's verification (2026-09-09, finding D): with the chat pane's 'upload' first and a sibling pane's
         # 'sends' behind it, paneWord was the first pane word found and the shell reloaded at 60 s over the sibling's
         # queued prompt; in the other order the upload never clocked while the 'sends' stood. busy() now records the
         # no-deadline word and the clocked word apart, whatever the order: 'sends' is the word reported (it defers a
         # release like a gesture), the upload's clock runs beside it, and the flush that ends the 'sends' releases the
-        # upload at once, the line naming its whole wait.
+        # upload at once, the line naming its whole wait. The clocked word is 'held-send' since the user's 2026-09-17 ruling
+        # (an upload never clocks: it is a no-deadline word like the 'sends', and the two hold side by side).
         for order in ("chat-first", "sends-first"):
             with self.subTest(order=order):
                 s = run_core(self.FAKES + """
-var R = window.__rompReload; var chatHold = "upload", queued = 1; var NOTE = null;
+var R = window.__rompReload; var chatHold = "held-send", queued = 1; var NOTE = null;
 var chat = { __rompReload: { busyHere: function () { return chatHold; }, paneHere: function () { return chatHold; } },
              __rompPersistForReload: function () { PERSISTED += 10; NOTE = window.__rompReload.released(); } };
 var sib = { __rompReload: { busyHere: function () { return queued ? "sends" : ""; }, paneHere: function () { return queued ? "sends" : ""; } } };   // the shim: everConnected && queue.length > queuedDiag
 IFRAMES = %s === "chat-first" ? [{ contentWindow: chat }, { contentWindow: sib }] : [{ contentWindow: sib }, { contentWindow: chat }];
-R.request("restart", "2.2"); var held = state(); var heldArmed = armed();
+R.require("a wire change"); var held = state(); var heldArmed = armed();
 NOW += 60000; runDue(); var atDeadline = state(); var atDeadlineArmed = armed(); var atDeadlineWarns = WARNS.length;   // 60 s: the upload's timer fires into the 'sends'
 NOW += 30000; R.tryFire(); var later = state(); var laterArmed = armed();                                                // 90 s: the poll re-asks; still deferred
 queued = 0; R.tryFire(); var after = state();                                                                            // the sibling's flush in ws.onopen: its ended() reaches the shell's tryFire
@@ -1380,7 +1480,7 @@ out({ held: held, heldArmed: heldArmed, atDeadline: atDeadline, atDeadlineArmed:
       later: later, laterArmed: laterArmed, after: after, note: NOTE, warns: WARNS, armed: armed() });""" % json.dumps(order))
                 self.assertEqual(s["held"]["reloads"], 0)
                 self.assertEqual(s["held"]["waiting"], "sends", "the no-deadline word is the one reported, ahead of the clocked word")
-                self.assertEqual(s["heldArmed"], [60000, 60000], "the upload's clock runs beside the 'sends', whichever pane comes first")   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
+                self.assertEqual(s["heldArmed"], [60000, 60000], "the held send's clock runs beside the 'sends', whichever pane comes first")   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
                 self.assertEqual(s["atDeadline"]["reloads"], 0, "60 s: no release over the 'sends': a reload would land on a kernel not answering the sibling and lose its prompt")
                 self.assertEqual(s["atDeadline"]["waiting"], "sends")
                 self.assertEqual(s["atDeadlineArmed"], [60000], "the timer fired into the 'sends' and is not re-armed: the flush is the next re-ask")   # upstream's backstop walk timer (the 2026-09-15 pull-in)
@@ -1388,64 +1488,64 @@ out({ held: held, heldArmed: heldArmed, atDeadline: atDeadline, atDeadlineArmed:
                 self.assertEqual(s["later"]["reloads"], 0, "the poll 30 s on: still deferred")
                 self.assertEqual(s["later"]["waiting"], "sends")
                 self.assertEqual(s["laterArmed"], [60000], "no fresh clock")   # upstream's backstop walk timer stands (the 2026-09-15 pull-in)
-                self.assertEqual(s["after"]["reloads"], 1, "the flush ends the 'sends', and the upload past its deadline is released at once")
+                self.assertEqual(s["after"]["reloads"], 1, "the flush ends the 'sends', and the held send past its deadline is released at once")
                 self.assertEqual(s["after"]["waiting"], "")
                 self.assertEqual(s["after"]["persisted"], 11, "the shell and the chat pane persisted before the reload")
                 self.assertEqual(len(s["warns"]), 1, s["warns"])
-                self.assertIn("'upload' hold did not end within 90 s", s["warns"][0], "the line measures the upload's whole wait, the 'sends' included")
-                self.assertEqual(s["note"], "An upload had not finished after 90 s, so the page reloaded without waiting longer.", "the chat pane's hook reads the shell's note")
+                self.assertIn("'held-send' hold did not end within 90 s", s["warns"][0], "the line measures the held send's whole wait, the 'sends' included")
+                self.assertEqual(s["note"], "A message held behind an upload had not finished after 90 s, so the page reloaded without waiting longer.", "the chat pane's hook reads the shell's note")
                 self.assertEqual(s["armed"], [60000])   # upstream's backstop walk timer stands (the 2026-09-15 pull-in)
-        # the upload's ack lands first: its clock goes with the word, the 'sends' holds on with no clock, and the flush reloads with no note
+        # the held send's gate clears first: its clock goes with the word, the 'sends' holds on with no clock, and the flush reloads with no note
         s = run_core(self.FAKES + """
-var R = window.__rompReload; var chatHold = "upload", queued = 1;
+var R = window.__rompReload; var chatHold = "held-send", queued = 1;
 IFRAMES = [{ contentWindow: { __rompReload: { busyHere: function () { return chatHold; }, paneHere: function () { return chatHold; } } } },
            { contentWindow: { __rompReload: { busyHere: function () { return queued ? "sends" : ""; }, paneHere: function () { return queued ? "sends" : ""; } } } }];
-R.request("restart", "2.2");
+R.require("a wire change");
 NOW += 20000; chatHold = ""; R.tryFire(); var acked = state(); var ackedArmed = armed();   // the chat pane's ended()
 NOW += 600000; R.tryFire(); var later = state();                                          // ten minutes on: the 'sends' still holds, no deadline
 queued = 0; R.tryFire();
 out({ acked: acked, ackedArmed: ackedArmed, later: later, after: state(), warns: WARNS, armed: armed() });""")
         self.assertEqual(s["acked"]["reloads"], 0)
         self.assertEqual(s["acked"]["waiting"], "sends")
-        self.assertEqual(s["ackedArmed"], [60000], "the upload's clock went with its word; a 'sends' alone arms none")   # upstream's backstop walk timer, armed on every held request; the fork's clock arms none for this word (the 2026-09-15 pull-in)
+        self.assertEqual(s["ackedArmed"], [60000], "the held send's clock went with its word; a 'sends' alone arms none")   # upstream's backstop walk timer, armed on every held request; the fork's clock arms none for this word (the 2026-09-15 pull-in)
         self.assertEqual(s["later"]["reloads"], 0, "a 'sends' hold has no deadline")
         self.assertEqual(s["after"]["reloads"], 1, "the flush reloads")
         self.assertEqual(s["after"]["released"], "", "no note: nothing was released")
         self.assertEqual(s["warns"], [])
         self.assertEqual(s["armed"], [60000])   # upstream's backstop walk timer (the 2026-09-15 pull-in)
 
-    def test_a_gesture_in_a_later_pane_and_an_earlier_panes_upload_hold_each_end_on_their_own_event(self):
+    def test_a_gesture_in_a_later_pane_and_an_earlier_panes_held_send_each_end_on_their_own_event(self):
         # under the deadline both must end, in whichever order they land; the gesture is the word reported while it holds,
-        # and the upload's clock runs underneath it
+        # and the held send's clock runs underneath it (the clocked word since the user's 2026-09-17 ruling: an upload never clocks)
         for gesture in ("drag", "pointer", "selection", "typing"):
             with self.subTest(gesture=gesture):
                 s = run_core(self.FAKES + """
-var R = window.__rompReload; var chatHold = "upload", paneGesture = %s;
+var R = window.__rompReload; var chatHold = "held-send", paneGesture = %s;
 IFRAMES = [{ contentWindow: { __rompReload: { busyHere: function () { return chatHold; } } } },
            { contentWindow: { __rompReload: { busyHere: function () { return paneGesture; } } } }];
-R.request("restart", "2.2"); var held = state(); var heldArmed = armed();
-paneGesture = ""; R.tryFire(); var gestureOver = state(); var gestureOverArmed = armed();   // the gesture's ending event calls the shell's tryFire; the ship still holds
-chatHold = ""; R.tryFire(); var shipOver = state();                                          // the ack lands: the chat pane's ended() reaches the shell
+R.require("a wire change"); var held = state(); var heldArmed = armed();
+paneGesture = ""; R.tryFire(); var gestureOver = state(); var gestureOverArmed = armed();   // the gesture's ending event calls the shell's tryFire; the gate still holds
+chatHold = ""; R.tryFire(); var shipOver = state();                                          // the gate clears: the chat pane's ended() reaches the shell
 out({ held: held, heldArmed: heldArmed, gestureOver: gestureOver, gestureOverArmed: gestureOverArmed, shipOver: shipOver, armed: armed(), warns: WARNS });""" % json.dumps(gesture))
                 self.assertEqual(s["held"]["reloads"], 0, "never mid-gesture, never mid-ship")
                 self.assertEqual(s["held"]["waiting"], gesture, "the gesture outranks the first pane's word")
-                self.assertEqual(s["heldArmed"], [60000, 60000], "the upload's clock runs from its first sight, gesture or not: the gesture only defers (the fold's review, UI-2)")   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
-                self.assertEqual(s["gestureOver"]["reloads"], 0, "the gesture ended; the ship still holds")
-                self.assertEqual(s["gestureOver"]["waiting"], "upload")
+                self.assertEqual(s["heldArmed"], [60000, 60000], "the held send's clock runs from its first sight, gesture or not: the gesture only defers (the fold's review, UI-2)")   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
+                self.assertEqual(s["gestureOver"]["reloads"], 0, "the gesture ended; the gate still holds")
+                self.assertEqual(s["gestureOver"]["waiting"], "held-send")
                 self.assertEqual(s["gestureOverArmed"], [60000, 60000], "the same timer: the gesture's end changes the word reported, not the clock")   # + upstream's backstop walk timer (the 2026-09-15 pull-in)
                 self.assertEqual(s["shipOver"]["reloads"], 1, "both ended: the reload fires")
                 self.assertEqual(s["armed"], [60000], "the clock went with the word")   # upstream's backstop walk timer stands (the 2026-09-15 pull-in)
                 self.assertEqual(s["warns"], [])
-        # the other order: the ack lands first, the later pane's gesture still holds, and its end fires
+        # the other order: the gate clears first, the later pane's gesture still holds, and its end fires
         s = run_core(self.FAKES + """
-var R = window.__rompReload; var chatHold = "upload", paneGesture = "pointer";
+var R = window.__rompReload; var chatHold = "held-send", paneGesture = "pointer";
 IFRAMES = [{ contentWindow: { __rompReload: { busyHere: function () { return chatHold; } } } },
            { contentWindow: { __rompReload: { busyHere: function () { return paneGesture; } } } }];
-R.request("restart", "2.2");
+R.require("a wire change");
 chatHold = ""; R.tryFire(); var shipOver = state();
 paneGesture = ""; R.tryFire();
 out({ shipOver: shipOver, after: state(), armed: armed() });""")
-        self.assertEqual(s["shipOver"]["reloads"], 0, "the ack landed; the later pane is still mid-gesture")
+        self.assertEqual(s["shipOver"]["reloads"], 0, "the gate cleared; the later pane is still mid-gesture")
         self.assertEqual(s["shipOver"]["waiting"], "pointer", "...and the gesture is the reason reported")
         self.assertEqual(s["after"]["reloads"], 1)
         self.assertEqual(s["armed"], [60000])   # upstream's backstop walk timer, armed on every held request; the fork's clock arms none for this word (the 2026-09-15 pull-in)
@@ -1454,7 +1554,7 @@ out({ shipOver: shipOver, after: state(), armed: armed() });""")
         s = run_core(self.FAKES + """
 var R = window.__rompReload;
 window.__rompPaneBusy = function () { return ""; };       // nothing shipping, no send held behind the ship gate
-R.noteVersion({ boot: "2.2", dist_ver: 7 });
+R.noteDv(8); R.accept();
 out({ after: state(), armed: armed(), warns: WARNS });""")
         self.assertEqual(s["after"]["reloads"], 1)
         self.assertEqual(s["after"]["released"], "")
@@ -1462,7 +1562,106 @@ out({ after: state(), armed: armed(), warns: WARNS });""")
         self.assertEqual(s["warns"], [])
 
 
+class ReloadOfferExecuted(unittest.TestCase):
+    """The ruling of 2026-09-16, executed in the real core."""
+
+    def test_a_same_build_restart_is_silent_and_a_newer_build_is_one_offer_with_no_hold_and_no_timer(self):
+        s = run_core("""
+var R = window.__rompReload;
+var held = 0; R.held = function () { held++; };
+VERSION = { boot: "2.2", dist_ver: 7, code_ident: "abc1234" }; R.checkBoot(); await tick(); await tick(); var restart = state();
+R.noteDv(8); var once = state(); R.noteDv(8); R.noteVersion({ boot: "2.2", dist_ver: 8, code_ident: "abc1234" });   // the keepalives and polls after it
+out({ restart: restart, restarted: R.restarted(), once: once, after: state(), offers: OFFERS, held: held, timers: TIMERS.length });""", code="abc1234")
+        self.assertEqual([s["restart"]["reloads"], s["restart"]["owed"], s["restart"]["offered"], s["restarted"]], [0, None, None, 1], "a same-build restart: counted, nothing else")
+        self.assertEqual(s["once"]["offered"], {"dv": 8, "code": "", "behind": False, "text": OFFER})
+        self.assertEqual(s["offers"], [{"dv": 8, "code": "", "behind": False, "text": OFFER}], "one offer per build, however many readings carry it")
+        self.assertEqual([s["after"]["reloads"], s["after"]["owed"], s["held"], s["timers"]], [0, None, 0, 0], "an offer owes nothing: no reload, no hold, no line, no backstop")
+
+    def test_not_now_is_kept_per_build_and_a_strictly_newer_build_re_offers(self):
+        s = run_core("""
+var R = window.__rompReload;
+R.noteDv(8); R.dismiss(); var declined = state();
+R.noteDv(8); R.noteVersion({ boot: "1.1", dist_ver: 8 }); var still = state();
+R.noteDv(9); var newer = state();
+out({ declined: declined, still: still, newer: newer, offers: OFFERS });""")
+        self.assertIsNone(s["declined"]["offered"]); self.assertEqual(s["declined"]["notNow"], {"dv": 8, "code": ""}, "the Not now is kept, per build, in localStorage")
+        self.assertIsNone(s["still"]["offered"], "the declined build stays quiet through every later reading")
+        self.assertEqual(s["newer"]["offered"]["dv"], 9, "a strictly newer build is new information")
+        self.assertEqual([o and o["dv"] for o in s["offers"]], [8, None, 9])
+        # another page of this browser (a second tab on the same build) reads the kept Not now
+        t = run_core("""
+var R = window.__rompReload;
+R.noteDv(8); var quiet = state(); R.noteDv(9); var offered = state();
+out({ quiet: quiet, offered: offered });""", local={"romp:reloadNotNow": {"dv": 8, "code": ""}})
+        self.assertIsNone(t["quiet"]["offered"], "declined in another tab: quiet here too")
+        self.assertEqual(t["offered"]["offered"]["dv"], 9)
+        # the code identity: declined for one, another re-offers; and a declined build seen with BOTH signals stays declined
+        u = run_core("""
+var R = window.__rompReload;
+R.noteVersion({ boot: "2.2", dist_ver: 8, code_ident: "def5678" }); var both = state(); R.dismiss();
+R.noteVersion({ boot: "2.2", dist_ver: 8, code_ident: "def5678" }); var quiet = state();
+R.noteVersion({ boot: "3.3", dist_ver: 8, code_ident: "ghi9012" }); var other = state();
+out({ both: both, quiet: quiet, other: other, notNow: state().notNow });""", code="abc1234")
+        self.assertEqual(u["both"]["offered"], {"dv": 8, "code": "def5678", "behind": False, "text": OFFER}, "one offer carries both signals")
+        self.assertIsNone(u["quiet"]["offered"]); self.assertEqual(u["notNow"], {"dv": 8, "code": "def5678"})
+        self.assertEqual(u["other"]["offered"]["code"], "ghi9012", "another code identity re-offers")
+        # a malformed Not now record is read as none
+        v = run_core("""
+var R = window.__rompReload; R.noteDv(8); out({ after: state() });""", local={"romp:reloadNotNow": "junk"})
+        self.assertEqual(v["after"]["offered"]["dv"], 8)
+
+    def test_an_unknown_op_refusal_sharpens_the_standing_offers_wording_once_and_latches_for_a_later_one(self):
+        s = run_core("""
+var R = window.__rompReload;
+R.noteDv(8); R.behind(); R.behind(); R.noteDv(8);
+out({ after: state(), offers: OFFERS });""")
+        self.assertEqual([o["text"] for o in s["offers"]], [OFFER, BEHIND], "the wording moves once; a second refusal and the next keepalive repaint nothing")
+        self.assertEqual(s["after"]["offered"], {"dv": 8, "code": "", "behind": True, "text": BEHIND})
+        self.assertEqual(s["after"]["reloads"], 0, "still an offer: a refusal never reloads")
+        t = run_core("""
+var R = window.__rompReload;
+R.behind(); var none = state(); R.noteDv(8);
+out({ none: none, offers: OFFERS });""")
+        self.assertIsNone(t["none"]["offered"], "a refusal alone offers nothing: nothing newer is known")
+        self.assertEqual([o["text"] for o in t["offers"]], [BEHIND], "the offer that comes later wears the reason")
+
+    def test_the_safety_valve_is_a_forced_request_through_the_same_holds(self):
+        s = run_core("""
+var R = window.__rompReload;
+emit("pointerdown"); R.require("a wire change"); var held = state();
+emit("pointerup"); await tick();
+out({ held: held, after: state() });""")
+        self.assertEqual(s["held"]["owed"], {"reason": "required", "detail": "a wire change"})
+        self.assertEqual([s["held"]["reloads"], s["held"]["waiting"]], [0, "pointer"], "forced, yet never mid-gesture")
+        self.assertEqual(s["after"]["reloads"], 1)
+        self.assertEqual(s["after"]["stored"]["reason"], "required"); self.assertEqual(s["after"]["reason"]["reason"], "required")
+
+
 class ReloadWiringPinned(unittest.TestCase):
+    def test_the_panes_and_the_shell_hand_the_kernels_frames_to_the_core(self):
+        # the shim: an unknownOp on THIS page's socket sharpens the offer and goes on to the bundle; a reloadRequired is the safety
+        # valve and never reaches the bundle; the shell's own socket carries the valve too
+        js = km._shim("chat", 5)
+        self.assertIn('if(msg&&msg.type==="reloadRequired"){try{if(window.__rompReload)window.__rompReload.require(msg.why);}catch(e){}return;}', js)
+        self.assertIn('if(msg&&msg.type==="unknownOp"){try{if(window.__rompReload)window.__rompReload.behind();}catch(e){}}', js)
+        self.assertLess(js.index('msg.type==="unknownOp"'), js.index("enqueue(msg);};"), "the refusal is read before the frame is handed on")
+        self.assertIn("else if(m&&m.type==='reloadRequired'){if(window.__rompReload)window.__rompReload.require(m.why);}", km._LANDING_MOBILE_JS)
+        src = open(os.path.join(ROOT, "kernel", "kernel.py")).read()
+        for frame in ('"type": "reloadRequired"', "'type': 'reloadRequired'", "type=\"reloadRequired\""):
+            self.assertNotIn(frame, src, "nothing in the kernel sends the valve today")
+
+    def test_a_standalone_pane_renders_the_offer_as_its_own_bar_with_reload_and_not_now(self):
+        js = km._shim("feed", 5)
+        self.assertIn('window.__rompReload.offer=function(o){var have=document.getElementById("romp-stale-self");var mine=have&&have.dataset.kind==="offer";', js)
+        self.assertIn('if(!o){if(mine)have.remove();return;}if(mine){have.firstChild.textContent=o.text;return;}selfBar(o.text,"offer");};', js,
+                      "null takes the bar down; a wording change is written into the standing bar; else the bar is raised")
+        self.assertIn("!window.__rompReload.inShell()){window.__rompReload.offer=", js, "a standalone page only: in the shell the banner speaks")
+        self.assertIn('x.textContent=(kind==="offer")?"Not now":"Dismiss"', js)
+        self.assertIn('x.onclick=(kind==="offer")?function(){try{window.__rompReload.dismiss();}catch(e){}b.remove();}:function(){b.remove();}', js)
+        self.assertIn('r.onclick=(kind==="offer")?function(){r.disabled=true;r.textContent="Reloading\u2026";try{window.__rompReload.accept();}catch(e){location.reload();}}:function(){location.reload();}', js)
+        self.assertIn('if((have.dataset.kind==="warn"||have.dataset.kind==="offer")&&(kind||"conn")==="conn")have.remove();else return;', js, "the offer yields the one slot to the connection bar")
+        self.assertIn('if(b&&b.dataset.kind==="conn"){b.remove();try{var RO=window.__rompReload;if(RO&&RO.offer&&RO.offered())RO.offer(RO.offered());}catch(e){}}', js, "and returns when it retires")
+
     def test_every_kernel_served_page_embeds_the_core_with_its_build_and_boot(self):
         shim = km._shim("feed", 123)
         self.assertIn("/*reload-core*/", shim)
@@ -1479,13 +1678,16 @@ class ReloadWiringPinned(unittest.TestCase):
             finally:
                 km._RELOAD_CORE_JS = km._RELOAD_CORE_JS.replace("window.__rompReload=R;})();", "window.__rompReload=R;})();/*end-reload-core*/", 1)
 
-    def test_the_shim_asks_the_core_on_build_drift_and_on_a_standalone_reconnect(self):
+    def test_the_shim_hands_the_core_its_keepalives_dv_and_asks_on_a_standalone_reconnect(self):
         js = km._shim("chat", 5)
-        self.assertIn('function raiseBuild(){if(buildRaised)return;buildRaised=true;var R=window.__rompReload;\n'
-                      'if(R){R.refused=function(){selfBar("A newer romp build is available.","build");};R.request("build","");}\n'
-                      'else selfBar("A newer romp build is available.","build");}', js)
+        # 2026-09-16: the dv itself goes to the core (noteDv proposes, deduped by build); no request, no refused fallback; the bar of
+        # the core's absence is latched once per page life
+        self.assertIn('function raiseBuild(dv){var R=window.__rompReload;if(R){R.noteDv(dv);return;}', js)
+        self.assertIn('if(buildRaised)return;buildRaised=true;selfBar("A newer romp build is available.","build");}', js)
+        self.assertNotIn('R.request("build","")', js, "the shim requests nothing: a newer build is proposed")
+        self.assertNotIn("R.refused=", js, "no refused fallback: a refused accept puts the offer back (the core)")
         self.assertNotIn('postMessage({romp:"wsStale",build:1}', js, "the build:1 hand-off to the banner is gone")
-        self.assertIn('if(msg&&msg.type==="ka"){if(LOADEDV&&msg.dv&&msg.dv>LOADEDV)raiseBuild();', js, "the keepalive's dv is still the event")
+        self.assertIn('if(msg&&msg.type==="ka"){if(LOADEDV&&msg.dv&&msg.dv>LOADEDV)raiseBuild(msg.dv);', js, "the keepalive's dv is still the event, and rides in")
         self.assertIn("if(window.__rompReload&&!window.__rompReload.inShell())window.__rompReload.checkBoot();", js)
         # the pane's queued sends hold the reload, and the flush is the ending event (review find, 2026-09-08)
         self.assertIn('window.__rompPaneBusy=function(){var q=everConnected&&queue.length>queuedDiag;if(!q){sendsSince=0;return "";}if(!sendsSince)sendsSince=Date.now();return Date.now()-sendsSince<SENDS_HOLD_MS?"sends":"";};', js)
@@ -1503,15 +1705,93 @@ class ReloadWiringPinned(unittest.TestCase):
         self.assertIn("if(shellOpened&&window.__rompReload)window.__rompReload.checkBoot();shellOpened=true;", js)
         self.assertIn("if(m&&m.type==='ka'){if(m.dv&&window.__rompReload)window.__rompReload.noteDv(m.dv);}", js)
 
-    def test_the_banner_is_the_refused_fallback_and_the_poll_feeds_the_core(self):
+    def test_the_banner_is_the_offers_home_and_the_poll_feeds_the_core(self):
         js = km._STALE_JS
-        self.assertIn("if(RL){RL.refused=function(){buildStale=true;show(BUILDMSG);};", js)
-        self.assertIn("RL.announce(function(k,t){if(window.__rompNotify)window.__rompNotify(k,t);});}", js)
+        # 2026-09-16: the shell's #rstale box paints the core's offer (the hook), Reload is the core's accept, Not now its dismiss
+        self.assertIn("if(RL){RL.offer=function(o){offer=o||null;rl.disabled=false;rl.textContent='Reload';paint();};", js)
+        self.assertIn("RL.announce(function(k,t){if(window.__rompNotify)window.__rompNotify(k,t);});RL.offer(RL.offered());}", js, "an offer proposed before the hook paints at install")
         self.assertIn("if(RL)RL.noteVersion(v);", js)
-        self.assertIn("if(loaded&&served>loaded&&served!==dismissed){if(!RL)show(BUILDMSG);}", js)
-        self.assertIn("if(m.build){if(RL)RL.request('build','');else{buildStale=true;show(BUILDMSG);}}", js)
-        self.assertIn("if(m&&m.romp==='wsFresh'){connStale=false;if(buildStale)show(BUILDMSG);else box.classList.remove('show');}", js,
-                      "the CONNECTION prompt for a plain reconnect is untouched")
+        self.assertIn("else if(loaded&&served>loaded&&served!==dismissed){buildStale=true;paint();}", js, "the banner's own wording only where the core is absent")
+        self.assertIn("if(m&&m.romp==='wsStale'){if(m.build){if(RL)RL.checkBoot();else buildStale=true;}else connStale=true;paint();}", js,
+                      "an older pane's build:1 asks the core for the authoritative /version reading; a connection stale paints the prompt")
+        self.assertIn("else if(m&&m.romp==='wsFresh'){connStale=false;paint();}", js, "the CONNECTION prompt retires on the resync; the offer, if one stands, paints again")
+        self.assertIn("else if(offer){box.classList.add('offer');dm.textContent='Not now';show(offer.text);}", js, "the offer's own wording, the accent class, Not now")
+        self.assertIn("if(connStale){box.classList.remove('offer');dm.textContent='Dismiss';show(CONNMSG);}", js, "the connection prompt outranks the offer while it stands")
+        self.assertIn("rl.onclick=function(){if(RL&&offer){rl.disabled=true;rl.textContent='Reloading\u2026';RL.accept();}else location.reload();};", js,
+                      "Reload acknowledges at once and is the core's accept; without an offer it is the plain reload of a frozen view")
+        self.assertIn("else if(RL&&offer)RL.dismiss();", js, "Not now is the core's dismiss, kept per build")
+        self.assertNotIn("RL.refused=", js); self.assertNotIn("RL.request(", js)
+        css = km._STALE_CSS
+        self.assertIn("#rstale.offer .rs-reload{background:var(--accent,#9cd2ff);color:var(--accent-fg,#0c1a2e);border-color:transparent}", css, "the offer's action wears the accent")
+        self.assertIn("#rstale button:disabled{opacity:.55;cursor:default}", css)
+        html = km._landing()
+        self.assertIn(":root{--accent:#9cd2ff;--accent-fg:#0c1a2e}", html, "the landing defines the token the rule reads")
+        self.assertIn("body.theme-light{--accent:#C2410C;--accent-fg:#FFF8F2;", html, "and the light theme re-resolves it")
+
+    def test_the_shells_banner_paints_the_offer_and_its_buttons_drive_the_core(self):
+        """_STALE_JS executed over a DOM fake: the core's offer hook paints the line with Not now and the accent class; Reload
+        acknowledges and calls accept (never location.reload while an offer stands); Not now calls dismiss; the connection prompt
+        outranks a standing offer and the offer returns when it retires; an older pane's build:1 asks for /version; with nothing
+        offered the Reload button is the plain reload."""
+        node = shutil.which("node")
+        if not node:
+            raise unittest.SkipTest("node not installed")
+        js = """
+var CALLS = [], RELOADS = 0, classes = {}, LISTEN = {};
+var msg = { textContent: "" }, rl = { textContent: "Reload", disabled: false, onclick: null, tagName: "BUTTON" }, dm = { textContent: "Dismiss", onclick: null, tagName: "BUTTON" };
+var box = { classList: { add: function () { for (var i = 0; i < arguments.length; i++) classes[arguments[i]] = true; }, remove: function () { for (var i = 0; i < arguments.length; i++) delete classes[arguments[i]]; } },
+            querySelector: function () { return msg; }, addEventListener: function () {}, getBoundingClientRect: function () { return { left: 0, top: 0, width: 100, height: 20 }; }, style: {} };
+var document = { getElementById: function (id) { return id === "rstale" ? box : id === "rstale-reload" ? rl : id === "rstale-dismiss" ? dm : null; } };
+var RL = { offer: null, held: null, announce: function () {}, offered: function () { return null; },
+           noteVersion: function (v) { CALLS.push(["noteVersion", v.dist_ver]); }, checkBoot: function () { CALLS.push(["checkBoot"]); },
+           accept: function () { CALLS.push(["accept"]); }, dismiss: function () { CALLS.push(["dismiss"]); } };
+var window = { addEventListener: function (t, f) { (LISTEN[t] = LISTEN[t] || []).push(f); }, __rompNotify: function (k, t) { CALLS.push(["notify", k, t]); }, __rompReload: RL, innerWidth: 800, innerHeight: 600 };
+var location = { reload: function () { RELOADS++; } };
+function fetch() { return { then: function () { return { then: function () { return { "catch": function () {} }; } }; } }; }   /* the poll never answers here */
+function setInterval() {}
+%s
+var OUT = {};
+function snap() { return { text: msg.textContent, shown: !!classes.show, offer: !!classes.offer, dismiss: dm.textContent, reload: rl.textContent, disabled: rl.disabled }; }
+OUT.installed = snap();
+RL.offer({ dv: 8, code: "", behind: false, text: %s });
+OUT.offered = snap();
+RL.offer({ dv: 8, code: "", behind: true, text: %s });
+OUT.behind = snap();
+var message = LISTEN.message[0];
+message({ data: { romp: "wsStale" } }); OUT.connOverOffer = snap();
+message({ data: { romp: "wsFresh" } }); OUT.offerBack = snap();
+message({ data: { romp: "wsStale", build: 1 } }); OUT.buildAsks = { calls: CALLS.slice(), snap: snap() }; message({ data: { romp: "wsFresh" } });
+dm.onclick(); OUT.afterNotNow = { calls: CALLS.slice() };
+RL.offer(null); OUT.retired = snap();
+RL.offer({ dv: 9, code: "", behind: false, text: %s });
+rl.onclick(); OUT.afterReload = { calls: CALLS.slice(), reloads: RELOADS, snap: snap() };
+RL.offer(null);
+rl.onclick(); OUT.plainReload = RELOADS;
+message({ data: { romp: "wsStale" } }); dm.onclick(); OUT.connDismissed = snap();
+process.stdout.write("RESULT:" + JSON.stringify(OUT) + "\\n");
+""" % (km._STALE_JS.replace("__LOADEDVER__", "7"), json.dumps(OFFER), json.dumps(BEHIND), json.dumps(OFFER))
+        d = tempfile.mkdtemp(prefix="stale-banner-")
+        path = os.path.join(d, "stale.js")
+        with open(path, "w") as f:
+            f.write(js)
+        r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
+        shutil.rmtree(d, ignore_errors=True)
+        self.assertEqual(r.returncode, 0, "node failed:\n" + r.stderr)
+        o = json.loads(next(ln for ln in r.stdout.splitlines() if ln.startswith("RESULT:"))[len("RESULT:"):])
+        self.assertFalse(o["installed"]["shown"], "nothing to say at install")
+        self.assertEqual(o["offered"], {"text": OFFER, "shown": True, "offer": True, "dismiss": "Not now", "reload": "Reload", "disabled": False})
+        self.assertEqual(o["behind"]["text"], BEHIND, "the sharpened wording is written into the standing line")
+        self.assertEqual(o["connOverOffer"]["text"], "romp lost the live connection to the dashboard, so what you see may be stale.")
+        self.assertEqual([o["connOverOffer"]["offer"], o["connOverOffer"]["dismiss"]], [False, "Dismiss"], "the connection prompt outranks the offer")
+        self.assertEqual([o["offerBack"]["text"], o["offerBack"]["offer"], o["offerBack"]["dismiss"]], [BEHIND, True, "Not now"], "the offer returns when the prompt retires")
+        self.assertEqual(o["buildAsks"]["calls"], [["checkBoot"]], "an older pane's build:1 asks the core for the authoritative reading")
+        self.assertEqual(o["afterNotNow"]["calls"], [["checkBoot"], ["dismiss"]], "Not now is the core's dismiss")
+        self.assertFalse(o["retired"]["shown"], "the hook's null takes the line down")
+        self.assertEqual(o["afterReload"]["calls"][-1], ["accept"], "Reload is the core's accept")
+        self.assertEqual(o["afterReload"]["reloads"], 0, "never location.reload while an offer stands: the core persists first")
+        self.assertEqual([o["afterReload"]["snap"]["disabled"], o["afterReload"]["snap"]["reload"]], [True, "Reloading\u2026"], "the click is acknowledged at once")
+        self.assertEqual(o["plainReload"], 1, "with no offer the button is the plain reload of a frozen view")
+        self.assertFalse(o["connDismissed"]["shown"])
 
     def test_a_held_reload_is_told_to_the_notification_center_and_to_a_standalone_panes_bar(self):
         # the shell's stale script installs the `held` hook: the line names what the reload waits for (an upload, a held
@@ -1533,11 +1813,16 @@ class ReloadWiringPinned(unittest.TestCase):
         self.assertIn("fetch('/version'", core, "…and /version is the serving kernel's own")
 
     def test_the_superseded_rule_is_recorded_with_both_dates(self):
+        # three rulings by date, each recorded as superseding the one before it (2026-07-13, 2026-09-08, 2026-09-16)
         src = open(os.path.join(ROOT, "kernel", "kernel.py")).read()
-        block = src[src.index("# ── the dashboard reloads ITSELF"):src.index("_RELOAD_CORE_JS = r")]
-        self.assertIn("2026-09-08", block); self.assertIn("2026-07-13", block); self.assertIn("supersedes", block)
+        block = src[src.index("# ── the dashboard OFFERS a reload on a newer build"):src.index("_RELOAD_CORE_JS = r")]
+        self.assertIn("2026-09-16", block); self.assertIn("2026-09-08", block); self.assertIn("2026-07-13", block)
+        self.assertIn("2026-09-16 supersedes 2026-09-08", block); self.assertIn("2026-09-08 (T265) supersedes 2026-07-13", block)
+        self.assertLess(block.index("2026-07-13"), block.index("2026-09-08 (T265) supersedes"), "oldest first")
         ext = open(os.path.join(ROOT, "vscode-extension", "src", "extension.ts")).read()
-        self.assertIn("2026-09-08", ext, "the VS Code exception names the ruling it stands beside")
+        self.assertIn("2026-09-16", ext, "the VS Code exception names the ruling it stands beside")
+        self.assertIn("2026-09-08", ext, "and the one it superseded")
+        self.assertIn("OFFERS the reload", ext)
 
 
 if __name__ == "__main__":
