@@ -22,13 +22,16 @@ const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.m
 
 const HEAD = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
 // the header's stand-in block, where the member-derived marks live: from `if (hidden.length) {` (folded, the unpinned
-// members; open, the members hidden inside the section, 2026-09-08) through the header's drag wiring to the next
-// top-level function (makeRowBreak). Both anchors are read by name and must be found first: an absent one reads -1 and
-// the slice goes vacuous (the old end, `head.draggable = true;`, left render.ts when the tab lock arrived, and the slice
-// ran to the end of HEAD unnoticed).
-const FOLDED_AT = HEAD.indexOf("if (hidden.length) {"), FOLDED_END = HEAD.indexOf("function makeRowBreak(");
+// members; open, the members hidden inside the section, 2026-09-08) to the header's drag wiring, whose first line
+// (`head.draggable = !settings.tabsLocked;`, unique in render.ts) comes one line after the block's close, behind the
+// header's aria-label. The slice ends THERE, not at the next top-level function: bounded on makeRowBreak it also took in
+// the drag wiring and makeGroupHead's tail, so a flag construction moved into the drag wiring passed every pin below that
+// says the marks live inside the block (review round 2 of the catch-up fold). Both anchors are read by name and must be
+// found first: an absent one reads -1 and the slice goes vacuous (the end was once `head.draggable = true;`; the tab lock
+// rewrote that line and the slice ran to the end of HEAD unnoticed until the anchors were asserted).
+const FOLDED_AT = HEAD.indexOf("if (hidden.length) {"), FOLDED_END = HEAD.indexOf("head.draggable = !settings.tabsLocked;");
 assert.ok(FOLDED_AT > -1 && FOLDED_END > FOLDED_AT,
-  "the stand-in block's anchors (if (hidden.length) { and function makeRowBreak() are in the header slice, in that order: an absent one reads -1 and the slice goes vacuous");
+  "the stand-in block's anchors (if (hidden.length) { and the drag wiring's first line, head.draggable = !settings.tabsLocked;) are in the header slice, in that order: an absent one reads -1 and the slice goes vacuous");
 const FOLDED = HEAD.slice(FOLDED_AT, FOLDED_END);
 const HANDLER = RENDER.slice(RENDER.indexOf('"open-group": (el) => {'), RENDER.indexOf('"open-group": (el) => {') + 260);
 
