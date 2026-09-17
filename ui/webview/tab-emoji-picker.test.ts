@@ -75,7 +75,7 @@ test("anchoring and dismissal follow the color swatches: where the menu stood, c
   assert.doesNotMatch(RENDER, /addEventListener\("scroll", closeEmojiPrompt/);
   assert.doesNotMatch(RENDER, /addEventListener\("blur", [^\n]*closeEmojiPrompt/);
   assert.doesNotMatch(slice("function dismissTabMenu() {", "\n}"), /closeEmojiPrompt/,
-                      "dismissTabMenu runs on every window scroll; hanging the picker off it would close it on its own grid scroll");
+                      "dismissTabMenu is the menu's close path, the builder's teardown that ctx-menu.ts showMenuCard's per-open listeners run on any scroll outside the card; the picker's closers stay its own two listeners above, never hung off the menu's");
   // the picker's own Escape listener of the old dialog is gone: the window-level one closes it
   assert.doesNotMatch(DIALOG, /document\.addEventListener\("keydown"/);
 });

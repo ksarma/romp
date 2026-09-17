@@ -6,6 +6,7 @@ the kernel's noticeAction op and, refused here (no backend owns the lab session)
 dismisses the card and Undo restores it; a new revision under the same key re-shows after a dismissal under a new item id;
 an expired notice leaves at the next build. Synthetic only (placeholder ids, invented text)."""
 import json
+import lab_dist
 import os
 import re
 import shutil
@@ -18,7 +19,6 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-from tests.dist_copy import copy_dist  # noqa: E402
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -147,11 +147,8 @@ class NoticeCardsServed(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             cls._skip("extension deps absent (npm ci not run here): the served guard needs them")
         cls.lab = tempfile.mkdtemp(prefix="notice-cards-")
-        b = subprocess.run(["node", "esbuild.js"], cwd=EXT, capture_output=True, text=True)
-        if b.returncode != 0:
-            cls._skip("esbuild failed here: " + (b.stderr or b.stdout)[-200:])
         dist = os.path.join(cls.lab, "dist")
-        copy_dist(os.path.join(EXT, "dist"), dist)
+        lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.state = os.path.join(cls.lab, "xdg", "romp")
         cwd = os.path.join(cls.lab, "notes-api")
         for d in ("names", "sdk", "states"):

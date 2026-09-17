@@ -12,9 +12,11 @@ The fix, both faces:
     and re-ships on romp:wsup — the exact kernel-is-back event, never a timer. The ack/nack
     echoes the client's shipId, so a duplicate ack from a re-ship race retires exactly the chip
     that asked, and a stray twin is DROPPED instead of attached to the active tab. Since the fold
-    that brought the reload core (T265: a kernel-served page reloads itself when the kernel serving
-    it restarts), the chat pane also holds that reload while any ship awaits its ack or a send is
-    held behind the ship gate (T272: render.ts wraps the shim's window.__rompPaneBusy and answers
+    that brought the reload core (T265: a kernel-served page owed itself a reload when the kernel
+    serving it restarted; since the 2026-09-16 ruling it offers a newer build's reload instead and
+    reloads only when the user accepts, or on the forced path the wedge below uses), the chat pane
+    also holds that reload while any ship awaits its ack or a send is held behind the ship gate
+    (T272: render.ts wraps the shim's window.__rompPaneBusy and answers
     'upload' / 'held-send'; the core asks it before firing), and tells the core when the last ack
     lands or the gate clears (endReloadHoldIfIdle, __rompReload.ended()), so the heal runs first and
     the reload follows it on that event. Without the hold the reload landed about 1.7 s after the

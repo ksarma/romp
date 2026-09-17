@@ -8674,7 +8674,8 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
         wireFlyout(sub, setDef, ".ctx-sub-default", () => openDefaultFly());
         sub.appendChild(setDef);
       }
-      // INSIDE the menu node (so dismissTabMenu and the outside-mousedown check cover it), placed beside the item
+      // INSIDE the menu node (so the builder's document-capture pointerdown check, ctx-menu.ts showMenuCard's onDown,
+      // reads a press on it as inside, and closeContextMenu takes it down with the menu), placed beside the item
       menu.appendChild(sub);
       placeFlyBeside(item, sub);
       return sub;
@@ -10382,7 +10383,9 @@ function onMoveDirCompletions(m: any): void {
 // strip of category icons that jumps to each, and a footer for what the list does not carry: a small "or
 // type or paste one" field (a skin-toned or brand-new emoji), Set, and Clear. It floats where the tab menu
 // stood, in the menu vocabulary, and dismisses on a mousedown outside it, Escape, or the tab menu opening
-// again (the menu's own closers, minus scroll and blur: see the window listeners by dismissTabMenu). What
+// again (the menu's own closers, minus scroll and blur; the menu's are the builder's per-open listeners,
+// ctx-menu.ts showMenuCard: pointerdown, Escape, scroll and blur; the picker's are its own two window
+// listeners, mousedown and keydown, under the note on the builder's listeners after showTabMenu). What
 // a pick does is unchanged from the field: the value is posted
 // with setSessionEmoji and the dialog STAYS OPEN for the kernel's verdict, acknowledging at once (Set reads
 // "Setting…" or Clear "Clearing…", the picked cell dims, the cells, the search box and the field lock). The

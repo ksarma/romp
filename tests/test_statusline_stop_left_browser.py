@@ -9,6 +9,7 @@ overflowing the line. The working session is left mid-turn (a typed prompt, no r
 button shows. Hermetic: a temp state root, one synthetic session in the notes-api demo world, the lab kernel of
 test_ship_reship_served."""
 import json
+import lab_dist
 import os
 import re
 import shutil
@@ -21,8 +22,6 @@ import unittest
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-
-from tests.dist_copy import copy_dist
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -134,11 +133,8 @@ class ServedStopButtonBesideTheChip(unittest.TestCase):
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
             raise unittest.SkipTest("no playwright browser on this box: the served guard needs one (CI installs none)")
         cls.lab = tempfile.mkdtemp(prefix="statusline-stop-left-")
-        b = subprocess.run(["node", "esbuild.js"], cwd=EXT, capture_output=True, text=True)
-        if b.returncode != 0:
-            raise unittest.SkipTest("esbuild failed here: " + (b.stderr or b.stdout)[-200:])
         dist = os.path.join(cls.lab, "dist")
-        copy_dist(os.path.join(EXT, "dist"), dist)
+        lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(cls.lab, "xdg", "romp")
         claude = os.path.join(cls.lab, "claude")
         cwd = os.path.join(cls.lab, "notes-api")

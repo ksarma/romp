@@ -902,8 +902,9 @@ test("in Chromium and Firefox, the Tags flyout nested in the menu over the real 
         // Configure tags' rects read, and a REAL click on Configure tags is attempted (Playwright refuses a target it cannot hit-test:
         // below the pane's edge on a fixed box with nothing to scroll, the round-6 diagnostic's state, the click timed out). This leg
         // builds the menu by hand with no window listener on the page, so the click proves the GEOMETRY alone: the foot is inside the
-        // pane and hit-testable once scrolled to. That the click reaches Configure tags through render.ts's own listeners, whose scroll
-        // dismissal must leave the flyout's scroll alone, is the fifth leg's M6 (round 8)
+        // pane and hit-testable once scrolled to. That the click reaches Configure tags through the builder's per-open listeners
+        // (ctx-menu.ts showMenuCard, imported real into the fifth leg's probe), whose scroll dismissal must leave the flyout's scroll
+        // alone, is the fifth leg's M6 (round 8)
         const foot = await page.evaluate(() => {
           const fly = document.getElementById("fly")!;
           fly.scrollTop = fly.scrollHeight;
@@ -1216,8 +1217,9 @@ test("in Chromium and Firefox, render.ts's own showTabMenu with real pointer inp
       // menu as the flyout opened, since openTagsFly's focus() on the New tag input at the foot scrolled the capped box to it (cut from 24
       // tags on, the rows fully out of view from 25). The listener leaves a scroll whose target the menu contains alone (round 8), and the
       // click-open focuses without scrolling (round 9: the focus scroll had put the session's own rows, with their x, above the fold, where
-      // the hover-open showed them at the top, so the two ways in showed different views). Read here through render.ts's own listeners with
-      // real input: the click-open leaves the flyout at scrollTop 0 with the held row and its x inside the flyout and the input focused,
+      // the hover-open showed them at the top, so the two ways in showed different views). Read here through the builder's per-open
+      // listeners (ctx-menu.ts showMenuCard, imported real into the probe page) with real input: the click-open leaves the flyout at
+      // scrollTop 0 with the held row and its x inside the flyout and the input focused,
       // and the menu survives it; a real wheel over the flyout scrolls it down and leaves the menu standing; a real click on Configure tags
       // lands (Playwright scrolls the foot into view first, another scroll inside the menu); and a wheel in a scrolling box outside the
       // menu still dismisses it (the control: the exemption is the menu's own scroll, not every scroll while a menu is open)

@@ -14,6 +14,7 @@ Two hermetic kernels, no ssh; loads no romp code in-process (like tests/test_cha
 Synthetic only: placeholder uuids, hostname TESTHOST, invented transcript text.
 """
 import json
+import lab_dist
 import os
 import re
 import shutil
@@ -26,7 +27,6 @@ import unittest
 import urllib.request
 from pathlib import Path
 
-from tests.dist_copy import copy_dist
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -182,10 +182,7 @@ class FederatedHistoryScroll(unittest.TestCase):
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
             raise unittest.SkipTest("no playwright browser on this box, the served lab needs one (CI installs none)")
         cls.lab = tempfile.mkdtemp(prefix="fed-history-scroll-")
-        b = subprocess.run(["node", "esbuild.js"], cwd=EXT, capture_output=True, text=True)
-        if b.returncode != 0:
-            raise unittest.SkipTest("esbuild failed here: " + (b.stderr or b.stdout)[-200:])
-        copy_dist(os.path.join(EXT, "dist"), os.path.join(cls.lab, "dist"))
+        lab_dist.copy_dist(os.path.join(cls.lab, "dist"))   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.rport, cls.rtoken = _free_port(), "testtok-remote-hist"
         cls.hport, cls.htoken = _free_port(), "testtok-hub-hist"
         rp, cls.rlog = _kernel(cls.lab, "testhost", cls.rport, cls.rtoken, [(SID_R, "api", 2, PAIRS)])

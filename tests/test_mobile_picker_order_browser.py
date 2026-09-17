@@ -23,6 +23,7 @@ phone lists its members regardless, where the desktop hides them). Skips LOUDLY 
 deps or a Playwright browser. SYNTHETIC fixtures only (the notes-api demo world, host TESTHOST,
 placeholder sids). MOBILE_ORDER_DUMP=<path> writes the whole measurement."""
 import json
+import lab_dist
 import os
 import re
 import shutil
@@ -35,8 +36,6 @@ import unittest
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-
-from tests.dist_copy import copy_dist
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -223,11 +222,8 @@ class ServedMobilePickerOrder(unittest.TestCase):
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         cls.lab = tempfile.mkdtemp(prefix="mobile-order-")
-        b = subprocess.run(["node", "esbuild.js"], cwd=EXT, capture_output=True, text=True)
-        if b.returncode != 0:
-            raise unittest.SkipTest("esbuild failed here: " + (b.stderr or b.stdout)[-200:])
         dist = os.path.join(cls.lab, "dist")
-        copy_dist(os.path.join(EXT, "dist"), dist)   # tests/dist_copy: skips the bundler's staging files
+        lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(cls.lab, "xdg", "romp")
         claude = os.path.join(cls.lab, "claude")
         cwd = os.path.join(cls.lab, "proj")

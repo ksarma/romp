@@ -11,6 +11,7 @@ Two hermetic kernels, no ssh; hermetic XDG floor at module top. Synthetic only: 
 the 4a served builder's invented text."""
 import glob
 import json
+import lab_dist
 import os
 import re
 import shutil
@@ -23,7 +24,6 @@ import unittest
 import urllib.request
 from pathlib import Path
 
-from tests.dist_copy import copy_dist
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -270,10 +270,7 @@ class FederatedTwoColWall(unittest.TestCase):
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
             raise unittest.SkipTest("no playwright browser")
         cls.lab = tempfile.mkdtemp(prefix="fed-twocol-")
-        b = subprocess.run(["node", "esbuild.js"], cwd=EXT, capture_output=True, text=True)
-        if b.returncode != 0:
-            raise unittest.SkipTest("esbuild failed: " + (b.stderr or b.stdout)[-200:])
-        copy_dist(os.path.join(EXT, "dist"), os.path.join(cls.lab, "dist"))
+        lab_dist.copy_dist(os.path.join(cls.lab, "dist"))   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.rport, cls.rtoken = _free_port(), "testtok-remote-2c"
         cls.hport, cls.htoken = _free_port(), "testtok-hub-2c"
         rp, cls.rlog, cls.seed = _remote_kernel(cls.lab, cls.rport, cls.rtoken)
