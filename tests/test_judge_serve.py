@@ -462,7 +462,9 @@ class Roads(Harness):
         self.assertEqual((done["op"], done["seq"], done["tierStarts"]), ("done", 1, 2))
         self.assertEqual(done["failures"]["count"], 1); self.assertIn("RuntimeError", done["failures"]["first"])
         c.send({"op": "pass", "seq": 2, "now": NOW, "mayStart": False})
-        self.assertEqual(c.line()["seq"], 2, "the child is alive after a tier crash")
+        second = c.line()
+        self.assertEqual((second["op"], second["seq"]), ("done", 2),
+                         "the child is alive after a tier crash and takes the next pass (a busy line carries seq 2 too)")
         c.send({"op": "quit"}); c.proc.wait(timeout=60); self.assertEqual(c.proc.returncode, 0)
         joined = "".join(c.err)
         self.assertIn("romp-judge: judge tier triage:", joined)

@@ -366,6 +366,122 @@ class JudgeUsageReader(unittest.TestCase):
         self.assertEqual(len(km._JUDGE_USAGE_CACHE["rows"]), 5)
 
 
+# ── race 6, the walkers: the roll-up's walk and the band's cursor slice against the reader's left prune ──
+class JudgeUsageWalkers(unittest.TestCase):
+    """Two consumers of the reader's LIVE rows list (returned without a copy since the judging band memo keys its cursor
+    on the list's identity) against the reader's left prune, which shifts every index in place under _JUDGE_USAGE_LOCK on
+    whichever thread reads the log. The /analytics roll-up walks a snapshot taken under the lock (the 2026-09-17 fold's
+    kernel review, item 5: a walk over the live list counted 33 rows short when a prune landed under it), and the band's
+    cursor takes the prune count, the boundary check and the slice under ONE hold (item 6: a prune landing between the
+    check and the slice began the slice past the verified boundary, and one frame lost the rows in between). Each test
+    parks the walker at the one step its race is about, runs the reader's prune from a second thread that takes the lock
+    itself, and asserts the walk's result against the rows present when the walk began."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self._saved = (jd.STATE, dict(km._JUDGE_USAGE_CACHE), km._judging_band, jd.active_runs)
+        jd.STATE = Path(self.td.name)
+        jd.active_runs = lambda: []
+        km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[], pruned=0)
+        km._judging_band = None
+        self.R = km._JUDGE_USAGE_RETAIN
+
+    def tearDown(self):
+        jd.STATE, saved, km._judging_band, jd.active_runs = self._saved
+        km._JUDGE_USAGE_CACHE.update(saved)
+        self.td.cleanup()
+
+    @staticmethod
+    def _row(t, **kw):
+        r = {"judge": "captioner", "fsid": SID, "t": t, "sent": t - 5, "recv": t, "ms": 5000, "in": 10, "out": 5, "cost": 0.01}
+        r.update(kw)
+        return r
+
+    def _write(self, rows, mode="w"):
+        with open(jd.STATE / "judge-usage.jsonl", mode) as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+
+    def _prune_from_a_second_thread(self, row):
+        """The reader's own prune, from another thread that takes _JUDGE_USAGE_LOCK itself: append `row` to the log (its t
+        past the retention floor of the leading rows) and read. Returns the thread."""
+        def go():
+            self._write([row], mode="a")
+            km._judge_usage_rows()
+        return _run(go)
+
+    def test_the_roll_up_counts_the_rows_present_at_the_walks_start_under_a_prune(self):
+        base = 1781100000
+        self._write([self._row(base + i) for i in range(1000)])
+        live = km._judge_usage_rows()
+        self.assertEqual(len(live), 1000)
+        entered, gate = threading.Event(), threading.Event()
+
+        class _Parks(dict):
+            """Row 500 of the walk: its first read parks the walker, with rows on either side of it still to count."""
+            armed = True
+
+            def get(self, *a):
+                if _Parks.armed:
+                    _Parks.armed = False
+                    entered.set()
+                    gate.wait(WAIT)
+                return dict.get(self, *a)
+        live[500] = _Parks(live[500])
+        got = {}
+        t1 = _run(lambda: got.__setitem__("u", km._judge_usage(0)))
+        self.assertTrue(entered.wait(WAIT), "the walker reached row 500")
+        t2 = self._prune_from_a_second_thread(self._row(base + 33 + self.R))    # newest - RETAIN passes the first 33 rows
+        t2.join(WAIT)
+        self.assertIsNone(t2.box["exc"])
+        self.assertEqual((len(live), km._JUDGE_USAGE_CACHE["pruned"]), (1000 - 33 + 1, 33), "the prune and the append landed under the walk")
+        gate.set()
+        t1.join(WAIT)
+        self.assertIsNone(t1.box["exc"])
+        self.assertEqual(got["u"]["total"]["calls"], 1000, "was: 968, the walk skipped the 33 rows the prune shifted under its index")
+        self.assertEqual(got["u"]["total"]["in"], 10 * 1000)
+        self.assertEqual(got["u"]["byJudge"]["captioner"]["calls"], 1000)
+
+    def test_the_bands_cursor_takes_the_count_the_check_and_the_slice_under_one_hold(self):
+        R, NOW = self.R, 1_800_000_000
+        base = NOW - R - 100                                      # three rows the next append pushes out of retention
+        self._write([self._row(base + i) for i in range(3)] + [self._row(base + 50 + i) for i in range(40)]
+                    + [self._row(NOW - 1000 + i) for i in range(5)])
+        c = km._JUDGE_USAGE_CACHE
+        km._judge_usage_rows()
+        entered, gate = threading.Event(), threading.Event()
+
+        class _ParksOnSlice(list):
+            """The reader's live list whose one ARMED slice read (the band's `rows[skip:]`) parks the thread taking it; the
+            reader's own reads (an index, an append, the left prune) run as on a plain list."""
+            armed = False
+
+            def __getitem__(self, i):
+                if isinstance(i, slice) and _ParksOnSlice.armed:
+                    _ParksOnSlice.armed = False
+                    entered.set()
+                    gate.wait(WAIT)
+                return list.__getitem__(self, i)
+        c["rows"] = live = _ParksOnSlice(c["rows"])              # the same object across builds: the memo keys on it
+        t0 = NOW - 86400
+        first = km._run_judging(t0, {SID}, [])
+        self.assertEqual([e["t1"] for e in first], [NOW - 1000 + i for i in range(5)])
+        mb = km._judging_band
+        self.assertEqual((mb[0] is live, mb[1]), (True, 43), "the cursor covers the 43 leading pre-horizon rows")
+        _ParksOnSlice.armed = True
+        got = {}
+        t1 = _run(lambda: got.__setitem__("out", km._run_judging(t0 + 1, {SID}, [])))
+        self.assertTrue(entered.wait(WAIT), "the band passed its boundary check and reached its slice")
+        t2 = self._prune_from_a_second_thread(self._row(base + 3 + R))    # newest - RETAIN passes the first three rows
+        time.sleep(SETTLE)                                        # the writer's chance: the lock, or the unguarded live list
+        gate.set()
+        t1.join(WAIT); t2.join(WAIT)
+        self.assertIsNone(t1.box["exc"]); self.assertIsNone(t2.box["exc"])
+        self.assertEqual((len(live), c["pruned"]), (3 + 40 + 5 + 1 - 3, 3), "the prune and the append landed")
+        self.assertEqual([e["t1"] for e in got["out"]], [NOW - 1000 + i for i in range(5)],
+                         "the frame carries every horizon row present at the read: was three short, the slice begun past the boundary")
+
+
 # ── race 7: the postal sender memo is one tuple, rebound whole ──
 class PostalRowMemo(unittest.TestCase):
     def setUp(self):

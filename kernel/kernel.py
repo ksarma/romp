@@ -21057,6 +21057,16 @@ def _sdk_locked():
             # a producer inside the backend posts a NOTICE CARD through the same door every producer takes (T370,
             # plans/notice-cards.md): the backend resolves it with getattr, so its tests' bare stand-ins carry no hook
             type(_sdk_backend).on_notice = staticmethod(post_notice)
+            # ...and the dropped-sends cards the constructor's boot echo reseed PARKED for this door: the reseed runs inside
+            # __init__, before the line above, so a post from there found no door, the held sends past the age line were
+            # flagged with no card, and the flags took them out of every later boot's selection (the 2026-09-17 fold's
+            # kernel review, item 3). The backend posts them on a thread of its own: this runs under _sdk_lock, and
+            # post_notice's session check re-enters it (Sessions.live() through _sdk()), so a synchronous post here would
+            # deadlock the boot; the thread waits the lock out, as the todo_lost seam's does. getattr-guarded like the
+            # probes below: a backend without the affordance still constructs.
+            _post_boot = getattr(_sdk_backend, "post_boot_notices", None)
+            if _post_boot:
+                _post_boot()
             # a SAFEGUARDS refusal the CLI retried on a fallback model (T279): the same wiring shape —
             # the backend observes the frame (and names the capacity card this turn's learn minted for
             # the swap), the judge store files the refusal and folds that card into it, the kernel
@@ -50488,14 +50498,57 @@ def _judge_usage_rows_locked():
     return c["rows"]
 
 
+def _judge_usage_rows_snapshot():
+    """A COPY of the reader's rows, taken under _JUDGE_USAGE_LOCK, for a consumer that walks them off the reader's
+    transaction and needs no identity (the /analytics roll-up, on an HTTP handler thread). The live list's left prune
+    runs under the lock on whichever thread reads the log and shifts every index in place, so a bare for-loop over the
+    live list skipped the shifted rows when a prune landed under it (33 of 1,000 in the 2026-09-17 fold's kernel review,
+    item 5), and a `list(...)` taken outside the lock reads the same shifting list. The band keeps the live list
+    (_judge_usage_rows): its memo keys on the list's identity and its scan takes its own slice under the lock
+    (_judge_usage_cursor). The reader's transaction runs first, at its own name (the tests patch it) and under its
+    own hold; the copy is then taken under a hold of the same lock, so no prune is mid-flight while the references
+    are copied."""
+    rows = _judge_usage_rows()
+    with _JUDGE_USAGE_LOCK:
+        return list(rows)
+
+
+def _judge_usage_cursor(rows, mb, t0):
+    """The judging band's cursor over the reader's live `rows` (_run_judging): the reader's prune count, the rows to skip
+    and the scan slice, the three taken under ONE _JUDGE_USAGE_LOCK hold. `mb` is the band's memo (rows, skip, boundary
+    row, pruned, t0, entries) or None. The cursor holds when the memo was built over this same list object for a horizon
+    no later than `t0` and the row before the shifted cursor is the boundary object the last scan verified (the reader's
+    prunes since that build moved every index by their count); else 0, a reset. Read in three unlocked steps (upstream's
+    text), a prune landing between the boundary check and the slice moved every index under the check's verdict, so the
+    slice began that many rows past the verified boundary and one frame lost the rows in between (healed by the next
+    build's reset); the reader's prune runs on whichever thread reads the log, and on a free-threaded interpreter it runs
+    during the step (the 2026-09-17 fold's kernel review, item 6). Under the lock the slice sees the list the count and
+    the check described. `rows` is passed in rather than read here: the band's reader call stays at its own site (its
+    tests rebind it per case), and the slice is a snapshot the scan walks after the lock is released."""
+    with _JUDGE_USAGE_LOCK:
+        pruned = _JUDGE_USAGE_CACHE.get("pruned", 0)
+        skip = 0
+        if mb is not None and rows is mb[0] and t0 >= mb[4]:
+            k = mb[1] - (pruned - mb[3])              # the reader's prunes since the memo's build moved every index by that many
+            try:
+                skip = k if 0 < k and rows[k - 1] is mb[2] else 0   # the same object at the cursor: the rows before it are
+            except IndexError:                        #  the ones verified; a list shrunk by an uncounted mutation is a reset
+                skip = 0
+        return pruned, skip, rows[skip:]              # the slice is a snapshot (~8.7k references on a live band): the scan
+        #                                               walks it after the lock, and a later prune cannot shift it
+
+
 def _judge_usage(t0):
     """Roll up the judge PIPELINE's token usage (one row per judge call, written by romp-judge) within
     [t0, now]: a grand total plus per-judge and per-tier {calls,in,out,cost,ms}. Reads the shared
     incremental row cache — never the file. Empty/zeros until the log exists."""
+    # The walk is over a SNAPSHOT taken under the reader's lock (_judge_usage_rows_snapshot): this runs on an HTTP
+    # handler thread, and the reader's left prune on another thread shifted the live list under a walk over it
+    # (item 5 of the 2026-09-17 fold's kernel review: 33 of 1,000 rows skipped)
     def blank():
         return {"calls": 0, "in": 0, "out": 0, "cost": 0.0, "ms": 0}
     total, by_judge, by_tier, by_auth = blank(), {}, {}, {}
-    for o in _judge_usage_rows():
+    for o in _judge_usage_rows_snapshot():
         if (o.get("t") or 0) < t0 or o.get("err"):     # err: an error envelope's row, kept for its fast readback
             continue                                    # only (zero cost, no model call to count)
         for b in (total, by_judge.setdefault(o.get("judge") or "?", blank()),
@@ -51356,21 +51409,15 @@ def _run_judging(t0, alive_sids, semantic):
     # working sessions painted lanes with no bars. _judge_usage_rows already existed for exactly
     # this (the 2026-08-13 analytics freeze); the band just never adopted it.
     rows = _judge_usage_rows()
-    pruned = _JUDGE_USAGE_CACHE.get("pruned", 0)
     mb = _judging_band                                # ONE read of the slot: every check below is against one snapshot
     prev = mb[5] if mb is not None else {}
-    skip = 0
-    if mb is not None:
-        if rows is mb[0] and t0 >= mb[4]:
-            k = mb[1] - (pruned - mb[3])              # the reader's prunes since the memo's build moved every index by that many
-            try:
-                skip = k if 0 < k and rows[k - 1] is mb[2] else 0   # the same object at the cursor: the rows before it are
-            except IndexError:                        #  the ones verified; a list shrunk under another thread is a reset
-                skip = 0
-        if mb[1] and not skip:
-            _JUDGING_BAND_STATS["resets"] += 1
-    scan = rows[skip:]                                # a snapshot (~8.7k references on a live band): the reader's left prune runs
-    #                                                   on whichever thread reads the log and can shrink the list under this scan
+    # the reader's prune count, the boundary check and the scan slice under ONE hold of the reader's lock (_judge_usage_cursor):
+    # read as three unlocked steps, a prune landing between the check and the slice began the slice past the verified boundary
+    # and one frame lost the rows in between; the slice is a snapshot the scan walks after the lock (the reader's left prune runs
+    # on whichever thread reads the log and would shrink the live list under this scan)
+    pruned, skip, scan = _judge_usage_cursor(rows, mb, t0)
+    if mb is not None and mb[1] and not skip:
+        _JUDGING_BAND_STATS["resets"] += 1
     skip0, num, fam = skip, (int, float), _JUDGE_FAMILY
     cur, reused, minted = {}, 0, 0
     advancing = True                                  # still inside the leading run of rows that fail on their times alone

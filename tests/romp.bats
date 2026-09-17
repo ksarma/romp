@@ -124,6 +124,8 @@ _sed_inplace() {
 # the body and exits 0. So the test proves the flags, not just the message.
 # MOCK_CURL_SEND_404=1 does the same on the /send leg (the kernel's 404 for a session
 # it lists none of), with the status rendered into the -w trailer the leg asks for.
+# MOCK_CURL_SEND_TIMEOUT=1 times the /send leg out the way curl -m does (exit 28, no
+# body; the /new leg answered first), so the late-answer arm is testable on its own.
 # Every branch that answers a call carrying -w appends that trailer, as real curl
 # does: the status-reading callers split the last line off as the code.
 _stub_curl() {
@@ -137,6 +139,7 @@ echo "curl $*" >> "$MOCK_LOG"
 url=""
 for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
 if [[ -n "${MOCK_CURL_FAIL_SEND:-}" && "$url" == */send ]]; then exit 22; fi
+if [[ -n "${MOCK_CURL_SEND_TIMEOUT:-}" && "$url" == */send ]]; then exit 28; fi
 if [[ -n "${MOCK_CURL_FAIL_NEW:-}" && "$url" == */new ]]; then exit 7; fi
 _w=""; _prev=""
 for a in "$@"; do [[ "$_prev" == "-w" ]] && _w="$a"; _prev="$a"; done
@@ -1206,6 +1209,27 @@ MOCK
     [[ "$output" == *"romp send ideabox"* ]]
     [[ "$output" != *"did NOT land"* ]]
     grep -q '/send' "$MOCK_LOG"
+}
+
+@test "new -m: a send the kernel took but answered late is exit 3 with the honest line, and names no retry" {
+    # curl 28 on the /send leg: the kernel took the first message and answered after the cap
+    # (ROMP_KERNEL_HTTP_TIMEOUT_S; a boot storm, the box under load). The leg exits 3 the way the send
+    # verb does, says the message may already have landed, and offers NO retry command: a caller that
+    # retried on the old exit 1 re-sent a delivered message every time. Upstream's -m leg still exits 1
+    # with the retry line, so a fold that takes its text goes red here. The stub times out /send only,
+    # and the log's /new before /send proves the timeout hit the SECOND leg, not the spawn.
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    export MOCK_CURL_SEND_TIMEOUT=1
+    run run_romp new -m "look into the flaky test" ideabox
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"took the first message but did not answer within"* ]]
+    [[ "$output" == *"may already have delivered the message"* ]]
+    [[ "$output" != *"Retry:"* ]]
+    [[ "$output" != *"did NOT land"* ]]
+    grep -q '/send' "$MOCK_LOG"
+    [ "$(grep -n '/new' "$MOCK_LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n '/send' "$MOCK_LOG" | head -1 | cut -d: -f1)" ]
 }
 
 @test "new: a kernel 400 surfaces the kernel's own refusal, never 'not reachable'" {
