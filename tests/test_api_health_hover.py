@@ -212,17 +212,27 @@ class Payload(unittest.TestCase):
         self.assertNotIn('out["bootAt"]', inspect.getsource(km.Handler.do_GET), "the route stamps no second number")
 
 
+_JD_WIRES = ("_LOGIN_AUTH_ENV_FN", "_USAGE_REFRESH_FN", "_DEFAULT_AUTH_FN", "_DEFAULT_LOGIN_FN", "_API_HEALTH_NOTE_FN")
+#   the judge-module names kernel/kernel.py's _sdk_locked assigns (its `jd._..._FN =` lines), the set
+#   _sdk_locked_for_real saves before the call and puts back after it; a wire the kernel adds joins this tuple
+
+
 def _sdk_locked_for_real(recorder):
     """The kernel's _sdk_locked run for REAL, with the backend module it loads swapped for `recorder`: the class the
     construction builds in SdkBackend's place and then wires, the way it wires the live backend. The names the construction
     reaches for (the module loader, the path check, the catalog cache and refresh, the binary lookup, the boot mark, the
-    problem report) are stubbed for the call and put back; the kernel's singleton slot and the judge module's three wires
-    too. Returns (backend, problems, stderr): what _sdk_locked returned, the problem rows it filed, the text it wrote."""
+    problem report) are stubbed for the call and put back; the kernel's singleton slot too, and the FIVE wires the
+    construction sets on the judge module (_JD_WIRES: _LOGIN_AUTH_ENV_FN, _USAGE_REFRESH_FN, _DEFAULT_AUTH_FN,
+    _DEFAULT_LOGIN_FN, _API_HEALTH_NOTE_FN) go back to their SAVED values, never a literal None. That module object is
+    one per process (the loader re-executes a loaded name into the same object, so every kernel copy in the worker
+    shares it): a wire left pointing at this module's kernel copy reached every later test in the worker, and a saved
+    value put back keeps the order of modules out of it. Returns (backend, problems, stderr): what _sdk_locked
+    returned, the problem rows it filed, the text it wrote."""
     fake = types.SimpleNamespace(SdkBackend=recorder, startup_auth_env=lambda *a, **k: {})
     names = ("_sdk_backend", "load_source", "_sdk_import_notice", "_ensure_sdk_on_path", "_model_catalog_boot",
              "_claude_bin", "_mark_boot", "_sdk_problem")
     saved = {n: getattr(km, n) for n in names}
-    saved_jd = (km.jd._LOGIN_AUTH_ENV_FN, km.jd._USAGE_REFRESH_FN)
+    saved_jd = {n: getattr(km.jd, n) for n in _JD_WIRES}
     problems = []
     try:
         km._sdk_backend = None
@@ -239,7 +249,8 @@ def _sdk_locked_for_real(recorder):
     finally:
         for n in names:
             setattr(km, n, saved[n])
-        km.jd._LOGIN_AUTH_ENV_FN, km.jd._USAGE_REFRESH_FN = saved_jd
+        for n, v in saved_jd.items():
+            setattr(km.jd, n, v)
     return be, problems, err.getvalue()
 
 
@@ -297,6 +308,9 @@ class OneClock(unittest.TestCase):
             def __init__(self, *a, **kw):
                 built.append(kw)
 
+        wire_before = km.jd._API_HEALTH_NOTE_FN   # the one of the five judge wires that leaked (round 3 item 1)
+        self.addCleanup(lambda: self.assertIs(
+            km.jd._API_HEALTH_NOTE_FN, wire_before, "the judge module's api-health wire is back at its pre-call value"))
         be, problems, err = _sdk_locked_for_real(_Recorder)
         self.assertEqual(problems, [], "the construction ran clean")
         self.assertNotIn("model catalog boot:", err,
@@ -481,6 +495,9 @@ class TheBootRoadCall(unittest.TestCase):
                 seen.append(getattr(type(self), "on_notice", None))   # the door as post_notice resolves it, or None
                 return None                                             # nothing parked: no thread (the kernel ignores it)
 
+        wire_before = km.jd._API_HEALTH_NOTE_FN   # the one of the five judge wires that leaked (round 3 item 1)
+        self.addCleanup(lambda: self.assertIs(
+            km.jd._API_HEALTH_NOTE_FN, wire_before, "the judge module's api-health wire is back at its pre-call value"))
         be, problems, err = _sdk_locked_for_real(_Recorder)
         self.assertEqual(problems, [], "the construction ran clean")
         self.assertIsInstance(be, _Recorder)
