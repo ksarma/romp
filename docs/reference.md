@@ -55,7 +55,8 @@ open page: it reconnects, and no line appears. When the kernel serves a newer bu
 runs, the page offers the reload on one persistent line, "A newer romp build is ready.", with
 **Reload** and **Not now**; Not now is remembered per build in that browser, so the same build
 never asks again and a later one does. The explicit gestures keep their reload: the update
-banner's **Update** click reloads once the new kernel is up, the rail's restart reloads nothing
+banner's second click, on **Restart**, reloads once the new kernel is up (the first, **Update**,
+only arms the confirm), the rail's restart reloads nothing
 for an unchanged build and offers the reload for a changed one, and the Reload buttons are
 clicks. An accepted reload waits for any gesture in progress and for a chat tab's own hold: a
 message held behind an upload, or an attachment still uploading, which is waited for until it
@@ -1691,8 +1692,8 @@ chat wire is negotiated per version, an action the new kernel does not know in t
 old page's form falls back to the older path, and when that happens the line says
 the page is behind the kernel. The rail's restart button follows the same rule
 (an unchanged build reloads nothing, a changed one is offered); the update
-banner's **Update** click, which asked for the update, still reloads once the new
-kernel is up. A kernel that must force a reload for correctness can send the page
+banner's second click, on **Restart**, which posts the update after **Update** armed
+it, still reloads once the new kernel is up. A kernel that must force a reload for correctness can send the page
 `reloadRequired`, honoured through the same holds a reload always waits on (a
 held pointer, a draft, an upload in flight); nothing sends it today.
 
