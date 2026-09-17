@@ -41,18 +41,26 @@ try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
 const errors = []; page.on("pageerror", (e) => errors.push(String(e).slice(0, 300)));
-// the pane's frames, recorded at the federation manager's inbound (the merged frames never ride the window message event):
-// each feed frame's notice item ids, and every noticeActionDone
+// the pane's frames, recorded as the pane sees them: each feed frame's notice item ids through the federation manager's
+// onFrame registration (frame-listener.ts), which hands the pane the merged whole `feed` the manager emits. The kernel
+// streams a caught-up page {type:"feedDelta"} frames after its first full one (the shim's ?caps=feedDelta) and the
+// manager applies each onto the frame it holds before re-emitting, so its inbound sees deltas, not frames. Every
+// noticeActionDone at inbound, once per gesture. (The merged frames never ride the window message event while the
+// manager is up; without one, the shim dispatches every frame there.)
 await page.addInitScript(() => {
   window.__feedNotices = []; window.__nad = []; window.__toasts = [];
   document.addEventListener("DOMContentLoaded", () => new MutationObserver(() => { for (const t of document.querySelectorAll(".feed-toast")) { const x = t.textContent || ""; if (x && !window.__toasts.includes(x)) window.__toasts.push(x); } })
     .observe(document.documentElement, { childList: true, subtree: true, characterData: true }));
-  const record = (m) => { if (!m) return; if (m.type === "feed" && Array.isArray(m.asks)) window.__feedNotices.push(m.asks.filter((a) => a && a.notice).map((a) => a.itemId));
-    if (m.type === "noticeActionDone") window.__nad.push(m); };
+  const seen = new WeakSet();   // one record per emitted frame, however many handlers the pane registers
+  const recordFeed = (m) => { if (!m || m.type !== "feed" || !Array.isArray(m.asks) || seen.has(m)) return; seen.add(m);
+    window.__feedNotices.push(m.asks.filter((a) => a && a.notice).map((a) => a.itemId)); };
+  const recordDone = (m) => { if (m && m.type === "noticeActionDone") window.__nad.push(m); };
   let fed = null;
   Object.defineProperty(window, "__rompFed", { configurable: true, get() { return fed; },
-    set(v) { fed = v; if (v && typeof v.inbound === "function" && !v.__labWrapped) { const inb = v.inbound; v.__labWrapped = true; v.inbound = (h, m) => { record(m); return inb(h, m); }; } } });
-  window.addEventListener("message", (e) => { if (!fed) record(e.data); });
+    set(v) { fed = v;
+      if (v && typeof v.inbound === "function" && !v.__labWrapped) { const inb = v.inbound; v.__labWrapped = true; v.inbound = (h, m) => { recordDone(m); return inb(h, m); }; }
+      if (v && typeof v.onFrame === "function" && !v.__labWrappedOn) { const on = v.onFrame; v.__labWrappedOn = true; v.onFrame = (h) => on((ev) => { recordFeed(ev && ev.data); return h(ev); }); } } });
+  window.addEventListener("message", (e) => { if (!fed) { recordFeed(e.data); recordDone(e.data); } });
 });
 const post = async (body) => { const r = await page.request.post(cfg.notice, { data: body, headers: { "X-Romp-Token": cfg.token } }); return await r.json(); };
 const sel = (id) => '[data-key="a:' + id + '"]';
@@ -100,9 +108,21 @@ const stillThere = !!(await page.$(sel(id2)));
 await page.click(sel(id1) + " button.fdismiss:visible", { timeout: 5000 }).catch(() => {});
 await page.waitForSelector(sel(id1), { state: "detached", timeout: 15000 }).catch(() => {});
 const afterClear = !!(await page.$(sel(id1)));
+// The Undo affordance shows once the kernel's next frame confirms the clear (canUndoClear, read from cleared.jsonl).
+// The pusher paces its cycle starts (PUSH_MIN_INTERVAL_S), so that frame lands up to a cycle after the 180 ms optimistic
+// detach above: wait for the affordance, the event, rather than sampling it at once.
 const undo = page.getByRole("button", { name: /undo/i }).first();
+await undo.waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
 let undone = null;
-if (await undo.count()) { await undo.click(); await page.waitForSelector(sel(id1), { timeout: 15000 }).catch(() => {}); undone = !!(await page.$(sel(id1))); }
+const framesBeforeUndo = await page.evaluate(() => (window.__feedNotices || []).length);
+if (await undo.count()) {
+  await undo.click(); await page.waitForSelector(sel(id1), { timeout: 15000 }).catch(() => {}); undone = !!(await page.$(sel(id1)));
+  // The restore shows at once from the pane's cache and is CONFIRMED by the kernel's next frame carrying the card again
+  // (feed.ts pendingRestored); until then the pane keeps forcing the cached card in, and a Clear posted inside that window
+  // is served by the same paced cycle, whose frame lacks the card: the clear is confirmed and the unconfirmed restore then
+  // puts the card back. The clear below is a gesture on a settled board, so wait for the confirming frame first.
+  await page.waitForFunction(([id, n]) => { const fr = window.__feedNotices || []; return fr.length > n && fr[fr.length - 1].includes(id); }, [id1, framesBeforeUndo], { timeout: 15000 }).catch(() => {});
+}
 // (4) a new revision under the same key re-shows after a dismissal, under a new id
 await page.click(sel(id1) + " button.fdismiss:visible", { timeout: 5000 }).catch(() => {});
 await page.waitForSelector(sel(id1), { state: "detached", timeout: 15000 }).catch(() => {});

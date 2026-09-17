@@ -125,7 +125,11 @@ await page.addInitScript(() => {
     return ws; };
   window.WebSocket.prototype = OrigWS.prototype; Object.assign(window.WebSocket, OrigWS);
   const watch = () => { const bar = document.getElementById("tabs"); if (!bar) { setTimeout(watch, 50); return; }
-    new MutationObserver((muts) => { const removed = muts.reduce((n, m) => n + m.removedNodes.length, 0);
+    // the hairlines (.tab-row-line) are left out of the count: the painter re-lays them after the drag's own insert on
+    // every dragover tick that moves the tab (render.ts, the #tabs dragover handler: insertBefore, then paintTabRowLines),
+    // one per row above the last, so a three-row strip removed two of them beside the moved tab and the tick read as a
+    // rebuild (the two-row fixture's one hairline kept the count at two, under the threshold)
+    new MutationObserver((muts) => { const removed = muts.reduce((n, m) => n + Array.from(m.removedNodes).filter((x) => !(x.classList && x.classList.contains("tab-row-line"))).length, 0);
       if (removed > 2) L("rebuild:-" + removed, null); }).observe(bar, { childList: true }); };
   watch();
 });

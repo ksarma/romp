@@ -117,10 +117,12 @@ class SigLabels(unittest.TestCase):
     def test_the_labels_follow_the_appends_in_source_order(self):
         # the two tests above pin the label-to-position mapping at `row` and `states` and over synthetic tuples;
         # this one pins the append order of the rest against the body: one marker per labelled read
+        # reg reads through _chat_reg_sig since upstream https://github.com/romp-on/romp/pull/1738: the helper keys the
+        # registry content without hostAck and hostLogPos, so a host journal ack no longer busts the tab
         src = inspect.getsource(km._chat_build_sig)
         markers = {"transcript": "sig.append((st.st_mtime, st.st_size))", "states": "sig.append(tuple(states))",
                    "store": "jd._store_identity(sid)[1:]", "hold": "_rewind_hold_get(sid)", "archive": "jd.ARCHDIR",
-                   "episodes": "jd.EPIDIR", "reg": 'jd.STATE / "sdk"', "gone": "jd.GONEDIR", "tasks": "_task_store_fp(",
+                   "episodes": "jd.EPIDIR", "reg": "_chat_reg_sig(sid)", "gone": "jd.GONEDIR", "tasks": "_task_store_fp(",
                    "todos": "_user_todo_fp(", "pins": "_pinned_notes_fp(", "cut": "pending_cut(",
                    "live": "Sessions.live_rev(sid, be)", "row": '"snapT", "interrupting"', "clock": "_idle_faded(",
                    "backend": "_queue_recallable(", "ops": "_pending_ops.get(sid)", "limit": "_limit_hold(sid, usage=",

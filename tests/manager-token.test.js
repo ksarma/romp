@@ -423,7 +423,12 @@ test('a kernels.json profile\'s own token is accepted on every door, a foreign o
     assert.equal((await h.req('/restart-all', 'POST', { 'X-Romp-Token': 'zq9-third-zq9' })).code, 401, 'a foreign token is still refused');
     const all = await h.req('/restart-all', 'POST', { 'X-Romp-Token': 'zq9-profile-zq9' });
     assert.equal(all.code, 200, all.body);
-    assert.deepEqual(JSON.parse(all.body).restarted.sort(), ['k2', 'main']);
+    // restarted names the ids a SIGTERM reached; a kernel whose restart is still in flight rides it and is listed
+    // under folded (successor not yet spawned) or trailing (spawned, not yet answering) instead. k2's own
+    // restart two requests above is in flight here, so this restart-all signals main and folds k2.
+    const body = JSON.parse(all.body);
+    assert.deepEqual(body.restarted, ['main'], 'main was idle, so its SIGTERM went out: ' + all.body);
+    assert.deepEqual([...body.folded, ...body.trailing], ['k2'], 'k2 rode its restart in flight: ' + all.body);
     assert.equal((await h.req('/restart-all', 'POST', { 'X-Romp-Token': TOKEN })).code, 200, 'the primary still matches');
     // re-read per request: the profile remints, the new value is honoured and the old refused
     fs.writeFileSync(path.join(h.profileRoot, 'serve-token'), 'zq9-profile-2-zq9\n', { mode: 0o600 });

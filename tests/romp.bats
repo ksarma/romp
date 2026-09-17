@@ -2566,7 +2566,12 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.path.startswith("/stop"):
             threading.Thread(target=self.server.shutdown, daemon=True).start()
     def log_message(self, *a): pass
-http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+class _Bound(http.server.HTTPServer):   # no reverse lookup of the bind address: HTTPServer.server_bind runs socket.getfqdn(host), about 36 s on GitHub's macOS images
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+_Bound(("127.0.0.1", port), H).serve_forever()
 PY
     MGR_PID=$!
     local i; for i in $(seq 1 50); do curl -fsS "http://127.0.0.1:$mport/status" >/dev/null 2>&1 && break; sleep 0.1; done
@@ -2639,7 +2644,12 @@ class H(http.server.BaseHTTPRequestHandler):
         self._note()
         self._json(code, {"ok": False, "error": body})
     def log_message(self, *a): pass
-http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+class _Bound(http.server.HTTPServer):   # no reverse lookup of the bind address: HTTPServer.server_bind runs socket.getfqdn(host), about 36 s on GitHub's macOS images
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+_Bound(("127.0.0.1", port), H).serve_forever()
 PY
         MGR_PID=$!
         for i in $(seq 1 50); do curl -fsS "http://127.0.0.1:$mport/status" >/dev/null 2>&1 && break; sleep 0.1; done
@@ -2731,7 +2741,12 @@ class H(http.server.BaseHTTPRequestHandler):
         self._note()
         self._json(code, {"ok": False, "error": body})
     def log_message(self, *a): pass
-http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+class _Bound(http.server.HTTPServer):   # no reverse lookup of the bind address: HTTPServer.server_bind runs socket.getfqdn(host), about 36 s on GitHub's macOS images
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+_Bound(("127.0.0.1", port), H).serve_forever()
 PY
         MGR_PID=$!
         for i in $(seq 1 50); do curl -fsS "http://127.0.0.1:$mport/status" >/dev/null 2>&1 && break; sleep 0.1; done

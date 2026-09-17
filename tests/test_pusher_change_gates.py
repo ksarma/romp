@@ -202,10 +202,18 @@ class WorkingNotesMemo(unittest.TestCase):
         (km.WORKING_DIR / SID).write_text("editing the notes API\n")
         real = Path.read_text
         reads = []
-        with mock.patch.object(Path, "read_text", lambda self, *a, **k: (reads.append(str(self)), real(self, *a, **k))[1]):
+
+        def counting(p, *a, **k):
+            # the notes' own reads only: the patch is process-global, and a kernel thread a peer module left
+            # running in the same xdist worker can read_text something else inside this window (one sweep
+            # counted 2 here, 2026-09-17); the idiom is test_cleared_set_memo's
+            if Path(p).parent == km.WORKING_DIR:
+                reads.append(str(p))
+            return real(p, *a, **k)
+        with mock.patch.object(Path, "read_text", counting):
             a = km._working_notes(); b = km._working_notes()
             self.assertEqual(a, {SID: "editing the notes API"}); self.assertEqual(a, b)
-            self.assertEqual(len(reads), 1)
+            self.assertEqual(len(reads), 1, reads)
             a[SID] = "mutated"; b.pop(SID)                           # the build-path result AND the hit-path one
             self.assertEqual(km._working_notes(), {SID: "editing the notes API"}, "callers get copies on both paths")
             (km.WORKING_DIR / SID).write_text("done, idle\n")

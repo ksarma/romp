@@ -158,7 +158,8 @@ class ExitPhases(unittest.TestCase):
     def test_the_exit_bounds_its_assembly_writes_and_times_its_phases(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()
         i = src.index("draining SDK sessions")
-        tail = src[i:i + 6000]
+        tail = src[i:src.index("_append_restart_cut(row)", i)]  # the exit path through the cut row's append; a fixed 6000-char window
+        # no longer reaches the cut row once the judges' child's start and the ack wait's grace wording share the path.
         self.assertIn("if time.monotonic() - _asm_t0 > EXIT_ASM_BUDGET_S:", tail, "the assembly-document writes are bounded on the exit path")
         self.assertIn("em.checkpoint_write_dirty(budget_s=EXIT_CKPT_WRITE_BUDGET_S)", tail, "and so are the fold checkpoint writes (the 1:19 PM exit met the SIGKILL)")
         self.assertIn("if time.monotonic() - _prime_t0 > EXIT_PRIME_BUDGET_S:", tail)
