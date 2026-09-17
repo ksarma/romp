@@ -7,7 +7,7 @@
 //      restarting a stale one once after a VSIX update),
 //   2. hosts the four webview surfaces — chat, feed, and outline/fleet
 //      (editor panels) plus the timeline (a native bottom-panel view) — and
-//      pipes their postMessage traffic over the kernel's WS protocol verbatim,
+//      reassembles feed/timeline deltas and pipes complete frames to their webviews,
 //   3. supplies the few genuinely CLIENT-side capabilities: opening files in
 //      the editor, the OS file picker, the clipboard, external links, and
 //      panel reveal/focus orchestration.
@@ -24,6 +24,7 @@ import WebSocket from "ws";
 import { chatBody, FEED_BODY, FLEET_BODY, TIMELINE_BODY, ATTACH_TITLE_VSCODE } from "./page-skeleton";
 import { askManagerEnsure, attachFailureToast, ensureThenAttach, parseHealthz, warnAfter } from "./kernel-attach";
 import { intentOp, ReloadHold } from "./pipe-intent";
+import { ViewDeltas } from "./view-deltas";
 import { routeViewMessage } from "./view-routing";
 import { deriveStatus, freshNeedsYou, renderStatusBar, statusTooltipLines, FleetStatus } from "./fleet-status";
 import { citeText, sessionsForWorkspace, SessionInfo } from "./workspace-sessions";
@@ -119,10 +120,12 @@ function maybeBuildNotice(dv: unknown): void {
 // AUTH-EXEMPT route: anything answering on the kernel port could then choose the directory we ran a
 // shell command from, and drive the prompt that invites the click besides. When this copy isn't a
 // checkout it can't rebuild anything, so we say so and point at the terminal rather than running some
-// other install.sh. Reload stays a user click here, never automatic: the served dashboard reloads ITSELF on a
-// kernel restart or a newer bundle since 2026-09-08 (superseding the 2026-07-13 banner preference, T265), but a
-// VS Code webview reload cannot fix bundled-code drift — the bundle comes from the installed VSIX, so only a
-// reinstall plus the editor's own reload lands new code, and that is the user's click.
+// other install.sh. Reload stays a user click here under every ruling: the served dashboard reloaded ITSELF on a
+// kernel restart or a newer bundle from 2026-09-08 (T265, superseding the 2026-07-13 banner preference), and since
+// 2026-09-16 it OFFERS the reload instead (a same-build restart is invisible; a newer build is one line with Reload
+// and Not now; the design block above kernel.py _RELOAD_CORE_JS). A VS Code webview reload cannot fix bundled-code
+// drift either way — the bundle comes from the installed VSIX, so only a reinstall plus the editor's own reload lands
+// new code, and that is the user's click.
 let updating = false;
 async function updateExtension(): Promise<void> {
   if (updating) return;                                    // one run per host (double-click, or toast + palette)
@@ -515,10 +518,13 @@ class KernelPipe {
     // term it would be a permanently unflagged Outline that disables the cold-tab gate for the whole kernel while open.
     // client=ext states what dials: Node's ws client sends no Origin and no User-Agent, so without the term the kernel
     // could not tell this host's panes from another kernel's relay dials (kernel.py _dial_kind, the wsopen row, 2026-09-15).
-    const ws = new WebSocket(`ws://${HOST}:${kernelPort()}/ws?app=${this.app}&wid=${encodeURIComponent(vscode.env.sessionId)}&token=${encodeURIComponent(serveToken())}${this.app === "fleet" ? "&provrows=1" : ""}&client=ext`);
+    const ws = new WebSocket(`ws://${HOST}:${kernelPort()}/ws?app=${this.app}&wid=${encodeURIComponent(vscode.env.sessionId)}&token=${encodeURIComponent(serveToken())}${this.app === "fleet" ? "&provrows=1" : ""}&client=ext&delta=1`);
+    // Bases belong to this socket, including the passive status pipe (2026-09-16). A reconnect starts with no
+    // base; recovery goes only to the socket whose delta missed, never into the intent replay queue.
+    const views = new ViewDeltas((slot) => ws.send(JSON.stringify({ type: "needSlot", slot })));
     this.ws = ws;
     ws.on("open", () => {
-      if (!this.alive) { ws.close(); return; }
+      if (!this.alive || this.ws !== ws) { ws.close(); return; }
       this.onState?.(true);
       if (this.everConnected) {
         // A reconnect after a kernel restart: the kernel lost this client's
@@ -539,9 +545,11 @@ class KernelPipe {
       }
     });
     ws.on("message", (data) => {
-      if (!this.alive) return;
+      if (!this.alive || this.ws !== ws || ws.readyState !== WebSocket.OPEN) return;
       let m: any;
       try { m = JSON.parse(String(data)); } catch { return; }
+      m = views.receive(m);
+      if (m === null) return;
       // keepalive carries the kernel's dist build token — drift vs this bundle's stamp → one banner.
       // Panel pipes only: the passive status pipe observes and never toasts.
       if (m && m.type === "ka" && !this.passive) maybeBuildNotice(m.dv);

@@ -69,8 +69,9 @@ test("the tab menu's Emoji… row sits with Rename, wears the current emoji as i
   assert.match(block, /dismissTabMenu\(\); showEmojiPrompt\(id\);/);
   // after Rename, before the color swatches: the aesthetic section. Move to folder… is no longer the lower bound: upstream
   // re-sectioned the menu at the 2026-09-15 pull-in and that row sits in section 2 beside Tags (the user 2026-09-11),
-  // while this fork's Emoji row stays with Rename
-  const rename = SRC.indexOf('l.textContent = "Rename"');
+  // while this fork's Emoji row stays with Rename (the Rename row is the builder's addMenuItem since upstream's menu tidy: its
+  // bound is the row's label)
+  const rename = SRC.indexOf('label: "Rename"');
   const colors = SRC.indexOf('const row = el("div", "ctx-colors");');
   assert.ok(rename > 0 && colors > 0 && rename < i && i < colors);
   // the glyph box sizes to its glyph up to the sibling SVG icons' 16px and CLIPS the rest horizontally: a

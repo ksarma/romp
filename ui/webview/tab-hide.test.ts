@@ -32,6 +32,7 @@ const SNAP = RENDER.slice(RENDER.indexOf("let snapView: string | null = null;"),
 const HEAD = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
 const TABS = RENDER.slice(RENDER.indexOf("function renderTabs() {"), RENDER.indexOf("function stripAftermath("));
 const GROUPS = ui("webview", "tab-groups.ts");
+const CTX = ui("webview", "ctx-menu.ts");   // the shared menu builder (upstream's v0.16.0 tidy): the tab menu's card, rows, placement and dismissal listeners live there
 
 // the notes-api demo world: web, api and tests in "infra"; old1 and old2 in "archived" (folded by default); a loose one
 const V = {
@@ -236,7 +237,7 @@ test("executed + pinned: nothing lost. An open header wears the pip and the todo
   // fields was superseded at the 2026-09-09 fold), and a StripHead carries `hides` (tab-groups.ts planStrip), so a hide
   // flip changes the signature and the strip repaints
   assert.match(TABS, /activeId \? tabInView\(activeId\) : null, plan\.items,\n/, "the plan, hides included, is in the strip's signature (tab-strip-skip.test lists it)");
-  assert.match(GROUPS, /export type StripHead = \{ head: TabSection; folded: boolean; active: boolean; hidden: string\[\]; hides: string\[\] \};/, "the item the signature serializes carries the hides");
+  assert.match(GROUPS, /export type StripHead = \{ head: TabSection; folded: boolean; active: boolean; hidden: string\[\]; hides: string\[\]; packed: boolean \};/, "the item the signature serializes carries the hides (and the packed bit, upstream's fold-pack)");
   assert.notEqual(JSON.stringify(planStrip(ALL, unions, apiHidden, "web", false).items), JSON.stringify(planStrip(ALL, unions, d, "web", false).items), "a hide flip alone is a new signature");
 });
 
@@ -381,10 +382,13 @@ test("executed: leaving the tag. The session shows wherever it lands, its stale 
   assert.deepEqual([pruned.pinned, pruned.hidden, pruned.collapsed], [[], [], ["infra"]]);
 });
 
-test("executed: the phone layout and sectioning off render the flat strip, hidden members included, as the folds do", () => {
-  assert.deepEqual(planStrip(ALL, unions, apiHidden, "web", true).items, ALL.map((id) => ({ id })), "the phone: every tab, no header to stand in");
+test("executed: the phone layout sections like the desktop with every section open and applies no hide (upstream's phone picker order, 2026-09-16; the hides follow the folds' phone rule, since the picker is the phone's only switcher), and sectioning off renders the flat strip, hidden members included", () => {
+  const phone = planStrip(ALL, unions, apiHidden, "web", true);
+  assert.deepEqual(phone.items, planStrip(ALL, unions, { ...d, collapsed: [], expanded: ["archived"] }, "web", false).items, "the phone: the desktop's plan with every section open and nothing hidden");
+  assert.ok(phone.items.some((i) => "id" in i && i.id === "api"), "the hidden member shows on the phone: a hide has no door there and would take a session out of its only switcher");
+  assert.ok(!heads(phone.items).some((h) => h.folded || h.hidden.length || h.hides.length), "no header folded, none standing in for a hidden member");
   assert.deepEqual(planStrip(ALL, unions, { ...apiHidden, on: false }, "web", false).items, ALL.map((id) => ({ id })), "Group tabs by tag off: the flat strip");
-  assert.deepEqual([...planStrip(ALL, unions, apiHidden, "web", true).folded], [], "nothing skipped on the phone");
+  assert.deepEqual([...phone.folded], [], "nothing skipped on the phone");
 });
 
 test("docs and the sheet: the guide's paragraph, the reference's section, the sheet's rules (tokens only, the one sub-line size), and no em dash in the new text", () => {
@@ -592,6 +596,7 @@ class FakeEl {
   addEventListener(k: string, fn: (ev: unknown) => void) { (this.listeners[k] ||= []).push(fn); }
   fire(k: string, ev: unknown = {}) { for (const fn of this.listeners[k] || []) fn(ev); }
   setAttribute(k: string, v: string) { this.attrs[k] = v; }
+  hasAttribute(k: string) { return k in this.attrs; }   // the builder's rows() reads it (showMenuCard marks a hand-built row menuitem and focusable)
   /** THE RECT MODEL (round 3): a menu or a flyout (.ctx-menu) stands where its style put it and is as tall as its rows, one ROW each
    *  (a flyout is a child of the menu but position: fixed, so it is not one of the menu's rows); a row's rect is its slot under the
    *  menu's top; anything else a fixed small box. Enough for the seat and the flyout's placement to be executed, not pinned */
@@ -645,7 +650,7 @@ class FakeWin {
 }
 /** a tick, for pressHold's zero timer at the release */
 const tick = () => new Promise<void>((r) => setTimeout(r, 2));
-type MenuApi = { open: (id: string, copy?: string, at?: { x: number; y: number }) => FakeEl; at: () => { x: number; y: number } | null; push: (views: unknown) => void; changed: () => void; pending: () => unknown };
+type MenuApi = { open: (id: string, copy?: string, at?: { x: number; y: number }) => FakeEl; at: () => { x: number; y: number } | null; push: (views: unknown) => void; changed: () => void; pending: () => unknown; doc: () => { fire: (k: string, ev?: unknown) => void; count: (k: string) => number } };
 function liftShowTabMenu(): (hooks: MenuHooks) => MenuApi {
   const lifted = liftShowTabMenuRaw();
   // the page's window and the real pressHold bound to it (render.ts calls pressHold(menu) with the default release, the window)
@@ -669,19 +674,24 @@ function liftShowTabMenuRaw(): (hooks: MenuHooks) => MenuApi {
   const notifier = RENDER.match(/\nfunction viewsChanged\(\) \{ tabMenuViewsHook\(\); \}\n/);
   const media = RENDER.match(/const PHONE_LAYOUT_MEDIA = "([^"]+)";/);
   assert.ok(la > 0 && lb > la && notifier && media, "the listeners', the notifier's or the media rule's anchor moved; re-anchor this lift");
-  // THE MENU'S WINDOW LISTENERS ARE REAL TOO (round 9): the outside mousedown, Escape, the picker's two, the scroll and the blur, the block
-  // the browser probe slices, evaluated against the harness window, so a test that fires a scroll event drives render.ts's own exemption
-  // for the menu's own scroll (round 8 executed it in the browser leg alone, which skips where no browser is installed, CI included)
-  const wa = RENDER.indexOf('window.addEventListener("mousedown", (e) => { if (ctxMenuEl && !ctxMenuEl.contains(e.target as Node)) dismissTabMenu(); }, true);');
-  const wb = RENDER.indexOf("\n", RENDER.indexOf('window.addEventListener("blur", () => dismissTabMenu());', wa)) + 1;
-  assert.ok(wa > 0 && wb > wa, "the menu's window listeners moved; re-anchor this lift");
+  // THE MENU'S DISMISSAL LISTENERS ARE REAL TOO (round 9; the shared builder since upstream's v0.16.0 tidy): showTabMenu builds its card
+  // with menuCard(), its standard rows with addMenuItem() and shows it through showMenuCard() (ctx-menu.ts), which installs the dismissal
+  // listeners per open (a press outside on the document's pointerdown capture, Escape, a scroll outside the card, the window's blur) and
+  // runs onTabMenuClosed at the close. The builder is lifted verbatim (its module state, the placement, the card, the row, the divider
+  // and the show) and evaluated against the harness document and window, so a test that fires a scroll on the document drives the
+  // builder's own exemption for the menu's own scroll, with this fork's instanceof guard on it (round 8 executed the exemption in the
+  // browser leg alone, which skips where no browser is installed, CI included)
+  const ca = CTX.indexOf("const MARGIN = 4;");
+  const cb = CTX.indexOf("\n}\n", CTX.indexOf("export function showMenuCard(menu: HTMLElement, x: number, y: number, opts: CtxMenuOpts = {}): HTMLElement {", ca)) + 3;
+  assert.ok(ca > 0 && cb > ca, "the builder's anchors moved (ctx-menu.ts, MARGIN to showMenuCard's end); re-anchor this lift");
+  const BUILDER = CTX.slice(ca, cb).replace(/^export /gm, "");   // the module's exports as plain declarations in the harness's one scope
   // THE FLYOUT GESTURE IS REAL (T380): wireFlyout, the one hover-and-click gesture the Tags row is wired with (the fork's inline
   // armHoverClose pair moved into it), lifted with its constant, so a test's click on the Tags row opens the flyout through render.ts's
   // own handler; the hover timers ride the harness window's setTimeout, which never fires (the tests click)
   const fa = RENDER.indexOf("const HOVER_INTENT_MS = 120;");
   const fb = RENDER.indexOf("\n}\n", RENDER.indexOf("function wireFlyout(", fa)) + 3;
   assert.ok(fa > 0 && fb > fa, "wireFlyout's anchors moved; re-anchor this lift");
-  const js = requireCjs("esbuild").transformSync(RENDER.slice(a, b) + RENDER.slice(la, lb) + notifier![0] + RENDER.slice(wa, wb) + RENDER.slice(fa, fb), { loader: "ts" }).code;
+  const js = requireCjs("esbuild").transformSync(RENDER.slice(a, b) + RENDER.slice(la, lb) + notifier![0] + BUILDER + RENDER.slice(fa, fb), { loader: "ts" }).code;
   // the page as showTabMenu reads it: the maps and helpers named as render.ts names them
   const prelude = `
     const H = HOOKS;
@@ -696,10 +706,17 @@ function liftShowTabMenuRaw(): (hooks: MenuHooks) => MenuApi {
     const ctxIcon = (kind, off) => { const sp = new FakeEl("span", "ctx-icon" + (off ? " off" : "")); sp.dataset.kind = kind; return sp; };
     const sessions = H.sessions, tabMeta = new Map();
     const paletteColors = [];
-    const dismissTabMenu = () => { H.dismissed++; ctxMenuEl?.remove(); ctxMenuEl = null; tagsFlyNewInput = null; tabMenuViewsHook = () => {}; };   // as render.ts's (pinned in the menu door test): the menu leaves the page, the input and the views hook are cleared (round 5: a stub that left the menu on the page let C4 read a re-dress the page had discarded)
+    // as render.ts's (pinned in the menu door test): the dismissal goes through the builder, whose teardown runs onTabMenuClosed, which
+    // forgets the card, the flyout's input and the views hook (round 5: a stub that left the menu on the page let C4 read a re-dress the
+    // page had discarded). The harness counts the closes in that one callback, since every road ends there: a row's pick, the Hide tab
+    // row's dismissTabMenu, a scroll or a press outside, Escape, the window's blur
+    const dismissTabMenu = () => { closeContextMenu(); };
+    const onTabMenuClosed = () => { H.dismissed++; ctxMenuEl = null; tagsFlyNewInput = null; tabMenuViewsHook = () => {}; };
+    const RENAME_SUBLINE = "the name is a label";   // the Rename row's sub-line (render.ts imports it from clear-confirm.ts): a stand-in string
+    FakeEl.focused = null;   // a fresh page: nothing has the focus (the builder focuses the card at the open and hands the focus back at the close)
     const closeEmojiPrompt = () => {};
     let emojiPrompt = null;   // the picker's listeners read it (never open here; round 9 lifts the menu's window listeners)
-    const Node = FakeEl;   // the scroll listener's instanceof check: a fake element is an element (round 9)
+    const Node = FakeEl;   // the builder's scroll listener's instanceof check (this fork's guard, ctx-menu.ts): a fake element is an element (round 9)
     const setSessionFlag = (id, k, v) => { H.flags.push([id, k, v]); };
     const setSessionColor = () => {}, startTabRename = () => {}, showMovePrompt = () => {}, showEmojiPrompt = () => {};
     const billingSubText = () => "";
@@ -718,7 +735,13 @@ function liftShowTabMenuRaw(): (hooks: MenuHooks) => MenuApi {
     const browseRouteNow = () => "pane", openBrowse = () => {};
     const location = { protocol: "vscode-webview:" };
     const window = H.window;   // the pane's size, and the release target pressHold installs its listeners on
-    const document = { body: new FakeEl("body"), getElementById: () => null, get activeElement() { return FakeEl.focused; } };
+    // the page's document as the builder reads it: the body the card mounts on, createElement for the card and its rows, the focus
+    // (activeElement, hasFocus) and the capture listeners showMenuCard installs per open (pointerdown, keydown, scroll), recorded and
+    // fired like the window's, so a test drives the dismissal through the builder's own listener
+    const document = { body: new FakeEl("body"), getElementById: () => null, get activeElement() { return FakeEl.focused; }, hasFocus: () => true,
+      createElement: (tag) => new FakeEl(tag),
+      listeners: {}, addEventListener(k, fn) { (this.listeners[k] ||= []).push(fn); }, removeEventListener(k, fn) { this.listeners[k] = (this.listeners[k] || []).filter((f) => f !== fn); },
+      fire(k, ev = {}) { for (const fn of (this.listeners[k] || []).slice()) fn(ev); }, count(k) { return (this.listeners[k] || []).length; } };
     let ctxMenuEl = null, ctxMenuAt = null;
   `;
   const epilogue = `
@@ -727,7 +750,7 @@ function liftShowTabMenuRaw(): (hooks: MenuHooks) => MenuApi {
              // notifier (viewsChanged, which runs the hook); 'changed' is the notifier alone, as onKernelCaps runs it after a revert already made (round 5);
              // the store listeners and the media rule's are the module's own, on the harness window (round 6): a test fires the event instead
              push: (views) => { H.views = views; viewsChanged(); }, changed: () => { viewsChanged(); },
-             pending: () => pendingSessionViews };   // the optimistic blob a remote-only edit mirrors into and renders from (round 8: the name pass is executed on it)
+             pending: () => pendingSessionViews, doc: () => document };   // the optimistic blob a remote-only edit mirrors into and renders from (round 8: the name pass is executed on it)
   `;
   return new Function("HOOKS", prelude + js + epilogue) as (hooks: MenuHooks) => MenuApi;
 }
@@ -874,7 +897,7 @@ test("executed: THE MENU DOOR. Hide tab sits with the toggles after Notify me, n
 
 test("pinned: the menu door in render.ts. The toggles' dress is one helper the Hide tab row re-uses on its one node; the write is the pin row's, explicit; the copy's home section is computed once in showTabMenu, tracked through the flyout's move and shared with it; the comment records the reversal", () => {
   const at = RENDER.indexOf("function showTabMenu(");
-  const MENU = RENDER.slice(at, RENDER.indexOf("document.body.appendChild(menu);", at));
+  const MENU = RENDER.slice(at, RENDER.indexOf("ctxMenuEl = showMenuCard(menu,", at));   // to the builder's show: the tail (the hook, the seat) is pinned on RENDER below
   // the home computation, hoisted: ONE bare readTabGroups().on read (tab-groups.test pins the count at two in all of render.ts), the
   // copy's section tracked (round 2: copyNow, which the move writes; round 3: "" is no copy, an add from no group claims the copy, and
   // the resolution is the copy's own group, else the one remaining holder, else nothing; round 4: the copy is a SectionRef, its tag's
@@ -907,7 +930,7 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   // left a "creating..." row and a stale Hide tab row), the two tab-groups store listeners after their render (another pane's
   // hide, a grouping flip) and, since round 6, the phone media rule's change listener after its render (a rotation: the Hide tab row
   // is gated on the same rule, so the flip takes it off the open menu). Nothing else calls the hook
-  assert.match(RENDER, /\nlet tabMenuViewsHook: \(\) => void = \(\) => \{\};\s*\nfunction viewsChanged\(\) \{ tabMenuViewsHook\(\); \}\s*\nfunction dismissTabMenu\(\) \{\s*\n\s*ctxMenuEl\?\.remove\(\);\s*\n\s*ctxMenuEl = null;\s*\n\s*tagsFlyNewInput = null;\s*\n\s*tabMenuViewsHook = \(\) => \{\};\s*\n\}/, "declared beside the menu's node, the notifier beside it; a closed menu's hook is a no-op");
+  assert.match(RENDER, /\nlet tabMenuViewsHook: \(\) => void = \(\) => \{\};\s*\nfunction viewsChanged\(\) \{ tabMenuViewsHook\(\); \}\s*\nfunction dismissTabMenu\(\) \{\s*\n\s*closeContextMenu\(\);[^\n]*\n\}\s*\n(?:\/\/[^\n]*\n)*function onTabMenuClosed\(\) \{\s*\n\s*ctxMenuEl = null;\s*\n\s*tagsFlyNewInput = null;\s*\n\s*tabMenuViewsHook = \(\) => \{\};\s*\n\}/, "declared beside the menu's node, the notifier beside it; the dismissal goes through the shared builder, whose close callback forgets the card, the input and the hook (a closed menu's hook is a no-op)");
   assert.equal(RENDER.split("tabMenuViewsHook()").length - 1, 1, "the hook has one caller, the notifier; no timer, no other caller");
   assert.equal(RENDER.split("function viewsChanged()").length - 1, 1, "one notifier");
   assert.equal(RENDER.split("viewsChanged();").length - 1, 6, "six callers: the tabOrder frame handler, onViewsAck, onKernelCaps, the storage listener, the TABGROUPS_EVENT listener and the phone media rule's change listener (round 6)");
@@ -916,8 +939,8 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.match(RENDER, /\} else if \(!adopted\) return;[^\n]*\n\s*viewsChanged\(\);[^\n]*\n\s*if \(activeId\) assertPeekFor\(activeId\);[^\n]*\n\s*renderTabs\(\);\n\}/, "onKernelCaps calls it once the writes in flight are dropped or the kept blob adopted, before the peek and the repaint; a frame that changed nothing shown returns before it");
   assert.match(RENDER, /window\.addEventListener\("storage", \(e\) => \{ if \(e\.key === TABGROUPS_KEY\) \{ renderTabs\(\); viewsChanged\(\); \} \}\);\s*\n(?:\/\/[^\n]*\n)*window\.addEventListener\("storage", \(e\) => \{ if \(e\.key === "romp-chat-cols"\) renderTabs\(\); \}\);\s*\nwindow\.addEventListener\(TABGROUPS_EVENT, \(\) => \{ renderTabs\(\); viewsChanged\(\); \}\);/, "the two store listeners: the strip's render, then the open menu (between them the chat split's column-store listener, the strip alone: a column move re-dresses no menu)");
   assert.match(RENDER, /window\.matchMedia\(PHONE_LAYOUT_MEDIA\)\.addEventListener\("change", \(\) => \{ renderTabs\(\); viewsChanged\(\); \}\);/, "the media rule's listener: the same shape (round 6; before, renderTabs alone, and a menu open across a rotation kept its Hide tab row)");
-  assert.match(RENDER, /document\.body\.appendChild\(menu\);\s*\n\s*ctxMenuEl = menu;\s*\n\s*tabMenuViewsHook = \(\) => \{ void hold\.defer\(\(\) => \{ if \(gone\(\)\) return; refreshHideRow\(\); refreshTags\(\); \}\); \};[^\n]*\n\s*seatMenu\(e\.clientX, e\.clientY\);[^\n]*\n\}/, "set once the menu is on the page, before the seat: one run through the menu's hold (round 5), the row's refresh and the Tags block's, dropped once the menu is dismissed");
-  assert.equal(RENDER.split("tabMenuViewsHook = ").length - 1, 2, "assigned by showTabMenu and cleared by dismissTabMenu; nowhere else (the declaration reads `let tabMenuViewsHook:`)");
+  assert.match(RENDER, /ctxMenuEl = showMenuCard\(menu, e\.clientX, e\.clientY, \{ onClose: onTabMenuClosed \}\);\s*\n\s*tabMenuViewsHook = \(\) => \{ void hold\.defer\(\(\) => \{ if \(gone\(\)\) return; refreshHideRow\(\); refreshTags\(\); \}\); \};[^\n]*\n\s*seatMenu\(e\.clientX, e\.clientY\);[^\n]*\n\}/, "set once the menu is on the page (the builder mounts and places it), before the seat: one run through the menu's hold (round 5), the row's refresh and the Tags block's, dropped once the menu is dismissed");
+  assert.equal(RENDER.split("tabMenuViewsHook = ").length - 1, 2, "assigned by showTabMenu and cleared by onTabMenuClosed, the builder's close callback; nowhere else (the declaration reads `let tabMenuViewsHook:`)");
   assert.match(MENU, /sb\.textContent = subText\(\);\s*\n\s*tagsItem\.title = sb\.textContent;[^\n]*\n(?:\s*\/\/[^\n]*\n)+\s*let rebuildFly = \(\) => \{\};\s*\n\s*refreshTags = \(\) => \{ sb\.textContent = subText\(\); tagsItem\.title = sb\.textContent; rebuildFly\(\); \};/, "the Tags block's refresh: the sub-line re-read and the row's title with it (round 5), then the flyout's rebuild (a no-op while it is closed)");
   assert.match(MENU, /const flySig = \(\) => \{ const h = homeNow\(\); return JSON\.stringify\(\[unionFor\(\)\.map\(\(g\) => \[g\.name, g\.localId, g\.color, !!g\.pending, g\.members\.includes\(id\), \[\.\.\.g\.locals, \.\.\.g\.remotes\]\.map\(\(t\) => \[t\.id, \(t\.members \|\| \[\]\)\.includes\(id\)\]\)\]\), h \? \[h\.name, h\.localId, isPinned\(tabGroups\(\), sectionRef\(h\), id\)\] : null\]\); \};\s*\n\s*let builtSig = "";\s*\n(?:\s*\/\/[^\n]*\n)+\s*const nrow = el\("div", "ctx-item ctx-item-newtag"\);\s*\n\s*const inp = el\("input", "ctx-tag-input"\) as HTMLInputElement;[\s\S]{0,2200}?\n\s*nrow\.appendChild\(inp\);\s*\n\s*tagsFlyNewInput = inp; syncNewTagInput\(\);\s*\n\s*sub\.appendChild\(nrow\);[^\n]*\n\s*const add = \(n: HTMLElement\) => sub\.insertBefore\(n, nrow\);[^\n]*\n\s*const build = \(\) => \{\s*\n\s*while \(sub\.firstChild && sub\.firstChild !== nrow\) sub\.firstChild\.remove\(\);[^\n]*\n\s*builtSig = flySig\(\);/, "the New tag… input is ONE node per flyout (round 5), on the flyout before the first build; the rows go in front of it and a build clears only what stands above it; what the rows show is stamped at every build, each constituent tag's id and hold included (round 7: a remote same-named tag joining with the session, or an already-joined one taking it, left the union's tuple unchanged and the rows unbuilt)");
   const flyBlock = MENU.slice(MENU.indexOf('const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");'), MENU.indexOf('wireFlyout(menu, tagsItem, ".ctx-sub-tags", openTagsFly);'));   // the flyout's hover gesture lives in wireFlyout (T380), so the block runs to the wiring call
@@ -941,13 +964,14 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.doesNotMatch(MENU, /liveUnion\(sec\)/, "the pin row no longer resolves its union by the ref (a home guard that then wrote the live union's ref still wrote a pruned pin in the renamed-away-plus-same-name corner)");
   // round 8: THE MENU LEAVES WHEN THE PAGE MOVES UNDER IT AND NOT WHEN IT SCROLLS WITHIN ITSELF (THE MENU'S OWN SCROLL executes it over
   // the harness window since round 9; the browser leg drives it with a real wheel where a browser is installed)
-  assert.match(RENDER, /\nwindow\.addEventListener\("scroll", \(e\) => \{ if \(ctxMenuEl && e\.target instanceof Node && ctxMenuEl\.contains\(e\.target\)\) return; dismissTabMenu\(\); \}, true\);\n/, "a scroll whose target the menu contains is the menu's own and is left alone; every other scroll dismisses");
+  assert.match(CTX, /\n  const onScroll = \(e: Event\) => \{ if \(e\.target instanceof Node && menu\.contains\(e\.target\)\) return; closeContextMenu\(\); \};\n/, "the builder's scroll listener (installed per open on the document's capture phase, ctx-menu.ts showMenuCard): a scroll whose target the card contains is the menu's own and is left alone; every other scroll dismisses; this fork's guard checks the target is a node first");
+  assert.doesNotMatch(RENDER, /window\.addEventListener\("scroll"/, "render.ts installs no menu scroll listener of its own: the builder's is the one (the emoji picker's two listeners are mousedown and keydown)");
   // round 3: THE MENU'S SEAT. One seat for the menu (the cursor's corner clamped inside the pane; the emoji picker's anchor follows),
   // re-run from the menu's own corner by the row's refresh, and the open flyout re-placed after it; the seat runs once the menu is on
   // the page (the lift's anchor)
   assert.match(MENU, /let corner: \{ x: number; y: number \} \| null = null;\s*\n\s*const seatMenu = \(x: number, y: number\) => \{\s*\n\s*const r = menu\.getBoundingClientRect\(\);\s*\n\s*const mx = Math\.max\(0, Math\.min\(x, window\.innerWidth - r\.width - 4\)\);\s*\n\s*const my = Math\.max\(0, Math\.min\(y, window\.innerHeight - r\.height - 4\)\);\s*\n\s*menu\.style\.left = mx \+ "px";\s*\n\s*menu\.style\.top = my \+ "px";\s*\n\s*ctxMenuAt = \{ x: mx, y: my \};[^\n]*\n\s*corner = ctxMenuAt;\s*\n\s*\};\s*\n\s*let reseatFly = \(\) => \{\};[^\n]*\n\s*const reseat = \(\) => \{ if \(!corner\) return; seatMenu\(corner\.x, corner\.y\); reseatFly\(\); \};/);
   assert.equal(MENU.split("seatMenu(").length - 1, 1, "inside the menu's build the seat runs from the refresh alone");
-  assert.match(RENDER, /document\.body\.appendChild\(menu\);\s*\n\s*ctxMenuEl = menu;\s*\n\s*tabMenuViewsHook = [^\n]*\n\s*seatMenu\(e\.clientX, e\.clientY\);[^\n]*\n\}/, "and once at the cursor when the menu is on the page (round 4: the views hook is set just before it)");
+  assert.match(RENDER, /ctxMenuEl = showMenuCard\(menu, e\.clientX, e\.clientY, \{ onClose: onTabMenuClosed \}\);\s*\n\s*tabMenuViewsHook = [^\n]*\n\s*seatMenu\(e\.clientX, e\.clientY\);[^\n]*\n\}/, "and once at the cursor when the menu is on the page (round 4: the views hook is set just before it; the builder's placement is re-placed by the seat in the same task, so the clamp and the corner stand)");
   assert.match(MENU, /menu\.appendChild\(sub\);\s*\n(?:\s*\/\/[^\n]*\n)+\s*const place = \(\) => \{\s*\n\s*const ir = tagsItem\.getBoundingClientRect\(\);\s*\n\s*const sr = sub\.getBoundingClientRect\(\);\s*\n\s*if \(ir\.right \+ 2 \+ sr\.width <= window\.innerWidth - 8\) sub\.style\.left = Math\.round\(ir\.right \+ 2\) \+ "px";\s*\n\s*else sub\.style\.left = Math\.max\(8, Math\.round\(ir\.left\) - sr\.width - 2\) \+ "px";\s*\n\s*sub\.style\.top = Math\.max\(0, Math\.min\(ir\.top, window\.innerHeight - sr\.height - 4\)\) \+ "px";\s*\n\s*\};\s*\n\s*place\(\);\s*\n\s*reseatFly = \(\) => \{ if \(sub\.isConnected\) place\(\); \};/, "the flyout's placement is one closure, run at open and on every reseat while the flyout is on the menu (the side rule and the clamp as they were)");
   assert.equal(MENU.split("sub.style.top = ").length - 1, 1, "the flyouts' tops: the Tags flyout's in place(); Billing's and its default submenu's go through placeFlyBeside (T387), below");
   assert.equal(MENU.split("placeFlyBeside(").length - 1, 2, "the Billing flyout and the Set default billing submenu are placed by the shared helper (T387)");
@@ -958,9 +982,9 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   // the toggles' dress: one helper (round 2), the toggle helper building its node with it and returning the node (the bell row is
   // the Hide tab row's anchor)
   assert.match(MENU, /const dressToggle = \(item: HTMLElement, kind: "feed" \| "mail" \| "bell" \| "tab", off: boolean, lab: string, sub: string\) => \{\s*\n\s*const bodyEl = el\("span", "ctx-item-body"\);\s*\n\s*const l = el\("span", "ctx-item-label"\); l\.textContent = lab; bodyEl\.appendChild\(l\);\s*\n\s*const sb = el\("span", "ctx-item-sub"\); sb\.textContent = sub; bodyEl\.appendChild\(sb\);\s*\n\s*item\.replaceChildren\(ctxIcon\(kind, off\), bodyEl\);\s*\n\s*\};/);
-  assert.match(MENU, /const toggle = \(kind: "feed" \| "mail" \| "bell" \| "tab", off: boolean, lab: string, sub: string, fn: \(\) => void\) => \{\s*\n\s*const item = el\("div", "ctx-item ctx-item-toggle"\);\s*\n\s*dressToggle\(item, kind, off, lab, sub\);\s*\n\s*item\.addEventListener\("click", \(ev\) => \{ ev\.stopPropagation\(\); dismissTabMenu\(\); fn\(\); \}\);\s*\n\s*menu\.appendChild\(item\);\s*\n\s*return item;\s*\n\s*\};/);
+  assert.match(MENU, /const toggle = \(kind: "feed" \| "mail" \| "bell", off: boolean, lab: string, sub: string, fn: \(\) => void\) => \{\s*\n\s*return addMenuItem\(menu, \{ icon: ctxIcon\(kind, off\), label: lab, sub, pick: fn \}\);\s*\n\s*\};/, "the standard toggles go through the builder's row (the same classes, the same click contract: close, then the pick; the row returned so the Hide tab row seats after Notify me); the tab kind is dressToggle's alone");
   assert.match(MENU, /const bellItem = toggle\("bell", !onBell,/);
-  assert.equal(MENU.split("dressToggle(").length - 1, 2, "two callers, the toggle helper and the Hide tab row's refresh (the declaration reads `dressToggle = (`)");
+  assert.equal(MENU.split("dressToggle(").length - 1, 1, "one caller, the Hide tab row's refresh, which re-dresses its one node (the toggle helper builds a fresh row through addMenuItem since the builder tidy; the declaration reads `dressToggle = (`)");
   // the row (rounds 1 to 3): one node with the row's class and the cap's modifier; the refresh reads the phone gate (the switch's
   // predicate), the copy's section and the stored state, dresses the node and seats it after Notify me, or takes it off the menu
   // while there is no section, and ends by seating the menu and the open flyout again (round 3); the click live: the section
@@ -1043,7 +1067,7 @@ test("pinned: a tag name never widens the MAIN menu (menu review rounds 2 to 5).
   assert.equal(CSS.split("\n.ctx-sub-capped").length - 1, 2, "the modifier's two rules, nothing else");
   assert.doesNotMatch(CSS, /\.ctx-item-hide|\.ctx-item-tags|\.ctx-item-pin/, "the sheet names the modifier, not the rows: any row whose text carries a name wears it");
   // the wearers: the two MAIN-menu rows whose sub-line carries a tag name, and none of the fixed rows and no flyout row (round 5)
-  const MENU = RENDER.slice(RENDER.indexOf("function showTabMenu("), RENDER.indexOf("document.body.appendChild(menu);", RENDER.indexOf("function showTabMenu(")));
+  const MENU = RENDER.slice(RENDER.indexOf("function showTabMenu("), RENDER.indexOf("ctxMenuEl = showMenuCard(menu,", RENDER.indexOf("function showTabMenu(")));
   const code = RENDER.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
   const wearers = Array.from(code.matchAll(/el\("div", "([^"]*ctx-sub-capped[^"]*)"/g)).map((m) => m[1]).sort();
   assert.deepEqual(wearers, ["ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped", "ctx-item ctx-item-toggle ctx-item-tags ctx-sub-capped"],
@@ -1051,7 +1075,7 @@ test("pinned: a tag name never widens the MAIN menu (menu review rounds 2 to 5).
   assert.equal(code.split("ctx-sub-capped").length - 1, 2, "two wearers, each on its el() call");
   assert.match(MENU, /for \(const g of others\) \{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle"\);/, "a Move to row wears no modifier (round 5): the flyout's per-row cap bounds its label");
   assert.match(MENU, /const row = el\("div", "ctx-item ctx-item-toggle ctx-item-pin" \+ \(on \? " current" : ""\)\);/, "the Show when folded row wears none: the per-row cap bounds its sub-line");
-  for (const fixed of [/const item = el\("div", "ctx-item ctx-item-toggle"\);/, /const item = el\("div", "ctx-item ctx-item-toggle ctx-item-billing"\);/]) assert.match(MENU, fixed, "a fixed row wears no modifier: " + fixed.source);
+  for (const fixed of [/return addMenuItem\(menu, \{ icon: ctxIcon\(kind, off\), label: lab, sub, pick: fn \}\);/, /const item = el\("div", "ctx-item ctx-item-toggle ctx-item-billing"\);/]) assert.match(MENU, fixed, "a fixed row wears no modifier: " + fixed.source);
   // the flyout's rows: a per-row cap with an ellipsis (round 2's shape, in the flyout alone), the label's and the sub-line's own, each
   // chosen so a 19-character name is whole and a 40-character one elides in both faces and both engines (the note gives the measurements)
   assert.match(CSS, /\n\.ctx-sub-tags \.ctx-item-label \{ max-width: 22em; overflow: hidden; text-overflow: ellipsis; \}\n\.ctx-sub-tags \.ctx-item-sub \{ max-width: 36em; overflow: hidden; text-overflow: ellipsis; \}\n/,
@@ -1944,7 +1968,7 @@ test("executed: THE FLYOUT'S ROWS ACT ON THE LIVE UNION (menu review rounds 7 an
   await withStore(async () => {
     const api = liftShowTabMenu()(hooks);
     const win = hooks.window!;
-    const press = (menu: FakeEl) => menu.fire("pointerdown", { button: 0 });
+    const press = (menu: FakeEl) => menu.fire("pointerdown", { button: 0, stopPropagation() {} });   // the builder's card stops a press inside it from reaching the page (ctx-menu.ts showMenuCard)
     // A: api under infra and archived, the menu on the infra copy, the flyout open; the push brings a remote infra tag holding api into
     // the union (a host attaching, or its tag taking api). The rows are rebuilt (round 6 left them: the union's tuple was unchanged), and
     // the x on infra clears the local tag and the remote mirror alike: api is under archived alone, the infra row is gone and the Hide
@@ -2426,24 +2450,25 @@ test("executed: THE FLYOUT'S ROWS ACT ON THE LIVE UNION (menu review rounds 7 an
   });
 });
 
-test("executed: THE MENU'S OWN SCROLL LEAVES IT STANDING (menu review rounds 8 and 9). The window's capture scroll listener, lifted from render.ts onto the harness window, dismisses the menu when the page moves under it and not when the Tags flyout scrolls within itself: a scroll whose target is the flyout, a row in it or the menu is left alone; a scroll in another box dismisses, and so do the page's own (its target the document, an ancestor the menu does not contain), one whose target is no node at all and one with no target", () => {
+test("executed: THE MENU'S OWN SCROLL LEAVES IT STANDING (menu review rounds 8 and 9). The builder's capture scroll listener (ctx-menu.ts showMenuCard, lifted onto the harness document), dismisses the menu when the page moves under it and not when the Tags flyout scrolls within itself: a scroll whose target is the flyout, a row in it or the menu is left alone; a scroll in another box dismisses, and so do the page's own (its target the document, an ancestor the menu does not contain), one whose target is no node at all and one with no target", () => {
   // Round 7 capped the flyout and made it a scroll container; the listener then saw the flyout's own scroll and closed the menu on the
   // first wheel tick (and on the click that opened it, while the New tag input's focus scrolled the box; round 9 focuses without a
   // scroll). Round 8's exemption was executed by the browser leg alone, which skips where no browser is installed (CI): this drives
-  // render.ts's own listener over the harness window, so a listener reverted to a bare dismissal fails here on the first scroll
+  // the builder's own listener over the harness document, so a listener reverted to a bare dismissal fails here on the first scroll
   const hooks = menuHooks();
   withStore(() => {
     const api = liftShowTabMenu()(hooks);
-    const win = hooks.window!;
-    assert.equal(win.count("scroll"), 1, "render.ts's one scroll listener is on the harness window");
+    const doc = api.doc();
+    assert.equal(doc.count("scroll"), 0, "no menu open, no listener: the builder installs its dismissal per open");
     const menu = api.open("api", "infra");
+    assert.equal(doc.count("scroll"), 1, "the builder's one scroll listener, on the document's capture phase while the menu is open");
     const fly = flyOf(menu);
     const d0 = hooks.dismissed;
-    win.fire("scroll", { target: fly });
+    doc.fire("scroll", { target: fly });
     assert.deepEqual([hooks.dismissed, menu.isConnected], [d0, true], "the flyout's own scroll (a wheel over it): the menu stands");
-    win.fire("scroll", { target: fly.children.find((r) => r.has("ctx-item-pin"))! });
+    doc.fire("scroll", { target: fly.children.find((r) => r.has("ctx-item-pin"))! });
     assert.deepEqual([hooks.dismissed, menu.isConnected], [d0, true], "a scroll whose target is a row inside the flyout (a click's scroll into view): the menu stands");
-    win.fire("scroll", { target: menu });
+    doc.fire("scroll", { target: menu });
     assert.deepEqual([hooks.dismissed, menu.isConnected], [d0, true], "the menu node itself as the target: contained");
     // THE PAGE'S OWN SCROLL (round 10): in Chromium and Firefox a viewport scroll's target is the document, a Node the menu does not contain
     // (an ancestor of it: render.ts appends the menu to document.body), so the listener takes its contains() branch and dismisses. The
@@ -2451,19 +2476,19 @@ test("executed: THE MENU'S OWN SCROLL LEAVES IT STANDING (menu review rounds 8 a
     // since the dismissal takes the menu off the page. Round 9 labelled the no-node case below as the document's
     const page = menu.parentNode!;
     assert.ok(page.tag === "body" && page.contains(menu) && !menu.contains(page), "the page holds the menu and is not inside it");
-    win.fire("scroll", { target: page });
+    doc.fire("scroll", { target: page });
     assert.deepEqual([hooks.dismissed, menu.isConnected], [d0 + 1, false], "the page's own scroll, its target an ancestor outside the menu's subtree, dismisses");
     const menuE = api.open("api", "infra");
     const dE = hooks.dismissed;
-    win.fire("scroll", { target: new FakeEl("div", "elsewhere") });
+    doc.fire("scroll", { target: new FakeEl("div", "elsewhere") });
     assert.deepEqual([hooks.dismissed, menuE.isConnected], [dE + 1, false], "a scroll in a box outside the menu dismisses, as before the exemption");
     const menu2 = api.open("api", "infra");
     const d1 = hooks.dismissed;
-    win.fire("scroll", { target: {} });
+    doc.fire("scroll", { target: {} });
     assert.deepEqual([hooks.dismissed, menu2.isConnected], [d1 + 1, false], "a target that is no node at all (a scroll dispatched at the window itself; no browser scroll event carries one, and the DOM's contains would throw on it) takes the listener's instanceof guard and dismisses");
     const menu3 = api.open("api", "infra");
     const d2 = hooks.dismissed;
-    win.fire("scroll", {});
+    doc.fire("scroll", {});
     assert.deepEqual([hooks.dismissed, menu3.isConnected], [d2 + 1, false], "and so does a scroll event with no target");
   });
 });
@@ -2577,7 +2602,7 @@ test("executed: NO REBUILD UNDER A PRESSED POINTER (menu review rounds 5 and 6).
   await withStore(async () => {
     const api = liftShowTabMenu()(hooks);
     const win = hooks.window!;
-    const press = (menu: FakeEl) => menu.fire("pointerdown", { button: 0 });
+    const press = (menu: FakeEl) => menu.fire("pointerdown", { button: 0, stopPropagation() {} });   // the builder's card stops a press inside it from reaching the page (ctx-menu.ts showMenuCard)
     // K1: the menu on api's infra copy, the flyout open; the pointer down on the menu; the rename pushed: nothing is rebuilt (the row's
     // children and the flyout's rows are the same nodes, the words still infra) while the section the row names is still infra; the
     // release, then the click the browser dispatches after it: the click lands, on the same copy by its id (platform, g1), and
@@ -2587,7 +2612,7 @@ test("executed: NO REBUILD UNDER A PRESSED POINTER (menu review rounds 5 and 6).
     let fly = flyOf(menu);
     let row = rowOf(menu)!;
     let kids = row.children.slice(), flyRows = fly.children.slice();
-    const blur0 = win.count("blur");   // the module's own blur listener (the window block lifted in round 9) is the baseline: a bare count held before any press
+    const blur0 = win.count("blur");   // the builder's per-open blur listener (showMenuCard installs it on the window at the open) is the baseline: a bare count held before any press
     press(menu);
     api.push(renamed(V_API_BOTH_QA, 0, "platform", 7));
     assert.ok(sameNodes(row.children, kids), "under the press the row is not re-dressed: the same child nodes (round 4 replaced them on every run)");
@@ -2597,7 +2622,7 @@ test("executed: NO REBUILD UNDER A PRESSED POINTER (menu review rounds 5 and 6).
     assert.equal(tagsSub(menu), "infra · archived", "the Tags row's sub-line waits too: the hook's run is parked whole");
     win.fire("pointerup");
     assert.equal(win.count("pointerup"), 0, "the release listeners leave with the release");
-    assert.equal(win.count("blur"), blur0, "the blur one too; the module's own stays");
+    assert.equal(win.count("blur"), blur0, "the blur one too; the builder's own stays while the menu is open");
     assert.ok(sameNodes(row.children, kids), "the re-dress waits for the tick after the release (the click comes first)");
     const d0 = hooks.dismissed;
     row.click();
@@ -2678,7 +2703,7 @@ test("executed: NO REBUILD UNDER A PRESSED POINTER (menu review rounds 5 and 6).
     hooks.views = V_API_BOTH_QA; hooks.writes = [];
     menu = api.open("api", "infra");
     row = rowOf(menu)!;
-    menu.fire("pointerdown", { button: 2 });
+    menu.fire("pointerdown", { button: 2, stopPropagation() {} });
     assert.equal(win.count("pointerup"), 0, "no hold taken");
     api.push(renamed(V_API_BOTH_QA, 0, "platform", 13));
     assert.equal(row.sub(), HIDE_SUB("platform"), "re-dressed at once");
@@ -2756,10 +2781,10 @@ test("executed: NO REBUILD UNDER A PRESSED POINTER (menu review rounds 5 and 6).
   });
 });
 
-test("executed: ABSENT ON THE PHONE LAYOUT (menu review round 1). Under the phone media rule the plan is the flat strip and a hide would show nothing, so the menu builds no Hide tab row and writes nothing; the rest of the menu stands; off the phone the row is back", () => {
+test("executed: ABSENT ON THE PHONE LAYOUT (menu review round 1). Under the phone media rule the plan sections but applies no hide (upstream's phone picker order; the hides follow the folds' phone rule), so a hide would show nothing there and the menu builds no Hide tab row and writes nothing; the rest of the menu stands; off the phone the row is back", () => {
   // the docs and the comment said the row was absent on the phone; the code never asked (phoneLayout had no read in showTabMenu), so
   // on a coarse-pointer narrow webview pane, where the strip still renders, the row showed and its click wrote a hide the phone's
-  // flat plan ignores. The gate is the one the Group tabs by tag switch uses.
+  // plan never applies (tab-groups.ts hideOf is gated off the phone, as foldOf is). The gate is the page's one media rule (phoneLayout).
   const hooks: MenuHooks = {
     views: V, known: ALL, sessions: new Map<string, unknown>([["web", { name: "web", status: { state: "ready" } }]]),
     writes: [], dismissed: 0, renders: 0, flags: [], phone: true,
@@ -2805,7 +2830,8 @@ test("executed: ABSENT ON THE PHONE LAYOUT (menu review round 1). Under the phon
     assert.deepEqual([hooks.writes.length, hooks.dismissed, menu.isConnected], [0, d0 + 1, false], "the click reads the gate: nothing written on the phone layout, the menu dismissed");
   });
   // pinned: the same predicate the switch reads (render.ts), so what the strip flattens and what the menu offers cannot disagree
-  assert.match(RENDER, /\.\.\.\(phoneLayout\(\) \? \{\} : \{\s*\n\s*groupToggle: \{ label: "Group tabs by tag"/, "the switch's gate");
+  assert.match(GROUPS, /const hideOf = \(sec: TabSection, id: string\): boolean => !phone && sec\.name !== null && isHidden\(st, sec, id\);/, "the plan's own phone rule: no hide applies there (the picker is the phone's only switcher), so a row absent on the phone hides nothing the phone would show");
+  assert.match(RENDER, /const groupToggle = \{ label: "Group tabs by tag", on: \(\) => readTabGroups\(\)\.on,/, "the switch is one object on both mounts (upstream's phone picker order): it carries no phone gate of its own");
   assert.match(RENDER, /const PHONE_LAYOUT_MEDIA = "\(pointer:coarse\) and \(max-width:1024px\)";\s*\nfunction phoneLayout\(\): boolean \{/, "one media rule behind it");
   assert.match(RENDER, /\ntry \{ window\.matchMedia\(PHONE_LAYOUT_MEDIA\)\.addEventListener\("change", \(\) => \{ renderTabs\(\); viewsChanged\(\); \}\); \} catch \{ \/\* no matchMedia \*\/ \}\n/, "the flip runs the notifier after the strip's render, the store listeners' shape (round 6)");
 });

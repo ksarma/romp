@@ -35,6 +35,19 @@ test("menu construction picks the choice list by the session's backend", () => {
   assert.match(TIMELINE, /\? \(kind === 'model' \? CODEX_MODEL_CHOICES : CODEX_EFFORT_CHOICES\)/);
 });
 
+test("a live Codex lane with no effort picked yet draws the effort picker, reading the bare kind (both surfaces agree)", () => {
+  // The chat badge (status-controls.ts effortBadgeText) and the timeline's meta column follow one rule (2026-09-16): a Codex
+  // session's effort is "" until a pick lands, and a surface that drew the picker only for a known level left no way to pick.
+  // The timeline gates its word on the lane being live; the chat needs no such gate because a closed session's status
+  // names no backend (build_session), so its badge is a live session's only.
+  assert.match(MODULE, /export function effortBadgeText\(st: MetaStatus\): string \{\n\s+return st\.effort \|\| \(st\.backend === "codex" \? "effort" : ""\);/);
+  assert.match(MODULE, /const effort = effortBadgeText\(st\);/);
+  assert.match(MODULE, /if \(effort\) meta\.appendChild\(metaButton\("effort", effort, forSid, hooks\)\);/);
+  assert.match(TIMELINE, /const effortWord = \(s\) => s\.effort \|\| \(s\.live && s\.backend === 'codex' \? 'effort' : ''\);/);
+  assert.match(TIMELINE, /if \(effortWord\(s\)\) drawPiece\('effort', effortWord\(s\), effortColX\);/);
+  assert.match(TIMELINE, /if \(s\.effort\) staticPiece\(s\.effort, effortColX\);/, "a dead lane still shows only a known level");
+});
+
 test("Codex offers only its supported modes and opens the mode picker", () => {
   const choices = RENDER.match(/const CODEX_MODE_CHOICES: MetaChoice\[\] = \[([\s\S]*?)\n\];/)![1];
   assert.deepEqual([...choices.matchAll(/value: "([^"]+)"/g)].map(m => m[1]), ["sandboxed", "auto"]);
@@ -301,6 +314,7 @@ function liftMenu(opts: { thread?: { th: unknown; status: any } } = {}) {
     slice("function isCurrentMeta(kind: MetaKind, st: Status, value: string): boolean {"),   // the real ✓ rule (by value): a row order the tests move must never lose it
     sliceMod("export function metaDots(): HTMLElement {"),   // the dots live in status-controls.ts (T415 part two)
     sliceMod("export function metaCurrent(kind: MetaKind, st: MetaStatus): string {"),   // the live value the tick and the held marks compare against (the module's too)
+    sliceMod("export function effortBadgeText(st: MetaStatus): string {"),   // metaCurrent reads the effort through it since the Codex effort button (a live Codex lane with no level picked shows the bare kind)
     slice("const MODEL_CHOICES: {", "function loadModelChoices(): void {"),
     sliceMod("export function metaButton(kind: MetaKind, text: string, forSid: string | null | undefined, hooks: MetaHooks): HTMLElement {").replace("function metaButton(", "function buildMetaButton("),
     // the chat's wrapper (render.ts META_HOOKS / metaButton, pinned by settings-previews.test.ts): the picker as the press hook

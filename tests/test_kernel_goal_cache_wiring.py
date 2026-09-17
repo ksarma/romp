@@ -64,7 +64,8 @@ def _tm():
 # and files one row per fault episode, never the frame.
 BOUNDARY = {"_feed_session_entry": 1, "_feed_peer_facts": 1,   # T368: the feed's per-session body reads the origin
             "build_session": 2,                                #   sender's store through the boundary; its memo key's
-            "build_timeline": 2}                               #   peer facts probe the same boundary
+            "build_timeline": 2,                               #   peer facts probe the same boundary
+            "_feed_goals_keyed": 1}                            # the feed's store read (#1789's name): its LIVE branch reads the shared view through the boundary (fork PR 359, the 2026-09-15 wiring ruling); the snapshot branch loads nothing
 #   build_timeline reads twice on this fork (upstream's count is 1): the bars build's lane read, and the skeleton
 #   build's one deferred read of a dead lane's store (the skeleton reads no live lane's store, 2026-09-06)
 SHARED = {"_open_top_goal": 1, "_deferral_sweep_tick": 1, "_session_stamp_read": 1, "_owned_yield_why": 1,
@@ -84,8 +85,12 @@ TWO_PHASE = {"_lift_spent_awaiting": (1, 1)}
 # re-reads stay bare (neither the round-5 walk nor the fold repointed them; they sit inside the tick's
 # per-session try/except), so this pin counts them as jd.load_goals(, unlike the lift's writer load above.
 WALK = {"_auto_nudge_session": (1, 3), "_wake_goal": (0, 1)}
-# Every read-only pusher site is wired now. The tuple stays so a site that must keep the writer's loader
-# has a place to be named; the test over it passes vacuously while it is empty.
+# Every read-only pusher site is wired now, the feed's store read included: _feed_goals_keyed (upstream's name since
+# #1789: the feed's store read that also reports the snapshot version key it served from; _feed_goals is that read
+# without the key) takes its LIVE branch through the shared view behind the boundary (BOUNDARY above pins the count),
+# where upstream keeps it on the writer's loader and names it UNWIRED (the 2026-09-15 wiring ruling: fork PR 359's
+# shared read stays under upstream's name and key contract). The tuple stays so a site that must keep the writer's
+# loader has a place to be named; the test over it passes vacuously while it is empty.
 UNWIRED = ()
 
 
@@ -173,6 +178,8 @@ class WiringPins(unittest.TestCase):
 
 class SharedViewInBuilds(unittest.TestCase):
     def setUp(self):
+        # the compaction sweep reads liveness for its owner list (2026-09-15): answer nothing, never build a backend here
+        self._saved_live_map, km._live_map = km._live_map, (lambda: {})
         self.td = tempfile.TemporaryDirectory()
         self.saved_state = jd.STATE
         jd._rebind_state(Path(self.td.name))         # clears the cache and lifts any earlier off switch
@@ -196,6 +203,7 @@ class SharedViewInBuilds(unittest.TestCase):
         self.stats0 = jd.shared_store_stats()
 
     def tearDown(self):
+        km._live_map = self._saved_live_map
         for nm, v in self.saved.items():
             setattr(km, nm, v)
         jd.discover = self.saved_discover

@@ -37,7 +37,7 @@ const V = {
 type Sess = { name: string; userTodos?: { id: string; text: string }[] };
 const todo = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `t${i + 1}`, text: `synthetic need ${i + 1}` }));
 const heads = (items: ReturnType<typeof planStrip>["items"]) =>
-  items.filter((i): i is { head: TabSection; folded: boolean; active: boolean; hidden: string[]; hides: string[] } => "head" in i);
+  items.filter((i): i is { head: TabSection; folded: boolean; active: boolean; hidden: string[]; hides: string[]; packed: boolean } => "head" in i);
 
 test("executed: a folded section with ONE member holding an open todo shows the flag, count 1, that session named", () => {
   const sessions = new Map<string, Sess>([["tests", { name: "tests", userTodos: todo(1) }], ["old1", { name: "old1", userTodos: [] }]]);
@@ -153,10 +153,10 @@ test("click-safe and keyboard: a real button (focusable; Enter and Space click I
   assert.ok(RENDER.indexOf("head.addEventListener(\"dragstart\"") > RENDER.indexOf("head.appendChild(b);"), "the header's own drag wiring stays, after the flag");
 });
 
-test("executed: the phone layout's flat strip has no headers, so the tabs' own glyphs are the signal there (the kernel's scrape mirrors them)", () => {
+test("executed: the phone layout sections like the desktop but folds nothing (upstream's phone picker order, 2026-09-16), so no header stands in for a member and the tabs' own glyphs are the signal there (the kernel's scrape mirrors them)", () => {
   const plan = planStrip(["web", "tests", "old1"], viewTagUnion(V), parseTabGroups(null), "web", true);
-  assert.equal(heads(plan.items).length, 0, "nothing folded on the phone — no header, no header flag");
-  assert.deepEqual(plan.items, [{ id: "web" }, { id: "tests" }, { id: "old1" }]);
+  assert.ok(heads(plan.items).length > 0 && heads(plan.items).every((h) => !h.folded && h.hidden.length === 0), "headers on the phone too, none folded, none standing in for a member: no header flag to derive");
+  assert.deepEqual(plan.items, planStrip(["web", "tests", "old1"], viewTagUnion(V), { ...parseTabGroups(null), expanded: ["archived"] }, "web", false).items, "item for item the desktop's plan with the default-folded group open");
   assert.match(fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8"), /ut:!!t\.querySelector\('\.tab-usertodo'\)/,
     "the phone list scrapes each tab's glyph (tab-usertodo.test pins the rest)");
 });

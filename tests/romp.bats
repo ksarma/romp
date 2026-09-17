@@ -106,6 +106,14 @@ run_romp() {
     "$ROMP_SCRIPT" "$@" 2>&1
 }
 
+# Helper: an in-place sed that BSD sed reads the same way as GNU sed. `sed -i 's/.../' file` is GNU's shape; BSD sed
+# (macOS) takes the word after -i as the backup suffix and then reads the expression as the file ("invalid command code
+# f", the macOS bats leg's first completion, 2026-09-16). The edit goes through a temp file and back into the file
+# itself, so the mock keeps its mode and its inode. $1 the expression, $2 the file.
+_sed_inplace() {
+    sed "$1" "$2" > "$2.sed-tmp" && cat "$2.sed-tmp" > "$2" && rm -f "$2.sed-tmp"
+}
+
 # Helper — a fake `curl` for the kernel-API paths (`romp new` SDK spawn + `-m` send).
 # Logs every call to MOCK_LOG and answers {"ok": true}; MOCK_CURL_FAIL_SEND=1 makes
 # the /send leg fail the way curl -f does, so per-leg error reporting is testable.
@@ -141,6 +149,7 @@ if [[ -n "${MOCK_CURL_SEND_404:-}" && "$url" == */send ]]; then
   exit 0
 fi
 if [[ -n "${MOCK_CURL_SEND_REFUSED:-}" && "$url" == */send ]]; then printf '{"ok": false, "error": "no running backend owns web — the message was not delivered"}%b\n' "${_w//\%\{http_code\}/200}"; exit 0; fi
+if [[ -n "${MOCK_CURL_NOTICE_REFUSE:-}" && "$url" == */notice ]]; then echo '{"ok": false, "error": "attachment refused: not a file"}'; exit 0; fi
 if [[ -n "${MOCK_CURL_WATCH_PR_REFUSE:-}" && "$url" == */watch-pr ]]; then
   echo '{"ok": false, "retryable": true, "error": "the watch could not be saved ([Errno 28] No space left on device) - nothing is watching TESTORG/testrepo#7; retry once the state directory takes writes again"}'
   exit 0
@@ -488,7 +497,12 @@ class H(BaseHTTPRequestHandler):
         out, st = (body, code) if self.path.startswith("/tag") else (b"not found", 404)
         self._answer(out, st)
     def log_message(self, *a): pass
-srv = HTTPServer(("127.0.0.1", 0), H)
+class _Bound(HTTPServer):   # no reverse lookup of the bind address: HTTPServer.server_bind runs socket.getfqdn(host), about 36 s on GitHub's macOS images
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+srv = _Bound(("127.0.0.1", 0), H)
 with open(portfile, "w") as f:
     f.write(str(srv.server_address[1]))
 srv.serve_forever()
@@ -1040,7 +1054,7 @@ MOCK
     [[ "$output" != *"applied tags"* ]]
     [[ "$output" != *"WARNING"* ]]
     # …while an inherited tag IS reported
-    sed -i 's/"tags": \[\]/"tags": ["pool"]/' "$MOCK_DIR/curl"
+    _sed_inplace 's/"tags": \[\]/"tags": ["pool"]/' "$MOCK_DIR/curl"
     run run_romp new ideabox
     [[ "$output" == *"applied tags pool"* ]]
 }
@@ -1070,7 +1084,7 @@ MOCK
     [[ "$output" != *"did not apply --in  pool"* ]]
     [[ "$output" != *"did not apply --in aaaa"* ]]
     # against a kernel with only the `tags` echo (no positional pair) the name match still stands
-    sed -i 's/, "tagsRequested".*"tagError"/, "tagError"/' "$MOCK_DIR/curl"
+    _sed_inplace 's/, "tagsRequested".*"tagError"/, "tagError"/' "$MOCK_DIR/curl"
     run run_romp new --in pool --in twin ideabox
     [[ "$output" == *"did not apply --in twin"* ]]
     [[ "$output" != *"did not apply --in pool"* ]]
@@ -1135,13 +1149,13 @@ MOCK
     [[ "$output" != *"starts in no tags"* ]]
     [[ "$output" != *"already running"* ]]
     # a refused --in (a null slot) is not "applied": the notice names only what landed
-    sed -i 's/"tagsApplied": \["infra", "qa"\]/"tagsApplied": ["infra", null]/' "$MOCK_DIR/curl"
+    _sed_inplace 's/"tagsApplied": \["infra", "qa"\]/"tagsApplied": ["infra", null]/' "$MOCK_DIR/curl"
     run run_romp new --in infra --in qa ideabox
     [[ "$output" == *"; --in applied: infra"* ]]
     [[ "$output" != *"--in applied: infra, qa"* ]]
     # the name was already running: nothing starts and nothing is inherited (no creation event); the
     # notice says so once, after the "is already running" line, and never "starts"
-    sed -i 's/"dir": "\/tmp\/x", "tags": \["infra", "qa"\], "tagsRequested": \["infra", "qa"\], "tagsApplied": \["infra", null\]/"existing": true, "tags": ["pool"], "tagsRequested": [], "tagsApplied": []/' "$MOCK_DIR/curl"
+    _sed_inplace 's/"dir": "\/tmp\/x", "tags": \["infra", "qa"\], "tagsRequested": \["infra", "qa"\], "tagsApplied": \["infra", null\]/"existing": true, "tags": ["pool"], "tagsRequested": [], "tagsApplied": []/' "$MOCK_DIR/curl"
     run run_romp new ideabox
     [ "$status" -eq 0 ]
     [[ "$output" == *'"ideabox" is already running; see the dashboard (romp)'* ]]
@@ -1575,7 +1589,12 @@ class H(http.server.BaseHTTPRequestHandler):
             os._exit(0)
     def log_message(self, *a):
         pass
-s = http.server.HTTPServer(("127.0.0.1", 0), H)
+class _Bound(http.server.HTTPServer):   # no reverse lookup of the bind address: HTTPServer.server_bind runs socket.getfqdn(host), about 36 s on GitHub's macOS images
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+s = _Bound(("127.0.0.1", 0), H)
 with open(tdir + "/kpid", "w") as f:
     f.write(str(os.getpid()))
 with open(tdir + "/kport", "w") as f:
@@ -1800,7 +1819,12 @@ class H(http.server.BaseHTTPRequestHandler):
         self.rfile.read(int(self.headers.get("Content-Length") or 0))
         self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers()
     def log_message(self, *a): pass
-s = http.server.HTTPServer(("127.0.0.1", 0), H)
+class _Bound(http.server.HTTPServer):   # no reverse lookup of the bind address: HTTPServer.server_bind runs socket.getfqdn(host), about 36 s on GitHub's macOS images
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+s = _Bound(("127.0.0.1", 0), H)
 open(tdir + "/kpid", "w").write(str(os.getpid()))
 open(tdir + "/kport", "w").write(str(s.server_address[1]))
 s.serve_forever()
@@ -2864,7 +2888,12 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(out))); self.end_headers()
         self.wfile.write(out)
     def log_message(self, *a): pass
-srv = HTTPServer(("127.0.0.1", 0), H)
+class _Bound(HTTPServer):   # no reverse lookup of the bind address: HTTPServer.server_bind runs socket.getfqdn(host), about 36 s on GitHub's macOS images
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+srv = _Bound(("127.0.0.1", 0), H)
 with open(portfile, "w") as f:
     f.write(str(srv.server_address[1]))
 srv.handle_request()
@@ -2904,7 +2933,12 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(out))); self.end_headers()
         self.wfile.write(out)
     def log_message(self, *a): pass
-srv = HTTPServer(("127.0.0.1", 0), H)
+class _Bound(HTTPServer):   # no reverse lookup of the bind address: HTTPServer.server_bind runs socket.getfqdn(host), about 36 s on GitHub's macOS images
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+srv = _Bound(("127.0.0.1", 0), H)
 with open(portfile, "w") as f:
     f.write(str(srv.server_address[1]))
 srv.handle_request()
@@ -2937,7 +2971,12 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(out))); self.end_headers()
         self.wfile.write(out)
     def log_message(self, *a): pass
-srv = HTTPServer(("127.0.0.1", 0), H)
+class _Bound(HTTPServer):   # no reverse lookup of the bind address: HTTPServer.server_bind runs socket.getfqdn(host), about 36 s on GitHub's macOS images
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+srv = _Bound(("127.0.0.1", 0), H)
 with open(portfile, "w") as f:
     f.write(str(srv.server_address[1]))
 srv.handle_request()
@@ -2972,7 +3011,12 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(out))); self.end_headers()
         self.wfile.write(out)
     def log_message(self, *a): pass
-srv = HTTPServer(("127.0.0.1", 0), H)
+class _Bound(HTTPServer):   # no reverse lookup of the bind address: HTTPServer.server_bind runs socket.getfqdn(host), about 36 s on GitHub's macOS images
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+srv = _Bound(("127.0.0.1", 0), H)
 with open(portfile, "w") as f:
     f.write(str(srv.server_address[1]))
 srv.handle_request()
@@ -3015,7 +3059,12 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(out))); self.end_headers()
         self.wfile.write(out)
     def log_message(self, *a): pass
-srv = HTTPServer(("127.0.0.1", 0), H)
+class _Bound(HTTPServer):   # no reverse lookup of the bind address: HTTPServer.server_bind runs socket.getfqdn(host), about 36 s on GitHub's macOS images
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+srv = _Bound(("127.0.0.1", 0), H)
 with open(portfile, "w") as f:
     f.write(str(srv.server_address[1]))
 srv.handle_request()
@@ -3143,3 +3192,49 @@ PY
     [ "$status" -ne 0 ]
 }
 
+
+@test "card: posts key, title, body and session to /notice; ROMP_SID is the default; usage errors exit 2" {
+    # T370 (plans/notice-cards.md): door three of the kernel's post_notice, romp watch's mechanics
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card --title "A new version of the figure is ready" --body "regenerated after the sweep" --key figure --needs-you --producer figure
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"romp card: posted"* ]]
+    grep '/notice' "$MOCK_LOG" | grep -q '"key": *"figure"'
+    grep '/notice' "$MOCK_LOG" | grep -q '"title": *"A new version of the figure is ready"'
+    grep '/notice' "$MOCK_LOG" | grep -q '"body": *"regenerated after the sweep"'
+    grep '/notice' "$MOCK_LOG" | grep -q '"needsYou": *true'
+    grep '/notice' "$MOCK_LOG" | grep -q '"producer": *"figure"'
+    grep '/notice' "$MOCK_LOG" | grep -q '"id": *"11111111-2222-3333-4444-555555555555"'
+    # the token never rides the command line: curl reads it from the piped config
+    [ "$(grep '/notice' "$MOCK_LOG" | grep -c 'testtok')" -eq 0 ]
+    # --session sends a NAME
+    run env ROMP_SID= "$ROMP_SCRIPT" card --key sweep --title "Sweep done: see the plot" --session web
+    [ "$status" -eq 0 ]
+    grep '/notice' "$MOCK_LOG" | grep -q '"name": *"web"'
+    grep '/notice' "$MOCK_LOG" | grep -q '"key": *"sweep"'
+    # the key is REQUIRED (a slug of the title made an edited title a second card): usage, exit 2, nothing posted
+    run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card --title "Sweep done: see the plot"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--key is the card's stable name"* ]]
+    [ "$(grep -c '/notice' "$MOCK_LOG")" -eq 2 ]
+    # outside a session with no --session: a loud usage refusal, never a silent guess
+    run env ROMP_SID= "$ROMP_SCRIPT" card --key x --title "x"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--session <name> required"* ]]
+    run run_romp card
+    [ "$status" -eq 2 ]
+    run run_romp card --key x --title "x" --expires soon
+    [ "$status" -eq 2 ]
+}
+
+@test "card: a refused post is relayed with the kernel's reason and exit 1, never reported as posted" {
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    run env ROMP_SID=11111111-2222-3333-4444-555555555555 MOCK_CURL_NOTICE_REFUSE=1 "$ROMP_SCRIPT" card --key x --title "x" --attach /nowhere.png
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp card: refused — attachment refused: not a file"* ]]
+    [[ "$output" != *"romp card: posted"* ]]
+}

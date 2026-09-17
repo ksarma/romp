@@ -15,8 +15,11 @@ test("a tab menu taller than the window scrolls inside it, and its own scroll do
   assert.match(CSS, /\.ctx-menu \{\s*\n\s*position: fixed; z-index: 100; min-width: 110px; padding: 4px;\n(?:\s*\/\*[\s\S]*?\*\/\n)?\s*max-height: calc\(100vh - 8px\); overflow-y: auto; overscroll-behavior: contain;/, "the menu clamps to the window and scrolls");
   const FEED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.css"), "utf8");
   assert.match(FEED, /\.ctx-menu \{\s*\n\s*position: fixed; z-index: 100; min-width: 110px; padding: 4px;\n\s*max-height: calc\(100vh - 8px\); overflow-y: auto; overscroll-behavior: contain;/, "feed.css mirrors the clamp");
-  // the fork's line guards the target with instanceof (a scroll dispatched at the window itself carries no node, and the DOM's
-  // contains would throw on it); the pin follows that line (tab-hide.test.ts runs the listener against a fake DOM)
-  assert.match(RENDER, /window\.addEventListener\("scroll", \(e\) => \{ if \(ctxMenuEl && e\.target instanceof Node && ctxMenuEl\.contains\(e\.target\)\) return; dismissTabMenu\(\); \}, true\);/, "a scroll inside the menu is not a dismissal; the page's still is");
+  const CTX = read("ctx-menu.ts");   // the dismissal is the shared builder's since the v0.16.0 tidy: the tab menu is shown through it
+  assert.match(RENDER, /ctxMenuEl = showMenuCard\(menu, e\.clientX, e\.clientY, \{ onClose: onTabMenuClosed \}\);/, "the tab menu opens through the builder");
+  // the builder's scroll listener carries this fork's guard: the target is checked to be a node first (a scroll dispatched at the
+  // window itself carries none, and a fake DOM's contains throws on it; tab-hide.test.ts runs the listener against one), so the pin
+  // follows the guarded line (ctx-menu.ts showMenuCard, the fork's post-offer guard re-applied inside the builder)
+  assert.match(CTX, /const onScroll = \(e: Event\) => \{ if \(e\.target instanceof Node && menu\.contains\(e\.target\)\) return; closeContextMenu\(\); \};/, "a scroll inside the menu is not a dismissal; the page's still is");
   assert.doesNotMatch(RENDER, /window\.addEventListener\("scroll", dismissTabMenu, true\);/, "the bare dismissal is gone");
 });

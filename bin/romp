@@ -83,11 +83,12 @@ EOF
     _romp_cmd "romp watch-pr <n> [--repo o/r]" -        "One mail here when the PR lands or fails — the kernel owns the watch, so it survives restarts (replaces the mortal shell loop)"
     _romp_cmd "romp login add|list|remove <label>" -    "The stored Claude logins a session can be billed to beside the machine's own: add records a COMMAND that prints the login's setup-token on demand (--cmd '<shell line>'; how the token is kept is the user's); list and remove print labels only, never a token"
     _romp_cmd "romp watch --cmd '<pred>' [...]" -       "One mail when the command exits 0 (or the timeout passes) — kernel-owned like watch-pr, for ANY background wait (--every Ns --timeout Ns --note '...' | --list | --cancel <id>)"
+    _romp_cmd "romp card --key <key> --title <text> [...]" - "Post a NOTICE CARD to the feed for a session (no judge): the key is the card's stable name (a second post under it is a revision); --body/--body-file, --attach <path>, --needs-you, --expires <s>, --producer; the card moves only on your dismissal, a new revision or its expiry; a session shows at most fifty live cards, the oldest superseded past that"
     _romp_cmd "romp mail ..."              romp-postal-service  "Romp Postal Service: send <to> <text> | inbox | agents | remote"
-    _romp_cmd "romp send <session> [--tag <label>] <text>" - "Hand a session a message; scripts/cron SHOULD pass --tag so it renders machine-sent, not as your typed words; an unknown session is refused with the kernel's reason, exit 1; a known session that is not running is refused the same way (not delivered, exit 1)"
+    _romp_cmd "romp send <session> [--tag <label>] <text>" - "Hand a session a message; scripts/cron SHOULD pass --tag so it renders machine-sent, not as your typed words; an unknown session is refused with the kernel's reason, exit 1; a known session that is not running is refused the same way (not delivered, exit 1); a kernel that took the request but answered late is exit 3 (the message may already have landed: do not retry blindly)"
     _romp_cmd "romp compact <session> [--wait]" -       "Compact a session's context in place (Claude's /compact) — queued safely if a turn is open; --wait blocks until it finishes (--timeout <s>, default 600)"
-    _romp_cmd "romp interrupt <session>"   -            "Interrupt a session's current turn; an unknown session is refused with the kernel's reason, exit 1"
-    _romp_cmd "romp end <session>|self [--now|--when-idle]" - "End a session, at once by default; --when-idle ends it once its turn settles (self, the calling session, defaults to that; --now overrides); an unknown session is refused with the kernel's reason, exit 1"
+    _romp_cmd "romp interrupt <session>"   -            "Interrupt a session's current turn; an unknown session is refused with the kernel's reason, exit 1; a kernel that took the request but answered late is exit 3 (it may already have acted: do not retry blindly)"
+    _romp_cmd "romp end <session>|self [--now|--when-idle]" - "End a session, at once by default; --when-idle ends it once its turn settles (self, the calling session, defaults to that; --now overrides); an unknown session is refused with the kernel's reason, exit 1; a kernel that took the request but answered late is exit 3 (it may already have acted: do not retry blindly)"
     _romp_cmd "romp checkin <host>"        -            "Publish this machine to an attached hub (romp checkout withdraws)"
     _romp_cmd "romp engine claude|codex"   -            "One switch: which vendor runs the judges + what new sessions default to"
     _romp_cmd "romp default-dir [PATH]"    -            "Default working dir for new sessions (no arg prints; \"\" clears)"
@@ -981,7 +982,7 @@ if [[ "${1:-}" == "fork" ]]; then
     exit 1
 fi
 
-# Rename a session (the user 2026-08-23, via the SynthProbe fleet restructuring): the kernel's
+# Rename a session (the user 2026-08-23, restructuring another project's sessions): the kernel's
 # POST /rename, the exact sibling of `romp fork` — sessions are uuid-keyed with the name as a
 # label, so a rename never breaks mailboxes, goals, or history; every surface resyncs.
 if [[ "${1:-}" == "rename" ]]; then
@@ -1322,6 +1323,71 @@ print(json.dumps(b))' "$_w_cmd" "$_w_key" "$_w_who" "$_w_every" "$_w_timeout" "$
     fi
     _err="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("error") or sys.argv[1])' "$_resp" 2>/dev/null || printf '%s' "$_resp")"
     echo "romp watch: refused — $_err" >&2
+    exit 1
+fi
+
+# `romp card --key <key> --title <text> [--body <markdown> | --body-file <path>] [--session <name>] [--attach <path>]
+#             [--needs-you] [--expires <seconds>] [--producer <label>]` (T370, plans/notice-cards.md): door three of the
+# kernel's post_notice, following `romp watch`'s mechanics exactly: the session defaults to $ROMP_SID under body key id,
+# --session sends name, neither outside a session refuses with exit 2; the token and the body go through _romp_token_cfg and
+# python3 -c 'import json'; one `romp card: posted` line on success, a `romp card: refused` line naming the error and exit 1.
+# The kernel judges the attachment and keeps the card's history; the card is never a way to issue a request (no --action here:
+# actions are for producers inside romp, against the kernel's allowlist).
+if [[ "${1:-}" == "card" ]]; then
+    shift
+    _c_usage="usage: romp card --key <key> --title <text> [--body <markdown> | --body-file <path>] [--session <name>]
+       [--attach <path>] [--needs-you] [--expires <seconds>] [--producer <label>]
+  --key is the card's stable name: a second post under the same key is a REVISION of the card, a different key a new card"
+    _c_title=""; _c_body=""; _c_bodyfile=""; _c_sess=""; _c_attach=""; _c_key=""; _c_needs=0; _c_expires=""; _c_prod="cli"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --title)     shift; [[ $# -eq 0 || -z "$1" ]] && { echo "$_c_usage" >&2; exit 2; }; _c_title="$1"; shift ;;
+            --body)      shift; [[ $# -eq 0 ]] && { echo "$_c_usage" >&2; exit 2; }; _c_body="$1"; shift ;;
+            --body-file) shift; [[ $# -eq 0 || ! -f "$1" ]] && { echo "$_c_usage" >&2; exit 2; }; _c_bodyfile="$1"; shift ;;
+            --session)   shift; [[ $# -eq 0 || -z "$1" || "$1" == -* ]] && { echo "$_c_usage" >&2; exit 2; }; _c_sess="$1"; shift ;;
+            --attach)    shift; [[ $# -eq 0 || -z "$1" ]] && { echo "$_c_usage" >&2; exit 2; }; _c_attach="$1"; shift ;;
+            --key)       shift; [[ $# -eq 0 || -z "$1" ]] && { echo "$_c_usage" >&2; exit 2; }; _c_key="$1"; shift ;;
+            --needs-you) _c_needs=1; shift ;;
+            --expires)   shift; [[ $# -eq 0 || ! "$1" =~ ^[0-9]+$ ]] && { echo "$_c_usage" >&2; exit 2; }; _c_expires="$1"; shift ;;
+            --producer)  shift; [[ $# -eq 0 || -z "$1" ]] && { echo "$_c_usage" >&2; exit 2; }; _c_prod="$1"; shift ;;
+            *)           echo "$_c_usage" >&2; exit 2 ;;
+        esac
+    done
+    if [[ -z "$_c_title" || -z "$_c_key" ]]; then echo "$_c_usage" >&2; exit 2; fi   # the key is required: a slug of the title made an edited title a second card (round two, low d)
+    if [[ -n "$_c_bodyfile" ]]; then _c_body="$(cat "$_c_bodyfile")"; fi
+    _tok="$(_romp_token)"
+    _kport="${ROMP_KERNEL_PORT:-29855}"
+    if [[ -z "$_tok" ]]; then
+        echo "romp card: the kernel isn't running (no serve token). Start romp first." >&2
+        exit 1
+    fi
+    _c_who="$_c_sess"
+    if [[ -z "$_c_who" ]]; then
+        if [[ -z "${ROMP_SID:-}" ]]; then
+            echo "romp card: --session <name> required outside a romp SDK session (ROMP_SID is not set)" >&2
+            exit 2
+        fi
+        _c_who="$ROMP_SID"
+    fi
+    _c_key_name="id"; [[ -n "$_c_sess" ]] && _c_key_name="name"
+    if [[ -n "$_c_attach" && "$_c_attach" != /* ]]; then _c_attach="$(cd "$(dirname "$_c_attach")" 2>/dev/null && pwd)/$(basename "$_c_attach")"; fi
+    _payload="$(python3 -c 'import json,sys,time
+b = {sys.argv[1]: sys.argv[2], "key": sys.argv[3], "title": sys.argv[4], "producer": sys.argv[8]}
+if sys.argv[5]: b["body"] = sys.argv[5]
+if sys.argv[6]: b["attachment"] = sys.argv[6]
+if sys.argv[7] == "1": b["needsYou"] = True
+if sys.argv[9]: b["expiresAt"] = int(time.time()) + int(sys.argv[9])
+print(json.dumps(b))' "$_c_key_name" "$_c_who" "$_c_key" "$_c_title" "$_c_body" "$_c_attach" "$_c_needs" "$_c_prod" "$_c_expires")"
+    _resp="$(_romp_token_cfg | curl -sf -m 15 --config - -X POST "http://127.0.0.1:$_kport/notice" \
+                  -H 'Content-Type: application/json' -d "$_payload")" \
+        || { echo "romp card: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
+    if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
+        _crev="$(python3 -c 'import json,sys; n = json.loads(sys.argv[1]).get("notice") or {}; print("%s rev %s" % (n.get("key"), n.get("rev")))' "$_resp" 2>/dev/null || true)"
+        echo "romp card: posted${_crev:+ ($_crev)}: it shows on the feed until you dismiss it, a new revision replaces it, or it expires"
+        exit 0
+    fi
+    _err="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("error") or sys.argv[1])' "$_resp" 2>/dev/null || printf '%s' "$_resp")"
+    echo "romp card: refused — $_err" >&2
     exit 1
 fi
 
@@ -1873,18 +1939,34 @@ else:
 fi
 
 # One kernel POST for the session verbs (send, interrupt, end) and for `romp new -m`'s first-message
-# leg: the answer lands in _pbody and its status in _pcode. Returns 0 on a 2xx; 1 when the kernel
-# ANSWERED a non-2xx, with the reason in _perr (the body's `error` when it carries the routes' JSON
-# error shape, else "the kernel answered HTTP <code>: <body>"); 2 when curl never connected (a dead
-# kernel: no status). Never `curl -sf`: -f folded every 4xx into the exit a dead kernel gets and threw
-# the body away, so the kernel's 404 for a name no session answers to printed "kernel not reachable"
-# and its reason never reached the caller. The status rides -w and is read here, the perf and tag
-# verbs' pattern (_tag_curl above). One copy for both call sites: the -m leg kept its own `curl -sf`
-# after the verbs dropped theirs (review find, 2026-09-09). Reads $_kport.
+# leg: the answer lands in _pbody and its status in _pcode, curl's own exit in _pcurl and the wait's
+# cap in _pcap. Returns 0 on a 2xx; 1 when the kernel ANSWERED a non-2xx, with the reason in _perr
+# (the body's `error` when it carries the routes' JSON error shape, else "the kernel answered HTTP
+# <code>: <body>"); 2 when curl never connected (a dead kernel: no status, nothing sent); 3 when curl
+# timed out (curl 28) on a kernel that took the request and answered late. The return says what
+# HAPPENED, not what curl felt (upstream, 2026-09-12): until then every curl failure wore one message,
+# "kernel not reachable", and exit 1, a TIMEOUT included, on a kernel that had already taken the
+# request and delivered it but answered late (a boot storm: the minutes after a restart, the box under
+# load); a caller that retried on any non-zero exit then re-sent a delivered message every time (one
+# wake service sent nine copies of each wake twenty seconds apart after a restart). So a connection
+# the kernel never took (curl 7, 6, 52) is 2 and the callers say "not reachable" with the curl code;
+# a timeout AFTER the request went out is 3 and the callers say the message may have been delivered
+# and not to retry blindly; a refusal the kernel wrote is 1 with its own words. The cap is
+# ROMP_KERNEL_HTTP_TIMEOUT_S (default 10 s), so a slow box can widen it and a test can shrink it.
+# Never `curl -sf`: -f folded every 4xx into the exit a dead kernel gets and threw the body away, so
+# the kernel's 404 for a name no session answers to printed "kernel not reachable" and its reason
+# never reached the caller (and without -f curl never returns 22, so no HTTP-error arm is read here).
+# The status rides -w and is read here, the perf and tag verbs' pattern (_tag_curl above). One copy
+# for both call sites: the -m leg kept its own `curl -sf` after the verbs dropped theirs (review find,
+# 2026-09-09). Reads $_kport.
 _romp_post() {   # _romp_post <route> <json payload>
     local _out
-    _out="$(_romp_token_cfg | curl -s -m 10 --config - -w '\n%{http_code}' -X POST "http://127.0.0.1:$_kport/$1" \
-                  -H 'Content-Type: application/json' -d "$2")" || return 2
+    _pcap="${ROMP_KERNEL_HTTP_TIMEOUT_S:-10}"
+    _pcurl=0
+    _out="$(_romp_token_cfg | curl -s -m "$_pcap" --config - -w '\n%{http_code}' -X POST "http://127.0.0.1:$_kport/$1" \
+                  -H 'Content-Type: application/json' -d "$2")" || _pcurl=$?   # `|| ...`: survives set -e
+    if [[ $_pcurl -eq 28 ]]; then return 3; fi
+    if [[ $_pcurl -ne 0 ]]; then return 2; fi
     _pcode="${_out##*$'\n'}"
     _pbody="${_out%$'\n'*}"
     if [[ "$_pcode" == 2?? ]]; then return 0; fi
@@ -2009,11 +2091,18 @@ w=sys.argv[2] if len(sys.argv)>2 else ""
 if w: d["when"]=w
 print(json.dumps(d))' "$_who" "$_when")"
     fi
-    # the status is read off the answer (_romp_post above): a dead kernel is "not reachable", a kernel
-    # that answered a non-2xx is quoted with its reason, exit 1 either way
+    # the status is read off the answer (_romp_post above): a dead kernel is "not reachable" with
+    # curl's exit code, a kernel that answered a non-2xx is quoted with its reason, exit 1 either way;
+    # a kernel that took the request but answered after the cap is exit 3 with the truth, since the
+    # message may already have landed and a blind retry re-sends it (the helper's comment says why)
     _rc=0
     _romp_post "$_verb" "$_payload" || _rc=$?
-    if [[ $_rc -eq 2 ]]; then echo "romp $_verb: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; fi
+    if [[ $_rc -eq 3 ]]; then
+        echo "romp $_verb: the kernel on :$_kport took the request but did not answer within ${_pcap}s" \
+             "(mid-restart or under load); it may already have $([[ "$_verb" == send ]] && echo 'delivered the message' || echo 'acted on it');" \
+             "do not retry blindly (ROMP_KERNEL_HTTP_TIMEOUT_S widens the wait)" >&2; exit 3
+    fi
+    if [[ $_rc -eq 2 ]]; then echo "romp $_verb: kernel not reachable on :$_kport (is romp running?) [curl exit $_pcurl]" >&2; exit 1; fi
     if [[ $_rc -ne 0 ]]; then echo "romp $_verb: $_perr" >&2; exit 1; fi
     _resp="$_pbody"
     if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
@@ -2929,10 +3018,14 @@ if len(sys.argv) > 3 and sys.argv[3]: d["tag"] = sys.argv[3]
 print(json.dumps(d))' "$session_arg" "$msg_arg" "$tag_arg" "$_resp")"
             # the same status-reading POST the send verb makes (_romp_post): a kernel that answered a
             # non-2xx (the 404 for a session it lists none of) is quoted with its reason, where `curl -sf`
-            # folded it into the reason-less line a dead kernel gets (review find, 2026-09-09)
+            # folded it into the reason-less line a dead kernel gets (review find, 2026-09-09); a kernel
+            # that took the message but answered after the cap is exit 3 with no retry advice, as for the
+            # verbs, since the message may already have landed (the helper's comment says why)
             _rc=0
             _romp_post send "$_mpayload" || _rc=$?
-            if [[ $_rc -eq 2 ]]; then
+            if [[ $_rc -eq 3 ]]; then
+                echo "romp new: session is up; the kernel on :$_kport took the first message but did not answer within ${_pcap}s (mid-restart or under load); it may already have delivered the message, so check the session before sending it again (ROMP_KERNEL_HTTP_TIMEOUT_S widens the wait)" >&2; exit 3
+            elif [[ $_rc -eq 2 ]]; then
                 echo "romp new: session is up but the message did NOT land (kernel send failed). Retry: romp send $session_arg '<text>'" >&2; exit 1
             elif [[ $_rc -ne 0 ]]; then
                 echo "romp new: the kernel refused the message: $_perr. Retry: romp send $session_arg '<text>'" >&2; exit 1

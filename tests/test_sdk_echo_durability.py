@@ -604,7 +604,8 @@ class RedeliveryFeedsTheAuthoritativeQueue(unittest.TestCase):
         self.be.sessions[SID] = s          # register WITHOUT starting the thread (no loop)
         return s
 
-    def _stash_echo(self, text, t=100, todo=""):
+    def _stash_echo(self, text, t=None, todo=""):
+        t = int(time.time()) - 100 if t is None else t   # a RECENT stamp: re-delivery has an age line (2026-09-12)
         e = {"type": "user", "uuid": "echo:" + text[:10], "session_id": SID, "t": t,
              "parentUuid": None, "author": "human", "_echo_text": text,
              "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
@@ -621,8 +622,8 @@ class RedeliveryFeedsTheAuthoritativeQueue(unittest.TestCase):
         # stranded typed send whose redelivery triggers the rewrite that used to erase the dict
         answer = {"text": self.ANSWER, "todo": self.TID}
         self._reg(queue=[answer])
-        self._stash_echo(self.ANSWER, t=100, todo=self.TID)
-        self._stash_echo(self.STRAY, t=200)
+        self._stash_echo(self.ANSWER, t=int(time.time()) - 100, todo=self.TID)   # recent stamps, the answer older than the stray (the age line, 2026-09-12: a 1970 stamp is stale and would be flagged, never re-fed)
+        self._stash_echo(self.STRAY, t=int(time.time()) - 50)
         self.be._mark_dropped_echoes(SID, sb._queue_texts([answer]))   # the boot reseed's call shape
         q = self._queue()
         self.assertIn(answer, q, "the persisted user-todo answer must survive the re-delivery rewrite")
@@ -641,7 +642,7 @@ class RedeliveryFeedsTheAuthoritativeQueue(unittest.TestCase):
     def test_live_session_redelivery_reaches_pending_and_survives_the_next_persist(self):
         reg = self._reg(queue=[])
         s = self._sess(reg)
-        e = self._stash_echo("typed while the old client was dying", t=300)
+        e = self._stash_echo("typed while the old client was dying", t=int(time.time()) - 60)
         self.be._mark_dropped_echoes(SID, s.pending())     # the fresh-spawn (_run) call shape
         self.assertEqual(s.pending(), ["typed while the old client was dying"],
                          "a live session's recovered send must enter _pending — a reg-only write "
@@ -713,7 +714,8 @@ class ReconnectStrandIsFlagOnly(unittest.TestCase):
         self.be.sessions[SID] = s          # register WITHOUT starting the thread (no loop)
         return s
 
-    def _stash_echo(self, text, t=100, todo=""):
+    def _stash_echo(self, text, t=None, todo=""):
+        t = int(time.time()) - 100 if t is None else t   # a RECENT stamp: re-delivery has an age line (2026-09-12)
         e = {"type": "user", "uuid": "echo:" + text[:10], "session_id": SID, "t": t,
              "parentUuid": None, "author": "human", "_echo_text": text,
              "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
@@ -727,7 +729,7 @@ class ReconnectStrandIsFlagOnly(unittest.TestCase):
         self.assertEqual(s.resume_sid, SID)
         s.inflight = 1
         s._inflight_texts.append(self.TEXT)
-        e = self._stash_echo(self.TEXT, t=300)
+        e = self._stash_echo(self.TEXT, t=int(time.time()) - 100)   # a recent stamp (the age line, 2026-09-12); the flag-only path never reads it
         s._reconcile_stranded()
         self.assertEqual(s.pending(), [],
                          "flag-only: a fed turn on a resumable conversation is never re-fed — "
@@ -740,7 +742,7 @@ class ReconnectStrandIsFlagOnly(unittest.TestCase):
         s = self._sess()
         s.inflight = 1
         s._inflight_texts.append(self.TEXT)
-        e = self._stash_echo(self.TEXT, t=300, todo=self.TID)
+        e = self._stash_echo(self.TEXT, t=int(time.time()) - 100, todo=self.TID)
         s._reconcile_stranded()
         self.assertEqual(s.pending(), [])
         self.assertTrue(e.get("dropped"))

@@ -658,7 +658,12 @@ test("in Chromium, over the real sheet with the faces loaded: the main menu's tw
   // closes the browser left Chromium open, and node --test then never exited, so a sweep hung instead of going red. Each
   // read asserts with a message naming the literal, so a miss prints one line and not render.ts.
   const pick = (re: RegExp, what: string) => { const m = RENDER.match(re); assert.ok(m, `render.ts carries ${what}`); return m![1]; };
-  const rename = pick(/sb\.textContent = "(the name is a label[^"]+)"; bodyEl\.appendChild\(sb\);/, "Rename's sub-line");
+  // Rename's sub-line is one copy with the Sessions pane's menu since upstream's menu tidy: render.ts passes clear-confirm.ts's
+  // RENAME_SUBLINE to the builder's row, so the literal is read there and the pass-through pinned here
+  assert.match(RENDER, /addMenuItem\(menu, \{ icon: ctxIcon\("pencil", false\), label: "Rename", sub: RENAME_SUBLINE,/, "render.ts builds the Rename row with clear-confirm.ts's sub-line");
+  const renameM = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "clear-confirm.ts"), "utf8").match(/export const RENAME_SUBLINE = "(the name is a label[^"]+)";/);
+  assert.ok(renameM, "clear-confirm.ts carries Rename's sub-line");
+  const rename = renameM![1];
   const bell = pick(/"(system notification when its work blocks on you or completes)"/, "Notify me's sub-line");
   const emoji = pick(/sb\.textContent = "(one glyph before the name on the tab[^"]+)";/, "Emoji's sub-line");
   const name40 = "notes-api-customer-billing-migration-two";   // 40 characters, the New tag input's maxLength
@@ -748,11 +753,12 @@ test("in Chromium, over the real sheet with the faces loaded: the main menu's tw
     };
     for (const width of [450, 400, 383]) {
       // the dark theme: Inter, loaded before the read (the face's own status, not the font-family string, which names Inter whether or
-      // not it loaded); Rename 29.8em (round 2 read 31.8, the fallback face's), Emoji the widest fixed sub-line at 33.1em
+      // not it loaded); Rename 28.8em since upstream's menu tidy put a colon where the em dash was (round 2 read 31.8, the fallback face's,
+      // and 29.8 for the dashed line), Emoji the widest fixed sub-line at 33.1em
       const dark = await pass(true, false, width, false), darkFull = await pass(true, false, width, true);
       for (const r of [dark, darkFull]) assert.ok(r.faces.includes("Inter:loaded") && r.checkInter, "Inter loaded before the read: " + JSON.stringify(r.faces));
       holds(dark, darkFull, "Inter");
-      assert.ok(dark.fixed[0].em > 29 && dark.fixed[0].em < 30.5, "Rename's width is Inter's, 29.8em (31.8 is the fallback face's): " + JSON.stringify(dark.fixed[0]));
+      assert.ok(dark.fixed[0].em > 28.2 && dark.fixed[0].em < 29.3, "Rename's width is Inter's, 28.8em for clear-confirm.ts's colon line (the fallback face reads about 30.7; round 2's dashed line read 29.8): " + JSON.stringify(dark.fixed[0]));
       assert.ok(dark.fixed[2].em > 32.5 && dark.fixed[2].em < 34 && dark.fixed[2].em > dark.fixed[0].em && dark.fixed[2].em > dark.fixed[1].em, "Emoji's is the widest fixed sub-line, 33.1em in Inter: " + JSON.stringify(dark.fixed[2]));
       // the light theme: Space Grotesk, loaded; Emoji's sub-line is 36.1em there, past round 3's cap, and whole because no fixed row is capped
       const light = await pass(true, true, width, false), lightFull = await pass(true, true, width, true);
@@ -977,7 +983,7 @@ test("in Chromium and Firefox, the Tags flyout nested in the menu over the real 
 //     been rebuilt), the release: the move is posted;
 //   - the same on the Show when folded row: the pin is written;
 //   - a push that changes nothing the row shows leaves its label node in place (round 4 replaced it every time);
-//   - at thirty tags (round 8) the flyout's own scroll, through render.ts's window listeners, leaves the menu standing: a real
+//   - at thirty tags (round 8) the flyout's own scroll, through the builder's own dismissal listener (ctx-menu.ts), leaves the menu standing: a real
 //     wheel, the click's scroll into view; a scroll in a box outside the menu still dismisses; and the click that opens the flyout
 //     leaves it at its top with the session's own row and its x in view, the New tag input focused without a scroll (round 9).
 function menuProbeSource(): string {
@@ -986,13 +992,10 @@ function menuProbeSource(): string {
   const b = RENDER.indexOf("\n}\n", end) + 3;
   assert.ok(a > 0 && end > a && b > end, "showTabMenu's anchors moved; re-anchor this probe");
   const MENU = RENDER.slice(a, b);
-  // THE MENU'S WINDOW LISTENERS (round 8), verbatim: the outside mousedown, Escape, the picker's two, the scroll and the blur. The scroll
-  // dismissal saw the Tags flyout's own scroll once the flyout was capped and scrolled within itself, so a real page closed the menu on
-  // the click that opened the flyout at thirty tags while the fourth leg, built by hand with no listener, stayed green (M6 below)
-  const wa = RENDER.indexOf('window.addEventListener("mousedown", (e) => { if (ctxMenuEl && !ctxMenuEl.contains(e.target as Node)) dismissTabMenu(); }, true);');
-  const wb = RENDER.indexOf("\n", RENDER.indexOf('window.addEventListener("blur", () => dismissTabMenu());', wa)) + 1;
-  assert.ok(wa > 0 && wb > wa, "the menu's window listeners moved; re-anchor this probe");
-  const LISTENERS = RENDER.slice(wa, wb);
+  // THE MENU'S DISMISSAL LISTENERS (round 8) are the shared builder's since upstream's v0.16.0 tidy: showMenuCard (ctx-menu.ts, imported
+  // real below) installs them per open (a press outside, Escape, a scroll outside the card, the window's blur). The scroll dismissal saw the
+  // Tags flyout's own scroll once the flyout was capped and scrolled within itself, so a real page closed the menu on the click that opened
+  // the flyout at thirty tags while the fourth leg, built by hand with no listener, stayed green (M6 below)
   // THE FLYOUT'S PLACEMENT AND GESTURE, verbatim: upstream's T380 and T387 lifted the Tags flyout's side rule (placeFlyBeside) and its
   // hover, click and leave-tolerance wiring (wireFlyout, with its HOVER_INTENT_MS) out of showTabMenu, which now calls both for the
   // Tags row; the rounds below drive that gesture and measure that placement
@@ -1007,6 +1010,8 @@ import { pressHold } from "./actions";
 import { keyHint } from "./keybindings";   // the Notify row's key hint (render.ts imports it from the same module)
 import { tabHotkey, miniChord } from "./tab-widgets";   // the Hot key row (T379): the tab's chord and its short spelling, the real readers
 import { tagChip } from "./tag-menu";   // the flyout's rows wear the tag chip (T321), the real builder, as the header probe above has it
+import { menuCard, addMenuItem, addMenuSep, showMenuCard, closeContextMenu } from "./ctx-menu";   // the one menu builder (upstream's v0.16.0 tidy): the card, the standard rows, the placement and the dismissal listeners
+import { RENAME_SUBLINE } from "./clear-confirm";   // the Rename row's sub-line, as render.ts imports it
 // THE STAND-IN PAGE: what showTabMenu reads, declared as render.ts declares it
 const sessions = new Map<string, any>([["api", { name: "api", status: { state: "working" } }], ["web", { name: "web", status: { state: "ready" } }]]);
 const tabMeta = new Map<string, any>();
@@ -1017,7 +1022,8 @@ let ctxMenuEl: HTMLElement | null = null, ctxMenuAt: any = null, tagsFlyNewInput
 let tabMenuViewsHook: () => void = () => {};
 function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
 function ctxIcon(kind: string, off: boolean): HTMLElement { const sp = el("span", "ctx-icon" + (off ? " off" : "")); sp.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 14"></svg>'; sp.dataset.kind = kind; return sp; }
-function dismissTabMenu() { H.dismissed++; ctxMenuEl?.remove(); ctxMenuEl = null; tagsFlyNewInput = null; tabMenuViewsHook = () => {}; }
+function dismissTabMenu() { closeContextMenu(); }   // as render.ts's: the builder's teardown runs onTabMenuClosed
+function onTabMenuClosed() { H.dismissed++; ctxMenuEl = null; tagsFlyNewInput = null; tabMenuViewsHook = () => {}; }   // as render.ts's, plus the count: every close ends here
 let emojiPrompt: any = null;   // the picker's listeners read it (never open here)
 function closeEmojiPrompt() {}
 function setSessionFlag(id: string, k: string, v: boolean) { H.flags.push([id, k, v]); }
@@ -1040,7 +1046,6 @@ function browseRouteNow() { return "pane"; } function openBrowse() {}
 function inRompShell() { return false; }   // the probe page is top-level, no shell around it (upstream T415: showTabMenu asks before it offers the Settings row)
 ${FLYOUT}
 ${MENU}
-${LISTENERS}
 // a scrolling box OUTSIDE the menu (round 8): the page's body never scrolls (styles.css), so the control that a scroll elsewhere still
 // dismisses the menu needs a box of its own, at the pane's far corner where no menu or flyout of these tests reaches
 const box = el("div"); box.id = "box"; box.style.cssText = "position:fixed;right:0;bottom:0;width:120px;height:120px;overflow:auto;background:transparent";

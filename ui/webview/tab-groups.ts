@@ -681,10 +681,11 @@ export function headWords(name: string, total: number, hidden: number, folded: b
 /** One strip item: a section header (folded or open; `active` = it holds the active tab; `hidden` =
  *  the member ids the header stands in for, the ones with no tab on the strip: folded, its members less
  *  the pinned ones that are not hidden; open, the hidden ones; `hides` = the members hidden inside the
- *  section by their own flag (isHidden), in strip order, whatever the fold, a subset of `hidden`) or a tab.
- *  The same id may appear as a tab under several headers (T264b: a session under N tags has N
+ *  section by their own flag (isHidden), in strip order, whatever the fold, a subset of `hidden`;
+ *  `packed` = this folded header shares the row of the folded header right before it, see planStrip) or
+ *  a tab. The same id may appear as a tab under several headers (T264b: a session under N tags has N
  *  copies); render.ts paints each copy as a full tab of the one session. */
-export type StripHead = { head: TabSection; folded: boolean; active: boolean; hidden: string[]; hides: string[] };
+export type StripHead = { head: TabSection; folded: boolean; active: boolean; hidden: string[]; hides: string[]; packed: boolean };
 export type StripItem = StripHead | { id: string };
 export interface StripPlan {
   items: StripItem[];
@@ -694,9 +695,13 @@ export interface StripPlan {
 
 /** The strip PLAN render.ts paints, pure so the rule executes in node tests.
  *  - `phone`: the kernel's phone chat page hides the strip and builds its own session list by scraping
- *    every rendered tab; it has no header to unfold and no switch, so a folded section there made its
- *    sessions unreachable (`archived` starts folded). Sectioning is DESKTOP-ONLY: on the phone layout
- *    the plan is the flat strip, always — every visible id, nothing folded.
+ *    the strip's children in order (kernel.py _CHAT_MOBILE_JS: a heading row per group header, a row per
+ *    tab copy, a divider at the trail). It SECTIONS like the desktop (the user 2026-09-16, whose phone
+ *    listed the sessions in the raw view order while the desktop grouped them by tag: the two must read
+ *    the same), but NOTHING FOLDS there: the picker's heading is a label, not a fold control, and the
+ *    picker is the phone's only switcher, so a folded section there made its sessions unreachable
+ *    (`archived` starts folded). Every member renders under its header, `folded` stays empty, and a pin
+ *    has nothing to show through.
  *  - `pending`: a provisional tab (a create in flight) with the tags the request named. It renders
  *    under every one of them from the first paint — the way the kernel's frame will place it — instead
  *    of landing in the untagged trail and jumping when the frame arrives.
@@ -709,6 +714,7 @@ export interface StripPlan {
  *    notwithstanding (the hide wins). The fold's own lists are never read or written here for them, so
  *    collapsing and expanding the section leaves exactly the hidden set hidden. Hidden ids join the
  *    `folded` set too: the keyboard skips them and the header is an active one's stand-in.
+ *    Never on the phone, where nothing folds and nothing hides: the picker is the phone's only switcher.
  *  - The ACTIVE tab's section folds like any other (the user 2026-09-06; until then it was forced open
  *    so keyboard focus never landed on a hidden node). Its header is marked `active` whether open or
  *    folded: folded, the header is the hidden tab's stand-in — render.ts focuses it where it would
@@ -721,7 +727,16 @@ export interface StripPlan {
  *    holder, the first in tagOrder, is marked: the header that stands in for the tab. Nothing springs
  *    open (the active tab's section folds like any other, above), so upstream's forced-open first holder
  *    has no counterpart here. A tab joins the `folded` set only when EVERY copy is off the strip; one
- *    copy on screen keeps it in the keyboard order. */
+ *    copy on screen keeps it in the keyboard order.
+ *  - FOLDED NEIGHBOURS SHARE A ROW (the user 2026-09-16: a folded group is one small header, yet each
+ *    took a whole row). Under the one-group-per-row layout every header opens a row, except a folded
+ *    header whose item right before it in strip order is another folded header: that one is `packed`,
+ *    and render.ts emits no row break ahead of it, so a run of bare folded headers reads as one row
+ *    (wrapping like tabs when the run outgrows the strip). An open group keeps a row of its own, and so
+ *    does the trail; a lone folded group between open ones has nothing to pack with and keeps its row.
+ *    The item right before, not the section: a folded section with a member pinned through its fold
+ *    ends in that member's tab, so the next folded header opens a row as it would after an open group.
+ *    Never on the phone, where nothing folds. */
 export function planStrip(visibleIds: readonly string[], unions: readonly TagUnion[], st: TabGroupsState,
                           activeId: string | null, phone: boolean,
                           pending?: { id: string; tags: readonly string[] } | null): StripPlan {
@@ -730,7 +745,7 @@ export function planStrip(visibleIds: readonly string[], unions: readonly TagUni
     u = unions.map((x) => (pending.tags.includes(x.name) && !x.members.includes(pending.id)
       ? { ...x, members: [...x.members, pending.id] } : x));
   }
-  const sectioned = !phone && st.on && anySectioned(visibleIds, u);
+  const sectioned = st.on && anySectioned(visibleIds, u);
   const items: StripItem[] = [];
   const folded = new Set<string>();
   if (!sectioned) {
@@ -740,8 +755,12 @@ export function planStrip(visibleIds: readonly string[], unions: readonly TagUni
   const secs = sectionTabs(visibleIds, u);
   // does this section put a copy of `id` on the strip: open and not hidden inside it, or folded with the
   // copy pinned through the fold (the hide wins over the pin, as `hidden` below reads it)
-  const shows = (sec: TabSection, id: string): boolean =>
-    sec.name === null || (!isHidden(st, sec, id) && (!isSectionCollapsed(st, sec.name) || isPinned(st, sec, id)));
+  // a section's fold as this plan renders it: never the trail's, and never on the phone (above)
+  const foldOf = (sec: TabSection): boolean => !phone && sec.name !== null && isSectionCollapsed(st, sec.name);
+  // a member's hide as this plan renders it (the snapshot's Hide, a desktop gesture): never the trail's, and never on the
+  // phone, the folds' rule, since the picker is the phone's only switcher and a hidden session would leave it
+  const hideOf = (sec: TabSection, id: string): boolean => !phone && sec.name !== null && isHidden(st, sec, id);
+  const shows = (sec: TabSection, id: string): boolean => !hideOf(sec, id) && (!foldOf(sec) || isPinned(st, sec, id));
   const holders = activeId !== null ? secs.filter((sec) => sec.ids.includes(activeId)) : [];
   const shownSomewhere = activeId !== null && holders.some((sec) => shows(sec, activeId));
   for (const sec of secs) {
@@ -751,10 +770,14 @@ export function planStrip(visibleIds: readonly string[], unions: readonly TagUni
     // open here: the active tab's section folds like any other (the user 2026-09-06)
     const active = activeId !== null && holders.includes(sec)
       && (holders.length === 1 || shows(sec, activeId) || (!shownSomewhere && sec === holders[0]));
-    const f = sec.name !== null && isSectionCollapsed(st, sec.name);
-    const hides = sec.name !== null ? sec.ids.filter((id) => isHidden(st, sec, id)) : [];
+    const f = foldOf(sec);
+    const hides = sec.ids.filter((id) => hideOf(sec, id));   // [] for the trail and on the phone (hideOf)
     const hidden = f ? sec.ids.filter((id) => hides.includes(id) || !isPinned(st, sec, id)) : hides;
-    items.push({ head: sec, folded: f, active, hidden, hides });
+    // packed: this header is folded and the item right before it is a folded header too (the trail's header
+    // is never folded, so a folded header never packs onto the trail, nor the trail onto anything)
+    const prev = items[items.length - 1];
+    const packed = f && prev !== undefined && "head" in prev && prev.folded;
+    items.push({ head: sec, folded: f, active, hidden, hides, packed });
     for (const id of sec.ids) { if (hidden.includes(id)) folded.add(id); else items.push({ id }); }
   }
   // a session under several tags (T264b) has a copy in each: it is folded away — skipped by the
