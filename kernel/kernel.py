@@ -50505,7 +50505,8 @@ def _judge_usage_rows_locked():
 
 def _judge_usage_rows_snapshot():
     """A COPY of the reader's rows, taken under _JUDGE_USAGE_LOCK, for a consumer that walks them off the reader's
-    transaction and needs no identity (the /analytics roll-up, on an HTTP handler thread). The live list's left prune
+    transaction and needs no identity (the /analytics roll-up, on an HTTP handler thread; the timeline's attach walk,
+    _attach_run_usage, since round 2 of the same review). The live list's left prune
     runs under the lock on whichever thread reads the log and shifts every index in place, so a bare for-loop over the
     live list skipped the shifted rows when a prune landed under it (33 of 1,000 in the 2026-09-17 fold's kernel review,
     item 5), and a `list(...)` taken outside the lock reads the same shifting list. The band keeps the live list
@@ -51267,9 +51268,12 @@ def _attach_run_usage(judging, t0, alive_sids):
         mk["ms"] = mk["in"] = mk["out"] = 0
         mk["sent"] = mk["recv"] = None
     runs = {}                                            # (sid, judge) -> [{t,ms,in,out,sent,recv}] sorted by t
-    # the shared incremental row cache (_judge_usage_rows) — this used to re-read + re-parse the whole
+    # a SNAPSHOT of the shared incremental row cache, copied under the reader's lock (_judge_usage_rows_snapshot): the
+    # reader's left prune on another thread shifts the live list in place under a bare walk over it, and this walk
+    # matched 33 of 1,000 marks to a neighbour's call when one landed (the 2026-09-17 fold's kernel review, round 2
+    # item 2; the roll-up's twin is round 1 item 5). The cache itself replaced a re-read + re-parse of the whole
     # append-only log on EVERY timeline build (0.46s at 38.7 MB, on the GIL, growing without bound)
-    for o in _judge_usage_rows():
+    for o in _judge_usage_rows_snapshot():
         t, sid = o.get("t"), o.get("fsid")
         if not isinstance(t, (int, float)) or t < t0 or sid not in alive_sids:
             continue

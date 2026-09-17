@@ -368,10 +368,12 @@ class JudgeUsageReader(unittest.TestCase):
 
 # ── race 6, the walkers: the roll-up's walk and the band's cursor slice against the reader's left prune ──
 class JudgeUsageWalkers(unittest.TestCase):
-    """Two consumers of the reader's LIVE rows list (returned without a copy since the judging band memo keys its cursor
+    """Three consumers of the reader's LIVE rows list (returned without a copy since the judging band memo keys its cursor
     on the list's identity) against the reader's left prune, which shifts every index in place under _JUDGE_USAGE_LOCK on
     whichever thread reads the log. The /analytics roll-up walks a snapshot taken under the lock (the 2026-09-17 fold's
-    kernel review, item 5: a walk over the live list counted 33 rows short when a prune landed under it), and the band's
+    kernel review, item 5: a walk over the live list counted 33 rows short when a prune landed under it), the timeline's
+    attach walk (_attach_run_usage) walks the same snapshot (round 2 of that review, item 2: round 1 covered the roll-up
+    alone, and a bare walk here matched 33 of 1,000 marks to a neighbour's call under the same prune), and the band's
     cursor takes the prune count, the boundary check and the slice under ONE hold (item 6: a prune landing between the
     check and the slice began the slice past the verified boundary, and one frame lost the rows in between). Each test
     parks the walker at the one step its race is about, runs the reader's prune from a second thread that takes the lock
@@ -441,6 +443,44 @@ class JudgeUsageWalkers(unittest.TestCase):
         self.assertEqual(got["u"]["total"]["calls"], 1000, "was: 968, the walk skipped the 33 rows the prune shifted under its index")
         self.assertEqual(got["u"]["total"]["in"], 10 * 1000)
         self.assertEqual(got["u"]["byJudge"]["captioner"]["calls"], 1000)
+
+    def test_the_attach_walk_matches_every_mark_to_its_own_call_under_a_prune(self):
+        """The timeline's attach walk (_attach_run_usage): one mark per logged call, the walker parked at row 500 while the
+        reader's prune drops the first 33 rows and appends one. Over the live list the walk resumed at its index and skipped
+        the 33 rows the prune shifted under it, so 33 marks took a neighbour's call (the greedy match within 180s) and the last
+        33 matched nothing; over the snapshot every mark carries its own call. The parked row is wrapped inside the cache's
+        rows, not through a list the reader returned, so the case holds if the reader ever returns a copy."""
+        base = 1781100000
+        self._write([self._row(base + i) for i in range(1000)])
+        self.assertEqual(len(km._judge_usage_rows()), 1000)
+        entered, gate = threading.Event(), threading.Event()
+
+        class _Parks(dict):
+            """Row 500 of the walk: its first read parks the walker, with rows on either side of it still to attach."""
+            armed = True
+
+            def get(self, *a):
+                if _Parks.armed:
+                    _Parks.armed = False
+                    entered.set()
+                    gate.wait(WAIT)
+                return dict.get(self, *a)
+        c = km._JUDGE_USAGE_CACHE
+        c["rows"][500] = _Parks(c["rows"][500])
+        judging = [{"sid": SID, "judge": "captioner", "t": base + i, "kind": "segment", "text": "m%d" % i} for i in range(1000)]
+        t1 = _run(lambda: km._attach_run_usage(judging, 0, {SID}))
+        self.assertTrue(entered.wait(WAIT), "the walker reached row 500")
+        t2 = self._prune_from_a_second_thread(self._row(base + 33 + self.R))    # newest - RETAIN passes the first 33 rows
+        t2.join(WAIT)
+        self.assertIsNone(t2.box["exc"])
+        self.assertEqual((len(c["rows"]), c["pruned"]), (1000 - 33 + 1, 33), "the prune and the append landed under the walk")
+        gate.set()
+        t1.join(WAIT)
+        self.assertIsNone(t1.box["exc"])
+        self.assertEqual(sum(1 for mk in judging if mk["ms"] == 5000), 1000,
+                         "was: 967, the walk skipped the 33 rows the prune shifted under its index and the last 33 marks matched nothing")
+        self.assertEqual([mk["recv"] for mk in judging], [base + i for i in range(1000)],
+                         "every mark carries its OWN call's response time, none a neighbour's")
 
     def test_the_bands_cursor_takes_the_count_the_check_and_the_slice_under_one_hold(self):
         R, NOW = self.R, 1_800_000_000
