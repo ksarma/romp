@@ -401,7 +401,7 @@ test("the core's release note reads as one notice, and as none from no core, an 
   assert.deepEqual(releasedNotices(core), [core.note], "read on the core itself (the accessor reaches its shell through the core's own closure)");
 });
 
-test("the reload core asks the pane's word after the gesture holds, defers while it answers, re-tries on the pane's ended(), and releases the word at its deadline (the shim's 'sends' excepted)", () => {
+test("the reload core asks the pane's word after the gesture holds, defers while it answers, re-tries on the pane's ended(), and releases the word at its deadline (the shim's 'sends' and the pane's 'upload' excepted)", () => {
   // re-aimed at the 2026-09-09 fold (kernel-code H20-H22, then the fold's ruling on the fork's deadline): the core's busyHere
   // ends on the pane's __rompPaneBusy, after its own reasons (pointer, pan, drag, selection, typing); the fork's 'ships' read
   // and its 500 ms re-check are gone, and its 60 s deadline is the BACKSTOP inside upstream's shape: tryFire runs the word

@@ -97,7 +97,7 @@ import { fileLinkRoute, browseRoute, type BrowseRoute } from "./file-route";   /
 import { pastedFilePath } from "./paste-path";
 import { insertAtCaret } from "./composer-insert";
 import { hostNameNodes, hostPartsNodes, hostPrefix, hostOf, hostIsDown, hostIsDialing, hostDownNote } from "./host-prefix";
-import { menuCard, addMenuItem, addMenuSep, showMenuCard, openContextMenu, closeContextMenu } from "./ctx-menu";   // the one menu builder (the v0.16.0 tidy)
+import { menuCard, addMenuItem, addMenuSep, showMenuCard, openContextMenu, closeContextMenu, contextMenuOpen } from "./ctx-menu";   // the one menu builder (the v0.16.0 tidy)
 import { focusAfterDismiss, emptyStateParts } from "./pane-focus";   // where focus goes when a tab leaves, and the empty body's line (T357)
 import { MENTION_MAX_ROWS, mentionQuery, rankMentions, mentionMoreNote, mentionToken, insertMention, mentionKeyAction, mentionSegments } from "./composer-mention";   // the @-mention card's rules, pure; the DOM is setupComposer's mention block and markMentions
 import type { MentionCandidate, MentionQuery } from "./composer-mention";
@@ -7653,12 +7653,28 @@ function viewsChanged() { tabMenuViewsHook(); }
 function dismissTabMenu() {
   closeContextMenu();   // the builder's teardown hands the focus back and runs onTabMenuClosed
 }
-// the card is gone (a pick, Escape, a press outside, a scroll, the window's blur, Tab, the focus leaving): forget it and the
-// tags flyout's input with it
+// the card is closing (a pick, Escape, a press outside, a scroll, the window's blur, Tab, the focus leaving): forget it and the
+// tags flyout's input with it. THE FOCUS: the builder hands it back to the right-clicked tab when that node still stands
+// (ctx-menu.ts showMenuCard's teardown), but renderTabs swaps the strip on every push, so after a push landed while the menu
+// was open the opener is detached, the builder has nothing to hand the focus to, the card keeps it and it falls to the body
+// as the card goes; the arrows stopped switching sessions until a click (the fold's review, 2026-09-17). So when the card
+// still holds the focus, or it already fell to the body, the ACTIVE tab takes it (focusActiveTab's ladder: the tab, else
+// its section head), and only while this document has the focus: a close that followed the focus elsewhere (another frame,
+// a field outside, the window's blur) moves nothing, and a close that put the focus back on a standing opener moves nothing
+// either. Read before the card is removed (closeContextMenu runs this callback first), so "the card holds it" is the
+// detached-opener case; the body arm covers a close that removed the card first
 function onTabMenuClosed() {
   ctxMenuEl = null;
   tagsFlyNewInput = null;
   tabMenuViewsHook = () => {};
+  const card = contextMenuOpen(), active = document.activeElement;
+  if (document.hasFocus() && ((card && card.contains(active)) || active === document.body)) focusActiveTab();
+}
+// the selection menu's close forgets its card and moves no focus: the builder hands the focus back to its opener when one
+// stands, and a right-click on the transcript's text leaves none, so the focus stays where the close found it (never the
+// strip: the refocus above is the tab menu's)
+function onSelectionMenuClosed() {
+  ctxMenuEl = null;
 }
 
 // Right-clicking a SELECTION in the transcript pops a small menu with Reply (quote
@@ -7687,7 +7703,7 @@ function showSelectionMenu(e: MouseEvent) {
   // the item just puts the caret where the reply goes. The in-box editable-blockquote form is gone.
   mk("Quote", () => { (document.getElementById("composer-input") as HTMLTextAreaElement | null)?.focus(); });
   mk("Copy", () => copyToClipboard(text));
-  ctxMenuEl = openContextMenu(e.clientX, e.clientY, items, { onClose: onTabMenuClosed });   // the shared card: placed, dismissed and keyed the one way
+  ctxMenuEl = openContextMenu(e.clientX, e.clientY, items, { onClose: onSelectionMenuClosed });   // the shared card: placed, dismissed and keyed the one way
 }
 
 function copyToClipboard(text: string) {
@@ -8699,7 +8715,8 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   }
   // at the cursor, clamped inside the pane; dismissed on a press outside, Escape, a scroll outside the card (its own scroll is
   // not a dismissal: taller than the window it scrolls inside it, styles.css max-height, 2026-09-13), Tab, the focus leaving,
-  // the window's blur; the rows reachable by the arrows; the focus back on the opener at the close (the shared builder)
+  // the window's blur; the rows reachable by the arrows; the focus back on the opener at the close (the shared builder), or
+  // on the active tab when a push rebuilt the opener away while the menu was open (onTabMenuClosed)
   ctxMenuEl = showMenuCard(menu, e.clientX, e.clientY, { onClose: onTabMenuClosed });
   tabMenuViewsHook = () => { void hold.defer(() => { if (gone()) return; refreshHideRow(); refreshTags(); }); };   // a change to what the strip reads while this menu is open re-dresses it (round 4; viewsChanged runs it, round 5), as one run through the menu's hold: parked under a pressed pointer, dropped once the menu is dismissed; onTabMenuClosed clears the hook
   seatMenu(e.clientX, e.clientY);   // then the menu's own seat: at the cursor, clamped so it never overflows the pane (the builder's placement above is re-placed in the same task), recording the corner the emoji picker opens at and the reseat reads

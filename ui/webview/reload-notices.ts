@@ -50,9 +50,11 @@ export function liveNotices(box: NoticeBox | null | undefined): string[] {
 }
 
 /** The reload core's own notice for the reload it is firing, as the list persistNoticesForReload appends to the live
- *  toasts: the core's 60 s backstop (kernel.py _RELOAD_CORE_JS `clock`) released a pane word that never ended (an upload
- *  with no ack or nack, a send held behind it; the shim's 'sends' has no deadline), and the note says what
- *  the page waited for and that it stopped waiting; a reload that fired on the hold's own event has none. Reads the core
+ *  toasts: the core's 60 s backstop (kernel.py _RELOAD_CORE_JS `clock`) released a clocked pane word that never ended
+ *  (a send held behind the pane's uploads, 'held-send', or any later pane word; the shim's 'sends' and the pane's
+ *  'upload' have no deadline: the upload holds until the pane's own ended(), when the last ack lands or the ship gives
+ *  up, on the user's 2026-09-17 ruling following upstream), and the note says what the page waited for and that it
+ *  stopped waiting; a reload that fired on the hold's own event has none. Reads the core
  *  handed in (window.__rompReload on a kernel-served page; a pane's answers with its shell's, since the shell decided),
  *  so a page without the core (the VS Code webview), an older core without the accessor, or a throwing one reads as
  *  none. */

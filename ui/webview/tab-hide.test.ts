@@ -615,8 +615,15 @@ class FakeEl {
     return { left: 0, top: 0, right: 120, bottom: 20, width: 120, height: 20 };
   }
   get isConnected(): boolean { let n: FakeEl | null = this; while (n) { if (n.tag === "body") return true; n = n.parent; } return false; }
-  /** whether n is this node or one of its descendants (round 9): the window's scroll listener reads ctxMenuEl.contains(e.target) */
-  contains(n: unknown): boolean { let c = n instanceof FakeEl ? n : null; while (c) { if (c === this) return true; c = c.parent; } return false; }
+  /** whether n is this node or one of its descendants, with the DOM's contract (round 9; catch-up review round 1): null and undefined
+   *  answer false, and any other argument that is no node throws the TypeError the DOM's contains throws. The builder's scroll listener
+   *  (ctx-menu.ts showMenuCard, which reads menu.contains(e.target)) is so held by its instanceof guard and not by the fake's leniency:
+   *  the scroll case fires a plain-object target, which dismisses through the guard and throws without it */
+  contains(n: unknown): boolean {
+    if (n === null || n === undefined) return false;
+    if (!(n instanceof FakeEl)) throw new TypeError("Failed to execute 'contains' on 'Node': parameter 1 is not of type 'Node'.");
+    let c: FakeEl | null = n; while (c) { if (c === this) return true; c = c.parent; } return false;
+  }
   querySelector(): FakeEl | null { return null; }
   /** the page's focus, as the prelude's document.activeElement reads it (round 5: the focus carry is executed, not source-pinned) */
   static focused: FakeEl | null = null;
@@ -930,7 +937,7 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   // left a "creating..." row and a stale Hide tab row), the two tab-groups store listeners after their render (another pane's
   // hide, a grouping flip) and, since round 6, the phone media rule's change listener after its render (a rotation: the Hide tab row
   // is gated on the same rule, so the flip takes it off the open menu). Nothing else calls the hook
-  assert.match(RENDER, /\nlet tabMenuViewsHook: \(\) => void = \(\) => \{\};\s*\nfunction viewsChanged\(\) \{ tabMenuViewsHook\(\); \}\s*\nfunction dismissTabMenu\(\) \{\s*\n\s*closeContextMenu\(\);[^\n]*\n\}\s*\n(?:\/\/[^\n]*\n)*function onTabMenuClosed\(\) \{\s*\n\s*ctxMenuEl = null;\s*\n\s*tagsFlyNewInput = null;\s*\n\s*tabMenuViewsHook = \(\) => \{\};\s*\n\}/, "declared beside the menu's node, the notifier beside it; the dismissal goes through the shared builder, whose close callback forgets the card, the input and the hook (a closed menu's hook is a no-op)");
+  assert.match(RENDER, /\nlet tabMenuViewsHook: \(\) => void = \(\) => \{\};\s*\nfunction viewsChanged\(\) \{ tabMenuViewsHook\(\); \}\s*\nfunction dismissTabMenu\(\) \{\s*\n\s*closeContextMenu\(\);[^\n]*\n\}\s*\n(?:\/\/[^\n]*\n)*function onTabMenuClosed\(\) \{\s*\n\s*ctxMenuEl = null;\s*\n\s*tagsFlyNewInput = null;\s*\n\s*tabMenuViewsHook = \(\) => \{\};\s*\n\s*const card = contextMenuOpen\(\), active = document\.activeElement;\s*\n\s*if \(document\.hasFocus\(\) && \(\(card && card\.contains\(active\)\) \|\| active === document\.body\)\) focusActiveTab\(\);\s*\n\}/, "declared beside the menu's node, the notifier beside it; the dismissal goes through the shared builder, whose close callback forgets the card, the input and the hook (a closed menu's hook is a no-op), then puts the focus on the active tab when a push rebuilt the opener away under the open menu (the fold review's correctness-1; ctx-menu.test.ts executes it)");
   assert.equal(RENDER.split("tabMenuViewsHook()").length - 1, 1, "the hook has one caller, the notifier; no timer, no other caller");
   assert.equal(RENDER.split("function viewsChanged()").length - 1, 1, "one notifier");
   assert.equal(RENDER.split("viewsChanged();").length - 1, 6, "six callers: the tabOrder frame handler, onViewsAck, onKernelCaps, the storage listener, the TABGROUPS_EVENT listener and the phone media rule's change listener (round 6)");
@@ -2485,11 +2492,11 @@ test("executed: THE MENU'S OWN SCROLL LEAVES IT STANDING (menu review rounds 8 a
     const menu2 = api.open("api", "infra");
     const d1 = hooks.dismissed;
     doc.fire("scroll", { target: {} });
-    assert.deepEqual([hooks.dismissed, menu2.isConnected], [d1 + 1, false], "a target that is no node at all (a scroll dispatched at the window itself; no browser scroll event carries one, and the DOM's contains would throw on it) takes the listener's instanceof guard and dismisses");
+    assert.deepEqual([hooks.dismissed, menu2.isConnected], [d1 + 1, false], "a target that is no node at all (a plain object, as the window itself is to contains; no scroll a document capture sees carries one) takes the listener's instanceof guard and dismisses; without the guard the fake's contains throws the TypeError the DOM's would, so this fire holds the guard executed, beyond the two source pins");
     const menu3 = api.open("api", "infra");
     const d2 = hooks.dismissed;
     doc.fire("scroll", {});
-    assert.deepEqual([hooks.dismissed, menu3.isConnected], [d2 + 1, false], "and so does a scroll event with no target");
+    assert.deepEqual([hooks.dismissed, menu3.isConnected], [d2 + 1, false], "and so does a scroll event with no target: e.target is undefined, which contains answers false (the DOM's and the fake's alike), so this case dismisses with or without the guard and pins the dismissal, not the guard");
   });
 });
 

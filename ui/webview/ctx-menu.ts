@@ -143,8 +143,10 @@ export function showMenuCard(menu: HTMLElement, x: number, y: number, opts: CtxM
   // later at the same phase yields to the menu's), any scroll outside it, the window losing focus
   const onDown = (e: Event) => { if (!menu.contains(e.target as Node)) closeContextMenu(); };
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.preventDefault(); closeContextMenu(); } };
-  // the target is checked to be a node first: a scroll dispatched at the window itself carries none, and contains throws on it
-  // (a fake DOM's, in tab-hide.test.ts, which runs this listener; a real document-level capture never sees a window-targeted event)
+  // the target is checked to be a node first: the DOM's contains throws a TypeError on an argument that is no Node (a scroll dispatched
+  // at the window itself has the window as its target), so an unguarded listener would throw where this one dismisses; a document-level
+  // capture never sees a window-targeted event, so the guard is inert in a browser, and tab-hide.test.ts holds it executed against a fake
+  // whose contains keeps the DOM's contract (a scroll whose target is a plain object dismisses through the guard and throws without it)
   const onScroll = (e: Event) => { if (e.target instanceof Node && menu.contains(e.target)) return; closeContextMenu(); };
   const onBlur = () => closeContextMenu();
   document.addEventListener("pointerdown", onDown, true);
