@@ -289,7 +289,7 @@ test("executed + pinned: the section holding the ACTIVE tab folds like any other
   assert.doesNotMatch(CSS, /\.tab-group-head\.holds-active[^\n]*\{[^}]*(background|border|outline|text-decoration)/, "no dress of any kind on the holding row");
   // the hidden active tab's stand-in in render.ts: focus lands on the header, the arrows step from it, and a
   // pick of a folded-away session opens its section (tab-snapshot-pane.test.ts runs these)
-  assert.match(RENDER, /const home = activeId \? homeSectionOf\(lastStripItems, activeId\) : null;\s*\n\s*if \(!home \|\| home\.name === null \|\| !bar\) return;\s*\n\s*Array\.from\(bar\.querySelectorAll<HTMLElement>\("\.tab-group-head"\)\)\.find\(\(h\) => h\.dataset\.group === home\.name\)\?\.focus\(\);/,
+  assert.match(RENDER, /const home = activeId \? homeSectionOf\(lastStripItems, activeId\) : null;\s*\n\s*if \(!home \|\| home\.name === null \|\| !bar\) return;\s*\n\s*Array\.from\(bar\.querySelectorAll<HTMLElement>\("\.tab-group-head"\)\)\.find\(\(h\) => h\.dataset\.group === home\.name\)\?\.focus\(opts\);/,
     "focusActiveTab falls back to the header");
   assert.match(RENDER, /const nb = neighborOfFolded\(lastStripItems, activeId, dir > 0 \? 1 : -1\);\s*\n\s*if \(nb\) setActive\(nb\);/,
     "cycleTab (the host's nextTab/prevTab commands, not the window's keys, which the test below pins)");

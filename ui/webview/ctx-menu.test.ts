@@ -11,7 +11,9 @@ import { nodeFactory, defineHidden, describeNode } from "../test-dom-shim";
 // chat's classes) are pinned in the source, and the served lab drives them on the real page. The focus at the close is
 // executed too, on the shim's nodes with the real showMenuCard and render.ts's close callbacks lifted from the source: the
 // tab menu's puts the focus on the active tab when a push rebuilt the strip under the open menu (the fold's review
-// 2026-09-17, correctness-1), the selection menu's moves none.
+// 2026-09-17, correctness-1) and takes it WITHOUT scrolling the strip's bar, so a press on another tab that dismisses the
+// menu keeps that tab under the pointer and its click lands (review round 2, tests-1 and ui-1); the selection menu's moves
+// none.
 const SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "ctx-menu.ts"), "utf8");
 const requireCjs = createRequire(__filename);
 const readWebview = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
@@ -100,14 +102,19 @@ test("every key the menu consumes stops at the card: a surface under it never wa
 // failure the tab menu's callback repairs shows here as it does in the browser.
 
 /** A page for the real showMenuCard and closeContextMenu: the shim's nodes (given the three members the builder reads that
- *  the factory lacks: className in step with classList, hasAttribute, isConnected), a body with a strip of tabs, a document
- *  with the focus fixup and the capture listeners the builder installs per open, a window with a size and its blur listener.
- *  The strip's key handler is a stand-in for render.ts's (ArrowRight makes the next tab active), reached only by a key
- *  dispatched from a node inside the strip, so "the arrows still switch sessions" is the executed check on where the
- *  focus landed. The document and window stand-ins carry no DOM edge (the body is a factory node whose edges the shim
- *  hid; the listener tables hold functions), so a failing dump of either is bounded without hideEdges. */
+ *  the factory lacks: className in step with classList, hasAttribute, isConnected, and a focus() that records its options
+ *  and scrolls), a body with the strip of tabs inside its scrolling bar (#tabbar, 28 px rows in a 150 px view, the desktop
+ *  cap), a document with the focus fixup and the capture listeners the builder installs per open, a window with a size and
+ *  its blur listener. The strip's key handler is a stand-in for render.ts's (ArrowRight makes the next tab active), reached
+ *  only by a key dispatched from a node inside the strip, so "the arrows still switch sessions" is the executed check on
+ *  where the focus landed. focus() on a node scrolls the bar to the node's row when that row is out of the bar's view, as a
+ *  browser's does, unless preventScroll is passed, so the scroll a plain focus() costs under a dismissing press shows here
+ *  (the pressed-tab case). The document and window stand-ins carry no DOM edge (the body is a factory node whose edges the
+ *  shim hid; the listener tables hold functions), so a failing dump of either is bounded without hideEdges. */
 function menuPage() {
   const make = nodeFactory();
+  const ROW = 28, VIEW = 150;   // one tab per row; the bar's view is the desktop cap (styles.css, --tabbar-cap)
+  const focusCalls: Array<{ node: any; opts: FocusOptions | undefined }> = [];
   const mk = (tag: string): any => {
     const n = make(tag);
     Object.defineProperty(n, "className", { enumerable: false, configurable: true,
@@ -115,10 +122,21 @@ function menuPage() {
       set(v: string) { n.classList._s = new Set(String(v).split(/\s+/).filter(Boolean)); } });
     Object.defineProperty(n, "isConnected", { enumerable: false, configurable: true, get() { return body.contains(n); } });
     defineHidden(n, "hasAttribute", (k: string) => k in n._attrs);
+    // focus records its options (the shim's own takes none), moves the focus as the shim's does, then scrolls the bar to
+    // the node's row when the node is a tab whose row is out of the bar's view, as a browser's focus() does unless it is
+    // given preventScroll
+    const shimFocus = n.focus;
+    defineHidden(n, "focus", (opts?: FocusOptions) => {
+      focusCalls.push({ node: n, opts });
+      shimFocus.call(n);
+      if (opts && opts.preventScroll) return;
+      if (typeof n._top === "number" && tabbar.contains(n) && (n._top < tabbar.scrollTop || n._top + ROW > tabbar.scrollTop + VIEW)) tabbar.scrollTop = n._top;
+    });
     return n;
   };
   const body = mk("body");
-  const bar = mk("div"); bar.id = "tabs"; body.appendChild(bar);
+  const tabbar = mk("div"); tabbar.id = "tabbar"; body.appendChild(tabbar);   // the strip's scrolling bar
+  const bar = mk("div"); bar.id = "tabs"; tabbar.appendChild(bar);
   let focused: any = null, activeId = "a";
   const doc: any = {
     body, focusInWindow: true, hasFocus() { return doc.focusInWindow; },
@@ -146,26 +164,32 @@ function menuPage() {
   const prev = { document: g.document, window: g.window };
   g.document = doc; g.window = win;
   return {
-    doc, win, body, bar,
-    /** renderTabs on a push: every tab node is replaced, so a node held from before is detached */
+    doc, win, body, tabbar, bar,
+    /** renderTabs on a push: every tab node is replaced, so a node held from before is detached; a tab's row is its index */
     strip(ids: string[]): any[] {
       for (const t of bar.children.slice()) t.remove();
-      return ids.map((id) => { const t = mk("div"); t.className = "tab"; t.dataset.id = id; t.tabIndex = 0; bar.appendChild(t); return t; });
+      return ids.map((id, i) => { const t = mk("div"); t.className = "tab"; t.dataset.id = id; t.tabIndex = 0; defineHidden(t, "_top", i * ROW); bar.appendChild(t); return t; });
     },
     activeId: () => activeId,
-    /** render.ts's focusActiveTab, its first rung: the active tab's node in the strip as it stands NOW */
-    focusActiveTab() { const t = bar.children.find((c: any) => c.dataset.id === activeId); if (t) t.focus(); },
+    /** render.ts's focusActiveTab, its first rung: the active tab's node in the strip as it stands NOW, focused with the
+     *  caller's options (the lift hands the callback's through) */
+    focusActiveTab(opts?: FocusOptions) { const t = bar.children.find((c: any) => c.dataset.id === activeId); if (t) t.focus(opts); },
+    /** the last focus() on one of the page's nodes: the node and the options it was given */
+    lastFocus() { return focusCalls[focusCalls.length - 1]; },
     /** a key dispatched at `node`, bubbling up the parents as the DOM's does (the builder's document-capture listeners are
      *  fired through doc.fire, the capture phase) */
     key(node: any, key: string) { const ev = { key, preventDefault() {}, stopPropagation() {} }; for (let p = node; p; p = p.parentNode) for (const fn of ((p._stacks && p._stacks.keydown) || []).slice()) fn(ev); },
     escape() { doc.fire("keydown", { key: "Escape", preventDefault() {} }); },   // the builder's Escape: its document-capture onKey
+    /** a press on `node`: the builder's document-capture pointerdown, a dismissal when the press is outside the card */
+    press(node: any) { doc.fire("pointerdown", { target: node }); },
     restore() { closeContextMenu(); g.document = prev.document; g.window = prev.window; },
   };
 }
 type Page = ReturnType<typeof menuPage>;
 
 /** render.ts's two close callbacks, lifted from the source by their anchors and evaluated against the page (the real
- *  contextMenuOpen, so they read the builder's own state; the page's focusActiveTab and document). */
+ *  contextMenuOpen, so they read the builder's own state; the page's focusActiveTab, given the options the callback
+ *  passes, and document). */
 function liftCloseCallbacks(page: Page): { onTabMenuClosed: () => void; onSelectionMenuClosed: () => void; setCard: (m: unknown) => void; card: () => unknown } {
   const RENDER = readWebview("render.ts");
   const a = RENDER.indexOf("\nfunction onTabMenuClosed() {");
@@ -175,7 +199,7 @@ function liftCloseCallbacks(page: Page): { onTabMenuClosed: () => void; onSelect
   const f = new Function("contextMenuOpen", "focusActiveTab", "document",
     "let ctxMenuEl = null, tagsFlyNewInput = null, tabMenuViewsHook = () => {};\n" + js +
     "\nreturn { onTabMenuClosed, onSelectionMenuClosed, setCard: (m) => { ctxMenuEl = m; }, card: () => ctxMenuEl };");
-  return f(contextMenuOpen, () => page.focusActiveTab(), page.doc);
+  return f(contextMenuOpen, (opts?: FocusOptions) => page.focusActiveTab(opts), page.doc);
 }
 const openTabMenu = (page: Page, onClose: () => void): any => {
   const menu = menuCard();
@@ -185,15 +209,18 @@ const openTabMenu = (page: Page, onClose: () => void): any => {
 
 test("render.ts: the tab menu's close callback puts the focus on the active tab when the card holds it or it fell to the body, with the document focused; the selection menu's forgets the card and moves nothing", () => {
   const R = readWebview("render.ts");
-  assert.match(R, /function onTabMenuClosed\(\) \{\s*\n\s*ctxMenuEl = null;\s*\n\s*tagsFlyNewInput = null;\s*\n\s*tabMenuViewsHook = \(\) => \{\};\s*\n\s*const card = contextMenuOpen\(\), active = document\.activeElement;\s*\n\s*if \(document\.hasFocus\(\) && \(\(card && card\.contains\(active\)\) \|\| active === document\.body\)\) focusActiveTab\(\);\s*\n\}/,
-    "the three forgets first (the pins on them hold), then the refocus: the builder's own card (contextMenuOpen, still the card when the callback runs), the card holds the focus or it fell to the body, the document has the focus");
+  assert.match(R, /function onTabMenuClosed\(\) \{\s*\n\s*ctxMenuEl = null;\s*\n\s*tagsFlyNewInput = null;\s*\n\s*tabMenuViewsHook = \(\) => \{\};\s*\n\s*const card = contextMenuOpen\(\), active = document\.activeElement;\s*\n\s*if \(document\.hasFocus\(\) && \(\(card && card\.contains\(active\)\) \|\| active === document\.body\)\) focusActiveTab\(\{ preventScroll: true \}\);\s*\n\}/,
+    "the three forgets first (the pins on them hold), then the refocus: the builder's own card (contextMenuOpen, still the card when the callback runs), the card holds the focus or it fell to the body, the document has the focus; taken with preventScroll, since the callback runs inside a dismissing pointerdown (the pressed-tab case below)");
+  assert.match(R, /function focusActiveTab\(opts\?: FocusOptions\) \{\s*\n\s*const bar = document\.getElementById\("tabs"\);\s*\n\s*const tab = bar\?\.querySelector\(`\.tab\[data-id="\$\{activeId\}"\]`\) as HTMLElement \| null;\s*\n\s*if \(tab\) \{ tab\.focus\(opts\); return; \}\s*\n(?:\s*\/\/[^\n]*\n)*\s*const home = activeId \? homeSectionOf\(lastStripItems, activeId\) : null;\s*\n\s*if \(!home \|\| home\.name === null \|\| !bar\) return;\s*\n\s*Array\.from\(bar\.querySelectorAll<HTMLElement>\("\.tab-group-head"\)\)\.find\(\(h\) => h\.dataset\.group === home\.name\)\?\.focus\(opts\);\s*\n\}/,
+    "the options ride both rungs of focusActiveTab's ladder: the tab, else its section's head");
+  assert.equal(R.split("focusActiveTab({ preventScroll: true })").length - 1, 1, "one caller holds the scroll, the tab menu's close; the arrows, a pick and the send-time hop scroll the tab into view as before");
   assert.match(R, /function onSelectionMenuClosed\(\) \{\s*\n\s*ctxMenuEl = null;\s*\n\}/, "the selection menu's close is the forget alone");
   assert.match(R, /import \{[^}]*\bcontextMenuOpen\b[^}]*\} from "\.\/ctx-menu";/, "render.ts reads the open card from the builder");
   assert.equal(R.split("{ onClose: onTabMenuClosed }").length - 1, 1, "one caller of the tab menu's callback: showTabMenu");
   assert.equal(R.split("{ onClose: onSelectionMenuClosed }").length - 1, 1, "one caller of the selection menu's: showSelectionMenu");
 });
 
-test("executed: Escape on the tab menu after a push rebuilt the strip puts the focus on the active tab, so ArrowRight still switches sessions (2026-09-17 review, correctness-1)", () => {
+test("executed: Escape on the tab menu after a push rebuilt the strip puts the focus on the active tab, taken with preventScroll, so ArrowRight still switches sessions (2026-09-17 review, correctness-1; round 2, tests-1)", () => {
   const page = menuPage();
   try {
     const [, b] = page.strip(["a", "b"]);   // a is the active session; the menu opens from a right-click on b's tab
@@ -207,8 +234,40 @@ test("executed: Escape on the tab menu after a push rebuilt the strip puts the f
     page.escape();
     assert.ok(contextMenuOpen() === null && cb.card() === null, "the card is closed and forgotten");
     assert.ok(page.doc.activeElement === a2, "the focus is on the active tab's fresh node, not the body: " + describeNode(page.doc.activeElement));
+    assert.ok(page.lastFocus().node === a2, "the last focus() was the active tab's: " + describeNode(page.lastFocus().node));
+    assert.deepEqual(page.lastFocus().opts, { preventScroll: true }, "taken with preventScroll: the same callback runs inside a dismissing pointerdown (the pressed-tab case below)");
     page.key(page.doc.activeElement, "ArrowRight");
     assert.equal(page.activeId(), "b", "an arrow from there reaches the strip's handler and switches the session");
+  } finally { page.restore(); }
+});
+
+test("executed: a press on another tab that dismisses the menu after a push rebuilt the strip leaves the bar's scrollTop where it was, so the pressed tab stays under the pointer and its click lands (review round 2, tests-1 and ui-1)", () => {
+  // the failure: the callback runs inside the dismissing pointerdown, and a plain focus() on the active tab (its row out of
+  // view) scrolled the bar before the release; the mouseup hit the tab that had scrolled in, the click fired on #tabs where
+  // the delegate names no tab, and the press selected nothing (both engines, real geometry, per the round's refuters)
+  const page = menuPage();
+  try {
+    // twelve tabs, one per row: the active tab a is in the top row, the bar is scrolled so rows 8 to 12 are in view and
+    // a's row is not; the menu opens from a right-click on the last tab, then a push rebuilds the strip under it
+    const ids = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
+    const first = page.strip(ids);
+    page.tabbar.scrollTop = 200;
+    first[11].focus();
+    assert.equal(page.tabbar.scrollTop, 200, "the right-clicked tab is in view: its focus scrolls nothing");
+    const cb = liftCloseCallbacks(page);
+    cb.setCard(openTabMenu(page, cb.onTabMenuClosed));
+    const fresh = page.strip(ids);
+    assert.ok(!first[11].isConnected && contextMenuOpen() !== null, "the opener is detached and the menu is still open");
+    // the press on a visible tab: the builder's pointerdown capture closes the card, whose callback refocuses the active tab
+    page.press(fresh[9]);
+    assert.ok(contextMenuOpen() === null && cb.card() === null, "the press closed the card");
+    assert.equal(page.tabbar.scrollTop, 200, "the bar did not move under the pointer: the refocus held the scroll");
+    assert.ok(page.doc.activeElement === fresh[0], "the focus is on the active tab's fresh node: " + describeNode(page.doc.activeElement));
+    assert.deepEqual(page.lastFocus().opts, { preventScroll: true }, "taken with preventScroll");
+    // the control: the arrows' plain focusActiveTab() does scroll the active tab's row into view, so the fake sees the scroll
+    // the press case holds (and the trade the fix accepts: after an Escape the ring may sit off screen until the first arrow)
+    page.focusActiveTab();
+    assert.equal(page.tabbar.scrollTop, 0, "a plain focus() scrolls the bar to the active tab's row");
   } finally { page.restore(); }
 });
 

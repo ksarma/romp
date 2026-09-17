@@ -117,7 +117,7 @@ function bundlePane(): string {
     entryPoints: [path.join(UI, "fleet.ts")], bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
     nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
-  assert.equal(r.outputFiles.length, 1, "the fleet entry bundles to one output (fleet.ts imports no sheet; fleet-pane.css is the build's own entry)");
+  assert.equal(r.outputFiles.length, 1, "the Sessions pane's entry (fleet.ts) bundles to one output (it imports no sheet; fleet-pane.css is the build's own entry)");
   paneBundle = r.outputFiles[0].text as string;
   return paneBundle;
 }

@@ -7662,13 +7662,20 @@ function dismissTabMenu() {
 // its section head), and only while this document has the focus: a close that followed the focus elsewhere (another frame,
 // a field outside, the window's blur) moves nothing, and a close that put the focus back on a standing opener moves nothing
 // either. Read before the card is removed (closeContextMenu runs this callback first), so "the card holds it" is the
-// detached-opener case; the body arm covers a close that removed the card first
+// detached-opener case; the body arm covers a close that removed the card first. WITHOUT A SCROLL: this callback runs
+// inside the pointerdown that dismisses the menu, and a plain focus() scrolls the strip's bar (#tabbar, capped and
+// scrolling on the desktop) to the active tab's row; with that row out of view the bar jumped under the pointer before
+// the release, the mouseup hit the tab that had scrolled in, the click fired on #tabs where the delegate names no tab,
+// and the press selected nothing (the click-safety rule in ui/CLAUDE.md; the fold's review round 2, 2026-09-17, both
+// engines). So the focus is taken with preventScroll, as the builder's own return to a standing opener and the Sessions
+// pane's row menu close (fleet.ts) take it. The trade: after Escape with a push the ring may sit off screen until the
+// first arrow, whose plain focusActiveTab() scrolls the new tab in
 function onTabMenuClosed() {
   ctxMenuEl = null;
   tagsFlyNewInput = null;
   tabMenuViewsHook = () => {};
   const card = contextMenuOpen(), active = document.activeElement;
-  if (document.hasFocus() && ((card && card.contains(active)) || active === document.body)) focusActiveTab();
+  if (document.hasFocus() && ((card && card.contains(active)) || active === document.body)) focusActiveTab({ preventScroll: true });
 }
 // the selection menu's close forgets its card and moves no focus: the builder hands the focus back to its opener when one
 // stands, and a right-click on the transcript's text leaves none, so the focus stays where the close found it (never the
@@ -8850,14 +8857,18 @@ function onTabKey(e: KeyboardEvent) {
     focusComposerOrAsk();
   }
 }
-function focusActiveTab() {
+// Puts the focus on the active tab: its node in the strip, else (folded away) its section's head. `opts` reaches the
+// focus() call on either rung. The arrow keys, a pick and the send-time hop pass none, so the focused tab scrolls into view
+// as a focus() does; the tab menu's close passes preventScroll (onTabMenuClosed says why: it runs inside the pointerdown
+// that dismisses the menu, and a scroll there moves the pressed tab from under the pointer)
+function focusActiveTab(opts?: FocusOptions) {
   const bar = document.getElementById("tabs");
   const tab = bar?.querySelector(`.tab[data-id="${activeId}"]`) as HTMLElement | null;
-  if (tab) { tab.focus(); return; }
+  if (tab) { tab.focus(opts); return; }
   // the active tab is folded away under its section: the header is its stand-in (tab-groups.ts)
   const home = activeId ? homeSectionOf(lastStripItems, activeId) : null;
   if (!home || home.name === null || !bar) return;
-  Array.from(bar.querySelectorAll<HTMLElement>(".tab-group-head")).find((h) => h.dataset.group === home.name)?.focus();
+  Array.from(bar.querySelectorAll<HTMLElement>(".tab-group-head")).find((h) => h.dataset.group === home.name)?.focus(opts);
 }
 /** Open a section that puts a folded-away tab on screen (a session pick names the tab, so its tab must be on
  *  screen). Per holder, since a session under several tags has a copy under each and every copy's fold and hide

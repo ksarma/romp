@@ -243,8 +243,8 @@ test("focus never falls to <body>: a submit parks it on the card before disablin
   assert.match(close, /const tab = bar\?\.querySelector\(`\.tab\[data-id="\$\{sid\}"\]`\) as HTMLElement \| null;\n\s*if \(tab\) \{ tab\.focus\(\); return; \}/);
   // the tab bar's own refocus addresses a tab by #tabs .tab[data-id] and falls back to the section header when
   // the active tab is folded away (tab-groups.ts): the ladder the close borrows
-  assert.match(RENDER, /function focusActiveTab\(\) \{\n\s*const bar = document\.getElementById\("tabs"\);\n\s*const tab = bar\?\.querySelector\(`\.tab\[data-id="\$\{activeId\}"\]`\) as HTMLElement \| null;\n\s*if \(tab\) \{ tab\.focus\(\); return; \}/,
-               "the premise: the tab bar's own refocus addresses a tab by #tabs .tab[data-id]");
+  assert.match(RENDER, /function focusActiveTab\(opts\?: FocusOptions\) \{\n\s*const bar = document\.getElementById\("tabs"\);\n\s*const tab = bar\?\.querySelector\(`\.tab\[data-id="\$\{activeId\}"\]`\) as HTMLElement \| null;\n\s*if \(tab\) \{ tab\.focus\(opts\); return; \}/,
+               "the premise: the tab bar's own refocus addresses a tab by #tabs .tab[data-id] (its options, the tab menu's close's preventScroll, ride the focus)");
 });
 
 test("a refusal marks the field only when IT sent the value: the caller says so (fromField); a pick of the current emoji's cell and Clear on an emptied field are not typed (review round 2)", () => {
@@ -283,7 +283,7 @@ test("a close with the tab gone from the strip (closed from another client, or r
   assert.doesNotMatch(close, /\?\.focus\(\)/, "no optional-chained focus that silently does nothing");
   // the same two fallbacks the tab bar uses: focusActiveTab lands on the header when the active tab is folded
   // away, and renderTabs lands on the active tab when the header a focused node sat in is gone
-  assert.match(RENDER, /const home = activeId \? homeSectionOf\(lastStripItems, activeId\) : null;\n\s*if \(!home \|\| home\.name === null \|\| !bar\) return;\n\s*Array\.from\(bar\.querySelectorAll<HTMLElement>\("\.tab-group-head"\)\)\.find\(\(h\) => h\.dataset\.group === home\.name\)\?\.focus\(\);/);
+  assert.match(RENDER, /const home = activeId \? homeSectionOf\(lastStripItems, activeId\) : null;\n\s*if \(!home \|\| home\.name === null \|\| !bar\) return;\n\s*Array\.from\(bar\.querySelectorAll<HTMLElement>\("\.tab-group-head"\)\)\.find\(\(h\) => h\.dataset\.group === home\.name\)\?\.focus\(opts\);/, "the second rung takes the same options");
   assert.match(RENDER, /if \(h && h\.tabIndex >= 0\) [^\n]*\.focus\(\); else focusActiveTab\(\);/);
   assert.match(RENDER, /head\.dataset\.group = name;[^]*?head\.tabIndex = 0;/, "a section head is focusable and carries its name in data-group");
   // executed, on the real planner: the two ways the tab leaves the strip while the card stays up
