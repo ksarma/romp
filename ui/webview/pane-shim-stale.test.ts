@@ -102,7 +102,10 @@ class Harness {
         visibilityState: "visible", getElementById: (id: string) => (id === "romp-stale-self" ? h.liveBar : null),
         // enough of a DOM for a standalone page's bar (selfBar): elements that take children and text, a body that holds ONE
         // bar at a time (the id slot), and removal
-        createElement: () => { const el: any = { style: {}, dataset: {}, children: [] as any[], textContent: "", appendChild(c: any) { el.children.push(c); }, remove() { if (h.liveBar === el) h.liveBar = null; }, get firstChild() { return el.children[0] || null; } }; return el; },
+        // hideEdges(el): a fake element's enumerable DOM edges (the children array, the firstChild accessor) make a failing assert's
+        // diff walk the whole tree (the fake-DOM rule, ui/test-dom-shim.ts); hidden, the edges stay reachable, so the shim's firstChild
+        // write and the body fake's children and dataset reads below still land
+        createElement: () => { const el: any = { style: {}, dataset: {}, children: [] as any[], textContent: "", appendChild(c: any) { el.children.push(c); }, remove() { if (h.liveBar === el) h.liveBar = null; }, get firstChild() { return el.children[0] || null; } }; return hideEdges(el); },
         body: { appendChild: (b: any) => { h.liveBar = b; h.bars.push({ text: (b.children[0] || {}).textContent, kind: b.dataset.kind, buttons: b.children.slice(1).map((c: any) => c.textContent) }); } },
       },
       localStorage: { getItem: () => null, setItem: () => {} },

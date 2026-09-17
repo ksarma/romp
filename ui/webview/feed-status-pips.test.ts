@@ -25,7 +25,13 @@ const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kern
 test("the kernel publishes the unreadable-state list, and no ready list", () => {
   assert.ok(KERNEL.includes("def _state_unknown_names(alive, live_map, working, awaiting):"));
   assert.ok(KERNEL.includes('"stateUnknown": _state_unknown_names(alive, live_map, working, awaiting)'));
-  const feedSrc = KERNEL.slice(KERNEL.indexOf("def build_feed"), KERNEL.indexOf("def _push_feed"));
+  // the slice ends at the next top-level def after build_feed; both anchors are read by name and must be found
+  // first (an absent one reads -1 and the slice runs to the end of the file, so the pin below goes over-broad)
+  const feedStart = KERNEL.indexOf("def build_feed"), feedEnd = KERNEL.indexOf("def _state_intervals(");
+  assert.ok(feedStart > -1, "the start anchor def build_feed is in kernel.py");
+  assert.ok(feedEnd > -1, "the end anchor def _state_intervals( is in kernel.py (the next top-level def after build_feed)");
+  assert.ok(feedEnd > feedStart, "the end anchor follows the start anchor");
+  const feedSrc = KERNEL.slice(feedStart, feedEnd);
   assert.ok(!/"ready":\s*ready/.test(feedSrc), "a quiet session is not enumerated — blank already says it");
 });
 

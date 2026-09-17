@@ -648,7 +648,13 @@ test("pinned: the wiring the lifted slices cannot reach: showActive's branch, th
   assert.match(SHOW, /if \(av && snapKeep && snapKeep\.v !== av\) \{\s*\n\s*snapKeep\.v\.scrollTop = snapKeep\.scrollTop; snapKeep\.v\.stick = snapKeep\.stick;\s*\n\s*snapKeep = \{ v: av, scrollTop: av\.scrollTop, stick: av\.stick \};\s*\n\s*\}/, "the active changed under the view (the session being read closed): the survivor's place is held instead");
   assert.match(SHOW, /if \(ta\) \{ ta\.disabled = true; ta\.placeholder = "Pick a session above to write to it"; \}/);
   assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? liveSession\(activeId\) : null;/, "a transcript showing: the view hidden, its place written back");
-  const loading = SHOW.slice(SHOW.indexOf("if (activeId && (tabMeta.has(activeId) || hostOf(activeId))) {"), SHOW.indexOf("} else if (!empty) {"));
+  // the loading branch of the no-session path, to the else branch that follows it (searched from the branch's own start:
+  // a bare `} else {` is not unique in render.ts). Both anchors are read by name and must be found first: an absent one
+  // reads -1 and the slice goes vacuous (the old end, `} else if (!empty) {`, left showActive and the slice ran to SHOW's end)
+  const loadAt = SHOW.indexOf("if (activeId && (tabMeta.has(activeId) || hostOf(activeId))) {"), loadEnd = SHOW.indexOf("} else {", loadAt);
+  assert.ok(loadAt > -1 && loadEnd > loadAt,
+    "the loading branch's anchors (if (activeId && (tabMeta.has(activeId) || hostOf(activeId))) { and its } else {) are in showActive's slice, in that order: an absent one reads -1 and the slice goes vacuous");
+  const loading = SHOW.slice(loadAt, loadEnd);
   assert.match(loading, /if \(ta\) \{ ta\.disabled = false; setComposerAskMode\(\); \}/, "a pick that lands on a still-loading tab takes the box back from the view's disabled state (the placeholder through its one owner, 2026-09-10)");
   assert.match(RENDER, /if \(snapView\) \{ sl\.replaceChildren\(\); return; \}/, "no session's statusline chip under a section list");
   assert.match(RENDER, /if \(!activeId \|\| skeletonTabs\.ids\.has\(activeId\) \|\| !liveAsks\.has\(activeId\) \|\| snapView\) \{/, "no live ask card under it");

@@ -27,6 +27,17 @@ const VIEWS = ui("webview", "session-views.ts");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
 
+// the strip's drop handler, read by name at BOTH ends (the tab-keys.test.ts rule): an absent anchor reads -1 and slice(at, -1)
+// runs to the file's end minus one character, which is what the four drop cases below read once the handler's old end literal
+// (`tabDragCommitted = true; }`) went with the reorderTo commit (2026-09-10). The handler is the last statement of its IIFE and
+// no top-level function follows it in render.ts, so the next top-level block's first line (the pinned-notes comment,
+// pinned-notes.test.ts's anchor) bounds it.
+function dropHandler(): string {
+  const at = RENDER.indexOf('tabs.addEventListener("drop"'), end = RENDER.indexOf("// PINNED NOTES (the user 2026-09-08): the strip rebuilds");
+  assert.ok(at > -1 && end > at, "both anchors are in render.ts, the strip's drop handler before the pinned-notes block (an absent one reads -1 and the slice goes vacuous)");
+  return RENDER.slice(at, end);
+}
+
 // the notes-api demo world: web + api in "infra", tests in "qa", a loose one; api ALSO in qa
 const V = {
   active: "all",
@@ -396,7 +407,7 @@ test("headers are click-safe: data-act on the node, the action on the stable #ta
 test("dragging a header reorders tagOrder through the views path — the store the timeline's pill drag writes (source pins)", () => {
   assert.match(RENDER, /head\.draggable = !settings\.tabsLocked;/, "a header drags unless the tabs are locked (T395)");
   assert.match(RENDER, /draggedGroup = name;/);
-  const drop = RENDER.slice(RENDER.indexOf('tabs.addEventListener("drop"'), RENDER.indexOf("tabDragCommitted = true;"));
+  const drop = dropHandler();
   assert.match(drop, /if \(draggedGroup\) \{/);
   assert.match(drop, /postTagOrder\(reorderTagOrder\(viewTagUnion\(effViews\(\)\)\.map\(\(u\) => u\.name\), draggedGroup, to\)\);/,
     "the FULL union order as a LENS write: the store's blob plus tagOrder, never the pending copy; setTimelineViews underneath (postTagOrder → postLens)");
@@ -500,7 +511,7 @@ test("executed + pinned: with stripGroupRows off (the fork default) the rebuild 
   // boundary sectionHeadOf reads and the drop's group edge), titled as before, no aria noise
   const sep = RENDER.slice(RENDER.indexOf("function makeTrailSep("), RENDER.indexOf("function sectionHeadOf("));
   assert.match(sep, /const sep = el\("div", "tab-group-sep"\);\s*\n\s*sep\.title = "sessions in no tag";\s*\n\s*return sep;/);
-  const drop = RENDER.slice(RENDER.indexOf('tabs.addEventListener("drop"'), RENDER.indexOf("tabDragCommitted = true; }"));
+  const drop = dropHandler();
   assert.match(drop, /const edge = \(n: Element\) => n\.classList\.contains\("tab-group-head"\) \|\| n\.classList\.contains\("tab-group-break"\) \|\| n\.classList\.contains\("tab-group-sep"\);/,
     "the inline divider bounds the trail for the drop's in-group neighbour walk, as a break does under the setting");
   // a gear flip repaints at once: the setting rides the strip's rebuild signature, and the settings listener calls renderTabs
@@ -574,7 +585,7 @@ test("executed: FOLDED NEIGHBOURS SHARE A ROW — two folded groups side by side
 test("executed: the drop's in-group neighbour walk stops at the trail's divider, as it stops at a break or a header", () => {
   // the walk's own source, lifted from the drop handler and run over a fake sibling chain; the replaces strip the
   // body's TypeScript annotations, leaving plain JS for new Function
-  const drop = RENDER.slice(RENDER.indexOf('tabs.addEventListener("drop"'), RENDER.indexOf("tabDragCommitted = true; }"));
+  const drop = dropHandler();
   const src = drop.slice(drop.indexOf("const own = "), drop.indexOf("// committed only when"))
     .replace(/: \(x: Element\) => Element \| null/g, "").replace(/\): HTMLElement \| null =>/g, ") =>")
     .replace(/ as HTMLElement \| null/g, "").replace(/\(n as HTMLElement\)/g, "n")
@@ -2012,7 +2023,7 @@ test("the tab drag moves THIS copy and reorders within its group's neighbours (T
   assert.equal((RENDER.match(/const dragged = draggedEl && draggedEl\.isConnected \? draggedEl : null;/g) || []).length, 2, "dragover and drop both move the very copy under the pointer");
   assert.doesNotMatch(RENDER, /tabs\.querySelector<HTMLElement>\(`\.tab\[data-id="\$\{CSS\.escape\(draggedId\)\}"\]`\)/, "never the first tab wearing the id");
   // the drop's neighbours skip the session's own copy in the group next door — reorderTo against itself moves nothing
-  const drop = RENDER.slice(RENDER.indexOf('tabs.addEventListener("drop"'), RENDER.indexOf("tabDragCommitted = true; }"));
+  const drop = dropHandler();
   assert.match(drop, /const own = \(n: Element \| null\) => !!n && \(n as HTMLElement\)\.dataset\?\.id === draggedId;/);
   // the neighbours come from the dragged copy's OWN group first: the walk stops at a header, a row break or
   // the trail's inline divider (the fork flows inline by default, the user 2026-09-08: the divider bounds the
@@ -2056,8 +2067,9 @@ test("the tab menu speaks for the right-clicked copy's group: Move to drops THAT
   // function, homeNow, read by that row's refresh and click and by the Tags flyout on every build of its own, so the Move-to and
   // Show-when-folded rows still speak for the copy's group after a move or a remove inside the flyout (the tab menu review's
   // round 2 made it the MOVED copy's group: moveUnion writes copyNow, and a named copy never falls to the first holder)
-  const menuAt = RENDER.indexOf("function showTabMenu(");
-  const menu = RENDER.slice(menuAt, RENDER.indexOf("document.body.appendChild(menu);", menuAt));
+  const menuAt = RENDER.indexOf("function showTabMenu("), menuEnd = RENDER.indexOf("ctxMenuEl = showMenuCard(menu,", menuAt);   // the builder's show, the menu's last statement (the body append went with the builder tidy; the anchor six sibling tests use)
+  assert.ok(menuAt > -1 && menuEnd > menuAt, "both anchors are in render.ts, showTabMenu before its showMenuCard call (an absent one reads -1 and the slice runs on into renderCommentPopover)");
+  const menu = RENDER.slice(menuAt, menuEnd);
   assert.match(menu, /const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*if \(!readTabGroups\(\)\.on\) return undefined;/);
   assert.equal(menu.split("homeNow()").length - 1, 5, "the Hide tab row's gate (rowHome, shared by its refresh and its click; round 6 of the tab menu review), the flyout's per-build read, the flyout's signature, Move to's source at the click (round 8) and the pin row's home at the click (round 9)");
   assert.ok(menu.indexOf("const homeNow = ") < menu.indexOf("const home = homeNow();   // read per build") && menu.indexOf("const homeNow = ") < menu.indexOf('"ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"'),
