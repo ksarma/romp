@@ -1217,18 +1217,22 @@ MOCK
     # verb does, says the message may already have landed, and offers NO retry command: a caller that
     # retried on the old exit 1 re-sent a delivered message every time. Upstream's -m leg still exits 1
     # with the retry line, so a fold that takes its text goes red here. The stub times out /send only,
-    # and the log's /new before /send proves the timeout hit the SECOND leg, not the spawn.
+    # and the log's /new before /send proves the timeout hit the SECOND leg, not the spawn. The knob is
+    # set to 1 s so the sentence's "within 1s" and curl's -m 1 on the /send call pin the knob's read
+    # (the default 10 s would print the same sentence with the knob never read).
     _stub_curl
     touch "$MOCK_LOG"
     export ROMP_SERVE_TOKEN=testtok
     export MOCK_CURL_SEND_TIMEOUT=1
+    export ROMP_KERNEL_HTTP_TIMEOUT_S=1
     run run_romp new -m "look into the flaky test" ideabox
     [ "$status" -eq 3 ]
-    [[ "$output" == *"took the first message but did not answer within"* ]]
+    [[ "$output" == *"took the first message but did not answer within 1s"* ]]
     [[ "$output" == *"may already have delivered the message"* ]]
     [[ "$output" != *"Retry:"* ]]
     [[ "$output" != *"did NOT land"* ]]
     grep -q '/send' "$MOCK_LOG"
+    grep -q -- ' -m 1 .*/send' "$MOCK_LOG"
     [ "$(grep -n '/new' "$MOCK_LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n '/send' "$MOCK_LOG" | head -1 | cut -d: -f1)" ]
 }
 

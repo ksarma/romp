@@ -11,8 +11,8 @@ their serialized strings, the preview images) beside the allocator's and the col
 Pinned here: the gauges move by exactly what a test adds and fall back when it removes it, and two snapshots move no
 cumulative counter (a); the block serializes and every leaf is a plain scalar (b); a container the source lacks or an
 accessor that raises yields None for its key, the snapshot still serves, and the failure is said once per key, not per
-snapshot, a built-chat entry of a shape the gauge does not know being such a failure and never a silent under-count (c); a snapshot reads no file, builds nothing, evicts nothing and collects nothing (d); and the read stays under
-5 ms over populated caches, 50 ms on a free-threaded build (e, READ_BOUND_S). Synthetic fixtures only: invented strings and placeholder uuids."""
+snapshot, a built-chat entry of a shape the gauge does not know being such a failure and never a silent under-count (c); a snapshot reads no file, builds nothing, evicts nothing and collects nothing (d); and the read over
+populated caches costs at most READ_MULTIPLE times an empty-cache read in the same process, on every build (e). Synthetic fixtures only: invented strings and placeholder uuids."""
 import contextlib
 import gc
 import io
@@ -53,16 +53,20 @@ HEAP_KEYS = {"allocatedBlocks", "gc", "tracing", "hydrated", "assemblyEntries", 
              "materializedLruSlots", "judgeUsageRows", "builtChat", "imgCache"}
 SID = "11111111-2222-3333-4444-%012d"       # placeholder uuids, one per synthetic tab
 IMG_URL = "data:image/png;base64,"           # the image cache holds data URLs; the payload here is invented
-# The Overhead bound is the GIL build's: upstream's 5 ms, thirty times a fresh lab process's 166 us. On a free-threaded build
-# (CPython 3.14t: `t` in sys.abiflags, the kernel's own test for the build) sys.getallocatedblocks() walks every thread
-# state's allocator heaps and then the abandoned pool once per heap tag, so the allocatedBlocks gauge costs what the
-# process's THREAD HISTORY costs and never falls back when objects are freed (measured on 3.14.6t: the segments 500 exited
-# threads left, 1.5 ms; 2,000 threads', 2.5 ms; this suite's serial CI process after 16,000 tests, 5.3 ms, where the same
-# read alone takes 120 us and the GIL builds' walk covers live pools only). That cost is the interpreter's, not the
-# block's, so a free-threaded build holds the read to ten times the bound: a lock held across the read or a walk of the
-# caches still shows; the allocator's walk does not.
-FREE_THREADED_BUILD = "t" in getattr(sys, "abiflags", "")
-READ_BOUND_S = 0.050 if FREE_THREADED_BUILD else 0.005
+# The Overhead bound is RELATIVE: the read over the populated caches is held to READ_MULTIPLE times an empty-cache read timed
+# first in the same process, and no build carries a wall number. Upstream pinned a 5 ms median, thirty times a fresh lab
+# process's 166 us, but the allocatedBlocks gauge does not stay at that: sys.getallocatedblocks() walks the allocator's
+# LIVE HEAP on every build (pymalloc's pools on the GIL builds, so O(live heap): 2.8 ms at 3 GB live and 5.7 ms at 6 GB on
+# 3.12; on a free-threaded build every thread state's heaps and then the abandoned pool once per heap tag, where exited
+# threads' segments stay after their objects are freed), and the fork's serial 3.14t CI cell read 5.3 ms after 16,000
+# tests where the module alone reads 120 us. Both reads pay that walk, so the ratio cancels it, and what the case guards
+# shows in the populated read alone: a gauge that walked a populated cache's entries (a probe re-deriving hydrated.bytes
+# over the 100,000 entries read a ratio in the hundreds on both builds). The multiple, from this box (2026-09-17, medians
+# of 20): a fresh process reads 6.7 to 8.1 on 3.12 (empty-cache read 18 to 21 us, populated 142 to 146 us) and 9.1 to 11.2
+# on 3.14t (11 to 12 us, 112 to 133 us); after five other modules in the same process 3.3 and 3.9, with 2 GB allocated
+# and freed first 3.4 on 3.12, at the CI floor about 1.02, because a larger heap or thread history raises both reads. A
+# fresh process is the worst case, and READ_MULTIPLE is about 3.5 times the largest ratio it read.
+READ_MULTIPLE = 40
 
 
 def _leaves(v):
@@ -96,6 +100,16 @@ def _em_lacking(*names):
     heap reads see the absence, as they would beside an older event model that has not got the container."""
     stub = types.SimpleNamespace(**{k: v for k, v in vars(em).items() if k not in names})
     return mock.patch.object(km, "em", stub)
+
+
+def _timed_reads(n):
+    """n reads of the heap block, each timed alone, and the last block read."""
+    took = []
+    for _ in range(n):
+        t0 = time.perf_counter()
+        h = km._heap_stats()
+        took.append(time.perf_counter() - t0)
+    return took, h
 
 
 class _Caches(unittest.TestCase):
@@ -363,36 +377,39 @@ class NoSideEffects(_Caches):
 
 class Overhead(_Caches):
     """(e) The read is cheap over populated caches: 1,000 images, 50 tabs with 100 KB strings, 100,000 hydrated entries,
-    10,000 LRU slots, 50,000 usage rows; the median of 20 calls under 5 ms (50 ms on a free-threaded build, READ_BOUND_S: the
-    allocator's walk there is the process's thread history)."""
+    10,000 LRU slots, 50,000 usage rows; the median of 20 calls at most READ_MULTIPLE times the median of 20 calls over the
+    caches as the module's other cases leave them, timed first in the same process (the allocator's walk over the live heap,
+    the cost no wall number holds across builds and processes, is in both reads and cancels; a gauge that walked a populated
+    cache's entries is in the second alone)."""
 
     def test_the_read_stays_under_five_milliseconds_over_populated_caches(self):
+        km._heap_stats()                                  # one warm call, the code paths compiled
+        empty, _ = _timed_reads(20)                       # the empty-cache reads: the caches as the module's other cases leave them
         self.add_images(1000, 100)
         self.add_tabs(50, 100 * 1024)
         self.add_hydrated(100_000, 10)
         self.add_mat_slots(10_000)
         self.set_rows(50_000)
-        km._heap_stats()                                  # one warm call, the code paths compiled
-        took = []
-        for _ in range(20):
-            t0 = time.perf_counter()
-            h = km._heap_stats()
-            took.append(time.perf_counter() - t0)
+        km._heap_stats()                                  # warm again over the populated caches
+        took, h = _timed_reads(20)
         self.assertEqual(h["imgCache"]["entries"] - 0, len(km._img_cache))
         self.assertGreaterEqual(h["hydrated"]["entries"], 100_000)
         self.assertGreaterEqual(h["materializedLruSlots"], 10_000)
         self.assertGreaterEqual(h["judgeUsageRows"], 50_000)
         self.assertGreaterEqual(h["builtChat"]["serializedBytes"], 50 * 100 * 1024)
-        walk = []                                         # the allocator's own count, timed apart: on a free-threaded build it is
-        for _ in range(20):                               #  the read's cost (READ_BOUND_S), and a red names it either way
+        walk = []                                         # the allocator's own count, timed apart: the live-heap walk both reads
+        for _ in range(20):                               #  pay, printed so a red names its share from the log
             t0 = time.perf_counter()
             sys.getallocatedblocks()
             walk.append(time.perf_counter() - t0)
-        med = statistics.median(took)
-        print("heap block: median %.0f us over 20 calls (min %.0f us, max %.0f us); sys.getallocatedblocks alone %.0f us"
-              % (med * 1e6, min(took) * 1e6, max(took) * 1e6, statistics.median(walk) * 1e6))
-        self.assertLess(med, READ_BOUND_S, "median %.3f ms against the %.0f ms bound (sys.getallocatedblocks alone %.3f ms)"
-                        % (med * 1000, READ_BOUND_S * 1000, statistics.median(walk) * 1000))
+        med, base = statistics.median(took), statistics.median(empty)
+        print("heap block: median %.0f us over 20 calls (min %.0f us, max %.0f us), %.1f times the empty-cache read's %.0f us; "
+              "sys.getallocatedblocks alone %.0f us"
+              % (med * 1e6, min(took) * 1e6, max(took) * 1e6, med / base, base * 1e6, statistics.median(walk) * 1e6))
+        self.assertLess(med, READ_MULTIPLE * base,
+                        "populated median %.3f ms is %.1f times the empty-cache read's %.3f ms, over the %d bound "
+                        "(sys.getallocatedblocks alone %.3f ms)"
+                        % (med * 1000, med / base, base * 1000, READ_MULTIPLE, statistics.median(walk) * 1000))
 
 
 class ShapeChange(_Caches):

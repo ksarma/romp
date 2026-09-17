@@ -17,9 +17,9 @@ every later collection in the process was skipped as well (a lab reproduction: t
 collector's tallies empty and an explicit gc.collect() returning 0).
 
 Pinned: the block's keys and a fresh collector's zeros (a); a forced full collection with the hook installed counts under
-generation 2 with a positive pause (b); the deadlock regression, a helper thread allocating, then collecting, under
-the stats lock finishes (c); the split rows carry the cycle's own delta, zero for a cycle with no collection and None for a
-cycle closed without an opening mark (d); a failing callback counts an error, says the first once on stderr and raises
+generation 2 with a positive pause (b); the deadlock regression, a helper thread collecting explicitly under the stats
+lock, on every build, finishes (c); the split rows carry the cycle's own delta, zero for a cycle with no collection and None
+for a cycle closed without an opening mark (d); a failing callback counts an error, says the first once on stderr and raises
 nothing (e); the kernel-samples
 row carries the generation-2 tallies (f); main installs the hook before the boot warm (g); the reference names every
 field (h). Synthetic fixtures only."""
@@ -145,16 +145,18 @@ class LockFree(_Hooked):
     callback never waits on that lock. Under the first draft's callback (one that took self.lock) the helper thread below
     never returns: the collector runs on it, inside the locked region, and the callback blocks on the lock it holds.
 
-    The region allocates past the young threshold, the GIL build's automatic trigger, then collects explicitly, the trigger
-    every build honours: the free-threaded build's collector (3.14t) starts an automatic collection only when the young
-    count has also outgrown a quarter of the live objects and the process's memory has grown since the last one, so the
-    burst alone starts none there (CI's 3.14t cell read an empty witness list, 2026-09-17; a bare-process probe needed a
-    65k-object burst). Either collection, automatic or asked for, runs the callbacks on this thread with the lock held,
-    which is the hazard: under the first draft's callback the explicit one waits on the lock the same way."""
+    The trigger is an explicit gc.collect() inside the locked region, on every build: it runs the collector, and so the
+    callbacks, on this thread with the lock held, which is the hazard, and under the first draft's callback it waits on the
+    lock the same way. An allocation burst is not the trigger. The free-threaded build's collector (3.14t) starts an
+    automatic collection only when the young count has also outgrown a quarter of the live objects and the process's memory
+    has grown since the last one, so a burst past the young threshold starts none there (CI's 3.14t cell read an empty
+    witness list, 2026-09-17; a bare-process probe needed a 65k-object burst). The burst stays in the region because the
+    GIL builds' collector does start one on it, a second witness of the same hazard where the interpreter provides it; the
+    explicit collection is the proof the case rests on."""
 
     def test_a_collection_triggered_under_the_stats_lock_finishes(self):
         st = self.st
-        gc.collect()                                     # the young count starts near zero, so the region's own allocations cross it
+        gc.collect()                                     # the young count starts near zero (under the GIL the burst below crosses it)
         before = _total(st.snapshot())
         seen = []                                        # (thread, lock held) at each collection's start: the proof the hazard ran
 
@@ -163,14 +165,14 @@ class LockFree(_Hooked):
                 seen.append((threading.current_thread().name, st.lock.locked()))
         gc.callbacks.append(witness)
         self.addCleanup(lambda: gc.callbacks.remove(witness))
-        n = 2 * gc.get_threshold()[0] + 100              # past the young threshold whatever this interpreter's default (700 on
-                                                         #  3.12, 2000 on 3.13): under the GIL the collector runs HERE, on this
-                                                         #  thread, lock held, at the next eval-breaker check
+        n = 2 * gc.get_threshold()[0] + 100              # a burst past the young threshold (700 on 3.12, 2000 on 3.13): under the
+                                                         #  GIL it starts an automatic collection HERE too, on this thread, lock held;
+                                                         #  the free-threaded collector starts none on it (the class docstring)
         def body():
             with st.lock:
                 keep = [[i] for i in range(n)]
-                gc.collect()                             # the trigger the free-threaded collector honours too: same thread, lock
-                                                         #  still held (the class docstring names its gates)
+                gc.collect()                             # THE trigger, on every build: an explicit collection on this thread with
+                                                         #  the lock still held
             del keep
 
         t = threading.Thread(target=body, daemon=True, name="gc-under-lock")

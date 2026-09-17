@@ -118,9 +118,11 @@ const framesBeforeUndo = await page.evaluate(() => (window.__feedNotices || []).
 if (await undo.count()) {
   await undo.click(); await page.waitForSelector(sel(id1), { timeout: 15000 }).catch(() => {}); undone = !!(await page.$(sel(id1)));
   // The restore shows at once from the pane's cache and is CONFIRMED by the kernel's next frame carrying the card again
-  // (feed.ts pendingRestored); until then the pane keeps forcing the cached card in, and a Clear posted inside that window
-  // is served by the same paced cycle, whose frame lacks the card: the clear is confirmed and the unconfirmed restore then
-  // puts the card back. The clear below is a gesture on a settled board, so wait for the confirming frame first.
+  // (feed.ts pendingRestored). A Clear inside that window is a pane DEFECT in both trees, not a timing to wait out: the
+  // Clear paths never delete the id from pendingRestored, so the frame confirming the clear lacks the card and the
+  // unconfirmed restore puts it back. The ledger names it, tier fix, a follow-up after the fold:
+  // upstream/2026-09-17-notice-clear-inside-restore-window-puts-the-card-back.md. This wait steps past that defect so the
+  // second Clear below lands on a confirmed restore; it does not mask it, and the fix is the ledger's, not this test's.
   await page.waitForFunction(([id, n]) => { const fr = window.__feedNotices || []; return fr.length > n && fr[fr.length - 1].includes(id); }, [id1, framesBeforeUndo], { timeout: 15000 }).catch(() => {});
 }
 // (4) a new revision under the same key re-shows after a dismissal, under a new id

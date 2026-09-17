@@ -33,6 +33,7 @@ SID2 = "11111111-2222-3333-4444-565656565656"
 FSID = "11111111-2222-3333-4444-888888888888"       # a transcript id a /clear minted under SID
 BUS_FIELDS = {"id", "name", "state", "dir", "bg", "fg", "lastSid", "compacting", "working", "backend"}   # what the postal bus's
 #                                                                                                          roster and the picker read
+MOON = "\U0001F319"                                 # an emoji-presentation code point (tests/test_session_emoji.py's fixture)
 
 
 class _Listing(unittest.TestCase):
@@ -141,6 +142,28 @@ class OneListingPerChange(_Listing):
         self.assertEqual(set(miss), {"first", "rows", "names", "notes", "registry"}, "each miss names its input: %r" % miss)
         self._cycle()
         self.assertEqual(self._stats()[0]["built"], 5, "and a quiet cycle builds nothing")
+
+    def test_an_emoji_set_or_cleared_moves_the_names_key_and_the_served_row_carries_it_within_one_cycle(self):
+        """The fork's `emoji` row field is the names record's fifth tab field (_set_session_emoji), and the listing key covers
+        it only because the key hashes the whole names record (_sessions_listing_key): a set or a clear rewrites the record,
+        the cycle's names snapshot re-reads it and the kept row is re-derived once. The record starts with FOUR fields (name,
+        cwd, bg, fg), so the set changes the fifth field alone: a key over the first four would keep the stale row on the set
+        as well as on the clear (2026-09-17 review; the head was right and nothing pinned it)."""
+        (self.names / SID).write_text("web\t%s\t#abcdef\t#ffffff\n" % str(self.cdir))   # the four-field record
+        self._cycle()
+        self.assertEqual(next(r for r in self._body() if r["id"] == SID)["emoji"], "")
+        self.assertTrue(km._set_session_emoji(SID, MOON))                 # the one store write every door shares (os.replace: the
+        self._cycle()                                                     #  per-entry memo's key moves, the snapshot re-reads)
+        self.assertEqual(next(r for r in self._body() if r["id"] == SID)["emoji"], MOON, "the served row carries the emoji")
+        st, miss = self._stats()
+        self.assertEqual((st["built"], miss.get("names")), (2, 1), "one rebuild, the names input named: %r" % (miss,))
+        self.assertTrue(km._set_session_emoji(SID, ""))                   # the clear: the record is the four-field shape again
+        self._cycle()
+        self.assertEqual(next(r for r in self._body() if r["id"] == SID)["emoji"], "", "the cleared row reads empty")
+        st, miss = self._stats()
+        self.assertEqual((st["built"], miss.get("names")), (3, 2), "one rebuild for the clear: %r" % (miss,))
+        self._cycle()
+        self.assertEqual(self._stats()[0]["built"], 3, "and a quiet cycle builds nothing")
 
     def test_a_start_a_rename_and_a_death_reach_the_roster_within_one_cycle(self):
         """The postal bus's roster (list_agents, the send's liveness check) reads this route: a session that started is

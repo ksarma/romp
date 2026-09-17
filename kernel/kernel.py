@@ -379,7 +379,11 @@ def _heap_stats():
     or O(entries) over a copied value list: the built tabs (bounded by the open tabs) and the image entries, whose cache has
     no cap, so that gauge is O(entries) over whatever it has grown to, a refused file counting as an entry of zero bytes
     (166 microseconds median over 100,000 hydrated entries, 10,000 LRU slots, 50,000 usage rows, 1,000 images and 50 tabs of
-    100 KB in the lab). A gauge the process cannot read is None, said once (_heap_read)."""
+    100 KB in the lab). The one exception is allocatedBlocks: sys.getallocatedblocks() walks the allocator's live heap on
+    every build (pymalloc's pools on the GIL builds, about 5 ms at 6 GB live on 3.12; on a free-threaded build every thread
+    state's heaps and the abandoned pool, the residue of exited threads), so that gauge is O(live heap) and is the read's
+    cost on a large kernel, the lab number being a small heap's. A gauge the process cannot read is None, said once
+    (_heap_read)."""
     def hydrated():
         with em._ASM_CKPT_LOCK:
             return {"entries": len(em._HYDRATED), "bytes": int(em._HYDRATED_BYTES[0]), "capBytes": int(em._HYDRATED_CAP)}
@@ -30661,7 +30665,8 @@ def _sessions_listing_reset():
 def _sessions_listing_key(live_map, names):
     """The exact key of the /sessions rows (rule 2): every field a row carries is a function of these inputs. The live rows
     (sid, state, since, backend: state and backend ride the row, since moves with a turn's edges), the names snapshot
-    (name, dir and the two identity colours: a move rewrites the names entry), the working-notes store (the note per sid,
+    (name, dir, the two identity colours and the tab emoji, the record's fifth field, hashed as one record: a move rewrites
+    the names entry, an emoji set or clear rewrites it too), the working-notes store (the note per sid,
     keyed by the store's entries' stats), the registry's rows revision (lastSid rides the SDK registry; a write that changes
     it moves the revision, a write of a field no row reads does not; the revision counts THIS process's writes, so a lastSid
     the outgoing kernel wrote during a handover reaches the rows when another input moves) and each row's compacting bit (the live row against the cached parse). A field whose input is not

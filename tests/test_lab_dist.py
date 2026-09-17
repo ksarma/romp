@@ -2368,7 +2368,7 @@ class ServedModulesUseTheHelper(unittest.TestCase):
                 continue
             if "\nimport lab_dist\n" in _read(p):
                 served.append(p)
-        self.assertGreaterEqual(len(served), 71, "the served labs import the helper (22 of the fork's plus the 49 upstream modules the 2026-09-15 pull-in converted, the kernel-restart lab among them in its review round 1)")
+        self.assertGreaterEqual(len(served), 83, "the served labs import the helper (22 of the fork's, the 49 upstream modules the 2026-09-15 pull-in converted, the kernel-restart lab among them in its review round 1, and the twelve upstream-new served labs the 2026-09-17 catch-up's fixer round c1b converted)")
         for p in served:
             self.assertIn("lab_dist.copy_dist(", _read(p), os.path.basename(p))
 
