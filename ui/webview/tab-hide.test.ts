@@ -713,10 +713,15 @@ function liftShowTabMenuRaw(): (hooks: MenuHooks) => MenuApi {
     const ctxIcon = (kind, off) => { const sp = new FakeEl("span", "ctx-icon" + (off ? " off" : "")); sp.dataset.kind = kind; return sp; };
     const sessions = H.sessions, tabMeta = new Map();
     const paletteColors = [];
-    // as render.ts's (pinned in the menu door test): the dismissal goes through the builder, whose teardown runs onTabMenuClosed, which
-    // forgets the card, the flyout's input and the views hook (round 5: a stub that left the menu on the page let C4 read a re-dress the
-    // page had discarded). The harness counts the closes in that one callback, since every road ends there: a row's pick, the Hide tab
-    // row's dismissTabMenu, a scroll or a press outside, Escape, the window's blur
+    // render.ts's dismissTabMenu and the three forgets of its onTabMenuClosed (both pinned in the menu door test): the dismissal goes
+    // through the builder, whose teardown runs onTabMenuClosed, which forgets the card, the flyout's input and the views hook (round 5: a
+    // stub that left the menu on the page let C4 read a re-dress the page had discarded). The harness counts the closes in that one
+    // callback, since every road ends there: a row's pick, the Hide tab row's dismissTabMenu, a scroll or a press outside, Escape, the
+    // window's blur. The stand-in OMITS the shipped callback's refocus arm (focusActiveTab with preventScroll when the card holds the focus
+    // or it fell to the body, under document.hasFocus()): no case in this leg focuses an opener and renderTabs is a stub, so a mirrored arm
+    // would fire at every close and pin nothing (the fold review's round 2, regression-1 and fresh-1). The arm is executed in
+    // ui/webview/ctx-menu.test.ts (the Escape, pressed-tab, standing-opener and blur cases) and pinned by the menu door test's
+    // onTabMenuClosed source pin below
     const dismissTabMenu = () => { closeContextMenu(); };
     const onTabMenuClosed = () => { H.dismissed++; ctxMenuEl = null; tagsFlyNewInput = null; tabMenuViewsHook = () => {}; };
     const RENAME_SUBLINE = "the name is a label";   // the Rename row's sub-line (render.ts imports it from clear-confirm.ts): a stand-in string

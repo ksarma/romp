@@ -1024,7 +1024,11 @@ let tabMenuViewsHook: () => void = () => {};
 function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
 function ctxIcon(kind: string, off: boolean): HTMLElement { const sp = el("span", "ctx-icon" + (off ? " off" : "")); sp.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 14"></svg>'; sp.dataset.kind = kind; return sp; }
 function dismissTabMenu() { closeContextMenu(); }   // as render.ts's: the builder's teardown runs onTabMenuClosed
-function onTabMenuClosed() { H.dismissed++; ctxMenuEl = null; tagsFlyNewInput = null; tabMenuViewsHook = () => {}; }   // as render.ts's, plus the count: every close ends here
+// render.ts's onTabMenuClosed: its three forgets, plus the count (every close ends here). The stand-in OMITS the shipped callback's refocus
+// arm (focusActiveTab with preventScroll when the card holds the focus or it fell to the body, under document.hasFocus()): this page has no
+// strip and declares no focusActiveTab, so the literal arm would throw at every close (the fold review's round 2, regression-1). The arm is
+// executed in ui/webview/ctx-menu.test.ts and pinned by ui/webview/tab-hide.test.ts (the menu door test's onTabMenuClosed source pin)
+function onTabMenuClosed() { H.dismissed++; ctxMenuEl = null; tagsFlyNewInput = null; tabMenuViewsHook = () => {}; }
 let emojiPrompt: any = null;   // the picker's listeners read it (never open here)
 function closeEmojiPrompt() {}
 function setSessionFlag(id: string, k: string, v: boolean) { H.flags.push([id, k, v]); }
