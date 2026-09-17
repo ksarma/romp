@@ -382,8 +382,9 @@ def _heap_stats():
     100 KB in the lab). The one exception is allocatedBlocks: sys.getallocatedblocks() walks the allocator's live heap on
     every build (pymalloc's pools on the GIL builds, about 5 ms at 6 GB live on 3.12; on a free-threaded build every thread
     state's heaps and the abandoned pool, the residue of exited threads), so that gauge is O(live heap) and is the read's
-    cost on a large kernel, the lab number being a small heap's. A gauge the process cannot read is None, said once
-    (_heap_read)."""
+    cost on a large kernel, the lab number being a small heap's; the read-cost test (tests/test_perf_heap_block.py, Overhead)
+    EXCLUDES that walk from the timed read, this module's sys stubbed for the timing, and bounds the other gauges alone. A
+    gauge the process cannot read is None, said once (_heap_read)."""
     def hydrated():
         with em._ASM_CKPT_LOCK:
             return {"entries": len(em._HYDRATED), "bytes": int(em._HYDRATED_BYTES[0]), "capBytes": int(em._HYDRATED_CAP)}
