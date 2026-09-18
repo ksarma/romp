@@ -2970,8 +2970,10 @@ print("\x1f".join([r.get("parentIgnored") or "", "existing" if r.get("existing")
             # Codex catalog does not offer, in the setter's own words): say it as a refusal with its
             # reason, never as an unacknowledged ask, so --effort stays out of the dropped check below
             # (the kernel answered; it did not drop the ask). A warning on stderr: the session exists.
+            # The setter's sentence names the level and the reason itself, so the line is romp new: plus that
+            # sentence and nothing more (review round 2: a prefix of its own said both twice).
             _refused="$(python3 -c 'import json,sys; v=json.loads(sys.argv[1]).get("refused"); print(v if isinstance(v, str) else "")' "$_resp" 2>/dev/null || true)"
-            [[ -n "$_refused" ]] && echo "romp new: effort $effort_arg refused: $_refused" >&2
+            [[ -n "$_refused" ]] && echo "romp new: $_refused" >&2
             _effask="$effort_arg"; [[ -n "$_refused" ]] && _effask=""
             _envask="${env_args[*]-}$_noenv"
             # the tags ask is named for what it was: --in, or the inheritance a parent implies

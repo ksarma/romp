@@ -3055,7 +3055,7 @@ class H(BaseHTTPRequestHandler):
             json.dump({"path": self.path, "body": body}, f)
         out = json.dumps({"ok": True, "id": "11111111-2222-3333-4444-555555555555",
                           "model": body.get("model"),
-                          "refused": "the catalog for this model does not offer it"}).encode()
+                          "refused": "Couldn't set effort 'turbo': the session's backend refused it."}).encode()
         self.send_response(200); self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(out))); self.end_headers()
         self.wfile.write(out)
@@ -3078,8 +3078,12 @@ PY
     [ "$status" -eq 0 ]
     [[ "$output" == *"started \"opt\""* ]]
     grep -q '"effort": "turbo"' "$TEST_DIR/req.log"
-    # one line names the asked level and the kernel's own reason
-    [[ "$output" == *"romp new: effort turbo refused: the catalog for this model does not offer it"* ]]
+    # one line: the prefix and the kernel's own sentence, which names the level and the reason itself
+    # (review round 2: a prefix of its own said both twice). Pinned as the exact line, so a second
+    # copy of the level or of the refusal on it fails here, as does a second line carrying the sentence.
+    local _refused_line
+    _refused_line="$(printf '%s\n' "$output" | grep -F "Couldn't set effort")"
+    [ "$_refused_line" = "romp new: Couldn't set effort 'turbo': the session's backend refused it." ]
     # the kernel ANSWERED the ask; it did not drop it, so no older-kernel warning
     [[ "$output" != *"did not acknowledge"* ]]
     [[ "$output" != *"older kernel"* ]]

@@ -39421,9 +39421,13 @@ def _set_effort_or_park(be, sid, value):
 
 def _effort_refusal(be, value):
     """The sentence a refused effort pick is answered with (fail loudly, never a silent no-op), the
-    setEffort op's and _route_meta_command's alike: a Codex session's model does not advertise the level
-    in its catalog (or the catalog could not be read); any other backend refused it outright (an SDK
-    session it holds no row for; the unowned route refuses before a setter is reached)."""
+    setEffort op's, _route_meta_command's, POST /new's and the parked-op drain's alike: a Codex session's
+    model does not advertise the level in its catalog (or the catalog could not be read); any other backend
+    refused it outright (an SDK session it holds no row for, or _UNOWNED, whose set_effort refuses every
+    level). _route_meta_command refuses an unowned sid before any setter is reached, but the drain does
+    reach _UNOWNED.set_effort for one (a queue parked before the session died, or restored after a restart
+    for a session no backend owns) and answers with this second sentence: the drain's established words for
+    a refusal in that state, as its command arm says the same of an undelivered command."""
     if be is not None and be is _codex():
         return "Couldn't set effort '%s': this model's Codex catalog does not offer it." % value
     return "Couldn't set effort '%s': the session's backend refused it." % value
@@ -39525,7 +39529,13 @@ def _route_meta_command(be, sid, text, client=None, floating=False, state=None):
         if state is not None:
             state["refused"] = why
         if client:
-            client["send"](json.dumps({"type": "warn", "text": why}))
+            # the timeline's own settingRefused frame (gesture command, the sid, the flag from the command head:
+            # model, effort or fast), as the owned arms below and the setEffort and setFast ops answer: a bare
+            # warn is read by the chat as an in-flight create's verdict and by the timeline page not at all, so a
+            # lane-menu pick on a dead lane got no reason and its optimistic dim ran out its 20 s timer (the
+            # catch-up fold's delta review, 2026-09-18)
+            client["send"](json.dumps({"type": "settingRefused", "gesture": "command", "sid": sid, "flag": head[1:],
+                                       "text": why}))
         sys.stderr.write("meta command %s for %s refused: no backend owns this session\n" % (head, sid))
         return True
     if model_pick:

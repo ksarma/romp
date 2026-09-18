@@ -160,7 +160,8 @@ class RefusalReachesTheClient(unittest.TestCase):
     and the timeline page renders no warn at all, so a lane-menu pick's refusal was dropped and its optimistic dim ran
     out its 20 s timer, though both pages already handle settingRefused. Three roads answer with it: the setEffort and
     setFast ops in _drive (this pane's socket), _route_meta_command with a client (the lane menu's sendCommand, the
-    composer's typed command), and the parked-op drain (_send_to_app to the chat: no client is at hand when a pick
+    composer's typed command; its unowned arm too since the fold's delta review, the flag taken from the command
+    head), and the parked-op drain (_send_to_app to the chat: no client is at hand when a pick
     parked mid-compaction fires later and is refused then; before this the drain dropped set_effort's and set_fast's
     verdicts, so the queued chip retired as if the level had landed, with no stderr line and no reply). POST /send
     (_deliver_text) has no socket and answers ok false with the words instead. Synthetic only: a placeholder sid, an
@@ -230,6 +231,26 @@ class RefusalReachesTheClient(unittest.TestCase):
         self.assertEqual([(m["type"], m["gesture"], m["sid"], m["flag"]) for m in sent],
                          [("settingRefused", "command", SID, "fast")])
         self.assertIn("fast mode", sent[0]["text"])
+
+    def test_the_command_route_answers_an_unowned_sessions_pick_on_the_same_frame_with_the_heads_flag(self):
+        # the unowned arm: a session no running backend owns (a dead Codex lane whose menu still offers its gpt
+        # models, a dead SDK lane) takes no setting, and this refusal is the one place the client hears that the
+        # pick went nowhere. It rode a bare warn until the fold's delta review (2026-09-18); the flag is the command
+        # head's (model, effort or fast), the key each page's pending map is filed under
+        for text, flag in (("/model gpt-5-test", "model"), ("/effort ultra", "effort"), ("/fast on", "fast")):
+            client, sent = self._client()
+            state = {}
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertTrue(km._route_meta_command(km._UNOWNED, SID, text, client, state=state), text)
+            self.assertEqual([(m["type"], m["gesture"], m["sid"], m["flag"]) for m in sent],
+                             [("settingRefused", "command", SID, flag)], text)
+            self.assertIn("no running backend owns this session", sent[0]["text"])
+            self.assertEqual(state["refused"], sent[0]["text"], "POST /send answers ok false with the same words")
+            self.assertIn("meta command %s for %s refused" % (text.split()[0], SID), err.getvalue(),
+                          "the stderr line stays as it was")
+            self.assertNotIn(SID, km._pending_ops, "refused before any park")
+        self.assertEqual(self.be.calls, [], "no backend was asked: nobody owns the session")
 
     def test_post_send_answers_a_refused_level_ok_false_with_the_words(self):
         # _deliver_text is the POST /send door: (ok, error, queued). No socket, so no frame: the words ride the answer
