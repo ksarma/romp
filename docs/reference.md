@@ -3712,14 +3712,15 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   raised; the fault is said once on stderr and the frame goes out unchanged
   either way. `lifetime` sums every counted pass and `last` is the latest
   one; `last` alone says whether the ledgers were attached
-  (`ledgersAttached`). `last` and `wire` are `{}` until the first counted
-  pass, and a cold kernel that has never had a feed-slot client serves
-  exactly that. `frame` is the frame's bytes as the pusher's size estimate
-  counts them (the per-card strings minus their tints, the per-ledger strings
-  and the remainder), so it sits under the served body by the key names,
-  separators and tints it does not count. `cards`, `ledgers` and `rest` are
-  its three parts, and `cardCount` and `ledgerCount` their counts. `by`
-  splits `rest` by top-level field, each row the field's quoted name, its
+  (`ledgersAttached`). `wire` is `{}` until the first per-entry encode of a
+  frame and `last` until the first counted one; a cold kernel that has never
+  had a feed-slot client serves both empty. `frame` is the frame's bytes as
+  the pusher's size estimate counts them (the per-card strings minus their
+  tints, the per-ledger strings and the remainder), so it sits under the
+  served body by the key names, separators and tints it does not count.
+  `cards`, `ledgers` and `rest` are its three parts, and `cardCount` and
+  `ledgerCount` their counts. `by` splits `rest` by top-level field, each row
+  the field's quoted name, its
   separators and its value, and publishes a fixed set of rows: the flag and
   count fields (`userTodosOn`, `dismissedCount`, `showDismissed`,
   `canUndoClear`, `off`: the checked-in list `FEED_BY_ROWS` in
@@ -3743,12 +3744,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   because the fold regroups bytes and drops none. `apps` has one row per
   consuming app and one projection row, `phoneFace`: `today`, the whole frame
   it receives, beside `projected`, the bytes of the fields its bundle reads,
-  from the checked-in
-  table `FEED_APP_FIELDS` in `kernel/kernel.py`, which a test pins against
-  the bundles' source and against `federation.ts`: the merge reads
-  `clearedForeign` off the local frame for the feed pane and the Outline (it
-  drops the remote cards and strikes the remote ledger tops the local ledger
-  cleared), so those two rows carry it. `projected` is computed from the
+  from the checked-in table `FEED_APP_FIELDS` in `kernel/kernel.py`, which a
+  test pins against the bundles' source and against `federation.ts`: the merge
+  reads `clearedForeign` off the local frame for the feed pane and the Outline
+  (it drops the remote cards and strikes the remote ledger tops the local
+  ledger cleared), so those two rows carry it. `projected` is computed from the
   per-field lengths before the fold, so a folded field still counts in full
   for the app that reads it. One figure is estimated, not bounded: the
   Outline reads a few fields of each card, not the card, and those fields
