@@ -48,12 +48,18 @@ var parentPosts=[],winEvents=[],delivered=[],winL={};
 // D3: the fake SHELL the pane sits in publishes a link through window.parent.__rompLink; parentLinkVal is the
 // {up,connT} it returns, undefined by default so every pre-D3 test runs the upstream (standalone) fast path unchanged.
 var parentLinkVal=undefined;
+// D2: the fake shell's layout probe (window.parent.__rompMobileOn), parentMobileVal its answer; undefined by default so every
+// pre-D2 test runs off a shell that parks nothing
+var parentMobileVal=undefined;
 var window={innerWidth:800,innerHeight:600,
-parent:{postMessage:function(m){parentPosts.push(m);},get __rompLink(){return parentLinkVal===undefined?undefined:function(){return parentLinkVal;};}},
+parent:{postMessage:function(m){parentPosts.push(m);},get __rompLink(){return parentLinkVal===undefined?undefined:function(){return parentLinkVal;};},
+get __rompMobileOn(){return parentMobileVal===undefined?undefined:function(){return parentMobileVal;};}},
 addEventListener:function(t,f){(winL[t]=winL[t]||[]).push(f);},
 dispatchEvent:function(e){winEvents.push(e.type);return true;},sessionStorage:{getItem:function(){return "";}},
 __rompFed:{inbound:function(h,m){delivered.push(m);}}};
 function fireWin(t,data){(winL[t]||[]).forEach(function(f){f({data:data});});}   // D3: hand the pane a window message (the shell's panes word)
+function word(on,link){fireWin("message",{romp:"panes",on:on,avail:{files:false},link:link||"up"});}   // D2: the shell's panes word (on[k] per pane, the link)
+function states(){return parentPosts.filter(function(p){return p.romp==="wsState";}).map(function(p){return p.state;});}   // the wsState words this pane told the shell, in order
 var location={protocol:"http:",host:"TESTHOST",search:""};
 var localStorage={getItem:function(){return null;},setItem:function(){}};
 var sockets=[];function WebSocket(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this);}
@@ -67,6 +73,8 @@ function recv(m){sock().onmessage({data:JSON.stringify(m)});}
 function caps(){recv({type:"caps",caps:["tagEdit"],viewsSeq:null});}   // the kernel's answer to a ready it processed (_send_caps), in the shape it sends
 function tick(){for(var i=0;i<intervals.length;i++)intervals[i].fn();}
 function rows(s,what){return s.sent.map(function(x){return JSON.parse(x);}).filter(function(m){return m.type==="clientDiag"&&(!what||m.what===what);});}
+function queued(what){return queue.map(function(x){return JSON.parse(x);}).filter(function(m){return m.type==="clientDiag"&&(!what||m.what===what);});}   // D2: the rows waiting in the shim's queue for a socket (a parked pane's, until its tap)
+function fireTimers(){var n=0;timers.forEach(function(t){if(t.live){t.live=false;t.fn();n++;}});return n;}   // every pending timer fires once
 function hide(){document.visibilityState="hidden";fire("visibilitychange");}
 function show(){document.visibilityState="visible";fire("visibilitychange");}
 function liveTimers(){return timers.filter(function(t){return t.live;}).map(function(t){return {ms:t.ms,fn:t.fn.name};});}
@@ -1133,6 +1141,229 @@ out({awaiting:awaiting,afterAliveTick:afterAliveTick,afterDeadTick:sockets.lengt
         self.assertIs(r["awaiting"], True)
         self.assertEqual(r["afterAliveTick"], 2, "a fresh tick stamp with an hours-old dial time: the loop is alive, no backstop dial")
         self.assertEqual(r["afterDeadTick"], 3, "the stamp 25 s stale: the backstop dials")
+
+
+class ParkedPane(unittest.TestCase):
+    """D2 (2026-09-18): hidden panes park their return redial, PHONE-ONLY (the user's ruling). A pane whose last panes word
+    from the shell said on[APP]=false, in a shell whose layout probe (window.parent.__rompMobileOn) says the phone layout,
+    returns with a dead socket: the socket is put down for every state (OPEN, CONNECTING, CLOSED), the shell hears ONE word
+    ("parked", never "down"), the return row says parked:true, and nothing dials until the word says on screen: not the
+    watchdog tick, not a blind onclose timer armed before the park, not the link-up word. The show (the user's tap) dials
+    once through D3's link rule, with a fresh return window from the tap and the loader re-raised, and the return-fresh that
+    follows says parked:true (with linkUpMs when a shell link drove it). A pane that never heard a word, a word without this
+    pane, a shell without the layout probe and the desktop layout dial exactly as before; a pane hidden since load still makes
+    its first dial and its pre-open redials.
+
+    parentMobileVal is the shell's layout answer; word(on, link) hands the pane the shell's panes word; states() the wsState
+    words it told the shell."""
+
+    def test_an_open_quiet_socket_is_parked_and_three_ticks_dial_nothing(self):
+        r = _run(r"""
+parentMobileVal=true;open();recv({type:"ka"});word({test:false});   // the phone: this pane is not the tab showing
+hide();NOW+=46000;show();                                            // OPEN but quiet past STALE_MS: redial-stale today
+var atReturn={sockets:sockets.length,nulled:ws===null,oldReady:sockets[0].readyState,oldOnclose:sockets[0].onclose,parked:parked,
+states:states(),timers:liveTimers(),wsdown:count(winEvents,"romp:wsdown"),localUp:window.__rompLocalUp,awaiting:awaitLink};
+tick();NOW+=5000;tick();NOW+=5000;tick();
+var afterTicks={sockets:sockets.length,timers:liveTimers()};
+var q=queued("return").map(function(m){return m.data;});
+out({atReturn:atReturn,afterTicks:afterTicks,q:q});""")
+        a = r["atReturn"]
+        self.assertEqual(a["sockets"], 1, "no dial at the return")
+        self.assertTrue(a["nulled"], "the socket is put down (ws null): the watchdog tick is inert")
+        self.assertEqual(a["oldReady"], 3, "...closed")
+        self.assertIsNone(a["oldOnclose"], "...and disowned, so its close is nobody's event")
+        self.assertIs(a["parked"], True)
+        self.assertEqual(a["states"], ["up", "parked"], "the shell hears parked, never down: a parked pane is not a broken one")
+        self.assertEqual(a["timers"], [], "no timer stands in for the tap")
+        self.assertEqual(a["wsdown"], 1, "the page's bundle and loader hear the wire go down")
+        self.assertIs(a["localUp"], False, "federation defers its relay dial while parked (the flag moves with the word)")
+        self.assertIs(a["awaiting"], False, "a parked return never awaits the link: the tap is its event")
+        self.assertEqual(r["afterTicks"], {"sockets": 1, "timers": []}, "three ticks: nothing dials, nothing arms")
+        self.assertEqual(len(r["q"]), 1, "the return row waits in the queue for the socket the tap dials")
+        self.assertEqual((r["q"][0]["decision"], r["q"][0]["parked"]), ("redial-stale", True))
+        self.assertNotIn("awaitLink", r["q"][0])
+
+    def test_a_connecting_socket_at_the_return_is_parked_and_three_ticks_dial_nothing(self):
+        r = _run(r"""
+parentMobileVal=true;open();recv({type:"ka"});word({test:false});
+sock().readyState=3;sock().onclose({code:1006});fireTimers();   // the socket died and the blind redial fired: a fresh CONNECTING attempt
+var connecting={sockets:sockets.length,ready:sock().readyState};
+hide();NOW+=46000;show();
+var atReturn={sockets:sockets.length,nulled:ws===null,ready:sockets[1].readyState,onclose:sockets[1].onclose,states:states()};
+tick();NOW+=5000;tick();NOW+=5000;tick();
+out({connecting:connecting,atReturn:atReturn,afterTicks:sockets.length,q:queued("return").map(function(m){return m.data;})});""")
+        self.assertEqual(r["connecting"], {"sockets": 2, "ready": 0})
+        a = r["atReturn"]
+        self.assertEqual(a["sockets"], 2, "no dial at the return")
+        self.assertTrue(a["nulled"])
+        self.assertEqual(a["ready"], 3, "the hung attempt is closed")
+        self.assertIsNone(a["onclose"], "...and disowned: its close arms no timer")
+        self.assertEqual(a["states"], ["up", "down", "parked"], "the FIN's down was real; the park says parked")
+        self.assertEqual(r["afterTicks"], 2, "the CONNECTING cut and the CLOSED arm have no socket to act on")
+        self.assertEqual((r["q"][0]["decision"], r["q"][0]["parked"]), ("redial-closed", True))
+
+    def test_a_closed_socket_at_the_return_is_parked_and_the_pending_blind_timer_is_held(self):
+        r = _run(r"""
+parentMobileVal=true;open();recv({type:"ka"});word({test:false});
+hide();NOW+=20000;sock().readyState=3;sock().onclose({code:1006});   // the FIN lands while hidden: a blind 1.5 s redial arms (no return window yet)
+var armed=redials();
+NOW+=26000;show();                                                    // the return finds a CLOSED socket with that timer still pending
+var atReturn={sockets:sockets.length,nulled:ws===null,armedStill:redials().length,states:states()};
+var fired=fireTimers();                                               // the pending blind timer fires: connect() is held by the park
+var afterTimer=sockets.length;
+tick();NOW+=5000;tick();NOW+=5000;tick();
+out({armed:armed,atReturn:atReturn,fired:fired,afterTimer:afterTimer,afterTicks:sockets.length,q:queued("return").map(function(m){return m.data;})});""")
+        self.assertEqual(r["armed"], [{"ms": 1500, "fn": "connect"}], "the blind cadence armed while hidden")
+        a = r["atReturn"]
+        self.assertEqual(a["sockets"], 1)
+        self.assertTrue(a["nulled"])
+        self.assertEqual(a["armedStill"], 1, "the park does not reach into the timer table...")
+        self.assertEqual(r["fired"], 1)
+        self.assertEqual(r["afterTimer"], 1, "...it holds the dial itself: connect() returns while parked")
+        self.assertEqual(r["afterTicks"], 1)
+        self.assertEqual(a["states"], ["up", "down", "parked"])
+        self.assertEqual((r["q"][0]["decision"], r["q"][0]["parked"]), ("redial-closed", True))
+
+    def test_the_show_word_dials_once_from_a_fresh_return_window_and_the_return_fresh_says_parked(self):
+        r = _run(r"""
+parentMobileVal=true;parentLinkVal={up:true,connT:NOW};open();recv({type:"ka"});word({test:false});
+hide();NOW+=46000;sock().readyState=3;show();
+var atReturn={sockets:sockets.length,awaiting:awaitLink,wsdown:count(winEvents,"romp:wsdown")};
+NOW+=60000;                                                           // a minute on another tab
+word({test:true});                                                    // the tap: this pane's tab comes forward
+var atTap={sockets:sockets.length,parked:parked,wsdown:count(winEvents,"romp:wsdown"),returnAt:returnAt,fg:foregroundedAt,now:NOW,eager:eagerDial,awaiting:awaitLink};
+NOW+=200;open();NOW+=100;recv({type:"feed",asks:[]});
+word({test:true});                                                    // a re-tell (an iframe load, a layout flip) dials nothing more
+out({atReturn:atReturn,atTap:atTap,sockets:sockets.length,ret:rows(sock(),"return").map(function(x){return x.data;}),
+rf:rows(sock(),"return-fresh").map(function(x){return x.data;}),states:states()});""")
+        self.assertEqual(r["atReturn"], {"sockets": 1, "awaiting": False, "wsdown": 1}, "parked even with the link up: the tab is the event, not the link")
+        t = r["atTap"]
+        self.assertEqual(t["sockets"], 2, "the show word dials once")
+        self.assertIs(t["parked"], False)
+        self.assertEqual(t["wsdown"], 2, "the loader is re-raised (its 30 s failsafe hid the badge long ago)")
+        self.assertEqual((t["returnAt"], t["fg"]), (t["now"], t["now"]), "a fresh return window from the tap: return-fresh measures tap to fresh")
+        self.assertIs(t["eager"], True, "the first in-window close after the tap redials at once, as after a return")
+        self.assertIs(t["awaiting"], False, "the link was up at the tap: no await")
+        self.assertEqual(r["sockets"], 2, "the re-tell dialed nothing more")
+        self.assertEqual(len(r["ret"]), 1, "the parked return row landed on the tap's socket")
+        self.assertEqual(sorted(r["ret"][0].keys()),
+                         sorted(["decision", "resumed", "hiddenMs", "frozenMs", "quietMs", "quietAtResumeMs", "ready", "app", "parked"]),
+                         "the return row: today's keys plus parked, no awaitLink")
+        self.assertEqual((r["ret"][0]["decision"], r["ret"][0]["parked"]), ("redial-closed", True))
+        self.assertEqual(len(r["rf"]), 1)
+        self.assertEqual(sorted(r["rf"][0].keys()), sorted(["ms", "bytesSince", "redialed", "app", "linkUpMs", "parked"]))
+        self.assertEqual(r["rf"][0]["ms"], 300, "tap to fresh, not return to fresh")
+        self.assertIs(r["rf"][0]["parked"], True)
+        self.assertEqual(r["rf"][0]["linkUpMs"], 0, "the link was up at the tap: the whole wait is code-owned")
+        self.assertTrue(r["rf"][0]["redialed"])
+        self.assertEqual(r["states"], ["up", "parked", "up"])
+
+    def test_a_tap_with_the_link_down_awaits_the_link_up_word_and_linkUpMs_counts_from_the_tap(self):
+        r = _run(r"""
+parentMobileVal=true;parentLinkVal={up:false,connT:NOW};open();recv({type:"ka"});word({test:false},"down");
+hide();NOW+=46000;sock().readyState=3;show();
+var atReturn={sockets:sockets.length,awaiting:awaitLink};
+tick();NOW+=5000;tick();                                              // D3's backstop runs nothing for a parked pane
+NOW+=10000;parentLinkVal={up:false,connT:NOW};word({test:true},"down");   // the tap while the path is still down
+var atTap={sockets:sockets.length,awaiting:awaitLink,parked:parked};
+NOW+=3000;parentLinkVal={up:true,connT:NOW};word({test:true},"up");       // the shell's socket opens: it re-tells with link up
+var atLink={sockets:sockets.length,awaiting:awaitLink};
+NOW+=100;open();NOW+=50;recv({type:"feed",asks:[]});
+out({atReturn:atReturn,atTap:atTap,atLink:atLink,rf:rows(sock(),"return-fresh").map(function(x){return x.data;}),ret:rows(sock(),"return").map(function(x){return x.data;})});""")
+        self.assertEqual(r["atReturn"], {"sockets": 1, "awaiting": False})
+        self.assertEqual(r["atTap"], {"sockets": 1, "awaiting": True, "parked": False}, "the tap with the link down: unparked, awaiting the link, no dial into a down path")
+        self.assertEqual(r["atLink"], {"sockets": 2, "awaiting": False}, "the link-up word dials once")
+        self.assertEqual(len(r["rf"]), 1)
+        self.assertEqual((r["rf"][0]["linkUpMs"], r["rf"][0]["ms"], r["rf"][0]["parked"]), (3000, 3150, True), "linkUpMs and ms count from the tap")
+        self.assertEqual((r["ret"][0]["parked"], "awaitLink" in r["ret"][0]), (True, False))
+
+    def test_a_pane_that_never_heard_a_word_dials_at_once_as_today(self):
+        r = _run(r"""
+parentMobileVal=true;open();recv({type:"ka"});hide();NOW+=46000;sock().readyState=3;show();
+out({sockets:sockets.length,parked:parked,q:queued("return").map(function(m){return m.data;}),states:states()});""")
+        self.assertEqual(r["sockets"], 2, "the phone layout alone parks nothing: the word is the witness")
+        self.assertIs(r["parked"], False)
+        self.assertNotIn("parked", r["q"][0], "no word, no parked field: the standalone row shape")
+        self.assertEqual(r["states"], ["up"])
+
+    def test_a_word_without_this_pane_and_a_shell_without_the_layout_probe_park_nothing(self):
+        # the settings frame sits outside the shell's KEYS, so its word never names it; and a shell too old to publish
+        # __rompMobileOn (a deploy window) tells the word but answers no layout: both dial as today
+        r = _run(r"""
+parentMobileVal=true;open();recv({type:"ka"});word({chat:false,feed:true});hide();NOW+=46000;sock().readyState=3;show();
+out({sockets:sockets.length,parked:parked,q:queued("return").map(function(m){return m.data;})});""")
+        self.assertEqual(r["sockets"], 2)
+        self.assertIs(r["parked"], False)
+        self.assertNotIn("parked", r["q"][0], "a word that does not name this pane leaves the row as it was")
+        r = _run(r"""
+open();recv({type:"ka"});word({test:false});hide();NOW+=46000;sock().readyState=3;show();   // parentMobileVal undefined: no probe on the shell
+out({sockets:sockets.length,parked:parked,q:queued("return").map(function(m){return m.data;})});""")
+        self.assertEqual(r["sockets"], 2, "no layout probe: dial as today")
+        self.assertIs(r["parked"], False)
+        self.assertIs(r["q"][0]["parked"], False, "the shell told a word, so the row says the return did not park")
+
+    def test_the_desktop_layout_dials_at_the_return_exactly_as_before(self):
+        # the user's ruling: a rail-collapsed desktop pane (on[APP] false) whose socket died keeps its background redial.
+        # With a shell link (D3): abandon and dial at once, awaitLink false; without one: the upstream path, byte for byte.
+        r = _run(r"""
+parentMobileVal=false;parentLinkVal={up:true,connT:NOW};open();recv({type:"ka"});word({test:false});
+hide();NOW+=46000;sock().readyState=3;show();
+var at={sockets:sockets.length,parked:parked,states:states(),awaiting:awaitLink};
+NOW+=100;open();NOW+=10;recv({type:"feed",asks:[]});
+out({at:at,ret:rows(sock(),"return").map(function(x){return x.data;}),rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
+        self.assertEqual(r["at"], {"sockets": 2, "parked": False, "states": ["up", "down"], "awaiting": False}, "the desktop: D3's abandon and dial at once, the shell hears down")
+        self.assertEqual((r["ret"][0]["parked"], r["ret"][0]["awaitLink"]), (False, False), "the row says the return did not park")
+        self.assertNotIn("parked", r["rf"][0], "a return that did not park files a return-fresh without the field")
+        r = _run(r"""
+parentMobileVal=false;open();recv({type:"ka"});word({test:false});hide();NOW+=46000;show();   // OPEN and quiet, no shell link
+var at={sockets:sockets.length,oldReady:sockets[0].readyState,parked:parked,states:states(),timers:liveTimers()};
+out({at:at});""")
+        self.assertEqual(r["at"], {"sockets": 2, "oldReady": 3, "parked": False, "states": ["up", "down"], "timers": []},
+                         "no link: the upstream fast path abandons and redials at once, as ResumeAwareLiveness pins")
+
+    def test_a_pane_hidden_since_load_still_makes_its_first_dial_and_its_pre_open_redials(self):
+        r = _run(r"""
+parentMobileVal=true;word({test:false});                             // the shell's word lands while the first dial is still CONNECTING
+var first={sockets:sockets.length,ready:sock().readyState};
+hide();NOW+=46000;show();                                            // a return before the first open decides nothing (as today)
+var early={sockets:sockets.length,queued:queue.length,parked:parked};
+NOW+=16000;tick();var cut=sock().readyState;                         // the CONNECTING cut closes the hung first attempt...
+NOW+=9000;tick();                                                    // ...and the CLOSED arm redials it: not parked, never connected
+var redialed={sockets:sockets.length,parked:parked};
+open();recv({type:"ka"});                                            // the pane connects while hidden
+hide();NOW+=46000;sock().readyState=3;show();                        // only a LATER return with a dead socket parks
+out({first:first,early:early,cut:cut,redialed:redialed,later:{sockets:sockets.length,parked:parked},states:states()});""")
+        self.assertEqual(r["first"], {"sockets": 1, "ready": 0}, "the first dial is made at load, word or no word")
+        self.assertEqual(r["early"], {"sockets": 1, "queued": 0, "parked": False}, "a return before everConnected files nothing and parks nothing")
+        self.assertEqual(r["cut"], 3)
+        self.assertEqual(r["redialed"], {"sockets": 2, "parked": False}, "the pre-open redial loop runs as today")
+        self.assertEqual(r["later"], {"sockets": 2, "parked": True}, "the park begins at a return decision, never before")
+        self.assertEqual(r["states"], ["up", "parked"])
+
+    def test_a_second_hidden_return_re_parks_and_a_layout_flip_to_the_desktop_ends_the_park(self):
+        r = _run(r"""
+parentMobileVal=true;open();recv({type:"ka"});word({test:false});hide();NOW+=46000;sock().readyState=3;show();
+hide();NOW+=100000;show();                                           // still hidden at a second return
+var twice={sockets:sockets.length,rows:queued("return").map(function(m){return [m.data.decision,m.data.parked,m.data.hiddenMs];}),states:states()};
+parentMobileVal=false;word({test:false});                            // a resize across the breakpoint: the desktop's word, this pane still off the rail
+out({twice:twice,after:{sockets:sockets.length,parked:parked}});""")
+        self.assertEqual(r["twice"]["sockets"], 1)
+        self.assertEqual(r["twice"]["rows"], [["redial-closed", True, 46000], ["redial-closed", True, 100000]], "one parked row per return, no dial")
+        self.assertEqual(r["twice"]["states"], ["up", "parked", "parked"])
+        self.assertEqual(r["after"], {"sockets": 2, "parked": False}, "the desktop keeps its background redial: the flip ends the park")
+
+    def test_source_the_park_is_inserted_lines_and_the_upstream_shim_lines_stand(self):
+        js = km._shim("feed", 3)
+        # the upstream lines this change sits beside, byte for byte
+        self.assertIn("function connect(){if(ws&&(ws.readyState===0||ws.readyState===1))return;   // one live attempt at a time — a lost timer + the watchdog can both call in\nif(parked)return;", js,
+                      "the guard is the line AFTER connect()'s opener, not an edit of it")
+        self.assertIn('function returnDiag(what,data){try{data.app=APP;send({type:"clientDiag",surface:"pane-shim",what:what,data:data});}catch(e){}}', js)
+        self.assertIn("function abandon(){var d=ws;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;", js)
+        self.assertIn('function park(){var d=ws;if(d){d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;}', js, "the park is its own function")
+        self.assertIn('parked=true;returnParked=true;netState("parked");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}', js)
+        self.assertIn('if(onScreen===false&&parentMobile()===true){park();row.parked=true;returnDiag("return",row);return;}', js, "the decision point, gated on the phone layout")
+        self.assertEqual(js.count('netState("parked")'), 1, "one place says parked")
+        self.assertIn("function parentMobile(){try{return (window.parent!==window&&window.parent.__rompMobileOn)?!!window.parent.__rompMobileOn():undefined;}catch(e){return undefined;}}", js)
 
 
 if __name__ == "__main__":

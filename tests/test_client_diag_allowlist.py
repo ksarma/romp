@@ -131,6 +131,28 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(rows[-2]["data"]["linkUpMs"], 900)
         self.assertEqual(rows[-1]["data"]["decision"], "redial-closed")
 
+    def test_the_parked_return_keys_pass_whole(self):
+        # D2 (2026-09-18): a pane off screen on the phone parks its return redial (return.parked, true; false on a return
+        # that did not park in a shell that told a word) and the return-fresh that answers its tap says so too
+        # (return-fresh.parked, beside D3's linkUpMs). A bool, approved field by field; the one key this change adds.
+        err = self.post("pane-shim", "return", {"decision": "redial-closed", "resumed": False, "hiddenMs": 181000,
+                                                 "frozenMs": 0, "quietMs": 181500, "quietAtResumeMs": -1, "ready": 3,
+                                                 "app": "feed", "parked": True})
+        err += self.post("pane-shim", "return-fresh", {"ms": 800, "bytesSince": 240000, "redialed": True,
+                                                       "linkUpMs": 0, "parked": True, "app": "feed"})
+        err += self.post("pane-shim", "return", {"decision": "redial-closed", "resumed": False, "hiddenMs": 181000,
+                                                 "frozenMs": 0, "quietMs": 181500, "quietAtResumeMs": -1, "ready": 3,
+                                                 "app": "chat", "awaitLink": True, "parked": False})
+        self.assertEqual(err, "", "the parked key is admitted whole on the return and return-fresh rows")
+        rows = self.rows()
+        self.assertIs(rows[-3]["data"]["parked"], True)
+        self.assertIs(rows[-2]["data"]["parked"], True)
+        self.assertEqual(rows[-2]["data"]["linkUpMs"], 0)
+        self.assertIs(rows[-1]["data"]["parked"], False)
+        self.assertIn("parked", km.CLIENT_DIAG_KEYS["pane-shim"])
+        for surface in ("shell", "federation", "chat", "perf", "reload-core"):
+            self.assertNotIn("parked", km.CLIENT_DIAG_KEYS[surface], "the key is the pane-shim surface's alone")
+
     def test_every_surface_in_the_table_admits_every_key_it_names(self):
         for surface, keys in sorted(km.CLIENT_DIAG_KEYS.items()):
             data = {k: i for i, k in enumerate(sorted(keys))}

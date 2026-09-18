@@ -3040,7 +3040,8 @@ CLIENT_DIAG_KEYS = {
                             "code", "reason", "wasClean", "sinceOpenMs", "everConnected", "bundleReady",        # wsclose
                             "attempts", "firstFailMs",                                                          # wsconnfail
                             "wasDiscarded", "nav",                                                              # page-load
-                            "awaitLink", "linkUpMs")),                                                          # D3 (2026-09-18): return awaits the shell's link; return-fresh's linkUpMs is the path's own recovery
+                            "awaitLink", "linkUpMs",                                                            # D3 (2026-09-18): return awaits the shell's link; return-fresh's linkUpMs is the path's own recovery
+                            "parked")),                                                                         # D2 (2026-09-18): a return that parked its redial (the pane off screen on the phone layout) and the return-fresh that answers its tap; a bool, approved field by field
     "reload-core": frozenset(("reason", "detail", "hold", "ageMs")),
     "shell": frozenset(("sidAttached", "host", "why", "tabs", "status", "via", "boot", "hasSid", "hasCard", "hasPid", "controlled", "dup",
                         "sub", "rows", "err", "getNotifications", "displayed", "vanished", "superseded", "sid8", "ageS", "shape", "kind", "sw",
@@ -64145,12 +64146,25 @@ data:{app:APP,why:why||"",ready:ws?ws.readyState:-1,quietMs:lastRecv?Date.now()-
 // send() queues while the socket is down, so a row survives the very redial it describes.
 var frozeAt=0,resumedAt=0,resumeQuiet=-1,hiddenAt=0,foregroundedAt=0,returnAt=0,returnBytes=0,returnRedialed=false,returnRow=null,eagerDial=false;   // eagerDial: the one immediate redial each return window gets   // returnRow: a keep-decision row held until a close inside the return window (or the watchdog, at the provisional bound) proves its socket was already dead; retired by the flush once its return-fresh has filed
 var awaitLink=false,linkUpMs=-1;   // [fork] D3 (2026-09-18): this return is waiting for the shell socket's link to come up (the shell is the page's one probe, kernel.py _LANDING_MOBILE_JS); linkUpMs is foreground->link-up, the path's own recovery split from the code-owned wait (return-fresh.ms minus it); reset each return, in the fast path below
+var onScreen=undefined,parked=false,returnParked=false;   // [fork] D2 (2026-09-18): onScreen is the shell's last panes word for THIS pane (on[APP]; undefined until a word arrives: a standalone page, the VS Code webview, a shell too old to tell, the settings frame outside the shell's KEYS); parked latches a return whose redial waits for the pane's tab (the phone layout only, the user's ruling of 2026-09-18); returnParked marks the return-fresh that answers a parked return
 // [fork] D3: the shell's published link, read SYNCHRONOUSLY for a same-origin pane iframe so the return decision does
 // not depend on the order the documents' visibilitychange handlers run. The shell is PRESENT when its publication
 // exists: window.parent.__rompLink is a function (the ruling of 2026-09-18: not the phone media query, not a foreign
 // parent alone). undefined for a standalone page, the VS Code webview, or a shell too old to publish one: those keep
 // the upstream fast-path lines below, byte for byte.
 function parentLink(){try{return (window.parent!==window&&typeof window.parent.__rompLink==="function")?window.parent.__rompLink():undefined;}catch(e){return undefined;}}
+// [fork] D2 (2026-09-18): the phone LAYOUT, read synchronously from the shell (its _MOBILE_MQ probe, _LANDING_MOBILE_JS
+// window.__rompMobileOn) the way parentLink() reads the link, so the decision does not depend on a cached word from before a
+// layout flip. Parking is phone-only (the user's ruling): the desktop's rail-collapsed panes keep their background redial
+// byte for byte. undefined off a shell (standalone, VS Code, an older shell): parks nothing.
+function parentMobile(){try{return (window.parent!==window&&window.parent.__rompMobileOn)?!!window.parent.__rompMobileOn():undefined;}catch(e){return undefined;}}
+// [fork] D2: park this pane's socket. abandon()'s teardown (the four handlers detached, close, ws nulled, so the watchdog tick
+// is inert on !ws and no onclose timer can arm) and its quiet-stale rule, but ONE state word to the shell, "parked", never
+// abandon()'s "down": a parked pane is not a broken one, so the shell's connection log stays silent and its cue dark
+// (_LANDING_ERRS_JS reads parked as its own state). romp:wsdown still tells this page's bundle and loader the wire is down.
+function park(){var d=ws;if(d){d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;}
+if(d&&stalePending&&openSock===d){var qw=stalePending;stalePending="";raiseStale(qw+"-quiet");}
+parked=true;returnParked=true;netState("parked");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}
 function returnDiag(what,data){try{data.app=APP;send({type:"clientDiag",surface:"pane-shim",what:what,data:data});}catch(e){}}
 var nav="";try{var ne=performance.getEntriesByType("navigation");nav=(ne&&ne[0]&&ne[0].type)||"";}catch(e){}
 // the page-load row exists to catch a tab the browser DISCARDED and reloaded on return (Memory Saver: the return is a
@@ -64241,6 +64255,7 @@ if(!o){if(mine)have.remove();return;}if(mine){have.firstChild.textContent=o.text
 function raiseBuild(dv){var R=window.__rompReload;if(R){R.noteDv(dv);return;}   // the core decides (an offer, deduped by build; in a shell, the shell's)
 if(buildRaised)return;buildRaised=true;selfBar("A newer romp build is available.","build");}   // no core on this page: the bar, once
 function connect(){if(ws&&(ws.readyState===0||ws.readyState===1))return;   // one live attempt at a time — a lost timer + the watchdog can both call in
+if(parked)return;   // [fork] D2 (2026-09-18): a parked pane dials nothing until the shell's word shows it (the panes listener below): a blind onclose timer armed before the park, or a lost-timer redial, must not dial ahead of the tap
 if(awaitLink)return;   // [fork] D3 (review round 2, 2026-09-18): while this return awaits the shell's link nothing dials. Every legitimate caller (the fast path's up branch, the link listener, the backstop's two arms, the next return) clears awaitLink before it calls in; the one that does not is the blind 1.5 s redial a close the page saw while hidden armed before the return, and it is refused here. Before this that stray dial stood as ws for the whole await: the link listener and the backstop (both inert with a socket up) never ended it, and the return-fresh carried no linkUpMs though the return row said awaitLink true
 if(returnAt)returnRedialed=true;   // a dial inside a return window (whatever path led here) → the return-fresh row says so
 connT=Date.now();var proto=location.protocol==="https:"?"wss://":"ws://";
@@ -64328,6 +64343,7 @@ ws.onerror=function(){try{ws.close();}catch(e){}};}
 function send(m){var s=JSON.stringify(m);if(m&&m.type==="ready"){bundleReady=true;readyProto=(m.proto===2?2:1);readyMsg=s;}   // the bundle's listener is installed: from here a redial may declare itself (the dial term in connect)
 if(m&&m.type==="ready"&&PM.bundleReady===undefined)PM.bundleReady=pnow();if(m&&m.type==="clientDiag"&&diagMuted())return;   // the beacon extension: the bundle's ready stamp; the kill switch drops every clientDiag row (the shim's, the reload core's and the collector's alike) before it is sent or queued
 if(m&&m.type==="clientDiag"&&m.what==="return-fresh"&&m.data&&linkUpMs>=0){m.data.linkUpMs=linkUpMs;s=JSON.stringify(m);}   // [fork] D3 (2026-09-18): the return-fresh row carries linkUpMs (foreground->link-up) only when this return awaited the shell's link (-1 otherwise, reset each return); stamped here, in the one funnel, so no upstream shim line is modified, and re-serialized because the first line above already built s
+if(m&&m.type==="clientDiag"&&m.what==="return-fresh"&&m.data&&returnParked){m.data.parked=true;returnParked=false;s=JSON.stringify(m);}   // [fork] D2 (2026-09-18): the first fresh frame after a parked return answers the TAP (the show word reset the return window), so its row says parked; the same funnel and the same re-serialization as the D3 stamp above, and no upstream shim line modified
 if(ws&&ws.readyState===1){ws.send(s);return;}
 if(m&&m.type==="ready")readyQueued=true;   // ...and this one waits for the open: the redial that carries it dials as a fresh page (onopen clears the bit after the flush)
 if(m&&m.type==="clientDiag"){if(queuedDiag>=DIAG_QUEUE_MAX)return;queuedDiag++;}   // breadcrumbs waiting for a reconnect are capped; everything else queues as before
@@ -64461,6 +64477,17 @@ if(m.link==="up"&&awaitLink&&!ws){awaitLink=false;if(returnAt&&linkUpMs<0)linkUp
 setInterval(function(){if(!awaitLink||ws)return;var L=parentLink();if(L===undefined)return;
 if(L.up){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;connect();return;}
 if(L.connT&&Date.now()-L.connT>25000){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;staleDiag("link-backstop","");connect();}},5000);
+// [fork] D2 (2026-09-18): the shell's panes word says which pane is on screen (on[k]: on the phone the tab showing, on the
+// desktop the rail flag; _LANDING_COLLAPSE_JS panesMsg, told on apply, iframe load, tab switch and layout flip). Cached for
+// the return decision below. The SHOW is the parked pane's event: the pane comes back through the return path (a fresh return
+// window from the tap, the loader re-raised by romp:wsdown after its 30 s failsafe has long hidden the badge, the
+// return-fresh that follows says parked) and dials once through D3's link rule: now if the link is up or unknown (an older
+// shell), else on the link-up word (awaitLink; the listener and the backstop above end it). A layout no longer the phone's
+// (a rotation, a resize across the breakpoint) ends a park too: the desktop keeps its background redial.
+try{window.addEventListener("message",function(e){var m=e&&e.data;if(!m||m.romp!=="panes"||!m.on)return;onScreen=m.on[APP];
+if(parked&&(onScreen===true||parentMobile()!==true)){parked=false;foregroundedAt=Date.now();eagerDial=true;returnAt=foregroundedAt;returnBytes=0;returnRedialed=false;returnRow=null;awaitLink=false;linkUpMs=-1;
+try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e2){}
+var L=parentLink();if(L===undefined||L.up){if(L!==undefined)linkUpMs=Date.now()-foregroundedAt;connect();}else{awaitLink=true;}}});}catch(e){}
 // visibility fast-path (the user 2026-07-05): a BACKGROUNDED tab has its timers throttled, so the 5s watchdog
 // above can lag and the browser may have quietly dropped the socket while it slept. The instant the tab is
 // foregrounded, if the socket isn't open or has gone quiet past the watchdog window, treat the view as stale:
@@ -64474,8 +64501,17 @@ var row={decision:stale?((!ws||ws.readyState!==1)?"redial-closed":"redial-stale"
 frozenMs:(res&&frozeAt>=hiddenAt&&resumedAt>frozeAt)?resumedAt-frozeAt:0,quietMs:lastRecv?Date.now()-lastRecv:-1,quietAtResumeMs:res?resumeQuiet:-1,ready:ws?ws.readyState:-1};
 returnAt=Date.now();returnBytes=0;returnRedialed=false;returnRow=null;   // every return starts with no held row (review find, 2026-09-08): a keep row left over from an earlier return must not ride this one's close or abandon
 awaitLink=false;linkUpMs=-1;   // [fork] D3: every return starts not awaiting the shell's link
+returnParked=false;if(onScreen!==undefined)row.parked=false;   // [fork] D2: a pane the shell has told about says whether this return parked (false until the branch below says otherwise; a standalone row carries no such field), and the fresh that answers a return that did not park is not a parked one
 if(!stale){returnRow=row;returnDiag("return",row);return;}   // the socket stands: the row rides it now — and is HELD, because a FIN queued in the same thaw burst would swallow it (review find 2026-09-07; onclose re-files)
 pendingWhy="foreground";freshPending=true;armFresh();   // the reconnect's arm reads "foreground" (upstream's two-event prompt)
+// [fork] D2 (2026-09-18): a pane the shell's word says is OFF SCREEN on the PHONE layout parks its redial (the user's ruling,
+// phone-only). Measured before this: five of six phone panes redialed at every return and each took a whole connect push
+// (feed frames, bars) on one link and one thread in the same second as the visible chat's session frame. Now the tab is the
+// event: the socket goes down for every state (park(); the tick inert on !ws), the return row says parked, and nothing
+// dials: not the blind timer (connect()'s guard), not the link-up word (awaitLink stays false). The pane dials once when its
+// word says on screen (the panes listener above). Standalone / VS Code / an older shell (no word) and the desktop layout fall
+// through to the D3 block and the upstream lines below.
+if(onScreen===false&&parentMobile()===true){park();row.parked=true;returnDiag("return",row);return;}
 // [fork] D3 (2026-09-18): when this pane sits in a shell that publishes a link, put the socket down for EVERY state
 // (abandon nulls ws, so the tick is inert and no onclose timer arms) and dial only once the link is up: now if it
 // already is (linkUpMs 0, the whole wait is code-owned), else on the shell's link-up word (awaitLink; the panes
@@ -65567,7 +65603,10 @@ window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='w
 var col=(m.app==='chat'&&window.__rompColOf)?window.__rompColOf(e.source):'';   // a split column reports under its own key (the sender frame says which)
 if(col){var sc=(m.state==='up')?'up':'down',pc=stc[col];stc[col]=sc;
 if(sc==='down'&&pc!=='down'&&shown('chat'))window.__rompNotify('conn','Kernel connection lost: chat split '+col+' (reconnecting)');else paint();return;}
-var s=(m.state==='up')?'up':'down',prev=st[m.app];st[m.app]=s;
+// A PARKED pane (2026-09-18: off screen on the phone, its redial waiting for its tab; the shim's netState("parked")) is its
+// own state here, never 'down': nothing is lost and nothing is reconnecting, so the cue stays dark and the log silent; its
+// later drop or open moves it like any other pane's.
+var s=(m.state==='up')?'up':(m.state==='parked'?'parked':'down'),prev=st[m.app];st[m.app]=s;
 if(s==='down'&&prev!=='down'&&shown(m.app))
 window.__rompNotify('conn','Kernel connection lost: '+paneLabel(m.app)+' pane (reconnecting)');
 else paint();});

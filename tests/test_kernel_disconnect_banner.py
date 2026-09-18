@@ -328,7 +328,7 @@ process.stdout.write(JSON.stringify({
     def test_shell_mounts_the_notification_center(self):
         # the shell listens for pane wsState posts and routes drops into the notification center — the
         # old fixed top banner is GONE (it got in the way, the user 2026-07-27)
-        self.assertIn("var s=(m.state==='up')?'up':'down',prev=st[m.app];st[m.app]=s;", km._LANDING_ERRS_JS)
+        self.assertIn("var s=(m.state==='up')?'up':(m.state==='parked'?'parked':'down'),prev=st[m.app];st[m.app]=s;", km._LANDING_ERRS_JS)   # parked is its own state since 2026-09-18 (test_a_parked_pane_is_its_own_state_never_down)
         land = inspect.getsource(km._landing)
         self.assertNotIn("id=rail-errs", land, "the Log's opener left the bottom bar's action cluster (T290): it opens from the gear")
         self.assertIn("if(m.romp==='openLog'&&window.__rompOpenErrs)window.__rompOpenErrs();", km._LANDING_SETTINGS_JS,
@@ -354,6 +354,20 @@ process.stdout.write(JSON.stringify({
         land = inspect.getsource(km._landing)
         self.assertIn("_LANDING_COLLAPSE_JS", land)
         self.assertIn("_LANDING_ERRS_JS", land)
+
+    def test_a_parked_pane_is_its_own_state_never_down(self):
+        # D2 (2026-09-18): a pane off screen on the phone parks its return redial until its tab is tapped and tells the shell
+        # netState("parked") (the shim's park(), one word, never abandon()'s down). The shell keeps parked as its own state:
+        # liveDown reads down alone, so the cue stays dark, and the up->down transition rule logs no "connection lost" entry,
+        # because nothing is lost and nothing is reconnecting. A later real drop (the tap's dial refused) or open moves the
+        # pane like any other. test_error_center.py ParkedPaneCue runs the center against these words.
+        js = km._LANDING_ERRS_JS
+        self.assertIn("var s=(m.state==='up')?'up':(m.state==='parked'?'parked':'down'),prev=st[m.app];st[m.app]=s;", js)
+        self.assertIn("if(st[k]==='down'&&shown(k))return true;", js, "liveDown reads down alone: parked does not light it")
+        self.assertIn("if(s==='down'&&prev!=='down'&&shown(m.app))", js, "the log's transition rule is down's alone")
+        shim = km._shim("feed")
+        self.assertIn('parked=true;returnParked=true;netState("parked");', shim, "the shim's one parked word")
+        self.assertEqual(shim.count('netState("down")'), 2, "abandon() and onclose post down as before; the park posts none")
 
 
 if __name__ == "__main__":
