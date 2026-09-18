@@ -70,6 +70,7 @@ PROG = "romp perf upload"
 SCHEMA = pe.SCHEMA
 RECEIVER_VAR = "ROMP_PERF_RECEIVER"
 RECEIVER_FILE = "~/.config/romp/perf-receiver"
+RECEIVER_FILE_MAX = 4096             # the setting file is one line of printable ASCII; past this it is not an address (fresh-5)
 ROUTE = "/v1/upload"
 MAX_BYTES = 1 << 20                  # the receiver's cap on Content-Length and on the bytes it reads
 TIMEOUT_S = 30
@@ -98,9 +99,12 @@ class Refusal(Exception):
 def receiver_setting(flag, env=None):
     """(text, source): the address as configured and which setting supplied it, in order --receiver, the
     environment variable, the file's first non-empty line; (None, None) when none is set. An empty variable
-    is unset. The file is read under HOME, the way `romp default-dir` reads its own; a file that is not UTF-8
-    text is returned as the empty string with the file as its source, an address the grammar refuses, so the
-    caller's refusal names the file and nothing of its bytes."""
+    is unset. The file is read under HOME, the way `romp default-dir` reads its own, and read with a bound: at most
+    RECEIVER_FILE_MAX + 1 bytes are taken, so a file that is not a setting (a device node, a fifo, a large file put
+    there by mistake) costs that much memory and no more, and one over the bound is not truncated to its first line
+    but returned as the empty string with the file as its source, the same road a file that is not UTF-8 text takes:
+    an address the grammar refuses, so the caller's refusal names the file and nothing of its bytes. A size check
+    would not do (stat reports 0 for a device node or a fifo), so the bound is on the read itself."""
     if flag is not None:
         return flag, "--receiver"
     env = os.environ if env is None else env
@@ -108,9 +112,12 @@ def receiver_setting(flag, env=None):
     if value:
         return value, RECEIVER_VAR
     try:
-        raw = Path(os.path.expanduser(RECEIVER_FILE)).read_bytes()
+        with open(os.path.expanduser(RECEIVER_FILE), "rb") as fh:
+            raw = fh.read(RECEIVER_FILE_MAX + 1)
     except OSError:
         return None, None
+    if len(raw) > RECEIVER_FILE_MAX:
+        return "", RECEIVER_FILE
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
@@ -260,12 +267,15 @@ def post(url, data, timeout=None):
     """One POST of `data` to `url`: (status, body) for any HTTP answer (the body read only on 201, capped at
     ANSWER_MAX + 1 so a long one is judged by its length, empty for every other status), or a Refusal naming the
     error's class alone when no answer came or the client raised anything else (the last clause is the belt:
-    whatever the class, its message is never printed). The opener has no proxy (ProxyHandler({}) reads no
-    *_proxy variable: the address configured is the address dialled), no cookie jar, and refuses redirects; TLS
-    is urllib's default context, which verifies the certificate against the system store."""
+    whatever the class, its message is never printed). The verb sets its three headers itself, Content-Type,
+    Content-Length (the body's own length, so the attribution the docs make is true by construction, and a body that
+    is not bytes fails at the call instead of going out chunked) and User-Agent; the client adds Host, Accept-Encoding
+    and Connection. The opener has no proxy (ProxyHandler({}) reads no *_proxy variable: the address configured is the
+    address dialled), no cookie jar, and refuses redirects; TLS is urllib's default context, which verifies the
+    certificate against the system store."""
     timeout = TIMEOUT_S if timeout is None else timeout
     req = urllib.request.Request(url, data=data, method="POST",
-                                 headers={"Content-Type": "application/json", "User-Agent": USER_AGENT})
+                                 headers={"Content-Type": "application/json", "Content-Length": str(len(data)), "User-Agent": USER_AGENT})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
     try:
         with opener.open(req, timeout=timeout) as r:

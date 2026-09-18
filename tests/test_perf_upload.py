@@ -308,6 +308,25 @@ class ReceiverSetting(unittest.TestCase):
         self.assertNotIn("receiver.example", text or "")
 
 
+    def test_a_setting_file_over_the_bound_is_an_address_the_grammar_refuses_naming_the_file_and_never_its_bytes(self):
+        """The setting file is read with a bound (RECEIVER_FILE_MAX + 1 bytes), never whole: a device node, a fifo or a
+        large file at that path costs that much memory and no more, and one over the bound is not truncated to its
+        first line (which would send to whatever address that line spelled) but returned as the empty string with the
+        file as its source, the non-UTF-8 road, so the caller refuses naming the file and nothing of its bytes. A stat
+        would not do: it reports 0 for a device node or a fifo. Fails before: the address on the first line was returned.
+        No device node in the suite: a regression there would exhaust the runner rather than fail a test."""
+        self.assertEqual(pu.RECEIVER_FILE_MAX, 4096)
+        first = "https://r.example\n"
+        self._file(first + "x" * (pu.RECEIVER_FILE_MAX + 1 - len(first)))          # one byte over the bound, the address first
+        with mock.patch.dict(os.environ, {"HOME": self.home}):
+            text, source = pu.receiver_setting(None, env={})
+        self.assertEqual((text, source), ("", "~/.config/romp/perf-receiver"), "over the bound: refused as an address, the file named")
+        self.assertIsNone(pu.receiver_url(text))
+        self._file(first + "x" * (pu.RECEIVER_FILE_MAX - len(first)))              # exactly the bound: read, and the first line is the address
+        with mock.patch.dict(os.environ, {"HOME": self.home}):
+            self.assertEqual(pu.receiver_setting(None, env={}), ("https://r.example", "~/.config/romp/perf-receiver"))
+
+
 class ReceiverAddress(unittest.TestCase):
     """receiver_url and upload_url: the address grammar and the route appended to it."""
 
@@ -984,6 +1003,28 @@ class Answers(unittest.TestCase):
             status, body = pu.post(self.fake.url + "/v1/upload", b"{}")
         self.assertEqual((status, body), (500, b""), "another status is not read at all")
         self.assertEqual(asked, [pu.ANSWER_MAX + 1])
+
+    def test_the_verb_sets_content_type_content_length_and_user_agent_and_the_client_adds_the_rest(self):
+        """The attribution the module docstring and the reference make (three headers from the verb, three from the HTTP
+        client) is pinned where it is decided, at the Request's construction, not on the wire: the wire shows six headers
+        whichever side supplied Content-Length (the enumeration test already sees it there). With the verb passing the
+        body's own length, a body that is not bytes fails at the call instead of going out chunked with no length.
+        Fails before: the verb passed two headers and left Content-Length to the client."""
+        real, constructed = urllib.request.Request, []
+
+        def recording(*a, **kw):
+            constructed.append(kw)
+            return real(*a, **kw)
+        with mock.patch.object(pu.urllib.request, "Request", new=recording):
+            status, body = pu.post(self.fake.url + "/v1/upload", b"{}")
+        self.assertEqual(status, 201)
+        self.assertEqual([kw.get("headers") for kw in constructed],
+                         [{"Content-Type": "application/json", "Content-Length": "2", "User-Agent": pu.USER_AGENT}])
+        self.assertEqual(len(self.fake.requests), 1)
+        line, headers, wire_body = self.fake.requests[0]
+        self.assertEqual(wire_body, b"{}")
+        self.assertEqual(sorted(dict(headers)), sorted(Enumeration.FIXED_HEADERS), "six headers on the wire, as before")
+        self.assertEqual(dict(headers)["Content-Length"], "2")
 
     def test_an_error_of_any_other_class_while_dialling_is_refused_by_its_class_alone(self):
         # the belt under the specific clauses: whatever else the client raises, the class and never the message
