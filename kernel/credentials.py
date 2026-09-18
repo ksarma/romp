@@ -120,6 +120,50 @@ def is_op_env_name(name) -> bool:
     return name in OP_ENV_NAMES or str(name).startswith(OP_ENV_PREFIX)
 
 
+# The two suffixes a credential-shaped variable name ends in, beside 1Password's own names: the shape the
+# boot notice names (sdk_backend.env_credential_names), the spawn.json writer moves out of the file
+# (sdk_backend.spawn_env_secret_names) and, since 2026-09-18, the per-session env doors refuse.
+CREDENTIAL_ENV_SUFFIXES = ("_API_KEY", "_TOKEN")
+# romp's own control token: a credential, but not a provider's, and legitimately in the kernel's own
+# environment, so the shape rule leaves it unnamed (the boot line would otherwise name it at every boot).
+CONTROL_TOKEN_VAR = "ROMP_SERVE_TOKEN"
+
+
+def is_credential_env_name(name) -> bool:
+    """A variable NAME shaped like a credential: one ending _API_KEY or _TOKEN, or one of 1Password's own
+    (is_op_env_name). The shape only; the value is credential_env_names' business."""
+    n = str(name)
+    return n.endswith(CREDENTIAL_ENV_SUFFIXES) or is_op_env_name(n)
+
+
+def credential_env_names(environ) -> list:
+    """The credential-shaped names (is_credential_env_name) in `environ` that hold a non-empty value, sorted,
+    names only. ONE rule for three readers, so they agree on what a credential looks like: the boot notice
+    over the kernel's environment (sdk_backend.env_credential_names), the spawn.json writer over a spawn's
+    env overlay (sdk_backend.spawn_env_secret_names), and the per-session env doors over a pick
+    (sdk_backend.env_request_error and the kernel's _env_error mirror, 2026-09-18: the kernel cannot import
+    the SDK backend at its door, and a second spelling of the list there would drift). An empty or
+    whitespace value holds no secret and is not named; the control token is the one exclusion."""
+    return sorted(n for n in environ
+                  if n != CONTROL_TOKEN_VAR and (environ.get(n) or "").strip() and is_credential_env_name(n))
+
+
+def credential_env_refusal(names) -> str:
+    """The per-session env doors' refusal of a pick that names a credential-shaped variable (2026-09-18,
+    found by the spawn.json fix's build: the door refused the three login names alone, so a pick of any other
+    credential-shaped name landed in the session registry and the per-sid flag-settings file, against the
+    fork's rule that no credential is ever written to a file). One wording for both copies of the validator
+    (sdk_backend.env_request_error and the kernel's _env_error), pinned in lockstep by tests. It names the
+    variable, never a value, and says where such a value belongs and that nothing was saved: this string
+    reaches the /new reply, `romp new`'s stderr, the kernel log and the problem ring."""
+    names = sorted(names)
+    return ("env: %s %s credential-shaped (a name ending _API_KEY or _TOKEN, or one of 1Password's), and a "
+            "per-session env is written to files under romp's state directory; the pick was not saved. A value "
+            "of that shape belongs in the process environment: what romp's service starts with reaches every "
+            "session, and a session's own shells can load it from a secret manager"
+            % (", ".join(names), "is" if len(names) == 1 else "are"))
+
+
 def retired_in_env_file(path=None) -> list:
     """The retired NAMES a service.env still assigns (an empty value counts: the line is what the migration
     removes): the provider variables first, then the 1Password CLI's names. [] for a missing file. An

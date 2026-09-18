@@ -19423,10 +19423,13 @@ def _env_error(env, auth=""):
     name outside it would be written silently and exported never. The first offender is NAMED and the
     whole request refused (fail-loudly, the user 2026-07-03): a skipped var is a session quietly
     running without the env it was asked to have. The backend validates AGAIN: spawn backs this
-    door with its loud ValueError, but set_env re-checks and refuses with a silent False its
-    callers discard — so on the existing:true path drift between the two copies would be a 200
-    with an env echo and nothing applied. This copy MUST stay in lockstep with
-    sdk_backend.env_request_error, pinned by test_session_env's ValidatorLockstep."""
+    door with its loud ValueError, but set_env re-checks and refuses with a False its callers
+    discard (logged as a problem row since 2026-09-18, answered to no caller), so on the
+    existing:true path drift between the two copies would be a 200 with an env echo and nothing
+    applied. This copy MUST stay in lockstep with sdk_backend.env_request_error, pinned by
+    test_session_env's ValidatorLockstep. The credential-shape rule and its wording are read from
+    credentials.py (credential_env_names, credential_env_refusal), which both copies load, so that
+    part is one function rather than a mirrored spelling."""
     if not isinstance(env, dict):
         return "env must be an object of NAME: value pairs"
     for k, v in env.items():
@@ -19448,6 +19451,14 @@ def _env_error(env, auth=""):
             # accepted, it bakes into the reg a var the CLI can only truncate or throw on, either
             # way diverging from what /new echoed as applied.
             return "env: the value for %r contains a NUL byte — no process environment can carry one" % (k,)
+    # A credential-shaped name of any other spelling is refused too, by name (2026-09-18, found by the
+    # spawn.json fix's build; the box admin ruled the door the fix): the pick lands in the registry and the
+    # per-sid flag-settings file, against the fork's rule that no credential is written to a file. The three
+    # login names were refused above whatever their value, so credentials.py's rule over the rest of the pick
+    # is exactly what sdk_backend.spawn_env_secret_names flags for the backend's copy (ValidatorLockstep).
+    secret = jd._cred.credential_env_names(env)
+    if secret:
+        return jd._cred.credential_env_refusal(secret)
     return ""
 
 

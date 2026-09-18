@@ -5158,13 +5158,12 @@ def env_credential_names(environ) -> list:
     logged. The one exclusion is romp's own control token, which is not a provider credential (the exact
     name romp reads, ROMP_SERVE_TOKEN; another spelling is not romp's token and is named like any other);
     no name the claim removes is excluded here, so a login token still present when this runs did reach
-    sessions and is named, and the call's place after the claim is what keeps it off the line.
+    sessions and is named, and the call's place after the claim is what keeps it off the line. The rule
+    itself lives in credentials.py (credential_env_names, 2026-09-18) so the kernel's per-session env door,
+    which cannot import this module, judges a pick by the same rule (env_request_error and its _env_error
+    mirror); this is the boot notice's name for it.
     """
-    def shaped(n) -> bool:
-        u = str(n).upper()
-        return u.endswith("_API_KEY") or u.endswith("_TOKEN") or _cred.is_op_env_name(n)
-    return sorted(n for n in environ
-                  if n != "ROMP_SERVE_TOKEN" and (environ.get(n) or "").strip() and shaped(n))
+    return _cred.credential_env_names(environ)
 
 
 def _overlay_text(value) -> str:
@@ -5239,7 +5238,8 @@ def env_request_error(env, auth: str = "") -> str:
     silently and exported never. One validator for every door (the /new handler mirrors it
     client-side of the backend seam; spawn and set_env enforce it here), loud and specific by rule —
     the first offender is NAMED and the whole payload refused, never skipped (fail-loudly, the user
-    2026-07-03)."""
+    2026-07-03). A pick naming a credential-shaped variable of any spelling is refused too, by name
+    (2026-09-18; the rule and the wording are credentials.py's, shared with the kernel's mirror)."""
     if not isinstance(env, dict):
         return "env must be an object of NAME: value pairs"
     for k, v in env.items():
@@ -5261,6 +5261,20 @@ def env_request_error(env, auth: str = "") -> str:
             # accepted, it bakes into the reg a var the CLI can only truncate or throw on, either
             # way diverging from what /new echoed as applied.
             return "env: the value for %r contains a NUL byte — no process environment can carry one" % (k,)
+    # A credential-shaped name of ANY spelling is refused, not the three login names alone (2026-09-18, found
+    # by the spawn.json fix's build): the pick lands in the session registry and in the per-sid flag-settings
+    # file, both files under the state directory, against the fork's rule that no credential is ever written
+    # to a file, and until now a NOTES_API_TOKEN or an OP_* name typed into the pick was written there. The
+    # box admin ruled the door the fix, the smallest one: a legitimate value of that shape has the process
+    # environment, and a host-environment road for such a pick is a follow-up only if a need appears. Judged
+    # over the pick itself by spawn_env_secret_names, the rule the spawn.json writer moves names by, so the
+    # door and the writer agree on what a credential looks like and no second list exists; a name whose value
+    # is empty holds no secret and passes, as it stays in the writer's file. The refusal names the variables,
+    # never a value, and says where the value belongs. The loop above has already refused the three, so what
+    # is left to name here is the other spellings.
+    secret = spawn_env_secret_names(env)
+    if secret:
+        return _cred.credential_env_refusal(secret)
     return ""
 
 
@@ -14879,6 +14893,19 @@ class SdkBackend:
             self._log("env (%s): ignoring reserved %s from the stored session env: romp sets the identity "
                       "env itself, and a session's credential is Claude Code's own"
                       % (sess.name, ", ".join(legacy)), problem=True)
+        # A stored env carrying a credential-shaped name of another spelling (accepted before the door refused
+        # them, 2026-09-18) is NOT stripped: the launch never ran the door, so the fix breaks no running
+        # session, and dropping the variable here would change a session's environment at its next reconnect
+        # with no gesture of the user's while cleaning nothing (the registry holds the same value). It is said
+        # instead, once per session in the problem ring (names only, never a value), so the admin can redact:
+        # a `romp new --env` re-run without the name, or `--no-env`, which the door accepts and the next
+        # connect writes.
+        stored = [n for n in spawn_env_secret_names(env_vars) if n not in legacy]
+        if stored:
+            self._log("env (%s): the stored session env carries credential-shaped %s, which a pick can no longer "
+                      "name; the session launches with it until the env is re-declared without the name "
+                      "(romp new --env, or --no-env)" % (sess.name, ", ".join(stored)),
+                      problem=True, key=("env-stored-credential", sess.sid))
         # Billing rides Claude Code's own resolution (credentials.py, 2026-09-08). A LOGIN pick disables the
         # box's apiKeyHelper for this one process through the per-session settings layer ("apiKeyHelper": "",
         # the value the CLI takes as unset; verified on 2.1.257): in the CLI's precedence the helper outranks
@@ -17610,7 +17637,13 @@ class SdkBackend:
         relaunch the very env the process runs (until round 4 set_env compared only against the reg, so a
         revert kept the hold and the settle relaunched the identical env); anything else reconnects."""
         reg = read_reg(self.state_dir, sid)
-        if env_request_error(env, (reg or {}).get("auth") or ""):
+        err = env_request_error(env, (reg or {}).get("auth") or "")
+        if err:
+            # said, not only refused (2026-09-18): the /new door validates first and answers the caller, but
+            # the parked-op replay hands set_env a pick validated under OLDER rules and discards the bool,
+            # so a refusal here that no line records is a pick that vanished. The message names variables,
+            # never a value.
+            self._log("env (%s): pick refused: %s" % ((reg or {}).get("name") or sid, err), problem=True)
             return False
         if not reg:
             return False

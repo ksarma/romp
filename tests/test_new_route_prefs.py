@@ -13,6 +13,7 @@ import tempfile
 import threading
 import unittest
 import urllib.request
+import uuid
 from contextlib import redirect_stderr
 from http.server import ThreadingHTTPServer
 from romp_load import load_source
@@ -205,6 +206,21 @@ class NewRouteEnv(unittest.TestCase):
                           "the error teaches the alphabet, not just refuses")
         self.assertEqual(self.created, [], "nothing may be created on a refused request")
         self.assertEqual(self.calls, [])
+
+    def test_a_credential_shaped_name_refuses_the_whole_request_and_names_it_never_the_value(self):
+        # the spawn.json fix's build found the door refusing the three login names alone (2026-09-18): a pick
+        # naming NOTES_API_TOKEN landed in the registry and the flag-settings file. Refused at THIS door now,
+        # before anything is created, with the variable named and the value nowhere in the reply. The value
+        # is built at run time (gitleaks reads this repo)
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+        code, body = self._post({"name": "opt", "dir": self.dir,
+                                 "env": {"NOTES_ENDPOINT": "http://notes.test", "NOTES_API_TOKEN": val}})
+        self.assertEqual(code, 400, "a credential-shaped name must 400, not spawn")
+        self.assertIn("NOTES_API_TOKEN", body["error"], "the refusal names the variable")
+        self.assertNotIn(val, body["error"], "the refusal never carries the value")
+        self.assertIn("the pick was not saved", body["error"])
+        self.assertEqual(self.created, [], "nothing was created")
+        self.assertEqual(self.calls, [], "no env reached a setter")
 
     def test_a_non_object_or_non_string_value_refuses(self):
         code, body = self._post({"name": "opt", "dir": self.dir, "env": "FEATURE_FLAG=1"})

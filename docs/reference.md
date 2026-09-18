@@ -227,9 +227,31 @@ clears them all. Keep secrets out of it: each value is copied into
 per-session files and the session registry under `~/.local/state/romp/`. A
 credential never goes in `--env`, and never in `service.env` either: a payload
 naming `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN`
-is refused outright. A session's credential is Claude Code's own resolution,
-the `apiKeyHelper` in its settings for a key and the login otherwise; see
-[Service environment and credentials](#service-environment-and-credentials).
+is refused outright, and so is one naming any other credential-shaped variable
+with a non-empty value (a name ending `_API_KEY` or `_TOKEN`, or one of
+1Password's `OP_*` names; the same rule the hosted launch uses to keep such a
+name out of its `spawn.json`). The refusal names the variable, never its value,
+and nothing is saved: a running session's env stays what it was. A value of
+that shape belongs in the process environment, not in a per-session pick: the
+environment romp's service starts with reaches every session's Claude process
+(the boot line described under
+[Service environment and credentials](#service-environment-and-credentials)
+names those variables), and a session's own shells can load one from a secret
+manager themselves. A session's credential is Claude Code's own resolution,
+the `apiKeyHelper` in its settings for a key and the login otherwise. An env
+stored before this rule keeps launching as it was and is named once per
+session in the problem ring; re-declare the env without the name (`romp new
+--env` with the rest of the set, or `--no-env`) to redact it. To list the
+stored files that still carry such a name, by name only:
+
+    python3 -c 'import glob, json, os
+    S = os.path.expanduser("~/.local/state/romp")
+    for p in sorted(glob.glob(S + "/sdk-flag-settings/*.json") + glob.glob(S + "/sdk/*.json")):
+        try: env = json.load(open(p)).get("env") or {}
+        except (OSError, ValueError): continue
+        for n in sorted(env):
+            if (env[n] or "").strip() and (n.endswith(("_API_KEY", "_TOKEN")) or n.startswith("OP_SESSION_") or n in ("OP_SERVICE_ACCOUNT_TOKEN", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN", "OP_ACCOUNT")):
+                print(p, n)'
 
 Two things to know before building on `romp sessions --json`. **`waiting` means
 at rest**, the ordinary state of a session that has finished its turn, so

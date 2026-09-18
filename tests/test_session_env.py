@@ -27,6 +27,7 @@ import json
 import os
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from romp_load import load_source
 
@@ -43,6 +44,13 @@ sb = load_source("romp_sdk_backend_env", os.path.join(BIN, "romp_sdk_backend.py"
 PARENT = "11111111-2222-3333-4444-555555555555"
 CHILD = "66666666-7777-8888-9999-aaaaaaaaaaaa"
 ENV = {"FEATURE_FLAG": "1", "UI_THEME": "dark"}
+PLAIN = {"NOTES_ENDPOINT": "http://notes.test"}   # a plain name beside a credential-shaped one in the door tests
+
+
+def _secret_value(tag):
+    """A synthetic credential-shaped VALUE built at run time from short parts: gitleaks reads this repo, so no
+    token-shaped literal ever sits in a test (the spawn.json fix's tests build theirs the same way)."""
+    return "synthetic-" + tag + "-" + uuid.uuid4().hex
 
 
 class _Backend(unittest.TestCase):
@@ -436,6 +444,15 @@ class ValidatorLockstep(unittest.TestCase):
         # bad values, the NUL hole included
         {"FEATURE_FLAG": 1}, {"FEATURE_FLAG": None}, {"FEATURE_FLAG": True},
         {"FEATURE_FLAG": {"nested": "no"}}, {"FEATURE_FLAG": "1\x00x"},
+        # credential-shaped names of other spellings (2026-09-18): refused by the rule credentials.py holds for
+        # both copies; an empty or whitespace value holds no secret and passes; the control token is the rule's
+        # one exclusion; a bad value under such a name is the value's refusal, whichever copy answers
+        {"NOTES_API_TOKEN": _secret_value("notes-token")}, {"NOTES_API_KEY": _secret_value("notes-key")},
+        {"OP_SESSION_notes": _secret_value("op-session")}, {"OP_CONNECT_TOKEN": _secret_value("op-connect")},
+        {"NOTES_ENDPOINT": "http://notes.test", "NOTES_API_TOKEN": _secret_value("notes-token"),
+         "NOTES_API_KEY": _secret_value("notes-key")},
+        {"EMPTY_TOKEN": ""}, {"SPACES_TOKEN": "  "}, {"ROMP_SERVE_TOKEN": "control"},
+        {"NOTES_API_TOKEN": 1}, {"NOTES_API_TOKEN": "a\x00b"},
     )
 
     @staticmethod
@@ -469,6 +486,23 @@ class ValidatorLockstep(unittest.TestCase):
                 self.assertEqual(a, b, "the copies must stay in lockstep (auth=%r, payload %r)" % (auth, p))
                 self.assertIn("is reserved: a session's credential is Claude Code's own", a)
                 self.assertIn(next(iter(p)), a, "the offender is named")
+
+    def test_the_copies_agree_that_a_credential_shaped_name_is_refused(self):
+        """The spawn.json fix's build found the doors refusing the three login names alone (2026-09-18): a pick
+        naming NOTES_API_TOKEN or an OP_* variable landed in the registry and the flag-settings file. Both
+        copies now refuse such a pick, for every billing pick, with credentials.py's one wording, naming the
+        variable and never its value."""
+        km = self._kernel()
+        val = _secret_value("notes-token")
+        for auth in ("", "key", "login"):
+            for p in ({"NOTES_API_TOKEN": val}, {"OP_SESSION_notes": val}, {**PLAIN, "NOTES_API_KEY": val}):
+                a, b = km._env_error(p, auth), sb.env_request_error(p, auth)
+                self.assertEqual(a, b, "the copies must stay in lockstep (auth=%r, payload %r)" % (auth, sorted(p)))
+                self.assertTrue(a, "refused (auth=%r, payload %r)" % (auth, sorted(p)))
+                name = next(n for n in p if n not in PLAIN)
+                self.assertIn(name, a, "the offender is named")
+                self.assertNotIn(val, a, "the value is never in the message")
+                self.assertIn("the pick was not saved", a)
 
 
 class DrivePlumbing(unittest.TestCase):
@@ -549,3 +583,155 @@ class EnvSecretsStayPrivate(unittest.TestCase):
         self.assertNotIn("s3cret", md)
         self.assertEqual(km._parked_md(("env", {})), "/env (cleared)")
 
+
+
+
+class CredentialShapedNamesAtTheDoor(unittest.TestCase):
+    """The door refuses a pick naming a credential-shaped variable of ANY spelling (2026-09-18, found by the
+    spawn.json fix's build; the box admin ruled the door the fix): until then env_request_error refused the
+    three login names alone, so NOTES_API_TOKEN=... typed into the pick was written into the registry and
+    the per-sid flag-settings file, against the fork's rule that no credential is ever written to a file.
+    The rule is the spawn.json writer's (spawn_env_secret_names) over the pick itself, one rule, never a
+    second list; the message names the variable(s), never a value, says where the value belongs, and that
+    nothing was saved. Values are built at run time (never a token-shaped literal: gitleaks reads tests)."""
+
+    def test_a_credential_shaped_name_is_refused_by_name_and_the_pick_without_it_passes(self):
+        for name in ("NOTES_API_TOKEN", "NOTES_API_KEY", "OP_SESSION_notes", "OP_SERVICE_ACCOUNT_TOKEN"):
+            val = _secret_value("value")
+            for auth in ("", "key", "login"):
+                err = sb.env_request_error({**PLAIN, name: val}, auth)
+                self.assertTrue(err, "%s must be refused for auth=%r" % (name, auth))
+                self.assertIn(name, err, "the offending NAME is in the message")
+                self.assertNotIn(val, err, "the VALUE is never in the message")
+                self.assertNotIn("NOTES_ENDPOINT", err, "the plain name is not blamed")
+                self.assertIn("the pick was not saved", err)
+                self.assertIn("process environment", err, "the message says where such a value belongs")
+                self.assertTrue(err.startswith("env: "), "the env doors' prefix, like every other refusal")
+        self.assertEqual(sb.env_request_error(dict(PLAIN)), "", "the same pick without the name passes")
+
+    def test_every_offending_name_is_said_sorted_and_no_value(self):
+        tok, key = _secret_value("tok"), _secret_value("key")
+        err = sb.env_request_error({"NOTES_API_TOKEN": tok, **PLAIN, "NOTES_API_KEY": key})
+        self.assertIn("NOTES_API_KEY, NOTES_API_TOKEN are credential-shaped", err, "all of them, sorted")
+        self.assertNotIn(tok, err)
+        self.assertNotIn(key, err)
+
+    def test_the_door_judges_by_the_writers_rule(self):
+        """One rule with the spawn.json writer: a well-formed pick is refused exactly when spawn_env_secret_names
+        flags a name in it, and the names the message says are the writer's."""
+        val = _secret_value("value")
+        picks = ({**PLAIN, "NOTES_API_TOKEN": val}, {"EMPTY_TOKEN": ""}, {"SPACES_TOKEN": "  "},
+                 {"ROMP_SERVE_TOKEN": "control"}, dict(PLAIN), {"OP_ACCOUNT": "acct"}, {"MY_SECRET_TOKEN": val},
+                 {"TOKEN_FIRST": val}, {"API_KEY_HOLDER": val})
+        for pick in picks:
+            flagged = sb.spawn_env_secret_names(pick)
+            err = sb.env_request_error(pick)
+            self.assertEqual(bool(err), bool(flagged), "door and writer disagree on %r" % (sorted(pick),))
+            for n in flagged:
+                self.assertIn(n, err)
+            self.assertNotIn(val, err)
+
+    def test_an_empty_credential_shaped_value_passes_as_the_writer_keeps_it(self):
+        # the writer leaves an empty value in its file (it holds no secret; there it is the unset it means), so
+        # the door lets it through too: one rule
+        self.assertEqual(sb.env_request_error({"EMPTY_TOKEN": ""}), "")
+        self.assertEqual(sb.env_request_error({**PLAIN, "EMPTY_API_KEY": ""}), "")
+
+    def test_the_three_login_names_keep_their_own_words(self):
+        # the loop's refusal of the three stands first, whatever the value, with the wording other tests pin
+        for name in sb.AUTH_ENV_NAMES:
+            err = sb.env_request_error({name: ""})
+            self.assertIn("Claude Code's own", err)
+            self.assertNotIn("credential-shaped", err)
+
+
+class CredentialShapedNamesEndToEnd(_OptionsBackend):
+    """The backend end to end (2026-09-18): a refused pick writes nothing, the stored env stands and the value
+    is in no file under the state root; a plain name still lands in the flag-settings file; a stored env from
+    before the rule still launches, with its name said in the problem ring and never its value."""
+
+    def setUp(self):
+        super().setUp()
+        Path(self.d, "session-hosts").write_text("off\n")   # this root mints no host (the runner floors only its own)
+        self.logged = []
+        self.be._log = lambda msg, problem=False, **kw: self.logged.append((msg, problem, kw))
+
+    def _files_carrying(self, text):
+        hits = []
+        for root, _dirs, files in os.walk(self.d):
+            for f in files:
+                p = os.path.join(root, f)
+                try:
+                    if text in Path(p).read_text(errors="replace"):
+                        hits.append(p)
+                except OSError:
+                    pass
+        return hits
+
+    def _live(self, sid):
+        s = self._sess(sid)
+        self.reconnects = []
+        s.request_reconnect = lambda *a, **k: self.reconnects.append(1)
+        self.be.sessions[sid] = s
+        return s
+
+    def _flag_file(self, sid):
+        return Path(self.be.state_dir, sb.FLAG_SETTINGS_DIR, "%s.json" % sid)
+
+    def test_a_refused_pick_writes_nothing_and_the_previous_env_stands(self):
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        s = self._live(sid)
+        self.be._options(s, dict)                              # the session launched with ENV: the file carries it
+        self.assertEqual(json.loads(self._flag_file(sid).read_text())["env"], ENV)
+        val = _secret_value("notes-token")
+        self.assertFalse(self.be.set_env(sid, {**PLAIN, "NOTES_API_TOKEN": val}), "the pick is refused")
+        self.assertEqual(self._reg(sid)["env"], ENV, "the stored pick stays what it was")
+        self.assertEqual(s.env_vars, ENV, "the live session's env stays what it was")
+        self.assertFalse(self.reconnects, "nothing to apply, no reconnect")
+        text = self._flag_file(sid).read_text()
+        self.assertEqual(json.loads(text)["env"], ENV, "the flag-settings file is untouched")
+        self.assertNotIn("NOTES_API_TOKEN", text)
+        self.be._options(s, dict)                              # the next connect rewrites the file from the reg
+        self.assertEqual(json.loads(self._flag_file(sid).read_text())["env"], ENV)
+        self.assertEqual(self._files_carrying(val), [], "the value is in no file under the state root")
+        rows = [m for m, problem, _kw in self.logged if problem and "NOTES_API_TOKEN" in m]
+        self.assertTrue(rows, "the refusal is a problem row naming the variable: %r" % (self.logged,))
+        self.assertFalse(any(val in m for m, _p, _kw in self.logged), "no log line carries the value")
+
+    def test_spawn_refuses_and_mints_no_file_carrying_the_value(self):
+        before = sum(len(f) for _r, _d, f in os.walk(self.d))
+        val = _secret_value("notes-key")
+        with self.assertRaises(ValueError) as cm:
+            self.be.spawn("api", "/tmp", env={**PLAIN, "NOTES_API_KEY": val})
+        self.assertIn("NOTES_API_KEY", str(cm.exception))
+        self.assertNotIn(val, str(cm.exception))
+        self.assertEqual(self._files_carrying(val), [])
+        self.assertEqual(sum(len(f) for _r, _d, f in os.walk(self.d)), before, "a refused spawn writes no file")
+
+    def test_a_plain_name_still_lands_in_the_flag_settings_file(self):
+        sid = self.be.spawn("web", "/tmp", env=dict(PLAIN))
+        kw = self.be._options(self._sess(sid), dict)
+        self.assertEqual(json.loads(Path(kw["settings"]).read_text())["env"], PLAIN,
+                         "a name of no credential shape rides the file as before")
+        self.assertTrue(self.be.set_env(sid, {**PLAIN, "FEATURE_FLAG": "1"}), "and a plain re-pick is accepted")
+
+    def test_a_stored_credential_shaped_name_still_launches_and_is_said_once_per_session(self):
+        """The launch path never ran the door, so a reg written before the rule (a pick accepted then) keeps
+        launching: the variable is NOT stripped from what the CLI receives (a drop would change a running
+        session's environment at its next reconnect with no gesture of the user's, and clean nothing: the
+        registry holds the value). It is said instead, names only, keyed per session so the ring holds one row."""
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        val = _secret_value("notes-token")
+        self.be._update_reg(sid, env={**ENV, "NOTES_API_TOKEN": val})   # a store from before the door refused it
+        s = self._sess(sid)
+        kw = self.be._options(s, dict)
+        got = json.loads(Path(kw["settings"]).read_text())["env"]
+        self.assertEqual(got, {**ENV, "NOTES_API_TOKEN": val}, "the stored env launches whole; nothing is dropped")
+        rows = [(m, kw2) for m, problem, kw2 in self.logged if problem and "NOTES_API_TOKEN" in m]
+        self.assertEqual(len(rows), 1, "one problem row names the stored variable: %r" % (self.logged,))
+        self.assertNotIn(val, rows[0][0], "the value is never in the line")
+        self.assertIn("romp new --env", rows[0][0], "the line says how to redact")
+        self.assertEqual(rows[0][1].get("key"), ("env-stored-credential", sid), "keyed per session: the ring dedupes")
+        self.assertFalse(any(val in m for m, _p, _k in self.logged))
+        self.assertTrue(self.be.set_env(sid, dict(ENV)), "the redaction re-declares the env without the name")
+        self.assertEqual(self._reg(sid)["env"], ENV)
