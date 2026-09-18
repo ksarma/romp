@@ -58,6 +58,25 @@ class BundleBuildMode(unittest.TestCase):
                       "_ensure_bundles must match the installer, or a .ts/.css touch reverts "
                       "the served dashboard to the unminified bundle")
 
+    def test_the_converge_rebuild_also_builds_production(self):
+        """The THIRD builder: _rebuild_dist, the in-place converge that runs when a fast-forward leaves dist
+        older than ui/ (the drift pass, _dist_converge_check). It ran `node esbuild.js` bare, so every
+        post-update rebuild served unminified bundles with sourcemaps, and _ensure_bundles never re-minified
+        them: it judges staleness by mtime against dist/render.js, not by profile, so a dev-profile dist newer
+        than its inputs is current to the next boot. The user's phone downloaded those bundles for weeks (about
+        27 percent larger gzipped; the user 2026-09-18, who wanted the phone's downloads minified). Same knob as
+        the other two builders: ROMP_EXT_DEV_BUILD opts out."""
+        src = _read(KERNEL)
+        m = re.search(r"def _rebuild_dist\(\):.*?(?=\ndef )", src, re.S)
+        self.assertIsNotNone(m, "_rebuild_dist not found")
+        body = m.group(0)
+        self.assertIn("esbuild.js", body)
+        self.assertIn("--production", body,
+                      "_rebuild_dist must build the production profile like _ensure_bundles and the installer, "
+                      "or every fast-forward serves the unminified bundles until someone notices")
+        self.assertIn("ROMP_EXT_DEV_BUILD", body,
+                      "_rebuild_dist must honour the same opt-out knob as _ensure_bundles")
+
     def test_both_honour_the_same_dev_opt_out(self):
         """One knob for a UI dev loop, spelled the same in both places — two names would mean
         turning it off in one builder and silently not the other."""
