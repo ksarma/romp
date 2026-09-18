@@ -722,15 +722,26 @@ class Collector(unittest.TestCase):
         families and an OPTIONS preflight per cross-origin POST route."""
         lit = re.compile(r'(?:\bp|u\.path) (?:==|in) (?:"(/[^"]*)"|\(((?:"/[^"]*"(?:, )?)+)\))')
         n = 0
+        derived = {}
         for meth in ("do_GET", "do_HEAD", "do_OPTIONS", "do_POST"):
             src = inspect.getsource(getattr(km.Handler, meth))
             paths = set()
             for m in lit.finditer(src):
                 paths.update([m.group(1)] if m.group(1) is not None else re.findall(r'"(/[^"]*)"', m.group(2)))
             n += len(paths)
+            derived[meth[3:]] = paths
         self.assertGreaterEqual(n, 80, "the derivation lost the route table (did the dispatch shape change?)")
         self.assertGreaterEqual(km._PerfStats.HTTP_PATHS, int(n * 1.5),
                                 "%d fixed routes: raise HTTP_PATHS, or routes land in other for the kernel's lifetime" % n)
+        # the checked-in register equals the dispatches, method by method (2026-09-18): a route added to a do_* without a
+        # line in _PERF_HTTP_ROUTES would count under `other` for the kernel's lifetime, and a line without a route would
+        # admit a key the kernel never serves; either way this says which path
+        self.assertEqual(derived["OPTIONS"], set(), "do_OPTIONS answers any route's preflight and dispatches on no path")
+        for meth in ("GET", "HEAD", "POST"):
+            self.assertEqual(set(km._PERF_HTTP_ROUTES[meth]), derived[meth],
+                             "%s: the register and the dispatches differ by %s" % (meth, sorted(set(km._PERF_HTTP_ROUTES[meth]) ^ derived[meth])))
+            self.assertEqual(list(km._PERF_HTTP_ROUTES[meth]), sorted(set(km._PERF_HTTP_ROUTES[meth])), "%s: sorted, no repeats" % meth)
+        self.assertEqual(set(km._PERF_HTTP_ROUTES["OPTIONS"]), derived["GET"] | derived["HEAD"] | derived["POST"], "a preflight for any route")
 
     def test_http_key_is_method_plus_normalized_path(self):
         key = km._perf_http_key
@@ -745,6 +756,34 @@ class Collector(unittest.TestCase):
         self.assertEqual(key("HEAD", "/remote/TESTHOST/file"), "HEAD /remote/*/file")
         self.assertEqual(key("GET", "/remote/TESTHOST"), "GET /remote/*")
         self.assertEqual(key("", "/version"), "/version", "a handler without a method: the path alone")
+
+    def test_http_keys_outside_the_route_table_fold_to_other(self):
+        """A request's path is the requester's text (2026-09-18, a paste-safety review of the snapshot): a scanner's probe, a
+        session id or a home path typed into a URL, an attached host's op stood as keys in the served http table. Every key
+        is now one of the checked-in routes (_PERF_HTTP_ROUTES, per method), a collapsed family, or `other`; a remote path
+        keeps its op only when the op is a route of the same method; a CORS preflight is allowed any route."""
+        key = km._perf_http_key
+        self.assertEqual(key("GET", "/nope/" + SID), "other", "a path that is no route names nothing")
+        self.assertEqual(key("GET", "/home/tester/.claude/projects/x/" + SID + ".jsonl"), "other")
+        self.assertEqual(key("GET", "/remote/TESTHOST/" + SID), "other", "a remote path whose op is no route")
+        self.assertEqual(key("GET", "/remote/TESTHOST/sessions"), "GET /remote/*/sessions", "a remote path whose op is a GET route")
+        self.assertEqual(key("POST", "/remote/TESTHOST/send"), "POST /remote/*/send", "the relay: the op is a POST route")
+        self.assertEqual(key("GET", "/remote/TESTHOST/send"), "other", "the same op under the wrong method")
+        self.assertEqual(key("HEAD", "/file"), "HEAD /file")
+        self.assertEqual(key("HEAD", "/version"), "other", "do_HEAD dispatches /file alone")
+        self.assertEqual(key("POST", "/version"), "other", "a GET route asked with POST is no route")
+        self.assertEqual(key("OPTIONS", "/perf"), "OPTIONS /perf", "a preflight for any route")
+        self.assertEqual(key("OPTIONS", "/nope"), "other")
+        self.assertEqual(key("GET", "/PERF"), "other", "the dispatches are case-sensitive, so is the register")
+        self.assertEqual(key("GET", "//perf"), "other")
+        self.assertEqual(key("GET", "/perf/"), "other")
+        self.assertEqual(key("", "/nope"), "other", "a handler without a method is judged against every method's routes")
+        self.assertEqual(key("GET", "/ws"), "GET /ws"); self.assertEqual(key("GET", "/"), "GET /")
+        for meth in ("GET", "HEAD", "POST"):                   # every registered route is its own key under its method
+            for path in km._PERF_HTTP_ROUTES[meth]:
+                self.assertEqual(key(meth, path), "%s %s" % (meth, path))
+        for fam in km._PERF_HTTP_FAMILIES:
+            self.assertEqual(key("GET", fam), "GET " + fam, "a collapsed family is a key in its own right")
 
     def test_reset_starts_over_and_moves_since(self):
         self.st.cycle(0.1); self.st.http_request("GET /x", 0.1)
@@ -1770,13 +1809,16 @@ class PerfRoutes(unittest.TestCase):
         self.assertGreater(after["ms"], before["ms"])
 
     def test_head_and_options_are_counted_too(self):
-        head0, opt0 = self._http("HEAD /version"), self._http("OPTIONS /perf")
+        head0, opt0, other0 = self._http("HEAD /file"), self._http("OPTIONS /perf"), self._http("other")
         with _HttpWatch() as w:
-            self._req("HEAD", "/version", token=False)
+            self._req("HEAD", "/file")                          # do_HEAD's one route (the PDF chip's existence probe)
+            self._req("HEAD", "/version", token=False)          # no HEAD route: counted, under `other` (2026-09-18)
             self._req("OPTIONS", "/perf")
-            self.assertTrue(w.wait_for("HEAD /version", 1))
+            self.assertTrue(w.wait_for("HEAD /file", 1))
+            self.assertTrue(w.wait_for("other", other0["count"] + 1))
             self.assertTrue(w.wait_for("OPTIONS /perf", 1))
-        self.assertEqual(self._http("HEAD /version")["count"], head0["count"] + 1, "a /file probe storm is visible")
+        self.assertEqual(self._http("HEAD /file")["count"], head0["count"] + 1, "a /file probe storm is visible")
+        self.assertEqual(self._http("other")["count"], other0["count"] + 1, "a HEAD of a route do_HEAD does not serve counts as other")
         self.assertEqual(self._http("OPTIONS /perf")["count"], opt0["count"] + 1, "a preflight burst is visible")
 
     def test_a_ws_upgrade_is_counted_when_it_arrives(self):

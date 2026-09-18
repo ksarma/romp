@@ -791,10 +791,12 @@ class _PerfStats:
                                    session-archive-unreadable, units-cache-unreadable,
                                    units-cache-write-failed)
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
-                                   path normalized by _perf_http_key (/dist/*, /media/*,
-                                   /remote/*/…), at most HTTP_PATHS keys with the rest folded into
-                                   "other" (so a scanner cannot grow it, and a static file or a host
-                                   name never takes a slot or appears in the output). A WebSocket
+                                   path normalized by _perf_http_key (/dist/*, /media/*, /glossary/*,
+                                   /remote/*/…; a path outside the checked-in route table,
+                                   _PERF_HTTP_ROUTES, is "other"), at most HTTP_PATHS keys with the
+                                   rest folded into "other" (so a scanner cannot grow it, and a static
+                                   file, a host name, a term or a typed path never takes a slot or
+                                   appears in the output). A WebSocket
                                    upgrade (a path ending in /ws) is counted when it ARRIVES and adds
                                    no ms: its handler returns when the socket closes, which is a
                                    connection's lifetime, not a request's."""
@@ -1791,14 +1793,61 @@ _PERF_IDENT = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")   # a name a /perf key may c
 #                                                        browser's perf-telemetry `ident` grammar, without its colon): else "other"
 
 
+# The kernel's own route table, checked in (2026-09-18): the "METHOD /path" keys GET /perf's `http` table may carry, one
+# tuple per do_* method, spelled exactly as the dispatches spell them (tests/test_perf_stats.py derives the same sets from
+# the do_* source and holds this constant equal to them, so a route added to a dispatch without a line here fails that
+# test rather than counting under `other` for the kernel's lifetime). A request whose method and path are not in its
+# method's tuple, or in the collapsed families _perf_http_key folds (below), counts under `other`: a scanner's path, a
+# session id or a home path typed into a URL, a glossary term, a host name. A CORS preflight (OPTIONS) is a request for
+# any of these paths, so it is allowed the union. The route table itself is the dispatches; this is their register.
+_PERF_HTTP_ROUTES = {
+    "GET": (
+        "/", "/analytics", "/api-health", "/api-health/frame", "/busy", "/chat", "/classify",
+        "/commands", "/defaults", "/diag/sendvis", "/emoji", "/feed", "/feed.json", "/file", "/files",
+        "/fleet", "/followup-preview", "/handoff", "/healthz", "/logins", "/manifest.webmanifest",
+        "/mcp", "/models", "/notify-all", "/notify-turns", "/palette", "/perf", "/push/pending",
+        "/push/vapid-key", "/session-events", "/sessions", "/sessions/by-fsid", "/settings",
+        "/spend/detail", "/ssh-hosts", "/sw.js", "/timeline", "/tunnels", "/tunnels/of",
+        "/tunnels/pairs", "/update-check", "/usage", "/usage/fleet", "/version", "/views", "/waiting",
+        "/watches", "/ws",
+    ),
+    "HEAD": (
+        "/file",
+    ),
+    "POST": (
+        "/checkin", "/checkin/stop", "/color", "/compact", "/deliver", "/down", "/emoji", "/end",
+        "/flag", "/fleet-restart", "/fork", "/fork-comment", "/fork-promote", "/group", "/interrupt",
+        "/judge-settings", "/logins", "/mesh-settings", "/move", "/new", "/notice", "/notify-all",
+        "/notify-turns", "/order", "/perf", "/pinnote", "/postal-notice", "/push/ack", "/push/dropped",
+        "/push/landed", "/push/relay", "/push/subscribe", "/push/superseded", "/push/test",
+        "/push/unsubscribe", "/redial", "/rename", "/restart", "/reveal", "/send", "/tag", "/tick",
+        "/tunnels", "/tunnels/askpull", "/tunnels/autoupdate", "/tunnels/checkin", "/tunnels/detach",
+        "/tunnels/forget", "/tunnels/pull", "/tunnels/start", "/tunnels/trust", "/tunnels/trust-mirror",
+        "/tunnels/trust-remote", "/tunnels/update", "/unpinnote", "/update", "/update-dismiss",
+        "/usertodo", "/usertodo/context", "/usertodo/withdraw", "/views", "/walk-root", "/watch",
+        "/watch-pr", "/working",
+    ),
+}
+_PERF_HTTP_ROUTES["OPTIONS"] = tuple(sorted(                 # a preflight asks about a route of any method
+    set(_PERF_HTTP_ROUTES["GET"]) | set(_PERF_HTTP_ROUTES["HEAD"]) | set(_PERF_HTTP_ROUTES["POST"])))
+_PERF_HTTP_FAMILIES = ("/dist/*", "/media/*", "/glossary/*", "/remote/*")   # the collapsed families, keys in their own right
+_PERF_HTTP_ROUTE_SETS = {m: frozenset(v) for m, v in _PERF_HTTP_ROUTES.items()}
+_PERF_HTTP_ANY = frozenset(_PERF_HTTP_ROUTES["OPTIONS"])
+
+
 def _perf_http_key(method, path):
-    """The `http` counter key for one request: "METHOD /path" with the query string gone and the
-    high-cardinality families collapsed — /dist/* and /media/* (the bundles, fonts, icons and source
-    maps a dashboard loads: dozens of names that would otherwise fill the HTTP_PATHS slots before a
-    script's first /sessions call), /glossary/* (one route per glossary TERM: a term is the user's
-    own text, and the lookups are what the counter is for, 2026-09-18) and /remote/<host>/… (a host
-    name per attached kernel; a tailnet host name is not something `romp perf` should print). The
-    route table's fixed paths stay as they are, so GET /perf and POST /perf are separate rows."""
+    """The `http` counter key for one request: "METHOD /path" with the query string gone, the
+    high-cardinality families collapsed, and everything outside the checked-in route table folded to
+    "other". The families: /dist/* and /media/* (the bundles, fonts, icons and source maps a dashboard
+    loads: dozens of names that would otherwise fill the HTTP_PATHS slots before a script's first
+    /sessions call), /glossary/* (one route per glossary TERM: a term is the user's own text, and the
+    lookups are what the counter is for, 2026-09-18) and /remote/<host>/... (a host name per attached
+    kernel; a tailnet host name is not something `romp perf` should print). The fold (2026-09-18): a
+    path is the requester's text, so a scanner's probe, a session id or a home path in a URL stood as
+    a key, and a copy of the snapshot could not be pasted in public. A remote path keeps its op when
+    the op is a route of the same method (/remote/*/sessions, /remote/*/send); a bare /remote/<host>
+    is a key of its own. The route table's fixed paths stay as they are, so GET /perf and POST /perf
+    are separate rows; a handler without a method is judged against every method's routes."""
     if path.startswith("/dist/"):
         path = "/dist/*"
     elif path.startswith("/media/"):
@@ -1809,6 +1858,10 @@ def _perf_http_key(method, path):
         rest = path[len("/remote/"):]
         i = rest.find("/")
         path = "/remote/*" + (rest[i:] if i >= 0 else "")
+    routes = _PERF_HTTP_ROUTE_SETS.get(method, _PERF_HTTP_ANY) if method else _PERF_HTTP_ANY
+    if not (path in routes or path in _PERF_HTTP_FAMILIES
+            or (path.startswith("/remote/*/") and path[len("/remote/*"):] in routes)):
+        return "other"
     return (method + " " + path) if method else path
 
 

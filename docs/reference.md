@@ -3692,8 +3692,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*`, `/glossary/*`
   (the term is the user's text; its lookups count under one key) and
-  `/remote/*/…` collapsed to one key each, for at most 256 keys; further keys
-  fold into `other`. A WebSocket upgrade is counted when it arrives and not
+  `/remote/*/…` collapsed to one key each, for at most 256 keys. A path
+  outside the kernel's own route table (a scanner's probe, anything typed
+  into a URL) counts under `other`, as do keys past the cap, so the table
+  names only routes the kernel ships. A WebSocket upgrade is counted when it arrives and not
   timed, since its handler runs for the life of the socket.
 
 `POST /perf` with the body `{"log": true}` or `{"log": false}` turns the
