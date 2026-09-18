@@ -45,7 +45,15 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()   # hermetic BEFORE the loads
 os.environ.pop("ROMP_STATE_DIR", None)
 sh = load_source("romp_session_host", os.path.join(ROOT, "kernel", "session_host.py"))
 sb = load_source("romp_sdk_backend", os.path.join(BIN, "romp_sdk_backend.py"))
-ht = sb._ht()
+# A PRIVATE copy of kernel/host_transport.py for the pure functions this module calls (host_exit_reason, host_dir),
+# never `sb._ht()` at import (round 1 addendum, 2026-09-18). The shared `romp_host_transport` entry is bound once per
+# process by the first load_source of that name and is then reused by every later _ht() without re-executing; its
+# Transport base is whatever `claude_agent_sdk` resolved to at that moment. tests/test_host_transport.py puts the
+# machine's SDK venv on sys.path BEFORE it binds that entry and pins HostTransport as a subclass of the SDK's
+# Transport, so a module collected earlier in the same worker that binds the entry with no SDK on the path (this
+# one did, through sb._ht()) leaves the pin reading a duck-typed base for the whole run. The one shared binder stays
+# tests/test_host_transport.py; test_spend_rebill.py takes the same private-copy road.
+ht = load_source("romp_host_transport_sdk_pin", os.path.join(ROOT, "kernel", "host_transport.py"))
 SDKVENV = Path(os.path.expanduser("~/.local/state/romp/sdkvenv"))
 
 
