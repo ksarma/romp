@@ -183,11 +183,39 @@ class SpawnSecrets(unittest.TestCase):
         self.assertTrue(kw["env"]["NOTES_API_TOKEN"] == val, "the overlay's value rides the host's environment, over the kernel's")
         self.assertFalse(any(val in a for a in argv), "the value never rides the command line")
 
+    def _spawn_road(self, env, login=""):
+        """The real _host_transport_for on its spawn road over a stub kernel (review round 1, 2026-09-18, shared by the
+        round's cases): hosts/ is cleared first, since a lease-less leftover hosts/<sid> from an earlier spawn in the
+        same state root sends the call down _host_orphan_recover, which this stub does not provide. Returns the
+        spawn.json written, what _spawn_host was handed, and every _log call as (message, kwargs)."""
+        ht = sb._ht()
+        shutil.rmtree(Path(self.state) / "hosts", ignore_errors=True)
+        handed, logged = {}, []
+
+        def spawn_host(sess, spec_path, secret_env=None):
+            handed["secrets"] = dict(secret_env or {})
+            ht.host_sock(self.state, SID).touch()                    # the launcher "served" its socket
+            return types.SimpleNamespace(pid=4242, poll=lambda: None, returncode=None)
+        me = types.SimpleNamespace(state_dir=self.state, code_version="abc12345", cli_scope=False,
+                                   _host_recently_ended={}, _lock=threading.Lock(), _host_spawning=set(),
+                                   _holder_ident=sb.SdkBackend._holder_ident, _spawn_host=spawn_host,
+                                   _new_host_transport=lambda sess, sock, offset: ("transport", str(sock), offset),
+                                   _log=lambda m, *a, **k: logged.append((str(m), k)))
+        sess = types.SimpleNamespace(sid=SID, name="web", _options_login=login, _host=None, _host_is_attach=False)
+        opts = types.SimpleNamespace(cli_path="/x/romp-cli-scope", cwd=self.state, env=dict(env), permission_mode="default")
+        t = asyncio.run(sb.SdkBackend._host_transport_for(me, sess, opts, ()))
+        self.assertEqual(t[0], "transport", "the spawn road handed back the new transport")
+        written = json.loads((Path(self.state) / "hosts" / SID / "spawn.json").read_text())
+        return written, handed, logged
+
     def test_the_host_launch_writes_spawn_json_without_any_credential_shaped_name_and_hands_them_to_the_host(self):
         """The real _host_transport_for, spawn road, over a stub kernel, with an overlay carrying a credential-shaped
         name beyond the three (the box admin's hazard review of the pull-in, 2026-09-16): the file keeps the plain
         name, the value is in no file under hosts/, _spawn_host receives exactly the moved variable for the host's
-        environment, and the log names what moved without its value."""
+        environment, and the log names what moved without its value. Review round 1 (2026-09-18) pinned the line's
+        two deliberate details, which survived mutation with the suite green: its problem=False classification, by
+        identity (assertFalse(None) passes, and None is exactly what a dropped kwarg records), and the login names'
+        silence (a second spawn, a login token alone in the overlay, says nothing)."""
         ht = sb._ht()
         handed, logged = {}, []
         val = "synthetic-notes-token-" + uuid.uuid4().hex
@@ -200,7 +228,7 @@ class SpawnSecrets(unittest.TestCase):
                                    _host_recently_ended={}, _lock=__import__("threading").Lock(), _host_spawning=set(),
                                    _holder_ident=sb.SdkBackend._holder_ident, _spawn_host=spawn_host,
                                    _new_host_transport=lambda sess, sock, offset: ("transport", str(sock), offset),
-                                   _log=lambda m, *a, **k: logged.append(str(m)))
+                                   _log=lambda m, *a, **k: logged.append((str(m), k)))
         sess = types.SimpleNamespace(sid=SID, name="web", _options_login="", _host=None, _host_is_attach=False)
         opts = types.SimpleNamespace(cli_path="/x/romp-cli-scope", cwd=self.state,
                                      env={"ROMP_SID": SID, "NOTES_ENDPOINT": "http://notes.test", "NOTES_API_TOKEN": val},
@@ -216,9 +244,75 @@ class SpawnSecrets(unittest.TestCase):
             self.assertNotIn(val, q.read_bytes().decode("utf-8", "replace"), "the value is in no file under hosts/")
         self.assertEqual(handed["secrets"], {"NOTES_API_TOKEN": val}, "the host's environment gets exactly the moved variable")
         self.assertEqual(opts.env["NOTES_API_TOKEN"], val, "the options object is untouched (spawn_spec copied)")
-        said = [m for m in logged if "NOTES_API_TOKEN" in m]
-        self.assertTrue(said, "the log names the moved variable")
-        self.assertNotIn(val, "".join(logged), "and never its value")
+        said = [(m, k) for m, k in logged if "NOTES_API_TOKEN" in m]
+        self.assertEqual(len(said), 1, "the log names the moved variable, once")
+        self.assertNotIn(val, "".join(m for m, _ in logged), "and never its value")
+        self.assertIs(said[0][1].get("problem"), False, "a routine line, never a problem row: filed as False explicitly")
+        # the three login names are routine (every login launch moves one) and go unsaid
+        written, handed, logged = self._spawn_road({"ROMP_SID": SID, "CLAUDE_CODE_OAUTH_TOKEN": self.tok})
+        self.assertEqual(written["env"], {"ROMP_SID": SID})
+        self.assertEqual(handed["secrets"], {"CLAUDE_CODE_OAUTH_TOKEN": self.tok}, "the login token still moves")
+        self.assertEqual([m for m, _ in logged if "credential-shaped" in m], [], "a login name alone: nothing said")
+
+    def test_a_non_string_value_anywhere_in_the_overlay_does_not_abort_the_split(self):
+        """Review round 1 (2026-09-18): the first cut judged the shape rule over the raw overlay, and
+        env_credential_names strips every value it is handed, so ONE non-string value anywhere in the overlay raised
+        AttributeError out of split_spawn_secrets, where the base tree launched the session (a total function became
+        partial). The rule is judged over a coerced view now: nothing raises, a plain name keeps its value as it was,
+        and a credential-shaped name whose value is not a string still leaves the spec, as the text the host's
+        environment carries (filtering the overlay to string values first would have written it into the file)."""
+        spec = {"sid": SID, "env": {"ROMP_SID": SID, "X_COUNT": 5, "X_FLAG": True}}
+        self.assertEqual(sb.split_spawn_secrets(spec), {}, "nothing credential-shaped: nothing moves, nothing raises")
+        self.assertEqual(spec["env"], {"ROMP_SID": SID, "X_COUNT": 5, "X_FLAG": True}, "the plain values stay as they were")
+        num = 10 ** 12 + uuid.uuid4().int % 10 ** 12
+        spec = {"sid": SID, "env": {"ROMP_SID": SID, "NOTES_API_TOKEN": num, "NOTES_API_KEY": ["a", "b"], "X_FLAG": True}}
+        secrets = sb.split_spawn_secrets(spec)
+        self.assertEqual(secrets, {"NOTES_API_TOKEN": str(num), "NOTES_API_KEY": str(["a", "b"])},
+                         "a credential-shaped name moves whatever its value's type, as text for the host's environment")
+        self.assertEqual(spec["env"], {"ROMP_SID": SID, "X_FLAG": True})
+        self.assertNotIn(str(num), json.dumps(spec), "the value is gone from the spec")
+        self.assertEqual(sb.split_spawn_secrets({"env": {"CLAUDE_CODE_OAUTH_TOKEN": None}}), {"CLAUDE_CODE_OAUTH_TOKEN": ""},
+                         "a login name moves whatever its value; None rides as the empty string, never the word None")
+        spec = {"env": {"EMPTY_TOKEN": None}}
+        self.assertEqual(sb.split_spawn_secrets(spec), {}, "None under another credential-shaped name holds no secret and stays")
+        self.assertEqual(spec["env"], {"EMPTY_TOKEN": None})
+        for v in (5, True, 1.5, ["a"], {"k": "v"}, 0, False, None, "", []):
+            self.assertEqual(sb.spawn_env_secret_names({"X_VALUE": v}), [], "total over every JSON-native value: %r" % (v,))
+
+    def test_the_host_launch_proceeds_with_a_non_string_value_and_still_omits_the_credential_under_one(self):
+        """The real _host_transport_for spawn road (review round 1, 2026-09-18): an overlay holding an integer under a
+        plain name and one under a credential-shaped name. The first cut aborted this launch before the file was
+        written; now the file is written with the plain integer as it was, the credential-shaped name's value is in
+        no file under hosts/, and the host receives it as text."""
+        num = 10 ** 12 + uuid.uuid4().int % 10 ** 12
+        written, handed, logged = self._spawn_road({"ROMP_SID": SID, "X_COUNT": 5, "NOTES_API_TOKEN": num})
+        self.assertEqual(written["env"], {"ROMP_SID": SID, "X_COUNT": 5}, "the plain integer stays in the file as it was")
+        under_hosts = [q for q in (Path(self.state) / "hosts").rglob("*") if q.is_file()]
+        self.assertTrue(under_hosts, "the write left files to check")
+        for q in under_hosts:
+            self.assertNotIn(str(num), q.read_bytes().decode("utf-8", "replace"), "the value is in no file under hosts/")
+        self.assertEqual(handed["secrets"], {"NOTES_API_TOKEN": str(num)}, "the host's environment gets it as text")
+        said = [m for m, _ in logged if "NOTES_API_TOKEN" in m]
+        self.assertEqual(len(said), 1, "the log names the moved variable, once")
+        self.assertNotIn(str(num), "".join(m for m, _ in logged), "and never its value")
+
+    def test_a_lowercase_credential_shaped_name_leaves_the_spec_env_too(self):
+        """Review round 1 (2026-09-18): the shape rule was an exact, case-sensitive suffix, so notes_api_token was never
+        moved and would have been written to spawn.json with its value. The suffixes are compared on the upper-cased
+        name now (in env_credential_names, so the boot notice folds case too); an empty value still stays whatever
+        its case, and a name whose suffix only begins with the shape stays."""
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+        key = "synthetic-notes-key-" + uuid.uuid4().hex
+        spec = {"sid": SID, "env": {"ROMP_SID": SID, "notes_api_token": val, "Notes_Api_Key": key, "empty_token": "",
+                                    "editor_tokenizer": "x"}}
+        secrets = sb.split_spawn_secrets(spec)
+        self.assertEqual(secrets, {"notes_api_token": val, "Notes_Api_Key": key}, "moved under their own spelling, values byte for byte")
+        self.assertEqual(spec["env"], {"ROMP_SID": SID, "empty_token": "", "editor_tokenizer": "x"})
+        self.assertNotIn(val, json.dumps(spec)); self.assertNotIn(key, json.dumps(spec))
+        written, handed, _ = self._spawn_road({"ROMP_SID": SID, "notes_api_token": val})
+        self.assertEqual(written["env"], {"ROMP_SID": SID}, "the file omits the lowercase name")
+        self.assertNotIn(val, (Path(self.state) / "hosts" / SID / "spawn.json").read_text())
+        self.assertEqual(handed["secrets"], {"notes_api_token": val})
 
 
 class JournalRules(unittest.TestCase):

@@ -33,7 +33,8 @@ def _op_name(n):
 
 
 def _shaped(n):
-    return n.endswith("_API_KEY") or n.endswith("_TOKEN") or _op_name(n)
+    u = n.upper()      # the suffixes fold case since review round 1 of the spawn-spec fix (2026-09-18); the op names do not
+    return u.endswith("_API_KEY") or u.endswith("_TOKEN") or _op_name(n)
 
 
 class PureNames(unittest.TestCase):
@@ -56,6 +57,14 @@ class PureNames(unittest.TestCase):
         (credentials.check_boot_environment), not this helper, is what keeps a key out of the environment."""
         env = {n: "v" for n in sb.AUTH_ENV_NAMES}
         self.assertEqual(self.names(env), sorted(sb.AUTH_ENV_NAMES))
+
+    def test_the_suffix_test_folds_case(self):
+        """Review round 1 of the spawn-spec fix (2026-09-18): the suffixes were compared exactly, so a lowercase or
+        mixed-case spelling was never named here, and the spawn spec's writer, which reuses this rule, would have
+        written such a name to hosts/<sid>/spawn.json with its value. A name whose suffix only begins with the
+        shape (editor_tokenizer) stays unnamed in any case."""
+        self.assertEqual(self.names({"notes_api_token": "x", "Notes_Api_Key": "y", "editor_tokenizer": "z"}),
+                         ["Notes_Api_Key", "notes_api_token"])
 
     def test_empty_or_whitespace_values_are_not_named(self):
         self.assertEqual(self.names({"FOO_API_KEY": "", "BAR_TOKEN": "   ", "BAZ_API_KEY": "v"}), ["BAZ_API_KEY"])
