@@ -64,6 +64,13 @@ while True:
 '''
 
 
+def _spin_cpu(seconds):
+    """Spin this thread for `seconds` of its own CPU (thread_time: a descheduled thread still burns the asked amount)."""
+    t0 = time.thread_time()
+    while time.thread_time() - t0 < seconds:                # loop-ok: bounded by the thread's own CPU clock
+        pass
+
+
 class _Child(unittest.TestCase):
     def setUp(self):
         self.km = km = kernel_module()
@@ -168,7 +175,11 @@ class ChildRoad(_Child):
         self.jd.run_index = lambda now=None: called.append("index")
         self.jd.run_triage = lambda now=None: called.append("triage")
         gen0 = km._judge_gen[0]
-        cpu0 = km._PERF_STATS.judge["cpu_ms_sum"]
+        cpu0 = self._judge()["cpu_ms_sum"]                # the SAME source as the after value: snapshot() adds judge.py's module-global
+        #                                                   in-process pool total (jd.judge_worker_cpu_ms()) to its copy at read time and the
+        #                                                   live dict never carries it, so a live baseline against a snapshot after value read
+        #                                                   7.0 plus whatever pool work any module in this process ran since judge.py last
+        #                                                   loaded (7.0465 in a full xdist run; the pin below, 2026-09-18)
         try:
             self._pass()
         finally:
@@ -187,7 +198,9 @@ class ChildRoad(_Child):
         j = self._judge()
         self.assertEqual((j["passes"], j["tierStarts"], j.get("passesLost"), j.get("childRestarts")), (1, 2, 0, 0))
         self.assertEqual(j.get("cpu_ms_child_workers"), 4.0)
-        self.assertEqual(j["cpu_ms_sum"] - cpu0, 7.0, "tier plus workers, as the in-process figure counts")
+        self.assertAlmostEqual(j["cpu_ms_sum"] - cpu0, 7.0, places=6, msg="tier plus workers, as the in-process figure counts")
+        #                                                   places=6: the two snapshot sums share the pool total and round on different grids,
+        #                                                   so their difference can sit an ulp off 7.0; any pool work is 1000x the tolerance
         self.assertEqual((j.get("child") or {}).get("seq"), 1)
         self.assertEqual((j.get("child") or {}).get("pid"), getattr(getattr(km, "_JUDGE_CHILD", None), "pid", None))
         child = j.get("child") or {}
@@ -199,6 +212,37 @@ class ChildRoad(_Child):
         self.assertNotIn("first", child.get("failures", {}) if isinstance(child.get("failures"), dict) else {},
                          "the line's text does not: the failures ride as a count (2026-09-18)")
         self.assertIsInstance(child.get("failures"), int)
+
+    def test_a_pool_total_left_by_earlier_work_never_enters_the_child_roads_cpu_delta(self):
+        """snapshot() adds judge.py's module-global in-process pool total (jd.judge_worker_cpu_ms(): every future any pool ran since
+        judge.py last executed) to cpu_ms_sum in its copy at read time; the live dict never carries it. judge.py is one module object
+        for every kernel a test process loads, so the total holds pool work OTHER modules ran earlier in the same xdist worker, and a
+        baseline read from the live dict against an after value read from the snapshot came out 7.0 plus that total (7.0465 in a
+        full run, 2026-09-18). The pool work is driven here through the real pool, so the gap shows in one process; both baselines
+        are taken and the trap is pinned beside the reading the test above uses. Sorts before that test, so this module's own run
+        reaches it with a nonzero total."""
+        km, jd = self.km, self.jd
+        self._on()
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:    # judge.py's own pool class: its workers account to _JUDGE_CPU
+            ex.submit(_spin_cpu, 0.002).result()
+        pool = jd.judge_worker_cpu_ms()
+        self.assertGreater(pool, 1.0, "about 2 ms of a worker's CPU stands in the module-global total: %r" % pool)
+        live0 = km._PERF_STATS.judge["cpu_ms_sum"]
+        snap0 = self._judge()["cpu_ms_sum"]
+        # places=6 is a millionth of a millisecond: two sums that share a non-round addend round on different grids, so their
+        # difference can sit an ulp (about 1e-15) off the figure (the full run's shape does in half of the draws), while any pool
+        # work is a thousand times the tolerance or more
+        self.assertAlmostEqual(snap0 - live0, pool, places=6, msg="the snapshot's sum is the live sum plus the pool total, at read time")
+        self._pass()
+        self.assertEqual(jd.judge_worker_cpu_ms(), pool, "the child road submits nothing to the in-process pools")
+        j = self._judge()
+        live1 = km._PERF_STATS.judge["cpu_ms_sum"]
+        self.assertEqual(j["cpu_ms_workers"], pool, "the split rides the snapshot as cpu_ms_workers")
+        self.assertAlmostEqual(j["cpu_ms_sum"] - live1, pool, places=6, msg="the composition: snapshot cpu_ms_sum is live cpu_ms_sum plus jd.judge_worker_cpu_ms()")
+        self.assertAlmostEqual(j["cpu_ms_sum"] - snap0, 7.0, places=6, msg="snapshot to snapshot: the pass's tier plus workers, none of the pool total")
+        self.assertAlmostEqual(live1 - live0, 7.0, places=6, msg="live to live: the same")
+        self.assertAlmostEqual(j["cpu_ms_sum"] - live0, 7.0 + pool, places=6,
+                               msg="the trap: a live baseline against a snapshot after value carries the whole pool total")
 
     def test_a_pass_with_no_store_moved_bumps_no_generation(self):
         km = self.km

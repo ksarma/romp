@@ -914,7 +914,11 @@ class _PerfStats:
                                    _run_tier, plus every per-session worker the tiers run in
                                    judge.py's thread pools; the split rides as cpu_ms_workers; the
                                    producer thread's own per-pass work, the episode tick, the goals
-                                   snapshot and the compaction, is not in it and lands under "other"),
+                                   snapshot and the compaction, is not in it and lands under "other";
+                                   a snapshot() read adds judge.py's in-process pool accumulator,
+                                   jd.judge_worker_cpu_ms(), to its copy while a live read of the
+                                   stats dict does not, so a delta comes from one source, never one
+                                   of each),
                                    wakes (every _producer_wake.set() call: the backends' pokes, POST
                                    /tick, the two kernel-internal sites; one SDK turn fires several,
                                    so wakes/s is an upper bound on the poke-episode rate, not the

@@ -3700,7 +3700,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the workers' share is `cpu_ms_workers`; the
   producer thread's own per-pass work is not included and shows under the
-  process line's "other"), `wakes` (every wake of the producer: the backends'
+  process line's "other"; a `/perf` snapshot adds judge.py's in-process pool
+  accumulator, `judge_worker_cpu_ms()`, to the sum at read time while the
+  kernel's live stats dict does not carry it, so a delta comes from one source,
+  never one of each), `wakes` (every wake of the producer: the backends'
   pokes, `POST /tick`, and two kernel-internal sites; one SDK turn fires
   several, so this is an upper bound on the poke rate), `wakes_event` and
   `wakes_backstop` (how the producer's 3 s wait ended; `wakes - wakes_event`
