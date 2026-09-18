@@ -84,6 +84,27 @@ class AtomicWriteMode(unittest.TestCase):
         km._atomic_write(d / "x.json", "{}", mode=0o600)
         self.assertEqual([p.name for p in d.glob("*.tmp.*")], [])
 
+    def test_the_mode_is_the_temps_creation_mode_never_a_chmod(self):
+        # The temp is CREATED at `mode` (O_EXCL). Until 2026-09-18 it was written at the umask's mode and
+        # chmod'd afterwards: a window with the text in it (PR 776's review round, kernel-1 and extra5-2,
+        # deferred to their own fix). Interpose on os.chmod and DON'T perform it: under the old order the
+        # file stays at the umask's mode, so the test reads the creation mode and nothing else.
+        d = km.jd.STATE / "permtest3"
+        d.mkdir(parents=True, exist_ok=True)
+        secret = d / "secret.json"
+        prior = os.umask(0o022)
+        self.addCleanup(os.umask, prior)
+        chmods = []
+        real_chmod = os.chmod
+        os.chmod = lambda path, mode, *a, **k: chmods.append((str(path), mode))
+        try:
+            km._atomic_write(secret, "{}", mode=0o600)
+        finally:
+            os.chmod = real_chmod
+        self.assertEqual(_mode(secret), 0o600, "0600 from the open that created the temp, not from a chmod after the write")
+        self.assertEqual(chmods, [], "no chmod at all: there is no window to close")
+        self.assertEqual(secret.read_text(), "{}")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

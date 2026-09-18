@@ -3308,7 +3308,19 @@ def write_reg(state_dir: Path, sid: str, reg: dict) -> None:
     # (FileNotFoundError, seen live 2026-07-06). os.replace stays atomic; last writer wins.
     tmp = p.with_name("%s.%d.%s.tmp" % (p.name, os.getpid(), uuid.uuid4().hex[:8]))
     try:
-        tmp.write_text(json.dumps(reg))
+        # Born 0600 (O_EXCL on the writer-unique name; no chmod afterwards). The reg carries the session's env
+        # block, whose values can be credentials (a pick under a token-shaped name lands here verbatim), and a
+        # temp created by write_text takes the umask (0664 on a box with umask 002), so the value was readable
+        # at that mode from the write on. Creating the temp at 0600 leaves no such window; os.replace carries
+        # the temp's mode onto the published path, so a reg written before this change tightens on its next
+        # write, and nothing needs a chmod. Every reader (the kernel, bin/romp, the judges, the postal service,
+        # the session host) is the same uid, so 0600 shuts nobody out. Defence in depth behind the 0700 state
+        # root (kernel/judge.py chmods it and says why), not a live fix: PR 776's review round asked for it
+        # (kernel-1, extra5-2) and the reviewer deferred it to its own fix (2026-09-18). The value still lives
+        # in a file; the mode is a mitigation, not the never-in-a-file rule.
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(reg))
         os.replace(tmp, p)
         REG_REV[0] += 1                                 # the table moved (after the publish, so a reader that took the revision
         _reg_rows_note(sid, reg)                        #  before its read misses on its next check); the rows revision only on a

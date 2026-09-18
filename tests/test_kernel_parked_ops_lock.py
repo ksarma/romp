@@ -26,6 +26,7 @@ SYNTHETIC fixtures only: placeholder uuids, invented texts.
 import io
 import os
 import contextlib
+import stat
 import tempfile
 import threading
 import time
@@ -633,6 +634,60 @@ class TheMirrorIsWrittenPerWriter(_Drain):
         for s in srcs:
             self.assertEqual(os.path.dirname(s), str(km._PENDING_OPS_FILE.parent),
                              "published from the file's own directory (a same-filesystem rename)")
+
+
+
+class TheMirrorIsOwnerOnly(_Drain):
+    """A parked ("env", {...}) op carries the pick's VALUES, which can be credentials (the chip renders names
+    only for that reason), and the mirror keeps them on disk until the op is delivered, across a kernel death.
+    pending-ops.json is therefore published at 0600 like the reg (write_reg): _atomic_write creates the
+    per-writer temp AT that mode (O_EXCL), never chmods it to that mode after the write, and os.replace carries
+    the mode onto the published path, so a mirror written before the change tightens on its next save. Only
+    the kernel reads it. Defence in depth behind the 0700 state root (extra5-2 of PR 776's review round,
+    deferred to its own fix, 2026-09-18): the values still live in a file."""
+
+    def setUp(self):
+        super().setUp()
+        prior = os.umask(0o022)                        # the common umask: a write_text temp would be 0644
+        self.addCleanup(os.umask, prior)
+        self.val = "synthetic-" + os.urandom(6).hex()  # assembled at run time: no credential-shaped literal
+
+    def _mode(self):
+        return stat.S_IMODE(os.stat(km._PENDING_OPS_FILE).st_mode)
+
+    def test_a_parked_env_pick_is_mirrored_owner_only(self):
+        with redirect_stderr(io.StringIO()):
+            km._park_op(SID, ("env", {"NOTES_API_TOKEN": self.val}))
+        self.assertEqual(self._mode(), 0o600)
+        self.assertIn(self.val, km._PENDING_OPS_FILE.read_text(), "the value IS in the mirror: the mode is what guards it")
+        self.assertEqual(km._load_pending_ops(), {SID: [("env", {"NOTES_API_TOKEN": self.val})]}, "the kernel reads it back")
+
+    def test_an_existing_loose_mirror_tightens_on_its_next_save(self):
+        km._pending_ops[SID] = [("model", "opus")]
+        km._save_pending_ops()
+        os.chmod(km._PENDING_OPS_FILE, 0o644)          # a mirror written before the change
+        km._pending_ops[SID] = [("env", {"NOTES_API_TOKEN": self.val})]
+        km._save_pending_ops()
+        self.assertEqual(self._mode(), 0o600, "os.replace carries the temp's mode onto the published path")
+
+    def test_the_mirrors_temp_is_never_observable_wider_than_0600(self):
+        seen, chmods = [], []
+        real_replace = os.replace
+
+        def replace_probe(src, dst, *a, **k):
+            if str(dst) == str(km._PENDING_OPS_FILE):
+                seen.append(stat.S_IMODE(os.stat(src).st_mode))   # the temp's mode as the publish begins
+            return real_replace(src, dst, *a, **k)
+
+        def chmod_probe(path, mode, *a, **k):
+            chmods.append((str(path), mode))               # recorded, not performed: a chmod after the
+            #                                                 write is the very window this closes
+        km._pending_ops[SID] = [("env", {"NOTES_API_TOKEN": self.val})]
+        with mock.patch.object(km.os, "replace", replace_probe), mock.patch.object(km.os, "chmod", chmod_probe):
+            km._save_pending_ops()
+        self.assertEqual(seen, [0o600], "born 0600: the mode at the replace is the mode at the open")
+        self.assertEqual(chmods, [], "no chmod at all: the mode comes from the open, so there is no window")
+        self.assertEqual(self._mode(), 0o600)
 
 
 

@@ -597,6 +597,21 @@ class AliasMigration(unittest.TestCase):
         self.assertEqual(self._snapshot(), before)
         self.assertEqual(err.getvalue(), "", "nothing to say when nothing moved")
 
+    def test_a_migrated_registry_is_rewritten_owner_only(self):
+        # The reg's own writer (write_reg) publishes 0600 since 2026-09-18 (the env block can carry a
+        # credential's value; PR 776's review round, deferred to its own fix). This pass rewrites a reg
+        # through _atomic_write and takes the same mode, else a 0600 reg came back at the umask's mode at
+        # the boot that migrated it, and stayed so until the session's next reg write.
+        import stat
+        prior = os.umask(0o022)
+        self.addCleanup(os.umask, prior)
+        os.chmod(jd.STATE / "sdk" / "a.json", 0o644)            # a reg written before the change
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._model_alias_boot_pass()
+        self.assertEqual(stat.S_IMODE(os.stat(jd.STATE / "sdk" / "a.json").st_mode), 0o600,
+                         "the rewrite is born 0600 and os.replace carries it onto the reg")
+        self.assertEqual(self._read("a")["model"], "fable", "and it is the migrated reg")
+
     def test_nothing_to_migrate_on_a_fresh_state(self):
         for p in list(jd.STATE.rglob("*.json")):
             p.unlink()

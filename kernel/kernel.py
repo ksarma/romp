@@ -4632,7 +4632,10 @@ def _model_alias_boot_pass():
         reg = _load(rp)
         if isinstance(reg, dict) and reg.get("model") in _SEED_PINS:
             reg["model"] = _SEED_PINS[reg["model"]]
-            _atomic_write(rp, json.dumps(reg))
+            _atomic_write(rp, json.dumps(reg), mode=0o600)   # the reg's own writer (write_reg) publishes 0600 since 2026-09-18
+            #                                                   (its env block can carry a credential's value); a mode-less
+            #                                                   rewrite here put a 0600 reg back at the umask's mode at the
+            #                                                   boot that migrated it, until the session's next reg write
             n += 1
             moved.append("session %s → %s" % (reg.get("name") or rp.stem, reg["model"]))
     if n:
@@ -6822,10 +6825,15 @@ def _atomic_write(path, text, mode=None):
     a temp the winner had already moved and crashed the push with FileNotFoundError (the user 2026-06-23).
     os.replace overwrites atomically + portably; the temp is removed if the write fails.
 
-    `mode` (e.g. 0o600) is applied to the TEMP before the replace, so the published file is never briefly
-    world-readable — required for any file holding a CREDENTIAL. Without it the temp inherits the umask
-    (usually 0644): remotes.json stores every attached host's serve token, so at 0644 any other local user
-    could read those tokens and drive the REMOTE kernels, defeating the loopback token gate for federation."""
+    `mode` (e.g. 0o600) is the mode the TEMP is CREATED with (O_EXCL on the per-writer name), and os.replace
+    carries it onto the published path, so the published file is never briefly world-readable and a looser
+    existing file tightens on its next write: required for any file holding a CREDENTIAL. Without it the temp
+    inherits the umask (usually 0644): remotes.json stores every attached host's serve token, so at 0644 any
+    other local user could read those tokens and drive the REMOTE kernels, defeating the loopback token gate
+    for federation. Until 2026-09-18 the mode was a chmod AFTER write_text, which left the temp at the umask's
+    mode, with the text in it, between the two calls; PR 776's review round (kernel-1, extra5-2) asked for the
+    pending-ops mirror at 0600 with no such window and the reviewer deferred that to its own fix, so the mode
+    moved onto the open (tests/test_kernel_remotes_perms.py pins it: no chmod runs at all)."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with _atomic_lock:
@@ -6833,9 +6841,12 @@ def _atomic_write(path, text, mode=None):
         n = _atomic_seq[0]
     tmp = path.with_name("%s.tmp.%d.%d.%d" % (path.name, os.getpid(), threading.get_ident(), n))
     try:
-        tmp.write_text(text)
-        if mode is not None:
-            os.chmod(tmp, mode)                          # before the publish — never a world-readable window
+        if mode is None:
+            tmp.write_text(text)
+        else:
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)   # born at `mode`: no window at the umask's
+            with os.fdopen(fd, "w") as f:
+                f.write(text)
         os.replace(tmp, path)                            # atomic publish (overwrites; cross-platform)
     except Exception:
         try:
@@ -39329,8 +39340,15 @@ def _save_pending_ops():
     restored as the queue (review find on #904, 2026-09-05)."""
     with _pending_ops_lock:
         try:
+            # 0600, born so (the mode is the temp's creation mode in _atomic_write): a parked ("env", {...}) op
+            # carries the pick's VALUES, which can be credentials (the chip renders names only for that reason),
+            # and this mirror keeps them until the op is delivered, across a kernel death. Only the kernel reads
+            # the file, and an older mirror at the umask's mode tightens on its next save through os.replace.
+            # Defence in depth behind the 0700 state root, like the reg (write_reg): PR 776's review round
+            # (extra5-2) asked for it and the reviewer deferred it to its own fix (2026-09-18).
             _atomic_write(_PENDING_OPS_FILE,
-                          json.dumps({k: [list(o) for o in v] for k, v in _pending_ops.items() if v}))
+                          json.dumps({k: [list(o) for o in v] for k, v in _pending_ops.items() if v}),
+                          mode=0o600)
         except Exception:
             sys.stderr.write("pending-ops save: %s\n" % traceback.format_exc())
 

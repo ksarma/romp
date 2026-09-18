@@ -11118,5 +11118,62 @@ class KillDuringRevive(unittest.TestCase):
         self.assertFalse(s.thread.is_alive(), "the stand-in CLI thread kept running after the kill")
 
 
+class RegistryFileIsOwnerOnly(unittest.TestCase):
+    """sdk/<sid>.json carries the session's env block, whose values can be credentials: a pick under a
+    token-shaped name lands in the reg verbatim (kernel-1 and extra5-2 of PR 776's review round, deferred
+    to their own fix, 2026-09-18). write_reg publishes it at 0600: the writer-unique temp is CREATED at that
+    mode (O_EXCL), never chmod'd to it after a write, and os.replace carries the mode onto the published
+    path, so a reg written before the change tightens on its next write. Every reader is the same uid.
+    Defence in depth behind the 0700 state root, not a live fix: the value still lives in a file."""
+
+    SID = "11111111-2222-3333-4444-666666666666"
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.d, True)
+        prior = os.umask(0o022)                        # the common umask: a write_text temp would be 0644
+        self.addCleanup(os.umask, prior)
+        self.val = "synthetic-" + os.urandom(6).hex()  # assembled at run time: no credential-shaped literal
+        self.reg = {"sid": self.SID, "name": "web", "cwd": "/tmp", "alive": True,
+                    "env": {"NOTES_ENDPOINT": "http://notes.test", "NOTES_API_TOKEN": self.val}}
+
+    def _mode(self):
+        import stat
+        return stat.S_IMODE(os.stat(sb._reg_path(self.d, self.SID)).st_mode)
+
+    def test_a_fresh_registry_is_published_owner_only(self):
+        sb.write_reg(self.d, self.SID, self.reg)
+        self.assertEqual(self._mode(), 0o600)
+        self.assertEqual(sb.read_reg(self.d, self.SID)["env"]["NOTES_API_TOKEN"], self.val,
+                         "the same uid reads it back: 0600 shuts no reader out")
+
+    def test_an_existing_loose_registry_tightens_on_its_next_write(self):
+        p = sb._reg_path(self.d, self.SID)
+        p.parent.mkdir(parents=True)
+        p.write_text(json.dumps(self.reg))
+        os.chmod(p, 0o644)                             # a reg written before the change
+        sb.write_reg(self.d, self.SID, dict(self.reg, alive=False))
+        self.assertEqual(self._mode(), 0o600, "os.replace carries the temp's mode onto the published path")
+        self.assertFalse(sb.read_reg(self.d, self.SID)["alive"], "and the write landed")
+
+    def test_the_temp_is_never_observable_wider_than_0600(self):
+        import stat
+        seen, chmods = [], []
+        real_replace = os.replace
+
+        def replace_probe(src, dst, *a, **k):
+            seen.append(stat.S_IMODE(os.stat(src).st_mode))   # the temp's mode as the publish begins
+            return real_replace(src, dst, *a, **k)
+
+        def chmod_probe(path, mode, *a, **k):
+            chmods.append((str(path), mode))               # recorded, not performed: a chmod after the
+            #                                                 write is the very window this closes
+        with mock.patch.object(os, "replace", replace_probe), mock.patch.object(os, "chmod", chmod_probe):
+            sb.write_reg(self.d, self.SID, self.reg)
+        self.assertEqual(seen, [0o600], "born 0600: the mode at the replace is the mode at the open")
+        self.assertEqual(chmods, [], "no chmod at all: the mode comes from the open, so there is no window")
+        self.assertEqual(self._mode(), 0o600)
+
+
 if __name__ == "__main__":
     unittest.main()
