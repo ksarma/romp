@@ -261,9 +261,17 @@ class SpawnSecrets(unittest.TestCase):
         """Review round 1 (2026-09-18): the first cut judged the shape rule over the raw overlay, and
         env_credential_names strips every value it is handed, so ONE non-string value anywhere in the overlay raised
         AttributeError out of split_spawn_secrets, where the base tree launched the session (a total function became
-        partial). The rule is judged over a coerced view now: nothing raises, a plain name keeps its value as it was,
-        and a credential-shaped name whose value is not a string still leaves the spec, as the text the host's
-        environment carries (filtering the overlay to string values first would have written it into the file)."""
+        partial). The rule is judged over a coerced view now (_overlay_text, for the NAME decision only): nothing
+        raises, and a credential-shaped name whose value is not a string still leaves the spec, as the text the
+        host's environment carries (filtering the overlay to string values first would have written it into the file).
+
+        What this pins about a non-string value under a PLAIN name is BASE behaviour, not correctness (review round
+        2, 2026-09-18): it stays in the spec as it always did, and a spec holding one cannot launch a real CLI. The
+        host's SDK transport, which every real install runs, merges the overlay as it is and a subprocess
+        environment refuses a non-string value; only the pipe transport of the SDK-less tests converts per value.
+        Pre-existing, unchanged here, out of scope for a fix-tier change, and no writer of options.env produces such
+        a value today; written down so the assertion is not read as support for the state (split_spawn_secrets'
+        docstring carries the same note)."""
         spec = {"sid": SID, "env": {"ROMP_SID": SID, "X_COUNT": 5, "X_FLAG": True}}
         self.assertEqual(sb.split_spawn_secrets(spec), {}, "nothing credential-shaped: nothing moves, nothing raises")
         self.assertEqual(spec["env"], {"ROMP_SID": SID, "X_COUNT": 5, "X_FLAG": True}, "the plain values stay as they were")
@@ -285,8 +293,10 @@ class SpawnSecrets(unittest.TestCase):
     def test_the_host_launch_proceeds_with_a_non_string_value_and_still_omits_the_credential_under_one(self):
         """The real _host_transport_for spawn road (review round 1, 2026-09-18): an overlay holding an integer under a
         plain name and one under a credential-shaped name. The first cut aborted this launch before the file was
-        written; now the file is written with the plain integer as it was, the credential-shaped name's value is in
-        no file under hosts/, and the host receives it as text."""
+        written; now the file is written, the credential-shaped name's value is in no file under hosts/, and the host
+        receives it as text. The plain integer staying in the file is BASE behaviour, pinned as such and not as a
+        supported state (review round 2, 2026-09-18): the SDK transport a real install's host runs cannot spawn a CLI
+        from a spec whose overlay holds a non-string value; pre-existing, unchanged here, see split_spawn_secrets."""
         num = 10 ** 12 + uuid.uuid4().int % 10 ** 12
         written, handed, logged = self._spawn_road({"ROMP_SID": SID, "X_COUNT": 5, "NOTES_API_TOKEN": num})
         self.assertEqual(written["env"], {"ROMP_SID": SID, "X_COUNT": 5}, "the plain integer stays in the file as it was")

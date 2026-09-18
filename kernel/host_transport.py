@@ -150,7 +150,9 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     environment overlay, minus the credential-shaped names of it as the kernel's split_spawn_secrets draws
     them (spawn_env_secret_names: the three login names whatever their value, and a non-empty value under a
     name ending _API_KEY or _TOKEN, in any letter case, or one of 1Password's), moved to the host's process
-    environment before this write; a name of another shape stays in the file with its value. The shape is
+    environment before this write; a name of another shape stays in the file with its value, as it was (a
+    non-string value included, which the host's SDK transport cannot spawn from; pre-existing, named in the
+    kernel's split_spawn_secrets). The shape is
     spelled out here because this sentence once claimed every credential-shaped name (review round 1's
     addendum, 2026-09-18): a password, a client secret or a private key under a name of another shape would
     be written, and the shape is deliberately not widened to catch them, since no such name has a road into
