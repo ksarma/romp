@@ -877,6 +877,10 @@ class Collector(unittest.TestCase):
 
     def test_reset_starts_over_and_moves_since(self):
         self.st.cycle(0.1); self.st.http_request("GET /x", 0.1)
+        self.st.stage("jobs.autoNudge.parse", 0.001)          # a `jobs.` write from this thread owning no cycle: stagesForeign
+        self.st.cycle_begin(); self.st.stage("jobs.apiHealth", 0.002); self.st.stage("jobs", 0.002); self.st.cycle(0.002)   # and the pusher's
+        self.assertEqual(self.st.snapshot()["stagesForeign"], {"jobs.autoNudge.parse": 1.0}, "premise: both blocks hold a row")
+        self.assertEqual(self.st.snapshot()["pusher"]["cycleJobsMs"]["apiHealth"], 2.0)
         before = self.st.snapshot()["since"]
         time.sleep(0.01)
         self.st.reset()
@@ -884,6 +888,9 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["pusher"]["cycles"], 0)
         self.assertEqual(snap["http"], {})
         self.assertGreater(snap["since"], before)
+        # the two owner-routed blocks start over with the rest (2026-09-18): the foreign block empty, the pusher's the nine at zero
+        self.assertEqual(snap["stagesForeign"], {})
+        self.assertEqual(snap["pusher"]["cycleJobsMs"], {j: 0.0 for j in km._PerfStats.CYCLE_JOBS})
 
     def test_writers_are_thread_safe(self):
         def hammer():
@@ -958,8 +965,7 @@ class JobRowsByOwner(unittest.TestCase):
         self.assertAlmostEqual(snap["stages_ms"]["jobsPass"], 3.0)
         for j in km._PerfStats.CYCLE_JOBS:
             self.assertIn(j, snap["pusher"]["cycleJobsMs"], "the nine are always present: %s" % j)
-        self.assertNotIn(self.NAME, set(snap["stages_ms"]) & {"jobs." + j for j in km._PerfStats.CYCLE_JOBS} - {self.NAME},
-                         "premise: the name is a cycle job's")
+        self.assertIn(self.NAME[len("jobs."):], km._PerfStats.CYCLE_JOBS, "premise: the name is a cycle job's")
 
     def test_the_flat_job_rows_roll_up_to_the_pass_and_the_cycle_jobs_to_the_jobs_container(self):
         """Over a run of both loops the flat `jobs.<job>` rows are the jobs thread's, so they sum to at most its pass (6 > 3
@@ -1042,7 +1048,7 @@ class JobRowsByOwner(unittest.TestCase):
         para = " ".join(para[:para.index("\n- `stagesForeign`:")].split())   # the reference wraps at 80 columns: one line
         self.assertIn("`pusher.cycleJobsMs`", para)
         self.assertIn("2026-09-18", para, "the day the meaning changed")
-        self.assertIn("do not compare across a capture pair", para, "the discontinuity, said plainly")
+        self.assertRegex(para, r"not compar(e|able)", "the discontinuity: the nine are not comparable across the change")
         for j in km._PerfStats.CYCLE_JOBS:
             self.assertIn("`%s`" % j, para, "the nine are named: %s" % j)
         self.assertIn("- `stagesForeign`:", doc, "the foreign block is documented as a top-level block")
