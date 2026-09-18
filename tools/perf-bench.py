@@ -396,10 +396,12 @@ class StateShadow:
     of the small JSON state files (installed on _read_state_json by install_guards) see the shadow, so a
     read-modify-write (the session order's append of new sids) lands once, as it does live, instead of
     re-firing on every build against a file that never changed (each re-fire would add an audit record
-    with a captured stack to the very rows this tool times). `written` lists every relative path that
-    was diverted, in order, duplicates kept; the report dedups it. A write aimed anywhere else is
-    appended to `refused` (the recorder's refused_writes list) before it is refused, so a caller that
-    swallows the error cannot hide it (check_guards_held)."""
+    with a captured stack to the very rows this tool times). `written` lists every relative path
+    redirected to the shadow, in order, duplicates kept, landed or not: a file when a write to it is
+    diverted, the checkpoints directory when install_guards points the event model's provider at it,
+    whether or not a document follows; the report dedups it. A write aimed anywhere else is appended
+    to `refused` (the recorder's refused_writes list) before it is refused, so a caller that swallows
+    the error cannot hide it (check_guards_held)."""
 
     def __init__(self, state, root, refused=None):
         self.state = Path(state).resolve()
@@ -1399,15 +1401,15 @@ def row_note(name, st):
 
 def render_writes(out):
     """The write census, one block: what changed in the copy (nothing, when every writer is known) and
-    the relative paths whose writes the shadow took. Printed whether or not the run got as far as a
-    benchmark row, so an error run says what it did to the copy too."""
+    the relative paths the shadow redirects, whether or not a write landed on each. Printed whether or
+    not the run got as far as a benchmark row, so an error run says what it did to the copy too."""
     w = out.get("writes")
     if w is None:
         return ["writes into the state copy: not measured (the run stopped before the census could start)"]
     L = ["writes into the state copy: %d changed, %d new, %d removed" % (w.get("changed", 0), w.get("new", 0), w.get("removed", 0))]
     for s in w.get("sample", []):
         L.append("  " + s)
-    L.append("writes shadowed (landed in the private dir, not the copy): %s" % (", ".join(w.get("shadowed") or []) or "none"))
+    L.append("writes redirected to the private dir, not the copy (paths, landed or not): %s" % (", ".join(w.get("shadowed") or []) or "none"))
     return L
 
 

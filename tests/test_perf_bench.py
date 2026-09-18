@@ -478,14 +478,15 @@ class PerfBench(unittest.TestCase):
         self.assertEqual(c["frames"], 3)
 
     def test_the_copy_is_byte_identical_after_a_run(self):
-        # the files the kernel aims at the copy (EXPECTED_SHADOWED) landed in the tool's shadow, so the copy
-        # has the same directories, files and bytes it started with; without the shadow the run creates
-        # repo-root, session-order.json and order-audit.jsonl inside it
+        # the paths the kernel aims at the copy (EXPECTED_SHADOWED) were redirected to the tool's shadow (the
+        # checkpoints directory by its provider, whether or not a document follows), so the copy has the same
+        # directories, files and bytes it started with; without the shadow the run creates repo-root,
+        # session-order.json and order-audit.jsonl inside it
         self._ok(self.main)
         self.assertEqual(self.state_after, self.state_before, "the state copy is only read")
         self.assertEqual(self.claude_after, self.claude_before, "the transcripts are only read")
         self.assertIn("writes into the state copy: 0 changed, 0 new, 0 removed", self.main.stdout)
-        shadowed_line = next(l for l in self.main.stdout.splitlines() if l.startswith("writes shadowed (landed in the private dir, not the copy): "))
+        shadowed_line = next(l for l in self.main.stdout.splitlines() if l.startswith("writes redirected to the private dir, not the copy (paths, landed or not): "))
         for name in EXPECTED_SHADOWED:
             self.assertIn(name, shadowed_line)
 
@@ -510,8 +511,9 @@ class PerfBench(unittest.TestCase):
         self.assertIn("--cwd-map", r.stderr, "the error points at the redacted-copy remedy")
         self.assertNotIn(root, r.stderr.split("perf-bench: discovery")[1], "the error names counts, not paths")
         self.assertIn("writes into the state copy: 0 changed, 0 new, 0 removed", r.stdout)
-        self.assertIn("writes shadowed (landed in the private dir, not the copy): checkpoints, repo-root", r.stdout,
-                      "the import-time marker, and the checkpoints directory the guards recorded before the run stopped")
+        self.assertIn("writes redirected to the private dir, not the copy (paths, landed or not): checkpoints, repo-root", r.stdout,
+                      "the import-time marker, which landed, and the checkpoints directory the guard pointed the provider "
+                      "at before the run stopped, which received no document")
         self.assertEqual(_tree_hash(state), before, "an error run leaves the copy byte-identical too")
         with open(out_json) as f:
             out = json.load(f)
@@ -592,7 +594,7 @@ class PerfBench(unittest.TestCase):
         r = run_tool(["--state", state, "--claude-dir", claude, "--repo", repo, "--iters", "1", "--json", out_json])
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("writes into the state copy: 0 changed, 0 new, 0 removed", r.stdout)
-        self.assertIn("writes shadowed (landed in the private dir, not the copy): none", r.stdout)
+        self.assertIn("writes redirected to the private dir, not the copy (paths, landed or not): none", r.stdout)
         self.assertIn("(partial: the run stopped on an error)", r.stdout)
         self.assertIn("perf-bench: RuntimeError: synthetic import failure", r.stderr)
         self.assertIn("Traceback", r.stderr, "the exception still leaves main() with its traceback")
@@ -1030,7 +1032,7 @@ class Recorders(unittest.TestCase):
         self.assertEqual(Path(self.writes[0][0]), Path(self.shadow_root) / "sub" / "x.json", "to the shadow, not the copy")
         self.assertFalse(os.path.exists(os.path.join(self.state, "sub")), "the copy gained nothing")
         self.assertEqual(shadow.written, ["checkpoints", "sub/x.json"], "and is recorded relative to the copy, after the "
-                         "checkpoints directory the guard recorded at install")
+                         "checkpoints directory the guard redirected at install (listed then, whether or not a document ever lands)")
         elsewhere = tempfile.mkdtemp(prefix="perf-bench-elsewhere-")
         self.addCleanup(shutil.rmtree, elsewhere, ignore_errors=True)
         with self.assertRaises(self.pb.BenchError) as cm:
