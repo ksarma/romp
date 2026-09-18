@@ -639,6 +639,124 @@ class NudgeWalkParseGate(unittest.TestCase):
         self.assertEqual(problems, [], "every marked road reads only the keyed files, through traced helpers")
         self.assertIn("kernel-downtime.jsonl", stat_src)
 
+    def test_every_declining_exit_of_the_awaiting_wake_and_the_goal_loop_notes_its_clock_or_stands_behind_a_keyed_read(self):
+        """Jobs stage 1, review round 1 (tests-3): the road census above traces the wake-only loop's READERS to the keyed files
+        but cannot trace _wake_goal (its fire, block and send path reads live state by design: 971 problems over 15 functions when
+        tried), and the walk's own goal loop is not a road. Retiring the stampedWait and allDelegated notes made both bodies'
+        declining exits memo-relevant: an exit that reads no keyed file and notes no leg lets the look record a skippable row, and
+        the awaiting ladder then waits for an unrelated keyed file to move (the refuters showed it with one injected line, and the
+        round's HIGH was such an exit, the user-todo stand-down). This census reads the source instead: every `return` of
+        _wake_goal that can decline (a bare `return True` is a fire, and a look that fires records no row) and every `continue` of
+        the goal loop in _auto_nudge_session must be preceded, in its own block, by a _nudge_clock call, or be named in the
+        exemptions below with the reason it stands behind a keyed file or a leg noted elsewhere. An exemption that matches no
+        exit, or an exit that is both noted and exempt, fails too, so the list cannot go stale."""
+        import ast, inspect
+
+        def exits(src, kind, loop_target=None):
+            """[(key, noted, line)] for the declining exits of the one function in `src`: the key is the source of the `if` test
+            the exit sits under (the exit's own text when it sits under none), whitespace folded; `noted` says a bare _nudge_clock
+            call precedes it in the same block."""
+            tree = ast.parse(src); fn = tree.body[0]
+            parents = {}
+            for node in ast.walk(fn):
+                for child in ast.iter_child_nodes(node):
+                    parents[child] = node
+            def loop_of(n):
+                while n in parents:
+                    n = parents[n]
+                    if isinstance(n, (ast.For, ast.While)):
+                        return n
+            if kind == "return":
+                nodes = [n for n in ast.walk(fn) if isinstance(n, ast.Return)
+                         and not (isinstance(n.value, ast.Constant) and n.value.value is True)]
+            else:
+                loop = next(n for n in ast.walk(fn) if isinstance(n, ast.For) and isinstance(n.target, ast.Name) and n.target.id == loop_target)
+                nodes = [n for n in ast.walk(loop) if isinstance(n, ast.Continue) and loop_of(n) is loop]
+            nodes.sort(key=lambda n: (n.lineno, n.col_offset))   # source order (ast.walk is breadth-first)
+            def text(n):
+                return " ".join(ast.get_source_segment(src, n).replace("\\\n", " ").split())
+            out = []
+            for n in nodes:
+                par = parents[n]
+                block = next(lst for f in ("body", "orelse", "finalbody") for lst in [getattr(par, f, None)] if isinstance(lst, list) and n in lst)
+                noted = any(isinstance(s, ast.Expr) and isinstance(s.value, ast.Call) and isinstance(s.value.func, ast.Name)
+                            and s.value.func.id == "_nudge_clock" for s in block[:block.index(n)])
+                out.append((text(par.test) if isinstance(par, ast.If) else text(n), noted, n.lineno))
+            return out
+
+        # the census on itself: an unnoted exit is unnoted, a note in the same block counts, a nested `if` does not shelter its
+        # exit behind an outer note, a nested loop's continue is that loop's
+        probe = ("def f(a, b, c):\n    if a:\n        return False\n    if b:\n        _nudge_clock(None, 'leg')\n        return False\n"
+                 "    _nudge_clock(2.0)\n    if c:\n        return False\n    return True\n")
+        self.assertEqual([(k, n) for k, n, _ in exits(probe, "return")], [("a", False), ("b", True), ("c", False)])
+        probe = ("def g(xs):\n    for gid in xs:\n        if gid:\n            continue\n        for k in xs:\n            continue\n"
+                 "        _nudge_clock(1.0)\n        continue\n")
+        self.assertEqual([(k, n) for k, n, _ in exits(probe, "continue", "gid")], [("gid", False), ("continue", True)])
+
+        EXEMPT = {                                   # (function, the exit's key): why the exit needs no clock note of its own
+            ("_wake_goal", 'rec and not rec.get("answeredAt") and not rec.get("failed") and not rec.get("moot")'):
+                "the outcome leg's escalation (return _fate == 'failed'): a landed stamp moves the ledger, _mark_nudge_failed's refused "
+                "moot stamp notes refusedWrite, and failed is a fire (the walk-gate tests pin all three)",
+            ("_wake_goal", "not ready"):
+                "_nudge_response_ready reads the parse (the transcript) and the store's placements, keyed files, and notes its own "
+                "legs inside (queuedSend, the lost-send instant); the in-flight pins drive it in both toggle states",
+            ("_wake_goal", "resp is not None"):
+                "the answered wake: a landed record moves the ledger, a refused one notes refusedWrite above, the filing writes the store",
+            ("_wake_goal", "_sdefer and not _nudge_deferred_ok(gid, _sdefer, now, sid)"):
+                "_nudge_deferred_ok notes the deferral legs (deferralNew, pausedTiers, deferralStanding) before it declines",
+            ("_wake_goal", '(rec.get("anchor") or 0) >= at'):
+                "the anti-loop rule over the ledger record and the stamp's anchor: the ledger and the store, keyed",
+            ("_wake_goal", "_defer and not _nudge_deferred_ok(gid, _defer, now, sid)"):
+                "the deferral legs, as above",
+            ("_wake_goal", 'not _goal_awaiting_stamp(_fresh.get("nodes", {}), gid, answered_at=_peer_answered(sid)) or '
+                           '_fresh.get("status", {}).get(gid, "working") != "working"'):
+                "the writer's re-read found the stamp gone or the goal resolved: the store moved, a keyed file",
+            ("_wake_goal", "_fresh is None"):
+                "reached only through the freshFault note above it (the try's success path binds _fresh)",
+            ("_wake_goal", "_sn is None"):
+                "the fresh store carries the wait at another anchor: the store moved (the re-anchored test pins it)",
+            ("_auto_nudge_session", 'nd.get("parentId") is not None or nd.get("cleared") or gid in cleared'):
+                "the store's node shape and the clears log: keyed files",
+            ("_auto_nudge_session", 'isinstance(nd.get("askAnchorRecord"), dict) and nd["askAnchorRecord"].get("kind") == "skill-load"'):
+                "the store's node record",
+            ("_auto_nudge_session", 'status.get(gid, "working") != "working"'):
+                "the store's status",
+            ("_auto_nudge_session", "_nudge_all_delegated(sid, store, nodes, gid)"):
+                "pure over the store's nodes (the road census traces it); a peer's return lands in the store and the postal log",
+            ("_auto_nudge_session", "_stamp"):
+                "the awaiting wake: its own declining exits are censused in the first half of this test",
+            ("_auto_nudge_session", "wake_only"):
+                "the look's mode is the row's tag: a wake-only row never serves a full look (_nudge_look_check)",
+            ("_auto_nudge_session", "_defer and not _nudge_deferred_ok(gid, _defer, now, sid)"):
+                "the deferral legs",
+            ("_auto_nudge_session", "not ready"):
+                "_nudge_response_ready, as above",
+            ("_auto_nudge_session", "_sdefer and not _nudge_deferred_ok(gid, _sdefer, now, sid)"):
+                "the deferral legs",
+            ("_auto_nudge_session", 'not (arm_id is not None and rec.get("moot") and not rec.get("failed") and _anch and '
+                                    "now - _anch > AWAITING_DEADMAN_SECS)"):
+                "the already-nudged exit: the record's lastTurnId against the arm turn (the ledger and the transcript, keyed); the "
+                "moot record's dead-man instant is noted in the branch just above it",
+        }
+        found = []
+        for fn, kind, target in ((km._wake_goal, "return", None), (km._auto_nudge_session, "continue", "gid")):
+            src, first = inspect.getsourcelines(fn)
+            for key, noted, line in exits("".join(src), kind, target):
+                found.append((fn.__name__, key, noted, first + line - 1))
+        self.assertGreaterEqual(len(found), 20, "the census found the exits: %d" % len(found))
+        keys = [(f, k) for f, k, _n, _l in found]
+        self.assertEqual(len(keys), len(set(keys)), "two exits share a key; give the census a way to tell them apart: %r" % keys)
+        unnoted = [(f, k, l) for f, k, n, l in found if not n and (f, k) not in EXEMPT]
+        self.assertEqual(unnoted, [], "a declining exit with no clock note before it and no exemption naming its keyed read (kernel.py lines)")
+        noted_and_exempt = [(f, k) for f, k, n, _l in found if n and (f, k) in EXEMPT]
+        self.assertEqual(noted_and_exempt, [], "an exit that notes its leg needs no exemption: drop the stale entry")
+        self.assertEqual(sorted(set(EXEMPT) - set(keys)), [], "an exemption that matches no exit: the exit moved or its test changed")
+        noted = sorted((f, k) for f, k, n, _l in found if n)
+        for must in (("_wake_goal", "now - since < AWAITING_DEADMAN_SECS"),       # the dead-man's instant: the bound on every gear-ON skip
+                     ("_auto_nudge_session", "_todo_standdown")):               # round 1's HIGH, closed by its note
+            self.assertIn(must, noted, "%s: %r must note its clock leg" % must)
+        self.assertGreaterEqual(len(noted), 8, "the noted exits: %r" % noted)
+
     def test_the_downtime_record_appends_before_it_writes_so_a_look_in_the_gap_cannot_record_a_stale_skippable_memo(self):
         """Round six, medium 1: with the write first, a look landing between the write and the append saw a moved stat but no
         suspension, computed working and recorded a skippable memo under the final stat; the append then moved nothing on disk
