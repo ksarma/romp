@@ -52912,37 +52912,6 @@ def _note_chat_withheld_at_close(client, now=None):
         return False
 
 
-# Every op _dispatch_ws and _drive accept from a client frame, by name: the kernel's own vocabulary of the wire, and the ONE
-# set a kernel-written record may quote a client frame's type from (_ws_op_word). A frame's type is client text until it
-# matches a name here: the implicitHandshake record, its stderr line and its client-diag row read the word or `other`, never
-# the type itself (review round 2 of the implicit handshake, 2026-09-18: str() of the type let a socket's first frame put free
-# text, a sid-shaped string or a dict's content into client-diag.jsonl and the kernel log). The dispatch has no table to read
-# this from (each arm tests its own literal), so the set is written out here and tests/test_chat_window_spans.py pins it equal
-# to the literals in _dispatch_ws's arms, _drive's ID_OPS and _TARGET_NAME_OPS: an arm added without its name here fails that
-# pin, and until then its op reads as `other` in the row.
-WS_OPS = frozenset((
-    "activeTab", "addCustomAsk", "answerAsk", "apiRetry", "askClear", "askClearMany", "askFollowUp", "askText",
-    "browseDir", "cancelAsk", "cancelCreate", "cancelQueued", "cancelWatch", "cardNotify", "cardOpened", "clearAll",
-    "clientDiag", "closeSession", "closeSubagent", "closeTab", "commentCreate", "commentDelete", "commentMerge",
-    "commentPromote", "commentReply", "commentResolve", "commentSeen", "compact", "compactSession", "createSession",
-    "deepLink", "dirComplete", "dismissEcho", "dismissLane", "dotHover", "dotOpen", "dropFile", "editTag",
-    "endSession", "expand", "fileComments", "fileCommentsSend", "fileGitLink", "forkSession", "hoverHighlight",
-    "imgRequest", "interrupt", "ledgerHover", "listDir", "loadAround", "loadEpisode", "loadNewer", "loadOlder",
-    "loadTurns", "locateDiag", "loginCancel", "loginCode", "loginRemove", "loginStart", "mcpAction", "moveSession",
-    "needFull", "needFullFeed", "needSlot", "nodeOverride", "noticeAction", "openByName", "openFile", "openFolder",
-    "openSession", "openSubagent", "openTagsDialog", "orderAudit", "pickFile", "pickResult", "quarantineDecision",
-    "ready", "redial", "redistill", "renameSession", "reorderTabs", "requestSessions", "reviveSession",
-    "rewindDelete", "rewindFiles", "rewindSend", "saveFile", "sendCommand", "sendMessage", "setAuth", "setAutoNudge",
-    "setColormap", "setCommentEffort", "setCommentFast", "setCommentModel", "setCompactSuggest", "setConserve",
-    "setDefaultDir", "setDistillEffort", "setDistillFast", "setDistillModel", "setEffort", "setFast",
-    "setFileEditing", "setGlobalRetryPaused", "setIndexEffort", "setIndexFast", "setIndexModel",
-    "setJudgeConcurrency", "setJudgeEffort", "setJudgeFast", "setJudgeModel", "setMode", "setModel", "setPalette",
-    "setSessionColor", "setSessionEmoji", "setSessionFlag", "setTaskTracking", "setThinkingSummaries",
-    "setTimelineViews", "setUpdateMode", "setUserTodos", "setWholeChatFrames", "showAskPath", "showOnTimeline",
-    "stopTask", "submitAsk", "tagEdit", "timelineHover", "toggleAsk", "undoClear", "unpinNote", "userTodoAnswer",
-    "userTodoDismiss", "viewReadOnly", "writeOrder",
-))
-
 
 def _ws_op_word(t):
     """The word a kernel-written record quotes for a client frame's type: the type when it is a str in WS_OPS, else "other"
@@ -76763,6 +76732,42 @@ def main():
     except KeyboardInterrupt:
         sys.stderr.write("\nromp-kernel: stopped\n")
 
+
+
+# WS_OPS sits at the END of the module on purpose: several tests read this file as text and take the FIRST
+# occurrence of a dispatch literal (tests/test_kernel_create_session_ack.py splits on "createSession"), so a table of
+# every op name placed above the dispatch would satisfy their anchor instead of the handler. _implicit_handshake and
+# _ws_op_word read the name at call time, so the position is free.
+# Every op _dispatch_ws and _drive accept from a client frame, by name: the kernel's own vocabulary of the wire, and the ONE
+# set a kernel-written record may quote a client frame's type from (_ws_op_word). A frame's type is client text until it
+# matches a name here: the implicitHandshake record, its stderr line and its client-diag row read the word or `other`, never
+# the type itself (review round 2 of the implicit handshake, 2026-09-18: str() of the type let a socket's first frame put free
+# text, a sid-shaped string or a dict's content into client-diag.jsonl and the kernel log). The dispatch has no table to read
+# this from (each arm tests its own literal), so the set is written out here and tests/test_chat_window_spans.py pins it equal
+# to the literals in _dispatch_ws's arms, _drive's ID_OPS and _TARGET_NAME_OPS: an arm added without its name here fails that
+# pin, and until then its op reads as `other` in the row.
+WS_OPS = frozenset((
+    "activeTab", "addCustomAsk", "answerAsk", "apiRetry", "askClear", "askClearMany", "askFollowUp", "askText",
+    "browseDir", "cancelAsk", "cancelCreate", "cancelQueued", "cancelWatch", "cardNotify", "cardOpened", "clearAll",
+    "clientDiag", "closeSession", "closeSubagent", "closeTab", "commentCreate", "commentDelete", "commentMerge",
+    "commentPromote", "commentReply", "commentResolve", "commentSeen", "compact", "compactSession", "createSession",
+    "deepLink", "dirComplete", "dismissEcho", "dismissLane", "dotHover", "dotOpen", "dropFile", "editTag",
+    "endSession", "expand", "fileComments", "fileCommentsSend", "fileGitLink", "forkSession", "hoverHighlight",
+    "imgRequest", "interrupt", "ledgerHover", "listDir", "loadAround", "loadEpisode", "loadNewer", "loadOlder",
+    "loadTurns", "locateDiag", "loginCancel", "loginCode", "loginRemove", "loginStart", "mcpAction", "moveSession",
+    "needFull", "needFullFeed", "needSlot", "nodeOverride", "noticeAction", "openByName", "openFile", "openFolder",
+    "openSession", "openSubagent", "openTagsDialog", "orderAudit", "pickFile", "pickResult", "quarantineDecision",
+    "ready", "redial", "redistill", "renameSession", "reorderTabs", "requestSessions", "reviveSession",
+    "rewindDelete", "rewindFiles", "rewindSend", "saveFile", "sendCommand", "sendMessage", "setAuth", "setAutoNudge",
+    "setColormap", "setCommentEffort", "setCommentFast", "setCommentModel", "setCompactSuggest", "setConserve",
+    "setDefaultDir", "setDistillEffort", "setDistillFast", "setDistillModel", "setEffort", "setFast",
+    "setFileEditing", "setGlobalRetryPaused", "setIndexEffort", "setIndexFast", "setIndexModel",
+    "setJudgeConcurrency", "setJudgeEffort", "setJudgeFast", "setJudgeModel", "setMode", "setModel", "setPalette",
+    "setSessionColor", "setSessionEmoji", "setSessionFlag", "setTaskTracking", "setThinkingSummaries",
+    "setTimelineViews", "setUpdateMode", "setUserTodos", "setWholeChatFrames", "showAskPath", "showOnTimeline",
+    "stopTask", "submitAsk", "tagEdit", "timelineHover", "toggleAsk", "undoClear", "unpinNote", "userTodoAnswer",
+    "userTodoDismiss", "viewReadOnly", "writeOrder",
+))
 
 if __name__ == "__main__":
     main()
