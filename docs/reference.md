@@ -2487,13 +2487,21 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
 
 - `now`, `since`, `uptime_s`, `log`: the clock, when the counters started,
   seconds since the process started, and whether the `romp-perf` log is on.
-- `process`: `rss_kb` (resident set size in KB: the current size on Linux, read
-  from `/proc`; the peak, `ru_maxrss`, on macOS, which has no `/proc`), `threads`,
-  `cpu_s`, `pid`, and the exact memory gauges:
-  `rss_anon_kb` and `hwm_kb` (the anonymous and the peak resident size from
-  `/proc/self/status`; null with `source` "unavailable" where `/proc` is
-  absent, since `rss_kb` there is a peak from `ru_maxrss` and is never passed
-  off as a current figure), `allocated_blocks` (the interpreter's live
+- `process`: `rss_kb` (the resident set size in KB, the CURRENT size on every
+  platform: `VmRSS` from `/proc` on Linux; on macOS, which has no `/proc`, the
+  Mach kernel's `task_info` resident size read through `ctypes`, or `ps -o rss=`
+  when `ctypes` cannot reach it, run at most once per 10 s with the last answer
+  served between runs and during the next run, so a `ps` figure can be up to
+  10 s old plus the run in flight (2 s at most); a run that fails leaves its
+  10 s window with no figure once it ends, and that window, like a Mac before
+  its first `ps` answer, shows the peak instead; `source` names the reader,
+  `proc`, `task_info` or `ps`, and reads `unavailable` when none answered and
+  the peak stands in), `rss_peak_kb` (macOS only: `ru_maxrss`, the
+  lifetime peak, which was `rss_kb` there before 2026-09-18, so memory over
+  uptime on a Mac only ever climbed), `threads`, `cpu_s`, `pid`, and the exact
+  memory gauges: `rss_anon_kb` and `hwm_kb` (the anonymous and the peak
+  resident size from `/proc/self/status`; null where `/proc` is absent, a peak
+  never being passed off as an anonymous figure), `allocated_blocks` (the interpreter's live
   allocations, `sys.getallocatedblocks`), `gc_gen2` (generation-2 collections
   so far) and `malloc` with `arena`, `hblkhd`, `uordblks`, `fordblks` in bytes
   (glibc's `mallinfo2`: the arena size, the bytes in mmap'd blocks, the bytes in
@@ -2502,7 +2510,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   absent). Two snapshots an hour apart answer where resident memory goes:
   blocks flat while rss climbs points at the allocator, blocks climbing at an
   object graph, a `caches` gauge climbing at that cache. `romp perf` prints
-  them on a `memory` line with the window's deltas beside the levels.
+  them on a `memory` line with the window's deltas beside the levels (on macOS
+  with `peak` beside the current size, and `source` beside `rss` whenever the
+  reader is neither `/proc` nor `task_info`).
 - `heap`: where that resident size sits at the moment of the read, so a
   large `process.rss_kb` can be attributed live, without a restart or a
   debugger (the lag investigation, 2026-09-15, had to attribute a 5-6 GiB

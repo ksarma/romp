@@ -148,11 +148,11 @@ sb_mod = load_source("romp_sdk_backend_restart_phases", os.path.join(os.path.dir
 
 class ExitPhases(unittest.TestCase):
     def test_the_cut_row_carries_the_exit_phases_and_nothing_else_from_them(self):
-        with mock.patch.object(km, "_kernel_process_sample", lambda: {}):
+        with mock.patch.object(km, "_kernel_process_sample", lambda **kw: {}):
             row = km._restart_cut_row({"cutTurns": [], "stopped": 3}, phases={"ckptS": 0.4, "drainS": 0.1, "junk": 9})
         self.assertEqual((row["ckptS"], row["drainS"], row["stopped"]), (0.4, 0.1, 3))
         self.assertNotIn("junk", row)
-        with mock.patch.object(km, "_kernel_process_sample", lambda: {}):
+        with mock.patch.object(km, "_kernel_process_sample", lambda **kw: {}):
             self.assertNotIn("ckptS", km._restart_cut_row({}))
 
     def test_the_exit_bounds_its_assembly_writes_and_times_its_phases(self):
@@ -192,7 +192,7 @@ class AttachTimedOutNamesTheAttaches(unittest.TestCase):
         try:
             with mock.patch.dict(km._BOOT_MARKS, {"firstServe": 100.0, "reconcileDone": 100.2, "censusDone": 100.1}, clear=True), \
                  mock.patch.object(km, "_append_restart_cut", lambda row: rows.append(row)), \
-                 mock.patch.object(km, "_kernel_process_sample", lambda: {}), \
+                 mock.patch.object(km, "_kernel_process_sample", lambda **kw: {}), \
                  mock.patch.object(km, "RESTART_CUTS_FILE", pathlib.Path(tempfile.mkdtemp()) / "restart-cuts.jsonl"):
                 km._append_boot_settled(100.0, 100.2)
         finally:
