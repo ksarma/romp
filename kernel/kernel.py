@@ -53141,8 +53141,11 @@ def _send_to_view(app, msg, wid):
     s = json.dumps(msg)
     with _clients_lock:
         targets = [c for c in _clients if c["app"] == app and (c.get("wid") or "") == wid and _client_ready(c)]
-    # the clients that took the frame (review round 1, 2026-09-18): _send_focus_to_view parks a focus nobody took,
-    # and keeps a copy when a taker is unproven; every other caller ignores the list
+    # the clients that took the frame (review round 1, 2026-09-18), on this wid-targeted road only: _send_focus_to_view
+    # parks a focus nobody took, and keeps a copy when a taker is unproven. The empty-wid road above returns _send_to_app's
+    # None, not a list: a broadcast names no takers, and an empty list there would read as "nobody took it" and park a
+    # focus every chat pane already has (review round 4, 2026-09-18), so a caller that reads the list handles an empty wid
+    # itself, as _send_focus_to_view does; every other caller ignores the value
     return [c for c in targets if _client_send(c, s)]
 
 
@@ -62546,9 +62549,11 @@ def _sw_js():
 # active-chat record): before, nothing cleared a park on a disconnect, so a boot reveal whose page died before its
 # chat pane came up sat in the slot until the next tap overwrote it. A copy whose every target the reaper has
 # dropped becomes a plain park at the reap (_retire_reveal_copy_at_reap; review round 3, 2026-09-18): the reap ends
-# the wait on a pong, not the tap, which stands for the window's next chat redial. Two residuals of the keyed slot,
-# named and kept (review round 3): the no-wid entry is bounded only by a consume or another no-wid park, so a
-# wid-less park nobody consumed lands on the next chat pane of ANY window, the legacy match, however much later;
+# the wait on a pong, not the tap, which stands for the window's next chat redial; a target that leaves by a normal
+# close is struck in the handler's finally (_forget_pending_reveal_if_last; review round 4, 2026-09-18), the same
+# downgrade, so no entry names a disconnected client. Two residuals of the keyed slot, named and kept (review round
+# 3): the no-wid entry is bounded only by a consume or another no-wid park, so a wid-less park nobody consumed lands
+# on the next chat pane of ANY window, the legacy match, however much later;
 # and a park for a wid whose page never connected a socket has no end but a consume, since the drop at the last
 # client sees no client leave. A sweep of the park sites was tried in review and dropped live taps (a dead-shell-socket
 # phone park, a storage-blocked page's own park), so neither is closed here.
@@ -62661,7 +62666,9 @@ def _reveal_proven(client):
     p = _PENDING_REVEAL.get(key)
     if p and any(c is client for c in (p.get("sent") or ())):
         _PENDING_REVEAL.pop(key, None)
-        print("[reveal] sid=%s: copy retired — its target answered" % str(p["sid"])[:8], file=sys.stderr)
+        # the line names the window (review round 4, 2026-09-18): the entries are per window, and a retire line without
+        # the wid could not be paired with the park line it ends when two windows' copies wait on one session
+        print("[reveal] sid=%s wid=%s: copy retired — its target answered" % (str(p["sid"])[:8], key[:8]), file=sys.stderr)
 
 
 def _consume_pending_reveal(client, why="the pane's ready"):
@@ -62713,15 +62720,42 @@ def _forget_pending_reveal_if_last(client):
     named in review round 3 (2026-09-18): a live window whose sockets all go dark together between the gesture and
     the pane's dial (a page fully suspended for that instant), or a reaped socket that was the window's only client,
     loses its park here although the gesture stands. Stamping the entry or carrying the page instance in it are the
-    shapes a fix would take; neither is this change's."""
+    shapes a fix would take; neither is this change's.
+
+    Before that test, the client leaving is struck from its window's copy (review round 4, 2026-09-18, kernel-2,
+    settled by execution before the fix): a copy's target that left by a NORMAL close (the peer's close frame, a
+    reload, the twin drop in _register_ws_client) never went through _retire_reveal_copy_at_reap, which only the
+    keepalive's drop calls, so the entry stayed a copy naming a disconnected client dict, and its send queue with it,
+    until the consume or this drop popped the entry, with no journal line at the close. The run showed the tap still
+    landing (the consume never reads the targets, so a copy with a dead target is consumed like a plain park); what
+    changes here is the retained dict and the journal's silence, not where the tap lands. The strike is the reap's
+    downgrade: a copy left with no target becomes a plain park, a copy with another target left keeps waiting on that
+    one, and one line says the wait ended and what the park now stands for; a client that was the window's last gets
+    no such line, since the drop's line follows and tells the whole story. The no-wid entry's targets are struck too
+    (a client wearing no wid can be a target of the no-wid copy through _reveal_request); that entry is still never
+    dropped here. Runs under _clients_lock like the rest of this function, taking no lock of its own. A reaped socket
+    whose handler's finally runs before the beat's retire is struck here first, and the retire then finds it gone and
+    does nothing."""
     wid = str(client.get("wid") or "")
-    if not wid or wid not in _PENDING_REVEAL:
+    p = _PENDING_REVEAL.get(wid)
+    if not p:
         return
-    if any(str(c.get("wid") or "") == wid for c in _clients):
-        return
-    p = _PENDING_REVEAL.pop(wid, None)
-    if p:
+    downgraded = False
+    if any(c is client for c in (p.get("sent") or ())):
+        left = [c for c in p["sent"] if c is not client]
+        if left:
+            p["sent"] = left
+        else:
+            p.pop("sent", None)
+            downgraded = True
+    if wid and not any(str(c.get("wid") or "") == wid for c in _clients):
+        _PENDING_REVEAL.pop(wid, None)
         print("[reveal] sid=%s wid=%s: dropped, its window's last client left" % (str(p["sid"])[:8], wid[:8]), file=sys.stderr)
+        return
+    if downgraded:
+        successor = any(c.get("app") == "chat" and str(c.get("wid") or "") == wid for c in _clients)
+        print("[reveal] sid=%s wid=%s: copy's target closed, the park stands for %s"
+              % (str(p["sid"])[:8], wid[:8], "the window's other chat pane" if successor else "the pane's redial"), file=sys.stderr)
 
 
 def _retire_reveal_copy_at_reap(client):
@@ -62741,7 +62775,9 @@ def _retire_reveal_copy_at_reap(client):
     the window's last client. Residual, named: a park whose reaped socket was the window's ONLY client goes with it
     through that rule when the handler's finally runs, so a boot tap on a page whose shell socket is also gone is
     lost; out of this function's reach. Called from _keepalive_all after its drop, outside _clients_lock, as the
-    drop is."""
+    drop is. The handler's finally strikes the client from the copy too (_forget_pending_reveal_if_last, review round
+    4, 2026-09-18), so on the reap road whichever of the two runs first does the work and the other finds the client
+    gone; this function's line is the beat's, that one's the close's."""
     key = str(client.get("wid") or "")
     p = _PENDING_REVEAL.get(key)
     if not p or not any(c is client for c in (p.get("sent") or ())):

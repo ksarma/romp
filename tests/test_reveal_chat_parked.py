@@ -24,6 +24,11 @@ plain park on every path: the reap ends the waiting-on-a-pong state, not the use
 consumes it or the window goes away (the ruling re-meaning the round-2 retire case below). The consequence of the
 no-wid entry's unbounded life is pinned as the behaviour kept on purpose.
 
+Review round 4 (2026-09-18): a copy's target that leaves by a NORMAL close (the peer's close frame, a reload, the twin
+drop), which only the reap's retire had struck, is struck in the handler's finally. The run before the fix showed the tap
+still landing on the redial (the consume never reads the targets), so the fix is the retained client dict and the
+journal's silence, the same downgrade as the reap's, at low. The pong's retire line names the window.
+
 Synthetic clients only; the one socket-shaped fixture is a stub with a shutdown method. Placeholder uuids.
 """
 import contextlib
@@ -395,6 +400,109 @@ class FocusParks(unittest.TestCase):
         self.assertFalse(any((c.get("wid") or "") == "W-C" for c in km._clients), "the handler's finally removed the client")
         self.assertEqual(km._PENDING_REVEAL, {}, "and the window's park went with it")
 
+    def _close_a_copys_target_through_the_real_handler(self, feed, path, inside_the_read):
+        """Register a chat socket through the real Handler._ws; inside its FIRST read make it unproven, send it the focus
+        (a copy is kept, tagged with it) and run `inside_the_read(target)`; then the read ends and the handler's finally
+        runs the disconnect bookkeeping. Returns the target, the entry as it stood after the focus, and the stderr."""
+        seen = {}
+
+        def recv(rfile):
+            if "target" in seen:
+                return None, None, True
+            with km._clients_lock:                                # the handler's own client: the window's one chat socket with a real socket
+                [c] = [c for c in km._clients if c.get("app") == "chat" and (c.get("wid") or "") == W and c.get("sock") is not None]
+            seen["target"] = c
+            c["pingAt"] = 100.0                                   # a ping on the wire nobody answered: unproven
+            km._reveal_chat_for(feed, {"type": "focus", "id": SID})
+            seen["parked"] = dict(km._PENDING_REVEAL.get(W) or {})
+            return inside_the_read(c)
+
+        real_recv = km._ws_recv
+        km._ws_recv = recv
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(buf):
+                km.Handler._ws(_fake_self(path))
+        finally:
+            km._ws_recv = real_recv
+        return seen["target"], seen["parked"], buf.getvalue()
+
+    def test_a_copys_target_that_closes_normally_is_struck_and_the_park_stands_for_the_windows_next_chat_pane(self):
+        """Review round 4 (2026-09-18, kernel-2, settled by execution before the fix): a copy's target that left by a
+        NORMAL close (the peer's close frame here, read by the real handler; a reload; the twin drop in the next case) never
+        went through the reap's retire, so the entry stayed a copy naming a disconnected client dict, with no journal line,
+        until the consume popped it. The run showed the tap still landing (the consume never reads the targets), so this is
+        the retained dict and the journal's silence, not round 3's loss: the handler's finally now strikes the client from
+        its window's copy, a copy left with no target becomes a plain park, and the journal says so. The window's feed stays
+        connected, so the last-client drop does not fire; the redial then consumes the park as before."""
+        feed, _ = self._register("feed", W)
+        target, parked, err = self._close_a_copys_target_through_the_real_handler(
+            feed, "/ws?app=chat&wid=%s" % W, lambda c: (0x8, b"", True))   # the peer's close frame
+        self.assertEqual(parked.get("sent"), [target], "the focus went to the unproven socket and a copy was kept")
+        self.assertFalse(any(c is target for c in km._clients), "the handler's finally removed the client")
+        self.assertEqual(km._PENDING_REVEAL.get(W), {"sid": SID, "wid": W},
+                         "the closed target is struck: a plain park that names no disconnected client")
+        self.assertIn("[reveal] sid=11111111 wid=W-phone: copy's target closed, the park stands for the pane's redial", err)
+        fresh, fresh_got = _fake_ws_client("chat", W)
+        with mock.patch.object(km, "_live_map", return_value={SID: {}}):
+            km._consume_pending_reveal(fresh, why="the pane's redial")
+        self.assertEqual(fresh_got, [{"type": "focus", "id": SID, "live": True, "own": True}])
+        self.assertEqual(km._PENDING_REVEAL, {})
+
+    def test_the_twin_drop_strikes_the_dropped_socket_from_the_copy_before_the_redial_that_superseded_it_consumes(self):
+        # the same strike on the twin road (review round 4): the tap's own redial registers with the dead-held socket's
+        # instance id, _register_ws_client drops that socket, and its handler's finally (its read ends on the shutdown)
+        # strikes it from the copy before the redial's first strip consumes; before, the entry named the dropped dict until
+        # that consume. The successor is in _clients when the finally runs, so the line names the window's other chat pane.
+        feed, _ = self._register("feed", W)
+        fresh, fresh_got = _fake_ws_client("chat", W)
+        fresh["iid"] = "page-1"; fresh["ready"] = False           # the redial: no ready until its first strip
+
+        def drop_by_twin(c):
+            km._register_ws_client(fresh)                         # the twin rule drops the held socket
+            self._added.append(fresh)
+            self.assertIs(c["alive"], False, "the twin rule judged the held socket")
+            return None, None, True                               # its read ends on the shutdown
+
+        target, parked, err = self._close_a_copys_target_through_the_real_handler(
+            feed, "/ws?app=chat&wid=%s&iid=page-1" % W, drop_by_twin)
+        self.assertEqual(parked.get("sent"), [target])
+        self.assertFalse(any(c is target for c in km._clients))
+        self.assertEqual(km._PENDING_REVEAL.get(W), {"sid": SID, "wid": W}, "a plain park now, for the successor")
+        self.assertIn("[reveal] sid=11111111 wid=W-phone: copy's target closed, the park stands for the window's other chat pane", err)
+        with mock.patch.object(km, "_live_map", return_value={SID: {}}):
+            km._consume_pending_reveal(fresh, why="the pane's redial")
+        self.assertEqual(fresh_got, [{"type": "focus", "id": SID, "live": True, "own": True}])
+        self.assertEqual(km._PENDING_REVEAL, {})
+
+    def test_a_copys_target_that_was_the_windows_only_client_takes_the_park_with_it_and_only_the_drop_line_is_said(self):
+        # the strike meets the last-client rule (review round 4): the closing target was the window's only client, so the
+        # copy is struck and the entry dropped in the same call, and the journal carries the drop line alone, never a
+        # "park stands" line for a park that is gone. The loss itself is round 3's named residual (a gesture whose window
+        # has no other socket reads as a gone window), unchanged here; the sender is a feed client the kernel never held.
+        feed, _ = _fake_ws_client("feed", W)
+        target, parked, err = self._close_a_copys_target_through_the_real_handler(
+            feed, "/ws?app=chat&wid=%s" % W, lambda c: (0x8, b"", True))
+        self.assertEqual(parked.get("sent"), [target])
+        self.assertEqual(km._PENDING_REVEAL, {}, "the window's only client left: the park went with it")
+        self.assertIn("[reveal] sid=11111111 wid=W-phone: dropped, its window's last client left", err)
+        self.assertNotIn("copy's target closed", err)
+
+    def test_a_copy_with_another_target_left_keeps_waiting_when_one_target_closes_normally(self):
+        # the other half of the strike (review round 4): two unproven chat clients of the window took the focus, one closes
+        # normally, and the copy still waits on the other, tagged with it alone; no line, as at the reap (the wait is not
+        # over). Through the real handler for the one that closes; the other is a fixture in _clients.
+        other, _ = self._register("chat", W)
+        other["pingAt"] = 100.0
+        feed, _ = self._register("feed", W)
+        target, parked, err = self._close_a_copys_target_through_the_real_handler(
+            feed, "/ws?app=chat&wid=%s" % W, lambda c: (0x8, b"", True))
+        self.assertEqual(len(parked.get("sent") or ()), 2, "both unproven takers were tagged")
+        self.assertEqual(km._PENDING_REVEAL.get(W), {"sid": SID, "wid": W, "sent": [other]}, "the copy waits on the other target alone")
+        self.assertNotIn("copy's target closed", err)
+        km._note_ws_inbound(other, now=101.0)                     # the other's pong retires the copy
+        self.assertEqual(km._PENDING_REVEAL, {})
+
     def test_the_journal_pairs_the_park_with_its_consume(self):
         # one stderr line when a focus parks or keeps a copy, none for a plain delivery (a desktop click is not a
         # journal event), so a report that a tap did nothing reads: parked, then consumed or never
@@ -410,6 +518,28 @@ class FocusParks(unittest.TestCase):
         lines = [l for l in buf.getvalue().splitlines() if l.startswith("[reveal]")]
         self.assertEqual(lines, ["[reveal] focus sid=11111111 wid=W-phone: parked",
                                  "[reveal] sid=11111111 wid=W-phone: consumed — the pane's redial"])
+
+    def test_the_retire_line_names_the_window_so_it_pairs_with_the_park_line_it_ends(self):
+        # review round 4 (2026-09-18, kernel-1): the entries are per window since round 2, and the pong's retire line named
+        # no wid, so with two windows' copies waiting on one session the "copy retired" line could not be paired with the
+        # park line it ends. The wids differ within their first 8 characters, as real ones (crypto.randomUUID) do.
+        a, _ = self._register("chat", "W-alpha1")
+        a["pingAt"] = 100.0
+        feed_a, _ = self._register("feed", "W-alpha1")
+        b, _ = self._register("chat", "W-beta22")
+        b["pingAt"] = 100.0
+        feed_b, _ = self._register("feed", "W-beta22")
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            km._reveal_chat_for(feed_a, {"type": "focus", "id": SID})
+            km._reveal_chat_for(feed_b, {"type": "focus", "id": SID})
+            km._note_ws_inbound(b, now=101.0)                     # B's pong: B's copy retires, A's still waits
+        lines = [l for l in buf.getvalue().splitlines() if l.startswith("[reveal]")]
+        self.assertEqual(lines, ["[reveal] focus sid=11111111 wid=W-alpha1: delivered, copy parked (target unproven)",
+                                 "[reveal] focus sid=11111111 wid=W-beta22: delivered, copy parked (target unproven)",
+                                 "[reveal] sid=11111111 wid=W-beta22: copy retired — its target answered"])
+        self.assertEqual((km._PENDING_REVEAL.get("W-alpha1") or {}).get("sent"), [a], "A's copy still waits on A")
+        self.assertIsNone(km._PENDING_REVEAL.get("W-beta22"))
 
 
 if __name__ == "__main__":
