@@ -31,6 +31,9 @@ const playwright = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
 const engine = cfg.engine || "chromium";
 const APPS = cfg.apps || ["chat", "timeline", "fleet", "feed", "waiting", "files"];
+// the panes whose documents the shell loads at boot (stage 0, 2026-09-18: on the phone the Outline, the Sessions band and the
+// Waiting pane load on their first tap, so their iframes sit at about:blank with no shim and no socket; the desktop loads all six)
+const EAGER = cfg.eagerApps || APPS;
 const FRESH_APPS = cfg.freshApps || APPS.filter((a) => a !== "files");   // the Files pane gets no resync frame, so it never files return-fresh
 const now = () => Date.now();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -203,12 +206,12 @@ const readDiag = () => {
 try {
   out.t.load = now();
   await page.goto(cfg.url, { waitUntil: "load", timeout: 40000 });
-  // every pane socket open: the shim posts {romp:'wsState',app,state:'up'} to the shell on each open
+  // every EAGER pane socket open: the shim posts {romp:'wsState',app,state:'up'} to the shell on each open; a lazy pane has no shim to post
   const bootDeadline = now() + (cfg.bootTimeoutMs || 30000);
   let up = {};
   while (now() < bootDeadline) {
     up = await page.evaluate(() => window.__labWsNow || {});
-    if (APPS.every((a) => up[a] === "up")) break;
+    if (EAGER.every((a) => up[a] === "up")) break;
     await sleep(150);
   }
   out.t.bootUp = now();
@@ -219,6 +222,30 @@ try {
   out.bodyClass = await page.evaluate(() => document.body.className);
   out.mobileShell = await page.evaluate(() => !!document.getElementById("mtabs") && getComputedStyle(document.getElementById("mtabs")).display !== "none");
   await sleep(cfg.settleMs || 1500);   // the bundles' ready, the caps answer, the first pushes: the return is measured from a settled page
+  // the iframes' src after the settle: the lazy contract read off the DOM (a lazy pane has none until its tap; every eager pane has its page)
+  out.srcAtBoot = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("iframe[id^=f-]")).map((f) => [f.id.slice(2), f.getAttribute("src")])));
+  out.wsWordsAtBoot = await page.evaluate(() => (window.__labWs || []).map((w) => w.app));   // every pane that said anything before the tap or the suspend
+  // the TAB-TAP leg (stage 0): tap a lazy pane's tab, wait for its socket (its document loads on the tap), then go back to the chat,
+  // so the return below finds a tapped pane off screen: the parked-pane contract (D2) exercised on a pane that did not exist at boot
+  if (cfg.tapPane) {
+    out.t.tap = now();
+    await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");
+    const tapDeadline = now() + (cfg.bootTimeoutMs || 30000);
+    let tapUp = {};
+    while (now() < tapDeadline) {
+      tapUp = await page.evaluate(() => window.__labWsNow || {});
+      if (tapUp[cfg.tapPane] === "up") break;
+      await sleep(100);
+    }
+    out.tapUpMs = tapUp[cfg.tapPane] === "up" ? now() - out.t.tap : -1;
+    out.srcAfterTap = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("iframe[id^=f-]")).map((f) => [f.id.slice(2), f.getAttribute("src")])));
+    out.loadingAfterTap = await page.evaluate(() => ({ body: document.body.classList.contains("pane-loading"), panes: Array.from(document.querySelectorAll(".pane.loading")).map((d) => d.id) }));
+    await page.click("#mtabs button[data-pane=chat]");
+    await sleep(Math.max(300, (cfg.settleMs || 1500) / 2));
+    out.tapped = cfg.tapPane;
+    out.framesAtBoot = out.frames;
+    out.frames = page.frames().map((f) => { try { return new URL(f.url()).pathname; } catch (e) { return f.url(); } });   // the frames the page holds at the suspend: the tapped pane's document is one now
+  }
   out.lateInstall = await ensureInstalled();
   out.installed = await page.evaluate(() => { const docs = [window].concat(Array.from(window.frames)); return docs.map((f) => { try { return ((f === window ? "top" : (f.frameElement && f.frameElement.id)) || f.location.pathname) + (f.document.__labInit ? "" : ":MISSING"); } catch (e) { return "ERR"; } }); });
   if (cfg.shots) await page.screenshot({ path: cfg.shots + "-boot.png" }).catch(() => {});

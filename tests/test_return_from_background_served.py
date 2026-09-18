@@ -10,13 +10,16 @@ them `connecting`). The reconnect design's PR plan lands the fixes as PRs 2 to 5
 baseline the fixes are measured against and asserts SHAPES only (rows present, fields typed, counts recorded into a
 JSON artifact), never counts ahead of the fix that earns them. The count assertions arrive with each fix (relay redials
 that wait for the local socket: zero `watchdog-close connecting`; hidden panes that park their redial, LANDED as D2 on
-2026-09-18 and pinned in `_parked` below: on the phone FOUR panes tell the shell `parked` at the return (every pane but
-the chat and the feed) and two dial, the visible chat and the feed, which is exempt from parking by the user's ruling of
+2026-09-18 and pinned in `_parked` below: on the phone every loaded pane but two tells the shell `parked` at the return (four at
+D2's landing, the Files pane alone since stage 0 made the other three lazy; see below) and two dial, the visible chat and the feed, which is exempt from parking by the user's ruling of
 2026-09-18 so the shell's bell keeps receiving card-trouble entries while the Feed tab is hidden, one extra redial per
 return accepted; the witness is the shell's wsState words the driver records, because a parked pane's own `return` row
 with `parked:true` waits in its queue for the tap, which no leg makes, so within a leg only the dialing panes' rows reach
 the kernel; the shell leading the visible pane's redial: zero pane `wsconnfail` and one `return-probe`), so a count
-pinned here ahead of its fix would pin today's storm.
+pinned here ahead of its fix would pin today's storm. Since stage 0 (2026-09-18, `_lazy` below) the phone loads only the chat,
+the feed and the Files pane at boot: the Outline, the Sessions band and the Waiting pane have no document until their first tap,
+so the cold open's documents, sockets and connect pushes drop by three, the parked set at a return is the Files pane alone (plus
+a pane a leg tapped), and the tab-tap leg exercises the parked contract on a pane that did not exist at boot.
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), with ROMP_WS_KEEPALIVE=2 (WS_DEAD_S 6 s, a floor for a socket the
@@ -46,7 +49,7 @@ rather than discovered; no `pageshow` is dispatched (the design dispatches none)
 not the phone's dead path, which the HUNG regime emulates. The override is installed per DOCUMENT, by an init script and
 again at boot in any frame the init script missed: an iframe navigating from its initial about:blank to a same-origin
 page keeps its Window (Firefox and WebKit every time, Chromium sometimes), and playwright's init script never reached the
-three eagerly created frames (chat, waiting, files) in Firefox, so without the late pass their shims read the browser's
+eagerly created frames (chat, feed, files on the phone; every pane on the desktop) in Firefox, so without the late pass their shims read the browser's
 real visibilityState and filed `keep` with `hiddenMs -1`; the artifact's `lateInstall` names the frames the pass caught.
 The kernel's dead-socket drop plays no part here: the driver's close at the suspend reaches the kernel at once (the
 kernel-side leg of every held socket closed 13 to 25 ms after the suspend, code 1006), so the kernel sees an immediate
@@ -94,8 +97,17 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 
 DRIVER = os.path.join(HERE, "return_from_background_browser.mjs")
-APPS = ("chat", "timeline", "fleet", "feed", "waiting", "files")   # the six pane documents the shell loads; the shell itself dials app=shell
+APPS = ("chat", "timeline", "fleet", "feed", "waiting", "files")   # the six pane documents the shell serves iframes for; the shell itself dials app=shell
 FRESH_APPS = tuple(a for a in APPS if a != "files")                # the Files pane gets no resync frame, so it files no return-fresh
+# stage 0 (2026-09-18): on the phone these load on their FIRST TAP (no document, no shim, no socket at boot); the chat ships its src,
+# the feed is exempt (the bell), the Files pane keeps its src (its markup line is upstream's). The desktop loads all six at boot.
+LAZY_PHONE = ("timeline", "fleet", "waiting")
+
+
+def _eager(shell, tap=None):
+    """The panes whose documents the shell has loaded before the suspend: every pane on the desktop; on the phone the eager ones plus
+    the pane a leg tapped (its document loaded on the tap)."""
+    return tuple(a for a in APPS if shell != "phone" or a not in LAZY_PHONE or a == tap)
 VISIBLE = "chat"                                                  # the phone's default tab and the desktop's first pane
 HOST = "TESTHOST"
 SESSIONS = (("11111111-2222-4333-8444-000000000101", "web", "w"),
@@ -326,14 +338,16 @@ class ReturnFromBackground(unittest.TestCase):
             shutil.rmtree(cls.lab, ignore_errors=True)
 
     # ---- the driver ----
-    def _drive(self, shell, regime, outage_s, engine="chromium"):
+    def _drive(self, shell, regime, outage_s, engine="chromium", tap=None):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
         if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
-        name = "%s-%s-%s-%ds" % (engine, shell, regime, outage_s)
+        name = "%s-%s-%s-%ds%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "")
+        eager = _eager(shell, tap)
         cfg = {"engine": engine, "shell": shell, "regime": regime, "outageMs": outage_s * 1000, "hiddenDwellMs": 400,
                "url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token),
-               "healthz": "http://127.0.0.1:%d/healthz" % self.port, "diag": self.diag, "apps": list(APPS), "freshApps": list(FRESH_APPS),
+               "healthz": "http://127.0.0.1:%d/healthz" % self.port, "diag": self.diag, "apps": list(APPS),
+               "eagerApps": list(_eager(shell)), "freshApps": [a for a in eager if a in FRESH_APPS], "tapPane": tap,   # the boot wait is the eager panes' (a lazy pane has no shim to say up); the fresh wait includes a tapped pane
                "perfShare": True, "bootTimeoutMs": 30000, "freshTimeoutMs": 25000, "settleMs": 1500,
                "shots": os.path.join(self.lab, "return-harness-" + name) if os.environ.get("RETURN_HARNESS_SHOTS") else ""}
         cfg["resultPath"] = os.path.join(self.lab, "result-%s.json" % name)   # the full result; the RESULT: line is a compact copy
@@ -359,15 +373,49 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertEqual(len(full.get("dials") or []), r.get("dialsN"), "the full result carries every dial the compact line counted")
         return name, full
 
-    def _leg(self, shell, regime, outage_s, engine="chromium"):
-        name, r = self._drive(shell, regime, outage_s, engine)
+    def _leg(self, shell, regime, outage_s, engine="chromium", tap=None):
+        name, r = self._drive(shell, regime, outage_s, engine, tap)
         m = measure(_rows(self.diag), r)
         art = os.path.join(self.lab, "return-harness-%s.json" % name)
         Path(art).write_text(json.dumps(m, indent=1, sort_keys=True))
         type(self).measurements[name] = m
         self._shapes(name, r, m, regime)
         self._parked(name, r, m)
+        self._lazy(name, r, m, tap)
         return m
+
+    # ---- stage 0's count pin (2026-09-18): the lazy panes' cold-open counts, and the tab-tap leg ----
+    def _lazy(self, name, r, m, tap):
+        """T1 and T6, end to end (stage 0, 2026-09-18). On the phone the Outline, the Sessions band and the Waiting pane have no src, no
+        document and no socket at boot: the kernel's wsopen rows before the suspend name the eager panes alone, no lazy pane's shim says
+        a word, and the iframes read no src. The cold open's counts (documents, sockets, dials) drop by the three lazy panes; the
+        desktop's do not. The tab-tap leg taps one lazy pane: its document loads on the tap (its src set, the shell's loader up while
+        it loads), its shim says up, and at the return, off screen behind the chat, it parks like any pane (D2)."""
+        where = name + ": "
+        shell = r.get("shell")
+        src = r.get("srcAtBoot") or {}
+        self.assertEqual(sorted(src), sorted(APPS + ("settings",)), where + "every pane iframe is in the served page, lazy or not: %r" % (src,))
+        if shell == "phone":
+            for app in LAZY_PHONE:
+                self.assertIsNone(src.get(app), where + "a lazy pane has no src at boot on the phone: %r" % (src,))
+                self.assertNotIn(app, r.get("wsWordsAtBoot") or [], where + "…and its shim said nothing before the tap (no document): %r" % (r.get("wsWordsAtBoot"),))
+                if app != tap:   # the tapped pane's one socket, after its tap, is counted below
+                    self.assertNotIn(app, m["wsopenBoot"], where + "…so the kernel accepted no socket from it before the suspend (wsopen by app: %r)" % (m["wsopenBoot"],))
+            for app in _eager("phone"):
+                self.assertEqual(src.get(app), "/" + app, where + "an eager pane has its page at boot: %r" % (src,))
+            self.assertEqual(sorted(k for k in m["wsopenBoot"] if k != "shell"), sorted(_eager("phone", tap)), where + "the kernel's boot pane sockets are the eager panes' (plus a tapped one's; the shell dials its own): %r" % (m["wsopenBoot"],))
+        else:
+            for app in APPS:
+                self.assertEqual(src.get(app), "/" + app, where + "the desktop loads every pane at boot, as before: %r" % (src,))
+            self.assertEqual(sorted(k for k in m["wsopenBoot"] if k != "shell"), sorted(APPS), where + "…one boot pane socket each (the shell dials its own): %r" % (m["wsopenBoot"],))
+        if tap:
+            self.assertGreaterEqual(r.get("tapUpMs", -1), 0, where + "the tapped pane's shim said up after the tap (its document loaded on it): %r" % r.get("tapUpMs"))
+            self.assertEqual((r.get("srcAfterTap") or {}).get(tap), "/" + tap, where + "the tap set its src: %r" % (r.get("srcAfterTap"),))
+            self.assertEqual(m["wsopenBoot"].get(tap), 1, where + "one socket from it, after the tap: %r" % (m["wsopenBoot"],))
+            la = r.get("loadingAfterTap") or {}
+            self.assertIn("panes", la, where + "the loading state was read after the tap: %r" % (la,))
+            self.assertNotIn(tap + "-pane", la.get("panes") or [], where + "its document had loaded by the time its socket was up, so its .pane no longer wears loading: %r" % (la,))
+            self.assertFalse(la.get("body"), where + "…and the shell's loader is down: %r" % (la,))
 
     # ---- D2's count pin (2026-09-18): which panes parked, through the wsState words the driver recorded ----
     def _parked(self, name, r, m):
@@ -385,8 +433,8 @@ class ReturnFromBackground(unittest.TestCase):
         parked_apps = sorted({w.get("app") for w in words if w.get("state") == "parked"})
         if r.get("shell") == "phone":
             dialing = {VISIBLE, "feed"}
-            self.assertEqual(parked_apps, sorted(set(APPS) - dialing),
-                             where + "every pane but the visible chat and the exempt feed parks at the return (parked words: %r)" % (parked_apps,))
+            self.assertEqual(parked_apps, sorted(set(_eager("phone", r.get("tapped"))) - dialing),
+                             where + "every pane the shell has loaded but the visible chat and the exempt feed parks at the return; a lazy pane has no shim to park (parked words: %r)" % (parked_apps,))
             for app in parked_apps:
                 self.assertEqual([w.get("state") for w in words if w.get("app") == app].count("parked"), 1, where + "%s says parked once: %r" % (app, words))
                 self.assertNotIn(app, m["wsopenReturn"], where + "a parked pane dials nothing at the return (kernel wsopen by app: %r)" % (m["wsopenReturn"],))
@@ -412,9 +460,10 @@ class ReturnFromBackground(unittest.TestCase):
                 self.assertGreaterEqual(row.get("hiddenMs", -1), 0, where + "%s saw the emulated hide (hiddenMs stamped): %r" % (app, row))
         # the precondition of the measurement: every pane socket was up before the suspend (a pane that never connected
         # would file no return row and the storm would be undercounted)
-        self.assertEqual(sorted(r.get("bootUpApps") or []), sorted(APPS),
-                         where + "every pane's shim said wsState up before the suspend: %r (frames %r)" % (r.get("bootUpApps"), r.get("frames")))
-        self.assertGreaterEqual(r.get("closedAtSuspend", 0), len(APPS),
+        eager = _eager(r.get("shell"), r.get("tapped"))   # the panes with a document at the suspend: the boot's, plus one a leg tapped
+        self.assertEqual(sorted(r.get("bootUpApps") or []), sorted(_eager(r.get("shell"))),
+                         where + "every eager pane's shim said wsState up at boot, and no lazy pane said anything (the boot wait ends before any tap): %r (frames %r)" % (r.get("bootUpApps"), r.get("frames")))
+        self.assertGreaterEqual(r.get("closedAtSuspend", 0), len(eager),
                                 where + "the driver held one passed-through socket per pane to close at the suspend: %r" % r.get("closedAtSuspend"))
         self.assertEqual(r.get("mobileShell"), r.get("shell") == "phone", where + "the shell the viewport selects: %r" % r.get("bodyClass"))
         # the return rows: one decision per pane document that had connected, typed
@@ -479,6 +528,9 @@ class ReturnFromBackground(unittest.TestCase):
 
     def test_phone_hung_12s(self):
         self._leg("phone", "hung", 12)
+
+    def test_phone_hung_12s_tab_tap(self):
+        self._leg("phone", "hung", 12, tap="fleet")   # stage 0: a lazy pane tapped before the suspend loads on the tap and parks at the return
 
     def test_phone_refused_30s_slow(self):
         self._leg("phone", "refused", 30)
