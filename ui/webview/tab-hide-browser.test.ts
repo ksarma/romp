@@ -1346,7 +1346,7 @@ test("in Chromium and Firefox, render.ts's own showTabMenu with real pointer inp
 });
 
 // THE ROW'S MENU IN ONE PAGE (the user 2026-09-18, who wanted a hidden session, which has no tab on the strip, to reach its settings
-// from the one place it has a row): render.ts's OWN pane (the first probe's slices) and its OWN showTabMenu (the menu probe's), bundled
+// from the place its tab would be): render.ts's OWN pane (the first probe's slices) and its OWN showTabMenu (the menu probe's), bundled
 // into one page over the pane's stand-in (probeSource({ menu: true })), in headless Chromium and Firefox with real input. The node-level
 // test (tab-snapshot-menu.test.ts) executes the same code over a fake DOM and fires the contextmenu event itself; this leg is what only
 // an engine can show: that the engine's right-click on a row's button, its keyboard menu key on the focused row and its clicks on the

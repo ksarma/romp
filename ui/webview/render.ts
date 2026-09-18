@@ -8777,11 +8777,11 @@ function startTabRename(id: string, copy?: string) {   // `copy`: which copy of 
   const s = sessions.get(id);
   if (!s) return;
   // THE SEAT FOLLOWS THE MENU (the user 2026-09-18, who wanted a hidden session to reach its settings from the section view): a
-  // Rename picked from a ROW of the section view edits the name on that row (the one place a hidden session, which has no tab,
-  // is shown at all); one picked from a tab edits the tab's label, as before, whatever the view shows (tabMenuSeat, set at the
-  // open). The row must be rendered (rowSeatFor: the view up, the row shown or its fold open), else the tab, else nothing; a
-  // row-first rule here moved a tab's Rename into the pane, and into the closed fold's list, where no input can take the focus
-  // (round 1 of the review). Resolved NOW, by id, on either surface (the rule below).
+  // Rename picked from a ROW of the section view edits the name on that row (the row is where a hidden session, which has no
+  // tab, now opens those settings); one picked from a tab edits the tab's label, as before, whatever the view shows
+  // (tabMenuSeat, set at the open). The row must be rendered (rowSeatFor: the view up, the row shown or its fold open), else the
+  // tab, else nothing; a row-first rule here moved a tab's Rename into the pane, and into the closed fold's list, where no input
+  // can take the focus (round 1 of the review). Resolved NOW, by id, on either surface (the rule below).
   const row = tabMenuSeat === "row" ? rowSeatFor(id) : null;
   const item = row ? row.parentElement : null;
   // Resolve the tab NOW, by id. The old signature took the nodes captured at menu-open time, and a
@@ -14351,8 +14351,9 @@ function snapshotHost(): HTMLElement | null {
   // repaints the strip and the view together. One latch for two surfaces one gesture can span.
   host.addEventListener("pointerdown", () => { tabPointerHeld = true; });
   // THE ROW'S CONTEXT MENU (the user 2026-09-18, who wanted a hidden session, which has no tab, to reach its settings from
-  // the one place it has a row). A right-click on a row, a long-press on a touch screen or the keyboard's menu key on a
-  // focused row (the engines dispatch all three as contextmenu) opens THE TAB'S MENU for the row's session: showTabMenu,
+  // the section view). The row is where those settings now open. A right-click on a row, a long-press on a touch screen or
+  // the keyboard's menu key on a focused row (the engines dispatch all three as contextmenu) opens THE TAB'S MENU for the
+  // row's session: showTabMenu,
   // the strip's own builder, called as the tab's handler calls it, so the rows, their words and their states are the tab
   // menu's own and a row added there is here at once (a hidden copy's Hide tab row reads Show tab). ONE listener on the
   // stable host, never on a row (click safety: the rows are rebuilt on every push that changes one). The gate is the

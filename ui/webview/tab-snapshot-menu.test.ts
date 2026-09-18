@@ -1,5 +1,5 @@
 // THE ROW'S CONTEXT MENU IN THE SECTION VIEW (the user 2026-09-18, who wanted a hidden session, which has no tab on the strip,
-// to reach its per-session settings from the one place it has a row: the tag's at-a-glance view). A right-click on a row (the
+// to reach its per-session settings from the place its tab would be: the tag's at-a-glance view). A right-click on a row (the
 // engines dispatch a long-press and the keyboard's menu key the same way) opens THE TAB'S MENU for the row's session, built by
 // showTabMenu itself with the section the view shows as the copy, so the rows are the tab menu's own. EXECUTED: render.ts's
 // pane block (snapView through fillSnapshotRow, with the host's contextmenu listener and rowHasTabMenu), its showTabMenu, its
@@ -810,11 +810,18 @@ test("the sheet: the row's editor rule, tokens and metrics only; the docs: the g
   assert.doesNotMatch(block, /#[0-9a-fA-F]{3,8}\b|rgba?\(/, "no colour of its own: the strip's input carries the dress");
   // THE PARAGRAPHS THEMSELVES (round 1 of the review, 2026-09-18): the two guide paragraphs the change edited, sliced out of the guide
   // between markers that must both stand (tab-hide.test.ts's idiom), so the em-dash and vocabulary check below reads the guide's
-  // text and not a literal of this file's, which could never fail
+  // text and not a literal of this file's, which could never fail. ONE PARAGRAPH EACH (round 2 of the review): a slice ends at the
+  // NEXT paragraph's bold opener, never at the section's heading, and is held to one paragraph and to a ceiling on its length. The
+  // hidden slice had run to the feed heading, 9,354 chars over four paragraphs, three of them never edited by this change, and the
+  // minimum alone let that pass: an em dash written into one of those three would have turned this test red naming the hidden
+  // paragraph. Each ceiling sits under the slice plus the paragraph after it, so a slice that widens by a paragraph fails here
   const guidePara = (from: string, to: string) => { const a = GUIDE.indexOf(from), b = GUIDE.indexOf(to, a + 1); assert.ok(a >= 0 && b > a, `the guide's markers moved: ${from} .. ${to}`); return GUIDE.slice(a, b); };
   const overview = guidePara("**A section at a glance.**", "**Hiding a session inside its group.**");
-  const hidden = guidePara("**Hiding a session inside its group.**", "### The feed");
-  assert.ok(overview.length > 500 && hidden.length > 500, "the two paragraphs, whole");
+  const hidden = guidePara("**Hiding a session inside its group.**", "**Coming back after a dropped connection.**");
+  for (const [name, s, ceiling] of [["overview", overview, 3000], ["hidden", hidden, 6000]] as const) {
+    assert.ok(s.length > 500 && s.length < ceiling, `the guide's ${name} paragraph, whole and alone: ${s.length} chars against a ceiling of ${ceiling}`);
+    assert.ok(!s.trimEnd().includes("\n\n"), `the guide's ${name} slice holds a paragraph break: it runs past its paragraph`);
+  }
   const flat = (s: string) => s.replace(/\s+/g, " ");
   assert.match(flat(overview), /see the next paragraph\)\. Right-click a row, or press the menu key while the row has the focus, to open the menu a right-click on the session's tab opens, with the same rows\. \*\*Rename\*\* from that menu edits the name on the row while this view shows it\. The rows update as/, "the overview paragraph");
   assert.match(flat(hidden), /A hidden session has no tab to right-click, so this view's \*\*Show\*\* button puts it back\. A right-click on its row here opens the tab's menu, where \*\*Hide tab\*\* reads \*\*Show tab\*\*\./, "the hidden paragraph: two sentences, the menu item named as an item (the review)");
