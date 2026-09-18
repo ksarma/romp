@@ -48,6 +48,27 @@ def _keys_named(doc, name):
                 walk(v, where + (i,))
     walk(doc, ())
     return out
+
+
+EPOCH_FLOOR = 1.5e9     # an epoch second from 2017 on: every stamp the fixture writes (2026) is above it, no count or duration is
+
+
+def _numbers(doc, floor=None):
+    """[(path, value)] for every numeric leaf of `doc` (a bool is not a number), at or above `floor` when one is given."""
+    out = []
+
+    def walk(node, where):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, where + (k,))
+        elif isinstance(node, (list, tuple)):
+            for i, v in enumerate(node):
+                walk(v, where + (i,))
+        elif isinstance(node, (int, float)) and not isinstance(node, bool):
+            if floor is None or node >= floor:
+                out.append(("/".join(str(p) for p in where), node))
+    walk(doc, ())
+    return out
 D0 = rm.day_start("2026-09-10", TZ)          # the anchor day, midnight UTC
 
 
@@ -333,19 +354,24 @@ class Document(unittest.TestCase):
         hostname is a personal identifier, so the default header names 'this machine' and the hostname
         appears nowhere unless --label passes it; and no em-dash anywhere in the summary."""
         import socket
-        host = (socket.gethostname() or "").split(".")[0]
-        doc = rm.collect(self.state, kind="week", anchor="2026-09-10", tz=TZ, live=False)
+        # the hostname is pinned to a synthetic one for the read AND for the collect and the summary, so the test reads
+        # no real machine string (the module docstring's promise) and cannot fail on a machine named after a token of
+        # the document (round 3 of the export's review: a first label of `web` failed it, the fixture's session name)
+        with mock.patch.object(socket, "gethostname", return_value="TESTHOST.example"):
+            host = (socket.gethostname() or "").split(".")[0]
+            doc = rm.collect(self.state, kind="week", anchor="2026-09-10", tz=TZ, live=False)
+            text = rm.summary(doc)
+            labelled = rm.collect(self.state, kind="week", anchor="2026-09-10", tz=TZ, live=False, label="web box")
+            labelled_text = rm.summary(labelled)
+        self.assertEqual(host, "TESTHOST")
         self.assertEqual(doc["label"], "this machine")
         self.assertNotIn("host", doc, "no host field at all: the document names itself by label only")
-        text = rm.summary(doc)
         self.assertIn("restart metrics: this machine, week windows", text)
-        if host:
-            self.assertNotIn(host, text)
-            self.assertNotIn(host, json.dumps(doc))
+        self.assertNotIn(host, text)
+        self.assertNotIn(host, json.dumps(doc))
         self.assertNotIn("\u2014", text)
         self.assertNotIn("\u2014", json.dumps(doc))
-        labelled = rm.collect(self.state, kind="week", anchor="2026-09-10", tz=TZ, live=False, label="web box")
-        self.assertIn("restart metrics: web box,", rm.summary(labelled))
+        self.assertIn("restart metrics: web box,", labelled_text)
 
     def test_no_em_dash_in_any_string_of_the_reader_or_the_report(self):
         """Every string literal of the two modules, docstrings included (--help prints the module docstring's
@@ -426,9 +452,12 @@ class PublicForm(unittest.TestCase):
     buckets' cutSessions counts, the sids and pids ride the events, the label is free text, and a cut row's
     drainError and reasonError and an event row's text are planted as one-token messages (_plant_free_text); none
     may survive, while the counts they stood beside do. Before the flag, argparse refused `--public`. Since 2026-09-18
-    every `t` goes too (the second of each restart, boot, quiet window, kernel-series point and event: this machine's
-    own history, an exact linkage key between two documents from it) and the kernel's uptime is rounded down to whole
-    minutes."""
+    every ABSOLUTE clock stamp goes too, whatever its key (`t`, the second of each restart, boot, quiet window,
+    kernel-series point and event, and the same stamps under other names: auditT, firstServe, reconcileDone, a quiet
+    window's since and restartT, the range's since and until), the live block's port goes, and the kernel's uptime is
+    rounded down to whole minutes; the bucket bounds (start, end: day or week boundaries in the chosen zone) are the one
+    stamp kept. The rule (round 3): the public form is paste-safe, not unlinkable. Durations (outageS, settleS, waitedS)
+    and every count and distribution stay, so two documents from one machine remain linkable through them by design."""
 
     def setUp(self):
         self.state = Path(tempfile.mkdtemp())
@@ -485,6 +514,43 @@ class PublicForm(unittest.TestCase):
         problems = pp.paste_problems(doc, planted=(SID, SID2, "TESTHOST", "this machine", "boom42"))   # the walk's probes are substrings
         self.assertEqual(problems, [], "%d leak(s):\n  %s" % (len(problems), "\n  ".join(map(str, problems))))
 
+    def test_no_absolute_clock_stamp_survives_except_the_bucket_bounds(self):
+        """The rule (round 3, 2026-09-18): the public form removes every ABSOLUTE clock stamp under whatever key. Denying
+        `t` alone left the same stamps under other names: a quiet window's restartT was the released restart's t
+        verbatim, its since the parked stamp (since plus waitedS is the row's t), a restart's auditT, a boot's firstServe
+        and reconcileDone (firstServe minus outageS is the denied cut's t), the range's since and until. Pinned as the
+        PROPERTY, not as key names: a walk over the printed document finds no numeric leaf at or above EPOCH_FLOOR
+        outside buckets[].start and buckets[].end, the day or week bounds in the chosen zone, coarse and documented
+        (they do reveal the zone's UTC offset). Durations stay. Fails before: fifteen leaves survived."""
+        doc = self._public("--since", "2026-09-10", "--until", "2026-09-13")
+        bounds = sorted("buckets/%d/%s" % (i, k) for i in range(len(doc["buckets"])) for k in ("start", "end"))
+        self.assertTrue(bounds, "the fixture fills buckets")
+        survivors = _numbers(doc, EPOCH_FLOOR)
+        self.assertEqual(sorted(p for p, _ in survivors), bounds,
+                         "an absolute stamp survives outside the bucket bounds:\n  %s" % "\n  ".join("%s = %r" % s for s in survivors))
+        for i, b in enumerate(doc["buckets"]):
+            self.assertEqual((b["end"] - b["start"]) % 86400, 0, "a bound pair spans whole days")
+        # the raw document's stamps (every epoch-range number off the bucket bounds) equal no number the public form keeps
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rm.main(["--json", "--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state),
+                     "--since", "2026-09-10", "--until", "2026-09-13"])
+        raw = json.loads(out.getvalue())
+        raw_stamps = {v for p, v in _numbers(raw, EPOCH_FLOOR) if p not in bounds}
+        self.assertGreaterEqual(len(raw_stamps), 15, "the raw document carries the stamps the public form must not")
+        kept = {v for p, v in _numbers(doc) if p not in bounds}
+        self.assertEqual(raw_stamps & kept, set(), "a raw stamp survives under some key")
+        # durations and counts stay: they are the data, and two documents from one machine stay linkable through them
+        self.assertEqual(doc["restarts"][0]["boot"]["outageS"], 2.5)
+        self.assertEqual(doc["restarts"][0]["boot"]["settleS"], 0.2)
+        self.assertEqual([q["waitedS"] for q in doc["quietWindows"]], [297, 900])
+        self.assertEqual([q["cutTurns"] for q in doc["quietWindows"]], [2, 1], "the joined restart's count stays, its stamp goes")
+        self.assertEqual(doc["range"], {}, "since and until are user-typed day bounds the buckets already carry")
+        self.assertEqual(doc["buckets"][0]["start"], D0, "the bucket bounds are the documented exception")
+        for key in ("auditT", "firstServe", "reconcileDone", "restartT", "prevCutT", "since", "until"):
+            self.assertIn(key, pp.DENY_KEYS, key)
+        self.assertNotIn(("since",), pp.DENY_PATHS, "since is denied by key now, at any depth")
+
     def test_week_buckets_keep_distinct_keys(self):
         # the raw key is "week of YYYY-MM-DD", which the ident grammar folds to `other`, so every week would collapse
         # into one unreadable bucket; the public form spells it week-of-YYYY-MM-DD before the fold
@@ -498,13 +564,16 @@ class PublicForm(unittest.TestCase):
     def test_the_generation_second_goes_with_generated_at(self):
         # live.t is generatedAt under another key, to the second, and goes with every other `t` (the denylist's key);
         # the kernel's uptime (a duration the counters are read against) stays, rounded down to whole minutes (to the
-        # second it is the boot to the second, a stamp constant for the life of the process), its start stamp and pid go
+        # second, beside the paste time, it placed the boot within a minute, a stamp constant for the life of the
+        # process), its start stamp and pid go; the port goes too (a kernel on a non-default ROMP_KERNEL_PORT made it a
+        # per-install constant no reader needs; round 3)
         out = rm.public_form({"schema": 1, "generatedAt": 1757500000, "label": "TESTHOST",
                               "live": {"t": 1757500000, "platform": "Linux", "sessionsCounted": 2,
                                        "kernel": {"port": 29855, "pid": 4242, "started": 1757400000.0, "uptimeS": 100000.0,
                                                   "kernelSha": "0123456789abcdef0123456789abcdef01234567", "bootId": "b1"}}})
         self.assertEqual(out, {"schema": 1, "public": True,
-                               "live": {"platform": "Linux", "sessionsCounted": 2, "kernel": {"port": 29855, "uptimeS": 99960}}})
+                               "live": {"platform": "Linux", "sessionsCounted": 2, "kernel": {"uptimeS": 99960}}})
+        self.assertIn("port", pp.DENY_KEYS)
         self.assertEqual(rm.public_form({"live": {"skipped": True}})["live"], {"skipped": True})
 
     def test_the_raw_document_still_carries_the_names_so_the_flag_is_what_removes_them(self):

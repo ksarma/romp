@@ -4,9 +4,15 @@
 invariant test (tests/test_perf_stats.py, ServedSnapshotIsPasteSafe). No bin/ entry: it is imported, never run.
 
 A GET /perf snapshot and a restart-metrics document are diagnosis a user may want to paste in public (an issue,
-a chat). What must not travel with them is anything that names the machine or its sessions: a home path, a
-session id, a hostname, a username, a pid, a glossary term, a client's own text. Two rules make a copy safe by
-construction, and one value is kept coarsened, so a block added to the kernel later costs nothing here (2026-09-18):
+a chat). What must not travel with them is anything that names the machine or its sessions (a home path, a
+session id, a hostname, a username, a pid, a glossary term, a client's own text) or fixes them in time (an
+absolute clock stamp). THE RULE (the export's third review round, 2026-09-18): the public form is PASTE-SAFE,
+not unlinkable. It removes identifiers, paths, free text, machine strings and every ABSOLUTE CLOCK STAMP;
+durations stay; per-process and per-machine MEASUREMENTS stay by design (the boot's stage split under
+pusher.firstCycle and jobs.firstPass, whole; the lifetime maxima; every counter), because they are the data a
+reader wants, so two exports from one kernel life, or from one machine, REMAIN LINKABLE through them. Two rules
+make a copy safe by construction and two kinds of value are kept coarsened, so a block added to the kernel later
+costs nothing here:
 
 1. The SHAPE rule, over the whole document. Numbers, booleans and null pass. Every dict key and every string
    value must fullmatch the browser's `ident` grammar, `^[A-Za-z0-9_.:-]{1,32}$` (ui/webview/perf-telemetry.ts),
@@ -19,25 +25,43 @@ construction, and one value is kept coarsened, so a block added to the kernel la
    `kind<-caller` and `stage:kind<-caller` (a stage mark, a reader kind and a function name, never text).
 2. The DENYLIST, dropped before the shape rule can turn them into `other` rows: the read table by path
    (`checkpoints.readByPath`, absolute transcript paths), the judges' child's first failure (an exception
-   message), the thread stacks, a process id under any spelling (PID_KEY), the stamps that fix a process in
-   time (`now`, `since`, `started`, `generatedAt`, and `t` at any depth: GET /perf writes it on every split row,
-   the boot's first cycle under `pusher.firstCycle`, the first pass under `jobs.firstPass` and each `stageRing`
-   row, as the wall clock at the cycle's close, and on the judge child's report; the first cycle's is the
-   kernel's start to the millisecond, constant for the life of the process, so every export from one kernel
-   shared it as an exact linkage key, and no `t` in the snapshot is a counter), a sid in any spelling, the restart document's free-text fields (an
-   event row's `text`, the prose of a session problem; a cut row's `drainError` and `reasonError`, exception
-   messages), which a one-token message would otherwise carry through the grammar verbatim, and every key
-   that names an identity or a place (a session or unit name, a scope, a label, a path, a working directory,
-   a host, a user, a command line) where its value can carry text. The same key over a plain number is a COUNTER and stays: the chat
-   build's per-label miss counts (`builds.chat.bg_miss.names`, `.host`, `.cwd`) and the sessions listing's
-   miss reasons (`memos.sessionsListing.missBy.names`) are integers under identity-shaped keys. DENY_PATHS are
-   anchored at the document's root; DENY_KEYS, PID_KEY and IDENTITY_KEYS apply wherever a dict key appears
-   (`denied` is the one test).
+   message), the thread stacks, a process id under any spelling (PID_KEY), every ABSOLUTE CLOCK STAMP under any
+   spelling the two documents use (`now`, `since`, `until`, `started`, `generatedAt`, `t` at any depth, and the
+   restart document's `auditT`, `firstServe`, `reconcileDone`, `restartT` and `prevCutT`; a duration beside one
+   stays: `outageS`, `settleS`, `waitedS`, `uptime_s`). GET /perf writes `t` on every split row (the boot's first
+   cycle under `pusher.firstCycle`, the first pass under `jobs.firstPass`, each `stageRing` row) as the wall
+   clock at the cycle's CLOSE, so the first cycle's is the kernel's start plus that cycle's length (under a
+   second on a quick boot, up to the ten seconds the kernel flags as slow), constant for the life of the process,
+   and on the judge child's report; no `t` in the snapshot is a counter. The restart document carried the same
+   stamps under other names while `t` alone was denied: a quiet window's `restartT` is the released restart's `t`
+   verbatim, and `firstServe` minus the kept `outageS` is the cut's. Its `buckets[].start` and `end` are the one
+   absolute stamp KEPT: day or week boundaries in the chosen zone, coarse, the window a bucket's counts cover
+   (they do reveal the zone's UTC offset). `live.kernel.port` goes too: no reader needs it, and a kernel on a
+   non-default ROMP_KERNEL_PORT made it a per-install constant. Then a sid in any spelling, the restart
+   document's free-text fields (an event row's `text`, the prose of a session problem; a cut row's `drainError`
+   and `reasonError`, exception messages), which a one-token message would otherwise carry through the grammar
+   verbatim, and every key that names an identity or a place (a session or unit name, a scope, a label, a path,
+   a working directory, a host, a user, a command line) where its value can carry text. The same key over a
+   plain number is a COUNTER and stays: the chat build's per-label miss counts (`builds.chat.bg_miss.names`,
+   `.host`, `.cwd`) and the sessions listing's miss reasons (`memos.sessionsListing.missBy.names`) are integers
+   under identity-shaped keys. DENY_PATHS are anchored at the document's root; DENY_KEYS, PID_KEY and
+   IDENTITY_KEYS apply wherever a dict key appears (`denied` is the one test).
 3. The UPTIME ROUNDING: `uptime_s` (and the restart document's `uptimeS`) is not denied, since it is the span the
    lifetime totals cover, which a reader needs, but it is rounded DOWN to whole minutes (UPTIME_KEYS,
-   public_uptime) before the envelope is written: to the second, beside the export's UTC minute, it placed the
-   kernel's start to the second, the same stamp the denied `t` carries, constant for the life of the process and
-   so a linkage key across every export from one kernel (the receiving side's review, 2026-09-18).
+   public_uptime) before the envelope is written: to the second, beside the export's UTC minute (a stamp with no
+   seconds), it placed the kernel's start within a minute, the same start the denied `t` carries and as constant
+   for the life of the process (the receiving side's review, 2026-09-18).
+4. The BOUND COARSENING: the memory-fraction bounds (BOUND_KEYS: `capBytes`, `budgetBytes`, `cap`, `bound`,
+   `stageRingMax`, wherever the key appears) are kept and rounded UP to a power of two (public_bound), the key
+   kept and the occupancy beside it untouched, so a bound that binds stays visible next to its `bytes` or
+   `entries`. Each is a fixed fraction of the machine's MemTotal (`recordCache.budgetBytes` is half of it,
+   `heap.hydrated.capBytes` a thirty-second, `checkpoints.docMemo.capBytes` and `asmCheckpoint.asmDocMemo.capBytes`
+   a five-hundred-twelfth, `asmIndex.cap` the memory over 32 KiB, `pusher.stageRingMax` one per 256 MiB,
+   `builds.feed.memo.bound` and `memos.spendTree.bound` a sixty-fourth, `memos.notices.bound` and
+   `memos.summaryAnchor.bound` a two-hundred-fifty-sixth; the judge child's copies of its tables carry the same
+   keys), so every export from one machine shared all ten exactly and one of them gave the machine's RAM to the
+   kilobyte: a value derived from a machine fact is a machine string in a number's clothing (the third review
+   round, 2026-09-18). A constant that happens to sit under one of the keys is coarsened too, at no cost.
 
 The walk (paste_problems) is the invariant test's: every key against its block's grammar (`ident` for a plain
 block; membership in the register's image for `http`, http_key_ok; the stack sample's `<ident> <kind>` for
@@ -174,26 +198,33 @@ JOINED_KEY_BLOCKS = JOINED | frozenset(("judge", "child") + b for b in JOINED if
 
 # ── the denylist ─────────────────────────────────────────────────────────────────────────────────────────
 # Anchored at the root: the read table by path, the child's first failure (an exception message; the count
-# beside it stays) and the /perf clock stamps (uptime_s, a duration, stays: rounded, see UPTIME_KEYS). The child's
-# report stamp, once listed here by path, is denied by its key (`t`, DENY_KEYS) since 2026-09-18.
-DENY_PATHS = frozenset({("checkpoints", "readByPath"), ("judge", "child", "failures", "first"),
-                        ("now",), ("since",)})
+# beside it stays) and /perf's `now` (uptime_s, a duration, stays: rounded, see UPTIME_KEYS). The child's report
+# stamp, once listed here by path, is denied by its key (`t`, DENY_KEYS) since 2026-09-18, and `since` moved to
+# DENY_KEYS in the third review round: a quiet window's parked stamp sits at depth under that name.
+DENY_PATHS = frozenset({("checkpoints", "readByPath"), ("judge", "child", "failures", "first"), ("now",)})
 # Dropped wherever they appear as a dict key, whatever the value: by-identity tables, thread stacks and the perf
-# log switch, session ids in every spelling this repository uses, the stamps that fix a process in time, `t`
-# among them (the receiving side's review, 2026-09-18: GET /perf writes `t` on every split row, the boot's first
-# cycle under pusher.firstCycle, the first pass under jobs.firstPass and each stageRing row, as the wall clock at
-# the cycle's close, and on the judge child's report; the first cycle's is the kernel's start to the millisecond,
-# constant for the life of the process, so every export from one kernel shared it as an exact linkage key. No `t`
-# in the snapshot is a counter, checked against the kernel's snapshot builders; and the restart document's `t`,
-# the second of each restart, boot, quiet window, kernel-series point and event, is that machine's own history,
-# the same kind of key between two of its documents), and the restart document's free-text fields: a
-# session-events row's `text` (problem_row's prose) and a cut row's `drainError` and `reasonError` (exception
-# messages). None of the three is ever a counter, and a message that happens to be one token of at most 32
-# characters would pass the grammar verbatim (the export's review, 2026-09-18).
+# log switch, session ids in every spelling this repository uses, every ABSOLUTE CLOCK STAMP under the spellings
+# the two documents use (the rule of the third review round, 2026-09-18: a stamp fixes a process or an event in
+# time and is the same value in every document from that machine, so all of them go and durations stay). `t`:
+# GET /perf writes it on every split row (the boot's first cycle under pusher.firstCycle, the first pass under
+# jobs.firstPass and each stageRing row) as the wall clock at the cycle's close, the first cycle's the kernel's
+# start plus that cycle's length and constant for the life of the process, and on the judge child's report; no
+# `t` in the snapshot is a counter, checked against the kernel's snapshot builders. The restart document's `t` is
+# the second of each restart, boot, quiet window, kernel-series point and event, and the same stamps ride its rows
+# under other names: auditT (the audit row a cut consumed), firstServe and reconcileDone (the boot's marks;
+# firstServe minus the kept outageS is the denied cut's t), a quiet window's since (parked; since plus waitedS is
+# its t) and restartT (the released restart's t verbatim), prevCutT (the ledger's own join key), and the range's
+# since and until (user-typed day bounds the buckets already carry as start and end, the one stamp kept). `port`
+# is live.kernel.port: no reader needs it, and a kernel on a non-default ROMP_KERNEL_PORT made it a per-install
+# constant. Then the restart document's free-text fields: a session-events row's `text` (problem_row's prose)
+# and a cut row's `drainError` and `reasonError` (exception messages). None of the three is ever a counter, and a
+# message that happens to be one token of at most 32 characters would pass the grammar verbatim (the export's
+# review, 2026-09-18).
 DENY_KEYS = frozenset({
     "bySid", "byPath", "readByPath", "stacks", "log",
     "sid", "sids", "sid8", "fsid", "lastSid", "sessionId",
-    "kernelSha", "bootId", "started", "generatedAt", "t",
+    "kernelSha", "bootId", "started", "generatedAt", "t", "since", "until",
+    "auditT", "firstServe", "reconcileDone", "restartT", "prevCutT", "port",
     "text", "drainError", "reasonError",
 })
 # A process id under any spelling the ledgers write (pid, ppid, pids, cliPid, hostPid, managerPid, hub_pid,
@@ -220,21 +251,44 @@ def denied(key, value):
 
 # The kernel's uptime, kept and COARSENED: GET /perf's `uptime_s` and the restart document's `uptimeS` (GET /version's,
 # under live.kernel). It is the span the lifetime totals cover, which a reader needs; to the second, beside the export
-# minute (or the paste time), it placed the kernel's start to the second, the same stamp as the denied `t` under another
-# name and as constant for the life of the process, so it is rounded DOWN to whole minutes before the envelope is
-# written (the receiving side's review, 2026-09-18). The export's usage block buckets the RAW value; its bounds are
-# whole minutes, so the bucket agrees with the rounded one (tests/test_perf_export.py, UptimeRounding, pins both).
+# minute (a stamp with no seconds) or the paste time, it placed the kernel's start within a minute, the same start as
+# the denied `t` carries and as constant for the life of the process, so it is rounded DOWN to whole minutes before the
+# envelope is written (the receiving side's review, 2026-09-18). The export's usage block buckets the RAW value; its
+# bounds are whole minutes, so the bucket agrees with the rounded one (tests/test_perf_export.py, UptimeRounding, pins
+# both).
 UPTIME_KEYS = frozenset({"uptime_s", "uptimeS"})
 UPTIME_GRAIN_S = 60
 
 
 def public_uptime(value):
     """`value` rounded down to a whole number of minutes, as an int (3725 -> 3720; 100.5 -> 60; 59.9 -> 0), the
-    linkage reason in UPTIME_KEYS's comment; anything that is not a finite number (a bool, null, a string, a NaN the
-    fold has nulled) is returned as it is."""
+    reason in UPTIME_KEYS's comment; anything that is not a finite number (a bool, null, a string, a NaN the fold
+    has nulled) is returned as it is."""
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         return value
     return int(math.floor(value / UPTIME_GRAIN_S)) * UPTIME_GRAIN_S
+
+
+# The memory-fraction BOUNDS, kept and COARSENED (the third review round, 2026-09-18): each of the ten GET /perf serves
+# (heap.hydrated.capBytes, checkpoints.docMemo.capBytes, asmCheckpoint.asmDocMemo.capBytes, asmIndex.cap,
+# recordCache.budgetBytes, pusher.stageRingMax, builds.feed.memo.bound, memos.notices.bound, memos.spendTree.bound,
+# memos.summaryAnchor.bound; the judge child's copies of its tables carry the same keys) is a fixed fraction of the
+# machine's MemTotal, so every export from one machine shared all ten exactly and recordCache.budgetBytes, half of
+# MemTotal, gave the machine's RAM to the kilobyte: a value derived from a machine fact. Rounded UP to a power of two
+# (public_bound), the key kept and the occupancy beside it untouched, so a bound that binds stays visible next to its
+# bytes or entries. Keyed on the name at any depth, like UPTIME_KEYS; a constant under one of the keys
+# (memos.judgingBand.bound, 20000 entries) is coarsened too, at no cost.
+BOUND_KEYS = frozenset({"capBytes", "budgetBytes", "cap", "bound", "stageRingMax"})
+
+
+def public_bound(value):
+    """`value` rounded UP to a power of two, as an int (3 -> 4; 4 -> 4; 2.5 -> 4; 501 -> 512), the machine-fact reason
+    in BOUND_KEYS's comment; a bound that already is a power of two (a floor on a small machine) reads the same, which
+    a reader cannot tell from a rounded one. Anything that is not a finite positive number (a bool, null, a string,
+    zero, a NaN the fold has nulled) is returned as it is."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        return value
+    return 1 << (math.ceil(value) - 1).bit_length()
 
 
 def _finite(x):
@@ -275,8 +329,9 @@ def _public_key(key, where):
 def fold(node, where=()):
     """The public form of `node`: the denylist dropped, every key and string outside its grammar folded to
     `other` (colliding keys merged), non-finite numbers null, the kernel's uptime rounded down to whole minutes
-    (UPTIME_KEYS). `where` is the path of ORIGINAL keys, which the denylist and the block grammars are keyed on.
-    Returns a new document; the input is not touched."""
+    (UPTIME_KEYS), every memory-fraction bound rounded up to a power of two (BOUND_KEYS). `where` is the path of
+    ORIGINAL keys, which the denylist and the block grammars are keyed on. Returns a new document; the input is not
+    touched."""
     if isinstance(node, dict):
         out = {}
         for k, v in node.items():
@@ -287,7 +342,9 @@ def fold(node, where=()):
             nk = _public_key(k, where)
             fv = fold(v, here)
             if k in UPTIME_KEYS:
-                fv = public_uptime(fv)          # the one value kept coarsened (whole minutes; see UPTIME_KEYS)
+                fv = public_uptime(fv)          # kept coarsened: whole minutes (UPTIME_KEYS)
+            elif k in BOUND_KEYS:
+                fv = public_bound(fv)           # kept coarsened: the next power of two (BOUND_KEYS)
             out[nk] = _merge(out[nk], fv) if nk in out else fv
         return out
     if isinstance(node, (list, tuple)):

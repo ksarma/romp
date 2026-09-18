@@ -2484,7 +2484,7 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
 
     def _paste_problems(self, doc):
         """The shared walk with this class's grammars: the stricter ident, the register's stack keys, the planted strings.
-        Each finding is a perf_public.Problem (kind, is_key, path, text); str(problem) is the line a failure prints."""
+        Each finding is a perf_public.Problem (kind, is_key, path, text, depth); str(problem) is the line a failure prints."""
         return pp.paste_problems(doc, planted=self.planted, ident=self.IDENT, stacks_key=self.STACKS_KEY)
 
     @staticmethod

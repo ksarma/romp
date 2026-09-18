@@ -15,7 +15,14 @@ hex sha, leaves the snapshot as it was. It writes the PUBLIC form of the snapsho
 denylist of cli/perf_public.py applied to the whole snapshot, under a top-level `schema` line
 (`romp-perf-export/1`), the UTC minute of the export (no seconds) and, when the snapshot carries the kernel's
 commit (from /version, or written beside a saved snapshot), its abbreviation to at most twelve hex characters,
-the `-dirty` suffix stripped. No hostname, path, pid, session id or username is written; the finished document
+the `-dirty` suffix stripped. The public form is PASTE-SAFE, not unlinkable (the rule of the third review
+round, 2026-09-18): it removes identifiers, paths, free text, machine strings and every absolute clock stamp
+(every `t`, the wall clock at a cycle's close; the snapshot's `now` and `since`), rounds the kernel's uptime
+down to whole minutes and the ten memory-fraction bounds up to a power of two (each a fixed fraction of the
+machine's MemTotal, one of them half of it); durations stay, and per-process and per-machine MEASUREMENTS stay
+by design (the boot's stage split under pusher.firstCycle and jobs.firstPass, whole; the lifetime maxima; every
+counter), because they are the data a reader wants, so two exports from one kernel life, or from one machine,
+remain linkable through them. No hostname, path, pid, session id, username or clock stamp is written; the finished document
 is searched for the strings only this machine knows (perf_public.identifier_hits) and walked once more
 (perf_public.paste_problems); either finding refuses the write, and the SHALLOWEST finding across both is the one
 named (check_document), so a walk problem beneath a machine-named key is reported as the machine string, not as
@@ -317,7 +324,11 @@ def write_file(path: Path, text: str) -> int:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog=PROG, description=__doc__.split("\n\n")[0],
                                  usage="%(prog)s --public [--from SNAPSHOT.json] [--usage] [--out PATH]")
-    ap.add_argument("--public", action="store_true", help="write the public form (required; there is no raw mode)")
+    ap.add_argument("--public", action="store_true",
+                    help="write the public form (required; there is no raw mode): paste-safe, not unlinkable. Identifiers, paths, "
+                         "free text, machine strings and every absolute clock stamp go, the uptime is rounded to whole minutes and "
+                         "the memory-fraction bounds up to a power of two; durations and per-process measurements (the boot's stage "
+                         "split, the lifetime maxima) stay, so two exports from one kernel remain linkable through them")
     ap.add_argument("--from", dest="src", metavar="SNAPSHOT.json", help="a saved `romp perf --json` snapshot instead of the running kernel")
     ap.add_argument("--usage", action="store_true", help="add the usage block (session counts, actions, views, uptime bucket)")
     ap.add_argument("--out", metavar="PATH", help="write here instead of <state>/%s/perf-export-<YYYYMMDDTHHMM>.json" % EXPORT_DIR)

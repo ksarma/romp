@@ -60,9 +60,64 @@ PLANTED = (SID, SID[:8], SID2, SID2[:8], HOME, "tester", "TESTHOST", TERM, FIRST
 STAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$")
 FILE_NAME = re.compile(r"^perf-export-\d{8}T\d{4}\.json$")
 # One split row as the kernel's _split writes it (the boot's first cycle and first pass, each stage-ring row): `t` is
-# the wall clock at the cycle's close, which for the first cycle is the kernel's start to the millisecond, constant
-# for the life of the process; `s`, `stages` and `gc` are the split.
+# the wall clock at the cycle's CLOSE, so the first cycle's is the kernel's start plus that cycle's length (under a
+# second on a quick boot, up to the ten seconds the kernel flags as slow), constant for the life of the process; `s`,
+# `stages` and `gc` are the split, measurements the public form keeps whole.
 SPLIT = {"s": 0.5, "t": 900.5, "stages": {"jobs": {"ms": 300.0, "bytes": 1024, "hydrated": 0}}, "gc": {"n0": 1, "n1": 0, "n2": 0, "ms2": 0.0}}
+
+# The ten memory-fraction bounds GET /perf serves, each a fixed fraction of the machine's MemTotal (the kernel's own
+# formulas, floors included), planted at their served paths from a synthetic MemTotal that is not a power of two (a
+# 125.5 GiB machine as /proc/meminfo spells it), with an occupancy beside each; the public form rounds every one UP to
+# a power of two (round 3 of the export's review, 2026-09-18: recordCache.budgetBytes gave the machine's RAM to the
+# kilobyte, and every export from one machine shared all ten exactly).
+MEM_TOTAL = 131_572_192 * 1024
+BOUND_PATHS = (("pusher", "stageRingMax"), ("heap", "hydrated", "capBytes"), ("checkpoints", "docMemo", "capBytes"),
+               ("asmCheckpoint", "asmDocMemo", "capBytes"), ("asmIndex", "cap"), ("recordCache", "budgetBytes"),
+               ("builds", "feed", "memo", "bound"), ("memos", "notices", "bound"), ("memos", "spendTree", "bound"),
+               ("memos", "summaryAnchor", "bound"))
+
+
+def bounds_snapshot(mem_total=MEM_TOTAL):
+    return {
+        "uptime_s": 100.5, "process": {}, "http": {},
+        "pusher": {"stageRingMax": max(16, mem_total // (256 * 1024 * 1024)), "stageRingLen": 7},
+        "heap": {"hydrated": {"entries": 12, "bytes": 5000, "capBytes": max(1024 ** 3, mem_total // 32)}},
+        "checkpoints": {"docMemo": {"entries": 2, "bytes": 3000, "capBytes": max(64 * 1024 ** 2, mem_total // 512), "parseMultiple": 4.5}},
+        "asmCheckpoint": {"asmDocMemo": {"entries": 1, "bytes": 200, "capBytes": max(64 * 1024 ** 2, mem_total // 512), "multiple": 10}},
+        "asmIndex": {"resident": 40, "cap": max(500_000, mem_total // (32 * 1024))},
+        "recordCache": {"entries": 9, "bytes": 123456, "budgetBytes": max(4 * 1024 ** 3, mem_total // 2), "countCap": 1024},
+        "builds": {"feed": {"memo": {"entries": 3, "bytes": 777, "bound": mem_total // 64}}},
+        "memos": {"notices": {"bytes": 10, "bound": mem_total // 256}, "spendTree": {"bytes": 11, "bound": mem_total // 64},
+                  "summaryAnchor": {"bytes": 12, "bound": mem_total // 256}},
+        "judge": {"child": {"recordCache": {"entries": 1, "bytes": 5, "budgetBytes": max(4 * 1024 ** 3, mem_total // 2)}}},
+    }
+
+
+def _at(doc, path):
+    for k in path:
+        doc = doc[k]
+    return doc
+
+
+def _numbers(doc, floor=None):
+    """[(path, value)] for every numeric leaf of `doc` (a bool is not a number), at or above `floor` when one is given."""
+    out = []
+
+    def walk(node, where):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, where + (k,))
+        elif isinstance(node, (list, tuple)):
+            for i, v in enumerate(node):
+                walk(v, where + (i,))
+        elif isinstance(node, (int, float)) and not isinstance(node, bool):
+            if floor is None or node >= floor:
+                out.append(("/".join(str(p) for p in where), node))
+    walk(doc, ())
+    return out
+
+
+EPOCH_FLOOR = 1.5e9     # an epoch second from 2017 on; no count, byte total or duration of the fixtures reaches it
 
 
 def leak_snapshot():
@@ -208,13 +263,20 @@ class FoldInvariant(unittest.TestCase):
 
     def test_the_split_rows_lose_their_stamp_and_keep_the_split(self):
         # every split row (the boot's first cycle and first pass, each stage-ring row) carries `t`, the wall clock at
-        # the cycle's close; the first's is the kernel's start to the millisecond, constant for the life of the process,
-        # so two exports from one kernel would share an exact linkage key (the receiver's review, 2026-09-18)
+        # the cycle's CLOSE; the first's is the kernel's start plus the first cycle's length, constant for the life of
+        # the process, an absolute clock stamp and so denied (the receiver's review, 2026-09-18). The split itself
+        # (`s`, `stages`, `gc`) stays WHOLE, for firstCycle and firstPass too, by decision (round 3): the boot's stage
+        # split is the data a reader wants (which stage a slow boot spent its time in), and though the two rows are set
+        # once per process and served unchanged, a per-process fingerprint, the public form is paste-safe, not
+        # unlinkable: it removes stamps, not measurements, and two exports from one kernel life stay linkable through
+        # these rows and hundreds of other lifetime constants (restoreMs, the bySession firsts and maxima).
         rows = [self.perf["pusher"]["firstCycle"], self.perf["jobs"]["firstPass"]] + self.perf["pusher"]["stageRing"] + self.perf["jobs"]["stageRing"]
         self.assertEqual(len(rows), 5)
         for row in rows:
             self.assertNotIn("t", row, row)
             self.assertEqual(sorted(row), ["gc", "s", "stages"], "the split itself stays")
+        self.assertEqual(self.perf["jobs"]["firstPass"]["s"], 1.5, "the first pass's length, a measurement, is kept whole")
+        self.assertEqual(self.perf["pusher"]["firstCycle"]["gc"], SPLIT["gc"])
         self.assertEqual(self.perf["pusher"]["firstCycle"]["stages"], {"jobs": {"ms": 300.0, "bytes": 1024, "hydrated": 0}})
         self.assertEqual([r["s"] for r in self.perf["pusher"]["stageRing"]], [0.5, 0.2])
         self.assertEqual(self.perf["pusher"]["stageRingLen"], 2)
@@ -522,12 +584,98 @@ class FoldInvariant(unittest.TestCase):
         self.assertNotIn(("judge", "child", "t"), pp.DENY_PATHS, "the child's stamp is denied by its key now")
         self.assertEqual(pp.fold({"pusher": {"firstCycle": {"s": 0.5, "t": 900.5}, "stageRing": [{"s": 0.2, "t": 1000.4}]}}),
                          {"pusher": {"firstCycle": {"s": 0.5}, "stageRing": [{"s": 0.2}]}})
+        # the rule (round 3): every ABSOLUTE clock stamp goes, whatever its key, the restart document's spellings included
+        # (a quiet window's restartT is a restart row's t verbatim; firstServe minus the kept outageS is the cut's t);
+        # `since` is a key now, not a root path (a quiet window's parked stamp sits at depth); durations stay
+        for key in ("since", "until", "started", "generatedAt", "auditT", "firstServe", "reconcileDone", "restartT", "prevCutT", "port"):
+            self.assertIn(key, pp.DENY_KEYS, key)
+            self.assertTrue(pp.denied(key, 1.7e9), key)
+        self.assertNotIn(("since",), pp.DENY_PATHS)
+        self.assertIn(("now",), pp.DENY_PATHS)
+        for key in ("outageS", "settleS", "waitedS", "uptimeS", "uptime_s", "s", "ms", "start", "end"):
+            self.assertFalse(pp.denied(key, 2.5), key + " is a duration or a bucket bound and stays")
+        self.assertEqual(pp.fold({"quietWindows": [{"t": 1.7e9, "since": 1.7e9 - 300, "waitedS": 297, "restartT": 1.7e9 + 3, "cutTurns": 2}],
+                                  "restarts": [{"t": 1.7e9, "auditT": 1.7e9 - 2, "boot": {"t": 1.7e9 + 2, "firstServe": 1.7e9 + 2.5,
+                                                                                            "reconcileDone": 1.7e9 + 2.7, "settleS": 0.2, "outageS": 2.5}}],
+                                  "range": {"since": 1.7e9, "until": None}, "live": {"kernel": {"port": 29855, "uptimeS": 61}}}),
+                         {"quietWindows": [{"waitedS": 297, "cutTurns": 2}], "restarts": [{"boot": {"settleS": 0.2, "outageS": 2.5}}],
+                          "range": {}, "live": {"kernel": {"uptimeS": 60}}})
+
+    def test_no_absolute_clock_stamp_survives_the_export(self):
+        # the PROPERTY, not key names (round 3): with every stamp of the leak snapshot moved into the epoch range (the
+        # fixture's own are small numbers), no numeric leaf at or above EPOCH_FLOOR survives anywhere in the export
+        def epoch(node, key=None):
+            if isinstance(node, dict):
+                return {k: epoch(v, k) for k, v in node.items()}
+            if isinstance(node, list):
+                return [epoch(v) for v in node]
+            if key in ("t", "now", "since") and isinstance(node, (int, float)) and not isinstance(node, bool):
+                return node + 1.7e9
+            return node
+        snap = epoch(leak_snapshot())
+        self.assertGreaterEqual(len(_numbers(snap, EPOCH_FLOOR)), 8, "the snapshot carries stamps: now, since, five split rows, the child's")
+        doc = pe.export_document(snap, usage=True)
+        survivors = _numbers(doc, EPOCH_FLOOR)
+        self.assertEqual(survivors, [], "an absolute stamp survives:\n  %s" % "\n  ".join("%s = %r" % s for s in survivors))
+        self.assertEqual(doc["perf"]["pusher"]["firstCycle"]["s"], 0.5, "the measurements beside the stamps stay")
+
+
+class BoundCoarsening(unittest.TestCase):
+    """The ten memory-fraction bounds (BOUND_PATHS) are kept and COARSENED (round 3 of the export's review, 2026-09-18): each
+    is a fixed fraction of the machine's MemTotal, so every export from one machine shared all ten exactly and
+    recordCache.budgetBytes (half of MemTotal) gave the machine's RAM to the kilobyte, a value derived from a machine fact.
+    The fold rounds each UP to a power of two (BOUND_KEYS, public_bound), the key kept and the occupancy beside it
+    untouched, so a bound that binds stays visible next to its bytes or entries; the machine's memory is not recoverable
+    from the result. Fails before: all ten survived exact."""
+
+    def test_the_ten_bounds_are_rounded_up_to_a_power_of_two_and_the_occupancy_beside_them_stays(self):
+        snap = bounds_snapshot()
+        perf = pe.export_document(snap)["perf"]
+        for path in BOUND_PATHS:
+            raw, pub = _at(snap, path), _at(perf, path)
+            where = "/".join(path)
+            self.assertIsInstance(pub, int, where)
+            self.assertNotEqual(pub, raw, where + " survives exact")
+            self.assertGreater(pub, raw, where + " is rounded UP")
+            self.assertLess(pub, 2 * raw, where + " is the next power of two, not a coarser one")
+            self.assertEqual(pub & (pub - 1), 0, where + " is a power of two")
+        self.assertNotEqual(perf["recordCache"]["budgetBytes"] * 2, MEM_TOTAL, "MemTotal is not budgetBytes times two any more")
+        self.assertNotEqual(perf["builds"]["feed"]["memo"]["bound"] * 64, MEM_TOTAL)
+        self.assertEqual(perf["judge"]["child"]["recordCache"]["budgetBytes"], perf["recordCache"]["budgetBytes"],
+                         "the child's copy of the table is coarsened the same way: the rule is keyed on the name, at any depth")
+        # the occupancy and every neighbour stay exact
+        self.assertEqual(perf["recordCache"]["bytes"], 123456)
+        self.assertEqual(perf["recordCache"]["entries"], 9)
+        self.assertEqual(perf["recordCache"]["countCap"], 1024, "a constant count cap is not a memory fraction")
+        self.assertEqual(perf["heap"]["hydrated"]["bytes"], 5000)
+        self.assertEqual(perf["checkpoints"]["docMemo"]["parseMultiple"], 4.5)
+        self.assertEqual(perf["asmIndex"]["resident"], 40)
+        self.assertEqual(perf["pusher"]["stageRingLen"], 7)
+        self.assertEqual(perf["memos"]["summaryAnchor"]["bytes"], 12)
+        self.assertEqual(pp.BOUND_KEYS, frozenset({"capBytes", "budgetBytes", "cap", "bound", "stageRingMax"}))
+
+    def test_public_bound_is_the_next_power_of_two_at_or_above_the_value(self):
+        for raw, want in ((1, 1), (2, 2), (3, 4), (4, 4), (5, 8), (1023, 1024), (1024, 1024), (1025, 2048), (2.5, 4), (16.0, 16),
+                          (500_000, 524288), (4 * 1024 ** 3, 4 * 1024 ** 3), (4 * 1024 ** 3 + 1, 8 * 1024 ** 3)):
+            got = pp.public_bound(raw)
+            self.assertEqual(got, want, raw)
+            self.assertIsInstance(got, int, raw)
+        for same in (0, -5, True, False, None, "other", "a b"):
+            self.assertIs(pp.public_bound(same), same, "not a positive number: kept as it is (%r)" % (same,))
+        self.assertIsNone(pp.fold({"cap": float("nan")})["cap"], "a non-finite number is null, as before")
+        self.assertEqual(pp.fold({"cap": "a b"})["cap"], "other", "a string takes the grammar")
+        self.assertEqual(pp.fold({"memos": {"judgingBand": {"entries": 3, "bound": 20000}}}), {"memos": {"judgingBand": {"entries": 3, "bound": 32768}}},
+                         "a constant under a bound key is coarsened too: the rule is keyed on the name and costs it nothing")
+        self.assertEqual(pp.fold({"recordCache": {"budgetBytes": 4 * 1024 ** 3}}), {"recordCache": {"budgetBytes": 4 * 1024 ** 3}},
+                         "a bound that IS a power of two (the floor on a small machine) reads the same, which a reader cannot tell from a rounded one")
 
 
 class UptimeRounding(unittest.TestCase):
     """`uptime_s` stays (it is the span the lifetime totals cover) but rounded DOWN to whole minutes: to the second,
-    beside the export minute, it placed the kernel's start to the second, a stamp constant for the life of the process
-    and so an exact linkage key across every export from one kernel (the receiver's review, 2026-09-18)."""
+    beside the export minute (a stamp with no seconds), it placed the kernel's start within a minute, the same start the
+    denied `t` carries and constant for the life of the process (the receiver's review, 2026-09-18). A whole-minute
+    uptime beside a whole-minute export stamp places the start within two minutes, which the rule accepts: the public
+    form is paste-safe, not unlinkable."""
 
     def test_uptime_is_rounded_down_to_whole_minutes_wherever_it_sits(self):
         self.assertEqual(pp.fold({"uptime_s": 3725}), {"uptime_s": 3720}, "62 min 5 s is 62 whole minutes")
@@ -952,6 +1100,13 @@ class ServedKernel(unittest.TestCase):
         self.assertNotIn("stacks", perf)
         self.assertEqual(_keys_named(perf, "t"), [], "no split row's or child report's stamp survives")
         self.assertEqual(perf["uptime_s"] % 60, 0, perf["uptime_s"])
+        big = [(p, v) for p, v in _numbers(doc, EPOCH_FLOOR) if not (isinstance(v, int) and v & (v - 1) == 0)]
+        self.assertEqual(big, [], "no absolute clock stamp survives the served export; the one large number allowed is a "
+                                  "coarsened bound, a power of two (this machine's byte bounds pass 1.5e9)")
+        for path in BOUND_PATHS:     # the register of memory-fraction bounds is the kernel's: each is served, and coarsened
+            v = _at(perf, path)
+            self.assertIsInstance(v, int, "/".join(path))
+            self.assertTrue(v > 0 and v & (v - 1) == 0, "%s = %r is not a power of two" % ("/".join(path), v))
         self.assertNotIn("pid", perf["process"])
         self.assertNotIn("readByPath", perf["checkpoints"])
         self.assertIn("leaf", perf["checkpoints"]["readByKind"])
@@ -1139,8 +1294,13 @@ class RawServer(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        try:
+            cls.sock.shutdown(socket.SHUT_RDWR)   # wakes the thread blocked in accept() (close alone does not, on Linux:
+        except OSError:                           # the join waited its whole five seconds; round 3)
+            pass
         cls.sock.close()
         cls.thread.join(5)
+        assert not cls.thread.is_alive(), "the accept thread did not end"
 
     def setUp(self):
         self.xdg, self.state = _state_root()
