@@ -35,8 +35,10 @@
 // left, recorded in the plan: `<hr>` inline is void, stays HTML and still splits its paragraph in the parser; a start tag whose
 // end tag stands in a LATER block renders as text now, where the parser used to wrap the blocks between in its element; a
 // block-level element closed within its block mid-line (`<div>x</div>`) still splits the paragraph in the parser. marked's
-// inline lexer state is not rewound: after an unclosed `<kbd>`, `<pre>`, `<code>` or `<script>` tag it lexes the block's
-// remaining text unescaped (its inRawBlock flag), and after an unclosed `<a` tag it autolinks no bare URL (inLink), as before.
+// inline lexer state is not rewound between blocks: after an unclosed `<kbd>`, `<pre>`, `<code>` or `<script>` tag it lexes
+// the remaining text of that block and of every later block unescaped (its inRawBlock flag) until an end tag of any of those
+// four names or the document's end, and after an unclosed `<a` tag it autolinks no bare URL in that block or any later one
+// (inLink) until an `</a>`, as before.
 import type { Token, Tokens } from "marked";
 
 /** HTML's void elements, upper case: a start tag of one opens nothing to close, so it stays HTML wherever it stands. The tag

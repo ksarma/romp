@@ -2109,8 +2109,10 @@ function walkedBlocks(table: SourceTable): Walked[] {
     const ends: EndTag[] = [];
     // the `open` array (the start tags the block's inline html leaves open) is discarded: since decision 52 (md-literal-tags.ts,
     // run on this lex in placeTokens) an inline start tag with no end tag in its block is a text token, so the scan meets none
-    // and the parser opens no element around the later blocks (before, `<b>` with no closer became a top-level wrapper around
-    // every later block, a shape the pairing did not model; the fix shape then recorded, Block.leaves, is moot)
+    // but an unclosed `<image>`, the alias the rule leaves HTML as it leaves `<img>` and VOID_TAGS lacks, which opens no element
+    // (the parser rewrites it to the void `img`), and the parser opens no element around the later blocks (before, `<b>` with
+    // no closer became a top-level wrapper around every later block, a shape the pairing did not model; the fix shape then
+    // recorded, Block.leaves, is moot)
     if (!isHtml) blockEnds([t], t.type === "text", [], ends);   // a top-level `text` token renders as a paragraph (tagOf)
     const scan = isHtml ? topTags(t.raw) : null;
     const tags = scan ? scan.tags : null;

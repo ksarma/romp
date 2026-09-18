@@ -134,6 +134,28 @@ test('decision 52 no longer calls blockEnds\' open array always empty: an unclos
   assert.deepEqual(calls, ['[t], t.type === "text", [], ends'], 'the one call outside the scan\'s own recursion passes a fresh array, which nothing holds a name for');
 });
 
+// ── the comments and messages the consolidation pass brought in line with the record (2026-09-18) ──
+
+test('the module header says the lexer state persists past the block as decision 52 does, the map\'s comment at the fresh array names its one occupant, and the html-rules message for the blank-encoding forms names the DOM the browser leg records', () => {
+  const header = flat(modSrc.slice(0, modSrc.indexOf('\nimport ')).replace(/^\/\/ ?/gm, ''));
+  assert.ok(header.includes('marked\'s inline lexer state is not rewound between blocks: after an unclosed `<kbd>`, `<pre>`, `<code>` or `<script>` tag it lexes the remaining text of that block and of every later block unescaped (its inRawBlock flag) until an end tag of any of those four names or the document\'s end'), 'the header\'s scope is the document\'s rest, as the record\'s');
+  assert.ok(header.includes('after an unclosed `<a` tag it autolinks no bare URL in that block or any later one (inLink) until an `</a>`'));
+  assert.ok(!header.includes('lexes the block\'s remaining text unescaped'), 'the block-scoped wording is gone');
+  assert.ok(d52.includes('of that block and of every later block unescaped (`inRawBlock`)'), 'the record the header follows');
+  const mapSrc = read('ui', 'webview', 'anchor-map.ts');
+  const at = mapSrc.indexOf('// the `open` array (the start tags the block\'s inline html leaves open) is discarded');
+  assert.ok(at >= 0, 'the comment at the fresh array');
+  const comment = flat(mapSrc.slice(at, mapSrc.indexOf('if (!isHtml) blockEnds(', at)).replace(/^\s*\/\/ ?/gm, ''));
+  assert.ok(comment.includes('so the scan meets none but an unclosed `<image>`, the alias the rule leaves HTML as it leaves `<img>` and VOID_TAGS lacks, which opens no element'), 'the comment names the one occupant, as the record does');
+  assert.ok(!comment.includes('so the scan meets none and'), 'the overstatement is gone');
+  const rules = read('ui', 'webview', 'anchor-map-html-rules.test.ts');
+  const browser = read('ui', 'webview', 'anchor-map-html-text-browser.test.ts');
+  assert.ok(browser.includes('src: "ma8 <math><annotation-xml encoding=\\"text/html \\"><b>x</math> y8\\n", quotes: [{ from: "ma8", to: "y8", shown: "ma8 y8" }]'), 'the browser leg records the blank-encoding form as an agreement: the DOM and the reader both `ma8 y8`');
+  assert.ok(!rules.includes('the DOM shows `ma8 x y8`, the breakout class, recorded'), 'the html-rules message no longer says the DOM shows the breakout for those forms');
+  assert.ok(rules.includes('the DOM shows `ma8 y8` too since decision 52, the annotation-xml and the b literal text inside the dropped math'));
+  assert.ok(rules.includes('the DOM showed `ma8 x y8` there before decision 52, the `<b>` breaking out of the math, the recorded class; since it the annotation-xml and the b, with no end tags of their own, are literal text inside the dropped math and the DOM shows `ma8 y8` too'), 'the test\'s title says the same');
+});
+
 // ── the inventory, both ways ────────────────────────────────────────
 
 /** The test modules a record names in backticks, as repo-relative paths. */
