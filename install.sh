@@ -369,6 +369,10 @@ if [[ -z "${ROMP_NO_SERVICE:-}" ]]; then
         # command. Never a restart from here: that is the user's call, on their own schedule. A failed
         # rewrite fails the run, as a failed install does: the manager is up, but the unit on disk or the
         # loaded definition is not this release's, and that is the silent state this step exists to end.
+        # The rewrite bakes nothing from this run's environment (round 1 of the review, 2026-09-18): this
+        # runs from the kernel's detached update child and from sessions' shells, so the unit keeps its own
+        # ExecStart, ROMP_DIR, PATH and instance lines, and a value here that differs from the unit's is
+        # the other exit 1, the line above naming both.
         if "$_svc" status 2>/dev/null | grep -qx running; then
             _svc_rc=0
             "$_svc" rewrite || _svc_rc=$?

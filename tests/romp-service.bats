@@ -960,27 +960,48 @@ EOF
     [[ "$output" == *"does not carry MALLOC_ARENA_MAX=2"* ]]
 }
 
-# ─── rewrite: the unit or the plist from this environment, and no restart ───────────────────
+# ─── rewrite: the unit or the plist, its own identity kept, and no restart ──────────────────
 # The box admin's hazard review of the pull-in (2026-09-16): install.sh runs this while the manager is up, where an
 # `install` would boot the manager out (macOS) and where skipping the step, as install.sh did until 2026-09-18, left
 # the unit on disk at the previous release's. Linux writes and reloads, macOS writes; neither starts, stops, enables
-# or loads anything, and the file lands by rename (no scratch file stays, no truncated unit at a reload).
-
-@test "rewrite (Linux): writes the unit whole and asks systemd to reload, nothing else; the one line names the manager's restart" {
-    unset ROMP_SERVICE_NO_LOAD
+# or loads anything, and the file lands by rename (no scratch file stays, no truncated unit at a reload). Round 1 of
+# the review (2026-09-18): the rewrite runs on every deploy from whatever ran it (the kernel's detached update, a
+# session's shell), so it keeps the file's own identity, ExecStart, ROMP_DIR, PATH and the instance Environment
+# block, refreshes the release's lines, and refuses when a value this environment carries differs from the file's.
+# The previous release's file, for the cases below, is the current install's with the allocator line removed and a
+# marker line added, so the old bytes can be told from the new ones through a hard link.
+_old_unit() {   # $1 the unit path: install the current unit, then age it into the previous release's
     ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    grep -v '^Environment=MALLOC_ARENA_MAX=' "$1" > "$1.old" && mv -f "$1.old" "$1"
+    printf '# previous release\n' >> "$1"
+}
+
+@test "rewrite (Linux): writes the release's unit by rename and asks systemd to reload, nothing else; the one line names the manager's restart" {
+    unset ROMP_SERVICE_NO_LOAD
     local unit="$ROMP_SYSTEMD_DIR/romp-manager.service"
-    printf '[Service]\nExecStart=old\n' > "$unit"                       # the previous release's unit
+    _old_unit "$unit"
+    ln "$unit" "$unit.pre"                                              # the old bytes, under a second name
     local stub; stub="$(_systemctl_stub active)"
     ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
     [ "$status" -eq 0 ]
+    local out="$output"
     grep -q '^Environment=MALLOC_ARENA_MAX=2$' "$unit"
     grep -q "^ExecStart=$ROMP_MANAGER_BIN up$" "$unit"
     [ ! -e "$unit.tmp" ]
+    # landed by RENAME: the hard link still holds the previous release's bytes (a truncating write would have
+    # rewritten them in place), and the unit is the new file
+    grep -qx '# previous release' "$unit.pre"
+    run grep -x '# previous release' "$unit"
+    [ "$status" -ne 0 ]
+    # systemd was asked to reload and read back, and for nothing else: no enable, start, stop, restart or kill
     grep -qx -- '--user daemon-reload' "$TEST_DIR/systemctl-calls"
-    [ "$(wc -l < "$TEST_DIR/systemctl-calls")" -eq 1 ]                 # the reload was the only call
-    [[ "$output" == *"keeps its old unit until its next restart:  systemctl --user restart romp-manager"* ]]
-    [ "$(printf '%s\n' "$output" | grep -c .)" -eq 1 ]                 # one line
+    run grep -E -- 'enable|start|stop|restart|kill' "$TEST_DIR/systemctl-calls"
+    [ "$status" -ne 0 ]
+    [[ "$out" == *"keeps its old unit until its next restart:  systemctl --user restart romp-manager"* ]]
+    [ "$(printf '%s\n' "$out" | grep -c 'systemctl --user restart romp-manager')" -eq 1 ]   # the instruction once
+    [[ "$out" != *"kept an older definition"* ]]                                            # the read-back was clean
+    # the rewrite journals itself (who ran the deploy) under this state root, the row the kernel's walk skips
+    grep -q '"action": "service-rewrite"' "$XDG_STATE_HOME/romp/restart-audit.jsonl"
 }
 
 @test "rewrite (Linux): a daemon-reload that fails is loud and exit 1; the unit is on disk and the message says so" {
@@ -998,7 +1019,37 @@ EOF
     grep -q '^Environment=MALLOC_ARENA_MAX=2$' "$ROMP_SYSTEMD_DIR/romp-manager.service"
 }
 
-@test "rewrite with no service installed exits 3 and writes nothing: a unit nothing enabled would read as installed" {
+@test "rewrite (Linux): after the reload the authoritative flag is read; NeedDaemonReload=yes is said on stderr at exit 0, an unreadable flag too" {
+    # Round 1 of the review (2026-09-18): the install arm reads the loaded Environment back and greps it for the
+    # allocator line, which a drop-in supplying that line satisfies over an entirely stale fragment (the drop-in boxes
+    # are the population this road exists for). The rewrite arm reads systemd's own answer instead: NeedDaemonReload
+    # is yes when the file on disk is newer than the loaded definition, the state a reload that returned 0 and kept
+    # the old definition leaves. An advisory, exit 0, as the install arm's: install.sh gates on the exit code, and a
+    # box whose probe alone is unreadable must still deploy.
+    unset ROMP_SERVICE_NO_LOAD
+    ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    local stub="$TEST_DIR/systemctl-stub"
+    cat > "$stub" <<EOF
+#!/bin/sh
+echo "\$*" >> "$TEST_DIR/systemctl-calls"
+case "\$*" in *NeedDaemonReload*) echo yes ;; esac
+exit 0
+EOF
+    chmod +x "$stub"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Rewrote the login service unit"* ]]
+    [[ "$output" == *"NeedDaemonReload=yes"* ]]
+    [[ "$output" == *"kept an older definition"* ]]
+    grep -qx -- '--user show -p NeedDaemonReload --value romp-manager.service' "$TEST_DIR/systemctl-calls"
+    # a probe that prints nothing is said too, never read as clean
+    printf '#!/bin/sh\nexit 0\n' > "$stub"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NeedDaemonReload could not be read"* ]]
+}
+
+@test "rewrite with no service installed exits 3 and writes nothing, not even its audit row: a unit nothing enabled would read as installed" {
     unset ROMP_SERVICE_NO_LOAD
     local stub; stub="$(_systemctl_stub active)"
     ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
@@ -1010,13 +1061,146 @@ EOF
     [ "$status" -eq 3 ]
     [[ "$output" == *"no login agent is installed"* ]]
     [ ! -e "$ROMP_LAUNCHD_DIR/com.romp.manager.plist" ]
+    # round 1 of the review (2026-09-18): the audit row is written after the installed check, so a run that wrote
+    # nothing journals nothing
+    [ ! -e "$XDG_STATE_HOME/romp/restart-audit.jsonl" ]
 }
 
-@test "rewrite (macOS): writes the plist and calls launchctl not at all; the line says when launchd reads it" {
+@test "rewrite (Linux): keeps the unit's own PATH and instance lines: the caller's environment adds none and drops none" {
+    # Round 1 of the review (2026-09-18). The rewrite runs from whatever ran install.sh: the kernel's detached update
+    # carries the manager's ports for every kernel and a profile's state root and Claude config dir, a session's
+    # shell carries the kernel's; the base's install-time contract (bake what the installing shell sets) would have
+    # written those into the shared login unit on every deploy. A value the unit does not carry is not added; a line
+    # the unit carries is kept when the environment says nothing about it.
+    unset ROMP_SERVICE_NO_LOAD
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service"
+    _old_unit "$unit"
+    local pathline; pathline="$(grep '^Environment=PATH=' "$unit")"
+    mkdir -p "$TEST_DIR/otherbin"
+    local stub; stub="$(_systemctl_stub active)"
+    PATH="$TEST_DIR/otherbin:$PATH" ROMP_SERVE_PORT=31855 ROMP_KERNEL_PORT=31855 ROMP_POSTAL_PORT=31900 \
+        ROMP_MANAGER_PORT=31856 ROMP_STATE_DIR="$TEST_DIR/aux" CLAUDE_CONFIG_DIR="$TEST_DIR/aux-claude" \
+        ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -q '^Environment=MALLOC_ARENA_MAX=2$' "$unit"                  # the release's line landed
+    grep -qxF -- "$pathline" "$unit"                                    # the unit's PATH, not the caller's
+    run grep -E '^Environment=(ROMP_SERVE_PORT|ROMP_KERNEL_PORT|ROMP_POSTAL_PORT|ROMP_MANAGER_PORT|ROMP_STATE_DIR|CLAUDE_CONFIG_DIR)=' "$unit"
+    [ "$status" -ne 0 ]
+    run grep -F "$TEST_DIR/otherbin" "$unit"
+    [ "$status" -ne 0 ]
+    # the other direction: a renumbered install's lines survive a rewrite from a shell without the exports
+    ROMP_SERVE_PORT=29866 ROMP_KERNEL_PORT=29866 ROMP_MANAGER_PORT=7433 ROMP_STATE_DIR="$TEST_DIR/second" \
+        ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    grep -q '^Environment=ROMP_KERNEL_PORT=29866$' "$unit"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -q '^Environment=ROMP_SERVE_PORT=29866$' "$unit"
+    grep -q '^Environment=ROMP_KERNEL_PORT=29866$' "$unit"
+    grep -q '^Environment=ROMP_MANAGER_PORT=7433$' "$unit"
+    grep -qF "Environment=ROMP_STATE_DIR=$TEST_DIR/second" "$unit"
+}
+
+@test "rewrite (Linux): refuses, exit 1 and nothing written or reloaded, when a value this environment carries differs from the unit's line" {
+    # Round 1 of the review (2026-09-18): an EFFECTIVE mismatch, a line the unit carries and a different value in the
+    # environment, is the one state that is refused, naming both values and the deliberate way through; raw absence
+    # (every kernel's environment sets the ports, most units carry none) is not, or nearly every deploy would fail.
+    unset ROMP_SERVICE_NO_LOAD
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service"
+    ROMP_SERVE_PORT=29866 ROMP_KERNEL_PORT=29866 ROMP_MANAGER_PORT=7433 \
+        ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    cp "$unit" "$unit.copy"
+    local stub; stub="$(_systemctl_stub active)"
+    ROMP_SERVE_PORT=29866 ROMP_KERNEL_PORT=31855 ROMP_MANAGER_PORT=7433 \
+        ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"ROMP_KERNEL_PORT"* ]]
+    [[ "$output" == *"29866"* ]]
+    [[ "$output" == *"31855"* ]]
+    [[ "$output" == *"romp-service install"* ]]
+    [[ "$output" != *"ROMP_SERVE_PORT"* ]]                              # only the differing value is named
+    [[ "$output" != *"Rewrote"* ]]
+    cmp -s "$unit" "$unit.copy"                                          # untouched
+    [ ! -e "$unit.tmp" ]
+    [ ! -e "$TEST_DIR/systemctl-calls" ]                                 # no reload of a unit that did not change
+    run grep -c '"action": "service-rewrite"' "$XDG_STATE_HOME/romp/restart-audit.jsonl"
+    [ "$status" -ne 0 ]                                                  # nothing rewritten, nothing journaled
+}
+
+@test "rewrite (Linux): refuses when the unit's ExecStart names another clone, naming both and the install that relocates" {
+    # Round 1 of the review (2026-09-18): a deploy run from a clone that is not the installed one (a review worktree,
+    # a second checkout) must not re-point the login service at itself, nor refresh another clone's unit from its own
+    # template; the relocation is `romp-service install` from the clone that should own the service.
+    unset ROMP_SERVICE_NO_LOAD
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service"
+    mkdir -p "$TEST_DIR/other/bin"
+    ROMP_MANAGER_BIN="$TEST_DIR/other/bin/romp-manager" ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    cp "$unit" "$unit.copy"
+    local stub; stub="$(_systemctl_stub active)"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite   # ROMP_MANAGER_BIN is the suite's, another path
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"ExecStart"* ]]
+    [[ "$output" == *"$TEST_DIR/other/bin/romp-manager"* ]]
+    [[ "$output" == *"$ROMP_MANAGER_BIN"* ]]
+    [[ "$output" == *"romp-service install"* ]]
+    cmp -s "$unit" "$unit.copy"
+    [ ! -e "$TEST_DIR/systemctl-calls" ]
+    # the same clone reached through a symlinked directory is the same clone, not a refusal
+    ln -s "$TEST_DIR/other" "$TEST_DIR/other-link"
+    ROMP_MANAGER_BIN="$TEST_DIR/other-link/bin/romp-manager" ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -q "^ExecStart=$TEST_DIR/other/bin/romp-manager up$" "$unit"   # the unit's own path, kept
+}
+
+@test "rewrite (Linux): a line added to the unit by hand is dropped, and a drop-in is left byte for byte" {
+    # The documented contract (a line of your own belongs in service.env or a drop-in), pinned on the rewrite road
+    # since it runs on every deploy (round 1 of the review, 2026-09-18); the base's install road carries the same.
+    unset ROMP_SERVICE_NO_LOAD
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service"
+    _old_unit "$unit"
+    printf 'Environment=ADMIN_LOCAL_KNOB=1\n' >> "$unit"
+    mkdir -p "$unit.d"
+    printf '[Service]\nEnvironment=FROM_DROPIN=1\n' > "$unit.d/local.conf"
+    cp "$unit.d/local.conf" "$TEST_DIR/local.conf.copy"
+    local stub; stub="$(_systemctl_stub active)"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -q '^Environment=MALLOC_ARENA_MAX=2$' "$unit"
+    run grep ADMIN_LOCAL_KNOB "$unit"
+    [ "$status" -ne 0 ]
+    cmp -s "$unit.d/local.conf" "$TEST_DIR/local.conf.copy"
+}
+
+@test "rewrite (Linux): a unit reached through a symlink becomes a regular file at that path, and the line says so" {
+    # Round 1 of the review (2026-09-18): the rename replaces the link, not the file behind it (writing through the
+    # link would put romp's generated unit into the administrator's own checkout, the base's behaviour); the line
+    # names the link that was replaced, so later edits of the target being invisible to systemd is not a mystery.
+    unset ROMP_SERVICE_NO_LOAD
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service"
+    _old_unit "$unit"
+    mkdir -p "$TEST_DIR/dotfiles"
+    mv "$unit" "$TEST_DIR/dotfiles/romp-manager.service"
+    ln -s "$TEST_DIR/dotfiles/romp-manager.service" "$unit"
+    local stub; stub="$(_systemctl_stub active)"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    [ ! -L "$unit" ]
+    [ -f "$unit" ]
+    grep -q '^Environment=MALLOC_ARENA_MAX=2$' "$unit"
+    grep -qx '# previous release' "$TEST_DIR/dotfiles/romp-manager.service"    # the target is not written through
+    [[ "$output" == *"was a symlink"* ]]
+    [[ "$output" == *"$TEST_DIR/dotfiles/romp-manager.service"* ]]
+}
+
+@test "rewrite (macOS): writes the plist by rename and calls launchctl not at all; the node copy is refreshed; the line says when launchd reads it" {
     unset ROMP_SERVICE_NO_LOAD
     ROMP_OS_OVERRIDE=Darwin ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
     local plist="$ROMP_LAUNCHD_DIR/com.romp.manager.plist"
-    printf '<plist/>\n' > "$plist"                                     # the previous release's plist
+    # the previous release's plist: a hand-added entry in the dict and a marker after the document element
+    awk '/<key>ROMP_SUPERVISED<\/key>/{print; print "    <key>ADMIN_LOCAL_KNOB</key><string>1</string>"; next}1' "$plist" > "$plist.old"
+    mv -f "$plist.old" "$plist"
+    printf '<!-- previous release -->\n' >> "$plist"
+    ln "$plist" "$plist.pre"
+    rm -f "$XDG_STATE_HOME/romp/romp-node"
     local stub="$TEST_DIR/launchctl-stub" calls="$TEST_DIR/launchctl-calls"
     printf '#!/bin/sh\necho "$1" >> "%s"\nexit 0\n' "$calls" > "$stub"
     chmod +x "$stub"
@@ -1027,6 +1211,41 @@ EOF
     [ ! -e "$plist.tmp" ]
     [ ! -e "$calls" ]                                                    # no bootout, bootstrap, kickstart or print
     [[ "$output" == *"until launchd next loads the agent:  romp-service install (or the next login)"* ]]
+    grep -qx -- '<!-- previous release -->' "$plist.pre"                 # landed by rename: the link holds the old bytes
+    run grep -c 'previous release' "$plist"
+    [ "$status" -ne 0 ]
+    run grep -c ADMIN_LOCAL_KNOB "$plist"                                # a hand-added entry is dropped, as documented
+    [ "$status" -ne 0 ]
+    [ -x "$XDG_STATE_HOME/romp/romp-node" ]                              # the launcher's node copy is refreshed
+}
+
+@test "rewrite (macOS): keeps the plist's own instance entries, refuses on a differing value, and names a replaced symlink" {
+    unset ROMP_SERVICE_NO_LOAD
+    local plist="$ROMP_LAUNCHD_DIR/com.romp.manager.plist"
+    ROMP_KERNEL_PORT=29866 ROMP_OS_OVERRIDE=Darwin ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    grep -q '<key>ROMP_KERNEL_PORT</key><string>29866</string>' "$plist"
+    ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite                            # no export in this shell: the entry is kept
+    [ "$status" -eq 0 ]
+    grep -q '<key>ROMP_KERNEL_PORT</key><string>29866</string>' "$plist"
+    ROMP_SERVE_PORT=31855 ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite      # a port the plist does not carry: not added
+    [ "$status" -eq 0 ]
+    run grep -c ROMP_SERVE_PORT "$plist"
+    [ "$status" -ne 0 ]
+    cp "$plist" "$plist.copy"
+    ROMP_KERNEL_PORT=31855 ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite     # a differing value: refused
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"ROMP_KERNEL_PORT"* ]]
+    [[ "$output" == *"29866"* ]]
+    [[ "$output" == *"31855"* ]]
+    cmp -s "$plist" "$plist.copy"
+    mkdir -p "$TEST_DIR/dotfiles"
+    mv "$plist" "$TEST_DIR/dotfiles/com.romp.manager.plist"
+    ln -s "$TEST_DIR/dotfiles/com.romp.manager.plist" "$plist"
+    ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    [ ! -L "$plist" ]
+    [[ "$output" == *"was a symlink"* ]]
+    cmp -s "$TEST_DIR/dotfiles/com.romp.manager.plist" "$plist.copy"     # the target is not written through
 }
 
 # ─── stop / start: the supervisor halves of `romp down` / `romp up` ──────────────────────────
@@ -1042,6 +1261,7 @@ _systemctl_stub() {
 echo "\$*" >> "$calls"
 case "\$2" in
   is-active) echo "$1"; [ "$1" = active ] ;;
+  show) case "\$*" in *NeedDaemonReload*) echo no ;; esac ;;   # the rewrite's read-back after its reload: loaded is current
   *) exit 0 ;;
 esac
 EOF

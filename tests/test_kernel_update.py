@@ -249,6 +249,29 @@ class UpdateCheck(Fresh):
         self.assertEqual(ran, ["v0.7.0"], "one automatic attempt per version")
         self.assertTrue(any(not n["ok"] and "v0.7.0" in n["text"] for n in self.notices()))
 
+    def test_auto_mode_on_a_kernel_that_is_not_the_primary_leaves_the_update_to_it(self):
+        # round 1 of the install-rewrite review (2026-09-18): the self-update's install.sh rewrites the login
+        # service's unit, and there is one unit, the primary's. An aux kernel (a kernels.json profile or a /ensure
+        # kernel; the manager names each kernel's registry id in ROMP_KERNEL_ID) in auto mode launches nothing and
+        # spends no once-only marker; it says so once per discovered version, and raises no banner for a click the
+        # route would refuse
+        sent = []
+        with mock.patch.object(km, "_kernel_ver", return_value="v0.6.0"), \
+             mock.patch.object(km, "_latest_release_tag", return_value="v0.7.0"), \
+             mock.patch.object(km, "_run_update", side_effect=AssertionError("the aux kernel must not launch it")), \
+             mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: sent.append(m)), \
+             mock.patch.dict(km.os.environ, {"ROMP_KERNEL_ID": "alice"}):
+            km._set_update_mode("auto")
+            km._update_check()
+            km._update_check()
+        self.assertFalse((jd.STATE / "update-attempted.json").exists(), "not an attempt: the version's one try is not spent")
+        ns = self.notices()
+        self.assertEqual(len(ns), 1, "said once per discovered version")
+        self.assertFalse(ns[0]["ok"])
+        self.assertIn("not the primary", ns[0]["text"])
+        self.assertIn("v0.7.0", ns[0]["text"])
+        self.assertEqual(sent, [])
+
     def test_rediscovering_the_same_release_mid_run_stays_quiet(self):
         # the 6h re-check re-finds a version for weeks — only a CHANGED discovery is new information
         sent = []
@@ -454,6 +477,55 @@ class RunUpdate(Fresh):
              mock.patch.dict(km.os.environ, env, clear=True):
             self.assertTrue(km._run_update("v0.7.0"))
         self.assertNotIn("/restart-all", calls[0][0][2])
+
+    def test_the_detached_child_carries_no_instance_port_or_config_dir(self):
+        # round 1 of the install-rewrite review (2026-09-18): under a running manager install.sh runs romp-service
+        # rewrite, which bakes nothing from its caller but compares the caller's instance variables against the
+        # unit's own lines and refuses on a difference. This kernel's environment carries the ports the manager set
+        # for it (specEnv sets them for every kernel) and, under service.env, values an older install never baked, so
+        # the four ports and the Claude config dir travel no further than this process. ROMP_STATE_DIR stays: it
+        # names the state root bin/romp-sdk-setup builds the venv under, and a second OS user's primary has its own.
+        calls = []
+        carried = {"ROMP_SERVE_PORT": "29999", "ROMP_KERNEL_PORT": "29999", "ROMP_POSTAL_PORT": "29998",
+                   "ROMP_MANAGER_PORT": "7777", "CLAUDE_CONFIG_DIR": "/tmp/TESTHOST-claude",
+                   "ROMP_STATE_DIR": "/tmp/TESTHOST-state", "ROMP_SERVE_TOKEN": "test-token-DO-NOT-USE"}
+        with mock.patch.object(km.subprocess, "Popen", side_effect=lambda *a, **kw: calls.append((a, kw))), \
+             mock.patch.object(km, "_release_remote", return_value="origin"), \
+             mock.patch.dict(km.os.environ, carried):
+            self.assertTrue(km._run_update("v0.7.0"))
+        (a, kw), = calls
+        env = kw.get("env")
+        self.assertIsInstance(env, dict, "the child gets an environment of its own, never this process's as it stands")
+        for k in ("ROMP_SERVE_PORT", "ROMP_KERNEL_PORT", "ROMP_POSTAL_PORT", "ROMP_MANAGER_PORT", "CLAUDE_CONFIG_DIR"):
+            self.assertNotIn(k, env, k)
+        self.assertEqual(env.get("ROMP_STATE_DIR"), "/tmp/TESTHOST-state", "the state root names the venv's home")
+        self.assertEqual(env.get("ROMP_SERVE_TOKEN"), "test-token-DO-NOT-USE", "the script reads the token at run time")
+        self.assertEqual(env.get("PATH"), km.os.environ.get("PATH"), "everything else rides through")
+        self.assertIn("/restart-all'", a[0][2], "the manager port was read before the scrub: the restart leg stays")
+
+    def test_a_kernel_that_is_not_the_primary_launches_no_update(self):
+        # round 1 of the install-rewrite review (2026-09-18): the update's install.sh rewrites the login service's
+        # unit, and there is one unit, the primary's; an aux kernel (the id the manager hands it in ROMP_KERNEL_ID)
+        # leaves the update to the primary, says so, and takes no latch. The primary, and a kernel no manager named
+        # (a hand-run romp-kernel, a kernel an older manager spawned), launch as before.
+        with mock.patch.object(km.subprocess, "Popen", side_effect=AssertionError("must not spawn")), \
+             mock.patch.dict(km.os.environ, {"ROMP_KERNEL_ID": "k30001"}):
+            self.assertFalse(km._run_update("v0.7.0"))
+        self.assertEqual(km._UPDATE_STATE[0], "", "no latch: nothing is in flight")
+        ns = self.notices()
+        self.assertEqual(len(ns), 1)
+        self.assertFalse(ns[0]["ok"])
+        self.assertIn("not the primary", ns[0]["text"])
+        self.assertIn("k30001", ns[0]["text"])
+        absent = {k: v for k, v in km.os.environ.items() if k != "ROMP_KERNEL_ID"}
+        for label, env, clear in (("main", dict(absent, ROMP_KERNEL_ID="main"), True), ("absent", absent, True)):
+            calls = []
+            km._UPDATE_STATE[0] = ""
+            with mock.patch.object(km.subprocess, "Popen", side_effect=lambda *a, **kw: calls.append(a)), \
+                 mock.patch.object(km, "_release_remote", return_value="origin"), \
+                 mock.patch.dict(km.os.environ, env, clear=clear):
+                self.assertTrue(km._run_update("v0.7.0"), label)
+            self.assertEqual(len(calls), 1, label)
 
     def test_refuses_junk_tags_and_reentry(self):
         with mock.patch.object(km.subprocess, "Popen", side_effect=AssertionError("must not spawn")):
@@ -777,6 +849,23 @@ class Routes(Fresh):
         with mock.patch.object(km, "_run_update", side_effect=lambda tag: ran.append(tag) or True):
             code, body = self._post("/update")
         self.assertEqual((code, ran), (200, ["v0.7.0"]))
+
+    def test_post_update_on_a_kernel_that_is_not_the_primary_is_refused_before_any_row(self):
+        # round 1 of the install-rewrite review (2026-09-18): the confirmed click on an aux kernel's banner is
+        # answered 409 naming the primary, with no self-update row and no launch (the update's install.sh would
+        # rewrite the primary's login unit from this kernel's profile)
+        km._UPDATE_AVAIL[0] = "v0.7.0"
+        km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+        ran = []
+        with mock.patch.object(km, "_run_update", side_effect=lambda tag: ran.append(tag) or True), \
+             mock.patch.dict(km.os.environ, {"ROMP_KERNEL_ID": "alice"}):
+            code, text = self._post("/update")
+        self.assertEqual(code, 409, text)
+        self.assertIn("not the primary", text)
+        self.assertIn("alice", text)
+        self.assertEqual(ran, [], "nothing launched")
+        self.assertEqual(self._audit_rows(), [], "a refused click is not a restart request; no row")
+        self.assertEqual(km._UPDATE_STATE[0], "", "not latched")
 
     def _audit_rows(self):
         p = jd.STATE / "restart-audit.jsonl"

@@ -12076,6 +12076,29 @@ def _latest_release_tag():
     return best
 
 
+def _is_primary_kernel():
+    """Whether this kernel is the manager's primary (registry id `main`), from ROMP_KERNEL_ID, which
+    bin/romp-manager's specEnv sets to each kernel's registry id at spawn (round 1 of the install-rewrite
+    review, 2026-09-18). Absent or empty reads as primary: a kernel no manager started (a hand-run
+    romp-kernel) is the only kernel there is, and a kernel an older manager spawned keeps the behaviour it
+    had. The release self-update runs from the primary alone: its install.sh rewrites the login service's
+    unit under the running manager, and there is one unit, the primary's, so an aux kernel's update (a
+    kernels.json profile, a /ensure kernel) would have baked its own port, state root and Claude config
+    dir into it, or now refuses the deploy over them (bin/romp-service rewrite compares them)."""
+    return os.environ.get("ROMP_KERNEL_ID", "") in ("", "main")
+
+
+# The per-instance variables the detached update child does NOT inherit (round 1 of the install-rewrite review,
+# 2026-09-18). install.sh runs `romp-service rewrite` under a running manager, which bakes nothing from its caller
+# but compares the caller's instance variables against the unit's own lines and refuses on a difference; this
+# process carries the ports the manager set for it (specEnv sets them for every kernel) and, through service.env,
+# values an older install never baked into the unit. The four ports and the Claude config dir go no further than
+# this process. ROMP_STATE_DIR is NOT in the list: bin/romp-sdk-setup builds the venv under it and install.sh reads
+# the token there, and a second OS user's primary has a root of its own, which its update must keep using.
+_UPDATE_CHILD_SCRUB = ("ROMP_SERVE_PORT", "ROMP_KERNEL_PORT", "ROMP_POSTAL_PORT", "ROMP_MANAGER_PORT",
+                       "CLAUDE_CONFIG_DIR")
+
+
 def _run_update(tag):
     """Start the self-update: fetch the tag, fast-forward EXACTLY onto it, install, report (+ restart
     on success), in a DETACHED child. Returns True when the child was launched. The tree lands on the
@@ -12086,6 +12109,12 @@ def _run_update(tag):
     passed _semver before it gets here; the guard repeats anyway because the string lands inside a
     shell script."""
     if not _semver(tag) or _UPDATE_STATE[0] == "running":
+        return False
+    if not _is_primary_kernel():
+        # before the latch: nothing is launched, so nothing is in flight (round 1 of the install-rewrite review)
+        _sync_notice("this kernel is not the primary (ROMP_KERNEL_ID=%s): the update to %s runs from the primary "
+                     "kernel, whose install rewrites the login service's unit; nothing was launched here"
+                     % (os.environ.get("ROMP_KERNEL_ID", ""), tag), ok=False)
         return False
     _UPDATE_STATE[0] = "running"
     q = shlex.quote
@@ -12174,8 +12203,11 @@ def _run_update(tag):
         + "else\n"
         + "  " + report({"ok": False, "tag": tag, "why": "the fetch, fast-forward or install failed"})
         + "fi\n")
+    # this kernel's environment less _UPDATE_CHILD_SCRUB (the manager port went into the script above, so the
+    # restart leg keeps it; the token the script reads at run time rides through)
+    child_env = {k: v for k, v in os.environ.items() if k not in _UPDATE_CHILD_SCRUB}
     try:
-        subprocess.Popen(["bash", "-c", script], start_new_session=True, cwd=str(ROOT),
+        subprocess.Popen(["bash", "-c", script], start_new_session=True, cwd=str(ROOT), env=child_env,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
         # the latch was taken above; a spawn that raises must give it back, or the kernel reads
@@ -12349,6 +12381,14 @@ def _update_check():
         return                                      # already discovered and acted on this kernel run
     prev, _UPDATE_AVAIL[0] = _UPDATE_AVAIL[0], latest
     if _update_mode() == "auto":
+        if not _is_primary_kernel():
+            # round 1 of the install-rewrite review (2026-09-18): the update's install.sh rewrites the login
+            # service's unit, the primary's; an aux kernel launches nothing and spends no once-only marker, and
+            # says so once per discovered version (the slot keeps the tag). No banner: the route refuses the click.
+            _sync_notice("a newer romp (%s) is available; this kernel is not the primary (ROMP_KERNEL_ID=%s), so the "
+                         "automatic update is the primary kernel's to run"
+                         % (latest, os.environ.get("ROMP_KERNEL_ID", "")), ok=False)
+            return
         tried = ""
         try:
             tried = json.loads((jd.STATE / "update-attempted.json").read_text()).get("tag", "")
@@ -12817,7 +12857,15 @@ _MANAGER_REFUSED_ACTION = "manager-refused-restart-all"   # the manager answered
 _NO_RESTART_ACTIONS = {"main-converge-skip", "bus-converge", "end-on-idle", "quiet-window",
                        "main-converge-declined",   # (a converge that found this kernel already leaving asked no restart)
                        "restart-folded", "restart-trailing", "restart-trailing-current",   # (the manager's notes of a request that rode a
-                       _MANAGER_REFUSED_ACTION}   #                                          restart in flight, or a trail found current)
+                       _MANAGER_REFUSED_ACTION,   #                                          restart in flight, or a trail found current)
+                       "service-rewrite"}   # (bin/romp-service rewrite, install.sh's unit rewrite under a running manager)
+# "service-rewrite" (round 1 of the install-rewrite review, 2026-09-18): install.sh rewrites the login service's unit
+# on every deploy under a running manager, and bin/romp-service journals that under this action, attribution of who
+# ran the deploy; the verb reloads systemd and restarts nothing. Absent from the set, the row was the request that
+# explained any SIGTERM within ninety seconds of a deploy: an unrequested kill filed as requested, its `signal`
+# verdict row never written, the row's own t consumed, and a parked quiet deploy hidden for the row's whole aged
+# lifetime (an aged request row ends the walk before the park). "service-install" stays OUT on purpose: an install is
+# a real request, the bootout on macOS and the reinstall on Linux, and its cut reads as such.
 # "quiet-window" is the manager's note of a quiet window APPLYING: a wait measured, T304; the restart it
 # releases writes its own manager-sigterm note.
 # The request rows a refused hop was written for, which the refusal consumes in _recent_restart_audit's walk
@@ -73662,6 +73710,12 @@ class Handler(BaseHTTPRequestHandler):
                                       "and try again", "text/plain")
                 tag = _UPDATE_AVAIL[0]
                 if tag:
+                    if not _is_primary_kernel():
+                        # round 1 of the install-rewrite review (2026-09-18): before the audit row, so a refused
+                        # click leaves no self-update row; the text names where the update runs from
+                        return self._send(409, "this kernel is not the primary (ROMP_KERNEL_ID=%s): start the update "
+                                          "from the primary kernel's dashboard; its install rewrites the login "
+                                          "service's unit" % os.environ.get("ROMP_KERNEL_ID", ""), "text/plain")
                     if _UPDATE_STATE[0] != "running":
                         _audit_restart_request("self-update", tag=tag, addr=str(self.client_address[0]),
                                                via="update-confirmed")

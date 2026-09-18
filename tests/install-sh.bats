@@ -15,6 +15,14 @@ setup() {
     TEST_DIR="$(mktemp -d)"
     export HOME="$TEST_DIR/home"
     mkdir -p "$HOME"
+    # The state root, pinned to the path the default resolves to (round 1 of the install-rewrite review,
+    # 2026-09-18): the running-manager case below runs the REAL bin/romp-service, whose rewrite journals itself
+    # under the state root, and a kernel exports ROMP_STATE_DIR (a profile's) or XDG_STATE_HOME to its sessions,
+    # so an unpinned run appended a row to a live restart-audit.jsonl. The default's own path rather than a
+    # separate directory: the tokened-link case seeds its token at $HOME/.local/state/romp, where install.sh's
+    # closing read looks, and a root elsewhere left that case red.
+    export ROMP_STATE_DIR="$HOME/.local/state/romp"
+    unset XDG_STATE_HOME
     export ROMP_NO_SERVICE=1 ROMP_NO_EXT=1 ROMP_NO_SDK=1
     # One try only: the closing dashboard-link block polls for the kernel's token
     # file, which never appears in this hermetic HOME — don't wait 10s for it.
@@ -341,7 +349,13 @@ SH
     [[ "$output" == *"romp-service rewrite FAILED"* ]]
     [[ "$output" == *"still running"* ]]                    # the manager is up; the unit is what did not land
     [[ "$output" == *"Retry by hand:"* ]]
-    ! grep -qx install "$TEST_DIR/svc.log"
+    # the run stops there, as a failed install's does: no closing report (the ROMPHOME note, the dashboard link)
+    # over a state that means the login service on disk is not this release's (round 1 of the review, 2026-09-18)
+    [[ "$output" != *"ROMPHOME"* ]]
+    [[ "$output" != *"http://127.0.0.1"* ]]
+    [[ "$output" != *"romp url"* ]]
+    run grep -x install "$TEST_DIR/svc.log"
+    [ "$status" -ne 0 ]
 }
 
 # ── the unit under a running manager (the box admin's hazard review of the pull-in, 2026-09-16) ──
@@ -356,6 +370,7 @@ _systemctl_active_stub() {   # a systemctl whose is-active says the manager runs
 echo "\$*" >> "$TEST_DIR/systemctl-calls"
 case "\$2" in
   is-active) echo active ;;
+  show) case "\$*" in *NeedDaemonReload*) echo no ;; esac ;;   # the rewrite's read-back after its reload: loaded is current
   *) exit 0 ;;
 esac
 EOF
@@ -381,10 +396,14 @@ EOF
     [[ "$output" == *"systemctl --user restart romp-manager"* ]]
     [[ "$output" != *"already running"* ]]
     [[ "$output" != *"Installing the romp login service"* ]]
-    # systemd was asked to reload, and for nothing else: no enable, start, stop or restart from here. Last, and
-    # armed: `run` replaces $output, and a bare `!` mid-test asserts nothing in bats
+    [[ "$output" != *"kept an older definition"* ]]         # the read-back after the reload found the loaded unit current
+    # the rewrite journaled itself under THIS run's state root (setup pins it; the row is the one the kernel's
+    # restart-audit walk skips), never under a root the session's environment carried
+    grep -q '"action": "service-rewrite"' "$ROMP_STATE_DIR/restart-audit.jsonl"
+    # systemd was asked to reload and read back, and for nothing else: no enable, start, stop, restart or kill from
+    # here. Last, and armed: `run` replaces $output, and a bare `!` mid-test asserts nothing in bats
     grep -qx -- '--user daemon-reload' "$TEST_DIR/systemctl-calls"
-    run grep -E -- 'enable|start|stop|restart' "$TEST_DIR/systemctl-calls"
+    run grep -E -- 'enable|start|stop|restart|kill' "$TEST_DIR/systemctl-calls"
     [ "$status" -ne 0 ]
 }
 

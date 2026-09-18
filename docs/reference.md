@@ -36,7 +36,12 @@ too: the label says so, and does not count them; when the manager does not answe
 kernels may restart too. When no manager started the kernel (a `romp-kernel` started by hand), nothing
 restarts: the first click reads "Update romp on disk now; restart it yourself to run it" with a green
 Update confirm, and the second click converges in place when the change is outside kernel code, else
-lands the kernel code on disk and the banner names `romp up` as the step that runs it. The gear's
+lands the kernel code on disk and the banner names `romp up` as the step that runs it. The release
+self-update runs from the primary kernel only (the manager tells each kernel its registry id in
+`ROMP_KERNEL_ID`; `main` is the primary): its `install.sh` rewrites the login service's unit, and there
+is one unit, the primary's, so a `kernels.json` profile's or a `/ensure` kernel's dashboard answers the
+confirmed click with a line naming the primary, and its automatic mode files one notice per release
+instead of running it. The gear's
 **Automatic updates** control (under *Updates & debug*) decides what happens: *Check and
 ask* shows the banner, *Install automatically* converges on its own, and *Off* stops both the
 checks and the banners, so a machine whose owner merges to `main` all day hears nothing about it
@@ -1113,7 +1118,13 @@ line you added to the unit or the plist by hand; a drop-in survives it (see
 [Two things still need a restart](#two-things-still-need-a-restart)). The
 service unit bakes in whatever is set at install time, so a renumbered port
 that only lives in your shell leaves the supervised manager on the old one, and
-the two collide.
+the two collide. A deploy under a running manager (`./install.sh`, the release
+self-update) rewrites the unit too, through `romp-service rewrite`, but that
+rewrite bakes nothing from the shell that ran it: it keeps the unit's own
+`ExecStart`, `ROMP_DIR`, `PATH`, `service.env` path and instance lines, adds
+none the unit did not carry, refreshes only the release's lines, and refuses
+(exit 1, naming both values) when a value in the deploying environment differs
+from the unit's line. `romp-service install` is the way to change them.
 
 ### The manager's control port
 
@@ -1511,9 +1522,18 @@ unit (the plist on macOS), reloads systemd on Linux and restarts nothing, and
 its one line names the restart command. (Until 2026-09-18 it skipped the
 service step under a running manager, so a unit change a release carried, the
 `MALLOC_ARENA_MAX=2` line for one, reached such a box only through a drop-in
-added by hand.) The rewrite drops a
+added by hand.) The rewrite keeps the unit's own identity, `ExecStart`,
+`ROMP_DIR`, `PATH`, the `service.env` path and the instance `Environment=`
+lines, whatever the deploying shell carries, and refuses when the two disagree
+(see [Two instances on one machine](#two-instances-on-one-machine)); after the
+reload it reads systemd's `NeedDaemonReload` flag back and says on stderr, at
+exit 0, when systemd still holds an older definition, and when the flag could
+not be read. The rewrite drops a
 line added to the unit by hand, as the plist rewrite does; a drop-in survives
-it, so a line of your own belongs in `service.env` or a drop-in.
+it, so a line of your own belongs in `service.env` or a drop-in. A unit or
+plist path that was a symlink is a regular file after the rewrite, and the
+line says so: the file behind the link is not written, and its later edits no
+longer reach the service manager.
 
 ### Stopping the kernel on purpose
 
@@ -5323,7 +5343,11 @@ whatever asks for one: `romp refresh`, `romp down`, the dashboard's restart
 button, the kernel's own update, and the manager before each SIGTERM it sends
 (action `manager-sigterm`, with a `trigger` naming what set it off: `restart`,
 `restart-all`, `refresh` for the stale-manager self-bounce, `cli-down` for a
-stop while `romp down`'s marker is on disk, `stop` for any other). When a
+stop while `romp down`'s marker is on disk, `stop` for any other), and
+`romp-service` when it installs (`service-install`) or rewrites
+(`service-rewrite`) the login service; the rewrite row is attribution of a
+deploy and restarts nothing, so the walk below passes over it like the
+manager's `quiet-window` note, while an install is a real request. When a
 SIGTERM arrives, the kernel reads the last two hundred rows,
 newest first, for a request within the last 90 seconds (20 minutes for a
 request that asked to wait for a quiet window) and no older than its own

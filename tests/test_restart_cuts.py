@@ -150,12 +150,40 @@ class CutRow(unittest.TestCase):
             {"t": 1150, "action": "main-converge-skip", "tag": "def5678"},
             {"t": 1160, "action": "bus-converge", "tag": "def5678"},
             {"t": 1170, "action": "end-on-idle", "tag": "11111111-2222-3333-4444-555555555555"},
+            # round 1 of the install-rewrite review (2026-09-18): install.sh rewrites the login service's unit under a
+            # running manager on every deploy, and bin/romp-service journals that as service-rewrite; the verb restarts
+            # nothing, so the row is walked past like the others (before the set held it, the row was the request that
+            # explained any SIGTERM inside ninety seconds of a deploy)
+            {"t": 1180, "action": "service-rewrite", "ppid": 4242, "parent": "bash ./install.sh"},
         ]))
         try:
             self.assertIn("p2p-update", km._recent_restart_reason(window=90, now=1200))
             audit.write_text(json.dumps({"t": 1150, "action": "main-converge-skip"}) + "\n")
             self.assertEqual(km._recent_restart_reason(window=90, now=1200), "",
                              "a skip alone names nothing — the cut was anonymous")
+        finally:
+            audit.unlink()
+
+    def test_a_unit_rewrite_row_neither_names_a_cut_nor_hides_a_park(self):
+        # round 1 of the install-rewrite review (2026-09-18). The rewrite's row is attribution (who ran the deploy),
+        # never a request: alone it names no cut, so an unrequested SIGTERM after a deploy still gets its `signal`
+        # verdict row; above a parked quiet converge it hides nothing, inside its own ninety seconds or long past
+        # them (an aged request row ends the walk before the park; a skipped one does not). service-install stays a
+        # request: on macOS the install boots the agent out, on Linux it reinstalls, so that row does explain a cut.
+        audit = self.AUDIT
+        rewrite = {"t": 1180, "action": "service-rewrite", "ppid": 4242, "parent": "bash ./install.sh"}
+        park = {"t": 1000, "action": "main-converge", "tag": "restart", "when": "quiet", "sha": "abc1234def"}
+        try:
+            audit.write_text(json.dumps(rewrite) + "\n")
+            self.assertEqual(km._recent_restart_reason(window=90, now=1200, started=900), "",
+                             "a rewrite alone names nothing: the kill was not asked for")
+            audit.write_text(json.dumps(park) + "\n" + json.dumps(rewrite) + "\n")
+            self.assertEqual(km._parked_quiet_deploy("abc1234def", now=1200), 1000, "the park beneath the row is read")
+            self.assertEqual(km._parked_quiet_deploy("abc1234def", now=1400), 1000,
+                             "and past the rewrite row's own window, which the aged row must not end the walk at")
+            audit.write_text(json.dumps(dict(rewrite, action="service-install")) + "\n")
+            self.assertEqual(km._recent_restart_reason(window=90, now=1200, started=900), "service-install",
+                             "the asymmetry: an install is a real request and stays out of the set")
         finally:
             audit.unlink()
 
