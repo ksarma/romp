@@ -52925,12 +52925,14 @@ def _implicit_handshake(client, msg):
     itself; no clock is read. Two producers dial a chat socket that neither posts `ready` nor carries a `proto` term and
     then ask this kernel for things: a hub page older than the federation's remote ready (b84f716a8 for a proto-2 page,
     f7a80efee for every page) relaying to a newer kernel, whose federation sent the page's ready to the local socket alone;
-    and a pane shim between 7390404be and 42ab10dd1 (upstream, 2026-09-10 to 2026-09-11) redialing after this kernel
-    restarted: its dial carries reconnect=1 with no proto term and no caps term, and its open re-posts no ready (the bundle
-    posts ready once; 42ab10dd1 is the redial's proto term). A pane shim older than 7390404be (this fork's from the
-    2026-09-03 re-send to the 2026-09-16 fold, fd95b435a among them, the vintage in the bug report) re-posts a bare ready
-    in its redial's onopen right after its queue flush, so it declares proto 1 itself one frame later and was never held
-    silent; it announces the readyGate hold and is declined below, then served at that ready (review round 3). Until
+    and an upstream pane shim between 8610b8954 and 42ab10dd1 redialing after this kernel restarted: its dial carries
+    reconnect=1 (8610b8954's term) with no proto term (42ab10dd1's) and no caps term, and its open re-posts no ready (the
+    bundle posts ready once; no upstream shim of any vintage re-posts a bare ready). The LINE tells the two shims apart,
+    not their age: a fork pane shim carrying a3a9e7385's re-send (2026-09-03) announces the readyGate hold and then
+    re-posts a bare ready in its redial's onopen right after its queue flush, so it declares proto 1 itself one frame
+    later; it is declined below for that readyGate and served at that ready (review round 3). fd95b435a, the fork merge
+    in the bug report, is an instance of the fork case, and by wall clock it is NEWER than 7390404be (2026-09-11 against
+    2026-09-10): a reader debugging a declined shim reads its line, never its date. Until
     2026-09-18 the gate withheld every chat frame from the two producers: strips and statuses flowed and every session
     body was withheld, so an older dashboard attached to a newer kernel listed the remote's tabs with nothing behind them
     (two relay sockets, 965 and 644 chat frames withheld, on the record). Both spoke the index wire before the gate
@@ -52946,8 +52948,8 @@ def _implicit_handshake(client, msg):
         (`ready` True): a socket held under the cap is a kernel-served pane whose bundle has not said ready, whose shim
         flushes queued clientDiag rows at its open before that ready, the very race the gate closed; and a pane that
         announced the cap and dialled reconnect=1 is ready from accept all the same (the accept's reconnect branch) while
-        its shim re-posts a bare ready right behind the rows it flushes (the fork's shims from the 2026-09-03 re-send to
-        the 2026-09-16 fold, fd95b435a among them), so its flushed row must not stand in for the ready one frame behind it
+        its shim re-posts a bare ready right behind the rows it flushes (the fork's shims carrying a3a9e7385's re-send,
+        fd95b435a among them), so its flushed row must not stand in for the ready one frame behind it
         (review round 3, 2026-09-18: the rule read `ready` alone and took that row, said the socket declared no wire, filed
         a row for it, and a pusher cycle landing before the ready served one whole frame twice). Neither producer above
         announces caps at all, so the check costs them nothing;
@@ -55733,9 +55735,12 @@ def _send_chat_locked(c, m, ms, change_from, led_changed):
     #                                                    A chat socket of OLDER VINTAGE (no readyGate announced, ready from accept, no namespaced iid,
     #                                                    not an ext pipe) that declares no wire but sends any other frame is taken at that frame as a
     #                                                    proto-1 client (_implicit_handshake, 2026-09-18): an older hub's relay and an upstream shim's
-    #                                                    redial between 7390404be and 42ab10dd1 got no chat frame for the socket's life, the remote's
-    #                                                    tabs listed with nothing behind them. A current page's relay (a namespaced iid) is never
-    #                                                    taken: its frames wait for its ready, as here.
+    #                                                    redial between 8610b8954 and 42ab10dd1 (reconnect=1, no proto, no caps, no ready re-posted)
+    #                                                    got no chat frame for the socket's life, the remote's tabs listed with nothing behind them.
+    #                                                    A fork shim carrying a3a9e7385's re-send announces readyGate and re-posts a bare ready behind
+    #                                                    its flush, so it is declined for that readyGate and served at its own ready: the LINE tells
+    #                                                    the shims apart, not their age (fd95b435a is the fork case, and newer than 7390404be). A
+    #                                                    current page's relay (a namespaced iid) is never taken: its frames wait for its ready, as here.
     #                                                                                       # (T386 stage 2, round eleven). It used to get index frames, and a proto-2 page whose ready lost the
     #                                                    race to this push (the pusher fires from the socket's open; the bundle evaluates later) held an
     #                                                    index frame at its reload restore and took the older wire for a landing the window wire owns.

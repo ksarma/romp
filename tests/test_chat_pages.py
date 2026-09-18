@@ -449,12 +449,14 @@ class RealArm(Harness):
     HUB_RELAY = "/ws?app=chat&wid=w1&relay=1&delta=1&iid=hubwid%3Aaaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"   # a current hub's splice: the page's terms, the iid namespaced by its wid (8fe70da07)
     OLD_RELAY = "/ws?app=chat&wid=w1&relay=1"                                                             # a hub older than the federation's remote ready: app, wid and the splice's own term alone
     EXT_PIPE = "/ws?app=chat&wid=w1&client=ext&delta=1"                                                   # the VS Code extension host's chat pipe (vscode-extension/src/extension.ts)
-    OLD_REDIAL = ("/ws?app=chat&delta=1&iid=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee&wid=w1&active=%s&caps=readyGate&reconnect=1" % SID)   # the fork's fd95b435a shim's redial, term for term
-    #             (its dial line: app, delta, the bare uuid iid every shim mints, wid, active, caps=readyGate, reconnect=1; no proto term. Its onopen flushes the queue, then
-    #             re-posts a bare ready, so this socket declares proto 1 itself one frame after the rows it flushes: declined by the hold it announced, served at that ready)
-    SILENT_REDIAL = ("/ws?app=chat&delta=1&iid=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee&wid=w1&active=%s&reconnect=1" % SID)   # the upstream shim's redial between 7390404be and
-    #             42ab10dd1, term for term (git show 7390404be:kernel/kernel.py, the dial line): app, delta, the bare uuid iid, wid, active, reconnect=1; NO caps term (upstream
-    #             has no readyGate), no proto term (42ab10dd1 adds it), and no ready re-posted at its open (the bundle posts ready once): the shim the gate held silent
+    FORK_REDIAL = ("/ws?app=chat&delta=1&iid=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee&wid=w1&active=%s&caps=readyGate&reconnect=1" % SID)   # a fork shim carrying a3a9e7385's re-send:
+    #             fd95b435a's redial, term for term (its dial line: app, delta, the bare uuid iid every shim mints, wid, active, caps=readyGate, reconnect=1; no proto term). Its
+    #             onopen flushes the queue, then re-posts a bare ready, so this socket declares proto 1 itself one frame after the rows it flushes: declined by the hold it
+    #             announced, served at that ready. The fork LINE, not an older vintage: fd95b435a (2026-09-11) is newer than 7390404be (2026-09-10) by wall clock
+    SILENT_REDIAL = ("/ws?app=chat&delta=1&iid=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee&wid=w1&active=%s&reconnect=1" % SID)   # the upstream shim's redial between 8610b8954 and
+    #             42ab10dd1, term for term (git show 8610b8954:kernel/kernel.py and git show 7390404be:kernel/kernel.py, the dial lines): app, delta, the bare uuid iid, wid,
+    #             active, reconnect=1 (8610b8954's term); NO caps term (upstream has no readyGate), no proto term (42ab10dd1 adds it), and no ready re-posted at its open (the
+    #             bundle posts ready once; no upstream shim of any vintage re-posts one): the shim the gate held silent
     READY2 = {"type": "ready", "proto": 2}
     INTENT = {"type": "sendMessage", "id": SID, "text": "a message typed while the pipe was down"}
 
@@ -552,7 +554,7 @@ class RealArm(Harness):
         self.assertEqual([r["what"] for r in rows], ["wsopen", "implicitHandshake"], "the event's row stands: %r" % rows)
 
     def test_a_silent_shims_redial_with_no_caps_term_is_taken_at_the_row_it_flushes(self):
-        """The other producer the rule exists for, through the real handler: an upstream pane shim between 7390404be and 42ab10dd1 redials
+        """The other producer the rule exists for, through the real handler: an upstream pane shim between 8610b8954 and 42ab10dd1 redials
         after this kernel restarted as that shim dials it, term for term (SILENT_REDIAL): reconnect=1 with no proto term and NO caps term
         (upstream has no readyGate, so the accept's no-hold disjunct makes it ready), delta=1 and the bare uuid iid every shim mints, from a
         browser (an Origin: kind page), and the wsclose row it queued while its socket was down is its first frame; its open re-posts no
@@ -560,7 +562,7 @@ class RealArm(Harness):
         the index wire. This is why neither delta nor reconnect keys the decline (review round 1): a current relay carries delta too, and
         reconnect is popped by the first pusher cycle, so either would have silenced this socket again. The row's kind and frame are
         pinned here too: this is the one leg that files a page-kind, clientDiag-word row. Review round 3 re-aimed this leg from the
-        fork's fd95b435a dial, whose shim re-posts a bare ready behind its flush and is declined (the next leg)."""
+        fork's dial (FORK_REDIAL, fd95b435a), whose shim re-posts a bare ready behind its flush and is declined (the next leg)."""
         row = {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat", "code": 1006, "everConnected": True, "bundleReady": True}}
         c, sent, marks, rows, err = self._run(self.SILENT_REDIAL, [row, "cycle"], headers={"Origin": "http://TESTHOST:1", "User-Agent": "TestBrowser/1.0"})
         self.assertEqual((c.get("kind"), c.get("redial"), c.get("ready"), c.get("delta"), c.get("iid")), ("page", True, True, True, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"))
@@ -575,7 +577,8 @@ class RealArm(Harness):
         self.assertEqual([(r["surface"], r["what"]) for r in rows][2:], [("pane-shim", "wsclose")], "the shim's own row lands behind them: %r" % rows)
 
     def test_the_fork_shims_redial_that_announced_readygate_is_declined_at_its_flushed_row_and_served_at_its_own_bare_ready(self):
-        """Review round 3: the fork's fd95b435a shim (the vintage in the bug report; OLD_REDIAL, term for term) redials with caps=readyGate
+        """Review round 3: a fork shim carrying a3a9e7385's re-send (fd95b435a, the build in the bug report; FORK_REDIAL, term for term; the
+        fork LINE, not an older vintage: fd95b435a is newer than 7390404be by wall clock) redials with caps=readyGate
         and reconnect=1 and no proto term, so the accept's reconnect branch makes it ready from accept, and its onopen flushes the wsclose
         row it queued while down and then re-posts a bare ready. The rule read the effective ready flag and took the row: the socket was
         said to have declared no wire one frame before it did, an implicitHandshake row went on the record, and a pusher cycle landing
@@ -583,7 +586,7 @@ class RealArm(Harness):
         the socket ANNOUNCED: the row is declined (no mark, nothing said, no row), the cycle between is withheld as the gate means, and
         the shim's own bare ready declares the index wire and serves the session once. Red on the round-2 kernel, which took the row."""
         row = {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat", "code": 1006, "everConnected": True, "bundleReady": True}}
-        c, sent, marks, rows, err = self._run(self.OLD_REDIAL, [row, "cycle", {"type": "ready"}], headers={"Origin": "http://TESTHOST:1", "User-Agent": "TestBrowser/1.0"})
+        c, sent, marks, rows, err = self._run(self.FORK_REDIAL, [row, "cycle", {"type": "ready"}], headers={"Origin": "http://TESTHOST:1", "User-Agent": "TestBrowser/1.0"})
         self.assertEqual((c.get("kind"), c.get("redial"), c.get("ready"), c.get("iid")), ("page", True, True, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"))
         self.assertEqual((c["caps"], c.get("active")), ({"readyGate"}, SID), "the hold announced and the watched tab, as the shim dials; ready all the same, by reconnect=1")
         self.assertNotIn("implicitHandshake", c, "declined at the flushed row: nothing stood in")

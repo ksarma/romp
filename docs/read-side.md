@@ -82,13 +82,16 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   pane ready from accept while its shim re-posts a bare `ready` right behind
   the rows it flushes at the open, so it is declined here and served at that
   `ready`. An older hub's relay socket is one socket the rule serves (a hub
-  before b84f716a8 sent its page's `ready` to its local socket alone); a pane
-  shim between 7390404be and 42ab10dd1 (upstream, 2026-09-10 to 2026-09-11)
-  is the other: its redial carries `reconnect=1` with no `proto` term and no
-  `caps` term and re-posts no `ready`. A shim older than 7390404be (the fork's
-  from the 2026-09-03 re-send to the 2026-09-16 fold, fd95b435a among them)
-  re-posts a bare `ready` in its redial's open right after its flush, so it
-  declares proto 1 itself one frame later and was never held silent.
+  before b84f716a8 sent its page's `ready` to its local socket alone); an
+  upstream pane shim between 8610b8954 and 42ab10dd1 is the other: its redial
+  carries `reconnect=1` (8610b8954's term) with no `proto` term (42ab10dd1's)
+  and no `caps` term, and it re-posts no `ready` (no upstream shim of any
+  vintage does). The line tells the shims apart, not their age: a fork shim
+  carrying a3a9e7385's re-send announces `readyGate` and then re-posts a bare
+  `ready` in its redial's open right after its flush, so it declares proto 1
+  itself one frame later and is declined for that `readyGate`. fd95b435a, the
+  fork merge in the bug report, is an instance of the fork case, and it is
+  newer than 7390404be by wall clock.
   A held page's frames before its `ready` (its shim's queued `clientDiag` rows)
   do not count, and a current page's relay is never taken: its frames wait for
   its `ready`. On the page side, federation posts the `ready` first on every

@@ -216,10 +216,13 @@ class WindowSpans(Harness):
 
     def test_an_older_vintage_sockets_first_frame_stands_as_a_proto1_handshake_and_a_silent_socket_stays_withheld(self):
         """2026-09-18: an older hub's relay socket (no proto term, no ready ever: its page sent the ready to its local socket alone) and
-        an upstream shim's redial between 7390404be and 42ab10dd1 (reconnect=1 with no proto term and no caps term, no ready re-posted
-        at its open) got no chat frame for the socket's life from the round-eleven gate above; the first client frame from such a
-        socket now stands as a proto-1 handshake
-        (_implicit_handshake) and the socket is served the index wire from there. The rule reads the client's VINTAGE, never the
+        an upstream shim's redial between 8610b8954 and 42ab10dd1 (reconnect=1 with no proto term and no caps term, no ready re-posted
+        at its open: no upstream shim of any vintage re-posts one) got no chat frame for the socket's life from the round-eleven gate
+        above; the first client frame from such a socket now stands as a proto-1 handshake
+        (_implicit_handshake) and the socket is served the index wire from there. A fork shim carrying a3a9e7385's re-send is told
+        from the upstream shim by its LINE, not its age (fd95b435a, the fork case in the bug report, is newer than 7390404be): it
+        announces readyGate and re-posts a bare ready behind its flush, so it is declined for that readyGate and declares proto 1
+        itself one frame later. The rule reads the client's VINTAGE, never the
         frame's kind (review round 1, 2026-09-18): a current page's relay (a namespaced iid), the VS Code extension host's pipe
         (client=ext) and a non-chat socket are never taken, whatever they send first, and neither `delta` nor `reconnect` is read,
         since the older shim's redial carries both. The decision table, then the wire it brings, then the real ready that
@@ -313,7 +316,7 @@ class WindowSpans(Harness):
         self.assertIn("firstUuid", sessions[0])
         self.assertIsInstance(relay["echat"][SID], dict, "a proto-2 base: %r" % (relay["echat"][SID],))
         self.assertEqual([r["what"] for r in rows], ["implicitHandshake"], "the durable record of the event stands in the file")
-        # the silent shim's redial after this kernel restarted (upstream, between 7390404be and 42ab10dd1): reconnect=1 and no proto term
+        # the silent shim's redial after this kernel restarted (upstream, between 8610b8954 and 42ab10dd1): reconnect=1 and no proto term
         # (stamped ready at accept), NO caps term (upstream has no readyGate), delta=1 and a BARE uuid iid like every shim's dial, and the
         # wsclose row the shim flushes at the redial's open is its first frame; the same road. Neither delta nor reconnect may key the
         # decline: this socket carries both (reconnect is popped by the first pusher cycle)
@@ -321,15 +324,16 @@ class WindowSpans(Harness):
                   "caps": set(), "iid": BARE_IID, "kind": "page", "app": "chat", "wid": "w2"}   # ready: no hold announced
         taken(silent, {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat"}}, "the silent shim's redial", "clientDiag")
         taken(dict(silent, handshake=False, reconnect=False), ask, "the same redial once the first cycle popped reconnect", "needFull")
-        # ...and NOT the fork's shim of the fd95b435a vintage (review round 3): its redial announces caps=readyGate and dials reconnect=1 with
+        # ...and NOT a fork shim carrying a3a9e7385's re-send, fd95b435a among them (review round 3; the fork LINE, not an older vintage:
+        # fd95b435a is newer than 7390404be by wall clock): its redial announces caps=readyGate and dials reconnect=1 with
         # no proto term, so the accept's reconnect branch makes it ready from accept, and its onopen flushes the wsclose row it queued while
         # down and re-posts a bare ready right behind it. The rule reads the hold the socket ANNOUNCED, never the effective ready flag: the
         # row is declined (the rule read `ready`, took the row, and the ready one frame behind then re-declared the wire, one whole frame
         # served twice when a cycle landed between), and the shim's own bare ready declares proto 1 through the arm, with nothing stood in
         fork_redial = {"send": (lambda s: None), "echat": {}, "handshake": False, "ready": True, "reconnect": True, "redial": True, "delta": True,
                        "caps": {"readyGate"}, "iid": BARE_IID, "kind": "page", "app": "chat", "wid": "w3"}   # ready: the hold it announced, lifted by reconnect=1
-        declined(fork_redial, {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat"}}, "the fd95b435a shim's redial, its flushed row")
-        declined(dict(fork_redial, reconnect=False), ask, "the fd95b435a shim's redial once the first cycle popped reconnect")
+        declined(fork_redial, {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat"}}, "the fork shim's redial (fd95b435a), its flushed row")
+        declined(dict(fork_redial, reconnect=False), ask, "the fork shim's redial (fd95b435a) once the first cycle popped reconnect")
         with contextlib.redirect_stderr(io.StringIO()):
             km.Handler._dispatch_ws(_Self(), {"type": "ready"}, fork_redial)
         self.assertEqual((fork_redial["handshake"], fork_redial["proto"], fork_redial.get("ready")), (True, 1, True), "its own bare ready declares the index wire")
