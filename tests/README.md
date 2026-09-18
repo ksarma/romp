@@ -61,12 +61,20 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   with a PytestConfigWarning (every worker until the venv path is inserted, the
   controller always, CI always); a module-level `warnings.filterwarnings` does not
   survive pytest's per-test `catch_warnings`. So `-p no:warnings` is no longer part of an
-  `-n` run. One more import-time leak reaches the postal suite the same way:
-  `tests/test_kernel_tunnels.py` sets `ROMP_POSTAL_PEERS=0` at module level and the
-  postal service reads it per call, so `test_postal_via_dedupe.py`'s
-  PeerRoutePrefersDirect resolve case answers an error instead of a relay in any run
-  that collects both. A red in one of these under `-n` is judged by the module
-  alone: `python3 -m pytest tests/<module>.py -q`.
+  `-n` run. One more import-time leak reached the postal suite the same way until
+  2026-09-18: `tests/test_kernel_tunnels.py` set `ROMP_POSTAL_PEERS=0` at module
+  level, the kernel and the postal service read it per call, and every worker imports
+  every collected module before it runs a test, so in any run that collected the
+  tunnels module `test_postal_via_dedupe.py`'s PeerRoutePrefersDirect resolve case
+  answered an error instead of a relay and `test_kernel_remote_identity.py`'s absorb
+  case missed its bus notice (5 of 6 full runs). The tunnels module now sets the value
+  per test (a setUp that saves what it found, a tearDown that restores it), both
+  readers pin the default the same way, and `tests/test_hermetic_kernel_postal.py`
+  holds the placement. From now on a module that needs `ROMP_POSTAL_PEERS` sets it in
+  setUp and restores it in tearDown, never at import; `ROMP_POSTAL_PORT` is the one
+  postal leg the kernel reads at import, and it stays before the load. A red in one of
+  these under `-n` is still judged by the module alone:
+  `python3 -m pytest tests/<module>.py -q`.
 - **`*.bats`** — the shell surfaces: `bin/romp`, the launch chain, hooks,
   postal CLI. Keep them GNU/BSD-portable (CI runs bats on ubuntu).
   Run: `bats tests/*.bats`.

@@ -14,10 +14,12 @@ Synthetic hosts, ids, and bus ids throughout; hermetic state dir; no sockets.
 Under pytest-xdist over the whole tests/ directory (-n 4) PeerRoutePrefersDirect's
 test_resolve_recipient_lands_direct_with_no_ambiguity_error is red ('error' != 'relay') while this module alone is
 green (8 passed), and so is this module beside tests/test_sdk_backend.py under -n 4. The leaked global is the
-environment: tests/test_kernel_tunnels.py sets ROMP_POSTAL_PEERS=0 at module level, every xdist worker imports every
-collected module before it runs a test, and the service's peers_on() reads the variable at call time, so
-resolve_recipient consults no peer route and answers an error where the relay is expected (diagnosed 2026-09-16;
-reproduced with no xdist by running that module before this one in one pytest process). Judge a red here by the
+environment: tests/test_kernel_tunnels.py set ROMP_POSTAL_PEERS=0 at module level (until 2026-09-18, when the value
+moved into that module's per-test setUp and tearDown after the kernel's remote-identity absorb case went red the same
+way in 5 of 6 full runs), every xdist worker imports every collected module before it runs a test, and the service's
+peers_on() reads the variable at call time, so resolve_recipient consults no peer route and answers an error where the
+relay is expected (diagnosed 2026-09-16; reproduced with no xdist by running that module before this one in one pytest
+process). Judge a red here by the
 module alone: `python3 -m pytest tests/test_postal_via_dedupe.py -q`. The postal modules that set ROMP_POSTAL_PEERS=1
 in setUp never saw the leak; since 2026-09-16 this one pins the variable itself too (_Seeded.setUp sets it to 1 and
 tearDown restores what it found), so the red above is the fails-before and the case reads the peer route whatever an
@@ -48,7 +50,7 @@ class _Seeded(unittest.TestCase):
     def setUp(self):
         self._peers, self._pstate = dict(pm.PEERS), dict(pm.PEER_STATE)
         # the peer route is gated by peers_on(), read per call: pin it on here, whatever an earlier module in the
-        # same process left (tests/test_kernel_tunnels.py sets 0 at module level; the header says why), restored below
+        # same process left (tests/test_kernel_tunnels.py set 0 at module level until 2026-09-18; the header says why), restored below
         self._peers_env = os.environ.get("ROMP_POSTAL_PEERS")
         os.environ["ROMP_POSTAL_PEERS"] = "1"
         pm.PEERS.clear()

@@ -37,6 +37,12 @@ class _Proc:
 
 class RemoteIdentity(unittest.TestCase):
     def setUp(self):
+        # The absorb tells the bus about the old name only with peers on (attach_remote's _postal_peers_on gate, read
+        # per call), so the default is pinned here, whatever an earlier module in this process left, and restored in
+        # tearDown. The fails-before: this module alone with ROMP_POSTAL_PEERS=0 in the environment reds the absorb
+        # case, which is how 5 of 6 full runs under xdist read until tests/test_kernel_tunnels.py stopped writing the
+        # value at import (2026-09-18; every worker imports every collected module before it runs a test).
+        self._peers_env = os.environ.pop("ROMP_POSTAL_PEERS", None)
         km._remotes.clear()
         with km._known_lock:
             km._known.clear()
@@ -47,6 +53,12 @@ class RemoteIdentity(unittest.TestCase):
         km._spawn_tunnel = lambda r: r.update(proc=_Proc(), status="starting", detail="")
         km._notify_bus_peer = (lambda host, port, up, tok="", trust="directed":
                                (self.bus_down.append(host) if not up else None) or True)
+
+    def tearDown(self):
+        if self._peers_env is None:
+            os.environ.pop("ROMP_POSTAL_PEERS", None)
+        else:
+            os.environ["ROMP_POSTAL_PEERS"] = self._peers_env
 
     def test_second_alias_absorbs_the_old_row(self):
         self.tokens = {"box-hostname": "TOK-SAME", "boxalias": "TOK-SAME"}

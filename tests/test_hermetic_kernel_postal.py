@@ -21,15 +21,25 @@ the bus itself: `romp-postal-service serve` and `ensure` refuse the fixed port u
 state root under a temporary directory) unless ROMP_POSTAL_PORT names the port as the run's own (ROMP_POSTAL_HERMETIC beside
 it, as the runner, the shell suite's setup and kernel_env set; an inherited name does not count), pinned by
 tests/test_postal_fixed_port_belt.py.
-A module that loads the kernel in-process and exercises the bus still carries the trio, before its load (the tunnel
-tests) or around the call that provokes the revive (the peer-notify test), so its kernel never even asks.
+A module that loads the kernel in-process and exercises the bus still carries the trio, each leg where it is read: the
+port before the load (the kernel reads it at import), client-only before the load, and peers PER TEST, set in the setUp
+of every class that attaches or detaches and restored in its tearDown (the tunnel tests), or all three around the one
+call that provokes the revive (the peer-notify test), so its kernel never even asks. Peers is never set at import: the
+kernel reads it at call time, and under xdist every worker imports every collected module before it runs a test, so the
+"0" the tunnel tests once wrote at module level reached every module on every worker, and the remote-identity absorb
+case (a bus notice gated on peers) was red in 5 of 6 full runs (diagnosed 2026-09-18). The placement test below reads
+the module's assignments by position, and the probe beside it imports the module and runs one setUp to see the value.
 
 The fixture rule below is static, so it holds for tests that skip here (no browser, no extension deps) and fails at
 the spawn site, naming the file.
 """
+import ast
+import json
 import os
 import re
+import subprocess
 import sys
+import textwrap
 import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -65,6 +75,73 @@ def _spawns_kernel(src):
 
 def _hermetic(src):
     return "kernel_env(" in src or all(k in src for k in TRIO)
+
+
+def _is_environ(node):
+    return isinstance(node, ast.Attribute) and node.attr == "environ" and isinstance(node.value, ast.Name) and node.value.id == "os"
+
+
+def _env_writes(node):
+    """The keys `os.environ[KEY] = ...` assigns anywhere under `node`."""
+    keys = set()
+    for n in ast.walk(node):
+        if isinstance(n, ast.Assign):
+            for t in n.targets:
+                if isinstance(t, ast.Subscript) and _is_environ(t.value) and isinstance(t.slice, ast.Constant) and isinstance(t.slice.value, str):
+                    keys.add(t.slice.value)
+    return keys
+
+
+def _env_pops(node):
+    """The keys `os.environ.pop(KEY, ...)` names anywhere under `node`."""
+    keys = set()
+    for n in ast.walk(node):
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "pop" and _is_environ(n.func.value)
+                and n.args and isinstance(n.args[0], ast.Constant) and isinstance(n.args[0].value, str)):
+            keys.add(n.args[0].value)
+    return keys
+
+
+def _loads_kernel(stmt):
+    """True for a module-level statement that load_source()s the kernel (its module name starts with romp_kernel)."""
+    return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "load_source" and n.args
+               and isinstance(n.args[0], ast.Constant) and str(n.args[0].value).startswith("romp_kernel")
+               for n in ast.walk(stmt))
+
+
+def _attaches_or_detaches(cls):
+    """True for a class whose tests reach the tunnel spawn or a detach: a detach_remote call, the /tunnels routes, or an
+    attach_remote call outside an assertRaises (an attach expected to raise is refused by host validation before the
+    tunnel or the bus is touched)."""
+    expected = set()
+    for n in ast.walk(cls):
+        if isinstance(n, ast.With) and any(isinstance(i.context_expr, ast.Call) and isinstance(i.context_expr.func, ast.Attribute)
+                                            and i.context_expr.func.attr == "assertRaises" for i in n.items):
+            expected.update(id(c) for b in n.body for c in ast.walk(b))
+    for n in ast.walk(cls):
+        if isinstance(n, ast.Attribute) and n.attr == "detach_remote":
+            return True
+        if isinstance(n, ast.Attribute) and n.attr == "attach_remote" and id(n) not in expected:
+            return True
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value.startswith("/tunnels"):
+            return True
+    return False
+
+
+def _method_chain(cls, name, classes):
+    """The FunctionDefs that run when `name` is called on `cls`: its own, then a base's (through the bases defined in
+    the same module) when the own one delegates with super().<name>() or there is no own one. Empty when nothing runs."""
+    own = next((n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == name), None)
+    chain = [own] if own is not None else []
+    delegates = own is None or any(
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == name
+        and isinstance(n.func.value, ast.Call) and isinstance(n.func.value.func, ast.Name) and n.func.value.func.id == "super"
+        for n in ast.walk(own))
+    if delegates:
+        for b in cls.bases:
+            if isinstance(b, ast.Name) and b.id in classes:
+                chain += _method_chain(classes[b.id], name, classes)
+    return chain
 
 
 class HermeticKernelPostal(unittest.TestCase):
@@ -113,11 +190,63 @@ class HermeticKernelPostal(unittest.TestCase):
                     'load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))'):
             self.assertFalse(_spawns_kernel(src), "not a kernel spawn (a build, the other scripts, an in-process load): " + src)
 
-    def test_the_module_that_loads_the_kernel_in_process_and_attaches_carries_the_trio_before_its_load(self):
-        src = open(os.path.join(HERE, "test_kernel_tunnels.py"), encoding="utf-8", errors="replace").read()
-        load = src.index('load_source("romp_kernel"')
-        for k in TRIO:
-            self.assertIn(k, src[:load], "%s is set before the kernel module loads (it reads the port at import)" % k)
+    def test_the_module_that_loads_the_kernel_in_process_and_attaches_places_each_leg_of_the_trio_where_it_is_read(self):
+        """Read by position from the module's ast, not by text: the port is assigned at module level before the kernel
+        loads (the kernel reads it at import); client-only is assigned before the load or in the setUp of every class
+        that attaches or detaches; peers is assigned in each of those setUps and popped or restored in the matching
+        tearDown, and NEVER at module level. A module-level peers assignment is the leak of 2026-09-18 (the header)."""
+        tree = ast.parse(open(os.path.join(HERE, "test_kernel_tunnels.py"), encoding="utf-8", errors="replace").read())
+        loads = [i for i, s in enumerate(tree.body) if _loads_kernel(s)]
+        self.assertTrue(loads, "the module loads the kernel in-process at module level")
+        top = [s for s in tree.body if not isinstance(s, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))]
+        before_load = set().union(*(_env_writes(s) for s in tree.body[:loads[0]] if s in top)) if loads[0] else set()
+        module_level = set().union(*(_env_writes(s) for s in top)) if top else set()
+        self.assertIn("ROMP_POSTAL_PORT", before_load, "the port is set before the kernel module loads (it reads the port at import)")
+        self.assertNotIn("ROMP_POSTAL_PEERS", module_level,
+                         "peers is never set at module level: the kernel reads it at call time, and under xdist a value written at "
+                         "import reaches every module on every worker (the remote-identity absorb case, red in 5 of 6 full runs)")
+        classes = {c.name: c for c in tree.body if isinstance(c, ast.ClassDef)}
+        attaching = [c for c in classes.values() if _attaches_or_detaches(c)]
+        self.assertGreaterEqual(len(attaching), 2, "the scan sees the classes that attach or detach: %r" % [c.name for c in attaching])
+        for cls in attaching:
+            set_up, tear_down = _method_chain(cls, "setUp", classes), _method_chain(cls, "tearDown", classes)
+            self.assertTrue(set_up, "%s attaches or detaches and so has a setUp" % cls.name)
+            in_setup = set().union(*(_env_writes(f) for f in set_up))
+            self.assertIn("ROMP_POSTAL_PEERS", in_setup, "%s.setUp (own or through super()) sets peers for its tests (a detach's refused bus notice revives the bus otherwise)" % cls.name)
+            self.assertIn("ROMP_POSTAL_CLIENT_ONLY", before_load | in_setup, "%s: client-only before the load or in its setUp" % cls.name)
+            self.assertTrue(tear_down, "%s restores peers in a tearDown" % cls.name)
+            self.assertIn("ROMP_POSTAL_PEERS", set().union(*(_env_writes(f) | _env_pops(f) for f in tear_down)),
+                          "%s.tearDown (own or through super()) pops or restores peers, so the value never outlives the test" % cls.name)
+
+    def test_importing_the_attaching_module_writes_no_peers_setting_and_its_setup_pins_one_for_the_test(self):
+        """Executed, not read: a fresh interpreter pops ROMP_POSTAL_PEERS, imports tests/test_kernel_tunnels.py (which
+        loads the kernel in-process against its own temp state and starts no bus) and reports the variable after the
+        import, inside an attaching class's setUp, and after its tearDown with a value a shell might have left. Before
+        2026-09-18 the import alone wrote "0"."""
+        probe = textwrap.dedent("""
+            import json, os, shutil, sys
+            os.environ.pop("ROMP_POSTAL_PEERS", None)
+            sys.path.insert(0, %r)
+            import test_kernel_tunnels as t
+            out = {"after_import": os.environ.get("ROMP_POSTAL_PEERS")}
+            os.environ["ROMP_POSTAL_PEERS"] = "1"
+            case = t.TunnelConcierge("test_attach_requires_host")
+            case.setUp()
+            out["in_setup"] = os.environ.get("ROMP_POSTAL_PEERS")
+            case.tearDown()
+            out["after_teardown"] = os.environ.get("ROMP_POSTAL_PEERS")
+            for d in (case.td, os.environ.get("XDG_STATE_HOME")):
+                shutil.rmtree(d, ignore_errors=True)
+            print(json.dumps(out))
+        """ % HERE)
+        env = dict(os.environ)
+        env.pop("ROMP_POSTAL_PEERS", None)
+        res = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=180, env=env, cwd=HERE)
+        self.assertEqual(res.returncode, 0, res.stderr[-2000:])
+        out = json.loads(res.stdout.strip().splitlines()[-1])
+        self.assertIsNone(out["after_import"], "importing the module writes no peers setting (the kernel reads it at call time; a write at import leaks under xdist)")
+        self.assertEqual(out["in_setup"], "0", "an attaching class's setUp turns peers off for its test")
+        self.assertEqual(out["after_teardown"], "1", "...and its tearDown restores what it found")
 
     def test_the_peer_notify_guard_test_carries_the_trio_around_the_call_it_forces_to_fail(self):
         src = open(os.path.join(HERE, "test_kernel.py"), encoding="utf-8", errors="replace").read()
