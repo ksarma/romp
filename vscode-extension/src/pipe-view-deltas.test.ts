@@ -16,7 +16,7 @@ const pipeCode = ts.transpileModule(node.getText(ast) + "\nglobalThis.Pipe = Ker
 }).outputText;
 
 function decoder() {
-  const file = path.join(process.cwd(), "src/view-deltas.ts");
+  const file = path.resolve(process.cwd(), "../ui/webview/view-deltas.ts");   // under ui/webview since federation.ts shares it (2026-09-18)
   if (!fs.existsSync(file)) return undefined; // the old pipe can run and demonstrate the failing wire behavior
   const exports: any = {};
   new Function("exports", ts.transpileModule(fs.readFileSync(file, "utf8"), {

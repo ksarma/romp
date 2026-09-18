@@ -24,7 +24,7 @@ import WebSocket from "ws";
 import { chatBody, FEED_BODY, FLEET_BODY, TIMELINE_BODY, ATTACH_TITLE_VSCODE } from "./page-skeleton";
 import { askManagerEnsure, attachFailureToast, ensureThenAttach, parseHealthz, warnAfter } from "./kernel-attach";
 import { intentOp, ReloadHold } from "./pipe-intent";
-import { ViewDeltas } from "./view-deltas";
+import { ViewDeltas } from "../../ui/webview/view-deltas";   // shared with federation.ts's remote sockets (2026-09-18)
 import { routeViewMessage } from "./view-routing";
 import { deriveStatus, freshNeedsYou, renderStatusBar, statusTooltipLines, FleetStatus } from "./fleet-status";
 import { citeText, sessionsForWorkspace, SessionInfo } from "./workspace-sessions";

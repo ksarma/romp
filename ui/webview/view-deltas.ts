@@ -1,5 +1,9 @@
-// The extension host's receiver for kernel _DELTA_SLOTS (2026-09-16). Browser panes do this in the
-// kernel's inline shim; VS Code's panels and passive status pipe have no such shim.
+// The TypeScript receiver for the kernel's _DELTA_SLOTS (2026-09-16): a full frame seeds a slot's base, a
+// {type:"delta", slot} patch reassembles onto it, and a patch that cannot apply asks the sending kernel for the
+// whole slot (needSlot) and yields nothing. Two consumers, each with one instance per socket: VS Code's panels and
+// passive status pipe (vscode-extension/src/extension.ts; they have no shim), and federation.ts for every REMOTE
+// socket it dials (Conn.viewDeltas, 2026-09-18: the relay dial carries the page's delta=1, so a remote kernel serves
+// its timeline bars as patches, and the kernel's inline shim reassembles only its own LOCAL socket's frames).
 // One instance belongs to one socket. Consumers continue receiving complete frames.
 type Slot = "feed" | "bars";
 type Frame = Record<string, any>;

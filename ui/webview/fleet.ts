@@ -797,9 +797,10 @@ listenForFrames(perfFrameHandler("fleet", (m) => vscodeApi?.postMessage(m), (e: 
     return;
   }
   if (m.type === "delta") {
-    // The shim reassembles every {type:"delta"} frame into the whole message before a bundle sees it, and
-    // federation's remote sockets never dial for deltas — so one reaching this handler means a host handed
-    // the pane a kernel frame unreassembled. Say so and ask for the whole slot (needSlot: what the shim
+    // The shim reassembles every {type:"delta"} frame its own LOCAL socket receives into the whole message before
+    // a bundle sees it, and federation.js does the same for each REMOTE socket it dials (those dial with the page's
+    // delta=1 since 2026-09-15; the per-conn receiver came 2026-09-18) — so one reaching this handler means a host
+    // handed the pane a kernel frame unreassembled. Say so and ask for the whole slot (needSlot: what the shim
     // itself sends for a delta it cannot apply) rather than sit on the last frame while every update is
     // dropped on the floor (fail loudly, never degrade). Run for real in fleet-live-clock.test.ts.
     console.error("outline: a delta frame reached the pane unreassembled — asking the kernel for the whole slot");

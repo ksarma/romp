@@ -14,6 +14,7 @@
 import { adoptArrivals, applyViewOrder, applyViewOrderTo, churnSwaps, healOrder, pruneViewOrder,
          readViewOrder, writeViewOrder, VIEW_ORDER_KEY, VIEW_ORDER_EVENT } from "./view-order";
 import { applyFeedDelta } from "./feed-delta";
+import { ViewDeltas } from "./view-deltas";
 import { adoptViews, capsAdopts, announcedSeq, announcedAfter } from "./views-writes";
 import { hostOf, bareId, hostDialLive } from "./host-prefix";
 import { installPerfTelemetry, classifyFrame, type RompPerf } from "./perf-telemetry";
@@ -864,9 +865,12 @@ export const REMOTE_PROVISIONAL_MS = 15000;
 // pages). Not the page's caps (readyGate is the shim's hold, and this manager posts its own ready), and not read
 // from the shim's __rompDialTerms: the decoder lives here, so the announcement does too. Without the term a
 // remote kernel served the feed on its view-delta slot path ({type:"delta", slot:"feed"}, which nothing on this
-// side decodes: the shim's reassembler reads its LOCAL socket alone), so a remote Outline froze after its first
+// side decoded then: the shim's reassembler reads its LOCAL socket alone), so a remote Outline froze after its first
 // full frame, each dropped frame filing a `delta-unapplied` row and a needSlot the LOCAL kernel could not answer
-// (86 rows in 2.4 minutes on the user's phone, 2026-09-18).
+// (86 rows in 2.4 minutes on the user's phone, 2026-09-18). Each conn now carries a view-delta receiver of its own
+// (Conn.viewDeltas, later that day: the timeline's bars have no other path, and a remote too old to read this term
+// still serves the feed as slot patches), but the feed stays on feedDelta where the remote reads the term: the slot
+// path re-encodes every card per build on the remote (kernel.py memos.wire feed_slot_split).
 export const REMOTE_DIAL_CAPS = "feedDelta";
 
 /** What the watchdog should do about ONE remote socket, from its state alone (pure, unit-tested):
@@ -921,6 +925,15 @@ interface Conn {
   // key. Lives on the CONN, not the socket, so it survives every re-dial — the onclose retry, the
   // poll's, and the liveness watchdog's abandon-and-dial (watchdog()).
   pending: Map<string, any>;
+  // The view-delta receiver for THIS conn's socket (ui/webview/view-deltas.ts, the class VS Code's pipe uses). The relay
+  // dial carries the page's delta=1 (remoteDialUrl), so after the first full frame the remote kernel serves its
+  // _DELTA_SLOTS as {type:"delta", slot} patches: the timeline's bars, and the feed on a kernel too old to read the caps
+  // term. The kernel's inline shim reassembles only its own LOCAL socket's frames, so a remote patch reached the pane
+  // raw and the timeline dropped it without a row: a remote host's bars froze on the phone where its first full frame
+  // put them (2026-09-18). One instance per conn, minted with it (openRemote) and gone with it (closeRemote), so a
+  // re-attached host's first patch finds no stale base; a patch it cannot apply asks the kernel that sent it for the
+  // whole slot on this conn (sendRemote), never the local kernel, which holds nothing for this host.
+  viewDeltas: ViewDeltas;
 }
 
 /** The TYPES held on a conn's queue, for the hostconn rows (flush-halt's `held`, detach's `pendingDropped`):
@@ -1185,6 +1198,17 @@ export class FederationManager {
   }
 
   private inboundNow(host: string, msg: any): void {
+    // A REMOTE socket's frame goes through its conn's view-delta receiver first, on the RAW frame: a patch's keys are
+    // the kernel's own ids (a bars key is the bare sid, the unit separator and the bar id), so prefixing first would
+    // miss every held key. A full frame of a delta slot seeds the receiver and continues unchanged; a patch continues
+    // as the reassembled whole frame, down the same bars/feed arms below and prefixed exactly as a full frame is; null
+    // means the receiver asked THAT kernel for the whole slot (needSlot on this conn) and there is nothing to emit.
+    // The LOCAL socket's frames arrive reassembled already (the shim applies its own deltas before __rompFed.inbound)
+    // and pass untouched, as does a frame for a host this manager holds no conn for (a detached host's straggler).
+    if (host !== LOCAL) {
+      const vd = this.conns.get(host)?.viewDeltas;
+      if (vd) { msg = vd.receive(msg); if (msg === null) return; }
+    }
     const m = prefixInbound(host, msg);
     if (m && m.type === "session" && typeof m.id === "string") {
       (this.perHostSids[host] ||= new Set()).add(m.id);
@@ -1802,7 +1826,9 @@ export class FederationManager {
     // credential is added by the relay (_remote_ws), so this URL carries no token at all. The URL is
     // built fresh on every dial (remoteDialUrl, called from connect) so a redial reflects the page's
     // current terms, exactly as the pane's own local socket rebuilds its ?active=/reconnect on each open.
-    const conn: Conn = { host, ws: null, url: "", closed: false, live, lastRecv: 0, resumeProvisional: 0, connT: 0, pending: new Map() };
+    const conn: Conn = { host, ws: null, url: "", closed: false, live, lastRecv: 0, resumeProvisional: 0, connT: 0, pending: new Map(),
+                         // a patch this socket's receiver cannot apply asks THIS host's kernel for the whole slot, on this conn
+                         viewDeltas: new ViewDeltas((slot) => this.sendRemote(host, { type: "needSlot", slot })) };
     this.conns.set(host, conn);
     this.ensureHost(host);
     this.connect(conn);
@@ -1825,7 +1851,10 @@ export class FederationManager {
   // never got a ready acked dials as a first dial, holding nothing to reconnect to. `caps` is this manager's
   // own term, not one of the page's (REMOTE_DIAL_CAPS): it names what THIS side decodes on a frame from that
   // host, so the remote kernel serves its feed as feedDelta frames, which the feedDelta branch applies per
-  // host, instead of the view-delta slot frames nothing here could reassemble (2026-09-18).
+  // host, instead of the view-delta slot frames (2026-09-18; the conn's receiver reassembles those too since later
+  // that day, but the slot path costs the remote a re-encode of every card per build). `delta` stays among the
+  // page's terms on purpose: it puts the remote's timeline bars on the view-delta path, where a change costs one
+  // patch instead of the whole bars frame and its 60 s repost (kernel.py _DEDUP_REPOST_S) per remote host.
   private remoteDialUrl(conn: Conn, redial: boolean): string {
     const host = conn.host;
     const proto = location.protocol === "https:" ? "wss://" : "ws://";
@@ -2043,6 +2072,7 @@ export class FederationManager {
     delete this.perHostFeed[host];
     delete this.perHostFeedAt[host];
     delete this.perHostFeedRaw[host];   // with them: a re-attach's first delta must find no stale base to apply onto
+    // (the conn's view-delta receiver, the bars and feed slot bases it held, went with the conn: this.conns.delete above)
     const hadTl = host in this.perHostTl || host in this.perHostTlBars;
     delete this.perHostTl[host];
     delete this.perHostTlBars[host];
