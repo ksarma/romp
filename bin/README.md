@@ -52,4 +52,5 @@ no separate implementation to point at.
 |---|---|---|
 | `romp-update` | `cli/update.py` | Pushes this machine's committed romp to attached remote kernels and restarts them (`romp update [host]`). |
 | `romp-version` | `cli/version.py` | Version report across the moving parts (`romp version`). |
+| `romp-perf-export` | `cli/perf_export.py` | Writes one paste-safe copy of the kernel's `GET /perf` counters, or of a saved snapshot, under the state directory (`romp perf export --public`): the shape rule and denylist of `cli/perf_public.py` (no bin entry; imported by this, by `romp-restart-metrics --public` and by the served-snapshot invariant test) applied to the whole document, so no path, session id, hostname, pid or username is written. |
 | `romp-spend-rebuild` | `cli/spend_rebuild.py` | Recounts the token columns of the spend ledger (`spend.json`) from the transcripts' per-call usage; dollars and turn counts untouched. Dry run by default, `--apply` writes with a backup (`romp spend-rebuild`). |
