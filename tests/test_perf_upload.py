@@ -567,14 +567,16 @@ class Cli(unittest.TestCase):
         """The kernel's millisecond totals are FLOATS and cumulative (pusher.cycle_cpu_ms_sum read 1,779,484.0 after one
         hour on a busy kernel, about 35 days to 1.5e9; the wire tables' sendMs behind it), so an export from a long-lived
         kernel carries floats the size of a clock stamp under duration keys. The re-check exempts a float under a
-        duration key (perf_public.duration_key: a name whose tokens carry `ms`) and the file is sent whole, the sums in
-        the body; the same value under a key whose name carries no `ms` token (sendMax) is the stamp finding, so the key
-        decides with the type. Fails before: the export was refused by its own belt, naming perf/pusher/cycle_cpu_ms_sum,
-        and nothing was sent."""
+        duration key (perf_public.duration_key: a name whose tokens carry `ms`), its own or any key above it (stages_ms,
+        the lifetime sum per stage, whose leaf keys are stage names), and the file is sent whole, the sums in the body;
+        the same value under a key whose path carries no `ms` token (sendMax) is the stamp finding, so the key decides
+        with the type. Fails before: the export was refused by its own belt, naming perf/pusher/cycle_cpu_ms_sum, and
+        nothing was sent; with the leaf-only reading, perf/stages_ms/push at 2.0e9 was refused the same way."""
         base = ["--yes", "--receiver", self.fake.url]
         doc = json.loads(self.data)
         self.assertNotIn("cycle_cpu_ms_sum", doc["perf"]["pusher"], "the planted snapshot carries no cpu sum; the case plants one")
         doc["perf"]["pusher"]["cycle_cpu_ms_sum"] = 2.0e9
+        doc["perf"]["stages_ms"]["push"] = 2.0e9            # a stage's lifetime sum: the parent key carries the token, the leaf names the stage
         doc["perf"]["pusher"]["clients"] = {
             "byKind": {"chrome": {"frames": 400_000, "bytes": 2_000_000_000, "sendMs": 1.6e9, "sendMax": 250.5, "sends": 400_000}}}
         edited = os.path.join(self.xdg, "edited.json")
@@ -583,6 +585,7 @@ class Cli(unittest.TestCase):
         with open(edited, "rb") as fh:
             data = fh.read()
         self.assertIn(b"2000000000.0", data, "the sum is written as a float, with a point")
+        self.assertIn(b'"push": 2000000000.0', data)
         self.assertIn(b"1600000000.0", data)
         r = _run([edited] + base, self.state)
         self.assertEqual(r.returncode, 0, r.stderr)

@@ -537,8 +537,8 @@ class FoldInvariant(unittest.TestCase):
     def test_the_denylist_walk_refuses_a_bound_off_a_power_of_two_and_a_number_the_size_of_a_stamp_and_passes_every_fold(self):
         """The two findings added with the third review round's rules (2026-09-18), so the upload's re-check matches the
         fold's full fixed point: a memory-fraction bound (BOUND_KEYS) the fold would have rounded up to a power of two, a
-        value finding at its own path; and a FLOAT leaf at or above STAMP_FLOOR anywhere outside a bound or a duration key
-        (test_a_float_under_a_duration_key_is_never_judged_against_the_stamp_floor), dict or list, which is round 3's
+        value finding at its own path; and a FLOAT leaf at or above STAMP_FLOOR anywhere outside a bound or a duration key on
+        its path (test_a_float_under_a_duration_key_is_never_judged_against_the_stamp_floor), dict or list, which is round 3's
         property (no absolute clock stamp survives the fold under any key) turned into a check over a file. An integer that
         large is exempt whatever its size: a time.time() value is a float, and the kernel's cumulative byte and count totals
         are integers that pass 1.5e9 within hours on a busy kernel (the ws tables' `bytes`, `parses.bytes`), so a fresh
@@ -629,9 +629,13 @@ class FoldInvariant(unittest.TestCase):
         float refused a fresh export from a long-lived kernel by its own belt (2026-09-18). A float at or above STAMP_FLOOR
         under a DURATION key (duration_key: a name whose tokens, split on underscores and camelCase boundaries, carry `ms`
         in any case) is a total and never a finding; under every other key outside BOUND_KEYS it stays the stamp finding
-        at its path, the type and the key deciding together. A list element has no key of its own and is judged against
-        the floor whatever key the list sits under. Fails before: cycle_cpu_ms_sum 2.0e9 and wallMs 1.6e9 were refused as
-        stamps, and check_document named perf/pusher/cycle_cpu_ms_sum."""
+        at its path, the type and the key deciding together. The exemption reads the leaf's own key and every dict key
+        above it (the ANCESTOR rule, the same day: stages_ms is a dict of lifetime millisecond sums keyed by stage names,
+        push, jobs, push.chat, so its leaf keys carry no `ms` token while the parent does, and the sums climb like
+        cycle_cpu_ms_sum), so a list element, which has no key of its own, passes under a duration key and is judged under
+        any other, and a leaf whose own key is one passes whatever its parents (a stageRing row's `ms`). Fails before:
+        cycle_cpu_ms_sum 2.0e9 and wallMs 1.6e9 were refused as stamps, and check_document named
+        perf/pusher/cycle_cpu_ms_sum; with the leaf-only reading, perf/stages_ms/push at 2.0e9 was refused too."""
         # the tokenizer: underscores and camelCase boundaries, an uppercase run kept whole before a capitalized word; the
         # boundary and the token are the receiver's, read by name from here
         self.assertEqual(pp.KEY_TOKEN_BOUNDARY.pattern, r"_+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
@@ -673,11 +677,40 @@ class FoldInvariant(unittest.TestCase):
                              [("a number the size of a clock stamp", False, "perf/pusher/" + name, 3)], name)
             self.assertEqual(_check(doc), "the public form still fails the denylist (a number the size of a clock stamp, "
                                           "the value at perf/pusher/%s); nothing written" % name)
-        # a list under a duration key: the element is judged, and the path carries the index
+        # THE ANCESTOR RULE: a float passes when any key on its path is a duration key. stages_ms is keyed by stage names,
+        # so the parent carries the token and the leaves do not, at any depth (a dotted seam's parts as a nested dict).
+        # Fails before: perf/stages_ms/push was the stamp finding
+        doc = pe.export_document(leak_snapshot(), usage=True)
+        self.assertEqual(doc["perf"]["stages_ms"]["jobs"], 5000.0)
+        doc["perf"]["stages_ms"]["push"] = 2.0e9
+        doc["perf"]["stages_ms"]["jobs"] = {"autoNudge": 1.6e9, "parse": {"cold": 1.5e9}}
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "a float below a duration key is a total")
+        self.assertIsNone(_check(doc))
+        # a list under a duration key: the element has no key of its own and passes by the ring's key above it (this pin
+        # read the element's own key alone before the ancestor rule and refused perf/pusher/cycle_ms_ring/1); a list under
+        # a key that is not one is judged as before, and the path carries the index
         doc = pe.export_document(leak_snapshot())
-        doc["perf"]["pusher"]["cycle_ms_ring"] = [1.0, 1.6e9]
+        doc["perf"]["pusher"]["cycle_ms_ring"] = [1.0, 1.6e9, [2.0e9]]
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "an element of a list under a duration key")
+        doc["perf"]["pusher"]["cycle_ring"] = [1.0, 1.6e9]
         self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",))],
-                         [("a number the size of a clock stamp", "perf/pusher/cycle_ms_ring/1")])
+                         [("a number the size of a clock stamp", "perf/pusher/cycle_ring/1")])
+        # the LEAF rule stands on its own: a stageRing row's stage split sits under keys none of which is a duration (jobs,
+        # stageRing, the index, stages, jobs), its `ms` passes by its own key, and the row's `bytes` beside it, the same
+        # float under the same parents, is the stamp finding at its depth; a key with no duration anywhere on its path is
+        # refused as before
+        doc = pe.export_document(leak_snapshot())
+        row = doc["perf"]["jobs"]["stageRing"][0]["stages"]["jobs"]
+        self.assertEqual(sorted(row), ["bytes", "hydrated", "ms"])
+        row["ms"] = 1.6e9
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "a leaf `ms` under parents that are not durations")
+        row["bytes"] = 1.6e9
+        self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",))],
+                         [("a number the size of a clock stamp", False, "perf/jobs/stageRing/0/stages/jobs/bytes", 7)])
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["pusher"]["startedAt"] = 1.6e9
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",))],
+                         [("a number the size of a clock stamp", "perf/pusher/startedAt")], "no duration key on the path")
         # a duration key exempts the floor alone: an uptime or a bound is judged by its own coarsening first, as before
         doc = pe.export_document(leak_snapshot())
         doc["perf"]["uptime_s"] = 1.6e9

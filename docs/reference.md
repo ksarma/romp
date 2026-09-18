@@ -3819,8 +3819,10 @@ are; an integer that large is a byte total or a count, which a long-lived
 kernel's lifetime totals reach within hours, and passes, and so does a float
 that large under a duration key, a name that carries the token `ms` between
 underscores or camelCase boundaries (`cycle_cpu_ms_sum`, `wallMs`; `sendMax`
-and `startedAt` are not), a millisecond total the kernel's sums reach in
-weeks: a check the export's own output passes by construction, and which
+and `startedAt` are not), its own key or any key above it (`stages_ms` names
+the measure and its entries the stages), a millisecond total the kernel's
+sums reach in weeks: a check the export's own output passes by construction,
+and which
 `romp perf upload` runs again over a file you may have edited); any finding
 refuses
 the write and names the kind of
@@ -3867,9 +3869,10 @@ walk and denylist check again, as it stands, since you may have edited it. The
 rule is the export's: the public form is paste-safe, not unlinkable. What the
 export dropped or coarsened is refused (a `t` put back on a split row, an
 uptime typed to the second, a bound typed to the byte, a float the size of a
-clock stamp under any key but a duration key), and the measurements it keeps
+clock stamp with no duration key on its path), and the measurements it keeps
 pass (an integer that large is a byte total or a count; a float that large
-under a duration key, a name carrying the token `ms`, is a millisecond total),
+under a duration key, a name carrying the token `ms`, its own or any key
+above it, is a millisecond total),
 so a fresh export passes whole and two
 uploads from one kernel remain linkable through them by design. A finding is
 reported by kind and key path, never by value. The verb then prints the path,

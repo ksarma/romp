@@ -270,9 +270,10 @@ def check_document(doc: dict, state: Path, under=("perf",), tail="nothing writte
     the kind of string or rule and the key path (a value's own path; for a key, the path of the dict holding it),
     never the key or the value itself. All three mechanisms run, the identifier scan, the walk and the denylist
     walk (pp.denylist_problems: a key the fold drops, an uptime not on whole minutes, a bound not on a power of two,
-    or a float the size of a clock stamp under any other key but a duration key; an integer that large is a byte
-    total or a count, and a float under a duration key, a name carrying the token `ms`, is a millisecond total, both
-    of which a long-lived kernel's totals reach, so both pass; none of the four a fold's own output carries, so for
+    or a float the size of a clock stamp with no duration key on its path; an integer that large is a byte total or
+    a count, and a float under a duration key, a name carrying the token `ms`, its own or any key above it, is a
+    millisecond total, both of which a long-lived kernel's totals reach, so both pass; none of the four a fold's own
+    output carries, so for
     this verb it is a
     belt; for `romp perf upload`, over a file as it stands, it is what refuses a `t` the user put back, an uptime
     typed to the second, a bound typed to the byte or a stamp under a new key, and passes every measurement the

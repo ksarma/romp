@@ -507,9 +507,12 @@ def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=(), stacks_key=S
 # export from a long-lived kernel by its own belt, and the upload verb with it (the two defects this replaces, 2026-09-18).
 # An INTEGER: the cumulative byte and count totals are integers, and on a busy kernel the wire totals (pusher.clients byKind
 # and byApp `bytes`, hundreds of megabytes to one client within an hour; `parses.bytes`) pass 1.5e9 within hours. A float
-# under a DURATION KEY (duration_key, below): the millisecond totals are floats and cumulative too (pusher.cycle_cpu_ms_sum
-# read 1,779,484.0 after one hour on a busy kernel, about 35 days to the floor; the other ms sums climb behind it), so a float
-# under a key that names a millisecond measure is never judged against the floor, and every other float at or above it is.
+# under a DURATION KEY (duration_key, below), its own or ANY key above it on its path: the millisecond totals are floats and
+# cumulative too (pusher.cycle_cpu_ms_sum read 1,779,484.0 after one hour on a busy kernel, about 35 days to the floor; the
+# other ms sums climb behind it), so a float under a key that names a millisecond measure is never judged against the floor;
+# the key that names it may be the parent's (stages_ms is a dict of lifetime sums keyed by STAGE names, push, jobs,
+# push.chat, so its leaves carry no ms token while the parent does, and they climb the same way), so every key on the
+# leaf's path is read, and a float at or above the floor with no duration key anywhere on its path is the finding.
 # A memory-fraction bound (BOUND_KEYS) is judged by the power-of-two rule alone, never against the floor
 # (recordCache.budgetBytes floors at 4 GiB on every machine). The fixed point holds over every fixture and a served export
 # (ServedKernel).
@@ -520,9 +523,11 @@ STAMP_FLOOR = 1.5e9
 # bytes and sigMsgs are not (the token must be `ms` whole, so `msgs` is not it), and a float under one of those is judged
 # against the floor whatever it measures: a per-write maximum cannot climb to 1.5e9 ms, and the totals that can all carry
 # the token. The kernel spells its millisecond keys both ways, so both splits are read; a digit joins its letters, so the
-# gc row's `ms2` (gen-2 time) is one token and not a duration under this rule. A list element has no key of its own and is
-# judged against the floor whatever key the list sits under. The receiver applies the same split and token, and its sync
-# test reads KEY_TOKEN_BOUNDARY and DURATION_TOKEN by name, so a change to either here is a change there.
+# gc row's `ms2` (gen-2 time) is one token and not a duration under this rule. The rule is applied to the leaf's own key and
+# to every dict key above it (a list index is not a key and is skipped), so a leaf named for what it counts under a parent
+# named for the measure passes (stages_ms.push), and so does an element of a list under a duration key, which has no key
+# of its own; a leaf with no duration key on its path is judged. The receiver applies the same split and token, and its
+# sync test reads KEY_TOKEN_BOUNDARY and DURATION_TOKEN by name, so a change to either here is a change there.
 KEY_TOKEN_BOUNDARY = re.compile(r"_+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")   # wallMs: wall, Ms; HTTPMs: HTTP, Ms
 DURATION_TOKEN = "ms"
 
@@ -536,8 +541,8 @@ def key_tokens(key):
 
 def duration_key(key):
     """True when `key` is a string one of whose pieces, split on KEY_TOKEN_BOUNDARY, is DURATION_TOKEN lower-cased: a
-    millisecond measure, which denylist_problems never judges against STAMP_FLOOR. None or a non-string key (a list
-    element's) is never one."""
+    millisecond measure. denylist_problems reads it over a leaf's own key and every key above it on its path, and never
+    judges a float with one there against STAMP_FLOOR. None or a non-string key (a list element's) is never one."""
     return isinstance(key, str) and any(t.lower() == DURATION_TOKEN for t in KEY_TOKEN_BOUNDARY.split(key))
 
 
@@ -550,12 +555,14 @@ def denylist_problems(doc, under=()):
     path the snapshot's blocks sit below, as paste_problems takes it), a KEY finding at the dict holding it, its value not
     walked; an uptime (UPTIME_KEYS) whose value is not what public_uptime would have written, a VALUE finding at its own
     path; a memory-fraction bound (BOUND_KEYS) whose value is not what public_bound would have written, a value finding at
-    its own path; and a FLOAT leaf at or above STAMP_FLOOR under any other key that is not a duration key (duration_key), in
-    a dict or a list, a value finding at its own path (the fold's output carries no absolute clock stamp under any key, so
-    one in a file was typed in after the export, whatever key it sits under; a time.time() value is a float, and an integer
-    that large is a count or a byte total, which the kernel's lifetime totals reach within hours, so it passes whatever its
-    size; a float under a duration key, a name whose tokens carry `ms`, is a millisecond total, which the kernel's sums
-    reach in weeks, so it passes too; a bound is judged as a bound alone, never against the floor). One finding per leaf,
+    its own path; and a FLOAT leaf at or above STAMP_FLOOR with no duration key (duration_key) on its path, its own key or
+    any dict key above it (a list index is not a key), in a dict or a list, a value finding at its own path (the fold's
+    output carries no absolute clock stamp under any key, so one in a file was typed in after the export, whatever key it
+    sits under; a time.time() value is a float, and an integer that large is a count or a byte total, which the kernel's
+    lifetime totals reach within hours, so it passes whatever its size; a float under a duration key, a name whose tokens
+    carry `ms`, its own or an ancestor's (stages_ms names the measure and its leaves the stages), is a millisecond total,
+    which the kernel's sums reach in weeks, so it passes too; a bound is judged as a bound alone, never against the floor).
+    One finding per leaf,
     the coarsening's first. The number itself is not carried in the kind,
     and a caller prints the kind and the path alone. The walk (paste_problems) is a shape rule and passes all four: `t`
     fits the identifier grammar and any number is a number, so a document that a fold produced passes here by
@@ -580,9 +587,10 @@ def denylist_problems(doc, under=()):
             if not (rounded is v or rounded == v):
                 value_problem("a bound not rounded to a power of two", v, here)
             return                          # a bound is judged as a bound alone, never against the floor
-        if isinstance(v, float) and v >= STAMP_FLOOR and not duration_key(key):
-            # a float alone, and never under a duration key: an integer that large is a total, and so is a float under a key
-            # that names a millisecond measure (STAMP_FLOOR's comment)
+        if isinstance(v, float) and v >= STAMP_FLOOR and not any(duration_key(k) for k in here):
+            # a float alone, and never with a duration key on its path: an integer that large is a total, and so is a float
+            # under a key that names a millisecond measure, its own or any above it (STAMP_FLOOR's comment); `here` ends in
+            # the leaf's own key, or in its index when the leaf is a list element, and an index is never a duration key
             value_problem("a number the size of a clock stamp", v, here)
 
     def walk(node, where):
