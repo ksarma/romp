@@ -449,7 +449,8 @@ class RealArm(Harness):
     HUB_RELAY = "/ws?app=chat&wid=w1&relay=1&delta=1&iid=hubwid%3Aaaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"   # a current hub's splice: the page's terms, the iid namespaced by its wid (8fe70da07)
     OLD_RELAY = "/ws?app=chat&wid=w1&relay=1"                                                             # a hub older than the federation's remote ready: app, wid and the splice's own term alone
     EXT_PIPE = "/ws?app=chat&wid=w1&client=ext&delta=1"                                                   # the VS Code extension host's chat pipe (vscode-extension/src/extension.ts)
-    OLD_REDIAL = "/ws?app=chat&delta=1&iid=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee&wid=w1&reconnect=1"        # a pane shim older than the redial's proto term: reconnect=1 alone, the bare uuid iid every shim mints
+    OLD_REDIAL = ("/ws?app=chat&delta=1&iid=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee&wid=w1&active=%s&caps=readyGate&reconnect=1" % SID)   # the fd95b435a shim's redial, term for term
+    #             (its dial line: app, delta, the bare uuid iid every shim mints, wid, active, caps=readyGate, reconnect=1; no proto term, the one the redial's handshake needs)
     READY2 = {"type": "ready", "proto": 2}
     INTENT = {"type": "sendMessage", "id": SID, "text": "a message typed while the pipe was down"}
 
@@ -548,20 +549,55 @@ class RealArm(Harness):
 
     def test_an_older_shims_redial_with_a_bare_iid_is_taken_at_the_row_it_flushes(self):
         """The other older producer, through the real handler: a pane shim older than the redial's proto term redials after this kernel
-        restarted with reconnect=1 alone (ready from accept, no proto: unhandshaken), delta=1 and the bare uuid iid every shim mints,
-        from a browser (an Origin: kind page), and the wsclose row it queued while its socket was down is its first frame. Taken there,
-        and the next cycle serves the index wire. This is why neither delta nor reconnect keys the decline (review round 1): a current
-        relay carries delta too, and reconnect is popped by the first pusher cycle, so either would have silenced this socket again."""
+        restarted as the fd95b435a shim dials it, term for term (OLD_REDIAL): caps=readyGate, the hold every kernel-served pane announces,
+        and reconnect=1 with no proto term, so the accept's reconnect branch is what makes the socket ready from accept (review round
+        2: modelled without the caps term, the leg reached ready through the no-hold disjunct and a kernel that lost the branch stayed
+        green), delta=1 and the bare uuid iid every shim mints, from a browser (an Origin: kind page), and the wsclose row it queued
+        while its socket was down is its first frame. Taken there, and the next cycle serves the index wire. This is why neither delta
+        nor reconnect keys the decline (review round 1): a current relay carries delta too, and reconnect is popped by the first
+        pusher cycle, so either would have silenced this socket again. The row's kind and frame are pinned here too: this is the one
+        leg that files a page-kind, clientDiag-word row."""
         row = {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat", "code": 1006, "everConnected": True, "bundleReady": True}}
         c, sent, marks, rows, err = self._run(self.OLD_REDIAL, [row, "cycle"], headers={"Origin": "http://TESTHOST:1", "User-Agent": "TestBrowser/1.0"})
         self.assertEqual((c.get("kind"), c.get("redial"), c.get("ready"), c.get("delta"), c.get("iid")), ("page", True, True, True, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"))
+        self.assertEqual((c["caps"], c.get("active")), ({"readyGate"}, SID), "the hold announced and the watched tab, as the shim dials; ready all the same, by reconnect=1")
         self.assertEqual((c["handshake"], c["proto"], c.get("implicitHandshake")), (True, 1, "clientDiag"), "taken at the flushed row")
         self.assertIn("a page socket (app chat) declared no chat wire; its first frame (clientDiag) stands as a proto-1 handshake", err)
+        self.assertEqual(rows[1]["data"], {"app": "chat", "kind": "page", "frame": "clientDiag", "withheld": 0, "proto": 1}, "the row names the producer's kind and the frame's word: %r" % (rows[1],))
         fulls = [f for f in sent[marks[1]:] if f.get("type") == "session" and f.get("id") == SID]
         self.assertEqual(len(fulls), 1, "the next cycle serves the session: %r" % [f.get("type") for f in sent[marks[1]:]])
         self.assertNotEqual(fulls[0].get("proto"), 2, "the index wire"); self.assertNotIn("firstUuid", fulls[0])
         self.assertEqual([r["what"] for r in rows][:2], ["wsopen", "implicitHandshake"], rows)
         self.assertEqual([(r["surface"], r["what"]) for r in rows][2:], [("pane-shim", "wsclose")], "the shim's own row lands behind them: %r" % rows)
+
+    def test_a_first_frame_whose_type_is_no_op_the_kernel_accepts_is_recorded_as_other(self):
+        """Review round 2, the privacy check through the real handler: the record, the stderr line and the implicitHandshake row quote
+        the first frame's type as a word from WS_OPS or as `other`, never the type itself. A free-text type, a sid-shaped type, a dict
+        type and a list type each stand in as `other`, the socket is taken all the same and served the index wire on the next cycle,
+        and none of the planted text reaches the record, the row or the handshake's line. (_note_unknown_op, the dispatch's terminal
+        arm, still says an unknown STRING op once per type on stderr, cut at 40, as before this PR; its line is not this fix's and is
+        read around here.) The control: a real op with planted text in its body quotes the op alone."""
+        PLANTED = "PLANTED-FREE-TEXT-9f3a"
+        for odd_type, why in ((PLANTED + " path=/srv/notes/private.md", "a free-text type"),
+                              ("11111111-2222-3333-4444-000000000001", "a sid-shaped type"),
+                              ({"leak": PLANTED, "id": "11111111-2222-3333-4444-000000000001"}, "a dict type"),
+                              ([PLANTED, "/srv/notes/private.md"], "a list type")):
+            c, sent, marks, rows, err = self._run(self.OLD_RELAY, ["cycle", {"type": odd_type, "id": SID}, "cycle"])
+            self.assertEqual((c["handshake"], c["proto"], c.get("implicitHandshake")), (True, 1, "other"), why)
+            self.assertEqual([r["what"] for r in rows], ["wsopen", "implicitHandshake"], why + ": %r" % (rows,))
+            self.assertEqual(rows[1]["data"], {"app": "chat", "kind": "relay", "frame": "other", "withheld": 1, "proto": 1}, why)
+            line = [l for l in err.splitlines() if "stands as a proto-1 handshake" in l]
+            self.assertEqual(len(line), 1, why + ": said once: %r" % (err,))
+            self.assertIn("its first frame (other) stands as a proto-1 handshake", line[0], why)
+            for text in (PLANTED, "11111111-2222", "/srv/notes", "leak"):
+                self.assertNotIn(text, json.dumps(rows) + line[0], why + ": planted text in the file or on the handshake's line: %r" % (text,))
+            fulls = [f for f in sent[marks[2]:] if f.get("type") == "session" and f.get("id") == SID]
+            self.assertEqual(len(fulls), 1, why + ": taken, so the next cycle serves the session: %r" % [f.get("type") for f in sent[marks[2]:]])
+            self.assertNotEqual(fulls[0].get("proto"), 2, why + ": the index wire")
+        c, sent, marks, rows, err = self._run(self.OLD_RELAY, ["cycle", {"type": "needFull", "id": SID, "text": PLANTED, "path": "/srv/notes/private.md"}])
+        self.assertEqual((c.get("implicitHandshake"), rows[1]["data"]["frame"]), ("needFull", "needFull"), "a real op quotes its own word")
+        for text in (PLANTED, "/srv/notes"):
+            self.assertNotIn(text, json.dumps(rows) + err, "the body's text is nowhere on the record or stderr: %r" % (text,))
 
     def test_a_deep_link_then_a_span_to_the_tail_grows_the_tail_run_and_every_tail_change_is_a_delta(self):
         """T386 stage 2: a deep link (a window with its turn span), then the gap between the window and the tail asked as one

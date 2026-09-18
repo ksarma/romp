@@ -52894,11 +52894,12 @@ def _note_history_reply(client, sid, mtype, reply, nbytes, now=None, sent=True):
 
 def _note_chat_withheld_at_close(client, now=None):
     """One client-diag row for a socket that CLOSED without its handshake after chat frames were withheld from it: the permanent
-    case (a socket that sent nothing for its whole life: a page whose ready never came and that asked for nothing; since
-    2026-09-18 an older shim's redial with no proto term, or an older hub's relay with no ready, is taken at its first frame
-    instead, _implicit_handshake), told apart from the routine pre-ready race (a pusher cycle between the accept and the
-    bundle's ready, whose handshake then arrives and whose frames follow), which used to file the same row (the tidy after PR
-    1642, low 1). Returns whether a row was filed."""
+    case, told apart from the routine pre-ready race (a pusher cycle between the accept and the bundle's ready, whose handshake
+    then arrives and whose frames follow), which used to file the same row (the tidy after PR 1642, low 1). The permanent case is
+    any chat socket whose wire was never declared while frames were withheld: one that sent nothing for its whole life (a page
+    whose ready never came and that asked for nothing), and one of CURRENT vintage (a namespaced-iid relay, an ext pipe) that
+    sent frames and never a ready, which the vintage rule leaves withheld; a chat socket of older vintage is taken at its first
+    frame instead (_implicit_handshake, 2026-09-18) and files no row here. Returns whether a row was filed."""
     if client.get("handshake") is not False or not client.get("withheld"):
         return False
     try:
@@ -52911,14 +52912,53 @@ def _note_chat_withheld_at_close(client, now=None):
         return False
 
 
+# Every op _dispatch_ws and _drive accept from a client frame, by name: the kernel's own vocabulary of the wire, and the ONE
+# set a kernel-written record may quote a client frame's type from (_ws_op_word). A frame's type is client text until it
+# matches a name here: the implicitHandshake record, its stderr line and its client-diag row read the word or `other`, never
+# the type itself (review round 2 of the implicit handshake, 2026-09-18: str() of the type let a socket's first frame put free
+# text, a sid-shaped string or a dict's content into client-diag.jsonl and the kernel log). The dispatch has no table to read
+# this from (each arm tests its own literal), so the set is written out here and tests/test_chat_window_spans.py pins it equal
+# to the literals in _dispatch_ws's arms, _drive's ID_OPS and _TARGET_NAME_OPS: an arm added without its name here fails that
+# pin, and until then its op reads as `other` in the row.
+WS_OPS = frozenset((
+    "activeTab", "addCustomAsk", "answerAsk", "apiRetry", "askClear", "askClearMany", "askFollowUp", "askText",
+    "browseDir", "cancelAsk", "cancelCreate", "cancelQueued", "cancelWatch", "cardNotify", "cardOpened", "clearAll",
+    "clientDiag", "closeSession", "closeSubagent", "closeTab", "commentCreate", "commentDelete", "commentMerge",
+    "commentPromote", "commentReply", "commentResolve", "commentSeen", "compact", "compactSession", "createSession",
+    "deepLink", "dirComplete", "dismissEcho", "dismissLane", "dotHover", "dotOpen", "dropFile", "editTag",
+    "endSession", "expand", "fileComments", "fileCommentsSend", "fileGitLink", "forkSession", "hoverHighlight",
+    "imgRequest", "interrupt", "ledgerHover", "listDir", "loadAround", "loadEpisode", "loadNewer", "loadOlder",
+    "loadTurns", "locateDiag", "loginCancel", "loginCode", "loginRemove", "loginStart", "mcpAction", "moveSession",
+    "needFull", "needFullFeed", "needSlot", "nodeOverride", "noticeAction", "openByName", "openFile", "openFolder",
+    "openSession", "openSubagent", "openTagsDialog", "orderAudit", "pickFile", "pickResult", "quarantineDecision",
+    "ready", "redial", "redistill", "renameSession", "reorderTabs", "requestSessions", "reviveSession",
+    "rewindDelete", "rewindFiles", "rewindSend", "saveFile", "sendCommand", "sendMessage", "setAuth", "setAutoNudge",
+    "setColormap", "setCommentEffort", "setCommentFast", "setCommentModel", "setCompactSuggest", "setConserve",
+    "setDefaultDir", "setDistillEffort", "setDistillFast", "setDistillModel", "setEffort", "setFast",
+    "setFileEditing", "setGlobalRetryPaused", "setIndexEffort", "setIndexFast", "setIndexModel",
+    "setJudgeConcurrency", "setJudgeEffort", "setJudgeFast", "setJudgeModel", "setMode", "setModel", "setPalette",
+    "setSessionColor", "setSessionEmoji", "setSessionFlag", "setTaskTracking", "setThinkingSummaries",
+    "setTimelineViews", "setUpdateMode", "setUserTodos", "setWholeChatFrames", "showAskPath", "showOnTimeline",
+    "stopTask", "submitAsk", "tagEdit", "timelineHover", "toggleAsk", "undoClear", "unpinNote", "userTodoAnswer",
+    "userTodoDismiss", "viewReadOnly", "writeOrder",
+))
+
+
+def _ws_op_word(t):
+    """The word a kernel-written record quotes for a client frame's type: the type when it is a str in WS_OPS, else "other"
+    (a type the kernel does not know, a missing type, a type that is not a string). Never the type itself, whatever it holds."""
+    return t if isinstance(t, str) and t in WS_OPS else "other"
+
+
 def _implicit_handshake(client, msg):
     """The FIRST client frame from a chat socket of OLDER VINTAGE that has declared no chat wire stands as its handshake, on
     the index wire (proto 1), and lifts the chat withhold (_send_chat_locked's gate). The event this keys on is that frame
     itself; no clock is read. Two producers dial a chat socket that neither posts `ready` nor carries a `proto` term and
-    then ask this kernel for things: a hub page older than the federation's remote ready (f7a80efee) relaying to a newer
-    kernel, whose federation sent the page's ready to the local socket alone; and a pane shim older than the redial's proto
-    term redialing after this kernel restarted (reconnect=1 alone, its page's one ready acked long ago, so no ready
-    follows). Until 2026-09-18 both were held silent for the socket's life: strips and statuses flowed and every session
+    then ask this kernel for things: a hub page older than the federation's remote ready (b84f716a8 for a proto-2 page,
+    f7a80efee for every page) relaying to a newer kernel, whose federation sent the page's ready to the local socket alone;
+    and a pane shim older than the redial's proto term redialing after this kernel restarted (reconnect=1 alone, its page's
+    one ready acked long ago, so no ready follows). Until 2026-09-18 both were held silent for the socket's life: strips and
+    statuses flowed and every session
     body was withheld, so an older dashboard attached to a newer kernel listed the remote's tabs with nothing behind them
     (two relay sockets, 965 and 644 chat frames withheld, on the record). Both spoke the index wire before the gate
     existed, and that is the wire they degrade to.
@@ -52947,11 +52987,23 @@ def _implicit_handshake(client, msg):
     wakes nothing itself (a settings post) would otherwise wait for the backstop cycle. Said once on stderr per socket,
     with the frame that stood in and the frames withheld before it, and filed as one kernel-surface client-diag row (what
     implicitHandshake: app, kind, frame, withheld, proto 1) beside the socket's wsopen row, in a try, so a file failure
-    never touches the socket; the frame type is cut at CLIENT_DIAG_STR_MAX on the record and in the row, the way every
-    stored string is. Returns whether the mark lifted here.
+    never touches the socket. The frame is quoted on all three (the record, the line, the row) as a WORD from WS_OPS, the
+    kernel's own vocabulary of the ops _dispatch_ws and _drive accept, or as `other` for any type outside it (a string the
+    kernel does not know, a missing type, a type that is not a string), never as the type itself: a first frame's type is
+    client text, and str() of it let free text, a sid-shaped string or a dict's content into client-diag.jsonl and the
+    kernel log (review round 2, 2026-09-18). Returns whether the mark lifted here.
     With federation.ts posting its ready before its flush (the same change), a current page's frame ahead of its ready can
     no longer pin its socket under any kernel, and a current relay that opens before its page's proto is known sends no
-    ready at the open, is declined here by its namespaced iid, and is served when its ready comes, as before."""
+    ready at the open, is declined here by its namespaced iid, and is served when its ready comes, as before. Two
+    intermediate vintages are still taken and repair themselves at their ready (review round 2): a hub whose federation is
+    between b84f716a8 (2026-09-11, the ready posted on the relay, behind its flush) and 8fe70da07 (2026-09-15, the
+    namespaced iid) dials app and wid alone and flushes a frame parked while the relay was down or connecting (a setting,
+    its active tab, an ask) before its ready, so that frame is taken here and a pusher cycle before the ready serves one
+    index session frame; and a VS Code extension host built between a6c57f42a (2026-09-11, the uuid wire) and f19808d19
+    (2026-09-15, the client=ext term) dials with no term to stand it down, so an intent it replays on a reconnect is taken
+    and the pipe is served the index wire until its webview's ready. The kernel cannot tell either dial from the older
+    producers this exists for (app and wid alone, no header, no namespaced iid); both windows end at the ready, which
+    re-declares the wire, resets the base and pops the mark, and the implicitHandshake row is the record of the window."""
     if not isinstance(msg, dict) or msg.get("type") == "ready":
         return False
     if client.get("app") != "chat":
@@ -52962,7 +53014,7 @@ def _implicit_handshake(client, msg):
         return False
     client["proto"] = 1
     client["handshake"] = True
-    client["implicitHandshake"] = str(msg.get("type") or "?")[:CLIENT_DIAG_STR_MAX]   # the frame that stood in, on the client's record
+    client["implicitHandshake"] = _ws_op_word(msg.get("type"))   # the frame that stood in, as a word from WS_OPS or `other`, never the client's text
     withheld = int(client.get("withheld") or 0)
     sys.stderr.write("ws: a %s socket (app %s) declared no chat wire; its first frame (%s) stands as a proto-1 handshake, "
                      "%d chat frame(s) withheld before it\n"

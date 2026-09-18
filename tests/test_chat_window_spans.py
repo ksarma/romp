@@ -7,9 +7,11 @@ before the floor and the floor'd list equal the whole build, so a span's events 
 transcripts only (the stage 4a served fixture's builder)."""
 import contextlib
 import datetime
+import inspect
 import io
 import json
 import os
+import re
 import sys
 import unittest
 
@@ -211,7 +213,7 @@ class WindowSpans(Harness):
         self.assertEqual(sent[0].get("proto"), 2, "…in the wire the handshake declared: %r" % {k: sent[0].get(k) for k in ("proto", "tailLo", "headFrom")})
         self.assertIsInstance(sent[0].get("tailLo"), int, "a proto-2 frame names the tail run's first turn")
 
-    def test_an_unhandshaken_sockets_first_frame_stands_as_a_proto1_handshake_and_a_silent_socket_stays_withheld(self):
+    def test_an_older_vintage_sockets_first_frame_stands_as_a_proto1_handshake_and_a_silent_socket_stays_withheld(self):
         """2026-09-18: an older hub's relay socket (no proto term, no ready ever: its page sent the ready to its local socket alone) and
         an older shim's redial (reconnect=1 with no proto term, its page's one ready acked long ago) were held silent for the socket's
         life by the round-eleven gate above; the first client frame from such a socket now stands as a proto-1 handshake
@@ -313,13 +315,30 @@ class WindowSpans(Harness):
         # uuid iid like every shim's dial, and the wsclose row the shim flushes at the redial's open is its first frame; the same road.
         # Neither delta nor reconnect may key the decline: this socket carries both (reconnect is popped by the first pusher cycle)
         redial = {"send": (lambda s: None), "echat": {}, "handshake": False, "ready": True, "reconnect": True, "redial": True, "delta": True,
-                  "iid": BARE_IID, "kind": "page", "app": "chat", "wid": "w2"}
+                  "caps": {"readyGate"}, "iid": BARE_IID, "kind": "page", "app": "chat", "wid": "w2"}   # ready: the hold it announced, lifted by reconnect=1
         taken(redial, {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat"}}, "the older shim's redial", "clientDiag")
         taken(dict(redial, handshake=False, reconnect=False), ask, "the same redial once the first cycle popped reconnect", "needFull")
-        # the branches the first cut left unpinned (review round 1): a frame with no type stands in as "?"; a record with the mark and
-        # no ready key reads as ready from accept (the accept path stamps every socket, so the default is never read live)
-        taken(dict(relay, handshake=False, proto=None, echat={}), {"id": SID}, "a frame with no type", "?")
+        # the branches the first cut left unpinned (review round 1): a frame with no type stands in as `other` (review round 2; "?" before
+        # the vocabulary below); a record with the mark and no ready key reads as ready from accept (the accept path stamps every socket,
+        # so the default is never read live)
+        taken(dict(relay, handshake=False, proto=None, echat={}), {"id": SID}, "a frame with no type", "other")
         taken({"send": relay["send"], "echat": {}, "handshake": False, "kind": "relay", "app": "chat"}, ask, "a record with no ready key", "needFull")
+        # a first frame's type is CLIENT TEXT until it matches an op the kernel accepts (review round 2, the privacy check): the record,
+        # the stderr line and the row quote a word from WS_OPS or `other`, never the type itself, so free text, a sid-shaped string and
+        # the content of a dict or list type never reach client-diag.jsonl or the kernel log; the socket is taken all the same
+        PLANTED = "PLANTED-FREE-TEXT-7c1d"
+        for odd_type, why in ((PLANTED + " path=/srv/notes/private.md", "a free-text type"),
+                              ("11111111-2222-3333-4444-000000000001", "a sid-shaped type"),
+                              ({"leak": PLANTED}, "a dict type"),
+                              ([PLANTED, "11111111-2222-3333-4444-000000000001"], "a list type"),
+                              (7, "a number type")):
+            nrows = len(rows)
+            said = taken(dict(relay, handshake=False, proto=None, echat={}), {"type": odd_type, "id": SID}, why, "other")
+            self.assertEqual(len(rows), nrows + 1, why + ": one row filed")
+            self.assertEqual(rows[-1]["data"], {"app": "chat", "kind": "relay", "frame": "other", "withheld": 1, "proto": 1}, why + ": the row reads the word")
+            self.assertIn("its first frame (other) stands as a proto-1 handshake", said, why)
+            for text in (PLANTED, "11111111-2222", "/srv/notes", "leak"):
+                self.assertNotIn(text, json.dumps(rows[-1]) + said, why + ": planted text on the row or stderr: %r" % text)
         # a file failure never touches the socket: the row is a courtesy to the reader of the file
         def refuse(fp, line):
             raise OSError("the state directory is unwritable")
@@ -328,6 +347,28 @@ class WindowSpans(Harness):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertTrue(km._implicit_handshake(dict(relay, handshake=False, echat={}), ask), "taken with the row refused")
         self.assertEqual(len(rows), nrows, "the refused row is not in the file: %r" % [r["what"] for r in rows])
+
+    def test_the_word_a_kernel_record_quotes_a_frame_type_from_is_the_dispatchs_own_vocabulary(self):
+        """WS_OPS (review round 2) is the set of op names _dispatch_ws's arms, _drive's ID_OPS and _TARGET_NAME_OPS test a client
+        frame's type against, and _ws_op_word maps a type to its member or to `other`. Pinned equal to the literals in the source, so
+        an arm added without its name fails here instead of reading as `other` in the implicitHandshake row for good."""
+        disp = inspect.getsource(km.Handler._dispatch_ws)
+        ops = set()
+        for m in re.finditer(r'msg(?:\.get\("type"\)|\["type"\]) (?:==|in) (\("[^)]*"\)|"\w+")', disp):
+            ops.update(re.findall(r'"(\w+)"', m.group(1)))
+        self.assertGreater(len(ops), 90, "the dispatch's arms were found in its source")
+        drive = inspect.getsource(km._drive)
+        ops.update(re.findall(r'"(\w+)"', re.search(r"ID_OPS = \((.*?)\)\n", drive, re.S).group(1)))
+        ops.update(re.findall(r't == "(\w+)"', drive))
+        ops.update(km._TARGET_NAME_OPS)
+        self.assertEqual(set(km.WS_OPS), ops, "WS_OPS is exactly what the dispatch and the drive accept; missing %r, extra %r"
+                         % (sorted(ops - km.WS_OPS), sorted(km.WS_OPS - ops)))
+        self.assertNotIn("other", km.WS_OPS, "the placeholder is no op")
+        for w in km.WS_OPS:
+            self.assertRegex(w, r"^[A-Za-z]+$", "a word: %r" % (w,))
+        for t, want in (("needFull", "needFull"), ("ready", "ready"), ("sendMessage", "sendMessage"), ("NEEDFULL", "other"), ("needFull ", "other"),
+                        ("", "other"), (None, "other"), ({"type": "needFull"}, "other"), (["needFull"], "other"), (7, "other"), (True, "other")):
+            self.assertEqual(km._ws_op_word(t), want, repr(t))
 
     def test_load_newer_is_retired(self):
         self._boot()

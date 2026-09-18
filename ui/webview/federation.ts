@@ -1841,6 +1841,10 @@ export class FederationManager {
       // re-arm the skeleton set, so the redial would be served the whole board (2026-09-15, the shim posts no ready
       // on its own redial for the same reason).
       if (this.pageProto !== null && !conn.dialedReconnect) { try { ws.send(JSON.stringify({ type: "ready", proto: this.pageProto })); } catch (e) { /* the next frame says */ } }   // the proto the page speaks, 1 included (low 2)
+      // a held needFull the ready's connect push answers is not flushed behind it, where it would serve the same session
+      // frame a second time (dropAsksTheReadyServes: every held ask on a dial with no skeleton term, the active tab's alone
+      // on a skeleton dial). Only when a ready went out just now: a redial posts none and keeps every ask (2026-09-18).
+      const moot = this.pageProto !== null && !conn.dialedReconnect ? this.dropAsksTheReadyServes(conn) : [];
       // settings queued while the socket was down go out next, behind the ready and ahead of everything else, on the
       // open event itself, never a timer, so nothing sent after the reconnect can overtake them (see flushPending). That
       // is also why the relay-up dispatch below comes AFTER the flush: the chat's upload re-ship rides that event, and a
@@ -1848,6 +1852,7 @@ export class FederationManager {
       const flushed = this.flushPending(conn);
       this.diag("hostconn", flushed.length ? { host: conn.host, ev: "open", flushed }
                                            : { host: conn.host, ev: "open" });
+      if (moot.length) this.diag("hostconn", { host: conn.host, ev: "moot", pendingDropped: moot });   // the asks the ready served, by type, beside the open row: an entry never leaves the queue unjournaled
       conn.lastRecv = Date.now();   // the watchdog measures this socket's silence from ITS open
       // this host's owed replies just became reachable again — the chat re-ships its pending
       // uploads on exactly this event (T215 review finding 2026-09-01: a remote kernel's restart
@@ -1884,6 +1889,29 @@ export class FederationManager {
         ws.close();
       } catch (e) {}
     };
+  }
+
+  /** The held needFull asks the ready this open just posted makes moot, removed from the conn's queue before the flush;
+   *  returns their types for the journal. The remote's ready arm answers a ready with a connect push: on a dial with no
+   *  skeleton term that push serves this socket every session whole, so a needFull flushed behind the ready would reset
+   *  that session's base at the remote and serve the same frame a second time (one tail frame per held ask); on a
+   *  skeleton dial the push serves the dial's active tab alone, so only that tab's ask is moot, and a held ask for any
+   *  other tab (a click, or the idle prefetch, while the socket was down) is that tab's only load and stays, as does
+   *  every ask on a skeleton dial that names no active (the remote skeletons every tab then). Read from the dial this
+   *  socket made (conn.url), the terms the remote read. A redial posts no ready and drops nothing (2026-09-18, review
+   *  round 2 of the ready-first open). */
+  private dropAsksTheReadyServes(conn: Conn): string[] {
+    const q = new URLSearchParams(conn.url.split("?")[1] || "");
+    const skeleton = q.get("skeleton") === "1";
+    const active = q.get("active") || "";
+    const dropped: string[] = [];
+    for (const [k, m] of conn.pending) {   // deleting the current entry mid-iteration is spec-safe on a Map
+      if (!m || m.type !== "needFull") continue;
+      if (skeleton && (!active || m.id !== active)) continue;
+      conn.pending.delete(k);
+      dropped.push(m.type);
+    }
+    return dropped;
   }
 
   /** One host's dial state changed: its relay socket's dial began (CONNECTING) or ended (open, closed, or
