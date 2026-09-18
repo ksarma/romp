@@ -3232,12 +3232,24 @@ class ApiHealth:
                 "transitions": transitions}
 
 
+_REG_READ_TL = threading.local()   # per-thread count of read_reg's file reads (reg_reads_on_thread, 2026-09-18)
+
+
+def reg_reads_on_thread() -> int:
+    """How many registry files read_reg has opened on the CALLING thread so far, attempts included (a missing or
+    unreadable record is a read that was tried). The kernel's chat-signature pass reads it before and after one
+    signature and reports the delta as memos.chatSig.regReads (stage 1 of its chat-signature design, 2026-09-18);
+    nothing else reads it. The kernel's own memoized registry reader (_thread_reg_read) is not in this count."""
+    return getattr(_REG_READ_TL, "n", 0)
+
+
 def read_reg(state_dir: Path, sid: str) -> dict | None:
     """The reg as parsed, or None when the file is absent, will not read, or holds JSON that is not an
     object (a list, a string, null). A non-object body is the failed read that read_reg_for_rmw's
     contract and the kernel's _thread_reg partition already name it; handed through as parsed, it made
     owns() memoize True for a list and a caller's `.update` raise instead of skipping its write (review
     round 6, 2026-09-09)."""
+    _REG_READ_TL.n = getattr(_REG_READ_TL, "n", 0) + 1   # counted before the read: an attempt, whatever it answers
     try:
         reg = json.loads(_reg_path(state_dir, sid).read_text())
     except (OSError, ValueError):
