@@ -2027,17 +2027,25 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
     attached host's name, a home path) and a client's declared app name, on its connect push and on a frame its
     sender wrote. Keys are the leak vectors, so every dict
     key must fit an identifier grammar (letters, digits, underscore, dot, dash) except inside the blocks named
-    below: `http` (METHOD /path over the checked-in route list, or `other`) and the byte tables keyed by function
-    names joined with `:` and `<-` (the kernel's, and the judge child's copies under judge.child). The walk runs over
-    a fresh collector's snapshot(), the same function the route serves, and the planted reads are removed after."""
+    below: `http` (METHOD /path over the checked-in route list, or `other`) and the tables whose keys join fixed
+    identifiers with `:` and `<-` (JOINED_KEY_BLOCKS: a stage mark, a reader kind and a calling function in the byte
+    tables; a phase and a reason code in the assembly counters; the same tables again under judge.child). The walk
+    runs over a fresh collector's snapshot(), the same function the route serves, so the module-global counters other
+    test modules filled in this process are walked too; the planted reads are removed after."""
 
     IDENT = re.compile(r"^[A-Za-z0-9_.-]+$")
     HTTP_KEY = re.compile(r"^(?:GET|HEAD|POST|OPTIONS) /[A-Za-z0-9_./*-]*$|^other$")
     JOINED_KEY = re.compile(r"^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?(?:<-[A-Za-z0-9_.?-]+)?$")
-    JOINED_KEY_BLOCKS = {("recordCache", "wholeReads"), ("recordCache", "wholeReadsByStage"),
-                         ("asmCheckpoint", "hydratedBy"), ("asmCheckpoint", "hydratedByStage"),
-                         ("judge", "child", "recordCache", "wholeReads"), ("judge", "child", "recordCache", "wholeReadsByStage"),
-                         ("judge", "child", "asmCheckpoint", "hydratedBy"), ("judge", "child", "asmCheckpoint", "hydratedByStage")}
+    # the blocks whose keys join identifiers, and what the joined parts are (every part a fixed name, a stage mark, a
+    # function name or a reason code; never a path, an id or text): the reader's whole reads as kind<-caller and
+    # stage:kind<-caller, the assembly checkpoints' hydrations as caller and stage:caller, its parse counters as
+    # phase:reason (g:boundary, full:noDocument, restore:chainRefused), its removals as fallback:reason, and the lazy
+    # index's materializations as stage:caller; the judge child's copies of the first two tables under judge.child
+    JOINED = {("recordCache", "wholeReads"), ("recordCache", "wholeReadsByStage"),
+              ("asmCheckpoint", "hydratedBy"), ("asmCheckpoint", "hydratedByStage"),
+              ("asmCheckpoint", "parse"), ("asmCheckpoint", "removed"),
+              ("asmIndex", "materializedByStage")}
+    JOINED_KEY_BLOCKS = JOINED | {("judge", "child") + b for b in JOINED if b[0] in ("recordCache", "asmCheckpoint")}
     UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
     HEX32 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}(?![0-9a-fA-F])")
     ABS_PATH = re.compile(r"(?:^|[\s\"'=(:,])/(?:[^/\s]+/)+[^/\s]*")   # a slash-rooted path of two or more segments
