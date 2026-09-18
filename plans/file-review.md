@@ -3904,7 +3904,7 @@ document stands on its own, each with the reasoning it was given.
     inner pair as HTML and makes the first `<b>` text, `<B>x</b>` is closed and `<b>x *y</b>*` is closed through the
     emphasis. The stacks date from the review's first round (2026-09-18): the first build kept one list of every
     open start tag and scanned it from its end on each end tag, quadratic when thousands of stray end tags followed
-    thousands of open start tags of another name, seconds on the main thread twice per open (the viewer's parse and
+    thousands of open start tags of another name, seconds of blocking work twice per open (the viewer's parse and
     the map's lex); the stacks are linear in the run's tags and convert the same tokens, held against that list as
     an oracle over a fixed sample and a seeded random one. The block is
     the token that owns the inline run, each on its own: a paragraph, a heading, a tight list item's text, a
