@@ -6833,7 +6833,14 @@ def _atomic_write(path, text, mode=None):
     for federation. Until 2026-09-18 the mode was a chmod AFTER write_text, which left the temp at the umask's
     mode, with the text in it, between the two calls; PR 776's review round (kernel-1, extra5-2) asked for the
     pending-ops mirror at 0600 with no such window and the reviewer deferred that to its own fix, so the mode
-    moved onto the open (tests/test_kernel_remotes_perms.py pins it: no chmod runs at all)."""
+    moved onto the open (tests/test_kernel_remotes_perms.py pins it: no chmod runs at all).
+
+    A mode handed here is the temp's CREATION mode, so the umask applies to it: a create honours the umask, a
+    chmod after the fact does not, so the two roads are equivalent only for modes whose bits the umask leaves
+    alone. A caller wanting group or other bits set must not assume they survive. Every caller today passes
+    owner-only (the registry writer, remotes.json, the push subscriptions, the pending-ops mirror), which no
+    other-write umask touches; two call sites forward a mode VARIABLE rather than a literal, so the rule, not
+    the instance, is what a future caller must read (the reviewer's note on PR 789, 2026-09-18)."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with _atomic_lock:
