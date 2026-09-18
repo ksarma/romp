@@ -71,9 +71,11 @@ class _FakeBackend:
     """A backend that records the calls the routes make, in order, and answers what the test tells it to."""
 
     def __init__(self, busy=False, why="", outlook="now", view=None, default="key", explicit=False, default_login="",
-                 labels=None, inflight=None, unwritten=None, explicit_pick=None, outlooks=None):
+                 labels=None, inflight=None, unwritten=None, explicit_pick=None, outlooks=None, failed=None, staggered=False):
         self.calls = []
         self._busy = busy
+        self.failed = list(failed or [])       # the walk's followers whose step raised (the per-session try, 2026-09-18)
+        self.staggered = staggered             # whether an asked relaunch waits for its spawn slot (auth_relaunch_staggered)
         # a turn in flight is NOT the same as busy: busy is also true for a queued or an untaken text with no turn open
         # (SdkBackend.busy's three readings), and only an open turn is something --now can cut (round 1 of the review).
         # None follows busy, for the cases that do not care
@@ -128,6 +130,9 @@ class _FakeBackend:
     def auth_apply_outlook(self, sid):
         return self.outlook
 
+    def auth_relaunch_staggered(self, sid):
+        return self.staggered                  # a bare read, as auth_apply_outlook is: not a recorded call
+
     def follow_default_auth(self, sid):
         self.calls.append(("follow_default_auth", sid))
         return True
@@ -136,7 +141,7 @@ class _FakeBackend:
         self.calls.append(("set_auth_followers", value))
         if self.why:
             return None
-        return {"moved": ["web", "tests"], "skipped": ["api"], "unwritten": list(self.unwritten),
+        return {"moved": ["web", "tests"], "skipped": ["api"], "unwritten": list(self.unwritten), "failed": list(self.failed),
                 "movedSids": [SID, FAR_SID], "outlook": dict(self.outlooks)}
 
     def billing_view(self, sid):
@@ -474,6 +479,35 @@ class PerSessionPick(_RouteServer):
             self.assertEqual([c[0] for c in fake.calls], ["set_auth" if pick == "login" else "follow_default_auth"],
                              "no interrupt: nothing is armed for a cut turn's settle to fire")
 
+    def test_a_pending_left_to_the_clis_first_report_is_answered_as_such_and_never_cut(self):
+        # the rebase follow-up (2026-09-18): the reviewer's cannot-tell class lands an attach that stamps no side, so the
+        # pending parks for the CLI's first init, not for a landing that has passed; the word names the report, and --now
+        # cuts nothing for it (nothing is armed for a cut turn's settle to fire)
+        fake = _FakeBackend(busy=True, inflight=True, outlook="report")
+        a, b = self._local(fake)
+        with a, b:
+            code, resp = self._post({"target": "web", "pick": "login", "now": True})
+        self.assertEqual(code, 200, resp)
+        self.assertEqual((resp["reconnect"], resp["cut"], resp["queued"]), ("when its CLI first reports its billing", False, False))
+        self.assertEqual([c[0] for c in fake.calls], ["set_auth"])
+
+    def test_now_on_a_bounded_default_answers_the_stagger_after_the_cut(self):
+        # the rebase follow-up (2026-09-18): `default` takes the follower walk's step, which flags its relaunch for the spawn
+        # stagger, and since the reviewer's round 1 the arm waits for that slot with the CLI still serving; after the cut
+        # the route answered "now" for a reconnect that fires at its turn. The backend's stagger read decides the word
+        fake = _FakeBackend(busy=True, inflight=True, outlook="deferred", staggered=True)
+        a, b = self._local(fake)
+        with a, b:
+            code, resp = self._post({"target": "web", "pick": "default", "now": True})
+        self.assertEqual(code, 200, resp)
+        self.assertEqual((resp["reconnect"], resp["cut"]), ("at its turn in the spawn stagger", True))
+        self.assertEqual([c[0] for c in fake.calls], ["follow_default_auth", "interrupt"])
+        fake = _FakeBackend(busy=True, inflight=True, outlook="deferred", staggered=False)
+        a, b = self._local(fake)
+        with a, b:
+            code, resp = self._post({"target": "web", "pick": "key", "now": True})
+        self.assertEqual((resp["reconnect"], resp["cut"]), ("now", True), "a plain pick draws no slot: the cut turn's settle arms at once")
+
     def test_now_during_a_compaction_is_refused_not_cut(self):
         fake = _FakeBackend(busy=True, outlook="deferred")
         with mock.patch.multiple(km, **{"_compacting_now": lambda sid, **kw: True, "_claude_account_label": lambda: MACHINE_LABEL}), \
@@ -604,11 +638,20 @@ class AllFollowing(_RouteServer):
         with mock.patch.object(km, "_sdk", lambda: fake):
             code, resp = self._post({"pick": "key", "allFollowing": True})
         self.assertEqual(code, 200, resp)
-        self.assertEqual(resp, {"ok": True, "pick": "key", "moved": 2, "skipped": 1, "unwritten": 0,
-                                "sessions": ["web", "tests"], "skippedSessions": ["api"], "unwrittenSessions": [],
+        self.assertEqual(resp, {"ok": True, "pick": "key", "moved": 2, "skipped": 1, "unwritten": 0, "failed": 0,
+                                "sessions": ["web", "tests"], "skippedSessions": ["api"], "unwrittenSessions": [], "failedSessions": [],
                                 "outlooks": {"web": "now", "tests": "none needed"}, "superseded": 0},
                          "each moved session's outlook rides the answer in the reconnect words (round 2 of the review)")
         self.assertEqual(fake.calls, [("set_auth_followers", "key")])
+
+    def test_a_follower_whose_step_failed_is_answered_apart(self):
+        # the rebase follow-up (2026-09-18): the walk survives one follower's fault (the reviewer's per-session rule) and
+        # names it apart from the moved, the skipped and the unwritten, so the verb can say it was left following the default
+        fake = _FakeBackend(failed=["notes"])
+        with mock.patch.object(km, "_sdk", lambda: fake):
+            code, resp = self._post({"pick": "key", "allFollowing": True})
+        self.assertEqual(code, 200, resp)
+        self.assertEqual((resp["failed"], resp["failedSessions"], resp["sessions"]), (1, ["notes"], ["web", "tests"]))
 
     def test_a_follower_whose_record_would_not_read_is_answered_apart_from_the_skipped(self):
         # round 1 of the review (findings 8 and 12): the walk filed an unreadable record under skipped, and the verb told
@@ -904,10 +947,12 @@ class BackendHelpers(unittest.TestCase):
         out = self.be.set_auth_followers("key")
         self.assertEqual(out, {"moved": ["api2", "docs", "tests", "web"], "skipped": ["api"], "unwritten": [],
                                "movedSids": [mid.sid, docs.sid, tests.sid, web.sid],
-                               # each moved session's outlook (round 2 of the review): web's request stands (now), tests
-                               # already runs the side (none), docs has no loop (next-launch), and api2's pending is the
-                               # connect in progress's to serve, with no request standing (landing)
-                               "outlook": {"web": "now", "tests": "none", "docs": "next-launch", "api2": "landing"}},
+                               "failed": [],
+                               # each moved session's outlook (round 2 of the review): web's request stands and its bounded
+                               # relaunch waits for a spawn slot with the CLI serving (staggered, since the reviewer's round 1
+                               # drew the slot at the arm), tests already runs the side (none), docs has no loop (next-launch),
+                               # and api2's pending is the connect in progress's to serve, with no request standing (landing)
+                               "outlook": {"web": "staggered", "tests": "none", "docs": "next-launch", "api2": "landing"}},
                          "names sorted: the roster's order is not a contract; the sids in the names' order")
         self.assertEqual((self._reg(mid.sid)["auth"], mid._auth_pending, mid._relaunch_bounded), ("key", "key", False),
                          "already applying: the pick and the pending, no request, so no slot")
@@ -929,7 +974,7 @@ class BackendHelpers(unittest.TestCase):
         docs = self._sess("docs", launched="login")
         sb._reg_path(Path(self.d), docs.sid).write_text("{not a record")
         out = self.be.set_auth_followers("key")
-        self.assertEqual(out, {"moved": ["web"], "skipped": [], "unwritten": ["docs"], "movedSids": [web.sid],
+        self.assertEqual(out, {"moved": ["web"], "skipped": [], "unwritten": ["docs"], "failed": [], "movedSids": [web.sid],
                                "outlook": {"web": "next-launch"}})
         self.assertIs(docs._relaunch_bounded, False, "nothing written, nothing asked, no slot")
         self.assertTrue(any("1 record would not read (docs)" in m for m in self.logs), self.logs[-2:])
@@ -1043,10 +1088,12 @@ class BackendHelpers(unittest.TestCase):
         # stamps) retires the report. The verb then had no step: nothing pending, no request, and the connect in flight,
         # composed from the old pick, landed with nothing to decide, so the session billed the pick's side for the process
         # lifetime while the reg said it followed the default. With `because` set the empty read hands the session to the
-        # unlanded step, which judges the connect in flight
+        # unlanded step, which judges the connect in flight. The report is the KEY: since round 1 of the reviewer's review
+        # (its kernel-4) a launch retires the report only when the side it composed differs from it, and the relaunch in
+        # flight here composes the pick, the login (the rebase follow-up, 2026-09-18)
         s = self._sess("web", auth="login")
-        self.be._update_reg(s.sid, apiKeyAuth=False)
-        s.auth_live = "login"                              # the report restored; no landing stamped
+        self.be._update_reg(s.sid, apiKeyAuth=True)
+        s.auth_live = "key"                                # the report restored; no landing stamped
         s._launching = dict(self.be._launch_shape(s))      # the connect in flight, composed from the pick; the default is the key
         queued = self._queue_loop(s)
         real, fired = sb.SdkBackend._follow_default, []
@@ -1158,7 +1205,11 @@ class BackendHelpers(unittest.TestCase):
         uq = self._queue_loop(u)
         self.assertTrue(self.be.follow_default_auth(u.sid))
         self.assertEqual(len(uq), 1)
-        self.assertEqual(self.be.auth_apply_outlook(u.sid), "now")
+        # the follower step's request is bounded (its relaunch waits for a spawn slot with the CLI serving, the reviewer's
+        # round 1), so the word is the stagger's; with no spawn budget it is "now"
+        self.assertEqual(self.be.auth_apply_outlook(u.sid), "staggered")
+        with mock.patch.object(self.be, "_spawn_sem", None):
+            self.assertEqual(self.be.auth_apply_outlook(u.sid), "now")
         # a landed session's pick keeps "now"
         v = self._sess("docs", launched="login")
         self._queue_loop(v)
@@ -1515,13 +1566,13 @@ class BackendHelpers(unittest.TestCase):
         s._auth_pending = "login"
         s.client = object()                  # a client is up: the stamp describes a running process
         self.assertEqual(self.be.billing_view(s.sid), {
-            "launched": "key", "launchedLogin": "", "launchedLabel": "", "live": "key",
+            "launched": "key", "launchedLogin": "", "launchedLabel": "", "live": "key", "cannotTell": False,
             "pick": {"auth": "login", "login": "", "label": "", "explicit": True}, "pending": True, "held": False})
         self.n += 1
         sid = "11111111-2222-3333-4444-%012d" % self.n
         sb.write_reg(Path(self.d), sid, {"sid": sid, "name": "docs", "cwd": self.d, "alive": True, "apiKeyAuth": False})
         self.assertEqual(self.be.billing_view(sid), {
-            "launched": None, "launchedLogin": "", "launchedLabel": "", "live": "login",
+            "launched": None, "launchedLogin": "", "launchedLabel": "", "live": "login", "cannotTell": False,
             "pick": {"auth": "key", "login": "", "label": "", "explicit": False}, "pending": False, "held": False},
             "a dormant follower: no process, the last init's side, the default it follows (the helper rule: the key)")
         self.assertIsNone(self.be.billing_view("11111111-2222-3333-4444-999999999999"))
@@ -1536,6 +1587,292 @@ class BackendHelpers(unittest.TestCase):
         self.assertEqual(self.be.billing_view(s.sid)["launched"], "login")
         s._connecting = True
         self.assertIsNone(self.be.billing_view(s.sid)["launched"], "a connect composed and not landed: the old process is gone")
+
+    # ---- the rebase onto round 1 of the reviewer's review of the auth-default fix (2026-09-18): the verb follows its
+    # invariants (the pending's login beside it, the slot flag in the pending's hold, the cannot-tell class, the walk's
+    # per-session try, the stagger in the words). Each test was red on the rebased tree before the follow-up
+
+    STAGGER = ', staggered: the relaunch waits for a spawn slot and the CLI serves until its turn'
+
+    @staticmethod
+    def _flag_checked(s):
+        """`s` records every write of its relaunch slot flag with whether its hold lock was held at the write (the reviewer's
+        regression-3: the ask's flag is written in the pending's hold). The _hold_checked idiom, for the flag."""
+        writes = []
+
+        class _Flagged(sb.SdkSession):
+            @property
+            def _relaunch_bounded(self_):
+                return self_.__dict__.get("_relaunch_bounded_v", False)
+
+            @_relaunch_bounded.setter
+            def _relaunch_bounded(self_, v):
+                writes.append((v, self_._hold_lock.locked()))
+                self_.__dict__["_relaunch_bounded_v"] = v
+        s.__dict__["_relaunch_bounded_v"] = s.__dict__.pop("_relaunch_bounded", False)
+        s.__class__ = _Flagged
+        return writes
+
+    def _stored_login(self, label="Work"):
+        rec = {"id": sb._logins.mint_id(), "label": label, "tokenCmd": "token-read 'romp login %s'" % label,
+               "addedAt": int(time.time()) - 86400}
+        sb._logins.write_record(self.d, rec)
+        return rec
+
+    def _leased_unreported_follower(self, name, composed, auth=""):
+        """The reviewer's cannot-tell class as set_auth meets it: no report on record (the previous kernel relaunched the CLI
+        onto a new side and it never turned since, so no init has streamed), no landing of this kernel stamped, a LIVE
+        host lease holding its CLI (the backend's lease read answers True for it), a boot re-attach in flight composed
+        from `composed`, and a recording loop."""
+        s = self._sess(name, auth=auth)
+        s._launching = dict(self.be._launch_shape(s), auth=composed, login="")
+        s._connecting = True
+        s._host_is_attach = True
+        leased = self.__dict__.setdefault("_leased", set())
+        leased.add(s.sid)
+        self.be._host_lease_live = lambda sess: sess.sid in leased
+        return s, self._queue_loop(s)
+
+    def test_set_auth_never_landed_branch_writes_the_pendings_login_beside_it(self):
+        # the pending carries the stored login it targets (the reviewer's regression-2 and correctness-3): set_auth's
+        # never-landed branch wrote the side word alone, so a stored-login pick parked for the landing read as the
+        # machine's own login to every pair compare (the landing's served clear, the outlook's, a later pick's guard)
+        rec = self._stored_login()
+        web, wq = self._never_landed_follower("web", reports="key", composed="key")
+        self.assertTrue(self.be.set_auth(web.sid, "login:" + rec["id"], chip=False))
+        self.assertEqual(web._auth_pending_target(), ("login", rec["id"]), "the pair, not the side word alone")
+        self.assertEqual((web.auth, web.auth_login, len(wq)), ("login", rec["id"], 0))
+        web._connect_landed()                                    # the attach stamps the report (the key): the pick stands unserved
+        self.assertEqual((web._launched_auth, web._auth_pending_target(), len(wq)), ("key", ("login", rec["id"]), 1))
+
+    def test_set_auth_writes_the_walks_slot_flag_in_the_pendings_hold(self):
+        # the reviewer's regression-3: the ask's slot flag is written in the same hold as the pending it belongs to, so the
+        # landing's guarded clear cannot run between the two writes and leave the flag standing with no ask behind it.
+        # set_auth's request branch wrote the walk's flag bare, after the hold and the mirror
+        web = self._sess("web", launched="login")
+        self._queue_loop(web)
+        writes = self._flag_checked(web)
+        self.assertTrue(self.be.set_auth(web.sid, "key", chip=False, bounded=True))
+        self.assertEqual(writes, [(True, True)], "one write of the flag, under the hold")
+        api = self._sess("api", launched="login")
+        self._queue_loop(api)
+        writes = self._flag_checked(api)
+        self.assertTrue(self.be.set_auth(api.sid, "key", chip=False))
+        self.assertEqual(writes, [(False, True)], "a plain pick writes the flag off, in the same hold")
+
+    def test_follow_default_unlanded_writes_the_pair_and_the_slot_flag_in_the_asks_hold(self):
+        # the verb's unlanded step wrote the pending's side word alone on both of its writing roads and the slot flag bare
+        # after the hold (its own comment said so), and its clear left the pending's login standing
+        rec = self._stored_login()
+        self.assertTrue(self.be.set_auth_default("login:" + rec["id"]))
+        web = self._sess("web", auth="key")                      # the connect in flight, composed from the old pick
+        web._launching = dict(self.be._launch_shape(web))
+        wq = self._queue_loop(web)
+        writes = self._flag_checked(web)
+        self.assertTrue(self.be.follow_default_auth(web.sid))
+        self.assertEqual((web._auth_pending_target(), len(wq)), (("login", rec["id"]), 1), "the ask names the stored login")
+        self.assertEqual(writes, [(True, True)], "the flag, once, under the hold")
+        docs = self._sess("docs", auth="key")                    # no connect composed: the standing pending is retargeted
+        docs._auth_pending = "key"
+        self._queue_loop(docs)
+        self.assertTrue(self.be.follow_default_auth(docs.sid))
+        self.assertEqual(docs._auth_pending_target(), ("login", rec["id"]))
+        api = self._sess("api", auth="login")                    # the connect in flight already launches the default: cleared
+        api.auth_login = rec["id"]
+        api._auth_pending, api._auth_pending_login = "login", rec["id"]
+        api._launching = dict(self.be._launch_shape(api), auth="login", login=rec["id"])
+        aq = self._queue_loop(api)
+        self.assertTrue(self.be.follow_default_auth(api.sid))
+        self.assertEqual((api._auth_pending, api._auth_pending_login, len(aq)), ("", "", 0), "the pair clears together")
+
+    def test_set_auth_on_a_leased_follower_with_no_report_parks_the_pick_for_the_clis_first_init(self):
+        # the reviewer's correctness-1, carried into the pick: the never-landed class was keyed on a REPORT, so a follower
+        # whose surviving CLI had streamed no init (a live host lease, no report) went through set_auth's ordinary guards.
+        # A pick of the side the re-attach composed took the already-applying guard; the cannot-tell attach then stamped
+        # None and the picked block cleared the pick as served, so a survivor billing the other side kept the pick on
+        # paper and never moved. A pick of the other side made a request whose arm tore down a CLI that may have billed
+        # the pick already. Now the pick parks (no request, no slot), the attach leaves it, and the CLI's first init
+        # decides it: served when the report is the pick, asked (with the walk's slot memo) when it is not
+        web, wq = self._leased_unreported_follower("web", composed="key")
+        out = self.be.set_auth_followers("login")
+        self.assertEqual((out["moved"], out["outlook"]), (["web"], {"web": "landing"}))
+        self.assertEqual((web.auth, web._auth_pending_target(), len(wq), web._relaunch_bounded, web._landing_ask_bounded),
+                         ("login", ("login", ""), 0, False, True), "parked for the landing: the pair, no request, the memo")
+        self.assertTrue(any("has not reported which side it bills" in m and "set to login" in m for m in self.logs), self.logs[-2:])
+        web._connect_landed()                                    # the attach, no report: cannot-tell
+        self.assertIsNone(web._launched_auth)
+        self.assertIsNotNone(web._launched_effort, "a landing happened")
+        self.assertEqual((web._auth_pending, self._reg(web.sid)["authPending"], len(wq)), ("login", True, 0),
+                         "not cleared as served: the landing could not tell, and asked nothing")
+        self.assertTrue(any("the CLI's first init decides it" in m for m in self.logs), self.logs[-2:])
+        self.assertEqual(self.be.auth_apply_outlook(web.sid), "report")
+        del self.logs[:]
+        self.be._note_auth_source(web, "ANTHROPIC_API_KEY")   # the CLI's first init: it bills the key, the pick is the login
+        self.assertEqual((web._launched_auth, len(wq), web._relaunch_bounded, web._landing_ask_bounded), ("key", 1, True, False),
+                         "the report is the stamp; the pick differs, so it is asked now, with the walk's slot")
+        line = [m for m in self.logs if "left to this report, so it is asked now" in m]
+        self.assertEqual(len(line), 1, self.logs)
+        self.assertTrue(line[0].endswith(self.STAGGER), line[0])
+        # the served twin, through the dashboard's own pick: the report names the pick, so nothing relaunches
+        api, aq = self._leased_unreported_follower("api", composed="login")
+        self.assertTrue(self.be.set_auth(api.sid, "key"))
+        self.assertEqual((api._auth_pending_target(), len(aq)), (("key", ""), 0))
+        api._connect_landed()
+        self.assertEqual((api._launched_auth, api._auth_pending), (None, "key"))
+        self.be._note_auth_source(api, "ANTHROPIC_API_KEY")
+        self.assertEqual((api._launched_auth, api._auth_pending, self._reg(api.sid)["authPending"], len(aq), api._relaunch_bounded),
+                         ("key", "", False, 0, False), "served by the report: cleared, mirrored, no request")
+        self.assertTrue(any("the pick is served, no reconnect" in m for m in self.logs), self.logs[-2:])
+        # a follower with neither a report nor a lease keeps set_auth's ordinary schedule (its first connect is a launch)
+        docs = self._sess("docs")
+        docs._launching = dict(self.be._launch_shape(docs), auth="login", login="")
+        dq = self._queue_loop(docs)
+        self.assertTrue(self.be.set_auth(docs.sid, "key", chip=False))
+        self.assertEqual(len(dq), 1, "no lease, no report: the request branch, as before")
+
+    def test_follow_default_auth_on_a_leased_follower_with_no_report_parks_the_ask_with_no_request(self):
+        # the dispatch keyed on the report and the stamp alone, so a picked session with a live host lease and no report
+        # (the reviewer's cannot-tell class) went to the unlanded step, which read the re-attach in flight as a connect
+        # composed from the old pick and REQUESTED a reconnect: its arm relaunched a survivor that may already bill the
+        # default. The follower step parks the ask as the pair with no request and lets the attach, or the CLI's first
+        # init, decide (the default is the key; the pick, and the re-attach's compose, the login)
+        s, q = self._leased_unreported_follower("web", composed="login", auth="login")
+        self.assertTrue(self.be.follow_default_auth(s.sid))
+        self.assertEqual((s.auth, s._auth_pending_target(), len(q), s._relaunch_bounded), ("", ("key", ""), 0, False),
+                         "the ask is parked as the pair: no request, no slot")
+        self.assertTrue(any("has not reported which side it bills: its first init decides" in m for m in self.logs), self.logs[-2:])
+        self.assertEqual(self.be.auth_apply_outlook(s.sid), "landing")
+        s._connect_landed()                                      # the cannot-tell attach: the ask stands, nothing asked
+        self.assertEqual((s._launched_auth, s._auth_pending, len(q)), (None, "key", 0))
+        self.be._note_auth_source(s, "none")                      # the CLI bills the login: the follower step asks
+        self.assertEqual((s._launched_auth, s._auth_pending, len(q)), ("login", "key", 1))
+
+    def test_auth_apply_outlook_says_staggered_for_a_bounded_request_on_a_quiet_session(self):
+        # since the reviewer's round 1 the bounded relaunch draws its spawn slot at the ARM, with the CLI still serving, and
+        # reconnects at the grant; "now" promised the moment the stagger delays. The word follows the flag, the wait in
+        # flight and the held slot (the three hand over on the loop thread), and falls back to "now" with no spawn budget
+        web = self._sess("web", launched="login")
+        self._queue_loop(web)
+        self.assertTrue(self.be.set_auth(web.sid, "key", chip=False, bounded=True))
+        self.assertEqual(self.be.auth_apply_outlook(web.sid), "staggered")
+        self.assertIs(self.be.auth_relaunch_staggered(web.sid), True)
+        web._relaunch_bounded = False
+        web._slot_wait = True
+        self.assertEqual(self.be.auth_apply_outlook(web.sid), "staggered", "the wait in flight")
+        web._slot_wait = False
+        web._relaunch_slot = lambda: None
+        self.assertEqual(self.be.auth_apply_outlook(web.sid), "staggered", "the granted slot, held for the relaunch")
+        web._relaunch_slot = None
+        self.assertEqual(self.be.auth_apply_outlook(web.sid), "now", "the slot fired: the relaunch is in flight")
+        api = self._sess("api", launched="login")
+        self._queue_loop(api)
+        self.assertTrue(self.be.set_auth(api.sid, "key", chip=False))
+        self.assertEqual(self.be.auth_apply_outlook(api.sid), "now", "a plain pick draws no slot")
+        self.assertIs(self.be.auth_relaunch_staggered(api.sid), False)
+        docs = self._sess("docs", launched="login")
+        self._queue_loop(docs)
+        self.assertTrue(self.be.set_auth(docs.sid, "key", chip=False, bounded=True))
+        with mock.patch.object(self.be, "_spawn_sem", None):
+            self.assertEqual(self.be.auth_apply_outlook(docs.sid), "now", "no spawn budget: the arm fires at once")
+        docs.inflight = 1
+        self.assertEqual(self.be.auth_apply_outlook(docs.sid), "deferred", "a turn in flight outranks the stagger: the settle arms")
+        self.assertIs(self.be.auth_relaunch_staggered("11111111-2222-3333-4444-999999999999"), False)
+
+    def test_auth_apply_outlook_says_report_after_a_cannot_tell_attach_landed(self):
+        # "landing" named an event that had passed: after an attach that stamped the effort but no side (the reviewer's
+        # cannot-tell class) the CLI's first init decides the parked pending, and the word says so
+        s = self._sess("web", auth="login")
+        s._auth_pending = "login"
+        s._launching = dict(self.be._launch_shape(s))
+        s._host_is_attach = True
+        self._queue_loop(s)
+        self.assertEqual(self.be.auth_apply_outlook(s.sid), "landing", "before the landing")
+        s._connect_landed()
+        self.assertEqual((s._launched_auth, s._auth_pending), (None, "login"))
+        self.assertEqual(self.be.auth_apply_outlook(s.sid), "report")
+
+    def test_billing_view_names_a_surviving_cli_attached_with_no_report(self):
+        # the read said "no CLI is up under this kernel" for a live object whose landing attached a surviving CLI with no
+        # report on record (launched None with a client up): a process runs, and its first init says what it bills
+        s = self._sess("web", auth="login")
+        s._launching = dict(self.be._launch_shape(s))
+        s._host_is_attach = True
+        s._connect_landed()
+        s.client = object()
+        view = self.be.billing_view(s.sid)
+        self.assertEqual((view["launched"], view["live"], view["cannotTell"]), (None, "", True))
+        s._connecting = True
+        self.assertIs(self.be.billing_view(s.sid)["cannotTell"], False, "a connect composed and not landed is not this")
+        t = self._sess("api", launched="login")
+        t.client = object()
+        self.assertIs(self.be.billing_view(t.sid)["cannotTell"], False)
+
+    def test_set_auth_followers_survives_one_followers_fault_and_leaves_it_a_follower(self):
+        # the reviewer's regression-4 and kernel-2, the default walk's rule carried into the verb's walk: one follower's reg
+        # write refused mid-step raised out of set_auth_followers, so the followers after it were never written, the route
+        # read the raise as the whole request failing, and the failed one was left half-picked (auth written in memory,
+        # a pending with no arm). The walk goes on, the failed session is a follower again with no ask, and one problem
+        # row names it; the answer files it apart
+        web, api, tests = self._sess("web", launched="login"), self._sess("api", launched="login"), self._sess("tests", launched="login")
+        for s in (web, api, tests):
+            self._queue_loop(s)
+        real_write = sb.write_reg
+
+        def refused(state_dir, sid, reg):
+            if sid == api.sid and reg.get("auth") == "key":
+                raise PermissionError(13, "Permission denied", str(sb._reg_path(state_dir, sid)))
+            return real_write(state_dir, sid, reg)
+        with mock.patch.object(sb, "write_reg", refused):
+            out = self.be.set_auth_followers("key")
+        self.assertEqual((out["moved"], out["failed"], out["unwritten"], sorted(out["outlook"])), (["tests", "web"], ["api"], [], ["tests", "web"]))
+        for s in (web, tests):
+            self.assertEqual((s.auth, s._auth_pending, self._reg(s.sid)["auth"]), ("key", "key", "key"), s.name)
+        self.assertEqual((api.auth, api.auth_login, api._auth_pending, api._auth_pending_login, api._relaunch_bounded, api._landing_ask_bounded),
+                         ("", "", "", "", False, False), "the failed follower is a follower again, with no ask")
+        self.assertEqual((self._reg(api.sid).get("auth", ""), self._reg(api.sid).get("authPending", False)), ("", False), "the mirror retried")
+        rows = [p["text"] for p in self.be.problems(10) if "step failed" in p["text"]]
+        self.assertEqual(len(rows), 1, self.be.problems(10))
+        self.assertIn("auth (api): the pick key was asked of this session, but its step failed (PermissionError", rows[0])
+        self.assertIn("it keeps following the machine default and stays on the login", rows[0])
+        self.assertTrue(any("1 step failed (api), left following the default with no ask standing" in m for m in self.logs), self.logs[-1:])
+
+    def test_the_verbs_ask_lines_end_with_the_stagger_clause(self):
+        # the walk's lines end with the stagger clause since the reviewer's round 1 (the relaunch waits for a spawn slot
+        # with the CLI still serving); the verb's four ask lines promised the moment the stagger delays
+        web = self._sess("web", launched="login")
+        self._queue_loop(web)
+        self.assertTrue(self.be.set_auth(web.sid, "key", chip=False, bounded=True))
+        self.assertTrue(self.logs[-1].startswith("auth (web): set to key; reconnecting to apply") and self.logs[-1].endswith(self.STAGGER), self.logs[-1])
+        api = self._sess("api", launched="login")
+        self._queue_loop(api)
+        self.assertTrue(self.be.set_auth(api.sid, "key", chip=False))
+        self.assertEqual(self.logs[-1], "auth (api): set to key; reconnecting to apply", "a plain pick draws no slot: no clause")
+        one, two = self._sess("one", launched="key"), self._sess("two", launched="key")   # two followers, the walk's head
+        self._queue_loop(one); self._queue_loop(two)
+        out = self.be.set_auth_followers("login")
+        self.assertEqual(out["outlook"], {"one": "staggered", "two": "staggered"})
+        head = [m for m in self.logs if m.startswith("auth: 2 sessions following the default now carry the pick login (one, two)")]
+        self.assertEqual(len(head), 1, self.logs[-3:])
+        self.assertIn("2 asked to reconnect (one, two), staggered: each relaunch waits for a spawn slot and its CLI serves until its turn", head[0])
+        docs = self._sess("docs", auth="login")                  # the unlanded step's ask, for a connect in flight
+        docs._launching = dict(self.be._launch_shape(docs))
+        self._queue_loop(docs)
+        self.assertTrue(self.be.follow_default_auth(docs.sid))
+        line = [m for m in self.logs if "connect in flight launches the login" in m]
+        self.assertEqual(len(line), 1, self.logs[-2:])
+        self.assertTrue(line[0].endswith(self.STAGGER), line[0])
+        notes, nq = self._never_landed_follower("notes", reports="login", composed="key")   # the landing's re-ask, from the memo
+        self.assertIn("notes", self.be.set_auth_followers("key")["moved"])   # docs, a follower again since its `default`, moves too
+        notes._connect_landed()
+        line = [m for m in self.logs if "left to this landing, so it is asked now" in m]
+        self.assertEqual((len(line), len(nq)), (1, 1), self.logs[-2:])
+        self.assertTrue(line[0].endswith(self.STAGGER), line[0])
+        tests, tq = self._never_landed_follower("tests", reports="login", composed="key")    # the dashboard's pick: no memo, no clause
+        self.assertTrue(self.be.set_auth(tests.sid, "key"))
+        tests._connect_landed()
+        line = [m for m in self.logs if "auth (tests)" in m and "left to this landing, so it is asked now" in m]
+        self.assertEqual(len(line), 1, self.logs[-2:])
+        self.assertFalse(line[0].endswith(self.STAGGER), line[0])
 
 
 class ParkedPickRefusedAtTheDrain(unittest.TestCase):
@@ -1717,6 +2054,29 @@ class VerbWords(unittest.TestCase):
                          "romp billing: 4 sessions following the default now carry their own pick, the API key (api, docs, tests, web); "
                          "they reconnect at their next quiet moment; 1 earlier queued pick was dropped; 0 skipped")
 
+    def test_the_walk_says_the_stagger_the_first_report_and_the_failed(self):
+        # the rebase follow-up (2026-09-18): an asked relaunch waits for its spawn slot with the CLI still serving (the
+        # reviewer's round 1), so "at their next quiet moment" promised the moment the stagger delays; a cannot-tell attach
+        # leaves the pending to the CLI's first report; and a follower whose step failed is said apart, left following
+        # the default
+        reply = {"ok": True, "pick": "key", "moved": 3, "skipped": 0, "unwritten": 0, "failed": 1, "skippedSessions": [],
+                 "unwrittenSessions": [], "failedSessions": ["notes"], "sessions": ["api2", "docs", "web"],
+                 "outlooks": {"web": "at its turn in the spawn stagger", "docs": "at its turn in the spawn stagger",
+                              "api2": "when its CLI first reports its billing"}}
+        out = self._romp("--all-following", "key", reply=(200, reply))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.strip(),
+                         "romp billing: 3 sessions following the default now carry their own pick, the API key (api2, docs, web); "
+                         "api2 waits for its CLI's first report of which side it bills, which decides whether to reconnect; "
+                         "docs, web reconnect at their turn in the spawn stagger, each CLI serving until then; "
+                         "0 skipped; 1 failed (notes): it keeps following the default unchanged, the kernel's Log names the fault")
+        reply.update(sessions=["web"], moved=1, outlooks={"web": "at its turn in the spawn stagger"}, failedSessions=["api", "notes"], failed=2)
+        out = self._romp("--all-following", "key", reply=(200, reply))
+        self.assertEqual(out.stdout.strip(),
+                         "romp billing: 1 session following the default now carries its own pick, the API key (web); "
+                         "it reconnects at its turn in the spawn stagger, its CLI serving until then; "
+                         "0 skipped; 2 failed (api, notes): they keep following the default unchanged, the kernel's Log names the fault")
+
     def test_the_walk_with_nothing_moved_denies_followers_only_when_none_was_reached(self):
         # round 2 of the review (verb-5): with nothing moved and a record unwritten the head said "no running session follows
         # the machine default" while the tail named the follower the walk reached and could not write
@@ -1795,6 +2155,11 @@ class VerbWords(unittest.TestCase):
         view["live"] = "key"
         self.assertEqual(self._romp("web", reply=(200, view)).stdout.splitlines()[0],
                          "launched: no CLI is up under this kernel; the CLI last reported: API key")
+        # a client up whose landing attached a surviving CLI with no report (the reviewer's cannot-tell class; the rebase
+        # follow-up, 2026-09-18): "no CLI is up" was false for it, and its first turn's report says what it bills
+        view.update(live="", cannotTell=True)
+        self.assertEqual(self._romp("web", reply=(200, view)).stdout.splitlines()[0],
+                         "launched: a surviving CLI is attached that has not reported which side it bills; its first turn's report says")
 
     def test_an_old_kernels_404_names_the_cause_and_the_remedy_on_both_arms(self):
         # finding 13: a kernel from before this change answers its catch-all 404 (text, no JSON object) and the verb printed
@@ -1827,6 +2192,10 @@ class VerbWords(unittest.TestCase):
             "none needed": ("web bills the API key already", "no reconnect is needed"),
             "at its next launch": ("web will bill the API key", "next launch"),
             "when its connect lands": ("web will bill the API key", "no reconnect was asked"),
+            # the rebase follow-up (2026-09-18): the reviewer's cannot-tell attach leaves the pending to the CLI's first
+            # report, and a bounded relaunch waits for its spawn slot with the CLI still serving
+            "when its CLI first reports its billing": ("web will bill the API key", "its first report decides"),
+            "at its turn in the spawn stagger": ("web will bill the API key", "spawn stagger"),
         }
         # the census (round 2 of the review, tests-2): the cases are the kernel's two tables, so a word added there with no
         # line in bin/romp's tails fails here rather than printing the generic "the session reconnects <word>" with exit 0

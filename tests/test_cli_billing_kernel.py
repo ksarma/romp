@@ -368,9 +368,11 @@ class BillingVerb(unittest.TestCase):
         # and its release, the landing on the other side) never ran against a live CLI
         out = self._romp("--all-following", "login")
         self.assertEqual(out.returncode, 0, out.stderr)
+        # the walk's relaunches wait for their spawn slot with the CLI still serving (round 1 of the reviewer's review of the
+        # auth-default fix, 2026-09-18), so the verb names the stagger, not a quiet moment it cannot promise
         self.assertEqual(out.stdout.strip(),
                          "romp billing: 2 sessions following the default now carry their own pick, the login (tests, web); "
-                         "they reconnect at their next quiet moment; 1 skipped (api): it has its own pick")
+                         "they reconnect at their turn in the spawn stagger, each CLI serving until then; 1 skipped (api): it has its own pick")
         for name in ("tests", "web"):
             reg = self._reg(name)
             self.assertEqual((reg["auth"], reg["authLogin"]), ("login", ""), name)
@@ -398,8 +400,10 @@ class BillingVerb(unittest.TestCase):
     def step_4_default_returns_a_picked_session_to_the_machine_default(self):
         out = self._romp("api", "default")
         self.assertEqual(out.returncode, 0, out.stderr)
+        # `default` takes the follower walk's step, whose relaunch is bounded, so it waits for its spawn slot too
         self.assertEqual(out.stdout.strip(),
-                         "romp billing: api follows the machine default again (API key); the session is reconnecting to apply it")
+                         "romp billing: api follows the machine default again (API key); the session reconnects at its turn in the "
+                         "machine's spawn stagger; its CLI serves until then")
         reg = self._reg("api")
         self.assertEqual((reg["auth"], reg["authLogin"]), ("", ""))
         self._landed_then_reported("api", "key")
