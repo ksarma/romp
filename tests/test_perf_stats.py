@@ -74,6 +74,19 @@ CACHE_NAMES = {"jsonl", "asm", "asm_keylocks", "trailing", "judge_parse", "judge
                "built_chat", "judge_usage", "img", "path_links", "space_paths", "session_stamp", "task_seg", "session_tok"}
 
 
+def _doc_row(doc, name):
+    """The _PerfStats docstring row whose entry line starts with `name`: from that line to the next line at or above its
+    indentation that begins an entry (a non-space after the indentation), or the docstring's end. The locator is RELATIVE
+    to the entry line's own indentation on purpose: Python 3.13 and later strip a docstring's common leading whitespace at
+    compile time, so a pin that counts leading spaces (the source's six before a row's name) passes on a 3.12 venv and
+    finds nothing on the 3.13 and 3.14t CI cells. Do not simplify it back to a space count."""
+    m = re.search(r"^( *)%s\s" % re.escape(name), doc, re.M)
+    if m is None:
+        raise ValueError("no docstring row starts with %r" % name)
+    nxt = re.compile(r"^ {0,%d}\S" % len(m.group(1)), re.M).search(doc, m.end())
+    return doc[m.start():nxt.start() if nxt else len(doc)]
+
+
 def _burn_cpu(seconds):
     """Spin this thread for `seconds` of its own CPU time (thread_time, so a descheduled thread still burns
     the asked amount rather than merely waiting it out)."""
@@ -1040,13 +1053,17 @@ class JobRowsByOwner(unittest.TestCase):
 
     def test_the_collectors_docstring_names_the_new_rows(self):
         doc = km._PerfStats.__doc__
-        pusher_row = doc[doc.index("      pusher  "):doc.index("      stages_ms  ")]
+        # each row is cut by _doc_row, relative to the row's own indentation: Python 3.13 and later strip a docstring's
+        # common leading whitespace at compile time, so a slice between six-space literals passed on the 3.12 venv and
+        # raised ValueError on the 3.13 and 3.14t CI cells; the stagesForeign check below is a line-start match for the
+        # same reason
+        pusher_row = _doc_row(doc, "pusher")
         self.assertIn("cycleJobsMs", pusher_row, "the pusher row names its cycle jobs' block")
-        stages_row = doc[doc.index("      stages_ms  "):doc.index("      builds  ")]
+        stages_row = _doc_row(doc, "stages_ms")
         self.assertIn("cycleJobsMs", stages_row, "the stages_ms row sends the reader to the pusher's block for the nine")
         self.assertRegex(stages_row, r"moved to pusher\.cycleJobsMs", "and says the nine MOVED there, so a reader of an older capture knows where the numbers went")
         self.assertIn("stagesForeign", stages_row)
-        self.assertIn("      stagesForeign  ", doc, "the foreign block has a row of its own")
+        self.assertRegex(doc, r"(?m)^ *stagesForeign ", "the foreign block has a row of its own")
 
 
 
@@ -1192,7 +1209,9 @@ class PushRowsByPurpose(unittest.TestCase):
         st.reset()
         self.assertEqual(st.snapshot()["pusher"]["connectPush"]["stagesMs"], {})
         doc = km._PerfStats.__doc__
-        self.assertIn("No seed", doc[doc.index("      pusher  "):doc.index("      stages_ms  ")], "the pusher row says the table is unseeded")
+        # the row by _doc_row, relative to its own indentation: Python 3.13 and later strip a docstring's common leading
+        # whitespace at compile time, so a slice between six-space literals raised ValueError on the 3.13 and 3.14t CI cells
+        self.assertIn("No seed", _doc_row(doc, "pusher"), "the pusher row says the table is unseeded")
 
     def test_every_push_row_key_fits_the_paste_safe_grammar_and_the_export_keeps_it(self):
         """The connect table and the foreign block are keyed by the kernel's own stage literals (`push`, the push.* names in
@@ -1222,15 +1241,18 @@ class PushRowsByPurpose(unittest.TestCase):
 
     def test_the_collectors_docstring_names_the_connect_table(self):
         doc = km._PerfStats.__doc__
-        pusher_row = doc[doc.index("      pusher  "):doc.index("      stages_ms  ")]
+        # each row is cut by _doc_row, relative to the row's own indentation: Python 3.13 and later strip a docstring's
+        # common leading whitespace at compile time, so a slice between six-space literals raised ValueError on the 3.13
+        # and 3.14t CI cells
+        pusher_row = _doc_row(doc, "pusher")
         self.assertIn("connectPush", pusher_row, "the pusher row documents the block the table rides")
         self.assertIn("stagesMs", pusher_row)
-        stages_row = doc[doc.index("      stages_ms  "):doc.index("      stagesForeign  ")]
+        stages_row = _doc_row(doc, "stages_ms")
         self.assertIn("pusher.connectPush.stagesMs", stages_row, "the stages_ms row sends the reader to the connect table")
         self.assertRegex(stages_row, r"moved to pusher\.connectPush\.stagesMs", "and says the connect pushes' part moved there")
         self.assertIn("2026-09-18", stages_row)
         self.assertNotIn("EVERY caller", stages_row, "the fold sentence is gone")
-        foreign_row = doc[doc.index("      stagesForeign  "):doc.index("      builds  ")]
+        foreign_row = _doc_row(doc, "stagesForeign")
         self.assertIn("push", foreign_row, "the foreign block names the push stages as a second family")
 
 
