@@ -264,6 +264,7 @@ class Collector(unittest.TestCase):
                                               "judgingBand",   # the judging band's per-row memo and horizon cursor (2026-09-16)
                                               "subagentTree",   # the subagents directory walk memo (2026-09-16): served vs walked, roots held
                                               "chatMergeSets", "chatPostal", "chatLedger", "chatFoldTasks",   # the chat build's fixed-cost memos (2026-09-09)
+                                              "chatSig",   # the chat signature pass's counters (stage 1 of the chat-signature design, 2026-09-18)
                                               "outlineProvisional",   # the Outline's provisional-row ledger memo, parse-free (plans/outline-pane-provisional-row.md, 2026-09-15)
                                               "notices",   # the notice files' parsed rows (T370, plans/notice-cards.md): bytes against their bound
                                               "wire", "sessions_scope", "caps", "thread_reg"},
@@ -379,6 +380,27 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["caches"]), CACHE_NAMES, "one exact-occupancy block per declared cache (M1-lite)")
         self.assertGreaterEqual(snap["uptime_s"], 0)
         json.dumps(snap)                                     # the whole thing serializes as-is
+
+    def test_the_chat_signature_counters_are_a_flat_integer_table(self):
+        """Stage 1 of the chat-signature design (2026-09-18): memos.chatSig is the pass's own table, one integer per
+        key, pasteable (identifier keys, numbers), served as a copy: the signature counts (pre, post, nosig, waited),
+        the compare (compares, compareIdentity), the reads inside a signature (stats, namesReads, switchReads,
+        regReads) and the warm-tab census (warmEligible, warmBlockedByOutline, heldBody)."""
+        snap = self.st.snapshot()
+        blk = snap["memos"]["chatSig"]
+        self.assertEqual(set(blk), {"pre", "post", "nosig", "waited", "compares", "compareIdentity",
+                                    "stats", "namesReads", "switchReads", "regReads",
+                                    "warmEligible", "warmBlockedByOutline", "heldBody"})
+        for k, v in blk.items():
+            self.assertIs(type(v), int, k)
+            self.assertTrue(km._PERF_IDENT.fullmatch(k), "an identifier key: %s" % k)
+        self.assertEqual(blk, km._chat_sig_stats_report())
+        blk["pre"] += 1000
+        self.assertNotEqual(blk["pre"], km._chat_sig_stats_report()["pre"], "the report is a copy, not the table")
+        km._chat_sig_bump(pre=2, nosig=1)
+        after = km._chat_sig_stats_report()
+        self.assertEqual((after["pre"] - blk["pre"] + 1000, after["nosig"] - blk["nosig"]), (2, 1), "the bump adds under the lock")
+        km._chat_sig_bump(pre=-2, nosig=-1)             # this module's table is shared by every test: put it back
 
     def test_every_memo_key_is_named_in_the_collectors_docstring(self):
         # the /perf reader's reference for a memo block is _PerfStats's own docstring (its `memos` rows): a memo

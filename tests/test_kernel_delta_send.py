@@ -305,11 +305,12 @@ class ByteIdenticalFrames(unittest.TestCase):
         t1, t2 = self._timeline(2, 1), self._timeline(3, 2)
         return [(a, f1, t1), (a, f1, t1), (b, f1, t1), (b, f1, t1), (c, f1, t1), (c, f2, t2)]
 
-    def _run(self, diff, perf=None, build=None, tolerate=()):
+    def _run(self, diff, perf=None, build=None, tolerate=(), between=None):
         """Six cycles; returns (the raw wire strings per client, whether the diff met one object on both sides per
         cycle, and with `perf` a _PerfStats each cycle's stage split, the cycle opened and closed on this thread).
         `build` replaces build_session's body (frame -> the session dict, or a raise); `tolerate` names stderr lines
-        the run expects (a failed build's own report)."""
+        the run expects (a failed build's own report); `between`, when given, is called with the cycle's index before
+        each cycle's push (the census tests move a client's skeleton set between cycles)."""
         sid = self.SID
         td = tempfile.TemporaryDirectory(); self.addCleanup(td.cleanup)
         path = os.path.join(td.name, sid + ".jsonl")
@@ -359,7 +360,9 @@ class ByteIdenticalFrames(unittest.TestCase):
                 mock.patch.object(km, "_DELTA_MAX_FRACTION", 10.0), \
                 mock.patch.object(sys, "stderr", err):
             builds, rows = [], []
-            for frame, feed, timeline in self._script():
+            for i, (frame, feed, timeline) in enumerate(self._script()):
+                if between is not None:
+                    between(i)
                 if not builds or builds[-1] is not frame:      # a new frame is a rebuild: the transcript's stat moves,
                     builds.append(frame)                        # so the tab's signature misses and build_session runs;
                     os.utime(path, (self.NOW, self.NOW + len(builds)))   # a repeat is the served tab (the cache hit)
@@ -401,6 +404,116 @@ class ByteIdenticalFrames(unittest.TestCase):
         first = [f for f in feed_frames if f["type"] == "feed"][0]
         self.assertEqual([a["column"] for a in first["asks"]], ["working"] * 4, "no card moved column")
         self.assertEqual([a["itemId"] for a in first["asks"]], ["%s:g%d" % (self.SID, i) for i in range(4)], "nor order")
+
+    def test_the_signature_counters_move_with_the_push_loop(self):
+        """Stage 1 of the chat-signature design (2026-09-18): memos.chatSig counts what the push loop does. Six cycles over
+        one tab, rebuilt and served alternately: pre = the six pre-build signatures = builds.chat cached + built, post = the
+        three post-build signatures = built less nosig, no nosig, a compare on every cycle after the first (a cached entry
+        to compare against), at least one stat per signature (the transcript's), and no census count with no chat client
+        registered (the harness's clients are the push's targets, not connected clients)."""
+        ps = km._PERF_STATS
+        before, b0 = km._chat_sig_stats_report(), ps.snapshot()["builds"]["chat"]
+        _wire, calls, _rows = self._run(km._chat_diff, perf=ps)
+        self.assertEqual(calls, [False, True, False, True, False, True], "premise: rebuilt, served, alternating")
+        after, b1 = km._chat_sig_stats_report(), ps.snapshot()["builds"]["chat"]
+        d = {k: after[k] - before[k] for k in after}
+        cached, built = b1["cached"] - b0["cached"], b1["built"] - b0["built"]
+        self.assertEqual((cached, built), (3, 3))
+        self.assertEqual(d["pre"], cached + built, "one pre-build signature per tab per push")
+        self.assertEqual(d["nosig"], 0)
+        self.assertEqual(d["post"], built - d["nosig"], "one post-build signature per rebuild that had a signature")
+        self.assertEqual(d["compares"], 5, "every cycle after the first meets the cached entry")
+        self.assertGreaterEqual(d["compareIdentity"], 0)
+        self.assertLessEqual(d["compareIdentity"], 5 * len(km._CHAT_SIG_LABELS))
+        self.assertGreaterEqual(d["stats"], d["pre"] + d["post"], "every signature stats the transcript at least")
+        self.assertEqual(d["waited"], 0)
+        self.assertEqual((d["warmEligible"], d["warmBlockedByOutline"], d["heldBody"]), (0, 0, 0), "no connected chat client: no census")
+
+    def test_the_warm_tab_census_counts_by_what_the_connected_clients_hold(self):
+        """The census the warm-tab gate question needs (the design's dropped alternative, kept as a count): a cached tab
+        every connected chat client holds as a skeleton and no client watches is warmEligible; the same tab with a plain
+        Outline pane connected is warmBlockedByOutline; a tab a client holds as a body (the watched tab included) is
+        heldBody. The first cycle builds the tab while the client still holds it whole (else the cold gate would skip it
+        and it would never be warm); the client's skeleton set gains the sid before the second."""
+        ps = km._PERF_STATS
+        keys = ("warmEligible", "warmBlockedByOutline", "heldBody")
+
+        def scenario(clients, between=None):
+            before, c0 = km._chat_sig_stats_report(), ps.snapshot()["builds"]["chat"]["coldSkipped"]
+            with mock.patch.object(km, "_clients", clients):
+                _wire, calls, _rows = self._run(km._chat_diff, perf=ps, between=between)
+            self.assertEqual(calls, [False, True, False, True, False, True], "the census changes no build: rebuilt, served, alternating")
+            self.assertEqual(ps.snapshot()["builds"]["chat"]["coldSkipped"], c0, "no tab was cold-skipped")
+            after = km._chat_sig_stats_report()
+            return tuple(after[k] - before[k] for k in keys)
+
+        def client(**kw):
+            return dict({"app": "chat", "alive": True, "sent": {}, "skeleton": set(), "proto": 2, "ready": True, "handshake": True}, **kw)
+        held = client()
+        def skeleton_from_cycle_1(i):
+            if i == 1:
+                held["skeleton"] = {self.SID}
+        self.assertEqual(scenario([held], skeleton_from_cycle_1), (5, 0, 1),
+                         "warm from cycle 1 on and held as a skeleton: eligible five times; held as a body on cycle 0")
+        held = client()
+        self.assertEqual(scenario([held, {"app": "fleet", "alive": True, "sent": {}}], skeleton_from_cycle_1), (0, 5, 1),
+                         "a plain Outline pane blocks the gate: the same five count under warmBlockedByOutline")
+        self.assertEqual(scenario([client(active=self.SID)]), (0, 0, 6), "a watched tab is a body every cycle")
+
+    def test_reads_inside_a_signature_are_counted_and_the_same_reads_outside_one_are_not(self):
+        """The read counters are gated to a signature (the thread-local scope _chat_build_sig opens): the names read in
+        _sdk_transcript_path, the switch read in _user_todos_on and sdk_backend.read_reg count inside one and not
+        outside, and regReads equals the read_reg calls the signature made (a dead tab's queue fallbacks included)."""
+        td = tempfile.TemporaryDirectory(); self.addCleanup(td.cleanup)
+        path = os.path.join(td.name, self.SID + ".jsonl")
+        with open(path, "w") as f:
+            f.write("{}\n")
+        sess = {"sid": self.SID, "name": "web", "anchor": None, "path": path, "mtime": self.NOW}
+        self.assertTrue(km._sdk(), "premise: the SDK backend module loads (its read_reg is the counted reader)")
+        sb = sys.modules["romp_sdk_backend"]
+        real_read_reg = sb.read_reg
+        reg_calls = []
+
+        def read_reg(state_dir, sid):
+            reg_calls.append(sid); return real_read_reg(state_dir, sid)
+        empty_stamp = ((None, None, None, None, ()), frozenset(), ())
+
+        def stamp(sid):
+            km._sdk_transcript_path(sid); return empty_stamp
+
+        def todo_fp(sid):
+            km._user_todos_on(); return None
+
+        def launch(sid, be=None):
+            sb.read_reg(km.jd.STATE, str(sid)); return None
+        with mock.patch.object(sb, "read_reg", read_reg), mock.patch.object(km, "_session_stamp_read", stamp), \
+                mock.patch.object(km, "_user_todo_fp", todo_fp), mock.patch.object(km, "_launch_error", launch), \
+                mock.patch.object(km._live_scope, "names", {}, create=True):   # a names snapshot: _names_parts reads no file
+            before = km._chat_sig_stats_report()
+            km._sdk_transcript_path(self.SID); km._user_todos_on(); sb.read_reg(km.jd.STATE, self.SID); km._chat_ident(path)
+            self.assertEqual(km._chat_sig_stats_report(), before, "outside a signature the readers count nothing")
+            del reg_calls[:]
+            sig = km._chat_build_sig(sess, None, self.NOW, live_map={})
+            after = km._chat_sig_stats_report()
+        self.assertIsNotNone(sig)
+        d = {k: after[k] - before[k] for k in after}
+        self.assertEqual(d["namesReads"], 1, "the stamp read's names read, and no other")
+        self.assertEqual(d["switchReads"], 1)
+        self.assertEqual(d["regReads"], len(reg_calls), "every read_reg the signature made: %r" % (reg_calls,))
+        self.assertGreaterEqual(d["regReads"], 1)
+        self.assertGreaterEqual(d["stats"], 5, "the transcript, the states file and the archive, episodes and gone identities at least")
+        self.assertEqual((d["pre"], d["post"], d["compares"]), (0, 0, 0), "a signature outside the push loop is not a loop count")
+
+    def test_the_frames_are_byte_identical_with_the_signature_counters_disabled(self):
+        """The counters are measurement: with every counting site a no-op the six cycles produce the same wire strings for
+        every client (the stage 1 invariant: no frame or read changes)."""
+        live, calls_live, _ = self._run(km._chat_diff)
+        noop = lambda *a, **k: None
+        with mock.patch.object(km, "_chat_sig_count", noop), mock.patch.object(km, "_chat_sig_bump", noop), \
+                mock.patch.object(km, "_chat_sig_note_pre", noop):
+            off, calls_off, _ = self._run(km._chat_diff)
+        self.assertEqual(off, live, "the same wire strings, per client, with the counters off")
+        self.assertEqual(calls_off, calls_live)
 
     def test_the_chat_stage_is_split_into_its_seams(self):
         """Stage 1 of the incremental-push design (2026-09-18): push.chat is a container of three seams in stages_ms
