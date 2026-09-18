@@ -21,7 +21,7 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_mobile", os.path.join(BIN, "romp-kernel"))
 sys.path.insert(0, HERE)
-from test_pane_shim_return import HARNESS as _PANE_HARNESS   # noqa: E402  the pane shim's node fakes (never its TestCases), for the linked runs below
+from test_pane_shim_return import HARNESS as _PANE_HARNESS, _run as _run_pane   # noqa: E402  the pane shim's node fakes and its pane-only runner (never its TestCases), for the linked runs below
 
 
 def _mobile_js():
@@ -965,14 +965,18 @@ var shellTell=global.__rompPanesTell;global.__rompPanesTell=function(){shellTell
 """
 
 
-def _run_linked(scenario):
+def _run_linked(scenario, app="test", pre="", before=""):
+    """`app` reaches km._shim_core_js as a served page's would (the chat's diet line and the feed's park exemption key on it).
+    `pre` runs after the shell harness and BEFORE the shell script (element fakes with attributes, the lazy panes). `before`
+    runs inside the pane scope after the pane harness and BEFORE the shim core: the pane's document loading after a shell
+    event (a tap that promotes a lazy pane), where the default runs the shim at the shell's boot as every case before did."""
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node not installed")
     fx = tempfile.mkdtemp()
     path = os.path.join(fx, "run.js")
     with open(path, "w") as f:
-        f.write(_FIT_HARNESS + _SHELL_PROBE_HARNESS + _mobile_js() + "\n(function(){\n" + _PANE_HARNESS + km._shim_core_js() + "\n" + _LINK_GLUE + scenario + "\n})();\n")
+        f.write(_FIT_HARNESS + _SHELL_PROBE_HARNESS + pre + _mobile_js() + "\n(function(){\n" + _PANE_HARNESS + before + km._shim_core_js(app) + "\n" + _LINK_GLUE + scenario + "\n})();\n")
     r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise AssertionError("node failed:\n" + r.stderr)
@@ -1370,6 +1374,64 @@ rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
         self.assertEqual(r["backstop"], 0, "no link-backstop row: the shell's loop was alive throughout")
         self.assertEqual(len(r["rf"]), 1)
         self.assertEqual(r["rf"][0]["linkUpMs"], 5000, "the word's time")
+
+
+# ── the lazy panes and the phone's skeleton first dial, shell + shim (stage 0, 2026-09-18) ────────────────────────
+# The fit harness's element fakes carry no attributes, so the lazy-pane cases hand the shell richer ones (`pre`): six pane
+# iframes with the served markup's src or data-src, a .pane parent each and a body that keeps data-tab. The pane's shim
+# then runs where the document would load: after the tap (`before`), for a lazy pane; at the shell's boot, for the chat.
+_LAZY_PRE = r"""
+const ATTRS = {}, SRCSETS = [], DIVCLS = {};
+const mk = (id) => { const k = id.slice(2), a = (k === 'chat' || k === 'files') ? { src: '/' + k } : { 'data-src': '/' + k }; ATTRS[id] = a; DIVCLS[id] = new Set();
+  const dc = DIVCLS[id];
+  return { id, parentNode: { classList: { add: (c) => dc.add(c), remove: (c) => dc.delete(c), contains: (c) => dc.has(c) } },
+    classList: { toggle() {} }, contentDocument: {}, contentWindow: { addEventListener: () => {} },
+    getAttribute: (x) => (x in a ? a[x] : null), setAttribute: (x, v) => { a[x] = v; if (x === 'src') SRCSETS.push(id); }, removeAttribute: (x) => { delete a[x]; },
+    addEventListener: (x, f) => { if (x === 'load') LOADS.push(id); } }; };
+['f-chat', 'f-fleet', 'f-feed', 'f-timeline', 'f-waiting', 'f-files'].forEach((id) => { PANES[id] = mk(id); });
+let TABNOW = null; const BODYCLS = new Set();
+global.document.body = { setAttribute: (x, v) => { if (x === 'data-tab') TABNOW = v; }, getAttribute: (x) => (x === 'data-tab' ? TABNOW : null),
+  classList: { toggle: (c, on) => { if (on) BODYCLS.add(c); else BODYCLS.delete(c); }, contains: (c) => BODYCLS.has(c) } };
+global.__rompPaneEnabled = () => true;   // the head script's reader: every pane shown
+global.lazySnap = () => ({ src: Object.fromEntries(Object.keys(ATTRS).map((id) => [id, ATTRS[id].src || null])), lazy: Object.fromEntries(Object.keys(ATTRS).map((id) => [id, ATTRS[id]['data-lazy-src'] || null])), sets: SRCSETS.slice() });
+"""
+# the pane reads the shell's REAL layout probe (as _LINK_GLUE points it at the shell's real link)
+_MOBILE_GLUE = r"""Object.defineProperty(window.parent,"__rompMobileOn",{configurable:true,get:function(){return global.__rompMobileOn;}});
+"""
+
+
+class LazyPaneLinked(unittest.TestCase):
+    """T1 (stage 0), shell + shim: a lazy pane has no src, so no document and no socket, until its tap; the tap sets the src once
+    and the pane's shim, loading after it, dials one socket and hears the panes word saying it is on screen; from then on it is a
+    pane like any other, parking at a return off screen (D2) and dialing on its tab (the linked harness of PR 768: one node
+    process, one fake clock, the pane reading the shell's real publications). And the phone's first chat dial carries skeleton=1
+    (the kernel's one-full-plus-statuses shape), where a standalone page, the VS Code webview or a desktop shell does not."""
+
+    def test_the_phones_first_chat_dial_carries_skeleton_1_and_a_redial_or_another_layout_does_not(self):
+        r = _run_linked(app="chat", pre=_LAZY_PRE, before=_MOBILE_GLUE, scenario=r"""
+var first=sock().url;
+open();recv({type:"ka"});sock().readyState=3;sock().onclose({code:1006});fireTimers();   // the socket dies before the bundle's ready was answered: the redial dials as a fresh page (the reload diet's rule)
+var redial=sock().url;
+out({first:first,redial:redial,sockets:sockets.length,mobile:parentMobile()});""")
+        self.assertIs(r["mobile"], True, "the pane reads the shell's real layout probe (the fit harness's media query matches)")
+        self.assertIn("app=chat&", r["first"])
+        self.assertIn("&skeleton=1", r["first"], "the phone's first chat dial takes the skeleton diet: one full for the shown tab, a status per other tab")
+        self.assertNotIn("reconnect=1", r["first"])
+        self.assertEqual(r["sockets"], 2)
+        self.assertNotIn("&skeleton=1", r["redial"], "a redial after a socket that died before the ready was answered dials as a fresh page, as the reload diet does (everConnected)")
+        # the other layouts, pane-only (the shell's probe stubbed): a desktop shell says false, a standalone page or the VS Code webview has none
+        for pre, why in (("parentMobileVal=false;", "a desktop shell"), ("", "no shell (standalone, VS Code)")):
+            d = _run_pane('out({url:sock().url});', pre=pre, app="chat")
+            self.assertNotIn("skeleton=1", d["url"], why + ": the whole push, as before")
+        js = km._shim_core_js("chat")
+        self.assertIn('if(APP==="chat"&&!COL&&!SKEL&&parentMobile()===true)RESTART_DIET=true;', js, "the fork line sets the reload diet's flag; the dial line is upstream's text")
+        self.assertLess(js.index("function parentMobile()"), js.index('RESTART_DIET=true;'), "after the probe it reads")
+        self.assertLess(js.index('RESTART_DIET=true;'), js.index('?"&skeleton=1":""'), "before the dial line reads the flag")
+        html = km._landing()
+        probe = "window.__rompMobileOn=function(){try{return !!(window.matchMedia&&matchMedia(" + json.dumps(km._MOBILE_MQ) + ").matches);}catch(e){return false;}};"
+        self.assertEqual(html.count(probe), 1, "the head defines the layout probe once")
+        self.assertLess(html.index(probe), html.index("<iframe"), "…before any iframe, so a pane's shim can read it at its own load (the wid mint's race)")
+        self.assertLess(html.index(probe), html.index("window.__rompMobileOn=mobileOn;"), "…and the mobile script's cached-list version replaces it when the body's scripts run")
 
 
 if __name__ == "__main__":

@@ -64551,6 +64551,20 @@ function parentLink(){try{return (window.parent!==window&&typeof window.parent._
 // byte for byte. The shell is present when its probe exists, window.parent.__rompMobileOn is a function, as parentLink()'s
 // gate reads the link; undefined off a shell (standalone, VS Code, an older shell): parks nothing.
 function parentMobile(){try{return (window.parent!==window&&typeof window.parent.__rompMobileOn==="function")?!!window.parent.__rompMobileOn():undefined;}catch(e){return undefined;}}
+// [fork] stage 0 (2026-09-18, the user's decision of that day): the phone's FIRST chat dial takes the skeleton diet. The kernel
+// then serves the strip with a skeleton list, ONE full for the tab the page shows (its ?active= hint, the state blob's activeId)
+// and a ~400 B status per other tab (_resolve_reconnect), where a fresh dial was served every tab whole (17 frames / 9 MB on the
+// measured board); the page's idle prefetch loads the rest one tab at a time once the visible tab's full has applied (render.ts,
+// skeleton-tabs.ts's gate). The dial line below reads RESTART_DIET for the first dial (everConnected false) and nothing after it,
+// so setting the reload diet's flag here gives the phone the same shape with the URL line left as upstream wrote it; a redial
+// carries the diet through reconnect=1 as today, and a redial after a socket that died before the bundle's ready was answered
+// dials as a fresh page, as the reload diet does. The main chat pane alone: a column is SKEL already, a standalone page or the
+// VS Code webview has no shell (parentMobile undefined), the desktop's grid shows several panes and keeps the whole push. The
+// shell's probe is defined in its head, before any iframe (_landing), so this read at the shim's load cannot race the shell's
+// body scripts. A blob with no activeId (a first-ever open) dials the term too and the kernel keeps its fail-safe whole push
+// for a local page with no hint (_resolve_reconnect); a stored tab that has ended matches no session and every tab is skeleton,
+// which the page's strip gate loads in the kernel's order.
+if(APP==="chat"&&!COL&&!SKEL&&parentMobile()===true)RESTART_DIET=true;
 // [fork] D2: park this pane's socket. abandon()'s teardown (the four handlers detached, close, ws nulled, so the watchdog tick
 // is inert on !ws and no onclose timer can arm) and its quiet-stale rule, but ONE state word to the shell, "parked", never
 // abandon()'s "down": a parked pane is not a broken one, so the shell's connection log stays silent and its cue dark
@@ -70117,6 +70131,12 @@ def _landing():
             # LANDSCAPE TABLET — too wide for both mobile breakpoints — took this branch and threw the
             # accurate measurement away (the user 2026-07-29, on an iPad).
             "html,body{margin:0;height:100%;height:100dvh;height:var(--app-h,100dvh);"
+            # [fork] stage 0 (2026-09-18): the phone LAYOUT probe, defined in the head too, before any iframe, so a pane's shim can
+            # read window.parent.__rompMobileOn at its own load (the chat pane's first dial takes the skeleton diet on the phone,
+            # _shim). The mobile script (_LANDING_MOBILE_JS) defines the same probe over its cached media-query list and replaces
+            # this one when it parses, at the body's end, which on a fast origin can be after the chat document's inline shim has
+            # run (the wid mint above moved here for the same race). One constant, _MOBILE_MQ, so the two answers cannot differ.
+            "window.__rompMobileOn=function(){try{return !!(window.matchMedia&&matchMedia(" + json.dumps(_MOBILE_MQ) + ").matches);}catch(e){return false;}};"
             "background:#1e1e1e;overflow:hidden}"
             # A pane whose document has not painted yet is a WHITE rectangle in the shell's dark frame
             # (Firefox shows it plainly). Give the frames the shell's own background so a slow or blank
