@@ -422,3 +422,39 @@ assert lines[i + 1:i + 6] == ["    _pusher (kernel.py:100)", "    _job_stage (ke
     [ "$status" -eq 0 ]
     [[ "$output" == *"romp perf"* ]]
 }
+
+@test "romp perf export: dispatches to romp-perf-export with its flags, which writes the public form of a saved snapshot" {
+    run "$ROMP_SCRIPT" perf export --public --from "$SNAP_A" --out "$TEST_DIR/public.json"
+    [ "$status" -eq 0 ]
+    [[ "$output" == "$TEST_DIR/public.json ("*" bytes)" ]]
+    [ ! -f "$CURL_LOG" ]                                 # --from: nothing reached the kernel
+    python3 - "$TEST_DIR/public.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["schema"] == "romp-perf-export/1", d.get("schema")
+assert "pid" not in d["perf"]["process"] and "now" not in d["perf"] and "log" not in d["perf"], sorted(d["perf"])
+assert d["perf"]["pusher"]["cycles"] == 100 and d["perf"]["http"]["GET /sessions"]["count"] == 5
+assert "GET /tick" not in d["perf"]["http"] and d["perf"]["http"]["other"]["count"] == 50, sorted(d["perf"]["http"])   # /tick is a POST route: a GET of it is outside the register
+assert "usage" not in d
+PY
+}
+
+@test "romp perf export: without --public the verb refuses with one line, exit 2, and writes nothing" {
+    run "$ROMP_SCRIPT" perf export --from "$SNAP_A" --out "$TEST_DIR/public.json"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--public"* ]]
+    [[ "$output" == *"no raw mode"* ]]
+    [ "$(printf '%s\n' "$output" | wc -l)" -eq 1 ]
+    [ ! -f "$TEST_DIR/public.json" ]
+}
+
+@test "romp perf export: --usage adds the usage block, and the usage line names the verb" {
+    run "$ROMP_SCRIPT" perf export --public --usage --from "$SNAP_A" --out "$TEST_DIR/public.json"
+    [ "$status" -eq 0 ]
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["usage"]["kernelUptime"] == "lt1h", d["usage"]' "$TEST_DIR/public.json"
+    run "$ROMP_SCRIPT" perf --nope
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"romp perf export --public"* ]]
+    run "$ROMP_SCRIPT" help
+    [[ "$output" == *"romp perf export --public"* ]]
+}

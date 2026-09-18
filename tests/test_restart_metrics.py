@@ -19,6 +19,7 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 rm = load_source("romp_restart_metrics", os.path.join(BIN, "romp-restart-metrics"))
+pp = rm.perf_public          # the public shape the --public flag applies (cli/perf_public.py)
 
 SID = "11111111-2222-4333-8444-000000000304"
 SID2 = "22222222-3333-4444-8555-000000000304"
@@ -371,6 +372,85 @@ class Document(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("restart metrics", out.getvalue())
         self.assertEqual(rm.main(["--since", "not-a-date", "--no-live", "--state", str(self.state)]), 2)
+
+
+class PublicForm(unittest.TestCase):
+    """`--json --public` (2026-09-18): the document's paste-safe form through cli/perf_public.py, the shape `romp perf
+    export --public` writes. The fixture's session names (web, api) ride the cut rows' cutSessions lists and the
+    buckets' cutSessions counts, the sids and pids ride the events, and the label is free text; none may survive,
+    while the counts they stood beside do. Before the flag, argparse refused `--public`."""
+
+    def setUp(self):
+        self.state = Path(tempfile.mkdtemp())
+        _fixture(self.state)
+
+    def _public(self, *extra):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = rm.main(["--json", "--public", "--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state)] + list(extra))
+        self.assertEqual(rc, 0)
+        return json.loads(out.getvalue())
+
+    def test_no_session_name_id_pid_scope_or_label_survives_and_the_counts_do(self):
+        doc = self._public("--label", "TESTHOST")
+        text = json.dumps(doc)
+        for planted in ('"web"', '"api"', SID, SID2, SID[:8], "TESTHOST", "this machine", "cutSessions", '"label"', '"pids"', '"sid"', '"name"'):
+            self.assertNotIn(planted, text, planted)     # the names as JSON tokens: `api` is a substring of the apiS latency key
+        self.assertIs(doc["public"], True)
+        self.assertEqual(doc["schema"], 1)
+        self.assertNotIn("generatedAt", doc)
+        first = doc["restarts"][0]
+        self.assertEqual((first["cutTurns"], first["stopped"], first["reason"]), (2, 5, "other"), "the count stays, the names go, free text folds")
+        self.assertNotIn("pid", first)
+        self.assertEqual(doc["restarts"][1]["reason"], "p2p-update", "a reason that is an identifier stays")
+        b = [x for x in doc["buckets"] if x["key"] == "2026-09-10"][0]
+        self.assertEqual((b["restarts"], b["cutTurns"], b["cleanRestarts"]), (2, 3, 0))
+        self.assertEqual(b["reasons"], {"manager-sigterm": 1, "p2p-update": 1})
+        self.assertEqual(doc["window"], {"kind": "day", "anchor": "2026-09-10", "tz": TZ})
+        self.assertEqual(sorted(doc["sources"]["turns"]), ["present", "rows"], "the file NAME is a path key and goes")
+        recent = doc["events"]["recent"]
+        self.assertTrue(recent and all("sid" not in e and "name" not in e and "pids" not in e for e in recent), recent)
+        self.assertEqual(doc["events"]["byKind"]["reconcile.duplicate-cli"], 1)
+        self.assertEqual(doc["notes"], ["other", "other"], "prose is not an identifier")
+        problems = pp.paste_problems(doc, planted=(SID, SID2, "TESTHOST", "this machine"))   # the walk's probes are substrings
+        self.assertEqual(problems, [], "%d leak(s):\n  %s" % (len(problems), "\n  ".join(problems)))
+
+    def test_the_raw_document_still_carries_the_names_so_the_flag_is_what_removes_them(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = rm.main(["--json", "--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state)])
+        self.assertEqual(rc, 0)
+        doc = json.loads(out.getvalue())
+        self.assertEqual(doc["restarts"][0]["cutSessions"], ["web", "api"])
+        self.assertNotIn("public", doc)
+
+    def test_public_without_json_is_refused(self):
+        err = io.StringIO()
+        with mock.patch("sys.stderr", err):
+            rc = rm.main(["--public", "--no-live", "--state", str(self.state)])
+        self.assertEqual(rc, 2)
+        self.assertIn("--json --public", err.getvalue())
+
+    def test_a_machine_string_that_survives_the_fold_refuses_the_print(self):
+        # an anchor is a date the fold keeps; a probe planted as the label would be dropped, so the scan is exercised
+        # through a value the fold keeps: the window's tz, set to a probe-shaped zone name
+        probes = [("hostname", "testhost")]
+        with mock.patch.object(pp, "machine_probes", return_value=probes):
+            err, out = io.StringIO(), io.StringIO()
+            with mock.patch("sys.stderr", err), redirect_stdout(out):
+                rc = rm.main(["--json", "--public", "--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state),
+                              "--label", "TESTHOST"])
+            self.assertEqual(rc, 0, "the label is dropped by the denylist before the scan: nothing to refuse")
+            self.assertNotIn("TESTHOST", out.getvalue())
+            err, out = io.StringIO(), io.StringIO()
+            with mock.patch("sys.stderr", err), redirect_stdout(out), \
+                    mock.patch.object(rm, "public_form", side_effect=lambda d: dict(rm.perf_public.fold(d), TESTHOST=1)):
+                rc = rm.main(["--json", "--public", "--no-live", "--state", str(self.state)])
+            self.assertEqual(rc, 1)
+            self.assertEqual(out.getvalue(), "", "nothing printed")
+            self.assertIn("hostname", err.getvalue())
+            self.assertIn("a key under the root", err.getvalue())
+            self.assertNotIn("TESTHOST", err.getvalue(), "never the value")
 
 
 class LiveHelpers(unittest.TestCase):

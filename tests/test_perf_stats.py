@@ -46,6 +46,7 @@ load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = load_source("romp_kernel_perf", os.path.join(BIN, "romp-kernel"))
+pp = load_source("romp_perf_public", os.path.join(os.path.dirname(HERE), "cli", "perf_public.py"))   # the paste-safe walk
 
 SID = "11111111-2222-3333-4444-555555555555"
 # A PRIVATE synthetic sid for the goal-store tests: load_goals replays the per-sid override journal,
@@ -2463,52 +2464,24 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
     runs over a fresh collector's snapshot(), the same function the route serves, so the module-global counters other
     test modules filled in this process are walked too; the planted reads are removed after."""
 
+    # The served snapshot's key grammar is the kernel's own (_PERF_IDENT without the cap): no colon, so it is
+    # STRICTER than the export's browser grammar (cli/perf_public.py IDENT, which allows `:`). The walk itself is the
+    # shared module's (perf_public.paste_problems), which `romp perf export --public` runs over its own output: the
+    # http check (membership in the register's image, perf_public.http_key_ok over the module's checked-in copy of the
+    # register, so the walk runs the same against any kernel tree), the stack sample's key and frame grammars, the
+    # joined-key grammar, and the leak detectors (a uuid, a 32-hex and a 40-hex token, an absolute path, free text,
+    # the planted strings). This test hands it the stricter ident.
     IDENT = re.compile(r"^[A-Za-z0-9_.-]+$")
-    _KIND_WORDS = getattr(km, "_THREAD_KIND_WORDS", None)         # the stack sample's "<ident> <kind>" (_thread_stacks): a word of
-    STACKS_KEY = re.compile(r"^[0-9]+ (?:(?:judge-)*(?:%s)|other)$" % "|".join(sorted(map(re.escape, _KIND_WORDS)))) if _KIND_WORDS \
-        else re.compile(r"^[0-9]+ (?:[A-Za-z0-9_.-]+|\?)$")       # the kernel's register (a judge pool's worker composes one
-    #                                                              with judge-) or other, nothing else: a thread's name is never
-    #                                                              a key (2026-09-18: a library's watchdog named with a test path
-    #                                                              reached CI's sample verbatim). A tree before the register gets
-    #                                                              the character grammar that stood here, so the fails-before run
-    #                                                              names the leaking sites, not this class
-    FRAME = re.compile(r"^(?:[A-Za-z0-9_]+|<[a-z]+>) \(<?[A-Za-z0-9_. -]+>?:[0-9]+\)$")   # "function (file:line)": a code object's
-    #                                                                                     name and its file's basename, the
-    #                                                                                     interpreter's <lambda> and <frozen ...>
-    #                                                                                     forms included; never a directory
-    NAME = r"(?:[A-Za-z0-9_.?-]+|<[a-z]+>)"           # a fixed name, a stage mark, a reason code, or a code object's name as the
-    #                                                   interpreter spells it (<lambda>, <genexpr>): a caller read through a lambda
-    JOINED_KEY = re.compile(r"^%s(?::%s)?(?:<-%s)?$" % (NAME, NAME, NAME))
-    # the blocks whose keys join identifiers, and what the joined parts are (every part a fixed name, a stage mark, a
-    # function name or a reason code; never a path, an id or text): the reader's whole reads as kind<-caller and
-    # stage:kind<-caller, the assembly checkpoints' hydrations as caller and stage:caller, its parse counters as
-    # phase:reason (g:boundary, full:noDocument, restore:chainRefused), its removals as fallback:reason, and the lazy
-    # index's materializations as caller and stage:caller; the judge child's copies of the first two tables under
-    # judge.child. A caller is a function's code-object name, which for a read made through a lambda is `<lambda>`.
-    JOINED = {("recordCache", "wholeReads"), ("recordCache", "wholeReadsByStage"),
-              ("asmCheckpoint", "hydratedBy"), ("asmCheckpoint", "hydratedByStage"),
-              ("asmCheckpoint", "parse"), ("asmCheckpoint", "removed"),
-              ("asmIndex", "materializedBy"), ("asmIndex", "materializedByStage")}
-    JOINED_KEY_BLOCKS = JOINED | {("judge", "child") + b for b in JOINED if b[0] in ("recordCache", "asmCheckpoint")}
-    UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
-    HEX32 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}(?![0-9a-fA-F])")
-    HEX40 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])")   # a sha1: a checkpoint document's name
-    ABS_PATH = re.compile(r"(?:^|[\s\"'=(:,])/(?:[^/\s]+/)+[^/\s]*")   # a slash-rooted path of two or more segments
-    WHITESPACE = re.compile(r"\s")
-
-    HTTP_KEY_BEFORE_THE_REGISTER = re.compile(r"^(?:GET|HEAD|POST|OPTIONS) /[A-Za-z0-9_./*-]*$|^other$")   # a tree without the
-    #                                                          register (main before this change): the character grammar the image
-    #                                                          replaced, so the fails-before run names the leaking sites, not this class
+    JOINED_KEY_BLOCKS = pp.JOINED_KEY_BLOCKS
 
     @staticmethod
     def _http_keys():
         """The image of _perf_http_key over the register: "METHOD /path" for every method's routes (OPTIONS, the union,
         included), "METHOD /family" for the collapsed families, "METHOD /remote/*<op>" for the same method's routes, and
         `other`. The fold returns nothing else (its last line spells a method and one of those paths, or `other`), and
-        test_the_http_key_set_is_the_image_of_the_fold reaches every member with one request, so membership here is
-        exact: no path-shaped key the fold never makes passes the walk. None on a tree without the register."""
-        if not hasattr(km, "_PERF_HTTP_ROUTES"):
-            return None
+        test_the_http_key_set_is_the_image_of_the_fold reaches every member with one request and holds every member to
+        the shared module's membership test (perf_public.http_key_ok, over its checked-in copy of the register), so the
+        walk's http check is exact: no path-shaped key the fold never makes passes it."""
         keys = {"other"}
         for method, routes in km._PERF_HTTP_ROUTES.items():
             keys.update(method + " " + p for p in routes)
@@ -2519,7 +2492,6 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
     def setUp(self):
         self.st = km._PerfStats()
         self.em = km.em
-        self.http_keys = self._http_keys()
         self.home = os.path.join(tempfile.mkdtemp(), "home", "tester")          # an absolute home path under a temp dir
         self.addCleanup(shutil.rmtree, os.path.dirname(os.path.dirname(self.home)), True)
         proj = os.path.join(self.home, ".claude", "projects", "-home-tester-code-notes-api")
@@ -2586,59 +2558,6 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
     def _my_stacks_key(self):
         return "%s %s" % (threading.get_ident(), km._thread_kind(threading.current_thread().name))
 
-    def _check_text(self, s, where, key):
-        at = "%s %r at %s" % ("key" if key else "value", s, "/".join(str(p) for p in where))
-        for probe in self.planted:
-            if probe in s:
-                self.problems.append("planted text survives: " + at)
-                break
-        if self.UUID.search(s):
-            self.problems.append("a uuid-shaped token: " + at)
-        if self.HEX32.search(s):
-            self.problems.append("a 32-hex token: " + at)
-        if self.HEX40.search(s):
-            self.problems.append("a 40-hex token: " + at)
-        if not (key and where == ("http",)) and self.ABS_PATH.search(s):   # a route key is a path by design; its
-            self.problems.append("an absolute path: " + at)                     #  grammar is checked in _check_key
-        if not key:                                                              # a value: no free text (an exception message,
-            if len(where) > 2 and where[0] == "stacks" and where[2] == "frames":   # a URL, a bare host name); a frame string
-                if not self.FRAME.match(s):                                        # has its own grammar
-                    self.problems.append("outside the frame grammar: " + at)
-            elif self.WHITESPACE.search(s):
-                self.problems.append("free text: " + at)
-
-    def _check_key(self, k, where):
-        at = "key %r at %s" % (k, "/".join(str(p) for p in where))
-        if not isinstance(k, str):
-            self.problems.append("a non-string key: " + at)
-            return
-        self._check_text(k, where, key=True)
-        if where == ("http",):
-            if self.http_keys is None:
-                if not self.HTTP_KEY_BEFORE_THE_REGISTER.match(k):
-                    self.problems.append("outside the http key grammar: " + at)
-            elif k not in self.http_keys:
-                self.problems.append("outside the image of _perf_http_key: " + at)
-        elif where == ("stacks",):
-            if not self.STACKS_KEY.match(k):
-                self.problems.append("outside the stack sample's key grammar: " + at)
-        elif where in self.JOINED_KEY_BLOCKS:
-            if not self.JOINED_KEY.match(k):
-                self.problems.append("outside the joined-identifier grammar: " + at)
-        elif not self.IDENT.match(k):
-            self.problems.append("outside the identifier grammar: " + at)
-
-    def _walk(self, node, where=()):
-        if isinstance(node, dict):
-            for k, v in node.items():
-                self._check_key(k, where)
-                self._walk(v, where + (k,))
-        elif isinstance(node, (list, tuple)):
-            for i, v in enumerate(node):
-                self._walk(v, where + (i,))
-        elif isinstance(node, str):
-            self._check_text(node, where, key=False)
-
     def test_a_thread_named_with_a_path_and_an_id_is_keyed_other_and_the_walk_stays_clean(self):
         """2026-09-18, CI red on every Python cell: pytest-timeout names its watchdog "pytest_timeout <node id>" (the running
         test's path, then ::Class::test), and the sample's colon rule kept the name up to the first "::", so the served key
@@ -2658,8 +2577,7 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         self.assertIn(key, snap["stacks"] or {}, sorted(snap["stacks"] or {}))
         self.assertTrue(snap["stacks"][key]["frames"][-1].startswith("wait ("), "the row is the planted thread's")
         self.assertNotIn(name, json.dumps(snap), "the name is nowhere in the snapshot")
-        self.problems = []
-        self._walk(snap)
+        self.problems = pp.paste_problems(snap, planted=self.planted, ident=self.IDENT)
         self.assertEqual(self.problems, [], "%d leak(s) in the served snapshot:\n  %s" % (len(self.problems), "\n  ".join(self.problems)))
 
     def test_no_key_or_string_in_the_served_snapshot_carries_a_path_an_id_or_planted_text(self):
@@ -2668,8 +2586,7 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         self.assertEqual(set(snap), TOP_KEYS, "the walk covers the whole served shape")
         me = self._my_stacks_key()
         self.assertIn(me, snap["stacks"] or {}, "the stack sample rides in the walk under its switch, this thread's row among the rest")
-        self.problems = []
-        self._walk(snap)
+        self.problems = pp.paste_problems(snap, planted=self.planted, ident=self.IDENT)
         self.assertEqual(self.problems, [], "%d leak(s) in the served snapshot:\n  %s" % (len(self.problems), "\n  ".join(self.problems)))
         self.assertEqual(snap["stacks"][me]["stage"], "http.GET.other", "the request's mark carries the fold's word, not the path's")
         # the diagnosis the folds keep: the reads per holder kind, the child's line as a size and a status, the per-session
@@ -2715,7 +2632,9 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         review's finding: a character grammar stood here and admitted any path-shaped key). Its size is the register's
         arithmetic (routes twice, once plain and once behind /remote/*, the families per method, and other: 457 on the
         register of 2026-09-18), so no key is counted twice, and one request reaches every member, so the check has no
-        false positives; the fold's other direction is its source, whose last line spells one of these or `other`."""
+        false positives; the fold's other direction is its source, whose last line spells one of these or `other`. The
+        walk's check is the shared module's membership test over its copy of the register (perf_public.http_key_ok), so
+        every member must pass it and the walk's own rejects must fail it."""
         keys = self._http_keys()
         routes = sum(len(r) for r in km._PERF_HTTP_ROUTES.values())
         self.assertEqual(len(keys), 1 + 2 * routes + len(km._PERF_HTTP_ROUTES) * len(km._PERF_HTTP_FAMILIES), sorted(keys))
@@ -2724,7 +2643,12 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
             method, path = k.split(" ", 1)
             asked = path.replace("/remote/*", "/remote/TESTHOST").replace("/*", "/x")
             self.assertEqual(km._perf_http_key(method, asked), k, "%s %s reaches %s" % (method, asked, k))
+            self.assertTrue(pp.http_key_ok(k), "%s: in the kernel's image and refused by the shared module's check" % k)
         self.assertEqual(km._perf_http_key("GET", "/nope/" + SID), "other")
+        for k in ("GET /nope/" + SID, "GET /glossary/Quarterly Roadmap", "GET /remote/TESTHOST/sessions", "HEAD /perf", "PUT /perf"):
+            self.assertFalse(pp.http_key_ok(k), k)
+            self.assertEqual(pp.paste_problems({"http": {k: {"count": 1}}}, ident=self.IDENT)[-1].split(":", 1)[0],
+                             "outside the image of the route register", k)
 
 if __name__ == "__main__":
     unittest.main()
