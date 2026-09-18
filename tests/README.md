@@ -111,7 +111,13 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   BOTH this and pytest on every kernel change.
 - **`manager-*.test.js`** — the node supervisor (`bin/romp-manager`): restart
   gating, the kernel registry, and the drain-poll handshake. Run:
-  `node --test tests/manager-*.test.js`.
+  `node --test tests/manager-*.test.js`. The runner runs the files
+  concurrently, so a file that starts a real manager takes its ports from
+  `tests/manager-ports.js` (`freePort(__filename)`), which owns a disjoint
+  block per file and probes inside it; a listen-on-zero pick was handed to two
+  files at once in the window between its close and the manager's bind.
+  `manager-ports.test.js` pins the table against the files on disk, so a new
+  `manager-*.test.js` needs a block there before it runs.
 - **`ui-bench.test.mjs`** — the dashboard pane bench (`tools/ui-bench.mjs`):
   the classifier, synthesizer, temp-path guard, recording client, front
   server, Handler-subprocess isolation, in-page instrument, profile fold, and
