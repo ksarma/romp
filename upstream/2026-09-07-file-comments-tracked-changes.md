@@ -9,3 +9,5 @@ offered:
 closed:
 ---
 Upstream's viewer reads a file and saves plain text; nothing there records a session's edits as changes a person can accept or reject from the dashboard, or carries comments on a file back to the session as one message (the plan's Summary). Offered as one, the way the plan's Upstream section intends: the vendored track-changents copy goes with it (vendoring the core and the agent-side tooling makes the loop self-contained, decisions 4 and 15), and three of the four patches to the vendored files were offered to that project's author separately (`vendor/track-changents/README.md`, the patch table; the fourth is romp-only). Not yet offered: the Slice 5 PR is pending on the fork, so no single PR number fits the `pr` field. Slice 0 is a candidate on its own (`user-todo-detail-opens-file`).
+
+2026-09-18: the 'Slice 5 PR pending' above is stale: Slice 5 merged as fork PR #311 on 2026-09-07.

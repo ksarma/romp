@@ -3,7 +3,7 @@ title: Chat page: the background-wait box shows about six rows when open and scr
 status: candidate
 where: ui/webview/styles.css (the .bg-list cap), ui/webview/render.ts (the fold-and-cap note), ui/webview/bg-tasks-layout.test.ts
 added: 2026-09-09
-pr:
+pr: 403
 tier: fix
 offered:
 closed:
