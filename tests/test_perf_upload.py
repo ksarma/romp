@@ -50,6 +50,11 @@ BIN = os.path.join(ROOT, "bin")
 UPLOAD = os.path.join(BIN, "romp-perf-upload")
 EXPORT = os.path.join(BIN, "romp-perf-export")
 ROMP = os.path.join(BIN, "romp")
+
+# Hermetic state BEFORE the load: the verb's module chain resolves its state root at import time, and only
+# pytest runs conftest's floor (a bare unittest or script run would otherwise touch REAL state).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 pu = load_source("romp_perf_upload", UPLOAD)
 pp = pu.pe.pp
 
