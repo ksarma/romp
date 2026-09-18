@@ -1,7 +1,7 @@
 ---
 title: Relay redials wait for the local socket
 status: candidate
-where: kernel/kernel.py (the pane shim netState publishes window.__rompLocalUp); ui/webview/federation.ts connect (the deferral and its dial-deferred row), start and watchLocalLink/localUp (the romp:wsup listener), poll (the /tunnels gate)
+where: kernel/kernel.py (the pane shim netState publishes window.__rompLocalUp); ui/webview/federation.ts connect (the deferral and its dial-deferred row), start and watchLocalLink/localUp (the romp:wsup listener), poll (the /tunnels gate); tests: tests/test_pane_shim_return.py LocalUpFlag (three cases; the third reads the flag inside each romp:wsup dispatch), tests/test_client_diag_allowlist.py (the dial-deferred fixture row), ui/webview/federation-reconnect.test.ts (the seven new cases, from 23 to 30 in the file, and the extended start() pin)
 added: 2026-09-18
 pr: 765
 tier: fix

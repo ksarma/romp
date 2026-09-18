@@ -261,36 +261,64 @@ test("a CONNECTING socket is still killed on foreground after a `resume` — the
 // down spell, the redial on romp:wsup (localUp) with the 4 s poll as the backstop, and no /tunnels GET meanwhile.
 const DEFERRED = { host: "TESTHOST", ev: "dial-deferred", why: "local-down" };
 
-test("local socket down: the foreground pass still abandons a quiet relay socket, but the dial is deferred with one row per spell", async () => {
-  await withManager((fm, _e, diag) => {
-    const g: any = globalThis;
-    fm.openRemote("TESTHOST", true);
-    const ws = FakeWS.made[0];
-    ws.open();
-    g.window.__rompLocalUp = false;                      // the shim put its socket down (netState("down"))
-    clock += 45_000;
-    fm.watchdog(clock, true);
-    assert.equal(ws.closed, 1, "the quiet socket is put down exactly as before");
-    const kills = diag.filter((d) => d.data && d.data.ev === "watchdog-close");
-    assert.equal(kills.length, 1);
-    assert.equal(kills[0].data.why, "quiet");
-    const conn = fm.conns.get("TESTHOST");
-    assert.equal(conn.ws, null, "the corpse is disowned and nulled");
-    assert.equal(FakeWS.made.length, 1, "…and NO fresh socket is dialed while the local socket is down");
-    let rows = diag.filter((d) => d.what === "hostconn" && d.data && d.data.ev === "dial-deferred");
-    assert.equal(rows.length, 1, "the deferral is said once");
-    assert.deepEqual(rows[0].data, DEFERRED, "fixed identifiers only: the row carries no free text");
-    assert.equal(conn.deferred, true);
-    clock += 5_000;
-    fm.watchdog(clock);                                  // a plain tick: a null socket is nobody's to verdict
-    fm.watchdog(clock, true);                            // a second foreground pass (the phone's next return in the same outage)
-    fm.connect(conn);                                    // a lost retry timer firing, or the poll's dial
-    assert.equal(FakeWS.made.length, 1, "still no dial");
-    rows = diag.filter((d) => d.data && d.data.ev === "dial-deferred");
-    assert.equal(rows.length, 1, "a second deferral in the same spell files no second row");
-    assert.equal(kills.length, 1, "and nothing else was killed");
-    conn.closed = true;
-  });
+test("local socket down: the foreground pass still abandons a quiet relay socket, but the dial is deferred with one row per spell; the pane's can't-reach line names the host while it is still coming", async () => {
+  const g: any = globalThis;
+  const hadFetch = "fetch" in g, prevFetch = g.fetch;
+  g.fetch = async () => ({ ok: true, json: async () => ({ tunnels: [{ host: "TESTHOST", hasToken: true, localPort: 5, status: "up" }] }) });
+  try {
+    await withManager(async (fm, emitted, diag) => {
+      fm.app = "feed";
+      fm.openRemote("TESTHOST", true);
+      const ws = FakeWS.made[0];
+      ws.open();
+      g.window.__rompLocalUp = false;                      // the shim put its socket down (netState("down"))
+      clock += 45_000;
+      fm.watchdog(clock, true);
+      assert.equal(ws.closed, 1, "the quiet socket is put down exactly as before");
+      const kills = () => diag.filter((d) => d.data && d.data.ev === "watchdog-close");   // re-filtered at each check: a snapshot bound here could not fail below (round 1)
+      assert.equal(kills().length, 1);
+      assert.equal(kills()[0].data.why, "quiet");
+      const conn = fm.conns.get("TESTHOST");
+      assert.equal(conn.ws, null, "the corpse is disowned and nulled");
+      assert.equal(FakeWS.made.length, 1, "…and NO fresh socket is dialed while the local socket is down");
+      let rows = diag.filter((d) => d.what === "hostconn" && d.data && d.data.ev === "dial-deferred");
+      assert.equal(rows.length, 1, "the deferral is said once");
+      assert.deepEqual(rows[0].data, DEFERRED, "fixed identifiers only: the row carries no free text");
+      assert.equal(conn.deferred, true);
+      // The one visible change: the deferred conn's null socket is a dead link to deadHosts(), so the merged feed's
+      // pendingDead names the host and the pane shows its can't-reach line for a host it is still WAITING on, where a
+      // hung handshake read as dialing. The line is the pending host's: a host whose payload already landed shows its
+      // cards and no line, deferred or not.
+      assert.deepEqual(fm.deadHosts(), ["TESTHOST"], "no socket while deferred = a dead link right now");
+      fm.inbound("", localFeed);
+      const feed = () => emitted.filter((m) => m.type === "feed").pop();
+      assert.deepEqual(feed().pendingHosts, ["TESTHOST"], "no feed payload from it yet: the pane waits on it");
+      assert.deepEqual(feed().pendingDead, ["TESTHOST"], "…on a dead link, so the pane says it cannot reach the host instead of an open-ended wait");
+      fm.inbound("TESTHOST", { type: "feed", asks: [], items: [], working: [], ledgers: [], order: [], sessions: [], now: 1000 });   // a payload that landed before the outage
+      assert.deepEqual(feed().pendingHosts, [], "its payload retires the wait");
+      assert.deepEqual(feed().pendingDead, [], "…and with it the line: the mark is the pending host's, not every remote session's");
+      assert.deepEqual(fm.deadHosts(), ["TESTHOST"], "the link itself still reads dead");
+      clock += 5_000;
+      fm.watchdog(clock);                                  // a plain tick: a null socket is nobody's to verdict
+      fm.watchdog(clock, true);                            // a second foreground pass (the phone's next return in the same outage)
+      fm.connect(conn);                                    // a lost retry timer firing, or the poll's dial
+      assert.equal(FakeWS.made.length, 1, "still no dial");
+      rows = diag.filter((d) => d.data && d.data.ev === "dial-deferred");
+      assert.equal(rows.length, 1, "a second deferral in the same spell files no second row");
+      assert.equal(kills().length, 1, "and nothing else was killed");
+      // the local socket's return: the deferred dial runs, and a socket dialing is not a dead link
+      g.window.__rompLocalUp = true;
+      fm.localUp();
+      assert.equal(FakeWS.made.length, 2, "the dial that waited runs on the return");
+      assert.equal(conn.ws, FakeWS.made[1]);
+      assert.equal(conn.deferred, false);
+      assert.deepEqual(fm.deadHosts(), [], "CONNECTING is not dead: the line would go with the next merged frame");
+      await new Promise((r) => setTimeout(r, 0));          // let localUp's poll finish while the fakes stand
+      conn.closed = true;
+    });
+  } finally {
+    if (hadFetch) g.fetch = prevFetch; else delete g.fetch;
+  }
 });
 
 test("local socket down: a CONNECTING relay socket is still killed on foreground, and its redial waits", async () => {
@@ -422,6 +450,48 @@ test("poll(): no /tunnels GET while the local socket is down; the first poll aft
       await fm.poll();
       assert.equal(fetches, 2, "no flag: polls as before");
       fm.conns.get("TESTHOST").closed = true;
+    });
+  } finally {
+    if (hadFetch) g.fetch = prevFetch; else delete g.fetch;
+  }
+});
+
+test("the 4 s poll is the backstop: a deferred conn (null socket) is redialed by the first poll that reads the flag true, with no romp:wsup; a second down spell files a second row", async () => {
+  const g: any = globalThis;
+  const hadFetch = "fetch" in g, prevFetch = g.fetch;
+  g.fetch = async () => ({ ok: true, json: async () => ({ tunnels: [{ host: "TESTHOST", hasToken: true, localPort: 5, status: "up" }] }) });
+  try {
+    await withManager(async (fm, _e, diag) => {
+      fm.openRemote("TESTHOST", true);
+      const ws = FakeWS.made[0];                           // the handshake into the dead path: never opens
+      g.window.__rompLocalUp = false;
+      clock += 1000;
+      fm.watchdog(clock, true);                            // the foreground kill; its redial is deferred
+      const conn = fm.conns.get("TESTHOST");
+      assert.equal(ws.closed, 1);
+      assert.equal(conn.ws, null);
+      assert.equal(conn.deferred, true);
+      assert.equal(FakeWS.made.length, 1, "nothing dialed while down");
+      const rows = () => diag.filter((d) => d.data && d.data.ev === "dial-deferred");
+      assert.equal(rows().length, 1);
+      // a FIRST open dispatches no romp:wsup (the loader waits for content), so nothing calls localUp: the shim flipped
+      // the flag at its onopen and the next poll reads it, taking the null socket as a lost dial
+      g.window.__rompLocalUp = true;
+      await fm.poll();
+      assert.equal(FakeWS.made.length, 2, "the poll's dial loop redials the deferred conn");
+      assert.equal(conn.ws, FakeWS.made[1]);
+      assert.equal(conn.deferred, false, "the dial that ran ends the spell");
+      assert.equal(rows().length, 1, "no new row: a spell ended, none began");
+      // a second down spell while that handshake is in flight: the kill is the same, and the redial waits again
+      g.window.__rompLocalUp = false;
+      clock += 1000;
+      fm.watchdog(clock, true);
+      assert.equal(FakeWS.made[1].closed, 1, "the foreground kill of the CONNECTING socket, as before");
+      assert.equal(conn.ws, null);
+      assert.equal(conn.deferred, true);
+      assert.equal(FakeWS.made.length, 2, "no dial while down");
+      assert.equal(rows().length, 2, "one row per conn per spell: the second spell files its own");
+      conn.closed = true;
     });
   } finally {
     if (hadFetch) g.fetch = prevFetch; else delete g.fetch;

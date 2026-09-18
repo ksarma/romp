@@ -844,14 +844,20 @@ out({atRefusal:atRefusal,atOpen:atOpen,wsup:count(winEvents,"romp:wsup")});""")
         self.assertEqual(r["wsup"], 0, "a FIRST open dispatches no romp:wsup (the loader waits for content): the relay's road back here is federation's 4 s poll, which reads the flag")
 
     def test_the_foreground_fast_path_abandon_puts_it_down_and_the_redials_open_puts_it_up_with_the_wsup(self):
+        # the order is asserted where federation relies on it: the harness window's dispatchEvent is wrapped before the
+        # redial's open() to record the flag as each romp:wsup finds it, so a shim that flipped it after the dispatch
+        # reads false HERE (reading the flag and the count after onopen returned proves nothing about the order)
         r = _run(r"""
 open();recv({type:"ka"});hide();NOW+=46000;show();var atReturn=window.__rompLocalUp;var dialed=sockets.length;
+var flagAtWsup=[];var dispatch=window.dispatchEvent;
+window.dispatchEvent=function(e){if(e.type==="romp:wsup")flagAtWsup.push(window.__rompLocalUp);return dispatch(e);};
 NOW+=300;open();var atReopen=window.__rompLocalUp;
-out({atReturn:atReturn,dialed:dialed,atReopen:atReopen,wsup:count(winEvents,"romp:wsup")});""")
+out({atReturn:atReturn,dialed:dialed,atReopen:atReopen,wsup:count(winEvents,"romp:wsup"),flagAtWsup:flagAtWsup});""")
         self.assertIs(r["atReturn"], False, "the return's abandon: down, with a fresh dial CONNECTING")
         self.assertEqual(r["dialed"], 2)
         self.assertIs(r["atReopen"], True)
-        self.assertEqual(r["wsup"], 1, "the reconnect open dispatches romp:wsup AFTER the flag flipped: federation's listener reads true")
+        self.assertEqual(r["wsup"], 1, "the reconnect open dispatches one romp:wsup")
+        self.assertEqual(r["flagAtWsup"], [True], "…AFTER the flag flipped: the listener federation installs (localUp) reads true inside the dispatch")
 
 
 if __name__ == "__main__":
