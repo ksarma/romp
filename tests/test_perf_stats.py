@@ -1194,6 +1194,31 @@ class PushRowsByPurpose(unittest.TestCase):
         doc = km._PerfStats.__doc__
         self.assertIn("No seed", doc[doc.index("      pusher  "):doc.index("      stages_ms  ")], "the pusher row says the table is unseeded")
 
+    def test_every_push_row_key_fits_the_paste_safe_grammar_and_the_export_keeps_it(self):
+        """The connect table and the foreign block are keyed by the kernel's own stage literals (`push`, the push.* names in
+        STAGES, and every `push.` name stage() is called with in the kernel's source), under the fixed keys connectPush and
+        stagesMs; never a client's or a user's text. Every key fits _PERF_IDENT (the served grammar) and the export's IDENT,
+        is neither denied nor coarsened by cli/perf_public.py (a denied key would drop the table from an export, a coarsened
+        one would round it), and the values are numbers; the fold keeps the populated blocks byte for byte and the paste
+        walk finds nothing. The stage names are read from the source, so a seam added later is held to the same grammar."""
+        src = inspect.getsource(km)
+        written = set(re.findall(r'_PERF_STATS\.stage\("(push(?:\.[A-Za-z0-9_.]+)?)"', src))
+        self.assertTrue({"push", "push.chat", "push.chat.sig", "push.feedFirst", "push.send.compare", "push.warm"} <= written, sorted(written))
+        names = written | {k for k in km._PerfStats.STAGES if k.startswith("push")} | {"connectPush", "stagesMs", "stagesForeign", "stages_ms"}
+        for k in sorted(names):
+            self.assertTrue(km._PERF_IDENT.fullmatch(k), "outside the served grammar: %s" % k)
+            self.assertTrue(pp.IDENT.fullmatch(k), "outside the export's grammar: %s" % k)
+            self.assertFalse(pp.denied(k, 0.0), "denied by the export: %s" % k)
+            self.assertNotIn(k, pp.BOUND_KEYS, "coarsened by the export: %s" % k)
+        snap = self._three_writers()
+        block = {"pusher": {"connectPush": snap["pusher"]["connectPush"]}, "stagesForeign": snap["stagesForeign"],
+                 "stages_ms": {k: v for k, v in snap["stages_ms"].items() if k.startswith("push")}}
+        self.assertEqual(pp.fold(block), block, "the export keeps every key and value as served")
+        for v in list(snap["pusher"]["connectPush"]["stagesMs"].values()) + list(snap["stagesForeign"].values()) + list(block["stages_ms"].values()):
+            self.assertIsInstance(v, float)
+        self.assertEqual(pp.paste_problems(block), [])
+        self.assertEqual(sorted(snap["pusher"]["connectPush"]["stagesMs"]), ["push.chat", "push.feedFirst", "push.send"], "premise: the table is populated")
+
     def test_the_collectors_docstring_names_the_connect_table(self):
         doc = km._PerfStats.__doc__
         pusher_row = doc[doc.index("      pusher  "):doc.index("      stages_ms  ")]
@@ -2867,7 +2892,15 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         st.send(("chat", SID), "full", 10)
         st.send(("status", SID), "delta", 5)
         st.cycle(0.050)
-        km._stage_marked("push")(lambda: st.stage("push.chat", 0.010))()   # under the pusher's mark: the flat row's (2026-09-18)
+        # the push stages by their writer's purpose (2026-09-18), all three routes populated so the walk covers them: the
+        # pusher's, under the "push" mark _push carries when the pusher calls it, to the flat row; a connect push's, under
+        # the "connect" mark, to pusher.connectPush.stagesMs; and a write under a request handler's route mark, neither
+        # purpose, to stagesForeign. Every key is a stage literal spelled in the kernel's source: stage() is never called
+        # with a client's or a user's text, so no planted string can reach any of the three; the walk holds them to the
+        # grammar anyway
+        km._stage_marked("push")(lambda: st.stage("push.chat", 0.010))()
+        km._stage_marked("connect")(lambda: (st.stage("push.chat", 0.003), st.stage("push.send.compare", 0.002)))()
+        km._stage_marked("http.GET.other")(lambda: st.stage("push.feed", 0.004))()
         # the two owner-routed blocks (2026-09-18), populated so the walk covers them: a `jobs.` stage from this thread
         # while it owns no cycle lands in stagesForeign, then the same thread as the pusher's owner writes a cycle job
         # into pusher.cycleJobsMs. Both keys are the kernel's own literals (a stage name from the STAGES vocabulary, a
@@ -2946,8 +2979,10 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         self.assertEqual(sorted(snap["pusher"]["connectPush"]["byApp"]), ["chat", "other"])
         self.assertEqual(sorted(snap["pusher"]["clients"]["byApp"]), ["chat", "other"], "the per-client wire table follows the same rule")
         self.assertEqual(snap["pusher"]["clients"]["byKind"]["other"]["frames"], 1)
-        self.assertEqual(snap["stagesForeign"], {"jobs.autoNudge.parse": 1.0}, "the foreign write rode in the walk")
+        self.assertEqual(snap["stagesForeign"], {"jobs.autoNudge.parse": 1.0, "push.feed": 4.0}, "the two foreign writes rode in the walk")
         self.assertEqual(snap["pusher"]["cycleJobsMs"]["persistCheckpoints"], 2.0, "and the pusher's cycle job")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {"push.chat": 3.0, "push.send.compare": 2.0}, "and the connect push's stages")
+        self.assertEqual(snap["stages_ms"]["push.chat"], 10.0, "the pusher's push.chat alone in the flat row")
 
     def test_the_route_mark_is_the_registers_word_never_the_requesters(self):
         """_route_seg (2026-09-18): GET /perf?stacks=1 and ROMP_PERF_STACKS serve each thread's stage mark, and a handler's is
