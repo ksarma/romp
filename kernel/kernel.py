@@ -910,9 +910,12 @@ class _PerfStats:
                                    miss / bypass_hold / bypass_empty and the gauge entries;
                                    feedComposition (the feed frame's bytes by component,
                                    _FeedComposition) -> passes / failed, lifetime and last (frame /
-                                   cards / ledgers / rest / cardCount / ledgerCount, `by` per
-                                   remainder field, `apps` per consuming app -> today / projected)
-                                   and wire (bytes / exact: the served body once a whole frame went)
+                                   cards / ledgers / rest / cardCount / ledgerCount, last's
+                                   ledgersAttached, `by` as published: the flag and count rows
+                                   (FEED_BY_ROWS), the off frame's empty lists and `other`, the sum
+                                   of the text-bearing fields; `apps` per consuming app and per
+                                   projection -> today / projected) and wire (bytes / exact: the
+                                   served body once a whole frame went)
       judge                        passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
@@ -54771,6 +54774,38 @@ FEED_FRAME_FIELDS = ("asks", "ledgers", "userTodos", "userTodoRows", "userTodosO
                      "working", "awaiting", "stateUnknown", "bgServices", "dismissedCount", "showDismissed",
                      "clearedForeign", "order", "sessions", "clearNotices", "sdkNotices", "syncNotices", "selfHost",
                      "canUndoClear", "off")
+# The `by` table's keys are drawn from this list and the off frame's lists (_FEED_BY_NAMES): a key outside both is
+# counted under `other`, the way _perf_http_key folds a path outside the route table, so a runtime key never stands
+# as a row of the stored table (the review of 2026-09-18: a name-shaped key rode into the export verbatim).
+_FEED_BY_NAMES = frozenset(FEED_FRAME_FIELDS) | frozenset(_FEED_FRAME_LISTS)
+# What the block PUBLISHES of the `by` table (the same review). The remainder's fields are user text and its lengths,
+# and a row per field was the length of ONE string on a small board: selfHost was 16 plus the machine's name, working
+# 17 plus one session's name, sessions a name and a repository string, userTodoRows a todo's text, which can name a
+# path. The export's identifier scan cannot see a length, and rest == sum(by) exactly, so dropping or coarsening one
+# row alone re-derives the same number from the remainder. The published table therefore keeps the rows whose value
+# can only be a flag or a count (FEED_BY_ROWS: a fixed spelling or a digit width) and folds every other field's bytes
+# into ONE row, `other`, at REPORT time (_FeedComposition.public_by). The stored tables stay whole: record() and
+# project() read them, so the per-app projections keep their exact per-field sums (a build-time fold under-counted
+# the feed row by forty percent). A pinned list, never a byte floor: a floor would make which rows appear a signal.
+# FEED_BY_FOLDED is classified by what a field CAN carry, never by a fixture's value: selfHost (the machine's short
+# hostname); working, awaiting, stateUnknown (session names); order (session ids, whose count is the divisor that
+# turns an aggregate back into per-object lengths on a small board); sessions (names and repository strings);
+# userTodoRows (a name and every todo's text); userTodos (a sid-keyed map, folded so that no published row holds a
+# string); views (the user's tag names); viewsFault (romp's wording plus the OS error text, which can name a path);
+# judgeLimit (null normally; when the latch is down, rows of name, host, sid and color); bgServices (session names
+# to service descriptions); clearedForeign (ids whose count and digit widths are recoverable); and the three notice
+# rings (prose of up to a few hundred characters each). The off frame's four federation lists (items, hosts,
+# pendingHosts, pendingDead) are outside FEED_FRAME_FIELDS, always empty here, and stay their own rows. A test holds
+# the two sets to a partition of the frame fields outside the cards and the ledgers, and every FEED_BY_ROWS value on
+# a built frame, the off frame and the fixtures to a bool, an int or None, so a field added to the frame is classified
+# here or the test fails. On a board with no session, no open todo, no tag and no notice `other` is a constant plus
+# the hostname's length (and the digit width of views.seq): that board's whole-frame length has always been on /perf
+# (push.send bytes, builds.feed.memo bytes) and is the served body's own length, so the fold restores the exposure
+# of the base and does not remove the whole-frame total, which is the block's purpose.
+FEED_BY_FOLDED = frozenset({"selfHost", "working", "awaiting", "stateUnknown", "order", "sessions", "userTodoRows",
+                            "userTodos", "views", "viewsFault", "judgeLimit", "bgServices", "clearedForeign",
+                            "clearNotices", "sdkNotices", "syncNotices"})
+FEED_BY_ROWS = frozenset({"userTodosOn", "dismissedCount", "showDismissed", "canUndoClear", "off"})
 _FEED_APP_ASK_FIELDS = {app: tuple(f[5:] for f in fields if f.startswith("asks."))
                         for app, fields in FEED_APP_FIELDS.items() if any(f.startswith("asks.") for f in fields)}
 
@@ -54845,10 +54880,15 @@ class _FeedComposition:
     Cost per pass, bounded: the two sums _feed_est takes (one int per card and per ledger), one len() per remainder
     field, and for the apps that read card fields an O(cards x fields) pass of len() calls memoized with the cards on
     the build's asks list (_feed_cards_memo), plus the projections' O(cards) passes memoized with it, so a ledgers
-    refill pays none of it; no encode anywhere. About a millisecond per thousand cards. Paste-safe: identifier keys
-    (the frame's own field names, the kernel's app names), numbers only; tests/test_feed_composition.py walks the
-    populated block through cli/perf_public's check, the one `romp perf export --public` runs over its output. A pass
-    whose accounting raises is counted under `failed` and said once; the frame is unaffected."""
+    refill pays none of it; no encode anywhere. About a millisecond per thousand cards.
+
+    Paste-safe: identifier keys (the frame's own field names, the kernel's app names), numbers only, and the `by`
+    table is published FOLDED (public_by, applied in report() to the last and the lifetime tables alike): the flag
+    and count rows (FEED_BY_ROWS), the off frame's empty federation lists, and `other`, the sum of every text-bearing
+    field (FEED_BY_FOLDED), so no published row is the length of one string. The remainder still equals the sum of
+    the published table exactly: the fold regroups bytes and drops none. tests/test_feed_composition.py walks the
+    populated block through cli/perf_public's check, the one `romp perf export --public` runs over its output. A
+    pass whose accounting raises is counted under `failed` and said once; the frame is unaffected."""
     __slots__ = ("lock", "passes", "failed", "life", "last", "said")
     SUMS = ("frame", "cards", "ledgers", "rest", "cardCount", "ledgerCount")
 
@@ -54902,6 +54942,18 @@ class _FeedComposition:
                 la["projected"] += row["projected"]
             self.last = last
 
+    @staticmethod
+    def public_by(by):
+        """The `by` table as the block publishes it (the FEED_BY_FOLDED comment): every row named there summed into
+        `other`, with any `other` the key bucketing in _feed_parts already produced, and every other row as it is.
+        Report time only: the stored tables stay whole for record() and project(). The sum is unchanged, so rest ==
+        sum(public_by(by)) holds exactly as it did over the whole table. `other` is present on every non-empty table,
+        so the published table's shape does not say which text fields the frame carried."""
+        out = {k: v for k, v in by.items() if k not in FEED_BY_FOLDED}
+        if by:
+            out["other"] = out.get("other", 0) + sum(v for k, v in by.items() if k in FEED_BY_FOLDED)
+        return out
+
     def fail(self, exc):
         with self.lock:
             self.failed += 1
@@ -54914,12 +54966,12 @@ class _FeedComposition:
     def report(self):
         with self.lock:
             life = {k: self.life[k] for k in self.SUMS}
-            life["by"] = dict(self.life["by"])
-            life["apps"] = {app: dict(row) for app, row in self.life["apps"].items()}
+            life["by"] = self.public_by(self.life["by"])          # published folded (FEED_BY_FOLDED); the stored table
+            life["apps"] = {app: dict(row) for app, row in self.life["apps"].items()}   #  stays whole for record()
             last = None
             if self.last is not None:
                 last = dict(self.last)
-                last["by"] = dict(last["by"])
+                last["by"] = self.public_by(last["by"])
                 last["apps"] = {app: dict(row) for app, row in last["apps"].items()}
             passes, failed = self.passes, self.failed
         w = _feed_wire                                   # tuple snapshot: rebound whole, never mutated
@@ -54983,12 +55035,17 @@ def _feed_parts(feed):
             if k not in ("type", "asks", "ledgers") and k not in _DEDUP_VOLATILE}
     # The remainder, encoded per field and joined into the sort_keys string the frame always carried, byte for byte
     # (tests/test_feed_composition.py pins the identity): the same one encode, in pieces, so the composition probe
-    # reads each field's bytes (its quoted name, the separators, its value) from the frame's own encode. A key that
-    # is not a str (never the frame's case) takes the whole encode as before, under one name.
+    # reads each field's bytes (its quoted name, the separators, its value) from the frame's own encode. The table
+    # is keyed by the checked-in names (_FEED_BY_NAMES): a key outside them is counted under `other`, so a runtime
+    # key never stands as a row. A key that is not a str (never the frame's case) takes the whole encode as before,
+    # under that one name.
     if all(isinstance(k, str) for k in rest):
-        enc = [(json.dumps(k), json.dumps(rest[k], sort_keys=True, default=dflt)) for k in sorted(rest)]
-        rest_ms = "{" + ", ".join(kj + ": " + s for kj, s in enc) + "}"
-        by = {k: len(kj) + 4 + len(s) for k, (kj, s) in zip(sorted(rest), enc)}
+        pairs = [(json.dumps(k), json.dumps(rest[k], sort_keys=True, default=dflt)) for k in sorted(rest)]
+        rest_ms = "{" + ", ".join(kj + ": " + s for kj, s in pairs) + "}"
+        by = {}
+        for k, (kj, s) in zip(sorted(rest), pairs):
+            name = k if k in _FEED_BY_NAMES else "other"
+            by[name] = by.get(name, 0) + len(kj) + 4 + len(s)
     else:
         rest_ms = json.dumps(rest, sort_keys=True, default=dflt)
         by = {"other": len(rest_ms)}
