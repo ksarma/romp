@@ -644,6 +644,191 @@ class QueuePersistence(unittest.TestCase):
                          "restores strings only — junk entries never wedge delivery")
 
 
+class TodoIdsRideTheQueue(unittest.TestCase):
+    """A queued message may answer a user request (SdkBackend.send's `user_todo`): the id travels WITH the message,
+    on the in-memory entry (_TodoText), through the registry mirror and back through the boot seed, so whatever
+    removes or loses the entry later reads the id off the entry itself, with no kernel-side table to lose across a
+    restart. reg['queue'] stays bare strings; the id rides reg['queueMeta'] beside the copy's identity (one entry
+    per position, text alone for an id-less copy), so every reader of the queue's texts is untouched and every
+    entry without an id is byte-identical to what it was. The sidecar's block alignment (queue_meta_from_reg)
+    carries the id through every text-only rewrite of reg['queue']: the boot reconcile's resume nudge, the crash
+    heal's nudge, a thread wake's notice, the stranded re-head."""
+
+    ANSWER = "Re: the staging port. 8443."
+    TODO = "ut-9f2c1a34"
+    SID = "11111111-2222-3333-4444-888888888888"
+
+    def _root(self):
+        d = tempfile.mkdtemp()
+        open(os.path.join(d, "session-hosts"), "w").write("off")   # nothing here may start a session host
+        return d
+
+    def _backend(self, d, **kw):
+        return sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, **kw)
+
+    def _session(self, queue=None, queue_meta=None, **be_kw):
+        d = self._root()
+        be = self._backend(d, **be_kw)
+        extra = {}
+        if queue is not None:
+            extra["queue"] = queue
+        if queue_meta is not None:
+            extra["queueMeta"] = queue_meta
+        reg = _reg(d, self.SID, **extra)
+        return d, be, self.SID, sb.SdkSession(be, reg)      # never started: pure kernel-thread surface
+
+    def _todos(self, entries):
+        return [getattr(t, "todo", "") for t in entries]
+
+    def _restored_todos(self, d, sid):
+        return self._todos(sb.SdkSession(self._backend(d), sb.read_reg(Path(d), sid)).pending())
+
+    def test_an_answer_entry_mirrors_its_id_beside_the_copy_and_the_queue_stays_bare(self):
+        d, be, sid, s = self._session()
+        s.enqueue("plain message")
+        s.enqueue(self.ANSWER, todo=self.TODO)
+        reg = sb.read_reg(Path(d), sid)
+        self.assertEqual(reg.get("queue"), ["plain message", self.ANSWER], "bare strings, both")
+        self.assertEqual(reg.get("queueMeta"), [{"text": "plain message"}, {"text": self.ANSWER, "todo": self.TODO}])
+
+    def test_a_send_minted_identity_and_the_id_share_one_sidecar_entry(self):
+        d, be, sid, s = self._session()
+        s.enqueue(self.ANSWER, qid="echo:a1", qts=1234, todo=self.TODO)
+        self.assertEqual(sb.read_reg(Path(d), sid).get("queueMeta"),
+                         [{"text": self.ANSWER, "qid": "echo:a1", "qts": 1234, "todo": self.TODO}])
+        s2 = sb.SdkSession(be, sb.read_reg(Path(d), sid))          # a kernel restart: the seed
+        self.assertEqual(self._todos(s2.pending()), [self.TODO])
+        self.assertEqual([m["qid"] for m in s2.pending_meta()], ["echo:a1"], "the copy's identity too")
+
+    def test_a_plain_queue_serializes_exactly_as_before(self):
+        # with no answer queued the mirror is the plain shape: bare strings and a sidecar without a "todo" key anywhere
+        d, be, sid, s = self._session()
+        s.enqueue("first")
+        s.enqueue("second")
+        reg = sb.read_reg(Path(d), sid)
+        self.assertEqual(json.dumps(reg.get("queue")), json.dumps(["first", "second"]))
+        self.assertEqual(reg.get("queueMeta"), [{"text": "first"}, {"text": "second"}])
+        self.assertEqual([type(t) for t in s.pending()], [str, str], "plain entries are plain str")
+
+    def test_the_seed_restores_the_id_onto_the_entry(self):
+        d, be, sid, s = self._session(queue=["held over", self.ANSWER, "", 42],
+                                      queue_meta=[{"text": "held over"}, {"text": self.ANSWER, "todo": "ut-11112222"}])
+        self.assertEqual(s.pending(), ["held over", self.ANSWER], "the texts seed as before; junk is filtered as before")
+        self.assertEqual(self._todos(s.pending()), ["", "ut-11112222"])
+
+    def test_an_older_mirror_without_the_sidecar_seeds_id_less_copies(self):
+        d, be, sid, s = self._session(queue=["held over", self.ANSWER])
+        self.assertEqual(self._todos(s.pending()), ["", ""])
+
+    def test_unqueue_returns_the_id_bearing_entry_and_cleans_the_mirror(self):
+        d, be, sid, s = self._session()
+        s.enqueue(self.ANSWER, todo=self.TODO)
+        got = s.unqueue(0)
+        self.assertEqual(got, self.ANSWER, "the text contract is unchanged")
+        self.assertEqual(getattr(got, "todo", ""), self.TODO, "the id rides the returned entry: a recall's caller reads it here")
+        reg = sb.read_reg(Path(d), sid)
+        self.assertEqual((reg.get("queue"), reg.get("queueMeta")), ([], []))
+
+    def test_backend_unqueue_hands_the_id_through_by_index_and_by_qid(self):
+        d, be, sid, s = self._session()
+        with be._lock:
+            be.sessions[sid] = s
+        s.enqueue(self.ANSWER, todo=self.TODO)
+        got = be.unqueue(sid, 0)
+        self.assertEqual((got, getattr(got, "todo", "")), (self.ANSWER, self.TODO))
+        s.enqueue(self.ANSWER, qid="echo:a1", qts=1234, todo=self.TODO)
+        got = be.unqueue(sid, -1, None, qid="echo:a1")
+        self.assertEqual((got, getattr(got, "todo", "")), (self.ANSWER, self.TODO),
+                         "by the copy's id, the arm a queued bubble's cancel takes on this backend")
+        self.assertEqual(s.pending(), [])
+
+    def test_the_adopted_mirror_rewraps_the_entry(self):
+        d, be, sid, s = self._session(queue=["seeded words"])
+        self.assertEqual(self._todos(s.pending()), [""])
+        s._adopt_queue_mirror({"queue": ["a notice first", self.ANSWER],
+                               "queueMeta": [{"text": "a notice first"}, {"text": self.ANSWER, "todo": self.TODO}]})
+        self.assertEqual(s.pending(), ["a notice first", self.ANSWER])
+        self.assertEqual(self._todos(s.pending()), ["", self.TODO], "the adopted copy carries its id like a seeded one")
+
+    def test_boot_prepend_keeps_the_id_on_its_entry(self):
+        # the cut-turn nudge prepend rewrites reg['queue'] by text: the sidecar's block alignment still puts the id
+        # back on the answer, now one position down
+        d = self._root()
+        be = self._backend(d)
+        be._ensure = lambda sid, on_boot_settled=None: on_boot_settled and on_boot_settled()
+        cut = "11111111-aaaa-0000-0000-0000000000f0"
+        _reg(d, cut, queue=[self.ANSWER, "plain backlog"],
+             queueMeta=[{"text": self.ANSWER, "todo": "ut-33334444"}, {"text": "plain backlog"}])
+        sb.append_state(Path(d), cut, "working")
+        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout="")):
+            be._boot_reconcile([sb.read_reg(Path(d), cut)])
+        self.assertEqual(sb.read_reg(Path(d), cut).get("queue"), [sb.BOOT_RESUME_NUDGE, self.ANSWER, "plain backlog"])
+        self.assertEqual(self._restored_todos(d, cut), ["", "ut-33334444", ""])
+
+    def test_crash_heal_prepend_keeps_the_id_on_its_entry(self):
+        d = self._root()
+        be = self._backend(d)
+        be._ensure = lambda sid, on_boot_settled=None: None
+        sid = "11111111-aaaa-0000-0000-0000000000f1"
+        _reg(d, sid, queue=[self.ANSWER], queueMeta=[{"text": self.ANSWER, "todo": "ut-55556666"}])
+        s = sb.SdkSession(be, sb.read_reg(Path(d), sid))
+        be._heal_cut_session(s)
+        self.assertEqual(sb.read_reg(Path(d), sid).get("queue"), [sb.CRASH_RESUME_NUDGE, self.ANSWER])
+        self.assertEqual(self._restored_todos(d, sid), ["", "ut-55556666"])
+
+    def test_thread_wake_notice_keeps_the_id_on_its_entry(self):
+        # a dormant comment thread woken with a killed question: _ensure rewrites reg['queue'] to put the notice
+        # first, and the id must still land on the answer in the reg the SdkSession seed reads
+        d = self._root()
+        be = self._backend(d)
+        sid = "11111111-aaaa-0000-0000-0000000000f2"
+        owner = "11111111-aaaa-0000-0000-0000000000f3"
+        _reg(d, sid, threadOf=owner, pendingAsk=True, queue=[self.ANSWER, "plain reply"],
+             queueMeta=[{"text": self.ANSWER, "todo": "ut-99990000"}, {"text": "plain reply"}])
+        seeded = []
+
+        class _Fake:
+            def __init__(self, backend, reg):
+                seeded.append(reg)
+                self.thread = types.SimpleNamespace(is_alive=lambda: True)
+
+            def start(self):
+                pass
+
+        with mock.patch.object(sb, "SdkSession", _Fake):
+            be._ensure(sid)
+        self.assertEqual(sb.read_reg(Path(d), sid).get("queue"), [sb.ASK_DIED_NOTICE, self.ANSWER, "plain reply"])
+        self.assertEqual(self._todos(sb.SdkSession(be, seeded[0]).pending()), ["", "ut-99990000", ""],
+                         "the seed reads THIS dict")
+
+    def test_reconcile_strand_rehead_keeps_the_id(self):
+        # the fed-turn twin (_inflight_texts) re-heads the queue when no conversation ever materialized: the restored
+        # entry still carries its id into the mirror, because the twin moves the entry object and never rebuilds a str
+        d, be, sid, s = self._session()
+        s.resume_sid = None                              # no init ever streamed: the re-head arm
+        s.enqueue(self.ANSWER, todo="ut-77778888")
+        with s._lock:
+            fed = s._pop_for_feed_locked()[0]            # the input generator feeds the entry
+        s.inflight = 1
+        s._inflight_texts.append(fed)                    # and its twin carries it, id and all
+        s._reconcile_stranded()
+        self.assertEqual(self._todos(s.pending()), ["ut-77778888"])
+        self.assertEqual(sb.read_reg(Path(d), sid).get("queueMeta"), [{"text": self.ANSWER, "todo": "ut-77778888"}])
+
+    def test_a_rewind_refused_head_answer_fires_the_loss_seam(self):
+        # the CLI refused the rewind connect: the held edit turn at the head leaves the queue, and an answer there
+        # names its request to the backend's todo_lost callback, the way a dropped echo does
+        lost = []
+        d, be, sid, s = self._session(todo_lost=lambda sid_, tid, text: lost.append((sid_, tid, text)))
+        s.enqueue(self.ANSWER, todo=self.TODO)
+        s._rewind_to = "22222222-3333-4444-5555-666666666666"
+        s._rewind_bare = False
+        s._rewind_failed(RuntimeError("refused"))
+        self.assertEqual(lost, [(sid, self.TODO, self.ANSWER)])
+        reg = sb.read_reg(Path(d), sid)
+        self.assertEqual((reg.get("queue"), reg.get("queueMeta"), s.pending()), ([], [], []), "the popped head leaves the mirror")
+
+
 def _procps() -> bool:
     """Whether this box's ps is procps (Linux; BSD ps has no --version). The truncation control below
     pins procps behaviour, so it runs only there."""

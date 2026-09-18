@@ -9,6 +9,7 @@ SYNTHETIC fixtures only."""
 import json
 import os
 import unittest
+from unittest import mock
 from romp_load import load_source
 import tempfile
 
@@ -767,6 +768,170 @@ class WhoSpeaks(unittest.TestCase):
         self.assertIn('ok, err, queued = _deliver_text(sid, body["text"])', src, "POST /send takes that door")
         self.assertIn("user=not msg.get(\"nudge\")", src, "a follow-up is the user's; a nudge is romp's")
         self.assertIn('_send_or_park(be, sid, text) is not None', src, "the watch deliverer passes nothing")
+
+
+class _FakeTodoQueueBackend(_FakeForwardBackend):
+    """An SDK-shaped backend whose send takes `user_todo`, the id of the user request a message answers, the way
+    SdkBackend.send stores it on its own queue entry: send() records (text, user, paths, user_todo) and answers
+    `ok`, so a test can make it refuse."""
+
+    def __init__(self):
+        super().__init__()
+        self.ok = True
+
+    def send(self, sid, text, qid=None, user=False, paths=None, user_todo=None):
+        self.calls.append((text, user, paths, user_todo))
+        self._q.append(text)
+        return self.ok
+
+
+class SendReturnShape(unittest.TestCase):
+    """A message can carry the id of the user request it answers (_send_or_park's `user_todo`). Parked, the id is
+    the op's SEVENTH slot (_op_todo), after the press id, the user flag and the attachment list, so every reader of
+    an earlier slot keeps its index and a mirror written before the slot existed reads as before. Handed over, it
+    reaches a send whose signature takes `user_todo` (_send_with_id, the _takes_qid rule) and no other. Drained, it
+    goes to the backend beside the speaker and the paths, and the drain reports the handover once through
+    _parked_answer_handed_over. The return contract is untouched: True parked, False handed over, None refused.
+    A message without an id is what it was, byte for byte: a three-slot op on disk and the plain send call."""
+
+    ANSWER = "Re: the staging port. 8443."
+    TODO = "ut-9f2c1a34"
+
+    def setUp(self):
+        self.be = _FakeTodoQueueBackend()
+        self._saved = (km._compacting_now, km.Sessions.backend_for, km._push_all, km._working_now, km._limit_hold)
+        km.Sessions.backend_for = staticmethod(lambda sid: self.be)
+        km._push_all = lambda *a, **k: None
+        km._working_now = lambda sid: False
+        km._compacting_now = lambda sid: False
+        km._limit_hold = lambda sid: None
+        km._pending_ops.clear()                      # this class asserts the disk mirror: start from an empty one
+        try:
+            os.unlink(km._PENDING_OPS_FILE)
+        except OSError:
+            pass
+
+    def tearDown(self):
+        (km._compacting_now, km.Sessions.backend_for, km._push_all, km._working_now, km._limit_hold) = self._saved
+        km._pending_ops.clear()
+        try:
+            os.unlink(km._PENDING_OPS_FILE)
+        except OSError:
+            pass
+
+    def test_parked_is_true_handed_over_is_false_refused_is_none(self):
+        km._compacting_now = lambda sid: True
+        self.assertIs(km._send_or_park(self.be, SID, self.ANSWER, user=True, user_todo=self.TODO), True)
+        self.assertEqual(self.be.calls, [], "parked: the backend was not touched")
+        km._pending_ops.clear()
+        km._compacting_now = lambda sid: False
+        self.assertIs(km._send_or_park(self.be, SID, self.ANSWER, user=True, user_todo=self.TODO), False)
+        self.assertEqual(self.be.calls, [(self.ANSWER, True, None, self.TODO)], "handed over now, with its id")
+        self.be.ok = False
+        self.assertIsNone(km._send_or_park(self.be, SID, self.ANSWER, user=True, user_todo=self.TODO),
+                          "refused by the backend: neither parked nor delivered")
+        self.assertNotIn(SID, km._pending_ops)
+
+    def test_a_plain_op_keeps_its_shape_on_disk_and_an_answer_takes_the_seventh_slot(self):
+        km._compacting_now = lambda sid: True
+        km._send_or_park(self.be, SID, "hello", echo="human")
+        self.assertEqual(km._pending_ops[SID], [("send", "hello", "human")])
+        self.assertEqual(json.loads(km._PENDING_OPS_FILE.read_text()), {SID: [["send", "hello", "human"]]},
+                         "a plain park's disk mirror is the three-slot list, byte for byte")
+        km._send_or_park(self.be, SID, "with a chart", echo="human", user=True, paths=["plots/a.png"])
+        self.assertEqual(km._pending_ops[SID][1], ("send", "with a chart", "human", None, True, ["plots/a.png"]),
+                         "a user park with attachments stays six slots")
+        km._send_or_park(self.be, SID, self.ANSWER, echo="human", user=True, user_todo=self.TODO)
+        op = km._pending_ops[SID][2]
+        self.assertEqual(op, ("send", self.ANSWER, "human", None, True, None, self.TODO),
+                         "an answer takes the seventh slot, after the id, the speaker and the attachment list")
+        self.assertEqual(km._load_pending_ops()[SID][2], op, "the disk round trip keeps the slot and its Nones")
+        self.assertEqual((km._op_todo(op), km._op_qid(op), km._op_user(op), km._op_paths(op)),
+                         (self.TODO, None, True, []))
+        km._send_or_park(self.be, SID, self.ANSWER, echo="human", qid="echo:1", user=True, paths=["plots/a.png"],
+                         user_todo=self.TODO)
+        full = km._pending_ops[SID][3]
+        self.assertEqual(full, ("send", self.ANSWER, "human", "echo:1", True, ["plots/a.png"], self.TODO))
+        self.assertEqual((km._op_todo(full), km._op_qid(full), km._op_user(full), km._op_paths(full)),
+                         (self.TODO, "echo:1", True, ["plots/a.png"]), "all four readers agree")
+        self.assertEqual(km._parked_md(op), self.ANSWER, "the queued bubble renders the text as a three-slot op's")
+        for plain in (("send", "hello", "human"), ("send", "hello", "human", "echo:1", True, ["a.png"]),
+                      ("command", "/frobnicate", "human", None, True), ("compact",)):
+            self.assertIsNone(km._op_todo(plain), "no seventh slot: no id")
+
+    def test_a_command_shaped_answer_carries_no_slot(self):
+        km._compacting_now = lambda sid: True
+        self.assertIs(km._send_or_park(self.be, SID, "/frobnicate", echo="human", user=True, user_todo="ut-1"), True)
+        self.assertEqual(km._pending_ops[SID], [("command", "/frobnicate", "human", None, True)],
+                         "a command parks as the five-slot op: no attachment list and no request id")
+        self.assertIsNone(km._op_todo(km._pending_ops[SID][0]))
+
+    def test_send_with_id_hands_the_id_only_to_a_send_that_takes_it(self):
+        plain = _FakeBackend()
+        km._send_with_id(plain, SID, "hello", user_todo="ut-1")
+        self.assertEqual(plain.calls, [("send", "hello")], "a send with no such parameter gets the plain call")
+        speaking = WhoSpeaks.Speaking()
+        km._send_with_id(speaking, SID, "hello", user=True, user_todo="ut-1")
+        self.assertEqual(speaking.calls, [("hello", True)], "qid and user but no user_todo: the id stays with the kernel")
+        km._send_with_id(self.be, SID, "hello", user=True, user_todo="ut-1")
+        self.assertEqual(self.be.calls, [("hello", True, None, "ut-1")], "a send that names the parameter receives it")
+
+        class _Starred:
+            def __init__(self):
+                self.calls = []
+
+            def send(self, sid, text, **kw):
+                self.calls.append((text, dict(kw)))
+                return True
+
+        starred = _Starred()
+        km._send_with_id(starred, SID, "hello", qid="echo:1", user=True, paths=["a.png"], user_todo="ut-1")
+        self.assertEqual(starred.calls, [("hello", {})], "the gate is the named parameter, never **kw (the _takes_qid rule)")
+
+    def test_the_drain_hands_a_parked_answers_id_beside_the_speaker_and_the_paths(self):
+        km._deliver_send_batch(self.be, SID, [("send", self.ANSWER, None, None, True, ["a.png"], "ut-1"),
+                                              ("send", "plain", None)])
+        self.assertEqual(self.be.calls, [(self.ANSWER, True, ["a.png"], "ut-1"), ("plain", False, None, None)])
+
+    def test_the_drain_reports_a_parked_answer_once_through_the_hook(self):
+        handed = []
+        rec = lambda sid, todo, qid, accepted: handed.append((sid, todo, qid, accepted))
+        with mock.patch.object(km, "_parked_answer_handed_over", rec):
+            km._deliver_send_batch(self.be, SID, [("send", self.ANSWER, None, None, True, None, "ut-1"),
+                                                  ("send", "plain", None)])
+            self.assertEqual(handed, [(SID, "ut-1", None, True)],
+                             "once per drained op that carries an id; a plain op reports nothing")
+            self.be.ok = False
+            km._deliver_send_batch(self.be, SID, [("send", self.ANSWER, None, "echo:1", True, None, "ut-1")])
+            self.assertEqual(handed[-1], (SID, "ut-1", "echo:1", False), "a refused handover reports False, with the copy's id")
+            self.be.ok = None
+            km._deliver_send_batch(self.be, SID, [("send", self.ANSWER, None, None, True, None, "ut-1")])
+            self.assertEqual(handed[-1], (SID, "ut-1", None, True),
+                             "only an explicit False is a refusal, the reading _send_or_park makes: a send answering None holds the message")
+            del handed[:]
+            km._deliver_send_batch(self.be, SID, [("send", "one", None), ("send", "two", None, None, True)])
+            self.assertEqual(handed, [], "a run of plain ops reports nothing")
+
+    def test_a_queue_filled_during_the_gates_parks_the_answer_behind_it(self):
+        # The race _park_behind_queue exists for: the advisory queue read at the first gate saw no queue, then a
+        # peer handler parked an op before the locked re-check, so this send lines up BEHIND that op and is never
+        # handed over ahead of it. _working_now is the last gate before the locked step, so a peer's park landing
+        # inside it is the race exactly. Fails if the arm is dropped (the backend gets the send) or if it claims
+        # parked without parking (the op is missing from the queue).
+        def peer_parks_then_idle(sid):
+            km._park_op(sid, ("compact",))
+            return False
+        km._working_now = peer_parks_then_idle
+        self.assertIs(km._send_or_park(self.be, SID, self.ANSWER, user=True, user_todo="ut-1"), True)
+        self.assertEqual(self.be.calls, [], "not handed over: the queue that appeared owns the order")
+        self.assertEqual(km._pending_ops[SID], [("compact",), ("send", self.ANSWER, None, None, True, None, "ut-1")],
+                         "behind the peer's op, id intact")
+
+    def test_a_non_forwarding_backend_merges_a_run_carrying_an_id_as_before(self):
+        plain = _FakeBackend()
+        km._deliver_send_batch(plain, SID, [("send", "alpha", None, None, True, None, "ut-1"), ("send", "beta", None)])
+        self.assertEqual(plain.calls, [("send", "alpha\n\nbeta")],
+                         "the merged arm is unchanged: one message, and a merged message has no entry to carry an id")
 
 
 if __name__ == "__main__":

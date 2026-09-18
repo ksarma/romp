@@ -288,6 +288,168 @@ class EchoesSurviveARestart(unittest.TestCase):
                          "a stale /model confirmation must not replay after a restart")
 
 
+class AnswerEchoesKeepTheirId(unittest.TestCase):
+    """A send that answers a user request (SdkBackend.send's `user_todo`) stamps the id on its echo (`_todo`),
+    mirrors it to the registry (`todo`) and gets it back at the boot reseed, so a loss found later can name the
+    request: every place an echo is flagged dropped (the marking _mark_dropped_echoes does at a boot reseed, a
+    spawn or the reconnect teardown's stranded turns, the prompt gate's refusal, the live settle of an echo a later
+    turn overtook) hands (sid, id, text) to the backend's `todo_lost` callback, once per lost answer and outside the
+    live-tail lock, and a callback that raises stops no marking. Every echo without an id mirrors exactly as before:
+    the plain entry's keys are the ones it always had, byte for byte, and a backend built without the callback flags
+    as before and calls nothing."""
+
+    ANSWER = "Re: the staging port. 8443."
+    TODO = "ut-9f2c1a34"
+    PLAIN_KEYS = ["t", "text", "author", "rompAuto", "dropped", "uuid"]
+
+    def _state(self):
+        state = tempfile.mkdtemp()
+        open(os.path.join(state, "session-hosts"), "w").write("off")   # nothing here may start a session host
+        return state
+
+    def _backend(self, state, **kw):
+        be = sb.SdkBackend(state, "/bin/true", lambda *a, **k: None, **kw)
+        sb.write_reg(be.state_dir, SID, {"sid": SID, "alive": True})
+        return be
+
+    def _answer_and_plain(self, be, t=1000):
+        k1, e1 = _echo("plain words", t=t, key="echo:p")
+        k2, e2 = _echo(self.ANSWER, t=t, key="echo:a")
+        e2["_todo"] = self.TODO
+        be._live[SID] = {k1: e1, k2: e2}
+
+    def test_send_stamps_the_id_on_the_echo_and_the_queue_entry(self):
+        be = self._backend(self._state())
+        fed = []
+
+        class _Session:
+            def enqueue(self, t, qid=None, qts=None, paths=None, todo=""):
+                fed.append((t, todo))
+
+        be._ensure = lambda sid: _Session()
+        self.assertTrue(be.send(SID, self.ANSWER, user_todo=self.TODO))
+        self.assertTrue(be.send(SID, "plain words"))
+        self.assertEqual(fed, [(self.ANSWER, self.TODO), ("plain words", "")],
+                         "the id reaches the queue entry; a plain send hands none")
+        by_text = {a["_echo_text"]: a for a in be.live_atoms(SID) if a.get("_echo_text")}
+        self.assertEqual(by_text[self.ANSWER].get("_todo"), self.TODO)
+        self.assertNotIn("_todo", by_text["plain words"], "a plain echo carries no id key at all")
+
+    def test_the_mirror_carries_the_id_and_a_plain_entry_is_byte_identical(self):
+        state = self._state()
+        be = self._backend(state)
+        self._answer_and_plain(be)
+        be._persist_echoes(SID)
+        mirror = sb.read_reg(be.state_dir, SID).get("echoes")
+        plain = next(x for x in mirror if x["text"] == "plain words")
+        self.assertEqual(list(plain.keys()), self.PLAIN_KEYS, "the plain shape, key for key, in order")
+        self.assertEqual(plain, {"t": 1000, "text": "plain words", "author": "human",
+                                 "rompAuto": False, "dropped": False, "uuid": "echo:p"})
+        answer = next(x for x in mirror if x["text"] == self.ANSWER)
+        self.assertEqual(answer.get("todo"), self.TODO)
+        be2 = sb.SdkBackend(state, "/bin/true", lambda *a, **k: None)      # a kernel restart: the reseed
+        atoms = {a["_echo_text"]: a for a in be2.live_atoms(SID) if a.get("_echo_text")}
+        self.assertEqual(atoms[self.ANSWER].get("_todo"), self.TODO)
+        self.assertNotIn("_todo", atoms["plain words"])
+
+    def test_boot_reseed_spares_an_answer_still_queued(self):
+        # the persisted queue holds the answer, its id beside it in the sidecar: the reseed's "still queued?" check
+        # sees it by the copy's id, so the echo is neither flagged dropped nor re-delivered while the message sits
+        # in the queue about to go out
+        state = self._state()
+        be = self._backend(state)
+        meta = [{"text": self.ANSWER, "qid": "echo:k1", "qts": 1000000, "todo": self.TODO}]
+        sb.write_reg(be.state_dir, SID, {"sid": SID, "alive": True, "queue": [self.ANSWER], "queueMeta": meta})
+        k, e = _echo(self.ANSWER)                                          # keyed echo:k1, the copy's id
+        e["_todo"] = self.TODO
+        be._live[SID] = {k: e}
+        be._persist_echoes(SID)
+        be2 = sb.SdkBackend(state, "/bin/true", lambda *a, **k: None)
+        atoms = be2.live_atoms(SID)
+        self.assertTrue(atoms and not atoms[0].get("dropped"), "a queued answer is in flight, not lost")
+        reg = sb.read_reg(state, SID)
+        self.assertEqual(reg.get("queue"), [self.ANSWER], "the reseed never rewrote the queue")
+        self.assertEqual(reg.get("queueMeta"), meta, "id intact")
+
+    def test_a_dropped_answer_echo_fires_the_loss_seam_with_its_id(self):
+        # both echoes are past the re-delivery age line at the boot, so the reseed marks them dropped (and stale)
+        # rather than re-feeding them; only the answer names a request, so the callback hears of it exactly once, and
+        # outside the live-tail lock like the other two sites. The recorder needs the backend BEFORE the constructor
+        # returns, since the reseed fires the seam from inside __init__: the subclass binds it first.
+        state = self._state()
+        be = self._backend(state)
+        self._answer_and_plain(be)
+        be._persist_echoes(SID)
+        rec, lost, held = self._recorder()
+
+        class _Bound(sb.SdkBackend):
+            def __init__(self, *a, **kw):
+                rec.backend = self                 # bound before super().__init__'s reseed fires the seam
+                super().__init__(*a, **kw)
+
+        be2 = _Bound(state, "/bin/true", lambda *a, **k: None, todo_lost=rec)
+        self.assertEqual(lost, [(SID, self.TODO, self.ANSWER)], "the constructor's reseed names the lost answer once")
+        self.assertEqual(held, [False], "the boot site too runs the callback after the live-tail lock is released")
+        self.assertEqual([bool(a.get("dropped")) for a in be2.live_atoms(SID)], [True, True])
+
+    def _recorder(self):
+        """A `todo_lost` callback that records (sid, id, text) and whether the backend held its live-tail lock when
+        it was called. Recorded, never asserted inside the callback: the seam swallows a raise, so an assertion there
+        could not fail the test."""
+        lost, held = [], []
+
+        def rec(sid, tid, text):
+            lost.append((sid, tid, text))
+            held.append(rec.backend._live_lock._is_owned())
+        return rec, lost, held
+
+    def test_mark_echo_refused_fires_the_seam_and_a_backend_without_it_stays_quiet(self):
+        rec, lost, held = self._recorder()
+        be = rec.backend = self._backend(self._state(), todo_lost=rec)
+        self._answer_and_plain(be, t=int(time.time()))
+        self.assertEqual(be.mark_echo_refused(SID, self.ANSWER, "a replayed schedule slot"), 1)
+        self.assertEqual(lost, [(SID, self.TODO, self.ANSWER)])
+        self.assertEqual(held, [False], "the callback is the kernel's: it runs after the live-tail lock is released")
+        quiet = self._backend(self._state())
+        self._answer_and_plain(quiet, t=int(time.time()))
+        self.assertEqual(quiet.mark_echo_refused(SID, self.ANSWER, "a replayed schedule slot"), 1)
+        flags = {a["_echo_text"]: (bool(a.get("dropped")), bool(a.get("refused"))) for a in quiet.live_atoms(SID)}
+        self.assertEqual(flags, {self.ANSWER: (True, True), "plain words": (False, False)},
+                         "flagged as before; no callback, no call, no raise")
+
+    def test_a_live_answer_echo_overtaken_by_a_later_turn_fires_the_seam(self):
+        # the live loss rule: a later human turn landed while the CLI held these sends; nothing is owed anywhere (no
+        # session running, the mirror's queue empty), so both are flagged dropped, and the answer names its request
+        rec, lost, held = self._recorder()
+        be = rec.backend = self._backend(self._state(), todo_lost=rec)
+        self._answer_and_plain(be)
+        be.settle_echoes(SID, human_floor=2000)
+        self.assertEqual([bool(a.get("dropped")) for a in be.live_atoms(SID)], [True, True])
+        self.assertEqual(lost, [(SID, self.TODO, self.ANSWER)], "the answer alone names its request")
+        self.assertEqual(held, [False], "outside the live-tail lock here too")
+        be.settle_echoes(SID, human_floor=2000)
+        self.assertEqual(lost, [(SID, self.TODO, self.ANSWER)], "already dropped: not reported again")
+
+    def test_a_raising_callback_never_stops_the_drop_marking(self):
+        # the seam runs the kernel's code inside the backend's bookkeeping: a raise there is a problem row, and the
+        # marking goes on, so a fault in the consumer can neither hide a lost send nor stop the boot reseed
+        state = self._state()
+        be = self._backend(state)
+        self._answer_and_plain(be)
+        be._persist_echoes(SID)
+
+        def boom(sid, tid, text):
+            raise RuntimeError("the consumer broke")
+
+        be2 = sb.SdkBackend(state, "/bin/true", lambda *a, **k: None, todo_lost=boom)   # the reseed fires the seam
+        self.assertEqual([bool(a.get("dropped")) for a in be2.live_atoms(SID)], [True, True],
+                         "both echoes read dropped: the raise stopped nothing")
+        rows = [p["text"] for p in be2.problems() if "loss seam" in p.get("text", "")]
+        self.assertEqual(len(rows), 1, "the raise is one problem row")
+        self.assertIn(self.TODO, rows[0])
+        self.assertIn("the consumer broke", rows[0])
+
+
 class DroppedSendsAnnounceThemselves(unittest.TestCase):
     """Guarantee 4 (the user 2026-07-29): an echo that survives its holder is marked `dropped` at the
     exact event that orphaned it — the boot reseed, or a fresh CLI spawning — so the chat can render
@@ -452,10 +614,16 @@ class RedeliveryFeedsTheAuthoritativeQueue(unittest.TestCase):
     caller (found 2026-08-26): on the LIVE-session caller (a fresh spawn's _run; the resumable
     reconnect is flag-only — ReconnectStrandIsFlagOnly below) the in-memory _pending is
     authoritative — a reg-only write is clobbered by the very next _persist_queue snapshot,
-    leaving the recovered send in limbo until a future kernel boot. SYNTHETIC fixtures only."""
+    leaving the recovered send in limbo until a future kernel boot. An echo that answers a user request carries
+    the request's id (_todo), and either arm keeps it on what it writes: the live entry (_TodoText) or the
+    registry sidecar the next start's seed reads. SYNTHETIC fixtures only."""
+
+    ANSWER = "Re: the staging port. 8443."
+    TODO = "ut-9f2c1a34"
 
     def setUp(self):
         self.state = tempfile.mkdtemp()
+        open(os.path.join(self.state, "session-hosts"), "w").write("off")   # nothing here may start a session host
         # an EMPTY reg listing, not a MISSING one: list_regs treats an absent sdk/ dir as a scan
         # fault and serves every cached row — earlier tests' regs would reseed into this boot
         os.makedirs(os.path.join(self.state, "sdk"))
@@ -515,6 +683,43 @@ class RedeliveryFeedsTheAuthoritativeQueue(unittest.TestCase):
         # a caller's queued snapshot can predate the enqueue — the write-moment check must dedupe
         self.be._mark_dropped_echoes(SID, [])
         self.assertEqual(s.pending(), ["already back in the queue"], "one copy, not two")
+
+    def test_live_session_redelivery_keeps_the_answers_request_id(self):
+        # an echo that answers a user request carries the request's id (_todo, SdkBackend.send's user_todo); the
+        # re-delivered entry keeps it (_TodoText) and the next queue mirror carries it, so a recall or a loss after
+        # the re-delivery can still name the request. The plain send beside it is re-delivered as before.
+        reg = self._reg(queue=[])
+        s = self._sess(reg)
+        e = self._stash_echo(self.ANSWER, t=int(time.time()) - 60)
+        e["_todo"] = self.TODO
+        self._stash_echo("plain words", t=int(time.time()) - 50)
+        self.be._mark_dropped_echoes(SID, s.pending())     # the fresh-spawn (_run) call shape
+        self.assertEqual(s.pending(), [self.ANSWER, "plain words"], "both back in the queue, in send order")
+        self.assertEqual([getattr(t, "todo", "") for t in s.pending()], [self.TODO, ""],
+                         "the re-delivered answer keeps its request's id; the plain send carries none")
+        s._persist_queue()
+        meta = (sb.read_reg(self.be.state_dir, SID) or {}).get("queueMeta")
+        self.assertEqual([m.get("todo") for m in meta], [self.TODO, None], "and the mirror carries it")
+        self.assertEqual(meta[0]["qid"], e["uuid"], "under the echo's own id, as before")
+        self.assertFalse(e.get("dropped"), "re-delivered, not lost")
+
+    def test_reg_redelivery_keeps_the_answers_request_id_for_the_seed(self):
+        # no session is running (the boot caller's shape): the re-delivery writes the registry queue, and the sidecar
+        # entry carries the id beside the copy's identity, so the next start's seed puts it back on the entry
+        self._reg(queue=[])
+        e = self._stash_echo(self.ANSWER, t=int(time.time()) - 60)
+        e["_todo"] = self.TODO
+        p = self._stash_echo("plain words", t=int(time.time()) - 50)
+        self.be._mark_dropped_echoes(SID, [])
+        reg = sb.read_reg(self.be.state_dir, SID)
+        self.assertEqual(reg.get("queue"), [self.ANSWER, "plain words"], "bare strings, in send order")
+        self.assertEqual(reg.get("queueMeta"), [
+            {"text": self.ANSWER, "qid": e["uuid"], "qts": e["t"] * 1000, "todo": self.TODO},
+            {"text": "plain words", "qid": p["uuid"], "qts": p["t"] * 1000}],
+            "the answer's entry carries its request's id; the plain entry is the shape it always was")
+        s = sb.SdkSession(self.be, dict(reg))                # the next start's seed reads the mirror
+        self.assertEqual([getattr(t, "todo", "") for t in s.pending()], [self.TODO, ""])
+        self.assertFalse(e.get("dropped"), "re-delivered, not lost")
 
 
 class ReconnectStrandIsFlagOnly(unittest.TestCase):

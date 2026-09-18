@@ -36063,11 +36063,14 @@ def _user_send(be, sid, text):
     return be.send(sid, text)
 
 
-def _send_with_id(be, sid, text, qid=None, user=False, paths=None):
+def _send_with_id(be, sid, text, qid=None, user=False, paths=None, user_todo=None):
     """be.send, with the copy's press-time id when one rode and the backend's send takes it (_takes_qid:
     SdkBackend, whose queued copy and echo then wear the id the chat's bubble already has). A send that takes
     no id (Codex; a stand-in) gets the text alone, as before. `user`: a message the user typed (the composer, the phone, a user's `romp send`, a parked
-    user send replayed), passed on when the send takes it (T315: the word that retries a stood-down attach)."""
+    user send replayed), passed on when the send takes it (T315: the word that retries a stood-down attach).
+    `user_todo`: the id of the user request the text answers, passed on when the send names the parameter (the
+    same signature read as `paths`; SdkBackend stores it on its queue entry and its echo) and left off for one
+    that does not, so a backend without the parameter gets the call it always got."""
     kw = {}
     if qid and _takes_qid(be.send):
         kw["qid"] = qid
@@ -36075,6 +36078,8 @@ def _send_with_id(be, sid, text, qid=None, user=False, paths=None):
         kw["user"] = True
     if paths and _takes_kw(be.send, "paths"):
         kw["paths"] = list(paths)                          # the attachment list, beside the copy's id (T373 fold)
+    if user_todo and _takes_kw(be.send, "user_todo"):
+        kw["user_todo"] = str(user_todo)                   # the request the text answers, to a send that names the parameter
     return be.send(sid, text, **kw)
 
 
@@ -36096,7 +36101,17 @@ def _op_paths(op):
     return list(op[5]) if op[0] == "send" and len(op) > 5 and isinstance(op[5], (list, tuple)) else []
 
 
-def _send_or_park(be, sid, text, echo=None, qid=None, user=False, paths=None):
+def _op_todo(op):
+    """The id of the user request a parked send ANSWERS (its seventh slot, _send_or_park's user_todo), or None: a
+    command, a plain send, a kernel-parked op and a record from a mirror written before the slot existed carry none.
+    Length-guarded like every reader of an optional slot, and the slot holds the bare id: one typed value behind
+    an isinstance check, the shape of the three optional slots before it, so a mirror written by a newer kernel
+    reads on an older one as before (its readers stop at their own slot) and one written by an older kernel reads
+    here as a shorter tuple."""
+    return op[6] if op[0] == "send" and len(op) > 6 and isinstance(op[6], str) and op[6] else None
+
+
+def _send_or_park(be, sid, text, echo=None, qid=None, user=False, paths=None, user_todo=None):
     """`user` (T315): the text is the USER's (the composer, the phone, an untagged `romp send`, a typed command),
     handed to the backend as its word to retry a stood-down attach and remembered on a parked op's fifth slot for the
     replay; a machine caller (a watch notice, a nudge, a tagged `romp send`) passes nothing and is queued behind a
@@ -36152,7 +36167,15 @@ def _send_or_park(be, sid, text, echo=None, qid=None, user=False, paths=None):
     the three-slot record when no id rides, so a mirror written before the slot existed and every reader that
     indexes the first three slots are unchanged. Without it the copy was identified where it entered the
     backend's queue, so a send parked during compaction, a usage-limit hold or behind a queue carried no id
-    until the drain and the chat read it by text."""
+    until the drain and the chat read it by text.
+
+    `user_todo` is the id of the user request the text ANSWERS (None for every other message). Parked, it rides
+    the op's SEVENTH slot (_op_todo), after the attachment list, so every reader of an earlier slot keeps its
+    index and guard; a command never carries it, as it carries no attachment list. Handed over now, it goes to a
+    send whose signature takes `user_todo` (_send_with_id: SdkBackend, whose queue entry and echo then carry the
+    id) and is left off for one that does not. Nothing here consumes the id: the caller of the immediate path
+    reads this function's False or None itself, and the drain reports a parked answer's handover through
+    _parked_answer_handed_over."""
     if be is _UNOWNED:
         be.send(sid, text)                               # says why on stderr; nothing is parked for a session nobody runs
         return None                                      # (a dead session's open turn would otherwise park it forever)
@@ -36164,6 +36187,8 @@ def _send_or_park(be, sid, text, echo=None, qid=None, user=False, paths=None):
         op = op + (None,) * (4 - len(op)) + (True,)     # the fifth slot: the user's words (_op_user); the fourth stays the id or None
     if paths and not cmd:
         op = op + (None,) * (5 - len(op)) + (list(paths),)   # the sixth slot: the attachments the trailing line named (_op_paths, T373 fold)
+    if user_todo and not cmd:
+        op = op + (None,) * (6 - len(op)) + (str(user_todo),)   # the seventh slot: the user request the text answers (_op_todo)
     if _compacting_now(sid) or _pending_ops.get(sid) or _limit_hold(sid):
         _park_op(sid, op)
         return True
@@ -36172,7 +36197,7 @@ def _send_or_park(be, sid, text, echo=None, qid=None, user=False, paths=None):
         return True
     if _park_behind_queue(sid, op):
         return True
-    if _send_with_id(be, sid, text, qid, user=user, paths=paths) is False:
+    if _send_with_id(be, sid, text, qid, user=user, paths=paths, user_todo=user_todo) is False:
         return None                                      # refused by the backend: not parked, not delivered
     return False
 
@@ -36546,18 +36571,36 @@ def _deliver_send_batch(be, sid, run):
     (SDK, Codex) enqueues each — the SDK's inputs() folds them into ONE turn; a backend that can't (none
     today; the tmux backend, until its removal 2026-09-11) has no fold, so MERGE them into a single message
     (the user okayed merging for that backend). Nothing is echoed here: every backend echoes inside send()
-    (the kernel-side echo left with the tmux backend)."""
+    (the kernel-side echo left with the tmux backend). A parked op may carry a seventh slot, the id of the user
+    request it answers (_op_todo): it goes to the backend beside the speaker and the attachment list, and the
+    handover is reported once through _parked_answer_handed_over after the send returned."""
     if not run:
         return
     if _forwards_sends(be):
         for op in run:
-            _send_with_id(be, sid, op[1], _op_qid(op), user=_op_user(op), paths=_op_paths(op) or None)   # under the id the press minted, with its attachment list
+            res = _send_with_id(be, sid, op[1], _op_qid(op), user=_op_user(op), paths=_op_paths(op) or None,
+                                user_todo=_op_todo(op))   # under the id the press minted, with its attachment list and the request it answers
+            if _op_todo(op):
+                _parked_answer_handed_over(sid, _op_todo(op), _op_qid(op), res is not False)
         return
     merged = "\n\n".join(op[1] for op in run)          # one message, blank-line separated between turns
     if any(_op_user(op) for op in run):
         _user_send(be, sid, merged)
     else:
         be.send(sid, merged)
+
+
+def _parked_answer_handed_over(sid, todo, qid, accepted):
+    """The ONE place an answer that WAITED in the kernel FIFO is reported as handed over. The drain calls it once
+    per drained send whose op carries a request id (_op_todo), after the backend's send returned. `accepted` True:
+    the backend holds the message (its send returned anything but False, the reading _send_or_park makes), which
+    on the SDK backend is a live enqueue, whose queue entry and echo then carry the id, or a stood-down session's
+    mirror entry, which does not; a backend whose send takes no `user_todo` holds it without the id. False: the
+    backend refused it, and the request is still unanswered. `qid` is the copy's press-time id when one rode, else
+    None. A no-op: nothing consumes the id yet, and the store that will record the handover is a later change,
+    which replaces this body. The immediate path needs no hook, since its caller reads _send_or_park's False or
+    None itself. Named for the event: a parked answer was handed over."""
+    return None
 
 
 def _apply_pending_ops(now=None):

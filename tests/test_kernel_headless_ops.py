@@ -81,6 +81,46 @@ class PendingOpsPersistence(unittest.TestCase):
     def test_missing_file_loads_empty(self):
         self.assertEqual(km._load_pending_ops(), {})
 
+    def test_a_seven_slot_op_from_the_mirror_drains_with_its_id(self):
+        # a parked answer restored from the disk mirror (a kernel restart) drains with its request id and its speaker,
+        # and the drain reports the handover once through _parked_answer_handed_over; the mirror shrinks as for any op
+        answer = "Re: the staging port. 8443."
+        km._PENDING_OPS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        km._PENDING_OPS_FILE.write_text(json.dumps({"sid-7": [["send", answer, "human", None, True, None, "ut-1"]]}))
+        km._pending_ops.update(km._load_pending_ops())
+        self.assertEqual(km._pending_ops["sid-7"], [("send", answer, "human", None, True, None, "ut-1")],
+                         "the mirror restores the seventh slot with its Nones")
+
+        class _Fake:
+            """An SDK-shaped backend: forwards its own sends (else the drain merges the run and hands no id),
+            answers busy() with nothing, and records every keyword its send received."""
+
+            def __init__(self):
+                self.calls = []
+
+            def forwards_sends(self):
+                return True
+
+            def busy(self, sid):
+                return None
+
+            def send(self, sid, text, qid=None, user=False, paths=None, user_todo=None):
+                self.calls.append((sid, text, qid, user, paths, user_todo))
+                return True
+
+        fake = _Fake()
+        handed = []
+        rec = lambda sid, todo, qid, accepted: handed.append((sid, todo, qid, accepted))
+        with mock.patch.object(km, "_compacting_now", return_value=False), \
+             mock.patch.object(km, "_working_now", return_value=False), \
+             mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+             mock.patch.object(km, "_parked_answer_handed_over", rec):
+            km._apply_pending_ops()
+        self.assertEqual(fake.calls, [("sid-7", answer, None, True, None, "ut-1")],
+                         "one send, as the user's, with the request id")
+        self.assertEqual(handed, [("sid-7", "ut-1", None, True)], "reported once, accepted")
+        self.assertEqual(km._load_pending_ops(), {}, "the delivered op leaves the disk mirror")
+
 
 class HeadlessRoutes(unittest.TestCase):
     """POST /interrupt and /end over the REAL handler on loopback (the ServeSecurity pattern)."""

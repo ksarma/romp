@@ -5045,6 +5045,24 @@ def helper_fast_org_env(log, cwd=None) -> dict:
 # The live session (one quarantined asyncio thread).
 # ---------------------------------------------------------------------------
 
+class _TodoText(str):
+    """A queued message that ANSWERS a user request: a plain str to every consumer (equality, sets, joins and json
+    are all unchanged), with the id of the request riding as an attribute. The id travels WITH the message,
+    through _pending, the fed-turn twin and the stranded re-head, so whatever later removes or loses the entry
+    reads the id off the entry it acts on, and no side table has to survive a restart to remember which message
+    answers what. getattr(entry, "todo", "") reads it off any queue text. Across a kernel death the id rides the
+    registry mirror BESIDE the copy's identity (reg['queueMeta'][i]["todo"]: _persist_queue writes it,
+    queue_meta_from_reg reads it back and the seed puts it on the text again); reg['queue'] itself stays bare
+    strings, so every reader of the queue's texts is untouched."""
+
+    __slots__ = ("todo",)
+
+    def __new__(cls, text, todo):
+        o = str.__new__(cls, text)
+        o.todo = str(todo or "")
+        return o
+
+
 class _AskCancelled(Exception):
     pass
 
@@ -5116,12 +5134,16 @@ def _echo_queued_in(a: dict, queued) -> bool:
     return a.get("_echo_text") in idless
 
 
-def _enqueue_with_id(s, text: str, uuid_, t):
+def _enqueue_with_id(s, text: str, uuid_, t, todo: str = ""):
     """Re-queue `text` on session `s` under the echo's uuid as its id (T252c) — a stand-in session in tests takes
-    the text alone."""
+    the text alone. `todo`: the id of the user request the text ANSWERS (the echo's _todo), kept on the re-queued
+    entry (_TodoText) so a recall or a later loss can still name that request."""
     qid = uuid_ if isinstance(uuid_, str) and uuid_.startswith("echo:") else None
     try:
-        s.enqueue(text, qid=qid, qts=(int(t or 0) * 1000 or None) if qid else None)
+        if todo:
+            s.enqueue(text, qid=qid, qts=(int(t or 0) * 1000 or None) if qid else None, todo=todo)
+        else:
+            s.enqueue(text, qid=qid, qts=(int(t or 0) * 1000 or None) if qid else None)
     except TypeError:
         s.enqueue(text)
 
@@ -5129,7 +5151,8 @@ def _enqueue_with_id(s, text: str, uuid_, t):
 def queue_meta_from_reg(reg: dict) -> list:
     """The per-copy identities the registry mirror carries for reg['queue'], ALIGNED with it (one entry per text,
     None for a copy without one). reg['queueMeta'] lists {"text", "qid", "qts"} for each identified copy in queue
-    order (_persist_queue), text alone for an id-less one. The run is aligned as one BLOCK of the queue, wherever
+    order (_persist_queue), text alone for an id-less one, and "todo", the id of the user request the copy ANSWERS,
+    on an entry that carries one. The run is aligned as one BLOCK of the queue, wherever
     the reg-level edits that know texts only (a boot notice prepended, a re-delivered send appended, the
     crash-resume nudge) have shifted it; only a run no block of the queue matches falls to first-in-first-out by
     text over the identified entries. An older kernel's mirror, which has no queueMeta, restores id-less copies
@@ -5140,11 +5163,16 @@ def queue_meta_from_reg(reg: dict) -> list:
     entries = [m for m in raw if isinstance(m, dict) and isinstance(m.get("text"), str)] if isinstance(raw, list) else []
 
     def ident(m):
+        # the id of the user request an ANSWER carries rides beside the copy's identity (_persist_queue): the seed
+        # reads it back onto the text (_TodoText), and a copy that has one is identified by it even without a qid
+        todo = m["todo"] if isinstance(m.get("todo"), str) and m["todo"] else None
         if not (isinstance(m.get("qid"), str) and m["qid"]):
-            return None
+            return {"qid": None, "qts": None, "todo": todo} if todo else None
         out = {"qid": m["qid"], "qts": m.get("qts")}
         if isinstance(m.get("paths"), list) and m["paths"]:
             out["paths"] = [str(x) for x in m["paths"] if isinstance(x, str)]   # the attachment list survives a restart with the copy (T373 fold)
+        if todo:
+            out["todo"] = todo
         return out
 
     # the mirror lists EVERY position (text alone for an id-less copy): align the mirrored run as one block of the
@@ -5547,6 +5575,11 @@ class SdkSession:
         # the record that lands the text (FIFO per text, at or after the feed) — the landed atom then carries
         # the same id the queued copy and the echo wore, and the chat places by identity, never by text.
         self._pending_meta: list = queue_meta_from_reg(reg)   # the ids the mirror carries, aligned with _pending
+        # A message that ANSWERS a user request carries the request's id ON the entry (_TodoText): the mirror keeps it
+        # beside the copy's identity (queueMeta[i]["todo"], _persist_queue) and the seed puts it back on the text, so a
+        # recall after a restart still knows which request the recalled message was answering.
+        self._pending = [_TodoText(t, m["todo"]) if isinstance(m, dict) and m.get("todo") else t
+                         for t, m in zip(self._pending, self._pending_meta)]
         self._fed_meta: list = []
         self._landed_qid: dict = {}
         self._ping_feeding = False   # a rename ping was fed and its turn hasn't streamed yet: hold the
@@ -5710,11 +5743,17 @@ class SdkSession:
         with self._lock:
             self._fed_meta = [f for f in self._fed_meta if f.get("qid") != qid]
 
-    def enqueue(self, text: str, qid: str | None = None, qts: int | None = None, paths: list | None = None):
+    def enqueue(self, text: str, qid: str | None = None, qts: int | None = None, paths: list | None = None,
+                todo: str = ""):
         """Deliver a user turn (called from the kernel thread). Held in self._pending —
         VISIBLE to pending_queued — until the input generator releases it at turn end. Works
         before the loop is ready too (the generator drains _pending on its first pass). `qid`/`qts`:
-        the copy's identity (send() mints them; a caller without one queues an id-less copy)."""
+        the copy's identity (send() mints them; a caller without one queues an id-less copy). `todo`: the id
+        of the user request this text ANSWERS (SdkBackend.send's user_todo), riding the entry itself
+        (_TodoText) and the mirror beside the copy's identity, so a recall reads it off the entry it removes
+        and never off a kernel-side table a restart empties. The meta dict is as before: qid, qts, paths."""
+        if todo:
+            text = _TodoText(text, todo)
         with self._lock:
             if qid:
                 self._fed_meta = [f for f in self._fed_meta if f.get("qid") != qid]   # back in the queue: not fed (a re-delivery)
@@ -5763,7 +5802,8 @@ class SdkSession:
 
     def unqueue(self, idx: int, expect: str | None = None, qid: str | None = None) -> str | None:
         """Remove the queued turn at position `idx` (the chat's queued list is this same _pending order)
-        and return its raw text, or None if it's gone. Lets the user CANCEL a message they queued
+        and return its raw text, or None if it's gone; an entry that answers a user request comes back as its
+        _TodoText, so the caller reads the request off the thing it removed. Lets the user CANCEL a message they queued
         behind a busy turn — click it in the chat to pull it back out and re-edit (the user 2026-06-27).
         Only pending (not-yet-started) turns are cancelable; once the input generator has fed a turn to
         the CLI there is no recall (the control protocol has no queue-remove), so a miss here is the
@@ -5797,6 +5837,8 @@ class SdkSession:
                 return
             self._pending = texts
             self._pending_meta = queue_meta_from_reg(reg)
+            self._pending = [_TodoText(t, m["todo"]) if isinstance(m, dict) and m.get("todo") else t
+                             for t, m in zip(self._pending, self._pending_meta)]   # the seed's rewrap (an answer keeps its id)
 
     def _persist_queue(self):
         """Mirror _pending to the registry (reg['queue']) so queued turns survive a kernel death —
@@ -5804,12 +5846,17 @@ class SdkSession:
         seed re-delivers it. Called on every mutation (enqueue / unqueue / the input generator's
         pop), from the kernel thread AND the loop thread — _update_reg serializes the writes. A
         turn already FED to the SDK is out of the persisted queue by design: it reaches the
-        transcript as a user atom, which is the cut-turn resume's territory, not replay's."""
+        transcript as a user atom, which is the cut-turn resume's territory, not replay's.
+        reg['queue'] is bare strings; the id of the user request an answer carries (_TodoText.todo) rides
+        reg['queueMeta'] beside the copy's identity as "todo", and every entry without one is unchanged."""
         with self._lock:
             snap = list(self._pending)
             metas = list(self._pending_meta)
         qmeta = [{"text": t, "qid": m["qid"], "qts": m.get("qts"), **({"paths": m["paths"]} if m.get("paths") else {})} if isinstance(m, dict) and m.get("qid") else {"text": t}
                  for t, m in zip(snap, metas)]        # every position, so the restore aligns the run as a block
+        for t, e in zip(snap, qmeta):
+            if getattr(t, "todo", ""):
+                e["todo"] = t.todo                    # the request this answer names, restored onto the entry by the seed
         try:
             self.backend._update_reg(self.sid, queue=snap, queueMeta=qmeta)
         except Exception:
@@ -7272,6 +7319,9 @@ class SdkSession:
             with self._lock:
                 dropped = self._q_pop(0)[0] if self._pending else None
             self._persist_queue()
+            if dropped is not None and getattr(dropped, "todo", ""):
+                # the head was an ANSWER to a user request: its loss is reported like a dropped echo's (_todo_lost)
+                self.backend._todo_lost(self.sid, dropped.todo, str(dropped))
         self._rewind_wait = False
         try:
             self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False,
@@ -10155,7 +10205,8 @@ class SdkBackend:
     def __init__(self, state_dir, claude_bin: str, notify, poke=None, push=None,
                  push_session=None,
                  mcp_config: str | None = None, append_prompt_path: str | None = None,
-                 log=None, reconcile: bool = False, boot_at=None, code_version=None, boot_phase=None):
+                 log=None, reconcile: bool = False, boot_at=None, code_version=None, boot_phase=None,
+                 todo_lost=None):
         self.state_dir = Path(state_dir)
         self.claude_bin = claude_bin
         self.code_version = str(code_version or "")   # the kernel's git sha, stamped on every lease this kernel
@@ -10304,6 +10355,15 @@ class SdkBackend:
         #                                           restore clobber the newer worker's watermark and the model
         #                                           heard the same notifications twice (2026-08-18 review)
         self._boot_phase = boot_phase            # the kernel's boot-milestone hook (censusDone, attachDone), or None
+        self._todo_lost_cb = todo_lost           # todo_lost(sid, tid, text): a queued ANSWER to a user request lost its
+        #   holder (an echo flagged dropped, a rewind-dropped head); see _todo_lost. A constructor argument, not an
+        #   assignment after construction: _reseed_echoes below fires drop marks during __init__, and an answer lost
+        #   at the boot must not miss the seam by wiring order. None (the default): nothing is called. That boot call
+        #   therefore arrives from inside this constructor, which the kernel runs under its construction lock
+        #   (_sdk_lock, a plain threading.Lock): a callback that reaches _sdk() or Sessions.live() from there deadlocks
+        #   the boot, the reason the dropped-sends cards below are parked for post_boot_notices rather than posted. A
+        #   consumer writes to its own store from the callback, or parks a boot loss for the kernel to drain once it is
+        #   wired; it never asks the kernel for session state from inside the call.
         self._boot_attach_pending = 0            # boot attaches whose hello (or death) has not landed yet
         self._boot_attach_unsettled = set()      # their sids, for the boot row when the backstop writes it
         self._boot_attach_lock = threading.Lock()
@@ -13514,7 +13574,8 @@ class SdkBackend:
         though it wasn't (the user 2026-06-27). The echo is keyed by the copy's id (send() mints one key
         for both), so a cancel by id drops the cancelled copy's own echo and no other: an echo already gone
         (retired ahead of its copy) leaves the text match unrun, since by text the first echo wearing the
-        words may be another same-text copy's, and that copy then read as never sent."""
+        words may be another same-text copy's, and that copy then read as never sent. The entry comes back as
+        SdkSession.unqueue gave it: one that answers a user request is its _TodoText, the id readable off it."""
         with self._lock:
             s = self.sessions.get(sid)
         if not s:
@@ -13559,7 +13620,8 @@ class SdkBackend:
                         or getattr(s, "_ping_feeding", False)   # getattr: test doubles skip __init__
                         or (s._rewind_to and not getattr(s, "_rewind_armed", False)))
 
-    def send(self, sid: str, text: str, qid: str | None = None, user: bool = False, paths: list | None = None) -> bool:
+    def send(self, sid: str, text: str, qid: str | None = None, user: bool = False, paths: list | None = None,
+             user_todo: str | None = None) -> bool:
         """`user`: the text is a message the USER typed (the composer, the phone, an untagged `romp send`, a comment
         reply or merge, a parked user send replayed, a compact click), the one word that retries a stood-down
         attach (T315). Romp's own automatic messages (the default: the nudge, the awaiting backstop, the debt
@@ -13567,7 +13629,13 @@ class SdkBackend:
         the text lands in the persisted queue mirror (reg['queue'], the seed of the next start) without starting
         the thread, so it rides the attach the user's next message makes, in order; True means accepted, as ever.
         The stand-down refuses the ATTACH, never the message (the commit-13 review's first item: a refusal
-        dropped the nudge after its ledger row had said fired)."""
+        dropped the nudge after its ledger row had said fired).
+
+        `user_todo`: the id of the user request the text ANSWERS, None for every other message. It rides the queue
+        entry (SdkSession.enqueue's `todo`, a _TodoText the mirror carries beside the copy's identity) and the echo
+        (`_todo`, mirrored as `todo`), so a recall or a loss detected later can name the request. The stand-down
+        arm below runs for automatic messages (`user=False`) only; its mirror entry carries no id and writes no
+        echo, so an answer sent that way into a stood-down session loses the id there."""
         if user:
             self._lift_attach_stand_down(sid)     # the user's message is the word that retries a stood-down attach (T315)
         else:
@@ -13603,7 +13671,10 @@ class SdkBackend:
         # writes the real user atom.
         key = qid or "echo:" + uuid.uuid4().hex
         try:
-            s.enqueue(text, qid=key, qts=int(time.time() * 1000), paths=paths or None)
+            if user_todo:
+                s.enqueue(text, qid=key, qts=int(time.time() * 1000), paths=paths or None, todo=str(user_todo))   # an answer's id rides the entry (_TodoText)
+            else:
+                s.enqueue(text, qid=key, qts=int(time.time() * 1000), paths=paths or None)
         except TypeError:                                    # a stand-in session that takes the text alone: an id-less copy
             s.enqueue(text)
         # optimistic input echo: show the user's own message INSTANTLY (neither the transcript nor the
@@ -13629,6 +13700,8 @@ class SdkBackend:
             echo["rompAuto"] = True                          # auto-nudge → romp-logo on the chat/timeline
         if sent_off is not None:
             echo["_echo_off"], echo["_echo_fsid"] = sent_off, sent_fsid   # the landing scan's start
+        if user_todo:
+            echo["_todo"] = str(user_todo)                   # the request this message answers, for whoever finds the echo lost
         self._stash_live(sid, key, echo)
         self._persist_echoes(sid)                            # unlanded echoes survive a kernel restart (reg mirror)
         self._wake_push()
@@ -13684,6 +13757,8 @@ class SdkBackend:
                     e["fsid"] = str(a.get("_echo_fsid") or "")
                 if a.get("_landed"):
                     e["landed"] = True            # the boot/spawn scan found its record: prune_live retires it
+                if a.get("_todo"):
+                    e["todo"] = str(a["_todo"])   # an answer's echo keeps its request's id across restarts; every other entry is unchanged
                 for flag in ("stale", "refused"):
                     if a.get(flag):
                         e[flag] = True            # WHY it was dropped (the age line / the prompt gate), for the chat
@@ -13736,6 +13811,8 @@ class SdkBackend:
                     atom["_echo_off"], atom["_echo_fsid"] = e["off"], str(e.get("fsid") or "")
                 if e.get("landed"):
                     atom["_landed"] = True           # already adjudicated landed: never re-scanned, never flagged
+                if e.get("todo"):
+                    atom["_todo"] = str(e["todo"])   # the request this answer names survives the restart too
                 self._stash_live(reg["sid"], key, atom)
             if self._live.get(reg["sid"]) and not self._lease_survives(reg["sid"]):
                 # a CLI that survived under its host still holds the sends the previous kernel handed it: nothing is
@@ -13885,7 +13962,8 @@ class SdkBackend:
                         s._compacting = True               # same enqueue-time semantics as send()
                     if _is_clear_cmd(a["_echo_text"]):
                         s._clearing = True
-                    _enqueue_with_id(s, a["_echo_text"], a.get("uuid"), a.get("t"))   # under the echo's own id (T252c)
+                    _enqueue_with_id(s, a["_echo_text"], a.get("uuid"), a.get("t"),
+                                     todo=str(a.get("_todo") or ""))   # under the echo's own id (T252c); an answer keeps its request's id
                     self._log("%s: re-delivering a typed send the dead CLI was holding: %.80r"
                               % (sid[:8], a["_echo_text"]))
             else:
@@ -13902,7 +13980,8 @@ class SdkBackend:
                             reg["queue"] = have + add      # behind the surviving queue: original send order
                             # each re-delivered copy keeps the echo's uuid as its id (T252c): the seed restores it
                             reg["queueMeta"] = [m for m in (reg.get("queueMeta") or []) if isinstance(m, dict)] + [
-                                {"text": a["_echo_text"], "qid": a["uuid"], "qts": int(a.get("t") or 0) * 1000 or None}
+                                dict({"text": a["_echo_text"], "qid": a["uuid"], "qts": int(a.get("t") or 0) * 1000 or None},
+                                     **({"todo": str(a["_todo"])} if a.get("_todo") else {}))   # an answer keeps its request's id: the seed restores it
                                 for a in adds if isinstance(a.get("uuid"), str) and a["uuid"].startswith("echo:")]
                             write_reg(self.state_dir, sid, reg)
                             for a in redeliver:
@@ -13922,6 +14001,8 @@ class SdkBackend:
                 self.forget_fed(sid, a.get("uuid"))   # its landing will never come (T252c)
             with self._live_lock:
                 self._touch_live(sid)                  # a flag write outside the lock: still a change to the tail
+            if a.get("_todo"):
+                self._todo_lost(sid, a["_todo"], a["_echo_text"])   # an ANSWER lost its holder: the request it names hears of it
             if id(a) in stale_ids:
                 continue                                   # counted in the one summary row below, not one row each
             if a["_echo_text"] in outrun:
@@ -13973,6 +14054,28 @@ class SdkBackend:
         self._persist_echoes(sid)
         self._wake_push()
 
+    def _todo_lost(self, sid: str, tid: str, text: str) -> None:
+        """Hand a lost ANSWER to the kernel's `todo_lost` callback (the constructor's seam), at the exact events that
+        lose one: an echo flagged dropped by _mark_dropped_echoes (the boot reseed, a fresh spawn, the reconnect
+        teardown's stranded turns), by the prompt gate's refusal (mark_echo_refused) or by a later human turn
+        overtaking it while the CLI held it (settle_echoes), and a rewind-refused queue head
+        (SdkSession._rewind_failed). Called outside the live-tail lock, since the callback is the kernel's. The boot
+        reseed's call comes from inside __init__, which the kernel constructs under its construction lock
+        (kernel._sdk_lock, not re-entrant): the callback must not call _sdk(), Sessions.live() or anything else that
+        takes that lock, or the boot deadlocks; a consumer that needs the kernel's session state parks boot losses and
+        drains them after wiring (the post_boot_notices shape) or writes to its own store only. A re-send from the
+        dropped-sends card (dropped_sends_card's Send again, a /send carrying the text alone) brings no id: to this
+        seam's consumer the request stays lost until a later change threads the id through that road or rules the
+        re-send a new plain message. Guarded and swallowing: the visible drop marking must survive a raising callback,
+        and a backend built without one keeps today's behaviour."""
+        cb = getattr(self, "_todo_lost_cb", None)          # getattr: bound-method test doubles skip __init__
+        if not cb:
+            return
+        try:
+            cb(sid, tid, text)
+        except Exception as e:
+            self._log("user-request loss seam (%s, %s) failed: %s" % (sid[:8], tid, e), problem=True)
+
     def mark_echo_refused(self, sid: str, text: str, reason: str = "") -> int:
         """The prompt gate REFUSED `text` for this session (_prompt_submit_gate's block: a replayed schedule slot).
         The CLI will not run it, so no record will ever land it — and an echo left pending would read as a lost
@@ -13982,7 +14085,7 @@ class SdkBackend:
         want = set(echo_keys(text))
         if not want:
             return 0
-        hit = []
+        hit, lost = [], []
         with self._live_lock:
             d = self._live.get(sid) or {}
             for a in d.values():
@@ -13995,12 +14098,16 @@ class SdkBackend:
                     if reason:
                         a["refusedWhy"] = str(reason)[:200]
                     hit.append(a.get("uuid"))
+                    if a.get("_todo"):
+                        lost.append((a["_todo"], et))      # an ANSWER the gate refused: reported below, outside the lock
             if hit:
                 self._touch_live(sid)
         if hit:
             if hasattr(self, "forget_fed"):
                 for u in hit:
                     self.forget_fed(sid, u)                # its landing will never come (T252c)
+            for tid, et in lost:
+                self._todo_lost(sid, tid, et)              # the request it names hears of the refusal
             self._persist_echoes(sid)                      # the flags ride the restart mirror at once
             self._wake_push()
         return len(hit)
@@ -16294,6 +16401,8 @@ class SdkBackend:
             self._log("%s: a send never reached its conversation (the CLI took a later message while still "
                       "holding it) — kept in the chat as never-delivered: %.80r"
                       % (sid[:8], a["_echo_text"]), problem=True)
+            if a.get("_todo"):
+                self._todo_lost(sid, a["_todo"], a["_echo_text"])   # an ANSWER overtaken while the CLI held it: the live loss
         self._persist_echoes(sid)                      # the flag rides the mirror across a restart
         self._wake_push()
 
