@@ -30,10 +30,14 @@ before it runs a test, so the "0" the tunnel tests once wrote at module level re
 and the remote-identity absorb case (a bus notice gated on peers) was red in 5 of 6 full runs (diagnosed 2026-09-18).
 The placement test below reads the module's assignments by position (a fault list, run over the real module and over
 synthetic copies with the leak planted, so it is known to be able to fail), the import-time half of the rule is held
-for EVERY module under tests/ (no module-level write of the variable, module-level if/try/for/with bodies included),
-and the probe beside them imports the module in a fresh interpreter and runs one setUp, and one that fails, to see the
-value. The restore is a cleanup rather than a tearDown since review round 1 (2026-09-18): unittest skips tearDown when
-a subclass's setUp raises after the base's returned, and a tearDown restore left the 0 in the worker on that path.
+for EVERY module under tests/, walked recursively, fixtures/ included (941 files on 2026-09-18): no module-level write
+of the variable, module-level if/try/for/with bodies included, in every shape a write takes (a subscript assignment,
+setdefault, update of a literal or of a module-level name bound to one, |=, os.putenv, through os.environ or any name
+bound to it; review round 2, 2026-09-18, after the subscript and setdefault alone left a module-level update
+invisible), and a write whose keys the scan cannot read fails the test rather than passing unread. The probe beside
+them imports the module in a fresh interpreter and runs one setUp, and one that fails, to see the value. The restore is
+a cleanup rather than a tearDown since review round 1 (2026-09-18): unittest skips tearDown when a subclass's setUp
+raises after the base's returned, and a tearDown restore left the 0 in the worker on that path.
 
 The fixture rule below is static, so it holds for tests that skip here (no browser, no extension deps) and fails at
 the spawn site, naming the file.
@@ -85,28 +89,153 @@ def _hermetic(src):
     return "kernel_env(" in src or all(k in src for k in TRIO)
 
 
-def _is_environ(node):
-    return isinstance(node, ast.Attribute) and node.attr == "environ" and isinstance(node.value, ast.Name) and node.value.id == "os"
+class UnreadableEnvWrite(AssertionError):
+    """A write to the process environment whose keys the scan cannot read from the source: an update of a computed
+    mapping or of `**kw`, a key that is not a string literal. Raised rather than skipped (review round 2, 2026-09-18): a
+    write the scan passed over would hold the repo-wide import-time rule vacuously for that module."""
 
 
-def _env_writes(node):
-    """The keys `os.environ[KEY] = ...` assigns anywhere under `node`."""
-    keys = set()
-    for n in ast.walk(node):
-        if isinstance(n, ast.Assign):
-            for t in n.targets:
-                if isinstance(t, ast.Subscript) and _is_environ(t.value) and isinstance(t.slice, ast.Constant) and isinstance(t.slice.value, str):
-                    keys.add(t.slice.value)
+def _literal_mapping_keys(node):
+    """The string keys of a dict literal, or of a `dict(...)` call of keywords alone; None for anything else (a computed
+    mapping, a `**spread`, a key that is not a string literal)."""
+    if isinstance(node, ast.Dict):
+        if all(isinstance(k, ast.Constant) and isinstance(k.value, str) for k in node.keys):
+            return {k.value for k in node.keys}
+        return None
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict" and not node.args
+            and all(kw.arg is not None for kw in node.keywords)):
+        return {kw.arg for kw in node.keywords}
+    return None
+
+
+class _EnvNames:
+    """What spells the process environment in a module, so a write is read whatever name it goes through (review round 2,
+    2026-09-18; before it the scan read `os.environ[...]` and `os.environ.setdefault` alone, and a module-level
+    `os.environ.update(...)` was invisible to it): `os.environ` under any name os is imported as, `environ` after
+    `from os import environ` (or its `as` name), and every name bound to it (`env = os.environ`). Beside those, the names
+    bound to a dict literal or to `dict(...)` of keywords, which an `update(NAME)` reads through the name
+    (tests/test_update_banner_confirm_served.py updates its DEAD_PORTS that way at import); a name bound any other way,
+    or more than once, is unreadable, and an update of it is loud. Built from the statements that run at import; a
+    function's own bindings are added when the function is walked (`within`)."""
+
+    def __init__(self, tree=None):
+        self.os_names = {"os"}
+        self.environ_names = set()
+        self.dicts = {}
+        if tree is not None:
+            self.absorb(_module_level_statements(tree.body))
+
+    def absorb(self, nodes):
+        for node in nodes:
+            for n in ast.walk(node):
+                if isinstance(n, ast.Import):
+                    self.os_names.update(a.asname for a in n.names if a.name == "os" and a.asname)
+                elif isinstance(n, ast.ImportFrom) and n.module == "os":
+                    self.environ_names.update(a.asname or a.name for a in n.names if a.name == "environ")
+                elif isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+                    name = n.targets[0].id
+                    if self.is_environ(n.value):
+                        self.environ_names.add(name)
+                    else:
+                        self.dicts[name] = None if name in self.dicts else _literal_mapping_keys(n.value)
+        return self
+
+    def within(self, node):
+        """These names plus whatever `node` (a function) binds itself."""
+        inner = _EnvNames()
+        inner.os_names, inner.environ_names, inner.dicts = set(self.os_names), set(self.environ_names), dict(self.dicts)
+        return inner.absorb([node])
+
+    def is_environ(self, node):
+        if isinstance(node, ast.Attribute) and node.attr == "environ" and isinstance(node.value, ast.Name):
+            return node.value.id in self.os_names
+        return isinstance(node, ast.Name) and node.id in self.environ_names
+
+
+def _unreadable(what, node, where):
+    return UnreadableEnvWrite("cannot read the key%s of this %s at line %d of %s: %s (a string-literal key, a dict literal, "
+                              "keyword arguments, or a name bound once to a dict literal are read; a computed key or "
+                              "mapping is not)" % ("s" if what == "update" else "", what, node.lineno, where, ast.unparse(node)))
+
+
+def _key(node, stmt, where, what):
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    raise _unreadable(what, stmt, where)
+
+
+def _mapping_keys(node, names, stmt, where):
+    """The keys the mapping expression `node` gives an update or a `|=`: a literal, or a name bound to one; loud otherwise."""
+    keys = _literal_mapping_keys(node)
+    if keys is None and isinstance(node, ast.Name):
+        keys = names.dicts.get(node.id)
+    if keys is None:
+        raise _unreadable("update", stmt, where)
     return keys
 
 
-def _env_pops(node, method="pop"):
-    """The keys `os.environ.pop(KEY, ...)` names anywhere under `node` (`method` picks another mutator, setdefault)."""
+def _flat_targets(targets):
+    for t in targets:
+        if isinstance(t, (ast.Tuple, ast.List)):
+            yield from _flat_targets(t.elts)
+        elif isinstance(t, ast.Starred):
+            yield from _flat_targets([t.value])
+        else:
+            yield t
+
+
+def _env_writes(node, names, where="<module>"):
+    """The environment keys the code under `node` sets: `environ[KEY] = v`, `environ |= {...}`, `environ.update({...})`,
+    `environ.update(KEY=v)`, `environ.update(NAME)` for a NAME bound to a dict literal, `environ.setdefault(KEY, v)` and
+    `os.putenv(KEY, v)`, environ spelled any way `names` knows (review round 2, 2026-09-18: the subscript and setdefault
+    alone before, so a module-level update was invisible). A write whose keys cannot be read from the source raises
+    UnreadableEnvWrite naming the line, never skips: the repo-wide import-time rule is only as good as the writes it
+    reads. Removals (`pop`, `del`) are not writes and are outside this scan's contract: unset is the production default
+    and the state a clean shell gives every module, so a removal at import sets nothing a later module would not have
+    found on its own; _env_removals reads them where a restore counts."""
+    names = names.within(node)
     keys = set()
     for n in ast.walk(node):
-        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == method and _is_environ(n.func.value)
-                and n.args and isinstance(n.args[0], ast.Constant) and isinstance(n.args[0].value, str)):
-            keys.add(n.args[0].value)
+        if isinstance(n, (ast.Assign, ast.AnnAssign)):
+            if isinstance(n, ast.AnnAssign) and n.value is None:
+                continue        # a bare annotation writes nothing
+            for t in _flat_targets(n.targets if isinstance(n, ast.Assign) else [n.target]):
+                if isinstance(t, ast.Subscript) and names.is_environ(t.value):
+                    keys.add(_key(t.slice, n, where, "environment assignment"))
+        elif isinstance(n, ast.AugAssign) and names.is_environ(n.target):
+            keys |= _mapping_keys(n.value, names, n, where)
+        elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+            if names.is_environ(n.func.value) and n.func.attr == "update":
+                if len(n.args) > 1 or any(kw.arg is None for kw in n.keywords):
+                    raise _unreadable("update", n, where)
+                for a in n.args:
+                    keys |= _mapping_keys(a, names, n, where)
+                keys.update(kw.arg for kw in n.keywords)
+            elif names.is_environ(n.func.value) and n.func.attr == "setdefault":
+                keys.add(_key(n.args[0] if n.args else None, n, where, "setdefault"))
+            elif isinstance(n.func.value, ast.Name) and n.func.value.id in names.os_names and n.func.attr == "putenv":
+                keys.add(_key(n.args[0] if n.args else None, n, where, "putenv"))
+    return keys
+
+
+def _env_removals(node, names):
+    """The environment keys the code under `node` removes by a string literal: `environ.pop(KEY, ...)`, `del environ[KEY]`,
+    `os.unsetenv(KEY)`. Read for the restore a cleanup makes (a pop is how a value found unset is put back). A key the
+    scan cannot read is passed over here and hidden by nothing: the cleanup check then faults for a restore it cannot
+    see."""
+    names = names.within(node)
+    keys = set()
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.args and isinstance(n.args[0], ast.Constant) \
+                and isinstance(n.args[0].value, str):
+            if (names.is_environ(n.func.value) and n.func.attr == "pop") or (
+                    isinstance(n.func.value, ast.Name) and n.func.value.id in names.os_names and n.func.attr == "unsetenv"):
+                keys.add(n.args[0].value)
+        elif isinstance(n, ast.Delete):
+            for t in n.targets:
+                if isinstance(t, ast.Subscript) and names.is_environ(t.value) and isinstance(t.slice, ast.Constant) \
+                        and isinstance(t.slice.value, str):
+                    keys.add(t.slice.value)
     return keys
 
 
@@ -132,16 +261,17 @@ def _module_level_statements(body):
             yield s
 
 
-def _module_level_env_writes(tree):
-    """The environment keys the module writes at import: `os.environ[KEY] = ...` and `os.environ.setdefault(KEY, ...)`
-    in any statement _module_level_statements yields."""
+def _module_level_env_writes(tree, where="<module>"):
+    """The environment keys the module writes at import, in every shape _env_writes reads, in any statement
+    _module_level_statements yields; `where` names the file in the loud message for a write the scan cannot read."""
+    names = _EnvNames(tree)
     keys = set()
     for s in _module_level_statements(tree.body):
-        keys |= _env_writes(s) | _env_pops(s, "setdefault")
+        keys |= _env_writes(s, names, where)
     return keys
 
 
-def _cleanup_restores(funcs, cls, classes, tree):
+def _cleanup_restores(funcs, cls, classes, tree, names, where):
     """The environment keys the cleanups registered under `funcs` (`self.addCleanup(callee, ...)`) write or pop: the
     callee resolved to a method of `cls` (`self.<name>`, its own or a base's through the module's classes) or to a
     function defined at module level, plus any key named as a string argument of the registration (a helper that takes
@@ -162,27 +292,29 @@ def _cleanup_restores(funcs, cls, classes, tree):
             elif isinstance(callee, ast.Name) and callee.id in module_funcs:
                 targets = [module_funcs[callee.id]]
             for t in targets:
-                keys |= _env_writes(t) | _env_pops(t)
+                keys |= _env_writes(t, names, where) | _env_removals(t, names)
     return keys
 
 
-def _placement_faults(tree):
+def _placement_faults(tree, where="test_kernel_tunnels.py"):
     """Every way a module that loads the kernel in-process and attaches misplaces a leg of the trio; empty when the
     placement holds. The port is assigned at module level before the kernel loads (the kernel reads it at import);
-    peers is NEVER written at module level (the leak of 2026-09-18, module-level if/try/for/with bodies included);
-    every class that attaches or detaches has a setUp (its own or through super()) that sets peers and registers a
-    cleanup that restores it, and client-only is set before the load or in that setUp. A list rather than assertions
-    so the check itself can be run over a synthetic module with the leak planted and shown to go red."""
+    peers is NEVER written at module level (the leak of 2026-09-18, module-level if/try/for/with bodies included, in
+    every shape _env_writes reads); every class that attaches or detaches has a setUp (its own or through super()) that
+    sets peers and registers a cleanup that restores it, and client-only is set before the load or in that setUp. A
+    list rather than assertions so the check itself can be run over a synthetic module with the leak planted and shown
+    to go red; a write the scan cannot read raises UnreadableEnvWrite out of it."""
     faults = []
     loads = [i for i, s in enumerate(tree.body) if _loads_kernel(s)]
     if not loads:
         return ["the module does not load the kernel in-process at module level"]
+    names = _EnvNames(tree)
     before_load = set()
     for s in _module_level_statements(tree.body[:loads[0]]):
-        before_load |= _env_writes(s)
+        before_load |= _env_writes(s, names, where)
     if "ROMP_POSTAL_PORT" not in before_load:
         faults.append("the port is not set before the kernel module loads (it reads the port at import)")
-    if "ROMP_POSTAL_PEERS" in _module_level_env_writes(tree):
+    if "ROMP_POSTAL_PEERS" in _module_level_env_writes(tree, where):
         faults.append("peers is written at module level: the kernel reads it at call time, and under xdist a value written at "
                       "import reaches every module on every worker (the remote-identity absorb case, red in 5 of 6 full runs)")
     classes = {c.name: c for c in tree.body if isinstance(c, ast.ClassDef)}
@@ -196,13 +328,13 @@ def _placement_faults(tree):
             continue
         in_setup = set()
         for f in set_up:
-            in_setup |= _env_writes(f)
+            in_setup |= _env_writes(f, names, where)
         if "ROMP_POSTAL_PEERS" not in in_setup:
             faults.append("%s.setUp (own or through super()) does not set peers for its tests (a detach's refused bus notice "
                           "revives the bus otherwise)" % cls.name)
         if "ROMP_POSTAL_CLIENT_ONLY" not in before_load | in_setup:
             faults.append("%s: client-only is neither before the load nor in its setUp" % cls.name)
-        if "ROMP_POSTAL_PEERS" not in _cleanup_restores(set_up, cls, classes, tree):
+        if "ROMP_POSTAL_PEERS" not in _cleanup_restores(set_up, cls, classes, tree, names, where):
             faults.append("%s.setUp (own or through super()) registers no cleanup that restores peers: a tearDown restore is "
                           "skipped when a later setUp statement raises, and the 0 outlives the class (review round 1, "
                           "2026-09-18)" % cls.name)
@@ -374,36 +506,91 @@ class HermeticKernelPostal(unittest.TestCase):
 
     def test_the_placement_check_reds_on_a_planted_module_level_write_and_on_a_teardown_only_restore(self):
         """The check is run over synthetic copies of the real module so it is known to be able to fail (review round 1,
-        2026-09-18): a module-level `os.environ["ROMP_POSTAL_PEERS"] = "0"` restored before the load, bare and inside a
-        module-level `if` body; and the restore moved back into a tearDown with no cleanup registered."""
+        2026-09-18): a module-level write of ROMP_POSTAL_PEERS restored before the load, in every shape a write takes
+        (review round 2 widened the scan from the subscript and setdefault to update, |=, a name bound to os.environ and
+        putenv: the subscript alone left a module-level update invisible), each copy faulting exactly once, for the
+        write and nothing else; a planted update whose keys the scan cannot read is loud, naming the line, never a clean
+        pass; and the restore moved back into a tearDown with no cleanup registered."""
         src = _tunnels_source()
-        for label, text in (("bare", _plant(src, 'os.environ["ROMP_POSTAL_PEERS"] = "0"\n')),
-                            ("in an if body", _plant(src, 'if True:\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\n')),
-                            ("by setdefault", _plant(src, 'os.environ.setdefault("ROMP_POSTAL_PEERS", "0")\n'))):
-            faults = _placement_faults(ast.parse(text))
-            self.assertTrue(any("written at module level" in f for f in faults), "%s planted write: %r" % (label, faults))
+        plants = (
+            ("bare", 'os.environ["ROMP_POSTAL_PEERS"] = "0"\n'),
+            ("in an if body", 'if True:\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\n'),
+            ("by setdefault", 'os.environ.setdefault("ROMP_POSTAL_PEERS", "0")\n'),
+            ("by update of a dict literal", 'os.environ.update({"ROMP_POSTAL_PEERS": "0"})\n'),
+            ("by update with a keyword", 'os.environ.update(ROMP_POSTAL_PEERS="0")\n'),
+            ("by update of a module-level name bound to a dict literal", 'PEERS_OFF = {"ROMP_POSTAL_PEERS": "0"}\nos.environ.update(PEERS_OFF)\n'),
+            ("by update of a dict() of keywords", 'os.environ.update(dict(ROMP_POSTAL_PEERS="0"))\n'),
+            ("by |=", 'os.environ |= {"ROMP_POSTAL_PEERS": "0"}\n'),
+            ("through from os import environ", 'from os import environ as _environ\n_environ["ROMP_POSTAL_PEERS"] = "0"\n'),
+            ("through a name bound to os.environ", '_env = os.environ\n_env["ROMP_POSTAL_PEERS"] = "0"\n'),
+            ("through a name bound to os.environ, by update", '_env = os.environ\n_env.update(ROMP_POSTAL_PEERS="0")\n'),
+            ("by os.putenv", 'os.putenv("ROMP_POSTAL_PEERS", "0")\n'),
+        )
+        for label, lines in plants:
+            faults = _placement_faults(ast.parse(_plant(src, lines)))
+            self.assertEqual(len(faults), 1, "%s planted write: one fault, for the write, and nothing else: %r" % (label, faults))
+            self.assertIn("written at module level", faults[0], label)
+        planted_line = src[:src.index(_PLANT_ANCHOR)].count("\n") + 1
+        with self.assertRaises(UnreadableEnvWrite) as loud:
+            _placement_faults(ast.parse(_plant(src, "os.environ.update(dict(os.environ))\n")))
+        self.assertIn("cannot read the keys of this update at line %d" % planted_line, str(loud.exception))
         faults = _placement_faults(ast.parse(_teardown_only_restore(src)))
         self.assertTrue(any("registers no cleanup" in f for f in faults), "tearDown-only restore: %r" % faults)
         self.assertEqual(len(faults), 2, "one fault per attaching class, nothing else: %r" % faults)
 
     def test_no_module_under_tests_writes_the_peers_setting_at_module_level(self):
-        """The import-time half of the rule, held for every .py under tests/ (review round 1, 2026-09-18): no module-level
-        write of ROMP_POSTAL_PEERS, module-level if/try/for/with bodies included. The per-test half (set in setUp, put
-        back by a cleanup) is a convention, checked above for the tunnels module alone; tests/README.md says so."""
+        """The import-time half of the rule, held for every .py under tests/ (review round 1, 2026-09-18), walked
+        recursively so fixtures/ is read too (941 files on 2026-09-18: 925 test_*.py, 13 helpers beside them and 3 under
+        fixtures/; the glob is checked against an independent walk so no file is silently unscanned): no module-level
+        write of ROMP_POSTAL_PEERS, module-level if/try/for/with bodies included, in every shape a write takes (review
+        round 2: a subscript, setdefault, update of a literal or of a module-level name bound to one, |=, putenv, through
+        os.environ or any name bound to it), and a write whose keys the scan cannot read fails here naming the file
+        and line rather than passing unread. The per-test half (set in setUp, put back by a cleanup) is a convention,
+        checked above for the tunnels module alone; tests/README.md says so."""
         paths = sorted(glob.glob(os.path.join(HERE, "**", "*.py"), recursive=True))
-        self.assertGreater(len(paths), 100, "the scan sees the test modules")
+        walked = sorted(os.path.join(d, f) for d, _, fs in os.walk(HERE) for f in fs if f.endswith(".py"))
+        self.assertEqual(paths, walked, "the glob walks every .py under tests/, subdirectories included: the set an os.walk finds")
+        self.assertGreater(len(paths), 900, "the scan walks the whole tree, recursively: %d files (941 on 2026-09-18)" % len(paths))
         writers = []
         for path in paths:
+            rel = os.path.relpath(path, HERE)
             tree = ast.parse(open(path, encoding="utf-8", errors="replace").read(), filename=path)
-            if "ROMP_POSTAL_PEERS" in _module_level_env_writes(tree):
-                writers.append(os.path.relpath(path, HERE))
+            if "ROMP_POSTAL_PEERS" in _module_level_env_writes(tree, rel):
+                writers.append(rel)
         self.assertEqual(writers, [], "these modules write ROMP_POSTAL_PEERS at import; the kernel and the postal service "
                                       "read it at call time, and under xdist every worker imports every collected module")
-        # the scan itself is known to see a planted write, bare and in an if body, and to ignore one inside a def
-        seen = _module_level_env_writes(ast.parse('import os\nif True:\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\n'))
-        self.assertIn("ROMP_POSTAL_PEERS", seen)
-        unseen = _module_level_env_writes(ast.parse('import os\ndef setUp(self):\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\n'))
+        # the scan itself is known to see a planted write in every shape, bare and in an if body, and to ignore one inside a def
+        for shape in ('os.environ["ROMP_POSTAL_PEERS"] = "0"',
+                      'if True:\n    os.environ["ROMP_POSTAL_PEERS"] = "0"',
+                      'os.environ.setdefault("ROMP_POSTAL_PEERS", "0")',
+                      'os.environ.update({"ROMP_POSTAL_PEERS": "0"})',
+                      'os.environ.update(ROMP_POSTAL_PEERS="0")',
+                      'OFF = {"ROMP_POSTAL_PEERS": "0"}\nos.environ.update(OFF)',
+                      'try:\n    OFF = dict(ROMP_POSTAL_PEERS="0")\nfinally:\n    os.environ.update(OFF)',
+                      'os.environ |= {"ROMP_POSTAL_PEERS": "0"}',
+                      'from os import environ\nenviron["ROMP_POSTAL_PEERS"] = "0"',
+                      'import os as _o\n_o.environ["ROMP_POSTAL_PEERS"] = "0"',
+                      'env = os.environ\nenv["ROMP_POSTAL_PEERS"] = "0"',
+                      'env = os.environ\nenv.update(ROMP_POSTAL_PEERS="0")',
+                      'os.putenv("ROMP_POSTAL_PEERS", "0")'):
+            self.assertIn("ROMP_POSTAL_PEERS", _module_level_env_writes(ast.parse("import os\n" + shape + "\n"), "planted.py"), shape)
+        unseen = _module_level_env_writes(ast.parse('import os\ndef setUp(self):\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\n'), "planted.py")
         self.assertNotIn("ROMP_POSTAL_PEERS", unseen)
+        # the one module-level update in the tree today reads its mapping through a name bound to a dict literal
+        # (tests/test_update_banner_confirm_served.py's DEAD_PORTS): the scan reads the keys, and the module stays clean
+        banner = "test_update_banner_confirm_served.py"
+        seen = _module_level_env_writes(ast.parse(open(os.path.join(HERE, banner), encoding="utf-8", errors="replace").read()), banner)
+        self.assertTrue({"ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT"} <= seen,
+                        "%s updates os.environ from DEAD_PORTS at import; the scan reads the keys through the name: %r" % (banner, sorted(seen)))
+        # a write the scan cannot read is loud, with the file and the line, never a clean pass
+        for shape in ("os.environ.update(computed())", "os.environ.update(**saved)", "os.environ.update(saved, ROMP_X=\"1\")",
+                      "os.environ |= saved", 'os.environ[name] = "0"', 'os.environ.setdefault(name, "0")', 'os.putenv(name, "0")',
+                      "saved = dict(os.environ)\nos.environ.update(saved)",
+                      'OFF = {"ROMP_POSTAL_PEERS": "0"}\nOFF = computed()\nos.environ.update(OFF)'):
+            with self.assertRaises(UnreadableEnvWrite, msg=shape) as loud:
+                _module_level_env_writes(ast.parse("import os\n" + shape + "\n"), "planted.py")
+            self.assertIn("cannot read the key", str(loud.exception), shape)
+            self.assertIn("at line %d of planted.py" % (shape.count("\n") + 2), str(loud.exception), shape)
 
     def _tunnels_probe(self, planted_text=None):
         """_PROBE in a fresh interpreter over the real module (imported) or over `planted_text`, a synthetic copy compiled
@@ -436,12 +623,15 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(out["after_setup_raise"], "1", "a subclass setUp that raises after the peers write still restores it: a tearDown restore is skipped on that path (review round 1, 2026-09-18)")
 
     def test_the_import_probe_reds_on_a_planted_module_level_peers_write(self):
-        """The same planted assignment, run: a copy of the module with `os.environ["ROMP_POSTAL_PEERS"] = "0"` restored
-        before the load reports "0" after the import, so the probe is known to see the leak it guards against (review
-        round 1, 2026-09-18)."""
-        out = self._tunnels_probe(_plant(_tunnels_source(), 'os.environ["ROMP_POSTAL_PEERS"] = "0"\n'))
-        self.assertEqual(out["after_import"], "0", "the probe sees a module-level write at import")
-        self.assertEqual(out["after_cleanups"], "1", "the planted copy's own cleanup still restores the shell's value")
+        """The same planted writes, run: a copy of the module with `os.environ["ROMP_POSTAL_PEERS"] = "0"` restored
+        before the load reports "0" after the import, and so does one with `os.environ.update(ROMP_POSTAL_PEERS="0")`
+        there (the shape review round 2 found the static scan blind to), so the probe is known to see the leak it
+        guards against (review rounds 1 and 2, 2026-09-18)."""
+        for label, lines in (("assignment", 'os.environ["ROMP_POSTAL_PEERS"] = "0"\n'),
+                             ("update", 'os.environ.update(ROMP_POSTAL_PEERS="0")\n')):
+            out = self._tunnels_probe(_plant(_tunnels_source(), lines))
+            self.assertEqual(out["after_import"], "0", "%s: the probe sees a module-level write at import" % label)
+            self.assertEqual(out["after_cleanups"], "1", "%s: the planted copy's own cleanup still restores the shell's value" % label)
 
     def test_the_peer_notify_guard_test_carries_the_trio_around_the_call_it_forces_to_fail(self):
         src = open(os.path.join(HERE, "test_kernel.py"), encoding="utf-8", errors="replace").read()

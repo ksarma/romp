@@ -15,21 +15,22 @@ Under pytest-xdist over the whole tests/ directory (-n 4) PeerRoutePrefersDirect
 test_resolve_recipient_lands_direct_with_no_ambiguity_error is red ('error' != 'relay') while this module alone is
 green (8 passed), and so is this module beside tests/test_sdk_backend.py under -n 4. The leaked global is the
 environment: tests/test_kernel_tunnels.py set ROMP_POSTAL_PEERS=0 at module level (until 2026-09-18, when the value
-moved into that module's per-test setUp and tearDown after the kernel's remote-identity absorb case went red the same
+moved into that module's per-test setUp, restored by a cleanup, after the kernel's remote-identity absorb case went red the same
 way in 5 of 6 full runs), every xdist worker imports every collected module before it runs a test, and the service's
 peers_on() reads the variable at call time, so resolve_recipient consults no peer route and answers an error where the
 relay is expected (diagnosed 2026-09-16; reproduced with no xdist by running that module before this one in one pytest
 process). Judge a red here by the
 module alone: `python3 -m pytest tests/test_postal_via_dedupe.py -q`. The postal modules that set ROMP_POSTAL_PEERS=1
-in setUp never saw the leak; since 2026-09-16 this one pins the variable itself too (_Seeded.setUp sets it to 1 and
-tearDown restores what it found), so the red above is the fails-before and the case reads the peer route whatever an
-earlier module left.
+in setUp never saw the leak; since 2026-09-16 this one pins the variable itself too (_Seeded.setUp sets it to 1 and a
+cleanup registered right there restores what it found), so the red above is the fails-before and the case reads the
+peer route whatever an earlier module left.
 """
 import os
 import tempfile
 import time
 import unittest
 from romp_load import load_source
+from tests.conftest import restore_env
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -50,9 +51,14 @@ class _Seeded(unittest.TestCase):
     def setUp(self):
         self._peers, self._pstate = dict(pm.PEERS), dict(pm.PEER_STATE)
         # the peer route is gated by peers_on(), read per call: pin it on here, whatever an earlier module in the
-        # same process left (tests/test_kernel_tunnels.py set 0 at module level until 2026-09-18; the header says why), restored below
+        # same process left (tests/test_kernel_tunnels.py set 0 at module level until 2026-09-18; the header says why),
+        # and put it back by a cleanup registered right after the write. A cleanup, not the tearDown below (review
+        # round 2 of the peers-leak fix, 2026-09-18): unittest skips tearDown when setUp raises, and the seeding after
+        # this line can raise, so a tearDown restore left the 1 in the worker for every later module on that path.
+        # SeededSetUpFailureRestore below runs that path.
         self._peers_env = os.environ.get("ROMP_POSTAL_PEERS")
         os.environ["ROMP_POSTAL_PEERS"] = "1"
+        self.addCleanup(restore_env, "ROMP_POSTAL_PEERS", self._peers_env)
         pm.PEERS.clear()
         pm.PEER_STATE.clear()
         now = int(time.time())
@@ -76,10 +82,37 @@ class _Seeded(unittest.TestCase):
         pm.PEERS.update(self._peers)
         pm.PEER_STATE.clear()
         pm.PEER_STATE.update(self._pstate)
-        if self._peers_env is None:
-            os.environ.pop("ROMP_POSTAL_PEERS", None)
-        else:
-            os.environ["ROMP_POSTAL_PEERS"] = self._peers_env
+
+
+class SeededSetUpFailureRestore(unittest.TestCase):
+    """Executed pin for the restore in _Seeded.setUp (review round 2 of the peers-leak fix, 2026-09-18): a subclass whose
+    setUp raises after super().setUp() is run through unittest with ROMP_POSTAL_PEERS unset, and it must be unset
+    afterwards. Red on the tearDown restore _Seeded carried until then: unittest skips tearDown when setUp raises, so
+    the 1 outlived the class and every later module on the worker read peers on. Green on the cleanup registered right
+    after the write. The peer tables the seeding fills are put back here too, since the skipped tearDown put back
+    nothing. The subclass is local to the test, so no loader collects it."""
+
+    def test_a_subclass_setup_that_raises_after_the_write_still_restores_the_value(self):
+        prior = os.environ.pop("ROMP_POSTAL_PEERS", None)
+        self.addCleanup(restore_env, "ROMP_POSTAL_PEERS", prior)
+        peers, pstate = dict(pm.PEERS), dict(pm.PEER_STATE)
+        self.addCleanup(lambda: (pm.PEERS.clear(), pm.PEERS.update(peers), pm.PEER_STATE.clear(), pm.PEER_STATE.update(pstate)))
+
+        class Raises(_Seeded):
+            def setUp(self):
+                super().setUp()
+                raise OSError("planted: the rest of a subclass's setUp failing after the peers write")
+
+            def test_never_reached(self):
+                pass
+
+        result = unittest.TestResult()
+        Raises("test_never_reached").run(result)
+        self.assertEqual(len(result.errors), 1, "the planted setUp raised, as an error on the case: %r" % (result.errors,))
+        # the key is named: an assertNotIn over os.environ prints the whole environment when it fails
+        self.assertIsNone(os.environ.get("ROMP_POSTAL_PEERS"),
+                          "the value found unset is unset again although tearDown never ran: the restore is a cleanup "
+                          "registered right after the write")
 
 
 class ViaReachFolds(_Seeded):

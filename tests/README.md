@@ -70,16 +70,28 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   case missed its bus notice (5 of 6 full runs). The tunnels module now sets the value
   per test (a setUp that saves what it found and registers the restore as a cleanup; a
   tearDown restore is skipped when a subclass's setUp fails part-way, and the value
-  leaks the same way), both readers pin the default the same way, and
-  `tests/test_hermetic_kernel_postal.py` holds the placement. The rule from now on has
-  two halves, held differently. The import-time half is pinned for every `.py` under
-  `tests/`: no module-level write of `ROMP_POSTAL_PEERS`, module-level `if`, `try`,
-  `for` and `with` bodies included. The per-test half, set in setUp and put back by a
-  cleanup registered right after the write (`restore_env` from `tests/conftest.py`, or a
-  method of the class), is a convention and not a pinned rule: the hermetic module
-  checks it for the tunnels module alone. The same shape leaked `ROMP_SESSIONS_FILE`
-  from `test_postal_bus_lifetime.py` (a tearDown that put back only a prior value; fixed
-  2026-09-18 with a cleanup and a pin that runs the case). conftest's
+  leaks the same way), both readers pin the default the same way (review round 2,
+  2026-09-18, moved their restores, `RemoteIdentity`'s and the dedupe module's
+  `_Seeded`'s, from tearDown onto a cleanup too, each with an executed pin that runs a
+  subclass setUp that raises), and `tests/test_hermetic_kernel_postal.py` holds the
+  placement. The rule from now on has two halves, held differently. The import-time half
+  is pinned for every `.py` under `tests/`, walked recursively so `fixtures/` is read too
+  (941 files on 2026-09-18: 925 `test_*.py`, 13 helpers beside them and 3 under
+  `fixtures/`; the test checks its glob against an independent walk, so no file is
+  silently unscanned): no module-level write of `ROMP_POSTAL_PEERS`, module-level `if`,
+  `try`, `for` and `with` bodies included, in every shape a write takes (a subscript
+  assignment, `setdefault`, `update` of a dict literal, of keywords or of a module-level
+  name bound to a dict literal, `|=`, `os.putenv`, through `os.environ` or any name bound
+  to it), and a write whose keys the scan cannot read fails the test naming the file and
+  line rather than passing unread (review round 2: the subscript and `setdefault` alone
+  had left a module-level `update` invisible). A module-level `pop` is outside that pin:
+  unset is the production default and what a clean shell gives every module. The
+  per-test half, set in setUp and put back by a cleanup registered right after the write
+  (`restore_env` from `tests/conftest.py`, or a method of the class), is a convention and
+  not a pinned rule: the hermetic module checks it for the tunnels module alone. The same
+  shape leaked `ROMP_SESSIONS_FILE` from `test_postal_bus_lifetime.py` (a tearDown that
+  put back only a prior value; fixed 2026-09-18 with a cleanup and a pin that runs the
+  case). conftest's
   `_shared_state_restored` names such a leftover, but only in a run that collects no
   module writing the seam at import, so the module alone is the run that shows it.
   `ROMP_POSTAL_PORT` is the one postal leg the kernel reads at import, and it stays
