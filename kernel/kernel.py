@@ -2000,7 +2000,7 @@ _PERF_IDENT = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")   # a name a /perf key may c
 # any of these paths, so it is allowed the union. The route table itself is the dispatches; this is their register.
 _PERF_HTTP_ROUTES = {
     "GET": (
-        "/", "/analytics", "/api-health", "/api-health/frame", "/busy", "/chat", "/classify",
+        "/", "/analytics", "/api-health", "/api-health/frame", "/billing", "/busy", "/chat", "/classify",
         "/commands", "/defaults", "/diag/sendvis", "/emoji", "/feed", "/feed.json", "/file", "/files",
         "/fleet", "/followup-preview", "/handoff", "/healthz", "/logins", "/manifest.webmanifest",
         "/mcp", "/models", "/notify-all", "/notify-turns", "/palette", "/perf", "/push/pending",
@@ -2013,7 +2013,7 @@ _PERF_HTTP_ROUTES = {
         "/file",
     ),
     "POST": (
-        "/checkin", "/checkin/stop", "/color", "/compact", "/deliver", "/down", "/emoji", "/end",
+        "/billing", "/checkin", "/checkin/stop", "/color", "/compact", "/deliver", "/down", "/emoji", "/end",
         "/flag", "/fleet-restart", "/fork", "/fork-comment", "/fork-promote", "/group", "/interrupt",
         "/judge-settings", "/logins", "/mesh-settings", "/move", "/new", "/notice", "/notify-all",
         "/notify-turns", "/order", "/perf", "/pinnote", "/postal-notice", "/push/ack", "/push/dropped",
@@ -40114,15 +40114,180 @@ def _set_env_or_park(be, sid, value):
         be.set_env(sid, value)
 
 
+def _set_auth_or_park_verdict(be, sid, value):
+    """_set_auth_or_park's verdict by name: "parked" (the FIFO holds the pick and applies it when the session is
+    quiet), "ok" (applied now), "refused" (a value that is no pick, or the backend's no). POST /billing answers
+    each differently (a parked pick applies at the session's next quiet moment); the WS arm needs the boolean."""
+    if not lg.parse_pick(value)[0]:          # "login" | "key" | "login:<id>" (a stored login, T346)
+        return "refused"
+    if _gate_or_park(sid, ("auth", value)):
+        return "parked"
+    return "ok" if be.set_auth(sid, value) else "refused"
+
+
 def _set_auth_or_park(be, sid, value):
     """Apply a billing-account change now — or park it while the session compacts, in the same FIFO as
     /model and /effort (it reconnects the session, which mid-compaction would derail the compaction
     exactly the way a model switch would). Returns the backend's verdict so the caller can be loud."""
-    if not lg.parse_pick(value)[0]:          # "login" | "key" | "login:<id>" (a stored login, T346)
-        return False
-    if _gate_or_park(sid, ("auth", value)):
-        return True
-    return be.set_auth(sid, value)
+    return _set_auth_or_park_verdict(be, sid, value) != "refused"
+
+
+# POST /billing's `reconnect` words, by the backend's outlook (SdkBackend.auth_apply_outlook), the words `romp billing`
+# prints from. "deferred" also names a pick the FIFO parked: the sweep applies it when the session is quiet.
+_BILLING_WORDS = {"now": "now", "deferred": "at the next quiet moment", "held": "held for live work",
+                  "next-launch": "at its next launch", "none": "none needed"}
+_BILLING_CHOICES = "'%s' is not a billing choice: key, login, login:<id> (a stored login) or default"
+_BILLING_NOT_SDK = "%s is not a Claude Code session: only a Claude Code session has a billing pick"
+
+
+def _billing_request(b):
+    """POST /billing's verdict for the parsed body `b` (the route's comment names the shapes): the JSON answer, with
+    its "_status" when not 200. The per-session arm mirrors the WS setAuth arm (_drive): the target through
+    _control_target, the pick through parse_pick, the apply through the park gate the dashboard's op takes
+    (_set_auth_or_park_verdict), the refusal through auth_unavailable_why with the side AND the stored login id (the
+    WS arm asks with the whole value, which a "login:<id>" answers "" to, so a stored login's own reason was lost
+    there). Two roads of its own:
+      * `now` cuts the turn in flight so the reconnect follows at once (the user 2026-09-18). It bypasses the FIFO
+        park the dashboard's op takes mid-turn: set_auth records the pick and asks its reconnect under the one arm
+        rule (deferred to the settle while a turn is open), and the interrupt after it ends that turn, so its settle
+        arms the reconnect; parked instead, the pick would apply only when the pusher's sweep found the session
+        quiet, and the interrupt would cut a turn with nothing pending. No new arm path. A compaction is refused, not
+        cut. Live work (subagents, background tasks) still holds the pick, and the answer says so.
+      * `default` has no dashboard value (the per-session op takes login, key or a stored login): it clears the
+        session's own pick (SdkBackend.follow_default_auth), and the reconnect it may need takes the follower walk's
+        own road, request_reconnect's arm rule, never the FIFO, whose replay could not apply the value (set_auth
+        refuses it) and would drop it in silence.
+    The walk (`allFollowing`) takes the SDK backend directly: it has no target, and only that backend keeps a machine
+    default with followers."""
+    pick = str(b.get("pick") or "")
+    now = bool(b.get("now"))
+    if b.get("allFollowing"):
+        if not lg.parse_pick(pick)[0]:
+            if pick == "default":
+                return {"ok": False, "error": "the sessions following the default already follow it: name the pick they "
+                                              "should carry instead (key, login or login:<id>)", "_status": 400}
+            return {"ok": False, "error": _BILLING_CHOICES % pick[:40], "_status": 400}
+        be = _sdk()
+        walk = getattr(be, "set_auth_followers", None)
+        if be is None or walk is None:
+            return {"ok": False, "error": "no Claude Code backend runs on this kernel, so no session follows a default here",
+                    "_status": 409}
+        out = walk(pick)
+        if out is None:
+            why = str(be.auth_unavailable_why(*lg.parse_pick(pick)) or "")
+            return {"ok": False, "error": why or "the pick was refused", "_status": 409}
+        _push_soon()
+        return {"ok": True, "pick": pick, "moved": len(out["moved"]), "skipped": len(out["skipped"]),
+                "sessions": out["moved"], "skippedSessions": out["skipped"]}
+    who = str(b.get("target") or "")
+    if not who or not pick:
+        return {"ok": False, "error": "target and pick required", "_status": 400}
+    if pick != "default" and not lg.parse_pick(pick)[0]:
+        return {"ok": False, "error": _BILLING_CHOICES % pick[:40], "_status": 400}
+    sid, r, refusal, _live = _control_target(who, route="/billing")
+    if r is not None:
+        # a session an attached host runs: forwarded with the validated fields, by the far sid; the far kernel's
+        # answer is the answer (the /end precedent: a dead tunnel is never an ok, a far refusal rides back in its words)
+        st, res, text = _remote_forward_answer(r, "/billing", {"target": sid, "pick": pick, "now": now})
+        return _billing_far_answer(r, st, res, text, "so its billing was not changed")
+    if refusal:
+        return refusal
+    be = Sessions.backend_for(sid)
+    if getattr(be, "auth_apply_outlook", None) is None:
+        return {"ok": False, "error": _BILLING_NOT_SDK % who, "_status": 409}
+    if now and _compacting_now(sid):
+        return {"ok": False, "error": "%s is compacting, and a compaction is not cut for a billing change; run it again "
+                                      "without --now to queue the pick behind the compaction, or wait for it to end" % who,
+                "_status": 409}
+    queued = False
+    out = {"ok": True, "session": _name_of(sid) or sid[:8], "sid": sid, "pick": pick}
+    if pick == "default":
+        if not be.follow_default_auth(sid):
+            return {"ok": False, "error": "%s's record would not read, so nothing was changed" % who, "_status": 409}
+        out["default"] = _billing_default(be)["value"]   # what it follows now, for the caller's line
+    elif now:
+        if not be.set_auth(sid, pick):
+            return _billing_refusal(be, who, pick)
+    else:
+        verdict = _set_auth_or_park_verdict(be, sid, pick)
+        if verdict == "refused":
+            return _billing_refusal(be, who, pick)
+        queued = verdict == "parked"
+    outlook = "deferred" if queued else be.auth_apply_outlook(sid)
+    cut = False
+    if now and outlook in ("deferred", "held") and be.busy(sid):
+        if be.interrupt(sid) is not False:
+            _mark_interrupt_clicked(sid)             # the chip reads interrupting now, as the /interrupt route's stop does
+            cut = True
+            if outlook == "deferred":
+                outlook = "now"                      # the cut turn's settle arms the reconnect; a hold for live work stands
+    _push_soon()
+    out.update(reconnect=_BILLING_WORDS[outlook], cut=cut, queued=queued)
+    return out
+
+
+def _billing_refusal(be, who, pick):
+    """The 409 for a pick the backend refused: the box's reason for the side and the stored login (the one vocabulary
+    every Billing surface uses), else the one other way set_auth answers False, a record that would not read."""
+    side, lid = lg.parse_pick(pick)
+    why = str(be.auth_unavailable_why(side, lid) or "")
+    return {"ok": False, "error": why or ("%s's record would not read, so nothing was changed" % who), "_status": 409}
+
+
+def _billing_far_answer(r, st, res, text, coda):
+    """A far kernel's answer to a forwarded /billing, relayed as the /end arm relays: a non-200 in its words with its
+    status (_remote_refusal), a dead tunnel as ok:false naming the host with `coda`, a 200 body as is."""
+    if st and st != 200:
+        out = _remote_refusal(r, st, res, text)
+        out["_status"] = st
+        return out
+    if res is None:
+        return {"ok": False, "error": "the remote kernel for this session (%s) isn't answering, %s" % (r.get("host", "?"), coda)}
+    if not isinstance(res, dict):
+        return {"ok": False, "error": "the remote kernel for %s answered with no JSON object" % r.get("host", "?")}
+    return res
+
+
+def _billing_default(be):
+    """The machine default as a session with no pick of its own BILLS it (the backend's fallback_auth: the explicit
+    default when this box can bill it, else the helper rule), with the stored login it names, whether it was set
+    explicitly, and a label (a stored login's, else the machine login's display name, "" for the key): {value, auth,
+    login, explicit, label}. Not _auth_avail's `default`: that is the new-session picker's preselected choice, which a
+    remembered per-session pick seeds while no explicit default is set, and a follower does not bill it (the reference's
+    rule, "Per-session billing"): the read said login for a default every follower launched on the key."""
+    side = str(be.fallback_auth() or "")
+    lid = str(be.explicit_default_login() or "") if side == "login" else ""
+    label = be.login_display(lid) if lid else (_claude_account_label() if side == "login" else "")
+    return {"value": lg.pick_value(side, lid), "auth": side, "login": lid,
+            "explicit": bool(be.explicit_default_auth()), "label": label}
+
+
+def _billing_read(target):
+    """GET /billing?target=: {ok, session, sid, launched, launchedLogin, launchedLabel, live, pick: {auth, login, label,
+    explicit}, pending, held, default: {auth, login, explicit, label}} (SdkBackend.billing_view's fields, the machine
+    default from _billing_default: what an unpicked session bills, explicit or the helper rule, with a stored login's
+    label or the machine login's), or {ok: false, error} with its status: 400 no target, the resolver's 404 or 503, 409
+    a backend with no billing pick or a record that would not read."""
+    if not target:
+        return {"ok": False, "error": "target required", "_status": 400}
+    sid, r, refusal, _live = _control_target(target, route="/billing")
+    if r is not None:
+        st, res, text = _remote_forward_answer(r, "/billing?target=" + quote(sid, safe=""), None, method="GET")
+        return _billing_far_answer(r, st, res, text, "so its billing cannot be read from here")
+    if refusal:
+        return refusal
+    be = Sessions.backend_for(sid)
+    view_fn = getattr(be, "billing_view", None)
+    if view_fn is None:
+        return {"ok": False, "error": _BILLING_NOT_SDK % target, "_status": 409}
+    view = view_fn(sid)
+    if view is None:
+        return {"ok": False, "error": "%s's record would not read" % target, "_status": 409}
+    d = _billing_default(be)
+    out = {"ok": True, "session": _name_of(sid) or sid[:8], "sid": sid}
+    out.update(view)
+    out["default"] = {k: d[k] for k in ("auth", "login", "explicit", "label")}
+    return out
 
 
 def _set_fast_or_park(be, sid, value):
@@ -72017,6 +72182,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, json.dumps({"ok": True, "id": tsid,
                                                    "emoji": parts[4] if len(parts) > 4 else ""}),
                                   "application/json", cache="no-cache")
+            if p == "/billing":
+                # `romp billing <session>` (the user 2026-09-18): the read half of POST /billing. ?target=<name|sid>;
+                # the target resolves as the POST's does (a session an attached host runs forwards over its tunnel,
+                # the far kernel's answer relayed with its status), and a dormant session answers from its reg. The
+                # shape and the verdicts are _billing_read's.
+                res = _billing_read((q.get("target") or [""])[0].strip())
+                return self._send(res.pop("_status", 200), json.dumps(res), "application/json", cache="no-cache")
             if p == "/perf":                                  # the kernel's performance counters (`romp perf`); shape: _PerfStats
                 snap = _PERF_STATS.snapshot(ring_all=(q.get("ring") or [""])[0] == "all")   # ?ring=all: the whole stage ring (T397)
                 if (q.get("stacks") or [""])[0] == "1":
@@ -73279,6 +73451,23 @@ class Handler(BaseHTTPRequestHandler):
                     _send_to_app("chat", {"type": "closed", "id": sid})
                 _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
                 return self._send(200, json.dumps({"ok": True}), "application/json")
+            if u.path == "/billing":
+                # `romp billing` (the user 2026-09-18): a session's billing from the shell, which until this only the
+                # dashboard could change. The WS setAuth arm as a route, mirrored the way /end mirrors endSession: the
+                # same backend calls (set_auth through the park gate the dashboard's op takes), the same refusal reasons
+                # (auth_unavailable_why), a remote session forwarded over its tunnel with the far answer relayed. Body:
+                # {"target": <name|sid>, "pick": key|login|login:<id>|default, "now": bool} for one session, or
+                # {"pick": <pick>, "allFollowing": true} for every live session that follows the machine default (the
+                # walk set_auth_default's followers take, on THIS kernel: a far host's followers are moved there). The
+                # verdicts, their answers and their statuses are _billing_request's.
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except ValueError:
+                    b = None
+                if not isinstance(b, dict):
+                    return self._send(400, json.dumps({"ok": False, "error": "a JSON object is required"}), "application/json")
+                res = _billing_request(b)
+                return self._send(res.pop("_status", 200), json.dumps(res), "application/json")
             if u.path.startswith("/remote/"):
                 # an attached host's own /new or /send, relayed: an action that LANDS on that machine (a session
                 # spawned THERE, its briefing sent before this kernel's poll has learned its sid). The local auth
