@@ -14,7 +14,11 @@ real build needs npm install and a network.
 import glob
 import os
 import re
+import tempfile
+import types
 import unittest
+from pathlib import Path
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -57,25 +61,6 @@ class BundleBuildMode(unittest.TestCase):
         self.assertIn("--production", body,
                       "_ensure_bundles must match the installer, or a .ts/.css touch reverts "
                       "the served dashboard to the unminified bundle")
-
-    def test_the_converge_rebuild_also_builds_production(self):
-        """The THIRD builder: _rebuild_dist, the in-place converge that runs when a fast-forward leaves dist
-        older than ui/ (the drift pass, _dist_converge_check). It ran `node esbuild.js` bare, so every
-        post-update rebuild served unminified bundles with sourcemaps, and _ensure_bundles never re-minified
-        them: it judges staleness by mtime against dist/render.js, not by profile, so a dev-profile dist newer
-        than its inputs is current to the next boot. The user's phone downloaded those bundles for weeks (about
-        27 percent larger gzipped; the user 2026-09-18, who wanted the phone's downloads minified). Same knob as
-        the other two builders: ROMP_EXT_DEV_BUILD opts out."""
-        src = _read(KERNEL)
-        m = re.search(r"def _rebuild_dist\(\):.*?(?=\ndef )", src, re.S)
-        self.assertIsNotNone(m, "_rebuild_dist not found")
-        body = m.group(0)
-        self.assertIn("esbuild.js", body)
-        self.assertIn("--production", body,
-                      "_rebuild_dist must build the production profile like _ensure_bundles and the installer, "
-                      "or every fast-forward serves the unminified bundles until someone notices")
-        self.assertIn("ROMP_EXT_DEV_BUILD", body,
-                      "_rebuild_dist must honour the same opt-out knob as _ensure_bundles")
 
     def test_both_honour_the_same_dev_opt_out(self):
         """One knob for a UI dev loop, spelled the same in both places — two names would mean
@@ -167,6 +152,70 @@ class FailureLineTail(unittest.TestCase):
             k = re.search(r"^const KERNEL_TAIL = (\d+);$", ts, re.M)
             self.assertIsNotNone(k, name + " names the kernel's tail")
             self.assertEqual(int(k.group(1)), n, name)
+
+
+class TheBuildersRunTheProductionProfile(unittest.TestCase):
+    """EXECUTED, not read. The text pins above are satisfied by a COMMENT that names the flag and the knob:
+    the review of 2026-09-18 reverted _rebuild_dist's argv line and the text pin stayed green, because the
+    explanatory comment inside the body still contained both strings. So the two kernel builders are run here
+    against a recording stand-in for subprocess (the idiom of tests/test_kernel_bundle_vendor_inputs.py's boot-scan
+    class) and the argv they hand it is asserted whole. Three knob states: unset and the empty string build
+    --production (install.sh's `-n` test reads the empty string as unset too); "1" builds the dev profile."""
+
+    CASES = ((None, ["node", "esbuild.js", "--production"]),
+             ("", ["node", "esbuild.js", "--production"]),
+             ("1", ["node", "esbuild.js"]))
+
+    @classmethod
+    def setUpClass(cls):
+        from romp_load import load_source
+        cls.km = load_source("romp_kernel_build_mode", os.path.join(ROOT, "bin", "romp-kernel"))
+
+    def _run_with(self, knob, fn):
+        """Call `fn` with ROMP_EXT_DEV_BUILD in state `knob` (None = unset) and km.subprocess swapped for a
+        recorder; return the argv list of every run() it made."""
+        km = self.km
+        env = {k: v for k, v in os.environ.items() if k != "ROMP_EXT_DEV_BUILD"}
+        if knob is not None:
+            env["ROMP_EXT_DEV_BUILD"] = knob
+        calls = []
+
+        def fake_run(argv, *a, **kw):
+            calls.append(list(argv))
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        real = km.subprocess
+        km.subprocess = types.SimpleNamespace(run=fake_run, TimeoutExpired=real.TimeoutExpired,
+                                              CalledProcessError=real.CalledProcessError)
+        try:
+            with mock.patch.dict(os.environ, env, clear=True):
+                fn()
+        finally:
+            km.subprocess = real
+        return calls
+
+    def test_the_converge_rebuild_passes_production_unless_the_dev_knob_is_set(self):
+        for knob, want in self.CASES:
+            with self.subTest(knob=knob):
+                calls = self._run_with(knob, lambda: self.assertTrue(self.km._rebuild_dist()[0]))
+                self.assertEqual(calls, [want])
+
+    def test_the_boot_build_passes_production_unless_the_dev_knob_is_set(self):
+        """_ensure_bundles builds only when dist/render.js is missing or older than an input, so point the kernel
+        at a synthetic checkout with a node_modules dir, no dist, and no inputs: stale, one build, recorded."""
+        km = self.km
+        with tempfile.TemporaryDirectory(prefix="romp-build-mode-") as d:
+            tmp = Path(d)
+            (tmp / "vscode-extension" / "node_modules").mkdir(parents=True)
+            saved = (km.ROOT, km.DIST, km._bundle_inputs)
+            km.ROOT, km.DIST, km._bundle_inputs = tmp, tmp / "dist", (lambda cv: [])
+            try:
+                for knob, want in self.CASES:
+                    with self.subTest(knob=knob):
+                        calls = self._run_with(knob, km._ensure_bundles)
+                        self.assertEqual(calls, [want])
+            finally:
+                km.ROOT, km.DIST, km._bundle_inputs = saved
 
 
 if __name__ == "__main__":
