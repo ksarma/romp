@@ -586,15 +586,17 @@ class Collector(unittest.TestCase):
 
     def test_judge_child_is_served_as_a_size_and_a_status_never_the_line(self):
         """judge.child stood as the judges' child's done line verbatim (2026-09-18, a paste-safety review of the snapshot):
-        its failures.first is an exception message, which names paths and quotes session text, and its blocks are whatever
-        the child sent. The served block is the line's length in characters, one of two fixed status tokens and the
-        line's per-pass numbers; the failures are a count; nothing the child wrote as text reaches the snapshot."""
+        its failures.first is an exception message, which names paths and quotes session text. The served block is the
+        line's length in characters, one of two fixed status tokens, the line's per-pass numbers and its four counter
+        blocks as the child sent them (numbers are not a leak); the failures are a count; the line's text never reaches
+        the snapshot."""
         home = "/home/tester/.claude/projects/-home-tester-code-notes-api/%s.jsonl" % SID
         first = "OSError: [Errno 2] No such file or directory: '%s'" % home
+        blocks = {"recordCache": {"entries": 1, "wholeReads": {"leaf<-_parse": {"count": 1, "bytes": 5}}},
+                  "asmCheckpoint": {"restored": 1, "hydratedBy": {"_unit_text<-build_session": 10}},
+                  "parses": {"misses": 1, "hits": 0}, "goalIo": {"loads": 1}}
         done = {"op": "done", "seq": 7, "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0,
-                "failures": {"count": 2, "first": first}, "recovered": True,
-                "recordCache": {"entries": 1}, "asmCheckpoint": {"restored": 1}, "parses": {"misses": 1, "hits": 0},
-                "goalIo": {"loads": 1, "note": "a text field a later child might add"}}
+                "failures": {"count": 2, "first": first}, "recovered": True, **blocks}
         self.st.judge_child_done(done, pid=4242)
         child = self.st.snapshot()["judge"]["child"]
         text = json.dumps(child)
@@ -605,8 +607,12 @@ class Collector(unittest.TestCase):
         self.assertIsInstance(t, float)
         compact = len(json.dumps(done, separators=(",", ":")))
         self.assertEqual(child, {"seq": 7, "pid": 4242, "chars": compact, "status": "failed", "failures": 2, "recovered": True,
-                                 "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0},
-                         "no reader count given: the line re-encoded compactly is its size")
+                                 "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0, **blocks},
+                         "no reader count given: the line re-encoded compactly is its size; the four blocks ride as sent")
+        self.st.judge_child_done({"op": "done", "seq": 9, "recordCache": "not a block", "goalIo": {"loads": 2}}, pid=4242)
+        child = self.st.snapshot()["judge"]["child"]
+        self.assertEqual((child.get("recordCache"), child.get("goalIo"), "asmCheckpoint" in child), (None, {"loads": 2}, False),
+                         "a block rides only as a dict, and only when sent")
         self.assertEqual(self.st.snapshot()["judge"]["cpu_ms_child_workers"], 4.0, "the CPU folds as before")
         line = json.dumps(done) + "\n"
         self.st.judge_child_done(done, pid=4242, chars=len(line))
@@ -2021,15 +2027,17 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
     attached host's name, a home path) and a client's declared app name, on its connect push and on a frame its
     sender wrote. Keys are the leak vectors, so every dict
     key must fit an identifier grammar (letters, digits, underscore, dot, dash) except inside the blocks named
-    below: `http` (METHOD /path over the checked-in route list, or `other`) and the four byte tables keyed by
-    function names joined with `:` and `<-`. The walk runs over a fresh collector's snapshot(), the same function
-    the route serves, and the planted reads are removed after."""
+    below: `http` (METHOD /path over the checked-in route list, or `other`) and the byte tables keyed by function
+    names joined with `:` and `<-` (the kernel's, and the judge child's copies under judge.child). The walk runs over
+    a fresh collector's snapshot(), the same function the route serves, and the planted reads are removed after."""
 
     IDENT = re.compile(r"^[A-Za-z0-9_.-]+$")
     HTTP_KEY = re.compile(r"^(?:GET|HEAD|POST|OPTIONS) /[A-Za-z0-9_./*-]*$|^other$")
     JOINED_KEY = re.compile(r"^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?(?:<-[A-Za-z0-9_.?-]+)?$")
     JOINED_KEY_BLOCKS = {("recordCache", "wholeReads"), ("recordCache", "wholeReadsByStage"),
-                         ("asmCheckpoint", "hydratedBy"), ("asmCheckpoint", "hydratedByStage")}
+                         ("asmCheckpoint", "hydratedBy"), ("asmCheckpoint", "hydratedByStage"),
+                         ("judge", "child", "recordCache", "wholeReads"), ("judge", "child", "recordCache", "wholeReadsByStage"),
+                         ("judge", "child", "asmCheckpoint", "hydratedBy"), ("judge", "child", "asmCheckpoint", "hydratedByStage")}
     UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
     HEX32 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}(?![0-9a-fA-F])")
     ABS_PATH = re.compile(r"(?:^|[\s\"'=(:,])/(?:[^/\s]+/)+[^/\s]*")   # a slash-rooted path of two or more segments
@@ -2060,8 +2068,11 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         st = self.st
         st.judge_child_done({"op": "done", "seq": 7, "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0,
                              "failures": {"count": 1, "first": self.first}, "recovered": False,
-                             "recordCache": {"entries": 1}, "asmCheckpoint": {"restored": 1}, "parses": {"misses": 1, "hits": 0},
-                             "goalIo": {"loads": 1}}, pid=4242)
+                             "recordCache": {"entries": 1, "wholeReads": {"leaf<-_parse": {"count": 1, "bytes": 5}},
+                                             "wholeReadsByStage": {"push:leaf<-_parse": {"count": 1, "bytes": 5}}},
+                             "asmCheckpoint": {"restored": 1, "hydratedBy": {"_unit_text<-build_session": 10},
+                                               "hydratedByStage": {"push:_unit_text<-build_session": 10}},
+                             "parses": {"misses": 1, "hits": 0}, "goalIo": {"loads": 1}}, pid=4242)
         st.build_chat(False, 0.100, active=True, sid=SID, nbytes=4096)
         st.build_chat(True, sid=SID)
         st.parse(SID, 4096)

@@ -1435,15 +1435,20 @@ class _PerfStats:
         with self.lock:
             self.judge["orphansSwept"] += 1
     CHILD_NUMBERS = ("wallMs", "tierStarts", "tierCpuMs", "workerCpuMs")   # the done line's per-pass figures judge.child keeps
+    CHILD_BLOCKS = ("recordCache", "asmCheckpoint", "parses", "goalIo")    # its counter blocks (per-pass deltas, gauges current),
+    #                                                                          served under judge.child as the child sends them
 
     def judge_child_done(self, done, pid=None, chars=None):
         """The child's done line (plans/judges-process.md rule 1): its tier starts and tier CPU join the in-process
         counters, its workers' CPU is kept apart (the in-process figure comes from this module's pools), and judge.child
-        carries the line's SIZE and STATUS with its per-pass numbers, never the line itself. The line used to stand
-        verbatim (2026-09-18): its failures.first is an exception message, which names paths and quotes session text,
-        and its blocks are whatever the child chose to send, so a snapshot could not be pasted anywhere public. `chars`
-        is the line's length as it arrived (the reader's count; the line re-encoded when none is given), `status` one
-        of two fixed tokens (`ok`, `failed`), `failures` a count, and every other field a number or a boolean."""
+        carries the line's SIZE and STATUS with its per-pass numbers and its counter blocks, never its text. The line used
+        to stand verbatim (2026-09-18): its failures.first is an exception message, which names paths and quotes session
+        text, so a snapshot could not be pasted anywhere public. `chars` is the line's length as it arrived (the reader's
+        count; the line re-encoded when none is given), `status` one of two fixed tokens (`ok`, `failed`), `failures` a
+        count, every other scalar a number or a boolean, and the four blocks (CHILD_BLOCKS: the record cache, the
+        assembly checkpoints, the parse store, the goal-store I/O, their counters as per-pass deltas and their gauges as
+        current values, the child's round three) as the child sent them: numbers are not a leak, and the kernel's own
+        blocks read zero for the child's work."""
         f = done.get("failures")
         failures = int(f.get("count") or 0) if isinstance(f, dict) else 0
 
@@ -1453,6 +1458,7 @@ class _PerfStats:
                  "chars": int(chars) if chars is not None else len(json.dumps(done, separators=(",", ":"))),
                  "status": "failed" if failures else "ok", "failures": failures, "recovered": bool(done.get("recovered"))}
         child.update({k: num(done.get(k)) for k in self.CHILD_NUMBERS})
+        child.update({k: done[k] for k in self.CHILD_BLOCKS if isinstance(done.get(k), dict)})
         with self.lock:
             j = self.judge
             j["cpu_ms_sum"] += float(done.get("tierCpuMs") or 0.0) + float(done.get("workerCpuMs") or 0.0)   # tiers plus workers, as

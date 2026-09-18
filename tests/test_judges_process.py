@@ -194,7 +194,11 @@ class ChildRoad(_Child):
         self.assertEqual((child.get("status"), child.get("failures"), child.get("tierStarts")), ("ok", 0, 2),
                          "the line's status and numbers: %r" % child)
         self.assertGreater(child.get("chars"), 0, "the line's length as it arrived")
-        self.assertNotIn("recordCache", child, "the line's blocks are not served (2026-09-18): the kernel reads them, /perf does not")
+        self.assertEqual((child.get("recordCache"), child.get("asmCheckpoint")), ({"entries": 1}, {"restore": 1}),
+                         "the line's counter blocks ride judge.child (numbers are not a leak): %r" % child)
+        self.assertNotIn("first", child.get("failures", {}) if isinstance(child.get("failures"), dict) else {},
+                         "the line's text does not: the failures ride as a count (2026-09-18)")
+        self.assertIsInstance(child.get("failures"), int)
 
     def test_a_pass_with_no_store_moved_bumps_no_generation(self):
         km = self.km

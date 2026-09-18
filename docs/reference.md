@@ -5170,13 +5170,14 @@ Bounds and counters, all on `/perf` under `judge`:
   so the exit stays inside the grace whatever the child does. A boot sweep that cannot list the state root leaves the
   sweep unmarked and the first request retries it.
 - On the child road `parses.judge` and the `goals` block read zero: the judges' parses and store writes happen in the
-  child, whose done line carries their per-pass figures to the kernel; `GET /perf` does not serve that line.
+  child, and their per-pass figures ride its done line as `judge.child.parses` and `judge.child.goalIo`.
 - `cpu_ms_sum` counts the child's tier and worker CPU as it counts the in-process tiers and pools; `cpu_ms_child_workers`
-  is the workers' share alone; `child` summarizes the last done line: `seq`, `pid`, `t`, `chars` (the line's length),
-  `status` (`ok` or `failed`), `failures` (a count), `recovered`, `wallMs`, `tierStarts`, `tierCpuMs` and `workerCpuMs`.
-  The line itself is not served, since its first failure is an exception message that can name a path or quote
-  session text and the snapshot is meant to be pasteable (2026-09-18); `tierStarts` is counted at the request, so a
-  long pass reads it during the pass.
+  is the workers' share alone; `child` is the last done line's numbers: `seq`, `pid`, `t`, `chars` (the line's length),
+  `status` (`ok` or `failed`), `failures` (a count), `recovered`, `wallMs`, `tierStarts`, `tierCpuMs`, `workerCpuMs`,
+  and its four counter blocks (`recordCache`, `asmCheckpoint`, `parses`, `goalIo`) as the child sent them. The line's
+  text is not served: its first failure is an exception message that can name a path or quote session text, and the
+  snapshot is meant to be pasteable (2026-09-18). `tierStarts` is counted at the request, so a long pass reads it
+  during the pass.
 
 ## Switches
 
