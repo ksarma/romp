@@ -461,6 +461,36 @@ class ByteIdenticalFrames(unittest.TestCase):
                          "a plain Outline pane blocks the gate: the same five count under warmBlockedByOutline")
         self.assertEqual(scenario([client(active=self.SID)]), (0, 0, 6), "a watched tab is a body every cycle")
 
+    def test_the_census_reads_each_clients_skeleton_set_once_per_push_not_once_per_tab(self):
+        """The census's skeleton question is answered from one read of every connected chat client per push
+        (_skeleton_census, before the tab loop), not by asking _held_as_skeleton_by_all per tab as the first cut did: over
+        six pushes with one connected page the by-all walk runs once, for the cold gate on the first cycle (the tab not
+        yet built), and the census helper once per push (2026-09-18 review, low 2)."""
+        ps = km._PERF_STATS
+        by_all, census = [], []
+        real_by_all, real_census = km._held_as_skeleton_by_all, km._skeleton_census
+
+        def spy_by_all(sid, clients):
+            by_all.append(sid); return real_by_all(sid, clients)
+
+        def spy_census(sids, clients):
+            census.append(list(sids)); return real_census(sids, clients)
+        held = {"app": "chat", "alive": True, "sent": {}, "skeleton": set(), "proto": 2, "ready": True, "handshake": True}
+
+        def skeleton_from_cycle_1(i):
+            if i == 1:
+                held["skeleton"] = {self.SID}
+        before = km._chat_sig_stats_report()
+        with mock.patch.object(km, "_clients", [held]), mock.patch.object(km, "_held_as_skeleton_by_all", spy_by_all), \
+                mock.patch.object(km, "_skeleton_census", spy_census):
+            _wire, calls, _rows = self._run(km._chat_diff, perf=ps, between=skeleton_from_cycle_1)
+        after = km._chat_sig_stats_report()
+        self.assertEqual(calls, [False, True, False, True, False, True], "premise: rebuilt, served, alternating")
+        self.assertEqual(by_all, [self.SID], "the by-all walk ran once: the cold gate's, on the first cycle, before the tab was built")
+        self.assertEqual(census, [[self.SID]] * 6, "the census helper ran once per push, over the push's tabs")
+        self.assertEqual(tuple(after[k] - before[k] for k in ("warmEligible", "warmBlockedByOutline", "heldBody")), (5, 0, 1),
+                         "...and the census reads the same as before the change")
+
     def test_reads_inside_a_signature_are_counted_and_the_same_reads_outside_one_are_not(self):
         """The read counters are gated to a signature (the thread-local scope _chat_build_sig opens): the names read in
         _sdk_transcript_path, the switch read in _user_todos_on and sdk_backend.read_reg count inside one and not
@@ -670,6 +700,110 @@ class ByteIdenticalFrames(unittest.TestCase):
             self.assertEqual(seen.count("push.chat.build"), 0 if served else 1)
             self.assertEqual(seen.count("push.chat.send"), 1)
             self.assertEqual(seen.count("push.chat"), 1)
+
+
+class _CountingLock:
+    """Stands in for a client's slot RLock (`dlock`, what _client_lock returns): counts the holds."""
+
+    def __init__(self):
+        self.holds = 0
+
+    def __enter__(self):
+        self.holds += 1
+
+    def __exit__(self, *a):
+        return False
+
+
+class ChatSigHelpers(unittest.TestCase):
+    """memos.chatSig's pieces on their own (stage 1 of the chat-signature design): the warm-tab census's once-per-push
+    skeleton read, the per-tab note's clauses, and a stat site's count. Synthetic ids only."""
+
+    SIDS = ["11111111-2222-4333-8444-0000000009%02d" % i for i in range(6)]
+
+    def _client(self, **kw):
+        return dict({"app": "chat", "alive": True, "sent": {}, "dlock": _CountingLock()}, **kw)
+
+    def test_the_skeleton_census_answers_the_by_all_question_per_tab_from_one_hold_per_client(self):
+        """_skeleton_census(sids, clients) is {sid for which _held_as_skeleton_by_all(sid, clients)} over the same client
+        shapes (a set holder, a reconnecting page with a watched tab, a relay diet page with none, a page whose echat
+        already holds a tab), taking each client's slot lock ONCE for any number of tabs; None with no client, so the
+        note can tell "no connected chat client" from "held by none"."""
+        s = self.SIDS
+        clients = [self._client(skeleton={s[0], s[1], s[2], s[3]}),
+                   self._client(reconnect=True, active=s[0], echat={s[3]: 1}),          # holds every tab but its watched one and the one it has
+                   self._client(skeletonOnReady=True, dietSkeleton=True, kind="relay")]  # a relay diet page with no watched tab: every tab
+        expected = {x for x in s if km._held_as_skeleton_by_all(x, clients)}
+        self.assertEqual(expected, {s[1], s[2]}, "premise: the by-all walk's own answer over these clients")
+        for c in clients:
+            c["dlock"].holds = 0
+        self.assertEqual(km._skeleton_census(s, clients), expected)
+        self.assertEqual([c["dlock"].holds for c in clients], [1, 1, 1], "one hold per client for six tabs")
+        self.assertIsNone(km._skeleton_census(s, []), "no connected chat client: None, not an empty set")
+        self.assertEqual(km._skeleton_census(s, [self._client()]), set(), "a page with no diet holds nothing as a skeleton")
+        self.assertEqual(km._skeleton_census([], clients), set())
+
+    def test_the_note_counts_a_cached_skeleton_tab_as_warm_only_while_its_transcript_exists(self):
+        """The warm-tab gate's transcript clause: a cached tab every page holds as a skeleton counts under warmEligible
+        when the signature's transcript component is a stat pair, and under neither warmEligible nor heldBody when it
+        is None (the file is gone: the cold gate's os.path.exists clause, read off the signature instead of a second
+        stat). A watched tab is a body whatever the set says; with no connected chat client the census counts nothing
+        (2026-09-18 review, low 16)."""
+        sid = self.SIDS[0]
+        n = len(km._CHAT_SIG_LABELS)
+        with_file = ((1.0, 3),) + (None,) * (n - 1)
+        no_file = (None,) * n
+        hit = (with_file, {"events": []}, None, None)
+        keys = ("pre", "nosig", "compares", "warmEligible", "warmBlockedByOutline", "heldBody")
+
+        def delta(sig, hit, watched, held, plain_outline=False):
+            before = km._chat_sig_stats_report()
+            km._chat_sig_note_pre(sid, sig, hit, watched, held, plain_outline)
+            after = km._chat_sig_stats_report()
+            return tuple(after[k] - before[k] for k in keys)
+        self.assertEqual(delta(with_file, hit, False, {sid}), (1, 0, 1, 1, 0, 0), "cached, unwatched, held, with a transcript: warm")
+        self.assertEqual(delta(no_file, hit, False, {sid}), (1, 0, 1, 0, 0, 0), "the transcript gone: neither warm nor a body")
+        self.assertEqual(delta(with_file, hit, False, {sid}, True), (1, 0, 1, 0, 1, 0), "a plain Outline connected: blocked, not eligible")
+        self.assertEqual(delta(with_file, hit, True, {sid}), (1, 0, 1, 0, 0, 1), "watched: a body, whatever the set says")
+        self.assertEqual(delta(with_file, hit, False, set()), (1, 0, 1, 0, 0, 1), "held by none of the connected pages: a body")
+        self.assertEqual(delta(with_file, hit, False, None), (1, 0, 1, 0, 0, 0), "no connected chat client: no census count")
+        self.assertEqual(delta(with_file, None, False, {sid}), (1, 0, 0, 0, 0, 0), "no cached build: cold, not warm, and no compare")
+        self.assertEqual(delta(None, hit, False, {sid}), (1, 1, 0, 0, 0, 0), "no signature: nosig, no compare, not warm")
+
+    def test_the_repo_index_key_counts_exactly_the_stats_it_attempts(self):
+        """_repo_index_key's share of memos.chatSig.stats is the stats it makes, each counted as it is attempted (the
+        rule at every other counted site: a stat of a missing file is a syscall too): one per immediate subdirectory,
+        one for the tree's own mtime, and one for the git index only when the tree has a git dir to hold one. The first
+        cut counted the subdirectories plus two whatever `gi` said, a phantom stat per signature for a tree with no git
+        dir (2026-09-18 review, low 4)."""
+        td = tempfile.TemporaryDirectory(); self.addCleanup(td.cleanup)
+        for d in ("a", "b"):
+            os.mkdir(os.path.join(td.name, d))
+        with open(os.path.join(td.name, "notes.txt"), "w") as f:
+            f.write("x\n")
+
+        def key_and_stats(head):
+            with mock.patch.object(km, "_tree_of", lambda d: (td.name, "main")), \
+                    mock.patch.object(km, "_git_head_file", lambda tree: head):
+                before = km._chat_sig_stats_report()["stats"]
+                with km._chat_sig_scope():
+                    key = km._repo_index_key(td.name)
+                return key, km._chat_sig_stats_report()["stats"] - before
+        key, n = key_and_stats("")
+        self.assertEqual(n, 3, "two subdirectory stats and the tree's mtime: no git dir, no index stat")
+        self.assertIsNone(key[0]); self.assertEqual([s[0] for s in key[2]], ["a", "b"])
+        gitdir = os.path.join(td.name, ".git")
+        os.mkdir(gitdir)
+        open(os.path.join(gitdir, "index"), "w").close()
+        key, n = key_and_stats(os.path.join(gitdir, "HEAD"))
+        self.assertEqual(n, 4, "...plus the index's mtime when the tree has a git dir (.git itself is not a counted subdirectory)")
+        self.assertIsNotNone(key[0])
+        before = km._chat_sig_stats_report()["stats"]
+        with mock.patch.object(km, "_tree_of", lambda d: (td.name, "main")), mock.patch.object(km, "_git_head_file", lambda tree: ""), \
+                mock.patch.object(km.os.path, "getmtime", mock.Mock(side_effect=OSError("synthetic"))):
+            with km._chat_sig_scope():
+                self.assertIsNone(km._repo_index_key(td.name), "a stat that raises: no key")
+        self.assertEqual(km._chat_sig_stats_report()["stats"] - before, 3, "the raising stat was attempted, so it counts, like a missing file's")
 
 
 if __name__ == "__main__":
