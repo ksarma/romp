@@ -5201,7 +5201,16 @@ def spawn_env_secret_names(env) -> list:
     name straight into the file, a verifier's probe showed). And the rule inherits env_credential_names' one
     by-name exclusion, romp's own control token (ROMP_SERVE_TOKEN, not a provider credential, and already in an
     owner-only file of the same state root): moot here, since no compose puts that name in options.env, so the
-    exclusion is stated and not undone, and the file and the boot notice keep one shape rule between them."""
+    exclusion is stated and not undone, and the file and the boot notice keep one shape rule between them.
+
+    The shape is not widened past this (review round 1's addendum, 2026-09-18, which took a wording fix at
+    write_spawn_spec instead: that docstring and the change's title had claimed every credential-shaped name). A
+    password, a client secret, a private key, a cookie or a bare TOKEN under a name of another shape would stay in
+    the file, and no such name has a road into options.env today (its writers are _options' own: PATH, the identity
+    names, the scope limits, the fast-mode switches, the login tokens); a match on PASSWORD, SECRET, PRIVATE_KEY,
+    COOKIE or a bare _KEY would move a legitimate TOKEN_BUDGET, PRIVATE_KEY_PATH or SECRET_NAME out of the spec for
+    nothing, onto a road whose rank against the flag-settings layer is unverified (ENV_RESERVED_NAMES). So wherever
+    the file's omission is described, the shape is named rather than called every credential."""
     if not isinstance(env, dict):
         return []
     names = set(n for n in AUTH_ENV_NAMES if n in env)
@@ -5507,14 +5516,15 @@ def startup_auth_env() -> dict:
 
 
 def split_spawn_secrets(spec: dict) -> dict:
-    """Move every credential-shaped variable (spawn_env_secret_names: AUTH_ENV_NAMES, and every other name of
-    a credential's shape carrying a value) out of a host spawn spec's env overlay and return them. The spec is
+    """Move the credential-shaped variables of a host spawn spec's env overlay out of it and return them
+    (spawn_env_secret_names' shape: AUTH_ENV_NAMES whatever their value, and a non-empty value under a name ending
+    _API_KEY or _TOKEN, in any letter case, or one of 1Password's; a name of another shape stays). The spec is
     written to hosts/<sid>/spawn.json, and a key or login token lives in the process environment only, never
     in a file (the fork's rule, 2026-09-05; the pull-in review's item 1, 2026-09-16): the launch hands the
     returned variables to bin/romp-session-host through its process environment instead (_spawn_host), and
     the host's CLI inherits them from there, so a stored login's CLAUDE_CODE_OAUTH_TOKEN and the machine's
     boot-claimed login tokens reach the CLI exactly as they do for a kernel child, with no file holding them.
-    The file omits every OTHER credential-shaped name of the overlay as well (the box admin's hazard review of
+    The file omits every other name of that shape in the overlay as well (the box admin's hazard review of
     the pull-in, 2026-09-16, fixed 2026-09-18: the first cut moved the three names alone, so any other such
     variable a compose put in options.env was written to disk): those take the same road, the host's
     environment, with the overlay's precedence kept (_spawn_host lays them over the kernel's environment, as
@@ -12478,9 +12488,11 @@ class SdkBackend:
             spec["login"] = str(getattr(sess, "_options_login", "") or "")   # the login IDENTIFIER this launch bills, echoed
             #   in every hello as cli.login, so the kernel that first sees the CLI stamps the login the launch used (never a
             #   token or key: those ride the host's process environment, and the hello never carries them)
-            secrets = split_spawn_secrets(spec)    # every credential-shaped name leaves the overlay BEFORE the file is
-            #   written: a login token, and any other such variable of the overlay, rides the host's environment
-            #   (_spawn_host), never spawn.json (the fork's secrets rule; the box admin's hazard review, 2026-09-16)
+            secrets = split_spawn_secrets(spec)    # the credential-shaped names (spawn_env_secret_names: a login name, and a
+            #   name ending _API_KEY or _TOKEN or one of 1Password's that carries a value) leave the overlay BEFORE the file
+            #   is written and ride the host's environment (_spawn_host), never spawn.json (the fork's secrets rule; the box
+            #   admin's hazard review, 2026-09-16; the shape named, not "every credential", since review round 1's addendum,
+            #   2026-09-18)
             moved = [n for n in secrets if n not in AUTH_ENV_NAMES]
             if moved:
                 # names only, never a value. The login names are routine (every login launch moves one) and go unsaid;
@@ -12534,10 +12546,11 @@ class SdkBackend:
         """Start bin/romp-session-host detached: in a transient scope of its own on Linux when scopes are on
         (outside the service cgroup, like the CLI's), a plain new-session child elsewhere. `secret_env` is the
         launch's credential overlay (split_spawn_secrets: a stored login's CLAUDE_CODE_OAUTH_TOKEN, the machine's
-        boot-claimed login tokens, and, since 2026-09-18, every other credential-shaped name of the overlay that
-        carries a value, spawn_env_secret_names' shape), handed to the host through its process environment and
-        never through the spec file or the command line: a scope runs its command as systemd-run's own child with this
-        environment, and both of the host's transports (session_host.py) build the CLI's environment from the
+        boot-claimed login tokens, and, since 2026-09-18, every other name of spawn_env_secret_names' shape in the
+        overlay that carries a value: one ending _API_KEY or _TOKEN, in any letter case, or one of 1Password's), handed
+        to the host through its process environment and never through the spec file or the command line: a scope runs
+        its command as systemd-run's own child with this environment, and both of the host's transports
+        (session_host.py) build the CLI's environment from the
         host's own with the spec's overlay on top, exactly as the SDK merges this process's environment for a
         kernel child. This process's environment carries no bearer (startup_auth_env claimed them at boot), so a
         key-billed launch's host inherits none."""

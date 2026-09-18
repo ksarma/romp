@@ -147,10 +147,16 @@ def spawn_spec(opts, sid: str, name: str, state_dir, version: str, grace_s: floa
 
 def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     """`hosts/<sid>/spawn.json`, the directory at 0700 and the file at 0600: the spec carries the
-    environment overlay, minus every credential-shaped name of it (the kernel's split_spawn_secrets moves
-    those to the host's process environment before this write; a credential never lives in a file, the
-    fork's rule, and the box admin's hazard review of the pull-in, 2026-09-16, found the first cut moving
-    the three login names alone)."""
+    environment overlay, minus the credential-shaped names of it as the kernel's split_spawn_secrets draws
+    them (spawn_env_secret_names: the three login names whatever their value, and a non-empty value under a
+    name ending _API_KEY or _TOKEN, in any letter case, or one of 1Password's), moved to the host's process
+    environment before this write; a name of another shape stays in the file with its value. The shape is
+    spelled out here because this sentence once claimed every credential-shaped name (review round 1's
+    addendum, 2026-09-18): a password, a client secret or a private key under a name of another shape would
+    be written, and the shape is deliberately not widened to catch them, since no such name has a road into
+    the overlay today and a legitimate TOKEN_BUDGET or PRIVATE_KEY_PATH would be moved out of the file for
+    nothing. A credential never lives in a file, the fork's rule, and the box admin's hazard review of the
+    pull-in, 2026-09-16, found the first cut moving the three login names alone."""
     d = host_dir(state_dir, sid)
     d.mkdir(parents=True, exist_ok=True)
     os.chmod(d, 0o700)

@@ -1,5 +1,5 @@
 ---
-title: spawn.json omits every credential-shaped name of the env overlay
+title: spawn.json omits the env overlay's _API_KEY, _TOKEN, 1Password and login names
 status: candidate
 where: kernel/sdk_backend.py (spawn_env_secret_names, split_spawn_secrets, the host spawn road log line); kernel/host_transport.py (write_spawn_spec docstring); docs/reference.md (the spawn.json sentence); tests/test_session_host.py (SpawnSecrets and the HostProcess environment case); bin/romp-session-host (the launcher docstring); tests/test_env_credential_names.py (the case fold)
 added: 2026-09-18

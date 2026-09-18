@@ -176,7 +176,10 @@ class SpawnSecrets(unittest.TestCase):
     def test_spawn_host_hands_every_moved_name_to_the_host_through_its_environment(self):
         """The road a moved name takes is the login token's (_spawn_host): the host's process environment, laid over
         the kernel's own, so the overlay's value outranks an inherited one exactly as options.env does for a kernel
-        child, and never the command line."""
+        child, and never the command line. Green on the base tree by design (review round 1's addendum, 2026-09-18):
+        this hands _spawn_host the dict itself and pins its merge, a base leg the change newly leans on, not the
+        split; the kernel's road for a name beyond the three is pinned by the spawn-road case below and, end to end
+        through a real host, by HostProcess's moved-name case, which derives the host's environment from the split."""
         val = "synthetic-notes-token-" + uuid.uuid4().hex
         with mock.patch.dict(os.environ, {"NOTES_API_TOKEN": "inherited-" + uuid.uuid4().hex}):
             argv, kw = self._spawn(False, {"NOTES_API_TOKEN": val})
@@ -655,13 +658,20 @@ class HostProcess(unittest.TestCase):
         self.fake_log = os.path.join(self.state, "fake-cli.log")
         self.tdir = os.path.join(self.state, "transcripts")
 
+    def _overlay(self):
+        """The spec's env overlay as a compose builds one for the fake CLI: its log, transcript dir and conversation id,
+        and a canary value no test hands the CLI by another road (the secrets case reads it back to check it appears
+        nowhere the host writes or sends). Its own method since review round 1's addendum (2026-09-18), so a case that
+        builds the overlay itself and runs the kernel's split over it starts from the same one."""
+        return {"FAKE_CLI_LOG": self.fake_log, "FAKE_CLI_TRANSCRIPT_DIR": self.tdir, "FAKE_CLI_SESSION_ID": FSID,
+                "ROMP_CANARY_SECRET": "canary-" + uuid.uuid4().hex}
+
     def _spec(self, **over):
         d = Path(self.state) / "hosts" / SID
         d.mkdir(parents=True, mode=0o700)
         spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": self.state, "protocol": 1,
                 "cli_path": FAKE, "cwd": self.state, "permission_prompt_tool_name": "stdio", "permission_mode": "default",
-                "env": {"FAKE_CLI_LOG": self.fake_log, "FAKE_CLI_TRANSCRIPT_DIR": self.tdir, "FAKE_CLI_SESSION_ID": FSID,
-                        "ROMP_CANARY_SECRET": "canary-" + uuid.uuid4().hex},
+                "env": self._overlay(),
                 "max_buffer_size": 1024 * 1024, "hook_self_answer_s": 2, "unattached_grace_s": 3600}
         spec.update(over)
         p = d / "spawn.json"
@@ -1146,17 +1156,35 @@ class HostProcess(unittest.TestCase):
         k.close()
 
     def test_a_moved_name_in_the_hosts_environment_reaches_the_cli_the_same_way(self):
-        """Every credential-shaped name of the overlay takes the login token's road since 2026-09-18 (the box admin's
-        hazard review of the pull-in, 2026-09-16): the host's process environment. A synthetic name rides it, the CLI
-        the host spawns sees it, and the spec the host read and every file under hosts/ omit the value."""
+        """A name of spawn_env_secret_names' shape beyond the three login names (a synthetic _TOKEN here) takes the login
+        token's road since 2026-09-18 (the box admin's hazard review of the pull-in, 2026-09-16): out of the spec, into
+        the host's process environment, and from there into the CLI. The host's environment is DERIVED from the kernel's
+        split here, never handed over by the test: the overlay is built with the name, split_spawn_secrets moves it out
+        of a spec holder as _host_transport_for does before the write, the split overlay is the spec the host reads, and
+        the returned dict is the host's environment (review round 1's addendum, 2026-09-18: the first cut put the
+        variable in host_env by hand, so it passed on the base tree, whose split moved the three login names alone, and
+        pinned nothing of the kernel's road).
+
+        The discriminating assertions are the spec's contents and the absence of the value under hosts/, NOT the CLI
+        probe: on the base tree the CLI reads the variable present anyway, because the host lays the spec's overlay over
+        its own environment, so the probe leg is true on both trees and only the file assertions turn this red before
+        the change (the refuter's caveat, kept here so nobody strengthens the wrong leg)."""
         probe, seen = self._env_probe_cli("NOTES_API_TOKEN")
         val = "synthetic-notes-token-" + uuid.uuid4().hex
-        host, sock, spec = self._start(host_env={"NOTES_API_TOKEN": val}, cli_path=probe)
-        self.assertNotIn("NOTES_API_TOKEN", json.dumps(spec), "the spec the host read carries no such name")
+        holder = {"sid": SID, "env": dict(self._overlay(), NOTES_ENDPOINT="http://notes.test", NOTES_API_TOKEN=val)}
+        secrets = sb.split_spawn_secrets(holder)          # the kernel's split over the overlay, the spec's env its remainder
+        host, sock, spec = self._start(host_env=secrets, cli_path=probe, env=holder["env"])
+        self.assertNotIn("NOTES_API_TOKEN", json.dumps(spec), "the spec the host read carries no such name: the split moved it")
+        self.assertEqual(spec["env"].get("NOTES_ENDPOINT"), "http://notes.test", "the plain name stays in the spec")
+        blob = "".join(q.read_bytes().decode("utf-8", "replace") for q in (Path(self.state) / "hosts").rglob("*") if q.is_file())
+        self.assertNotIn(val, blob, "the value is in no file under hosts/")
+        self.assertEqual(sorted(secrets), ["NOTES_API_TOKEN"], "the split's return is the host's whole credential environment")
+        self.assertTrue(secrets["NOTES_API_TOKEN"] == val)
         k = self._one_turn(sock)
+        # true on the base tree too (the host lays the spec's overlay over its environment): not the discriminating leg
         self.assertEqual(open(seen).read(), "present", "the CLI inherited the variable from the host's environment")
         blob = "".join(q.read_bytes().decode("utf-8", "replace") for q in (Path(self.state) / "hosts").rglob("*") if q.is_file())
-        self.assertNotIn(val, blob + json.dumps(k.frames), "the value is in no file under hosts/ and no frame")
+        self.assertNotIn(val, blob + json.dumps(k.frames), "after a turn: the value is in no file under hosts/ and no frame")
         k.close()
 
     def test_without_a_token_in_the_hosts_environment_the_cli_gets_none(self):
