@@ -177,6 +177,36 @@ await page.addInitScript(() => {
   try { if (window === window.top && !localStorage.getItem("__vsplit_drag_started")) { localStorage.removeItem("romp-chat-cols"); Object.keys(localStorage).filter((k) => k.indexOf("romp-vscode-state-chat") === 0).forEach((k) => localStorage.removeItem(k)); localStorage.setItem("__vsplit_drag_started", "1"); } } catch (e) {}
 });
 const out = { died: null };
+// A LATE timeline (cfg.holdTimeline): the band's document is held until the driver has the tabs it drags, so the timeline's
+// loader and then its bars land AFTER the point the driver measures from: the shape a slow runner produced (CI, 2026-09-18).
+let releaseTimeline = () => {};
+if (cfg.holdTimeline) { const held = new Promise((r) => { releaseTimeline = r; }); await page.route((u) => u.pathname === "/timeline", async (route) => { await held; await route.continue(); }); }
+// The timeline band under the pane row auto-fits its content: --tl follows the timeline body's scrollHeight through a
+// ResizeObserver (kernel.py _LANDING_JS autosize). While the timeline shows its loader the band is about 250 px; when its
+// bars land it shrinks to the lanes and #chat-pane takes the difference. A drag begun before that lands measures a bottom
+// zone the collapse then moves out from under the pointer (CI 2026-09-18: the pane 533 px tall at the zone, 686 at the
+// ghost, the ghost never on, the drop missed). Wait for the event the pane's growth follows, never a delay: the loader
+// hidden, the plot shown, the band at its content height. A dashboard without the band (po-timeline off) waits for nothing.
+const settled = () => page.waitForFunction(() => {
+  if (!document.body.classList.contains("po-timeline")) return { skipped: true };
+  const tf = document.getElementById("f-timeline"); const d = tf && tf.contentDocument; if (!d || !d.body) return false;
+  const ld = d.querySelector(".tl-loader"), svg = d.querySelector("svg");
+  if (!ld || ld.style.display !== "none" || !svg || svg.style.display === "none") return false;
+  const band = document.getElementById("tl-pane").getBoundingClientRect().height;
+  const want = Math.min(d.body.scrollHeight + 2, Math.round(window.innerHeight * 0.7));
+  return Math.abs(band - want) <= 1 ? { band: band, want: want } : false;
+}, null, { timeout: 40000 }).then((h) => h.jsonValue()).catch(async (e) => {
+  // The generic waitForFunction timeout names no step, so the failure this wait exists to catch would read like every
+  // other wait's (review of PR 771). Name the step and say what the band looked like when the wait gave up.
+  const seen = await page.evaluate(() => {
+    const tf = document.getElementById("f-timeline"); const d = tf && tf.contentDocument;
+    const ld = d && d.querySelector(".tl-loader"), svg = d && d.querySelector("svg"), tl = document.getElementById("tl-pane");
+    return { poTimeline: document.body.classList.contains("po-timeline"), band: tl ? Math.round(tl.getBoundingClientRect().height) : null,
+             want: d && d.body ? Math.min(d.body.scrollHeight + 2, Math.round(window.innerHeight * 0.7)) : null,
+             loader: ld ? (ld.style.display || "shown") : "absent", plot: svg ? (svg.style.display || "shown") : "absent" };
+  }).catch(() => null);
+  throw new Error("the timeline band never settled (loader hidden, plot shown, band at its content height) within 40 s; seen " + JSON.stringify(seen) + "; " + ((e && e.message) || e));
+});
 const frameOf = async (fid) => { const h = await page.$("#" + fid); return h ? await h.contentFrame() : null; };
 const rectIn = async (fid, sel) => { const fr = await frameOf(fid); if (!fr) return null; const h = await fr.$(sel); if (!h) return null; const b = await h.boundingBox(); return b ? { x: b.x + b.width / 2, y: b.y + b.height / 2 } : null; };
 // the fill observable for the bottom pane (the dragged session): scroll #content to the top twice, let the observer
@@ -191,11 +221,12 @@ const filled = async (fid) => {
   return await fr.evaluate((id) => { const regions = (typeof window.__rompRegions === "function") ? window.__rompRegions(id) : null; return { turns: document.querySelectorAll("#content .turn[data-uuid]").length, filled: !!(regions && regions.some((r) => r.kind === "run" && r.lo === 0)), regions }; }, cfg.bot);
 };
 try {
-  await page.goto(cfg.url);
+  await page.goto(cfg.url, { waitUntil: cfg.holdTimeline ? "domcontentloaded" : "load" });   // a held timeline document holds the top document's load event too (as a slow /timeline response does on a slow runner); the waits below are event-based and need no load
   await page.waitForFunction((t) => { const f = document.getElementById("f-chat"); const d = f && f.contentDocument; return !!(d && d.querySelector('#tabs .tab[data-id="' + t + '"]')); }, cfg.top, { timeout: 40000 });
   // both sessions sit in column 1; show the top one, then wait for the bottom session's tab to be draggable (its manager up, not locked)
   await frameOf("f-chat").then((fr) => fr && fr.locator('#tabs .tab[data-id="' + cfg.top + '"]').first().click().catch(() => {}));
   await page.waitForFunction((b) => { const f = document.getElementById("f-chat"); const d = f && f.contentDocument; const t = d && d.querySelector('#tabs .tab[data-id="' + b + '"]'); return !!(t && t.draggable); }, cfg.bot, { timeout: 40000 });
+  releaseTimeline(); out.settled = await settled();   // the band at its content height: from here the pane rect holds through the drag
   out.pane = await page.evaluate(() => { const p = document.getElementById("chat-pane"); const r = p.getBoundingClientRect(); return { left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) }; });
   // A REAL pointer drag of the bottom session's tab past the threshold: the page's dragstart mounts the shell's zones.
   // Wait for the seeded tab to render AND lay out (a slow runner paints the strip late, so a one-shot boundingBox can be
@@ -237,6 +268,7 @@ class _VSplitLab(unittest.TestCase):
     text each subclass names in DRIVER_JS (VSplitLocal drives the mutation; VSplitDrag drives the pointer)."""
     maxDiff = None
     DRIVER_JS = None
+    CFG_EXTRA = {}   # driver switches a subclass adds to cfg.json (VSplitDragLateTimeline: holdTimeline)
     _cache = None
 
     @classmethod
@@ -328,7 +360,7 @@ class _VSplitLab(unittest.TestCase):
             cfg = os.path.join(self.lab, "cfg.json")
             with open(cfg, "w") as f:
                 json.dump({"url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token),
-                           "top": SID_TOP, "bot": SID_BOT}, f)
+                           "top": SID_TOP, "bot": SID_BOT, **type(self).CFG_EXTRA}, f)
             driver = os.path.join(self.lab, "driver.mjs")
             Path(driver).write_text(type(self).DRIVER_JS)
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=420,
@@ -443,6 +475,17 @@ class VSplitDrag(_VSplitLab):
     DRIVER_JS = POINTER_DRIVER
     _cache = None
 
+    def test_0_the_layout_stood_still_through_the_drag(self):
+        """The drag begins only once the timeline band has settled (its loader hidden, its height its content's), so the
+        pane rect the zone was measured against is the rect the ghost and the drop see. CI 2026-09-18: the band collapsed
+        from its loader to two lanes mid-drag, the pane went 533 to 686, the ghost never turned on and the drop missed."""
+        r = self._result()
+        st = r.get("settled") or {}
+        self.assertTrue(st.get("skipped") or abs(st.get("band", -99) - st.get("want", 99)) <= 1,
+                        "the timeline band at its content height before the drag: %r" % st)
+        heights = ((r.get("pane") or {}).get("height"), (r.get("bottomZone") or {}).get("paneHeight"), (r.get("ghost") or {}).get("paneHeight"))
+        self.assertEqual(len(set(heights)), 1, "the pane rect held from the zone to the ghost: %r" % (heights,))
+
     def test_1_a_drag_to_the_bottom_edge_mounts_a_split_down_band_at_the_pane_bottom(self):
         r = self._result()
         bz = r.get("bottomZone") or {}
@@ -476,6 +519,14 @@ class VSplitDrag(_VSplitLab):
         r = self._result()
         self.assertTrue((r.get("botFill") or {}).get("filled"),
                         "the dragged-down session's bottom pane fills to turn 0 (the wall lesson): %r" % r.get("botFill"))
+
+
+class VSplitDragLateTimeline(VSplitDrag):
+    """The same drag with the timeline's document held until the tabs are ready, so its loader and then its bars land
+    after the point the driver measures from: the shape a slow runner produced on 2026-09-18 (the pane 533 px tall at
+    the zone, 686 at the ghost). The drag still lands because the driver waits for the band to settle before it measures."""
+    CFG_EXTRA = {"holdTimeline": True}
+    _cache = None
 
 
 if __name__ == "__main__":
