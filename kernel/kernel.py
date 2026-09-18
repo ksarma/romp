@@ -41081,10 +41081,15 @@ def _set_auth_or_park(be, sid, value):
 # prints from. "deferred" is a turn in flight (the one state --now cuts); "queued" a text waiting with no turn open
 # (round 1 of the review, 2026-09-18: busy, but nothing to cut); "landing" a pending no request stands for, on an
 # object no landing of this kernel has stamped, whose connect in progress or to come decides it (round 2 of the
-# review, 2026-09-18: it read "now", and the verb promised a reconnect nothing had asked for).
+# review, 2026-09-18: it read "now", and the verb promised a reconnect nothing had asked for); "report" the same pending on
+# an object whose connect HAS landed and could not tell what its CLI bills (an attach to a surviving CLI with no report,
+# the reviewer's cannot-tell class), so the CLI's first init decides; "staggered" a request standing on a quiet session
+# whose relaunch is bounded, so the arm waits for its spawn slot with the CLI still serving (the reviewer's round 1: the
+# slot is drawn at the arm, and "now" promised the moment the stagger delays; the rebase follow-up, 2026-09-18).
 _BILLING_WORDS = {"now": "now", "deferred": "at the end of the open turn", "queued": "at the next quiet moment",
                   "held": "held for live work", "next-launch": "at its next launch", "none": "none needed",
-                  "landing": "when its connect lands"}
+                  "landing": "when its connect lands", "report": "when its CLI first reports its billing",
+                  "staggered": "at its turn in the spawn stagger"}
 # ...and a pick the FIFO parked, by the reason it waits (_park_reason): the drain applies it when the gate lifts.
 # "waiting" is busy with no turn open (a queued turn, an untaken text; round 2 of the review): the words the unparked
 # road's "queued" prints, so the verb offers --now only for "turn", the one park a cut can end.
@@ -41176,10 +41181,12 @@ def _billing_request(b):
         superseded = sum(_drop_parked_auth(s, "the --all-following pick") for s in (out.get("movedSids") or []))
         _push_soon()
         unwritten = out.get("unwritten") or []    # the followers whose record would not read: nothing written, said apart
+        failed = out.get("failed") or []          # the followers whose step raised: left following the default, no ask (the
+        #                                           walk's per-session try, the rebase follow-up of 2026-09-18); the Log names the fault
         outlooks = {n: _BILLING_WORDS.get(w, w) for n, w in (out.get("outlook") or {}).items()}
         return {"ok": True, "pick": pick, "moved": len(out["moved"]), "skipped": len(out["skipped"]), "unwritten": len(unwritten),
-                "sessions": out["moved"], "skippedSessions": out["skipped"], "unwrittenSessions": unwritten,
-                "outlooks": outlooks, "superseded": superseded}
+                "failed": len(failed), "sessions": out["moved"], "skippedSessions": out["skipped"], "unwrittenSessions": unwritten,
+                "failedSessions": failed, "outlooks": outlooks, "superseded": superseded}
     who = str(b.get("target") or "")
     if not who or not pick:
         return {"ok": False, "error": "target and pick required", "_status": 400}
@@ -41256,7 +41263,11 @@ def _billing_request(b):
             _mark_interrupt_clicked(sid)             # the chip reads interrupting now, as the /interrupt route's stop does
             cut = True
             if outlook == "deferred":
-                outlook = "now"                      # the cut turn's settle arms the reconnect; a hold for live work stands
+                # the cut turn's settle arms the reconnect; a hold for live work stands. A bounded relaunch (`default` takes
+                # the follower walk's step, which flags its slot) waits at that arm for its spawn slot with the CLI still
+                # serving (the reviewer's round 1, 2026-09-18), so its word is the stagger's, not "now"
+                staggered = getattr(be, "auth_relaunch_staggered", lambda s: False)(sid)
+                outlook = "staggered" if staggered else "now"
     _push_soon()
     out.update(reconnect=_BILLING_WORDS[outlook], cut=cut, queued=False, superseded=superseded)
     return out

@@ -2236,8 +2236,9 @@ if [[ "${1:-}" == "billing" ]]; then
             echo "  queued earlier for the session is dropped by --now and by default, and the output says so. Live"
             echo "  subagents and background tasks still hold the pick until they finish, and the output says so."
             echo "  --all-following <pick> writes the pick on every running session that follows the machine"
-            echo "  default (they stop following it) and prints the names moved, which of them reconnect, the names"
-            echo "  skipped for a pick of their own, and any whose record would not read."
+            echo "  default (they stop following it) and prints the names moved, which of them reconnect (each"
+            echo "  relaunch waits its turn on the machine's spawn budget, the CLI serving until then), the names"
+            echo "  skipped for a pick of their own, any whose record would not read, and any whose step failed."
             echo "  An unknown session name exits 1 with the kernel's reason."
             exit 0 ;;
     esac
@@ -2294,6 +2295,7 @@ def words(p):
     return {"key": "the API key", "login": "the login"}.get(p) or ('the login "%s"' % p[6:] if p.startswith("login:") else p)
 moved, skipped = r.get("sessions") or [], r.get("skippedSessions") or []
 unwritten = r.get("unwrittenSessions") or []   # absent from an older kernel's answer: nothing to say
+failed = r.get("failedSessions") or []         # the walk's per-session try (2026-09-18): a step that raised, the session left a follower
 outlooks = r.get("outlooks")                   # per moved name, the kernel's reconnect word; absent from an older kernel's answer
 n = len(moved)
 def one(c):
@@ -2315,7 +2317,13 @@ if moved:
         def next_launch(s, p): return "%s appl%s it at %s next launch" % (s, "y" if p else "ies", "their" if p else "its")
         def landing(s, p): return "%s wait%s for %s connect in progress to land, which decides whether to reconnect" % (s, "" if p else "s", "their" if p else "its")
         def held(s, p): return "%s wait%s for live work to finish, then reconnect%s" % (s, "" if p else "s", "" if p else "s")
+        # the relaunch waits for its slot on the machine's spawn budget with the CLI still serving (the reviewer's round 1,
+        # 2026-09-18): "at its next quiet moment" promised the moment the stagger delays
+        def staggered(s, p): return "%s reconnect%s at %s turn in the spawn stagger, %s CLI serving until then" % (s, "" if p else "s", "their" if p else "its", "each" if p else "its")
+        # the connect landed and could not tell what the surviving CLI bills (no report yet): its first report decides
+        def report(s, p): return "%s wait%s for %s CLI's first report of which side it bills, which decides whether to reconnect" % (s, "" if p else "s", "their" if p else "its")
         buckets = [("none needed", already), ("at its next launch", next_launch), ("when its connect lands", landing),
+                   ("when its CLI first reports its billing", report), ("at its turn in the spawn stagger", staggered),
                    ("held for live work", held)]
         named = {w for w, _ in buckets}
         groups = [(reconnecting, sorted(m for m in moved if outlooks.get(m) not in named))]
@@ -2343,6 +2351,11 @@ if unwritten:
     # a record that would not read: nothing was written, and it is not a pick of that session's own (round 1 of the review)
     tail += "; %d not written (%s): %s" % (len(unwritten), ", ".join(unwritten),
                                            "its record would not read" if len(unwritten) == 1 else "their records would not read")
+if failed:
+    # one follower's step raised and the walk went on (the rebase follow-up, 2026-09-18): that session keeps following the
+    # default with no change and no ask, and the kernel's Log names the fault
+    tail += "; %d failed (%s): %s the default unchanged, the kernel's Log names the fault" % (
+        len(failed), ", ".join(failed), "it keeps following" if len(failed) == 1 else "they keep following")
 print("romp billing: %s; %s" % (head, tail))
 PY
         exit 0
@@ -2380,7 +2393,12 @@ def words(side, login_id="", label=""):
         name = label or login_id
         return ('login "%s"' % name) if name else "login"
     return side or "unknown"
-if r.get("launched") is None:
+if r.get("launched") is None and r.get("cannotTell"):
+    # a client is up whose landing attached a surviving CLI with no report on record (the reviewer's cannot-tell class,
+    # 2026-09-18; the rebase follow-up): a process runs, and what it bills is its first init's to say, which a resumed
+    # session streams at its first turn; "no CLI is up" was false for it
+    launched = "launched: a surviving CLI is attached that has not reported which side it bills; its first turn's report says"
+elif r.get("launched") is None:
     # no landed launch stands under this kernel: a dormant session, a client torn down, or a connect composed and not landed
     # (round 2 of the review, 2026-09-18: "no CLI process running" claimed a process fact the kernel does not know, since
     # a dormant session's CLI can serve under its host and a connect in flight is a process; and the report the kernel
@@ -2468,7 +2486,13 @@ tails = {"now": (lead_now, "the session is reconnecting to apply it"),
          # no request stands (round 2 of the review, 2026-09-18): the pending was written on a session no landing of this
          # kernel has stamped, and the connect in progress or to come decides it; "reconnecting to apply it" promised a
          # reconnect nothing had asked for
-         "when its connect lands": (lead, "no reconnect was asked: a connect is in progress or about to start, and its landing decides whether the session must reconnect to apply it")}
+         "when its connect lands": (lead, "no reconnect was asked: a connect is in progress or about to start, and its landing decides whether the session must reconnect to apply it"),
+         # the connect landed and could not tell what the surviving CLI bills (no report on record; the reviewer's cannot-tell
+         # class, 2026-09-18): the CLI's first report decides, and nothing was asked yet
+         "when its CLI first reports its billing": (lead, "no reconnect was asked: the CLI attached has not reported which side it bills, and its first report decides whether the session must reconnect to apply it"),
+         # the arm waits for its slot on the machine's spawn budget with the CLI still serving (the reviewer's round 1): the
+         # `default` road takes the follower walk's bounded step, so its relaunch is staggered as the walk's are
+         "at its turn in the spawn stagger": (lead, "the session reconnects at its turn in the machine's spawn stagger; its CLI serves until then")}
 head, tail = tails.get(when) or (lead, "the session reconnects %s" % when)
 cut = "the in-flight turn was cut; " if r.get("cut") else ""
 # a pick queued earlier for this session would have fired over this one at the next quiet cycle (round 2 of the review):
