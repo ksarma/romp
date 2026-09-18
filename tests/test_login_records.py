@@ -549,7 +549,7 @@ class StoredLoginPick(_Backend):
         self.be._stamp_launch_login(s)
         return kw
 
-    def test_set_auth_persists_the_login_and_seeds_the_next_session(self):
+    def test_set_auth_persists_the_login_and_remembers_it_without_seeding_the_next_spawn(self):
         rec = _rec(self.be.state_dir, "Work", org="Acme", kind="enterprise")
         sid = self.be.spawn("n", "/tmp")
         self.assertTrue(self.be.set_auth(sid, "login:" + rec["id"]))
@@ -557,9 +557,15 @@ class StoredLoginPick(_Backend):
         self.assertEqual((reg["auth"], reg["authLogin"], reg["authPending"]), ("login", rec["id"], True))
         d = sb.read_sdk_defaults(self.be.state_dir)
         self.assertEqual((d.get("auth"), d.get("authLogin")), ("login", rec["id"]))
+        # remembered as the picker's preselected choice, and nothing more (2026-09-18): a spawn with no pick of its own reads
+        # the file's auth only beside authExplicit, as the launch and the init check do, and follows the machine default
         sid2 = self.be.spawn("m", "/tmp")
         reg2 = sb.read_reg(self.be.state_dir, sid2)
-        self.assertEqual((reg2.get("auth"), reg2.get("authLogin")), ("login", rec["id"]), "the next spawn seeds the stored login")
+        self.assertEqual((reg2.get("auth"), reg2.get("authLogin")), (None, None), "the next spawn follows the default, not the pick")
+        self.assertTrue(self.be.set_auth_default("login:" + rec["id"]))
+        reg3 = sb.read_reg(self.be.state_dir, self.be.spawn("o", "/tmp"))
+        self.assertEqual((reg3.get("auth"), reg3.get("authLogin")), ("login", rec["id"]), "the EXPLICIT stored-login default seeds")
+        self.assertTrue(self.be.set_auth_default("auto"))
         # a plain login pick clears the stored one, in the reg and in the remembered default
         self.assertTrue(self.be.set_auth(sid, "login"))
         self.assertEqual(sb.read_reg(self.be.state_dir, sid).get("authLogin"), "")
@@ -1016,7 +1022,7 @@ class StoredLoginPick(_Backend):
     def test_the_seed_skip_names_a_dead_remembered_stored_login(self):
         rec = _rec(self.be.state_dir, "Work")
         lg.mark_refused(self.be.state_dir, rec["id"], "refused")
-        sb.write_sdk_default(self.be.state_dir, auth="login", authLogin=rec["id"])
+        sb.write_sdk_default(self.be.state_dir, auth="login", authLogin=rec["id"], authExplicit=True)   # the EXPLICIT default is what a spawn reads (2026-09-18)
         logs = []
         self.be._log = lambda m, problem=False: logs.append(m)
         sid = self.be.spawn("n", "/tmp")

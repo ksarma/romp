@@ -5490,21 +5490,26 @@ def _expected_auth() -> str:
 
 def _declared_auth(state_dir) -> tuple:
     """The EFFECTIVE box-wide auth expectation and where it came from: ("key"|"login"|"", "pick"|"env"|"").
-    One explicit gear Billing pick makes ROMP_EXPECTED_AUTH INERT (Q3, 2026-08-26): set_auth is the
-    ONLY writer of the remembered auth default, so that entry existing IS "the user has picked
-    billing by hand at least once" — from then on the remembered pick is the box's expectation and
-    the env declaration stops speaking (it described the box's unpicked design; once billing is
-    hand-managed it is stale doctrine, and its per-init alarms fought the user's own choice on
-    every re-seeded spawn). A SPAWN re-seeding reg.auth from the remembered default never counts
-    as explicit — inertness keys on the PICK EVENT's durable trace (the defaults entry), never on
-    any session's seeded state; hand-editing sdk-defaults.json stays the sanctioned escape hatch
-    (the mode precedent)."""
+    One explicit Billing decision makes ROMP_EXPECTED_AUTH INERT (Q3, 2026-08-26): from then on the
+    remembered default is the box's expectation and the env declaration stops speaking (it described
+    the box's unpicked design; once billing is hand-managed it is stale doctrine, and its per-init
+    alarms fought the user's own choice on every spawn). WHICH decision leaves the durable trace turned
+    on 2026-09-18: the MACHINE DEFAULT, sdk-defaults.json `auth` beside `authExplicit` (set_auth_default,
+    the Billing flyout's Set default billing submenu), and no longer a per-session pick's seed. A
+    per-session pick writes `auth` alone (set_auth: the picker's remembered choice, no flag), and the
+    LAUNCH already read the file that way (_explicit_default follows the side only beside the flag), so
+    a check that took the seed as the box's expectation rang "the remembered Billing pick is login" on
+    every unpicked session that landed exactly where its launch meant to (the user 2026-09-18, whose
+    every unpicked session rang after one session's pick). The check reads the file as the launch does: an
+    explicit default speaks as the pick, a seeded value falls through to the env declaration as if the file
+    held no auth, and a SPAWN's seeded reg.auth never counts either; hand-editing sdk-defaults.json stays
+    the sanctioned escape hatch (the mode precedent)."""
     try:
         d = read_sdk_defaults(Path(state_dir))
     except Exception:
         d = {}
     a = d.get("auth")
-    if a in ("key", "login"):
+    if a in ("key", "login") and d.get("authExplicit"):
         return a, "pick"
     v = _expected_auth()
     return v, ("env" if v else "")
@@ -6059,6 +6064,8 @@ class SdkSession:
         self.auth_login = SdkBackend.reg_login(reg) if self.auth == "login" else ""
         self._auth_pending = ""      # target while the applying reconnect is in flight (auth is
         #   connect-time env, no runtime control) — mirrors _effort_pending's dots + notice
+        self._relaunch_bounded = False   # the next relaunch draws a spawn-stagger slot (_take_relaunch_slot): set by
+        #   set_auth_default's walk, which can ask every follower on a box to reconnect at once; consumed at the loop top
         self._launched_keyed = False  # whether the launch MEANT the key side: the box's apiKeyHelper bills this
         #   process (launch_keyed in _options; romp holds and injects no key). _note_auth_source compares the
         #   init's apiKeySource against THIS, so a CLI that lands on the other side (a stale login, a helper a
@@ -6318,6 +6325,63 @@ class SdkSession:
                 cb()
             except Exception as e:
                 self.backend._log("boot-settled callback (%s) failed: %s" % (self.name, e))
+
+    async def _take_relaunch_slot(self) -> bool:
+        """THE BOUNDED RELAUNCH (the user 2026-09-18, whose sessions all stayed on the key after the default changed):
+        set_auth_default's walk asks every follower on the other side to reconnect at once, and the loop's relaunch
+        drew no slot, so a box of followers would relaunch every CLI in one burst (_spawn_sem bounds boot, the drive
+        and spawn only). A walk-flagged relaunch (_relaunch_bounded) draws a slot on the ONE machine-wide _spawn_sem
+        before it composes and parks the release exactly as boot does (on_boot_settled: the CLI's init, the thread's
+        death or the attach hello free it, _fire_boot_settled). Flag-gated: one session's pick relaunches one CLI, and
+        a loop-wide acquire would queue every pick's reconnect behind boot's and the drive's slots. The acquire runs
+        on a thread of its own, never on the loop (a threading.Semaphore blocks) and never on the loop's default
+        executor (asyncio.run joins that executor at exit, so a blocked acquire would hold the thread's end, and with
+        it _on_session_gone, for the slot's whole backstop); the loop keeps serving meanwhile, and a wake during the
+        wait is read: an end gives the slot back (False: nothing to launch), a pick's wake keeps waiting (the connect
+        composes from the session, so the pick rides it). The timeout is the boot path's own backstop, said as a
+        problem and relaunched anyway, as the drive does. Returns whether to go on to the connect."""
+        sem = getattr(self.backend, "_spawn_sem", None)
+        if sem is None:
+            return True
+        fut = self.loop.create_future()
+
+        def take():
+            got = sem.acquire(timeout=BOOT_RESUME_SLOT_S)
+
+            def resolve():
+                if fut.done():                 # the waiter gave up (the session ended): the slot goes straight back
+                    if got:
+                        sem.release()
+                else:
+                    fut.set_result(got)
+            try:
+                self.loop.call_soon_threadsafe(resolve)
+            except RuntimeError:               # the loop is closed: nobody waits, the slot goes back
+                if got:
+                    sem.release()
+        threading.Thread(target=take, name="sdk-slot:%s" % self.name, daemon=True).start()
+        while not fut.done():
+            waker = asyncio.ensure_future(self._wake.wait())
+            await asyncio.wait({fut, waker}, return_when=asyncio.FIRST_COMPLETED)
+            if not waker.done():
+                waker.cancel()
+            if fut.done():
+                break
+            if self.ended:
+                fut.cancel()                   # resolve() sees it done and returns the slot
+                return False
+            self._wake.clear()                 # a pick's wake: the connect below reads the pick; the slot is still owed
+        if not fut.result():
+            self.backend._log("reconnect (%s): stagger slot backstop expired (a CLI is wedged pre-init?); relaunching anyway"
+                              % self.name, problem=True)
+            return True
+        with self._lock:
+            park = self.on_boot_settled is None
+            if park:
+                self.on_boot_settled = sem.release
+        if not park:
+            sem.release()   # a slot is already parked on this session (a spawn's whose CLI never reached its init) and frees at the same event
+        return True
 
     def _q_append(self, text: str, meta=None):
         self._pending.append(text)
@@ -7564,11 +7628,20 @@ class SdkSession:
             # OTHER side stays pending for the reconnect its own request armed (review round 2, 2026-09-09;
             # effort's rule above, applied to billing)
             # ...and, for a login pick, when the launch carried the stored login the pick names (T346: a pick of another
-            # stored login made during this spawn stays pending for its own reconnect, as a pick of the other side does)
+            # stored login made during this spawn stays pending for its own reconnect, as a pick of the other side does).
+            # A FOLLOWER (no pick of its own; set_auth_default's walk set its pending) is compared against the stored
+            # login the machine default names (effective_login), not its own empty pick (the user 2026-09-18): its
+            # auth_login is "" while a stored-login default names a real id, so its dots never cleared. The read is
+            # lock-free: this block runs outside _hold_write
+            def _pending_login():
+                auth = getattr(self, "auth", None)       # None: a __new__-built test double, which follows no default
+                if auth in ("login", "key") or auth is None:
+                    return getattr(self, "auth_login", "") or ""
+                return self.effective_login()
             if (self._launched_auth is None or self._launched_unkeyed_pick
                     or (self._auth_pending == self._launched_auth
                         and (self._auth_pending != "login"
-                             or (getattr(self, "_launched_login", "") or "") == (getattr(self, "auth_login", "") or "")))):
+                             or (getattr(self, "_launched_login", "") or "") == _pending_login()))):
                 self._auth_pending = ""
                 self.backend._update_reg(self.sid, authPending=False)
                 self.backend._poke()
@@ -8581,6 +8654,14 @@ class SdkSession:
         # incoming message, leaking the client + its claude subprocess).
         while not self.ended:
             self._wake.clear()
+            if getattr(self, "_relaunch_bounded", False):
+                # a relaunch set_auth_default's walk asked for draws a spawn-stagger slot first (_take_relaunch_slot says
+                # why and how); the flag is consumed here, so the next reconnect, a pick's, draws none. Before the
+                # reconnect state is reset: a pick landing during the wait arms as it does between a teardown and the
+                # loop top, and the reset below folds it into this connect
+                self._relaunch_bounded = False
+                if not await self._take_relaunch_slot():
+                    continue                     # the session ended while it waited: nothing to launch
             # a DELIBERATE reconnect (the waker tore the last client down for an effort or model change: _reconnect armed and
             # no attach retry pending) hands the same conversation to a fresh client and its forwarded sends land through the
             # resume, so the fresh-CLI block below stamps the epoch and heals the awaiting but does NOT mark held echoes
@@ -14849,7 +14930,12 @@ class SdkBackend:
         a, lid = _logins.parse_pick(auth)       # "login:<id>" names a stored login (T346); junk reads as no pick
         seeded = not a
         if seeded:
-            a = d.get("auth") if d.get("auth") in ("login", "key") else ""
+            # the file's auth seeds a new session ONLY as the machine's EXPLICIT default (the user 2026-09-18; until then
+            # a per-session pick's write, which carries no authExplicit, seeded every pick-less spawn with a pick of its
+            # own): the launch (_explicit_default) and the init check (_declared_auth) read the file that way, so the
+            # spawn does too, and a session created with no pick of its own follows the machine default wherever it
+            # moves. The pick-less write still preselects the picker's choice for the next new session (_auth_avail)
+            a = d.get("auth") if (d.get("authExplicit") and d.get("auth") in ("login", "key")) else ""
             lid = SdkBackend.reg_login(d) if a == "login" else ""
         if a and seeded and self.pick_unavailable(a, lid):
             # A REMEMBERED default the box cannot bill seeds nothing: a key default with no helper (review
@@ -17568,11 +17654,15 @@ class SdkBackend:
             return False
         s = self.sessions.get(sid)
         value = self.login_display(login_id) if login_id else side   # the stored login's display label (T346), else the side word; `value` is spent
-        # the seed for the NEXT new session, like model/effort: every pick, the unchanged ones below included (review
-        # round 1); the guards decide only whether THIS session reconnects. Until the user sets the machine's default
-        # EXPLICITLY (set_auth_default, the Billing flyout's Default group, T380): from then on a per-session pick is
-        # about that session and moves no default. authLogin rides beside it: the stored login a login pick names, ""
-        # for the machine's own (written as "" so a plain pick clears an earlier stored one).
+        # the remembered pick, like model/effort: every pick, the unchanged ones below included (review round 1); the
+        # guards decide only whether THIS session reconnects. Until the user sets the machine's default EXPLICITLY
+        # (set_auth_default, the Billing flyout's Default group, T380): from then on a per-session pick is about that
+        # session and moves no default. This write carries no authExplicit, and since 2026-09-18 that is how every reader
+        # takes it: the picker's preselected choice for the next new session (_auth_avail's default) and nothing more; a
+        # spawn with no pick of its own (the seed), the launch (_explicit_default) and the init check (_declared_auth)
+        # follow the file's auth only beside the flag (a seeded value once made every unpicked session's init ring).
+        # authLogin rides beside it: the stored login a login pick names, "" for the machine's own (written as "" so a
+        # plain pick clears an earlier stored one).
         if not read_sdk_defaults(self.state_dir).get("authExplicit"):
             write_sdk_default(self.state_dir, auth=side, authLogin=login_id)
         # the pick, the side the connect in progress launches, the side the running process launched and the side a
@@ -17673,7 +17763,10 @@ class SdkBackend:
         per-session pick gets (auth_unavailable_why). Marks the default explicit (`authExplicit`), so a later
         per-session pick no longer moves it; "auto" clears the flag and the seed (the helper rule again).
         Touches no session's own pick: a session that follows the default shows the new side in its status at
-        once and launches on it next time. A STORED login ("login:<id>") is a default too since 2026-09-14 (the user:
+        once and, when its CLI runs on the other side, is asked to reconnect at its next quiet moment exactly as a
+        per-session pick asks, with no pick written for it (_reconnect_default_followers; the user 2026-09-18: per-session
+        hosts and their CLIs outlive a kernel restart, so "at its next launch" never came and every follower stayed on
+        the old side). A STORED login ("login:<id>") is a default too since 2026-09-14 (the user:
         the Set default billing submenu offers every billing the picks do), written with its id under authLogin and
         judged on its own record as a pick of it would be; the machine's own login and the key write authLogin empty."""
         if value == "auto":
@@ -17683,6 +17776,7 @@ class SdkBackend:
             # id here would ride the next explicit Login default into every new session (the merge read, 2026-09-12)
             write_sdk_default(self.state_dir, auth="", authExplicit=False, authLogin="")
             self._log("auth: the machine's default billing is automatic again (the helper rule)")
+            self._reconnect_default_followers("automatic")
             return True
         side, lid = _logins.parse_pick(value)
         if not side:
@@ -17697,9 +17791,87 @@ class SdkBackend:
         # the machine default by inheritance (a seed carrying one would bill it silently, the 2026-08-12 wrong-account
         # failure): an id here is always the user's explicit choice in the submenu
         write_sdk_default(self.state_dir, auth=side, authExplicit=True, authLogin=lid)
-        self._log("auth: the machine's default billing is now %s (new sessions, and sessions with no pick of their own)"
-                  % (self.login_display(lid) if lid else side))
+        label = self.login_display(lid) if lid else side
+        self._log("auth: the machine's default billing is now %s (new sessions, and sessions with no pick of their own)" % label)
+        self._reconnect_default_followers(label)
         return True
+
+    def _reconnect_default_followers(self, label: str) -> None:
+        """The machine default just changed (set_auth_default wrote it): ask every live session that FOLLOWS the default
+        and runs on the other side to reconnect, as a per-session pick asks (the user 2026-09-18, whose sessions had all
+        launched on the key before the default became the login and stayed keyed: per-session hosts and their CLIs
+        outlive a kernel restart, so the launch docs/reference.md promised never came). Exactly set_auth's schedule arm
+        MINUS the pick: the pending target rides the session and authPending the reg (the badge dots), the surface is
+        recorded for the arm's line, the request goes through the one arm rule (at once when quiet, else at the settle
+        that finds it quiet, held for live work), and NO auth is written for the session, so it keeps following the
+        default through this change and the next. Called AFTER the write: the launch shape resolves the default through
+        _decide_auth, whose cache is keyed on the file's stat. `label` is the new default as the user would name it (a
+        side word, a stored login's label, or "automatic", said with the side the environment resolves).
+
+        The side a session RUNS on is the CLI's own report first (auth_live, the init's apiKeySource, restored from the
+        reg's apiKeyAuth) and the composed stamp (_launched_auth) only without one: a kernel re-attach stamps the
+        options it composed for the surviving CLI, not what that CLI bills, so after a restart the stamp can read login
+        while the CLI bills the key. For a login, the stored login the launch carried (_launched_login) is part of the
+        side, as in set_auth: a default of another stored login is a change of billing. A session that never connected
+        (no report, no stamp) is left to its first connect, which decides through _decide_auth; an ended one is nothing
+        to move. A connect in progress already launching the new default (_launching, set_auth's already-applying
+        guard) and a reconnect already pending on the new side with no connect in progress are not asked again (a
+        follower's pending reconnect composes from the default at the loop top, so its target IS the current default;
+        with a connect in progress launching the OLD default the request is made, and its arm rides the connect after).
+        A follower that already runs the new side with a reconnect pending to the OTHER side (an earlier default,
+        reverted before its reconnect ran) has that pending withdrawn as set_auth withdraws a reverted pick: its
+        reconnect would relaunch the side the process runs, and the landing's clear compares the pending side against
+        the launched one, so its dots never cleared. Each session moved draws a spawn-stagger slot for its relaunch
+        (_relaunch_bounded, _take_relaunch_slot: a box of followers relaunches in bounded bursts, as boot resumes do).
+        One log line per session moved or withdrawn; the untouched ones are quiet. No /auth chip: the session made no
+        pick. Kernel thread; every read here is one set_auth makes on the same thread."""
+        with self._lock:                       # the roster moves under other threads (boot, the heal): refresh_usage's idiom
+            sessions = list(self.sessions.values())
+        for s in sessions:
+            if s.ended or s.auth in ("login", "key"):
+                continue
+            running_side = s.auth_live or s._launched_auth
+            if not running_side:
+                continue
+            shape = self._launch_shape(s)
+            target = (shape["auth"], shape["login"])
+            running = (running_side, (getattr(s, "_launched_login", "") or "") if running_side == "login" else "")
+            launching = s._launching
+            launching_pick = (launching.get("auth"), launching.get("login") or "") if launching else None
+            if launching_pick == target:
+                continue
+            what = label if label != "automatic" else "automatic (the %s on this box)" % target[0]
+            if running == target and launching_pick is None:
+                if s._auth_pending and s._auth_pending != target[0]:
+                    reverted = s._auth_pending
+                    s._auth_pending = ""
+                    self._update_reg(s.sid, authPending=False)
+                    s._withdraw_held_pick("auth")
+                    self._log("auth (%s): the machine default is now %s, which this session already runs; the pending %s "
+                              "reconnect is withdrawn" % (s.name, what, reverted))
+                continue
+            if s._auth_pending == target[0] and launching_pick is None:
+                continue
+            if s.auth_live and s._launched_auth != s.auth_live:
+                # THE STAMP FOLLOWS THE REPORT: the served check (_served_by_connect) and set_auth's guards read the launched
+                # shape (_launched_auth) as what the running process bills, and after a kernel restart that stamp is the
+                # re-attach's composed options, not the surviving CLI; left standing, the request below was dropped as "the
+                # running process already runs it" while the CLI billed the other side. The CLI's own report is the process
+                with s._hold_write():
+                    s._launched_auth = s.auth_live
+            s._auth_pending = target[0]
+            s._wrong_landing_reconnected = False   # a wrong landing may take the documented fall again (set_auth's rule)
+            s._relaunch_bounded = True
+            # apiKeyAuth=None: the persisted CLI report described the process this reconnect replaces (set_auth); no auth
+            # and no authLogin: the session keeps following the default
+            self._update_reg(s.sid, authPending=True, apiKeyAuth=None)
+            outcome = s._note_reconnect_ask("auth")
+            if s.loop is None or s.ended:
+                s.auth_live = ""   # no arm is coming to clear it (set_auth's rule); the arm clears it otherwise
+            s.request_reconnect(pick="auth")
+            runs = ("the %s login" % self.login_display(running[1])) if running[1] else ("the %s" % running[0])
+            self._log("auth (%s): the machine default is now %s; this session follows the default but runs on %s; %s"
+                      % (s.name, what, runs, outcome))
 
     def default_auth(self, reg: dict | None = None) -> str:
         """The auth a session with no live SdkSession object would launch with — the dormant twin of

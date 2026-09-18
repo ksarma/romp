@@ -648,11 +648,18 @@ a stored login the machine cannot bill just now, refused, expired or removed,
 falls through to the machine's own login),
 and a pick there changes no session that carries its own pick; a session
 with no pick of its own follows it, in its status at once and at its next
-launch. A third choice, Automatic, is the rule that held before: the API key
-when a helper is configured, else the login; it clears the explicit default,
-and the group's sub-line says which rule holds. Until the default is set here,
-the last per-session pick seeds it (as a model or effort pick does); once set
-here, a per-session pick is about that session alone and moves no default. A
+launch; changing the machine default reconnects every session following it
+that runs on the other side, at its next quiet moment (the same pending dots
+a per-session pick shows), and those sessions keep following the default (no
+pick is written for them). A third choice, Automatic, is the rule that held
+before: the API key when a helper is configured, else the login; it clears
+the explicit default, the group's sub-line says which rule holds, and the
+sessions following the default are reconnected the same way. Until the
+default is set here, the last per-session pick is remembered as the
+preselected choice in the new-session picker and nothing more: a session
+created with no pick of its own follows the machine default, not that pick;
+once set here, a per-session pick is about that session alone and moves no
+default. A
 remote session's flyout names its host, and the pick sets that host's default
 (the op routes to the session's owning kernel). The judges follow the same
 resolution: a judge on a session with no pick of its own bills the machine's
@@ -662,13 +669,13 @@ when the right would clip and the left has room, below the row when neither
 side has room, above it when below does not fit, and only then clamped inside
 the window; it never covers its row while a place beside or beyond it exists.
 
-On a one-auth box the picker never chooses the missing side. A remembered
-default that names the side this box cannot bill is set aside at spawn and the
-unpicked rule below decides instead, in both directions: a remembered login
-pick on a machine with no login seeds new sessions on the API key when a
-helper is configured, exactly as a remembered key pick on a helper-less machine
-already fell to the login, and the fall is said once per process as a problem
-row. An explicit pick that names the missing
+On a one-auth box the picker never chooses the missing side. An explicit
+machine default that names the side this box cannot bill is set aside at spawn
+and the unpicked rule below decides instead, in both directions: an explicit
+login default on a machine with no login seeds new sessions on the API key
+when a helper is configured, exactly as an explicit key default on a
+helper-less machine falls to the login, and the fall is said once per process
+as a problem row. An explicit pick that names the missing
 side (a session picked "login" on a box that later lost its login) launches on
 the other side when one exists and says so once per session start, on the tab
 menu's Billing sub-line as `⚠ login unavailable, billing API key` and in the
@@ -736,13 +743,15 @@ flagged, naming the declaration. On a box with a helper every session without
 a login pick bills the key, so `ROMP_EXPECTED_AUTH=key` describes such a box
 truthfully. An undeclared box (the variable unset, or any other value)
 compares each landing against what that session was launched for and stays
-quiet when they agree. One explicit gear **Billing** pick supersedes the
-declaration from then on: the remembered pick becomes the box's expectation
-and the env var goes inert (it described the unpicked design), so re-seeded
-spawns are judged against your pick, never against stale doctrine. The one
-exception is an API-key pick remembered from a box that no longer holds a
-key: it is set aside at spawn, so it seeds nothing (the per-init check still
-judges each landing against the pick).
+quiet when they agree. Setting the machine's default billing (the **Set
+default billing** submenu) supersedes the declaration from then on: the
+explicit default becomes the box's expectation and the env var goes inert (it
+described the unpicked design), so the sessions following the default are
+judged against it, never against stale doctrine; a per-session **Billing**
+pick is about that session alone and leaves the declaration speaking for the
+others. An explicit API-key default on a box that no longer holds a key is set
+aside at spawn, so it seeds nothing (the per-init check still judges each
+landing against the default).
 
 The kernel also checks, once at boot and before anything is spawned, that no
 retired key path is still configured. A `service.env` that still carries a key

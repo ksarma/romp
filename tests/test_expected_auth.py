@@ -184,7 +184,7 @@ class DeclarationInvertsTheMismatch(_Declared):
         s = self._sess(35)
         s._launched_keyed = True
         rows.append((filed(s, "none"), "launched for the API key", LOGIN))
-        sb.write_sdk_default(Path(self.d), auth="login")   # written last: the env word is inert after it
+        sb.write_sdk_default(Path(self.d), auth="login", authExplicit=True)   # written last: the env word is inert after it
         s = self._sess(36)
         s._launched_keyed = False
         rows.append((filed(s, "apiKeyHelper"), "the remembered Billing pick is login", HELPER))
@@ -232,62 +232,110 @@ class AllKeyedUsageLineHonorsTheDeclaration(_Declared):
 
 
 class GearPickMakesTheDeclarationInert(_Declared):
-    """Q3 (2026-08-26): ONE explicit gear Billing pick supersedes ROMP_EXPECTED_AUTH from then on —
-    the env var described the box's UNPICKED design, and once billing is hand-managed its per-init
-    alarms fought the user's own choice on every spawn re-seeded from the remembered default. The
-    pick's durable trace is the remembered auth default (set_auth is its only writer), so inertness
-    keys on the PICK EVENT — a spawn's seeded reg.auth never counts as explicit."""
+    """Q3 (2026-08-26): ONE explicit Billing decision supersedes ROMP_EXPECTED_AUTH from then on. The env var
+    described the box's UNPICKED design, and once billing is hand-managed its per-init alarms fought the
+    user's own choice on every spawn. WHICH decision leaves the durable trace turned on 2026-09-18: it is the
+    MACHINE DEFAULT (set_auth_default writes sdk-defaults.json `auth` with `authExplicit`), no longer any
+    per-session pick's seed. A per-session pick writes `auth` alone (a seed, no flag), and the launch already
+    ignored that seed for an unpicked session (_explicit_default reads the side only beside the flag), so a
+    check that took the seed as the box's expectation rang "the remembered Billing pick is login" on every
+    unpicked session that landed where its launch meant to (the user 2026-09-18, whose sessions all rang after
+    one pick). The check now reads the file the way the launch does: an explicit default speaks as the pick,
+    a seeded value is inert, and a spawn's seeded reg.auth never counts either."""
 
-    def test_the_pick_supersedes_the_env_declaration(self):
+    def test_the_explicit_default_supersedes_the_env_declaration(self):
+        # the rule turned (2026-09-18): the trace is set_auth_default's write, since the launch follows only that;
+        # a per-session pick's seed leaves the env declaration speaking
         os.environ["ROMP_EXPECTED_AUTH"] = "key"
-        sb.write_sdk_default(Path(self.d), auth="login")   # set_auth's durable trace — the gear pick
+        sb.write_sdk_default(Path(self.d), auth="login")   # a per-session pick's seed: no authExplicit
+        s0 = self._sess(10)
+        s0._launched_keyed = True
+        self.be._note_auth_source(s0, "none")              # a login landing contradicts the env, which still speaks
+        self.assertTrue(any("ROMP_EXPECTED_AUTH=key" in t and "billing the login" in t for t in self._problem_texts()),
+                        "a seeded value is inert: the env declaration still governs: %r" % self._problem_texts())
+        sb.write_sdk_default(Path(self.d), auth="login", authExplicit=True)   # set_auth_default's durable trace
+        n = len(self._problem_texts())
         s = self._sess(11)
         s._launched_keyed = True
-        self.be._note_auth_source(s, "none")               # a login landing: contradicts the ENV, honors the PICK
-        self.assertFalse([t for t in self._problem_texts() if "billing" in t],
-                         "the env declaration is INERT after the pick — no false alarm")
+        self.be._note_auth_source(s, "none")               # a login landing: contradicts the ENV, honors the DEFAULT
+        self.assertEqual(len(self._problem_texts()), n, "the env declaration is INERT after the explicit default: no false alarm")
         s2 = self._sess(12)
         s2._launched_keyed = False
-        self.be._note_auth_source(s2, "apiKeyHelper")      # a keyed landing: contradicts the PICK
-        texts = self._problem_texts()
+        self.be._note_auth_source(s2, "apiKeyHelper")      # a keyed landing: contradicts the DEFAULT
+        texts = self._problem_texts()[n:]
         self.assertTrue(any("the remembered Billing pick is login" in t and "billing the API key" in t
                             for t in texts),
-                        "a landing contradicting the pick rings, NAMING THE PICK not the env var: %r" % texts)
+                        "a landing contradicting the default rings, NAMING THE PICK not the env var: %r" % texts)
         self.assertFalse(any("ROMP_EXPECTED_AUTH" in t for t in texts),
-                         "the env var no longer speaks anywhere once picked")
+                         "the env var no longer speaks anywhere once the default is explicit")
 
     def test_a_seeded_spawn_never_makes_the_declaration_inert(self):
-        # the remembered default SEEDS reg.auth on a spawn — that seed must not count as explicit:
-        # with no pick trace in the defaults, the env declaration still governs
+        # a spawn's reg.auth seeded from a remembered value must not count as explicit: with no explicit default
+        # in the file, the env declaration still governs the unpicked sessions. The same reason the rule turned on
+        # 2026-09-18: the launch (_explicit_default) ignores a seeded value, so the check must too
         os.environ["ROMP_EXPECTED_AUTH"] = "key"
         s = self._sess(13, auth="key")                     # a spawn re-seeded from some remembered default
         s._launched_keyed = True
-        self.be._note_auth_source(s, "none")               # lands on login — contradicts its own seed
+        self.be._note_auth_source(s, "none")               # lands on login: contradicts its own seed
         texts = self._problem_texts()
         self.assertTrue(any("billing the login" in t for t in texts),
                         "the seeded session is still judged (against its own pick side): %r" % texts)
         self.assertFalse(any("remembered Billing pick" in t for t in texts),
-                         "…but nothing pretends a remembered default was an explicit box-wide pick")
+                         "...but nothing pretends a remembered default was an explicit box-wide pick")
 
-    def test_all_keyed_gate_follows_the_pick(self):
+    def test_all_keyed_gate_follows_the_explicit_default(self):
         os.environ["ROMP_EXPECTED_AUTH"] = "login"
-        sb.write_sdk_default(Path(self.d), auth="key")     # the user picked key billing by hand
+        sb.write_sdk_default(Path(self.d), auth="key", authExplicit=True)   # the user set the machine default to the key
+        # a live, connected, keyed session (refresh_usage counts a session with a client and a loop; the class above
+        # stages the same): until 2026-09-18 this test set `connected` alone, and the branch under test never ran
         be2 = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None, log=self.logs.append)
         s = sb.SdkSession(be2, {"sid": "11111111-2222-3333-4444-%012d" % 14, "name": "s14", "cwd": "/tmp"})
-        s.connected = True
-        s.api_key_auth = True
+        s.client, s.loop, s.ended, s.api_key_auth = object(), object(), False, True
         be2.sessions[s.sid] = s
         be2.refresh_usage()
+        self.assertTrue(any("all billing API keys" in str(m) for m in self.logs), "the all-keyed line was said")
         probs = [p for p in be2.problems(20) if "telemetry is unavailable" in p["text"]]
-        self.assertFalse(probs, "all-keyed under a KEY pick is the design — an info line, not a problem "
+        self.assertFalse(probs, "all-keyed under an explicit KEY default is the design: an info line, not a problem "
                                 "(the env =login is inert)")
+        # a seeded key (a per-session pick's write, no flag) leaves the env speaking, and all-keyed contradicts =login
+        sb.write_sdk_default(Path(self.d), auth="key", authExplicit=False)
+        be3 = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None, log=self.logs.append)
+        s3 = sb.SdkSession(be3, {"sid": "11111111-2222-3333-4444-%012d" % 15, "name": "s15", "cwd": "/tmp"})
+        s3.client, s3.loop, s3.ended, s3.api_key_auth = object(), object(), False, True
+        be3.sessions[s3.sid] = s3
+        be3.refresh_usage()
+        self.assertTrue([p for p in be3.problems(20) if "telemetry is unavailable" in p["text"]],
+                        "a seeded value is not the box's expectation: all-keyed still contradicts the declaration")
 
-    def test_the_real_set_auth_leaves_the_trace(self):
-        # end to end: the gear pick itself writes the durable trace _declared_auth keys on
-        sb.write_reg(Path(self.d), "11111111-2222-3333-4444-%012d" % 15,
-                     {"sid": "11111111-2222-3333-4444-%012d" % 15, "name": "s15", "cwd": "/tmp"})
-        self.assertTrue(self.be.set_auth("11111111-2222-3333-4444-%012d" % 15, "login"))
+    def test_the_real_set_auth_default_leaves_the_trace_and_a_session_pick_does_not(self):
+        # end to end: the machine default writes the durable trace _declared_auth keys on; a per-session pick's
+        # seed does not (the launch ignores that seed for every unpicked session, so the check must too)
+        sid = "11111111-2222-3333-4444-%012d" % 16
+        sb.write_reg(Path(self.d), sid, {"sid": sid, "name": "s16", "cwd": "/tmp"})
+        self.assertTrue(self.be.set_auth(sid, "login"))
+        self.assertEqual(sb.read_sdk_defaults(Path(self.d)).get("auth"), "login", "the seed is written (the picker's remembered choice)")
+        self.assertEqual(sb._declared_auth(Path(self.d)), ("", ""), "...and it is not the box's expectation")
+        self.assertTrue(self.be.set_auth_default("login"))
         self.assertEqual(sb._declared_auth(Path(self.d)), ("login", "pick"))
+
+    def test_a_seeded_default_is_inert_and_the_explicit_one_rings(self):
+        # the defect (the user 2026-09-18): one per-session login pick on an apiKeyHelper box made every OTHER,
+        # unpicked session ring "the remembered Billing pick is login" at each init, though each had launched keyed
+        # on purpose (an unpicked launch follows the helper rule; the seed is not a default)
+        sb.write_sdk_default(Path(self.d), auth="login")   # set_auth's seed: no authExplicit
+        s = self._sess(17)
+        s._launched_keyed = True                           # the helper box: an unpicked launch means the key
+        self.be._note_auth_source(s, "apiKeyHelper")       # ...and lands there
+        self.assertFalse(any("remembered Billing pick" in t for t in self._problem_texts()),
+                         "a seeded value rings nothing: the launch never followed it: %r" % self._problem_texts())
+        self.assertFalse(any("billing the API key" in t for t in self._problem_texts()), "the intended landing is quiet")
+        self.assertTrue(self.be.set_auth_default("login"))   # the machine default: the launch follows it, so the check does
+        s2 = self._sess(18)
+        s2._launched_keyed = True                          # a stale stamp (a launch from before the default) landing keyed
+        self.be._note_auth_source(s2, "apiKeyHelper")
+        texts = self._problem_texts()
+        self.assertTrue(any("the remembered Billing pick is login" in t and "billing the API key" in t for t in texts),
+                        "the same landing contradicts the explicit default and rings: %r" % texts)
 
 
 class LoginPickNeedsALogin(_Declared):

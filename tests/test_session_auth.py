@@ -704,7 +704,9 @@ class FallbackBothWays(_Keyed):
                          "an explicit pick reads as picked: pick_unavailable says the launch fell")
 
     def test_a_remembered_login_default_with_no_login_seeds_nothing_and_says_so_once(self):
-        sb.write_sdk_default(self.be.state_dir, auth="login")
+        # the remembered default a spawn reads is the EXPLICIT one (2026-09-18; a per-session pick's seed, written with no
+        # authExplicit, seeds nothing and has nothing to set aside); the flag written once here stays through the mirror's write
+        sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
         self.be.login_ok = lambda: False
         sid = self.be.spawn("n", "/tmp")
         self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid), "unpicked: bills the key by the box's fallback")
@@ -854,16 +856,22 @@ class DeclaredLoginOnAHelperBox(_Keyed):
 
 
 class SetAuth(_Keyed):
-    def test_persists_pending_and_seeds_the_next_session(self):
+    def test_persists_pending_and_remembers_the_pick_without_seeding_the_next_spawn(self):
         sid = self.be.spawn("n", "/tmp")
         self.assertTrue(self.be.set_auth(sid, "login"))
         reg = sb.read_reg(self.be.state_dir, sid)
         self.assertEqual(reg["auth"], "login")
         self.assertTrue(reg["authPending"], "the applying reconnect hasn't happened yet — badge dots")
-        self.assertEqual(sb.read_sdk_defaults(self.be.state_dir).get("auth"), "login")
-        # …and the next spawn seeds from it
+        self.assertEqual(sb.read_sdk_defaults(self.be.state_dir).get("auth"), "login", "remembered: the picker's preselected choice")
+        self.assertFalse(sb.read_sdk_defaults(self.be.state_dir).get("authExplicit"))
+        # ...and the next spawn with no pick of its own is NOT seeded from it (2026-09-18): the launch and the init check
+        # follow the file's auth only beside authExplicit, and so does the spawn now, so a session created with no pick
+        # follows the machine default wherever it moves instead of carrying a pick of the remembered side
         sid2 = self.be.spawn("m", "/tmp")
-        self.assertEqual(sb.read_reg(self.be.state_dir, sid2).get("auth"), "login")
+        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid2), "a follower, not a pick of the remembered side")
+        self.assertTrue(self.be.set_auth_default("login"))
+        sid3 = self.be.spawn("o", "/tmp")
+        self.assertEqual(sb.read_reg(self.be.state_dir, sid3).get("auth"), "login", "the EXPLICIT default seeds a new session")
 
     def test_the_machine_default_is_set_explicitly_and_a_session_pick_then_moves_it_no_more(self):
         """T380 (the user 2026-09-12): the Billing flyout's Default group writes the seed every new session and every
