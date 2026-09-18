@@ -728,9 +728,10 @@ class WakeOnlyLooksSkipOnTheKey(_Base):
         with the toggle on a stamped top records a bounded row for the first time since the stampedWait note retired, so the
         dead-man instant _wake_goal notes is the only bound on the gear-ON skip. A mutant that notes the instant on the wake-only
         road alone (`if wake_only:` around the note) leaves the rest of the nudge, wake and awaiting suites green while the
-        check-in wake never fires; this test fails under it twice over: the first row's flip reads -1.0 where the instant
-        belongs, and at the instant the pass skips, (0, 0) != (1, 1). The byte-identity twin below cannot fail for that defect:
-        a skip against a full pass over an unchanged world records the same row whether or not the instant was noted."""
+        check-in wake stays unfired for as long as that world stands; this test fails under it twice over: the first row's
+        flip reads -1.0 where the instant belongs, and at the instant the pass skips, (0, 0) != (1, 1). The byte-identity twin
+        below cannot fail for that defect: a skip against a full pass over an unchanged world records the same row whether or
+        not the instant was noted."""
         self._toggle(True)
         self.alive = [SID]
         self._seed(kind="job", age=5 * H)                          # due at NOW + 1 h
@@ -760,11 +761,11 @@ class WakeOnlyLooksSkipOnTheKey(_Base):
     def test_a_skipping_pass_with_nudges_on_leaves_every_output_byte_identical_to_a_full_pass(self):
         """The gear-ON twin of the byte-identity proof, filed as a LOW regression pin (review round 1: tests-1, regression-1,
         kernel-2). It cannot catch a staleness defect: a skip and a full pass over a STATIC world record the same row whether or
-        not a leg noted the input that could move, so an unnoted gear-ON exit passes it while a due wake never fires (the
-        refuters proved this by injecting one). What it does pin: with the toggle on a stamped top and a delegated top skip at
-        all (the stampedWait and allDelegated notes retired: at the base every gear-on pass over them parsed), and the skip
-        writes nothing a full evaluation would. The plain working top stays out of this world: with the gear on it takes the
-        status nudge, a fire that records no row. The load-bearing gear-ON pin is the due twin above."""
+        not a leg noted the input that could move, so an unnoted gear-ON exit passes it while a due wake stays unfired for as
+        long as that world stands (the refuters proved this by injecting one). What it does pin: with the toggle on a stamped
+        top and a delegated top skip at all (the stampedWait and allDelegated notes retired: at the base every gear-on pass over
+        them parsed), and the skip writes nothing a full evaluation would. The plain working top stays out of this world: with
+        the gear on it takes the status nudge, a fire that records no row. The load-bearing gear-ON pin is the due twin above."""
         self._toggle(True)
         self.alive = [SID2, SID3]
         self._seed(kind="job", age=5 * H, sid=SID2); self._seed(stamped=False, delegated=True, sid=SID3)
@@ -941,8 +942,10 @@ class WakeOnlyLooksSkipOnTheKey(_Base):
 
     def test_a_plain_top_alone_fires_its_status_nudge_on_the_pass_after_the_todo_is_dismissed(self):
         """The pre-existing case the note also closes: with the plain top alone the base recorded a bounded row on the first pass
-        (no stamped or delegated top ever noted stampedWait or allDelegated for it), skipped from the second, and never fired
-        after the dismissal until a keyed file moved. The same note fixes it."""
+        (no stamped or delegated top ever noted stampedWait or allDelegated for it), skipped from the second, and after the
+        dismissal held the status nudge until the next box-wide keyed event (any postal, cleared or ledger row on the box)
+        moved a keyed file; in this world nothing notes a dead-man instant (no stamped top, no parked or moot record), so no
+        ceiling bounds that hold. The same note closes it."""
         self._seed(stamped=False)
         p = jd.GOALDIR / (SID + ".json"); store = json.loads(p.read_text())
         store["nodes"][self.gid]["text"] = self.PLAIN_TOP_TEXT      # the one top is the plain one the nudge quotes
