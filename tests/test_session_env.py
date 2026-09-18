@@ -174,6 +174,85 @@ class FlagSettingsEnv(unittest.TestCase):
             sb.flag_settings_path(self.d, PARENT, log=lambda *a, **k: logged.append(a)), "")
         self.assertEqual(logged, [], "nothing requested, nothing dropped — nothing to report")
 
+    def test_no_keys_removes_the_file_an_earlier_connect_left(self):
+        """Review round 1 of the env-pick door (2026-09-18), the round's one high finding: with no key riding the
+        writer returned "" and left the previous connect's file, and with it the env block that connect launched
+        with, on disk for good, so a per-session env redacted to the empty set stayed in this file while the
+        registry said it was gone. The stale file goes; the "" contract stands; nothing is said (the common case)."""
+        p = sb.flag_settings_path(self.d, PARENT, env={"FEATURE_FLAG": "1"})
+        self.assertTrue(Path(p).exists())
+        logged = []
+        self.assertEqual(sb.flag_settings_path(self.d, PARENT, log=lambda *a, **k: logged.append(a)), "")
+        self.assertFalse(Path(p).exists(), "the stale per-session file is removed, not left with its env block")
+        self.assertEqual(logged, [], "a removal that worked is not a problem row")
+        self.assertEqual(sb.flag_settings_path(self.d, PARENT), "", "and a second call finds nothing to remove")
+        self.assertFalse(Path(self.d, sb.FLAG_SETTINGS_DIR, "%s.json" % CHILD).exists(),
+                         "a session that never had a file gets none")
+
+    def test_a_stale_file_that_cannot_be_removed_is_a_problem_row(self):
+        # a DIRECTORY where the per-sid file goes: unlink raises an OSError that is not a missing file
+        Path(self.d, sb.FLAG_SETTINGS_DIR, "%s.json" % PARENT).mkdir(parents=True)
+        logged = []
+        self.assertEqual(sb.flag_settings_path(self.d, PARENT, log=lambda msg, problem=False: logged.append((msg, problem))), "")
+        self.assertEqual(len(logged), 1, "the file may still carry an earlier launch's env: said, as the write branch says its drop")
+        self.assertTrue(logged[0][1])
+        self.assertIn(PARENT, logged[0][0])
+        self.assertIn("could not be removed", logged[0][0])
+        self.assertEqual(sb.flag_settings_path(self.d, PARENT), "", "log=None neither raises nor changes the contract")
+
+
+class FlagSettingsSyncEnv(unittest.TestCase):
+    """flag_settings_sync_env (review round 1 of the env-pick door, 2026-09-18): the per-sid file's env block follows
+    the registry at the WRITE, for the session that never connects again. The other keys stay as the last connect
+    wrote them; with nothing left the file goes; a missing file is nothing to do."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.p = Path(self.d, sb.FLAG_SETTINGS_DIR, "%s.json" % PARENT)
+
+    def _read(self):
+        return json.loads(self.p.read_text())
+
+    def test_a_missing_file_is_nothing_to_do_and_none_is_created(self):
+        sb.flag_settings_sync_env(self.d, PARENT, ENV)
+        self.assertFalse(Path(self.d, sb.FLAG_SETTINGS_DIR).exists(), "no directory, no file: the next connect writes what it needs")
+        Path(self.d, sb.FLAG_SETTINGS_DIR).write_text("not a directory")
+        sb.flag_settings_sync_env(self.d, PARENT, {})    # a plain file where the directory goes is no file either
+
+    def test_the_env_block_is_replaced_and_the_other_keys_stay(self):
+        import stat
+        sb.flag_settings_path(self.d, PARENT, fast=True, no_helper=True, env={"FEATURE_FLAG": "1", "OLD_FLAG": "x"})
+        sb.flag_settings_sync_env(self.d, PARENT, ENV)
+        self.assertEqual(self._read(), {"fastMode": True, "apiKeyHelper": "", "env": ENV})
+        self.assertEqual(stat.S_IMODE(os.stat(self.p).st_mode), 0o600, "0600, the writer's own treatment")
+        self.assertFalse(Path(str(self.p) + ".tmp").exists(), "renamed into place")
+
+    def test_an_empty_env_drops_the_block_and_an_empty_file_goes(self):
+        sb.flag_settings_path(self.d, PARENT, ultracode=True, env=ENV)
+        sb.flag_settings_sync_env(self.d, PARENT, {})
+        self.assertEqual(self._read(), {"ultracode": True}, "the block goes, the key that still rides stays")
+        sb.flag_settings_path(self.d, PARENT, env=ENV)
+        sb.flag_settings_sync_env(self.d, PARENT, None)
+        self.assertFalse(self.p.exists(), "nothing rides: the file goes rather than staying as {}")
+
+    def test_an_unparsable_file_is_replaced_by_what_is_known(self):
+        self.p.parent.mkdir(parents=True)
+        self.p.write_text("{not json")
+        sb.flag_settings_sync_env(self.d, PARENT, ENV)
+        self.assertEqual(self._read(), {"env": ENV})
+        self.p.write_text("{not json")
+        sb.flag_settings_sync_env(self.d, PARENT, {})
+        self.assertFalse(self.p.exists())
+
+    def test_a_write_that_fails_is_a_problem_row(self):
+        self.p.mkdir(parents=True)          # a directory where the file goes: the open fails, the unlink fails
+        logged = []
+        sb.flag_settings_sync_env(self.d, PARENT, {}, log=lambda msg, problem=False: logged.append((msg, problem)))
+        self.assertEqual(len(logged), 1)
+        self.assertTrue(logged[0][1])
+        self.assertIn(PARENT, logged[0][0])
+        sb.flag_settings_sync_env(self.d, PARENT, {})    # log=None: quiet, no raise
+
 
 class SpawnEnv(_Backend):
     def test_spawn_persists_the_env_in_the_reg(self):
@@ -445,8 +524,9 @@ class ValidatorLockstep(unittest.TestCase):
         {"FEATURE_FLAG": 1}, {"FEATURE_FLAG": None}, {"FEATURE_FLAG": True},
         {"FEATURE_FLAG": {"nested": "no"}}, {"FEATURE_FLAG": "1\x00x"},
         # credential-shaped names of other spellings (2026-09-18): refused by the rule credentials.py holds for
-        # both copies; an empty or whitespace value holds no secret and passes; the control token is the rule's
-        # one exclusion; a bad value under such a name is the value's refusal, whichever copy answers
+        # both copies; an empty or whitespace value holds no secret and passes; the control token is refused like
+        # any other since review round 1 (its exclusion is the boot notice's alone); a bad value under such a
+        # name is the value's refusal, whichever copy answers
         {"NOTES_API_TOKEN": _secret_value("notes-token")}, {"NOTES_API_KEY": _secret_value("notes-key")},
         {"OP_SESSION_notes": _secret_value("op-session")}, {"OP_CONNECT_TOKEN": _secret_value("op-connect")},
         {"NOTES_ENDPOINT": "http://notes.test", "NOTES_API_TOKEN": _secret_value("notes-token"),
@@ -459,6 +539,8 @@ class ValidatorLockstep(unittest.TestCase):
         # only begins with the shape passes in any case
         {"notes_api_token": _secret_value("notes-token")}, {"Notes_Api_Key": _secret_value("notes-key")},
         {"romp_serve_token": _secret_value("control-lower")}, {"editor_tokenizer": "x"}, {"empty_token": ""},
+        # the 1Password half folds too (review round 1 of the env-pick door, 2026-09-18): both copies, one verdict
+        {"op_session_notes": _secret_value("op-session-lower")}, {"Op_Account": "acct"}, {"options_for_x": "x"},
     )
 
     @staticmethod
@@ -521,7 +603,9 @@ class DrivePlumbing(unittest.TestCase):
         self.assertIn("def _set_env_or_park(be, sid, value):", src)
         self.assertIn('_gate_or_park(sid, ("env", value))', src)   # parks on the gate, or hands over (2026-09-05)
         self.assertIn('elif op[0] == "env":', src)
-        self.assertIn("be.set_env(sid, op[1])", src)
+        self.assertIn("refused = be.set_env(sid, op[1]) is False", src,
+                      "the drain reads the verdict (review round 1 of the env-pick door, 2026-09-18); the refusal "
+                      "itself is pinned by execution in tests/test_kernel_meta_command_gate.py")
         self.assertIn('("model", "effort", "fast", "env", "cwd")', src,
                        "a repeat env pick REPLACES the earlier parked one in place, like model/effort (and a move)")
 
@@ -614,7 +698,34 @@ class CredentialShapedNamesAtTheDoor(unittest.TestCase):
                 self.assertIn("the pick was not saved", err)
                 self.assertIn("process environment", err, "the message says where such a value belongs")
                 self.assertTrue(err.startswith("env: "), "the env doors' prefix, like every other refusal")
+                self.assertEqual(err, "env: " + sb._cred.credential_env_refusal([name]),
+                                 "the door's head once, in front of the shared sentence (review round 1, 2026-09-18)")
         self.assertEqual(sb.env_request_error(dict(PLAIN)), "", "the same pick without the name passes")
+
+    def test_the_shared_sentence_carries_no_head_of_its_own(self):
+        """Review round 1 (2026-09-18): the sentence began "env: " and set_env's log line put its own head in front,
+        so the row read "pick refused: env: ...". Each door adds the head once; the sentence leads with the names."""
+        sentence = sb._cred.credential_env_refusal(["NOTES_API_TOKEN"])
+        self.assertTrue(sentence.startswith("NOTES_API_TOKEN is credential-shaped"), sentence)
+        self.assertNotIn("env: ", sentence)
+        short = sb._cred.credential_env_ring_text(["NOTES_API_TOKEN"])
+        self.assertTrue(short.startswith("NOTES_API_TOKEN is credential-shaped: the pick was not saved"), short)
+        self.assertIn("process environment", short)
+        self.assertNotIn("env: ", short)
+
+    def test_the_control_token_is_refused_like_any_credential_shaped_name(self):
+        """Review round 1 (2026-09-18): the door reused a rule that left ROMP_SERVE_TOKEN unnamed for the boot line's
+        sake, so romp's own control token was the one credential-shaped name a pick could still write to the
+        registry and the flag-settings file, while the reference's lister reported it as an offender. The
+        exclusion is the boot notice's alone now; the rule, the writer and the doors name it."""
+        pick = {"ROMP_SERVE_TOKEN": "control"}
+        err = sb.env_request_error(pick)
+        self.assertIn("ROMP_SERVE_TOKEN is credential-shaped", err)
+        self.assertEqual(sb._cred.credential_env_names(pick), ["ROMP_SERVE_TOKEN"], "the rule names it")
+        self.assertEqual(sb.spawn_env_secret_names(pick), ["ROMP_SERVE_TOKEN"], "the writer moves it")
+        self.assertEqual(sb.env_credential_names(pick), [], "the boot line alone leaves it unnamed")
+        self.assertEqual(sb.env_credential_names({"romp_serve_token": "c"}), ["romp_serve_token"],
+                         "and that exclusion stays the exact name romp reads")
 
     def test_every_offending_name_is_said_sorted_and_no_value(self):
         tok, key = _secret_value("tok"), _secret_value("key")
@@ -629,7 +740,7 @@ class CredentialShapedNamesAtTheDoor(unittest.TestCase):
         val = _secret_value("value")
         picks = ({**PLAIN, "NOTES_API_TOKEN": val}, {"EMPTY_TOKEN": ""}, {"SPACES_TOKEN": "  "},
                  {"ROMP_SERVE_TOKEN": "control"}, dict(PLAIN), {"OP_ACCOUNT": "acct"}, {"MY_SECRET_TOKEN": val},
-                 {"TOKEN_FIRST": val}, {"API_KEY_HOLDER": val})
+                 {"TOKEN_FIRST": val}, {"API_KEY_HOLDER": val}, {"op_session_notes": val}, {"Op_Connect_Host": "h"})
         for pick in picks:
             flagged = sb.spawn_env_secret_names(pick)
             err = sb.env_request_error(pick)
@@ -652,12 +763,15 @@ class CredentialShapedNamesAtTheDoor(unittest.TestCase):
         spellings, under their own spelling, with the refusal an upper-case name gets, the value in no message;
         an empty value and a name whose suffix only begins with the shape pass in any case."""
         for name, upper in (("notes_api_token", "NOTES_API_TOKEN"), ("Notes_Api_Key", "NOTES_API_KEY"),
-                            ("hf_token", "HF_TOKEN")):
+                            ("hf_token", "HF_TOKEN"),
+                            # the 1Password half folds too (review round 1 of the env-pick door, 2026-09-18: the fold
+                            # had reached the suffixes alone, so a lowercase session token passed every door)
+                            ("op_session_notes", "OP_SESSION_NOTES"), ("Op_Account", "OP_ACCOUNT")):
             val = _secret_value("value")
             for auth in ("", "key", "login"):
                 err = sb.env_request_error({**PLAIN, name: val}, auth)
                 self.assertTrue(err, "%s must be refused for auth=%r" % (name, auth))
-                self.assertEqual(err, sb._cred.credential_env_refusal([name]), "the one wording, naming this spelling")
+                self.assertEqual(err, "env: " + sb._cred.credential_env_refusal([name]), "the one wording, naming this spelling")
                 self.assertEqual(err.replace(name, upper), sb.env_request_error({**PLAIN, upper: val}, auth),
                                  "the same refusal text as the upper-case spelling gets")
                 self.assertNotIn(val, err, "the VALUE is never in the message")
@@ -759,6 +873,9 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         self.assertEqual(len(rows), 1, "one problem row names the stored variable: %r" % (self.logged,))
         self.assertNotIn(val, rows[0][0], "the value is never in the line")
         self.assertIn("romp new --env", rows[0][0], "the line says how to redact")
+        self.assertIn("flag-settings file", rows[0][0],
+                      "and says the redaction reaches the file too (review round 1, 2026-09-18: the first wording "
+                      "promised a redaction that left the value in that file)")
         self.assertEqual(rows[0][1].get("key"), ("env-stored-credential", sid), "keyed per session: the ring dedupes")
         self.assertFalse(any(val in m for m, _p, _k in self.logged))
         self.assertTrue(self.be.set_env(sid, dict(ENV)), "the redaction re-declares the env without the name")
@@ -780,3 +897,147 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         self.assertNotIn(val, rows[0][0], "the value is never in the line")
         self.assertEqual(rows[0][1].get("key"), ("env-stored-credential", sid))
         self.assertFalse(any(val in m for m, _p, _k in self.logged))
+
+    def _stored_offender(self, name="NOTES_API_TOKEN"):
+        """A live session launched with a stored credential-shaped name (a pick accepted before the door refused it):
+        the registry and the flag-settings file both carry the value."""
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        val = _secret_value("notes-token")
+        self.be._update_reg(sid, env={**ENV, name: val})
+        s = self._live(sid)
+        self.be._options(s, dict)
+        self.assertIn(val, self._flag_file(sid).read_text(), "the launch wrote the value: the state under test")
+        return sid, s, val
+
+    def test_redacting_to_the_empty_env_removes_the_value_from_every_file_under_the_state_root(self):
+        """The round's one HIGH finding (review round 1 of the env-pick door, 2026-09-18): the reference named
+        `romp new --no-env` as a redaction road, and that road cleared the registry and the launch while the
+        per-session flag-settings file kept the value, because the writer returned "" without unlinking when no
+        key rode and nothing removed the file; and the stored-offender line, which reads the registry, fell
+        silent, so the value stayed on disk and the warning went away. Now the write itself brings the file in
+        line (flag_settings_sync_env) and a connect that needs no key removes a stale one (flag_settings_path).
+        Pinned by execution over a walk of the whole state root, at the write and after the connect."""
+        sid, s, val = self._stored_offender()
+        self.assertTrue(self.be.set_env(sid, {}), "the redaction road the reference names")
+        self.assertEqual(self._reg(sid)["env"], {})
+        self.assertEqual(self._files_carrying(val), [], "gone at the write itself, before any connect")
+        self.assertFalse(self._flag_file(sid).exists(), "no key rides this session: the file goes")
+        kw = self.be._options(s, dict)                          # the connect the redaction applies by
+        self.assertNotIn("settings", kw)
+        self.assertEqual(self._files_carrying(val), [], "and no file under the state root carries the value after it")
+        self.assertFalse(self._flag_file(sid).exists())
+        self.assertFalse(any(val in m for m, _p, _k in self.logged), "no log line carries the value")
+
+    def test_re_declaring_the_env_without_the_name_rewrites_the_file_at_the_write(self):
+        # the other redaction road, `romp new --env` with the rest of the set: the file follows the registry at
+        # the write, so a session that never connects again is clean too
+        sid, s, val = self._stored_offender()
+        self.assertTrue(self.be.set_env(sid, dict(ENV)))
+        self.assertEqual(json.loads(self._flag_file(sid).read_text())["env"], ENV, "the file's block follows the registry")
+        self.assertEqual(self._files_carrying(val), [], "the value is in no file under the state root at the write")
+        self.be._options(s, dict)
+        self.assertEqual(self._files_carrying(val), [])
+
+    def test_a_dormant_sessions_redaction_needs_no_connect(self):
+        """A registry with no live process never reconnects: until review round 1 (2026-09-18) its flag-settings file
+        kept the redacted value for good. The write is what redacts it."""
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        val = _secret_value("notes-token")
+        self.be._update_reg(sid, env={**ENV, "NOTES_API_TOKEN": val})
+        self.be._options(self._sess(sid), dict)                 # launched once; no live object holds it now
+        self.assertNotIn(sid, self.be.sessions)
+        self.assertIn(val, self._flag_file(sid).read_text())
+        self.assertTrue(self.be.set_env(sid, {}))
+        self.assertEqual(self._files_carrying(val), [], "gone at the write, with no connect to come")
+        self.assertFalse(self._flag_file(sid).exists())
+
+    def test_the_write_keeps_the_other_keys_and_a_stale_file_goes_at_the_next_connect(self):
+        # the file also carries the keys the last connect wrote (a fast-mode pick here): the env block goes, the rest
+        # stays for the launch that reads it; and a file an earlier kernel left stale (the registry already
+        # redacted) is removed by an unchanged re-declaration at the write, or by the next connect
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        val = _secret_value("notes-token")
+        p = self._flag_file(sid)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"fastMode": True, "env": {**ENV, "NOTES_API_TOKEN": val}}) + "\n")
+        self.assertTrue(self.be.set_env(sid, {}))
+        self.assertEqual(json.loads(p.read_text()), {"fastMode": True}, "the block goes, the key that rides stays")
+        p.write_text(json.dumps({"env": {"NOTES_API_TOKEN": val}}) + "\n")   # stale: the registry already says {}
+        self.assertTrue(self.be.set_env(sid, {}), "an unchanged re-declaration")
+        self.assertFalse(p.exists(), "puts the stale file right at the write")
+        p.write_text(json.dumps({"env": {"NOTES_API_TOKEN": val}}) + "\n")
+        kw = self.be._options(self._sess(sid), dict)            # or the next connect does, needing no key
+        self.assertNotIn("settings", kw)
+        self.assertFalse(p.exists(), "a connect that needs no key removes the stale file rather than leaving it")
+        self.assertEqual(self._files_carrying(val), [])
+
+    def test_a_fork_copies_no_credential_shaped_name_into_its_own_files(self):
+        """Review round 1 of the env-pick door (2026-09-18): the fork copied the parent's stored env verbatim except
+        the reserved and login names, so a stored credential-shaped name was written into a fresh registry and,
+        at the child's first connect, a fresh flag-settings file, by a user gesture (a cut turn, a comment thread)
+        no door sees. The copy drops such a name, on its own names-only line (not the reserved drop's, whose words
+        would misdescribe it, and with no key: the fork is one gesture, and stubs of _log take none), and the
+        parent keeps it until its env is re-declared."""
+        os.environ["CLAUDE_CONFIG_DIR"] = tempfile.mkdtemp()   # transcript_path resolves through this
+        try:
+            self.be.spawn("parent", self.d, sid=PARENT, env=ENV)
+            val = _secret_value("notes-token")
+            self.be._update_reg(PARENT, env={**ENV, "NOTES_API_TOKEN": val, "op_session_notes": val})
+            self.be.fork("child", PARENT, "a1", sid=CHILD)
+            self.assertEqual(self._reg(CHILD).get("env"), ENV, "the env inherits less the credential-shaped names")
+            kw = self.be._options(self._sess(CHILD), dict)
+            self.assertEqual(json.loads(Path(kw["settings"]).read_text())["env"], ENV, "the child's own file is clean")
+            for path in self._files_carrying(val):
+                self.assertIn(PARENT, path, "the value sits in the parent's files alone: %r" % (path,))
+            self.assertTrue(self._files_carrying(val), "the parent's registry still holds it (nothing is cleaned there)")
+            rows = [(m, kw2) for m, problem, kw2 in self.logged if problem and "child" in m and "NOTES_API_TOKEN" in m]
+            self.assertEqual(len(rows), 1, "one names-only line for the fork: %r" % (self.logged,))
+            self.assertIn("op_session_notes", rows[0][0])
+            self.assertIn("not copying credential-shaped", rows[0][0])
+            self.assertNotIn("reserved", rows[0][0], "not the reserved drop's words")
+            self.assertNotIn("key", rows[0][1], "no dedupe key: a fork is one gesture")
+            self.assertFalse(any(val in m for m, _p, _k in self.logged), "no log line carries the value")
+            self.assertFalse(any(kw2.get("key") == ("env-stored-credential", CHILD) for _m, _p, kw2 in self.logged),
+                             "the child's own connect has no stored offender to report")
+        finally:
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+
+    def test_the_refusal_line_is_headed_once_and_fits_the_caps(self):
+        """Review round 1 of the env-pick door (2026-09-18): the set_env line read "pick refused: env: ..." and ran
+        to 414 characters against the feed's 400 (kernel.SDK_PROBLEM_TEXT_CAP), so the row an admin read was
+        clipped mid-word; the error centre cuts again at 240 (sdk_backend.ERROR_CENTER_TEXT_CAP, the badge
+        mirror's literal). The line carries the door's head once, fits the kernel's cap with a name, and the
+        ring text, the error centre's short form, fits its cap and leads with the names, that nothing was saved
+        and where the value belongs."""
+        km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        val = _secret_value("notes-token")
+        self.assertFalse(self.be.set_env(sid, {**PLAIN, "NOTES_API_TOKEN": val}))
+        rows = [(m, kw) for m, problem, kw in self.logged if problem and "pick refused" in m]
+        self.assertEqual(len(rows), 1, self.logged)
+        line, kw = rows[0]
+        self.assertTrue(line.startswith("env (web): pick refused: NOTES_API_TOKEN is credential-shaped"), line)
+        self.assertNotIn("refused: env:", line, "the door's own head is not repeated")
+        self.assertEqual(line.count("env ("), 1)
+        self.assertNotIn("env: ", line, "the door's head appears nowhere in the line")
+        self.assertLessEqual(len(line), km.SDK_PROBLEM_TEXT_CAP, "whole in the feed's problem row")
+        self.assertEqual(km._sdk_problem_text(line), line, "the kernel's cut leaves it as it is")
+        ring = kw.get("ring_text")
+        self.assertTrue(ring and ring.startswith("env (web): pick refused: NOTES_API_TOKEN is credential-shaped: the pick was not saved"), ring)
+        self.assertIn("process environment", ring)
+        self.assertLessEqual(len(ring), sb.ERROR_CENTER_TEXT_CAP, "whole in the error centre")
+        self.assertNotIn(val, line)
+        self.assertNotIn(val, ring)
+        # another refusal shape keeps its own words, headed once, and rides the ring as it is
+        self.assertFalse(self.be.set_env(sid, {"9BAD": "1"}))
+        bad = [(m, kw) for m, problem, kw in self.logged if problem and "9BAD" in m]
+        self.assertEqual(len(bad), 1)
+        self.assertTrue(bad[0][0].startswith("env (web): pick refused: bad name"), bad[0][0])
+        self.assertEqual(bad[0][1].get("ring_text"), bad[0][0])
+
+    def test_the_error_centre_cap_is_the_badge_mirrors_literal(self):
+        ts = Path(os.path.dirname(HERE), "ui", "webview", "badge-mirror.ts").read_text()
+        self.assertIn("cap(r.text, %d)" % sb.ERROR_CENTER_TEXT_CAP, ts,
+                      "the constant mirrors the cut the dashboard's error centre applies to an SDK problem row")
+        km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+        self.assertEqual(km._sdk_problem_text.__defaults__, (km.SDK_PROBLEM_TEXT_CAP,), "the feed's cut is the constant")

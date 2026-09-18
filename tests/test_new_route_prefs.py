@@ -145,8 +145,10 @@ class NewRouteEnv(unittest.TestCase):
     the SDK spawn so the eager connect already carries it, re-asserted through the park-aware
     set_env on the idempotent existing:true open, and echoed back like model/effort. SDK-only: the
     payload rides the per-sid flag-settings file, which the Codex backend never reads — asked of a
-    Codex session or the Codex arm, /new says so instead of pretending. Synthetic values only
-    (FEATURE_FLAG=1 shapes, never anything credential-shaped — gitleaks reads this repo too)."""
+    Codex session or the Codex arm, /new says so instead of pretending. Values are assembled at run
+    time and never a token-shaped literal (gitleaks reads this repo too); the door tests deliberately
+    plant credential-shaped NAMES, since refusing them is what they pin (review round 1 of the env-pick
+    door, 2026-09-18, which found this docstring still claiming no such name is used here)."""
 
     class _SdkBe:
         """A backend double WITH the set_env capability (the SDK shape)."""

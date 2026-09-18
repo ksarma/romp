@@ -116,7 +116,10 @@ def env_file_assignments(text, names=None) -> dict:
 def is_op_env_name(name) -> bool:
     """The 1Password CLI's own credential names, the ones the retired reference kind read: romp no longer
     runs `op`, so they are refused at boot like the provider variables (a token beside a retired line was
-    the documented shape, and a token left in the manager's environment would ride into every session)."""
+    the documented shape, and a token left in the manager's environment would ride into every session).
+    Exact, as 1Password spells them: this is the boot check's classifier (check_boot_environment,
+    retired_in_env_file), which refuses what `op` exports. The credential SHAPE rule (is_credential_env_name)
+    hands it the upper-cased name, so there a lowercase spelling counts too."""
     return name in OP_ENV_NAMES or str(name).startswith(OP_ENV_PREFIX)
 
 
@@ -126,33 +129,44 @@ def is_op_env_name(name) -> bool:
 # doors refuse.
 CREDENTIAL_ENV_SUFFIXES = ("_API_KEY", "_TOKEN")
 # romp's own control token: a credential, but not a provider's, and legitimately in the kernel's own
-# environment, so the shape rule leaves it unnamed (the boot line would otherwise name it at every boot).
+# environment, so the BOOT NOTICE leaves it unnamed (sdk_backend.env_credential_names; the line would otherwise
+# name it at every boot). The shape rule itself does not exclude it (review round 1 of the env-pick door,
+# 2026-09-18): a per-session pick naming it is refused like any other credential-shaped name, and the spawn.json
+# writer moves it, so the doors, the writer and the reference's lister agree and only the boot line differs.
 CONTROL_TOKEN_VAR = "ROMP_SERVE_TOKEN"
 
 
 def is_credential_env_name(name) -> bool:
-    """A variable NAME shaped like a credential: one ending _API_KEY or _TOKEN in any letter case, or one of
-    1Password's own (is_op_env_name). The shape only; the value is credential_env_names' business. The suffixes
-    are compared on the upper-cased name (the spawn-spec fix's review round 1, 2026-09-18: an exact, case-sensitive
-    suffix let notes_api_token past the spawn.json writer, and the same comparison here let it past the per-session
-    env doors into the registry and the flag-settings file with its value; the writer and the doors judge by this
-    one predicate, so both fold or neither does). The op names stay as this module spells them, that being the
-    classifier the boot check refuses by; the control token's exclusion (credential_env_names) stays the exact
-    name romp reads, so another spelling of it is a credential-shaped name like any other."""
-    n = str(name)
-    return n.upper().endswith(CREDENTIAL_ENV_SUFFIXES) or is_op_env_name(n)
+    """A variable NAME shaped like a credential: one ending _API_KEY or _TOKEN, or one of 1Password's own
+    (is_op_env_name), in any letter case. The shape only; the value is credential_env_names' business. Both halves
+    are compared on the upper-cased name. The suffixes since the spawn-spec fix's review round 1 (2026-09-18: an
+    exact, case-sensitive suffix let notes_api_token past the spawn.json writer, and the same comparison here let it
+    past the per-session env doors into the registry and the flag-settings file with its value; the writer and the
+    doors judge by this one predicate, so both fold or neither does). The 1Password half since review round 1 of
+    the env-pick door (2026-09-18): that fold had been carried into the suffix half alone, so op_session_<account>,
+    a 1Password session token under a spelling `op` never writes, was refused by neither door nor writer and landed
+    in both files with its value, the hole the suffix fold had closed, left open on the more secret shape. The boot
+    check's own refusal of the retired names (check_boot_environment) keeps is_op_env_name exact: it refuses what
+    `op` exports. The control token is not excluded here (its exclusion is the boot notice's,
+    sdk_backend.env_credential_names, the exact name romp reads)."""
+    n = str(name).upper()
+    return n.endswith(CREDENTIAL_ENV_SUFFIXES) or is_op_env_name(n)
 
 
 def credential_env_names(environ) -> list:
     """The credential-shaped names (is_credential_env_name) in `environ` that hold a non-empty value, sorted,
     names only. ONE rule for three readers, so they agree on what a credential looks like: the boot notice
-    over the kernel's environment (sdk_backend.env_credential_names), the spawn.json writer over a spawn's
-    env overlay (sdk_backend.spawn_env_secret_names), and the per-session env doors over a pick
-    (sdk_backend.env_request_error and the kernel's _env_error mirror, 2026-09-18: the kernel cannot import
-    the SDK backend at its door, and a second spelling of the list there would drift). An empty or
-    whitespace value holds no secret and is not named; the control token is the one exclusion."""
-    return sorted(n for n in environ
-                  if n != CONTROL_TOKEN_VAR and (environ.get(n) or "").strip() and is_credential_env_name(n))
+    over the kernel's environment (sdk_backend.env_credential_names, which alone leaves the control token
+    unnamed), the spawn.json writer over a spawn's env overlay (sdk_backend.spawn_env_secret_names), and the
+    per-session env doors over a pick (sdk_backend.env_request_error and the kernel's _env_error mirror,
+    2026-09-18: the kernel cannot import the SDK backend at its door, and a second spelling of the list there
+    would drift). An empty or whitespace value holds no secret and is not named. Every value must be a str or
+    None: a value of another type raises here, and a caller whose values may be of other types coerces them
+    first, as the writer does (sdk_backend._overlay_text; review round 1 of the env-pick door, 2026-09-18, which
+    found the precondition stated nowhere). No name is excluded here: until that round the control token was, for
+    the boot line's sake, so the doors accepted the one credential-shaped name a pick could still write to two
+    files while the reference's lister reported it; the exclusion is the boot notice's now."""
+    return sorted(n for n in environ if (environ.get(n) or "").strip() and is_credential_env_name(n))
 
 
 def credential_env_refusal(names) -> str:
@@ -162,14 +176,30 @@ def credential_env_refusal(names) -> str:
     fork's rule that no credential is ever written to a file). One wording for both copies of the validator
     (sdk_backend.env_request_error and the kernel's _env_error), pinned in lockstep by tests. It names the
     variable, never a value, and says where such a value belongs and that nothing was saved: this string
-    reaches the /new reply, `romp new`'s stderr, the kernel log and the problem ring."""
+    reaches the /new reply, `romp new`'s stderr, the kernel log and the problem ring.
+
+    The sentence carries no "env: " head of its own; each door adds that once (review round 1 of the env-pick
+    door, 2026-09-18: set_env's log line put its own head in front of the door's, so the row read "pick refused:
+    env: ..."). It is kept short enough that the line set_env logs stays whole under the kernel's problem-text
+    cap (kernel.SDK_PROBLEM_TEXT_CAP, 400 characters; the first wording ran to 414 with one name and was clipped
+    mid-word), and it leads with what matters, so a shorter cut still says the names and that nothing was
+    saved (credential_env_ring_text is the error centre's own short form)."""
     names = sorted(names)
-    return ("env: %s %s credential-shaped (a name ending _API_KEY or _TOKEN in any letter case, or one of "
-            "1Password's), and a per-session env is written to files under romp's state directory; the pick was "
-            "not saved. A value "
-            "of that shape belongs in the process environment: what romp's service starts with reaches every "
-            "session, and a session's own shells can load it from a secret manager"
+    return ("%s %s credential-shaped (_API_KEY or _TOKEN suffix, or a 1Password OP_* name, any letter case) and a "
+            "per-session env is written to disk: the pick was not saved. Put such a value in the process environment "
+            "romp's service starts with, which every session inherits, or load it from a secret manager in the "
+            "session's shells"
             % (", ".join(names), "is" if len(names) == 1 else "are"))
+
+
+def credential_env_ring_text(names) -> str:
+    """credential_env_refusal's short form for the dashboard's error centre, which shows a problem row's first
+    sdk_backend.ERROR_CENTER_TEXT_CAP characters (240; review round 1 of the env-pick door, 2026-09-18): the
+    names, that nothing was saved, and where such a value belongs, front-loaded, so the row an admin reads is
+    whole. The full sentence stays in the kernel log."""
+    names = sorted(names)
+    return ("%s %s credential-shaped: the pick was not saved. Such a value belongs in the process environment, "
+            "not in a per-session env" % (", ".join(names), "is" if len(names) == 1 else "are"))
 
 
 def retired_in_env_file(path=None) -> list:

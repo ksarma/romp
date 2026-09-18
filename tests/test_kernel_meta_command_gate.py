@@ -16,6 +16,7 @@ import json
 import os
 import tempfile
 import unittest
+import uuid
 from contextlib import redirect_stderr
 from romp_load import load_source
 from unittest import mock
@@ -35,14 +36,16 @@ SID = "11111111-2222-4333-8444-0a0a0a0a0a0a"      # private to this module: park
 
 
 class _Backend:
-    """A backend that takes every setter; records what fired. Only the three setters' calls: neither the
+    """A backend that takes every setter; records what fired. Only the setters' calls: neither the
     route nor a setter reaches any other method on the paths driven here. `effort_ok` is set_effort's
     verdict, the SessionBackend contract's bool: False is a level the Codex model's catalog does not
-    offer (CodexBackend.set_effort answers it for an unknown model or an unreadable catalog too)."""
-    def __init__(self): self.calls = []; self.effort_ok = True
+    offer (CodexBackend.set_effort answers it for an unknown model or an unreadable catalog too).
+    `env_ok` is set_env's (False: a pick the door refuses, a credential-shaped name since 2026-09-18)."""
+    def __init__(self): self.calls = []; self.effort_ok = True; self.env_ok = True
     def set_model(self, sid, v): self.calls.append(("model", v))
     def set_effort(self, sid, v): self.calls.append(("effort", v)); return self.effort_ok
     def set_fast(self, sid, v): self.calls.append(("fast", v)); return True
+    def set_env(self, sid, v): self.calls.append(("env", v)); return self.env_ok
 
 
 def _forget_queue():
@@ -298,6 +301,49 @@ class RefusalReachesTheClient(unittest.TestCase):
         self.assertEqual(self.be.calls, [("effort", "ultra")])
         self.assertEqual(self.frames, [], "nothing to say: the level landed")
         self.assertEqual(err, "", "the refusal line is for refusals")
+
+    def _park_env_then_drain(self, pick):
+        """Park an env pick under a busy gate (the /new door's road, _set_env_or_park), then drain with the gate quiet."""
+        self.verdict = True
+        km._set_env_or_park(self.be, SID, pick)
+        self.assertEqual([op[0] for op in km._pending_ops[SID]], ["env"], "parked, not applied")
+        self.assertEqual(self.be.calls, [], "never applied before the gate lifts")
+        self.verdict = False
+        err = io.StringIO()
+        with redirect_stderr(err):
+            km._apply_pending_ops()
+        self.assertNotIn(SID, km._pending_ops, "popped: a refused pick is never replayed forever")
+        return err.getvalue()
+
+    def test_a_parked_env_pick_the_backend_refuses_at_the_drain_is_said_with_names_only(self):
+        """Review round 1 of the env-pick door (2026-09-18): the drain's env arm discarded set_env's verdict, so a
+        parked pick the door refuses at replay (a queue mirrored before the credential-shape rule and drained after
+        a restart) retired its chip as if it had landed, with no frame and no stderr line, though the effort and
+        fast arms of the same loop had been changed to read theirs for exactly that reason. The words are names
+        only, through the chip's own renderer: the op's dict carries the values, and a credential-shaped one is what
+        the door refuses, so neither the stderr line nor the frame may quote the pick, and the frame's reason is
+        generic (the backend's own log line says why)."""
+        self.be.env_ok = False
+        val = "synthetic-notes-token-" + uuid.uuid4().hex     # assembled at run time: the scanner reads this repo
+        pick = {"NOTES_ENDPOINT": "http://notes.test", "NOTES_API_TOKEN": val}
+        err = self._park_env_then_drain(pick)
+        self.assertEqual(self.be.calls, [("env", pick)], "fired once, at the drain, and refused there")
+        self.assertEqual([(a, m["type"], m["gesture"], m["sid"], m["flag"]) for a, m in self.frames],
+                         [("chat", "settingRefused", "command", SID, "env")],
+                         "the chat hears the refusal on the frame the effort and fast arms answer with")
+        text = self.frames[0][1]["text"]
+        self.assertIn("per-session env", text)
+        self.assertNotIn(val, text, "no value in the frame")
+        self.assertNotIn("credential", text, "no door wording: the reason stays generic")
+        self.assertIn("pending ops apply: _Backend refused '/env NOTES_API_TOKEN NOTES_ENDPOINT' for %s" % SID[:8], err,
+                      "the drain's own line, the op rendered as its names-only chip (_parked_md)")
+        self.assertNotIn(val, err, "no value on stderr")
+
+    def test_a_parked_env_pick_the_backend_takes_at_the_drain_says_nothing(self):
+        err = self._park_env_then_drain({"FEATURE_FLAG": "1"})
+        self.assertEqual(self.be.calls, [("env", {"FEATURE_FLAG": "1"})])
+        self.assertEqual(self.frames, [], "nothing to say: the pick landed")
+        self.assertEqual(err, "")
 
 
 if __name__ == "__main__":

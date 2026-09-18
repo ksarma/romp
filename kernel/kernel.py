@@ -19455,10 +19455,11 @@ def _env_error(env, auth=""):
     # spawn.json fix's build; the box admin ruled the door the fix): the pick lands in the registry and the
     # per-sid flag-settings file, against the fork's rule that no credential is written to a file. The three
     # login names were refused above whatever their value, so credentials.py's rule over the rest of the pick
-    # is exactly what sdk_backend.spawn_env_secret_names flags for the backend's copy (ValidatorLockstep).
+    # is exactly what sdk_backend.spawn_env_secret_names flags for the backend's copy (ValidatorLockstep). The
+    # "env: " head is this door's, added once (review round 1 of the env-pick door, 2026-09-18).
     secret = jd._cred.credential_env_names(env)
     if secret:
-        return jd._cred.credential_env_refusal(secret)
+        return "env: " + jd._cred.credential_env_refusal(secret)
     return ""
 
 
@@ -21962,7 +21963,13 @@ def _sdk_problem_count():
     return n
 
 
-def _sdk_problem_text(text, cap=400):
+# How many characters of a problem row's text the feed carries (the error centre cuts again at
+# sdk_backend.ERROR_CENTER_TEXT_CAP): a line meant to be read whole stays under it (review round 1 of the env-pick
+# door, 2026-09-18, which found set_env's refusal row 14 characters past it and clipped mid-word).
+SDK_PROBLEM_TEXT_CAP = 400
+
+
+def _sdk_problem_text(text, cap=SDK_PROBLEM_TEXT_CAP):
     """One line naming what broke, out of a message that may be a whole traceback. The head says what
     romp was doing ("boot reconcile failed"), the LAST line says what actually raised ("KeyError: 'x'"),
     and the frames in between are the kernel log's business — so the entry reads as a cause, not as
@@ -21977,7 +21984,7 @@ def _sdk_problem_text(text, cap=400):
     return out[:cap - 1] + "…" if len(out) > cap else out
 
 
-def _sdk_problem_rows(limit=20, cap=400):
+def _sdk_problem_rows(limit=20, cap=SDK_PROBLEM_TEXT_CAP):
     """Recent SDK-backend problems for the feed payload, oldest first. The signature keys the OCCURRENCE
     (this kernel's start + the ring's own sequence number), so a re-render or a page reload never re-logs
     and a repeat of the same failure DOES log again — the bell coalesces a flood into one counted row.
@@ -40364,7 +40371,11 @@ def _apply_pending_ops(now=None):
                     elif op[0] == "auth":
                         be.set_auth(sid, op[1])
                     elif op[0] == "env":
-                        be.set_env(sid, op[1])
+                        # the verdict is READ here too (review round 1 of the env-pick door, 2026-09-18): a parked
+                        # pick the door refuses at replay (a queue mirrored before the credential-shape rule and
+                        # drained after a restart) retired its chip as if it had landed, with no line and no frame,
+                        # while the effort and fast arms had been changed to read theirs for exactly that reason
+                        refused = be.set_env(sid, op[1]) is False
                     # (an unknown op kind gets no call: it is popped below and dropped — never wedge the queue)
                     with _pending_ops_lock:               # POP the head — only if it is still the op the backend got
                         _inflight_ops.pop(sid, None)      # (a no-op for a cwd op, which was never recorded)
@@ -40396,7 +40407,7 @@ def _apply_pending_ops(now=None):
                             _mark_compacting(sid)         # a TYPED /compact gets the same instant cue as the button's op
                         _after_turn_opening(be, sid, _pending_ops.get(sid) or [])
                         break                             # its turn / compaction must end before anything behind it fires
-                    if op[0] in ("effort", "fast") and refused:
+                    if op[0] in ("effort", "fast", "env") and refused:
                         # the backend refused the parked level or toggle when it fired (a Codex model whose catalog does
                         # not offer the level, a session the backend holds no row for, a Codex session's fast toggle):
                         # the same stderr line the command and compact arms write, and the refusal to the chat on the
@@ -40405,9 +40416,17 @@ def _apply_pending_ops(now=None):
                         # a same-kind replacement delivering next does not unsay this one's refusal. No client is at hand
                         # here, so the chat page is the addressee (_send_to_app). Nothing applies early: the gate lift is
                         # still what fires the op (the catch-up fold's review, 2026-09-18).
-                        what = "/%s %s" % (op[0], op[1] if op[0] == "effort" else v)
-                        why = (_effort_refusal(be, op[1]) if op[0] == "effort"
-                               else "Couldn't toggle fast mode: the session's backend refused it.")
+                        if op[0] == "env":
+                            # NAMES ONLY, through the chip's own renderer (_parked_md): the op's dict carries the values,
+                            # and a credential-shaped one is what the door refuses, so neither the stderr line nor the
+                            # frame may quote the pick; the reason stays generic, the backend's log line says why
+                            # (review round 1 of the env-pick door, 2026-09-18)
+                            what = _parked_md(op)
+                            why = "Couldn't set the per-session env: the session's backend refused it (its log line says why)."
+                        else:
+                            what = "/%s %s" % (op[0], op[1] if op[0] == "effort" else v)
+                            why = (_effort_refusal(be, op[1]) if op[0] == "effort"
+                                   else "Couldn't toggle fast mode: the session's backend refused it.")
                         sys.stderr.write("pending ops apply: %s refused %r for %s\n" % (type(be).__name__, what, sid[:8]))
                         _send_to_app("chat", {"type": "settingRefused", "gesture": "command", "sid": sid,
                                               "flag": op[0], "text": why})

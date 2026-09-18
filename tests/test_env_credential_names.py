@@ -5,8 +5,11 @@ variables are staged straight into os.environ: nothing of romp's claims them but
 boot check (credentials.check_boot_environment, run by kernel.main() before a backend exists and pinned in
 tests/test_credentials.py, BootCheck and KernelSide) never runs here, so a backend built directly sees
 what is staged; no retired provider name is staged anywhere in this module."""
+import json
 import os
 from pathlib import Path
+import re
+import subprocess
 import sys
 import tempfile
 from types import ModuleType
@@ -28,13 +31,18 @@ sb = load_source("romp_sdk_envnames", str(ROOT / "kernel/sdk_backend.py"))
 
 def _op_name(n):
     """The 1Password CLI's own names as credentials.py classifies them (is_op_env_name): the boot line's op
-    shape is that classifier, the one the boot check refuses and the test floor pops."""
+    shape is that classifier, the one the boot check refuses and the test floor pops. The delegation is
+    deliberate, so over an op-shaped spelling the table below can only agree with the implementation; the
+    INTENT for the op half's case handling is pinned on its own (PureNames.test_the_1password_half_folds_case_by_declared_intent,
+    review round 1 of the env-pick door, 2026-09-18)."""
     return sb._cred.is_op_env_name(n)
 
 
 def _shaped(n):
-    u = n.upper()      # the suffixes fold case since review round 1 of the spawn-spec fix (2026-09-18); the op names do not
-    return u.endswith("_API_KEY") or u.endswith("_TOKEN") or _op_name(n)
+    # both halves fold case: the suffixes since review round 1 of the spawn-spec fix, the op names since review
+    # round 1 of the env-pick door (2026-09-18), which hands the classifier the upper-cased name as the predicate does
+    u = n.upper()
+    return u.endswith("_API_KEY") or u.endswith("_TOKEN") or _op_name(u)
 
 
 class PureNames(unittest.TestCase):
@@ -49,6 +57,9 @@ class PureNames(unittest.TestCase):
         env = {"ROMP_SERVE_TOKEN": "control", "OPENROUTER_API_KEY": "r"}
         self.assertEqual(self.names(env), ["OPENROUTER_API_KEY"],
                          "romp's own control token is not a provider credential; nothing else is excluded by name")
+        self.assertEqual(sb._cred.credential_env_names(env), ["OPENROUTER_API_KEY", "ROMP_SERVE_TOKEN"],
+                         "the exclusion is this boot wrapper's, not the rule's (review round 1 of the env-pick door, "
+                         "2026-09-18: carried in the rule, it let a per-session pick write the token to two files)")
 
     def test_a_login_token_still_present_is_named(self):
         """The helper excludes no name the boot claim removes: a login token still in the environment when it
@@ -71,25 +82,55 @@ class PureNames(unittest.TestCase):
         is_credential_env_name and credential_env_names, and this helper delegates to the same; so does the
         spawn.json writer (spawn_env_secret_names). The list of names is built at run time from stems, suffixes
         and casings, so the four readers are compared over spellings no one wrote out, and the expected verdict
-        is this module's own _shaped (the suffixes fold case, the op names do not) with the control token's
-        exact name as the one exclusion of the value-bearing readers."""
+        is this module's own _shaped (both halves fold case since review round 1 of the env-pick door,
+        2026-09-18). The control token's exact name is excluded by the boot notice alone (that round moved the
+        exclusion out of the rule); the rule, the writer and the door name it like any other."""
         names = []
-        for stem in ("NOTES", "notes", "Notes", "HF", "my_secret", "ROMP_SERVE", "romp_serve", "OP_SESSION"):
+        for stem in ("NOTES", "notes", "Notes", "HF", "my_secret", "ROMP_SERVE", "romp_serve", "OP_SESSION", "op_session"):
             for suffix in ("_API_KEY", "_TOKEN", "_api_key", "_token", "_Api_Key", "_Token", "_TOKENIZER", "_tokenizer",
                            "_KEY", "", "_ENDPOINT"):
                 names.append(stem + suffix)
-        names += ["OP_SESSION_testacct", "OP_ACCOUNT", "op_account", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN",
-                  "OPTIONS_FOR_X", "TOKEN_FIRST", "API_KEY_HOLDER", "_TOKEN", "_API_KEY", "_token"]
+        names += ["OP_SESSION_testacct", "op_session_testacct", "Op_Session_TestAcct", "OP_ACCOUNT", "op_account",
+                  "Op_Connect_Host", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN", "op_service_account_token",
+                  "OPTIONS_FOR_X", "options_for_x", "TOKEN_FIRST", "API_KEY_HOLDER", "_TOKEN", "_API_KEY", "_token"]
         self.assertGreater(len(set(names)), 80)
         for n in names:
             self.assertIs(sb._cred.is_credential_env_name(n), _shaped(n), "the door's predicate on %r" % (n,))
-            expect = [n] if _shaped(n) and n != "ROMP_SERVE_TOKEN" else []
+            expect = [n] if _shaped(n) else []
             self.assertEqual(sb._cred.credential_env_names({n: "v"}), expect, "credentials.py over %r" % (n,))
-            self.assertEqual(self.names({n: "v"}), expect, "this helper over %r" % (n,))
+            self.assertEqual(self.names({n: "v"}), [] if n == "ROMP_SERVE_TOKEN" else expect,
+                             "this helper over %r (the boot notice's one exclusion, the exact control token)" % (n,))
             self.assertEqual(sb.spawn_env_secret_names({n: "v"}), expect, "the spawn.json writer over %r" % (n,))
             self.assertEqual(bool(sb.env_request_error({n: "v"})), bool(expect), "the door over %r" % (n,))
         self.assertEqual(self.names({"romp_serve_token": "v"}), ["romp_serve_token"],
                          "the exclusion is the exact name romp reads; another spelling is not romp's token")
+
+    def test_the_1password_half_folds_case_by_declared_intent(self):
+        """Review round 1 of the env-pick door (2026-09-18): the table above delegates the op half of its oracle to
+        is_op_env_name on purpose (the boot check reads the same classifier, and the table's job is four-site
+        agreement), so over an op-shaped spelling it can only agree with the implementation; what it could not pin
+        was the INTENT for that half's case handling, and the fold ordered for the suffixes had reached that half
+        alone, so op_session_<account>, the most sensitive of these names, passed every reader. The intent is
+        declared here, so a later change to the op half's case handling has to re-declare itself in a test: a
+        lowercase or mixed-case 1Password name is credential-shaped, named by the rule, moved by the writer and
+        refused at the door, exactly like its upper-case spelling. The boot check's own classifier
+        (credentials.is_op_env_name, read direct) keeps 1Password's spelling: it refuses what `op` exports."""
+        for n in ("op_session_testacct", "Op_Session_TestAcct", "op_account", "Op_Connect_Host",
+                  "op_service_account_token", "OP_SESSION_testacct"):
+            intent = ("INTENT (review round 1 of the env-pick door, 2026-09-18): the 1Password half of the shape rule "
+                      "folds letter case, so %r is credential-shaped; a change to that case handling must re-declare "
+                      "itself here" % (n,))
+            self.assertTrue(sb._cred.is_credential_env_name(n), intent)
+            self.assertEqual(sb._cred.credential_env_names({n: "v"}), [n], intent)
+            self.assertEqual(self.names({n: "v"}), [n], intent)
+            self.assertEqual(sb.spawn_env_secret_names({n: "v"}), [n], intent)
+            self.assertIn(n, sb.env_request_error({n: "v"}), intent)
+            self.assertEqual(sb._cred.credential_env_names({n: ""}), [], "an empty value is not a leak, in any case")
+        for n in ("op_account", "op_session_testacct", "Op_Connect_Host"):
+            self.assertFalse(sb._cred.is_op_env_name(n),
+                             "the boot check's classifier itself stays as 1Password spells the names: %r" % (n,))
+        self.assertTrue(sb._cred.is_op_env_name("OP_ACCOUNT") and sb._cred.is_op_env_name("OP_SESSION_testacct"))
+        self.assertFalse(sb._cred.is_credential_env_name("options_for_x"), "a prefix that only begins like OP_ is not the shape")
 
     def test_empty_or_whitespace_values_are_not_named(self):
         self.assertEqual(self.names({"FOO_API_KEY": "", "BAR_TOKEN": "   ", "BAZ_API_KEY": "v"}), ["BAZ_API_KEY"])
@@ -100,8 +141,9 @@ class PureNames(unittest.TestCase):
     def test_op_names_are_named_as_credentials_classifies_them(self):
         """OP_SESSION_<account> (what `op signin` exports) ends in neither suffix, yet credentials.py classifies
         it (is_op_env_name, beside the service-account and Connect names in OP_ENV_NAMES) as the 1Password
-        CLI's own and refuses it at boot; the helper names exactly what that classifier accepts, so the boot
-        line and the boot check agree on what an op name is."""
+        CLI's own and refuses it at boot; the helper names what that classifier accepts on the upper-cased name
+        (the fold, review round 1 of the env-pick door, 2026-09-18), so the boot line names every spelling the
+        boot check refuses and the lowercase ones besides."""
         env = {"OP_SESSION_TESTACCT": "s", "OP_CONNECT_HOST": "h", "OP_ACCOUNT": "a",
                "OP_SERVICE_ACCOUNT_TOKEN": "t", "OPTIONS_FOR_X": "not an op name"}
         self.assertEqual(self.names(env), ["OP_ACCOUNT", "OP_CONNECT_HOST", "OP_SERVICE_ACCOUNT_TOKEN",
@@ -115,6 +157,75 @@ class PureNames(unittest.TestCase):
         out = self.names(env)
         self.assertEqual(out, ["OPENAI_API_KEY"])
         self.assertNotIn("plain-oai-must-not-appear", " ".join(out))
+
+
+class ReferenceLister(unittest.TestCase):
+    """docs/reference.md's names-only lister is a fourth spelling of the shape rule (review round 1 of the env-pick
+    door, 2026-09-18): pinned by nothing, it carried a ROMP_SERVE_TOKEN exclusion the doors do not, folded case on
+    the suffixes alone, resolved a literal state root, and its markdown indent landed inside the quoted Python, so
+    the command copied from the raw file was an IndentationError. Run here exactly as fenced, over a synthetic
+    state root, and held to credential_env_names file by file and name by name."""
+
+    SID_A = "11111111-2222-3333-4444-555555555501"
+    SID_B = "11111111-2222-3333-4444-555555555502"
+
+    @classmethod
+    def _snippet(cls):
+        text = (ROOT / "docs" / "reference.md").read_text(encoding="utf-8")
+        blocks = re.findall(r"```bash\n(.*?)\n```", text, re.S)
+        hits = [b for b in blocks if "sdk-flag-settings" in b]
+        assert len(hits) == 1, "one fenced bash block lists the flag-settings files: %d found" % len(hits)
+        return hits[0]
+
+    def test_the_snippet_is_fenced_without_indent_and_lists_what_the_rule_names(self):
+        snippet = self._snippet()
+        self.assertTrue(snippet.startswith("python3 -c '"), "a shell command, fenced as bash")
+        self.assertFalse(any(ln.startswith(" ") and ln.lstrip().startswith(("S =", "for p")) for ln in snippet.splitlines()),
+                         "no markdown indent inside the quoted source (the indent was the IndentationError)")
+        self.assertNotIn("ROMP_SERVE_TOKEN", snippet, "no exclusion the doors do not have")
+        self.assertNotIn('expanduser("~/.local/state/romp")', snippet, "the state root is resolved as romp resolves it")
+        root = tempfile.mkdtemp(prefix="romp-lister-")
+        os.makedirs(os.path.join(root, "sdk-flag-settings"))
+        os.makedirs(os.path.join(root, "sdk"))
+        val = "synthetic-" + os.urandom(6).hex()
+        env_a = {"NOTES_ENDPOINT": "http://notes.test", "notes_api_token": val, "EMPTY_TOKEN": "",
+                 "ROMP_SERVE_TOKEN": "control", "OP_SESSION_testacct": val, "op_account": "acct", "SPACES_TOKEN": "  "}
+        env_b = {"FEATURE_FLAG": "1", "Notes_Api_Key": val, "editor_tokenizer": "x", "options_for_x": "x"}
+        pa = os.path.join(root, "sdk-flag-settings", self.SID_A + ".json")
+        pb = os.path.join(root, "sdk", self.SID_B + ".json")
+        Path(pa).write_text(json.dumps({"fastMode": True, "env": env_a}) + "\n")
+        Path(pb).write_text(json.dumps({"sid": self.SID_B, "name": "api", "env": env_b}) + "\n")
+        Path(root, "sdk", "unreadable.json").write_text("{not json")
+        Path(root, "sdk", self.SID_A + ".json").write_text(json.dumps({"sid": self.SID_A, "name": "web"}) + "\n")
+        env = {"PATH": os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", ""),
+               "ROMP_STATE_DIR": root, "HOME": root}
+        for k in ("XDG_STATE_HOME",):
+            env[k] = os.path.join(root, "unused-xdg")     # ROMP_STATE_DIR outranks it, as in the kernel
+        r = subprocess.run(["/bin/sh", "-c", snippet], env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, "the snippet runs as copied: %s" % r.stderr)
+        got = sorted(r.stdout.splitlines())
+        want = sorted(["%s %s" % (pa, n) for n in sb._cred.credential_env_names(env_a)]
+                      + ["%s %s" % (pb, n) for n in sb._cred.credential_env_names(env_b)])
+        self.assertEqual(got, want, "file by file and name by name, the rule's own verdict")
+        self.assertIn("%s ROMP_SERVE_TOKEN" % pa, got, "the control token is listed, as the doors refuse it")
+        self.assertIn("%s op_account" % pa, got, "the 1Password half folds case here too")
+        self.assertIn("%s notes_api_token" % pa, got)
+        self.assertNotIn("%s EMPTY_TOKEN" % pa, got)
+        self.assertNotIn(val, r.stdout, "names only, never a value")
+
+    def test_the_snippet_resolves_the_state_root_in_romps_order(self):
+        # ROMP_STATE_DIR, else XDG_STATE_HOME/romp, else ~/.local/state/romp: the kernel's own resolution
+        snippet = self._snippet()
+        root = tempfile.mkdtemp(prefix="romp-lister-xdg-")
+        os.makedirs(os.path.join(root, "romp", "sdk-flag-settings"))
+        val = "synthetic-" + os.urandom(6).hex()
+        p = os.path.join(root, "romp", "sdk-flag-settings", self.SID_A + ".json")
+        Path(p).write_text(json.dumps({"env": {"HF_TOKEN": val}}) + "\n")
+        env = {"PATH": os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", ""),
+               "XDG_STATE_HOME": root, "HOME": os.path.join(root, "home-unused")}
+        r = subprocess.run(["/bin/sh", "-c", snippet], env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(), ["%s HF_TOKEN" % p])
 
 
 class BootNoticeMethod(unittest.TestCase):
