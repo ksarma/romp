@@ -3039,10 +3039,12 @@ CLIENT_DIAG_KEYS = {
                             "ms", "bytesSince", "redialed",                                                     # return-fresh
                             "code", "reason", "wasClean", "sinceOpenMs", "everConnected", "bundleReady",        # wsclose
                             "attempts", "firstFailMs",                                                          # wsconnfail
-                            "wasDiscarded", "nav")),                                                            # page-load
+                            "wasDiscarded", "nav",                                                              # page-load
+                            "awaitLink", "linkUpMs")),                                                          # D3 (2026-09-18): return awaits the shell's link; return-fresh's linkUpMs is the path's own recovery
     "reload-core": frozenset(("reason", "detail", "hold", "ageMs")),
     "shell": frozenset(("sidAttached", "host", "why", "tabs", "status", "via", "boot", "hasSid", "hasCard", "hasPid", "controlled", "dup",
-                        "sub", "rows", "err", "getNotifications", "displayed", "vanished", "superseded", "sid8", "ageS", "shape", "kind", "sw")),
+                        "sub", "rows", "err", "getNotifications", "displayed", "vanished", "superseded", "sid8", "ageS", "shape", "kind", "sw",
+                        "decision", "hiddenMs", "quietMs", "attempts", "firstFailMs", "ms")),                    # D3 (2026-09-18): the shell socket's return-probe row (all fixed identifiers / enum members)
     "federation": frozenset(("host", "ev", "why", "quietMs", "foreground", "msgType", "rs", "flushed", "held", "unread", "endedUnread",
                              "code", "clean", "detached", "pendingDropped", "buildId", "counts", "gt", "superseded")),
     "chat": frozenset(("sid", "error", "held", "got", "distVer", "path", "mdLen", "queuedLeft", "ids", "n", "active", "ts", "len", "route",
@@ -64142,7 +64144,12 @@ data:{app:APP,why:why||"",ready:ws?ws.readyState:-1,quietMs:lastRecv?Date.now()-
 // the first fresh frame then took (and whether a redial got in the way). Same clientDiag path as staleDiag:
 // send() queues while the socket is down, so a row survives the very redial it describes.
 var frozeAt=0,resumedAt=0,resumeQuiet=-1,hiddenAt=0,foregroundedAt=0,returnAt=0,returnBytes=0,returnRedialed=false,returnRow=null,eagerDial=false;   // eagerDial: the one immediate redial each return window gets   // returnRow: a keep-decision row held until a close inside the return window (or the watchdog, at the provisional bound) proves its socket was already dead; retired by the flush once its return-fresh has filed
-function returnDiag(what,data){try{data.app=APP;send({type:"clientDiag",surface:"pane-shim",what:what,data:data});}catch(e){}}
+var awaitLink=false,linkUpMs=-1;   // [fork] D3 (2026-09-18): this return is waiting for the shell socket's link to come up (the shell is the page's one probe, kernel.py _LANDING_MOBILE_JS); linkUpMs is foreground->link-up, the path's own recovery split from the code-owned wait (return-fresh.ms minus it); reset each return, in the fast path below
+// [fork] D3: the shell's published link, read SYNCHRONOUSLY for a same-origin pane iframe so the return decision does
+// not depend on the order the documents' visibilitychange handlers run. undefined for a standalone page, the VS Code
+// webview, or a shell too old to publish one: those keep the upstream fast-path lines below, byte for byte.
+function parentLink(){try{return (window.parent!==window&&window.parent.__rompLink)?window.parent.__rompLink():undefined;}catch(e){return undefined;}}
+function returnDiag(what,data){try{data.app=APP;if(what==="return-fresh"&&linkUpMs>=0)data.linkUpMs=linkUpMs;send({type:"clientDiag",surface:"pane-shim",what:what,data:data});}catch(e){}}
 var nav="";try{var ne=performance.getEntriesByType("navigation");nav=(ne&&ne[0]&&ne[0].type)||"";}catch(e){}
 // the page-load row exists to catch a tab the browser DISCARDED and reloaded on return (Memory Saver: the return is a
 // cold load, no visibilitychange, so no `return` row) or a reload/back-forward arrival — a plain navigation says
@@ -64308,6 +64315,11 @@ if(returnRow&&Date.now()-foregroundedAt<STALE_MS){var rr=returnRow;returnRow=nul
 var inWin=Date.now()-foregroundedAt<STALE_MS,d=1500;   // a close landing within STALE_MS of a foreground (the FIN a frozen tab thawed into; an iOS return): the close IS the event
 if(inWin){d=eagerDial?0:250;eagerDial=false;}   // …so the FIRST such close redials NOW; every further close in the same window waits 250 ms (a kernel that is down must not be hammered) (2026-09-07)
 if(restartAnnounced&&Date.now()-restartAnnounced<30000)d=Math.min(d,250);   // an announced death keeps its tight redial
+// [fork] D3 (2026-09-18): an in-window close while the shell's link is down (and no announced restart) waits for the
+// link-up word, not a blind timer: the shell's probe says the path is down, so a per-pane redial here is the storm this
+// design removes. Put the socket down (ws=null) so the tick is inert and re-await; a link that is up (or standalone, or
+// an announced restart) keeps the upstream 0/250 cadence below (a proven path, dial at once).
+var _lk=parentLink();if(inWin&&_lk!==undefined&&!_lk.up&&!(restartAnnounced&&Date.now()-restartAnnounced<30000)){awaitLink=true;ws=null;return;}
 setTimeout(connect,d);};   // the blind 1.5 s stays for unannounced drops outside any return window
 ws.onerror=function(){try{ws.close();}catch(e){}};}
 function send(m){var s=JSON.stringify(m);if(m&&m.type==="ready"){bundleReady=true;readyProto=(m.proto===2?2:1);readyMsg=s;}   // the bundle's listener is installed: from here a redial may declare itself (the dial term in connect)
@@ -64419,6 +64431,20 @@ setInterval(function(){if(!ws)return;
 if(ws.readyState===1){var bound=resumeProvisional?PROVISIONAL_MS:STALE_MS;if(everConnected&&Date.now()-lastRecv>bound){staleDiag("watchdog-close","quiet");abandon();connect();}return;}   // a resumed keep no frame has confirmed runs at the shorter bound (PROVISIONAL_MS, above)
 if(ws.readyState===0&&Date.now()-connT>15000){try{ws.close();}catch(e){}return;}
 if(ws.readyState===3&&Date.now()-connT>8000){connect();}},5000);
+// [fork] D3 (2026-09-18): the shell leads this pane's return redial. The shell socket is the page's one link probe;
+// on a stale return into a down link the fast path below puts this socket down (the tick above goes inert on !ws) and
+// waits, and the shell's link-up word is the redial's event. The shell re-tells the panes word (link:'up'|'down',
+// _LANDING_COLLAPSE_JS panesMsg) on its socket's open/close/abandon, so a routine panes word carries the current link
+// too. Only ends an await with no socket; stamps linkUpMs (foreground->link-up) onto the pending return-fresh.
+try{window.addEventListener("message",function(e){var m=e&&e.data;if(!m||m.romp!=="panes")return;
+if(m.link==="up"&&awaitLink&&!ws){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;connect();}});}catch(e){}
+// the link backstop: re-read the shell's link every 5 s while awaiting with no socket. An `up` we missed the word for
+// dials; a link whose own connect attempt (connT) has not renewed for 20 s (the shell's 15 s CONNECTING cut plus one
+// 5 s tick) means the shell's redial loop is dead, so dial anyway and say why loudly (a link-backstop diag row). 20 s
+// is derived from existing bounds, not a new constant; it approximates the one event nobody can hear (that loop dying).
+setInterval(function(){if(!awaitLink||ws)return;var L=parentLink();if(L===undefined)return;
+if(L.up){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;connect();return;}
+if(L.connT&&Date.now()-L.connT>20000){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;staleDiag("link-backstop","");connect();}},5000);
 // visibility fast-path (the user 2026-07-05): a BACKGROUNDED tab has its timers throttled, so the 5s watchdog
 // above can lag and the browser may have quietly dropped the socket while it slept. The instant the tab is
 // foregrounded, if the socket isn't open or has gone quiet past the watchdog window, treat the view as stale:
@@ -64431,8 +64457,18 @@ var stale=!ws||ws.readyState!==1||Date.now()-lastRecv>STALE_MS;var res=resumedAt
 var row={decision:stale?((!ws||ws.readyState!==1)?"redial-closed":"redial-stale"):"keep",resumed:res,hiddenMs:hiddenAt?Date.now()-hiddenAt:-1,
 frozenMs:(res&&frozeAt>=hiddenAt&&resumedAt>frozeAt)?resumedAt-frozeAt:0,quietMs:lastRecv?Date.now()-lastRecv:-1,quietAtResumeMs:res?resumeQuiet:-1,ready:ws?ws.readyState:-1};
 returnAt=Date.now();returnBytes=0;returnRedialed=false;returnRow=null;   // every return starts with no held row (review find, 2026-09-08): a keep row left over from an earlier return must not ride this one's close or abandon
+awaitLink=false;linkUpMs=-1;   // [fork] D3: every return starts not awaiting the shell's link
 if(!stale){returnRow=row;returnDiag("return",row);return;}   // the socket stands: the row rides it now — and is HELD, because a FIN queued in the same thaw burst would swallow it (review find 2026-09-07; onclose re-files)
 pendingWhy="foreground";freshPending=true;armFresh();   // the reconnect's arm reads "foreground" (upstream's two-event prompt)
+// [fork] D3 (2026-09-18): when this pane sits in a shell that publishes a link, put the socket down for EVERY state
+// (abandon nulls ws, so the tick is inert and no onclose timer arms) and dial only once the link is up: now if it
+// already is (linkUpMs 0, the whole wait is code-owned), else on the shell's link-up word (awaitLink; the panes
+// listener and the backstop above end it). Independent of PR 3 (hidden panes park): with this PR alone every pane
+// awaits the link and dials on link-up, so the returns are coordinated and there is no failed-connect storm; when
+// PR 3 lands, a parked pane skips this dial. Standalone / VS Code / an older shell (parentLink undefined) fall through
+// to the upstream lines below, byte for byte (today's path).
+var _L=parentLink();
+if(_L!==undefined){abandon();if(_L.up){row.awaitLink=false;linkUpMs=Date.now()-foregroundedAt;connect();}else{awaitLink=true;row.awaitLink=true;}returnDiag("return",row);return;}
 if(ws&&ws.readyState===1)abandon();else{try{if(ws&&ws.readyState===0)ws.close();}catch(e){}}   // OPEN-but-quiet → abandoned + redialed below, now; stuck-CONNECTING → aborted, onclose retries
 if(!ws||ws.readyState===3)connect();
 returnDiag("return",row);});/*end-shim-core*/})();   // filed AFTER the redial so it queues for the new socket instead of vanishing into the dead one
@@ -67882,18 +67918,40 @@ b.addEventListener('click',function(){var f=A[b.getAttribute('data-act')];if(f)f
 window.addEventListener('message',function(e){var m=e.data;if(!m)return;if(m.romp==='reveal'&&m.pane)reveal(m.pane);// the chat header's Fleet pill / the fleet's back-to-chat post toggleFleet — on mobile that IS a tab switch
 if(m.romp==='toggleFleet')userSwitch(m.to==='chat'?'chat':'fleet');});
 var shellOpened=false;   // T265: this socket's REOPEN is the kernel-restart signal — the shell asks /version whose kernel answered
-function shellWS(){try{var proto=location.protocol==='https:'?'wss://':'ws://';
+// [fork] D3 (2026-09-18): the shell socket is the page's ONE link probe. It gets the shim's liveness rules (one attempt
+// in flight, a lastRecv / freeze-resume clock, a 5 s watchdog with the shim's three arms, a return probe filed per
+// return, and a redial cadence), so a 30 s outage costs one socket's retries, not thirteen. romp-manager ruled the shell
+// keeps its OWN copy of these rules rather than sharing the shim's (the shim is upstream text the fold touches weekly);
+// tests/test_kernel_ws_heartbeat.py pins the two copies to agree on the constants and the tick. The connect cut is a
+// named constant at today's 15 s (SH_CONNECT_MS, no behaviour change); the 5 s cut experiment is a later harness leg.
+var shWs=null,shLastRecv=0,shConnT=0,shResumeProvisional=0,shHiddenAt=0,shForegroundedAt=0,shFrozeAt=0,shResumedAt=0,shFailed=0,shFirstFailT=0,shRestartAnnounced=0,shReturnProbe=null,shRung=0;
+var SH_STALE_MS=30000,SH_PROVISIONAL_MS=15000,SH_CONNECT_MS=15000,SH_REDIAL_MS=8000,SH_TICK_MS=5000,SH_LADDER=[1000,2000,4000,4000];
+// the shell publishes the page's link: a synchronous read for the same-origin pane iframes (their parentLink), and the
+// panes word (link:'up'|'down', _LANDING_COLLAPSE_JS panesMsg) re-told on this socket's open, close and abandon. up only
+// for a socket that is OPEN and heard a frame within SH_STALE_MS (the shim's rule); connT for the pane's 20 s backstop.
+window.__rompLink=function(){return {up:!!(shWs&&shWs.readyState===1&&Date.now()-shLastRecv<=SH_STALE_MS),connT:shConnT};};
+function shTell(){try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}
+function shAbandon(){var d=shWs;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}shWs=null;if(shellSock===d)shellSock=null;shTell();}   // detach + null so the abandoned socket's onclose is nobody's event (as the shim's abandon)
+// the shim's freeze / resume stamps: a thawed Chromium tab must not redial a shell socket the browser still holds OPEN
+document.addEventListener('freeze',function(){shFrozeAt=Date.now();});
+document.addEventListener('resume',function(){shResumedAt=Date.now();if(shWs&&shWs.readyState===1&&!(shFrozeAt&&shFrozeAt-shLastRecv>SH_STALE_MS)){shLastRecv=Date.now();shResumeProvisional=shLastRecv;}});
+function shellWS(){try{if(shWs&&(shWs.readyState===0||shWs.readyState===1))return;   // [fork] D3: one live attempt at a time (a lost timer + the tick can both call in)
+shConnT=Date.now();var proto=location.protocol==='https:'?'wss://':'ws://';
 // this dashboard's id rides the connect, as it does on every pane's socket (wid(): the sessionStorage key the HEAD
 // script mints before any pane connects): an op the shell sends that the kernel answers with a reveal (the API
 // detail's openSession) then lands on THIS dashboard's chat alone (_reveal_chat_for), the way the feed's own session
 // links do. Without it the shell client's wid was '' and the reveal fell to the broadcast.
 var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid()));
+shWs=ws;var shOpened=false;   // [fork] D3: this dial's socket for the liveness machinery, and whether it ever opened (the return probe's attempt count keys on it)
 // ready → the kernel sends the current needs-you count, so a relaunched installed app trues up
 // its icon badge immediately instead of waiting for the next change (plans/ios-app.md proposal 3)
-ws.onopen=function(){try{ws.send(JSON.stringify({type:'ready'}));}catch(e){}
+ws.onopen=function(){shOpened=true;shLastRecv=Date.now();shResumeProvisional=0;shRung=0;try{ws.send(JSON.stringify({type:'ready'}));}catch(e){}
 shellSock=ws;var q=diagQ;diagQ=[];if(!diagMuted())q.forEach(function(m){try{ws.send(JSON.stringify(m));}catch(e){}});   // the rows that waited for this socket; the queue holds clientDiag rows alone, so one re-read of the kill switch at the open holds them all when a mute was flipped on while the socket was down, as the pane shim's flush does (review find, 2026-09-18)
+if(shReturnProbe){shReturnProbe.ms=Date.now()-shForegroundedAt;shReturnProbe.attempts=shFailed;shReturnProbe.firstFailMs=shFirstFailT?Date.now()-shFirstFailT:-1;shellDiag('return-probe',shReturnProbe);shReturnProbe=null;shFailed=0;shFirstFailT=0;}   // [fork] D3: ONE shell row per return - the decision, the hidden/quiet gap, and the path's own recovery (attempts, firstFailMs, foreground->open ms)
+shTell();   // [fork] D3: link up - re-tell the panes
 if(shellOpened&&window.__rompReload)window.__rompReload.checkBoot();shellOpened=true;};
-ws.onmessage=function(ev){var m;try{m=JSON.parse(ev.data);}catch(e){return;}
+ws.onmessage=function(ev){shLastRecv=Date.now();shResumeProvisional=0;var m;try{m=JSON.parse(ev.data);}catch(e){return;}
+if(m&&m.type==='restarting'){shRestartAnnounced=Date.now();return;}   // [fork] D3: the kernel's announced death - the redial keeps its tight cadence
 if(m&&m.type==='ka'){if(m.dv&&window.__rompReload)window.__rompReload.noteDv(m.dv);}   // build drift on the shell's own keepalive (T265; an OFFER since 2026-09-16)
 else if(m&&m.type==='reloadRequired'){if(window.__rompReload)window.__rompReload.require(m.why);}   // the safety valve (2026-09-16): a kernel that must force a reload for correctness; nothing sends it today
 else if(m&&m.type==='reveal'&&m.pane)reveal(m.pane);
@@ -67917,7 +67975,32 @@ else if(m&&m.type==='warn'&&typeof m.text==='string'&&m.text&&window.__rompNotif
 else if(m&&m.type==='updateAvail'&&window.__rompUpdateOffer)window.__rompUpdateOffer(m.cur||'',m.tag||'',m.drift||'',m.boot||'',m.state||'',m.manager);};
 // the API health detail's pause acknowledgment rides this socket: a press it carried cannot be answered now (the
 // redial's ready re-sends the last frame verbatim), so the detail is told before the redial (_LANDING_APIH_JS)
-ws.onclose=function(){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}if(shellSock===ws)shellSock=null;setTimeout(shellWS,2000);};}catch(e){}}
+ws.onclose=function(){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}if(shellSock===ws)shellSock=null;if(shWs===ws)shWs=null;shTell();   // [fork] D3: link down - re-tell the panes
+if(!shOpened){if(!shFailed)shFirstFailT=Date.now();shFailed++;}   // [fork] D3: a handshake that never opened - the return probe's attempt count
+var shInWin=shForegroundedAt&&Date.now()-shForegroundedAt<SH_STALE_MS,shd;   // [fork] D3: the redial cadence (ruling 4, 2026-09-18)
+if(shRestartAnnounced&&Date.now()-shRestartAnnounced<30000)shd=250;   // an announced restart keeps its tight redial (the kernel's own word)
+else if(!shOpened&&Date.now()-shConnT<SH_CONNECT_MS){shd=SH_LADDER[shRung<SH_LADDER.length?shRung:SH_LADDER.length-1];shRung++;}   // a REFUSED attempt (an onclose within the connect cut): back off on the bounded ladder 1/2/4/4 s, reset by an open, so a fast-refusing path is not a dial storm (the harness baseline: 236 dials/pane in 30 s at 250 ms)
+else if(shInWin)shd=250;   // a HUNG attempt the 15 s cut paced, inside a return window: prompt
+else shd=2000;   // the blind cadence for an ordinary drop outside any window (today's shell)
+setTimeout(shellWS,shd);};}catch(e){}}
+// [fork] D3: the shell's progress watchdog - the shim's three arms with the shell's own copy of the bounds. An OPEN
+// socket quiet past the bound (PROVISIONAL_MS while a resumed keep awaits a confirming frame, STALE_MS otherwise) is
+// abandoned and redialed; a CONNECTING one past the 15 s cut is closed (its onclose then redials); a CLOSED one past
+// the redial bound dials. Inert when there is no socket, so an awaiting page runs nothing here.
+setInterval(function(){if(!shWs)return;
+if(shWs.readyState===1){var b=shResumeProvisional?SH_PROVISIONAL_MS:SH_STALE_MS;if(shLastRecv&&Date.now()-shLastRecv>b){shAbandon();shellWS();}return;}
+if(shWs.readyState===0&&Date.now()-shConnT>SH_CONNECT_MS){try{shWs.close();}catch(e){}return;}
+if(shWs.readyState===3&&Date.now()-shConnT>SH_REDIAL_MS){shellWS();}},SH_TICK_MS);
+// [fork] D3: the shell's visibility fast path - the instant the app returns, if the shell socket is dead or quiet, put
+// it down (every state) and dial at once, and set up the ONE return-probe row filed at the next open (ms = foreground
+// -> open). A socket that stands files no probe. This is the page's one probe of the path; the panes follow its link.
+document.addEventListener('visibilitychange',function(){if(document.visibilityState!=='visible'){shHiddenAt=Date.now();return;}
+shForegroundedAt=Date.now();shRung=0;
+var shStale=!shWs||shWs.readyState!==1||Date.now()-shLastRecv>SH_STALE_MS;
+if(!shStale){shReturnProbe=null;return;}
+shReturnProbe={decision:(!shWs||shWs.readyState!==1)?'redial-closed':'redial-stale',hiddenMs:shHiddenAt?Date.now()-shHiddenAt:-1,quietMs:shLastRecv?Date.now()-shLastRecv:-1};
+shFailed=0;shFirstFailT=0;
+shAbandon();shellWS();});
 shellWS();
 var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);
 })();
@@ -68412,7 +68495,7 @@ _LANDING_COLLAPSE_JS = """
   // classes ignored, _LANDING_MOBILE_JS) it is the current tab, so a po.files left true by a desktop session
   // or an earlier bring-forward cannot silently steer a phone's file links into a tab nobody is looking at
   function panesMsg(){var mob=!!(window.__rompMobileOn&&window.__rompMobileOn()),tab=mob?document.body.getAttribute('data-tab'):null;
-    var on={};KEYS.forEach(function(k){on[k]=mob?(k===tab):!!po[k];});return {romp:'panes',on:on,avail:{files:filesCtl()}};}
+    var on={};KEYS.forEach(function(k){on[k]=mob?(k===tab):!!po[k];});return {romp:'panes',on:on,avail:{files:filesCtl()},link:(window.__rompLink&&window.__rompLink().up)?'up':'down'};}   // [fork] D3 (2026-09-18): the page's link is the shell socket's state (_LANDING_MOBILE_JS window.__rompLink), re-told on its open/close/abandon; consumers (render.ts, waiting.ts) replace on and avail wholesale and ignore keys they do not read
   function tell(f,m){try{f&&f.contentWindow&&f.contentWindow.postMessage(m,'*');}catch(e){}}
   function broadcast(){var m=panesMsg();KEYS.forEach(function(k){tell(document.getElementById('f-'+k),m);});}
   window.__rompPanesTell=broadcast;   // the mobile script re-tells on a tab switch / layout flip

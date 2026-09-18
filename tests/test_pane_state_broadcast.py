@@ -219,7 +219,7 @@ class Broadcast(unittest.TestCase):
     def test_the_boot_apply_tells_every_pane_the_set_as_the_flags_stand(self):
         self.assertEqual(self.out["boot"]["counts"], {k: 1 for k in self.keys}, "one message per pane at boot")
         self.assertEqual(self.out["boot"]["chat"], {"romp": "panes", "on": {"chat": True, "timeline": True, "fleet": False, "feed": True, "waiting": False, "files": False},
-                                                     "avail": {"files": True}})   # avail: the Files control's setting rides every tell (T317); on here by the store (off by default since T317b)
+                                                     "avail": {"files": True}, "link": "down"})   # avail: the Files control's setting rides every tell (T317); link (D3, 2026-09-18): the shell socket's state, 'down' here since this harness runs no shell socket (window.__rompLink absent)
         self.assertEqual(self.out["boot"]["files"], self.out["boot"]["chat"], "every pane hears the same set")
 
     def test_a_toggle_is_the_event_and_a_no_change_toggle_is_silent(self):
@@ -445,6 +445,7 @@ global.encodeURIComponent = (s) => s;
 global.location = { protocol: 'http:', host: 'TESTHOST:1' };
 global.sessionStorage = { getItem: () => 'wid1' };
 global.setTimeout = () => 0;
+global.setInterval = () => 0;   // D3 (2026-09-18): the shell socket's watchdog tick, a no-op here so node exits
 const pane = (id) => ({ id, classList: { toggle: (c, on) => { TOGGLES.push([id, c, !!on]); } }, contentDocument: {},
   contentWindow: { addEventListener: () => {} }, addEventListener: () => {} });
 const PANES = {};

@@ -150,5 +150,59 @@ class BuildDriftBanner(unittest.TestCase):
             self.assertIn('_shim("%s", v' % app, KSRC, "%s page bakes its ?v token into the shim" % app)   # (the feed page also passes caps=)
 
 
+class ShellLivenessMatchesTheShim(unittest.TestCase):
+    """D3 (2026-09-18): the shell socket got the shim's liveness rules. romp-manager ruled the shell keeps its OWN copy
+    rather than sharing a fragment inlined into the shim (the shim is upstream text the fold touches weekly, and the
+    standing rule is to follow upstream there). This ONE test is that ruling's safety net: it reads the constants and
+    the three watchdog arms out of BOTH copies and asserts they agree, so a drift between them fails a test, not a
+    phone. The shim's anti-duplicate guard above still holds (the shell uses its own SH_* names, so the shim is still
+    one), and the shell's connect cut is the design's named constant at today's 15 s."""
+
+    def _shim_bounds(self):
+        js = km._shim("chat")
+        import re
+        stale = int(re.search(r"var lastRecv=0;var STALE_MS=(\d+);", js).group(1))
+        prov = int(re.search(r"var PROVISIONAL_MS=(\d+),resumeProvisional=0;", js).group(1))
+        connect_cut = int(re.search(r"ws\.readyState===0&&Date\.now\(\)-connT>(\d+)", js).group(1))
+        closed_redial = int(re.search(r"ws\.readyState===3&&Date\.now\(\)-connT>(\d+)\)\{connect\(\);\}\},(\d+)\)", js).group(1))
+        tick = int(re.search(r"ws\.readyState===3&&Date\.now\(\)-connT>\d+\)\{connect\(\);\}\},(\d+)\)", js).group(1))
+        return {"stale": stale, "prov": prov, "connect_cut": connect_cut, "closed_redial": closed_redial, "tick": tick}
+
+    def _shell_bounds(self):
+        mob = km._LANDING_MOBILE_JS
+        import re
+        line = re.search(r"var SH_STALE_MS=(\d+),SH_PROVISIONAL_MS=(\d+),SH_CONNECT_MS=(\d+),SH_REDIAL_MS=(\d+),SH_TICK_MS=(\d+),", mob)
+        self.assertIsNotNone(line, "the shell declares its own copy of the liveness constants")
+        return {"stale": int(line.group(1)), "prov": int(line.group(2)), "connect_cut": int(line.group(3)),
+                "closed_redial": int(line.group(4)), "tick": int(line.group(5))}
+
+    def test_the_two_copies_agree_on_the_constants(self):
+        shim, shell = self._shim_bounds(), self._shell_bounds()
+        self.assertEqual(shim["stale"], shell["stale"], "STALE_MS")
+        self.assertEqual(shim["prov"], shell["prov"], "PROVISIONAL_MS")
+        self.assertEqual(shim["connect_cut"], shell["connect_cut"], "the 15 s CONNECTING cut")
+        self.assertEqual(shim["closed_redial"], shell["closed_redial"], "the CLOSED redial bound")
+        self.assertEqual(shim["tick"], shell["tick"], "the 5 s watchdog tick")
+        self.assertEqual(shell["connect_cut"], 15000, "the connect cut is a named constant at today's 15 s (SH_CONNECT_MS)")
+
+    def test_the_two_copies_agree_on_the_tick_semantics(self):
+        # both watchdogs carry the same three arms with the same bounds: an OPEN socket quiet past a bound is put down
+        # and redialed; a CONNECTING one past the 15 s cut is closed; a CLOSED one past the redial bound dials
+        shim = km._shim("chat")
+        mob = km._LANDING_MOBILE_JS
+        self.assertIn("if(ws.readyState===1){var bound=resumeProvisional?PROVISIONAL_MS:STALE_MS;", shim)
+        self.assertIn("if(shWs.readyState===1){var b=shResumeProvisional?SH_PROVISIONAL_MS:SH_STALE_MS;", mob)
+        self.assertIn("if(ws.readyState===0&&Date.now()-connT>15000){try{ws.close();}catch(e){}return;}", shim)
+        self.assertIn("if(shWs.readyState===0&&Date.now()-shConnT>SH_CONNECT_MS){try{shWs.close();}catch(e){}return;}", mob)
+        self.assertIn("if(ws.readyState===3&&Date.now()-connT>8000){connect();}", shim)
+        self.assertIn("if(shWs.readyState===3&&Date.now()-shConnT>SH_REDIAL_MS){shellWS();}", mob)
+
+    def test_the_shim_anti_duplicate_guard_still_reads_one_shim(self):
+        # the shell's copy uses SH_* names, so the shim's own line is still counted once (the guard above is untouched)
+        self.assertEqual(KSRC.count("var lastRecv=0;var STALE_MS=30000;"), 1)
+        self.assertEqual(KSRC.count("var SH_STALE_MS=30000,SH_PROVISIONAL_MS=15000,SH_CONNECT_MS=15000,SH_REDIAL_MS=8000,SH_TICK_MS=5000,"), 1,
+                         "the shell keeps exactly one copy of its own constants")
+
+
 if __name__ == "__main__":
     unittest.main()

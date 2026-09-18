@@ -44,10 +44,16 @@ var intervals=[];var setInterval=function(fn,ms){intervals.push({fn:fn,ms:ms});r
 var docL={};var document={visibilityState:"visible",wasDiscarded:false,
 addEventListener:function(t,f){(docL[t]=docL[t]||[]).push(f);},getElementById:function(){return null;}};
 function fire(t){(docL[t]||[]).forEach(function(f){f({type:t});});}
-var parentPosts=[],winEvents=[],delivered=[];
-var window={innerWidth:800,innerHeight:600,parent:{postMessage:function(m){parentPosts.push(m);}},
+var parentPosts=[],winEvents=[],delivered=[],winL={};
+// D3: the fake SHELL the pane sits in publishes a link through window.parent.__rompLink; parentLinkVal is the
+// {up,connT} it returns, undefined by default so every pre-D3 test runs the upstream (standalone) fast path unchanged.
+var parentLinkVal=undefined;
+var window={innerWidth:800,innerHeight:600,
+parent:{postMessage:function(m){parentPosts.push(m);},get __rompLink(){return parentLinkVal===undefined?undefined:function(){return parentLinkVal;};}},
+addEventListener:function(t,f){(winL[t]=winL[t]||[]).push(f);},
 dispatchEvent:function(e){winEvents.push(e.type);return true;},sessionStorage:{getItem:function(){return "";}},
 __rompFed:{inbound:function(h,m){delivered.push(m);}}};
+function fireWin(t,data){(winL[t]||[]).forEach(function(f){f({data:data});});}   // D3: hand the pane a window message (the shell's panes word)
 var location={protocol:"http:",host:"TESTHOST",search:""};
 var localStorage={getItem:function(){return null;},setItem:function(){}};
 var sockets=[];function WebSocket(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this);}
@@ -858,6 +864,120 @@ out({atReturn:atReturn,dialed:dialed,atReopen:atReopen,wsup:count(winEvents,"rom
         self.assertIs(r["atReopen"], True)
         self.assertEqual(r["wsup"], 1, "the reconnect open dispatches one romp:wsup")
         self.assertEqual(r["flagAtWsup"], [True], "…AFTER the flag flipped: the listener federation installs (localUp) reads true inside the dispatch")
+
+
+class ShellLedReturn(unittest.TestCase):
+    """D3 (2026-09-18): the shell leads the visible pane's redial. A pane that sits in a shell publishing a link
+    (window.parent.__rompLink) puts its socket down on a stale return and dials only when the link is up: at once if it
+    already is, else on the shell's link-up word (a panes word with link:'up'), recording linkUpMs on its return-fresh;
+    a loud link-backstop dials anyway when the shell's own connT is 20 s stale. A standalone page (no __rompLink) runs
+    the upstream path unchanged. Independent of PR 3 (hidden panes park): here every pane awaits the link.
+
+    parentLinkVal is the shell's {up,connT}; fireWin("message",{romp:'panes',link:...}) hands the pane the shell's word."""
+
+    def test_await_with_the_link_down_puts_the_socket_down_and_dials_nothing_across_two_ticks(self):
+        r = _run(r"""
+open();recv({type:"ka"});hide();NOW+=46000;sock().readyState=3;   // the phone's case: the socket is dead on return
+parentLinkVal={up:false,connT:NOW};   // the shell's link is down but its loop is alive (connT fresh): the pane waits
+show();
+var atReturn={sockets:sockets.length,nulled:ws===null,awaiting:awaitLink};
+tick();NOW+=5000;tick();              // the tick re-reads the link: down and young, so no dial
+var afterTicks=sockets.length;
+parentLinkVal={up:true,connT:NOW};fireWin("message",{romp:"panes",on:{},link:"up"});open();   // end the await to flush the queued return row
+out({atReturn:atReturn,afterTicks:afterTicks,ret:rows(sock(),"return").map(function(x){return x.data;})});""")
+        self.assertEqual(r["atReturn"]["sockets"], 1, "the down link: no dial at the return")
+        self.assertTrue(r["atReturn"]["nulled"], "the socket is put down (abandon nulls ws), so the watchdog tick is inert")
+        self.assertIs(r["atReturn"]["awaiting"], True)
+        self.assertEqual(r["afterTicks"], 1, "no dial while the link stays down and its loop alive")
+        self.assertEqual(len(r["ret"]), 1)
+        self.assertEqual(r["ret"][0]["decision"], "redial-closed")
+        self.assertIs(r["ret"][0]["awaitLink"], True, "the return row says it is waiting for the link")
+
+    def test_the_link_up_word_dials_once_and_the_return_fresh_carries_linkUpMs(self):
+        r = _run(r"""
+open();recv({type:"ka"});hide();NOW+=46000;
+parentLinkVal={up:false,connT:NOW};show();
+var dialedAtReturn=sockets.length;
+NOW+=4000;parentLinkVal={up:true,connT:NOW};fireWin("message",{romp:"panes",on:{},link:"up"});
+var dialedAfterWord=sockets.length;
+NOW+=200;open();NOW+=50;recv({type:"feed",asks:[]});
+out({dialedAtReturn:dialedAtReturn,dialedAfterWord:dialedAfterWord,
+rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
+        self.assertEqual(r["dialedAtReturn"], 1, "no dial while awaiting")
+        self.assertEqual(r["dialedAfterWord"], 2, "the link-up word dials exactly once")
+        self.assertEqual(len(r["rf"]), 1)
+        self.assertEqual(r["rf"][0]["linkUpMs"], 4000, "linkUpMs is foreground->link-up: the path's own recovery")
+        self.assertTrue(r["rf"][0]["redialed"])
+
+    def test_the_link_up_at_the_decision_dials_at_once_with_awaitLink_false(self):
+        r = _run(r"""
+parentLinkVal={up:true,connT:NOW};
+open();recv({type:"ka"});hide();NOW+=46000;show();
+var dialed=sockets.length;
+NOW+=100;open();NOW+=10;recv({type:"feed",asks:[]});
+out({dialed:dialed,ret:rows(sock(),"return").map(function(x){return x.data;}),
+rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
+        self.assertEqual(r["dialed"], 2, "the path is up at the decision: dial at once")
+        self.assertIs(r["ret"][0]["awaitLink"], False)
+        self.assertEqual(r["rf"][0]["linkUpMs"], 0, "the whole return-fresh.ms is the code-owned wait when the path was already up")
+
+    def test_a_standalone_page_with_no_shell_link_dials_at_once_as_today(self):
+        r = _run(r"""
+open();recv({type:"ka"});hide();NOW+=46000;show();
+var dialed=sockets.length;
+NOW+=100;open();
+out({dialed:dialed,ret:rows(sock(),"return").map(function(x){return x.data;})});""")
+        self.assertEqual(r["dialed"], 2, "no __rompLink (standalone / VS Code): the upstream fast path dials at once")
+        self.assertNotIn("awaitLink", r["ret"][0], "the standalone return row has no awaitLink field")
+
+    def test_an_in_window_close_cadence_by_link_state(self):
+        # link up at the close: today's 0/250 in-window cadence (the upstream lines, a proven path); link down: no
+        # blind timer, re-await (the link-up word is the redial's event) and the socket put down so the tick is inert
+        r = _run(r"""
+function connectTimers(){return timers.filter(function(t){return t.live&&t.fn.name==="connect";});}
+function fireConnects(){connectTimers().forEach(function(t){t.live=false;t.fn();});}
+parentLinkVal={up:true,connT:NOW};
+open();recv({type:"ka"});hide();NOW+=46000;show();                 // link up: dials at once
+open();                                                             // the dialed socket opens
+NOW+=100;sock().readyState=3;sock().onclose({code:1006});          // an in-window close, link still up
+var up={armed:connectTimers().length,delays:connectTimers().map(function(t){return t.ms;})};
+fireConnects();open();                                              // the armed redial opens a fresh socket
+parentLinkVal={up:false,connT:NOW};                                 // now the link is down
+NOW+=100;sock().readyState=3;sock().onclose({code:1006});          // an in-window close with the link down
+var down={armed:connectTimers().length,awaiting:awaitLink,nulled:ws===null};
+out({up:up,down:down});""")
+        self.assertGreaterEqual(r["up"]["armed"], 1, "an in-window close with the link up arms the upstream 0/250 redial")
+        self.assertIn(r["up"]["delays"][-1], [0, 250], "...at the 0/250 in-window cadence")
+        self.assertEqual(r["down"]["armed"], 0, "an in-window close with the link down arms no blind timer")
+        self.assertIs(r["down"]["awaiting"], True, "...it re-awaits the link-up word instead")
+        self.assertTrue(r["down"]["nulled"], "...and puts the socket down so the tick is inert")
+
+    def test_a_restarting_frame_keeps_its_250ms_redial_with_the_link_down(self):
+        r = _run(r"""
+function armed(){return liveTimers().filter(function(t){return t.fn==="connect";}).map(function(t){return t.ms;});}
+parentLinkVal={up:false,connT:NOW};
+open();recv({type:"ka"});recv({type:"restarting",boot:"1"});
+NOW+=100;sock().readyState=3;sock().onclose({code:1006});
+out({delays:armed(),awaiting:awaitLink});""")
+        self.assertIn(250, r["delays"], "an announced restart keeps its tight 250 ms redial even with the link down")
+        self.assertIs(r["awaiting"], False, "...and does not re-await: the announce is the kernel's own word")
+
+    def test_the_link_backstop_dials_when_the_shells_connT_is_20001ms_stale(self):
+        r = _run(r"""
+open();recv({type:"ka"});hide();NOW+=46000;
+parentLinkVal={up:false,connT:NOW};show();                         // connT fresh at the return: the shell's loop is alive
+var awaiting=awaitLink,dialedAtReturn=sockets.length;
+tick();var afterFirstTick=sockets.length;                          // link down and young: no dial
+NOW+=20001;tick();                                                 // the shell's connT unrenewed for >20 s: its loop is dead
+var dialedAfterBackstop=sockets.length;
+open();                                                             // the fresh socket opens: the queued link-backstop row flushes onto it
+out({awaiting:awaiting,dialedAtReturn:dialedAtReturn,afterFirstTick:afterFirstTick,dialedAfterBackstop:dialedAfterBackstop,
+backstop:rows(sock(),"link-backstop").length});""")
+        self.assertIs(r["awaiting"], True)
+        self.assertEqual(r["dialedAtReturn"], 1, "no dial at the return while the link is down")
+        self.assertEqual(r["afterFirstTick"], 1, "no dial while the link is down and its loop young")
+        self.assertEqual(r["dialedAfterBackstop"], 2, "the backstop dials anyway once the shell's connT is 20 s stale")
+        self.assertEqual(r["backstop"], 1, "...and files a loud link-backstop diag row")
 
 
 if __name__ == "__main__":

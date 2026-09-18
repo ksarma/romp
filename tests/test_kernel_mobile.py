@@ -5,6 +5,7 @@ brings the chat forward. Pure-HTML + routing asserts; no real session data.
 """
 import json
 import os
+import shutil
 import subprocess
 import unittest
 from romp_load import load_source
@@ -466,6 +467,7 @@ global.innerHeight = 844; global.innerWidth = 390; global.scrollY = 0;
 global.scrollTo = () => {};
 global.matchMedia = () => ({ matches: true });                 // a coarse pointer: the phone
 global.requestAnimationFrame = (f) => { RAF.push(f); return RAF.length; };
+global.setInterval = () => 0;   // D3 (2026-09-18): the shell socket's watchdog tick; a no-op here so node exits (ShellLinkProbe drives its own)
 global.addEventListener = on(WIN);
 global.visualViewport = { height: 844, scale: 1, addEventListener: on(VV) };
 const pane = (id) => ({ id, classList: { toggle() {} }, contentDocument: {},
@@ -657,6 +659,7 @@ global.window = global;
 global.innerHeight = 844; global.innerWidth = 390; global.scrollY = 0; global.scrollTo = () => {};
 global.matchMedia = () => ({ matches: true });
 global.requestAnimationFrame = () => 1;
+global.setInterval = () => 0;   // D3 (2026-09-18): the shell socket's watchdog tick, a no-op here so node exits
 global.addEventListener = on(WIN);
 global.visualViewport = { height: 844, scale: 1, addEventListener() {} };
 global.document = { visibilityState: 'visible', addEventListener() {}, body,
@@ -889,6 +892,132 @@ class MobileShellDiagExecutes(unittest.TestCase):
 
     def test_the_switch_is_read_at_each_row(self):
         self.assertEqual(self.out["e"], ["probe-i"])
+
+
+# ── the shell socket as the page's link probe (D3, 2026-09-18) ──────────────────────────────────────
+# The shell script runs under node against the fit harness's window plus controllable timers, a fake WebSocket
+# and a mutable clock (the pattern MobileShellDiagExecutes uses at PR 762's head). D3 makes the shell socket the
+# page's ONE link probe: one attempt in flight, a 15 s connect cut (SH_CONNECT_MS), the refused ladder 1/2/4/4 s
+# reset by an open, a return-probe row filed per return, and window.__rompLink for the panes to follow.
+_SHELL_PROBE_HARNESS = r"""
+var SHNOW=1000000;Date.now=function(){return SHNOW;};
+var SHTIMERS=[];global.setTimeout=function(fn,ms){SHTIMERS.push({fn:fn,ms:ms,live:true});return SHTIMERS.length;};
+global.clearTimeout=function(id){if(id&&SHTIMERS[id-1])SHTIMERS[id-1].live=false;};
+var SHINTERVALS=[];global.setInterval=function(fn,ms){SHINTERVALS.push({fn:fn,ms:ms});return SHINTERVALS.length;};
+global.location={protocol:'https:',host:'TESTHOST',search:''};
+global.sessionStorage={getItem:function(k){return k==='romp:wid'?'W1':'';}};
+var SHSOCKS=[];global.WebSocket=function(u){this.url=u;this.readyState=0;this.sent=[];SHSOCKS.push(this);};
+global.WebSocket.prototype.send=function(s){this.sent.push(s);};global.WebSocket.prototype.close=function(){this.readyState=3;};
+var TELLS=0;window.__rompPanesTell=function(){TELLS++;};   // count the shell's re-tells of the panes word (D3: open/close/abandon)
+function shSock(){return SHSOCKS[SHSOCKS.length-1];}
+function shOpen(){var s=shSock();s.readyState=1;s.onopen();return s;}
+function shRecv(m){shSock().onmessage({data:JSON.stringify(m)});}
+function shTick(){SHINTERVALS.forEach(function(iv){iv.fn();});}
+function shFireDoc(t){(DOC[t]||[]).forEach(function(f){f({type:t});});}
+function shHide(){document.visibilityState='hidden';shFireDoc('visibilitychange');}
+function shShow(){document.visibilityState='visible';shFireDoc('visibilitychange');}
+function shProbeRows(){var all=[];SHSOCKS.forEach(function(s){s.sent.forEach(function(x){var m=JSON.parse(x);if(m.type==='clientDiag'&&m.surface==='shell'&&m.what==='return-probe')all.push(m.data);});});return all;}
+function shDialTimers(){return SHTIMERS.filter(function(t){return t.live&&t.fn.name==='shellWS';});}
+function shFireDials(){shDialTimers().forEach(function(t){t.live=false;t.fn();});}
+function shOut(o){process.stdout.write(JSON.stringify(o));}
+"""
+
+
+def _run_probe(scenario):
+    node = shutil.which("node")
+    if not node:
+        raise unittest.SkipTest("node not installed")
+    fx = tempfile.mkdtemp()
+    path = os.path.join(fx, "run.js")
+    with open(path, "w") as f:
+        f.write(_FIT_HARNESS + _SHELL_PROBE_HARNESS + _mobile_js() + "\n" + scenario)
+    r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        raise AssertionError("node failed:\n" + r.stderr)
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+class ShellLinkProbe(unittest.TestCase):
+    """D3 (2026-09-18): the shell socket is the page's one link probe. It gets the shim's liveness rules with the
+    shell's OWN copy of the constants (romp-manager's ruling; tests/test_kernel_ws_heartbeat.py pins the two copies to
+    agree), files ONE return-probe row per return, and publishes window.__rompLink for the panes to follow. Run under
+    node against a fake WebSocket and controllable timers, the way MobileShellDiagExecutes runs the shell script."""
+
+    def test_the_shell_dials_one_socket_with_the_dashboards_wid_and_publishes_the_link(self):
+        r = _run_probe(r"""
+var before=window.__rompLink();var tell0=TELLS;
+shOpen();var atOpen=window.__rompLink();var tellOnOpen=TELLS-tell0;
+shRecv({type:'ka'});
+SHNOW+=40000;var whenStale=window.__rompLink();   // no frame for >SH_STALE_MS: link reads down though the socket is OPEN
+shOut({socks:SHSOCKS.length,url:SHSOCKS[0].url,before:before,atOpen:atOpen,whenStale:whenStale,tellOnOpen:tellOnOpen});""")
+        self.assertEqual(r["socks"], 1, "one shell socket dialed at load (one live attempt)")
+        self.assertTrue(r["url"].startswith("wss://TESTHOST/ws?app=shell&wid="), r["url"])
+        self.assertIs(r["before"]["up"], False, "no link before the socket opens")
+        self.assertIs(r["atOpen"]["up"], True, "the socket open publishes the link up")
+        self.assertGreaterEqual(r["tellOnOpen"], 1, "the open re-tells the panes word")
+        self.assertIs(r["whenStale"]["up"], False, "__rompLink reads up only for an OPEN socket fresh within SH_STALE_MS")
+
+    def test_the_visibility_fast_path_probes_the_path_and_files_one_return_probe_row(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;   // the socket died while the app was in the background
+SHNOW+=100;shShow();
+var dialedAtReturn=SHSOCKS.length;   // the fast path abandoned the dead socket and dialed a fresh one
+shOpen();   // the fresh socket opens: the return-probe row files at its open
+shOut({dialedAtReturn:dialedAtReturn,probe:shProbeRows()});""")
+        self.assertEqual(r["dialedAtReturn"], 2, "the fast path put the dead socket down and dialed at once")
+        self.assertEqual(len(r["probe"]), 1, "ONE shell return-probe row per return")
+        self.assertEqual(sorted(r["probe"][0].keys()), sorted(["decision", "hiddenMs", "quietMs", "attempts", "firstFailMs", "ms"]))
+        self.assertEqual(r["probe"][0]["decision"], "redial-closed", "a dead socket at the return")
+
+    def test_a_hung_attempt_is_cut_at_15s_and_one_attempt_is_in_flight(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // dial a fresh socket; the path hangs, so it stays CONNECTING
+var dialed=SHSOCKS.length;
+SHNOW+=5000;shTick();var beforeCut=SHSOCKS.length;      // <15 s: no cut, still ONE attempt in flight
+SHNOW+=11000;shTick();var cutRs=SHSOCKS[1].readyState;  // >15 s since the dial: the tick closes the CONNECTING socket
+SHSOCKS[1].onclose({code:1006});var armedAfterCut=SHSOCKS.length;   // the browser's onclose then arms the redial
+shFireDials();var afterRedial=SHSOCKS.length;
+shOut({dialed:dialed,beforeCut:beforeCut,cutRs:cutRs,armedAfterCut:armedAfterCut,afterRedial:afterRedial});""")
+        self.assertEqual(r["dialed"], 2, "one fresh attempt at the return")
+        self.assertEqual(r["beforeCut"], 2, "the tick does not dial a second while one attempt is in flight and young")
+        self.assertEqual(r["cutRs"], 3, "the 15 s connect cut closes the hung CONNECTING socket")
+        self.assertEqual(r["armedAfterCut"], 2, "its onclose arms a redial, no new socket yet")
+        self.assertEqual(r["afterRedial"], 3, "the redial dials the next single attempt")
+
+    def test_a_refused_attempt_backs_off_on_the_1_2_4_4s_ladder_reset_by_an_open(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
+var delays=[];
+function refuse(){var s=shSock();s.readyState=3;s.onclose({code:1006});delays.push(SHTIMERS[SHTIMERS.length-1].ms);shFireDials();}
+refuse();refuse();refuse();refuse();   // four fast refusals within the connect cut: the ladder
+var laddered=delays.slice();
+shOpen();   // an open resets the rung
+var s=shSock();s.readyState=3;s.onclose({code:1006});shFireDials();   // the opened socket drops (not a refusal): arms and redials
+var fresh=shSock();fresh.readyState=3;fresh.onclose({code:1006});   // the fresh dial is refused: rung reset to 1000
+var afterReset=SHTIMERS[SHTIMERS.length-1].ms;
+shOut({laddered:laddered,afterReset:afterReset});""")
+        self.assertEqual(r["laddered"], [1000, 2000, 4000, 4000], "the refused ladder 1/2/4/4 s")
+        self.assertEqual(r["afterReset"], 1000, "an open resets the rung, so the next refusal is 1 s again")
+
+    def test_rompLink_reads_up_only_for_an_open_socket_fresh_within_stale_ms(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});var open1=window.__rompLink().up;
+SHNOW+=40000;var stale1=window.__rompLink().up;
+shRecv({type:'ka'});var fresh=window.__rompLink().up;
+shSock().readyState=3;var closed=window.__rompLink().up;
+shOut({open1:open1,stale1:stale1,fresh:fresh,closed:closed});""")
+        self.assertEqual([r["open1"], r["stale1"], r["fresh"], r["closed"]], [True, False, True, False])
+
+    def test_the_open_and_close_re_tell_the_panes_word(self):
+        r = _run_probe(r"""
+var t0=TELLS;shOpen();var onOpen=TELLS-t0;
+var t1=TELLS;SHSOCKS[0].readyState=3;SHSOCKS[0].onclose({code:1006});var onClose=TELLS-t1;
+shOut({onOpen:onOpen,onClose:onClose});""")
+        self.assertGreaterEqual(r["onOpen"], 1, "the socket open re-tells the panes word (link up)")
+        self.assertGreaterEqual(r["onClose"], 1, "the socket close re-tells it (link down)")
 
 
 if __name__ == "__main__":
