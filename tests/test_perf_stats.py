@@ -662,11 +662,10 @@ class Collector(unittest.TestCase):
     def test_every_cpu_stage_is_named_in_the_collectors_stages_cpu_ms_row(self):
         # the same rule for the CPU block: the docstring's stages_cpu_ms row (from its key to the next row's key) names
         # every stage the snapshot serves a CPU row for from the start (2026-09-18 review, low 17: the row listed seven
-        # of the nine, the signature seam's two sub-seams missing)
-        lines = km._PerfStats.__doc__.splitlines()
-        start = next(i for i, l in enumerate(lines) if re.match(r"^\s{6}stages_cpu_ms\s", l))
-        end = next(i for i in range(start + 1, len(lines)) if re.match(r"^\s{6}\S", lines[i]))
-        row = "\n".join(lines[start:end])
+        # of the nine, the signature seam's two sub-seams missing). The row is cut by _doc_row, relative to its own
+        # indentation: Python 3.13 and later strip a docstring's common leading whitespace at compile time, so the old
+        # match on six leading spaces found no row on the 3.13 and 3.14t CI cells (a StopIteration)
+        row = _doc_row(km._PerfStats.__doc__, "stages_cpu_ms")
         for k in km._PerfStats.CPU_STAGES:
             self.assertIn(k, row, "stages_cpu_ms row lacks %s" % k)
 
