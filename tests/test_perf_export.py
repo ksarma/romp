@@ -252,6 +252,15 @@ class FoldInvariant(unittest.TestCase):
         self.assertEqual(kinds({"stacks": {"11 pusher": {"frames": ["go kernel.py:3"]}}}), ["outside the frame grammar"], "free text in a frame slot is the frame rule's")
         self.assertEqual(kinds({"stacks": {"11 pusher": {"stage": "jobs auto"}}}), ["free text"], "a stage value is not a frame")
         self.assertEqual(kinds({"stacks": {"11 pusher": {"frames": ["_pusher (kernel.py:100)"]}}}, ident=re.compile(r"^[A-Za-z0-9_.-]+$")), [])
+        # the module's stack-key grammar is the character one: the export drops the block and the cli never loads the
+        # kernel, so it holds no copy of the kernel's register of thread kinds. A caller that does (the served walk in
+        # tests/test_perf_stats.py) passes the register's grammar, under which a thread's name is not a kind
+        reg = re.compile(r"^[0-9]+ (?:(?:judge-)*(?:%s)|other)$" % "|".join(sorted(map(re.escape, km._THREAD_KIND_WORDS))))
+        rows = {"stacks": {"11 probe-thread": {}, "12 other": {}, "13 judge-index": {}, "14 pusher": {}}}
+        self.assertEqual(kinds(rows), [], "the module's grammar admits any kind token")
+        self.assertEqual(kinds(rows, stacks_key=reg), ["outside the stack sample's key grammar"], "the register's admits its words, judge- composites and other alone")
+        self.assertEqual(kinds({"perf": rows}, under=("perf",), stacks_key=reg), ["outside the stack sample's key grammar"], "below the export's envelope too")
+        self.assertEqual(kinds({"stacks": {"12 ?": {}}}, stacks_key=reg), ["outside the stack sample's key grammar"], "the pre-register token is outside the register's grammar")
         self.assertIn("stacks", pp.DENY_KEYS, "the export never carries the block; the grammars are for the served walk")
         self.assertNotIn("stacks", pe.export_document(leak_snapshot())["perf"])
 

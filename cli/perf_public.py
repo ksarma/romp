@@ -258,10 +258,12 @@ HEX40 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])")   # a sha1
 ABS_PATH = re.compile(r"(?:^|[\s\"'=(:,])/(?:[^/\s]+/)+[^/\s]*")   # a slash-rooted path of two or more segments
 WHITESPACE = re.compile(r"\s")                                       # free text: an exception message, a URL, a bare host name
 # The stack sample (GET /perf?stacks=1, ROMP_PERF_STACKS; the kernel's _thread_stacks): a row per thread keyed
-# "<ident> <kind>", the kind a thread's name before the naming convention's separator, a default name's target
-# function or a pool worker's prefix, and `?` the kernel's own token for a thread gone between its two
-# enumerations, never a name. The export drops the block (DENY_KEYS); the served snapshot carries it under its
-# switch, so the walk knows its grammars.
+# "<ident> <kind>", the kind a word from the kernel's register of its own thread kinds (_THREAD_KIND_WORDS, a
+# judge pool's worker composing judge-<word>) or `other`, never a name. The export drops the block (DENY_KEYS)
+# and so needs no copy of that register; this module's grammar is the character grammar, one kind token or `?`
+# (what a kernel before the register spelled for a thread gone between its two enumerations), which admits a
+# served snapshot from any tree, and the served walk (tests/test_perf_stats.py, ServedSnapshotIsPasteSafe) passes
+# the register's own grammar through paste_problems's stacks_key.
 STACKS_KEY = re.compile(r"^[0-9]+ (?:[A-Za-z0-9_.-]+|\?)$")
 # A frame string, "function (file:line)": a code object's name and its file's BASENAME, the interpreter's <lambda>
 # and <frozen ...> forms included; never a directory.
@@ -273,10 +275,12 @@ def _frame_value(block):
     return block is not None and len(block) > 2 and block[0] == "stacks" and block[2] == "frames"
 
 
-def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=()):
+def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=(), stacks_key=STACKS_KEY):
     """Every way `doc` fails to be paste-safe, as one line each (empty when it is): a key outside its block's
-    grammar (`ident` for plain blocks, the register's image for `http` (http_key_ok), STACKS_KEY for `stacks`,
-    JOINED_KEY for the joined tables), a key or string value carrying a uuid, a 32-hex or 40-hex token, an
+    grammar (`ident` for plain blocks, the register's image for `http` (http_key_ok), `stacks_key` for `stacks`
+    (STACKS_KEY, the character grammar, unless the caller holds the kernel's register of thread kinds and passes
+    its grammar, as the served-snapshot test does), JOINED_KEY for the joined tables), a key or string value
+    carrying a uuid, a 32-hex or 40-hex token, an
     absolute path or any of the `planted` strings, a string value carrying whitespace (free text) anywhere but
     the stack sample's frames, and a frame outside FRAME. `skip` names top-level keys whose string value is not
     walked (an export's schema line); `under` is the key path the snapshot's blocks sit below (`("perf",)` in an
@@ -318,7 +322,7 @@ def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=()):
             if not http_key_ok(k):
                 problems.append("outside the image of the route register: " + at)
         elif block(where) == ("stacks",):
-            if not STACKS_KEY.match(k):
+            if not stacks_key.match(k):
                 problems.append("outside the stack sample's key grammar: " + at)
         elif block(where) in JOINED_KEY_BLOCKS:
             if not JOINED_KEY.match(k):

@@ -2470,9 +2470,21 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
     # http check (membership in the register's image, perf_public.http_key_ok over the module's checked-in copy of the
     # register, so the walk runs the same against any kernel tree), the stack sample's key and frame grammars, the
     # joined-key grammar, and the leak detectors (a uuid, a 32-hex and a 40-hex token, an absolute path, free text,
-    # the planted strings). This test hands it the stricter ident.
+    # the planted strings). This test hands it the stricter ident and the stack sample's key grammar built from the
+    # kernel's register: the module's own is a character grammar, because the export drops the block (DENY_KEYS) and
+    # the cli never loads the kernel; the served walk is where the register's words are the only kinds allowed.
     IDENT = re.compile(r"^[A-Za-z0-9_.-]+$")
+    STACKS_KEY = re.compile(r"^[0-9]+ (?:(?:judge-)*(?:%s)|other)$" % "|".join(sorted(map(re.escape, km._THREAD_KIND_WORDS))))
+    #                                                              the stack sample's "<ident> <kind>" (_thread_stacks): a word of
+    #                                                              the kernel's register (a judge pool's worker composes one
+    #                                                              with judge-) or other, nothing else: a thread's name is never
+    #                                                              a key (2026-09-18: a library's watchdog named with a test path
+    #                                                              reached CI's sample verbatim)
     JOINED_KEY_BLOCKS = pp.JOINED_KEY_BLOCKS
+
+    def _paste_problems(self, doc):
+        """The shared walk with this class's grammars: the stricter ident, the register's stack keys, the planted strings."""
+        return pp.paste_problems(doc, planted=self.planted, ident=self.IDENT, stacks_key=self.STACKS_KEY)
 
     @staticmethod
     def _http_keys():
@@ -2577,8 +2589,13 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         self.assertIn(key, snap["stacks"] or {}, sorted(snap["stacks"] or {}))
         self.assertTrue(snap["stacks"][key]["frames"][-1].startswith("wait ("), "the row is the planted thread's")
         self.assertNotIn(name, json.dumps(snap), "the name is nowhere in the snapshot")
-        self.problems = pp.paste_problems(snap, planted=self.planted, ident=self.IDENT)
+        self.problems = self._paste_problems(snap)
         self.assertEqual(self.problems, [], "%d leak(s) in the served snapshot:\n  %s" % (len(self.problems), "\n  ".join(self.problems)))
+        # the grammar the walk applied is the register's, not the shared module's character one: the planted name as a
+        # kind, which the module's own grammar admits, is refused here
+        self.assertEqual([l.split(":", 1)[0] for l in self._paste_problems({"stacks": {"%d probe-thread" % th.ident: {}}})],
+                         ["outside the stack sample's key grammar"], "a thread's name is not a kind under the served walk")
+        self.assertEqual(pp.paste_problems({"stacks": {"%d probe-thread" % th.ident: {}}}), [], "the module's default admits the token")
 
     def test_no_key_or_string_in_the_served_snapshot_carries_a_path_an_id_or_planted_text(self):
         self._plant()
@@ -2586,7 +2603,7 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         self.assertEqual(set(snap), TOP_KEYS, "the walk covers the whole served shape")
         me = self._my_stacks_key()
         self.assertIn(me, snap["stacks"] or {}, "the stack sample rides in the walk under its switch, this thread's row among the rest")
-        self.problems = pp.paste_problems(snap, planted=self.planted, ident=self.IDENT)
+        self.problems = self._paste_problems(snap)
         self.assertEqual(self.problems, [], "%d leak(s) in the served snapshot:\n  %s" % (len(self.problems), "\n  ".join(self.problems)))
         self.assertEqual(snap["stacks"][me]["stage"], "http.GET.other", "the request's mark carries the fold's word, not the path's")
         # the diagnosis the folds keep: the reads per holder kind, the child's line as a size and a status, the per-session
