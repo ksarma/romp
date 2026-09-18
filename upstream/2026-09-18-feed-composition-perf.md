@@ -4,7 +4,7 @@ status: candidate
 where: kernel/kernel.py (_FeedComposition, FEED_APP_FIELDS, _feed_parts), docs/reference.md, tests/test_feed_composition.py
 added: 2026-09-18
 pr:
-tier: fix
+tier: feature
 offered:
 closed:
 ---

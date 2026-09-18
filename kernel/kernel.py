@@ -54705,7 +54705,7 @@ def _note_unknown_op(msg, client):
 _FEED_KEYED = (("asks", "itemId"), ("ledgers", "sid"))
 
 
-_feed_cards_memo = None    # (a build's asks list, {itemId: json}, {app: card-field bytes}) — the per-card encode once per
+_feed_cards_memo = None    # (a build's asks list, {itemId: json}, {app: card-field bytes}): the per-card encode once per
 #                            BUILD (2026-09-06): a ledgers-only refill of _feed_wire (same feed_src, the per-cycle ledgers
 #                            attach changed) re-encodes the ledgers and the remainder, not the cards. Identity-keyed like
 #                            _delta_parts_cache: no consumer mutates a cached build's cards (they copy). The third member
@@ -54723,18 +54723,24 @@ _feed_dupes_said = set()   # itemIds already reported as duplicated within one b
 # receive if it were sent only the fields it reads, beside the whole frame it receives today (_FeedComposition).
 #
 # FEED_APP_FIELDS is the checked-in table of what each reader reads from the frame: a top-level field by name, or
-# `asks.<field>` for a card field an app reads without the rest of the card. tests/test_feed_composition.py pins each
-# row against the reader's source (feed.ts applyFeedPayload, fleet.ts's frame handler, waiting.ts applyFrame: every
-# `m.<field>` read of a frame field, and fleet.ts's `a.<field>` / `ask.<field>` card reads), both ways, so a reader
-# that picks up or drops a field changes this table or fails that test. Not in it: the volatile fields every frame
-# carries (`type`, `now`, `buildId`, about forty bytes) and the fields federation writes client-side (pendingHosts,
-# pendingDead, nowAt, buildIds, offHosts, hostsUnread), which cost no frame bytes a projection could save.
+# `asks.<field>` for a card field an app reads without the rest of the card. A pane reads through federation.js, which
+# loads on every feed-slot page ahead of the bundle and hands it the merged frame: most fields it merges through, and
+# the pane's own read counts them, but `clearedForeign` it consumes on the pane's behalf (mergeHostFeeds reads it off
+# the local frame; applyViewerClears drops the remote cards and strikes the remote ledger tops the local ledger
+# cleared), so the feed and fleet rows carry it and the waiting row, which reads neither cards nor ledgers, does not.
+# tests/test_feed_composition.py pins each row against the reader's source (feed.ts applyFeedPayload, fleet.ts's frame
+# handler, waiting.ts applyFrame: every `m.<field>` read of a frame field, and fleet.ts's `a.<field>` / `ask.<field>`
+# card reads) and against federation.ts (the local-frame fields mergeHostFeeds consumes, for every pane that reads a
+# field applyViewerClears rewrites), both ways, so a reader that picks up or drops a field changes this table or fails
+# that test. Not in it: the volatile fields every frame carries (`type`, `now`, `buildId`, about forty bytes) and the
+# fields federation writes client-side (pendingHosts, pendingDead, nowAt, buildIds, offHosts, hostsUnread), which cost
+# no frame bytes a projection could save.
 FEED_APP_FIELDS = {
     "feed": ("asks", "judgeLimit", "working", "awaiting", "stateUnknown", "bgServices", "userTodos", "order", "views",
              "sessions", "clearNotices", "sdkNotices", "syncNotices", "dismissedCount", "showDismissed", "canUndoClear",
-             "selfHost", "off"),
+             "clearedForeign", "selfHost", "off"),
     "fleet": ("asks.itemId", "asks.provisional", "asks.sid", "asks.name", "asks.color", "asks.text", "asks.background",
-              "asks.summary", "asks.blockSummary", "ledgers", "views", "sessions", "off"),
+              "asks.summary", "asks.blockSummary", "ledgers", "views", "sessions", "clearedForeign", "off"),
     "waiting": ("userTodoRows", "userTodosOn", "sessions"),
 }
 # The frame's top-level fields outside the volatile three: build_feed's return, the pusher's `ledgers` attach, the views
@@ -54753,11 +54759,13 @@ def _ask_fields_est(asks, fields):
     """An ESTIMATE of the bytes `fields` of every card in `asks` take on the wire, from lengths alone: per card its braces,
     and per field present its quoted name, the separators and its value at the length of its text (a string plus its
     quotes; a number, a bool or null at the length of its JSON spelling; a nested value, a card's `color` say, at the
-    length of its repr, which for the frame's nested values is the JSON length). JSON escapes are not counted, so a text
-    with quotes or non-ASCII reads a little under its wire size. No encode: the per-card encode _feed_parts already ran is
-    the whole card, and re-encoding a third of every card per build for one number is the cost this probe refuses. An
-    upper bound on the projection: every named field of every card is counted, where fleet.ts reads a provisional card's
-    sid, name, color and text and a goal card's background, summary and blockSummary (asksById)."""
+    length of its repr, which for the frame's nested values is the JSON length). No encode: the per-card encode
+    _feed_parts already ran is the whole card, and re-encoding a third of every card per build for one number is the
+    cost this probe refuses. An estimate, not a bound, with an error in each direction: it over-counts by naming every
+    field of every card, where fleet.ts reads a provisional card's sid, name, color and text and a goal card's
+    background, summary and blockSummary (asksById); and it under-counts JSON escapes, one byte per quote, backslash or
+    newline in a text and up to five per non-ASCII character, so a board of quote- and newline-heavy texts can read
+    under the bytes those fields would take."""
     n = 0
     for a in asks:
         if not isinstance(a, dict):
@@ -54893,8 +54901,8 @@ def _feed_parts(feed):
     The cards are memoized on the build's asks list, so a refill for a changed ledgers attach encodes only
     the ledgers and the remainder. The remainder is encoded per field and joined (2026-09-18): the same
     bytes, and the composition probe (_FeedComposition, memos.feedComposition) reads every part's size
-    from this one pass. itemIds are unique by construction — goal ids are minted `<uuid>:g<seq>`,
-    every other card kind carries its own `kind:` prefix — and both the delta path and _feed_sig read one
+    from this one pass. itemIds are unique by construction (goal ids are minted `<uuid>:g<seq>`,
+    every other card kind carries its own `kind:` prefix) and both the delta path and _feed_sig read one
     card per id; a build that breaks that is said on stderr, once per id, not silently collapsed."""
     global _feed_cards_memo
     dflt = _wire_default_in("_feed_parts")

@@ -3716,11 +3716,15 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   quoted name and separators. `apps` has one row per consuming app: `today`,
   the whole frame it receives, beside `projected`, the bytes of the fields its
   bundle reads, from the checked-in table `FEED_APP_FIELDS` in
-  `kernel/kernel.py`, which a test pins against the bundles' source. `last`
-  also says whether the ledgers were attached (`ledgersAttached`). One figure
-  is estimated: the Outline reads a few fields of each card, not the card,
-  and those fields are sized from their text lengths, escapes uncounted, never
-  re-encoded. `wire` is the served body's length as the kernel holds it now,
+  `kernel/kernel.py`, which a test pins against the bundles' source and
+  against `federation.ts`: the merge reads `clearedForeign` off the local
+  frame for the feed pane and the Outline (it drops the remote cards and
+  strikes the remote ledger tops the local ledger cleared), so those two rows
+  carry it. `last` also says whether the ledgers were attached
+  (`ledgersAttached`). One figure is estimated, not bounded: the Outline reads
+  a few fields of each card, not the card, and those fields are sized from
+  their text lengths, never re-encoded, so the figure over-counts by naming
+  every field of every card and under-counts JSON escapes. `wire` is the served body's length as the kernel holds it now,
   with `exact` 1 once a whole frame has gone out and 0 while it is the
   estimate. Every number comes from the encode the wire needs anyway; the
   accounting adds a few length sums per pass and no second encode.

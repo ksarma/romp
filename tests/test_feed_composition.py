@@ -14,10 +14,12 @@ checked-in table pinned here against the bundles' source both ways, beside the w
 Pinned here: (a) on a served kernel the block is on GET /perf, its parts sum to its frame figure exactly and that
 figure sits under the frame the client received by no more than the stated tolerance (the tints, key names and
 separators the estimate does not count), `wire` is the exact body once a whole frame went, and every key is an
-identifier over integer leaves; (b) the per-app table matches the readers' source both ways, for the frame's fields
-and for the Outline's card fields, and the frame-fields list matches a built frame, the off frame and the views
-fault marker; (c) a synthetic build with a known ledger share projects the expected bytes per app, a ledgers refill
-re-sizes only the ledgers, and the lifetime sums accumulate; (d) the remainder's per-field encode is byte for byte the
+identifier over integer leaves; (b) the per-app table matches the readers' source both ways, for the frame's fields,
+for the Outline's card fields and for the field federation.ts consumes on a pane's behalf (clearedForeign, read off the
+local frame by mergeHostFeeds; applyViewerClears rewrites the merged cards and the ledgers from it, so the two panes
+that read those carry it), and the frame-fields list matches a built frame, the off frame and the views fault marker;
+(c) a synthetic build with a known ledger share projects the expected bytes per app, a ledgers refill re-sizes only the
+ledgers, and the lifetime sums accumulate; (d) the remainder's per-field encode is byte for byte the
 whole sort_keys encode, and a build encodes each card, ledger and remainder field once and a refill no card.
 
 Synthetic only: the notes-api demo world, TESTHOST, placeholder ids."""
@@ -247,8 +249,8 @@ class ServedBlock(unittest.TestCase):
                 self.assertLess(last["apps"][app]["projected"], last["frame"], app)
             self.assertLess(last["apps"]["waiting"]["projected"], last["rest"], "waiting reads three remainder fields")
             self.assertEqual(last["apps"]["feed"]["projected"], last["frame"] - last["ledgers"] - last["by"]["userTodoRows"]
-                             - last["by"]["userTodosOn"] - last["by"]["clearedForeign"],
-                             "the feed pane reads everything but the ledgers and the fields it never touches")
+                             - last["by"]["userTodosOn"],
+                             "the feed pane reads everything but the ledgers and the Waiting-on-you pane's two fields")
             for k in block["lifetime"]:
                 if k not in ("by", "apps"):
                     self.assertGreaterEqual(block["lifetime"][k], last[k], k)
@@ -288,17 +290,41 @@ class AppTable(unittest.TestCase):
         with open(os.path.join(WEBVIEW, name), encoding="utf-8") as fh:
             return fh.read()
 
+    @staticmethod
+    def _fn(src, head):
+        """The text of the top-level function whose declaration starts with `head`, to its closing brace."""
+        start = src.index(head)
+        return src[start:src.index("\n}", start)]
+
     def test_the_table_names_every_frame_field_each_reader_reads_and_nothing_else(self):
         table = km.FEED_APP_FIELDS                               # fails before: no table
         self.assertEqual(set(table), set(self.READERS), "one row per app that rides the feed slot")
+        # federation.js loads on every feed-slot page ahead of the pane's bundle and hands it the merged frame. Most
+        # fields it merges through, and the pane's own read counts them; the fields it CONSUMES on the pane's behalf
+        # are the local frame's fields mergeHostFeeds reads by name (clearedForeign: applyViewerClears drops the remote
+        # cards and strikes the remote ledger tops the local ledger cleared). A pane that reads a field the consumer
+        # rewrites receives the consumed field's effect, so its row carries the field; a pane that reads none of the
+        # rewritten fields does not (fails before: the feed and fleet rows lacked clearedForeign).
+        fed = self._src("federation.ts")
+        consumed = set(re.findall(r"\blocal\??\.(\w+)", self._fn(fed, "export function mergeHostFeeds("))) \
+            & set(km.FEED_FRAME_FIELDS)
+        clears = self._fn(fed, "export function applyViewerClears(")
+        rewrites = set(re.findall(r"\bmerged\.(\w+) = ", clears)) & set(km.FEED_FRAME_FIELDS)
+        if "ledgers[i] = " in clears:
+            rewrites.add("ledgers")
+        self.assertTrue(consumed, "mergeHostFeeds reads a frame field off the local frame by name")
+        self.assertTrue(rewrites, "applyViewerClears rewrites a frame field of the merged frame")
+        self.assertIn("clearedForeign", consumed)
         for app, fname in self.READERS.items():
             src = self._src(fname)
             reads = {f for f in km.FEED_FRAME_FIELDS if re.search(r"\bm\??\.%s\b" % re.escape(f), src)}
+            via = consumed if reads & rewrites else set()
             top = {f.split(".", 1)[0] for f in table[app]}       # `asks.<field>` rows are a read of `asks`
-            self.assertEqual(top, reads,
+            self.assertEqual(top, reads | via,
                              "%s: the table's top-level fields are exactly the frame fields %s reads off its frame "
-                             "(m.<field>); table-only %s, source-only %s"
-                             % (app, fname, sorted(top - reads), sorted(reads - top)))
+                             "(m.<field>) plus the fields federation consumes for it (%s); table-only %s, "
+                             "source-only %s"
+                             % (app, fname, sorted(via), sorted(top - reads - via), sorted((reads | via) - top)))
             for f in top:
                 self.assertIn(f, km.FEED_FRAME_FIELDS, "%s: %s names a frame field" % (app, f))
         # the Outline reads a few fields of each card (never the card): the provisional card's face in its frame handler
@@ -374,12 +400,14 @@ class SyntheticBuild(unittest.TestCase):
                                            "projected": by["userTodoRows"] + by["userTodosOn"] + by["sessions"]},
                          "the Waiting-on-you pane reads its rows, the switch and the session list")
         self.assertEqual(apps["feed"]["projected"],
-                         last["frame"] - leds - by["userTodoRows"] - by["userTodosOn"] - by["clearedForeign"],
-                         "the feed pane reads the cards and the remainder minus the fields it never touches, no ledgers")
+                         last["frame"] - leds - by["userTodoRows"] - by["userTodosOn"],
+                         "the feed pane reads the cards and the remainder minus the two fields it never touches, no "
+                         "ledgers; clearedForeign stays in, federation drops remote cards from it for the pane")
         fields = km._FEED_APP_ASK_FIELDS["fleet"]
         est = km._ask_fields_est(feed["asks"], fields)
-        self.assertEqual(apps["fleet"]["projected"], leds + by["views"] + by["sessions"] + est,
-                         "the Outline reads the ledgers, the views, the session list and a few fields of each card")
+        self.assertEqual(apps["fleet"]["projected"], leds + by["views"] + by["sessions"] + by["clearedForeign"] + est,
+                         "the Outline reads the ledgers, the views, the session list, the viewer's foreign clears "
+                         "(federation strikes remote ledger tops from them) and a few fields of each card")
         # the card-field estimate: the docstring's arithmetic, done again here over one goal card and one provisional
         # card, and bounded by the texts it counts and the cards it stands in for
         goal, prov = feed["asks"][0], feed["asks"][9]
