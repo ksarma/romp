@@ -921,15 +921,73 @@ class WakeOnlyLooksSkipOnTheKey(_Base):
 
     # ── the wake's ledger writes under the memo (review finds on jobs stage 1) ──
 
-    def _wake_record(self, sid, anchor, fired_at):
-        """An in-flight wake record for `sid`'s top, as the nudges-on fire wrote it, in a gear-off ledger: {wake, anchor, count,
-        lastTurnId, armAtoms, at} with no answeredAt, failed or moot."""
-        (jd.STATE / "auto-nudge.json").write_text(json.dumps({"enabled": False, "nudged": {
+    def _wake_record(self, sid, anchor, fired_at, enabled=False):
+        """An in-flight wake record for `sid`'s top, as the nudges-on fire wrote it, in a ledger with the toggle `enabled` (off
+        unless said): {wake, anchor, count, lastTurnId, armAtoms, at} with no answeredAt, failed or moot."""
+        (jd.STATE / "auto-nudge.json").write_text(json.dumps({"enabled": enabled, "nudged": {
             sid + ":g1": {"wake": True, "anchor": anchor, "count": 1, "lastTurnId": "t2", "armAtoms": 0, "at": fired_at}}}))
         km._autonudge_cache.clear()
 
     def _ledger_rec(self):
         return dict(km._auto_nudge_data().get("nudged", {}).get(self.gid) or {})
+
+    def _in_flight_exit_between_the_fire_and_the_response(self, enabled, mode):
+        """Review round 1 (tests-2): the exit every in-flight wake takes on each pass between its fire and its response
+        (_nudge_response_ready's not-ready answer while the arm turn stands unchanged) went from an always-unbounded look to a
+        skippable row, and the three in-flight tests below stub the answer to ready. Pinned by execution in three assertions,
+        with the real _nudge_response_ready: (1) the unchanged arm turn records a bounded row and the next pass skips; (2) an
+        append to the transcript FILE alone releases the row under missBy.transcript, but the parse (a fixture here) did not grow,
+        so the pass re-records the same not-ready exit; (3) growing the parse too, the arm turn past its armed atoms with no
+        visible nudge segment, moves the row's bound onto the lost-send instant (the fire time plus LOST_SEND_DEADMAN_SECS), a
+        clock note, not a None note. Run with the gear off (mode `wake`) and on (mode `full`): the exit is newly skippable in
+        both toggle states."""
+        self._toggle(enabled)
+        self.alive = [SID]
+        self._seed(kind="job", age=5 * H)
+        self._wake_record(SID, NOW - 5 * H, NOW - 3600, enabled=enabled)
+        st = km._session_files_stat(self.rows[SID])
+        def tail():
+            return tuple(self._row(SID)[len(st):])
+        def miss_transcript():
+            return (km._tick_seen_report()["byJob"].get("auto-nudge") or {}).get("missBy", {}).get("transcript", 0)
+        p1 = self._pass()
+        self.assertEqual(p1["parses"], 1)
+        self.assertEqual(tail(), (mode, -1.0, None), "(1) the not-ready exit records a bounded row: the response is the transcript's, a keyed file")
+        self.assertEqual(dict(km._NUDGE_WALK_STATS["unboundedBy"]), {}, "no None note on this exit")
+        p2 = self._pass(NOW + 5)
+        self.assertEqual((p2["parses"], p2["skippedParses"]), (0, 1), "(1) the next pass skips")
+        with open(self.paths[SID], "a") as f:                       # (2) the transcript file grows; the parse fixture does not
+            f.write(json.dumps({"type": "assistant", "uuid": "a1", "timestamp": "2026-09-10T00:01:00Z",
+                                "message": {"role": "assistant", "content": "still running the rebuild"}}) + "\n")
+        m0 = miss_transcript()
+        p3 = self._pass(NOW + 10)
+        self.assertEqual((p3["parses"], p3["skippedParses"]), (1, 0), "(2) the transcript's stat releases the row")
+        self.assertEqual(miss_transcript() - m0, 1, "(2) named as the transcript's position")
+        self.assertEqual(tail(), (mode, -1.0, None), "(2) the parse did not grow: the same not-ready exit is re-recorded, still bounded")
+        self.assertFalse(self._node().get("blocked"), "(2) no outcome leg ran: nothing escalated")
+        p4 = self._pass(NOW + 15)
+        self.assertEqual((p4["parses"], p4["skippedParses"]), (0, 1), "(2) and the pass after it skips again")
+        self.turns[-1]["atoms"] = [{"t": NOW - 3000, "type": "assistant"}]   # (3) the arm turn grew past its armed atoms (0)
+        self._reparse()
+        with open(self.paths[SID], "a") as f:                       # and the file moves with it, as a real transcript would
+            f.write(json.dumps({"type": "assistant", "uuid": "a2", "timestamp": "2026-09-10T00:02:00Z",
+                                "message": {"role": "assistant", "content": "the rebuild finished"}}) + "\n")
+        p5 = self._pass(NOW + 20)
+        self.assertEqual((p5["parses"], p5["skippedParses"]), (1, 0), "(3) the key moved: the look evaluates")
+        self.assertEqual(self._row(SID)[-2], NOW - 3600 + km.LOST_SEND_DEADMAN_SECS,
+                         "(3) past the armed atoms with no visible nudge segment and no turn ended after the fire: the lost-send instant bounds the row")
+        self.assertEqual(self._row(SID)[len(st)], mode)
+        self.assertEqual(dict(km._NUDGE_WALK_STATS["unboundedBy"]), {}, "(3) a clock note, not a None note")
+        p6 = self._pass(NOW + 25)
+        self.assertEqual((p6["parses"], p6["skippedParses"]), (0, 1), "(3) the instant is ahead: skipped")
+        self.assertEqual((self.fb.sent, self._lifts()), ([], []), "nothing sent, nothing lifted across the six passes")
+        self.assertFalse(self._node().get("blocked"))
+
+    def test_an_in_flight_wake_between_its_fire_and_its_response_is_bounded_by_the_transcript_with_the_gear_off(self):
+        self._in_flight_exit_between_the_fire_and_the_response(False, "wake")
+
+    def test_an_in_flight_wake_between_its_fire_and_its_response_is_bounded_by_the_transcript_with_the_gear_on(self):
+        self._in_flight_exit_between_the_fire_and_the_response(True, "full")
 
     def test_a_refused_answered_wake_record_notes_refusedWrite_and_the_healed_pass_lands_it(self):
         """Review find: the answered leg of _wake_goal discarded _put_nudged's verdict. A refused record (an unproved ledger
