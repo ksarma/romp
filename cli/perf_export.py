@@ -5,15 +5,18 @@
 
 Reads GET /perf from the running kernel the way `romp perf` does (the serve token from ROMP_SERVE_TOKEN or the
 state directory's serve-token file, the port from ROMP_KERNEL_PORT or 29855, a ten-second timeout, a dead
-kernel and a refused token each said plainly), or takes a snapshot `romp perf --json` saved earlier (--from),
-and writes the PUBLIC form of it: the shape rule and the denylist of cli/perf_public.py applied to the whole
-snapshot, under a top-level `schema` line (`romp-perf-export/1`), the UTC minute of the export (no seconds) and,
-when the snapshot carries the kernel's commit, its twelve-character abbreviation. No hostname, path, pid,
-session id or username is written; the finished document is walked once more (perf_public.paste_problems) and
-searched for the strings only this machine knows (perf_public.identifier_hits), and either finding refuses the
-write naming the key path, never the value. `--usage` adds a `usage` block, off by default: the session counts,
-the feature counts (the user's own actions and the panes opened, from the http table's route counts) and the
-kernel's uptime bucket, all from keys the snapshot already carries and folded the same way.
+kernel, a refused token and a ROMP_KERNEL_PORT that is not a port number each said plainly, never replaced by
+the default), or takes a snapshot `romp perf --json` saved earlier (--from); either must carry GET /perf's fixed
+top-level blocks (SNAPSHOT_KEYS), so a registry row or a sessions listing handed to --from is refused at the
+read rather than folded and labelled an export. It writes the PUBLIC form of the snapshot: the shape rule and
+the denylist of cli/perf_public.py applied to the whole snapshot, under a top-level `schema` line
+(`romp-perf-export/1`), the UTC minute of the export (no seconds) and, when the snapshot carries the kernel's
+commit, its twelve-character abbreviation. No hostname, path, pid, session id or username is written; the
+finished document is walked once more (perf_public.paste_problems) and searched for the strings only this
+machine knows (perf_public.identifier_hits), and either finding refuses the write naming the key path, never
+the value. `--usage` adds a `usage` block, off by default: the session counts, the feature counts (the user's
+own actions and the panes opened, from the http table's route counts) and the kernel's uptime bucket, all from
+keys the snapshot already carries and folded the same way.
 
 The file lands under the state directory as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json`, mode 0600, or at
 --out; the path and the byte size are printed, exit 0. Nothing leaves the machine: the user reads the file and
@@ -39,6 +42,10 @@ TIMEOUT_S = 10          # `romp perf`'s curl -m
 DEFAULT_PORT = 29855
 EXPORT_DIR = "perf-exports"
 COMMIT_KEYS = ("kernel_sha", "kernel_commit", "commit", "sha")
+# GET /perf's fixed top-level blocks, present in every kernel since the verb (2026-09-06): what makes an object a
+# snapshot. Any other JSON object (a registry row, a listing) would pass the grammar with keys the denylist
+# never heard of.
+SNAPSHOT_KEYS = ("uptime_s", "process", "pusher", "http")
 COMMIT = re.compile(r"[0-9a-fA-F]{7,64}")
 # The http routes that count as the user's own actions (POST) and the panes they opened (GET), as feature names.
 ACTION_SKIP = frozenset({"/tick", "/perf", "/push/ack", "/push/dropped", "/push/landed", "/push/superseded",
@@ -63,13 +70,31 @@ def _token(state: Path) -> str:
         return ""
 
 
-def _port() -> int:
-    env = os.environ.get("ROMP_KERNEL_PORT")
-    return int(env) if env and env.isdigit() else DEFAULT_PORT
-
-
 class ReadError(Exception):
     pass
+
+
+def _port() -> int:
+    """ROMP_KERNEL_PORT as a port number, or the default when it is unset or empty. A value that is not a port is a
+    ReadError: bin/romp's perf verb dials what it was given and fails on it, and this reader must not dial the
+    default instead and export whatever kernel answers there."""
+    env = os.environ.get("ROMP_KERNEL_PORT")
+    if env is None or env == "":
+        return DEFAULT_PORT
+    if not env.isdigit() or not 0 < int(env) < 65536:
+        raise ReadError("ROMP_KERNEL_PORT is set but is not a port number (1-65535); not read")
+    return int(env)
+
+
+def _snapshot(snap, what: str) -> dict:
+    """`snap` when it is a GET /perf snapshot (an object with SNAPSHOT_KEYS); else a ReadError naming `what` and the
+    missing blocks, never the contents."""
+    if not isinstance(snap, dict):
+        raise ReadError("%s is not a JSON object (a `romp perf --json` snapshot)" % what)
+    missing = [k for k in SNAPSHOT_KEYS if k not in snap]
+    if missing:
+        raise ReadError("%s is not a GET /perf snapshot (no %s)" % (what, ", ".join(missing)))
+    return snap
 
 
 def read_kernel(state: Path) -> dict:
@@ -92,9 +117,7 @@ def read_kernel(state: Path) -> dict:
         snap = json.loads(raw)
     except ValueError:
         raise ReadError("the kernel on :%d did not answer JSON on GET /perf" % port)
-    if not isinstance(snap, dict):
-        raise ReadError("the kernel on :%d answered GET /perf with something other than an object" % port)
-    return snap
+    return _snapshot(snap, "the kernel's answer on :%d" % port)
 
 
 def read_file(path: str) -> dict:
@@ -107,9 +130,7 @@ def read_file(path: str) -> dict:
         raise ReadError("%s: %s" % (path, e.__class__.__name__))
     except ValueError:
         raise ReadError("%s is not JSON" % path)
-    if not isinstance(snap, dict):
-        raise ReadError("%s is not a JSON object (a `romp perf --json` snapshot)" % path)
-    return snap
+    return _snapshot(snap, path)
 
 
 def kernel_commit(snap: dict):

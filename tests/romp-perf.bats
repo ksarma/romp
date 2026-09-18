@@ -10,7 +10,11 @@
 # processes (a restart inside the window) are not subtracted into negative rates, and a refused
 # token is named as such rather than reported as a dead kernel. Nothing here touches a real kernel:
 # curl is a stub that serves synthetic snapshots in turn and emits the status trailer the real one
-# is asked for (-w).
+# is asked for (-w). The one verb that does not go through curl is `romp perf export`, which delegates
+# to romp-perf-export (python, urllib): its cases pin ROMP_KERNEL_PORT at 1, a port nothing answers
+# on, so a case that reads the kernel fails loudly there instead of dialling the live port setup()
+# exports for the curl stub's URL assertions. --from reads no kernel: that a --from case passes on
+# the dead port is the proof.
 
 ROMP_SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp"
 
@@ -424,10 +428,9 @@ assert lines[i + 1:i + 6] == ["    _pusher (kernel.py:100)", "    _job_stage (ke
 }
 
 @test "romp perf export: dispatches to romp-perf-export with its flags, which writes the public form of a saved snapshot" {
-    run "$ROMP_SCRIPT" perf export --public --from "$SNAP_A" --out "$TEST_DIR/public.json"
-    [ "$status" -eq 0 ]
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" perf export --public --from "$SNAP_A" --out "$TEST_DIR/public.json"
+    [ "$status" -eq 0 ]                                  # on a dead port: --from reached no kernel
     [[ "$output" == "$TEST_DIR/public.json ("*" bytes)" ]]
-    [ ! -f "$CURL_LOG" ]                                 # --from: nothing reached the kernel
     python3 - "$TEST_DIR/public.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -440,7 +443,7 @@ PY
 }
 
 @test "romp perf export: without --public the verb refuses with one line, exit 2, and writes nothing" {
-    run "$ROMP_SCRIPT" perf export --from "$SNAP_A" --out "$TEST_DIR/public.json"
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" perf export --from "$SNAP_A" --out "$TEST_DIR/public.json"
     [ "$status" -eq 2 ]
     [[ "$output" == *"--public"* ]]
     [[ "$output" == *"no raw mode"* ]]
@@ -449,7 +452,7 @@ PY
 }
 
 @test "romp perf export: --usage adds the usage block, and the usage line names the verb" {
-    run "$ROMP_SCRIPT" perf export --public --usage --from "$SNAP_A" --out "$TEST_DIR/public.json"
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" perf export --public --usage --from "$SNAP_A" --out "$TEST_DIR/public.json"
     [ "$status" -eq 0 ]
     python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["usage"]["kernelUptime"] == "lt1h", d["usage"]' "$TEST_DIR/public.json"
     run "$ROMP_SCRIPT" perf --nope
@@ -457,4 +460,15 @@ PY
     [[ "$output" == *"romp perf export --public"* ]]
     run "$ROMP_SCRIPT" help
     [[ "$output" == *"romp perf export --public"* ]]
+}
+
+@test "romp perf export: without --from it dials ROMP_KERNEL_PORT, and a dead kernel fails LOUDLY with nothing written" {
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" perf export --public --out "$TEST_DIR/public.json"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel not reachable on :1"* ]]
+    [ ! -f "$TEST_DIR/public.json" ]
+    ROMP_KERNEL_PORT=" 1" run "$ROMP_SCRIPT" perf export --public --out "$TEST_DIR/public.json"
+    [ "$status" -eq 1 ]                                  # not a port number: refused, never the default port instead
+    [[ "$output" == *"ROMP_KERNEL_PORT"* ]]
+    [ ! -f "$TEST_DIR/public.json" ]
 }

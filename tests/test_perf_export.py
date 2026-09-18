@@ -345,12 +345,72 @@ class Cli(unittest.TestCase):
         r = _run(["--public", "--from", bad], state=self.state)
         self.assertEqual(r.returncode, 1)
         self.assertIn("not a JSON object", r.stderr)
+        # an object that is not GET /perf (a registry row, a sessions listing): its keys would pass the grammar and the
+        # denylist knows none of them, so the shape is checked at the read and the file is refused before any fold
+        out = os.path.join(self.xdg, "not-a-snapshot.json")
+        with open(bad, "w") as fh:
+            json.dump({"name": "web", "tags": ["acme-corp", "q3-launch"], "branch": "feature-acme-sso", "project": "acme-billing",
+                       "remotes": {"peer-box-7": {"ok": True}}}, fh)
+        r = _run(["--public", "--from", bad, "--out", out], state=self.state)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("not a GET /perf snapshot", r.stderr)
+        self.assertNotIn("acme", r.stderr, "the file's contents are not echoed")
+        self.assertFalse(os.path.exists(out))
+        with open(bad, "w") as fh:
+            json.dump({"uptime_s": 1.0, "process": {}, "pusher": {}}, fh)
+        r = _run(["--public", "--from", bad, "--out", out], state=self.state)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("http", r.stderr, "the missing block is named")
 
     def test_a_dead_kernel_is_said_and_nothing_written(self):
         r = _run(["--public"], state=self.state, env_extra={"ROMP_KERNEL_PORT": "1"})
         self.assertEqual(r.returncode, 1)
         self.assertIn("kernel not reachable on :1", r.stderr)
         self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")))
+
+    def test_a_kernel_port_that_is_not_a_number_is_refused_not_replaced(self):
+        # bin/romp's perf verb uses ROMP_KERNEL_PORT as given and fails on a bad one; the export must not read a
+        # kernel on 29855 instead and export whatever answers there
+        r = _run(["--public"], state=self.state, env_extra={"ROMP_KERNEL_PORT": " 3000"})
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("ROMP_KERNEL_PORT", r.stderr)
+        self.assertNotIn("not reachable", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")))
+        r = _run(["--public"], state=self.state, env_extra={"ROMP_KERNEL_PORT": "70000"})
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("ROMP_KERNEL_PORT", r.stderr)
+        r = _run(["--public", "--from", self.src], state=self.state, env_extra={"ROMP_KERNEL_PORT": " 3000"})
+        self.assertEqual(r.returncode, 0, "--from reads no kernel, so the port is not consulted: %s" % r.stderr)
+
+    def test_out_over_an_existing_file_replaces_it_and_leaves_it_readable_by_the_owner_alone(self):
+        out = os.path.join(self.xdg, "public.json")
+        with open(out, "w") as fh:
+            fh.write("stale text a reader must not find\n")
+        os.chmod(out, 0o644)
+        r = _run(["--public", "--from", self.src, "--out", out], state=self.state)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(stat.S_IMODE(os.stat(out).st_mode), 0o600, "a pre-existing world-readable file is fixed, not kept")
+        with open(out, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertNotIn("stale", text)
+        self.assertEqual(json.loads(text)["schema"], "romp-perf-export/1")
+        self.assertEqual(r.stdout, "%s (%d bytes)\n" % (out, len(text.encode("utf-8"))))
+        # the same minute's default name is one file: the second export replaces the first
+        state = pe.Path(self.state)
+        now = pe.datetime(2026, 9, 18, 8, 53, 7, tzinfo=pe.timezone.utc)
+        path = pe.default_path(state, now)
+        self.assertEqual(path, state / "perf-exports" / "perf-export-20260918T0853.json")
+        self.assertEqual(pe.write_file(path, "one\n"), 4)
+        os.chmod(path, 0o644)
+        self.assertEqual(pe.write_file(path, "second\n"), 7)
+        self.assertEqual((open(path).read(), stat.S_IMODE(os.stat(path).st_mode)), ("second\n", 0o600))
+        # a symlink where the file would go is not followed
+        link = os.path.join(self.xdg, "link.json")
+        os.symlink(os.path.join(self.xdg, "target.json"), link)
+        r = _run(["--public", "--from", self.src, "--out", link], state=self.state)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("cannot write", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.xdg, "target.json")))
 
     def test_a_string_the_machine_knows_refuses_the_write_naming_the_key_path_never_the_value(self):
         # the sdk registry holds the session ids the scan learns; an eight-character sid prefix is an identifier
