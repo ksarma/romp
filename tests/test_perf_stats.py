@@ -942,19 +942,24 @@ class JobRowsByOwner(unittest.TestCase):
 
     NAME = "jobs.persistCheckpoints"      # a cycle job's name, written here from all three kinds of thread
 
-    def _three_writers(self):
+    def _three_writers(self, jobs_part=False):
         """The note's run: the pusher (this thread) writes the name for 2 ms, a jobs thread for 3 ms inside a 3 ms pass, and a
-        thread with no cycle for 1 ms; then the pusher closes its `jobs` container and its cycle. Returns the snapshot."""
+        thread with no cycle for 1 ms; then the pusher closes its `jobs` container and its cycle. With `jobs_part` the jobs
+        thread also runs a job with a part inside its pass (jobs.autoNudge.parse 2 ms inside jobs.autoNudge 2 ms, the pass
+        5 ms): a legitimate part row in the flat table. Returns the snapshot."""
         st = km._PerfStats()
         st.cycle_begin()                                              # this thread is the pusher
         st.stage(self.NAME, 0.002)
         written, release, foreign_done = threading.Event(), threading.Event(), threading.Event()
+        pass_s = 0.005 if jobs_part else 0.003
 
         def jobs_thread():
             st.cycle_begin("jobs")
             st.stage(self.NAME, 0.003)
-            st.stage("jobsPass", 0.003)
-            st.jobs_pass(0.003)
+            if jobs_part:
+                st.stage("jobs.autoNudge.parse", 0.002); st.stage("jobs.autoNudge", 0.002)
+            st.stage("jobsPass", pass_s)
+            st.jobs_pass(pass_s)
             written.set()
             release.wait(5)                                           # alive until the foreign write is in: the owner map holds
             #                                                           this thread's ident, and a thread started after its exit can
@@ -990,16 +995,61 @@ class JobRowsByOwner(unittest.TestCase):
             self.assertIn(j, snap["pusher"]["cycleJobsMs"], "the nine are always present: %s" % j)
         self.assertIn(self.NAME[len("jobs."):], km._PerfStats.CYCLE_JOBS, "premise: the name is a cycle job's")
 
+    # The two roll-up sums take the JOB rows alone, by a dot-free key, whoever wrote them (2026-09-18 review). The documented
+    # bounds are per family: a job's parts (jobs.<job>.<part>, from _sub_stage) sum to at most their job, and the jobs sum to
+    # at most their container (the pass for the flat rows, the pusher's `jobs` for cycleJobsMs). A sum over every dotted key
+    # counted a part beside its job and went red on a legitimate part with the routing correct (a real run of both loops
+    # puts jobs.autoNudge.key, .looks and .snapshot in the flat table); a sum over PASS_JOBS or CYCLE_JOBS by name excluded a
+    # cycle job's name the jobs thread wrote and read zero on a planted mis-credit under that name. The three-way test below
+    # holds the sums to both.
+    @staticmethod
+    def _flat_jobs(stages_ms):
+        """The flat `jobs.<job>` rows' sum: dot-free under the prefix, `jobs.prelude` (the jobs thread's opening, outside the
+        pass) excluded."""
+        return sum(v for k, v in stages_ms.items() if k.startswith("jobs.") and "." not in k[len("jobs."):] and k != "jobs.prelude")
+
+    @staticmethod
+    def _cycle_jobs(cycle_jobs_ms):
+        """The pusher's job rows' sum under cycleJobsMs: the block takes a part's name as a key too, so dot-free here as well."""
+        return sum(v for k, v in cycle_jobs_ms.items() if "." not in k)
+
     def test_the_flat_job_rows_roll_up_to_the_pass_and_the_cycle_jobs_to_the_jobs_container(self):
         """Over a run of both loops the flat `jobs.<job>` rows are the jobs thread's, so they sum to at most its pass (6 > 3
         before, when the pusher's and the foreign write sat in them), and the pusher's rows sum to at most its `jobs`
         container. `jobs.prelude` is the jobs thread's opening, outside the pass, so it is not in the sum."""
         snap = self._three_writers()
-        flat = sum(v for k, v in snap["stages_ms"].items() if k.startswith("jobs.") and k != "jobs.prelude")
+        flat = self._flat_jobs(snap["stages_ms"])
         self.assertLessEqual(flat, snap["stages_ms"]["jobsPass"] + 1e-9, "the flat job rows against the pass: %r" % flat)
         self.assertGreater(flat, 0.0, "the jobs thread's write is in them")
-        self.assertLessEqual(sum(snap["pusher"]["cycleJobsMs"].values()), snap["stages_ms"]["jobs"] + 1e-9)
-        self.assertGreater(sum(snap["pusher"]["cycleJobsMs"].values()), 0.0)
+        self.assertLessEqual(self._cycle_jobs(snap["pusher"]["cycleJobsMs"]), snap["stages_ms"]["jobs"] + 1e-9)
+        self.assertGreater(self._cycle_jobs(snap["pusher"]["cycleJobsMs"]), 0.0)
+
+    def test_the_roll_up_sum_passes_a_legitimate_part_and_catches_a_planted_mis_credit(self):
+        """The guard's sum, on three snapshots (2026-09-18 review): the clean run (3.0 against a 3 ms pass), the run with a
+        legitimate part on the jobs thread (5.0 against a 5 ms pass: the part is not counted beside its job, where a sum over
+        every dotted key read 7.0 and went red with the routing correct), and the clean run with the pusher's 2 ms and the
+        foreign 1 ms planted into the flat row, what a collector merging every writer served (6.0 against 3.0: caught, where
+        a sum over the PASS_JOBS names read 0.0, the name being a cycle job's, and passed the merge)."""
+        every_dotted = lambda st: sum(v for k, v in st.items() if k.startswith("jobs.") and k != "jobs.prelude")      # rejected
+        pass_names = lambda st: sum(st["jobs." + j] for j in km._PerfStats.PASS_JOBS)                                # rejected
+        clean = self._three_writers()
+        part = self._three_writers(jobs_part=True)
+        planted = self._three_writers()
+        planted["stages_ms"][self.NAME] += 2.0 + 1.0
+        with self.subTest("clean"):
+            self.assertAlmostEqual(self._flat_jobs(clean["stages_ms"]), 3.0)
+            self.assertLessEqual(self._flat_jobs(clean["stages_ms"]), clean["stages_ms"]["jobsPass"] + 1e-9)
+        with self.subTest("legitimate part"):
+            self.assertAlmostEqual(part["stages_ms"]["jobs.autoNudge.parse"], 2.0, msg="premise: the part is in the flat table")
+            self.assertAlmostEqual(part["stages_ms"]["jobs.autoNudge"], 2.0)
+            self.assertAlmostEqual(self._flat_jobs(part["stages_ms"]), 5.0)
+            self.assertLessEqual(self._flat_jobs(part["stages_ms"]), part["stages_ms"]["jobsPass"] + 1e-9, "the part is not counted beside its job")
+            self.assertGreater(every_dotted(part["stages_ms"]), part["stages_ms"]["jobsPass"], "the rejected every-key sum reads red here: %r" % every_dotted(part["stages_ms"]))
+            self.assertLessEqual(part["stages_ms"]["jobs.autoNudge.parse"], part["stages_ms"]["jobs.autoNudge"] + 1e-9, "the part against its job: the other family's bound")
+        with self.subTest("planted mis-credit"):
+            self.assertAlmostEqual(self._flat_jobs(planted["stages_ms"]), 6.0)
+            self.assertGreater(self._flat_jobs(planted["stages_ms"]), planted["stages_ms"]["jobsPass"], "caught: the merged writers exceed the pass")
+            self.assertEqual(pass_names(planted["stages_ms"]), 0.0, "the rejected name-list sum is blind to it")
 
     def test_a_pusher_write_under_a_name_outside_the_nine_still_lands_in_its_block(self):
         """A job's part (jobs.autoNudge.snapshot, _sub_stage) or a job that moved lists, written by the pusher's owner: the
