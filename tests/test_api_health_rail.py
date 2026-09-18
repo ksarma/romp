@@ -657,8 +657,11 @@ class Detail(unittest.TestCase):
                       "painted on release under a held pointer, like a frame")
         html = km._landing()
         self.assertIn("ws.onclose=function(){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}"
-                      "if(shellSock===ws)shellSock=null;setTimeout(shellWS,2000);};", html,
-                      "the shell socket's close tells the detail before the redial")
+                      "if(shellSock===ws)shellSock=null;shTell();", html,
+                      "the shell socket's close tells the detail before it nulls the socket and re-tells the panes the link is down (D3, 2026-09-18; "
+                      "the pin reads through to the re-tell so it holds D3's line, not the prefix the pre-D3 line shares)")
+        self.assertIn("if(shellSock===d){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}shellSock=null;}", html,
+                      "the shell's abandon (a return's, the watchdog's) tells the detail too, in the close's order: the abandoned socket's onclose is detached, so nobody else would (review round 1, 2026-09-18)")
 
     def test_focus_moves_to_the_card_before_the_pressed_button_is_disabled(self):
         # a disabled element cannot hold focus: left on the button, focus fell to BODY, where the card's Tab trap

@@ -111,7 +111,8 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   still-open socket. A socket kept on the strength of that stamp is provisional:
   if no frame confirms it within 15 s (1.5 keepalive periods) the watchdog puts
   it down there instead, a socket already 30 s overdue when the tab froze is not
-  stamped and is redialed at the return, and a browser without `resume` behaves
+  stamped and is redialed at the return (at once when the shell's link is up,
+  else at the shell's link-up word), and a browser without `resume` behaves
   as before. After a reconnect the shim
   raises the "what you see may be stale" prompt only on the SECOND `ka` arriving
   before the resync frame — one full heartbeat period, bracketed by two kernel
@@ -153,6 +154,24 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   for a reload or a tab the browser discarded; a `resent: true` copy of the
   `return` row means the kept socket proved dead and the row was re-filed onto
   the redial.
+  In a dashboard whose shell publishes its link (every pane iframe there; a
+  standalone page or the VS Code webview has none), a `return` that found its
+  socket dead carries `awaitLink`: `true` when the pane put its socket down and
+  waited for the shell's link-up word, `false` when the shell's socket stood
+  and the pane dialed at once. Its `return-fresh` then carries `linkUpMs`, the
+  foreground-to-link-up gap, so the path's own recovery reads apart from the
+  code-owned wait (`ms` minus `linkUpMs`). The shell's own socket files one
+  `return-probe` row (surface `shell`) per return that found it dead or quiet:
+  the `decision` (`redial-closed` or `redial-stale`; a standing socket files
+  none, nor does a return before the shell socket's first open: until then the
+  boot dial is the probe), the `hiddenMs` and `quietMs` gaps, and the path's
+  recovery on that one socket, `attempts`, `firstFailMs` and `ms` (foreground to
+  open); `ms` and `firstFailMs` are -1 when the next return came before the
+  open, the row filed at that return with the attempts as they stood. A pane
+  whose wait outlived the shell's loop-alive stamp (its `connT`, the later of
+  its last dial and its watchdog's last tick with a socket to watch, 25 s stale)
+  dials on its own and files a `link-backstop` stale row, the loud sign that the
+  shell's redial loop died.
   A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's
   caps frame has answered the bundle's ready; before that, with the ready still
   queued, or after a socket that died before the caps frame came back, it dials

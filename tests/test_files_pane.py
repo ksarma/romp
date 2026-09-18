@@ -262,7 +262,7 @@ class Shell(unittest.TestCase):
         self.assertNotIn("st.filesControl", js + km._LANDING_MOBILE_JS, "the T317-era key is never read: a whole-object save merged its true into profiles that never touched the box")
         _has(self, "document.body.classList.toggle('no-files-control',!ctl);", js)
         _has(self, "if(k==='files'&&!filesCtl())return;", js)
-        _has(self, "return {romp:'panes',on:on,avail:{files:filesCtl()}};", js)
+        _has(self, "return {romp:'panes',on:on,avail:{files:filesCtl()},link:(window.__rompLink&&window.__rompLink().up)?'up':'down'};", js)   # D3 (2026-09-18): the word gained a link field (the shell socket's state); on and avail are unchanged
         _has(self, "window.addEventListener('storage',function(e){if(!e||!e.key||e.key===SK)reconcile(true);apply();});", js)   # the gear writes from another document: this is the event (a gear save re-reads the optional panes before the titles refresh)
         mob = km._LANDING_MOBILE_JS
         _has(self, "function show(p){if(p==='files'&&!filesCtlM())p='chat';", mob)
