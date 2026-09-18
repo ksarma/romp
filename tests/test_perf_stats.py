@@ -1044,30 +1044,42 @@ class JobRowsByOwner(unittest.TestCase):
         self.assertIn("cycleJobsMs", pusher_row, "the pusher row names its cycle jobs' block")
         stages_row = doc[doc.index("      stages_ms  "):doc.index("      builds  ")]
         self.assertIn("cycleJobsMs", stages_row, "the stages_ms row sends the reader to the pusher's block for the nine")
+        self.assertRegex(stages_row, r"moved to pusher\.cycleJobsMs", "and says the nine MOVED there, so a reader of an older capture knows where the numbers went")
         self.assertIn("stagesForeign", stages_row)
         self.assertIn("      stagesForeign  ", doc, "the foreign block has a row of its own")
 
 
 
     def test_the_reference_names_the_new_rows_and_the_discontinuity(self):
-        """docs/reference.md's stages_ms entry names the two blocks and says, with the date, that the nine cycle jobs' keys
-        left stages_ms and do not compare across a capture pair spanning the change; the jobs entry sends the reader to
-        pusher.cycleJobsMs; the pusher entry lists the block."""
+        """docs/reference.md's stages_ms entry names the blocks and states both discontinuities by their load-bearing words,
+        not one wording: the date, the word "moved", the prefix each family moved to (`pusher.cycleJobsMs` for the nine
+        cycle jobs, `pusher.connectPush.stagesMs` for the connect pushes' part of the push.* rows), and that the moved
+        rows do not compare across a capture pair spanning the change; the jobs entry sends the reader to
+        pusher.cycleJobsMs; the pusher entry lists both tables; the foreign entry names both families."""
         doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
         para = doc[doc.index("- `stages_ms`:"):]
         para = " ".join(para[:para.index("\n- `stagesForeign`:")].split())   # the reference wraps at 80 columns: one line
         self.assertIn("`pusher.cycleJobsMs`", para)
         self.assertIn("2026-09-18", para, "the day the meaning changed")
-        self.assertRegex(para, r"not compar(e|able)", "the discontinuity: the nine are not comparable across the change")
+        self.assertIn("moved", para, "the rows MOVED: a reader of an older capture is told where the numbers went")
+        self.assertRegex(para, r"moved.{0,120}`pusher\.cycleJobsMs", "the nine moved to the pusher's block (the word and the prefix, close together)")
+        self.assertRegex(para, r"moved.{0,120}`pusher\.connectPush\.stagesMs", "the connect pushes' part of the push rows moved to the connect table")
+        self.assertRegex(para, r"not compar(e|able)", "the discontinuity: the moved rows are not comparable across the change")
+        self.assertNotIn("count every push", para, "the fold sentence is gone")
         for j in km._PerfStats.CYCLE_JOBS:
             self.assertIn("`%s`" % j, para, "the nine are named: %s" % j)
         self.assertIn("- `stagesForeign`:", doc, "the foreign block is documented as a top-level block")
+        foreign_para = doc[doc.index("- `stagesForeign`:"):]
+        foreign_para = " ".join(foreign_para[:foreign_para.index("\n- `")].split())
+        self.assertIn("`jobs.<job>`", foreign_para); self.assertIn("`push.*`", foreign_para)
         jobs_para = doc[doc.index("- `jobs`: the jobs thread"):]
         jobs_para = jobs_para[:jobs_para.index("\n- `")]
         self.assertIn("`pusher.cycleJobsMs`", jobs_para)
         pusher_para = doc[doc.index("- `pusher`: `cycles`"):]
-        pusher_para = pusher_para[:pusher_para.index("\n- `")]
+        pusher_para = " ".join(pusher_para[:pusher_para.index("\n- `")].split())
         self.assertIn("`cycleJobsMs`", pusher_para)
+        self.assertIn("`stagesMs`", pusher_para, "the connect table is listed under connectPush")
+        self.assertIn("`pusher.connectPush.stagesMs`", pusher_para, "the firstCycle sentence sends a connect push there, not to stages_ms")
 
 
 class PushRowsByPurpose(unittest.TestCase):

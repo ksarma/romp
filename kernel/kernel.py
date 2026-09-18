@@ -740,9 +740,10 @@ class _PerfStats:
                                    the jobs thread's time under that name (stage() routes a jobs.
                                    write by its writer's owner: the pusher's to pusher.cycleJobsMs,
                                    a thread owning neither loop's to stagesForeign), where before it
-                                   was every thread's and held the pusher's nine cycle jobs too, so
-                                   those nine keys are gone from this block and do not compare
-                                   across a capture pair spanning the change; push: _push_all as
+                                   was every thread's and held the pusher's nine cycle jobs too:
+                                   those nine moved to pusher.cycleJobsMs.<job>, their keys are gone
+                                   from this block, and they do not compare across a capture pair
+                                   spanning the change; push: _push_all as
                                    the cycle calls it; push.chat (the tab strip, the build_session
                                    loop and the chat sends), push.feed (the view signature,
                                    _cached_feed and the ledgers attach), push.timeline (the skeleton

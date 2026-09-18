@@ -1,11 +1,17 @@
 ---
-title: GET /perf credits a jobs.<job> stage to its writer: the flat stages_ms row is the jobs thread's, the pusher's nine cycle jobs are counted under pusher.cycleJobsMs, and a write from a thread owning neither loop counts under stagesForeign
+title: GET /perf credits a stage to its writer: a jobs.<job> row in stages_ms is the jobs thread's and the pusher's nine cycle jobs moved to pusher.cycleJobsMs; the push.* rows are the pusher's own and a connect push's stages moved to pusher.connectPush.stagesMs; a write from a thread with neither purpose counts under stagesForeign; romp perf prints the connect pushes apart from the pusher's shares
 status: candidate
-where: kernel/kernel.py (_PerfStats.stage, the snapshot), docs/reference.md, tests/test_perf_stats.py, tests/test_jobs_thread_split.py
+where: kernel/kernel.py (_PerfStats.stage, the snapshot), bin/romp (the perf stages line), docs/reference.md, tests/test_perf_stats.py, tests/test_jobs_thread_split.py, tests/test_first_cycle_stage_split.py, tests/romp-perf.bats
 added: 2026-09-18
 pr:
 tier: fix
 offered:
 closed:
 ---
-Meaning change, 2026-09-18: `stages_ms.jobs.<job>` narrowed from every thread's time under the name to the jobs thread's own; those rows keep their names and their values, since the housekeeping jobs already ran on the jobs thread alone. The pusher thread's nine cycle jobs (beginCheckpointCycle, sessionsListing, applyPendingOps, turnNotify, persistCheckpoints, convergeCheckpoints, bootRowBackstop, kernelSample, apiHealth), in those rows until then, left `stages_ms` that day and are counted from then on under `pusher.cycleJobsMs.<job>`, seeded at zero so the block is always whole; a `jobs.<job>` write from a thread owning neither loop goes to `stagesForeign`, counted rather than merged into a row that names another thread. No call site, stage mark, split row, boot row or CLI line changes; JOBS stays the census as CYCLE_JOBS + PASS_JOBS. Nothing had been exported before the change; the nine keys are not comparable across it.
+Two meaning changes on 2026-09-18, for a reader comparing a capture from before that day with one from after it.
+
+The jobs rows: `stages_ms.jobs.<job>` narrowed from every thread's time under the name to the jobs thread's own; those rows keep their names and their values, since the housekeeping jobs already ran on the jobs thread alone. The pusher thread's nine cycle jobs (beginCheckpointCycle, sessionsListing, applyPendingOps, turnNotify, persistCheckpoints, convergeCheckpoints, bootRowBackstop, kernelSample, apiHealth), in those rows until then, moved to `pusher.cycleJobsMs.<job>`, seeded at zero so the block is always whole; their `jobs.<job>` keys are gone from `stages_ms` and do not compare across the change.
+
+The push rows: `stages_ms.push.*` narrowed to the pusher's own work. A connect push (a fresh client's full push on its HTTP handler thread) runs the same stage calls, and its walls sat in those rows until then, so the rows could add up to more than `push` and the `romp perf` stages line, which divides them by the pusher's cycle time, read a chat share above the push share, or above one hundred percent, while pages reloaded. The connect pushes' part moved to `pusher.connectPush.stagesMs.<stage>`, unseeded (push.warm and the push container never run on a connect push, so seeded rows there would never move), routed by the thread's stage mark ("connect", which _push's decorator already set); a `push.*` row does not compare across the change. The CLI line keeps the pusher's shares and prints the connect pushes' count, whole wall and per-stage wall apart, in ms; a kernel without the table is said, not printed as zeros.
+
+A `jobs.<job>` write from a thread owning neither loop, and a push stage from a thread that is neither the pusher nor a connect push, count under `stagesForeign`, counted rather than merged into a row that names another thread. No call site, stage mark, split row or boot row changes; JOBS stays the census as CYCLE_JOBS + PASS_JOBS. Nothing had been exported before the change.

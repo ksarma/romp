@@ -2638,7 +2638,15 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the client declared under the identifier-and-cap rule `clients.byApp`
   states below, so `other` and `none` are keys there too; the pusher's
   cycles never see this push, so before it the restart's logo phase had no
-  number),
+  number; and `stagesMs` (2026-09-18): `{stage: ms}`, the `push.*` stages
+  those pushes closed (`push.chat` and its seams, `push.feed`,
+  `push.timeline`, `push.send` and its seams, `push.feedFirst`), cumulative
+  wall under the stage name, with no seed, so the table lists the stages
+  connect pushes ran (`push.warm` and the `push` container are the pusher's
+  alone and never appear); `push.chat`, `push.feed`, `push.timeline`,
+  `push.send` and `push.feedFirst` add up to at most `ms_sum`, a seam to at
+  most its container. Until that day these walls sat in the `stages_ms`
+  `push.*` rows beside the pusher's),
   `clients` (what each client's sender thread wrote to its socket,
   2026-09-18): `byApp`, per app the client declared on its socket URL,
   `frames` and `bytes` (the text frames written and their wire bytes, header
@@ -2694,8 +2702,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   cut's `hydrated` bytes ON THE PUSHER'S THREAD since the previous stage
   boundary (another thread's reads in the window, the judges' first pass or
   a boot warm, are not the pusher's; a dashboard's connect push, which runs
-  the same stages on the HTTP handler thread, feeds `stages_ms` and never the
-  split); the `push` container carries its sub-stages' sums, the jobs before
+  the same stages on the HTTP handler thread, feeds
+  `pusher.connectPush.stagesMs` since 2026-09-18, the `stages_ms` rows
+  before, and never the split); the `push` container carries its
+  sub-stages' sums, the jobs before
   the push land in `jobs`, and the boundary sits at the push's entry, before
   the cards-first path. A plain GET carries the newest 16 splits and
   `stageRingLen` (how many splits the ring holds now, not how many were
@@ -3090,23 +3100,34 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   and an unchanged build no `feedParts` or `barsSplit`; the cycle's split
   (`pusher.firstCycle`, `pusher.stageRing`) carries a seam's own bytes, its
   parent's glue under `push.chat.other` or `push.send.other`, and `push`
-  counts the parent's rows through the parent's own row, once. The `push.*`
-  stages count every push, including the one a connecting page gets, so they
-  can add up to more than `push`.
-  Since 2026-09-18 a `jobs.<job>` row is the jobs thread's time under that
-  name; before, it was every thread's, and the pusher thread's nine cycle
-  jobs (`beginCheckpointCycle`, `sessionsListing`, `applyPendingOps`,
+  counts the parent's rows through the parent's own row, once. `push` and
+  the `push.*` rows are the pusher's own: a connect push (the full push a
+  connecting page gets, on its HTTP handler thread) runs the same stages,
+  and its walls are counted under `pusher.connectPush.stagesMs.<stage>`, so
+  `push.chat`, `push.feed`, `push.timeline`, `push.send`, `push.warm` and
+  `push.feedFirst` add up to at most `push`. A push stage from a thread that
+  is neither the pusher nor a connect push is counted under `stagesForeign`.
+  Two discontinuities, both on 2026-09-18, for anyone comparing a capture
+  from before that day with one from after it. The nine cycle jobs the
+  pusher runs (`beginCheckpointCycle`, `sessionsListing`, `applyPendingOps`,
   `turnNotify`, `persistCheckpoints`, `convergeCheckpoints`,
-  `bootRowBackstop`, `kernelSample`, `apiHealth`) sat in it. From that day
-  they are counted under `pusher.cycleJobsMs.<job>` and their `jobs.<job>`
-  keys are gone from `stages_ms`, so those nine keys do not compare across a
-  capture pair spanning the change; the other `jobs.<job>` rows keep their
-  names and their values. A `jobs.<job>` write from a thread owning neither
-  loop is counted under `stagesForeign`.
+  `bootRowBackstop`, `kernelSample`, `apiHealth`) moved from `jobs.<job>`
+  rows here to `pusher.cycleJobsMs.<job>`: their `jobs.<job>` keys are gone
+  from `stages_ms`, and a `jobs.<job>` row is the jobs thread's time under
+  that name, where before it was every thread's; the nine do not compare
+  across a capture pair spanning the change, while the remaining
+  `jobs.<job>` rows keep their names and their values. The `push.*` rows
+  narrowed to the pusher's own work: the connect pushes' part, in those rows
+  until then (so they could add up to more than `push`), moved to
+  `pusher.connectPush.stagesMs.<stage>`, and a `push.*` row does not compare
+  across a capture pair spanning the change either. A `jobs.<job>` write
+  from a thread owning neither loop is counted under `stagesForeign`.
 - `stagesForeign`: `{stage: ms}`, a `jobs.<job>` stage closed by a thread
-  that owns neither loop (a handler thread, a test that opened no cycle),
-  cumulative wall under the stage name, so a write that fits no owner is
-  counted rather than merged into a row that names another thread. On a
+  that owns neither loop (a handler thread, a test that opened no cycle), or
+  a push stage (`push`, `push.*`) closed by a thread that is neither the
+  pusher nor a connect push, cumulative wall under the stage name, so a
+  write that fits no owner is counted rather than merged into a row that
+  names another thread. On a
   running kernel the block holds the `jobs.autoNudge.*` parts of the
   act-now pass the dashboard's Auto Nudge and compaction-suggestion arms run
   on the WS handler thread (`_ws_act_now_tick`: `key`, `snapshot`, `looks`,
