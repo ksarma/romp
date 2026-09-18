@@ -7,7 +7,8 @@ a pinned hostname) or, for the request itself, through bin/romp: the receiver ad
 else ROMP_PERF_RECEIVER, else ~/.config/romp/perf-receiver, and with none set the verb refuses naming all
 three; the address must be https with a host and no userinfo, query or fragment (http for 127.0.0.1 and
 localhost alone), and a refused address is never echoed; the file must exist, be at most 1 MiB, parse as strict
-JSON (no NaN or Infinity, no repeated key at any depth, nesting within the parser's reach) to an object with the schema
+JSON (no NaN or Infinity, no repeated key at any depth, nesting within the checks' reach, about a thousand levels, past
+which the verb refuses in one line) to an object with the schema
 line and pass the export's own scan, walk and denylist walk as it stands (what the export dropped or coarsened is refused:
 a key it drops, an uptime off whole minutes, a bound off a power of two, a float inside a clock stamp's epoch window, seconds
 or milliseconds, under any key but a duration key; an integer, a float outside both windows and a float under a duration key
@@ -788,6 +789,27 @@ class Cli(unittest.TestCase):
         r = _run([deep] + base, self.state)
         self.assertEqual(r.returncode, 0, r.stderr + " (the receiver's depth rule is the receiver's; the verb parses, walks and sends)")
         self.assertEqual(len(self.fake.requests), 1)
+
+    def test_a_file_nested_past_the_checks_reach_is_refused_in_one_line_with_no_traceback_and_nothing_sent(self):
+        """The parser reaches about ten thousand levels and the three checks and the fold about a thousand (one frame per
+        level under the interpreter's recursion limit), so a document the parser admits can overflow the checks: at the
+        previous head that was a multi-page RecursionError traceback on stderr. Now it is the documented one-line refusal,
+        nothing sent. The depth is derived from the recursion limit (the child inherits the interpreter's default, which is
+        what this process reads too) and is not a depth rule of the verb's own: the receiver's depth rule is the receiver's,
+        and the 900-deep case beside this one still takes the ordinary path."""
+        base = ["--yes", "--receiver", self.fake.url]
+        depth = sys.getrecursionlimit() + 5
+        deep = os.path.join(self.xdg, "deep.json")
+        with open(deep, "w") as fh:
+            fh.write('{"schema": "romp-perf-export/1", "perf": {"uptime_s": 60, "x": ' + '{"a": ' * depth + "1" + "}" * depth + "}}")
+        with open(deep, "rb") as fh:
+            self.assertIsInstance(pu.strict_loads(fh.read()), dict, "the parser admits it")
+        r = self._refused(_run([deep] + base, self.state), 1, "refused: %s is nested past the checks; nothing sent" % deep)
+        self.assertEqual(r.stderr, "romp perf upload: refused: %s is nested past the checks; nothing sent\n" % deep)
+        self.assertNotIn("Recursion", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertEqual(r.stdout, "")
+        self.assertEqual(self.fake.requests, [])
 
     def test_a_setting_file_that_is_not_utf8_text_is_refused_naming_the_file_and_never_its_bytes(self):
         os.makedirs(os.path.join(self.home, ".config", "romp"))

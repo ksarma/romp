@@ -17,7 +17,8 @@ unauthenticated: no credential exists for it, and the verb reads no token from a
 
 The file must exist, be a regular file of at most 1 MiB, parse as strict JSON (no NaN or Infinity literals, no
 key repeated within one object at any depth, since json.loads would keep the last copy while the bytes sent
-carry every copy, and nesting within the parser's reach) with the top-level `schema` line `romp-perf-export/1`,
+carry every copy, and nesting within the checks' reach, about a thousand levels, a tenth of the parser's; past it the
+verb refuses in one line, never a traceback) with the top-level `schema` line `romp-perf-export/1`,
 and pass the export's own check again as the file stands, since the user may have edited it: the scan for the
 strings only this machine knows, the paste-safety walk and the denylist walk of cli/perf_public.py, through
 perf_export.check_document, so a problem is reported by its kind and key path and never by the key or the value; then,
@@ -180,7 +181,9 @@ def _no_repeat(pairs):
 def strict_loads(data):
     """The document `data` (bytes) spells, or a ValueError: UTF-8, no NaN or Infinity, no key repeated within
     one object at any depth (RepeatedKey, a ValueError), and nesting within the parser's reach (json raises
-    RecursionError past it; here that is a ValueError like any other unparseable input, never a traceback)."""
+    RecursionError past it; here that is a ValueError like any other unparseable input, never a traceback). The
+    parser reaches about ten times deeper than the checks that follow in read_export, which refuse past their own
+    reach in one line too."""
     try:
         return json.loads(data.decode("utf-8"), parse_constant=_no_constant, object_pairs_hook=_no_repeat)
     except RecursionError:
@@ -200,7 +203,10 @@ def read_export(path, state):
     checks name a finding by its kind and key path, and the fold comparison catches whatever shape a later fold rule
     would fold that no check yet names, at the price of naming the block alone. A Refusal
     otherwise, naming the file path the user passed and, for a walk or scan finding, the kind and the key path,
-    never the value; for the belt, the block's name, which the checks passed."""
+    never the value; for the belt, the block's name, which the checks passed. The checks and the fold recurse one
+    frame per level, so a document the parser admits (about ten thousand levels) can still exceed their reach (about
+    a thousand): that is the same one-line refusal, never a traceback, and not a depth rule of this verb's own (the
+    receiver's depth rule is the receiver's)."""
     p = Path(path)
     try:
         st = p.stat()
@@ -226,15 +232,20 @@ def read_export(path, state):
         raise Refusal("refused: %s is not strict JSON; nothing sent" % path, 1)
     if not isinstance(doc, dict) or doc.get("schema") != SCHEMA:
         raise Refusal("refused: %s is not a romp perf export (no top-level schema %s); nothing sent" % (path, SCHEMA), 1)
-    reason = pe.check_document(doc, state, tail="nothing sent")
-    if reason:
-        raise Refusal("refused: " + reason, 1)
-    for k in doc:
-        # the belt: a fold is a fixed point of its own output (pinned over every fixture and a served export), so a block
-        # that differs from its fold was changed after the export in a way the checks above do not name; the block's name
-        # is safe to print because they passed over it
-        if k not in pe.ENVELOPE_KEYS and pp.fold(doc[k]) != doc[k]:
-            raise Refusal("refused: %s is not the export's own public form (the %s block differs from its fold); nothing sent" % (path, k), 1)
+    try:
+        reason = pe.check_document(doc, state, tail="nothing sent")
+        if reason:
+            raise Refusal("refused: " + reason, 1)
+        for k in doc:
+            # the belt: a fold is a fixed point of its own output (pinned over every fixture and a served export), so a
+            # block that differs from its fold was changed after the export in a way the checks above do not name; the
+            # block's name is safe to print because they passed over it
+            if k not in pe.ENVELOPE_KEYS and pp.fold(doc[k]) != doc[k]:
+                raise Refusal("refused: %s is not the export's own public form (the %s block differs from its fold); nothing sent" % (path, k), 1)
+    except RecursionError:
+        # the walks and the fold recurse one frame per level and the parser reaches about ten times deeper, so a document
+        # it admitted can overflow them: the documented one-line refusal, not a traceback (round 2, 2026-09-18)
+        raise Refusal("refused: %s is nested past the checks; nothing sent" % path, 1)
     return data
 
 
