@@ -228,3 +228,30 @@ test("the Files control is hidden by default; showing it round-trips, and only t
   assert.deepEqual(Object.keys(JSON.parse(store["romp:settings"])).filter((k) => /filesControl/i.test(k)), ["showFilesControl"], "the next save leaves the old key behind and writes the fresh one");
   delete store["romp:settings"];
 });
+
+// The beacon extension's two switches (2026-09-18): the browser's timing rows carry the page-load, resource, environment,
+// visibility, byte and frame-gap fields only when perfShare holds the literal true, and perfMute true stops every row.
+// Read raw from the store by the collector in every pane and the shell, by the pane shim and by the shell script
+// (perf-telemetry.ts readSwitches, kernel.py diagMuted), so the key names and the true-only rule are the contract.
+test("the beacon switches are off by default; each round-trips, and only the literal true turns one on", () => {
+  assert.equal(DEFAULT_SETTINGS.perfShare, false);
+  assert.equal(DEFAULT_SETTINGS.perfMute, false);
+  delete store["romp:settings"];
+  assert.equal(loadSettings().perfShare, false, "a fresh install shares nothing");
+  assert.equal(loadSettings().perfMute, false, "and mutes nothing");
+  saveSettings({ perfShare: true });
+  assert.equal(loadSettings().perfShare, true, "sharing survives a reload");
+  assert.equal(JSON.parse(store["romp:settings"]).perfShare, true, "the key the collector reads, the literal true");
+  assert.equal(loadSettings().perfMute, false, "one switch does not move the other");
+  saveSettings({ perfMute: true });
+  assert.equal(JSON.parse(store["romp:settings"]).perfMute, true, "the key the shim and the shell read");
+  saveSettings({ perfShare: false, perfMute: false });
+  assert.equal(loadSettings().perfShare, false); assert.equal(loadSettings().perfMute, false);
+  store["romp:settings"] = JSON.stringify({ compact: true });
+  assert.equal(loadSettings().perfShare, false, "a store written before the keys shares nothing");
+  assert.equal(loadSettings().perfMute, false);
+  store["romp:settings"] = JSON.stringify({ perfShare: "yes", perfMute: 1 });
+  assert.equal(loadSettings().perfShare, false, "a foreign stored value reads off: only true turns a switch on");
+  assert.equal(loadSettings().perfMute, false);
+  delete store["romp:settings"];
+});

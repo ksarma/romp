@@ -17,7 +17,9 @@ import { hideEdges, staysEnumerable } from "../test-dom-shim";
 import {
   Ring, percentile, histBucket, histQuantileBucket, classifyFrame, scriptKey, sanitizeInvoker, uaClass, attributeScripts,
   createPerfTelemetry, installPerfTelemetry, perfFrameHandler,
-  HIST_EDGES, HIST_BUCKETS, MAX_FRAME_TYPES, MAX_TOP_KEYS, SLOW_FRAME_MS, SLOW_ROWS_PER_MINUTE, FREE_RING, type PerfDeps,
+  readSwitches, navInfo, resourceKey, foldResources, pageMarks, iosMajor, envInfo, orientation, RES_ROOT_FILES,
+  HIST_EDGES, HIST_BUCKETS, MAX_FRAME_TYPES, MAX_TOP_KEYS, SLOW_FRAME_MS, SLOW_ROWS_PER_MINUTE, FREE_RING, MAX_RES, RAF_GAP_MS,
+  SETTINGS_KEY, SHARE_SETTING, MUTE_SETTING, ENV_ENTRY_TYPES, type PerfDeps, type BeaconSwitches,
 } from "./perf-telemetry";
 import { FederationManager } from "./federation";
 
@@ -55,6 +57,11 @@ function harness(over: Partial<PerfDeps> = {}) {
     pageUrl: PAGE,
     windowEvents: null,
     documentEvents: null,
+    // the beacon extension: both switches off, no timeline entries, no shim marks, a desktop environment
+    switches: () => ({ share: false, mute: false }),
+    entries: () => null,
+    marks: () => null,
+    env: () => ({ standalone: false, iosMajor: 0, touch: false, vw: 800, vh: 600, dpr: 1, entryTypes: [], ric: true }),
     ...over,
   };
   /** run the animation-frame callbacks queued so far (one frame); a callback that queues another leaves it for the next call */
@@ -367,7 +374,7 @@ test("free: a sample that resolves after the document went hidden, or the pane l
   assert.equal((q.snapshot() as any).free, null);
 });
 
-test("visibilitychange to hidden, and a resize to a zero viewport, cancel the armed sample; pagehide flushes", () => {
+test("visibilitychange to hidden, and a resize to a zero viewport, cancel the armed sample; the hide flushes the minute, and so does pagehide", () => {
   const win = new EventTarget();
   const doc = new EventTarget();
   let vis = true;
@@ -380,6 +387,10 @@ test("visibilitychange to hidden, and a resize to a zero viewport, cancel the ar
   doc.dispatchEvent(new Event("visibilitychange"));
   assert.equal((p.snapshot() as any).free_pending, false);
   assert.deepEqual(h.cancelled, [1]);
+  // the hide flushes what the minute holds (2026-09-18): iOS fires visibilitychange on an app switch and then freezes the
+  // page, and pagehide, a navigation event, never comes, so the minute before a background was lost
+  assert.equal(minuteRows(h.posted).length, 1, "the hide flushed the minute");
+  assert.equal(minuteRows(h.posted)[0].data.frames.feed.n, 1);
   vis = true;
   // a resize that leaves the pane with a viewport cancels nothing; one to zero size does
   h.frame(p, { type: "feed" }, 10);
@@ -390,8 +401,8 @@ test("visibilitychange to hidden, and a resize to a zero viewport, cancel the ar
   assert.equal((p.snapshot() as any).free_pending, false);
   assert.deepEqual(h.cancelled, [1, 2]);
   win.dispatchEvent(new Event("pagehide"));
-  assert.equal(minuteRows(h.posted).length, 1);
-  assert.equal(minuteRows(h.posted)[0].data.frames.feed.n, 2);
+  assert.equal(minuteRows(h.posted).length, 2, "pagehide flushes the minute the hide started");
+  assert.equal(minuteRows(h.posted)[1].data.frames.feed.n, 1);
 });
 
 // ── slow frames ──
@@ -959,4 +970,402 @@ test("a window stand-in enumerates its primitives alone; parent stays non-enumer
   assert.ok(win.parent === win && win.performance.now() === 0 && win.location.href === PAGE, "parent, performance and location are still reachable");
   const dump = inspect(win, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
   assert.ok(!/^\s*(parent|location|navigator|performance):/m.test(dump), "the window dumps an edge:\n" + dump);
+});
+
+// ── the beacon extension (2026-09-18): the two gear switches, the shared fields, the hide flush, the gap loop ──
+
+const TODAY_KEYS = ["app", "dom", "frames", "free", "heap_mb", "hidden_pane", "loaf", "since", "slow", "span_ms", "ua", "visible"];
+const SHARED_KEYS = ["env", "marks", "nav", "rafGap", "res", "vis", "wsBytes"];
+const ORIGIN = "http://h:1";
+const NAV = [{ type: "reload", responseEnd: 210.4, domContentLoadedEventEnd: 655.6, loadEventEnd: 0 }];
+const PAINTS = [{ name: "first-paint", startTime: 388.2 }, { name: "first-contentful-paint", startTime: 401.7 }];
+/** a phone's resource entries: the bundles and the sheet, a glyph, the manifest, two polls, a file read, a figure host's image, a data URL */
+const RES = [
+  { name: ORIGIN + "/dist/feed.js?v=1757100000", transferSize: 120000, encodedBodySize: 119700, duration: 88.2 },
+  { name: ORIGIN + "/dist/federation.js?v=1757100000", transferSize: 40000, encodedBodySize: 39800, duration: 30 },
+  { name: ORIGIN + "/dist/styles.css?v=1757100000", transferSize: 9000, encodedBodySize: 8800, duration: 12 },
+  { name: ORIGIN + "/media/romp-swirl-glyph.svg", transferSize: 3000, encodedBodySize: 2900, duration: 5 },
+  { name: ORIGIN + "/manifest.webmanifest", transferSize: 500, encodedBodySize: 400, duration: 4 },
+  { name: ORIGIN + "/tunnels", transferSize: 300, encodedBodySize: 200, duration: 20 },
+  { name: ORIGIN + "/tunnels", transferSize: 300, encodedBodySize: 200, duration: 25 },
+  { name: ORIGIN + "/file?path=notes/plan.md", transferSize: 7000, encodedBodySize: 6900, duration: 15 },
+  { name: "https://img.example/pic.png", transferSize: 50000, encodedBodySize: 49000, duration: 60 },
+  { name: "data:image/png;base64,iVBORw0KGgo", transferSize: 0, encodedBodySize: 0, duration: 0 },
+];
+const MARKS = { wsOpen: 120.6, bundleReady: 300, firstFrame: 455.2, wsBytes: 5000, dv: 1757100000 };
+const PHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1";
+const IPAD_DESKTOP_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15";
+const fakeStore = (obj: unknown) => ({ getItem: (k: string) => (k === SETTINGS_KEY && obj !== undefined ? (typeof obj === "string" ? obj : JSON.stringify(obj)) : null) });
+
+test("readSwitches: the literal true under each key alone turns a switch on; a missing store, a foreign value, bad JSON or a throwing store read off", () => {
+  assert.deepEqual(readSwitches(null), { share: false, mute: false });
+  assert.deepEqual(readSwitches(undefined), { share: false, mute: false });
+  assert.deepEqual(readSwitches(fakeStore(undefined)), { share: false, mute: false });
+  assert.deepEqual(readSwitches(fakeStore({ compact: true })), { share: false, mute: false }, "a store from before the keys");
+  assert.deepEqual(readSwitches(fakeStore({ [SHARE_SETTING]: true })), { share: true, mute: false });
+  assert.deepEqual(readSwitches(fakeStore({ [MUTE_SETTING]: true })), { share: false, mute: true });
+  assert.deepEqual(readSwitches(fakeStore({ [SHARE_SETTING]: true, [MUTE_SETTING]: true })), { share: true, mute: true });
+  assert.deepEqual(readSwitches(fakeStore({ [SHARE_SETTING]: "yes", [MUTE_SETTING]: 1 })), { share: false, mute: false }, "only the literal true");
+  assert.deepEqual(readSwitches(fakeStore("{not json")), { share: false, mute: false });
+  assert.deepEqual(readSwitches({ getItem: () => { throw new Error("sandboxed"); } }), { share: false, mute: false });
+  assert.equal(SHARE_SETTING, "perfShare"); assert.equal(MUTE_SETTING, "perfMute"); assert.equal(SETTINGS_KEY, "romp:settings");
+});
+
+test("navInfo: the entry's type from the fixed vocabulary and three whole-ms figures; a missing figure is -1; no entry is null", () => {
+  assert.equal(navInfo(null), null);
+  assert.equal(navInfo([]), null);
+  assert.deepEqual(navInfo(NAV), { type: "reload", responseEnd: 210, domContentLoaded: 656, loadEventEnd: 0 });
+  assert.deepEqual(navInfo([{ type: "navigate", responseEnd: 100, domContentLoadedEventEnd: 200, loadEventEnd: 300 }]), { type: "navigate", responseEnd: 100, domContentLoaded: 200, loadEventEnd: 300 });
+  assert.deepEqual(navInfo([{ type: "back_forward" }]), { type: "back_forward", responseEnd: -1, domContentLoaded: -1, loadEventEnd: -1 });
+  assert.equal(navInfo([{ type: "prerender" }])!.type, "prerender");
+  assert.equal(navInfo([{ type: "http://h:1/chat?token=abc" }])!.type, "other", "a value outside the vocabulary never travels");
+  assert.equal(navInfo(["x"]), null);
+});
+
+test("resourceKey names same-origin assets under /dist/ and /media/ and root files by basename, query stripped; everything else is other", () => {
+  assert.equal(resourceKey(ORIGIN + "/dist/feed.js?v=1757100000", ORIGIN), "feed.js");
+  assert.equal(resourceKey(ORIGIN + "/dist/styles.css", ORIGIN), "styles.css");
+  assert.equal(resourceKey(ORIGIN + "/media/romp-swirl-glyph.svg#a", ORIGIN), "romp-swirl-glyph.svg");
+  assert.equal(resourceKey(ORIGIN + "/manifest.webmanifest", ORIGIN), "manifest.webmanifest");
+  assert.equal(resourceKey(ORIGIN + "/sw.js", ORIGIN), "sw.js");
+  assert.equal(resourceKey(ORIGIN + "/favicon.ico", ORIGIN), "favicon.ico");
+  assert.equal(resourceKey(ORIGIN + "/11111111-2222-3333-4444-555555555555.json", ORIGIN), "other", "a root name outside the fixed list, asset-shaped or not");
+  assert.equal(resourceKey(ORIGIN + "/other.js", ORIGIN), "other");
+  assert.equal(resourceKey(ORIGIN + "/tunnels", ORIGIN), "other", "a route with no asset extension");
+  assert.equal(resourceKey(ORIGIN + "/file?path=notes/plan.md", ORIGIN), "other", "a file read: the path stays behind");
+  assert.equal(resourceKey(ORIGIN + "/file/notes/plan.png", ORIGIN), "other", "a path under a route is never named");
+  assert.equal(resourceKey(ORIGIN + "/dist/nested/x.js", ORIGIN), "other");
+  assert.equal(resourceKey(ORIGIN + "/history/11111111-2222-3333-4444-555555555555", ORIGIN), "other");
+  assert.equal(resourceKey("https://img.example/pic.png", ORIGIN), "other", "cross-origin: a figure host's image is named by the document that embeds it");
+  assert.equal(resourceKey("http://h:10/dist/feed.js", ORIGIN), "other", "another port is another origin");
+  assert.equal(resourceKey("data:image/png;base64,iVBORw0KGgo", ORIGIN), "other");
+  assert.equal(resourceKey("blob:http://h:1/abc", ORIGIN), "other");
+  assert.equal(resourceKey(ORIGIN + "/dist/feed.js", ""), "other", "no origin known: nothing is named");
+  assert.equal(resourceKey(undefined, ORIGIN), "other");
+  assert.deepEqual(RES_ROOT_FILES, ["sw.js", "manifest.webmanifest", "favicon.ico"]);
+});
+
+test("foldResources sums per key, largest encoded body first, the unnamed into other; at most MAX_RES named then other; no entries is null", () => {
+  assert.equal(foldResources(null, ORIGIN), null);
+  assert.deepEqual(foldResources([], ORIGIN), {});
+  const f = foldResources(RES, ORIGIN)!;
+  assert.deepEqual(Object.keys(f), ["feed.js", "federation.js", "styles.css", "romp-swirl-glyph.svg", "manifest.webmanifest", "other"]);
+  assert.deepEqual(f["feed.js"], { transferSize: 120000, encodedBodySize: 119700, duration: 88 });
+  assert.deepEqual(f.other, { transferSize: 300 + 300 + 7000 + 50000, encodedBodySize: 200 + 200 + 6900 + 49000, duration: 20 + 25 + 15 + 60 }, "two polls, the file read, the image and the data URL, summed");
+  assertIdentifiersOnly(f);
+  // the cap: thirty named bundles keep the largest MAX_RES, the rest fold into other
+  const many = [...Array(30).keys()].map((i) => ({ name: ORIGIN + "/dist/b" + i + ".js", transferSize: 1000 + i, encodedBodySize: 1000 + i, duration: 1 }));
+  const g = foldResources(many, ORIGIN)!;
+  assert.equal(Object.keys(g).length, MAX_RES + 1);
+  assert.equal(Object.keys(g)[0], "b29.js"); assert.equal(Object.keys(g)[MAX_RES - 1], "b6.js");
+  assert.deepEqual(g.other, { transferSize: 1000 * 6 + 15, encodedBodySize: 1000 * 6 + 15, duration: 6 }, "b0..b5 folded");
+  assert.equal("other" in foldResources(many.slice(0, 3), ORIGIN)!, false, "no other when nothing folded into it");
+  assert.deepEqual(foldResources([{ name: ORIGIN + "/dist/a.js" }, null, "x"], ORIGIN), { "a.js": { transferSize: 0, encodedBodySize: 0, duration: 0 } }, "missing figures read 0; junk entries are skipped");
+});
+
+test("pageMarks: the shim's three stamps where they are non-negative numbers, whole ms, plus first paint and first contentful paint", () => {
+  assert.deepEqual(pageMarks(MARKS, PAINTS), { wsOpen: 121, bundleReady: 300, firstFrame: 455, fp: 388, fcp: 402 });
+  assert.deepEqual(pageMarks({ wsOpen: -1, bundleReady: "300", firstFrame: NaN }, null), {}, "a -1 (no clock), a string or NaN is not a mark");
+  assert.deepEqual(pageMarks(null, PAINTS), { fp: 388, fcp: 402 }, "no shim (the shell): the paints alone");
+  assert.deepEqual(pageMarks(null, null), {});
+  assert.deepEqual(pageMarks({ wsOpen: 0 }, [{ name: "largest-contentful-paint", startTime: 1 }, { name: "first-paint" }]), { wsOpen: 0 }, "0 is a figure; other paint names and a paint with no time are ignored");
+});
+
+test("iosMajor, envInfo and orientation: the iPhone's version, the iPad's desktop UA as 0, the fixed entry-type list in its order, one-decimal dpr", () => {
+  assert.equal(iosMajor(PHONE_UA), 17);
+  assert.equal(iosMajor("Mozilla/5.0 (iPad; CPU OS 16_2 like Mac OS X) AppleWebKit/605.1.15"), 16);
+  assert.equal(iosMajor(IPAD_DESKTOP_UA), 0, "an iPad with the desktop UA states no version; its touch tells it apart");
+  assert.equal(iosMajor("Mozilla/5.0 (Macintosh) Chrome/128.0.0.0 Safari/537.36"), 0);
+  assert.equal(iosMajor("Mozilla/5.0 (iPhone) AppleWebKit"), 0, "no OS token");
+  const e = envInfo({ standalone: true, ua: PHONE_UA, maxTouchPoints: 5, vw: 390.4, vh: 664, dpr: 3, entryTypes: ["mark", "measure", "resource", "navigation", "paint", "element"], ric: false });
+  assert.deepEqual(e, { standalone: true, iosMajor: 17, touch: true, vw: 390, vh: 664, dpr: 3, entryTypes: ["paint", "resource", "navigation"], ric: false });
+  const d = envInfo({ standalone: undefined, ua: "Mozilla/5.0 (Macintosh) Chrome/128.0.0.0 Safari/537.36", maxTouchPoints: 0, vw: 1440, vh: 900, dpr: 1.25, entryTypes: ENV_ENTRY_TYPES.slice().reverse(), ric: true });
+  assert.deepEqual(d, { standalone: false, iosMajor: 0, touch: false, vw: 1440, vh: 900, dpr: 1.3, entryTypes: ENV_ENTRY_TYPES.slice(), ric: true }, "the list comes out in the fixed order whatever the browser's");
+  assert.deepEqual(envInfo({ standalone: "yes", ua: "", maxTouchPoints: NaN, vw: NaN, vh: -5, dpr: NaN, entryTypes: [], ric: true }), { standalone: false, iosMajor: 0, touch: false, vw: 0, vh: 0, dpr: 0, entryTypes: [], ric: true });
+  assert.equal(orientation(390, 664), "portrait"); assert.equal(orientation(664, 390), "landscape"); assert.equal(orientation(500, 500), "portrait");
+  assertIdentifiersOnly(e);
+});
+
+/** a harness whose page has everything the beacon reads, with the switches settable */
+function beaconHarness(sw: BeaconSwitches, over: Partial<PerfDeps> = {}) {
+  const marks: Record<string, unknown> = { ...MARKS };
+  const env = { standalone: true, iosMajor: 17, touch: true, vw: 390, vh: 664, dpr: 3, entryTypes: ["paint", "resource", "navigation"], ric: false };
+  const entries = (t: string) => (t === "navigation" ? NAV : t === "resource" ? RES : t === "paint" ? PAINTS : []);
+  const h = harness({ switches: () => ({ ...sw }), entries, marks: () => marks, env: () => ({ ...env }), ...over });
+  return { ...h, sw, marks, env };
+}
+
+test("share OFF: the minute row's keys are exactly today's, whatever the page could tell", () => {
+  const h = beaconHarness({ share: false, mute: false });
+  const p = createPerfTelemetry("chat", h.deps);
+  h.frame(p, { type: "session" }, 10);
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.deepEqual(Object.keys(minuteRows(h.posted)[0].data).sort(), TODAY_KEYS);
+  assert.equal(h.rafQueue.length, 1, "the free sample's frame alone: no gap loop runs with the switch off");
+});
+
+test("share ON: the first row carries nav, res, marks and env once, every row vis, wsBytes and rafGap; a rotation re-sends env alone", () => {
+  const h = beaconHarness({ share: true, mute: false }, { raf: null });
+  const p = createPerfTelemetry("chat", h.deps);
+  h.frame(p, { type: "session" }, 10);
+  h.clock.wall += 60_000;
+  h.marks.wsBytes = 5000 + 12_345;
+  p.tick();
+  const d = minuteRows(h.posted)[0].data;
+  assert.deepEqual(Object.keys(d).sort(), [...TODAY_KEYS, ...SHARED_KEYS].sort());
+  assert.deepEqual(d.nav, { type: "reload", responseEnd: 210, domContentLoaded: 656, loadEventEnd: 0 });
+  assert.deepEqual(Object.keys(d.res), ["feed.js", "federation.js", "styles.css", "romp-swirl-glyph.svg", "manifest.webmanifest", "other"]);
+  assert.deepEqual(d.marks, { wsOpen: 121, bundleReady: 300, firstFrame: 455, fp: 388, fcp: 402 });
+  assert.deepEqual(d.env, { standalone: true, iosMajor: 17, touch: true, vw: 390, vh: 664, dpr: 3, entryTypes: ["paint", "resource", "navigation"], ric: false, dv: 1757100000 }, "the dist token rides env from the shim's marks");
+  assert.deepEqual(d.vis, { hiddenN: 0, visibleN: 0, hiddenMs: 0 });
+  assert.equal(d.wsBytes, 12_345, "the characters the shim counted since the minute began");
+  assert.deepEqual(d.rafGap, { n: 0, worst: 0 });
+  assertIdentifiersOnly(d);
+  // the second minute: the once-per-page fields are gone, the per-minute ones stay, the byte delta is this minute's
+  h.frame(p, { type: "session" }, 10);
+  h.marks.wsBytes = 5000 + 12_345 + 700;
+  h.clock.wall += 60_000;
+  p.tick();
+  const e = minuteRows(h.posted)[1].data;
+  assert.deepEqual(Object.keys(e).sort(), [...TODAY_KEYS, "rafGap", "vis", "wsBytes"].sort());
+  assert.equal(e.wsBytes, 700);
+  // a rotation: env again, nothing else of the once-per-page set
+  h.env.vw = 664; h.env.vh = 390;
+  h.frame(p, { type: "session" }, 10);
+  h.clock.wall += 60_000;
+  p.tick();
+  const f = minuteRows(h.posted)[2].data;
+  assert.deepEqual(Object.keys(f).sort(), [...TODAY_KEYS, "env", "rafGap", "vis", "wsBytes"].sort());
+  assert.equal(f.env.vw, 664);
+  // the same orientation again: no env
+  h.frame(p, { type: "session" }, 10);
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.equal("env" in minuteRows(h.posted)[3].data, false);
+  assert.equal(slowRows(h.posted).length, 0);
+});
+
+test("share ON on a page without the APIs: nav and res are null, marks empty, wsBytes null, never a guess", () => {
+  const h = harness({ switches: () => ({ share: true, mute: false }), raf: null, entries: () => null, marks: () => null, env: () => null });
+  const p = createPerfTelemetry("shell", h.deps);
+  h.frame(p, { type: "x" }, 1);
+  h.clock.wall += 60_000;
+  p.tick();
+  const d = minuteRows(h.posted)[0].data;
+  assert.equal(d.nav, null); assert.equal(d.res, null); assert.deepEqual(d.marks, {}); assert.equal(d.env, null); assert.equal(d.wsBytes, null);
+  assert.deepEqual(d.vis, { hiddenN: 0, visibleN: 0, hiddenMs: 0 }); assert.deepEqual(d.rafGap, { n: 0, worst: 0 });
+  // a throwing reader reads the same as an absent one
+  const g = harness({ switches: () => ({ share: true, mute: false }), raf: null, entries: () => { throw new Error("no"); }, marks: () => { throw new Error("no"); }, env: () => { throw new Error("no"); } });
+  const q = createPerfTelemetry("shell", g.deps);
+  g.frame(q, { type: "x" }, 1);
+  g.clock.wall += 60_000;
+  assert.doesNotThrow(() => q.tick());
+  const e = minuteRows(g.posted)[0].data;
+  assert.equal(e.nav, null); assert.equal(e.res, null); assert.equal(e.env, null); assert.equal(e.wsBytes, null);
+});
+
+test("vis: the hide counts and flushes, the return counts and adds the hidden stretch; a minute spent hidden reports its own span hidden", () => {
+  const doc = new EventTarget();
+  let vis = true;
+  const h = beaconHarness({ share: true, mute: false }, { raf: null, documentEvents: doc, visible: () => vis });
+  const p = createPerfTelemetry("chat", h.deps);
+  h.frame(p, { type: "session" }, 10);
+  h.clock.t += 1000; h.clock.wall += 1000;
+  vis = false;
+  doc.dispatchEvent(new Event("visibilitychange"));
+  assert.equal(minuteRows(h.posted).length, 1, "the hide flushed");
+  assert.deepEqual(minuteRows(h.posted)[0].data.vis, { hiddenN: 1, visibleN: 0, hiddenMs: 0 });
+  assert.equal(minuteRows(h.posted)[0].data.span_ms, 1000, "the wall clock's second; the frame's 10 ms is the handler clock's");
+  // hidden for 90 s across a timer flush: the flushed minute is all hidden time (frames kept arriving)
+  h.clock.t += 60_000; h.clock.wall += 60_000;
+  h.frame(p, { type: "session" }, 5);
+  p.tick();
+  assert.deepEqual(minuteRows(h.posted)[1].data.vis, { hiddenN: 0, visibleN: 0, hiddenMs: 60_005 });
+  h.clock.t += 30_000; h.clock.wall += 30_000;
+  vis = true;
+  doc.dispatchEvent(new Event("visibilitychange"));
+  h.frame(p, { type: "session" }, 5);
+  h.clock.t += 2000; h.clock.wall += 2000;
+  p.tick();
+  assert.deepEqual(minuteRows(h.posted)[2].data.vis, { hiddenN: 0, visibleN: 1, hiddenMs: 30_000 }, "the return adds the stretch since the last flush");
+  // a hide with nothing in the minute flushes nothing (an idle minute sends nothing)
+  vis = false;
+  doc.dispatchEvent(new Event("visibilitychange"));
+  assert.equal(minuteRows(h.posted).length, 3);
+  vis = true;
+  doc.dispatchEvent(new Event("visibilitychange"));
+  h.frame(p, { type: "session" }, 5);
+  p.tick();
+  assert.deepEqual(minuteRows(h.posted)[3].data.vis, { hiddenN: 1, visibleN: 1, hiddenMs: 0 }, "the idle hide's count passed on to the row that followed (vis reads since the previous row); no time passed hidden");
+});
+
+test("rafGap: the loop runs only while share is on and the document visible; gaps over 50 ms count and mark the minute; a hide stops it and a return restarts it with no baseline", () => {
+  const doc = new EventTarget();
+  const win = new EventTarget();
+  let vis = true;
+  let zero = false;
+  const h = beaconHarness({ share: true, mute: false }, { documentEvents: doc, windowEvents: win, visible: () => vis, hiddenPane: () => zero });
+  const p = createPerfTelemetry("chat", h.deps);
+  assert.equal(h.rafQueue.length, 1, "the loop armed at construction");
+  assert.equal((p.snapshot() as any).gap_running, true);
+  // steady 16 ms frames: no gap
+  for (let i = 0; i < 5; i++) { h.clock.t += 16; h.runRafs(); }
+  assert.equal(h.rafQueue.length, 1, "one callback in flight");
+  assert.deepEqual((p.snapshot() as any).rafGap, undefined, "the snapshot is the row's shape: the gap counters ride the shared fields at the flush");
+  // a 120 ms gap and a 51 ms gap count; a 50 ms one does not
+  h.clock.t += 120; h.runRafs();
+  h.clock.t += 50; h.runRafs();
+  h.clock.t += 51; h.runRafs();
+  h.clock.wall += 60_000;
+  p.tick();
+  const d = minuteRows(h.posted)[0].data;
+  assert.deepEqual(d.rafGap, { n: 2, worst: 120 });
+  assert.deepEqual(d.frames, {}, "no frame arrived: the gaps alone made the minute worth a row");
+  // hidden: the loop stops (its callback cancelled, nothing re-armed); the stretch is not a gap
+  vis = false;
+  doc.dispatchEvent(new Event("visibilitychange"));
+  assert.equal((p.snapshot() as any).gap_running, false);
+  assert.ok(h.cancelled.length >= 1, "the armed callback was cancelled");
+  h.clock.t += 5000;
+  h.runRafs();   // the cancelled callback, were the fake to run it anyway: the loop is off and counts nothing
+  vis = true;
+  doc.dispatchEvent(new Event("visibilitychange"));
+  assert.equal((p.snapshot() as any).gap_running, true);
+  h.clock.t += 16; h.runRafs();   // the first callback after the return sets the baseline
+  h.clock.t += 16; h.runRafs();
+  h.frame(p, { type: "session" }, 1);
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.deepEqual(minuteRows(h.posted)[1].data.rafGap, { n: 0, worst: 0 }, "the hidden stretch never counted");
+  // a resize drops the baseline: a pane shown again after display:none gets its callbacks back with the hidden stretch behind them
+  h.clock.t += 16; h.runRafs();
+  win.dispatchEvent(new Event("resize"));
+  h.clock.t += 900; h.runRafs();
+  h.clock.t += 16; h.runRafs();
+  // a pane with no viewport: the callback counts nothing
+  zero = true;
+  h.clock.t += 300; h.runRafs();
+  zero = false;
+  h.frame(p, { type: "session" }, 1);
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.deepEqual(minuteRows(h.posted)[2].data.rafGap, { n: 0, worst: 0 });
+  // the switch turns off: the next flush stops the loop
+  h.sw.share = false;
+  h.frame(p, { type: "session" }, 1);
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.equal((p.snapshot() as any).gap_running, false);
+  assert.equal("rafGap" in minuteRows(h.posted)[3].data, false);
+});
+
+test("the kill switch: mute ON posts nothing, minute and slowframe rows alike, while the collector keeps measuring; OFF again through the storage event, the next row goes", () => {
+  const win = new EventTarget();
+  const h = beaconHarness({ share: true, mute: true }, { windowEvents: win, raf: null });
+  const p = createPerfTelemetry("chat", h.deps);
+  h.frame(p, { type: "session" }, 200);   // a slow frame: its row would go at once
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.equal(h.posted.length, 0, "nothing left the page");
+  assert.equal((p.snapshot() as any).mute, true);
+  assert.equal((p.snapshot() as any).gap_running, false, "no gap loop while muted, whatever share says");
+  h.frame(p, { type: "session" }, 1);
+  assert.equal((p.snapshot() as any).frames.session.n, 1, "measuring went on");
+  // the gear in another document turns it off: the storage event re-reads the store at once
+  h.sw.mute = false;
+  win.dispatchEvent(Object.assign(new Event("storage"), { key: SETTINGS_KEY }));
+  assert.equal((p.snapshot() as any).mute, false);
+  h.frame(p, { type: "session" }, 200);
+  assert.equal(slowRows(h.posted).length, 1, "the slowframe row goes now");
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.equal(minuteRows(h.posted).length, 1);
+  assert.deepEqual(Object.keys(minuteRows(h.posted)[0].data).sort(), [...TODAY_KEYS, ...SHARED_KEYS].sort());
+});
+
+test("a switch flipped in the gear reaches the collector through the storage event for its key and the same-document romp:settings event, and at every flush; another key's event is not read", () => {
+  const win = new EventTarget();
+  let reads = 0;
+  const sw = { share: false, mute: false };
+  const h = beaconHarness(sw, { windowEvents: win, raf: null, switches: () => { reads++; return { ...sw }; } });
+  const p = createPerfTelemetry("chat", h.deps);
+  const at = reads;
+  win.dispatchEvent(Object.assign(new Event("storage"), { key: "romp-vscode-state-chat" }));
+  assert.equal(reads, at, "another key's save is not this module's");
+  sw.share = true;
+  win.dispatchEvent(Object.assign(new Event("storage"), { key: SETTINGS_KEY }));
+  assert.equal(reads, at + 1);
+  assert.equal((p.snapshot() as any).share, true);
+  sw.share = false;
+  win.dispatchEvent(new Event("romp:settings"));
+  assert.equal((p.snapshot() as any).share, false);
+  win.dispatchEvent(new Event("storage"));   // a clear() fires with no key: read
+  assert.equal(reads, at + 3);
+  sw.share = true;
+  h.frame(p, { type: "session" }, 1);
+  h.clock.wall += 60_000;
+  p.tick();   // the flush reads too: a save lands within a minute even without the events
+  assert.equal("env" in minuteRows(h.posted)[0].data, true);
+});
+
+test("installPerfTelemetry reads the page: the gear's store, the timeline entries, the shim's marks object and the environment; a store that throws reads both switches off", () => {
+  const g: any = globalThis;
+  let t = 0;
+  const win = standIn({
+    performance: { now: () => t, getEntriesByType: (k: string) => (k === "navigation" ? NAV : k === "resource" ? RES : k === "paint" ? PAINTS : []) },
+    navigator: { userAgent: PHONE_UA, maxTouchPoints: 5, standalone: true },
+    location: { href: "http://h:1/chat?token=abc&wid=11111111" },
+    localStorage: { getItem: (k: string) => (k === SETTINGS_KEY ? JSON.stringify({ perfShare: true, compact: true }) : null) },
+    __rompPerfMarks: { wsOpen: 120, bundleReady: 300, firstFrame: 455, wsBytes: 8000, dv: 1757100000 },
+    PerformanceObserver: Object.assign(class { observe() {} disconnect() {} }, { supportedEntryTypes: ["resource", "navigation", "paint", "mark"] }),
+  });
+  win.innerWidth = 390; win.innerHeight = 664; win.devicePixelRatio = 3;
+  let intervalCb: (() => void) | null = null;
+  win.setInterval = (cb: () => void) => { intervalCb = cb; return { unref: () => {} }; };
+  const rafs: Array<(t: number) => void> = [];
+  win.requestAnimationFrame = (cb: (t: number) => void) => { rafs.push(cb); return rafs.length; };
+  win.cancelAnimationFrame = () => {};
+  const sent: any[] = [];
+  win.__rompLocalSend = (m: any) => sent.push(m);
+  const doc: any = new EventTarget();
+  doc.visibilityState = "visible";
+  doc.getElementsByTagName = () => ({ length: 42 });
+  g.window = win;
+  g.document = doc;
+  try {
+    const a = installPerfTelemetry("chat");
+    assert.ok(a);
+    assert.equal((a!.snapshot() as any).share, true);
+    assert.equal(rafs.length, 1, "the gap loop armed through the page's requestAnimationFrame");
+    a!.timed("session", () => { t += 10; });
+    win.__rompPerfMarks.wsBytes = 8000 + 2500;
+    intervalCb!();
+    assert.equal(sent.length, 1);
+    const d = sent[0].data;
+    assert.deepEqual(d.env, { standalone: true, iosMajor: 17, touch: true, vw: 390, vh: 664, dpr: 3, entryTypes: ["paint", "resource", "navigation"], ric: false, dv: 1757100000 });
+    assert.deepEqual(d.marks, { wsOpen: 120, bundleReady: 300, firstFrame: 455, fp: 388, fcp: 402 });
+    assert.deepEqual(d.nav, { type: "reload", responseEnd: 210, domContentLoaded: 656, loadEventEnd: 0 });
+    assert.equal(Object.keys(d.res).length, 6);
+    assert.equal(d.wsBytes, 2500);
+    assert.equal(d.ua, "safari-ios");
+    assertIdentifiersOnly(d);
+  } finally {
+    delete g.window;
+    delete g.document;
+  }
+  // a sandboxed frame: window.localStorage throws on access, and both switches read off
+  const bare = standIn({ performance: { now: () => 0 }, navigator: {}, location: { href: PAGE } });
+  Object.defineProperty(bare, "localStorage", { get() { throw new Error("SecurityError"); } });
+  g.window = bare;
+  g.document = new EventTarget();
+  try {
+    const b = installPerfTelemetry("feed");
+    assert.ok(b);
+    assert.equal((b!.snapshot() as any).share, false);
+    assert.equal((b!.snapshot() as any).mute, false);
+  } finally {
+    delete g.window;
+    delete g.document;
+  }
 });

@@ -70,7 +70,8 @@ class Harness {
   bars: any[] = [];            // the bars a standalone page raised (selfBar): {text, kind, buttons}
   liveBar: any = null;         // the one bar standing (the #romp-stale-self slot)
   notified: any[] = [];        // what the shell's own write path (__rompNotify on the parent) received, synchronously
-  constructor(js: string, opts: { standalone?: boolean; session?: Map<string, string>; pathname?: string; parentNotify?: boolean } = {}) {
+  perfNow = 1234;              // performance.now() as the shim reads it (the beacon extension's marks, 2026-09-18)
+  constructor(js: string, opts: { standalone?: boolean; session?: Map<string, string>; pathname?: string; parentNotify?: boolean; store?: Map<string, string> } = {}) {
     const h = this;
     const session = opts.session || new Map<string, string>();
     class FakeWS {
@@ -108,7 +109,8 @@ class Harness {
         createElement: () => { const el: any = { style: {}, dataset: {}, children: [] as any[], textContent: "", appendChild(c: any) { el.children.push(c); }, remove() { if (h.liveBar === el) h.liveBar = null; }, get firstChild() { return el.children[0] || null; } }; return hideEdges(el); },
         body: { appendChild: (b: any) => { h.liveBar = b; h.bars.push({ text: (b.children[0] || {}).textContent, kind: b.dataset.kind, buttons: b.children.slice(1).map((c: any) => c.textContent) }); } },
       },
-      localStorage: { getItem: () => null, setItem: () => {} },
+      // opts.store: the gear's store, for the kill switch the shim reads (romp:settings perfMute); empty by default
+      localStorage: { getItem: (k: string) => (opts.store && opts.store.has(k) ? opts.store.get(k)! : null), setItem: (k: string, v: string) => { opts.store?.set(k, String(v)); } },
       location: { protocol: "http:", host: "TESTHOST:29855", search: "", pathname: opts.pathname || "/chat" },
       URLSearchParams: class { get() { return ""; } },
       WebSocket: FakeWS, Date: FakeDate, JSON, console,
@@ -121,7 +123,7 @@ class Harness {
       // synchronously here, so `toBundle` reads in wire order exactly as before; the slicing has its own tests
       // (tests/test_pane_shim_return.py). `performance` backs the page-load breadcrumb's navigation type.
       MessageChannel: class { port1: any = { onmessage: null }; port2: any; constructor() { const p1 = this.port1; this.port2 = { postMessage: (d: any) => { p1.onmessage?.({ data: d }); } }; } },
-      performance: { getEntriesByType: () => [] },
+      performance: { getEntriesByType: () => [], now: () => h.perfNow },
     };
     sandbox.window.window = sandbox.window;
     if (opts.standalone) sandbox.window.parent = sandbox.window;   // no shell: the page is its own parent
@@ -724,4 +726,55 @@ test("a standalone page renders the core's offer as its bar with Reload and Not 
   // a page in the shell installs no hook: the shell's banner speaks
   const inShell = new Harness(shimJs("feed", "feedDelta", false, FAKE_CORE.replace("return false;", "return true;")));
   assert.equal(inShell.win.__rompReload.offer, null, "in a shell the pane renders no bar of its own");
+});
+
+// ── the beacon extension's hooks (2026-09-18): the marks the page's collector reads, and the kill switch ──
+
+test("the shim stamps the first socket open, the bundle's ready and the first delivered frame once each, counts every received character, and names the dist token", () => {
+  const h = FEED();
+  const PM = h.win.__rompPerfMarks;
+  assert.deepEqual({ ...PM }, { wsBytes: 0, dv: 5 }, "published before any script that follows the shim, with the page's dist token");   // a copy: the assertion would narrow PM's type to the literal's
+  h.perfNow = 120; h.ws.open();
+  assert.equal(PM.wsOpen, 120);
+  h.perfNow = 300; h.win.__rompLocalSend({ type: "ready" });
+  assert.equal(PM.bundleReady, 300);
+  h.perfNow = 455; h.ws.msg({ type: "ka", dv: 5 });
+  assert.equal(PM.firstFrame, undefined, "a keepalive is swallowed before the bundle: not a frame");
+  const afterKa = PM.wsBytes;
+  assert.equal(afterKa, JSON.stringify({ type: "ka", dv: 5 }).length, "its characters count all the same");
+  h.ws.msg({ type: "feed", asks: [] });
+  assert.equal(PM.firstFrame, 455, "the first frame handed to the bundle");
+  assert.equal(PM.wsBytes, afterKa + JSON.stringify({ type: "feed", asks: [] }).length);
+  assert.equal(h.toBundle.length, 1);
+  // a drop and a redial re-stamp nothing; the counter keeps counting on the new socket
+  h.ws.close(); h.runTimers(); h.perfNow = 9000; h.ws.open(); h.ws.msg({ type: "feed", asks: [{ id: "a" }] });
+  assert.equal(PM.wsOpen, 120); assert.equal(PM.bundleReady, 300); assert.equal(PM.firstFrame, 455);
+  assert.equal(PM.wsBytes, afterKa + JSON.stringify({ type: "feed", asks: [] }).length + JSON.stringify({ type: "feed", asks: [{ id: "a" }] }).length);
+});
+
+test("the kill switch: with perfMute true in the store no clientDiag row is sent or queued, from the shim, the reload core's door or a bundle; other messages pass; flipped off, the next row goes", () => {
+  const store = new Map([["romp:settings", JSON.stringify({ perfMute: true, compact: true })]]);
+  const h = new Harness(shimJs("feed", "feedDelta"), { store });
+  h.win.__rompLocalSend({ type: "clientDiag", surface: "pane-shim", what: "probe", data: { i: 1 } });   // before the open: would queue
+  h.win.__rompLocalSend({ type: "activeTab", id: "TESTSID" });
+  h.ws.open();
+  assert.deepEqual(h.sent.map((m) => m.type), ["activeTab"], "the queued breadcrumb is gone; the other message rode the open");
+  h.ws.close(); h.runTimers(); h.ws.open();                 // a close the browser reports files wsclose: dropped
+  assert.equal(h.diags("wsclose").length, 0);
+  h.win.__rompDiag("held", { reason: "fresh", detail: "", hold: "fresh", ageMs: 61000 });   // the reload core's door: the same send
+  h.win.acquireVsCodeApi().postMessage({ type: "clientDiag", surface: "perf", what: "minute", data: { app: "feed" } });   // a bundle's own row on a kernel page
+  h.win.acquireVsCodeApi().postMessage({ type: "needSlot", slot: "feed" });
+  assert.equal(h.sent.filter((m) => m.type === "clientDiag").length, 0, "nothing muted left the page");
+  assert.equal(h.sent.filter((m) => m.type === "needSlot").length, 1, "an ordinary message did");
+  // the gear turns it off (a save in another document): the shim reads the store at each row, so the next one goes
+  store.set("romp:settings", JSON.stringify({ perfMute: false, compact: true }));
+  h.win.__rompLocalSend({ type: "clientDiag", surface: "pane-shim", what: "probe", data: { i: 2 } });
+  assert.deepEqual(h.diags("probe").map((m) => m.data.i), [2]);
+  // a store the shim cannot read, or one from before the key, mutes nothing
+  const g = new Harness(shimJs("feed", "feedDelta"), { store: new Map([["romp:settings", "{not json"]]) });
+  g.ws.open(); g.win.__rompLocalSend({ type: "clientDiag", surface: "pane-shim", what: "probe", data: { i: 3 } });
+  assert.equal(g.diags("probe").length, 1);
+  const k = new Harness(shimJs("feed", "feedDelta"), { store: new Map([["romp:settings", JSON.stringify({ perfMute: "yes" })]]) });
+  k.ws.open(); k.win.__rompLocalSend({ type: "clientDiag", surface: "pane-shim", what: "probe", data: { i: 4 } });
+  assert.equal(k.diags("probe").length, 1, "only the literal true mutes");
 });

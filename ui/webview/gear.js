@@ -385,6 +385,16 @@ var GEAR_HTML =
   '</span></label>' +
   '</div>' +
   '<div class=rs-sec>Diagnostics</div>' +
+  // the beacon extension's two per-browser switches (the user 2026-09-18, who wanted the phone's timing shared only by choice):
+  // both off by default; read raw from the store by every pane's collector, the pane shim and the shell script (perf-telemetry.ts)
+  '<label class=rs-row><input type=checkbox id=rs-perfshare>' +
+  "<span><b>Share this browser's timing rows</b>" +
+  "<span class=rs-sub>Adds page-load, download, screen, visibility, socket-byte and frame-gap figures to the timing rows this browser already sends to its kernel. Numbers and fixed names only, never text. Off by default.</span>" +
+  '</span></label>' +
+  '<label class=rs-row><input type=checkbox id=rs-perfmute>' +
+  '<span><b>Stop all timing rows from this browser</b>' +
+  '<span class=rs-sub>Sends no timing or connection rows from this browser at all, the standard ones included. Off by default.</span>' +
+  '</span></label>' +
   "<div class=rs-sep style='padding-top:8px'>" +
   '<button id=ra-open class=ra-openbtn>Token usage analytics</button>' +
   '<button id=rs-log-open class=ra-openbtn hidden>Open log<span class=rs-log-n hidden></span></button></div>' +   // T290: the Log moved here from the bottom bar (web shell only); the span is the unread count
@@ -443,6 +453,7 @@ function initGear(post, opts) {
     cs = document.getElementById('rs-chatscheme'),
     tt = document.getElementById('rs-theme'),
     dn = document.getElementById('rs-dense'),
+    psh = document.getElementById('rs-perfshare'), pmu = document.getElementById('rs-perfmute'),
     fc = document.getElementById('rs-feedcollapsed'),
     jm = document.getElementById('rs-judgemodel'),
     im = document.getElementById('rs-indexmodel'), je = document.getElementById('rs-judgeeffort'),
@@ -500,7 +511,7 @@ function initGear(post, opts) {
   // Context bar read as on at 50 percent whatever the user had chosen, and a save of ANY setting wrote the empty prefs and
   // rewrote the mirror. A store with no tabWidgets derives the prefs from tabCtx at read time (widgetPrefs, the same
   // derivation settings.ts makes), and only a widget change writes the key (saveWidgets).
-  function load() { try { var o = Object.assign({ compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', tabCtx: 'over50', showFilesControl: false, stripGroupRows: false, denseChrome: false, figureHosts: FIGURE_HOSTS_DEFAULT.slice(), collapseGaps: true, activeOnly: true }, JSON.parse(localStorage.getItem('romp:settings') || 'null')); delete o.filesControl; delete o.fileLinkPane; return o; } catch (e) { return { compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', tabCtx: 'over50', showFilesControl: false, stripGroupRows: false, denseChrome: false, figureHosts: FIGURE_HOSTS_DEFAULT.slice(), collapseGaps: true, activeOnly: true }; } }
+  function load() { try { var o = Object.assign({ compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', tabCtx: 'over50', showFilesControl: false, stripGroupRows: false, denseChrome: false, perfShare: false, perfMute: false, figureHosts: FIGURE_HOSTS_DEFAULT.slice(), collapseGaps: true, activeOnly: true }, JSON.parse(localStorage.getItem('romp:settings') || 'null')); delete o.filesControl; delete o.fileLinkPane; return o; } catch (e) { return { compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', tabCtx: 'over50', showFilesControl: false, stripGroupRows: false, denseChrome: false, perfShare: false, perfMute: false, figureHosts: FIGURE_HOSTS_DEFAULT.slice(), collapseGaps: true, activeOnly: true }; } }
   // mirrors settings.ts tabCtxMode (this file can't import the TS module): the gauge shipped for a
   // few hours as a boolean toggle — false was an explicit hide, true the default nobody chose.
   function tabCtxMode(v) { return (v === 'always' || v === 'never') ? v : (v === false ? 'never' : 'over50'); }
@@ -528,6 +539,9 @@ function initGear(post, opts) {
   if (sr) sr.addEventListener('change', function () { var s = load(); s.stripGroupRows = sr.checked; save(s); });
   // compact tabs and agents (off by default): render.ts applies a body class on the save, and the strip and the panel repaint through the cascade
   if (dn) dn.addEventListener('change', function () { var s = load(); s.denseChrome = dn.checked; save(s); });
+  // the beacon extension's switches: every pane's collector, the shim and the shell read the store on the storage event the save fires (perf-telemetry.ts)
+  if (psh) psh.addEventListener('change', function () { var s = load(); s.perfShare = psh.checked; save(s); });
+  if (pmu) pmu.addEventListener('change', function () { var s = load(); s.perfMute = pmu.checked; save(s); });
   if (fh) fh.addEventListener('change', function () { var s = load(); s.figureHosts = figureHostList(fh.value); save(s); fh.value = s.figureHosts.join('\n'); figureHostsNote(s.figureHosts); });   // read by the file viewer at every paint of a rendered markdown file (file-view.ts, figure-gate.ts); painted back so the textarea shows the host names the setting holds, and the note names what is not one
   if (fsc) fsc.addEventListener('change', function () { var s = load(); s.showFilesControl = fsc.checked; save(s); });   // the shell hears the store change (its storage listener) and hides or shows the control (T317)
   // the optional panes: the whole set is rewritten from the three boxes on every change (a missing key reads
@@ -2053,7 +2067,7 @@ function initGear(post, opts) {
     // burned the whole 5-frame retry against a display:none pane, latched rs-pane-gone, and the
     // full-viewport fallback box blacked out every pane behind the modal.
     try { if (window.parent !== window) window.parent.postMessage({ romp: 'logUnseenQuery' }, '*'); } catch (e) { /* no shell to ask */ }   // T290: the Open log count
-    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; tl.checked = !!s.tabsLocked; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (sr) sr.checked = s.stripGroupRows === true; if (dn) dn.checked = s.denseChrome === true; if (fsc) fsc.checked = (s.showFilesControl === true); if (fh) { var fhl = figureHostList(s.figureHosts); fh.value = fhl.join('\n'); figureHostsNote(fhl); } (function (p) { Object.keys(pn).forEach(function (k) { if (pn[k]) pn[k].checked = p[k]; }); })(panesOf(s)); tcPaint(); paintWidgets(); csPaint(); ttPaint(); if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) { bk.value = BN.effectiveDefaultBackend(s.backend); repaintSelectPicks(); } if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); if (section) showSection(section); else clearSectionScroll(); }
+    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; tl.checked = !!s.tabsLocked; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (sr) sr.checked = s.stripGroupRows === true; if (dn) dn.checked = s.denseChrome === true; if (psh) psh.checked = s.perfShare === true; if (pmu) pmu.checked = s.perfMute === true; if (fsc) fsc.checked = (s.showFilesControl === true); if (fh) { var fhl = figureHostList(s.figureHosts); fh.value = fhl.join('\n'); figureHostsNote(fhl); } (function (p) { Object.keys(pn).forEach(function (k) { if (pn[k]) pn[k].checked = p[k]; }); })(panesOf(s)); tcPaint(); paintWidgets(); csPaint(); ttPaint(); if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) { bk.value = BN.effectiveDefaultBackend(s.backend); repaintSelectPicks(); } if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); if (section) showSection(section); else clearSectionScroll(); }
   if (g) g.onclick = function (e) { e.stopPropagation(); openSettings(); };   // hidden anchor; hosts open via the message below
   window.addEventListener('message', function (e) { if (e.data && e.data.romp === 'openSettings') openSettings(typeof e.data.tab === 'string' ? e.data.tab : undefined, typeof e.data.section === 'string' ? e.data.section : undefined); });   // the tab and its section ride the ask (T379: the strip's gear opens Chat at Tab widgets)
   // Escape, relayed by the web shell's Escape chain (_LANDING_ESC_JS captures keydown in this same-origin

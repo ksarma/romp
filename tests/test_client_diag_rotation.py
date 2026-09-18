@@ -62,7 +62,7 @@ class ClientDiagRotationTest(unittest.TestCase):
     def post(self, i):
         """One breadcrumb through the real dispatch: what the shim sends for a pane's minute row."""
         km.Handler._dispatch_ws(None, {"type": "clientDiag", "surface": "perf", "what": "minute",
-                                       "data": {"app": "feed", "i": i, "frames": {"feed": {"n": i}}}},
+                                       "data": {"app": "feed", "since": i, "frames": {"feed": {"n": i}}}},   # since: the row counter, on a key the perf allowlist admits (2026-09-18)
                                 {"wid": WID})
 
     @staticmethod
@@ -80,7 +80,7 @@ class ClientDiagRotationTest(unittest.TestCase):
         self.assertEqual(rows[0]["wid"], WID)
         self.assertEqual(rows[0]["surface"], "perf")
         self.assertEqual(rows[0]["what"], "minute")
-        self.assertEqual(rows[0]["data"]["i"], 1)
+        self.assertEqual(rows[0]["data"]["since"], 1)
         self.assertFalse(self.fp1.exists())
 
     def test_past_the_cap_the_file_rotates_to_dot_one_and_a_second_rotation_replaces_it(self):
@@ -92,20 +92,20 @@ class ClientDiagRotationTest(unittest.TestCase):
         first = self.rows(self.fp1)
         self.assertGreaterEqual(sum(len(json.dumps(r)) + 1 for r in first), km.CLIENT_DIAG_MAX_BYTES,
                                 "the rename happens only once the file is at the cap")
-        self.assertEqual([r["data"]["i"] for r in first], list(range(1, i)), "the older rows moved whole")
-        self.assertEqual([r["data"]["i"] for r in self.rows(self.fp)], [i], "the row that tripped it starts the new file")
+        self.assertEqual([r["data"]["since"] for r in first], list(range(1, i)), "the older rows moved whole")
+        self.assertEqual([r["data"]["since"] for r in self.rows(self.fp)], [i], "the row that tripped it starts the new file")
         # keep going: the second rotation REPLACES .1 rather than stacking a .2
         n1 = i
-        while self.rows(self.fp1)[0]["data"]["i"] == 1:
+        while self.rows(self.fp1)[0]["data"]["since"] == 1:
             i += 1
             self.post(i)
             self.assertLess(i, 200, "the second rotation never happened")
         second = self.rows(self.fp1)
-        self.assertEqual(second[0]["data"]["i"], n1, "the .1 file is now the second run")
-        self.assertEqual(self.rows(self.fp)[0]["data"]["i"], i)
+        self.assertEqual(second[0]["data"]["since"], n1, "the .1 file is now the second run")
+        self.assertEqual(self.rows(self.fp)[0]["data"]["since"], i)
         self.assertFalse((km.jd.STATE / "client-diag.jsonl.2").exists())
         # nothing is lost between the two files at any moment: every row is in exactly one
-        seen = [r["data"]["i"] for r in second] + [r["data"]["i"] for r in self.rows(self.fp)]
+        seen = [r["data"]["since"] for r in second] + [r["data"]["since"] for r in self.rows(self.fp)]
         self.assertEqual(seen, list(range(n1, i + 1)))
 
     def test_the_production_cap_is_eight_megabytes(self):
@@ -131,7 +131,7 @@ class ClientDiagRotationTest(unittest.TestCase):
                 self.post(3)
         finally:
             os.replace = real
-        self.assertEqual([r["data"]["i"] for r in self.rows(self.fp)], [1, 2, 3], "both rows past the cap still appended")
+        self.assertEqual([r["data"]["since"] for r in self.rows(self.fp)], [1, 2, 3], "both rows past the cap still appended")
         self.assertFalse(self.fp1.exists())
         lines = err.getvalue().splitlines()
         self.assertEqual(len(lines), 1, "two refused renames, one stderr line: %r" % lines)
@@ -222,8 +222,8 @@ class ClientDiagRotationTest(unittest.TestCase):
             tb.join(10)
         finally:
             os.replace, pathlib.Path.stat = real_replace, real_stat
-        self.assertEqual([r["data"]["i"] for r in self.rows(self.fp1)], [1, 2, 3, 4], "the rotated run is intact")
-        self.assertEqual(sorted(r["data"]["i"] for r in self.rows(self.fp)), [5, 6], "both new rows are in the current file")
+        self.assertEqual([r["data"]["since"] for r in self.rows(self.fp1)], [1, 2, 3, 4], "the rotated run is intact")
+        self.assertEqual(sorted(r["data"]["since"] for r in self.rows(self.fp)), [5, 6], "both new rows are in the current file")
 
 
 if __name__ == "__main__":

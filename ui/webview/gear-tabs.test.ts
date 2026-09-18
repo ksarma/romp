@@ -51,7 +51,7 @@ test("every existing control keeps its id and sits in exactly one pane, by the a
     sessions: ["rs-defaultdir", "rs-backend"],
     automation: ["rs-autonudge", "rs-suggestcompact"],
     tasks: ["rs-tasktrack", "rs-judgemodel", "rs-judgefast", "rs-judgeeffort", "rs-distillmodel", "rs-distillfast", "rs-distilleffort", "rs-indexmodel", "rs-indexfast", "rs-indexeffort", "rs-judgeconc"],
-    debug: ["rs-judges-index", "rs-judges-triage", "ra-open", "rs-log-open", "rsver"],
+    debug: ["rs-judges-index", "rs-judges-triage", "rs-perfshare", "rs-perfmute", "ra-open", "rs-log-open", "rsver"],   // rs-perfshare, rs-perfmute: the beacon extension's switches under Diagnostics (2026-09-18)
   };
   for (const [pane, ids] of Object.entries(where)) {
     for (const id of ids) {
