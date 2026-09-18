@@ -137,6 +137,20 @@ class HelpSurfacesAgree(unittest.TestCase):
             self.assertEqual(out.stdout, "", "%s: misuse speaks on stderr only" % verb)
             self.assertEqual(out.stderr.splitlines()[0], "usage: " + form, verb)
 
+    def test_billing_misuse_is_usage_exit_2_without_a_kernel(self):
+        # round 1 of the review (finding 11): four misuse arms sat after the serve-token read, so with no kernel they
+        # exited 1 ("the kernel isn't running") instead of the usage exit 2 the verb's header promises; the siblings
+        # (move, color, emoji, end) check arity before any network. _run has no kernel and no token. An EMPTY session
+        # (a script's unset variable) is misuse too (round 2 of the review, 2026-09-18): it passed the arity check as one
+        # argument and exited 1, as `romp end ""` never did
+        form, _ = self._usage_form("billing")
+        for args in (("--all-following",), ("--all-following", "--now"), ("--now", "web", "login"),
+                     ("web", "login", "--later"), ("web", "--now"), ("",), ("", "login")):
+            out = _run("billing", *args)
+            self.assertEqual(out.returncode, 2, (args, out.stderr))
+            self.assertEqual(out.stderr.splitlines()[0], "usage: " + form, args)
+            self.assertEqual(out.stdout, "", args)
+
     def test_every_surface_states_the_unknown_session_contract(self):
         for verb in VERBS:
             form, rendered = self._usage_form(verb)

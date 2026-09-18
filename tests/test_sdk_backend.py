@@ -8954,9 +8954,19 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
                                  #                                 and since round 1 of the review the attach landing) asks as
                                  #                                 set_auth asks, its pick named, so a request that raced the
                                  #                                 landing is served by the landed process the same way
-                                 "_ask_parked_pick": ["auth"]})  # the picked closer's ask at the CLI's first init (round 5 of the
-        #                                                          reviewer's review, 2026-09-19): a pick the init finds unserved with
-        #                                                          no arm standing is asked as set_auth asks, its pick named
+                                 "_ask_parked_pick": ["auth"],   # the picked closer's ask at the CLI's first init (round 5 of the
+                                 #                                 reviewer's review, 2026-09-19): a pick the init finds unserved with
+                                 #                                 no arm standing is asked as set_auth asks, its pick named
+                                 "_follow_default_unlanded": ["auth"],    # `romp billing <session> default` on a session with no
+                                 #                                          running side while a connect composed from the OLD pick
+                                 #                                          is in flight (round 1 of the billing verb's review,
+                                 #                                          2026-09-18): the same ask, so its arm rides after
+                                 #                                          that connect lands
+                                 "_connect_landed": ["auth"]})   # the landing's re-ask for a PICK left to it (round 2 of the billing
+        #                                                          verb's review, 2026-09-18): set_auth writes a pick on an object no
+        #                                                          landing has stamped with no request, and the landing that stamps
+        #                                                          the truth and finds the pick unserved with no arm standing asks
+        #                                                          there, the picked mirror of the follower branch's _follow_default
 
     def test_y6_a_pick_the_composed_connect_serves_rides_it_and_keeps_its_flag_until_the_landing(self):
         # the served check's in-progress branch moves the names it discards into the riding set, so a pick that landed
