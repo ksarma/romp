@@ -891,12 +891,20 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(len(self.fake.requests), 2)
 
-    def test_a_file_nested_past_the_parser_is_refused_as_not_strict_json_and_one_within_the_depth_bound_takes_the_ordinary_path(self):
+    def test_a_hundred_thousand_level_file_is_refused_by_the_parser_or_the_depth_bound_and_one_within_the_bound_takes_the_ordinary_path(self):
+        """Which refusal the 100000-level document meets depends on whether the build's parser admits it: a parser that
+        gives up on it refuses it as not strict JSON; one that admits it (CI's free-threaded 3.14t cell does) hands it to
+        the depth bound, which refuses it as nested 100001 levels deep. Both are refusals by kind, so the case accepts
+        either fixed line and holds the rest in common: exit 1, one stderr line, no traceback word, nothing printed,
+        nothing sent."""
         base = ["--yes", "--receiver", self.fake.url]
         deep = os.path.join(self.xdg, "deep.json")
         with open(deep, "w") as fh:
             fh.write('{"schema": "romp-perf-export/1", "perf": ' + "[" * 100000 + "]" * 100000 + "}")        # 200 KB, under the size cap
-        r = self._refused(_run([deep] + base, self.state), 1, "refused: %s is not strict JSON; nothing sent" % deep)
+        r = self._refused(_run([deep] + base, self.state), 1, "refused: %s is " % deep, "; nothing sent")
+        self.assertIn(r.stderr, ("romp perf upload: refused: %s is not strict JSON; nothing sent\n" % deep,
+                                 "romp perf upload: refused: %s is nested 100001 levels deep and this verb takes at most 32; nothing sent\n" % deep),
+                      r.stderr)
         self.assertEqual(r.stdout, "")
         self.assertNotIn("Recursion", r.stderr)
         self.assertEqual(self.fake.requests, [])
@@ -913,8 +921,9 @@ class Cli(unittest.TestCase):
         the depth at which they do differs by build: CI's free-threaded 3.14t cell alone overflowed on a document every
         other cell walked and sent, so the old test's case, derived from the interpreter's recursion limit, pinned a number
         no two builds agreed on. The three documents here are fixed: 33 levels, one past the bound, refused; 32, at the bound,
-        sent; and the 100000-level file the case beside this one gives the parser is refused as not strict JSON first, so
-        the depth line is never reached on a file the parser did not admit."""
+        sent; and the 100000-level file in the case beside this one meets whichever refusal its build's parser leaves it:
+        a parser that gives up on the document refuses it as not strict JSON, one that admits it hands it to the depth
+        bound, and both are refusals by kind."""
         base = ["--yes", "--receiver", self.fake.url]
         deep = os.path.join(self.xdg, "deep.json")
         with open(deep, "w") as fh:
