@@ -178,7 +178,9 @@ await page.addInitScript(() => {
 });
 const out = { died: null };
 // A LATE timeline (cfg.holdTimeline): the band's document is held until the driver has the tabs it drags, so the timeline's
-// loader and then its bars land AFTER the point the driver measures from: the shape a slow runner produced (CI, 2026-09-18).
+// loader and then its bars land while the driver waits on the settle below, BEFORE the point it measures from, and the band
+// moves from its loader height to its content height before the drag begins: the hold reproduces the slow runner's late
+// timeline arrival (CI, 2026-09-18), not the missed drop (VSplitDragLateTimeline's docstring says why).
 let releaseTimeline = () => {};
 if (cfg.holdTimeline) { const held = new Promise((r) => { releaseTimeline = r; }); await page.route((u) => u.pathname === "/timeline", async (route) => { await held; await route.continue(); }); }
 // The timeline band under the pane row auto-fits its content: --tl follows the timeline body's scrollHeight through a

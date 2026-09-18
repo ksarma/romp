@@ -175,11 +175,13 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   says is off screen parks instead (the feed excepted: its socket carries the
   bell's card-trouble entries): a `return` that found its socket dead or quiet
   carries `parked: true` and dials nothing until the shell shows its tab or
-  the layout is no longer the phone's; the `return-fresh` that answers the
-  show carries `parked: true` too, with `ms` and `linkUpMs` counted from the
-  show word rather than the return. A return in a shell that told a word and
-  did not park says `parked: false`; a standalone page's row carries no
-  `parked` field.
+  the layout is no longer the phone's, and carries no `awaitLink`: at the
+  return the wait is on the tab, not the link, and the link wait after the
+  show lands in the `return-fresh`'s `linkUpMs`; the `return-fresh` that
+  answers the show carries `parked: true` too, with `ms` and `linkUpMs`
+  counted from the show word rather than the return. A return in a shell that
+  told a word and did not park says `parked: false`; a standalone page's row
+  carries no `parked` field.
   A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's
   caps frame has answered the bundle's ready; before that, with the ready still
   queued, or after a socket that died before the caps frame came back, it dials
