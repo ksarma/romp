@@ -19121,7 +19121,7 @@ class SdkBackend:
             self._wake_push()
         return True
 
-    def set_auth(self, sid: str, value: str) -> bool:
+    def set_auth(self, sid: str, value: str, chip: bool = True) -> bool:
         """Change which account this session bills — 'login' (the machine's Claude login) or 'key'
         (the key behind Claude Code's apiKeyHelper). Auth is connect-time (a login pick rides the
         per-session settings layer at launch; there is no runtime control), so this persists the pick and RECONNECTS to apply, exactly
@@ -19131,7 +19131,12 @@ class SdkBackend:
         landing on the wrong side). "login:<id>" names a STORED login (T346): the side word is `login`, the
         record id rides the reg (authLogin) and the session (auth_login), and a pick of another stored
         login is a change of billing though the side word is the same, so every guard below compares the
-        side and the id together (the launch shape carries the id as `login`, _launch_shape)."""
+        side and the id together (the launch shape carries the id as `login`, _launch_shape).
+
+        `chip` (the user 2026-09-18, the `romp billing --all-following` walk): the dashboard's pick and the CLI's
+        per-session pick acknowledge in the chat with the /auth chip below; the walk over the default's followers
+        (set_auth_followers) passes False, since the session made no pick of its own, the rule set_auth_default's
+        walk keeps."""
         side, login_id = _logins.parse_pick(value)   # "login" | "key" | "login:<id>" (a stored login, T346)
         if not side:
             return False
@@ -19274,13 +19279,144 @@ class SdkBackend:
                 self._log("auth (%s): set to %s; %s" % (s.name, value, outcome))
             else:
                 self._update_reg(sid, auth=side, authLogin=login_id, authPending=True, apiKeyAuth=None)
-        if s:
+        if s and chip:
             # Acknowledge the pick in the chat exactly as set_effort does: the reconnect writes no
             # transcript record, so without a synthesized chip an idle session's auth change shows
             # nothing at all. One chip, every path; its word is the stored login's display label (T346),
             # else the side word.
             self._ack_cmd_chip(sid, "/auth", "/auth " + value, s.resume_sid)
         return True
+
+    def set_auth_followers(self, value: str) -> "dict | None":
+        """`romp billing --all-following <pick>` (the user 2026-09-18): write `value` as the OWN pick of every live session
+        that follows the machine default, so each bills it from now and stops following the default, through the walk
+        set_auth_default's followers take (the same roster read, the same filter: an ended session is nothing to move, a
+        session with a pick of its own is skipped) with set_auth's whole schedule per session (the unchanged guard for
+        a follower already running the side, the already-applying guard, else the pending reconnect under the one arm
+        rule) and no /auth chip, since the session made no pick of its own. Each session asked to reconnect draws a
+        spawn-stagger slot (_relaunch_bounded), as the default's walk does and under its rule, flagged only when the
+        request can arm; a follower set_auth reconnects nothing for gives the slot back. {"moved": [names], "skipped":
+        [names]}, each sorted, or None for a value that is no pick
+        or a side this box cannot bill (last_auth_refusal names why, as set_auth's refusal does): the check runs ONCE,
+        ahead of the walk, so a refused side moves nothing. Kernel thread."""
+        side, login_id = _logins.parse_pick(value)
+        if not side:
+            return None
+        why = self.auth_unavailable_why(side, login_id)
+        if why:
+            self.last_auth_refusal = why
+            self._log("auth: the followers cannot move to %s on this box: %s" % (value, why), problem=True)
+            return None
+        with self._lock:                       # the roster moves under other threads: _reconnect_default_followers' idiom
+            sessions = list(self.sessions.values())
+        moved, skipped = [], []
+        for s in sessions:
+            if s.ended:
+                continue
+            if s.auth in ("login", "key"):
+                skipped.append(s.name)
+                continue
+            s._relaunch_bounded = s.loop is not None and not s.ended   # flagged only when the request can arm (the walk's rule)
+            if not self.set_auth(s.sid, value, chip=False):
+                s._relaunch_bounded = False
+                skipped.append(s.name)     # its record would not read: set_auth logged it, nothing was written
+                continue
+            if not s._auth_pending:
+                s._relaunch_bounded = False    # no reconnect was asked (the side it runs): the slot is not held
+            moved.append(s.name)
+        label = self.login_display(login_id) if login_id else side
+        self._log("auth: %d session%s following the default now bill %s (%s); %d skipped with a pick of their own (%s)"
+                  % (len(moved), "" if len(moved) == 1 else "s", label, ", ".join(sorted(moved)) or "none",
+                     len(skipped), ", ".join(sorted(skipped)) or "none"))
+        return {"moved": sorted(moved), "skipped": sorted(skipped)}
+
+    def follow_default_auth(self, sid: str) -> bool:
+        """`romp billing <session> default` (the user 2026-09-18): the session gives up its own pick and follows the machine
+        default again. The dashboard has no value for this (its per-session setAuth takes login, key or a stored login;
+        "auto" is refused for one session), so this is the reg write set_auth never makes: `auth` and `authLogin` empty,
+        the unpicked shape every reader takes as "follows the default" (effective_auth, default_auth, the constructor).
+        A live session then takes the ONE per-follower step the default's walk and the attach landing take
+        (_follow_default): a reconnect when it runs the other side, the withdrawal of a pick's pending reconnect the
+        default makes moot, nothing when it already runs what the default resolves to. A dormant PICKED session's
+        pending described its pick's reconnect, moot now: cleared, as the constructor would heal it; a dormant session
+        that already followed the default keeps its authPending, the ask a follower carries across a kernel restart
+        (round 1 of the walk's review), and its next launch decides. No /auth chip: the session made no pick. False for
+        a record that will not read."""
+        reg = read_reg(self.state_dir, sid)
+        if not reg:
+            return False
+        s = self.sessions.get(sid)
+        was_picked = reg.get("auth") in ("login", "key")
+        self._update_reg(sid, auth="", authLogin="", **({"authPending": False} if (not s and was_picked) else {}))
+        label = self._default_label()
+        if not s:
+            self._log("auth (%s): its own pick is cleared; it follows the machine default again (%s) from its next launch"
+                      % (reg.get("name") or sid[:8], label))
+            return True
+        s.auth = ""
+        s.auth_login = ""
+        self._log("auth (%s): its own pick is cleared; it follows the machine default again (%s)" % (s.name, label))
+        if not s.ended:
+            self._follow_default(s, label, because="follows the machine default again")
+        return True
+
+    def _default_label(self) -> str:
+        """The machine default as the user would name it, for the walk's log lines: a stored login's label, a side word, or
+        "automatic" (the helper rule; _follow_default says which side that resolves to on this box)."""
+        side, lid = self._explicit_default()
+        if not side:
+            return "automatic"
+        return self.login_display(lid) if lid else side
+
+    def auth_apply_outlook(self, sid: str) -> str:
+        """When the billing change just recorded for `sid` applies, for the caller's answer (`romp billing`): "none" when
+        no reconnect is pending (the process already bills the pick); "next-launch" when no process runs to reconnect (a
+        dormant session, or one whose loop has not started: the reg carries the pick to its connect); "held" while the
+        pick waits for live work (subagents, background tasks: the hold snapshot's pickHeld names it); "deferred" while a
+        turn is open or a fed text waits (the settle that finds the session quiet arms it); else "now" (the arm is
+        immediate). The same predicates _note_reconnect_ask reads to word the setters' log lines, read again here on the
+        kernel thread with nothing marked. Kernel thread."""
+        s = self.sessions.get(sid)
+        if s is not None and not s._auth_pending:
+            return "none"
+        if s is None or s.loop is None or s.ended:
+            return "next-launch"
+        held = s._pick_held()
+        if held and "auth" in (held.get("surfaces") or ()):
+            return "held"
+        with s._lock:
+            busy = s._busy_under_lock()
+        return "deferred" if busy else "now"
+
+    def billing_view(self, sid: str) -> "dict | None":
+        """What `romp billing <session>` reads: the side the running CLI LAUNCHED on (_launched_auth, the stamp the landing
+        wrote; None when no process runs) with the stored login it carried, the CLI's own report of what it bills
+        (auth_live, the init's apiKeySource; for a dormant session the persisted report, apiKeyAuth), the pick as the
+        status rows read it (effective_auth and effective_login: the session's own when it has one, else what the
+        default resolves to; `explicit` says which), whether a reconnect is pending on a pick and whether it is held
+        for live work. A dormant session answers from its reg through the dormant twins (default_auth, default_login).
+        None for a record that will not read."""
+        s = self.sessions.get(sid)
+        if s is not None:
+            launched = s._launched_auth
+            held = s._pick_held()
+            llid = (getattr(s, "_launched_login", "") or "") if launched == "login" else ""
+            return {"launched": launched, "launchedLogin": llid, "launchedLabel": self.login_display(llid),
+                    "live": s.auth_live,
+                    "pick": {"auth": s.effective_auth(), "login": s.effective_login(),
+                             "label": self.login_display(s.effective_login()), "explicit": bool(s.auth)},
+                    "pending": bool(s._auth_pending),
+                    "held": bool(held and "auth" in (held.get("surfaces") or ()))}
+        reg = read_reg(self.state_dir, sid)
+        if not reg:
+            return None
+        aka = reg.get("apiKeyAuth")
+        lid = self.default_login(reg)
+        return {"launched": None, "launchedLogin": "", "launchedLabel": "",
+                "live": ("key" if aka else "login") if isinstance(aka, bool) else "",
+                "pick": {"auth": self.default_auth(reg), "login": lid, "label": self.login_display(lid),
+                         "explicit": reg.get("auth") in ("login", "key")},
+                "pending": bool(reg.get("authPending")), "held": False}
 
     def set_auth_default(self, value: str) -> bool:
         """Set the machine's DEFAULT billing (T380, the user 2026-09-12): the seed every new session and every
@@ -19427,15 +19563,17 @@ class SdkBackend:
                       problem=True)
             return False
 
-    def _follow_default(self, s, label=None, landing=None) -> None:
+    def _follow_default(self, s, label=None, landing=None, because=None) -> None:
         """ONE follower's step (a session with no pick of its own, not ended): exactly set_auth's schedule arm MINUS the
         pick. When its CLI runs on the other side of the machine default the pending target rides the session and
         authPending the reg (the badge dots), the surface is recorded for the arm's line, the request goes through the
         one arm rule (at once when quiet, else at the settle that finds it quiet, held for live work), and NO auth is
-        written for the session, so it keeps following the default through this change and the next. Two callers:
-        set_auth_default's walk (`label`, the new default as the user names it) and the ATTACH landing (`label` None;
+        written for the session, so it keeps following the default through this change and the next. Three callers:
+        set_auth_default's walk (`label`, the new default as the user names it), the ATTACH landing (`label` None;
         _connect_landed: the session carried an ask across a kernel restart, or was asked during the attach, and the
-        surviving CLI it attached runs the other side), whose lines say so and name the default from the file.
+        surviving CLI it attached runs the other side), whose lines say so and name the default from the file, and
+        `romp billing <session> default` (follow_default_auth, the user 2026-09-18: the session gave up its own pick
+        and follows the default again; `because` opens its lines in those words, then the default it follows).
 
         The side a session RUNS on is the CLI's own report first (auth_live, the init's apiKeySource, restored from the
         reg's apiKeyAuth) and the composed stamp (_launched_auth) only without one: a kernel re-attach stamps the
@@ -19541,10 +19679,16 @@ class SdkBackend:
         what = label if label != "automatic" else "automatic (the %s on this box)" % target[0]
         runs = (("the %s login" % self.login_display(running[1])) if running[1] else ("the %s" % running[0])) if running_side \
             else "a side its CLI has not reported yet"
-        head = ("auth (%s): attached to this session's surviving CLI" % s.name) if at_attach \
-            else ("auth (%s): this session's CLI reported its billing" % s.name) if landing == "init" \
-            else ("auth (%s): this session's connect landed" % s.name) if at_landing \
-            else ("auth (%s): the machine default is now %s" % (s.name, what))
+        if at_attach:
+            head = "auth (%s): attached to this session's surviving CLI" % s.name
+        elif landing == "init":
+            head = "auth (%s): this session's CLI reported its billing" % s.name
+        elif at_landing:
+            head = "auth (%s): this session's connect landed" % s.name
+        elif because:
+            head = "auth (%s): %s: %s" % (s.name, because, what)
+        else:
+            head = "auth (%s): the machine default is now %s" % (s.name, what)
         if launching_pick == target and (not never_landed or running == target):
             return   # the connect in progress launches the new default (set_auth's already-applying guard), or attaches to a CLI on it
         if running == target and launching_pick is None:
@@ -19590,7 +19734,7 @@ class SdkBackend:
                 # the landing ran between the read above and this write: it stamped what the CLI runs and decided the
                 # pending as it stood, so this step runs once more from a fresh read, with the stamps truthful (the
                 # object has landed now, so the step does not come back here)
-                return self._follow_default(s, label, landing)
+                return self._follow_default(s, label, landing, because)
             if asked:
                 s._mirror_auth_pending()
                 self._poke()

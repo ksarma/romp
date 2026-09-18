@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The four surfaces that describe `romp send`, `romp interrupt` and `romp end` agree: the verb's own
+"""The four surfaces that describe `romp send`, `romp interrupt`, `romp end` and `romp billing` agree: the verb's own
 `--help`, the no-argument misuse line, the `romp help` row, and the docs/reference.md command table spell
 one invocation, name the same flags (`self`, `--now`, `--when-idle`, `--tag`) and the three prose surfaces
 each say that an unknown session is refused with the kernel's reason and exit 1. The per-verb help was
@@ -23,7 +23,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 ROMP = os.path.join(ROOT, "bin", "romp")
 
-VERBS = ("send", "interrupt", "end")
+VERBS = ("send", "interrupt", "end", "billing")
 FLAG = re.compile(r"(?<![\w-])(--[a-z][a-z-]*|self)(?![\w-])")
 REFUSAL_ROW = "an unknown session is refused with the kernel's reason, exit 1"
 REFUSAL_DOC = "An unknown session is refused with the kernel's reason and exit 1"
@@ -122,6 +122,8 @@ class HelpSurfacesAgree(unittest.TestCase):
         self.assertEqual(_flags(form), {"self", "--now", "--when-idle"})
         self.assertEqual(_flags(self._usage_form("send")[0]), {"--tag"})
         self.assertEqual(_flags(self._usage_form("interrupt")[0]), set())
+        # `romp billing` (the user 2026-09-18): the immediate form and the walk over the default's followers
+        self.assertEqual(_flags(self._usage_form("billing")[0]), {"--now", "--all-following"})
 
     def test_the_bare_verb_prints_the_help_usage_line(self):
         # the no-argument call is a fourth surface: it printed `usage: romp end <session> ` (the bare
