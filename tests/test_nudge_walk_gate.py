@@ -755,6 +755,202 @@ class WakeOnlyLooksSkipOnTheKey(_Base):
         self.assertEqual((p2["parses"], p2["skippedParses"]), (0, 2), "a boot over a persisted wake-mode memo skips the unchanged sessions")
         self.assertEqual(sorted(km._NUDGE_WALK_FIRST["skipped"]), sorted([SID[:8], SID2[:8]]), "and the boot row says which")
 
+    # ── the wake's ledger writes under the memo (review finds on jobs stage 1) ──
+
+    def _wake_record(self, sid, anchor, fired_at):
+        """An in-flight wake record for `sid`'s top, as the nudges-on fire wrote it, in a gear-off ledger: {wake, anchor, count,
+        lastTurnId, armAtoms, at} with no answeredAt, failed or moot."""
+        (jd.STATE / "auto-nudge.json").write_text(json.dumps({"enabled": False, "nudged": {
+            sid + ":g1": {"wake": True, "anchor": anchor, "count": 1, "lastTurnId": "t2", "armAtoms": 0, "at": fired_at}}}))
+        km._autonudge_cache.clear()
+
+    def _ledger_rec(self):
+        return dict(km._auto_nudge_data().get("nudged", {}).get(self.gid) or {})
+
+    def test_a_refused_answered_wake_record_notes_refusedWrite_and_the_healed_pass_lands_it(self):
+        """Review find: the answered leg of _wake_goal discarded _put_nudged's verdict. A refused record (an unproved ledger
+        snapshot: the writer refuses without raising) left answeredAt unrecorded, and with the stampedWait note retired the
+        look recorded a bounded row, so the write was never retried until a keyed file moved and the answer stayed unfiled
+        for as long. The leg notes refusedWrite: the row is unbounded, the next pass evaluates, the healed writer lands the
+        record and the answer files. The filing itself needs no note: a landed ledger write moved the tenth keyed file."""
+        self._toggle(False)
+        self.alive = [SID]
+        self._seed(kind="job", age=5 * H)
+        self._wake_record(SID, NOW - 5 * H, NOW - 3600)
+        real_put = km._put_nudged; puts = []
+        def refusing_once(gid, rec):
+            puts.append(dict(rec))
+            return False if len(puts) == 1 else real_put(gid, rec)
+        real_file = km._file_wake_answer; filings = []
+        def landing_nothing_once(sid, gid, now):
+            filings.append(now)                       # the same fault episode: the filing's own load or row refused too
+            return False if len(filings) == 1 else real_file(sid, gid, now)
+        with mock.patch.object(km, "_nudge_response_ready", return_value=(True, {"id": "seg-1", "t": NOW - 1800})), \
+                mock.patch.object(km, "_put_nudged", refusing_once), mock.patch.object(km, "_file_wake_answer", landing_nothing_once):
+            p1 = self._pass()
+            self.assertEqual((p1["parses"], len(puts), filings), (1, 1, [NOW]), "the answered leg ran: one refused record, one filing that landed nothing")
+            self.assertNotIn("answeredAt", self._ledger_rec(), "the refused record did not land")
+            self.assertEqual(dict(km._NUDGE_WALK_STATS["unboundedBy"]), {"refusedWrite": 1}, "the refused write is noted")
+            self.assertIsNone(self._row(SID)[-2], "the row is unbounded: the next look must retry")
+            p2 = self._pass(NOW + 5)
+            self.assertEqual((p2["parses"], p2["skippedParses"], len(puts)), (1, 0, 2), "the next pass evaluates and retries the record")
+            self.assertEqual(self._ledger_rec().get("answeredAt"), NOW - 1800, "the healed writer lands answeredAt")
+            self.assertEqual(len(filings), 2, "and the answer files")
+            rows = [e for e in self._node()["log"] if e.get("kind") == "awaiting" and e.get("src") == "nudge"]
+            self.assertEqual(len(rows), 1, "the same-why re-assert landed on the store")
+            p3 = self._pass(NOW + 10)
+            self.assertEqual(p3["parses"], 1, "the ledger and the store moved under the look: one re-evaluation")
+            self.assertEqual(self._row(SID)[-2], NOW - 1800 + km.AWAITING_DEADMAN_SECS, "measured from the answer: the next dead-man is the row's instant")
+            p4 = self._pass(NOW + 15)
+            self.assertEqual((p4["parses"], p4["skippedParses"]), (0, 1), "steady again")
+        self.assertEqual(self.fb.sent, []); self.assertEqual(self._lifts(), [])
+
+    def test_a_refused_moot_stamp_notes_refusedWrite_and_the_healed_pass_lands_it(self):
+        """Review find: _mark_nudge_failed's moot path discarded _write_auto_nudge's verdict and returned "moot" anyway. Unlike
+        the failed path it writes no store row, so a refused stamp moved no keyed file and the wake's look recorded a bounded
+        row: the stamp lived in memory for one pass and the record stayed in flight until an unrelated file moved. The writer's
+        site notes refusedWrite: the row is unbounded and the next pass lands the stamp. Bookkeeping (the judge already ruled),
+        but a write the next look must retry."""
+        self._toggle(False)
+        self.alive = [SID]
+        self._seed(kind="job", age=5 * H)
+        self._wake_record(SID, NOW - 5 * H, NOW - 3600)
+        p = jd.GOALDIR / (SID + ".json"); store = json.loads(p.read_text())
+        store["nodes"][self.gid]["log"].append({"ev_t": NOW - 2000, "src": "unblocker", "kind": "unblock", "at": NOW - 1800,
+                                                "why": "the user answered the question in passing"})   # a real ruling filed after the wake
+        p.write_text(json.dumps(store)); km._SESSION_STAMP_CACHE.clear()
+        real_write = km._write_auto_nudge; refused = []
+        def refusing_the_moot_once(d):
+            if not refused and ((d.get("nudged") or {}).get(self.gid) or {}).get("moot"):
+                refused.append(dict(d["nudged"][self.gid]))
+                return False                          # the unproved-snapshot refusal, as _ledger_write_proved gives it
+            return real_write(d)
+        with mock.patch.object(km, "_nudge_response_ready", return_value=(True, None)), \
+                mock.patch.object(km, "_write_auto_nudge", refusing_the_moot_once):
+            p1 = self._pass()
+            self.assertEqual((p1["parses"], len(refused)), (1, 1), "the moot ruling's write was refused")
+            self.assertNotIn("moot", self._ledger_rec(), "the stamp did not land")
+            self.assertEqual(dict(km._NUDGE_WALK_STATS["unboundedBy"]), {"refusedWrite": 1}, "the refused write is noted")
+            self.assertIsNone(self._row(SID)[-2], "the row is unbounded: the next look must retry")
+            p2 = self._pass(NOW + 5)
+            self.assertEqual((p2["parses"], p2["skippedParses"]), (1, 0), "the next pass evaluates")
+            self.assertTrue(self._ledger_rec().get("moot"), "and the healed writer lands the moot stamp")
+            self.assertEqual(len(refused), 1)
+            p3 = self._pass(NOW + 10)
+            self.assertEqual(p3["parses"], 1, "the ledger moved: one re-evaluation, the anti-loop rule on the moot record")
+            p4 = self._pass(NOW + 15)
+            self.assertEqual((p4["parses"], p4["skippedParses"]), (0, 1), "steady again")
+        self.assertEqual([e for e in self._node()["log"] if e.get("kind") == "block"], [], "moot, not failed: no block")
+        self.assertEqual(self.fb.sent, []); self.assertEqual(self._lifts(), [])
+
+    def test_a_refused_failed_stamp_needs_no_note_because_its_look_reports_a_fire_and_records_nothing(self):
+        """The failed path beside the moot one carries no note, and the pin says why: _wake_goal reports "failed" as a fire, the
+        look returns True, and a look that fires records no memo (a fire moves files), so a refused failed stamp is retried by the
+        next look whether or not the block row landed. Here neither the stamp nor the block lands (the same fault episode) and
+        the next pass evaluates on the absent row; the healed writer lands both. Moot differs because its look returns False."""
+        self._toggle(False)
+        self.alive = [SID]
+        self._seed(kind="job", age=5 * H)
+        self._wake_record(SID, NOW - 5 * H, NOW - 3600)
+        real_write = km._write_auto_nudge; refused = []
+        def refusing_the_failed_once(d):
+            if not refused and ((d.get("nudged") or {}).get(self.gid) or {}).get("failed"):
+                refused.append(dict(d["nudged"][self.gid]))
+                return False
+            return real_write(d)
+        real_rv = jd.record_verdict; blocks = []
+        def refusing_the_block_once(store, nd, src, kind, *a, **k):
+            if (src, kind) == ("nudge", "block"):
+                blocks.append(kind)
+                if len(blocks) == 1:
+                    return False                      # the same fault episode: the row refused, no save, no store move
+            return real_rv(store, nd, src, kind, *a, **k)
+        with mock.patch.object(km, "_nudge_response_ready", return_value=(True, None)), \
+                mock.patch.object(km, "_write_auto_nudge", refusing_the_failed_once), mock.patch.object(jd, "record_verdict", refusing_the_block_once):
+            p1 = self._pass()
+            self.assertEqual((p1["parses"], len(refused), len(blocks)), (1, 1, 1), "the failed stamp and its block were both refused")
+            self.assertNotIn("failed", self._ledger_rec()); self.assertFalse(self._node().get("blocked"))
+            self.assertEqual(dict(km._NUDGE_WALK_STATS["unboundedBy"]), {}, "no note on this path")
+            self.assertIsNone(self._row(SID), "the look reported a fire: no memo row, so nothing to skip on")
+            p2 = self._pass(NOW + 5)
+            self.assertEqual((p2["parses"], p2["skippedParses"]), (1, 0), "the next pass evaluates on the absent row")
+            self.assertTrue(self._ledger_rec().get("failed"), "the healed writer lands the failed stamp")
+            self.assertEqual([e["src"] for e in self._node()["log"] if e.get("kind") == "block"], ["nudge"], "and the block lands")
+            self.assertTrue(self._node().get("blocked"))
+        self.assertEqual(self.fb.sent, [], "gear off: the escalation is a filing, never a message")
+
+    def _judge_writes_between_the_stat_and_the_look(self, change):
+        """The writer's re-read in _wake_goal finds a store a concurrent judge pass saved after this pass's stat: `change` edits
+        the loaded store, the save lands, and the fresh copy is what the look reads. Once, for SID."""
+        real = jd.load_goals; judged = []
+        def loading(sid):
+            store = real(sid)
+            if sid == SID and not judged:
+                judged.append(sid)
+                change(store)
+                jd.rollup_status(store, False); jd.save_goals(sid, store); km._SESSION_STAMP_CACHE.clear()
+                return real(sid)
+            return store
+        jd.load_goals = loading
+        return judged
+
+    def test_a_stamp_re_anchored_under_the_due_look_lifts_nothing_and_the_moved_store_releases_the_row(self):
+        """Review find: the `_sn is None` exit of the wake-only lift (the fresh store carries the wait, but not at THIS anchor: a
+        judge re-asserted it between the pass's stat and the look's re-read) was covered by the retired stampedWait note and had
+        no pin. It lifts nothing and notes no leg: the save that moved the anchor is a store write the pass's stat predates, so
+        the next pass misses on the store position, evaluates the new stamp and notes its dead-man."""
+        self._toggle(False)
+        self.alive = [SID]
+        self._seed(kind="job", age=5 * H)
+        due = NOW - 5 * H + km.AWAITING_DEADMAN_SECS
+        self._pass(); self._pass(NOW + 5)
+        def re_anchor(store):
+            n = store["nodes"][self.gid]
+            ok = jd.record_verdict(store, n, "closer", "awaiting", due - 60, why="the index landed; the deploy it queued is still running",
+                                   await_kind="job")
+            if not ok:
+                raise AssertionError("the fixture's re-assert was refused")
+        judged = self._judge_writes_between_the_stat_and_the_look(re_anchor)
+        d = self._pass(due)
+        self.assertEqual((d["parses"], d["clockDue"], judged), (1, 1, [SID]), "the due look evaluated and took the writer's re-read")
+        self.assertEqual(self._lifts(), [], "the fresh store carries the wait at a new anchor: nothing lifted")
+        self.assertEqual(self._node()["awaitingAt"], due - 60, "the re-anchored stamp stands")
+        self.assertEqual(dict(km._NUDGE_WALK_STATS["unboundedBy"]), {}, "the exit notes no leg: the store that moved is a keyed file")
+        self.assertEqual(self._row(SID)[-2], -1.0, "bounded by the key alone")
+        miss0 = (km._tick_seen_report()["byJob"].get("auto-nudge") or {}).get("missBy", {}).get("store", 0)
+        d = self._pass(due + 5)
+        self.assertEqual((d["parses"], d["skippedParses"]), (1, 0), "the store moved under the look: the next pass evaluates")
+        self.assertEqual(km._tick_seen_report()["byJob"]["auto-nudge"]["missBy"].get("store", 0) - miss0, 1, "named as the store's position")
+        self.assertEqual(self._row(SID)[-2], due - 60 + km.AWAITING_DEADMAN_SECS, "the new stamp's dead-man is the row's instant")
+        d = self._pass(due + 10)
+        self.assertEqual((d["parses"], d["skippedParses"]), (0, 1), "steady again")
+        self.assertEqual(self._lifts(), []); self.assertEqual(self.fb.sent, [])
+
+    def test_a_stamp_lifted_under_the_due_look_lifts_nothing_more_and_the_moved_store_releases_the_row(self):
+        """The sibling exit three lines above it: the fresh store no longer carries the wait at all (a judge lifted it between the
+        stat and the re-read). No second lift, no note, and the judge's save releases the row the same way."""
+        self._toggle(False)
+        self.alive = [SID]
+        self._seed(kind="job", age=5 * H)
+        due = NOW - 5 * H + km.AWAITING_DEADMAN_SECS
+        self._pass(); self._pass(NOW + 5)
+        def lift(store):
+            n = store["nodes"][self.gid]
+            if not jd.record_verdict(store, n, "closer", "awaiting", due - 60, lift=True, end_ev=due - 60):
+                raise AssertionError("the fixture's lift was refused")
+        judged = self._judge_writes_between_the_stat_and_the_look(lift)
+        d = self._pass(due)
+        self.assertEqual((d["parses"], d["clockDue"], judged), (1, 1, [SID]))
+        self.assertEqual([e["src"] for e in self._lifts()], ["closer"], "the judge's lift stands alone: the wake filed nothing on it")
+        self.assertIsNone(self._node().get("awaitingWhy"))
+        self.assertEqual(dict(km._NUDGE_WALK_STATS["unboundedBy"]), {}, "no leg noted: the store that moved is a keyed file")
+        self.assertEqual(self._row(SID)[-2], -1.0)
+        d = self._pass(due + 5)
+        self.assertEqual((d["parses"], d["skippedParses"]), (1, 0), "the store moved under the look: the next pass evaluates the unstamped top")
+        d = self._pass(due + 10)
+        self.assertEqual((d["parses"], d["skippedParses"]), (0, 1), "steady again")
+        self.assertEqual(len(self._lifts()), 1); self.assertEqual(self.fb.sent, [])
+
 
 class FileWakeAnswerLoadsItsOwnCopy(_Base):
     def test_the_answer_row_files_on_a_writer_copy_while_a_frozen_view_is_held(self):

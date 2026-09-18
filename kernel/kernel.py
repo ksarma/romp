@@ -13974,7 +13974,11 @@ def _mark_nudge_failed(gid, ev_t=None, wake=False):
                 #                                        after the fire otherwise inherits a spent
                 #                                        window and re-enters at once, 2026-08-29)
                 d["nudged"] = nudged
-                _write_auto_nudge(d)
+                if _write_auto_nudge(d) is False:
+                    _nudge_clock(None, "refusedWrite")   # the moot stamp was refused (an unproved snapshot) and, unlike the failed
+                #                                          path below, this path writes no store row, so no keyed file moved: the
+                #                                          look must not record a skippable memo, or the stamp waits for an
+                #                                          unrelated file (review find, jobs stage 1). A no-op outside a look
                 return "moot"
         except Exception:
             pass
@@ -13984,7 +13988,9 @@ def _mark_nudge_failed(gid, ev_t=None, wake=False):
         # the user's own follow-up).
         nudged[gid] = dict(rec, failed=True, failedAt=now)
         d["nudged"] = nudged
-        _write_auto_nudge(d)
+        _write_auto_nudge(d)                         # no refusedWrite note here (jobs stage 1): the callers report "failed" as a fire, and a
+        #                                              look that fires records no memo, so a refused stamp is retried by the next look whether
+        #                                              or not the block row below lands (the walk-gate tests pin it)
         try:
             sid = gid.rsplit(":", 1)[0]
             store = jd.load_goals(sid)
@@ -17217,7 +17223,13 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, live_map, wake_on
         if resp is not None:
             # the judges ruled on the answer and the stamp still stands → the wait was re-affirmed
             nudged[gid] = dict(rec, answeredAt=(resp.get("t") or int(now)))
-            _put_nudged(gid, nudged[gid])
+            if not _put_nudged(gid, nudged[gid]):
+                _nudge_clock(None, "refusedWrite")   # the answered record was refused (an unproved snapshot: the writer says so without
+            #                                          raising) and no file moved, so the next look must retry it; with the stampedWait
+            #                                          note retired a bounded row here skipped the retry until a keyed file moved, and
+            #                                          the answer stayed unfiled for as long (review find, jobs stage 1). The filing
+            #                                          below needs no note of its own: the ledger write that landed moved the tenth
+            #                                          keyed file, and one that was refused is noted here
             _file_wake_answer(sid, gid, now)         # the answer becomes a FILED event → the closer
             return False                              #   re-audits with it in view (see the helper)
         _sdefer = _revivers_pending(sid, store, turns, gid)

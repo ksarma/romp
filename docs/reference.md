@@ -3275,9 +3275,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   deferred session is the resume cursor, so the next pass rotates the
   recency order to start there and every session is reached within as many
   passes as there are cold parses), `unbounded` (memos refused because a leg's release is not one
-  of the session's files: a deferral retired by a judge pass, a stamped wait
-  a peer's bounce can end, an owed reminder a refused ledger write left
-  standing), `clockDue` (memos refused because a noted flip has come),
+  of the session's files: a deferral retired by a judge pass, a wait on
+  peers the live map still shows alive, an owed reminder a refused ledger
+  write left standing), `clockDue` (memos refused because a noted flip has come),
   `wakeOnly` (looks with injected follow-ups off, or Task tracking off: the
   awaiting dead-man walk alone; since 2026-09-18 such a look checks and
   records like any other, under its own mode tag, so with the gear off
@@ -3596,9 +3596,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   (the state log), `store` (the goal store), `overrides` (its journal),
   `archive`, `episode`, `cleared`, `messages` (the postal log), `downtime`,
   `ledger` (the nudge ledger, one file for the box), then `askerRow` for the
-  walk's asker registry rows and `shape` for a key of another length or an
-  unreadable entry; per job, hits plus misses plus neverSeen plus
-  noTranscript plus clockParse is the checks. The interrupt block's key
+  walk's asker registry rows, `mode` for a row the nudge walk recorded under
+  another look mode (the tag the `nudgeWalk` entry above describes), and
+  `shape` for a key of another length or an unreadable entry; per job, hits
+  plus misses plus neverSeen plus noTranscript plus clockParse is the
+  checks. The interrupt block's key
   keeps that shape but moves only with the files its road reads: the
   transcript, the state log, the downtime log, the goal store with its
   journal and archive, and the clears log (the store readers' override
