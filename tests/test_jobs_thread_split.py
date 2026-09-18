@@ -50,6 +50,11 @@ class Partition(unittest.TestCase):
         self.assertEqual(tuple(jobs), HOUSEKEEPING, "the housekeeping, in the order it always ran")
         self.assertFalse(set(pusher) & set(jobs), "no job on both threads")
         self.assertEqual(set(pusher) | set(jobs), set(km._PerfStats.JOBS), "together they are the JOBS census")
+        # the collector keeps the two lists by thread since 2026-09-18 (stage attribution: the pusher's nine are seeded under
+        # pusher.cycleJobsMs, the jobs thread's nineteen as flat `jobs.<job>` rows), so each must be the source's, in order
+        self.assertEqual(km._PerfStats.CYCLE_JOBS, PUSHER_JOBS, "CYCLE_JOBS is _pusher_cycle_jobs's list")
+        self.assertEqual(km._PerfStats.PASS_JOBS, HOUSEKEEPING, "PASS_JOBS is _jobs_pass's list")
+        self.assertEqual(km._PerfStats.JOBS, PUSHER_JOBS + HOUSEKEEPING, "JOBS is the census as CYCLE_JOBS + PASS_JOBS")
 
     def test_the_jobs_pass_keeps_its_ordering_reasons(self):
         src = inspect.getsource(self.km._jobs_pass)
@@ -164,12 +169,37 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
         # the pass body directly, under the job's own stage: a test earlier in this module leaves a pass in flight on a blocked
         # thread, and the tick's single-flight guard would stand this walk down
         now = int(time.time())
+        km._PERF_STATS.cycle_begin("jobs")                 # this thread stands for the jobs thread: a `jobs.` stage is the flat row's
+        #                                                    by its writer's owner (2026-09-18), and a thread owning no loop
+        #                                                    would count under stagesForeign instead
         km._job_stage("autoNudge", lambda: km._auto_nudge_pass(now, km._live_map(), False))
-        st = km._PERF_STATS.snapshot()["stages_ms"]
+        snap = km._PERF_STATS.snapshot()
+        st = snap["stages_ms"]
         have = sorted(k for k in st if k.startswith("jobs.autoNudge"))
         self.assertEqual(have, ["jobs.autoNudge", "jobs.autoNudge.key", "jobs.autoNudge.looks", "jobs.autoNudge.snapshot"], have)
         parts = sum(st[k] for k in st if k.startswith("jobs.autoNudge."))
         self.assertLessEqual(parts, st["jobs.autoNudge"] + 1.0, "the parts sum to at most the job")
+        self.assertEqual(snap["stagesForeign"], {}, "the walk ran as the jobs owner: nothing foreign")
+
+    def test_a_run_of_both_loops_keeps_each_threads_job_rows_apart(self):
+        """The real _pusher_cycle and _jobs_cycle, every job quiet: the nine cycle jobs' walls land under pusher.cycleJobsMs
+        and sum to at most the pusher's `jobs` container, the nineteen housekeeping jobs' land in the flat `jobs.<job>` rows
+        and sum to at most `jobsPass`, no cycle job's key is in stages_ms, and nothing is foreign. Each sum is a set of
+        disjoint intervals inside its container's, so the bound is exact, not a ratio (the ratio tests here were coin
+        tosses under load)."""
+        km = self.km
+        km._pusher_cycle(); km._jobs_cycle()
+        snap = km._PERF_STATS.snapshot()
+        st, cyc = snap["stages_ms"], snap["pusher"]["cycleJobsMs"]
+        self.assertEqual(sorted(cyc), sorted(PUSHER_JOBS), "exactly the nine, whether or not a job took measurable time")
+        self.assertFalse({"jobs." + j for j in PUSHER_JOBS} & set(st), "no cycle job's row in stages_ms")
+        for j in HOUSEKEEPING:
+            self.assertIn("jobs." + j, st, j)
+        self.assertLessEqual(sum(cyc.values()), st["jobs"] + 1e-6, "the cycle jobs against the pusher's jobs container")
+        self.assertLessEqual(sum(st["jobs." + j] for j in HOUSEKEEPING), st["jobsPass"] + 1e-6, "the housekeeping against the pass")
+        self.assertGreater(st["jobsPass"], 0.0); self.assertGreater(st["jobs"], 0.0)
+        self.assertEqual(snap["stagesForeign"], {})
+        self.assertEqual(snap["jobs"]["passes"], 1); self.assertEqual(snap["pusher"]["cycles"], 1)
 
     def test_the_stats_keep_two_owners_apart(self):
         """A stage closed on the jobs thread lands in the jobs split and never in the pusher's, and the other way round, while
@@ -192,7 +222,13 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
         self.assertEqual(sorted(snap["pusher"]["firstCycle"]["stages"]), ["jobs", "jobs.apiHealth", "push", "push.chat"])
         self.assertEqual(sorted(snap["jobs"]["firstPass"]["stages"]), ["jobs.autoNudge", "jobsPass"])
         self.assertAlmostEqual(snap["jobs"]["firstPass"]["stages"]["jobsPass"]["ms"], 20.0)
-        self.assertAlmostEqual(snap["stages_ms"]["jobs.autoNudge"], 20.0, "the totals take every thread's stages")
+        self.assertAlmostEqual(snap["stages_ms"]["jobs.autoNudge"], 20.0, "the flat row takes the jobs thread's job")
+        # the pusher's `jobs.apiHealth` (2026-09-18): its split row as before, its cumulative wall under pusher.cycleJobsMs
+        # and not in stages_ms, which holds no cycle job's key since the change
+        self.assertAlmostEqual(snap["pusher"]["firstCycle"]["stages"]["jobs.apiHealth"]["ms"], 1.0)
+        self.assertAlmostEqual(snap["pusher"]["cycleJobsMs"]["apiHealth"], 1.0)
+        self.assertNotIn("jobs.apiHealth", snap["stages_ms"])
+        self.assertEqual(snap["stagesForeign"], {}, "both writers owned a loop")
         self.assertEqual(ps._mine(), "pusher")
         self.assertEqual(snap["jobs"]["passes"], 1)
         self.assertEqual(snap["pusher"]["cycles"], 1)
