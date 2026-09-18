@@ -156,9 +156,11 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   the redial.
   In a dashboard whose shell publishes its link (every pane iframe there; a
   standalone page or the VS Code webview has none), a `return` that found its
-  socket dead carries `awaitLink`: `true` when the pane put its socket down and
-  waited for the shell's link-up word, `false` when the shell's socket stood
-  and the pane dialed at once. Its `return-fresh` then carries `linkUpMs`, the
+  socket dead and did not park carries `awaitLink`: `true` when the pane put
+  its socket down and waited for the shell's link-up word, `false` when the
+  shell's socket stood and the pane dialed at once. A parked `return` (a pane
+  off screen on the phone; the parked paragraph below) carries no `awaitLink`
+  and files no `return-fresh` until its tap. Its `return-fresh` then carries `linkUpMs`, the
   foreground-to-link-up gap, so the path's own recovery reads apart from the
   code-owned wait (`ms` minus `linkUpMs`). The shell's own socket files one
   `return-probe` row (surface `shell`) per return that found it dead or quiet:
