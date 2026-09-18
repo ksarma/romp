@@ -2620,7 +2620,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   early from a hold counts in both),
   `connectPush` (a fresh client's full push on its handler thread, the
   browser's own first draw after a reload or a restart: `count`, `ms_sum`,
-  `ms_max`, `ms_last`, and the same per app under `byApp`; the pusher's
+  `ms_max`, `ms_last`, and the same per app under `byApp`, keyed by the app
+  the client declared under the identifier-and-cap rule `clients.byApp`
+  states below, so `other` and `none` are keys there too; the pusher's
   cycles never see this push, so before it the restart's logo phase had no
   number),
   `clients` (what each client's sender thread wrote to its socket,
@@ -2850,8 +2852,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   (what reading the checkpoint documents themselves cost since boot),
   `fallbacks` per reason (`version`, `path`, `shrunk`, `guard`, `rewrite`,
   `corrupt`), `dirty` (files whose folds moved since their last write),
-  `readBytes` and `readByPath` (what the JSONL reader pulled off disk since
-  boot, in total and per file), `docConsults` (fold documents loaded through the one
+  `readBytes` and `readByKind` (what the JSONL reader pulled off disk since
+  boot, in total and per holder kind: `leaf`, `agent`, `states`, `postal`,
+  `checkpoint`, `other`, each with `files`, `bytes` and `max`, the largest
+  single file's read; no file is named, since a path carries the home
+  directory and the session id), `docConsults` (fold documents loaded through the one
   validated read that the two boot restore paths, a write's carry and a
   retirement's consult share; at boot the restore paths dominate it, one per
   checkpointed file), `docMemo` (the documents that read keeps for the write
@@ -2882,19 +2887,27 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   walks whose memo could not be read or stored (`fallback`: a document state
   of the wrong shape, or no reader entry after the walk).
 - `stacks`: every live thread's stack, keyed `"<ident> <kind>"`. The kind
-  is the thread's name up to the naming convention's colon (`sdk` and
+  is a word from the kernel's register of its own thread kinds
+  (`_THREAD_KINDS` and `_THREAD_KIND_PREFIXES`, beside the route table in
+  `kernel/kernel.py`), never the thread's name itself: the name up to the
+  naming convention's colon when that part is a registered prefix (`sdk` and
   `sdk-intr` for a session's threads, `codex` for a Codex session's worker,
-  `end-host` for a session's end hook, `port-up` for a dial's port watch, `peer` for a postal peer loop,
-  `romp-refused-mark` for the refused-echo mark a cut-off boot re-delivery writes aside), the
-  target function for a thread the code left unnamed (`_ask_poll`,
-  `_parent_watch`, `_update_check_loop`, `_tunnel_supervisor`,
-  `serve_forever`, ...), `handler` for the HTTP server's request threads,
-  `judge-index`, `judge-triage` and the other tiers' pool workers, `pool`
-  for an unprefixed pool worker, `thread` for a default name with no target,
-  `pusher`, `producer`, `index`, `triage`, `parse-warm`, `boot-warm`,
-  `sdk-boot`, `first-cycle-sampler`, `jobs` (the housekeeping loop split off the pusher), `main`; never a
-  session's name, sid, host or path (the ident
-  keeps two workers sharing a kind apart). Each row has `self` (the thread building the
+  `end-host` for a session's end hook, `port-up` for a dial's port watch,
+  `peer` for a postal peer loop, `romp-refused-mark` for the refused-echo
+  mark a cut-off boot re-delivery writes aside); a registered constant name
+  (`pusher`, `jobs` (the housekeeping loop split off the pusher), `producer`,
+  `index`, `triage`, `serve-pass`, `parse-warm`, `boot-warm`, `sdk-boot`,
+  `first-cycle-sampler`, `ws-send`, `model-catalog`, `price-refresh`, and
+  the rest of the register); `handler` for the HTTP server's request
+  threads; `thread` for a thread the code left unnamed (its target function
+  is the row's own fourth frame); `pool` for an unprefixed pool worker;
+  `judge-<kind>` for a judge pool's workers (`judge-index`, `judge-triage`,
+  `judge-serve-pass`: the kind of the thread that built the pool); `main`;
+  and `other` for every name outside the register: a library's thread named
+  with free text (pytest-timeout names its watchdog with the running test's
+  path), a name carrying a path or an id, or no name at all. Never a
+  session's name, sid, host or path (the ident keeps two workers sharing a
+  kind apart, two `other` threads included). Each row has `self` (the thread building the
   sample), `stage` (the thread's current stage mark: the pusher's
   `jobs.<job>` or `push`, a handler's `connect`, `null` outside one) and
   `frames`, "function (file:line)" strings innermost last, at most 40; no
@@ -2966,8 +2979,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   submits to (the mark rides the submit, as the pass frame does, since a
   thread-local does not cross into a pool worker), `http.<METHOD>.<route>`
   for every request and the socket a GET becomes (the route is the path's
-  first segment, or its first two under `/push`, `/tunnels` and `/usage`,
-  whose roads differ by the second), `warm.parse`, `warm.boot`,
+  first segment when the route table holds a path under it, or its first two
+  under `/push`, `/tunnels` and `/usage`, whose roads differ by the second,
+  when the two-segment path is itself a route; any other path, a session id
+  or a host name typed into a URL, reads `other`, since `stacks` serves the
+  mark), `warm.parse`, `warm.boot`,
   `producer`, `revive`, `rewind.migration`, `rewind.holds`, `move`,
   `remote-ws`, `federation.push`, `federation.pull`, `federation.ask`,
   `ask-poll`, `todo.lost` (the SDK backend's lost-answer seam, whose landed
@@ -3026,7 +3042,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
 - `parses`: the cold event-model parses through the one parse store the
   kernel and the judges share: `total` (every miss, whoever asked), `kernel`
   (the display's asks among them, with `bytes`, the parsed files' sizes, and
-  `bySid`, per session by the first eight characters of its id), `judge` (the
+  `perSession`, the sessions parsed as a count and the largest per-session
+  count, `sessions` and `max`; no session id is served), `judge` (the
   rest), `hits` (the display's asks served from the store) and `sharedHits`
   (every hit). The acceptance number of the lazy-transcript work: a boot with
   no client connected reads `kernel` zero, and a connecting chat client adds
@@ -3053,6 +3070,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   stages count every push, including the one a connecting page gets, so they
   can add up to more than `push`.
 - `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
+  `chat` also carries `bySession`, one row per living session built since
+  the boot, ordered by `max` (slowest first) and numbered by `rank` in that
+  order, each with `first`, `last` and `max` (build times in ms: the first
+  build after the boot, the latest, the largest), `n` (the rebuild count),
+  `cached` (the builds served from the cache) and `bytes` (the transcript's
+  size at the last build); no session id is served, and a row leaves with its
+  session's certified death.
   `feed` also carries `dirty`, the rebuilds a kernel-side mutation forced past
   the view signature (a card reply, a clear, a follow-up: the mutation is
   invisible to the signature and must not wait out the rebuild interval).
@@ -3701,9 +3725,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the `judge` line, since the judge's CPU share alone cannot tell a cheaper
   pass from a faster cadence.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
-  OPTIONS, the query string removed and `/dist/*`, `/media/*` and
-  `/remote/*/…` collapsed to one key each, for at most 256 keys; further keys
-  fold into `other`. A WebSocket upgrade is counted when it arrives and not
+  OPTIONS, the query string removed and `/dist/*`, `/media/*`, `/glossary/*`
+  (the term is the user's text; its lookups count under one key) and
+  `/remote/*/…` collapsed to one key each, for at most 256 keys. A path
+  outside the kernel's own route table (a scanner's probe, anything typed
+  into a URL) counts under `other`, as do keys past the cap, so the table
+  names only routes the kernel ships. A WebSocket upgrade is counted when it arrives and not
   timed, since its handler runs for the life of the socket.
 
 `POST /perf` with the body `{"log": true}` or `{"log": false}` turns the
@@ -5178,8 +5205,12 @@ Bounds and counters, all on `/perf` under `judge`:
 - On the child road `parses.judge` and the `goals` block read zero: the judges' parses and store writes happen in the
   child, and their per-pass figures ride its done line as `judge.child.parses` and `judge.child.goalIo`.
 - `cpu_ms_sum` counts the child's tier and worker CPU as it counts the in-process tiers and pools; `cpu_ms_child_workers`
-  is the workers' share alone; `child` is the last done line (its wall, tier starts, CPU, failures, record cache and
-  checkpoint blocks); `tierStarts` is counted at the request, so a long pass reads it during the pass.
+  is the workers' share alone; `child` is the last done line's numbers: `seq`, `pid`, `t`, `chars` (the line's length),
+  `status` (`ok` or `failed`), `failures` (a count), `recovered`, `wallMs`, `tierStarts`, `tierCpuMs`, `workerCpuMs`,
+  and its four counter blocks (`recordCache`, `asmCheckpoint`, `parses`, `goalIo`) as the child sent them. The line's
+  text is not served: its first failure is an exception message that can name a path or quote session text, and the
+  snapshot is meant to be pasteable (2026-09-18). `tierStarts` is counted at the request, so a long pass reads it
+  during the pass.
 
 ## Switches
 

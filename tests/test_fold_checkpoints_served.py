@@ -293,17 +293,14 @@ class ExitThenBoot(unittest.TestCase):
         try:
             self._drive(p2)
             perf = self._get(p2, "/perf")["checkpoints"]
-            by = perf["readByPath"]
-            report = {"agent": 0, "states": 0, "leaf": 0, "postal": 0, "checkpoint": 0, "other": 0}
-            for path, n in by.items():
-                cls_ = ("checkpoint" if "/checkpoints/" in path else "agent" if "/subagents/" in path else "states" if "/states/" in path
-                        else "postal" if path.endswith("messages.jsonl") else "leaf" if path.endswith(".jsonl") and "/projects/" in path else "other")
-                report[cls_] += n
+            by = perf["readByKind"]                          # per holder kind since 2026-09-18: the served table names no file
+            report = {k: v["bytes"] for k, v in by.items()}
             self.assertEqual(perf["fallbacks"], {}, "every checkpoint verified: %s" % perf)
             self.assertGreaterEqual(perf["restored"], len(ALL), "one restore per states log at least: %s" % perf)
-            got = by.get(os.path.realpath(self.agent_file), by.get(self.agent_file))
+            self.assertEqual(by["agent"]["files"], 1, "the one agent transcript in this fixture: %s" % by)
+            got = by["agent"]["bytes"]
             self.assertEqual(got, 128, "the agent file was read as a TAIL: its 64 guard bytes checked and captured again, nothing of its "
-                                       "content, since nothing was appended (its size %d; bytes by class in this boot: %s)" % (agent_size, report))
+                                       "content, since nothing was appended (its size %d; bytes by kind in this boot: %s)" % (agent_size, report))
             self.assertGreaterEqual(perf["restoredFolds"].get("agentGist", 0), 1, "the gist fold resumed from its recorded state: %s" % perf["restoredFolds"])
             self.assertGreaterEqual(perf["restoredFolds"].get("statesOverlay", 0), len(ALL),   # the fold the feed runs per session
                                     "the statesOverlay fold resumed for every session's states log: %s" % perf["restoredFolds"])
@@ -320,19 +317,23 @@ class ExitThenBoot(unittest.TestCase):
                                     "the second boot's walk skipped every unchanged session on the memo the first kernel left: %s" % walk)
             # what stays whole is asserted, not hidden: the leaf transcripts and their states logs, which the parse
             # reads (stage 4's), cost their whole size plus the guard check the folds' restore made on each
-            for sid, sp in self.states_files.items():
-                got = by.get(os.path.realpath(sp), by.get(sp)) or 0
-                now_size = os.path.getsize(sp)                      # the second kernel appends states rows of its own
-                self.assertGreaterEqual(got, sizes[sid], "%s's states log: whole, the parse's read (bytes by class: %s)" % (sid, report))
-                self.assertLessEqual(got, 2 * now_size + 8 * 64,
-                                     "%s's states log: the parse's whole read, at most one more whole read when two threads meet "
-                                     "the file's first read at once (the reader serializes no reads; at boot the judges' parse and "
-                                     "the pusher's folds both ask, and the trace showed two from-zero reads of one log back to back), "
-                                     "plus guard reads and captures" % sid)
-            for sid, lp in self.leaf_files.items():
-                got = by.get(os.path.realpath(lp), by.get(lp)) or 0
-                self.assertGreaterEqual(got, os.path.getsize(lp), "%s's leaf transcript: whole, the parse's read (stage 4)" % sid)
-            sys.stderr.write("t323s3 served: second boot bytes by class %s, restored %d, writes %d\n"
+            # the served table is per kind since 2026-09-18 (no file is named), so the bounds are the kinds' sums: every
+            # states log read whole at least, and at most one more whole read each when two threads meet a file's first
+            # read at once (the reader serializes no reads; at boot the judges' parse and the pusher's folds both ask, and
+            # the trace showed two from-zero reads of one log back to back), plus guard reads and captures
+            self.assertEqual(by["states"]["files"], len(self.states_files), "one states log per session read: %s" % by)
+            now_sizes = {sid: os.path.getsize(sp) for sid, sp in self.states_files.items()}   # the second kernel appends rows of its own
+            self.assertGreaterEqual(by["states"]["bytes"], sum(sizes.values()), "the states logs: whole, the parse's read (bytes by kind: %s)" % report)
+            self.assertLessEqual(by["states"]["bytes"], sum(2 * n + 8 * 64 for n in now_sizes.values()),
+                                 "the states logs: the parse's whole read, at most one more whole read each, plus guard reads and captures")
+            # the per-file bound the per-kind table keeps through its max: the kind's sum alone lets one log read whole many
+            # times pass while the rest read once (2026-09-18)
+            self.assertLessEqual(by["states"]["max"], 2 * max(now_sizes.values()) + 8 * 64,
+                                 "one states log: at most the parse's whole read, one more whole read, and guard reads and captures")
+            self.assertEqual(by["leaf"]["files"], len(self.leaf_files), "one leaf transcript per session read: %s" % by)
+            self.assertGreaterEqual(by["leaf"]["bytes"], sum(os.path.getsize(lp) for lp in self.leaf_files.values()),
+                                    "the leaf transcripts: whole, the parse's read (stage 4)")
+            sys.stderr.write("t323s3 served: second boot bytes by kind %s, restored %d, writes %d\n"
                              % (report, perf["restored"], perf["writes"]))
         finally:
             self._stop(k2)

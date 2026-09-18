@@ -234,10 +234,10 @@ class RestartOverACheckpointedSession(unittest.TestCase):
             time.sleep(1.0)
             perf = self._get(p2, "/perf")
             asm = perf["asmCheckpoint"]
-            by = perf["checkpoints"]["readByPath"]
+            by = perf["checkpoints"]["readByKind"]
             self.assertEqual(asm["fallbacks"], {}, "the document verified: %s" % asm)
             self.assertGreaterEqual(asm["restored"], 1, "the parse came from the document: %s" % asm)
-            leaf_read = by.get(os.path.realpath(self.leaf), by.get(self.leaf, 0))
+            leaf_read = by["leaf"]["bytes"]                    # the one transcript here: the kind's bytes are its read (2026-09-18)
             self.assertLessEqual(leaf_read, size + 8 * 64, "the leaf was never read whole: %d of %d bytes (the tail, the guards, and the "
                                                             "frame's hydration of the atoms it renders); the folds the first kernel left: %s; the leaf's reads and chain answers: %s"
                                                             % (leaf_read, size, folds, self._leaf_trace(log2)))
@@ -273,8 +273,8 @@ class RestartOverACheckpointedSession(unittest.TestCase):
                                                                     "planner's declared-plan fold: %s" % asm["hydratedBy"])
             self.assertEqual(asm["hydratedAtoms"], n_lazy, "no caller re-read a body: the memo served what the frame had read; "
                                                            "by caller %s; judges %s" % (asm["hydratedBy"], perf.get("judge")))
-            by = perf["checkpoints"]["readByPath"]
-            leaf_read = by.get(os.path.realpath(self.leaf), by.get(self.leaf, 0))
+            by = perf["checkpoints"]["readByKind"]
+            leaf_read = by["leaf"]["bytes"]
             self.assertLessEqual(leaf_read, size + 8 * 64, "the judges' pass added no whole read: %d of %d bytes; hydration by caller %s; %s"
                                  % (leaf_read, size, asm["hydratedBy"], self._leaf_trace(log2)))
             log = open(log2).read()

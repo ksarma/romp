@@ -791,10 +791,57 @@ def thread_hydrated_bytes():
 
 def read_bytes_report():
     """{path: bytes read since this process began} plus "total": what the reader itself pulled off disk, file by
-    file, so a test or /perf can say how much of a boot was tails and how much whole files."""
+    file, so a test or a bench can say how much of a boot was tails and how much whole files. In-process only: the
+    served snapshot carries read_bytes_by_kind, since a path names the machine's home directory and the session's id."""
     with _READ_BYTES_LOCK:
         out = dict(_READ_BYTES)
         out["total"] = _READ_BYTES_TOTAL[0]              # the running total, kept for this report alone (T397 round two, low 1)
+    return out
+
+
+_READ_KINDS = ("leaf", "agent", "states", "postal", "checkpoint", "other")   # the holder kinds of read_bytes_by_kind, in its order
+
+
+def _read_kind(path, ckpt_dir=None):
+    """The holder KIND of a path the reader counted bytes for (2026-09-18: /perf's checkpoints.readByKind): `leaf` (a
+    session's transcript, `projects/<slug>/<sid>.jsonl`), `agent` (a subagent's transcript, under `subagents/`), `states`
+    (a session's states log, under `states/`), `postal` (the postal timeline's messages.jsonl), `checkpoint` (a document
+    under the checkpoint directory) or `other`. Judged from the path's own last segments and the checkpoint directory,
+    never from a substring of the whole string, so a home directory that happens to contain one of these words
+    classifies nothing. The path itself never reaches the snapshot: it carries the machine's home directory, the
+    project's directory and the session's id, and GET /perf is meant to be pasteable."""
+    p = str(path)
+    if ckpt_dir is not None and p.startswith(str(ckpt_dir) + os.sep):
+        return "checkpoint"
+    head, name = os.path.split(p)
+    head, parent = os.path.split(head)
+    if parent == "checkpoints":
+        return "checkpoint"
+    if parent == "subagents":
+        return "agent"
+    if parent == "states":
+        return "states"
+    if name == "messages.jsonl":
+        return "postal"
+    if name.endswith(".jsonl") and os.path.basename(head) == "projects":
+        return "leaf"
+    return "other"
+
+
+def read_bytes_by_kind(report=None, ckpt_dir=None):
+    """{kind: {"files", "bytes", "max"}} over the per-path table (read_bytes_report's, or `report`, its "total" key
+    ignored): what the reader pulled off disk since the process began, per holder kind, every kind listed and at zero
+    when unread. `max` is the largest single file's read, so a boot still reads as tails against whole files (a leaf
+    read whole shows as a max near its size) without a file being named. The served form of the table."""
+    rb = dict(read_bytes_report() if report is None else report)
+    rb.pop("total", None)
+    out = {k: {"files": 0, "bytes": 0, "max": 0} for k in _READ_KINDS}
+    for p, n in rb.items():
+        row = out[_read_kind(p, ckpt_dir)]
+        row["files"] += 1
+        row["bytes"] += n
+        if n > row["max"]:
+            row["max"] = n
     return out
 
 
@@ -1675,8 +1722,8 @@ def checkpoint_stats():
         out["dirty"] = len(_FOLD_DIRTY)
     rb = read_bytes_report()
     out["readBytes"] = rb.pop("total")
-    out["readByPath"] = rb                            # per file, so a boot can be read as tails versus whole files
-    return out
+    out["readByKind"] = read_bytes_by_kind(rb, d)     # per holder kind (files, bytes, the largest file's read), so a boot can be
+    return out                                        #  read as tails versus whole files; per path only in-process (2026-09-18)
 
 
 def _scan_jsonl_bytes(data, base_offset, offsets=None):

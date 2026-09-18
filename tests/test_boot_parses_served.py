@@ -176,7 +176,7 @@ class ServedBootParses(unittest.TestCase):
         self._settled()
         p = self._parses()
         self.assertEqual(p["kernel"], 0, "no client asked, so the kernel parsed no transcript at boot: %r" % p)
-        self.assertEqual(p["bySid"], {}, "per session: none")
+        self.assertEqual(p["perSession"], {"sessions": 0, "max": 0}, "per session: none")
         # the judges' first pass still parses what it enumerates (their checkpoint resume is stages 3 and 4); this
         # stage only orders it newest first; pin the count so a regression to double parsing shows
         self.assertLessEqual(p["judge"], 2 * len(ALL), "the judges parse each session about once at boot (a key file moving "
@@ -210,7 +210,8 @@ class ServedBootParses(unittest.TestCase):
         asked = after["kernel"] + after["hits"]     # stage 2: the judges may have parsed a tab first, then the kernel's ask is a hit
         self.assertGreaterEqual(asked, 1, "a connected chat client's own tabs are parsed or served on demand: %r" % after)
         self.assertLessEqual(after["kernel"] - before, len(ALL), "and nothing beyond the shown tabs (every living session is a tab here): %r" % after)
-        self.assertTrue(set(after["bySid"]) <= {s[:8] for s in ALL}, after["bySid"])
+        self.assertLessEqual(after["perSession"]["sessions"], len(ALL), after["perSession"])   # a count, never the sids (2026-09-18)
+        self.assertNotIn("bySid", after)
 
 
 if __name__ == "__main__":

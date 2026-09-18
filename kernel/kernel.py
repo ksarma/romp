@@ -791,10 +791,12 @@ class _PerfStats:
                                    session-archive-unreadable, units-cache-unreadable,
                                    units-cache-write-failed)
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
-                                   path normalized by _perf_http_key (/dist/*, /media/*,
-                                   /remote/*/…), at most HTTP_PATHS keys with the rest folded into
-                                   "other" (so a scanner cannot grow it, and a static file or a host
-                                   name never takes a slot or appears in the output). A WebSocket
+                                   path normalized by _perf_http_key (/dist/*, /media/*, /glossary/*,
+                                   /remote/*/…; a path outside the checked-in route table,
+                                   _PERF_HTTP_ROUTES, is "other"), at most HTTP_PATHS keys with the
+                                   rest folded into "other" (so a scanner cannot grow it, and a static
+                                   file, a host name, a term or a typed path never takes a slot or
+                                   appears in the output). A WebSocket
                                    upgrade (a path ending in /ws) is counted when it ARRIVES and adds
                                    no ms: its handler returns when the socket closes, which is a
                                    connection's lifetime, not a request's."""
@@ -806,9 +808,9 @@ class _PerfStats:
     # below the table itself). test_perf_stats pins it at 1.5x the literal count.
     HTTP_PATHS = 256
     SLOTS = 32
-    APPS = 16                                 # distinct client app names pusher.clients.byApp keys (client_send); the rest, and any
-    #                                           name outside _PERF_IDENT, count under "other" (2026-09-18: the name is the client's
-    #                                           own text). connectPush.byApp takes the same rule when the served-/perf leak branch lands.
+    APPS = 16                                 # distinct client app names either byApp table keys: pusher.clients.byApp (client_send) and
+    #                                           pusher.connectPush.byApp (connect_push); the rest, and any name outside _PERF_IDENT, count
+    #                                           under "other" (2026-09-18: the name is the client's own text; both tables are capped)
     JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "turnNotify", "liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
             "unreadableStores",   # the fork's unreadable-store warn (PR 322), a housekeeping stage on the jobs thread since the 2026-09-15 pull-in
             "autoNudge", "interruptBlock", "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "persistCheckpoints", "convergeCheckpoints", "bootRowBackstop",
@@ -889,7 +891,7 @@ class _PerfStats:
             self.chat_by_session = {}                 # sid -> {first, last, max, n, cached, bytes}: the per-session chat build
             #                                           timer (2026-09-14); a row leaves with its session's certified death
             #                                           (chat_row_drop), reset with the process, sids only, time.monotonic
-            #                                           deltas as the call sites take them
+            #                                           deltas as the call sites take them; served by rank, never by sid
             self.sends = {k: {} for k in self.SEND_KINDS}
             self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0, "cpu_ms_sum": 0.0,
                           "wakes": 0, "wakes_event": 0, "wakes_backstop": 0,
@@ -900,8 +902,9 @@ class _PerfStats:
             #                                 consecutive lost spawns, orphans of a dead kernel swept at boot, its workers' CPU (also
             #                                 folded into cpu_ms_sum, as the in-process workers' is) and its last done line
             # cold event-model parses this kernel ran (T323 stage 1): the kernel's own _parse misses, per session
-            # (sid8) and in total, plus the bytes of the files parsed; the judges' misses ride the snapshot from
-            # jd.parse_misses(). The acceptance number of the lazy-transcript work: a boot with no client parses zero.
+            # (sid8, kept here; served as a count of sessions and the largest per-session count) and in total, plus the
+            # bytes of the files parsed; the judges' misses ride the snapshot from jd.parse_misses(). The acceptance
+            # number of the lazy-transcript work: a boot with no client parses zero.
             self.parses = {"kernel": 0, "hits": 0, "bytes": 0, "bySid": {}}   # kernel-asked cold parses; total/judge from jd
             self.http = {}
             # the file preview popover's slice cache (T351): hits and misses of GET /file?slice=1, the bytes it served,
@@ -960,14 +963,28 @@ class _PerfStats:
         with self.lock:
             self.pusher["exempt"] += 1
     def connect_push(self, app, dt):
-        """One connect push (a fresh client's full state on its handler thread): its wall seconds, per app too."""
+        """One connect push (a fresh client's full state on its handler thread): its wall seconds, per app too. The app
+        is the name the client DECLARED on its socket URL (chat, feed, timeline, ...), so it is the client's own text: a
+        name outside _PERF_IDENT's grammar, or past the APPS distinct names, counts under "other", and a client that
+        declared none under "none" while the table has room for that word, else under "other" like any name the cap
+        refuses (2026-09-18: the snapshot is meant to be pasteable, and a key is a leak vector; the same rule client_send
+        gives pusher.clients.byApp)."""
         ms = dt * 1000.0
+        app = str(app) if app else "none"
+        if not _PERF_IDENT.fullmatch(app):   # fullmatch, not match: the pattern's $ also matches before a trailing newline, and match let a name ending in one through as a key
+            app = "other"
         with self.lock:
             c = self.connect_push_stats
             c["count"] += 1; c["ms_sum"] += ms; c["ms_last"] = ms
             if ms > c["ms_max"]:
                 c["ms_max"] = ms
-            a = c["byApp"].setdefault(str(app or "?"), {"count": 0, "ms_sum": 0.0, "ms_max": 0.0, "ms_last": 0.0})
+            a = c["byApp"].get(app)
+            if a is None:
+                if len(c["byApp"]) >= self.APPS:
+                    app = "other"
+                    a = c["byApp"].get(app)
+                if a is None:
+                    a = c["byApp"][app] = {"count": 0, "ms_sum": 0.0, "ms_max": 0.0, "ms_last": 0.0}
             a["count"] += 1; a["ms_sum"] += ms; a["ms_last"] = ms
             if ms > a["ms_max"]:
                 a["ms_max"] = ms
@@ -979,8 +996,8 @@ class _PerfStats:
         refused is not counted: the client is dropped. The app is the client's own text (chat, feed, timeline, ...): a
         name outside _PERF_IDENT's grammar, or past the APPS distinct names, counts under "other"; a client that
         declared none counts under "none" while the table has room for that word, else under "other" like any name the
-        cap refuses (the snapshot is meant to be pasteable, and a key is a leak vector; the same rule the
-        perf-served-leaks branch gives connectPush.byApp)."""
+        cap refuses (the snapshot is meant to be pasteable, and a key is a leak vector; the same rule connect_push
+        gives pusher.connectPush.byApp)."""
         ms = dt * 1000.0
         app = str(app) if app else "none"
         if not _PERF_IDENT.fullmatch(app):   # fullmatch, not match: the pattern's $ also matches before a trailing newline, and match let a name ending in one through as a key
@@ -1417,16 +1434,36 @@ class _PerfStats:
     def judge_orphan_swept(self):
         with self.lock:
             self.judge["orphansSwept"] += 1
-    def judge_child_done(self, done, pid=None):
+    CHILD_NUMBERS = ("wallMs", "tierStarts", "tierCpuMs", "workerCpuMs")   # the done line's per-pass figures judge.child keeps
+    CHILD_BLOCKS = ("recordCache", "asmCheckpoint", "parses", "goalIo")    # its counter blocks (per-pass deltas, gauges current),
+    #                                                                          served under judge.child as the child sends them
+
+    def judge_child_done(self, done, pid=None, chars=None):
         """The child's done line (plans/judges-process.md rule 1): its tier starts and tier CPU join the in-process
-        counters, its workers' CPU is kept apart (the in-process figure comes from this module's pools), and the line
-        itself stands as judge.child for the read."""
+        counters, its workers' CPU is kept apart (the in-process figure comes from this module's pools), and judge.child
+        carries the line's SIZE and STATUS with its per-pass numbers and its counter blocks, never its text. The line used
+        to stand verbatim (2026-09-18): its failures.first is an exception message, which names paths and quotes session
+        text, so a snapshot could not be pasted anywhere public. `chars` is the line's length as it arrived (the reader's
+        count; the line re-encoded when none is given), `status` one of two fixed tokens (`ok`, `failed`), `failures` a
+        count, every other scalar a number or a boolean, and the four blocks (CHILD_BLOCKS: the record cache, the
+        assembly checkpoints, the parse store, the goal-store I/O, their counters as per-pass deltas and their gauges as
+        current values, the child's round three) as the child sent them: numbers are not a leak, and the kernel's own
+        blocks read zero for the child's work."""
+        f = done.get("failures")
+        failures = int(f.get("count") or 0) if isinstance(f, dict) else 0
+
+        def num(v):                                       # a JSON number as itself, anything else (a string, a bool, None) as None
+            return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+        child = {"seq": num(done.get("seq")), "pid": pid, "t": time.time(),
+                 "chars": int(chars) if chars is not None else len(json.dumps(done, separators=(",", ":"))),
+                 "status": "failed" if failures else "ok", "failures": failures, "recovered": bool(done.get("recovered"))}
+        child.update({k: num(done.get(k)) for k in self.CHILD_NUMBERS})
+        child.update({k: done[k] for k in self.CHILD_BLOCKS if isinstance(done.get(k), dict)})
         with self.lock:
             j = self.judge
             j["cpu_ms_sum"] += float(done.get("tierCpuMs") or 0.0) + float(done.get("workerCpuMs") or 0.0)   # tiers plus workers, as
             j["cpu_ms_child_workers"] += float(done.get("workerCpuMs") or 0.0)                                 #  the in-process figure is
-            j["child"] = dict({k: v for k, v in done.items() if k != "op"}, pid=pid, t=time.time())   # the done line verbatim: its
-            #                                 counters are per-pass deltas and its gauges current values (the child's round three)
+            j["child"] = child                                                                                 #  the in-process one
     def http_request(self, path, dt):
         """dt None: count the request, add no time (the WebSocket upgrade case)."""
         with self.lock:
@@ -1471,11 +1508,13 @@ class _PerfStats:
             stages = dict(self.stages)
             builds = {k: dict(v) for k, v in self.builds.items()}
             builds["chat"]["bg_miss"] = dict(self.builds["chat"]["bg_miss"])   # the nested map: a copy too
-            builds["chat"]["bySession"] = sorted(              # the per-session timer, sids only, the largest max first
-                ({"sid": sid, **row} for sid, row in self.chat_by_session.items()),
-                key=lambda r: -(r["max"] or 0.0))
+            builds["chat"]["bySession"] = [                    # the per-session timer, the largest max first, each row by its RANK
+                {"rank": i, **row} for i, row in enumerate(   #  in that order and never by its sid (2026-09-18: the snapshot is
+                    sorted(self.chat_by_session.values(), key=lambda r: -(r["max"] or 0.0)), 1)]   #  meant to be pasteable)
+            by_sid = self.parses["bySid"]
             parses = {"kernel": self.parses["kernel"], "hits": self.parses["hits"], "bytes": self.parses["bytes"],
-                      "bySid": dict(self.parses["bySid"])}
+                      "perSession": {"sessions": len(by_sid), "max": max(by_sid.values(), default=0)}}   # the sids folded to a
+            #                                                                                              count and the largest per-sid count
             sends = {k: {sl: {"count": e[0], "bytes": e[1]} for sl, e in d.items()}
                      for k, d in self.sends.items()}
             judge = dict(self.judge)
@@ -1635,36 +1674,48 @@ def _set_stage(name):
 
 _THREAD_NAME_SEP = ":"            # the one naming convention for every worker the kernel or a backend names with an identity
 #                                   in it: "<kind>:<payload>" (sdk:<session name>, sdk-intr:<session name>, codex:<session
-#                                   name>, end-host:<sid8>, peer:<host>); the kind rule below keeps the kind and drops the
-#                                   payload, so no session name, sid, host or path reaches the stack sample (T401 round two).
-#                                   The writers (sdk_backend, codex_backend, postal) spell the colon themselves, since they do
-#                                   not import the kernel: the census test over every construction site is the guard
+#                                   name>, end-host:<sid8>, port-up:<host>, peer:<host>); the kind rule below keeps the kind
+#                                   when the register beside _PERF_ROUTE_SEGMENTS holds it and drops the payload, so no
+#                                   session name, sid, host or path reaches the stack sample (T401 round two). The writers
+#                                   (sdk_backend, codex_backend, postal) spell the colon themselves, since they do not import
+#                                   the kernel: the census test over every construction site is the guard
 
 
 def _thread_kind(name):
-    """A thread's KIND from its name, never a session's name, sid, host or path: a name with the convention's separator keeps
-    the part before it (sdk, sdk-intr, codex, end-host, peer); Python's default "Thread-N (target)" keeps the target function
-    (the identity a slow-boot read needs: _ask_poll, _parent_watch, _update_check_loop, serve_forever, ...), "handler" for
-    the HTTP server's process_request_thread; a pool worker "<prefix>_N" keeps its prefix (the judge tiers' pools are
-    prefixed judge-<tier>), a default "ThreadPoolExecutor-K_N" is "pool"; MainThread is "main"; the rest (pusher, producer,
-    index, triage, parse-warm, ...) are kinds already. The stack sample keys its rows by ident and kind (T401 round one,
-    medium 1: a key carried a live session name where the reference promised no session content; round two: the Codex
-    worker's hyphenated name and the end-host's sid slipped past a colon-only rule, and every default name read as handler)."""
-    n = name or "?"
-    if _THREAD_NAME_SEP in n:
-        return n.split(_THREAD_NAME_SEP, 1)[0] or "?"
-    m = re.match(r"Thread-\d+(?: \((.+)\))?$", n)
-    if m:
-        fn = m.group(1) or "thread"
-        return "handler" if fn == "process_request_thread" else fn
+    """A thread's KIND from its name: a word from the checked-in register beside _PERF_ROUTE_SEGMENTS (_THREAD_KINDS, the
+    constant names the kernel gives its threads; _THREAD_KIND_PREFIXES, the kinds spelled "<kind>:<payload>"; and the fixed
+    forms), or "other" for every name outside it. A registered constant name (pusher, jobs, index, ws-send, ...) is its own
+    kind; a name with the convention's separator keeps the part before it when that part is a registered prefix (sdk,
+    sdk-intr, codex, end-host, port-up, peer, romp-refused-mark); Python's default "Thread-N" and "Thread-N (target)" are
+    "thread", except the HTTP server's "Thread-N (process_request_thread)", which is "handler" (the target function is the
+    row's own fourth frame, so the word loses nothing the row does not carry); MainThread is "main"; a default
+    "ThreadPoolExecutor-K_N" is "pool"; a judge pool's worker, "judge-<tier>_N" (judge.py's _TimedPool names its workers after
+    the thread that built the pool), is "judge-" plus that thread's kind (judge-index, judge-triage, judge-serve-pass; judge-jobs
+    for a pool a tick job built in-process). Everything else is "other": a library's thread named with free text (pytest-timeout
+    names its watchdog with the running test's node id, and the colon rule that stood here kept the test's path up to the node
+    id's first "::", the 2026-09-18 CI failure), a name carrying a path, a uuid or a session name spelled without the
+    separator, and no name at all (a thread gone between the sample's two enumerations, or one the threading module never
+    saw); the ident half of the sample's key keeps two such threads two rows. Never a session's name, sid, host or path (T401
+    round one, medium 1: a key carried a live session name where the reference promised no session content; round two: the
+    Codex worker's hyphenated name and the end-host's sid slipped past a colon-only rule)."""
+    n = name or ""
+    if n in _THREAD_KINDS:
+        return n
     if n == "MainThread":
         return "main"
+    if _THREAD_NAME_SEP in n:
+        head = n.split(_THREAD_NAME_SEP, 1)[0]
+        return head if head in _THREAD_KIND_PREFIXES else "other"
+    m = re.match(r"Thread-\d+(?: \((.+)\))?$", n)
+    if m:
+        return "handler" if m.group(1) == "process_request_thread" else "thread"
     if re.match(r"ThreadPoolExecutor-\d+_\d+$", n):
         return "pool"
-    m = re.match(r"(.+)_\d+$", n)
+    m = re.match(r"judge-(.+)_\d+$", n)
     if m:
-        return m.group(1)
-    return n
+        inner = _thread_kind(m.group(1))
+        return "other" if inner == "other" else "judge-" + inner
+    return "other"
 
 
 def _thread_stacks(limit=40):
@@ -1691,18 +1742,27 @@ def _thread_stacks(limit=40):
     return out
 
 
-_ROUTE_TWO_SEGMENTS = ("push", "tunnels", "usage")   # prefixes whose roads differ by their second segment (/push/relay, /tunnels/dial,
+_ROUTE_TWO_SEGMENTS = ("push", "tunnels", "usage")   # prefixes whose roads differ by their second segment (/push/relay, /tunnels/of,
 #                                                      /usage/fleet): the mark keeps both, so eight push roads never share one row
 
 def _route_seg(path):
-    """A request path's route for the stage mark: its first segment ("/chat/x" -> "chat", "/ws" -> "ws", "/remote/h/ws" -> "remote",
-    "/" -> "root"), or its first two for the prefixes above ("/push/relay" -> "push.relay", "/usage/fleet" -> "usage.fleet";
-    T401 (5a): a request handler's reads, builds and hydrations count under http.<METHOD>.<route>)."""
+    """A request path's route for the stage mark, in the register's words and never the requester's: its first segment when
+    the checked-in route table (_PERF_HTTP_ROUTES over every method, and the collapsed _PERF_HTTP_FAMILIES, both below; a
+    mark is made at request time, long after the module loaded) holds a path equal to it or under it ("/chat/x" -> "chat",
+    "/ws" -> "ws", "/remote/h/ws" -> "remote", "/" -> "root"), its first two for the prefixes above when that two-segment path
+    is itself a route ("/push/relay" -> "push.relay", "/usage/fleet" -> "usage.fleet"), and "other" for every other path
+    ("/<sid>", "/tunnels/nope"). The fold (2026-09-18, the paste-safety review's last road): GET /perf?stacks=1 serves each
+    thread's mark, and a handler's mark carried the first segment of any in-flight URL, a session id, a host name or a
+    scanner's probe included. T401 (5a): a request handler's reads, builds and hydrations count under http.<METHOD>.<route>."""
     parts = str(path or "").split("?", 1)[0].strip("/").split("/")
-    seg = parts[0] if parts else ""
+    seg = parts[0]
+    if not seg:
+        return "root"
+    if seg not in _PERF_ROUTE_SEGMENTS:
+        return "other"
     if seg in _ROUTE_TWO_SEGMENTS and len(parts) > 1 and parts[1]:
-        return seg + "." + parts[1]
-    return seg or "root"
+        return seg + "." + parts[1] if "/%s/%s" % (seg, parts[1]) in _PERF_HTTP_ANY else "other"
+    return seg
 
 
 def _stage_marked(name):
@@ -1774,21 +1834,106 @@ _PERF_IDENT = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")   # a name a /perf key may c
 #                                                        browser's perf-telemetry `ident` grammar, without its colon): else "other"
 
 
+# The kernel's own route table, checked in (2026-09-18): the "METHOD /path" keys GET /perf's `http` table may carry, one
+# tuple per do_* method, spelled exactly as the dispatches spell them. tests/test_perf_stats.py derives two sets from the
+# do_* source and holds the register equal to both: the literal comparisons (`p == "/x"`, `u.path == "/x"`, the `in`
+# tuples) against this constant, method by method, and the `startswith` prefixes against _PERF_HTTP_FAMILIES (below), each
+# prefix also asserted to fold in _perf_http_key; so a route or a prefix added to a dispatch without a line here fails that
+# test rather than counting under `other` for the kernel's lifetime. A request whose method and path are not in its
+# method's tuple, or in the collapsed families _perf_http_key folds (below), counts under `other`: a scanner's path, a
+# session id or a home path typed into a URL, a glossary term, a host name. A CORS preflight (OPTIONS) is a request for
+# any of these paths, so it is allowed the union. The route table itself is the dispatches; this is their register.
+_PERF_HTTP_ROUTES = {
+    "GET": (
+        "/", "/analytics", "/api-health", "/api-health/frame", "/busy", "/chat", "/classify",
+        "/commands", "/defaults", "/diag/sendvis", "/emoji", "/feed", "/feed.json", "/file", "/files",
+        "/fleet", "/followup-preview", "/handoff", "/healthz", "/logins", "/manifest.webmanifest",
+        "/mcp", "/models", "/notify-all", "/notify-turns", "/palette", "/perf", "/push/pending",
+        "/push/vapid-key", "/session-events", "/sessions", "/sessions/by-fsid", "/settings",
+        "/spend/detail", "/ssh-hosts", "/sw.js", "/timeline", "/tunnels", "/tunnels/of",
+        "/tunnels/pairs", "/update-check", "/usage", "/usage/fleet", "/version", "/views", "/waiting",
+        "/watches", "/ws",
+    ),
+    "HEAD": (
+        "/file",
+    ),
+    "POST": (
+        "/checkin", "/checkin/stop", "/color", "/compact", "/deliver", "/down", "/emoji", "/end",
+        "/flag", "/fleet-restart", "/fork", "/fork-comment", "/fork-promote", "/group", "/interrupt",
+        "/judge-settings", "/logins", "/mesh-settings", "/move", "/new", "/notice", "/notify-all",
+        "/notify-turns", "/order", "/perf", "/pinnote", "/postal-notice", "/push/ack", "/push/dropped",
+        "/push/landed", "/push/relay", "/push/subscribe", "/push/superseded", "/push/test",
+        "/push/unsubscribe", "/redial", "/rename", "/restart", "/reveal", "/send", "/tag", "/tick",
+        "/tunnels", "/tunnels/askpull", "/tunnels/autoupdate", "/tunnels/checkin", "/tunnels/detach",
+        "/tunnels/forget", "/tunnels/pull", "/tunnels/start", "/tunnels/trust", "/tunnels/trust-mirror",
+        "/tunnels/trust-remote", "/tunnels/update", "/unpinnote", "/update", "/update-dismiss",
+        "/usertodo", "/usertodo/context", "/usertodo/withdraw", "/views", "/walk-root", "/watch",
+        "/watch-pr", "/working",
+    ),
+}
+_PERF_HTTP_ROUTES["OPTIONS"] = tuple(sorted(                 # a preflight asks about a route of any method
+    set(_PERF_HTTP_ROUTES["GET"]) | set(_PERF_HTTP_ROUTES["HEAD"]) | set(_PERF_HTTP_ROUTES["POST"])))
+_PERF_HTTP_FAMILIES = ("/dist/*", "/media/*", "/glossary/*", "/remote/*")   # the collapsed families, keys in their own right
+_PERF_HTTP_ROUTE_SETS = {m: frozenset(v) for m, v in _PERF_HTTP_ROUTES.items()}
+_PERF_HTTP_ANY = frozenset(_PERF_HTTP_ROUTES["OPTIONS"])
+_PERF_ROUTE_SEGMENTS = frozenset(p.strip("/").split("/", 1)[0]          # the first segments a stage mark may keep (_route_seg,
+                                 for p in _PERF_HTTP_ANY | set(_PERF_HTTP_FAMILIES) if p.strip("/"))   # above): the register's,
+#                                                                       every method, and the families' (dist, media, glossary, remote)
+
+_THREAD_KINDS = frozenset((          # the register of the kernel's own thread kinds, for the stack sample's keys (_thread_kind;
+    # kernel.py                      # 2026-09-18): the constant name= of every thread the kernel and the modules it loads
+    "pusher", "jobs", "producer", "parse-warm", "boot-warm", "sdk-boot", "first-cycle-sampler", "model-catalog",
+    "price-refresh", "remote-ws", "romp-move", "user-todo-lost", "ws-send", "judge-child-end",
+    # sdk_backend.py
+    "sdk-boot-notices", "sdk-boot-reconcile", "sdk-idle-queue-drive", "sdk-lease-beat", "sdk-push-session", "test-root-sweep",
+    # codex_backend.py (codex-handshake-clock is a Timer named after construction)
+    "codex-pump", "codex-handshake-clock",
+    # judge.py: the tier threads; their pools' workers read judge-<tier> through the composite rule
+    "index", "triage", "serve-pass",
+))                                   # in-process start, by file. A thread named outside the register reads "other" in the sample
+#                                      (a library's watchdog named with a test path, pytest-timeout's, was served verbatim through
+#                                      a colon rule and failed CI's key grammar); the census test over every construction site
+#                                      holds the register equal to the source both ways, so a new kernel thread kind is caught at
+#                                      review time and a retired one leaves no dead word. A thread that must show its kind is
+#                                      named here, never by a looser rule in _thread_kind.
+_THREAD_KIND_PREFIXES = frozenset((  # the kinds spelled "<kind>:<payload>" (_THREAD_NAME_SEP): the payload (a session name, a sid,
+    "sdk", "sdk-intr",               # a host) never reaches the sample; peer is the postal service's, a separate process the census
+    "codex", "end-host",             # walks all the same
+    "port-up", "romp-refused-mark", "peer",
+))
+_THREAD_KIND_FIXED = frozenset(("main", "handler", "thread", "pool"))   # the words _thread_kind's fixed rules make: MainThread,
+#                                                                        the HTTP server's request threads, Python's default names
+_THREAD_KIND_WORDS = _THREAD_KINDS | _THREAD_KIND_PREFIXES | _THREAD_KIND_FIXED   # every word a key may carry but "other" and the
+#                                                                                   judge-<word> composites: the served key grammar
+
+
 def _perf_http_key(method, path):
-    """The `http` counter key for one request: "METHOD /path" with the query string gone and the
-    high-cardinality families collapsed — /dist/* and /media/* (the bundles, fonts, icons and source
-    maps a dashboard loads: dozens of names that would otherwise fill the HTTP_PATHS slots before a
-    script's first /sessions call) and /remote/<host>/… (a host name per attached kernel; a tailnet
-    host name is not something `romp perf` should print). The route table's fixed paths stay as they
-    are, so GET /perf and POST /perf are separate rows."""
+    """The `http` counter key for one request: "METHOD /path" with the query string gone, the
+    high-cardinality families collapsed, and everything outside the checked-in route table folded to
+    "other". The families: /dist/* and /media/* (the bundles, fonts, icons and source maps a dashboard
+    loads: dozens of names that would otherwise fill the HTTP_PATHS slots before a script's first
+    /sessions call), /glossary/* (one route per glossary TERM: a term is the user's own text, and the
+    lookups are what the counter is for, 2026-09-18) and /remote/<host>/... (a host name per attached
+    kernel; a tailnet host name is not something `romp perf` should print). The fold (2026-09-18): a
+    path is the requester's text, so a scanner's probe, a session id or a home path in a URL stood as
+    a key, and a copy of the snapshot could not be pasted in public. A remote path keeps its op when
+    the op is a route of the same method (/remote/*/sessions, /remote/*/send); a bare /remote/<host>
+    is a key of its own. The route table's fixed paths stay as they are, so GET /perf and POST /perf
+    are separate rows; a handler without a method is judged against every method's routes."""
     if path.startswith("/dist/"):
         path = "/dist/*"
     elif path.startswith("/media/"):
         path = "/media/*"
+    elif path.startswith("/glossary/"):
+        path = "/glossary/*"
     elif path.startswith("/remote/"):
         rest = path[len("/remote/"):]
         i = rest.find("/")
         path = "/remote/*" + (rest[i:] if i >= 0 else "")
+    routes = _PERF_HTTP_ROUTE_SETS.get(method, _PERF_HTTP_ANY) if method else _PERF_HTTP_ANY
+    if not (path in routes or path in _PERF_HTTP_FAMILIES
+            or (path.startswith("/remote/*/") and path[len("/remote/*"):] in routes)):
+        return "other"
     return (method + " " + path) if method else path
 
 
@@ -62386,6 +62531,7 @@ class _JudgeChild:
         self.pid = None
         self.buf = b""
         self.lost_spawns = 0
+        self.done_chars = None                # the last done line's length in characters: judge.child's size (2026-09-18)
         self.swept = False
         self.in_pass = False
 
@@ -62596,6 +62742,7 @@ class _JudgeChild:
                     self._lost_spawn()
                 return None
             self.lost_spawns = 0
+            self.done_chars = len(line)
             return done
 
     def _lost_spawn(self):
@@ -62692,7 +62839,7 @@ def _judge_child_pass(tracking):
     if done is None:
         _PERF_STATS.judge_pass_lost()
         return None
-    _PERF_STATS.judge_child_done(done, pid=_JUDGE_CHILD.pid)
+    _PERF_STATS.judge_child_done(done, pid=_JUDGE_CHILD.pid, chars=_JUDGE_CHILD.done_chars)
     if done.get("recovered"):                              # the child's calls served again after failing: the edge is its own
         try:
             _n = jd.rearm_failed_summaries(int(time.time()), auto=True)

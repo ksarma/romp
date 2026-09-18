@@ -12,6 +12,7 @@ increments on the hot paths and no formatting until a read.
 Drives the REAL Handler over HTTP and the REAL _push with stubbed builders (the test_color_route.py
 and test_tab_meta_push.py patterns). Synthetic fixtures only: placeholder UUIDs, invented names."""
 import base64
+import collections
 import concurrent.futures
 import inspect
 import io
@@ -533,21 +534,45 @@ class Collector(unittest.TestCase):
         snap = self.st.snapshot()
         chat = snap["builds"]["chat"]
         self.assertEqual((chat["built"], chat["cached"]), (5, 2), "the aggregate counts every build as before")
-        rows = {r["sid"]: r for r in chat["bySession"]}
-        self.assertEqual([r["sid"] for r in chat["bySession"]], [B, A, C], "sorted by max, the largest first")
-        self.assertEqual(rows[A], {"sid": A, "first": 100.0, "last": 50.0, "max": 100.0, "n": 2, "cached": 1, "bytes": 1200})
-        self.assertEqual(rows[B], {"sid": B, "first": 20.0, "last": 300.0, "max": 300.0, "n": 2, "cached": 0, "bytes": 60})
-        self.assertEqual(rows[C], {"sid": C, "first": None, "last": None, "max": 0.0, "n": 0, "cached": 1, "bytes": None})
+        rows = chat["bySession"]                                              # served by RANK in max order, never by sid (2026-09-18)
+        self.assertEqual([r["rank"] for r in rows], [1, 2, 3], "sorted by max, the largest first, ranked in that order")
+        self.assertEqual(rows[0], {"rank": 1, "first": 20.0, "last": 300.0, "max": 300.0, "n": 2, "cached": 0, "bytes": 60})     # B
+        self.assertEqual(rows[1], {"rank": 2, "first": 100.0, "last": 50.0, "max": 100.0, "n": 2, "cached": 1, "bytes": 1200})   # A
+        self.assertEqual(rows[2], {"rank": 3, "first": None, "last": None, "max": 0.0, "n": 0, "cached": 1, "bytes": None})     # C
+        self.assertEqual(self.st.chat_by_session[A], {"first": 100.0, "last": 50.0, "max": 100.0, "n": 2, "cached": 1, "bytes": 1200},
+                         "the collector keeps the rows by sid; the snapshot does not")
         self.st.build_chat(False, 0.400, sid=A)
-        rows = {r["sid"]: r for r in self.st.snapshot()["builds"]["chat"]["bySession"]}
-        self.assertEqual((rows[A]["first"], rows[A]["last"], rows[A]["max"]), (100.0, 400.0, 400.0), "first is set once; last and max move")
+        rows = self.st.snapshot()["builds"]["chat"]["bySession"]
+        self.assertEqual((rows[0]["first"], rows[0]["last"], rows[0]["max"]), (100.0, 400.0, 400.0),
+                         "first is set once; last and max move, and A's row now ranks first")
         self.st.chat_row_drop(B)                                              # B's death was certified (_record_death calls this)
-        self.assertEqual(sorted(r["sid"] for r in self.st.snapshot()["builds"]["chat"]["bySession"]), sorted([A, C]))
+        self.assertEqual(sorted(self.st.chat_by_session), sorted([A, C]))
+        self.assertEqual([r["rank"] for r in self.st.snapshot()["builds"]["chat"]["bySession"]], [1, 2], "ranks close up")
         self.st.chat_row_drop("no-such-sid")                                  # a death of a session never built: nothing to drop
         self.assertEqual(len(self.st.snapshot()["builds"]["chat"]["bySession"]), 2)
         # the certified death drives the drop through the real _record_death and the real death sweep's tick over three ticks
         # (tests/test_sdk_registry_blind.py, ChatBuildRowsLeaveWithTheCertifiedDeath); the call sites are executed, not read: PushStages below
         # drives the real _push and the real _push_session_now and reads the rows from the snapshot
+
+    def test_per_session_rows_are_served_by_rank_and_parsed_sessions_as_a_count(self):
+        """builds.chat.bySession named its session in every row and parses.bySid keyed the cold-parse table by the first
+        eight characters of the sid (2026-09-18, a paste-safety review of the snapshot). The rows are served by rank in the
+        block's own order (the largest max first) and the parse table as the number of sessions parsed with the largest
+        per-session count; the collector keeps both by sid for its own bookkeeping (a row leaves with its session's death)."""
+        A, B = "aaaaaaaa-2222-4333-8444-0000000000a1", "bbbbbbbb-2222-4333-8444-0000000000b2"
+        self.st.build_chat(False, 0.100, sid=A, nbytes=10); self.st.build_chat(False, 0.300, sid=B, nbytes=20)
+        self.st.parse(A, 100); self.st.parse(A, 100); self.st.parse(B, 50)
+        snap = self.st.snapshot()
+        text = json.dumps(snap["builds"]["chat"]) + json.dumps(snap["parses"])
+        for probe in (A, B, A[:8], B[:8]):
+            self.assertNotIn(probe, text, "a session id in the served block: %s" % text)
+        self.assertEqual(snap["builds"]["chat"]["bySession"],
+                         [{"rank": 1, "first": 300.0, "last": 300.0, "max": 300.0, "n": 1, "cached": 0, "bytes": 20},
+                          {"rank": 2, "first": 100.0, "last": 100.0, "max": 100.0, "n": 1, "cached": 0, "bytes": 10}])
+        self.assertEqual(snap["parses"]["perSession"], {"sessions": 2, "max": 2})
+        self.assertNotIn("bySid", snap["parses"])
+        self.assertEqual(sorted(self.st.chat_by_session), [A, B], "the collector's own rows stay by sid")
+        self.assertEqual(self.st.parses["bySid"], {A[:8]: 2, B[:8]: 1})
 
     def test_stages_builds_judge(self):
         self.st.stage("push.chat", 0.5); self.st.stage("push.chat", 0.25); self.st.stage("jobs", 0.1)
@@ -568,6 +593,44 @@ class Collector(unittest.TestCase):
         self.assertAlmostEqual(snap["judge"]["ms_mean"], 3000.0)
         self.assertAlmostEqual(snap["judge"]["cpu_ms_sum"] - snap["judge"]["cpu_ms_workers"], 250.0,
                                msg="the tier threads' CPU, apart from the pool workers' share")
+
+    def test_judge_child_is_served_as_a_size_and_a_status_never_the_line(self):
+        """judge.child stood as the judges' child's done line verbatim (2026-09-18, a paste-safety review of the snapshot):
+        its failures.first is an exception message, which names paths and quotes session text. The served block is the
+        line's length in characters, one of two fixed status tokens, the line's per-pass numbers and its four counter
+        blocks as the child sent them (numbers are not a leak); the failures are a count; the line's text never reaches
+        the snapshot."""
+        home = "/home/tester/.claude/projects/-home-tester-code-notes-api/%s.jsonl" % SID
+        first = "OSError: [Errno 2] No such file or directory: '%s'" % home
+        blocks = {"recordCache": {"entries": 1, "wholeReads": {"leaf<-_parse": {"count": 1, "bytes": 5}}},
+                  "asmCheckpoint": {"restored": 1, "hydratedBy": {"_unit_text<-build_session": 10}},
+                  "parses": {"misses": 1, "hits": 0}, "goalIo": {"loads": 1}}
+        done = {"op": "done", "seq": 7, "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0,
+                "failures": {"count": 2, "first": first}, "recovered": True, **blocks}
+        self.st.judge_child_done(done, pid=4242)
+        child = self.st.snapshot()["judge"]["child"]
+        text = json.dumps(child)
+        self.assertNotIn(SID, text, "the session id in the first failure's path: %s" % text)
+        self.assertNotIn("/home/", text, "the path in the first failure: %s" % text)
+        self.assertNotIn("first", text, "the failure text itself: %s" % text)
+        t = child.pop("t")
+        self.assertIsInstance(t, float)
+        compact = len(json.dumps(done, separators=(",", ":")))
+        self.assertEqual(child, {"seq": 7, "pid": 4242, "chars": compact, "status": "failed", "failures": 2, "recovered": True,
+                                 "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0, **blocks},
+                         "no reader count given: the line re-encoded compactly is its size; the four blocks ride as sent")
+        self.st.judge_child_done({"op": "done", "seq": 9, "recordCache": "not a block", "goalIo": {"loads": 2}}, pid=4242)
+        child = self.st.snapshot()["judge"]["child"]
+        self.assertEqual((child.get("recordCache"), child.get("goalIo"), "asmCheckpoint" in child), (None, {"loads": 2}, False),
+                         "a block rides only as a dict, and only when sent")
+        self.assertEqual(self.st.snapshot()["judge"]["cpu_ms_child_workers"], 4.0, "the CPU folds as before")
+        line = json.dumps(done) + "\n"
+        self.st.judge_child_done(done, pid=4242, chars=len(line))
+        self.assertEqual(self.st.snapshot()["judge"]["child"]["chars"], len(line), "the reader's own count when it has one")
+        self.st.judge_child_done({"op": "done", "seq": 8, "wallMs": "12", "tierStarts": True, "failures": None}, pid=4242)
+        child = self.st.snapshot()["judge"]["child"]
+        self.assertEqual((child["status"], child["failures"], child["wallMs"], child["tierStarts"]), ("ok", 0, None, None),
+                         "a non-number where a number belongs is served as null, never as itself")
 
     def test_sends_classify_by_kind_and_slot_name(self):
         self.st.send(("chat", SID), "full", 1000)            # a tuple dedup key: the slot is its first element
@@ -649,6 +712,40 @@ class Collector(unittest.TestCase):
         self.assertNotIn("none", by_app)
         self.assertEqual(by_app["other"]["frames"], 41 - km._PerfStats.APPS, "none is a name like any other to the cap")
 
+    def test_connect_push_keys_only_identifier_app_names_and_caps_them(self):
+        """connectPush.byApp keyed a connect push by the app name the client DECLARED on its socket URL, verbatim and
+        unbounded (2026-09-18, a paste-safety review of the snapshot): a client could put any text, a session id or a home
+        path included, into a served key. A name is a key only when it fits the identifier grammar (_PERF_IDENT) and while
+        the table holds fewer than APPS distinct names; everything else counts under `other`, a missing name under `none`
+        while the table has room for that word and under `other` past the cap (the rule pusher.clients.byApp follows); the
+        aggregate counts every push as before."""
+        self.st.connect_push("chat", 0.010)
+        self.st.connect_push("<b>%s</b> /home/tester" % SID, 0.020)
+        self.st.connect_push("chat\n", 0.050)   # $ matches before a trailing newline: the check is a fullmatch (match let this through as a key)
+        self.st.connect_push("", 0.030); self.st.connect_push(None, 0.040)
+        by = self.st.snapshot()["pusher"]["connectPush"]["byApp"]
+        self.assertNotIn(SID, json.dumps(by)); self.assertNotIn("/home/", json.dumps(by))
+        self.assertNotIn("chat\n", by, "a name ending in a newline is not a key")
+        self.assertEqual(sorted(by), ["chat", "none", "other"])
+        self.assertEqual((by["other"]["count"], by["none"]["count"], by["chat"]["count"]), (2, 2, 1))
+        self.assertAlmostEqual(by["other"]["ms_sum"], 70.0); self.assertAlmostEqual(by["none"]["ms_max"], 40.0)
+        self.assertEqual(self.st.snapshot()["pusher"]["connectPush"]["count"], 5, "the aggregate counts every push")
+        for i in range(km._PerfStats.APPS + 5):
+            self.st.connect_push("app%d" % i, 0.001)
+        by = self.st.snapshot()["pusher"]["connectPush"]["byApp"]
+        self.assertEqual(len(by), km._PerfStats.APPS, "at most APPS names; other, already held, is one of them (the http table's rule)")
+        self.assertEqual(by["other"]["count"], 2 + (km._PerfStats.APPS + 5) - (km._PerfStats.APPS - 3),
+                         "the names past the cap join other (chat, none and other held three of the slots)")
+        self.st.connect_push("chat", 0.001)
+        self.assertEqual(self.st.snapshot()["pusher"]["connectPush"]["byApp"]["chat"]["count"], 2, "a held name still counts under itself")
+        st = km._PerfStats()
+        for i in range(km._PerfStats.APPS):
+            st.connect_push("app%d" % i, 0.001)
+        st.connect_push(None, 0.001)                            # an app-less client past the cap: other, no none row seated
+        by = st.snapshot()["pusher"]["connectPush"]["byApp"]
+        self.assertNotIn("none", by)
+        self.assertEqual((len(by), by["other"]["count"]), (km._PerfStats.APPS + 1, 1), "none is a name like any other to the cap; other seats past it")
+
     def test_http_keys_are_capped_and_ws_adds_no_time(self):
         cap = km._PerfStats.HTTP_PATHS
         for i in range(cap + 36):
@@ -672,18 +769,57 @@ class Collector(unittest.TestCase):
         on 2026-09-07). The count comes from the do_* dispatch source (`p == "/x"`, `u.path == "/x"` and the
         `in ("/x", "/y")` tuples; inspect.getsource unwraps the timing decorator), so this trips when routes
         outgrow the headroom: 1.5x the literal count, room for the collapsed /dist/*, /media/* and /remote/*/…
-        families and an OPTIONS preflight per cross-origin POST route."""
+        families and an OPTIONS preflight per cross-origin POST route. The same source gives the register
+        its two halves and this test holds both: the literal routes, equal to _PERF_HTTP_ROUTES method by
+        method, and the `startswith` prefixes (`p.startswith("/x/")`, `u.path.startswith(...)`, a tuple of
+        them), equal to _PERF_HTTP_FAMILIES and each folding in _perf_http_key, so a prefix-dispatched family
+        added later without a family line and a fold branch fails here instead of counting under `other`
+        (2026-09-18, the review's finding: the test held the literals alone while the register's comment
+        claimed any unregistered route failed it)."""
         lit = re.compile(r'(?:\bp|u\.path) (?:==|in) (?:"(/[^"]*)"|\(((?:"/[^"]*"(?:, )?)+)\))')
         n = 0
+        derived = {}
         for meth in ("do_GET", "do_HEAD", "do_OPTIONS", "do_POST"):
             src = inspect.getsource(getattr(km.Handler, meth))
             paths = set()
             for m in lit.finditer(src):
                 paths.update([m.group(1)] if m.group(1) is not None else re.findall(r'"(/[^"]*)"', m.group(2)))
             n += len(paths)
+            derived[meth[3:]] = paths
         self.assertGreaterEqual(n, 80, "the derivation lost the route table (did the dispatch shape change?)")
         self.assertGreaterEqual(km._PerfStats.HTTP_PATHS, int(n * 1.5),
                                 "%d fixed routes: raise HTTP_PATHS, or routes land in other for the kernel's lifetime" % n)
+        # the checked-in register equals the dispatches, method by method (2026-09-18): a route added to a do_* without a
+        # line in _PERF_HTTP_ROUTES would count under `other` for the kernel's lifetime, and a line without a route would
+        # admit a key the kernel never serves; either way this says which path
+        self.assertEqual(derived["OPTIONS"], set(), "do_OPTIONS answers any route's preflight and dispatches on no path")
+        for meth in ("GET", "HEAD", "POST"):
+            self.assertEqual(set(km._PERF_HTTP_ROUTES[meth]), derived[meth],
+                             "%s: the register and the dispatches differ by %s" % (meth, sorted(set(km._PERF_HTTP_ROUTES[meth]) ^ derived[meth])))
+            self.assertEqual(list(km._PERF_HTTP_ROUTES[meth]), sorted(set(km._PERF_HTTP_ROUTES[meth])), "%s: sorted, no repeats" % meth)
+        self.assertEqual(set(km._PERF_HTTP_ROUTES["OPTIONS"]), derived["GET"] | derived["HEAD"] | derived["POST"], "a preflight for any route")
+        # the prefix families: a prefix-dispatched route (the shape /dist/, /media/, /glossary/ and /remote/ use; do_HEAD and
+        # do_POST dispatch /remote/ on u.path) is neither a literal nor a register line, so the checks above would let one
+        # fold to `other` silently. The prefixes come from the same source and equal the families, and each folds in
+        # _perf_http_key ITSELF: a family line without an elif branch there passes the set comparison and still counts
+        # under other
+        pre = re.compile(r'(?:\bp|u\.path)\.startswith\((?:"(/[^"]*)"|\(((?:"/[^"]*"(?:, )?)+),?\))\)')
+        prefixes = {}
+        for meth in ("do_GET", "do_HEAD", "do_OPTIONS", "do_POST"):
+            src = inspect.getsource(getattr(km.Handler, meth))
+            found = set()
+            for m in pre.finditer(src):
+                found.update([m.group(1)] if m.group(1) is not None else re.findall(r'"(/[^"]*)"', m.group(2)))
+            prefixes[meth[3:]] = found
+        families = {fam[:-1] for fam in km._PERF_HTTP_FAMILIES}
+        self.assertTrue(all(fam.endswith("/*") for fam in km._PERF_HTTP_FAMILIES), km._PERF_HTTP_FAMILIES)
+        self.assertEqual(set().union(*prefixes.values()), families,
+                         "the startswith prefixes in the dispatches and the collapsed families differ by %s"
+                         % sorted(set().union(*prefixes.values()) ^ families))
+        for meth, found in sorted(prefixes.items()):
+            for prefix in sorted(found):
+                self.assertEqual(km._perf_http_key(meth, prefix + "x"), "%s %s*" % (meth, prefix),
+                                 "%s %s: a family the register names has to fold in _perf_http_key too" % (meth, prefix))
 
     def test_http_key_is_method_plus_normalized_path(self):
         key = km._perf_http_key
@@ -692,10 +828,40 @@ class Collector(unittest.TestCase):
         self.assertEqual(key("GET", "/dist/render.js"), "GET /dist/*")
         self.assertEqual(key("GET", "/dist/fonts/a-b-c.woff2"), "GET /dist/*", "sixty font files: one key")
         self.assertEqual(key("GET", "/media/romp-app-192.png"), "GET /media/*")
+        self.assertEqual(key("GET", "/glossary/Quarterly%20Roadmap"), "GET /glossary/*", "a glossary term is the user's text: the lookups count, the term does not")
+        self.assertEqual(key("GET", "/glossary/"), "GET /glossary/*")
         self.assertEqual(key("GET", "/remote/TESTHOST/ws"), "GET /remote/*/ws", "no host name in a key")
         self.assertEqual(key("HEAD", "/remote/TESTHOST/file"), "HEAD /remote/*/file")
         self.assertEqual(key("GET", "/remote/TESTHOST"), "GET /remote/*")
         self.assertEqual(key("", "/version"), "/version", "a handler without a method: the path alone")
+
+    def test_http_keys_outside_the_route_table_fold_to_other(self):
+        """A request's path is the requester's text (2026-09-18, a paste-safety review of the snapshot): a scanner's probe, a
+        session id or a home path typed into a URL, an attached host's op stood as keys in the served http table. Every key
+        is now one of the checked-in routes (_PERF_HTTP_ROUTES, per method), a collapsed family, or `other`; a remote path
+        keeps its op only when the op is a route of the same method; a CORS preflight is allowed any route."""
+        key = km._perf_http_key
+        self.assertEqual(key("GET", "/nope/" + SID), "other", "a path that is no route names nothing")
+        self.assertEqual(key("GET", "/home/tester/.claude/projects/x/" + SID + ".jsonl"), "other")
+        self.assertEqual(key("GET", "/remote/TESTHOST/" + SID), "other", "a remote path whose op is no route")
+        self.assertEqual(key("GET", "/remote/TESTHOST/sessions"), "GET /remote/*/sessions", "a remote path whose op is a GET route")
+        self.assertEqual(key("POST", "/remote/TESTHOST/send"), "POST /remote/*/send", "the relay: the op is a POST route")
+        self.assertEqual(key("GET", "/remote/TESTHOST/send"), "other", "the same op under the wrong method")
+        self.assertEqual(key("HEAD", "/file"), "HEAD /file")
+        self.assertEqual(key("HEAD", "/version"), "other", "do_HEAD dispatches /file alone")
+        self.assertEqual(key("POST", "/version"), "other", "a GET route asked with POST is no route")
+        self.assertEqual(key("OPTIONS", "/perf"), "OPTIONS /perf", "a preflight for any route")
+        self.assertEqual(key("OPTIONS", "/nope"), "other")
+        self.assertEqual(key("GET", "/PERF"), "other", "the dispatches are case-sensitive, so is the register")
+        self.assertEqual(key("GET", "//perf"), "other")
+        self.assertEqual(key("GET", "/perf/"), "other")
+        self.assertEqual(key("", "/nope"), "other", "a handler without a method is judged against every method's routes")
+        self.assertEqual(key("GET", "/ws"), "GET /ws"); self.assertEqual(key("GET", "/"), "GET /")
+        for meth in ("GET", "HEAD", "POST"):                   # every registered route is its own key under its method
+            for path in km._PERF_HTTP_ROUTES[meth]:
+                self.assertEqual(key(meth, path), "%s %s" % (meth, path))
+        for fam in km._PERF_HTTP_FAMILIES:
+            self.assertEqual(key("GET", fam), "GET " + fam, "a collapsed family is a key in its own right")
 
     def test_reset_starts_over_and_moves_since(self):
         self.st.cycle(0.1); self.st.http_request("GET /x", 0.1)
@@ -1357,13 +1523,16 @@ class PushStages(unittest.TestCase):
         # the leaf's byte size, the cached site hands the sid; a second push over the same transcript raises `cached` and leaves n
         km._PERF_STATS.chat_by_session.pop(SID, None)
         km._push([self.chat, self.tl])
-        rows = {r["sid"]: r for r in km._PERF_STATS.snapshot()["builds"]["chat"]["bySession"]}
+        rows = km._PERF_STATS.chat_by_session                  # the collector's rows by sid: the served list ranks them (2026-09-18)
         self.assertIn(SID, rows, "the built site hands the sid: %s" % sorted(rows))
-        row = rows[SID]
+        row = dict(rows[SID])
         self.assertEqual((row["n"], row["cached"], row["bytes"]), (1, 0, os.path.getsize(self.transcript)), row)
         self.assertGreaterEqual(row["first"], 5.0, "the build's sleep is the first build's ms"); self.assertEqual((row["last"], row["max"]), (row["first"], row["first"]))
+        served = km._PERF_STATS.snapshot()["builds"]["chat"]["bySession"]
+        self.assertIn(row, [{k: v for k, v in r.items() if k != "rank"} for r in served], "the same row rides the served list, by rank")
+        self.assertFalse([r for r in served if "sid" in r], "no row names its session")
         km._push([self.chat, self.tl])
-        row2 = {r["sid"]: r for r in km._PERF_STATS.snapshot()["builds"]["chat"]["bySession"]}[SID]
+        row2 = km._PERF_STATS.chat_by_session[SID]
         self.assertEqual((row2["n"], row2["cached"], row2["first"]), (1, 1, row["first"]), "the cached site hands the sid; n and first stand")
 
     def test_the_targeted_push_records_its_build_in_the_row_and_the_aggregate(self):
@@ -1381,8 +1550,9 @@ class PushStages(unittest.TestCase):
                 km._clients[:] = saved[0]
         self.assertEqual(self.builds, 1, "the targeted push built the session")
         snap = km._PERF_STATS.snapshot()["builds"]["chat"]
-        row = {r["sid"]: r for r in snap["bySession"]}.get(SID)
+        row = km._PERF_STATS.chat_by_session.get(SID)          # the collector's row by sid; the served list ranks it (2026-09-18)
         self.assertIsNotNone(row, "the targeted push feeds the per-session row")
+        self.assertIn(dict(row), [{k: v for k, v in r.items() if k != "rank"} for r in snap["bySession"]], "and the served list carries it")
         self.assertEqual((row["n"], row["cached"], row["bytes"]), (1, 0, os.path.getsize(self.transcript)), row)
         self.assertGreaterEqual(row["first"], 5.0)
         self.assertEqual(snap["built"] - saved[1]["built"], 1, "and the aggregate")
@@ -1501,8 +1671,8 @@ class PerfRoutes(unittest.TestCase):
         rows = snap["stacks"]
         self.assertIsInstance(rows, dict, "?stacks=1 fills the slot the plain snapshot leaves null")
         self.assertTrue(rows and all(set(r) == {"self", "stage", "frames"} for r in rows.values()), list(rows.items())[:1])
-        key = "%d probe-thread" % th.ident
-        self.assertIn(key, rows, sorted(rows))                              # keyed "<ident> <kind>" (T358's duplicate-worker case)
+        key = "%d other" % th.ident                                         # a test-only name is outside the register: the kind
+        self.assertIn(key, rows, sorted(rows))                              #  reads other, the ident finds the row (T358's case)
         mine = rows[key]
         self.assertEqual(mine["stage"], "jobs.probe", mine)
         self.assertTrue(any(f.startswith("wait (threading.py:") for f in mine["frames"]), mine["frames"])
@@ -1518,8 +1688,9 @@ class PerfRoutes(unittest.TestCase):
 
     def test_the_sample_keys_threads_by_kind_never_by_a_session_name(self):
         """Round one, medium 1: an SDK session thread is named "sdk:<session name>", and the sample's key carried it where
-        the reference promised no session content. Keys are "<ident> <kind>", the kind _thread_kind's (the name before the
-        convention's separator, a default name's target function, a pool worker's prefix)."""
+        the reference promised no session content. Keys are "<ident> <kind>", the kind _thread_kind's: a word from the register
+        beside _PERF_ROUTE_SEGMENTS (a registered prefix before the convention's separator, a registered constant name, the fixed
+        forms for Python's default names, the HTTP server's threads and the main thread) or `other` (2026-09-18)."""
         gate = threading.Event()
         th = threading.Thread(target=gate.wait, name="sdk:notes-api-web", daemon=True); th.start()
         try:
@@ -1529,31 +1700,47 @@ class PerfRoutes(unittest.TestCase):
         self.assertIn("%d sdk" % th.ident, rows, sorted(rows))
         self.assertNotIn("notes-api-web", json.dumps(rows), "no session name anywhere in the sample")
         self.assertEqual((km._thread_kind("sdk-intr:web"), km._thread_kind("Thread-12 (process_request_thread)"), km._thread_kind("pusher"),
-                          km._thread_kind("MainThread"), km._thread_kind(None)), ("sdk-intr", "handler", "pusher", "main", "?"))
-        # round two: every identity-bearing worker follows kind:payload, and a default name keeps its target function
+                          km._thread_kind("MainThread"), km._thread_kind(None)), ("sdk-intr", "handler", "pusher", "main", "other"))
+        # round two: every identity-bearing worker follows kind:payload; the register (2026-09-18): a default name reads thread,
+        # its target function being the row's own fourth frame, and a judge pool's worker carries the kind of the thread that
+        # built the pool, a nested pool and one built on a request handler included
         self.assertEqual((km._thread_kind("codex:notes-api-web"), km._thread_kind("end-host:11111111"), km._thread_kind("peer:TESTHOST")),
                          ("codex", "end-host", "peer"))
         self.assertEqual((km._thread_kind("Thread-7 (_ask_poll)"), km._thread_kind("Thread-9 (serve_forever)"), km._thread_kind("Thread-3")),
-                         ("_ask_poll", "serve_forever", "thread"), "a default name keeps the target function, the identity a slow-boot read needs")
-        self.assertEqual((km._thread_kind("judge-index_2"), km._thread_kind("ThreadPoolExecutor-0_4")), ("judge-index", "pool"))
+                         ("thread", "thread", "thread"), "a default name is the register's word for it, never the target's text")
+        self.assertEqual((km._thread_kind("judge-index_2"), km._thread_kind("ThreadPoolExecutor-0_4"), km._thread_kind("judge-jobs_0"),
+                          km._thread_kind("judge-judge-index_2_0"), km._thread_kind("judge-Thread-4 (process_request_thread)_1")),
+                         ("judge-index", "pool", "judge-jobs", "judge-judge-index", "judge-handler"))
+        # outside the register: a prefix the convention never named, a session name spelled without the separator, a pool
+        # built on an unregistered thread, a library's watchdog named with a test path, the empty name
+        self.assertEqual((km._thread_kind("watchdog:notes-api-web"), km._thread_kind("notes-api-web"), km._thread_kind("judge-nope_0"),
+                          km._thread_kind("pytest_timeout tests/test_perf_stats.py::Case::test"), km._thread_kind("")),
+                         ("other",) * 5, "a name outside the register reads other")
         gate = threading.Event()
         th = threading.Thread(target=gate.wait, daemon=True); th.start()   # unnamed: Python's "Thread-N (wait)"
         try:
             rows = km._thread_stacks()
         finally:
             gate.set(); th.join(5)
-        self.assertIn("%d wait" % th.ident, rows, sorted(rows))
+        self.assertIn("%d thread" % th.ident, rows, sorted(rows))
 
     def test_every_named_thread_site_maps_to_a_kind_without_an_identity(self):
         """Round two, medium 1, and round three's medium 1: a census of every thread and pool construction site in the kernel,
         every module the kernel loads in-process (the backends, the judge, the credentials helper) and the postal service,
         walked with the ast module (a regex could not cross a newline and missed five named sites, the Codex worker's among
-        them). A constant name is a kind already; a name with a dynamic part (a session name, a sid, a host) must carry it after
-        the convention's separator so _thread_kind drops it; a name built any other way fails, and so does a name the census
-        cannot see: a Thread's positional name (its third positional argument), a Timer with a positional beyond its interval
-        and function, keywords passed through **kwargs, or an aliased constructor (an assignment whose value is one of the
-        constructors; ctor_of resolves Name and Attribute spellings only, so an alias would hide every site built through it).
-        Every kind family the census derives must appear in the reference's kind list, so a new kind cannot ship undocumented."""
+        them). The register beside _PERF_ROUTE_SEGMENTS is held equal to the census both ways (2026-09-18, after a library's
+        watchdog thread reached CI's served sample by name): a constant name must be a word of _THREAD_KINDS, so a new kernel
+        thread kind the sample would read as `other` is caught here, and every word there must be a name some site starts, so a
+        retired thread leaves no dead word; a name with a dynamic part (a session name, a sid, a host) must carry it after the
+        convention's separator with a prefix in _THREAD_KIND_PREFIXES, held equal to the census the same way, so _thread_kind
+        keeps the prefix and drops the payload. A Thread renamed after construction (`<thread>.name = "..."`, the Codex handshake
+        clock) is a site too when the name is a constant; a dynamic rename cannot be told from a session object's name field
+        statically and is left to the fold, which reads it `other`. A name built any other way fails, and so does a name the
+        census cannot see: a Thread's positional name (its third positional argument), a Timer with a positional beyond its
+        interval and function, keywords passed through **kwargs, or an aliased constructor (an assignment whose value is one of
+        the constructors; ctor_of resolves Name and Attribute spellings only, so an alias would hide every site built through
+        it). Every kind family the census derives must appear in the reference's kind list, so a new kind cannot ship
+        undocumented."""
         import ast, re
         root = os.path.dirname(BIN)
         files = [os.path.join(root, "kernel", f) for f in ("kernel.py", "sdk_backend.py", "codex_backend.py", "session_host.py",
@@ -1576,7 +1763,7 @@ class PerfRoutes(unittest.TestCase):
             if isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr == "format" and isinstance(v.func.value, ast.Constant):
                 return v.func.value.value.split("{")[0], True
             return None, None
-        sites, named, bad, dyn_kinds, per_file = 0, [], [], set(), {}
+        sites, named, bad, dyn_kinds, consts, per_file = 0, [], [], set(), set(), {}
         for f in files:
             src = open(f, encoding="utf-8").read()
             tree = ast.parse(src)
@@ -1588,6 +1775,12 @@ class PerfRoutes(unittest.TestCase):
                 if isinstance(node, ast.Assign) and isinstance(node.value, (ast.Name, ast.Attribute)) and ctor_of(ast.Call(func=node.value, args=[], keywords=[])) \
                         and not all(isinstance(tg, ast.Name) and tg.id in CTORS for tg in node.targets):   # judge.py rebinds ThreadPoolExecutor
                     bad.append(("%s:%d" % (os.path.basename(f), node.lineno), "a constructor aliased into a name the census cannot follow", ast.dump(node.value)[:60]))   # to its timed subclass: both names are constructors, so every site stays visible
+                if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Attribute) \
+                        and node.targets[0].attr == "name" and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                    label = "%s:%d" % (os.path.basename(f), node.lineno)    # a Thread renamed after construction with a constant
+                    named.append(label); consts.add(node.value.value)        #  (the Codex handshake clock): a register word too
+                    if km._thread_kind(node.value.value) != node.value.value:
+                        bad.append((label, "a constant rename outside the register (_THREAD_KINDS): the sample would read it other", node.value.value))
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call) or ctor_of(node) is None:
                     continue
@@ -1615,14 +1808,21 @@ class PerfRoutes(unittest.TestCase):
                     dyn_kinds.add(kind)                          # a kind with a payload is a documented family (sdk, codex, ...)
                 else:
                     kind = km._thread_kind(static if kw.arg == "name" else static + "_0")   # a pool prefix names its workers <prefix>_N
+                    if kw.arg == "name":
+                        consts.add(static)
                     if kind != static or re.search(r"[/\\]|[0-9a-f]{8}-", static):
-                        bad.append((label, "a constant name that is not a plain kind", kind))
+                        bad.append((label, "a constant name outside the register (_THREAD_KINDS): the sample would read it other", kind))
         self.assertGreaterEqual(sites, 60, "the census walked the construction sites: %d" % sites)
         self.assertGreaterEqual(len(named), 23, "the census found every named site, the multi-line ones included: %r" % named)
         self.assertTrue(any(l.startswith("codex_backend.py:") for l in named), "the Codex worker's site is walked: %r" % named)
         self.assertGreaterEqual(per_file.get("credentials.py", 0), 1, "the credentials helper's Timer is a construction site the census walked: %r" % per_file)
         self.assertGreaterEqual(per_file.get("judge.py", 0), 7, "the judge tiers' pools are construction sites the census walked: %r" % per_file)
-        self.assertEqual(bad, [], "every named thread maps to a kind with no identity in it")
+        self.assertEqual(bad, [], "every named thread maps to a register word with no identity in it")
+        self.assertEqual(sorted(km._THREAD_KINDS - consts), [], "every register word is a constant name some site starts: a retired thread leaves no dead word")
+        self.assertEqual(sorted(km._THREAD_KIND_PREFIXES - dyn_kinds), [], "every registered prefix is a kind some site spells with a payload")
+        self.assertEqual(sorted(dyn_kinds - km._THREAD_KIND_PREFIXES), [], "every kind spelled with a payload is a registered prefix")
+        self.assertTrue(km._THREAD_KINDS.isdisjoint(km._THREAD_KIND_PREFIXES) and km._THREAD_KIND_FIXED.isdisjoint(km._THREAD_KINDS | km._THREAD_KIND_PREFIXES)
+                        and "other" not in km._THREAD_KIND_WORDS, "the register's three parts are disjoint, and other is the fold's word alone")
         ref = open(os.path.join(root, "docs", "reference.md"), encoding="utf-8").read()
         para = ref[ref.index("- `stacks`: every live thread's stack"):]
         para = para[:para.index("\n- ", 10)]
@@ -1717,13 +1917,16 @@ class PerfRoutes(unittest.TestCase):
         self.assertGreater(after["ms"], before["ms"])
 
     def test_head_and_options_are_counted_too(self):
-        head0, opt0 = self._http("HEAD /version"), self._http("OPTIONS /perf")
+        head0, opt0, other0 = self._http("HEAD /file"), self._http("OPTIONS /perf"), self._http("other")
         with _HttpWatch() as w:
-            self._req("HEAD", "/version", token=False)
+            self._req("HEAD", "/file")                          # do_HEAD's one route (the PDF chip's existence probe)
+            self._req("HEAD", "/version", token=False)          # no HEAD route: counted, under `other` (2026-09-18)
             self._req("OPTIONS", "/perf")
-            self.assertTrue(w.wait_for("HEAD /version", 1))
+            self.assertTrue(w.wait_for("HEAD /file", 1))
+            self.assertTrue(w.wait_for("other", other0["count"] + 1))
             self.assertTrue(w.wait_for("OPTIONS /perf", 1))
-        self.assertEqual(self._http("HEAD /version")["count"], head0["count"] + 1, "a /file probe storm is visible")
+        self.assertEqual(self._http("HEAD /file")["count"], head0["count"] + 1, "a /file probe storm is visible")
+        self.assertEqual(self._http("other")["count"], other0["count"] + 1, "a HEAD of a route do_HEAD does not serve counts as other")
         self.assertEqual(self._http("OPTIONS /perf")["count"], opt0["count"] + 1, "a preflight burst is visible")
 
     def test_a_ws_upgrade_is_counted_when_it_arrives(self):
@@ -1749,20 +1952,22 @@ class PerfRoutes(unittest.TestCase):
 
 class StacksField(unittest.TestCase):
     """The perf route's `stacks` (T358, a debugging aid behind ROMP_PERF_STACKS; T401's sample): every thread's frames, keyed by
-    the thread's ident WITH its kind, so two workers sharing a kind stay two entries (the duplicate-worker case the aid is for);
-    None without the switch."""
+    the thread's ident WITH its kind, so two workers sharing a kind stay two entries (the duplicate-worker case the aid is for),
+    two threads outside the register, both `other`, included; None without the switch."""
     def test_two_threads_sharing_a_name_are_two_entries(self):
         import threading
         from unittest import mock
         gate = threading.Event()
-        ths = [threading.Thread(target=gate.wait, name="same-name-worker", daemon=True) for _ in range(2)]
+        ths = [threading.Thread(target=gate.wait, name="ws-send", daemon=True) for _ in range(2)]   # a register kind, shared
         for t in ths:
             t.start()
         try:
             with mock.patch.dict(os.environ, {"ROMP_PERF_STACKS": "1"}):
                 snap = km._PerfStats().snapshot()
-            keys = [k for k in (snap.get("stacks") or {}) if k.endswith(" same-name-worker")]
-            self.assertEqual(len(keys), 2, "one entry per thread, the name carried: %s" % sorted(snap.get("stacks") or {}))
+            idents = {t.ident for t in ths}
+            keys = [k for k in (snap.get("stacks") or {}) if int(k.split()[0]) in idents]
+            self.assertEqual(len(keys), 2, "one entry per thread: %s" % sorted(snap.get("stacks") or {}))
+            self.assertTrue(all(k.endswith(" ws-send") for k in keys), "the kind carried: %s" % keys)
             self.assertEqual(len(set(keys)), 2, "keyed by ident: distinct")
             self.assertTrue(all(str(t.ident) in k for t, k in zip(sorted(ths, key=lambda t: t.ident), sorted(keys, key=lambda k: int(k.split()[0])))))
             for k in keys:                                                   # the value shape (T401): the row the served
@@ -1778,6 +1983,29 @@ class StacksField(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("ROMP_PERF_STACKS", None)
             self.assertIsNone(km._PerfStats().snapshot()["stacks"], "None without the switch")
+
+    def test_two_threads_outside_the_register_are_two_entries_keyed_other(self):
+        """2026-09-18: two threads whose names the register does not hold (a library's watchdog named with a test path, a worker
+        named with an id) both read `other` and stay two rows, the ident half of the key keeping them apart; neither name
+        reaches the sample."""
+        gate = threading.Event()
+        names = ("pytest_timeout tests/test_perf_stats.py::StacksField::test_x", "worker 11111111-2222-3333-4444-555555555555")
+        ths = [threading.Thread(target=gate.wait, name=n, daemon=True) for n in names]
+        for t in ths:
+            t.start()
+        try:
+            rows = km._thread_stacks()
+        finally:
+            gate.set()
+            for t in ths:
+                t.join(timeout=5)
+        keys = ["%d other" % t.ident for t in ths]
+        self.assertEqual(len(set(keys)), 2, keys)
+        for k in keys:
+            self.assertIn(k, rows, sorted(rows))
+            self.assertTrue(rows[k]["frames"][-1].startswith("wait ("), rows[k]["frames"])
+        text = json.dumps(rows)
+        self.assertFalse(any(n in text for n in names), "no planted name in the sample")
 
 class UserAgentKind(unittest.TestCase):
     """_ua_kind: the browser kind of a dial's User-Agent header, one of WS_UA_KINDS, never the header and never a version
@@ -1881,6 +2109,291 @@ class UserAgentKind(unittest.TestCase):
             srv.server_close()
         self.assertEqual(gone, {}, "both clients retired from _clients once their sockets closed")
 
+
+class ServedSnapshotIsPasteSafe(unittest.TestCase):
+    """The served GET /perf snapshot carries no absolute path, no session id (a uuid or a 32-hex token) and no
+    verbatim session text, in any key or string value, so a copy of it can be pasted in public (an issue, a chat)
+    and still read as diagnosis (2026-09-18). Every leak this test plants goes in through a writer the collector
+    takes from the machine or from a client: the JSONL reader's per-path byte table (a transcript under a home
+    directory), the judges' child's done line (an exception message naming that path), the per-session chat timer
+    and the cold-parse table (sids), the http table (a glossary term, a scanner's path with a sid in it, an
+    attached host's name, a home path), a client's declared app name, on its connect push and on a frame its
+    sender wrote, and the stack sample's stage mark (a request handler's, made from the in-flight URL through
+    _route_seg, with the sample switched on so the `stacks` block rides in the walk and no served block sits outside
+    it). Keys are the leak vectors, so every dict
+    key must fit an identifier grammar (letters, digits, underscore, dot, dash) except inside the blocks named
+    below: `http` (a member of the image of _perf_http_key: METHOD /path over the checked-in route list, the
+    families, the remote star form, or `other`; a character grammar stood here first and admitted any path-shaped
+    key), `stacks` (an ident and a kind), and the tables whose keys join fixed
+    identifiers with `:` and `<-` (JOINED_KEY_BLOCKS: a stage mark, a reader kind and a calling function in the byte
+    tables; a phase and a reason code in the assembly counters; the same tables again under judge.child). A string
+    value is held to the same rules and to two more: no free text (whitespace) outside the frame strings of the
+    stack sample, which have their own grammar, and no 40-hex token (a checkpoint document's name). The walk
+    runs over a fresh collector's snapshot(), the same function the route serves, so the module-global counters other
+    test modules filled in this process are walked too; the planted reads are removed after."""
+
+    IDENT = re.compile(r"^[A-Za-z0-9_.-]+$")
+    _KIND_WORDS = getattr(km, "_THREAD_KIND_WORDS", None)         # the stack sample's "<ident> <kind>" (_thread_stacks): a word of
+    STACKS_KEY = re.compile(r"^[0-9]+ (?:(?:judge-)*(?:%s)|other)$" % "|".join(sorted(map(re.escape, _KIND_WORDS)))) if _KIND_WORDS \
+        else re.compile(r"^[0-9]+ (?:[A-Za-z0-9_.-]+|\?)$")       # the kernel's register (a judge pool's worker composes one
+    #                                                              with judge-) or other, nothing else: a thread's name is never
+    #                                                              a key (2026-09-18: a library's watchdog named with a test path
+    #                                                              reached CI's sample verbatim). A tree before the register gets
+    #                                                              the character grammar that stood here, so the fails-before run
+    #                                                              names the leaking sites, not this class
+    FRAME = re.compile(r"^(?:[A-Za-z0-9_]+|<[a-z]+>) \(<?[A-Za-z0-9_. -]+>?:[0-9]+\)$")   # "function (file:line)": a code object's
+    #                                                                                     name and its file's basename, the
+    #                                                                                     interpreter's <lambda> and <frozen ...>
+    #                                                                                     forms included; never a directory
+    NAME = r"(?:[A-Za-z0-9_.?-]+|<[a-z]+>)"           # a fixed name, a stage mark, a reason code, or a code object's name as the
+    #                                                   interpreter spells it (<lambda>, <genexpr>): a caller read through a lambda
+    JOINED_KEY = re.compile(r"^%s(?::%s)?(?:<-%s)?$" % (NAME, NAME, NAME))
+    # the blocks whose keys join identifiers, and what the joined parts are (every part a fixed name, a stage mark, a
+    # function name or a reason code; never a path, an id or text): the reader's whole reads as kind<-caller and
+    # stage:kind<-caller, the assembly checkpoints' hydrations as caller and stage:caller, its parse counters as
+    # phase:reason (g:boundary, full:noDocument, restore:chainRefused), its removals as fallback:reason, and the lazy
+    # index's materializations as caller and stage:caller; the judge child's copies of the first two tables under
+    # judge.child. A caller is a function's code-object name, which for a read made through a lambda is `<lambda>`.
+    JOINED = {("recordCache", "wholeReads"), ("recordCache", "wholeReadsByStage"),
+              ("asmCheckpoint", "hydratedBy"), ("asmCheckpoint", "hydratedByStage"),
+              ("asmCheckpoint", "parse"), ("asmCheckpoint", "removed"),
+              ("asmIndex", "materializedBy"), ("asmIndex", "materializedByStage")}
+    JOINED_KEY_BLOCKS = JOINED | {("judge", "child") + b for b in JOINED if b[0] in ("recordCache", "asmCheckpoint")}
+    UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+    HEX32 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}(?![0-9a-fA-F])")
+    HEX40 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])")   # a sha1: a checkpoint document's name
+    ABS_PATH = re.compile(r"(?:^|[\s\"'=(:,])/(?:[^/\s]+/)+[^/\s]*")   # a slash-rooted path of two or more segments
+    WHITESPACE = re.compile(r"\s")
+
+    HTTP_KEY_BEFORE_THE_REGISTER = re.compile(r"^(?:GET|HEAD|POST|OPTIONS) /[A-Za-z0-9_./*-]*$|^other$")   # a tree without the
+    #                                                          register (main before this change): the character grammar the image
+    #                                                          replaced, so the fails-before run names the leaking sites, not this class
+
+    @staticmethod
+    def _http_keys():
+        """The image of _perf_http_key over the register: "METHOD /path" for every method's routes (OPTIONS, the union,
+        included), "METHOD /family" for the collapsed families, "METHOD /remote/*<op>" for the same method's routes, and
+        `other`. The fold returns nothing else (its last line spells a method and one of those paths, or `other`), and
+        test_the_http_key_set_is_the_image_of_the_fold reaches every member with one request, so membership here is
+        exact: no path-shaped key the fold never makes passes the walk. None on a tree without the register."""
+        if not hasattr(km, "_PERF_HTTP_ROUTES"):
+            return None
+        keys = {"other"}
+        for method, routes in km._PERF_HTTP_ROUTES.items():
+            keys.update(method + " " + p for p in routes)
+            keys.update(method + " " + fam for fam in km._PERF_HTTP_FAMILIES)
+            keys.update(method + " /remote/*" + p for p in routes)
+        return keys
+
+    def setUp(self):
+        self.st = km._PerfStats()
+        self.em = km.em
+        self.http_keys = self._http_keys()
+        self.home = os.path.join(tempfile.mkdtemp(), "home", "tester")          # an absolute home path under a temp dir
+        self.addCleanup(shutil.rmtree, os.path.dirname(os.path.dirname(self.home)), True)
+        proj = os.path.join(self.home, ".claude", "projects", "-home-tester-code-notes-api")
+        state = km.jd.STATE
+        self.reads = {os.path.join(proj, SID + ".jsonl"): 4096,                                       # the leaf
+                      os.path.join(proj, SID, "subagents", "agent-%s.jsonl" % SID[:8]): 512,          # a subagent's
+                      str(state / "states" / (SID + ".jsonl")): 256,                                  # its states log
+                      str(state.parent / "timeline" / "messages.jsonl"): 128,                          # the postal log
+                      str(state / "checkpoints" / ("a" * 40 + ".json")): 64,                           # a checkpoint document
+                      os.path.join(self.home, "notes", "scratch.jsonl"): 32}                           # anything else
+        self.term = "Quarterly Roadmap"
+        self.app = "<b>%s</b> %s" % (SID, self.home)
+        self.first = "OSError: [Errno 2] No such file or directory: '%s'" % next(iter(self.reads))
+        self.planted = [SID, SID[:8], self.home, "TESTHOST", self.term, self.first, self.app, "-home-tester-code-notes-api"]
+
+    def _plant(self):
+        by_kind = getattr(self.em, "read_bytes_by_kind", None)   # the process's other reads (a peer module's, under xdist): deltas
+        self.reads_before = by_kind() if by_kind else collections.defaultdict(lambda: {"bytes": 0})   # below. A tree before the
+        #                                                        fix has no per-kind table: a zeroed one, so the walk runs first
+        #                                                        and the failure names every leaking site, not this attribute
+        for path, n in self.reads.items():
+            self.em._count_read(path, n)
+        self.addCleanup(self._unplant_reads)
+        st = self.st
+        st.judge_child_done({"op": "done", "seq": 7, "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0,
+                             "failures": {"count": 1, "first": self.first}, "recovered": False,
+                             "recordCache": {"entries": 1, "wholeReads": {"leaf<-_parse": {"count": 1, "bytes": 5}},
+                                             "wholeReadsByStage": {"push:leaf<-_parse": {"count": 1, "bytes": 5}}},
+                             "asmCheckpoint": {"restored": 1, "hydratedBy": {"_unit_text<-build_session": 10},
+                                               "hydratedByStage": {"push:_unit_text<-build_session": 10}},
+                             "parses": {"misses": 1, "hits": 0}, "goalIo": {"loads": 1}}, pid=4242)
+        st.build_chat(False, 0.100, active=True, sid=SID, nbytes=4096)
+        st.build_chat(True, sid=SID)
+        st.parse(SID, 4096)
+        for method, path in (("GET", "/glossary/" + self.term), ("GET", "/nope/" + SID), ("GET", "/remote/TESTHOST/sessions"),
+                             ("GET", "/remote/TESTHOST/" + SID), ("GET", "/dist/render.js"), ("GET", "/perf"), ("POST", "/send"),
+                             ("GET", self.home), ("HEAD", "/file"), ("OPTIONS", "/perf")):
+            st.http_request(km._perf_http_key(method, path), 0.001)
+        st.http_request(km._perf_http_key("GET", "/ws"), None)
+        st.connect_push("chat", 0.010)
+        st.connect_push(self.app, 0.010)
+        st.client_send("chat", "chrome", 10, 0.001)
+        st.client_send(self.app, "Mozilla/5.0 " + self.home, 10, 0.001)   # the kind arrives classed; a header here reads other
+        st.send(("chat", SID), "full", 10)
+        st.send(("status", SID), "delta", 5)
+        st.cycle(0.050)
+        st.stage("push.chat", 0.010)
+
+    def _unplant_reads(self):
+        with self.em._READ_BYTES_LOCK:
+            for path in self.reads:
+                self.em._READ_BYTES.pop(path, None)
+
+    def _snapshot_under_a_request(self, path):
+        """The snapshot taken while this thread handles a request for `path`: the read runs under the stage-mark decorator
+        the do_* methods carry (tests/test_stage_marks.py pins its text on each of the four), over a stand-in with the one
+        attribute the route lambda reads, so the mark rides in through _route_seg the way an in-flight request's does; the
+        sample's switch is set so `stacks` fills its slot and this thread's row carries the mark."""
+        st = self.st
+        read = km._stage_marked(lambda req: "http.GET." + km._route_seg(req.path))(lambda req: st.snapshot(ring_all=True))
+        with mock.patch.dict(os.environ, {"ROMP_PERF_STACKS": "1"}):
+            return read(type("Request", (), {"path": path})())
+
+    def _my_stacks_key(self):
+        return "%s %s" % (threading.get_ident(), km._thread_kind(threading.current_thread().name))
+
+    def _check_text(self, s, where, key):
+        at = "%s %r at %s" % ("key" if key else "value", s, "/".join(str(p) for p in where))
+        for probe in self.planted:
+            if probe in s:
+                self.problems.append("planted text survives: " + at)
+                break
+        if self.UUID.search(s):
+            self.problems.append("a uuid-shaped token: " + at)
+        if self.HEX32.search(s):
+            self.problems.append("a 32-hex token: " + at)
+        if self.HEX40.search(s):
+            self.problems.append("a 40-hex token: " + at)
+        if not (key and where == ("http",)) and self.ABS_PATH.search(s):   # a route key is a path by design; its
+            self.problems.append("an absolute path: " + at)                     #  grammar is checked in _check_key
+        if not key:                                                              # a value: no free text (an exception message,
+            if len(where) > 2 and where[0] == "stacks" and where[2] == "frames":   # a URL, a bare host name); a frame string
+                if not self.FRAME.match(s):                                        # has its own grammar
+                    self.problems.append("outside the frame grammar: " + at)
+            elif self.WHITESPACE.search(s):
+                self.problems.append("free text: " + at)
+
+    def _check_key(self, k, where):
+        at = "key %r at %s" % (k, "/".join(str(p) for p in where))
+        if not isinstance(k, str):
+            self.problems.append("a non-string key: " + at)
+            return
+        self._check_text(k, where, key=True)
+        if where == ("http",):
+            if self.http_keys is None:
+                if not self.HTTP_KEY_BEFORE_THE_REGISTER.match(k):
+                    self.problems.append("outside the http key grammar: " + at)
+            elif k not in self.http_keys:
+                self.problems.append("outside the image of _perf_http_key: " + at)
+        elif where == ("stacks",):
+            if not self.STACKS_KEY.match(k):
+                self.problems.append("outside the stack sample's key grammar: " + at)
+        elif where in self.JOINED_KEY_BLOCKS:
+            if not self.JOINED_KEY.match(k):
+                self.problems.append("outside the joined-identifier grammar: " + at)
+        elif not self.IDENT.match(k):
+            self.problems.append("outside the identifier grammar: " + at)
+
+    def _walk(self, node, where=()):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                self._check_key(k, where)
+                self._walk(v, where + (k,))
+        elif isinstance(node, (list, tuple)):
+            for i, v in enumerate(node):
+                self._walk(v, where + (i,))
+        elif isinstance(node, str):
+            self._check_text(node, where, key=False)
+
+    def test_a_thread_named_with_a_path_and_an_id_is_keyed_other_and_the_walk_stays_clean(self):
+        """2026-09-18, CI red on every Python cell: pytest-timeout names its watchdog "pytest_timeout <node id>" (the running
+        test's path, then ::Class::test), and the sample's colon rule kept the name up to the first "::", so the served key
+        read "<ident> pytest_timeout tests/test_perf_stats.py", outside the key grammar; a thread named with a path, a uuid or
+        free text by any library reached the snapshot the same way. The kind is a word from the kernel's register or `other`,
+        the ident keeping the row its own; the planted name, a node id with a session id and a home path appended, is nowhere
+        in the snapshot, and the whole walk stays clean with the thread alive."""
+        gate = threading.Event()
+        name = "pytest_timeout tests/test_perf_stats.py::ServedSnapshotIsPasteSafe::test_x %s %s" % (SID, self.home)
+        th = threading.Thread(target=gate.wait, name=name, daemon=True); th.start()
+        try:
+            self._plant()
+            snap = self._snapshot_under_a_request("/" + SID + "?stacks=1")
+        finally:
+            gate.set(); th.join(5)
+        key = "%d other" % th.ident
+        self.assertIn(key, snap["stacks"] or {}, sorted(snap["stacks"] or {}))
+        self.assertTrue(snap["stacks"][key]["frames"][-1].startswith("wait ("), "the row is the planted thread's")
+        self.assertNotIn(name, json.dumps(snap), "the name is nowhere in the snapshot")
+        self.problems = []
+        self._walk(snap)
+        self.assertEqual(self.problems, [], "%d leak(s) in the served snapshot:\n  %s" % (len(self.problems), "\n  ".join(self.problems)))
+
+    def test_no_key_or_string_in_the_served_snapshot_carries_a_path_an_id_or_planted_text(self):
+        self._plant()
+        snap = self._snapshot_under_a_request("/" + SID + "?stacks=1")   # a session id as the in-flight URL, the sample on
+        self.assertEqual(set(snap), TOP_KEYS, "the walk covers the whole served shape")
+        me = self._my_stacks_key()
+        self.assertIn(me, snap["stacks"] or {}, "the stack sample rides in the walk under its switch, this thread's row among the rest")
+        self.problems = []
+        self._walk(snap)
+        self.assertEqual(self.problems, [], "%d leak(s) in the served snapshot:\n  %s" % (len(self.problems), "\n  ".join(self.problems)))
+        self.assertEqual(snap["stacks"][me]["stage"], "http.GET.other", "the request's mark carries the fold's word, not the path's")
+        # the diagnosis the folds keep: the reads per holder kind, the child's line as a size and a status, the per-session
+        # rows by rank, the sessions parsed as a count, the glossary lookups and the remote route as counts
+        ck = snap["checkpoints"]
+        self.assertEqual({k: v["bytes"] - self.reads_before[k]["bytes"] for k, v in ck["readByKind"].items()},
+                         {"leaf": 4096, "agent": 512, "states": 256, "postal": 128, "checkpoint": 64, "other": 32})
+        self.assertEqual((snap["judge"]["child"]["status"], snap["judge"]["child"]["failures"]), ("failed", 1))
+        self.assertEqual([r["rank"] for r in snap["builds"]["chat"]["bySession"]], [1])
+        self.assertEqual(snap["parses"]["perSession"], {"sessions": 1, "max": 1})
+        h = snap["http"]
+        self.assertEqual(h["GET /glossary/*"]["count"], 1)
+        self.assertEqual(h["GET /remote/*/sessions"]["count"], 1)
+        self.assertEqual(h["other"]["count"], 3, "the scanner's path, the remote path with a sid and the home path: %s" % sorted(h))
+        self.assertEqual(sorted(snap["pusher"]["connectPush"]["byApp"]), ["chat", "other"])
+        self.assertEqual(sorted(snap["pusher"]["clients"]["byApp"]), ["chat", "other"], "the per-client wire table follows the same rule")
+        self.assertEqual(snap["pusher"]["clients"]["byKind"]["other"]["frames"], 1)
+
+    def test_the_route_mark_is_the_registers_word_never_the_requesters(self):
+        """_route_seg (2026-09-18): GET /perf?stacks=1 and ROMP_PERF_STACKS serve each thread's stage mark, and a handler's is
+        made from the in-flight URL, so the segment it keeps is one the register (every method's routes and the families)
+        holds a path under, the second segment under /push, /tunnels and /usage only when the two-segment path is itself a
+        route, and `other` for everything else: a session id, a host name, a scanner's probe."""
+        seg = km._route_seg
+        self.assertEqual(seg("/" + SID), "other", "a session id as the path")
+        self.assertEqual(seg("/" + SID + "/sessions"), "other")
+        self.assertEqual(seg("/nope/" + SID), "other", "a scanner's probe")
+        self.assertEqual(seg("/TESTHOST"), "other", "a host name")
+        self.assertEqual(seg("/tunnels/" + SID), "other", "a two-segment prefix whose second segment is no route: the whole mark folds")
+        self.assertEqual(seg("/push/relay?x=1"), "push.relay"); self.assertEqual(seg("/push"), "push", "the prefix alone: a route sits under it")
+        self.assertEqual(seg("/remote/TESTHOST/ws"), "remote", "the family keeps its name and the host stays out")
+        self.assertEqual(seg("/"), "root"); self.assertEqual(seg(""), "root")
+        for method, routes in km._PERF_HTTP_ROUTES.items():   # every registered route keeps its first segment, or its two
+            for p in routes:
+                parts = p.strip("/").split("/")
+                want = ".".join(parts[:2]) if parts[0] in km._ROUTE_TWO_SEGMENTS else (parts[0] or "root")
+                self.assertEqual(seg(p), want, "%s %s" % (method, p))
+        for fam in km._PERF_HTTP_FAMILIES:
+            self.assertEqual(seg(fam[:-1] + "x"), fam[1:-2], fam)
+
+    def test_the_http_key_set_is_the_image_of_the_fold(self):
+        """The set the walk holds the http table to is what _perf_http_key can return, and nothing else (2026-09-18, the
+        review's finding: a character grammar stood here and admitted any path-shaped key). Its size is the register's
+        arithmetic (routes twice, once plain and once behind /remote/*, the families per method, and other: 457 on the
+        register of 2026-09-18), so no key is counted twice, and one request reaches every member, so the check has no
+        false positives; the fold's other direction is its source, whose last line spells one of these or `other`."""
+        keys = self._http_keys()
+        routes = sum(len(r) for r in km._PERF_HTTP_ROUTES.values())
+        self.assertEqual(len(keys), 1 + 2 * routes + len(km._PERF_HTTP_ROUTES) * len(km._PERF_HTTP_FAMILIES), sorted(keys))
+        self.assertGreaterEqual(len(keys), 457, "the register shrank: %d keys" % len(keys))
+        for k in sorted(keys - {"other"}):
+            method, path = k.split(" ", 1)
+            asked = path.replace("/remote/*", "/remote/TESTHOST").replace("/*", "/x")
+            self.assertEqual(km._perf_http_key(method, asked), k, "%s %s reaches %s" % (method, asked, k))
+        self.assertEqual(km._perf_http_key("GET", "/nope/" + SID), "other")
 
 if __name__ == "__main__":
     unittest.main()
