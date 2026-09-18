@@ -112,7 +112,14 @@ where a document leaves the machine without a human reading it, which is what ma
 listed word that is also romp vocabulary refuses every export on that machine, naming the kind (`private
 string`) and the path, and the remedy is editing the list. A hostname or login that IS one of romp's identifiers
 (a user named root and the `POST /walk-root` route) still refuses; that is rare, and the refusal names the kind
-of string and the key path."""
+of string and the key path.
+
+The three walks and the fold recurse one frame per level and stay recursive (their traversal order decides which of two
+equally shallow findings check_document names), which is safe on every road but one because the document is bounded by
+construction (the export folds a snapshot the kernel built, restart-metrics reads its own state, the invariant test its
+fixtures), and on the one road that reads a file a person names, `romp perf upload`, only because that verb refuses a
+document nested deeper than its MAX_DEPTH (32) before any walk runs; a future road that takes untrusted input owes a bound
+of its own the same way."""
 import collections
 import glob
 import json

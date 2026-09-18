@@ -17,8 +17,9 @@ unauthenticated: no credential exists for it, and the verb reads no token from a
 
 The file must exist, be a regular file of at most 1 MiB, parse as strict JSON (no NaN or Infinity literals, no
 key repeated within one object at any depth, since json.loads would keep the last copy while the bytes sent
-carry every copy, and nesting within the checks' reach, about a thousand levels, a tenth of the parser's; past it the
-verb refuses in one line, never a traceback) with the top-level `schema` line `romp-perf-export/1`,
+carry every copy) with the top-level `schema` line `romp-perf-export/1`, nest at most MAX_DEPTH levels (32; a fresh
+export is about 7 deep; a deeper file is refused in one line that names the bound, before any check walks it and never with a
+traceback: the checks recurse one frame per level, and this is the one road that reads a file a person names),
 and pass the export's own check again as the file stands, since the user may have edited it: the scan for the
 strings only this machine knows, the paste-safety walk and the denylist walk of cli/perf_public.py, through
 perf_export.check_document, so a problem is reported by its kind and key path and never by the key or the value; then,
@@ -86,6 +87,20 @@ RECEIVER_FILE = "~/.config/romp/perf-receiver"
 RECEIVER_FILE_MAX = 4096             # the setting file is one line of printable ASCII; past this it is not an address (fresh-5)
 ROUTE = "/v1/upload"
 MAX_BYTES = 1 << 20                  # the receiver's cap on Content-Length and on the bytes it reads
+# The DEPTH BOUND (the fork review of the second round, 2026-09-18). This verb is the one road in romp that hands a
+# document a PERSON named to the shared walks (perf_public's identifier scan, paste walk, denylist walk and fold, through
+# perf_export.check_document), and those walks recurse one frame per level: past the interpreter's stack they raise
+# RecursionError, at a depth that differs by build (CI's free-threaded 3.14t cell alone overflowed on a document every
+# other cell walked). So a file's nesting is bounded here, before any walk runs, by a fixed number the refusal names.
+# The measurement the bound rests on: a fresh `romp perf export --public --usage` on 2026-09-18 was 116,063 bytes with a
+# maximum nesting depth of 7 by nesting_depth's count (the deepest leaf perf/jobs/stageRing/#/stages/jobs.autoNudge/bytes),
+# the reviewer measured 6 on a 129,435-byte document, and the receiver's own contract refuses more than about eight
+# levels. The bound is 32, about four times the measured depth: a block the kernel adds later with a few more levels
+# passes, and no document within it comes near any build's stack. The walks stay recursive (their traversal order decides
+# which of two equally shallow findings a refusal names), which is safe on every other road because the document is
+# bounded by construction (the export folds a snapshot the kernel built; restart-metrics reads its own state), and safe
+# here only because of this bound: a future road that reads untrusted input owes a bound of its own.
+MAX_DEPTH = 32                       # the deepest nesting read_export admits, by nesting_depth's count (the comment above)
 TIMEOUT_S = 30                       # a deadline over the whole exchange (_Deadline), not a per-operation timeout
 USER_AGENT = "romp-perf-upload/1"
 ANSWER_MAX = 64 * 1024               # a receipt is under 200 bytes; a longer 201 body is not the shape
@@ -192,12 +207,30 @@ def strict_loads(data):
     """The document `data` (bytes) spells, or a ValueError: UTF-8, no NaN or Infinity, no key repeated within
     one object at any depth (RepeatedKey, a ValueError), and nesting within the parser's reach (json raises
     RecursionError past it; here that is a ValueError like any other unparseable input, never a traceback). The
-    parser reaches about ten times deeper than the checks that follow in read_export, which refuse past their own
-    reach in one line too."""
+    parser's reach is not the verb's depth rule: read_export holds the parsed document to MAX_DEPTH, a far smaller
+    number, before any check walks it."""
     try:
         return json.loads(data.decode("utf-8"), parse_constant=_no_constant, object_pairs_hook=_no_repeat)
     except RecursionError:
         raise ValueError("not strict JSON: nested past the parser")
+
+
+def nesting_depth(node):
+    """How deep `node` nests: the objects and arrays around its deepest value, the root counting one, so a leaf's depth
+    is the number of components in its key path (a fresh export's deepest leaf, perf/jobs/stageRing/#/stages/jobs.autoNudge/
+    bytes, sits at 7; an empty object at the root is 1; a scalar alone is 0). An explicit stack and no recursion: this runs
+    before the walks so that a document deeper than their frames reach never gets to them, and a measure that shared their
+    limit would overflow on the very document it is there to refuse."""
+    depth = 0
+    stack = [(node, 1)] if isinstance(node, (dict, list, tuple)) else []
+    while stack:
+        n, d = stack.pop()
+        if d > depth:
+            depth = d
+        for v in (n.values() if isinstance(n, dict) else n):
+            if isinstance(v, (dict, list, tuple)):
+                stack.append((v, d + 1))
+    return depth
 
 
 # ── the file ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -205,7 +238,8 @@ def strict_loads(data):
 def read_export(path, state):
     """The file's bytes, once every check passes: it exists and is a regular file, it is at most MAX_BYTES, it
     parses as strict JSON (strict_loads: a repeated key is named as the reason, since the file may be one the
-    user edited by hand and an editor calls it valid) to an object with the schema line, and it passes
+    user edited by hand and an editor calls it valid) to an object with the schema line, it nests at most MAX_DEPTH
+    levels (nesting_depth), and it passes
     perf_export.check_document (the machine-string scan, the paste-safety walk and the denylist walk, which holds
     the file to the export's own rule, paste-safe, not unlinkable: what the export dropped, folded or coarsened is
     refused and the measurements it keeps pass; the shallowest finding named) as it stands, and then every top-level
@@ -213,10 +247,13 @@ def read_export(path, state):
     checks name a finding by its kind and key path, and the fold comparison catches whatever shape a later fold rule
     would fold that no check yet names, at the price of naming the block alone. A Refusal
     otherwise, naming the file path the user passed and, for a walk or scan finding, the kind and the key path,
-    never the value; for the belt, the block's name, which the checks passed. The checks and the fold recurse one
-    frame per level, so a document the parser admits (about ten thousand levels) can still exceed their reach (about
-    a thousand): that is the same one-line refusal, never a traceback, and not a depth rule of this verb's own (the
-    receiver's depth rule is the receiver's)."""
+    never the value; for the belt, the block's name, which the checks passed. The depth rule runs before the checks and
+    is this verb's own: the checks and the fold recurse one frame per level, the parser admits documents far deeper than
+    their frames reach on some builds, and this is the one road that hands them a file a person named, so a document
+    nested deeper than MAX_DEPTH is refused in one line naming the bound and the file's depth (the receiver's depth rule,
+    about eight levels, is the receiver's and is not enforced here). A RecursionError out of the checks is caught behind
+    the bound as a belt, the same one-line refusal naming the error's class, never a traceback; with the bound in front
+    no file reaches it."""
     p = Path(path)
     try:
         st = p.stat()
@@ -242,6 +279,9 @@ def read_export(path, state):
         raise Refusal("refused: %s is not strict JSON; nothing sent" % path, 1)
     if not isinstance(doc, dict) or doc.get("schema") != SCHEMA:
         raise Refusal("refused: %s is not a romp perf export (no top-level schema %s); nothing sent" % (path, SCHEMA), 1)
+    depth = nesting_depth(doc)
+    if depth > MAX_DEPTH:            # the depth bound, before any walk runs (the comment at MAX_DEPTH)
+        raise Refusal("refused: %s is nested %d levels deep and this verb takes at most %d; nothing sent" % (path, depth, MAX_DEPTH), 1)
     try:
         reason = pe.check_document(doc, state, tail="nothing sent")
         if reason:
@@ -254,9 +294,10 @@ def read_export(path, state):
             if k not in pe.ENVELOPE_KEYS and pp.fold(doc[k]) != doc[k]:
                 raise Refusal("refused: %s is not the export's own public form (the %s block differs from its fold); nothing sent" % (path, k), 1)
     except RecursionError:
-        # the walks and the fold recurse one frame per level and the parser reaches about ten times deeper, so a document
-        # it admitted can overflow them: the documented one-line refusal, not a traceback (round 2, 2026-09-18)
-        raise Refusal("refused: %s is nested past the checks; nothing sent" % path, 1)
+        # the belt behind the depth bound: the walks and the fold recurse one frame per level, and MAX_DEPTH keeps every
+        # file this verb reads far inside any build's stack, so nothing reaches this line by nesting alone; it stands so
+        # that whatever the interpreter's stack looks like, the verb answers with one line and never a traceback
+        raise Refusal("refused: %s could not be checked (RecursionError); nothing sent" % path, 1)
     return data
 
 

@@ -7,8 +7,8 @@ a pinned hostname) or, for the request itself, through bin/romp: the receiver ad
 else ROMP_PERF_RECEIVER, else ~/.config/romp/perf-receiver, and with none set the verb refuses naming all
 three; the address must be https with a host and no userinfo, query or fragment (http for 127.0.0.1 and
 localhost alone), and a refused address is never echoed; the file must exist, be at most 1 MiB, parse as strict
-JSON (no NaN or Infinity, no repeated key at any depth, nesting within the checks' reach, about a thousand levels, past
-which the verb refuses in one line) to an object with the schema
+JSON (no NaN or Infinity, no repeated key at any depth) nested at most MAX_DEPTH levels (32, about four times a fresh
+export's 7; a deeper file is refused in one line naming the bound before any check walks it) to an object with the schema
 line and pass the export's own scan, walk and denylist walk as it stands (what the export dropped, folded or coarsened is
 refused: a key it drops, a string value or a key the fold would have written as `other`, a key ending in a newline among
 them, an uptime off whole minutes, a bound off a power of two, a float inside a clock stamp's epoch window, seconds or
@@ -152,6 +152,14 @@ def _export(xdg, state):
                        capture_output=True, text=True, timeout=60, env=_env(state))
     assert r.returncode == 0, r.stderr
     return out
+
+
+def _nested(depth):
+    """An export-shaped document text whose nesting is exactly `depth` by the verb's count (nesting_depth: the root is 1,
+    `perf` 2, and each `{"a": ` one more): the schema line, an uptime on the grain, and a chain of single-key objects
+    under perf/x ending in the number 1, so every check passes and the depth alone decides the outcome."""
+    n = depth - 2
+    return '{"schema": "romp-perf-export/1", "perf": {"uptime_s": 60, "x": ' + '{"a": ' * n + "1" + "}" * n + "}}"
 
 
 def _keys_named(doc, name):
@@ -857,7 +865,7 @@ class Cli(unittest.TestCase):
         a key with a trailing newline after a good name (the walk's `$`-anchored match admits it, the fold's fullmatch does
         not), and a top-level block the envelope does not name whose value carries the token. Each exits 1 with one stderr
         line naming the kind and the key path (a key's the dict holding it), the token in no output, nothing sent; a fresh
-        export and the 900-deep file the ordinary path admits still exit 0."""
+        export and a 20-deep file, inside the depth bound, still exit 0."""
         base = ["--yes", "--receiver", self.fake.url]
         token = "zz-planted-token-past-thirty-two-chars-zz"
         edited = os.path.join(self.xdg, "edited.json")
@@ -878,12 +886,12 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.returncode, 0, "a fresh export is its own fold and passes")
         deep = os.path.join(self.xdg, "deep.json")
         with open(deep, "w") as fh:
-            fh.write('{"schema": "romp-perf-export/1", "perf": {"uptime_s": 60, "x": ' + '{"a": ' * 900 + "1" + "}" * 900 + "}}")
+            fh.write(_nested(20))
         r = _run([deep] + base, self.state)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(len(self.fake.requests), 2)
 
-    def test_a_file_nested_past_the_parser_is_refused_as_not_strict_json_and_one_within_its_reach_takes_the_ordinary_path(self):
+    def test_a_file_nested_past_the_parser_is_refused_as_not_strict_json_and_one_within_the_depth_bound_takes_the_ordinary_path(self):
         base = ["--yes", "--receiver", self.fake.url]
         deep = os.path.join(self.xdg, "deep.json")
         with open(deep, "w") as fh:
@@ -893,31 +901,40 @@ class Cli(unittest.TestCase):
         self.assertNotIn("Recursion", r.stderr)
         self.assertEqual(self.fake.requests, [])
         with open(deep, "w") as fh:
-            fh.write('{"schema": "romp-perf-export/1", "perf": {"uptime_s": 60, "x": ' + '{"a": ' * 900 + "1" + "}" * 900 + "}}")
+            fh.write(_nested(20))
         r = _run([deep] + base, self.state)
-        self.assertEqual(r.returncode, 0, r.stderr + " (the receiver's depth rule is the receiver's; the verb parses, walks and sends)")
+        self.assertEqual(r.returncode, 0, r.stderr + " (20 levels is inside the bound and every build's walks admit it; the verb parses, walks and sends)")
         self.assertEqual(len(self.fake.requests), 1)
 
-    def test_a_file_nested_past_the_checks_reach_is_refused_in_one_line_with_no_traceback_and_nothing_sent(self):
-        """The parser reaches about ten thousand levels and the three checks and the fold about a thousand (one frame per
-        level under the interpreter's recursion limit), so a document the parser admits can overflow the checks: at the
-        previous head that was a multi-page RecursionError traceback on stderr. Now it is the documented one-line refusal,
-        nothing sent. The depth is derived from the recursion limit (the child inherits the interpreter's default, which is
-        what this process reads too) and is not a depth rule of the verb's own: the receiver's depth rule is the receiver's,
-        and the 900-deep case beside this one still takes the ordinary path."""
+    def test_a_file_nested_past_the_depth_bound_is_refused_in_one_line_naming_the_bound_with_no_traceback_and_nothing_sent(self):
+        """The depth rule is the verb's own (the fork review of the second round, 2026-09-18): a file nested deeper than
+        MAX_DEPTH (32) is refused before any check walks it, in one stderr line that names the file's depth and the bound,
+        exit 1, nothing sent, on every Python. Before the bound the verb let the walks decide by running out of stack, and
+        the depth at which they do differs by build: CI's free-threaded 3.14t cell alone overflowed on a document every
+        other cell walked and sent, so the old test's case, derived from the interpreter's recursion limit, pinned a number
+        no two builds agreed on. The three documents here are fixed: 33 levels, one past the bound, refused; 32, at the bound,
+        sent; and the 100000-level file the case beside this one gives the parser is refused as not strict JSON first, so
+        the depth line is never reached on a file the parser did not admit."""
         base = ["--yes", "--receiver", self.fake.url]
-        depth = sys.getrecursionlimit() + 5
         deep = os.path.join(self.xdg, "deep.json")
         with open(deep, "w") as fh:
-            fh.write('{"schema": "romp-perf-export/1", "perf": {"uptime_s": 60, "x": ' + '{"a": ' * depth + "1" + "}" * depth + "}}")
-        with open(deep, "rb") as fh:
-            self.assertIsInstance(pu.strict_loads(fh.read()), dict, "the parser admits it")
-        r = self._refused(_run([deep] + base, self.state), 1, "refused: %s is nested past the checks; nothing sent" % deep)
-        self.assertEqual(r.stderr, "romp perf upload: refused: %s is nested past the checks; nothing sent\n" % deep)
+            fh.write(_nested(33))                    # the literals, not MAX_DEPTH: a change to the bound is made here on purpose
+        r = self._refused(_run([deep] + base, self.state), 1, "refused: %s is nested 33 levels deep and this verb takes at most 32; nothing sent" % deep)
+        self.assertEqual(r.stderr, "romp perf upload: refused: %s is nested 33 levels deep and this verb takes at most 32; nothing sent\n" % deep)
         self.assertNotIn("Recursion", r.stderr)
         self.assertNotIn("Traceback", r.stderr)
-        self.assertEqual(r.stdout, "")
+        self.assertEqual(r.stdout, "", "refused before the summary line")
         self.assertEqual(self.fake.requests, [])
+        with open(deep, "rb") as fh:
+            doc = pu.strict_loads(fh.read())
+        self.assertIsInstance(doc, dict, "the parser admits it: the depth rule, not the parser, refused it")
+        self.assertEqual(pu.nesting_depth(doc), 33, "one past the bound, by the verb's own count")
+        self.assertEqual(pu.MAX_DEPTH, 32)
+        with open(deep, "w") as fh:
+            fh.write(_nested(32))
+        r = _run([deep] + base, self.state)
+        self.assertEqual(r.returncode, 0, r.stderr + " (at the bound the file takes the ordinary path)")
+        self.assertEqual(len(self.fake.requests), 1)
 
     def test_a_setting_file_that_is_not_utf8_text_is_refused_naming_the_file_and_never_its_bytes(self):
         os.makedirs(os.path.join(self.home, ".config", "romp"))
@@ -1100,6 +1117,45 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.stderr, "")
         self.assertEqual(len(self.fake.requests), 1)
         self.assertEqual(self.fake.requests[0][2], self.data, "the body is the file's bytes")
+
+
+class DepthBound(unittest.TestCase):
+    """The depth rule as a unit: nesting_depth's count (the root is 1, a leaf's depth its key path's length, a scalar 0),
+    without recursion, so it measures a document the walks could not; the bound is 32, about four times the depth of a
+    fresh export, which this module's export from the planted snapshot stays under with the same margin; and the
+    RecursionError belt behind the bound refuses in one line naming the error's class, since no file reaches it by nesting
+    alone."""
+
+    def test_nesting_depth_counts_containers_around_the_deepest_value_without_recursion(self):
+        for doc, depth in (({}, 1), ([], 1), (1, 0), ("s", 0), ({"a": []}, 2), ({"a": [{"b": 1}]}, 3), ({"a": {"b": {}}, "c": 1}, 3),
+                           ([[[]]], 3), ({"a": 1, "b": {"c": [1, {"d": None}]}}, 4)):
+            self.assertEqual(pu.nesting_depth(doc), depth, repr(doc))
+        for depth in (2, 20, 32, 33):
+            self.assertEqual(pu.nesting_depth(pu.strict_loads(_nested(depth).encode("utf-8"))), depth)
+        deep = 1
+        for _ in range(5000):           # built as an object, not parsed: the parser's own reach differs by build and is not the point
+            deep = [deep]
+        self.assertEqual(pu.nesting_depth(deep), 5000, "an explicit stack, so a document the walks could not take is measured")
+        self.assertEqual(pu.MAX_DEPTH, 32)
+
+    def test_the_export_from_the_planted_snapshot_sits_inside_a_quarter_of_the_bound(self):
+        xdg, state = _state_root()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        with open(_export(xdg, state), "rb") as fh:
+            depth = pu.nesting_depth(pu.strict_loads(fh.read()))
+        self.assertGreaterEqual(depth, 3)
+        self.assertLessEqual(depth, pu.MAX_DEPTH // 4, "a fresh export measured 7 on 2026-09-18; the bound is about four times that")
+
+    def test_a_recursion_error_out_of_the_checks_is_the_one_line_belt_behind_the_bound(self):
+        xdg, state = _state_root()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        file = _export(xdg, state)
+        with mock.patch.object(pu.pe, "check_document", side_effect=RecursionError("planted")):
+            with self.assertRaises(pu.Refusal) as cm:
+                pu.read_export(file, pu.pe.Path(state))
+        self.assertEqual(str(cm.exception), "refused: %s could not be checked (RecursionError); nothing sent" % file)
+        self.assertEqual(cm.exception.code, 1)
+        self.assertNotIn("planted", str(cm.exception))
 
 
 class FoldBelt(unittest.TestCase):

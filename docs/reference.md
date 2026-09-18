@@ -3875,8 +3875,12 @@ appended to; a refused address is not echoed. The receiver is unauthenticated,
 so no credential exists for it: the verb reads no token and sends none. The
 file must be a regular file of at most 1 MiB that parses as strict JSON (no
 `NaN` or `Infinity`, no key repeated within an object) with the
-`romp-perf-export/1` schema line. It must also pass the export's own scan,
-walk and denylist check again, as it stands, since you may have edited it. The
+`romp-perf-export/1` schema line, nested at most 32 levels deep (a fresh export
+is about 7; the checks below recurse one level per frame and this is the one
+file romp reads that a person names, so a deeper file is refused in one line
+that names the bound before any check walks it). It must also pass the
+export's own scan, walk and denylist check again, as it stands, since you may
+have edited it. The
 rule is the export's: the public form is paste-safe, not unlinkable, and the
 file is held to the export's own fold, not only to its checks. What the
 export dropped or coarsened is refused (a `t` put back on a split row, a
