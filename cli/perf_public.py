@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """perf_public: the public shape of a romp performance document, shared by `romp perf export --public`
-(cli/perf_export.py), `romp restart-metrics --json --public` (cli/restart_metrics.py) and the served-snapshot
-invariant test (tests/test_perf_stats.py, ServedSnapshotIsPasteSafe). No bin/ entry: it is imported, never run.
+(cli/perf_export.py), `romp restart-metrics --json --public` (cli/restart_metrics.py), `romp perf upload`
+(cli/perf_upload.py, which holds a file to this shape as the file stands) and the served-snapshot invariant test
+(tests/test_perf_stats.py, ServedSnapshotIsPasteSafe). No bin/ entry: it is imported, never run.
 
 A GET /perf snapshot and a restart-metrics document are diagnosis a user may want to paste in public (an issue,
 a chat). What must not travel with them is anything that names the machine or its sessions (a home path, a
@@ -77,7 +78,20 @@ message, a URL, a bare host name), except a stack frame, "function (file:line)",
 reports each finding as a Problem (the kind of finding, whether a key or a value, the key path, the offending
 string), formatted by the caller: the export runs it over its own output as a self-check and refuses to write
 on a problem naming the kind and the path alone, while the invariant tests print the whole line (str(problem))
-so a failure says what leaked. The identifier scan (machine_probes, identifier_hits) is the last backstop: strings only this machine knows (its hostname, user and home directory; the session ids and
+so a failure says what leaked. The denylist walk (denylist_problems) is the third mechanism, and it enforces the fold's own
+rule over a document as it stands: it refuses what the fold would have dropped, folded or coarsened, six findings, a
+key the denylist drops (a key finding at the dict holding it, its value not walked), a key the fold would have written
+as `other` (the block's own grammar through _public_key, so a trailing newline the walk's anchored match admits and a
+joined key past the cap count; the value still walked), a string value it would have written as `other`, an uptime
+(UPTIME_KEYS) not on whole minutes, a bound (BOUND_KEYS) not on a power of two, and a float inside one of the
+STAMP_WINDOWS with no duration key (duration_key) on its path. It runs through perf_export.check_document for that
+function's three callers, `romp perf export --public` (cli/perf_export.py, over its own output, where it is a belt),
+`romp restart-metrics --json --public` (cli/restart_metrics.py, over its document at the root) and `romp perf upload`
+(cli/perf_upload.py, over a file as it stands, which is where an edit made after the export is caught), and not for
+the served-snapshot invariant test, which runs paste_problems alone. A fold's own output is the walk's fixed point,
+pinned over every fixture and a served export; the one stated exception is the summed-floats case _merge names, two
+measurement floats under a merged `other` key landing inside a stamp window. The identifier scan (machine_probes,
+identifier_hits) is the last of the three, the backstop: strings only this machine knows (its hostname, user and home directory; the session ids and
 working directories the state directory's sdk registry holds; and the strings listed in the machine-local file
 ~/.config/romp/private-strings.txt, the same list the repository's pre-push hook reads, one string per line with
 `#` comments, resolved the way the hook resolves it: ROMP_PRIVATE_STRINGS, else $XDG_CONFIG_HOME, else $HOME/.config,
