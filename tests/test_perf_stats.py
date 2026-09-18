@@ -1062,7 +1062,12 @@ class JobRowsByOwner(unittest.TestCase):
         stages_row = _doc_row(doc, "stages_ms")
         self.assertIn("cycleJobsMs", stages_row, "the stages_ms row sends the reader to the pusher's block for the nine")
         self.assertRegex(stages_row, r"moved to pusher\.cycleJobsMs", "and says the nine MOVED there, so a reader of an older capture knows where the numbers went")
-        self.assertIn("stagesForeign", stages_row)
+        # the jobs clause itself, not the bare word: the same row's push sentence also says "counts under stagesForeign",
+        # so a bare assertIn stayed green with the jobs cross-reference dropped (2026-09-18 review). The row is joined and
+        # split first, as the reference-doc test does, because the docstring wraps at 80 columns and the two words sit on
+        # different lines; the colon in "owner:" is load bearing (a bare "owner" matches inside "ownership")
+        self.assertRegex(" ".join(stages_row.split()), r"writer's owner:.{0,120}stagesForeign",
+                         "the stages_ms row's jobs sentence sends a thread owning neither loop's write to stagesForeign")
         self.assertRegex(doc, r"(?m)^ *stagesForeign ", "the foreign block has a row of its own")
 
 
