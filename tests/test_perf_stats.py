@@ -209,6 +209,7 @@ class Collector(unittest.TestCase):
                                               "subagentTree",   # the subagents directory walk memo (2026-09-16): served vs walked, roots held
                                               "chatMergeSets", "chatPostal", "chatLedger", "chatFoldTasks",   # the chat build's fixed-cost memos (2026-09-09)
                                               "outlineProvisional",   # the Outline's provisional-row ledger memo, parse-free (plans/outline-pane-provisional-row.md, 2026-09-15)
+                                              "feedComposition",   # the feed frame's bytes by component and per consuming app (2026-09-18, tests/test_feed_composition.py)
                                               "notices",   # the notice files' parsed rows (T370, plans/notice-cards.md): bytes against their bound
                                               "wire", "sessions_scope", "caps", "thread_reg"},
                          "one block per memo the kernel keeps: the shared names spelled as upstream reports them "

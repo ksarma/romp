@@ -907,7 +907,12 @@ class _PerfStats:
                                    miss / evict / fault and entries / bytes / bound
                                    (SUMMARY_ANCHOR_MEMO_BYTES); outlineProvisional (the Outline's
                                    provisional-row ledger memo, _prov_ledger_memo_report) -> hit /
-                                   miss / bypass_hold / bypass_empty and the gauge entries
+                                   miss / bypass_hold / bypass_empty and the gauge entries;
+                                   feedComposition (the feed frame's bytes by component,
+                                   _FeedComposition) -> passes / failed, lifetime and last (frame /
+                                   cards / ledgers / rest / cardCount / ledgerCount, `by` per
+                                   remainder field, `apps` per consuming app -> today / projected)
+                                   and wire (bytes / exact: the served body once a whole frame went)
       judge                        passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
@@ -1734,6 +1739,8 @@ class _PerfStats:
                           ("chatMergeSets", _merge_sets_report), ("chatPostal", _chat_postal_report),
                           ("chatLedger", _ledger_memo_report), ("chatFoldTasks", _task_fold_report),
                           ("outlineProvisional", _prov_ledger_memo_report),
+                          ("feedComposition", _feed_composition_report),   # the feed frame's bytes by component and per
+                          #                                                    consuming app (2026-09-18, _FeedComposition)
                           ("notices", _notice_memo_report)):   # the notice files' parsed rows (T370): bytes against their bound
             try:
                 memos[key] = read()
@@ -54698,11 +54705,181 @@ def _note_unknown_op(msg, client):
 _FEED_KEYED = (("asks", "itemId"), ("ledgers", "sid"))
 
 
-_feed_cards_memo = None    # (a build's asks list, {itemId: json}) — the per-card encode once per BUILD (2026-09-06): a
-#                            ledgers-only refill of _feed_wire (same feed_src, the per-cycle ledgers attach changed)
-#                            re-encodes the ledgers and the remainder, not the cards. Identity-keyed like
-#                            _delta_parts_cache: no consumer mutates a cached build's cards (they copy)
+_feed_cards_memo = None    # (a build's asks list, {itemId: json}, {app: card-field bytes}) — the per-card encode once per
+#                            BUILD (2026-09-06): a ledgers-only refill of _feed_wire (same feed_src, the per-cycle ledgers
+#                            attach changed) re-encodes the ledgers and the remainder, not the cards. Identity-keyed like
+#                            _delta_parts_cache: no consumer mutates a cached build's cards (they copy). The third member
+#                            is the composition probe's per-app card-field estimate (_ask_fields_est), memoized with the
+#                            cards so a refill pays none of it (2026-09-18)
 _feed_dupes_said = set()   # itemIds already reported as duplicated within one build: said once per id
+
+
+# ── the feed frame's composition (2026-09-18) ──────────────────────────────────────────────────────────────────────
+# One feed frame goes whole to every client that rides the feed slot (_push's send stage: the feed pane, the Outline,
+# which dials as `fleet` on every layout, the phone's included, and the Waiting-on-you pane, `waiting`), and each
+# bundle reads a part of it: feed.ts reads no ledgers, waiting.ts reads three of its fields, fleet.ts the ledgers and a
+# few fields of each card. Nothing said what the frame was made of (about 8.8 MB on a busy board). memos.feedComposition
+# on GET /perf now says, per _feed_parts pass, how the frame's bytes divide by component, and what each app would
+# receive if it were sent only the fields it reads, beside the whole frame it receives today (_FeedComposition).
+#
+# FEED_APP_FIELDS is the checked-in table of what each reader reads from the frame: a top-level field by name, or
+# `asks.<field>` for a card field an app reads without the rest of the card. tests/test_feed_composition.py pins each
+# row against the reader's source (feed.ts applyFeedPayload, fleet.ts's frame handler, waiting.ts applyFrame: every
+# `m.<field>` read of a frame field, and fleet.ts's `a.<field>` / `ask.<field>` card reads), both ways, so a reader
+# that picks up or drops a field changes this table or fails that test. Not in it: the volatile fields every frame
+# carries (`type`, `now`, `buildId`, about forty bytes) and the fields federation writes client-side (pendingHosts,
+# pendingDead, nowAt, buildIds, offHosts, hostsUnread), which cost no frame bytes a projection could save.
+FEED_APP_FIELDS = {
+    "feed": ("asks", "judgeLimit", "working", "awaiting", "stateUnknown", "bgServices", "userTodos", "order", "views",
+             "sessions", "clearNotices", "sdkNotices", "syncNotices", "dismissedCount", "showDismissed", "canUndoClear",
+             "selfHost", "off"),
+    "fleet": ("asks.itemId", "asks.provisional", "asks.sid", "asks.name", "asks.color", "asks.text", "asks.background",
+              "asks.summary", "asks.blockSummary", "ledgers", "views", "sessions", "off"),
+    "waiting": ("userTodoRows", "userTodosOn", "sessions"),
+}
+# The frame's top-level fields outside the volatile three: build_feed's return, the pusher's `ledgers` attach, the views
+# payload's fault marker and the off frame's flag. The table's top-level names are drawn from this list; a test pins the
+# list against a built frame and the off frame (the off frame's empty federation lists, items, hosts, pendingHosts and
+# pendingDead, are outside it: a few bytes each, counted under their own names when present).
+FEED_FRAME_FIELDS = ("asks", "ledgers", "userTodos", "userTodoRows", "userTodosOn", "views", "viewsFault", "judgeLimit",
+                     "working", "awaiting", "stateUnknown", "bgServices", "dismissedCount", "showDismissed",
+                     "clearedForeign", "order", "sessions", "clearNotices", "sdkNotices", "syncNotices", "selfHost",
+                     "canUndoClear", "off")
+_FEED_APP_ASK_FIELDS = {app: tuple(f[5:] for f in fields if f.startswith("asks."))
+                        for app, fields in FEED_APP_FIELDS.items() if any(f.startswith("asks.") for f in fields)}
+
+
+def _ask_fields_est(asks, fields):
+    """An ESTIMATE of the bytes `fields` of every card in `asks` take on the wire, from lengths alone: per card its braces,
+    and per field present its quoted name, the separators and its value at the length of its text (a string plus its
+    quotes; a number, a bool or null at the length of its JSON spelling; a nested value, a card's `color` say, at the
+    length of its repr, which for the frame's nested values is the JSON length). JSON escapes are not counted, so a text
+    with quotes or non-ASCII reads a little under its wire size. No encode: the per-card encode _feed_parts already ran is
+    the whole card, and re-encoding a third of every card per build for one number is the cost this probe refuses. An
+    upper bound on the projection: every named field of every card is counted, where fleet.ts reads a provisional card's
+    sid, name, color and text and a goal card's background, summary and blockSummary (asksById)."""
+    n = 0
+    for a in asks:
+        if not isinstance(a, dict):
+            continue
+        n += 2
+        for f in fields:
+            if f not in a:
+                continue
+            v = a[f]
+            if isinstance(v, str):
+                n += len(f) + 8 + len(v)
+            elif v is None or isinstance(v, bool):
+                n += len(f) + 6 + (4 if v is None or v else 5)
+            else:
+                n += len(f) + 6 + len(repr(v))
+    return n
+
+
+class _FeedComposition:
+    """memos.feedComposition: what the feed frame is made of, per _feed_parts pass (a build, or a ledgers refill of the
+    same build), as lifetime sums and the last pass, and per consuming app (FEED_APP_FIELDS) the bytes it would receive
+    if it were sent only the fields it reads (`projected`), beside the whole frame it receives today (`today`).
+
+    Every number but one is read from the sizes _feed_parts makes for the wire anyway: the per-card strings (the cards
+    minus their tints, as _feed_est counts them), the per-ledger strings and, since this probe, the remainder's per-field
+    strings (the remainder is encoded per field and joined into the one sort_keys string it always was, byte for byte,
+    so a field's bytes come from the frame's own encode: its quoted name, the separators and its value). `frame` is
+    _feed_est's total, which sits under the served body by the frame's key names, separators and the cards' and nodes'
+    tints; `wire` beside it is the served body's exact length once a whole frame went (_LazyWire.materialized), else
+    that estimate again. The one figure not read from an encode is an app's card FIELDS (fleet.ts reads a few fields of
+    each card): _ask_fields_est estimates those from lengths, and says how.
+
+    Cost per pass, bounded: the two sums _feed_est takes (one int per card and per ledger), one len() per remainder
+    field, and for the apps that read card fields an O(cards x fields) pass of len() calls memoized with the cards on
+    the build's asks list (_feed_cards_memo), so a ledgers refill pays none of it; no encode anywhere. About a
+    millisecond per thousand cards. Paste-safe: identifier keys (the frame's own field names, the kernel's app names),
+    numbers only. A pass whose accounting raises is counted under `failed` and said once; the frame is unaffected."""
+    __slots__ = ("lock", "passes", "failed", "life", "last", "said")
+    SUMS = ("frame", "cards", "ledgers", "rest", "cardCount", "ledgerCount")
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.passes = 0
+        self.failed = 0
+        self.said = False
+        self.life = {k: 0 for k in self.SUMS}
+        self.life["by"] = {}
+        self.life["apps"] = {app: {"today": 0, "projected": 0} for app in FEED_APP_FIELDS}
+        self.last = None
+
+    @staticmethod
+    def project(cards_bytes, led_bytes, rest_bytes, by, ask_fields):
+        """Per app: the whole frame's bytes (`today`) and the bytes of the fields FEED_APP_FIELDS says it reads
+        (`projected`): the cards whole or by field (ask_fields: the app's _ask_fields_est), the ledgers, the remainder's
+        fields by name from `by`."""
+        frame = cards_bytes + led_bytes + rest_bytes
+        apps = {}
+        for app, fields in FEED_APP_FIELDS.items():
+            p = ask_fields.get(app, 0)
+            for f in fields:
+                if f == "asks":
+                    p += cards_bytes
+                elif f == "ledgers":
+                    p += led_bytes
+                elif not f.startswith("asks."):
+                    p += by.get(f, 0)
+            apps[app] = {"today": frame, "projected": p}
+        return frame, apps
+
+    def record(self, cards_bytes, n_cards, led_bytes, n_led, attached, rest_bytes, by, ask_fields):
+        frame, apps = self.project(cards_bytes, led_bytes, rest_bytes, by, ask_fields)
+        last = {"frame": frame, "cards": cards_bytes, "ledgers": led_bytes, "rest": rest_bytes, "cardCount": n_cards,
+                "ledgerCount": n_led, "ledgersAttached": 1 if attached else 0, "by": dict(by), "apps": apps}
+        with self.lock:
+            self.passes += 1
+            life = self.life
+            for k in self.SUMS:
+                life[k] += last[k]
+            lb = life["by"]
+            for k, v in by.items():
+                lb[k] = lb.get(k, 0) + v
+            for app, row in apps.items():
+                la = life["apps"][app]
+                la["today"] += row["today"]
+                la["projected"] += row["projected"]
+            self.last = last
+
+    def fail(self, exc):
+        with self.lock:
+            self.failed += 1
+            first = not self.said
+            self.said = True
+        if first:
+            sys.stderr.write("feed composition: the accounting raised (%s: %s); the frame is unaffected\n"
+                             % (type(exc).__name__, exc))
+
+    def report(self):
+        with self.lock:
+            life = {k: self.life[k] for k in self.SUMS}
+            life["by"] = dict(self.life["by"])
+            life["apps"] = {app: dict(row) for app, row in self.life["apps"].items()}
+            last = None
+            if self.last is not None:
+                last = dict(self.last)
+                last["by"] = dict(last["by"])
+                last["apps"] = {app: dict(row) for app, row in last["apps"].items()}
+            passes, failed = self.passes, self.failed
+        w = _feed_wire                                   # tuple snapshot: rebound whole, never mutated
+        wire = {}
+        if w is not None:
+            body = w[3]
+            wire = {"bytes": _wire_len(body),
+                    "exact": 1 if (isinstance(body, str) or body.materialized()) else 0}
+        return {"passes": passes, "failed": failed, "lifetime": life, "last": last or {}, "wire": wire}
+
+
+_FEED_COMP = _FeedComposition()
+
+
+def _feed_composition_report():
+    """memos.feedComposition for GET /perf: see _FeedComposition."""
+    return _FEED_COMP.report()
 
 
 def _feed_parts(feed):
@@ -54714,7 +54891,9 @@ def _feed_parts(feed):
     Since 2026-09-06 (PLAN-2 P5/P8) this is the ONE serialization a rebuild pays for the feed: the dedup
     signature is a tuple of these strings (_feed_sig) and the whole body is lazy (_feed_body via _LazyWire).
     The cards are memoized on the build's asks list, so a refill for a changed ledgers attach encodes only
-    the ledgers and the remainder. itemIds are unique by construction — goal ids are minted `<uuid>:g<seq>`,
+    the ledgers and the remainder. The remainder is encoded per field and joined (2026-09-18): the same
+    bytes, and the composition probe (_FeedComposition, memos.feedComposition) reads every part's size
+    from this one pass. itemIds are unique by construction — goal ids are minted `<uuid>:g<seq>`,
     every other card kind carries its own `kind:` prefix — and both the delta path and _feed_sig read one
     card per id; a build that breaks that is said on stderr, once per id, not silently collapsed."""
     global _feed_cards_memo
@@ -54724,11 +54903,12 @@ def _feed_parts(feed):
         asks = []
     m = _feed_cards_memo
     if m is not None and m[0] is asks:
-        cards = m[1]
+        cards, askf = m[1], m[2]
         _wire_bump("feed_cards_hit")
     else:
         cards = {a["itemId"]: json.dumps(_strip_trgb(a), default=dflt) for a in asks}
-        _feed_cards_memo = (asks, cards)
+        askf = {app: _ask_fields_est(asks, fs) for app, fs in _FEED_APP_ASK_FIELDS.items()}   # the composition probe's
+        _feed_cards_memo = (asks, cards, askf)                                              #  card-field estimate, once per build
         _wire_bump("feed_cards_miss")
         if len(cards) != len(asks):
             seen, dup = set(), set()
@@ -54743,7 +54923,24 @@ def _feed_parts(feed):
             if isinstance(feed.get("ledgers"), list) else None)
     rest = {k: v for k, v in feed.items()
             if k not in ("type", "asks", "ledgers") and k not in _DEDUP_VOLATILE}
-    return cards, leds, rest, json.dumps(rest, sort_keys=True, default=dflt)
+    # The remainder, encoded per field and joined into the sort_keys string the frame always carried, byte for byte
+    # (tests/test_feed_composition.py pins the identity): the same one encode, in pieces, so the composition probe
+    # reads each field's bytes (its quoted name, the separators, its value) from the frame's own encode. A key that
+    # is not a str (never the frame's case) takes the whole encode as before, under one name.
+    if all(isinstance(k, str) for k in rest):
+        enc = [(json.dumps(k), json.dumps(rest[k], sort_keys=True, default=dflt)) for k in sorted(rest)]
+        rest_ms = "{" + ", ".join(kj + ": " + s for kj, s in enc) + "}"
+        by = {k: len(kj) + 4 + len(s) for k, (kj, s) in zip(sorted(rest), enc)}
+    else:
+        rest_ms = json.dumps(rest, sort_keys=True, default=dflt)
+        by = {"other": len(rest_ms)}
+    try:
+        _FEED_COMP.record(sum(map(len, cards.values())), len(cards),
+                          sum(map(len, leds.values())) if leds else 0, len(leds) if leds else 0, leds is not None,
+                          len(rest_ms), by, askf)
+    except Exception as e:
+        _FEED_COMP.fail(e)
+    return cards, leds, rest, rest_ms
 
 
 def _feed_sig(parts):
