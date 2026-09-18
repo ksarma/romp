@@ -3127,19 +3127,24 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   rows here to `pusher.cycleJobsMs.<job>`: their `jobs.<job>` keys are gone
   from `stages_ms`, and a `jobs.<job>` row is the jobs thread's time under
   that name, where before it was every thread's; the nine do not compare
-  across a capture pair spanning the change, while the remaining
-  `jobs.<job>` rows keep their names and their values. The `push.*` rows
+  across a capture pair spanning the change, while the nineteen remaining
+  `jobs.<job>` container rows (the pass jobs) keep their names and their
+  values: the act-now pass the dashboard's arms run on the WS handler thread
+  closes no `jobs.<job>` container, so the jobs thread alone wrote those
+  nineteen. A job's part rows narrow too: the `jobs.autoNudge.<part>` rows
+  shed that pass's share, now counted under `stagesForeign` (the
+  `stagesForeign` bullet below, since 2026-09-18). The `push.*` rows
   narrowed to the pusher's own work: the connect pushes' part, in those rows
   until then (so they could add up to more than `push`), moved to
   `pusher.connectPush.stagesMs.<stage>`, and a `push.*` row does not compare
   across a capture pair spanning the change either. A `jobs.<job>` write
   from a thread owning neither loop is counted under `stagesForeign`.
-- `stagesForeign`: `{stage: ms}`, a `jobs.<job>` stage closed by a thread
-  that owns neither loop (a handler thread, a test that opened no cycle), or
-  a push stage (`push`, `push.*`) closed by a thread that is neither the
-  pusher nor a connect push, cumulative wall under the stage name, so a
-  write that fits no owner is counted rather than merged into a row that
-  names another thread. On a
+- `stagesForeign`: `{stage: ms}` (2026-09-18), a `jobs.<job>` stage closed by
+  a thread that owns neither loop (a handler thread, a test that opened no
+  cycle), or a push stage (`push`, `push.*`) closed by a thread that is
+  neither the pusher nor a connect push, cumulative wall under the stage
+  name, so a write that fits no owner is counted rather than merged into a
+  row that names another thread. On a
   running kernel the block holds the `jobs.autoNudge.*` parts of the
   act-now pass the dashboard's Auto Nudge and compaction-suggestion arms run
   on the WS handler thread (`_ws_act_now_tick`: `key`, `snapshot`, `looks`,
