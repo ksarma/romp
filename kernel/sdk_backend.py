@@ -12432,8 +12432,11 @@ class SdkBackend:
             deadline = time.time() + ht.SOCKET_WAIT_S
             while not sock.exists():                          # loop-ok: a bounded wait on the socket appearing
                 if proc.poll() is not None:
-                    raise CLIConnectionErrorLike("the session host exited before serving its socket (code %s); see hosts/%s/host.log"
-                                                 % (proc.returncode, sess.sid))
+                    # the host's last word when it left one (an SDK pin mismatch names both versions and the repin
+                    # command there; a spawn failure its exception type), so the card says why, not just where to look
+                    reason = ht.host_exit_reason(self.state_dir, sess.sid)
+                    raise CLIConnectionErrorLike("the session host exited before serving its socket (code %s); see hosts/%s/host.log%s"
+                                                 % (proc.returncode, sess.sid, (": " + reason) if reason else ""))
                 if time.time() > deadline:
                     # a host that never served is ended, or a resend would start a second host and two CLIs
                     try:
@@ -12680,7 +12683,8 @@ class SdkBackend:
         kept = reg.get("hostLogPos") if isinstance(reg.get("hostLogPos"), dict) else {}
         pos = int(kept.get("pos") or 0) if kept.get("host") == ident else 0
         kinds = {"hook-self-answered": "host.hook-self-answered", "reader-behind": "host.reader-behind",
-                 "end-forced": "host.end-forced", "cli-spawn-failed": "host.spawn-failed"}
+                 "end-forced": "host.end-forced", "cli-spawn-failed": "host.spawn-failed",
+                 "sdk-version-untested": "host.sdk-untested"}
         for ln in lines[pos:]:
             try:
                 row = json.loads(ln)
@@ -12697,6 +12701,12 @@ class SdkBackend:
                 prose = "the host's journal for %s fell behind the CLI's output" % sess.name
             elif kind == "host.end-forced":
                 prose = "the host had to SIGKILL %s's CLI: it did not exit within the grace after stdin closed" % sess.name
+            elif kind == "host.sdk-untested":
+                # a host running on an SDK other than the one its private imports were verified against (the imports
+                # still resolved, so the session runs); visible here so the machine is repinned before a release moves one
+                prose = ("the host for %s runs claude-agent-sdk %s, %s than the %s it is written against; run %s to install the tested version"
+                         % (sess.name, row.get("installed"), row.get("relation") if row.get("relation") in ("newer", "older") else "other",
+                            row.get("tested"), _ht().sh.SDK_REPIN_COMMAND))
             else:
                 prose = "the host for %s could not spawn its CLI" % sess.name
             problem_row(self.state_dir, prose, kind, sid=sess.sid, name=sess.name, log=self._log, t=row.get("t"), **fields)

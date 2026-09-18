@@ -97,6 +97,27 @@ def host_sock(state_dir, sid: str) -> Path:
     return Path(state_dir) / "hosts" / (str(sid)[:8] + ".sock")
 
 
+def host_exit_reason(state_dir, sid: str) -> str:
+    """What a host that exited before serving its socket said last: the `error` of its final `host-crashed` or
+    `cli-spawn-failed` row, for the kernel's launch error; "" when no row says (an unreadable log, a host that
+    died without one). Added 2026-09-18 so an SDK pin mismatch (session_host.py, SdkInternalsMismatch) reaches
+    the card with both versions and the repin command instead of "see host.log" (the box admin's hazard review
+    of the pull-in, 2026-09-16). Safe to carry: the host writes no spec field and no environment value to
+    host.log (its module docstring), so the row's text is the host's own."""
+    try:
+        lines = (host_dir(state_dir, sid) / "host.log").read_text().splitlines()
+    except OSError:
+        return ""
+    for ln in reversed(lines):
+        try:
+            row = json.loads(ln)
+        except ValueError:
+            continue
+        if row.get("kind") in ("host-crashed", "cli-spawn-failed") and row.get("error"):
+            return str(row["error"])
+    return ""
+
+
 def host_scope_unit(sid: str, t: int | None = None) -> str:
     """The host's own transient scope on Linux: `romp-host-<sid8>-<t>.scope` (the pid is not known before
     the spawn; the sweep keys on the sid's lease, not on a pid)."""

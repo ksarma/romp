@@ -789,16 +789,58 @@ EOF
     chmod +x "$1"
 }
 
+# ── the SDK is installed at the version the session host is written against ─────────────────────
+# kernel/session_host.py imports the SDK's private internals (claude_agent_sdk._internal) with no fallback,
+# and a release that moves one fails every hosted session launch. Until 2026-09-18 this script ran
+# `pip install --upgrade claude-agent-sdk`, so a routine re-run could install that release with nothing to say
+# so (the box admin's hazard review of the pull-in, 2026-09-16). The version is declared ONCE, as
+# SDK_TESTED_VERSION in kernel/session_host.py; the script reads that line and pins pip to it. This test reads
+# the line the same way and holds the pip call to it, so the two cannot drift apart unnoticed.
+@test "romp-sdk-setup: installs claude-agent-sdk==<the version kernel/session_host.py is written against>, never an open upgrade" {
+    _logging_venv_python "$STUB/python3.12"
+    pin="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' "$ROMP_DIR/kernel/session_host.py" | head -1)"
+    [[ "$pin" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]                          # one declaration, a real version string
+
+    PATH="$(bare_path)" ROMP_PYTHON="$STUB/python3.12" run "$ROMP_DIR/bin/romp-sdk-setup"
+
+    [ "$status" -eq 0 ]
+    grep -q "^pip install -q claude-agent-sdk==$pin$" "$CALL_LOG"      # the exact pin, the only SDK install
+    [ "$(grep -c 'claude-agent-sdk' "$CALL_LOG")" -eq 1 ]
+    [[ "$output" == *"claude-agent-sdk==$pin"* ]]                       # the install output names the version
+    [[ "$output" == *"kernel/session_host.py"* ]]                       # and where it is declared
+    # the venv's verify step is handed the pin, so it can refuse a venv that holds another version
+    grep -q "^venv-python - venv=$TEST_DIR/state/sdkvenv$" "$CALL_LOG"
+    grep -q 'ROMP_SDK_PIN="\$SDK_VERSION"' "$ROMP_DIR/bin/romp-sdk-setup"
+    run grep -q -- "--upgrade claude-agent-sdk" "$CALL_LOG"            # armed last: `run` replaces $output
+    [ "$status" -ne 0 ]
+}
+
+@test "romp-sdk-setup: with no SDK_TESTED_VERSION line to read it installs nothing and says where the line belongs" {
+    # A copy of the checkout with the declaration removed, so the script's own relative read finds no line.
+    # It must stop BEFORE the venv or pip runs: an unpinned install is the hazard, not a fallback.
+    _logging_venv_python "$STUB/python3.12"
+    mkdir -p "$TEST_DIR/tree/bin" "$TEST_DIR/tree/kernel"
+    cp "$ROMP_DIR/bin/romp-sdk-setup" "$TEST_DIR/tree/bin/"
+    grep -v '^SDK_TESTED_VERSION = ' "$ROMP_DIR/kernel/session_host.py" > "$TEST_DIR/tree/kernel/session_host.py"
+
+    PATH="$(bare_path)" ROMP_PYTHON="$STUB/python3.12" run "$TEST_DIR/tree/bin/romp-sdk-setup"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"SDK_TESTED_VERSION"* ]]
+    [[ "$output" == *"kernel/session_host.py"* ]]
+    [ ! -e "$CALL_LOG" ]                                               # nothing ran: no venv, no pip (the stubs log every call)
+}
+
 @test "romp-sdk-setup: installs cryptography beside the SDK (same pip, same venv) and verifies it too" {
     _logging_venv_python "$STUB/python3.12"
 
     PATH="$(bare_path)" ROMP_PYTHON="$STUB/python3.12" run "$ROMP_DIR/bin/romp-sdk-setup"
 
     [ "$status" -eq 0 ]
-    grep -q "^pip install -q --upgrade claude-agent-sdk$" "$CALL_LOG"
+    grep -q "^pip install -q claude-agent-sdk==" "$CALL_LOG"        # pinned; the test above holds the version
     grep -q "^pip install -q --upgrade cryptography$" "$CALL_LOG"
     # the SDK first: the backend every session runs on is never held behind the notifications' package
-    sdk_line="$(grep -n 'upgrade claude-agent-sdk' "$CALL_LOG" | head -1 | cut -d: -f1)"
+    sdk_line="$(grep -n 'claude-agent-sdk==' "$CALL_LOG" | head -1 | cut -d: -f1)"
     cr_line="$(grep -n 'upgrade cryptography' "$CALL_LOG" | head -1 | cut -d: -f1)"
     [ -n "$sdk_line" ] && [ -n "$cr_line" ] && [ "$sdk_line" -lt "$cr_line" ]
     # the verify step runs in the venv's python (argv unchanged: `-`, the heredoc) and is handed the venv in its
@@ -814,7 +856,7 @@ EOF
     PATH="$(bare_path)" ROMP_PYTHON="$STUB/python3.12" PIP_FAIL_ON=cryptography run "$ROMP_DIR/bin/romp-sdk-setup"
 
     [ "$status" -eq 0 ]                                                  # the SDK is in; romp runs without the other
-    grep -q "^pip install -q --upgrade claude-agent-sdk$" "$CALL_LOG"
+    grep -q "^pip install -q claude-agent-sdk==" "$CALL_LOG"
     [[ "$output" == *"could not install 'cryptography'"* ]]
     [[ "$output" == *"phone and browser notifications stay off"* ]]      # the consequence, in the user's terms
     [[ "$output" == *"$TEST_DIR/state/sdkvenv/bin/pip install cryptography"* ]]   # the exact command, for this venv

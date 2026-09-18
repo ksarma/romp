@@ -7,11 +7,26 @@
 # sys.path (see _ensure_sdk_on_path in bin/romp-kernel). The venv is built with the SAME python the
 # kernel runs (pick_python below matches bin/romp-serve's), so the ABI matches. Both pickers follow
 # the venv's own recorded interpreter once one exists, so a re-run keeps the interpreter and only
-# upgrades the SDK; the venv is REBUILT for a different python only when ROMP_PYTHON names one or the
-# recorded interpreter is gone, loudly (see below). Idempotent. Re-run to upgrade.
+# installs the SDK; the venv is REBUILT for a different python only when ROMP_PYTHON names one or the
+# recorded interpreter is gone, loudly (see below). Idempotent. Re-run after a pull that moves the pin.
+#
+# The SDK is installed at ONE version, never upgraded open-endedly: kernel/session_host.py imports the SDK's
+# private internals (claude_agent_sdk._internal) with no fallback, and a release that moves one fails every
+# hosted session launch. Until 2026-09-18 this line ran `pip install --upgrade claude-agent-sdk`, so a routine
+# re-run could install that release with nothing here to say so (the box admin's hazard review of the
+# pull-in, 2026-09-16). The version is declared once, as SDK_TESTED_VERSION in kernel/session_host.py, beside
+# the imports it was verified against; this script reads that line and pins pip to it, and the host refuses to
+# start on another version whose internals are gone (see sdk_internals there).
 set -euo pipefail
 STATE="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"
 VENV="$STATE/sdkvenv"
+ROMP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+SDK_PIN_SOURCE="$ROMP_DIR/kernel/session_host.py"
+SDK_VERSION="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' "$SDK_PIN_SOURCE" | head -1)"
+if [[ ! "$SDK_VERSION" =~ ^[0-9]+\.[0-9]+ ]]; then
+    echo "romp-sdk-setup: no SDK_TESTED_VERSION line in $SDK_PIN_SOURCE (read: '${SDK_VERSION}'). The SDK is installed at the version the session host is written against, declared on that line; nothing is installed without it." >&2
+    exit 1
+fi
 
 # The Agent SDK needs python >= 3.10; some hosts pin the system python3 older (Ubuntu 20.04 = 3.8)
 # with a newer one alongside (e.g. a uv-managed 3.12 in ~/.local/bin, probed explicitly because a
@@ -235,7 +250,11 @@ if [ ! -x "$VENV/bin/python" ] || [ ! -x "$VENV/bin/pip" ]; then
   fi
 fi
 "$VENV/bin/pip" install -q --upgrade pip >/dev/null
-"$VENV/bin/pip" install -q --upgrade claude-agent-sdk
+# Pinned (the header says why): `==`, so a re-run moves the venv to the tested version in either direction and
+# never past it. The message names the version and where it is declared, so an operator reading the install
+# output knows what a later `pip list` should show and where to change it.
+echo "romp-sdk-setup: installing claude-agent-sdk==$SDK_VERSION, the version the session host is written against (SDK_TESTED_VERSION in kernel/session_host.py)"
+"$VENV/bin/pip" install -q "claude-agent-sdk==$SDK_VERSION"
 # cryptography: what phone and browser notifications (Web Push: VAPID signing, payload encryption)
 # need on the kernel host, the kernel's one soft dependency beyond the SDK (_push_crypto in
 # kernel/kernel.py reads it from this venv). Nothing installed it until 2026-09-14, so a fresh
@@ -247,9 +266,16 @@ fi
 if ! "$VENV/bin/pip" install -q --upgrade cryptography; then
   echo "romp-sdk-setup: could not install 'cryptography' (the line above says why). romp runs without it, but phone and browser notifications stay off until it is installed:  $VENV/bin/pip install cryptography" >&2
 fi
-ROMP_SDK_VENV="$VENV" "$VENV/bin/python" - <<'PY'
-import claude_agent_sdk as m, os, sys
-print("romp-sdk-setup: claude-agent-sdk %s ready (python %s)" % (m.__version__, ".".join(map(str, sys.version_info[:3]))))
+ROMP_SDK_VENV="$VENV" ROMP_SDK_PIN="$SDK_VERSION" "$VENV/bin/python" - <<'PY'
+import claude_agent_sdk as m, importlib.metadata, os, sys
+# the venv's word on what it holds, checked against the pin: a pip that reported success and left another
+# version (a cached wheel, a constraints file in the environment) must not be reported as ready
+have = importlib.metadata.version("claude-agent-sdk")
+want = os.environ.get("ROMP_SDK_PIN", "")
+if want and have != want:
+    print("romp-sdk-setup: the venv holds claude-agent-sdk %s after an install of ==%s; the session host is written against %s and refuses to start on another version whose internals moved. pip's output above says why; fix that and re-run." % (have, want, want), file=sys.stderr)
+    sys.exit(1)
+print("romp-sdk-setup: claude-agent-sdk %s ready (python %s), the version kernel/session_host.py is written against" % (have, ".".join(map(str, sys.version_info[:3]))))
 try:
     import cryptography
     print("romp-sdk-setup: cryptography %s ready (phone and browser notifications)" % cryptography.__version__)
