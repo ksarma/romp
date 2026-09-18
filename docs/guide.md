@@ -242,7 +242,9 @@ its work so far, else from the last task it had; a session that has published a 
 working on shows the note as a quieter second line. Hover a row for its last message, shown without
 its formatting; click one to open that session, which also opens its section if the section is
 folded (with several tags, the first folded group of them that does not hide it; a section that
-hides the session stays as it was; see the next paragraph). The rows update as
+hides the session stays as it was; see the next paragraph). Right-click a row, or press the
+menu key while the row has the focus, to open the menu a right-click on the session's tab opens, with
+the same rows. **Rename** from that menu edits the name on the row while this view shows it. The rows update as
 the sessions work and change only when something about a session changes; the **Blocked** chip
 follows the feed, at most a moment behind it. The section of the tab you are reading folds like
 any other; its header then stands in for the tab (the name is underlined, ←/→ step from there).
@@ -287,7 +289,8 @@ The menu has **Hide tab** only while
 the tabs are grouped by tag and the tab is in a group, since nothing is hidden on the flat strip,
 on a phone, or for the untagged sessions after the divider. A tag that is still being created (its
 row under **Tags** says creating) has no **Hide tab** yet; the row appears once the tag exists. A hidden
-session has no tab to right-click, so this view's **Show** button puts it back. Hiding is separate
+session has no tab to right-click, so this view's **Show** button puts it back. A right-click on its row
+here opens the tab's menu, where **Hide tab** reads **Show tab**. Hiding is separate
 from folding: fold the group and open it again, and the hidden sessions stay hidden while the rest
 come back. Nothing is lost by
 hiding. The group's header keeps the dot and the ⚑ flag for its hidden sessions (the dot is red

@@ -3,7 +3,7 @@ title: Pinned notes: a session pins short notes above its own transcript for the
 status: candidate
 where: fork branch `pinnotes` (kernel/kernel.py the pinned-notes store with its tombstones and bounds, `_CHAT_SIG_LABELS` gaining `pins` (CHAT_MISS follows) and the `_chat_build_sig` fold, `build_session` field, `_send_chat` tail, the two routes, `_remote_no_answer_why` shared with /usertodo/withdraw, the `unpinNote` drive op and `_chat_body`; postal/postal_service.py the two tools, `_pinned_notes_words` and `_pinned_dropped_words`; ui/webview/pinned-notes.ts, render.ts, styles.css; vscode-extension/src/page-skeleton.ts; tests/test_pinned_notes.py, tests/test_postal_pinned_notes.py, tests/test_injected_voice.py, ui/webview/pinned-notes.test.ts, ui/webview/pinned-notes-browser.test.ts, plus the re-aimed tests/test_chat_fixed_cost_memos.py, tests/test_chat_build_sig_inputs.py, ui/webview/file-view-links.test.ts and ui/webview/user-todo-title-links.test.ts; docs/reference.md, docs/guide.md)
 added: 2026-09-08
-pr:
+pr: 379
 tier: feature
 offered:
 closed:

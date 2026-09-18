@@ -1,10 +1,10 @@
 ---
 title: Free-threaded CPython readiness (3.14t): the kernel's shared caches close their check-then-act and read-modify-write races, `SourceFileLoader.load_module()` (removed in Python 3.15) gives way to `kernel/loadsource.py`, CI gains a 3.14t cell, and the test floors poison `ROMP_KERNEL_PORT` / `ROMP_SERVE_PORT` beside `ROMP_MANAGER_PORT`
-status: candidate
+status: keep-private
 where: fork PR #275 (branch `ft-ready`, merged 2026-09-07, merge `c94e97a9`): kernel/kernel.py, kernel/judge.py, kernel/event_model.py, kernel/loadsource.py, tests/romp_load.py, tests/test_free_threaded_caches.py, tests/conftest.py, tests/__init__.py, .github/workflows/ci.yml, docs/install.md
 added: 2026-09-07
 pr: 275
-tier:
+tier: fix
 offered:
 closed:
 ---
@@ -13,3 +13,5 @@ Three of the races are live under the GIL and upstream carries the same code: `_
 Status detail (migrated from the table): candidate
 
 The loader half (kernel/loadsource.py, tests/romp_load.py, the four kernel import heads) is offered on its own through the loadsource-loader entry (their PR #1278); the test-module sweep follows as its own PR; the rest of this entry stays candidate.
+
+2026-09-18: the user keeps this private (no fix offer, no CI-cell split).

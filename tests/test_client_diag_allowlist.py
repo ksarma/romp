@@ -115,6 +115,22 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(rows[2]["data"]["reason"], "")
         self.assertEqual(rows[3]["data"]["resent"], True)
 
+    def test_the_shell_led_return_keys_pass_whole(self):
+        # D3 (2026-09-18): the pane's return awaits the shell's link (return.awaitLink) and its return-fresh carries
+        # the path's own recovery (return-fresh.linkUpMs); the shell socket's return-probe is a fixed-shape row.
+        err = self.post("pane-shim", "return", {"decision": "redial-closed", "resumed": False, "hiddenMs": 195000,
+                                                 "frozenMs": 0, "quietMs": 195500, "quietAtResumeMs": -1, "ready": 3,
+                                                 "app": "chat", "awaitLink": True})
+        err += self.post("pane-shim", "return-fresh", {"ms": 1200, "bytesSince": 40000, "redialed": True,
+                                                       "linkUpMs": 900, "app": "chat"})
+        err += self.post("shell", "return-probe", {"decision": "redial-closed", "hiddenMs": 195000, "quietMs": 195500,
+                                                   "attempts": 2, "firstFailMs": 12500, "ms": 33000})
+        self.assertEqual(err, "", "the D3 keys are admitted whole (awaitLink, linkUpMs, and the shell return-probe)")
+        rows = self.rows()
+        self.assertIs(rows[-3]["data"]["awaitLink"], True)
+        self.assertEqual(rows[-2]["data"]["linkUpMs"], 900)
+        self.assertEqual(rows[-1]["data"]["decision"], "redial-closed")
+
     def test_every_surface_in_the_table_admits_every_key_it_names(self):
         for surface, keys in sorted(km.CLIENT_DIAG_KEYS.items()):
             data = {k: i for i, k in enumerate(sorted(keys))}
@@ -473,6 +489,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("hostconn", {"host": host, "ev": "open", "flushed": 1}),
                 ("hostconn", {"host": host, "ev": "close", "code": 1006, "clean": False, "detached": False}),
                 ("hostconn", {"host": host, "ev": "detach", "pendingDropped": 2}),
+                ("hostconn", {"host": host, "ev": "moot", "pendingDropped": ["needFull", "needFull"]}),   # the held asks the ready's connect push answers, dropped before the flush, by type (2026-09-18)
                 ("feedDelta-nobase", {"host": host, "buildId": "b1"}),
                 ("feedmerge", {"counts": {host: 4}}),
                 ("sendqueue", {"host": host, "msgType": "prompt", "gt": 2, "rs": 0, "superseded": True}),
@@ -494,6 +511,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("tap-pending-land", {"sid8": sid[:8], "ageS": 4, "dup": False}),
                 ("tap-vanish-land", {"sid8": sid[:8], "ageS": 4}),
                 ("sw-message", {"shape": "object", "hasSid": True, "kind": "tap", "dup": False, "sw": True}),
+                ("return-probe", {"decision": "redial-closed", "hiddenMs": 30000, "quietMs": 31000, "attempts": 3, "firstFailMs": 12500, "ms": 30500}),   # D3 (2026-09-18): the shell socket's return probe, one row per return; decision is an enum, the rest ints
             ],
         }
         for surface, rows in posters.items():

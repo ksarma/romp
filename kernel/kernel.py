@@ -3039,10 +3039,12 @@ CLIENT_DIAG_KEYS = {
                             "ms", "bytesSince", "redialed",                                                     # return-fresh
                             "code", "reason", "wasClean", "sinceOpenMs", "everConnected", "bundleReady",        # wsclose
                             "attempts", "firstFailMs",                                                          # wsconnfail
-                            "wasDiscarded", "nav")),                                                            # page-load
+                            "wasDiscarded", "nav",                                                              # page-load
+                            "awaitLink", "linkUpMs")),                                                          # D3 (2026-09-18): return awaits the shell's link; return-fresh's linkUpMs is the path's own recovery
     "reload-core": frozenset(("reason", "detail", "hold", "ageMs")),
     "shell": frozenset(("sidAttached", "host", "why", "tabs", "status", "via", "boot", "hasSid", "hasCard", "hasPid", "controlled", "dup",
-                        "sub", "rows", "err", "getNotifications", "displayed", "vanished", "superseded", "sid8", "ageS", "shape", "kind", "sw")),
+                        "sub", "rows", "err", "getNotifications", "displayed", "vanished", "superseded", "sid8", "ageS", "shape", "kind", "sw",
+                        "decision", "hiddenMs", "quietMs", "attempts", "firstFailMs", "ms")),                    # D3 (2026-09-18): the shell socket's return-probe row (all fixed identifiers / enum members)
     "federation": frozenset(("host", "ev", "why", "quietMs", "foreground", "msgType", "rs", "flushed", "held", "unread", "endedUnread",
                              "code", "clean", "detached", "pendingDropped", "buildId", "counts", "gt", "superseded")),
     "chat": frozenset(("sid", "error", "held", "got", "distVer", "path", "mdLen", "queuedLeft", "ids", "n", "active", "ts", "len", "route",
@@ -3056,7 +3058,8 @@ CLIENT_DIAG_KEYS = {
     "outline": frozenset(("buildId", "slot", "rev")),
     "waiting": frozenset(("buildId",)),
     "kernel": frozenset(("app", "kind", "reconnect", "iid", "cid", "host", "sid", "type", "span", "events", "bytes", "head", "missing",
-                         "refused", "reason", "sent", "frames", "ageS")),
+                         "refused", "reason", "sent", "frames", "ageS",
+                         "frame", "withheld", "proto")),                                                   # implicitHandshake (_implicit_handshake)
 }
 _client_diag_said = set()      # (surface, key) pairs already said on stderr; one line each per kernel, CLIENT_DIAG_SAID_MAX of them
 _CLIENT_DIAG_SAID_FULL = (None, None)   # the latch's own entry once it is full: the one line past the bound
@@ -52891,9 +52894,15 @@ def _note_history_reply(client, sid, mtype, reply, nbytes, now=None, sent=True):
 
 def _note_chat_withheld_at_close(client, now=None):
     """One client-diag row for a socket that CLOSED without its handshake after chat frames were withheld from it: the permanent
-    case (an older shim's redial with no proto term, a page whose ready never came), told apart from the routine pre-ready race
-    (a pusher cycle between the accept and the bundle's ready, whose handshake then arrives and whose frames follow), which used
-    to file the same row (the tidy after PR 1642, low 1). Returns whether a row was filed."""
+    case, told apart from the routine pre-ready race (a pusher cycle between the accept and the bundle's ready, whose handshake
+    then arrives and whose frames follow), which used to file the same row (the tidy after PR 1642, low 1). The permanent case is
+    any chat socket whose wire was never declared while frames were withheld: one that sent nothing for its whole life (a page
+    whose ready never came and that asked for nothing), and one the vintage rule declines (a namespaced-iid relay, an ext pipe)
+    that sent frames and never a ready, which the rule leaves withheld; a chat socket the rule takes is taken at its first frame
+    instead (_implicit_handshake, 2026-09-18) and files no row here: an older hub's relay, an upstream pane shim's redial between
+    8610b8954 and 42ab10dd1 at the row it flushes, and an upstream pane shim of cd1625792 or later at the frame its open flushes
+    ahead of the ready it re-posts (no upstream shim announces caps, so the readyGate decline reaches none of them). Returns
+    whether a row was filed."""
     if client.get("handshake") is not False or not client.get("withheld"):
         return False
     try:
@@ -52904,6 +52913,120 @@ def _note_chat_withheld_at_close(client, now=None):
         return True
     except Exception:
         return False
+
+
+
+def _ws_op_word(t):
+    """The word a kernel-written record quotes for a client frame's type: the type when it is a str in WS_OPS, else "other"
+    (a type the kernel does not know, a missing type, a type that is not a string). Never the type itself, whatever it holds."""
+    return t if isinstance(t, str) and t in WS_OPS else "other"
+
+
+def _implicit_handshake(client, msg):
+    """The FIRST client frame from a chat socket of OLDER VINTAGE that has declared no chat wire stands as its handshake, on
+    the index wire (proto 1), and lifts the chat withhold (_send_chat_locked's gate). The event this keys on is that frame
+    itself; no clock is read. Two producers dial a chat socket that neither posts `ready` nor carries a `proto` term and
+    then ask this kernel for things: a hub page older than the federation's remote ready (b84f716a8 for a proto-2 page,
+    f7a80efee for every page) relaying to a newer kernel, whose federation sent the page's ready to the local socket alone;
+    and an upstream pane shim between 8610b8954 and 42ab10dd1 redialing after this kernel restarted: its dial carries
+    reconnect=1 (8610b8954's term) with no proto term (42ab10dd1's) and no caps term, and its open re-posts no ready: no
+    upstream build in that range does. The onopen at 8610b8954, be11455cd and 7390404be flushes its queue and posts nothing
+    (`readyQueued` there gates the dial term, it is not a re-send), and `ws.send(readyMsg)` first appears at cd1625792,
+    after the range. The LINE tells the two shims apart, not their age: a fork pane shim carrying a3a9e7385's re-send
+    (2026-09-03) announces the readyGate hold and then
+    re-posts a bare ready in its redial's onopen right after its queue flush, so it declares proto 1 itself one frame
+    later; it is declined below for that readyGate and served at that ready (review round 3). fd95b435a, the fork merge
+    in the bug report, is an instance of the fork case, and by wall clock it is NEWER than 7390404be (2026-09-11 against
+    2026-09-10): a reader debugging a declined shim reads its line, never its date. Until
+    2026-09-18 the gate withheld every chat frame from the two producers: strips and statuses flowed and every session
+    body was withheld, so an older dashboard attached to a newer kernel listed the remote's tabs with nothing behind them
+    (two relay sockets, 965 and 644 chat frames withheld, on the record). Both spoke the index wire before the gate
+    existed, and that is the wire they degrade to.
+    The rule reads the CLIENT'S VINTAGE, never the frame's kind (review round 1, 2026-09-18). The first cut took the first
+    decodable frame of any unhandshaken socket, and a CURRENT page's relay sent a held setting or bookkeeping frame ahead of
+    its ready on a fresh open (federation.ts flushed its pending frames before it posted the ready), so a proto-2 page's
+    relay was pinned to proto 1 for that window and a pusher cycle landing in it served an index session frame and a turn-0
+    build: the race b0fabb0a7 closed, reopened for remote sessions. Taken only for a socket that is all of:
+      a chat socket (app chat: every chat send site is chat-filtered, so a feed, Outline or timeline relay carries no chat
+        wire to declare and is neither stamped nor logged about);
+      announced no READY_GATE_CAP hold (read from `caps`, never from the effective `ready` flag) and ready from accept
+        (`ready` True): a socket held under the cap is a kernel-served pane whose bundle has not said ready, whose shim
+        flushes queued clientDiag rows at its open before that ready, the very race the gate closed; and a pane that
+        announced the cap and dialled reconnect=1 is ready from accept all the same (the accept's reconnect branch) while
+        its shim re-posts a bare ready right behind the rows it flushes (the fork's shims carrying a3a9e7385's re-send,
+        fd95b435a among them), so its flushed row must not stand in for the ready one frame behind it
+        (review round 3, 2026-09-18: the rule read `ready` alone and took that row, said the socket declared no wire, filed
+        a row for it, and a pusher cycle landing before the ready served one whole frame twice). Neither producer above
+        announces caps at all, so the check costs them nothing;
+      not the VS Code extension host's pipe (client["ext"], stamped at accept from the client=ext dial term _dial_kind
+        reads: every ext pipe forwards its webview's own ready, and on a reconnect it first replays the intents the user
+        typed or picked while it was down, which would otherwise pin the pipe to proto 1 until that ready);
+      of older vintage: its dial carries no NAMESPACED instance id (a colon-joined `iid`, which only a current hub's relay
+        sends: 8fe70da07 namespaces the page's iid by the hub's wid, and every hub of that vintage also posts its ready on
+        the relay, f7a80efee being older; the older hub's relay states app and wid alone, and the older shim's redial
+        carries a bare uuid iid). Neither `delta` nor `reconnect` is read: the older shim's redial carries delta=1 like a
+        current relay, and `reconnect` is popped by the first pusher cycle, which the redial's accept-time wake makes
+        precede its first frame.
+    Not taken besides: a `ready` (the arm declares the wire itself); a socket already handshaken (a redial's proto term, a
+    ready seen); an undecodable frame (msg None) or a decodable frame that is not an object. A socket that sends nothing
+    keeps the gate's behaviour: no chat frame, the chatWithheld row at its close. A real `ready` after this re-declares the
+    wire, resets the base as it always did and pops `implicitHandshake` from the record. Wakes the pusher: a frame that
+    wakes nothing itself (a settings post) would otherwise wait for the backstop cycle. Said once on stderr per socket,
+    with the frame that stood in and the frames withheld before it, and filed as one kernel-surface client-diag row (what
+    implicitHandshake: app, kind, frame, withheld, proto 1) beside the socket's wsopen row, in a try, so a file failure
+    never touches the socket. The frame is quoted on all three (the record, the line, the row) as a WORD from WS_OPS, the
+    kernel's own vocabulary of the ops _dispatch_ws and _drive accept, or as `other` for any type outside it (a string the
+    kernel does not know, a missing type, a type that is not a string), never as the type itself: a first frame's type is
+    client text, and str() of it let free text, a sid-shaped string or a dict's content into client-diag.jsonl and the
+    kernel log (review round 2, 2026-09-18). Returns whether the mark lifted here.
+    With federation.ts posting its ready before its flush (the same change), a current page's frame ahead of its ready can
+    no longer pin its socket under any kernel, and a current relay that opens before its page's proto is known sends no
+    ready at the open, is declined here by its namespaced iid, and is served when its ready comes, as before. Three
+    vintages are still taken and repair themselves at their ready, two intermediate (review round 2) and upstream's
+    current pane shim (the closing check, 2026-09-18): a hub whose federation is
+    between b84f716a8 (2026-09-11, the ready posted on the relay, behind its flush) and 8fe70da07 (2026-09-15, the
+    namespaced iid) dials app and wid alone and flushes a frame parked while the relay was down or connecting (a setting,
+    its active tab, an ask) before its ready, so that frame is taken here and a pusher cycle before the ready serves one
+    index session frame; and a VS Code extension host built between a6c57f42a (2026-09-11, the uuid wire) and f19808d19
+    (2026-09-15, the client=ext term) dials with no term to stand it down, so an intent it replays on a reconnect is taken
+    and the pipe is served the index wire until its webview's ready. An upstream pane shim of cd1625792 (2026-09-11) or
+    later is taken the same way and repairs the same way: from that commit its open re-posts the bundle's ready when no
+    caps frame ever answered it, and that re-post comes after the queue flush, so a frame the flush carries is taken here
+    and the re-posted ready (`{type:"ready",proto:2}` for a chat page) re-declares the wire one frame later. Such a dial
+    carries no reconnect term (the term needs `readyAcked`, the re-post needs `!readyAcked`), so it is not the silent
+    shape and no build at or after 42ab10dd1 can make that shape. The kernel cannot tell any of the three dials from the
+    older producers this exists for (app and wid alone, no header, no namespaced iid, no caps); each window ends at the
+    ready, which re-declares the wire, resets the base and pops the mark, and the implicitHandshake row is the record of
+    the window. No upstream shim announces caps at any vintage (`&caps=` appears nowhere in upstream/main's kernel.py
+    history), so the readyGate decline is the fork's alone: the fork's current shim carries the same re-post and is
+    declined for its `caps=readyGate` term, and an upstream shim of the same vintage is taken and repairs at its
+    re-posted ready."""
+    if not isinstance(msg, dict) or msg.get("type") == "ready":
+        return False
+    if client.get("app") != "chat":
+        return False
+    if client.get("handshake") is not False or not client.get("ready", True):
+        return False
+    if READY_GATE_CAP in (client.get("caps") or ()):
+        return False   # a kernel-served pane: its shim posts the ready itself, one frame behind the rows a redial flushes (round 3)
+    if client.get("ext") or ":" in str(client.get("iid") or ""):
+        return False
+    client["proto"] = 1
+    client["handshake"] = True
+    client["implicitHandshake"] = _ws_op_word(msg.get("type"))   # the frame that stood in, as a word from WS_OPS or `other`, never the client's text
+    withheld = int(client.get("withheld") or 0)
+    sys.stderr.write("ws: a %s socket (app %s) declared no chat wire; its first frame (%s) stands as a proto-1 handshake, "
+                     "%d chat frame(s) withheld before it\n"
+                     % (client.get("kind") or "page", client.get("app"), client["implicitHandshake"], withheld))
+    try:
+        _client_diag_append(jd.STATE / "client-diag.jsonl", json.dumps({"t": int(time.time()), "wid": str(client.get("wid") or ""), "surface": "kernel",
+                                                                         "what": "implicitHandshake",
+                                                                         "data": {"app": client.get("app"), "kind": client.get("kind"), "frame": client["implicitHandshake"],
+                                                                                  "withheld": withheld, "proto": 1}}) + "\n")
+    except Exception:
+        pass   # the durable record is a courtesy to the reader of the file; the socket's service never waits on it
+    _pusher_wake.set()
+    return True
 
 
 def _drop_dead_ws_client(client, why):
@@ -55624,6 +55747,15 @@ def _send_chat_locked(c, m, ms, change_from, led_changed):
         c["withheld"] = int(c.get("withheld") or 0) + 1   # counted, not filed: a pusher cycle between the accept and the bundle's ready is the ROUTINE
         return ms                                     # case, and a row for it read the same as the permanent one; the socket's close files the row
     #                                                    when the handshake never came (_note_chat_withheld_at_close; the tidy after PR 1642, low 1).
+    #                                                    A chat socket of OLDER VINTAGE (no readyGate announced, ready from accept, no namespaced iid,
+    #                                                    not an ext pipe) that declares no wire but sends any other frame is taken at that frame as a
+    #                                                    proto-1 client (_implicit_handshake, 2026-09-18): an older hub's relay and an upstream shim's
+    #                                                    redial between 8610b8954 and 42ab10dd1 (reconnect=1, no proto, no caps, no ready re-posted)
+    #                                                    got no chat frame for the socket's life, the remote's tabs listed with nothing behind them.
+    #                                                    A fork shim carrying a3a9e7385's re-send announces readyGate and re-posts a bare ready behind
+    #                                                    its flush, so it is declined for that readyGate and served at its own ready: the LINE tells
+    #                                                    the shims apart, not their age (fd95b435a is the fork case, and newer than 7390404be). A
+    #                                                    current page's relay (a namespaced iid) is never taken: its frames wait for its ready, as here.
     #                                                                                       # (T386 stage 2, round eleven). It used to get index frames, and a proto-2 page whose ready lost the
     #                                                    race to this push (the pusher fires from the socket's open; the bundle evaluates later) held an
     #                                                    index frame at its reload restore and took the older wire for a landing the window wire owns.
@@ -64142,6 +64274,13 @@ data:{app:APP,why:why||"",ready:ws?ws.readyState:-1,quietMs:lastRecv?Date.now()-
 // the first fresh frame then took (and whether a redial got in the way). Same clientDiag path as staleDiag:
 // send() queues while the socket is down, so a row survives the very redial it describes.
 var frozeAt=0,resumedAt=0,resumeQuiet=-1,hiddenAt=0,foregroundedAt=0,returnAt=0,returnBytes=0,returnRedialed=false,returnRow=null,eagerDial=false;   // eagerDial: the one immediate redial each return window gets   // returnRow: a keep-decision row held until a close inside the return window (or the watchdog, at the provisional bound) proves its socket was already dead; retired by the flush once its return-fresh has filed
+var awaitLink=false,linkUpMs=-1;   // [fork] D3 (2026-09-18): this return is waiting for the shell socket's link to come up (the shell is the page's one probe, kernel.py _LANDING_MOBILE_JS); linkUpMs is foreground->link-up, the path's own recovery split from the code-owned wait (return-fresh.ms minus it); reset each return, in the fast path below
+// [fork] D3: the shell's published link, read SYNCHRONOUSLY for a same-origin pane iframe so the return decision does
+// not depend on the order the documents' visibilitychange handlers run. The shell is PRESENT when its publication
+// exists: window.parent.__rompLink is a function (the ruling of 2026-09-18: not the phone media query, not a foreign
+// parent alone). undefined for a standalone page, the VS Code webview, or a shell too old to publish one: those keep
+// the upstream fast-path lines below, byte for byte.
+function parentLink(){try{return (window.parent!==window&&typeof window.parent.__rompLink==="function")?window.parent.__rompLink():undefined;}catch(e){return undefined;}}
 function returnDiag(what,data){try{data.app=APP;send({type:"clientDiag",surface:"pane-shim",what:what,data:data});}catch(e){}}
 var nav="";try{var ne=performance.getEntriesByType("navigation");nav=(ne&&ne[0]&&ne[0].type)||"";}catch(e){}
 // the page-load row exists to catch a tab the browser DISCARDED and reloaded on return (Memory Saver: the return is a
@@ -64232,6 +64371,7 @@ if(!o){if(mine)have.remove();return;}if(mine){have.firstChild.textContent=o.text
 function raiseBuild(dv){var R=window.__rompReload;if(R){R.noteDv(dv);return;}   // the core decides (an offer, deduped by build; in a shell, the shell's)
 if(buildRaised)return;buildRaised=true;selfBar("A newer romp build is available.","build");}   // no core on this page: the bar, once
 function connect(){if(ws&&(ws.readyState===0||ws.readyState===1))return;   // one live attempt at a time — a lost timer + the watchdog can both call in
+if(awaitLink)return;   // [fork] D3 (review round 2, 2026-09-18): while this return awaits the shell's link nothing dials. Every legitimate caller (the fast path's up branch, the link listener, the backstop's two arms, the next return) clears awaitLink before it calls in; the one that does not is the blind 1.5 s redial a close the page saw while hidden armed before the return, and it is refused here. Before this that stray dial stood as ws for the whole await: the link listener and the backstop (both inert with a socket up) never ended it, and the return-fresh carried no linkUpMs though the return row said awaitLink true
 if(returnAt)returnRedialed=true;   // a dial inside a return window (whatever path led here) → the return-fresh row says so
 connT=Date.now();var proto=location.protocol==="https:"?"wss://":"ws://";
 var active="";try{var st0=JSON.parse(localStorage.getItem(SK)||"null");active=(st0&&st0.activeId)||"";}catch(e){}
@@ -64308,10 +64448,16 @@ if(returnRow&&Date.now()-foregroundedAt<STALE_MS){var rr=returnRow;returnRow=nul
 var inWin=Date.now()-foregroundedAt<STALE_MS,d=1500;   // a close landing within STALE_MS of a foreground (the FIN a frozen tab thawed into; an iOS return): the close IS the event
 if(inWin){d=eagerDial?0:250;eagerDial=false;}   // …so the FIRST such close redials NOW; every further close in the same window waits 250 ms (a kernel that is down must not be hammered) (2026-09-07)
 if(restartAnnounced&&Date.now()-restartAnnounced<30000)d=Math.min(d,250);   // an announced death keeps its tight redial
+// [fork] D3 (2026-09-18): an in-window close while the shell's link is down (and no announced restart) waits for the
+// link-up word, not a blind timer: the shell's probe says the path is down, so a per-pane redial here is the storm this
+// design removes. Put the socket down (ws=null) so the tick is inert and re-await; a link that is up (or standalone, or
+// an announced restart) keeps the upstream 0/250 cadence below (a proven path, dial at once).
+var _lk=parentLink();if(inWin&&_lk!==undefined&&!_lk.up&&!(restartAnnounced&&Date.now()-restartAnnounced<30000)){awaitLink=true;ws=null;return;}
 setTimeout(connect,d);};   // the blind 1.5 s stays for unannounced drops outside any return window
 ws.onerror=function(){try{ws.close();}catch(e){}};}
 function send(m){var s=JSON.stringify(m);if(m&&m.type==="ready"){bundleReady=true;readyProto=(m.proto===2?2:1);readyMsg=s;}   // the bundle's listener is installed: from here a redial may declare itself (the dial term in connect)
 if(m&&m.type==="ready"&&PM.bundleReady===undefined)PM.bundleReady=pnow();if(m&&m.type==="clientDiag"&&diagMuted())return;   // the beacon extension: the bundle's ready stamp; the kill switch drops every clientDiag row (the shim's, the reload core's and the collector's alike) before it is sent or queued
+if(m&&m.type==="clientDiag"&&m.what==="return-fresh"&&m.data&&linkUpMs>=0){m.data.linkUpMs=linkUpMs;s=JSON.stringify(m);}   // [fork] D3 (2026-09-18): the return-fresh row carries linkUpMs (foreground->link-up) only when this return awaited the shell's link (-1 otherwise, reset each return); stamped here, in the one funnel, so no upstream shim line is modified, and re-serialized because the first line above already built s
 if(ws&&ws.readyState===1){ws.send(s);return;}
 if(m&&m.type==="ready")readyQueued=true;   // ...and this one waits for the open: the redial that carries it dials as a fresh page (onopen clears the bit after the flush)
 if(m&&m.type==="clientDiag"){if(queuedDiag>=DIAG_QUEUE_MAX)return;queuedDiag++;}   // breadcrumbs waiting for a reconnect are capped; everything else queues as before
@@ -64419,6 +64565,32 @@ setInterval(function(){if(!ws)return;
 if(ws.readyState===1){var bound=resumeProvisional?PROVISIONAL_MS:STALE_MS;if(everConnected&&Date.now()-lastRecv>bound){staleDiag("watchdog-close","quiet");abandon();connect();}return;}   // a resumed keep no frame has confirmed runs at the shorter bound (PROVISIONAL_MS, above)
 if(ws.readyState===0&&Date.now()-connT>15000){try{ws.close();}catch(e){}return;}
 if(ws.readyState===3&&Date.now()-connT>8000){connect();}},5000);
+// [fork] D3 (2026-09-18): the shell leads this pane's return redial. The shell socket is the page's one link probe;
+// on a stale return into a down link the fast path below puts this socket down (the tick above goes inert on !ws) and
+// waits, and the shell's link-up word is the redial's event. The shell re-tells the link on its socket's open, close
+// and abandon (_LANDING_COLLAPSE_JS broadcast): the six pane frames hear it as the link field of the panes word
+// (link:'up'|'down', panesMsg), every other shim-bearing iframe (the settings frame, a split chat column) as a link
+// word of its own ({romp:'link',link}), since a panes word would replace those frames' pane set (review round 1,
+// 2026-09-18: before this the word reached the six pane frames alone, and the others ended their await on the 5 s
+// backstop poll below). Only ends an await with no socket; stamps linkUpMs (foreground->link-up) onto the pending
+// return-fresh.
+try{window.addEventListener("message",function(e){var m=e&&e.data;if(!m||(m.romp!=="panes"&&m.romp!=="link"))return;
+if(m.link==="up"&&awaitLink&&!ws){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;connect();}});}catch(e){}
+// the link backstop: re-read the shell's link every 5 s while awaiting with no socket. An `up` we missed the word for
+// dials; a link whose loop-alive stamp (connT: the later of the shell's last dial and its watchdog's last tick with a
+// socket to watch, review round 2, 2026-09-18) has not renewed for 25 s means the shell's loop is dead, so dial anyway
+// and say why loudly (a link-backstop diag row). The stamp renews every tick while the shell has a socket in any state,
+// so an alive loop reads under one tick stale whatever its socket's age (before the stamp, a long-standing OPEN shell
+// socket crossing the quiet bound published its hours-old dial time for the tick that put it down, and a pane awaiting
+// in that tick filed a false link-backstop row and dialed on its own). 25 s is the shell's whole alive cycle on a hung path,
+// from its named constants (_LANDING_MOBILE_JS): the 15 s CONNECTING cut (SH_CONNECT_MS), the watchdog tick that
+// performs it (up to one SH_TICK_MS late) and the 2 s blind redial that follows (SH_BLIND_MS), 22 s, rounded up to
+// the next tick as a margin for late timers; tests/test_kernel_ws_heartbeat.py pins the sum against those constants
+// (review round 1, 2026-09-18: the 20 s bound omitted the redial, so a pane tick landing in the loop's last two
+// seconds called an alive loop dead). It approximates the one event nobody can hear (that loop dying).
+setInterval(function(){if(!awaitLink||ws)return;var L=parentLink();if(L===undefined)return;
+if(L.up){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;connect();return;}
+if(L.connT&&Date.now()-L.connT>25000){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;staleDiag("link-backstop","");connect();}},5000);
 // visibility fast-path (the user 2026-07-05): a BACKGROUNDED tab has its timers throttled, so the 5s watchdog
 // above can lag and the browser may have quietly dropped the socket while it slept. The instant the tab is
 // foregrounded, if the socket isn't open or has gone quiet past the watchdog window, treat the view as stale:
@@ -64431,8 +64603,18 @@ var stale=!ws||ws.readyState!==1||Date.now()-lastRecv>STALE_MS;var res=resumedAt
 var row={decision:stale?((!ws||ws.readyState!==1)?"redial-closed":"redial-stale"):"keep",resumed:res,hiddenMs:hiddenAt?Date.now()-hiddenAt:-1,
 frozenMs:(res&&frozeAt>=hiddenAt&&resumedAt>frozeAt)?resumedAt-frozeAt:0,quietMs:lastRecv?Date.now()-lastRecv:-1,quietAtResumeMs:res?resumeQuiet:-1,ready:ws?ws.readyState:-1};
 returnAt=Date.now();returnBytes=0;returnRedialed=false;returnRow=null;   // every return starts with no held row (review find, 2026-09-08): a keep row left over from an earlier return must not ride this one's close or abandon
+awaitLink=false;linkUpMs=-1;   // [fork] D3: every return starts not awaiting the shell's link
 if(!stale){returnRow=row;returnDiag("return",row);return;}   // the socket stands: the row rides it now — and is HELD, because a FIN queued in the same thaw burst would swallow it (review find 2026-09-07; onclose re-files)
 pendingWhy="foreground";freshPending=true;armFresh();   // the reconnect's arm reads "foreground" (upstream's two-event prompt)
+// [fork] D3 (2026-09-18): when this pane sits in a shell that publishes a link, put the socket down for EVERY state
+// (abandon nulls ws, so the tick is inert and no onclose timer arms) and dial only once the link is up: now if it
+// already is (linkUpMs 0, the whole wait is code-owned), else on the shell's link-up word (awaitLink; the panes
+// listener and the backstop above end it). Independent of PR 3 (hidden panes park): with this PR alone every pane
+// awaits the link and dials on link-up, so the returns are coordinated and there is no failed-connect storm; when
+// PR 3 lands, a parked pane skips this dial. Standalone / VS Code / an older shell (parentLink undefined) fall through
+// to the upstream lines below, byte for byte (today's path).
+var _L=parentLink();
+if(_L!==undefined){abandon();if(_L.up){row.awaitLink=false;linkUpMs=Date.now()-foregroundedAt;connect();}else{awaitLink=true;row.awaitLink=true;}returnDiag("return",row);return;}
 if(ws&&ws.readyState===1)abandon();else{try{if(ws&&ws.readyState===0)ws.close();}catch(e){}}   // OPEN-but-quiet → abandoned + redialed below, now; stuck-CONNECTING → aborted, onclose retries
 if(!ws||ws.readyState===3)connect();
 returnDiag("return",row);});/*end-shim-core*/})();   // filed AFTER the redial so it queues for the new socket instead of vanishing into the dead one
@@ -67882,18 +68064,47 @@ b.addEventListener('click',function(){var f=A[b.getAttribute('data-act')];if(f)f
 window.addEventListener('message',function(e){var m=e.data;if(!m)return;if(m.romp==='reveal'&&m.pane)reveal(m.pane);// the chat header's Fleet pill / the fleet's back-to-chat post toggleFleet — on mobile that IS a tab switch
 if(m.romp==='toggleFleet')userSwitch(m.to==='chat'?'chat':'fleet');});
 var shellOpened=false;   // T265: this socket's REOPEN is the kernel-restart signal — the shell asks /version whose kernel answered
-function shellWS(){try{var proto=location.protocol==='https:'?'wss://':'ws://';
+// [fork] D3 (2026-09-18): the shell socket is the page's ONE link probe. It gets the shim's liveness rules (one attempt
+// in flight, a lastRecv / freeze-resume clock, a 5 s watchdog with the shim's three arms, a return probe filed per
+// return, and a redial cadence), so a 30 s outage costs one socket's retries, not thirteen. romp-manager ruled the shell
+// keeps its OWN copy of these rules rather than sharing the shim's (the shim is upstream text the fold touches weekly);
+// tests/test_kernel_ws_heartbeat.py pins the two copies to agree on the constants and the tick. The connect cut is a
+// named constant at today's 15 s (SH_CONNECT_MS, no behaviour change); the 5 s cut experiment is a later harness leg.
+var shWs=null,shLastRecv=0,shConnT=0,shResumeProvisional=0,shHiddenAt=0,shForegroundedAt=0,shFrozeAt=0,shResumedAt=0,shFailed=0,shFirstFailT=0,shRestartAnnounced=0,shReturnProbe=null,shRung=0,shTimer=0,shTickT=0;   // shTimer: the ONE pending redial timer (review round 1, 2026-09-18: a dial clears it, so a return while the pre-return close's blind timer is pending makes one chain, not two on the ladder side by side); shTickT: the watchdog's last tick with a socket to watch, the loop-alive stamp __rompLink publishes as connT beside the dial time (review round 2)
+var SH_STALE_MS=30000,SH_PROVISIONAL_MS=15000,SH_CONNECT_MS=15000,SH_REDIAL_MS=8000,SH_TICK_MS=5000,SH_BLIND_MS=2000,SH_LADDER=[1000,2000,4000,4000];   // SH_BLIND_MS: the redial after an ordinary drop outside any window (today's shell), named so the pane's link backstop is derived from it (kernel.py _shim)
+// the shell publishes the page's link: a synchronous read for the same-origin pane iframes (their parentLink), and the
+// panes word (link:'up'|'down', _LANDING_COLLAPSE_JS panesMsg) re-told on this socket's open, close and abandon. up only
+// for a socket that is OPEN and heard a frame within SH_STALE_MS (the shim's rule); connT for the pane's 25 s link backstop:
+// the loop-alive stamp, the later of this shell's last dial (shConnT) and its watchdog's last tick with a socket to watch
+// (shTickT), so a long-standing OPEN socket crossing the quiet bound does not publish an hours-old dial time for the tick
+// that puts it down (review round 2, 2026-09-18: a pane awaiting in that tick filed a false link-backstop row and dialed on
+// its own). The field keeps its name: the pane reads connT, and its derivation pin (tests/test_kernel_ws_heartbeat.py) too.
+window.__rompLink=function(){return {up:!!(shWs&&shWs.readyState===1&&Date.now()-shLastRecv<=SH_STALE_MS),connT:Math.max(shConnT,shTickT)};};
+function shTell(){try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}
+function shAbandon(){var d=shWs;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}shWs=null;   // detach + null so the abandoned socket's onclose is nobody's event (as the shim's abandon)...
+if(shellSock===d){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}shellSock=null;}   // ...so the API health detail is told HERE, in ws.onclose's order (the hook, then the null): a pause press this socket carried cannot be answered now (review round 1, 2026-09-18: unsaid, the redial's ready re-sent the last frame with the same seq and the press stayed acknowledged, the case onclose's own comment guards against)
+shTell();}   // link down: re-tell the panes
+// the shim's freeze / resume stamps: a thawed Chromium tab must not redial a shell socket the browser still holds OPEN
+document.addEventListener('freeze',function(){shFrozeAt=Date.now();});
+document.addEventListener('resume',function(){shResumedAt=Date.now();if(shWs&&shWs.readyState===1&&!(shFrozeAt&&shFrozeAt-shLastRecv>SH_STALE_MS)){shLastRecv=Date.now();shResumeProvisional=shLastRecv;}});
+function shellWS(){try{if(shWs&&(shWs.readyState===0||shWs.readyState===1))return;   // [fork] D3: one live attempt at a time (a lost timer + the tick can both call in)
+clearTimeout(shTimer);shTimer=0;   // [fork] D3: a dial cancels the pending redial timer, so the return's direct dial and the pre-return close's blind timer make ONE chain (review round 1, 2026-09-18: two chains ran the ladder side by side for the whole outage, 18 dials in 30 s instead of 10)
+shConnT=Date.now();var proto=location.protocol==='https:'?'wss://':'ws://';
 // this dashboard's id rides the connect, as it does on every pane's socket (wid(): the sessionStorage key the HEAD
 // script mints before any pane connects): an op the shell sends that the kernel answers with a reveal (the API
 // detail's openSession) then lands on THIS dashboard's chat alone (_reveal_chat_for), the way the feed's own session
 // links do. Without it the shell client's wid was '' and the reveal fell to the broadcast.
 var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid()));
+shWs=ws;var shOpened=false;   // [fork] D3: this dial's socket for the liveness machinery, and whether it ever opened (the return probe's attempt count keys on it)
 // ready → the kernel sends the current needs-you count, so a relaunched installed app trues up
 // its icon badge immediately instead of waiting for the next change (plans/ios-app.md proposal 3)
-ws.onopen=function(){try{ws.send(JSON.stringify({type:'ready'}));}catch(e){}
+ws.onopen=function(){shOpened=true;shLastRecv=Date.now();shResumeProvisional=0;shRung=0;try{ws.send(JSON.stringify({type:'ready'}));}catch(e){}
 shellSock=ws;var q=diagQ;diagQ=[];if(!diagMuted())q.forEach(function(m){try{ws.send(JSON.stringify(m));}catch(e){}});   // the rows that waited for this socket; the queue holds clientDiag rows alone, so one re-read of the kill switch at the open holds them all when a mute was flipped on while the socket was down, as the pane shim's flush does (review find, 2026-09-18)
+if(shReturnProbe){shReturnProbe.ms=Date.now()-shForegroundedAt;shReturnProbe.attempts=shFailed;shReturnProbe.firstFailMs=shFirstFailT?Date.now()-shFirstFailT:-1;shellDiag('return-probe',shReturnProbe);shReturnProbe=null;shFailed=0;shFirstFailT=0;}   // [fork] D3: ONE shell row per return - the decision, the hidden/quiet gap, and the path's own recovery (attempts, firstFailMs, foreground->open ms)
+shTell();   // [fork] D3: link up - re-tell the panes
 if(shellOpened&&window.__rompReload)window.__rompReload.checkBoot();shellOpened=true;};
-ws.onmessage=function(ev){var m;try{m=JSON.parse(ev.data);}catch(e){return;}
+ws.onmessage=function(ev){shLastRecv=Date.now();shResumeProvisional=0;var m;try{m=JSON.parse(ev.data);}catch(e){return;}
+if(m&&m.type==='restarting'){shRestartAnnounced=Date.now();return;}   // [fork] D3: the kernel's announced death - the redial keeps its tight cadence
 if(m&&m.type==='ka'){if(m.dv&&window.__rompReload)window.__rompReload.noteDv(m.dv);}   // build drift on the shell's own keepalive (T265; an OFFER since 2026-09-16)
 else if(m&&m.type==='reloadRequired'){if(window.__rompReload)window.__rompReload.require(m.why);}   // the safety valve (2026-09-16): a kernel that must force a reload for correctness; nothing sends it today
 else if(m&&m.type==='reveal'&&m.pane)reveal(m.pane);
@@ -67917,7 +68128,40 @@ else if(m&&m.type==='warn'&&typeof m.text==='string'&&m.text&&window.__rompNotif
 else if(m&&m.type==='updateAvail'&&window.__rompUpdateOffer)window.__rompUpdateOffer(m.cur||'',m.tag||'',m.drift||'',m.boot||'',m.state||'',m.manager);};
 // the API health detail's pause acknowledgment rides this socket: a press it carried cannot be answered now (the
 // redial's ready re-sends the last frame verbatim), so the detail is told before the redial (_LANDING_APIH_JS)
-ws.onclose=function(){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}if(shellSock===ws)shellSock=null;setTimeout(shellWS,2000);};}catch(e){}}
+ws.onclose=function(){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}if(shellSock===ws)shellSock=null;shTell();   // [fork] D3: link down - re-tell the panes. shWs keeps the CLOSED socket (review round 1, 2026-09-18): the watchdog's CLOSED arm below reads it to recover a lost redial timer; shellWS's guard skips a socket that is neither CONNECTING nor OPEN and __rompLink requires readyState 1, so a CLOSED shWs is harmless
+if(!shOpened){if(!shFailed)shFirstFailT=Date.now();shFailed++;}   // [fork] D3: a handshake that never opened - the return probe's attempt count
+var shInWin=shForegroundedAt&&Date.now()-shForegroundedAt<SH_STALE_MS,shd;   // [fork] D3: the redial cadence (ruling 4, 2026-09-18)
+if(shRestartAnnounced&&Date.now()-shRestartAnnounced<30000)shd=250;   // an announced restart keeps its tight redial (the kernel's own word)
+else if(!shOpened&&Date.now()-shConnT<SH_CONNECT_MS){shd=SH_LADDER[shRung<SH_LADDER.length?shRung:SH_LADDER.length-1];shRung++;}   // a REFUSED attempt (an onclose within the connect cut): back off on the bounded ladder 1/2/4/4 s, reset by an open, so a fast-refusing path is not a dial storm (the harness baseline: 236 dials/pane in 30 s at 250 ms)
+else if(shInWin)shd=250;   // a HUNG attempt the 15 s cut paced, inside a return window: prompt
+else shd=SH_BLIND_MS;   // the blind cadence for an ordinary drop outside any window (today's shell)
+shTimer=setTimeout(shellWS,shd);};}catch(e){}}   // the one pending redial timer (a dial clears it, shellWS)
+// [fork] D3: the shell's progress watchdog - the shim's three arms with the shell's own copy of the bounds. An OPEN
+// socket quiet past the bound (PROVISIONAL_MS while a resumed keep awaits a confirming frame, STALE_MS otherwise) is
+// abandoned and redialed; a CONNECTING one past the 15 s cut is closed (its onclose then redials); a CLOSED one past
+// the redial bound dials (a redial timer the browser lost; onclose keeps shWs so this arm can see it). Inert when
+// there is no socket (after an abandon), so an awaiting page runs nothing here. Each tick with a socket stamps shTickT,
+// the loop-alive stamp __rompLink publishes as connT (review round 2, 2026-09-18): after the guard, so a shell left with
+// no socket at all goes stale and the pane's 25 s backstop can still call its loop dead.
+setInterval(function(){if(!shWs)return;
+shTickT=Date.now();   // [fork] D3 (review round 2): the loop-alive stamp, after the no-socket guard
+if(shWs.readyState===1){var b=shResumeProvisional?SH_PROVISIONAL_MS:SH_STALE_MS;if(shLastRecv&&Date.now()-shLastRecv>b){shAbandon();shellWS();}return;}
+if(shWs.readyState===0&&Date.now()-shConnT>SH_CONNECT_MS){try{shWs.close();}catch(e){}return;}
+if(shWs.readyState===3&&Date.now()-shConnT>SH_REDIAL_MS){shellWS();}},SH_TICK_MS);
+// [fork] D3: the shell's visibility fast path - the instant the app returns, if the shell socket is dead or quiet, put
+// it down (every state) and dial at once, and set up the ONE return-probe row filed at the next open (ms = foreground
+// -> open). A socket that stands files no probe; a page whose boot dial has not opened yet returns from nothing and
+// files none either; a probe the next return overtakes is filed at that return with ms -1 (review round 2, 2026-09-18).
+// This is the page's one probe of the path; the panes follow its link.
+document.addEventListener('visibilitychange',function(){if(document.visibilityState!=='visible'){shHiddenAt=Date.now();return;}
+shForegroundedAt=Date.now();shRung=0;
+if(!shellOpened)return;   // [fork] D3 (review round 2, 2026-09-18): the shim's own not-yet-connected guard. A dashboard opened in a background tab has its boot dial CONNECTING at its first foreground; without this the fast path abandoned that dial, dialed a second socket and filed a return-probe row (hiddenMs and quietMs -1) for a return that never happened. After the foreground stamp and the ring reset, as in the shim, so a boot dial the cut closes after the foreground still redials at the in-window cadence
+if(shReturnProbe){shReturnProbe.ms=-1;shReturnProbe.firstFailMs=-1;shReturnProbe.attempts=shFailed;shellDiag('return-probe',shReturnProbe);shReturnProbe=null;}   // [fork] D3 (review round 2): the last return's probe never opened before this return: file its row now (queued until the next open) with ms and firstFailMs at the row's unknown sentinels and the attempts as they stand, so a return the path outlasted still leaves its row (docs/read-side.md). Before this the fast path overwrote the pending probe and reset the counters, and the first return left no trace
+var shStale=!shWs||shWs.readyState!==1||Date.now()-shLastRecv>SH_STALE_MS;
+if(!shStale){shReturnProbe=null;return;}
+shReturnProbe={decision:(!shWs||shWs.readyState!==1)?'redial-closed':'redial-stale',hiddenMs:shHiddenAt?Date.now()-shHiddenAt:-1,quietMs:shLastRecv?Date.now()-shLastRecv:-1};
+shFailed=0;shFirstFailT=0;
+shAbandon();shellWS();});
 shellWS();
 var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);
 })();
@@ -68412,10 +68656,21 @@ _LANDING_COLLAPSE_JS = """
   // classes ignored, _LANDING_MOBILE_JS) it is the current tab, so a po.files left true by a desktop session
   // or an earlier bring-forward cannot silently steer a phone's file links into a tab nobody is looking at
   function panesMsg(){var mob=!!(window.__rompMobileOn&&window.__rompMobileOn()),tab=mob?document.body.getAttribute('data-tab'):null;
-    var on={};KEYS.forEach(function(k){on[k]=mob?(k===tab):!!po[k];});return {romp:'panes',on:on,avail:{files:filesCtl()}};}
+    var on={};KEYS.forEach(function(k){on[k]=mob?(k===tab):!!po[k];});return {romp:'panes',on:on,avail:{files:filesCtl()},link:(window.__rompLink&&window.__rompLink().up)?'up':'down'};}   // [fork] D3 (2026-09-18): the page's link is the shell socket's state (_LANDING_MOBILE_JS window.__rompLink), re-told on its open/close/abandon; consumers (render.ts, waiting.ts) replace on and avail wholesale and ignore keys they do not read
   function tell(f,m){try{f&&f.contentWindow&&f.contentWindow.postMessage(m,'*');}catch(e){}}
+  // [fork] D3 (2026-09-18): the page's link reaches EVERY shim-bearing iframe, not the six pane frames alone. The pane
+  // frames hear it as the panes word's link field; the others (the settings frame, a split chat column: every iframe
+  // in this document runs the shim) hear a link word of their own, {romp:'link',link}, because a panes word would
+  // replace a chat column's pane set wholesale (render.ts). The shim's await ends on either word (kernel.py _shim).
+  // Review round 1: before this a split column or the settings frame ended its await on the shim's 5 s backstop poll.
+  // broadcast (the boot and toggle apply) stays the pane frames' word; the re-tell the shell and the mobile script call
+  // (__rompPanesTell) is the one that carries a CHANGED link, so it is the one that reaches every iframe.
   function broadcast(){var m=panesMsg();KEYS.forEach(function(k){tell(document.getElementById('f-'+k),m);});}
-  window.__rompPanesTell=broadcast;   // the mobile script re-tells on a tab switch / layout flip
+  function linkMsg(){return {romp:'link',link:panesMsg().link};}
+  function tellLink(){var m=linkMsg(),pane={};KEYS.forEach(function(k){pane['f-'+k]=true;});
+    Array.prototype.forEach.call(document.querySelectorAll('iframe'),function(f){if(!pane[f.id])tell(f,m);});}
+  function broadcastAll(){broadcast();tellLink();}
+  window.__rompPanesTell=broadcastAll;   // the mobile script re-tells on a tab switch / layout flip; the shell socket on its open, close and abandon (_LANDING_MOBILE_JS shTell)
   // The OPTIONAL panes (the user 2026-09-10): the gear's Panes section (romp:settings.panes, per browser,
   // settings.ts paneSet: only an explicit false hides) says whether Sessions (timeline), the Outline (fleet)
   // and the Feed are in this dashboard AT ALL, a different thing from the rail toggle, which hides a loaded
@@ -68482,6 +68737,8 @@ _LANDING_COLLAPSE_JS = """
   reconcile();   // the optional panes this browser shows, before the first apply (the body class ships with the defaults)
   apply();
   ALL.forEach(function(k){var f=document.getElementById('f-'+k);if(f)f.addEventListener('load',function(){tell(f,panesMsg());});});   // wired after the boot apply: both orders (iframe first / shell first) are covered; every iframe, since a pane enabled later loads later
+  var fst=document.getElementById('f-settings');if(fst)fst.addEventListener('load',function(){tell(fst,linkMsg());});   // [fork] D3 (review round 1): the settings frame loads when the gear opens, long after the boot apply; it hears the link then
+  window.addEventListener('romp-chat-cols',function(e){var f=e&&e.detail&&e.detail.frame;if(f&&f.addEventListener)f.addEventListener('load',function(){tell(f,linkMsg());});});   // [fork] D3 (review round 1): a split chat column is made later (_LANDING_SPLIT_JS make / makeBelow dispatch this at creation; this script runs first, so a column restored at boot is caught too); it hears the link when it loads
   window.addEventListener('romp:keys',apply);   // a rebind (or palette-main's boot nudge) refreshes the titles
   window.addEventListener('storage',function(e){if(!e||!e.key||e.key===SK)reconcile(true);apply();});     // …including one made in another tab; a gear save (romp:settings, or a cleared store) re-reads the optional panes first, and a pane it turned on comes on screen
 })();
@@ -74037,6 +74294,7 @@ class Handler(BaseHTTPRequestHandler):
         try/except (see _ws) so a bug in one handler logs and the NEXT message still processes, instead of
         the exception escaping the recv loop and tearing the socket down — which made a reconnect blank the
         chat (the _session_list TypeError, the user 2026-06-22). A genuine socket error still propagates."""
+        _implicit_handshake(client, msg)   # a socket that declared no chat wire: its first frame stands as a proto-1 handshake (the gate in _send_chat_locked)
         if _drive(msg, client):   # per-session drive ops (send/interrupt/ask/model/…) → the owning backend
             return
         if msg and msg.get("type") == "activeTab":
@@ -74221,6 +74479,7 @@ class Handler(BaseHTTPRequestHandler):
         if msg and msg.get("type") == "ready":
             client["proto"] = 2 if msg.get("proto") == 2 else 1   # the chat wire it speaks (T323 stage 4b): 2 = uuid frames; absent = index frames
             client["handshake"] = True                            # …and the socket may be served chat frames from here (round eleven)
+            client.pop("implicitHandshake", None)                 # a real ready re-declares the wire an older-vintage socket's first frame stood in for (_implicit_handshake)
             # `ready` = the render bundle JUST evaluated, so this renderer holds NOTHING — but this
             # socket may already have been served: the pusher fires from the moment the WS opens
             # (the inline shim dials during HTML parse), while the 1.4MB bundle can still be
@@ -75390,6 +75649,9 @@ class Handler(BaseHTTPRequestHandler):
         # would block this handler forever (caught by tests/test_kernel.py's socket-error loop test)
         client, sendq, lock = _new_ws_client(app, wid, self.connection, lock=lock, ua=self.headers.get("User-Agent"))
         client["kind"] = _dial_kind(self.headers, q)   # page or relay: the one tell the wsopen row reads (and a planned connect-push split)
+        if (q.get("client") or [""])[0] == "ext":
+            client["ext"] = True                       # the VS Code extension host's pipe, by its own term (_dial_kind reads it too): every ext pipe
+            #                                            posts its webview's ready, so _implicit_handshake stands down for it (2026-09-18)
         client["caps"] = set(x for x in caps.split(",") if x)
         # Held until its bundle says `ready` when the page announced it will (READY_GATE_CAP — every kernel-
         # served pane does); ready from accept otherwise (a relay, a pipe, an older page: nothing to wait for).
@@ -76504,6 +76766,45 @@ def main():
     except KeyboardInterrupt:
         sys.stderr.write("\nromp-kernel: stopped\n")
 
+
+
+# WS_OPS sits at the END of the module on purpose: several tests read this file as text and take the FIRST
+# occurrence of a dispatch literal (tests/test_kernel_create_session_ack.py splits on "createSession"), so a table of
+# every op name placed above the dispatch would satisfy their anchor instead of the handler. _implicit_handshake and
+# _ws_op_word read the name at call time, so the position is free.
+# Every op _dispatch_ws and _drive accept from a client frame, by name: the kernel's own vocabulary of the wire, and the ONE
+# set a kernel-written record may quote a client frame's type from (_ws_op_word). A frame's type is client text until it
+# matches a name here: the implicitHandshake record, its stderr line and its client-diag row read the word or `other`, never
+# the type itself (review round 2 of the implicit handshake, 2026-09-18: str() of the type let a socket's first frame put free
+# text, a sid-shaped string or a dict's content into client-diag.jsonl and the kernel log). The dispatch has no table to read
+# this from (each arm tests its own literal), so the set is written out here and tests/test_chat_window_spans.py pins it equal
+# to every name the source of _dispatch_ws and _drive compares a frame's type against, read by AST, not by regex (review round
+# 3: each ast.Compare with msg's type, or a local bound to it, on one side and == or `in` between; a str, a tuple of str, a
+# tuple bound in the function such as _drive's ID_OPS or a module tuple such as _TARGET_NAME_OPS on the other; a comparator
+# the walk cannot resolve fails the pin loudly), so an arm added without its name here fails that pin in any spelling (no
+# spaces around ==, membership in a named tuple), and until then its op reads as `other` in the row.
+WS_OPS = frozenset((
+    "activeTab", "addCustomAsk", "answerAsk", "apiRetry", "askClear", "askClearMany", "askFollowUp", "askText",
+    "browseDir", "cancelAsk", "cancelCreate", "cancelQueued", "cancelWatch", "cardNotify", "cardOpened", "clearAll",
+    "clientDiag", "closeSession", "closeSubagent", "closeTab", "commentCreate", "commentDelete", "commentMerge",
+    "commentPromote", "commentReply", "commentResolve", "commentSeen", "compact", "compactSession", "createSession",
+    "deepLink", "dirComplete", "dismissEcho", "dismissLane", "dotHover", "dotOpen", "dropFile", "editTag",
+    "endSession", "expand", "fileComments", "fileCommentsSend", "fileGitLink", "forkSession", "hoverHighlight",
+    "imgRequest", "interrupt", "ledgerHover", "listDir", "loadAround", "loadEpisode", "loadNewer", "loadOlder",
+    "loadTurns", "locateDiag", "loginCancel", "loginCode", "loginRemove", "loginStart", "mcpAction", "moveSession",
+    "needFull", "needFullFeed", "needSlot", "nodeOverride", "noticeAction", "openByName", "openFile", "openFolder",
+    "openSession", "openSubagent", "openTagsDialog", "orderAudit", "pickFile", "pickResult", "quarantineDecision",
+    "ready", "redial", "redistill", "renameSession", "reorderTabs", "requestSessions", "reviveSession",
+    "rewindDelete", "rewindFiles", "rewindSend", "saveFile", "sendCommand", "sendMessage", "setAuth", "setAutoNudge",
+    "setColormap", "setCommentEffort", "setCommentFast", "setCommentModel", "setCompactSuggest", "setConserve",
+    "setDefaultDir", "setDistillEffort", "setDistillFast", "setDistillModel", "setEffort", "setFast",
+    "setFileEditing", "setGlobalRetryPaused", "setIndexEffort", "setIndexFast", "setIndexModel",
+    "setJudgeConcurrency", "setJudgeEffort", "setJudgeFast", "setJudgeModel", "setMode", "setModel", "setPalette",
+    "setSessionColor", "setSessionEmoji", "setSessionFlag", "setTaskTracking", "setThinkingSummaries",
+    "setTimelineViews", "setUpdateMode", "setUserTodos", "setWholeChatFrames", "showAskPath", "showOnTimeline",
+    "stopTask", "submitAsk", "tagEdit", "timelineHover", "toggleAsk", "undoClear", "unpinNote", "userTodoAnswer",
+    "userTodoDismiss", "viewReadOnly", "writeOrder",
+))
 
 if __name__ == "__main__":
     main()
