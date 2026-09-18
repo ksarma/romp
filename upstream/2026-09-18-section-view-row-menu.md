@@ -1,7 +1,7 @@
 ---
 title: The section view's rows open the tab's context menu
 status: candidate
-where: ui/webview/render.ts: snapshotHost (one contextmenu listener on the view's host, calling showTabMenu with the section as the copy), rowHasTabMenu, startTabRename's row editor, renderSnapshot's rename hold; ui/webview/tab-snapshot-view.ts menuAnchor; styles.css; docs/guide.md, docs/reference.md; ui/webview/tab-snapshot-menu.test.ts, ui/webview/tab-hide-browser.test.ts, ui/webview/tab-hide.test.ts
+where: ui/webview/render.ts: snapshotHost (one contextmenu listener on the view's host, calling showTabMenu with the section as the copy), rowHasTabMenu, startTabRename's row editor, renderSnapshot's rename hold; ui/webview/tab-snapshot-view.ts menuAnchor; styles.css; docs/guide.md, docs/reference.md; ui/webview/tab-snapshot-menu.test.ts, ui/webview/tab-hide-browser.test.ts, ui/webview/tab-hide.test.ts; tests/test_tab_snapshot_menu_served.py
 added: 2026-09-18
 pr:
 tier: feature
