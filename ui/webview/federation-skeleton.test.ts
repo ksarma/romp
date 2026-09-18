@@ -18,7 +18,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { FederationManager, prefixInbound, routeOutbound, BOOKKEEPING } from "./federation";
+import { FederationManager, prefixInbound, routeOutbound, BOOKKEEPING, REMOTE_REDIAL_MS } from "./federation";
 
 const U = "11111111-2222-3333-4444-555555555555";
 const V = "99999999-8888-7777-6666-555555555555";
@@ -318,6 +318,55 @@ test("a skeleton dial that names no active tab keeps every held needFull (the re
     fm.outbound({ type: "needFull", id: "gpu2:" + U, why: "gap" });
     b.open();
     assert.deepEqual(b.sent, [{ type: "needFull", id: U, why: "gap" }], "no ready went out, so nothing is moot");
+    assert.equal(hostconn(diags, "moot"), undefined);
+    fm.conns.get("gpu2").closed = true;
+  });
+});
+
+// ── a REDIAL posts no ready and drops nothing (review round 3 of the ready-first open, 2026-09-18) ────────────
+// The moot drop is keyed on the ready THIS open posted. A redial's reconnect=1&proto term is its handshake, it posts no
+// ready, and the remote's accept re-arms the skeleton set for it, so nothing on that open serves a session whole and a
+// held ask is that session's only load. Before this cell no test pinned the redial half of the guard: with the redial
+// condition removed from the moot line in federation.ts onopen, a clicked skeleton tab's only load was dropped on the
+// redial open and a moot row filed, and every webview test stayed green.
+test("a REDIAL (reconnect=1&proto) posts no ready and keeps every held needFull: the ask rides the redial open and no moot row is filed", () => {
+  withManager((fm, _e, _l, diags) => {
+    fm.outbound({ type: "ready", proto: 2 });
+    const a = attach(fm, "gpu2");
+    assert.deepEqual(a.sent, [{ type: "ready", proto: 2 }], "the first dial posts the page's ready");
+    a.frame({ type: "caps" });                                                   // the remote's ready arm acked it: readyAcked latches
+    a.readyState = 3;                                                            // the socket dies under the page with no onclose timer
+    fm.outbound({ type: "needFull", id: "gpu2:" + U, why: "skeleton-click" });   // a skeleton tab clicked while the socket was down: its only load
+    assert.equal(fm.conns.get("gpu2").pending.size, 1, "held on the conn for the next open");
+    clock += REMOTE_REDIAL_MS + 1000;
+    fm.watchdog(clock);
+    assert.equal(FakeWS.made.length, 2, "the watchdog dialed the redial");
+    const b = FakeWS.made[1];
+    const q = new URLSearchParams(b.url.split("?")[1] || "");
+    assert.equal(q.get("reconnect"), "1", "a redial after a ready acked states reconnect");
+    assert.equal(q.get("proto"), "2", "with the page's proto: the dial term is the handshake");
+    assert.equal(q.get("skeleton"), null, "this page states no skeleton term: the shape the ready-first open drops every held ask on");
+    assert.equal(fm.conns.get("gpu2").dialedReconnect, true);
+    b.open();
+    assert.deepEqual(b.sent, [{ type: "needFull", id: U, why: "skeleton-click" }], "no ready, and the held ask rides the redial open");
+    assert.equal(hostconn(diags, "moot"), undefined, "nothing was moot: no ready went out on this open");
+    assert.deepEqual(hostconn(diags, "open").data, { host: "gpu2", ev: "open", flushed: ["needFull"] });
+    fm.conns.get("gpu2").closed = true;
+  });
+  // the same on a skeleton dial naming the active tab, whose held ask the ready-first open drops: the redial keeps it
+  withManager((fm, _e, _l, diags) => {
+    (globalThis as any).window.__rompDialTerms = () => ({ skeleton: 1, active: "gpu2:" + U, iid: "PAGEIID-0001", delta: 1 });
+    fm.outbound({ type: "ready", proto: 2 });
+    const a = attach(fm, "gpu2");
+    a.frame({ type: "caps" });
+    a.readyState = 3;
+    fm.outbound({ type: "needFull", id: "gpu2:" + U, why: "gap" });
+    clock += REMOTE_REDIAL_MS + 1000;
+    fm.watchdog(clock);
+    const b = FakeWS.made[FakeWS.made.length - 1];
+    assert.match(b.url, /skeleton=1/); assert.match(b.url, /&reconnect=1&proto=2$/, "the redial's terms, the skeleton posture included");
+    b.open();
+    assert.deepEqual(b.sent, [{ type: "needFull", id: U, why: "gap" }], "kept: the redial's accept re-arms the skeleton set, and this ask is the tab's load");
     assert.equal(hostconn(diags, "moot"), undefined);
     fm.conns.get("gpu2").closed = true;
   });

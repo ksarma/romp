@@ -71,14 +71,24 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   the older wire. A chat socket of older vintage that declares neither is
   taken as a proto-1 client at the first frame it does send and is served the
   index wire from there (`_implicit_handshake`): degraded rather than silent.
-  Older vintage is read from the dial, never from the frame: the socket is
-  ready from accept (it announced no `readyGate` hold, or dialled with
-  `reconnect=1`), it is not the VS Code extension's pipe (`client=ext`, which
-  always forwards its webview's own `ready`), and it carries no namespaced
-  instance id (the colon-joined `iid` only a current hub's relay sends, and
-  every such hub posts its `ready` on the relay). An older hub's relay socket
-  is one such socket (a hub before b84f716a8 sent its page's `ready` to its
-  local socket alone); an older shim's redial with no `proto` term is another.
+  Older vintage is read from the dial, never from the frame: the socket
+  announced no `readyGate` hold, it is ready from accept, it is not the VS
+  Code extension's pipe (`client=ext`, which always forwards its webview's own
+  `ready`), and it carries no namespaced instance id (the colon-joined `iid`
+  only a current hub's relay sends, and every such hub posts its `ready` on
+  the relay). The hold is read from the socket's `caps`, never from the
+  effective ready flag: a kernel-served pane's shim announces the hold and
+  posts its bundle's `ready` itself, and a `reconnect=1` redial makes such a
+  pane ready from accept while its shim re-posts a bare `ready` right behind
+  the rows it flushes at the open, so it is declined here and served at that
+  `ready`. An older hub's relay socket is one socket the rule serves (a hub
+  before b84f716a8 sent its page's `ready` to its local socket alone); a pane
+  shim between 7390404be and 42ab10dd1 (upstream, 2026-09-10 to 2026-09-11)
+  is the other: its redial carries `reconnect=1` with no `proto` term and no
+  `caps` term and re-posts no `ready`. A shim older than 7390404be (the fork's
+  from the 2026-09-03 re-send to the 2026-09-16 fold, fd95b435a among them)
+  re-posts a bare `ready` in its redial's open right after its flush, so it
+  declares proto 1 itself one frame later and was never held silent.
   A held page's frames before its `ready` (its shim's queued `clientDiag` rows)
   do not count, and a current page's relay is never taken: its frames wait for
   its `ready`. On the page side, federation posts the `ready` first on every
