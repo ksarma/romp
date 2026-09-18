@@ -212,6 +212,37 @@ PY
     [[ "$output" == *"memory    rss 410 MB (+10 MB)   peak 449 MB   blocks 1001000 (+1000)"* ]]
     [[ "$output" != *"anon "* ]]
     [[ "$output" != *"hwm "* ]]
+    [[ "$output" != *"source "* ]]
+}
+
+@test "romp perf: the memory line names the source beside rss when a Mac's kernel is on its ps fallback" {
+    # a reader is down (2026-09-18, review round 1): the ps fallback's figure is right but nothing said which
+    # reader answered; the proc and task_info sources print nothing (the case above)
+    python3 - "$SNAP_A" "$SNAP_B" <<'PY'
+import json, sys
+for p in sys.argv[1:]:
+    d = json.load(open(p))
+    d["process"].update({"rss_anon_kb": None, "hwm_kb": None, "source": "ps", "rss_peak_kb": 450000})
+    json.dump(d, open(p, "w"))
+PY
+    run "$ROMP_SCRIPT" perf --interval 0
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"memory    rss 410 MB (+10 MB)   source ps   peak 439 MB   blocks 1001000 (+1000)"* ]]
+}
+
+@test "romp perf: with no current reader the memory line says rss is the peak" {
+    # both darwin readers down: rss_kb is ru_maxrss, the peak, under source unavailable, and the line says so
+    # outright rather than printing a peak where a current size is expected
+    python3 - "$SNAP_A" "$SNAP_B" <<'PY'
+import json, sys
+for p in sys.argv[1:]:
+    d = json.load(open(p))
+    d["process"].update({"rss_anon_kb": None, "hwm_kb": None, "source": "unavailable", "rss_peak_kb": d["process"]["rss_kb"]})
+    json.dump(d, open(p, "w"))
+PY
+    run "$ROMP_SCRIPT" perf --interval 0
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"memory    rss 410 MB (+10 MB)   source unavailable, rss is the peak   peak 410 MB   blocks 1001000 (+1000)"* ]]
 }
 
 @test "romp perf: the cycle line's max is the ring's, and the parenthetical names the ring" {

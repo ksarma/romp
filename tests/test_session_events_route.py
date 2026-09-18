@@ -167,7 +167,7 @@ class KernelSampleOnRestartRows(unittest.TestCase):
 
     def test_sample_never_raises(self):
         saved = km._process_stats
-        km._process_stats = lambda: (_ for _ in ()).throw(RuntimeError("no proc"))
+        km._process_stats = lambda **kw: (_ for _ in ()).throw(RuntimeError("no proc"))
         try:
             self.assertEqual(km._kernel_process_sample(), {})
             self.assertNotIn("rssKb", km._restart_cut_row({"cutTurns": []}, now=1))
