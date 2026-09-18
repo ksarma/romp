@@ -24,11 +24,12 @@ by design (the boot's stage split under pusher.firstCycle and jobs.firstPass, wh
 counter), because they are the data a reader wants, so two exports from one kernel life, or from one machine,
 remain linkable through them. No hostname, path, pid, session id, username or clock stamp is written; the finished document
 is searched for the strings only this machine knows (perf_public.identifier_hits), walked once more
-(perf_public.paste_problems) and walked for the denylist (perf_public.denylist_problems: a key the fold drops, an
-uptime not on whole minutes, a bound not on a power of two, a float inside a clock stamp's epoch window under any other
-key; a fold's own output carries none of the four, so here it is a belt, and for `romp perf upload`, which runs the same
-check over a file the user may have edited, it is the check that what the export dropped or coarsened does not
-travel, while the measurements it keeps pass, the export's own rule: paste-safe, not unlinkable); any finding refuses
+(perf_public.paste_problems) and walked for the denylist (perf_public.denylist_problems: a key the fold drops, a key or
+a string value the fold would have written as `other`, an uptime not on whole minutes, a bound not on a power of two, a
+float inside a clock stamp's epoch window under any other key; a fold's own output carries none of the six, so here it
+is a belt, and for `romp perf upload`, which runs the same check over a file the user may have edited, it is the check
+that what the export dropped, folded or coarsened does not travel, while the measurements it keeps pass, the export's
+own rule: paste-safe, not unlinkable); any finding refuses
 the write, and the SHALLOWEST finding across the three is
 the one named (check_document), so a walk problem beneath a machine-named key is reported as the machine string, not
 as a path spelling the key, and a machine string beneath a key the walk refuses (a 32-hex token) is reported as
@@ -62,6 +63,9 @@ import perf_public as pp  # noqa: E402
 
 PROG = "romp perf export"
 SCHEMA = "romp-perf-export/1"
+# The envelope export_document writes around the folded blocks: the one part of the document that is not a fold's output
+# (the schema line carries a slash by design). `romp perf upload` holds every OTHER top-level block to its own fold.
+ENVELOPE_KEYS = ("schema", "exported_at", "kernel_commit")
 TIMEOUT_S = 10          # `romp perf`'s curl -m
 DEFAULT_PORT = 29855
 EXPORT_DIR = "perf-exports"
@@ -269,17 +273,20 @@ def check_document(doc: dict, state: Path, under=("perf",), tail="nothing writte
     """None when the finished document may be written; else the one-line reason, built from the finding's fields:
     the kind of string or rule and the key path (a value's own path; for a key, the path of the dict holding it),
     never the key or the value itself. All three mechanisms run, the identifier scan, the walk and the denylist
-    walk (pp.denylist_problems: a key the fold drops, an uptime not on whole minutes, a bound not on a power of two,
-    or a float inside a clock stamp's epoch window, 1.5e9 to 2.0e9 seconds or 1.5e12 to 2.0e12 milliseconds
+    walk (pp.denylist_problems: a key the fold drops, a key the fold would have written as `other` (a trailing newline
+    the walk's anchored match admits, a joined key past the cap), a string value it would have (a token outside the
+    identifier grammar with none of the shapes the walk names), an uptime not on whole minutes, a bound not on a power
+    of two, or a float inside a clock stamp's epoch window, 1.5e9 to 2.0e9 seconds or 1.5e12 to 2.0e12 milliseconds
     (pp.STAMP_WINDOWS), with no duration key on its path; an integer is a byte total or a count, a float outside both
     windows is a measurement the export keeps, the allocator's figures on a long-lived kernel among them, and a float
     under a duration key, a name carrying the token `ms`, its own or any key above it, is a millisecond total, all of
-    which a long-lived kernel's figures reach, so all pass; none of the four a fold's own
+    which a long-lived kernel's figures reach, so all pass; none of the six a fold's own
     output carries, so for
     this verb it is a
     belt; for `romp perf upload`, over a file as it stands, it is what refuses a `t` the user put back, an uptime
-    typed to the second, a bound typed to the byte or a stamp under a new key, and passes every measurement the
-    export keeps: paste-safe, not unlinkable, the fold's own rule), and the SHALLOWEST finding is the one named:
+    typed to the second, a bound typed to the byte, a stamp under a new key or a token the fold would have folded, and
+    passes every measurement the export keeps: paste-safe, not unlinkable, the fold's own rule; the three take the same
+    `skip` for the schema line, whose slash is the envelope's by design), and the SHALLOWEST finding is the one named:
     the fewest path components, a key finding counting the depth of the dict holding it and a value finding its
     own, the scan's wording when the depths tie, then the walk's.
 
@@ -301,7 +308,7 @@ def check_document(doc: dict, state: Path, under=("perf",), tail="nothing writte
     findings += [(p.depth, 1, "the public form still fails the walk (%s, %s)" % (p.kind, pp.place(p)))
                  for p in pp.paste_problems(doc, skip=("schema",), under=under)]
     findings += [(p.depth, 2, "the public form still fails the denylist (%s, %s)" % (p.kind, pp.place(p)))
-                 for p in pp.denylist_problems(doc, under=under)]
+                 for p in pp.denylist_problems(doc, under=under, skip=("schema",))]
     if not findings:
         return None
     return "%s; %s" % (min(findings, key=lambda f: f[:2])[2], tail)    # min is stable: walk order among equals

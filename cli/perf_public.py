@@ -554,31 +554,43 @@ def duration_key(key):
     return isinstance(key, str) and any(t.lower() == DURATION_TOKEN for t in KEY_TOKEN_BOUNDARY.split(key))
 
 
-def denylist_problems(doc, under=()):
+def denylist_problems(doc, under=(), skip=()):
     """Every entry of `doc` the fold would not have written as it stands, one Problem each; empty when the document is a
     fold's own output, the walk's FIXED POINT, pinned over every fixture and a served export. THE RULE it enforces is the
     fold's (the export's third review round, 2026-09-18): the public form is PASTE-SAFE, not unlinkable, so what the fold
-    drops or coarsens is refused here and what it keeps (durations, counts, per-process measurements) passes. Four
+    drops, folds or coarsens is refused here and what it keeps (durations, counts, per-process measurements) passes. Six
     findings: a key the denylist drops (denied, wherever a dict key appears, and DENY_PATHS anchored at `under`, the key
     path the snapshot's blocks sit below, as paste_problems takes it), a KEY finding at the dict holding it, its value not
-    walked; an uptime (UPTIME_KEYS) whose value is not what public_uptime would have written, a VALUE finding at its own
-    path; a memory-fraction bound (BOUND_KEYS) whose value is not what public_bound would have written, a value finding at
-    its own path; and a FLOAT leaf inside one of the STAMP_WINDOWS (1.5e9 to 2.0e9, an epoch second; 1.5e12 to 2.0e12, an
-    epoch millisecond; both ends in) with no duration key (duration_key) on its path, its own key or any dict key above it
-    (a list index is not a key), in a dict or a list, a value finding at its own path (the fold's output carries no absolute
-    clock stamp under any key, so one in a file was typed in after the export, whatever key it sits under; a time.time()
-    value is a float, and an integer inside a window is a count or a byte total, which the kernel's lifetime totals reach
-    within hours, so an integer passes whatever its size; a float outside both windows tells no time and is a measurement
-    the export keeps, the allocator's arena on a long-lived kernel among them, so it passes whatever its size; a float under
-    a duration key, a name whose tokens carry `ms`, its own or an ancestor's (stages_ms names the measure and its leaves the
-    stages), is a millisecond total, which the kernel's sums carry through the seconds window in weeks, so it passes too; a
-    bound is judged as a bound alone, never as a stamp).
-    One finding per leaf,
-    the coarsening's first. The number itself is not carried in the kind,
-    and a caller prints the kind and the path alone. The walk (paste_problems) is a shape rule and passes all four: `t`
-    fits the identifier grammar and any number is a number, so a document that a fold produced passes here by
+    walked; a KEY the fold would have replaced by `other` (_public_key over the block the key sits in: the identifier
+    grammar's fullmatch for a plain block, the joined grammar's fullmatch and its 96-character cap for a joined table, the
+    register's own collapse for `http`), a key finding at the dict holding it, its value still walked, which is what closes
+    the class of key the walk's anchored `.match` admits and the fold does not (a trailing newline after an otherwise good
+    name: `$` matches before it; a joined key past the cap), the upload's second review round, 2026-09-18; a STRING VALUE
+    the fold would have replaced by `other` (the identifier grammar's fullmatch, which every string a fold writes passes by
+    construction), a VALUE finding at its own path, in a dict or a list (the walk judges a value for a uuid, a hex token, a
+    path and whitespace, so a 43-character token with none of them passed it), the same round; an uptime (UPTIME_KEYS)
+    whose value is not what public_uptime would have written, a value finding at its own path; a memory-fraction bound
+    (BOUND_KEYS) whose value is not what public_bound would have written, a value finding at its own path; and a FLOAT
+    leaf inside one of the STAMP_WINDOWS (1.5e9 to 2.0e9, an epoch second; 1.5e12 to 2.0e12, an epoch millisecond; both
+    ends in) with no duration key (duration_key) on its path, its own key or any dict key above it (a list index is not a
+    key), in a dict or a list, a value finding at its own path (the fold's output carries no absolute clock stamp under any
+    key, so one in a file was typed in after the export, whatever key it sits under; a time.time() value is a float, and an
+    integer inside a window is a count or a byte total, which the kernel's lifetime totals reach within hours, so an
+    integer passes whatever its size; a float outside both windows tells no time and is a measurement the export keeps, the
+    allocator's arena on a long-lived kernel among them, so it passes whatever its size; a float under a duration key, a
+    name whose tokens carry `ms`, its own or an ancestor's (stages_ms names the measure and its leaves the stages), is a
+    millisecond total, which the kernel's sums carry through the seconds window in weeks, so it passes too; a bound is
+    judged as a bound alone, never as a stamp). `skip` names top-level keys whose string value is not judged, as
+    paste_problems and identifier_hits take it: the export's `schema` line carries a slash by design and check_document
+    passes it, so the envelope is not the finding on every export.
+    One finding per leaf: a string is judged by the grammar alone, a number by the coarsening the fold applies under its
+    key first, else the stamp windows. The string or number itself is not carried in the kind,
+    and a caller prints the kind and the path alone. The walk (paste_problems) is a shape rule and passes all six: `t`
+    fits the identifier grammar, any number is a number, and its key and value rules are anchored matches and searches for
+    named shapes, so a document that a fold produced passes here by
     construction, and one a user edited after the export (a `t` put back on a split row, an uptime typed to the second, a
-    bound typed to the byte, a float stamp under a new key) is refused with the same wording the export's own check uses
+    bound typed to the byte, a float stamp under a new key, a token or a key the fold would have written as `other`) is
+    refused with the same wording the export's own check uses
     (`romp perf upload`, 2026-09-18)."""
     problems = []
     n = len(under)
@@ -587,6 +599,13 @@ def denylist_problems(doc, under=()):
         problems.append(Problem(kind, False, "/".join(str(x) for x in here), str(v), len(here)))
 
     def leaf(key, v, here):
+        if isinstance(v, str):
+            # a string is judged by the grammar alone: the fold writes every string value as itself or as `other`, and
+            # both fullmatch IDENT, so one that does not was put there after the fold (the coarsenings and the windows
+            # judge numbers and a bound key over a string is a string still)
+            if not IDENT.fullmatch(v):
+                value_problem("a string the fold would have folded", v, here)
+            return
         # one finding per leaf: the coarsening the fold applies under the key first, else the stamp windows
         if key in UPTIME_KEYS:
             rounded = public_uptime(v)
@@ -607,12 +626,20 @@ def denylist_problems(doc, under=()):
 
     def walk(node, where):
         if isinstance(node, dict):
+            block = where[n:] if where[:n] == tuple(under) else None     # the dict's path below `under`: which grammar its keys take
             for k, v in node.items():
                 key = k if isinstance(k, str) else str(k)
                 here = where + (key,)
                 anchored = here[n:] if here[:n] == tuple(under) else None
                 if denied(key, v) or (anchored is not None and anchored in DENY_PATHS):
                     problems.append(Problem("a key the denylist drops", True, "/".join(str(x) for x in where), key, len(where)))
+                    continue
+                if _public_key(key, block) != key:
+                    # the key the fold would have written is not this one: the walk's `.match` against a `$`-anchored grammar
+                    # admits a trailing newline and the joined grammar has no length cap there; the fold's fullmatch and cap
+                    # do not, and a key outside the register's image in `http` collapses. The value is walked all the same.
+                    problems.append(Problem("a key the fold would have folded", True, "/".join(str(x) for x in where), key, len(where)))
+                if where == () and key in skip and isinstance(v, str):
                     continue
                 leaf(key, v, here)
                 walk(v, here)

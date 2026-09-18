@@ -488,12 +488,12 @@ class FoldInvariant(unittest.TestCase):
         upload`, running check_document over a file the user may have edited, refuse a `t` put back or an uptime typed
         to the second. Over a fold's own output it finds nothing, so the export's own write is unchanged (2026-09-18)."""
         doc = pe.export_document(leak_snapshot(), usage=True)
-        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "a fold's output is the walk's fixed point")
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "a fold's output is the walk's fixed point")
         self.assertIsNone(_check(doc))
         # a split row's stamp put back: a key finding at the dict holding it (the walk is silent)
         doc["perf"]["pusher"]["firstCycle"]["t"] = 900.5
         self.assertEqual(pp.paste_problems(doc, skip=("schema",), under=("perf",)), [])
-        self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",))],
+        self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
                          [("a key the denylist drops", True, "perf/pusher/firstCycle", 3)])
         self.assertEqual(_check(doc), "the public form still fails the denylist (a key the denylist drops, a key under perf/pusher/firstCycle); nothing written")
         # an uptime off the grain: a value finding at its own path, the number in no printed field; on the grain it
@@ -501,7 +501,7 @@ class FoldInvariant(unittest.TestCase):
         for raw, refused in ((3725, True), (59.9, True), (3720, False), (3720.0, False), (0, False), (None, False), (True, False)):
             doc = pe.export_document(leak_snapshot())
             doc["perf"]["uptime_s"] = raw
-            problems = pp.denylist_problems(doc, under=("perf",))
+            problems = pp.denylist_problems(doc, under=("perf",), skip=("schema",))
             if refused:
                 self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in problems],
                                  [("an uptime not rounded to whole minutes", False, "perf/uptime_s", 2)], repr(raw))
@@ -517,7 +517,7 @@ class FoldInvariant(unittest.TestCase):
         doc["perf"]["heap"]["name"] = "x"
         doc["perf"]["heap"]["names"] = 3
         doc["usage"]["sid"] = 1
-        self.assertEqual(sorted((p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",))),
+        self.assertEqual(sorted((p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))),
                          sorted([("a key the denylist drops", "perf"), ("a key the denylist drops", "perf/process"),
                                  ("a key the denylist drops", "perf/heap"), ("a key the denylist drops", "usage")]))
         # the depth rule holds with the third source: a machine string beneath a denied key names the denied key's dict,
@@ -554,7 +554,7 @@ class FoldInvariant(unittest.TestCase):
         for snap in (leak_snapshot(), _epoch(leak_snapshot()), bounds_snapshot(), bounds_snapshot(8 * 1024 ** 3)):
             for usage in (False, True):
                 doc = pe.export_document(snap, usage=usage)
-                self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "a fold's output is the walk's fixed point")
+                self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "a fold's output is the walk's fixed point")
                 self.assertIsNone(_check(doc))
         doc = pe.export_document(bounds_snapshot())
         self.assertGreater(doc["perf"]["recordCache"]["budgetBytes"], pp.STAMP_WINDOWS[0][1], "a coarsened bound above the seconds window is the fold's own and passes")
@@ -566,14 +566,14 @@ class FoldInvariant(unittest.TestCase):
         for raw in (4_210_310_144, 3, 2.5, 501, 20000, 1.7e9):
             doc = pe.export_document(bounds_snapshot())
             doc["perf"]["heap"]["hydrated"]["capBytes"] = raw
-            self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",))],
+            self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
                              [("a bound not rounded to a power of two", False, "perf/heap/hydrated/capBytes", 4)], repr(raw))
             self.assertEqual(_check(doc), "the public form still fails the denylist (a bound not rounded to a power of two, "
                                           "the value at perf/heap/hydrated/capBytes); nothing written", repr(raw))
         for ok in (1, 2, 4096, 1 << 40, 4096.0, 0, -5, None, True, "other"):
             doc = pe.export_document(bounds_snapshot())
             doc["perf"]["heap"]["hydrated"]["capBytes"] = ok
-            self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], repr(ok))
+            self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], repr(ok))
         # the windows: a FLOAT leaf inside the seconds window or the milliseconds window under a key the denylist does not
         # know, in a dict or a list, in `usage` too; a value at a window's floor or ceiling is refused, one past either passes
         for path, raw, where in (((("perf", "pusher", "startedAt"), 1.6e9, "perf/pusher/startedAt")),
@@ -587,12 +587,12 @@ class FoldInvariant(unittest.TestCase):
             for k in path[:-1]:
                 node = node[k]
             node[path[-1]] = raw
-            self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",))],
+            self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
                              [("a number the size of a clock stamp", False, where, where.count("/") + 1)], where)
             self.assertEqual(_check(doc), "the public form still fails the denylist (a number the size of a clock stamp, the value at %s); nothing written" % where)
         doc = pe.export_document(leak_snapshot())
         doc["perf"]["pusher"]["cycles"] = 1_499_999_999
-        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "below the seconds window a number is a count")
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "below the seconds window a number is a count")
         # OUTSIDE BOTH WINDOWS a float is a measurement, whatever its size and wherever it sits (fails before: each was the
         # stamp finding, and check_document named perf/process/malloc/arena): glibc's allocator figures on a long-lived
         # kernel (the fifth review round's numbers), above the seconds window; a float between the windows; one above the
@@ -604,14 +604,14 @@ class FoldInvariant(unittest.TestCase):
         doc["perf"]["heap"]["marks"] = [1, 2_000_000_001.0, 1.0e12, 2.5e12, 1e300]
         doc["perf"]["pusher"]["cycles"] = 1_499_999_999.5
         doc["usage"]["firstSeen"] = 2.5e12
-        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "a float outside both windows is a measurement")
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "a float outside both windows is a measurement")
         self.assertIsNone(_check(doc))
         # the edges: both ends of each window in, the values just past them out
         for raw, stamp in ((1.5e9, True), (2.0e9, True), (1_499_999_999.9, False), (2_000_000_000.5, False),
                            (1.5e12, True), (2.0e12, True), (1_499_999_999_999.9, False), (2_000_000_000_000.5, False)):
             doc = pe.export_document(leak_snapshot())
             doc["perf"]["pusher"]["startedAt"] = raw
-            self.assertEqual([p.kind for p in pp.denylist_problems(doc, under=("perf",))],
+            self.assertEqual([p.kind for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
                              ["a number the size of a clock stamp"] if stamp else [], repr(raw))
         # an INTEGER inside a window is a count or a byte total, not a stamp, whatever its size and wherever it sits: under a
         # bytes-named key (the kernel's lifetime wire totals pass 2e9 within hours), under a key the denylist does not know,
@@ -624,24 +624,24 @@ class FoldInvariant(unittest.TestCase):
         doc["perf"]["pusher"]["startedAt"] = 2_000_000_000
         doc["perf"]["heap"]["marks"] = [1, 2_000_000_000, 1 << 40]
         doc["usage"]["firstSeen"] = 1_700_000_000
-        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "an integer past the floor is a total, not a stamp")
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "an integer past the floor is a total, not a stamp")
         self.assertIsNone(_check(doc))
         doc["perf"]["pusher"]["startedAt"] = 2_000_000_000.0
-        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",))],
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
                          [("a number the size of a clock stamp", "perf/pusher/startedAt")], "the same value as a float is a stamp")
         # one finding per leaf: under an uptime key the grain is judged first (1.6e9 is off it), and on the grain the window
         # (1.5e9 is 25 million whole minutes) as a float; the same as an integer is what public_uptime writes and passes;
         # under a denied key nothing beneath is walked, so the key finding stands alone
         doc = pe.export_document(leak_snapshot())
         doc["perf"]["uptime_s"] = 1.6e9
-        self.assertEqual([p.kind for p in pp.denylist_problems(doc, under=("perf",))], ["an uptime not rounded to whole minutes"])
+        self.assertEqual([p.kind for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))], ["an uptime not rounded to whole minutes"])
         doc["perf"]["uptime_s"] = 1.5e9
-        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",))], [("a number the size of a clock stamp", "perf/uptime_s")])
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))], [("a number the size of a clock stamp", "perf/uptime_s")])
         doc["perf"]["uptime_s"] = 1_500_000_000
-        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "an integer uptime on the grain is the fold's own")
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "an integer uptime on the grain is the fold's own")
         doc = pe.export_document(leak_snapshot())
         doc["perf"]["pusher"]["firstCycle"]["t"] = 1.7e9
-        self.assertEqual([(p.kind, p.is_key, p.path) for p in pp.denylist_problems(doc, under=("perf",))],
+        self.assertEqual([(p.kind, p.is_key, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
                          [("a key the denylist drops", True, "perf/pusher/firstCycle")])
         # the depth rule with the new findings: a shallower key finding wins over a deeper value finding, and a value finding
         # at the root's child over a deeper key finding
@@ -701,19 +701,19 @@ class FoldInvariant(unittest.TestCase):
         doc["perf"]["pusher"]["held_ms"] = 1_600_000_000.5
         doc["perf"]["judge"]["wall_ms_sum"] = 1.6e12
         doc["usage"]["restoreMs"] = 1.6e9
-        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "a millisecond total is a duration, not a stamp")
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "a millisecond total is a duration, not a stamp")
         self.assertIsNone(_check(doc))
         # the same float under a key that is not a duration by name is the stamp finding at its path, the number in no field
         for name in ("startedAt", "sendMax", "bytes", "sigMsgs"):
             doc = pe.export_document(leak_snapshot())
             doc["perf"]["pusher"][name] = 1.6e9
-            self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",))],
+            self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
                              [("a number the size of a clock stamp", False, "perf/pusher/" + name, 3)], name)
             self.assertEqual(_check(doc), "the public form still fails the denylist (a number the size of a clock stamp, "
                                           "the value at perf/pusher/%s); nothing written" % name)
         doc = pe.export_document(leak_snapshot())
         doc["perf"]["pusher"]["sendMax"] = 1.6e12
-        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",))],
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
                          [("a number the size of a clock stamp", "perf/pusher/sendMax")], "a millisecond stamp under a key that is not a duration")
         # THE ANCESTOR RULE: a float passes when any key on its path is a duration key. stages_ms is keyed by stage names,
         # so the parent carries the token and the leaves do not, at any depth (a dotted seam's parts as a nested dict).
@@ -722,16 +722,16 @@ class FoldInvariant(unittest.TestCase):
         self.assertEqual(doc["perf"]["stages_ms"]["jobs"], 5000.0)
         doc["perf"]["stages_ms"]["push"] = 2.0e9
         doc["perf"]["stages_ms"]["jobs"] = {"autoNudge": 1.6e9, "parse": {"cold": 1.5e9}}
-        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "a float below a duration key is a total")
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "a float below a duration key is a total")
         self.assertIsNone(_check(doc))
         # a list under a duration key: the element has no key of its own and passes by the ring's key above it (this pin
         # read the element's own key alone before the ancestor rule and refused perf/pusher/cycle_ms_ring/1); a list under
         # a key that is not one is judged as before, and the path carries the index
         doc = pe.export_document(leak_snapshot())
         doc["perf"]["pusher"]["cycle_ms_ring"] = [1.0, 1.6e9, [2.0e9]]
-        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "an element of a list under a duration key")
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "an element of a list under a duration key")
         doc["perf"]["pusher"]["cycle_ring"] = [1.0, 1.6e9]
-        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",))],
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
                          [("a number the size of a clock stamp", "perf/pusher/cycle_ring/1")])
         # the LEAF rule stands on its own: a stageRing row's stage split sits under keys none of which is a duration (jobs,
         # stageRing, the index, stages, jobs), its `ms` passes by its own key, and the row's `bytes` beside it, the same
@@ -741,18 +741,95 @@ class FoldInvariant(unittest.TestCase):
         row = doc["perf"]["jobs"]["stageRing"][0]["stages"]["jobs"]
         self.assertEqual(sorted(row), ["bytes", "hydrated", "ms"])
         row["ms"] = 1.6e9
-        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "a leaf `ms` under parents that are not durations")
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "a leaf `ms` under parents that are not durations")
         row["bytes"] = 1.6e9
-        self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",))],
+        self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
                          [("a number the size of a clock stamp", False, "perf/jobs/stageRing/0/stages/jobs/bytes", 7)])
         doc = pe.export_document(leak_snapshot())
         doc["perf"]["pusher"]["startedAt"] = 1.6e9
-        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",))],
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
                          [("a number the size of a clock stamp", "perf/pusher/startedAt")], "no duration key on the path")
         # a duration key exempts the stamp finding alone: an uptime or a bound is judged by its own coarsening first, as before
         doc = pe.export_document(leak_snapshot())
         doc["perf"]["uptime_s"] = 1.6e9
-        self.assertEqual([p.kind for p in pp.denylist_problems(doc, under=("perf",))], ["an uptime not rounded to whole minutes"])
+        self.assertEqual([p.kind for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))], ["an uptime not rounded to whole minutes"])
+
+    def test_the_denylist_walk_refuses_what_the_fold_would_have_folded_a_string_outside_the_grammar_and_a_key_its_anchored_match_admits(self):
+        """The two findings that make the re-check hold a file to the fold's own rule and not to the walk's (the upload's
+        second review round, 2026-09-18). The walk judges a KEY by `.match` against a `$`-anchored grammar, which admits a
+        trailing newline after a good name (and the joined grammar has no length cap there), and a string VALUE for a
+        uuid, a hex token, a path and whitespace, so a 43-character token with none of them passed it; the fold's
+        `_public_key` fullmatches and caps, and folds every string outside IDENT to `other`. So a file carrying either was
+        changed after the export and would have been POSTed at the previous head. Each is one path-precise finding of the
+        denylist walk: a key finding at the dict holding it (its value still walked), a value finding at its own path, in a
+        dict or a list, under a bound key too (a string is judged by the grammar alone); check_document names them with the
+        denylist wording and the token reaches no output. The schema line is not judged with the same skip the scan and the
+        walk take (without it the envelope's slash would be the finding on every export). The fixed point still holds over
+        every fixture and both usage settings, and every top-level block outside the envelope equals its own fold, which is
+        the belt `romp perf upload` adds under the checks. Fails before: the walk reported [] for all of them."""
+        token = "zz-planted-token-past-thirty-two-chars-zz"     # 41 characters, no whitespace, no hex run: silent to the walk
+        self.assertIsNone(pp.IDENT.fullmatch(token))
+        self.assertEqual(pp.fold(token), "other")
+        doc = pe.export_document(leak_snapshot(), usage=True)
+        doc["perf"]["heap"]["tok"] = token
+        doc["perf"]["heap"]["list"] = ["ok", token]
+        doc["perf"]["heap"]["capBytes"] = token
+        doc["perf"]["pusher"]["cycles\n"] = 1
+        doc["perf"]["recordCache"]["wholeReads"]["leaf<-_parse\n"] = {"count": 1, "bytes": 5}
+        doc["perf"]["recordCache"]["wholeReadsByStage"]["x" * 97] = {"count": 1}
+        for k in ("cycles\n", "leaf<-_parse\n", "x" * 97):
+            self.assertIsNotNone(pp.IDENT.match(k) if k == "cycles\n" else pp.JOINED_KEY.match(k), "the walk's anchored match admits it")
+            self.assertEqual(pp._public_key(k, () if k == "cycles\n" else ("recordCache", "wholeReads")), "other", "the fold does not")
+        self.assertEqual(pp.paste_problems(doc, skip=("schema",), under=("perf",)), [], "the walk is silent on every one")
+        self.assertEqual(sorted((p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))),
+                         sorted([("a string the fold would have folded", False, "perf/heap/tok", 3),
+                                 ("a string the fold would have folded", False, "perf/heap/list/1", 4),
+                                 ("a string the fold would have folded", False, "perf/heap/capBytes", 3),
+                                 ("a key the fold would have folded", True, "perf/pusher", 2),
+                                 ("a key the fold would have folded", True, "perf/recordCache/wholeReads", 3),
+                                 ("a key the fold would have folded", True, "perf/recordCache/wholeReadsByStage", 3)]))
+        self.assertTrue(all(token not in str(p.kind) and token not in p.path for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))))
+        # each alone through check_document: the denylist wording, the kind and the path, the token and the key in no output
+        for plant, line in (((("perf", "heap", "tok"), token), "a string the fold would have folded, the value at perf/heap/tok"),
+                            (((("perf", "heap", "list"), ["ok", token])), "a string the fold would have folded, the value at perf/heap/list/1"),
+                            (((("perf", "pusher", "cycles\n"), 1)), "a key the fold would have folded, a key under perf/pusher"),
+                            (((("perf", "recordCache", "wholeReads", "leaf<-_parse\n"), {"count": 1})), "a key the fold would have folded, a key under perf/recordCache/wholeReads"),
+                            (((("extra",), {"note": token})), "a string the fold would have folded, the value at extra/note")):
+            doc = pe.export_document(leak_snapshot(), usage=True)
+            node = doc
+            for k in plant[0][:-1]:
+                node = node[k]
+            node[plant[0][-1]] = plant[1]
+            reason = _check(doc)
+            self.assertEqual(reason, "the public form still fails the denylist (%s); nothing written" % line)
+            self.assertNotIn(token, reason)
+            self.assertNotIn("\n", reason)
+        # the http block: a key outside the register's image is the walk's finding first and the fold's too (it collapses)
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["http"]["GET /dist/render.js"] = {"count": 1}
+        self.assertEqual([p.kind for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))], ["a key the fold would have folded"])
+        self.assertEqual(_check(doc), "the public form still fails the walk (outside the image of the route register, a key under perf/http); nothing written")
+        # the key finding leaves the value walked: a stamp beneath a folded key is named too
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["pusher"]["ring\n"] = {"startedAt": 1.6e9}
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
+                         [("a key the fold would have folded", "perf/pusher"), ("a number the size of a clock stamp", "perf/pusher/ring\n/startedAt")])
+        # the schema line: judged without the skip (the envelope's slash), not judged with it, as the scan and the walk take it
+        doc = pe.export_document(leak_snapshot())
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",))], [("a string the fold would have folded", "schema")])
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [])
+        self.assertIsNone(_check(doc))
+        # the fixed point, and the belt: every block outside the envelope is its own fold, on every fixture, both usage settings
+        self.assertEqual(pe.ENVELOPE_KEYS, ("schema", "exported_at", "kernel_commit"))
+        for snap in (leak_snapshot(), _epoch(leak_snapshot()), bounds_snapshot(), bounds_snapshot(8 * 1024 ** 3)):
+            for usage in (False, True):
+                doc = pe.export_document(snap, usage=usage)
+                self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [])
+                self.assertEqual(set(doc) - {"perf", "usage"}, set(doc) & set(pe.ENVELOPE_KEYS), "the envelope and the blocks, nothing else")
+                for k in doc:
+                    if k not in pe.ENVELOPE_KEYS:
+                        self.assertEqual(pp.fold(doc[k]), doc[k], k)
+                        self.assertEqual(pp.fold(pp.fold(doc[k])), pp.fold(doc[k]), "and the fold is idempotent")
 
     def test_the_walk_holds_the_http_block_to_the_registers_image_and_the_stack_sample_to_its_grammars(self):
         # the walk's http check is membership in what the kernel's fold can return (http_key_ok), not a character grammar:

@@ -20,8 +20,10 @@ key repeated within one object at any depth, since json.loads would keep the las
 carry every copy, and nesting within the parser's reach) with the top-level `schema` line `romp-perf-export/1`,
 and pass the export's own check again as the file stands, since the user may have edited it: the scan for the
 strings only this machine knows, the paste-safety walk and the denylist walk of cli/perf_public.py, through
-perf_export.check_document, so a problem is reported by its kind and key path and never by the key or the value. Any
-of these refuses with exit 1. The rule the re-check holds the file to is the export's (its third review round,
+perf_export.check_document, so a problem is reported by its kind and key path and never by the key or the value; then,
+as a belt under the three, every top-level block outside the envelope (schema, exported_at, kernel_commit) must equal
+its own fold, perf_public.fold, and one that does not is refused naming the block alone (a name the checks just passed).
+Any of these refuses with exit 1. The rule the re-check holds the file to is the export's (its third review round,
 2026-09-18): the public form is PASTE-SAFE, not unlinkable. It removes identifiers, paths, free text, machine
 strings and every absolute clock stamp and coarsens the uptime and the memory-fraction bounds; durations, counts and
 per-process measurements stay, so two exports from one kernel remain linkable through them by design. The re-check
@@ -65,6 +67,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))   # cli/, whether run through the bin/ symlink or loaded by path
 import perf_export as pe  # noqa: E402
+import perf_public as pp  # noqa: E402  the fold the re-check holds every block to
 
 PROG = "romp perf upload"
 SCHEMA = pe.SCHEMA
@@ -191,10 +194,13 @@ def read_export(path, state):
     parses as strict JSON (strict_loads: a repeated key is named as the reason, since the file may be one the
     user edited by hand and an editor calls it valid) to an object with the schema line, and it passes
     perf_export.check_document (the machine-string scan, the paste-safety walk and the denylist walk, which holds
-    the file to the export's own rule, paste-safe, not unlinkable: what the export dropped or coarsened is refused
-    and the measurements it keeps pass; the shallowest finding named) as it stands. A Refusal
+    the file to the export's own rule, paste-safe, not unlinkable: what the export dropped, folded or coarsened is
+    refused and the measurements it keeps pass; the shallowest finding named) as it stands, and then every top-level
+    block outside the envelope (pe.ENVELOPE_KEYS) equals its own fold (pp.fold), the belt under the three checks: the
+    checks name a finding by its kind and key path, and the fold comparison catches whatever shape a later fold rule
+    would fold that no check yet names, at the price of naming the block alone. A Refusal
     otherwise, naming the file path the user passed and, for a walk or scan finding, the kind and the key path,
-    never the value."""
+    never the value; for the belt, the block's name, which the checks passed."""
     p = Path(path)
     try:
         st = p.stat()
@@ -223,6 +229,12 @@ def read_export(path, state):
     reason = pe.check_document(doc, state, tail="nothing sent")
     if reason:
         raise Refusal("refused: " + reason, 1)
+    for k in doc:
+        # the belt: a fold is a fixed point of its own output (pinned over every fixture and a served export), so a block
+        # that differs from its fold was changed after the export in a way the checks above do not name; the block's name
+        # is safe to print because they passed over it
+        if k not in pe.ENVELOPE_KEYS and pp.fold(doc[k]) != doc[k]:
+            raise Refusal("refused: %s is not the export's own public form (the %s block differs from its fold); nothing sent" % (path, k), 1)
     return data
 
 

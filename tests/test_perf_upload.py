@@ -741,6 +741,39 @@ class Cli(unittest.TestCase):
             self.assertNotIn("someone", r.stdout + r.stderr)
         self.assertEqual(self.fake.requests, [], "json.loads alone would keep the last copy, pass the scan, and send the bytes with both")
 
+    def test_an_edited_file_the_fold_would_have_changed_is_refused_by_kind_and_key_path_and_never_sent(self):
+        """The re-check holds the file to the export's FOLD, not to the walk's shapes alone (the upload's second review
+        round, 2026-09-18). Three edits the walk passed and the fold would have written differently, each POSTed at the
+        previous head: a 41-character token with no whitespace, hex run or path as a string value (the fold writes `other`),
+        a key with a trailing newline after a good name (the walk's `$`-anchored match admits it, the fold's fullmatch does
+        not), and a top-level block the envelope does not name whose value carries the token. Each exits 1 with one stderr
+        line naming the kind and the key path (a key's the dict holding it), the token in no output, nothing sent; a fresh
+        export and the 900-deep file the ordinary path admits still exit 0."""
+        base = ["--yes", "--receiver", self.fake.url]
+        token = "zz-planted-token-past-thirty-two-chars-zz"
+        edited = os.path.join(self.xdg, "edited.json")
+        for edit, line in (({"perf": {"leak": token}}, "a string the fold would have folded, the value at perf/leak"),
+                           ({"perf": {"cycles\n": 1}}, "a key the fold would have folded, a key under perf"),
+                           ({"extra": {"note": token}}, "a string the fold would have folded, the value at extra/note")):
+            doc = json.loads(self.data)
+            for k, v in edit.items():
+                doc.setdefault(k, {}).update(v)
+            with open(edited, "w") as fh:
+                json.dump(doc, fh)
+            r = self._refused(_run([edited] + base, self.state), 1, "refused: the public form still fails the denylist (%s); nothing sent" % line)
+            self.assertNotIn(token, r.stdout + r.stderr, line)
+            self.assertNotIn("cycles", r.stdout + r.stderr, line)
+            self.assertEqual(r.stdout, "", "refused before the summary line")
+        self.assertEqual(self.fake.requests, [], "none of the three was sent")
+        r = _run([self.file] + base, self.state)
+        self.assertEqual(r.returncode, 0, "a fresh export is its own fold and passes")
+        deep = os.path.join(self.xdg, "deep.json")
+        with open(deep, "w") as fh:
+            fh.write('{"schema": "romp-perf-export/1", "perf": {"uptime_s": 60, "x": ' + '{"a": ' * 900 + "1" + "}" * 900 + "}}")
+        r = _run([deep] + base, self.state)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.fake.requests), 2)
+
     def test_a_file_nested_past_the_parser_is_refused_as_not_strict_json_and_one_within_its_reach_takes_the_ordinary_path(self):
         base = ["--yes", "--receiver", self.fake.url]
         deep = os.path.join(self.xdg, "deep.json")
@@ -894,6 +927,38 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.stderr, "")
         self.assertEqual(len(self.fake.requests), 1)
         self.assertEqual(self.fake.requests[0][2], self.data, "the body is the file's bytes")
+
+
+class FoldBelt(unittest.TestCase):
+    """read_export's last step, as a unit: with the three checks stubbed to pass, a top-level block that differs from its
+    own fold is refused naming the block alone, and an export as written passes."""
+
+    def test_the_fold_belt_refuses_a_block_the_checks_passed(self):
+        xdg, state = _state_root()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        file = _export(xdg, state)
+        with open(file, "rb") as fh:
+            data = fh.read()
+        token = "zz-planted-token-past-thirty-two-chars-zz"
+        doc = json.loads(data)
+        doc["extra"] = {"note": token, "count": 1}
+        edited = os.path.join(xdg, "edited.json")
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        with mock.patch.object(pu.pe, "check_document", return_value=None) as stub:
+            with self.assertRaises(pu.Refusal) as cm:
+                pu.read_export(edited, pu.pe.Path(state))
+            self.assertEqual(stub.call_count, 1, "the checks ran first and passed (stubbed); the belt is what refused")
+            self.assertEqual(str(cm.exception), "refused: %s is not the export's own public form (the extra block differs from its fold); nothing sent" % edited)
+            self.assertEqual(cm.exception.code, 1)
+            self.assertNotIn(token, str(cm.exception))
+            self.assertEqual(pu.read_export(file, pu.pe.Path(state)), data, "the export as written is its own fold")
+            doc = json.loads(data)
+            doc["extra"] = {"note": "fits-the-grammar", "count": 1}      # a block the fold leaves as it is passes the belt
+            with open(edited, "w") as fh:
+                json.dump(doc, fh)
+            self.assertEqual(json.loads(pu.read_export(edited, pu.pe.Path(state)))["extra"], doc["extra"])
+        self.assertEqual(pu.pe.ENVELOPE_KEYS, ("schema", "exported_at", "kernel_commit"))
 
 
 class Answers(unittest.TestCase):
