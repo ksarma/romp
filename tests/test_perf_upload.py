@@ -446,6 +446,15 @@ class Cli(unittest.TestCase):
         self.assertNotIn("send it?", r.stdout, "--yes asks nothing, on a terminal too")
         self.assertEqual(len(self.fake.requests), 3)
 
+    def test_no_proxy_variable_diverts_the_request(self):
+        dead = "http://127.0.0.1:%d" % _free_port()
+        proxies = {k: dead for k in ("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")}
+        proxies["no_proxy"] = proxies["NO_PROXY"] = ""
+        r = _run([self.file, "--yes", "--receiver", self.fake.url], self.state, extra=proxies)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.fake.requests), 1, "the configured address was dialled, not the proxy")
+        self.assertEqual(self.fake.requests[0][0], "POST /v1/upload HTTP/1.1", "origin form, not the absolute form a proxy is sent")
+
     def test_success_prints_the_receipt_and_the_retention_and_exits_0(self):
         self.fake.answer = (201, {}, json.dumps({"av": "skipped", "retention_days": 7, "receipt": RECEIPT.upper()}))
         r = _run([self.file, "--yes", "--receiver", self.fake.url], self.state)
@@ -565,6 +574,65 @@ class Answers(unittest.TestCase):
         self.assertEqual(err.getvalue(), "romp perf upload: refused: no answer from the receiver (TimeoutError); no receipt\n")
         self.assertEqual(pu.TIMEOUT_S, 30, "the verb's own timeout is thirty seconds")
         time.sleep(1.5)                               # let the handler finish before the fake is reset
+
+
+class Enumeration(unittest.TestCase):
+    """Exactly what the verb sends, read from a recording receiver and not from the code. The export is written
+    through bin/romp from the planted snapshot (a home path, a session id, a hostname, a glossary term and a
+    client's app string in every place the export folds or drops them), the upload runs through bin/romp against
+    it with --yes, and the one request the receiver saw is compared whole: the request line, the header set
+    (exactly six: Host, User-Agent, Accept-Encoding, Content-Type, Content-Length, Connection), the body bytes
+    against the file's. Both runs are hermetic: an empty HOME under the test's tree, USER and LOGNAME `tester`,
+    no ROMP_* variable, a dead kernel port; the machine strings the two scans read are the same for both."""
+    FIXED_HEADERS = ("Host", "User-Agent", "Accept-Encoding", "Content-Type", "Content-Length", "Connection")
+
+    def test_the_one_request_is_the_file_under_six_fixed_headers_and_names_nothing_of_the_machine(self):
+        fake = Receiver()
+        self.addCleanup(fake.stop)
+        xdg, state = _state_root()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        home = os.path.join(xdg, "home")
+        os.makedirs(home)
+        src, out = os.path.join(xdg, "snap.json"), os.path.join(xdg, "export.json")
+        with open(src, "w") as fh:
+            json.dump(planted_snapshot(), fh)
+        env = _env(state, home=home)
+        r = subprocess.run([ROMP, "perf", "export", "--public", "--from", src, "--out", out], capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(out, "rb") as fh:
+            data = fh.read()
+        doc = json.loads(data)
+        self.assertEqual(doc["schema"], "romp-perf-export/1")
+        self.assertEqual(pp.paste_problems(doc, planted=PLANTED, skip=("schema",), under=("perf",)), [], "the export carries no plant")
+        self.assertEqual(doc["perf"]["pusher"]["cycles"], 100, "and keeps the counters")
+
+        r = subprocess.run([ROMP, "perf", "upload", out, "--yes", "--receiver", fake.url], capture_output=True, text=True, timeout=60,
+                           env=env, stdin=subprocess.DEVNULL)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "%s (%d bytes) to 127.0.0.1\n" % (out, len(data)) + SUCCESS % (RECEIPT, 180))
+        self.assertEqual(r.stderr, "")
+
+        self.assertEqual(len(fake.requests), 1, "one POST, no other request")
+        line, headers, body = fake.requests[0]
+        self.assertEqual(line, "POST /v1/upload HTTP/1.1")
+        self.assertEqual(len(headers), len(self.FIXED_HEADERS), headers)
+        self.assertEqual(dict(headers), {"Host": "127.0.0.1:%d" % fake.port, "User-Agent": "romp-perf-upload/1", "Accept-Encoding": "identity",
+                                         "Content-Type": "application/json", "Content-Length": str(len(data)), "Connection": "close"})
+        self.assertEqual(body, data, "the body is the file's bytes, unchanged")
+        self.assertEqual(len(body), int(dict(headers)["Content-Length"]))
+        # nothing of the machine or the file in the request line or a header: the plants, the real hostname, user and home
+        # of the machine running the suite, the temp tree, the file's name, a path, a uuid, a hex token
+        text = line + "\n" + "\n".join("%s: %s" % h for h in headers)
+        for s in PLANTED + (socket.gethostname(), os.environ.get("USER") or "-", os.environ.get("HOME") or "-", xdg, os.path.basename(out)):
+            self.assertNotIn(s, text, s)
+        for name, value in headers:
+            self.assertNotIn(name, ("Cookie", "Authorization", "X-Romp-Token", "Referer", "Origin"))
+            self.assertIsNone(pp.ABS_PATH.search(value), (name, value))
+            self.assertIsNone(pp.UUID.search(value), (name, value))
+            self.assertIsNone(pp.HEX32.search(value), (name, value))
+            self.assertNotIn(" ", value.strip(), (name, value))
+        with open(out, "rb") as fh:
+            self.assertEqual(fh.read(), data, "the verb did not touch the file")
 
 
 if __name__ == "__main__":
