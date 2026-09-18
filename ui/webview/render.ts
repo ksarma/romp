@@ -51,7 +51,7 @@ import { CHIP_LABEL, chipWords, statusChip, type ChipState } from "./status-chip
 import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail, RENAME_SUBLINE, END_SESSION_STANDING } from "./clear-confirm";
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { historyMarks, historyBands, windowSpans, HIST_H, HIST_GAP } from "./glow-history";
-import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind } from "./skeleton-tabs";
+import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind, gateOnFrame, gateOnStrip } from "./skeleton-tabs";
 import { reconcileTabOrder, adoptArrival } from "./tab-order";
 import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, setPinned, isHidden, setHidden, prunePinned, reachableFrom, headWords,
@@ -6099,6 +6099,12 @@ function applyTabOrder(o: any, tabs?: any, report?: OrderReport, live?: any) {
   colSets = readColSets();   // membership is fresh for the restore below (the chat split)
   if (back && heldHere(back) && restoreIfShown(back)) { /* focus is back on the tab the pane named; nothing more to paint here. Only a tab this column holds (the chat split): another column's session is its owner's to restore, and no record of it is this column's to keep */ }
   else if (!activeId) showActive();   // the strip changed under an unfocused pane (it may have emptied), or the tab it names is listed but hidden: the body's line and the box's placeholder follow it (the review's low)
+  // The idle prefetch's start gate, the strip half (stage 0, 2026-09-18; skeleton-tabs.ts gateOnStrip): the local kernel's
+  // strip that lists no tab this pane shows or awaits as active (the stored tab ended while the page was away, or none is
+  // stored) is the event that says no full is coming for one, so the chain may start on it; a strip that lists it leaves the
+  // gate to that tab's first frame (upsert). Only the local strip: a re-emission is empty on a fresh page and says nothing.
+  // Ahead of the render below (schedulePrebuild queues one idle pass, so the order costs nothing).
+  if (localStrip(report) && gateOnStrip(skeletonTabs, kernelOrder, activeId || wantActive)) schedulePrebuild();
   // The board has been heard on this socket ONLY when this frame is the local kernel's own strip (tab-order.ts localStrip):
   // a synthetic re-emission is re-served from the manager's store, EMPTY on a fresh page (order []), and another host's
   // fresh push says nothing about this kernel's sessions. The vanishing tab (the user 2026-09-12): a view-order storage
@@ -18944,6 +18950,7 @@ function sharesAnyUuid(a: ChatEvent[], b: ChatEvent[]): boolean {
 
 function upsert(msg: any) {
   retryCmtCreates(String(msg.id || ""));   // a session frame = the kernel re-parsed → retry a lag-refused create (T106)
+  const gateWant = activeId || wantActive;   // the tab the strip shows as active, read BEFORE this frame's own adoption moves it (the start gate at the tail; stage 0)
   // The LOCAL kernel's own machine name rides its session frames (the kernel's _self_host, as the tabOrder
   // and feed frames carry it): the chat reads a postal card's sender host against it (postalSenderHost). It
   // was learned only from the + picker's sessionList reply before, so that reading was inert in any chat
@@ -19142,6 +19149,11 @@ function upsert(msg: any) {
   if (adoptsProvisional(existed, msg.name, pendingNewSession)) {
     adoptProvisional(msg.id);
   }
+  // The idle prefetch's start gate, the frame half (stage 0, 2026-09-18; skeleton-tabs.ts gateOnFrame): the first full applied
+  // for the tab the strip shows as active, the tab this pane showed at the frame's arrival or the one it awaited after a reload
+  // (gateWant, read above) or adopted from this very frame (activeId now), opens the chain; the arm below then runs it. Until
+  // then no background ask leaves: the visible tab's full never waits behind a tab nobody is looking at.
+  gateOnFrame(skeletonTabs, msg.id, [gateWant, activeId]);
   schedulePrebuild(); // startup + new content: build the off-screen tabs in idle so they open instantly
 }
 

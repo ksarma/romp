@@ -28,7 +28,7 @@ const fn = (name: string): string => {
 };
 
 test("render.ts holds ONE skeleton set, declared beside tabMeta, and reads the active session through liveSession", () => {
-  assert.match(RENDER, /import \{ newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind \} from "\.\/skeleton-tabs";/);
+  assert.match(RENDER, /import \{ newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind, gateOnFrame, gateOnStrip \} from "\.\/skeleton-tabs";/);   // gateOnFrame, gateOnStrip: the idle prefetch's start gate (stage 0, 2026-09-18)
   // beside tabMeta / closingTabs / pendingTabMeta (below them: tab-close-optimistic.test.ts wants closingTabs within
   // 900 characters of tabMeta) — renderTabs reads it and can run before the module finishes evaluating
   assert.match(RENDER, /const pendingTabMeta = new Map<string, PendingTabMeta>\(\);\n(?:\/\/[^\n]*\n)*const skeletonTabs = newSkeletonState\(\);/);
@@ -422,4 +422,31 @@ test("run: a column's own session, listed by the strip but not among its skeleto
   // …the neighbouring skeleton still asks on its pick: the gate is the set, not the missing session
   w.api.set({ activeId: "B" }); w.api.showActive();
   assert.deepEqual(w.HOOKS.fulls, ["skeleton-click:B"]);
+});
+
+test("the idle prefetch's START GATE (stage 0, 2026-09-18): upsert reads the shown tab before the adoption and opens the gate on its frame; the local strip opens it when it lists no such tab; the click road is not gated", () => {
+  const up = fn("upsert");
+  // the want is read at the head of upsert, before the frame's own adoption (the `adopted` block moves activeId and clears wantActive)
+  assert.match(up, /^function upsert\(msg: any\) \{\s*\n\s*retryCmtCreates\(String\(msg\.id \|\| ""\)\);[^\n]*\n\s*const gateWant = activeId \|\| wantActive;/,
+    "the tab the strip shows as active, or the one awaited after a reload, read before this frame can move either");
+  assert.ok(up.indexOf("const gateWant = activeId || wantActive;") < up.indexOf("const wouldAdopt = "), "…ahead of the adoption");
+  // the frame half sits right before upsert's arm, so the arm runs the chain the moment the gate opens
+  assert.match(up, /gateOnFrame\(skeletonTabs, msg\.id, \[gateWant, activeId\]\);\s*\n\s*schedulePrebuild\(\); \/\/ startup \+ new content/,
+    "the visible tab's frame (the want read above, or the active tab this very frame adopted) opens the gate, then the arm");
+  assert.equal(RENDER.split("gateOnFrame(").length - 1, 1, "one frame site: upsert");
+  // the strip half: the LOCAL kernel's strip alone (a re-emission is empty on a fresh page), keyed on the same want
+  const ato = RENDER.slice(RENDER.indexOf("\nfunction applyTabOrder("), RENDER.indexOf("\nfunction syncTabKeysWithStrip("));
+  assert.match(ato, /else if \(!activeId\) showActive\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(localStrip\(report\) && gateOnStrip\(skeletonTabs, kernelOrder, activeId \|\| wantActive\)\) schedulePrebuild\(\);\n(?:\s*\/\/[^\n]*\n)*\s*const stripFrom = stripHost\(report\);/,
+    "the local strip that lists no shown or awaited tab opens the gate and arms the chain at once: after the restore, ahead of the strip's render (chat-split.test.ts pins the stripFrom / tabOrderSeen / renderTabs run as adjacent)");
+  assert.equal(RENDER.split("gateOnStrip(").length - 1, 1, "one strip site: applyTabOrder");
+  // the click road stays ungated: showActive asks for a skeleton active with no gate read in front of it
+  const sa = fn("showActive");
+  assert.match(sa, /if \(skeleton\) requestFullSession\(activeId, "skeleton-click"\);/);
+  assert.doesNotMatch(sa, /skeletonTabs\.gate|gateOnFrame|gateOnStrip/, "a tap loads at once whatever the gate says");
+  // the socket flip closes the gate inside onSocketUp (skeleton-tabs.ts), which the wsup frame already calls
+  assert.match(RENDER, /else if \(m\.type === "wsup"\) \{ onSocketUp\(skeletonTabs\); skeletonDiagArmed = true; \}/);
+  const SK = fs.readFileSync(path.join(WEBVIEW, "skeleton-tabs.ts"), "utf8");
+  assert.match(SK, /export function onSocketUp\(st: SkeletonState\): void \{\s*\n\s*st\.loaded\.clear\(\);\s*\n\s*st\.gate = false;/, "a new socket closes the gate");
+  assert.match(SK, /if \(hidden \|\| !st\.gate\) return null;/, "nextPrefetch is null while the gate is closed: no background ask leaves");
+  assert.match(SK, /return \{ ids: new Set\(\), order: \[\], status: new Map\(\), loaded: new Set\(\), gate: false \};/, "a fresh state's gate is closed");
 });

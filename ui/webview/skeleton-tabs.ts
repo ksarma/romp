@@ -20,10 +20,40 @@ export interface SkeletonState {
   order: string[];             // the kernel's list order — ascending transcript size, the prefetch order
   status: Map<string, any>;    // the last kernel-sent status per skeleton id (the chip reads ONLY this)
   loaded: Set<string>;         // ids whose full `session` frame arrived on THIS socket (see applyTabOrderSkeleton)
+  // The idle prefetch's START GATE (stage 0 of the reconnect design, 2026-09-18). Closed for every new socket (the boot dial, and
+  // each redial: onSocketUp) and opened by ONE of two events: the first full frame applied for the tab the strip shows as
+  // active (gateOnFrame: the pane's active tab, or the tab it awaits after a reload, the kernel's one full under the diet), or
+  // a strip from the local kernel that lists no such tab (gateOnStrip: the stored tab ended while the page was away, or a
+  // fresh profile with none; the kernel's list is the event that says no full is coming for one). nextPrefetch is null while
+  // it is closed; the click road (a tap on a skeleton asks at once, render.ts showActive) is never gated. Before this the
+  // chain armed from the strip's first paint, which the kernel sends before it builds anything, so the first background full
+  // could leave ahead of the visible tab's, and on a phone link the visible session waited behind a tab nobody was looking at.
+  gate: boolean;
 }
 
 export function newSkeletonState(): SkeletonState {
-  return { ids: new Set(), order: [], status: new Map(), loaded: new Set() };
+  return { ids: new Set(), order: [], status: new Map(), loaded: new Set(), gate: false };
+}
+
+/** A full `session` frame applied (render.ts upsert). Opens the gate when `id` is one of `wants`, the tab the strip shows as
+ *  active (render.ts passes the active tab and the tab awaited after a reload, read before the frame's own adoption moved
+ *  them). Returns whether it opened NOW, so a caller can arm the chain on the event; an open gate stays open. */
+export function gateOnFrame(st: SkeletonState, id: string, wants: ReadonlyArray<string | null | undefined>): boolean {
+  if (st.gate || !id) return false;
+  if (!wants.some((w) => w === id)) return false;
+  st.gate = true;
+  return true;
+}
+
+/** The local kernel's strip landed (render.ts applyTabOrder, localStrip). When it lists no tab the pane shows or awaits as
+ *  active (`want` null, or an id the strip does not carry: an ended session) no full is coming for one, so the gate opens
+ *  here and the chain loads the tabs in the kernel's order. A strip that does list it leaves the gate to the frame. Returns
+ *  whether it opened NOW. */
+export function gateOnStrip(st: SkeletonState, order: readonly string[], want: string | null | undefined): boolean {
+  if (st.gate) return false;
+  if (want && order.includes(want)) return false;
+  st.gate = true;
+  return true;
 }
 
 /** A tabOrder frame landed. An ARRAY is the kernel's authoritative set → REPLACE (a second reconnect while
@@ -116,16 +146,18 @@ export function onDismiss(st: SkeletonState, id: string): void {
  *  kernel sends may legitimately re-list those tabs (they are stale after the outage). */
 export function onSocketUp(st: SkeletonState): void {
   st.loaded.clear();
+  st.gate = false;   // …and the chain waits again for the active tab's first frame on the new socket (stage 0): a redial re-skeletons every other tab, and the visible one's full comes first
 }
 
 /** The one skeleton to fetch in this idle callback, or null. Null while the page is hidden (bytes and work
  *  nobody sees — the very regime this exists to spare), while ANY skeleton id is already in flight (one at a
  *  time: a 1 MB full ahead of the active tab's 2 KB tail on a slow link delays that tail; one bounds it), and
  *  when nothing is left. Otherwise the first id of the kernel's order still held, not the active tab (its own
- *  click path asks), and in the current view (a view-hidden tab loads on click instead). */
+ *  click path asks), and in the current view (a view-hidden tab loads on click instead). Null too while the start gate is
+ *  closed (`st.gate`, stage 0): the visible tab's first frame has not applied on this socket and the strip lists it. */
 export function nextPrefetch(st: SkeletonState, activeId: string | null, inFlight: ReadonlySet<string>,
                              hidden: boolean, inView: (id: string) => boolean): string | null {
-  if (hidden) return null;
+  if (hidden || !st.gate) return null;
   for (const id of st.ids) if (inFlight.has(id)) return null;
   for (const id of st.order) {
     if (!st.ids.has(id) || id === activeId) continue;
