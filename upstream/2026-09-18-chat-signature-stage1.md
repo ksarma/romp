@@ -3,7 +3,7 @@ title: Chat signature pass: memos.chatSig counters, stages_cpu_ms and the static
 status: candidate
 where: kernel/kernel.py (`_CHAT_SIG_STATS`, `_chat_sig_scope`, `_chat_sig_note_pre`, `_chat_sig_seam_close`, `_thread_cpu`, `_PerfStats.CPU_STAGES`, `STAGES`, `CONTAINERS`, `stage`, `_chat_build_sig`, `_push`, `_pusher_cycle_jobs`, `_jobs_pass`); kernel/sdk_backend.py (`reg_reads_on_thread`); docs/reference.md; tests in `tests/test_perf_stats.py` and `tests/test_kernel_delta_send.py`
 added: 2026-09-18
-pr:
+pr: 798
 tier: feature
 offered:
 closed:
