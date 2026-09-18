@@ -3017,10 +3017,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   seam is recorded when its work ran, so a served tab lists no build seam
   and an unchanged build no `feedParts` or `barsSplit`; the cycle's split
   (`pusher.firstCycle`, `pusher.stageRing`) carries a seam's own bytes, its
-  parent's glue under `push.chat.other` or `push.send.other`, and the parent
-  and `push` sum their direct children once. The `push.*` stages count every
-  push, including the one a connecting page gets, so they can add up to more
-  than `push`.
+  parent's glue under `push.chat.other` or `push.send.other`, and `push`
+  counts the parent's rows through the parent's own row, once. The `push.*`
+  stages count every push, including the one a connecting page gets, so they
+  can add up to more than `push`.
 - `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
   `feed` also carries `dirty`, the rebuilds a kernel-side mutation forced past
   the view signature (a card reply, a clear, a follow-up: the mutation is

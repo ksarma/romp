@@ -807,8 +807,9 @@ class _PerfStats:
     #                                          of the housekeeping off the pusher, 2026-09-13; see _jobs_loop)
     # a container stage -> the prefix of its sub-stages. push.chat and push.send are containers of their own seams (stage 1 of
     # the incremental-push design, 2026-09-18): a seam's bytes count in the seam, the container's glue in `<container>.other`,
-    # and a container sums its DIRECT children only (`stage` below), so `push` counts the chat's bytes once, not again
-    # through push.chat.build
+    # and a container counts a nested container's rows through that container's own row (`_through_nested` below), so `push`
+    # counts the chat's bytes once, not again through push.chat.build; a dotted stage under a plain job (jobs.autoNudge.parse)
+    # counts directly, as it did before the seams
     CONTAINERS = {"push": "push.", "push.chat": "push.chat.", "push.send": "push.send.", "jobs": "jobs.", "jobsPass": "jobs."}
     BUILDS = ("chat", "feed", "timeline", "feedJson", "thread")
     # builds.chat's bg_miss labels: _chat_build_sig's components, a tab with no cached build, and a tab whose
@@ -1081,6 +1082,16 @@ class _PerfStats:
                 cs = st["stages"].setdefault("jobs.other", {"ms": 0.0, "bytes": 0, "hydrated": 0})
                 cs["bytes"] += max(0, marks[0] - prev[0]); cs["hydrated"] += max(0, marks[1] - prev[1])
 
+    @classmethod
+    def _through_nested(cls, pfx, key, stages):
+        """Whether a row under a container's prefix is counted through a NESTED container's row rather than directly:
+        `push.chat.sig` under `push` when the split holds a `push.chat` row (its bytes are in that row's sum). A dotted
+        stage whose head is no container (`jobs.autoNudge.parse`, a job's part from _sub_stage) counts directly, as does
+        a seam whose container never closed (a raise that escaped the chat loop returns before `push.chat` closes):
+        the first reading, "direct children only", dropped both (2026-09-18 review)."""
+        head, dot, _rest = key[len(pfx):].partition(".")
+        return bool(dot) and (pfx + head) in cls.CONTAINERS and (pfx + head) in stages
+
     def stage(self, name, dt):
         marks = self._byte_marks()
         with self.lock:
@@ -1099,9 +1110,9 @@ class _PerfStats:
                     g = stages.setdefault(pfx + "other", {"ms": 0.0, "bytes": 0, "hydrated": 0})
                     g["bytes"] += max(0, marks[0] - prev[0]); g["hydrated"] += max(0, marks[1] - prev[1])
                 st["mark"] = marks
-                kids = [v for k, v in stages.items() if k.startswith(pfx) and "." not in k[len(pfx):]]   # direct children: a
-                cs["bytes"] = sum(v["bytes"] for v in kids)                                                #  nested container's
-                cs["hydrated"] = sum(v["hydrated"] for v in kids)                                          #  seams count through it
+                kids = [v for k, v in stages.items() if k.startswith(pfx) and not self._through_nested(pfx, k, stages)]
+                cs["bytes"] = sum(v["bytes"] for v in kids)
+                cs["hydrated"] = sum(v["hydrated"] for v in kids)
             else:
                 prev = st["mark"]
                 if prev is not None:

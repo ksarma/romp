@@ -97,8 +97,8 @@ class StageSplitUnit(unittest.TestCase):
     def test_a_seams_bytes_roll_into_its_container_and_once_into_the_push(self):
         """Stage 1 of the incremental-push design (2026-09-18): push.chat and push.send are containers of their own
         seams (push.chat.sig / build / send, push.send.feedParts / barsSplit / compare). A seam's bytes count in
-        it, the container's glue lands in `<container>.other`, the container carries the sum, and `push` sums its
-        DIRECT children only, so a nested container's bytes are counted once, not again through its seams."""
+        it, the container's glue lands in `<container>.other`, the container carries the sum, and `push` counts a
+        nested container's bytes through the container's own row, once, not again through its seams."""
         km = self.km
         ps = km._PerfStats()
         for k in ("push.chat.sig", "push.chat.build", "push.chat.send", "push.send.feedParts", "push.send.barsSplit", "push.send.compare"):
@@ -125,10 +125,64 @@ class StageSplitUnit(unittest.TestCase):
         self.assertEqual(st["push.feed"]["bytes"], 100)
         self.assertEqual(st["push.send"]["bytes"], 0)
         self.assertNotIn("push.send.other", st, "no glue, no row")
-        self.assertEqual(st["push"]["bytes"], 380, "direct children only: the chat's 280 once, not again through its seams")
+        self.assertEqual(st["push"]["bytes"], 380, "the chat's 280 once, through its own row, not again through its seams")
         self.assertEqual(sorted(k for k in st if k.startswith("push.chat")),
                          ["push.chat", "push.chat.build", "push.chat.other", "push.chat.send", "push.chat.sig"])
         self.assertEqual(st["push"]["ms"], 9.0); self.assertEqual(st["push.chat"]["ms"], 5.0, "the ms are the callers' own, never summed")
+
+    def test_a_jobs_sub_stage_that_is_no_container_still_counts_in_its_containers(self):
+        """The tick jobs record finer stages of their own, `jobs.<job>.<part>` (_sub_stage; the nudge walk's
+        autoNudge.snapshot, .looks, .key and .parse), and `jobs.<job>` is no container: each part's row carries the
+        bytes read inside it and the job's own row only the bytes since its last part closed, so the old prefix
+        sum counted each byte once. The seams' rule (2026-09-18) first read "direct children only" and dropped
+        every such part from `jobs` and `jobsPass`: a pass reading 100 bytes under autoNudge.snapshot, 40 under
+        autoNudge.parse, 7 in the job's tail and 200 under apiHealth reported 207. A child counts through a nested
+        container's row only when that child IS a container's (a `push.chat.*` seam under `push`); a dotted
+        stage under a plain job counts directly."""
+        km = self.km
+        ps = km._PerfStats()
+        self.assertNotIn("jobs.autoNudge", km._PerfStats.CONTAINERS, "premise: a job is a plain stage, not a container")
+        ps.cycle_begin("jobs")                               # this thread is the jobs thread for the pass
+        em._count_read("/lab/a.jsonl", 100)                  # the ledger and the peer graph
+        ps.stage("jobs.autoNudge.snapshot", 0.001)
+        em._count_read("/lab/b.jsonl", 40)                   # the parse-store read inside the walk
+        ps.stage("jobs.autoNudge.parse", 0.001)
+        em._count_read("/lab/c.jsonl", 7)                    # the job's own tail
+        ps.stage("jobs.autoNudge", 0.003)
+        em._count_read("/lab/d.jsonl", 200)
+        ps.stage("jobs.apiHealth", 0.001)
+        ps.stage("jobsPass", 0.006); ps.jobs_pass(0.006)
+        st = ps.snapshot()["jobs"]["firstPass"]["stages"]
+        self.assertEqual(st["jobs.autoNudge.snapshot"]["bytes"], 100)
+        self.assertEqual(st["jobs.autoNudge.parse"]["bytes"], 40)
+        self.assertEqual(st["jobs.autoNudge"]["bytes"], 7, "the job's row carries the bytes since its last part closed")
+        self.assertEqual(st["jobsPass"]["bytes"], 347, "the pass counts the parts' bytes and the jobs' own, each once")
+        ps.cycle_begin()                                     # the pusher's own jobs container, the same rule
+        em._count_read("/lab/e.jsonl", 100); ps.stage("jobs.autoNudge.snapshot", 0.001)
+        em._count_read("/lab/f.jsonl", 7); ps.stage("jobs.autoNudge", 0.002)
+        ps.stage("jobs", 0.002); ps.cycle(0.002)
+        self.assertEqual(ps.snapshot()["pusher"]["firstCycle"]["stages"]["jobs"]["bytes"], 107)
+
+    def test_a_seam_whose_container_never_closed_still_counts_in_the_push(self):
+        """A raise that escapes the chat loop returns from _push before `push.chat` closes (the cycle-level catch), with
+        the seams already closed for the earlier tabs sitting in the split. Those bytes are `push`'s: with no
+        `push.chat` row to carry them they count directly, and the glue since the last seam lands in `push.other`
+        as before the seams (2026-09-18 review, low 1)."""
+        km = self.km
+        ps = km._PerfStats()
+        ps.cycle_begin(); ps.stage_boundary()
+        ps.stage("push.chat.sig", 0.001)
+        em._count_read("/lab/a.jsonl", 250)                  # the transcript read inside build_session
+        ps.stage("push.chat.build", 0.002)
+        ps.stage("push.chat.send", 0.001)
+        em._count_read("/lab/b.jsonl", 30)                   # the second tab's reads before its send raised
+        ps.stage("push", 0.009)                              # the except returned: no push.chat, no push.send
+        ps.stage("jobs", 0.001); ps.cycle(0.010)
+        st = ps.snapshot()["pusher"]["firstCycle"]["stages"]
+        self.assertNotIn("push.chat", st, "premise: the container never closed")
+        self.assertEqual(st["push.chat.build"]["bytes"], 250)
+        self.assertEqual(st["push.other"]["bytes"], 30, "the glue since the last seam")
+        self.assertEqual(st["push"]["bytes"], 280, "the orphaned seams' bytes and the glue, each once")
 
     def test_the_split_is_the_pusher_threads_alone(self):
         """Round one, medium: a dashboard's connect push runs _push on the HTTP handler thread through the same stage calls; its
