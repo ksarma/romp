@@ -608,7 +608,7 @@ _CHAT_SIG_DEPS = ("taskout", "pathlink", "postal")
 
 # ── stages_cpu_ms: a stage's CPU beside its wall (stage 1 of the chat-signature design, 2026-09-18) ────────────────
 # stage() records wall time, so a seam over a stat storm holds the GIL waits and the syscall waits of every other thread
-# with it, and the pusher's stage wall exceeded its own thread CPU by 157 ms per cycle on the box 1 readings with no way
+# with it, and the pusher's stage wall exceeded its own thread CPU by 157 ms per cycle on the second-boot readings with no way
 # to say which stage carried the wait. getrusage(RUSAGE_THREAD) splits the calling thread's CPU into user and system;
 # the chat seams and the push and jobs containers read it at their open and close and hand stage() the delta. The cost
 # is bounded: TWO getrusage calls per mark (one syscall each, about a microsecond), so per tab per cycle the chat loop

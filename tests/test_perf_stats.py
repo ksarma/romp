@@ -2226,6 +2226,15 @@ class GoalIoCounters(unittest.TestCase):
         self.assertIn("`memos.shared`", doc)
         self.assertIn("- `heap`:", doc, "the heap block is a documented top-level block (tests/test_perf_heap_block.py pins its keys)")
 
+    def test_the_reference_doc_names_the_chat_signature_stage_1_keys(self):
+        # stage 1 of the chat-signature design (2026-09-18): the CPU block, the signature seam's sub-seams and the
+        # memos.chatSig table are documented where the reader of GET /perf looks
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        self.assertIn("- `stages_cpu_ms`:", doc)
+        for k in ("`chatSig`", "`push.chat.sig.static`", "`push.chat.sig.deps`", "`compareIdentity`", "`regReads`",
+                  "`warmEligible`", "`warmBlockedByOutline`", "`heldBody`"):
+            self.assertIn(k, doc, k)
+
     def test_the_reference_doc_names_the_shared_memos_by_their_camelcase_keys(self):
         # the memo keys upstream also reports are spelled one way in GET /perf and in the doc (bgTops, liftGate,
         # intrMarks, statesOverlay, chatMergeSets, chatPostal, chatLedger, chatFoldTasks); the older snake_case

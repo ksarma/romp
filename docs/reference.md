@@ -3104,7 +3104,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `push.chat`, `push.feed`, `push.timeline`, `push.send`, `push.warm`,
   `push.feedFirst`; a fresh snapshot lists every one at zero. Two of those
   are split further: inside `push.chat`, `push.chat.sig` (each tab's build
-  signature, every tab every cycle, the post-build check included),
+  signature, every tab every cycle, the post-build check included; itself
+  split into `push.chat.sig.static`, the signature less its dependency
+  tail, and `push.chat.sig.deps`, the tail evaluated over the cached
+  build's record, the task-output stats, the path-token re-resolves and
+  the postal values, recorded only when the tail ran, so a post-build check
+  lists static alone),
   `push.chat.build` (the session build alone, a rebuild only) and
   `push.chat.send` (the events diff and the per-client chat sends); inside
   `push.send`, `push.send.feedParts` (the feed's per-card pass and its
@@ -3166,6 +3171,23 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   on the WS handler thread (`_ws_act_now_tick`: `key`, `snapshot`, `looks`,
   and `parse` per session looked at); any other key names a stage that ran
   outside both loops. The keys are the kernel's own stage names.
+- `stages_cpu_ms`: the calling thread's CPU over a stage, beside its wall:
+  `{stage: {user, sys}}` in milliseconds, from `getrusage(RUSAGE_THREAD)`
+  read at the stage's open and close, for the containers `push`, `jobs` and
+  `jobsPass` and the chat loop's seams `push.chat`, `push.chat.sig`,
+  `push.chat.sig.static`, `push.chat.sig.deps`, `push.chat.build` and
+  `push.chat.send`, each listed at zero from the start and cumulative like
+  the flat rows of `stages_ms`. A row takes the CPU of a mark whose wall
+  went to the flat `stages_ms` row of its name: a connect push's `push.*`
+  stage, the pusher's `jobs.<job>` and a foreign writer's stage record no
+  CPU row, so each row's CPU is the same writer's as its wall. Over a
+  window, wall minus user minus sys is the stage's wait (the GIL, the
+  syscalls); the split between user and sys is tick-sampled by
+  the operating system and scaled to the exact total, so read it over a
+  window, never off one cycle. The reads cost two `getrusage` calls per
+  mark, about 230 clock reads per cycle at 38 tabs. Empty where the platform
+  has no per-thread rusage (macOS): an empty block means no clock, not no
+  CPU.
 - `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
   `chat` also carries `bySession`, one row per living session built since
   the boot, ordered by `max` (slowest first) and numbered by `rank` in that
@@ -4026,6 +4048,31 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   forty percent off that overhead. The block is counts and byte totals under
   identifier keys, and the public export (`romp perf export --public`)
   carries it whole.
+  `chatSig` is the chat signature pass's own table (stage 1 of the
+  chat-signature design), one integer per key: `pre` and `post`, the
+  pre-build signatures the push loop took (one per tab past the cold gate, a
+  raising one included) and the post-build ones (over a window `pre` equals
+  `builds.chat` `cached` plus `built` less the targeted push's builds, which
+  take no signature, and `post` equals `built` less `nosig`); `nosig`,
+  signatures that raised or found no transcript path (the tab built, never
+  cached); `waited`, tabs served after waiting for another thread's build of
+  the same tab; `compares`, cache checks that met a cached entry and a
+  signature, and `compareIdentity`, the components of those compares equal
+  by object identity; `stats`, the `os.stat` calls inside a signature at the
+  transcript, the states files and the kernel's own identity helpers (the
+  store identity, the registry, the task store, the todo and pin
+  fingerprints and the cwd memos stat through their own helpers and are not
+  counted); `namesReads`, raw names-registry reads inside a signature;
+  `switchReads`, reads of the user-todos switch file; `regReads`, registry
+  file reads by the SDK backend's reader; and the warm-tab census:
+  `warmEligible`, a tab with a cached build that no connected chat client
+  watches, every connected chat client holds as a skeleton, with a
+  transcript and no plain Sessions pane connected (the cold gate's predicate
+  less its not-yet-built clause, so what a warm-tab gate would skip);
+  `warmBlockedByOutline`, the same tab with a plain Sessions pane connected;
+  and `heldBody`, a tab some connected chat client holds as a body, the
+  watched tab included. Every push counts, a connecting page's included, so
+  a per-cycle figure is a delta over `pusher.cycles`.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the in-process pools' share is
