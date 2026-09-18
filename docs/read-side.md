@@ -63,8 +63,21 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   the kernel then holds every push to that socket (pusher cycles, broadcasts, a
   reveal) until the bundle sends `ready`. A socket that does not announce
   (federation's remote relays, the VS Code extension's pipes, an older page) is
-  served from accept, as it always was. Keepalives and the restart notice reach
-  every socket, held or not: the shim consumes both itself. On `ready`, a feed
+  served the push paths from accept: tab strips, statuses, feed frames. Chat
+  frames are the exception on every socket: a proto-2 page once received an
+  index frame before its `ready` and its reload restore took the older wire, so
+  no chat frame goes to a socket until it has declared its wire, by a
+  `{type:"ready", proto}` message or by dialling with `reconnect=1&proto=N`. A
+  socket that declares neither and then sends any other frame (an older hub's
+  relay socket, whose page sent its `ready` to its local socket alone; an older
+  shim's redial with no `proto` term) is taken at that first frame as a proto-1
+  client and served the index wire from there, degraded rather than silent
+  (`_implicit_handshake`; an older dashboard attached to a newer kernel listed
+  the remote's tabs with nothing behind them, 2026-09-18). A socket that sends
+  nothing at all gets no chat frame, and its close files a `chatWithheld` row in
+  `client-diag.jsonl` with the count of frames withheld. Keepalives and the
+  restart notice reach every socket, held or not: the shim consumes both itself.
+  On `ready`, a feed
   socket receives the cached `{type:"feed"}` frame at once, with no build, and the
   frame's `now` is rewritten to the time of the serve. The rewrite matters because
   the pusher builds only while a client is connected: after a night with no

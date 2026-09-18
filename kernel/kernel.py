@@ -52893,9 +52893,11 @@ def _note_history_reply(client, sid, mtype, reply, nbytes, now=None, sent=True):
 
 def _note_chat_withheld_at_close(client, now=None):
     """One client-diag row for a socket that CLOSED without its handshake after chat frames were withheld from it: the permanent
-    case (an older shim's redial with no proto term, a page whose ready never came), told apart from the routine pre-ready race
-    (a pusher cycle between the accept and the bundle's ready, whose handshake then arrives and whose frames follow), which used
-    to file the same row (the tidy after PR 1642, low 1). Returns whether a row was filed."""
+    case (a socket that sent nothing for its whole life: a page whose ready never came and that asked for nothing; since
+    2026-09-18 an older shim's redial with no proto term, or an older hub's relay with no ready, is taken at its first frame
+    instead, _implicit_handshake), told apart from the routine pre-ready race (a pusher cycle between the accept and the
+    bundle's ready, whose handshake then arrives and whose frames follow), which used to file the same row (the tidy after PR
+    1642, low 1). Returns whether a row was filed."""
     if client.get("handshake") is not False or not client.get("withheld"):
         return False
     try:
@@ -52906,6 +52908,38 @@ def _note_chat_withheld_at_close(client, now=None):
         return True
     except Exception:
         return False
+
+
+def _implicit_handshake(client, msg):
+    """The FIRST client frame from a socket that has declared no chat wire stands as its handshake, on the index wire
+    (proto 1), and lifts the chat withhold (_send_chat_locked's gate). The event this keys on is that frame itself; no
+    clock is read. Two producers dial a socket that neither posts `ready` nor carries a `proto` term and then ask this
+    kernel for things: a hub page older than the federation's remote ready (f7a80efee) relaying to a newer kernel, whose
+    federation sent the page's ready to the local socket alone; and a pane shim older than the redial's proto term
+    redialing after this kernel restarted (reconnect=1 alone, its page's one ready acked long ago, so no ready follows).
+    Until 2026-09-18 both were held silent for the socket's life: strips and statuses flowed and every session body was
+    withheld, so an older dashboard attached to a newer kernel listed the remote's tabs with nothing behind them (two
+    relay sockets, 965 and 644 chat frames withheld, on the record). Both spoke the index wire before the gate existed,
+    and that is the wire they degrade to. Not taken: a `ready` (the arm declares the wire itself); a socket held under
+    READY_GATE_CAP (`ready` False: a kernel-served pane whose bundle has not said ready, whose shim flushes queued
+    clientDiag rows at its open before that ready, the very race the gate closed); a socket already handshaken (a
+    redial's proto term, a ready seen); an undecodable frame (msg None). A socket that sends nothing keeps the gate's
+    behaviour: no chat frame, the chatWithheld row at its close. A real `ready` after this re-declares the wire and
+    resets the base as it always did. Wakes the pusher: a frame that wakes nothing itself (a settings post) would
+    otherwise wait for the backstop cycle. Said once on stderr per socket, with the frame that stood in and the frames
+    withheld before it. Returns whether the mark lifted here."""
+    if not isinstance(msg, dict) or msg.get("type") == "ready":
+        return False
+    if client.get("handshake") is not False or not client.get("ready", True):
+        return False
+    client["proto"] = 1
+    client["handshake"] = True
+    client["implicitHandshake"] = str(msg.get("type") or "?")   # the frame that stood in, on the client's record
+    sys.stderr.write("ws: a %s socket (app %s) declared no chat wire; its first frame (%s) stands as a proto-1 handshake, "
+                     "%d chat frame(s) withheld before it\n"
+                     % (client.get("kind") or "page", client.get("app"), client["implicitHandshake"], int(client.get("withheld") or 0)))
+    _pusher_wake.set()
+    return True
 
 
 def _drop_dead_ws_client(client, why):
@@ -55626,6 +55660,9 @@ def _send_chat_locked(c, m, ms, change_from, led_changed):
         c["withheld"] = int(c.get("withheld") or 0) + 1   # counted, not filed: a pusher cycle between the accept and the bundle's ready is the ROUTINE
         return ms                                     # case, and a row for it read the same as the permanent one; the socket's close files the row
     #                                                    when the handshake never came (_note_chat_withheld_at_close; the tidy after PR 1642, low 1).
+    #                                                    A socket that declares no wire but sends any other frame is taken at that frame as a
+    #                                                    proto-1 client (_implicit_handshake, 2026-09-18): an older hub's relay and an older shim's
+    #                                                    redial were held silent for the socket's life, the remote's tabs listed with nothing behind them.
     #                                                                                       # (T386 stage 2, round eleven). It used to get index frames, and a proto-2 page whose ready lost the
     #                                                    race to this push (the pusher fires from the socket's open; the bundle evaluates later) held an
     #                                                    index frame at its reload restore and took the older wire for a landing the window wire owns.
@@ -74164,6 +74201,7 @@ class Handler(BaseHTTPRequestHandler):
         try/except (see _ws) so a bug in one handler logs and the NEXT message still processes, instead of
         the exception escaping the recv loop and tearing the socket down — which made a reconnect blank the
         chat (the _session_list TypeError, the user 2026-06-22). A genuine socket error still propagates."""
+        _implicit_handshake(client, msg)   # a socket that declared no chat wire: its first frame stands as a proto-1 handshake (the gate in _send_chat_locked)
         if _drive(msg, client):   # per-session drive ops (send/interrupt/ask/model/…) → the owning backend
             return
         if msg and msg.get("type") == "activeTab":

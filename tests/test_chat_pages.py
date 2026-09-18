@@ -399,6 +399,59 @@ class RealArm(Harness):
             self.assertEqual(c.get("proto"), want, path)
             self.assertIsInstance(c.get("t0"), (int, float), "the registration is stamped for the ready wait")
 
+    def test_a_relay_socket_that_never_says_ready_is_served_the_index_wire_from_its_first_frame(self):
+        """An older hub's federation relays a page's socket to this kernel with the splice's terms alone (app, wid, relay=1: no proto
+        term) and never posts ready on it (the hub page sent its ready to its local socket alone, the shape before f7a80efee), then
+        asks for a session (needFull). Until 2026-09-18 the round-eleven gate held such a socket silent for its life (965 and 644
+        chat frames withheld over two relay sockets on the record; the remote's tabs listed with nothing behind them). The first
+        frame now stands as a proto-1 handshake and the socket is served the index wire from there, through the REAL handler: the
+        accept, a pusher cycle before the peer's first frame, the needFull arm, the close. A socket that sends nothing is unchanged
+        (tests/test_chat_window_spans.py pins the withhold and the chatWithheld row)."""
+        recs = transcript(NOW - 86400, turns=120, compact_every=25)
+        self.write(recs); self.whole(); self.document()
+        got, sent, rows, state = [], [], [], {"step": "silent"}
+        real = (km._register_ws_client, km._ws_recv, km._mk_ws_send, km._alive_sessions, km._client_diag_append)
+        km._register_ws_client = lambda c: (got.append(c), km._clients.append(c))
+        km._mk_ws_send = lambda q, sock, client: (lambda s: sent.append(json.loads(s)))
+        km._alive_sessions = lambda now, tmux: list(self.rows)
+        km._client_diag_append = lambda fp, line: rows.append(json.loads(line))
+
+        def next_frame(rfile):
+            c = got[0]
+            if state["step"] == "silent":
+                state["step"] = "asked"
+                km._push([c], connect=True)                              # a pusher cycle before the peer's first frame
+                self.assertEqual([f.get("type") for f in sent if f.get("type") in ("session", "chatTail")], [],
+                                 "no chat frame before the first frame: %r" % [f.get("type") for f in sent])
+                self.assertGreaterEqual(int(c.get("withheld") or 0), 1, "the withheld frames are counted on the record")
+                state["before"] = len(sent)
+                return self._frame({"type": "needFull", "id": SID})     # the first frame the old page sends: an ask, never a ready
+            return (0x8, b"", True)
+
+        km._ws_recv = next_frame
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                km.Handler._ws(_fake_self("/ws?app=chat&wid=w1&relay=1"))
+        finally:
+            km._register_ws_client, km._ws_recv, km._mk_ws_send, km._alive_sessions, km._client_diag_append = real
+            with km._clients_lock:
+                for c in got:
+                    if c in km._clients:
+                        km._clients.remove(c)
+        self.assertEqual(len(got), 1); c = got[0]
+        self.assertEqual(c.get("kind"), "relay", "the splice's term names the producer")
+        after = sent[state["before"]:]
+        fulls = [f for f in after if f.get("type") == "session" and f.get("id") == SID]
+        self.assertEqual(len(fulls), 1, "the ask is answered with the session, once: %r" % [f.get("type") for f in after])
+        f = fulls[0]
+        self.assertNotEqual(f.get("proto"), 2, "the index wire, not the uuid wire: %r" % {k: f.get(k) for k in ("proto", "firstUuid", "tailLo", "headFrom")})
+        self.assertNotIn("firstUuid", f); self.assertNotIn("lastUuid", f)
+        self.assertIsInstance(c["echat"].get(SID), tuple, "the index base (head uuid, headFrom): %r" % (c["echat"].get(SID),))
+        self.assertEqual((c["handshake"], c["proto"], c.get("implicitHandshake")), (True, 1, "needFull"))
+        self.assertIn("a relay socket (app chat) declared no chat wire; its first frame (needFull) stands as a proto-1 handshake", err.getvalue())
+        self.assertEqual([r["what"] for r in rows if r.get("what") == "chatWithheld"], [], "served: no chatWithheld row at its close: %r" % rows)
+        self.assertEqual([r["what"] for r in rows], ["wsopen"], "the accept's own row stands alone: %r" % rows)
+
     def test_a_deep_link_then_a_span_to_the_tail_grows_the_tail_run_and_every_tail_change_is_a_delta(self):
         """T386 stage 2: a deep link (a window with its turn span), then the gap between the window and the tail asked as one
         span (loadTurns), whose reply moves the kernel's base to the filled span's first event since it reaches the tail's first

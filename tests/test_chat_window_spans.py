@@ -5,7 +5,9 @@ moves the client's base only when its span reaches the tail run, so the kernel n
 history (no client is ever detached). Over the render-floor fixture (a restored parse whose pre-cut turns are lazy) the pages
 before the floor and the floor'd list equal the whole build, so a span's events are checked against the whole. Synthetic
 transcripts only (the stage 4a served fixture's builder)."""
+import contextlib
 import datetime
+import io
 import json
 import os
 import sys
@@ -208,6 +210,52 @@ class WindowSpans(Harness):
         self.assertEqual([f.get("type") for f in sent], ["session"], "the first frame after the handshake is the session")
         self.assertEqual(sent[0].get("proto"), 2, "…in the wire the handshake declared: %r" % {k: sent[0].get(k) for k in ("proto", "tailLo", "headFrom")})
         self.assertIsInstance(sent[0].get("tailLo"), int, "a proto-2 frame names the tail run's first turn")
+
+    def test_an_unhandshaken_sockets_first_frame_stands_as_a_proto1_handshake_and_a_silent_socket_stays_withheld(self):
+        """2026-09-18: an older hub's relay socket (no proto term, no ready ever: its page sent the ready to its local socket alone) and
+        an older shim's redial (reconnect=1 with no proto term, its page's one ready acked long ago) were held silent for the socket's
+        life by the round-eleven gate above; the first client frame now stands as a proto-1 handshake (_implicit_handshake) and the
+        socket is served the index wire from there. The decision table, then the wire it brings; the silent socket's withhold and its
+        chatWithheld row are pinned by the test above and stand."""
+        whole, m, frame, c = self._boot()
+        sent = []
+        relay = {"send": (lambda s: sent.append(json.loads(s))), "echat": {}, "handshake": False, "ready": True, "kind": "relay", "app": "chat"}
+        km._send_chat_locked(relay, m, None, 0, False)                                  # a pusher cycle before any frame from the peer
+        self.assertEqual(sent, [], "withheld before the first frame"); self.assertEqual(relay["withheld"], 1)
+        # not taken: a ready (the arm declares the wire itself), an undecodable frame, a socket held under READY_GATE_CAP (a kernel-served
+        # pane before its bundle's ready, whose shim flushes queued clientDiag rows at its open), a socket already handshaken, a record
+        # without the mark (a test's dict modelling a socket past its handshake)
+        self.assertFalse(km._implicit_handshake(relay, {"type": "ready", "proto": 2})); self.assertIs(relay["handshake"], False); self.assertNotIn("proto", relay)
+        self.assertFalse(km._implicit_handshake(relay, None)); self.assertIs(relay["handshake"], False)
+        held = dict(relay, ready=False, kind="page")
+        self.assertFalse(km._implicit_handshake(held, {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat"}}))
+        self.assertIs(held["handshake"], False); self.assertNotIn("proto", held)
+        done = dict(relay, handshake=True, proto=2)
+        self.assertFalse(km._implicit_handshake(done, {"type": "needFull", "id": SID})); self.assertEqual(done["proto"], 2)
+        bare = {"send": relay["send"], "echat": {}}
+        self.assertFalse(km._implicit_handshake(bare, {"type": "needFull", "id": SID})); self.assertNotIn("handshake", bare)
+        # taken: the first frame of an unhandshaken socket that is ready from accept, said once on stderr; the second frame changes nothing
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertTrue(km._implicit_handshake(relay, {"type": "needFull", "id": SID}))
+            self.assertFalse(km._implicit_handshake(relay, {"type": "activeTab", "id": SID}), "once: the mark has lifted")
+        self.assertEqual((relay["handshake"], relay["proto"], relay["implicitHandshake"]), (True, 1, "needFull"))
+        self.assertEqual(err.getvalue().count("stands as a proto-1 handshake"), 1, err.getvalue())
+        self.assertIn("a relay socket (app chat) declared no chat wire; its first frame (needFull) stands as a proto-1 handshake, 1 chat frame(s) withheld before it", err.getvalue())
+        # ...and the wire it brings is the index wire, the one every older producer speaks
+        km._send_chat_locked(relay, m, None, 0, False)
+        self.assertEqual([f.get("type") for f in sent], ["session"], "the next push serves the session")
+        f = sent[0]
+        self.assertNotEqual(f.get("proto"), 2, "the index wire, not the uuid wire: %r" % {k: f.get(k) for k in ("proto", "firstUuid", "tailLo", "headFrom")})
+        self.assertNotIn("firstUuid", f); self.assertNotIn("lastUuid", f)
+        self.assertIsInstance(relay["echat"][SID], tuple, "the index base (head uuid, headFrom), never a proto-2 dict: %r" % (relay["echat"][SID],))
+        self.assertTrue(km._chat_floor0_of([relay]), "an index client: the floor drops to 0 for it, as for a ready that names no proto")
+        self.assertFalse(km._note_chat_withheld_at_close(relay), "served: the frames withheld before its first frame file no row at its close")
+        # the older shim's redial after this kernel restarted: reconnect=1 and no proto term, stamped ready at accept, and the wsclose
+        # row the shim flushes at the redial's open is its first frame; the same road
+        redial = {"send": (lambda s: None), "echat": {}, "handshake": False, "ready": True, "reconnect": True, "kind": "page", "app": "chat"}
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertTrue(km._implicit_handshake(redial, {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat"}}))
+        self.assertEqual((redial["handshake"], redial["proto"], redial["implicitHandshake"]), (True, 1, "clientDiag"))
 
     def test_load_newer_is_retired(self):
         self._boot()
