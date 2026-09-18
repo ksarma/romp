@@ -1,12 +1,12 @@
 ---
 title: api_retry detail reads the wire's attempt and error string
-status: offered
+status: merged
 where: kernel/sdk_backend.py: the api_retry branch of _on_message; tests/test_sdk_backend.py ApiRetryState
 added: 2026-09-16
 pr:
 tier: fix
 offered: their PR #1852
-closed:
+closed: 2026-09-18
 ---
 
 The installed CLI's SDKAPIRetryMessage carries attempt, max_retries, retry_delay_ms, error_status (null for a
