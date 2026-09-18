@@ -64149,7 +64149,7 @@ var awaitLink=false,linkUpMs=-1;   // [fork] D3 (2026-09-18): this return is wai
 // not depend on the order the documents' visibilitychange handlers run. undefined for a standalone page, the VS Code
 // webview, or a shell too old to publish one: those keep the upstream fast-path lines below, byte for byte.
 function parentLink(){try{return (window.parent!==window&&window.parent.__rompLink)?window.parent.__rompLink():undefined;}catch(e){return undefined;}}
-function returnDiag(what,data){try{data.app=APP;if(what==="return-fresh"&&linkUpMs>=0)data.linkUpMs=linkUpMs;send({type:"clientDiag",surface:"pane-shim",what:what,data:data});}catch(e){}}
+function returnDiag(what,data){try{data.app=APP;send({type:"clientDiag",surface:"pane-shim",what:what,data:data});}catch(e){}}
 var nav="";try{var ne=performance.getEntriesByType("navigation");nav=(ne&&ne[0]&&ne[0].type)||"";}catch(e){}
 // the page-load row exists to catch a tab the browser DISCARDED and reloaded on return (Memory Saver: the return is a
 // cold load, no visibilitychange, so no `return` row) or a reload/back-forward arrival — a plain navigation says
@@ -64324,6 +64324,7 @@ setTimeout(connect,d);};   // the blind 1.5 s stays for unannounced drops outsid
 ws.onerror=function(){try{ws.close();}catch(e){}};}
 function send(m){var s=JSON.stringify(m);if(m&&m.type==="ready"){bundleReady=true;readyProto=(m.proto===2?2:1);readyMsg=s;}   // the bundle's listener is installed: from here a redial may declare itself (the dial term in connect)
 if(m&&m.type==="ready"&&PM.bundleReady===undefined)PM.bundleReady=pnow();if(m&&m.type==="clientDiag"&&diagMuted())return;   // the beacon extension: the bundle's ready stamp; the kill switch drops every clientDiag row (the shim's, the reload core's and the collector's alike) before it is sent or queued
+if(m&&m.type==="clientDiag"&&m.what==="return-fresh"&&m.data&&linkUpMs>=0){m.data.linkUpMs=linkUpMs;s=JSON.stringify(m);}   // [fork] D3 (2026-09-18): the return-fresh row carries linkUpMs (foreground->link-up) only when this return awaited the shell's link (-1 otherwise, reset each return); stamped here, in the one funnel, so no upstream shim line is modified, and re-serialized because the first line above already built s
 if(ws&&ws.readyState===1){ws.send(s);return;}
 if(m&&m.type==="ready")readyQueued=true;   // ...and this one waits for the open: the redial that carries it dials as a fresh page (onopen clears the bit after the flush)
 if(m&&m.type==="clientDiag"){if(queuedDiag>=DIAG_QUEUE_MAX)return;queuedDiag++;}   // breadcrumbs waiting for a reconnect are capped; everything else queues as before
