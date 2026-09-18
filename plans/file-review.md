@@ -3567,12 +3567,19 @@ document stands on its own, each with the reasoning it was given.
     as `trackedIn` so the closure is built once per call; a path is judged under the name given and under the real
     path the kernel opens, so a symlink to a tracked file carries no write past it. The refusal is exit 2 with one
     line naming the file and the track-edit command, in the person's voice. What it lets through: a read (cat,
-    grep, diff, git, sed without -i) names no target; a path built from a variable, and a command behind eval,
-    xargs or a shell -c it cannot read, is unresolvable and passes, since a silent block of ordinary work would
-    cost more than a missed write; a glob is expanded against the filesystem as the shell expands it and passes
-    only when it matches nothing or names more than the hook will list, a brace list is expanded before the
-    operands are read, a here-string is scanned like a heredoc and a process substitution's command is read like
-    a `$(...)`; a tracked image or PDF passes by name as in the vendored guard; a source copied out of a tracked
+    grep, diff, git, sed without -i) names no target; a command behind eval, xargs or a shell -c it cannot read
+    is unresolvable and passes, since a silent block of ordinary work would cost more than a missed write; a
+    write whose target the hook cannot read (a variable, a `$(...)` or a backtick, a `~user`, a brace list past
+    the cap, or a glob that matches nothing or names more than the hook will list) is refused while a project
+    that tracks anything is in play, that is when the session's cwd, the directory a `cd` moved to, or the
+    folder a copy lands in sits under a config whose tracked list is not empty, and passes with no such project
+    in play (2026-09-18, after a research session's report through the box admin, 2026-09-17: a `cp` built from
+    shell variables landed raw on a tracked file beside a refused literal one; the hook reads no environment to
+    resolve the word, which would read names shaped like secrets and guess at the cwd); a glob is otherwise
+    expanded against the filesystem as the shell expands it (a redirection onto several matches or brace
+    alternatives names each, as zsh's multios writes them; bash writes none), a brace list is expanded before
+    the operands are read, a here-string is scanned like a heredoc and a process substitution's command is read
+    like a `$(...)`; a tracked image or PDF passes by name as in the vendored guard; a source copied out of a tracked
     file is a read. Not read: rm, a mv of the tracked file elsewhere (a rename the store heals by content hash),
     find -exec, rsync and patch. Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
     per Bash call when no target needs the link closure (a read, a target outside any project, an explicit hit on

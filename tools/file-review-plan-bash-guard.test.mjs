@@ -79,11 +79,18 @@ test('decision 47 names the hook, and the hook reads every verb, redirection and
 
 test('decision 47 states what passes, and the hook agrees: reads, opaque commands, non-text files, no ROMP_SID', () => {
   assert.ok(d47.includes('a read (cat, grep, diff, git, sed without -i) names no target'));
-  assert.ok(d47.includes('a path built from a variable, and a command behind eval, xargs or a shell -c it cannot read, is unresolvable and passes'));
+  assert.ok(d47.includes('a command behind eval, xargs or a shell -c it cannot read is unresolvable and passes'));
+  // since 2026-09-18 a write target the hook cannot read (a variable, a substitution, a glob or brace list it cannot
+  // expand) is refused while a project that tracks anything is in play, and the decision says so
+  assert.ok(d47.includes('a write whose target the hook cannot read') && d47.includes('is refused while a project that tracks anything is in play'));
+  assert.ok(d47.includes('the hook reads no environment to resolve the word'));
+  assert.ok(hook.includes('function trackingRootAt(dir)') && hook.includes('function inPlayFor(u, cwd)') && hook.includes('const cannotRead = (w, how) => {'));
+  assert.ok(hook.includes('which is not a literal path'), 'the refusal says the target is not literal');
   // a glob is no longer unresolvable: it is expanded as the shell expands it (the review's second round), as are a
   // brace list, a here-string and a process substitution, and the decision says so of each
   assert.ok(!d47.includes('a path built from a variable or a glob'), 'a glob is not listed among the unresolvable');
-  assert.ok(d47.includes('a glob is expanded against the filesystem as the shell expands it and passes only when it matches nothing or names more than the hook will list'));
+  assert.ok(d47.includes('or a glob that matches nothing or names more than the hook will list) is refused'));
+  assert.ok(d47.includes('a glob is otherwise expanded against the filesystem as the shell expands it (a redirection onto several matches or brace alternatives names each, as zsh\'s multios writes them; bash writes none)'));
   assert.ok(hook.includes('function expandGlob(w, cwd)') && hook.includes('const GLOB_MATCH_CAP = ') && hook.includes('const GLOB_READ_CAP = '));
   assert.ok(d47.includes('a brace list is expanded before the operands are read') && hook.includes('function braceExpand(text, marks)'));
   assert.ok(d47.includes('a here-string is scanned like a heredoc') && hook.includes("expect = { kind: 'herestring' }"));

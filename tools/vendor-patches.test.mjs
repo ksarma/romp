@@ -228,6 +228,20 @@ test('P7 the skill asks the agent to include the .trackchanges/ folder in a comm
   assert.ok(notes.includes('it holds the user\'s comments on your files and the record of your tracked changes'));
 });
 
+// ── P9: the skill says a shell write whose target is not a literal path is refused in a project that tracks files ──
+//
+// Prose (patch 0009): the refusal romp's Bash-side guard emits since 2026-09-18 for a write target it cannot
+// read (a research session's report of a `cp "$SRC" "$DST"` that landed raw; hooks/romp-track-bash-guard.mjs).
+// Each phrase is absent from the pristine skill and present with the patch.
+
+test('P9 the skill says a shell write whose target is not a literal path is refused in a project that tracks files, and to spell the path out', () => {
+  const section = SKILL.slice(SKILL.indexOf('## When tracking is ON'), SKILL.indexOf('## Messages from the editor'));
+  assert.ok(section.includes('a shell write whose target is not a literal path'));
+  for (const form of ['`"$DST"`', '`$(...)`', 'glob or brace list']) assert.ok(section.includes(form), `the rule names ${form}`);
+  assert.ok(section.includes('so the refusal holds whatever the word would expand to'), 'the guard does not resolve the word');
+  assert.ok(section.includes('does not read your environment to find out'));
+  assert.ok(section.includes('Spell the path out'), 'what to do');
+});
 
 // ── P8: one writer per sidecar: the CLIs take store-io's lock around their load-to-rename ──
 //

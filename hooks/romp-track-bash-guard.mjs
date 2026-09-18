@@ -18,12 +18,23 @@
 // through the same store-io the CLIs and the vendored guard use. A path is judged under its own
 // name and under the name the kernel would open (symlinks resolved), so a link to a tracked file
 // does not carry a write past it. A read-only command (cat, grep, diff, git) names no write target
-// and passes. A command the extraction cannot see through (paths built from variables, eval,
-// xargs) passes too: never a silent block of ordinary work. Like the vendored guard it lets a
-// non-text file through (an image or a PDF cannot take a tracked edit, so the raw write is the
-// only way to regenerate a figure), and it exits 0 at once, before stdin is read, when ROMP_SID is
-// absent from its environment (decision 24: registered machine-wide, inert in every session romp
-// did not launch).
+// and passes. A command the extraction cannot see through (eval, xargs, a script held in a
+// variable) passes too: never a silent block of ordinary work. A write whose TARGET it cannot read
+// is refused, though, while a tracked project is in play (2026-09-18; a research session reported
+// through the box admin, 2026-09-17, that a `cp` whose operands were shell variables overwrote a
+// tracked file with no change recorded, while the same cp spelled out was refused: the hook
+// dropped every target it could not read). Such a target is one built from a variable, a `$(...)`
+// or a backtick, a `~user`, a brace list past the cap, or a glob the hook cannot expand (no match,
+// the cwd unknown, past the caps); in play means the session's cwd, the directory a `cd` moved to,
+// or the folder a copy lands in sits under a `.trackchanges/config.json` whose tracked list is not
+// empty. The hook never reads the session's environment to resolve the word (that would read names
+// shaped like secrets and guess at the cwd): the refusal says the target is not literal and asks
+// for the path spelled out, which then takes today's verdict (a file outside the project runs as
+// usual, a tracked one goes through track-edit). With no such project in play the word is dropped,
+// as before. Like the vendored guard it lets a non-text file through (an image or a PDF cannot
+// take a tracked edit, so the raw write is the only way to regenerate a figure), and it exits 0 at
+// once, before stdin is read, when ROMP_SID is absent from its environment (decision 24:
+// registered machine-wide, inert in every session romp did not launch).
 //
 // Cost: a couple of small reads of config.json per target and, when the project's tracked list is
 // non-empty and a target is not on it by name, ONE walk of the project's markdown tree per call
@@ -56,7 +67,10 @@ import engine from '../vendor/track-changents/engine.js';
 // extractWriteTargets expands against the filesystem the way the shell would. Brace expansion
 // happens here, as in the shell before every other expansion: an unquoted `{a,b}` or `{1..3}`
 // makes one word per alternative (`mv report.md{.new,}` names two operands), and a redirection
-// target that expands to several words is the shell's ambiguous redirect, which writes nothing.
+// target that expands to several words is one redirection per alternative: bash calls it an
+// ambiguous redirect and writes nothing, zsh (multios, on by default) writes each, and the hook
+// names each (2026-09-18; before, it read bash's rule and named none, so `> docs/{a,b}.md` in zsh
+// rewrote a tracked file unjudged).
 // A leading ~/ is expanded to the home directory, as the shell would. A heredoc body
 // (<<EOF ... EOF) and a here-string (<<< word) are data, not commands: kept on the segment whose
 // command opened them (not the one current when the line ends, which after
@@ -73,8 +87,10 @@ const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 const PREFIXES = new Set(['sudo', 'command', 'builtin', 'exec', 'nice', 'nohup', 'time', 'env', 'timeout', 'ionice', 'stdbuf']);
 const RESERVED = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}']);
 
+// `at` is the literal folder a copy lands in when the landing NAME is not literal (`cp "$SRC" docs/`,
+// `cp -t docs "$SRC"`): the refusal of such a word is judged by that folder's project, not the cwd's.
 function word(text, literal, raw, extra) {
-  return { text, literal, raw, glob: !!(extra && extra.glob), marks: extra && extra.marks != null ? extra.marks : null };
+  return { text, literal, raw, glob: !!(extra && extra.glob), marks: extra && extra.marks != null ? extra.marks : null, at: extra && extra.at != null ? extra.at : null };
 }
 
 // Whether `text` has an unquoted glob character, per `marks`.
@@ -176,9 +192,12 @@ export function lex(command) {
     if (!inWord) return;
     if (expect) {
       if (expect.kind === 'target') {
-        // a target that brace-expands to several words is an ambiguous redirect: the shell writes nothing
+        // a target that brace-expands to several words: bash's ambiguous redirect writes nothing, zsh's
+        // multios writes each (2026-09-18), so each is a redirection of its own; past the cap the word is one
+        // the hook cannot read
         const alts = braceExpand(buf, marks);
-        seg.redirects.push({ op: expect.op, target: alts && alts.length === 1 ? mk(alts[0][0], alts[0][1]) : word(buf, false, raw) });
+        if (alts) for (const [t, m] of alts) seg.redirects.push({ op: expect.op, target: mk(t, m) });
+        else seg.redirects.push({ op: expect.op, target: word(buf, false, raw) });
       } else if (expect.kind === 'heredoc') pendingHeredocs.push({ delim: buf, stripTabs: expect.stripTabs, owner: seg });
       else if (expect.kind === 'herestring') seg.heredocs.push(buf);
       expect = null;
@@ -596,27 +615,35 @@ function copyTargets(args, cwd, verb) {
     operands.push(a);
   }
   const expanded = [];
-  for (const o of operands) {
+  for (let k = 0; k < operands.length; k++) {
+    const o = operands[k];
     if (!o.glob) { expanded.push(o); continue; }
     const m = expandGlob(o, cwd);
-    if (m) expanded.push(...m);   // no match: no operand (zsh runs nothing; bash names a file the session did not mean)
-    else expanded.push(word(o.text, false, o.raw));   // unresolvable: one operand the hook cannot read
+    // A source that matches nothing is no operand (zsh runs nothing; bash names a file that is not there
+    // and cp stops). A destination that matches nothing is a target the hook cannot read (bash writes the
+    // pattern's text as the name; 2026-09-18), as is a glob past the caps or with the cwd unknown: one
+    // operand, not literal, for the refusal to name.
+    const isDst = !targetDir && k === operands.length - 1;
+    if (!m || (!m.length && isDst)) expanded.push(word(o.text, false, o.raw));
+    else expanded.push(...m);
   }
+  // A destination or a target folder the hook cannot read is returned as it stands (not literal), so the
+  // caller's add records it for the refusal (2026-09-18); before, it was dropped and the copy passed.
   const out = [];
   if (targetDir) {
     if (targetDir.glob) { const m = expandGlob(targetDir, cwd); targetDir = m && m.length === 1 ? m[0] : word(targetDir.text, false, targetDir.raw); }
-    if (!targetDir.literal) return out;
-    for (const s of expanded) out.push(...land(s, word(path.join(targetDir.text, path.basename(s.text)), s.literal, s.raw)));
+    if (!targetDir.literal) return [targetDir];
+    for (const s of expanded) out.push(...land(s, word(path.join(targetDir.text, path.basename(s.text)), s.literal, s.raw, { at: targetDir.text })));
     return out;
   }
   if (expanded.length < 2) return out;
   const dst = expanded[expanded.length - 1];
-  if (!dst.literal) return out;
+  if (!dst.literal) return [dst];
   const resolved = resolveAgainst(dst.text, cwd);
   let isDir = false;
   if (!noTargetDir && resolved) { try { isDir = fs.statSync(resolved).isDirectory(); } catch { isDir = /\/$/.test(dst.text); } }
   if (isDir) {
-    for (const s of expanded.slice(0, -1)) out.push(...land(s, word(path.join(dst.text, path.basename(s.text)), s.literal, s.raw)));
+    for (const s of expanded.slice(0, -1)) out.push(...land(s, word(path.join(dst.text, path.basename(s.text)), s.literal, s.raw, { at: dst.text })));
     return out;
   }
   if (expanded.length === 2) return land(expanded[0], dst);
@@ -796,20 +823,36 @@ function shellScript(args) {
 // the body may not run, and one the lexer cannot read makes every later relative path
 // unresolvable). A glob is expanded against the filesystem, as the shell would expand it before
 // the command runs, so `sed -i ... docs/*.md` names each file. `how` names the writing construct
-// for the refusal. Returns { targets, opaque }.
+// for the refusal. Returns { targets, opaque, unresolved }: `unresolved` lists the write targets the
+// hook could not read, each { raw, how, dir, at } (the word as typed, the construct, the directory
+// current at the write or null when unknown, and the folder a copy lands in when that much is
+// literal), for evaluate to refuse while a tracked project is in play (the header; 2026-09-18).
 export function extractWriteTargets(command, cwd) {
   const { segments, opaque } = lex(command);
   const targets = [];
+  const unresolved = [];
   let dir = cwd || null;
   let unknownDir = false;
+  // A write target the hook cannot read (the header). A process substitution (`>(cmd)`) is a pipe and
+  // never a file, so it is dropped, not recorded.
+  const cannotRead = (w, how) => {
+    if (/^[<>]\(/.test(w.text)) return;
+    const here = unknownDir ? null : dir;
+    unresolved.push({ raw: w.raw, how, dir: here, at: w.at ? resolveAgainst(w.at, here) : null });
+  };
   const add = (w, how) => {
-    if (!w || !w.text) return;
+    if (!w) return;   // a word that is only an expansion (`"$(mktemp)"`) has no text after quote removal, and is still a target
     if (w.glob) {
+      // every match, as the shell names each (a redirection onto several: zsh's multios writes each, bash
+      // writes none and says so, so the over-count costs a command bash refuses anyway); no match, the cwd
+      // unknown or past the caps is a target the hook cannot read (2026-09-18)
       const m = expandGlob(w, unknownDir ? null : dir);
-      if (m) for (const x of m) add(x, how);
+      if (m && m.length) for (const x of m) add(x, how);
+      else cannotRead(w, how);
       return;
     }
-    if (!w.literal) return;
+    if (!w.literal) { cannotRead(w, how); return; }
+    if (!w.text) return;
     const p = resolveAgainst(w.text, unknownDir ? null : dir);
     if (p) targets.push({ path: p, how });
   };
@@ -817,6 +860,7 @@ export function extractWriteTargets(command, cwd) {
   const recurse = (text) => {
     const sub = extractWriteTargets(text, unknownDir ? null : dir);
     targets.push(...sub.targets);
+    unresolved.push(...sub.unresolved);
     if (sub.opaque) sawOpaqueCommand = true;
   };
   // What a command at segment `idx` reads on stdin, as text the hook holds: its own heredocs and
@@ -876,13 +920,7 @@ export function extractWriteTargets(command, cwd) {
     }
     if (seg.paren === ')') { closeSubshell(); continue; }
     braces(seg);
-    for (const r of seg.redirects) {
-      if (!WRITE_REDIRECTS.has(r.op)) continue;
-      if (r.target.glob) {   // a glob target writes its one match; several, or none, is an ambiguous redirect
-        const m = expandGlob(r.target, unknownDir ? null : dir);
-        if (m && m.length === 1) add(m[0], `${r.op} redirection`);
-      } else add(r.target, `${r.op} redirection`);
-    }
+    for (const r of seg.redirects) if (WRITE_REDIRECTS.has(r.op)) add(r.target, `${r.op} redirection`);   // a glob: every match (add)
     for (const inner of seg.subs) recurse(inner);
     const head = seg.words.length ? seg.words[0].text : '';
     if (head in CLOSERS) closeCompound(CLOSERS[head]);
@@ -973,7 +1011,7 @@ export function extractWriteTargets(command, cwd) {
         }
     }
   }
-  return { targets, opaque: opaque || sawOpaqueCommand };
+  return { targets, opaque: opaque || sawOpaqueCommand, unresolved };
 }
 
 // ── the verdict ─────────────────────────────────────────────────────
@@ -1086,6 +1124,26 @@ export function isGuardedPath(file, closures) {
   } catch { return false; } finally { activeMemo = prev; }
 }
 
+// The root of the project that tracks anything at `dir` (a directory), or null: store-io's root
+// markers and a non-empty tracked list in its .trackchanges/config.json (an empty list tracks
+// nothing, as trackedIn reads it); TRACKCHANGES_ROOT stands in for the search, as in rootOf.
+function trackingRootAt(dir) {
+  if (!dir) return null;
+  const root = process.env.TRACKCHANGES_ROOT || findVaultRoot(path.join(dir, 'x'));   // findVaultRoot starts at the parent of the path given
+  return root && readTrackedPaths(root).length ? root : null;
+}
+
+// The tracked project in play for a write target the hook could not read, or null. A copy into a
+// literal folder lands there whatever the name (`at`), so that folder's project decides and the cwd
+// does not; any other such target could land anywhere, so the directory current at the write and
+// the session's cwd both count, the first under a project that tracks anything. Nothing here reads
+// the session's environment (the header).
+function inPlayFor(u, cwd) {
+  const dirs = u.at ? [u.at] : [u.dir, cwd];
+  for (const d of dirs) { const root = trackingRootAt(d); if (root) return root; }
+  return null;
+}
+
 // Returns a block reason string when the command must be denied, or null to allow.
 export function evaluate(raw) {
   let payload;
@@ -1095,7 +1153,8 @@ export function evaluate(raw) {
   if (typeof command !== 'string' || !command) return null;
   const cwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
   let targets;
-  try { ({ targets } = extractWriteTargets(command, cwd)); } catch { return null; }
+  let unresolved;
+  try { ({ targets, unresolved } = extractWriteTargets(command, cwd)); } catch { return null; }
   const seen = new Set();
   const closures = new Map();
   for (const t of targets) {
@@ -1106,6 +1165,20 @@ export function evaluate(raw) {
       + `(its ${t.how} would write the file silently, with no change for me to accept or reject). `
       + `Make the change with track-edit instead, which records it for me to accept or reject:\n`
       + `  node ~/.claude/hooks/track-edit.mjs --file "${t.path}" --old "<exact unique text>" --new "<replacement>"`;
+  }
+  // A target the hook could not read, while a tracked project is in play (the header): refused, since
+  // the same path spelled out would be judged and this one cannot be (2026-09-18). After the literal
+  // targets, so a command that also writes a tracked file by name gets the more useful answer.
+  for (const u of unresolved) {
+    let root = null;
+    try { root = inPlayFor(u, cwd); } catch { root = null; }
+    if (!root) continue;
+    return `Track-changes is ON in ${root}, so this command is blocked here: its ${u.how} names ${u.raw}, `
+      + `which is not a literal path. The shell fills that in when the command runs, so I cannot tell which `
+      + `file it would write, and a tracked file written that way would carry no change for me to accept or `
+      + `reject. Spell the path out: outside that project the command then runs as usual, and a tracked file `
+      + `takes its change through track-edit instead:\n`
+      + `  node ~/.claude/hooks/track-edit.mjs --file "<the file>" --old "<exact unique text>" --new "<replacement>"`;
   }
   return null;
 }

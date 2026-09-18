@@ -520,13 +520,15 @@ test('what a brace list does not write: three operands and no directory, an ambi
   assert.deepEqual(targets('cp base/report.md docs/report.{md,bak}'), [], 'cp stops: the last operand is not a directory');
   assert.equal(evaluate(payload('cp base/report.md docs/report.{md,bak}')), null);
   assert.deepEqual(targets('mkdir -p docs/{a,b}; cp base/report.md docs/{a,b}/report.md'), []);
-  assert.deepEqual(targets('echo x > docs/{report,other}.md'), [], 'an ambiguous redirect: the shell writes nothing');
-  assert.equal(evaluate(payload('echo x > docs/{report,other}.md')), null);
+  // a redirection onto several alternatives: bash calls it ambiguous and writes nothing, zsh (multios, on by
+  // default) writes each, so each is named (2026-09-18, with the non-literal-target fix)
+  assert.deepEqual(targets('echo x > docs/{report,other}.md'), [path.join(proj, 'docs', 'other.md'), report].sort(), 'each alternative');
+  assert.ok(evaluate(payload('echo x > docs/{report,other}.md')), 'the tracked alternative is refused');
   assert.deepEqual(targets('echo x > docs/{report}.md'), [path.join(proj, 'docs', '{report}.md')], 'no comma: text');
   assert.deepEqual(targets("echo x > 'docs/{report,other}.md'"), [path.join(proj, 'docs', '{report,other}.md')], 'quoted: text');
   assert.deepEqual(targets('echo x > docs/\\{report,other\\}.md'), [path.join(proj, 'docs', '{report,other}.md')], 'escaped: text');
   assert.deepEqual(targets('echo x > "docs/${d}.md"'), [], 'a parameter expansion is not a brace list');
-  assert.deepEqual(targets('tee notes/n{1..1000}.md'), [], 'past the cap the word is unresolvable and passes');
+  assert.deepEqual(targets('tee notes/n{1..1000}.md'), [], 'past the cap the word names no path (a tracked project refuses it: the grammar module)');
   assert.deepEqual(targets('{ echo x; } > docs/report.md'), [report], 'a brace group is a group, and its redirection writes');
   assert.deepEqual(targets("awk '{print}' base/report.md > docs/report.md"), [report]);
 });
@@ -639,7 +641,7 @@ test('what a glob does not write: several destination matches, no match, a quote
   assert.deepEqual(targets('cp base/report.md report.md docs/report.md'), [], 'the same without a glob: three operands and no directory');
   assert.deepEqual(targets('cp base/*.rst notes/'), [], 'no match: zsh runs nothing, bash names a file the session did not mean');
   assert.equal(evaluate(payload('cp base/*.rst notes/')), null);
-  assert.deepEqual(targets('echo x > docs/*.md'), [], 'two matches for a redirection: ambiguous, the shell writes nothing');
+  assert.deepEqual(targets('echo x > docs/*.md'), [path.join(proj, 'docs', 'other.md'), report].sort(), 'two matches for a redirection: zsh writes each (multios), bash writes none and says so (2026-09-18)');
   assert.deepEqual(targets("cp base/report.md 'notes/*.md'"), [path.join(proj, 'notes', '*.md')], 'a quoted glob is a name');
   assert.ok(evaluate(payload("cp base/report.md 'notes/*.md'")), 'and under the tracked folder that name is tracked');
   assert.deepEqual(targets('cp base/report.md notes/\\*.md'), [path.join(proj, 'notes', '*.md')], 'escaped: a name');

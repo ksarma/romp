@@ -139,8 +139,10 @@ the clone updates it:
   registered as a `PreToolUse` hook on `Write|Edit|MultiEdit`; it stops a session from writing a
   tracked file silently, and it does nothing in a Claude Code session Romp did not start. Romp's
   own `romp-track-bash-guard.mjs`, registered on `Bash`, does the same for a write made through a
-  shell command (a `cp` or `tee` onto the file, a `>` redirection, `sed -i`). If you
-  had installed track-changents yourself, the installer re-points those links at the bundled copy,
+  shell command (a `cp` or `tee` onto the file, a `>` redirection, `sed -i`). In a project that
+  tracks files it also refuses a shell write whose target it cannot read (a variable, a glob) and
+  asks for the path spelled out. If you had installed track-changents yourself, the installer
+  re-points those links at the bundled copy,
   which carries fixes the checkout lacks, and says so.
 
 ### Manual and custom installs

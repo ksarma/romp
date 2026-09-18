@@ -59,6 +59,13 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
 the write: its status is 0 when tracking is ON, so `track-config ... && cp ...` runs
 the copy on exactly the file it must not touch.
 
+In a project that tracks files, a shell write whose target is not a literal path
+is refused as well: a variable such as `"$DST"`, a `$(...)`, a glob or brace list
+the guard cannot expand. The guard cannot tell which file such a word names and
+does not read your environment to find out, so the refusal holds whatever the word
+would expand to. Spell the path out; a tracked file then takes its change through
+`track-edit`, and a file outside the project takes an ordinary write.
+
 For ANY change to the file, use the CLI, NOT the Edit/Write/MultiEdit tools:
 
 - **Make or replace text** — applies the change AND records it as your tracked

@@ -237,19 +237,119 @@ test('paths resolve against the session cwd, a cd earlier in the command, ~/, an
   finally { process.env.HOME = home; }
 });
 
-test('a command the lexer cannot see through is allowed: variables, eval, xargs, a shell -c it cannot read', () => {
+test('a command the lexer cannot see through and that names no target is allowed: eval, xargs, a shell -c it cannot read, a read or a pipe of a variable', () => {
+  // The variable-target cps that used to sit here (`cp "$SRC" "$DST"` and its kin) are in the block below:
+  // since 2026-09-18 a target the hook cannot read is refused while a tracked project is in play. What stays
+  // allowed is a command with no target to judge, and a word that can never be a file (a process substitution).
   for (const cmd of [
-    'cp "$SRC" "$DST"',
-    'cp base/report.md "$OUT"',
-    'cp base/report.md docs/$NAME.md',
     'eval "$CMD"',
     'ls docs/*.md | xargs -I{} cp base/{} {}',
     'bash -c "$SCRIPT"',
+    'cat "$F" | grep latency',
+    'diff "$A" docs/report.md',
+    'tee >(cat) docs/other.md',
+    'cmd > >(cat)',
+    'if [[ "$name" > docs/report.md ]]; then echo newer; fi',
   ]) {
     assert.equal(evaluate(payload(cmd)), null, `allowed: ${cmd}`);
   }
   assert.ok(extractWriteTargets('eval "$CMD"', proj).opaque);
   assert.ok(!extractWriteTargets('cp a b', proj).opaque);
+});
+
+// ── a target the shell fills in, in a tracked project ──────────────
+//
+// A research session reported (2026-09-17, through the box admin) that `cp "$SRC" "$DST"` overwrote a
+// tracked file with no change recorded, while the same cp spelled out was refused: the hook dropped every
+// target it could not read. Since 2026-09-18 such a target is refused while a project that tracks anything
+// is in play (the session's cwd, the directory a cd moved to, or the folder a copy lands in); the hook never
+// reads the session's environment to resolve the word. With no such project in play the word is dropped as
+// before, and a literal target keeps its verdict.
+
+const NOT_LITERAL = /is not a literal path/;
+
+test('a write whose target the shell fills in is refused in a tracked project: a variable, a substitution, a backtick, a ~user, a glob or brace list the hook cannot expand', () => {
+  for (const cmd of [
+    'cp "$SRC" "$DST"',                                 // the reported shape
+    'cp base/report.md "$DST"',                         // a literal source too
+    'cp base/report.md docs/$NAME.md',
+    'cp base/report.md "${OUT}"',
+    'cp base/report.md "$(mktemp -p docs)"',
+    'cp base/report.md `mktemp -p docs`',
+    'cp base/report.md ~someone/report.md',
+    'mv base/report.md "$DST"',
+    'install -m 644 base/report.md "$DST"',
+    'ln -sf base/report.md "$LINK"',
+    'echo x > "$OUT"',
+    'echo x >> $LOG',
+    'cmd 2> "$ERR"',
+    'cat x | tee "$F"',
+    'cat x | tee -a docs/other.md "$F"',
+    'dd if=/dev/zero of="$F" bs=1 count=1',
+    'sort -o "$F" base/report.md',
+    'truncate -s 0 "$F"',
+    "sed -i 's/a/b/' \"$F\"",
+    "perl -pi -e 's/a/b/' $F",
+    'cp base/report.md notes/new*.md',                 // a glob with no match: bash writes the pattern's text as the name
+    'echo x > notes/new*.md',
+    'cd "$D" && cp base/report.md report*.md',          // a glob the hook cannot expand: the cwd unknown
+    'tee notes/n{1..1000}.md',                          // a brace list past the cap
+    'cp "$SRC" docs/',                                  // a literal folder, a name the shell fills in
+    'cp -t notes "$SRC"',
+    'for f in a b; do cp "$f" docs/; done',
+    'cp "$SRC" "$DST"; echo done',                      // in a list
+    'echo "$(cp a "$B")"',                              // inside a substitution
+  ]) {
+    const reason = evaluate(payload(cmd));
+    assert.ok(reason, `refused: ${cmd}`);
+    assert.match(reason, NOT_LITERAL, cmd);
+    assert.ok(reason.includes(proj), `names the project in play: ${cmd}`);
+    assert.ok(reason.includes('track-edit'), `names the remedy: ${cmd}`);
+  }
+  assert.ok(evaluate(payload('cp "$SRC" "$DST"')).includes('its cp names "$DST"'), 'the word as typed, quotes included');
+  assert.ok(evaluate(payload('echo x > "$OUT"')).includes('its > redirection names "$OUT"'));
+  assert.ok(evaluate(payload('cp "$SRC" docs/')).includes('its cp names "$SRC"'), 'a copy into a folder names the source whose name it takes');
+  const { unresolved } = extractWriteTargets('cp "$SRC" "$DST"', proj);
+  assert.deepEqual(unresolved.map((u) => [u.raw, u.how, u.dir]), [['"$DST"', 'cp', proj]], 'the grammar reports the word it could not read');
+});
+
+test('the same commands pass with no tracked project in play: no .trackchanges/config.json, an empty tracked list, a copy into a folder outside the project', () => {
+  const plain = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-plain-')));
+  try {
+    fs.mkdirSync(path.join(plain, '.git'));   // a repository root, as findVaultRoot reads one, with no tracking
+    fs.mkdirSync(path.join(plain, 'docs'));
+    fs.mkdirSync(path.join(plain, 'base'));
+    fs.writeFileSync(path.join(plain, 'base', 'report.md'), 'x\n');
+    const shapes = ['cp "$SRC" "$DST"', 'cp base/report.md "$DST"', 'echo x > "$OUT"', 'cp base/report.md docs/new*.md', "sed -i 's/a/b/' \"$F\"", 'cp "$SRC" docs/', 'tee docs/n{1..1000}.md'];
+    for (const cmd of shapes) assert.equal(evaluate(payload(cmd, plain)), null, `allowed with no tracking: ${cmd}`);
+    // a project whose tracked list is empty tracks nothing
+    fs.mkdirSync(path.join(plain, '.trackchanges'));
+    fs.writeFileSync(path.join(plain, '.trackchanges', 'config.json'), JSON.stringify({ v: 2, tracked: [] }));
+    for (const cmd of shapes) assert.equal(evaluate(payload(cmd, plain)), null, `allowed with an empty list: ${cmd}`);
+    // from the tracked project, a copy into a folder outside it lands nothing tracked: that folder decides, not the cwd
+    assert.equal(evaluate(payload(`cp "$SRC" ${plain}/docs/`)), null);
+    assert.equal(evaluate(payload(`cp -t ${plain}/docs "$SRC"`)), null);
+    assert.equal(evaluate(payload(`cd ${plain} && cp "$SRC" docs/`)), null, 'after a cd out of the project too: the folder the copy lands in decides');
+    assert.ok(evaluate(payload(`cd ${plain} && cp a "$DST"`)), 'but a target that could land anywhere is judged by the payload cwd as well as the directory the cd reached');
+    assert.ok(evaluate(payload(`cd ${plain} && echo x > "$OUT"`)));
+    // a literal target keeps its verdict beside the rule
+    assert.equal(evaluate(payload('cp base/report.md docs/other.md')), null, 'a literal untracked target passes');
+    assert.match(evaluate(payload('cp base/report.md docs/report.md')), /^Track-changes is ON for /, 'a literal tracked target is refused with the file named');
+  } finally { fs.rmSync(plain, { recursive: true, force: true }); }
+});
+
+test('beside a non-literal target a literal tracked one is named first, and the refusal for the non-literal one speaks as the person and says how to proceed', () => {
+  const both = evaluate(payload('cp base/report.md docs/report.md; cp a "$B"'));
+  assert.ok(both.includes(report) && !NOT_LITERAL.test(both), 'the tracked file is the more useful answer');
+  const reason = evaluate(payload('cp "$SRC" "$DST"'));
+  const prose = reason.split('\n')[0].split(proj).join('<project>');
+  assert.ok(!ROMP_NOUNS.test(prose), `no romp noun in: ${prose}`);
+  assert.ok(!/\u2014/.test(reason), 'no em dash');
+  assert.match(prose, /^Track-changes is ON in /);
+  assert.ok(prose.includes('Spell the path out'), 'how to proceed: the literal path');
+  assert.ok(prose.includes('outside that project'), 'or a path outside the project');
+  assert.ok(prose.includes('for me to accept or reject'), 'the person\'s voice');
+  assert.match(reason, /node ~\/\.claude\/hooks\/track-edit\.mjs --file/, 'the remedy for a tracked file');
 });
 
 test('a glob is expanded as the shell expands it: a glob source into the tracked folder is refused, and a glob that names no write passes', () => {
@@ -367,6 +467,9 @@ test('the hook process with ROMP_SID denies a cp onto a tracked file with exit 2
   assert.equal(allowed.status, 0, allowed.stderr);
   assert.equal(allowed.stderr, '');
   assert.equal(run('cp base/report.md docs/other.md').status, 0);
+  const notLiteral = run('cp "$SRC" "$DST"');
+  assert.equal(notLiteral.status, 2, 'a target the hook cannot read, in a tracked project');
+  assert.match(notLiteral.stderr, /is not a literal path/);
 });
 
 test('the hook run through its installed symlink, as the registered command runs it, still recognises itself and rules the same way', () => {
