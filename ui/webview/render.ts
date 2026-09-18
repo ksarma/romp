@@ -17004,6 +17004,7 @@ function elapsedMs(sinceMs: number | null): string {
 // One dropdown entry. `sub` is the second line for a choice whose consequence is not obvious from its
 // label; `sdkOnly` drops the entry on a backend that cannot apply it (Codex).
 interface MetaChoice { label: string; value: string; sub?: string; sdkOnly?: boolean; color?: number[] | null;
+  model?: string; isDefault?: boolean; efforts?: MetaChoice[];
   versions?: { label: string; value: string; learned?: boolean }[]; default?: string }   // model families only (the
   // user 2026-08-25). `default` is the family's remembered version pin, else the family ALIAS; `learned`
   // marks a version the catalog lacks — a running session's CLI reported it (kernel /models).
@@ -17014,9 +17015,9 @@ interface MetaChoice { label: string; value: string; sub?: string; sdkOnly?: boo
 const MODEL_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
 const EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
 // A CODEX session's pickers speak Codex's vocabulary (the payload's codex section — models from
-// the app-server's own list, efforts the four Codex accepts). Empty until the codex backend has
+// the app-server's own list, including each model's supported efforts). Empty until the codex backend has
 // run: an empty model menu beats offering another vendor's models (docs/codex.md).
-const CODEX_MODEL_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
+const CODEX_MODEL_CHOICES: MetaChoice[] = [];
 const CODEX_EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
 // The effort menus list the ladder TOP-DOWN (the user 2026-09-14): the highest effort first, the lowest
 // last, the way the model menu already leads with the most capable family. The kernel serves `efforts`
@@ -17026,6 +17027,12 @@ const CODEX_EFFORT_CHOICES: { label: string; value: string; color?: number[] | n
 // and the ✓ matches by value (isCurrentMeta), so it follows its row.
 const effortDisplayOrder = (efforts: { label: string; value: string; color?: number[] | null }[]): { label: string; value: string; color?: number[] | null }[] =>
   [...efforts].reverse();
+function codexEffortChoices(model?: string): MetaChoice[] {
+  // Per-model capabilities (2026-09-17); only an older kernel without this field uses its flat list.
+  if (!CODEX_MODEL_CHOICES.some((m) => Array.isArray(m.efforts))) return CODEX_EFFORT_CHOICES;
+  const row = CODEX_MODEL_CHOICES.find((m) => model ? m.value === model || m.model === model : m.isDefault);
+  return effortDisplayOrder(row?.efforts || []);
+}
 // Why the Codex list is empty, when it is: the payload's `codex.error` (the app-server client not up yet,
 // a failed model list, no live Codex session). A Codex menu with no list shows it in place of a
 // blank menu. "" while a list is held or the field is absent.
@@ -17127,13 +17134,13 @@ const META_CHOICES: Record<MetaKind, MetaChoice[]> = {
   mode: MODE_CHOICES, model: MODEL_CHOICES, effort: EFFORT_CHOICES, fast: FAST_CHOICES,
 };
 // The choices a menu offers depend on the session's BACKEND: a Codex session speaks Codex's
-// vocabulary (its own model list, the four efforts it accepts) — never Claude's, whose aliases
+// vocabulary (its own model list and each model's efforts) — never Claude's, whose aliases
 // the codex backend refuses (docs/codex.md). Codex modes use its own approval reviewer.
 function metaChoices(kind: MetaKind, st: Status): MetaChoice[] {
   if (st.backend === "codex") {
     if (kind === "mode") return CODEX_MODE_CHOICES;
     if (kind === "model") return CODEX_MODEL_CHOICES;
-    if (kind === "effort") return CODEX_EFFORT_CHOICES;
+    if (kind === "effort") return codexEffortChoices(st.model);
   }
   return META_CHOICES[kind];
 }
@@ -17378,8 +17385,15 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     const head = el("div");
     head.textContent = kind === "model" ? "No model list from Codex" : "No effort list from Codex";
     const sub = el("div", "meta-item-sub");
-    sub.textContent = CODEX_MODELS_ERROR || "asking for the list now";
-    if (!CODEX_MODELS_ERROR) sub.appendChild(metaDots());   // a wait wears the loader's dots
+    // The effort kind with a catalog HELD has its final answer, not a wait: codexEffortChoices reads [] for a model
+    // whose catalog entry lists no levels and for one the catalog does not know, and the kernel serves the catalog
+    // from a once-per-process cache, so the re-read below cannot change it. The row states it in the timeline lane
+    // menu's words and wears no dots (ui/CLAUDE.md, waiting states); the wait copy is for a menu with no catalog yet.
+    const catalogHeld = () => CODEX_MODEL_CHOICES.some((m) => Array.isArray(m.efforts));
+    const NO_LEVELS = "no effort levels from Codex for this model";
+    const finalNow = kind === "effort" && catalogHeld();
+    sub.textContent = CODEX_MODELS_ERROR || (finalNow ? NO_LEVELS : "asking for the list now");
+    if (!CODEX_MODELS_ERROR && !finalNow) sub.appendChild(metaDots());   // a wait wears the loader's dots
     empty.append(head, sub);
     menu.appendChild(empty);
     onModelChoicesLoaded = () => {
@@ -17391,7 +17405,7 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
       // its own sid and is never the active tab, so its rebuild below is unchanged.
       if (!forThread && activeId !== opSid) { closeMetaMenu(); return; }
       const now = metaChoices(kind, s.status).filter((c) => !c.sdkOnly || s.status.backend === "sdk");
-      if (!now.length) { sub.textContent = CODEX_MODELS_ERROR || (kind === "model" ? "no model list yet" : "no effort list yet"); return; }   // textContent drops the dots
+      if (!now.length) { sub.textContent = CODEX_MODELS_ERROR || (kind === "model" ? "no model list yet" : catalogHeld() ? NO_LEVELS : "no effort list yet"); return; }   // textContent drops the dots
       // The list landed: rebuild against the badge as it stands now, not the one captured at open. The spawn
       // that makes the list readable also pushes, and every push rebuilds the statusline, so the captured
       // button is often detached by the time the re-read lands; with no live badge for this kind and session
@@ -20249,6 +20263,13 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
       dropPendingFlag(pendingFlags, m.sid, m.flag as SessionFlag);   // the click's expectation ends here, not after three frames
       const s = sessions.get(m.sid);
       if (s && typeof m.value === "boolean") (s as any)[m.flag] = m.value;
+    }
+    if (m.gesture === "command" && typeof m.sid === "string" && typeof m.flag === "string" && m.sid && m.flag) {
+      // a refused setEffort or setFast pick (the kernel's catalog check on a Codex session): the pick's local loader
+      // (armMetaPending's 20 s timer) ends on THIS event, as the timeline's dim does on the same frame; the kernel's
+      // state did not change, so no push follows to repaint the badge, and the active tab's line repaints here
+      metaPending.delete(`${m.sid}:${m.flag}`);
+      if (m.sid === activeId) updateStatusline();
     }
     notifyShell("refused", m.text, typeof m.sid === "string" ? m.sid : "");
     warnToast(m.text);

@@ -465,7 +465,16 @@ class Collector(unittest.TestCase):
         snap = self.st.snapshot()
         self.assertEqual(set(snap["builds"]["feed"]), {"cached", "built", "ms", "dirty", "memo"})   # dirty: this fork's forced-rebuild counter beside the memo
         memo = snap["builds"]["feed"]["memo"]
-        self.assertEqual(set(memo), {"hit", "miss", "evict", "entries", "bytes", "bound", "derived", "miss_by"})
+        self.assertEqual(set(memo), {"hit", "miss", "evict", "entries", "bytes", "bound", "derived", "miss_by",
+                                     "failed", "failing"})   # failed: derivations that raised, cumulative; failing: sessions whose last one did (2026-09-17)
+        # ...and the reference's builds.feed.memo paragraph names every counter the block serves, so a counter cannot
+        # ship undocumented (2026-09-18: `failed` and `failing` arrived with the card-build containment and the paragraph
+        # named the eight older ones only). The slice: from the paragraph's opening line to the next block's bullet.
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        para = doc[doc.index("`feed` also carries\n  `memo`"):]
+        para = para[:para.index("\n- `sends`:")]
+        for k in memo:
+            self.assertIn("`%s`" % k, para, "builds.feed.memo `%s` is not named in the reference's memo paragraph" % k)
         self.assertEqual(set(memo["miss_by"]), set(km._FEED_MEMO_LABELS) | {"cold"})
         self.assertEqual(memo["bound"], km.FEED_MEMO_BYTES)
         self.assertEqual(memo, km._feed_memo_report())

@@ -19012,7 +19012,10 @@ def _apply_new_session_prefs(sid, body):
     FRESH spawn the env was already born into the reg (_create_sdk_session), so the env leg here is
     the unchanged re-assert set_env skips the reconnect for — the echo still comes back. The handler
     validated env at the door and refused non-SDK targets, so the hasattr guard is only the backstop
-    for direct callers."""
+    for direct callers. A level the backend REFUSES (a Codex model whose catalog does not offer it) is
+    echoed as `refused`, the setter's own words, never as `effort`: the verdict used to be dropped here,
+    so `romp new` printed the level as applied and exited 0 while nothing changed (the catch-up fold's
+    review, 2026-09-18)."""
     out = {}
     m = str((body or {}).get("model") or "").strip()
     e = str((body or {}).get("effort") or "").strip()
@@ -19032,8 +19035,15 @@ def _apply_new_session_prefs(sid, body):
         _set_model_or_park(be, str(sid), m)
         out["model"] = m
     if e:
-        _set_effort_or_park(be, str(sid), e)
-        out["effort"] = e
+        took, _parked = _set_effort_or_park(be, str(sid), e)
+        if took:
+            out["effort"] = e
+        else:
+            # refused (a Codex model whose catalog does not offer the level, or a catalog the backend could not
+            # read): the echo carries the refusal in place of the level, so the caller is loud, and stderr says so
+            # once, as the typed route does
+            out["refused"] = _effort_refusal(be, e)
+            sys.stderr.write("effort %r for %s refused by %s (POST /new)\n" % (e, sid, type(be).__name__))
     if ev is not None and hasattr(be, "set_env"):
         _set_env_or_park(be, str(sid), dict(ev))
         out["env"] = dict(ev)
@@ -22737,13 +22747,25 @@ def _drive(msg, client):
         # forget the family's remembered pin and send the alias
         _set_model_or_park(be, sid, str(msg["value"]), floating=bool(msg.get("floating"))); _push_soon()
     elif t == "setEffort" and msg.get("value"):
-        _set_effort_or_park(be, sid, str(msg["value"])); _push_soon()   # SDK: reconnect with --effort; Codex: its engine's level at the next turn; mid-compaction → parked
+        # SDK: reconnect with --effort; Codex: its engine's level at the next turn; mid-compaction → parked.
+        # LOUD on refusal, as setFast below: a level the model's Codex catalog does not advertise (the menu
+        # lists the catalog's levels, but a stale list or a model change under it can still send one) used
+        # to leave the badge on the old level with no reason given (the review of #1814). The refusal rides
+        # the timeline's own settingRefused frame (gesture command, the sid, the flag), never a bare warn: a
+        # warn arriving while a create is in flight is read by the chat as that create's verdict and strikes
+        # the provisional tab, and the timeline page renders no warn at all, so a lane-menu pick's refusal
+        # was dropped there and its optimistic dim ran out its timer (the catch-up fold's review, 2026-09-18)
+        if not _set_effort_or_park(be, sid, str(msg["value"]))[0]:
+            client["send"](json.dumps({"type": "settingRefused", "gesture": "command", "sid": sid, "flag": "effort",
+                                       "text": _effort_refusal(be, str(msg["value"]))}))
+        _push_soon()
     elif t == "setFast" and msg.get("value") in ("on", "off"):
         # the chat's fast badge — /fast on|off delivered like any slash command; mid-compaction → parked.
         # LOUD on refusal (fail loudly, never degrade silently): a dormant SDK session has no live CLI to
         # apply it, and silently swallowing the click would leave a toggle that "did nothing".
+        # The same settingRefused frame as setEffort above (flag fast), for the same two readers.
         if not _set_fast_or_park(be, sid, str(msg["value"]))[0]:
-            client["send"](json.dumps({"type": "warn",
+            client["send"](json.dumps({"type": "settingRefused", "gesture": "command", "sid": sid, "flag": "fast",
                                        "text": "Couldn't toggle fast mode — the session isn't connected right now."}))
         _push_soon()
     elif t == "setMode" and msg.get("value"):
@@ -27981,6 +28003,8 @@ def _deliver_text(sid, text, plain=False):
     be = Sessions.backend_for(sid)
     meta = {}
     if not plain and _route_meta_command(be, sid, text, state=meta):
+        if meta.get("refused_effort"):
+            return False, str(meta["refused_effort"]), False   # the route's own words for a level the backend refused (the review of #1814)
         if meta.get("refused"):
             return False, "no running backend owns %s — the command was not delivered" % sid, False
         return True, "", bool(meta.get("queued"))
@@ -33538,7 +33562,8 @@ def _states_awaiting_overlay(sid):
     evicted: `fail` counts reads that were attempted and failed. The interrupt tick drops the entries of
     sessions outside its alive set each cycle (_states_overlay_forget); a dormant session read by
     GET /sessions re-enters and leaves again on the next tick, one fold of cached records with no I/O, and
-    the fold's own cache clears whole above 256 entries, the shared idiom. Counters ride GET /perf under
+    the fold's own cursor dict past 256 entries sheds the cursors whose reader entry is gone or replaced
+    (fold_records; it cleared whole there before 2026-09-17). Counters ride GET /perf under
     memos.statesOverlay."""
     p = jd.STATE / "states" / ("%s.jsonl" % sid)
     last, working_after = _fold_records(_states_overlay_cache, p, _states_overlay_init, _states_overlay_step, ckpt="statesOverlay",
@@ -33589,11 +33614,12 @@ def _states_overlay_on(path_s, kind):
     stderr line per episode, so a failed read is told apart from a rewrite in GET /perf and in the log. A
     later good fold of the same file ends the episode, and no per-path event does: the interrupt tick's forget
     (_states_overlay_forget) leaves the set alone, since a departed session's file is still read. The set is
-    instead cleared whole above 256 paths, the fold cache's own bound (fold_records), so a path stranded by a
-    session whose file is never read again cannot pin it forever; a whole clear ends every open episode at
-    once, so a still-unreadable file is named a second time after it, exactly as the fold cache re-folds
-    after its clear. Cheap on purpose, since it runs inside every fold: one locked increment, and the set is
-    touched only on a failure or while an episode is open."""
+    instead cleared whole above 256 paths (the fold cursor dict's trip point in fold_records, which since
+    2026-09-17 sweeps only the dead cursors there; this set has no liveness to judge a path by, so it clears),
+    so a path stranded by a session whose file is never read again cannot pin it forever; a whole clear ends
+    every open episode at once, so a still-unreadable file is named a second time after it. Cheap on purpose,
+    since it runs inside every fold: one locked increment, and the set is touched only on a failure or while
+    an episode is open."""
     _states_overlay_bump(kind)
     if kind == "fail":
         with _STATES_OVERLAY_LOCK:
@@ -39478,11 +39504,31 @@ def _set_model_or_park(be, sid, value, floating=False):
 def _set_effort_or_park(be, sid, value):
     """Apply an effort change now — or park it while the session compacts (the user 2026-07-02: /effort
     is a slash command like /model, so it must queue the same way — it used to slip straight through,
-    with no queued chip and the same derail risk the /model park was built for)."""
-    parked = _gate_or_park(sid, ("effort", value))
-    if not parked:
-        be.set_effort(sid, value)
-    return parked
+    with no queued chip and the same derail risk the /model park was built for). Returns (took, parked)
+    in _set_fast_or_park's shape: `parked` is True when the change queued (mid-compaction or behind a
+    queue), `took` is False when the backend refused the value, so the caller can be loud. The
+    SessionBackend.set_effort contract is a bool and every shipped setter keeps it: CodexBackend refuses
+    a level the session's model does not advertise, an unknown model or a catalog it could not read,
+    SdkBackend a value outside its levels or a session it holds no row for, the unowned route everything.
+    This used to return only `parked` and drop that verdict, so a refused /effort answered ok and moved
+    nothing (the review of #1814)."""
+    if _gate_or_park(sid, ("effort", value)):
+        return (True, True)
+    return (bool(be.set_effort(sid, value)), False)
+
+
+def _effort_refusal(be, value):
+    """The sentence a refused effort pick is answered with (fail loudly, never a silent no-op), the
+    setEffort op's, _route_meta_command's, POST /new's and the parked-op drain's alike: a Codex session's
+    model does not advertise the level in its catalog (or the catalog could not be read); any other backend
+    refused it outright (an SDK session it holds no row for, or _UNOWNED, whose set_effort refuses every
+    level). _route_meta_command refuses an unowned sid before any setter is reached, but the drain does
+    reach _UNOWNED.set_effort for one (a queue parked before the session died, or restored after a restart
+    for a session no backend owns) and answers with this second sentence: the drain's established words for
+    a refusal in that state, as its command arm says the same of an undelivered command."""
+    if be is not None and be is _codex():
+        return "Couldn't set effort '%s': this model's Codex catalog does not offer it." % value
+    return "Couldn't set effort '%s': the session's backend refused it." % value
 
 
 def _set_env_or_park(be, sid, value):
@@ -39535,7 +39581,11 @@ def _route_meta_command(be, sid, text, client=None, floating=False, state=None):
     command, a bare "/model" (the CLI's own picker), plain text that merely contains one — is the
     caller's to send verbatim: the CLI owns what executes. A refused fast toggle is told to
     the client (fail loudly): a dormant SDK session has no live CLI to apply it, and the typed text
-    used to at least draw the CLI's own refusal. `state`, when given, receives {"queued": bool}: whether
+    used to at least draw the CLI's own refusal; a refused effort level (one the Codex model's catalog
+    does not offer) is told the same way and filed as state["refused_effort"], so POST /send answers ok:false
+    with the words. Both ride the timeline's own settingRefused frame (gesture command, the sid, the flag),
+    never a bare warn: the timeline page renders no warn, and the chat reads one arriving during a create as
+    that create's verdict (the catch-up fold's review, 2026-09-18). `state`, when given, receives {"queued": bool}: whether
     the change PARKED, taken from each setter's own return, so POST /send answers `queued` for a meta
     command exactly as for a text send (2026-09-03: a parked /model read as plain 'ok'). The effort/fast
     setters report whether they parked under _gate_or_park (the one _ops_gate evaluation those two pay),
@@ -39563,7 +39613,11 @@ def _route_meta_command(be, sid, text, client=None, floating=False, state=None):
     model_pick = head == "/model" and (_vouched_model(value)
                                         or (value.startswith("gpt") and be is not None
                                             and (be is _UNOWNED or be is _codex())))
-    is_meta = (model_pick or (head == "/effort" and value in _EFFORT_VALUES)
+    # Codex's backend validates against the selected model's advertised capabilities (2026-09-17).
+    # Its effort command must never become model input just because a new level is absent from the SDK list.
+    effort_pick = head == "/effort" and (value in _EFFORT_VALUES or (be is not None
+                                         and (be is _UNOWNED or be is _codex())))
+    is_meta = (model_pick or effort_pick
                or (head == "/fast" and value in ("on", "off")))
     if is_meta and be is _UNOWNED:
         # a session no running backend owns takes no setting: refuse before any stamp (the switching dots
@@ -39573,7 +39627,13 @@ def _route_meta_command(be, sid, text, client=None, floating=False, state=None):
         if state is not None:
             state["refused"] = why
         if client:
-            client["send"](json.dumps({"type": "warn", "text": why}))
+            # the timeline's own settingRefused frame (gesture command, the sid, the flag from the command head:
+            # model, effort or fast), as the owned arms below and the setEffort and setFast ops answer: a bare
+            # warn is read by the chat as an in-flight create's verdict and by the timeline page not at all, so a
+            # lane-menu pick on a dead lane got no reason and its optimistic dim ran out its 20 s timer (the
+            # catch-up fold's delta review, 2026-09-18)
+            client["send"](json.dumps({"type": "settingRefused", "gesture": "command", "sid": sid, "flag": head[1:],
+                                       "text": why}))
         sys.stderr.write("meta command %s for %s refused: no backend owns this session\n" % (head, sid))
         return True
     if model_pick:
@@ -39581,12 +39641,27 @@ def _route_meta_command(be, sid, text, client=None, floating=False, state=None):
         # model_switches_live — none shipped does yet, so the SDK still parks; #923), so its verdict is
         # read, not inferred from _ops_gate, which would say `queued` for a pick that had already applied
         parked = _set_model_or_park(be, sid, value, floating=floating)
-    elif head == "/effort" and value in _EFFORT_VALUES:
-        parked = _set_effort_or_park(be, sid, value)    # mid-compaction → parked as a queued command
+    elif effort_pick:
+        took, parked = _set_effort_or_park(be, sid, value)    # mid-compaction → parked as a queued command
+        if not took:
+            # the backend refused the level (a Codex model whose catalog does not offer it, or a catalog the
+            # backend could not read): said, as the /fast arm says its refusal, and filed in `state` so POST
+            # /send answers ok:false with the words. Before this the setter's verdict was dropped and the
+            # command answered ok while the badge stayed put (the review of #1814).
+            why = _effort_refusal(be, value)
+            if state is not None:
+                state["refused_effort"] = why
+            if client:
+                # the timeline's own settingRefused frame (gesture command, the sid, the flag), as the setEffort op
+                # answers: a bare warn is read by the chat as an in-flight create's verdict and by the timeline page
+                # not at all (the catch-up fold's review, 2026-09-18)
+                client["send"](json.dumps({"type": "settingRefused", "gesture": "command", "sid": sid, "flag": "effort",
+                                           "text": why}))
+            sys.stderr.write("effort %r for %s refused by %s\n" % (value, sid, type(be).__name__))
     elif head == "/fast" and value in ("on", "off"):
         took, parked = _set_fast_or_park(be, sid, value)          # took: applied or parked; parked: queued
         if not took and client:
-            client["send"](json.dumps({"type": "warn",
+            client["send"](json.dumps({"type": "settingRefused", "gesture": "command", "sid": sid, "flag": "fast",
                                        "text": "Couldn't toggle fast mode — the session isn't connected right now."}))
     else:
         return False
@@ -39807,12 +39882,16 @@ def _apply_pending_ops(now=None):
                     elif op[0] == "model":
                         be.set_model(sid, op[1])
                     elif op[0] == "effort":
-                        be.set_effort(sid, op[1])
+                        # the verdict is READ (the catch-up fold's review, 2026-09-18): a level the backend refuses at
+                        # fire time (a Codex model whose catalog does not offer it: a stale menu, a model change under
+                        # the park) is reported below, where the live op would have said so; dropped, the queued chip
+                        # retired as if the level had landed, with no stderr line and no reply
+                        refused = be.set_effort(sid, op[1]) is False
                     elif op[0] == "fast":
                         # fast ops parked by a pre-2026-08-09 kernel stored a BOOL; set_fast validates
                         # against "on"/"off", so coerce here or a queue that survived the upgrade wedges.
                         v = op[1] if isinstance(op[1], str) else ("on" if op[1] else "off")
-                        be.set_fast(sid, v)
+                        refused = be.set_fast(sid, v) is False     # its bool was dropped the same way
                     elif op[0] == "auth":
                         be.set_auth(sid, op[1])
                     elif op[0] == "env":
@@ -39848,6 +39927,21 @@ def _apply_pending_ops(now=None):
                             _mark_compacting(sid)         # a TYPED /compact gets the same instant cue as the button's op
                         _after_turn_opening(be, sid, _pending_ops.get(sid) or [])
                         break                             # its turn / compaction must end before anything behind it fires
+                    if op[0] in ("effort", "fast") and refused:
+                        # the backend refused the parked level or toggle when it fired (a Codex model whose catalog does
+                        # not offer the level, a session the backend holds no row for, a Codex session's fast toggle):
+                        # the same stderr line the command and compact arms write, and the refusal to the chat on the
+                        # settingRefused frame the live setEffort and setFast ops answer with (gesture command, the sid,
+                        # the flag), so the chip's retirement is not read as the pick landing. Said whether or not `took`:
+                        # a same-kind replacement delivering next does not unsay this one's refusal. No client is at hand
+                        # here, so the chat page is the addressee (_send_to_app). Nothing applies early: the gate lift is
+                        # still what fires the op (the catch-up fold's review, 2026-09-18).
+                        what = "/%s %s" % (op[0], op[1] if op[0] == "effort" else v)
+                        why = (_effort_refusal(be, op[1]) if op[0] == "effort"
+                               else "Couldn't toggle fast mode: the session's backend refused it.")
+                        sys.stderr.write("pending ops apply: %s refused %r for %s\n" % (type(be).__name__, what, sid[:8]))
+                        _send_to_app("chat", {"type": "settingRefused", "gesture": "command", "sid": sid,
+                                              "flag": op[0], "text": why})
                     # a settings op (or an unknown kind): delivery continues. `took` False means a same-kind pick
                     # replaced the head in place while it was with the backend — the replacement delivers next
             except Exception:
@@ -44494,8 +44588,13 @@ _FEED_NUDGE_FIELDS = ("count", "failed", "failedAt")  # the fields the card read
 _feed_memo = {}                                  # sid → (key, entry_json, size); dict order is the LRU order: a served entry
 #                                                  moves to the tail, the head goes first when the bytes exceed the bound
 _feed_memo_lock = threading.Lock()               # the dict ops and the counters only; the derivation runs outside it
-_FEED_MEMO_STATS = {"hit": 0, "miss": 0, "evict": 0, "entries": 0, "bytes": 0, "bound": 0, "derived": 0,
+_FEED_MEMO_STATS = {"hit": 0, "miss": 0, "evict": 0, "entries": 0, "bytes": 0, "bound": 0, "derived": 0, "failed": 0,
                     "miss_by": {k: 0 for k in _FEED_MEMO_LABELS + ("cold",)}}   # /perf builds.feed.memo
+_FEED_DERIVE_FAILED = {}   # sid → cause head of the session's CURRENT card-build fault episode (the decode of its memoized
+#                            entry, its key, its derivation, the serialization: whatever raised last), present while it is
+#                            failing: the dedupe of the stderr line and the bell row (one per distinct cause per session,
+#                            never per 2s build; the _chat_build_faults rule) and /perf's `failing` count; a build that
+#                            serves or derives the session, or its departure, ends the episode (2026-09-17)
 
 
 def _feed_memo_bound():
@@ -44560,6 +44659,17 @@ def _feed_memo_put(sid, key, entry_json):
         _FEED_MEMO_STATS["entries"] = len(_feed_memo)
 
 
+def _feed_memo_drop(sid):
+    """Drop sid's entry (an entry whose JSON no longer decodes serves nobody and would fail the same way every build;
+    the next build starts it cold). Counted as an eviction."""
+    with _feed_memo_lock:
+        old = _feed_memo.pop(sid, None)
+        if old is not None:
+            _FEED_MEMO_STATS["bytes"] -= old[2]
+            _FEED_MEMO_STATS["evict"] += 1
+            _FEED_MEMO_STATS["entries"] = len(_feed_memo)
+
+
 def _feed_memo_forget(alive_sids):
     """Drop the entries of sessions no longer in the build's alive set (a departed session's cards are not coming
     back under its sid; a revived one re-derives). Called after every build's loop."""
@@ -44569,7 +44679,46 @@ def _feed_memo_forget(alive_sids):
             _FEED_MEMO_STATS["bytes"] -= _feed_memo.pop(k)[2]
         _FEED_MEMO_STATS["evict"] += len(gone)
         _FEED_MEMO_STATS["entries"] = len(_feed_memo)
+        for k in [k for k in _FEED_DERIVE_FAILED if k not in alive_sids]:
+            _FEED_DERIVE_FAILED.pop(k, None)         # a departed session is not failing any more (nothing derives it)
     return len(gone)
+
+
+def _feed_derive_complain(sid, name, e, served_prev):
+    """One session's card build raised inside build_feed's loop (the decode of its memoized entry, its key, the derivation,
+    the dependency key, the serialization or the memo put). Counted (builds.feed.memo `failed`, cumulative; `failing`, the
+    sessions whose current build is failing) and, ONCE per (session, cause) episode, said on stderr with the traceback AND
+    as a dashboard bell row through _sync_notice, the _chat_build_fault seam: the user sees which session's cards are
+    stale or absent and why, without a traceback, in the bell every client mirrors, rather than a board that looks fine
+    (fail loudly, 2026-07-03). The row wears the kind a state file that cannot be read wears. The caller decides what the
+    board shows for the session; the bell is a courtesy inside the build and never raises."""
+    head = "%s: %s" % (type(e).__name__, str(e)[:160])
+    with _feed_memo_lock:
+        _FEED_MEMO_STATS["failed"] = _FEED_MEMO_STATS.get("failed", 0) + 1
+        said = _FEED_DERIVE_FAILED.get(sid) == head
+        _FEED_DERIVE_FAILED[sid] = head
+    if said:
+        return
+    try:
+        _sync_notice("feed: the cards for %s cannot be built; %s until a build succeeds (%s)"
+                     % (name or str(sid)[:8],
+                        "the board shows their last state" if served_prev else "they are absent from the board",
+                        head[:120]), ok=False, kind="refused")
+    except Exception:
+        pass
+    try:                                          # the reporter must never be the exception that re-opens the freeze it reports
+        sys.stderr.write("feed: %s (%s) card derivation failed — %s until it derives again: %s\n%s"
+                         % (str(sid)[:8], name, "serving its previous cards" if served_prev else "its cards are absent",
+                            head, traceback.format_exc()))
+    except (OSError, ValueError):                 # a closed or broken stderr (2026-09-17): the count and the record still stand
+        pass
+
+
+def _feed_derive_recovered(sid):
+    """The session's entry was served or derived: its fault episode ends, so the same fault later is said (and rung) anew."""
+    if sid in _FEED_DERIVE_FAILED:               # the common path takes no lock: the dict is empty
+        with _feed_memo_lock:
+            _FEED_DERIVE_FAILED.pop(sid, None)
 
 
 def _feed_memo_report():
@@ -44579,6 +44728,7 @@ def _feed_memo_report():
         out["miss_by"] = dict(_FEED_MEMO_STATS["miss_by"])
         out["entries"] = len(_feed_memo)
         out["bound"] = FEED_MEMO_BYTES
+        out["failing"] = len(_FEED_DERIVE_FAILED)   # sessions whose LAST derivation raised (a standing fault, not history)
     return out
 
 
@@ -46247,22 +46397,42 @@ def build_feed(now, live_map=None):
         fsid = s["sid"]
         tm = live_map.get(fsid)
         ent = _feed_memo_get(fsid)
-        prev = json.loads(ent[1]) if ent is not None else None   # the ONE decode per session per build: a hit's fresh
-        #                                                          objects to fold, and the dependency record the key reads
-        key = _feed_session_key(s, tm, ctx, prev)
-        if ent is not None and ent[0] == key:
-            _feed_memo_count("hit")
+        prev = None
+        # CONTAINMENT (2026-09-17): one session's card build raising used to propagate out of build_feed; the pusher's
+        # catch swallowed it, no counter moved, and every client kept the LAST successful frame: the whole board froze
+        # for an hour behind one session (a pre-cut atom whose transcript the hydration map did not know, a LazyBodyRead
+        # out of _last_plain_user_turn_t; that root cause is fixed separately). ONE guard spans the session's whole path,
+        # the decode of its memoized entry and its key included (the key stats files and reads stores, and a key that
+        # raises means hit and miss cannot be told apart, so it is a failed build like any other): the fault stays the
+        # session's, counted and said once on stderr and in the bell (_feed_derive_complain), its previous cards served
+        # when the memo holds a decodable entry (stale, and the bell says so) else absent this build, nothing memoized,
+        # so the next build tries again; every other session folds as usual and the frame ships.
+        try:
+            prev = json.loads(ent[1]) if ent is not None else None   # the ONE decode per session per build: a hit's fresh
+            #                                                          objects to fold, and the dependency record the key reads
+            key = _feed_session_key(s, tm, ctx, prev)
+            if ent is not None and ent[0] == key:
+                _feed_memo_count("hit")
+                entry = prev
+            else:
+                _feed_memo_miss(ent[0] if ent is not None else None, key)
+                _feed_memo_count("derived")
+                entry = _feed_session_entry(s, ctx)
+                key = _feed_key_with_deps(key, ctx, entry)   # the peers and reads THIS derivation recorded
+                js = json.dumps(entry, default=_wire_default_in("_feed_memo"))   # str() of an unencodable value, said once
+                if not (entry or {}).get("faults"):      # a derivation that met a body-read fault is served but not kept:
+                    _feed_memo_put(fsid, key, js)        #   the next build re-derives it (the anchor memo skipped it too)
+                entry = json.loads(js)                   # the fold's objects come from the string on a miss too, so a hit and
+                #                                          a miss hand the board the same shapes, byte for byte
+        except Exception as e:
+            _feed_derive_complain(fsid, s["name"], e, prev is not None)
+            if prev is None:
+                if ent is not None:
+                    _feed_memo_drop(fsid)                # an entry that no longer decodes: gone, so the next build starts cold
+                continue
             entry = prev
         else:
-            _feed_memo_miss(ent[0] if ent is not None else None, key)
-            _feed_memo_count("derived")
-            entry = _feed_session_entry(s, ctx)
-            key = _feed_key_with_deps(key, ctx, entry)   # the peers and reads THIS derivation recorded
-            js = json.dumps(entry, default=_wire_default_in("_feed_memo"))   # str() of an unencodable value, said once
-            if not (entry or {}).get("faults"):      # a derivation that met a body-read fault is served but not kept:
-                _feed_memo_put(fsid, key, js)        #   the next build re-derives it (the anchor memo skipped it too)
-            entry = json.loads(js)                   # the fold's objects come from the string on a miss too, so a hit and
-            #                                          a miss hand the board the same shapes, byte for byte
+            _feed_derive_recovered(fsid)
         _heal, _hid, _cold = _feed_fold_entry(entry, now, cmap, s["name"], asks, working, awaiting, bg_services, serving_folds)
         heal_total += _heal
         hidden_total += _hid
@@ -70939,7 +71109,7 @@ class Handler(BaseHTTPRequestHandler):
                 # the codex section rides along untinted: what a CODEX session's pickers offer
                 # (docs/codex.md) — models from the app-server's own list via the backend (the
                 # authoritative source; [] until the backend runs, so no picker ever shows another
-                # vendor's models); efforts are the four Codex accepts — max/ultracode are Claude-only.
+                # vendor's models); each model carries the efforts the app-server advertises for it (2026-09-17).
                 # The section's `error` field names WHY `models` is empty: null beside a non-empty list,
                 # else one sentence for the picker to show (a string, never an object or a code).
                 # Without it the picker opens on a blank menu with no word of why: the backend's
@@ -70968,6 +71138,9 @@ class Handler(BaseHTTPRequestHandler):
                     cx_err = "no live Codex session; the list is read once one runs"
                 else:
                     cx_err = "the Codex backend is unavailable (see the kernel log)"
+                # Older panes read the flat list; derive it from the same catalog, never a second allowlist.
+                # Current panes select the model's own efforts, so one model cannot lend levels to another.
+                cx_efforts = {e["value"]: e for m in cx_models for e in m.get("efforts", [])}
                 return self._send(200, json.dumps(
                     # `rev` is the pick memory's revision — the models frame's counter (_models_changed),
                     # read here BEFORE the picks so a payload never carries a rev newer than its list: a
@@ -70983,8 +71156,7 @@ class Handler(BaseHTTPRequestHandler):
                      "efforts": [dict(c, color=_effort_color(c["value"], _stops), tone=_effort_tone(c["value"]))
                                  for c in EFFORT_CHOICES],
                      "codex": {"models": cx_models, "error": cx_err,
-                               "efforts": [{"value": v, "label": v}
-                                           for v in ("low", "medium", "high", "xhigh")]},
+                               "efforts": list(cx_efforts.values())},
                      # the create dialog's pre-read (the user 2026-08-29): what a new comment thread
                      # gets when the dialog is left untouched — RAW ("session" = same as the session),
                      # so the dialog shows the effective default and a pick stays a deviation

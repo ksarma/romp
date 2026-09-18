@@ -11,6 +11,11 @@ TAB_WIDGETS_DIST=<dir> serves another tree's UI bundle (the red run's before); T
 <prefix>-strip-<theme>.png and <prefix>-settings-<theme>.png; TAB_WIDGETS_DUMP=<path> writes the whole measurement. Skips LOUDLY
 without the extension deps or a Playwright browser (CI sets ROMP_SERVED_TESTS_REQUIRE=1 and installs both, so a skip
 there is a failure). Synthetic throughout: placeholder sids, TESTHOST, invented text.
+
+The tall scene's resize waits are for a landing AT the new viewport height, not for the landing mark's presence: a re-ask writes
+the mark twice (at once, then one frame later from the ask observer's first observation) and a resize lands one frame after the
+browser clamps the scroll, so a mark cleared between them could stand into the resize and the read that followed saw the clamp
+(one CI red on 2026-09-18, 303 px off in the taller scene; the landing code is unchanged).
 """
 import json
 import os
@@ -294,10 +299,18 @@ for (const mode of ["always", "never"]) {
   // the review's oracles (round two): the ask STANDS across the browser's own scrolls and re-lands on size changes; only the user's input ends it
   const clearMark = () => sf3.evaluate(() => { const c = document.querySelector("#rsettings .rs-card"); if (c) c.removeAttribute("data-section-landed"); });
   const landedSoon = (frame, ms) => frame.waitForSelector('#rsettings .rs-card[data-section-landed="tabstrip"]', { timeout: ms }).then(() => true).catch(() => false);
-  await clearMark(); await p3.setViewportSize({ width: 1200, height: 900 });    // SHORTER: the card shrinks to the new cap (Chrome's anchoring nudges the scroll)
-  out.tall.shorter = { landed: await landedSoon(sf3, 10000), sec: await readSec() };
-  await clearMark(); await p3.setViewportSize({ width: 1200, height: 1400 });   // TALLER: the card grows to the new cap and the browser clamps the scroll first
-  out.tall.taller = { landed: await landedSoon(sf3, 10000), sec: await readSec() };
+  // a size change waits for a landing AT its height, not for the mark's presence (CI, 2026-09-18: the mark is re-written one frame
+  // after a re-ask by the ask's observer's first observation, and a resize's landing runs a frame after the browser's own clamp of
+  // the scroll, so a mark cleared between them can stand again before the resize is issued and the read that followed saw the
+  // clamp, 303 px off with the smaller window's room). Each write of the mark is journaled with the viewport height it landed at;
+  // a landing writes the mark in the same task that read the cap, so a landing journaled at 1400 was sized to the 1400 cap.
+  await sf3.evaluate(() => { const c = document.querySelector("#rsettings .rs-card"); window.__landings = [];
+    new MutationObserver(() => { if (c.getAttribute("data-section-landed") === "tabstrip") window.__landings.push(window.innerHeight); }).observe(c, { attributes: true, attributeFilter: ["data-section-landed"] }); });
+  const landedAt = (frame, h, ms) => frame.waitForFunction((h) => window.__landings.includes(h), h, { timeout: ms }).then(() => true).catch(() => false);
+  await p3.setViewportSize({ width: 1200, height: 900 });    // SHORTER: the card shrinks to the new cap (Chrome's anchoring nudges the scroll)
+  out.tall.shorter = { landed: await landedAt(sf3, 900, 10000), sec: await readSec() };
+  await p3.setViewportSize({ width: 1200, height: 1400 });   // TALLER: the card grows to the new cap and the browser clamps the scroll first
+  out.tall.taller = { landed: await landedAt(sf3, 1400, 10000), sec: await readSec() };
   const fr3 = await p3.evaluate(() => { const f = document.getElementById("f-settings").getBoundingClientRect(); return { x: f.left, y: f.top }; });
   const cr3 = await sf3.evaluate(() => { const r = document.querySelector("#rsettings .rs-card").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
   await p3.mouse.move(fr3.x + cr3.x, fr3.y + cr3.y); await p3.mouse.wheel(0, -120); await sf3.waitForTimeout(250);   // a real WHEEL over the card: the user's scroll
