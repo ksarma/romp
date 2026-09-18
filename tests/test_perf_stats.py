@@ -2011,5 +2011,141 @@ class UserAgentKind(unittest.TestCase):
         self.assertEqual(gone, {}, "both clients retired from _clients once their sockets closed")
 
 
+class ServedSnapshotIsPasteSafe(unittest.TestCase):
+    """The served GET /perf snapshot carries no absolute path, no session id (a uuid or a 32-hex token) and no
+    verbatim session text, in any key or string value, so a copy of it can be pasted in public (an issue, a chat)
+    and still read as diagnosis (2026-09-18). Every leak this test plants goes in through a writer the collector
+    takes from the machine or from a client: the JSONL reader's per-path byte table (a transcript under a home
+    directory), the judges' child's done line (an exception message naming that path), the per-session chat timer
+    and the cold-parse table (sids), the http table (a glossary term, a scanner's path with a sid in it, an
+    attached host's name, a home path) and a client's declared app name, on its connect push and on a frame its
+    sender wrote. Keys are the leak vectors, so every dict
+    key must fit an identifier grammar (letters, digits, underscore, dot, dash) except inside the blocks named
+    below: `http` (METHOD /path over the checked-in route list, or `other`) and the four byte tables keyed by
+    function names joined with `:` and `<-`. The walk runs over a fresh collector's snapshot(), the same function
+    the route serves, and the planted reads are removed after."""
+
+    IDENT = re.compile(r"^[A-Za-z0-9_.-]+$")
+    HTTP_KEY = re.compile(r"^(?:GET|HEAD|POST|OPTIONS) /[A-Za-z0-9_./*-]*$|^other$")
+    JOINED_KEY = re.compile(r"^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?(?:<-[A-Za-z0-9_.?-]+)?$")
+    JOINED_KEY_BLOCKS = {("recordCache", "wholeReads"), ("recordCache", "wholeReadsByStage"),
+                         ("asmCheckpoint", "hydratedBy"), ("asmCheckpoint", "hydratedByStage")}
+    UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+    HEX32 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}(?![0-9a-fA-F])")
+    ABS_PATH = re.compile(r"(?:^|[\s\"'=(:,])/(?:[^/\s]+/)+[^/\s]*")   # a slash-rooted path of two or more segments
+
+    def setUp(self):
+        self.st = km._PerfStats()
+        self.em = km.em
+        self.home = os.path.join(tempfile.mkdtemp(), "home", "tester")          # an absolute home path under a temp dir
+        self.addCleanup(shutil.rmtree, os.path.dirname(os.path.dirname(self.home)), True)
+        proj = os.path.join(self.home, ".claude", "projects", "-home-tester-code-notes-api")
+        state = km.jd.STATE
+        self.reads = {os.path.join(proj, SID + ".jsonl"): 4096,                                       # the leaf
+                      os.path.join(proj, SID, "subagents", "agent-%s.jsonl" % SID[:8]): 512,          # a subagent's
+                      str(state / "states" / (SID + ".jsonl")): 256,                                  # its states log
+                      str(state.parent / "timeline" / "messages.jsonl"): 128,                          # the postal log
+                      str(state / "checkpoints" / ("a" * 40 + ".json")): 64,                           # a checkpoint document
+                      os.path.join(self.home, "notes", "scratch.jsonl"): 32}                           # anything else
+        self.term = "Quarterly Roadmap"
+        self.app = "<b>%s</b> %s" % (SID, self.home)
+        self.first = "OSError: [Errno 2] No such file or directory: '%s'" % next(iter(self.reads))
+        self.planted = [SID, SID[:8], self.home, "TESTHOST", self.term, self.first, self.app, "-home-tester-code-notes-api"]
+
+    def _plant(self):
+        self.reads_before = self.em.read_bytes_by_kind()   # the process's other reads (a peer module's, under xdist): deltas below
+        for path, n in self.reads.items():
+            self.em._count_read(path, n)
+        self.addCleanup(self._unplant_reads)
+        st = self.st
+        st.judge_child_done({"op": "done", "seq": 7, "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0,
+                             "failures": {"count": 1, "first": self.first}, "recovered": False,
+                             "recordCache": {"entries": 1}, "asmCheckpoint": {"restored": 1}, "parses": {"misses": 1, "hits": 0},
+                             "goalIo": {"loads": 1}}, pid=4242)
+        st.build_chat(False, 0.100, active=True, sid=SID, nbytes=4096)
+        st.build_chat(True, sid=SID)
+        st.parse(SID, 4096)
+        for method, path in (("GET", "/glossary/" + self.term), ("GET", "/nope/" + SID), ("GET", "/remote/TESTHOST/sessions"),
+                             ("GET", "/remote/TESTHOST/" + SID), ("GET", "/dist/render.js"), ("GET", "/perf"), ("POST", "/send"),
+                             ("GET", self.home), ("HEAD", "/file"), ("OPTIONS", "/perf")):
+            st.http_request(km._perf_http_key(method, path), 0.001)
+        st.http_request(km._perf_http_key("GET", "/ws"), None)
+        st.connect_push("chat", 0.010)
+        st.connect_push(self.app, 0.010)
+        st.client_send("chat", "chrome", 10, 0.001)
+        st.client_send(self.app, "Mozilla/5.0 " + self.home, 10, 0.001)   # the kind arrives classed; a header here reads other
+        st.send(("chat", SID), "full", 10)
+        st.send(("status", SID), "delta", 5)
+        st.cycle(0.050)
+        st.stage("push.chat", 0.010)
+
+    def _unplant_reads(self):
+        with self.em._READ_BYTES_LOCK:
+            for path in self.reads:
+                self.em._READ_BYTES.pop(path, None)
+
+    def _check_text(self, s, where, key):
+        at = "%s %r at %s" % ("key" if key else "value", s, "/".join(str(p) for p in where))
+        for probe in self.planted:
+            if probe in s:
+                self.problems.append("planted text survives: " + at)
+                break
+        if self.UUID.search(s):
+            self.problems.append("a uuid-shaped token: " + at)
+        if self.HEX32.search(s):
+            self.problems.append("a 32-hex token: " + at)
+        if not (key and where == ("http",)) and self.ABS_PATH.search(s):   # a route key is a path by design; its
+            self.problems.append("an absolute path: " + at)                     #  grammar is checked in _check_key
+
+    def _check_key(self, k, where):
+        at = "key %r at %s" % (k, "/".join(str(p) for p in where))
+        if not isinstance(k, str):
+            self.problems.append("a non-string key: " + at)
+            return
+        self._check_text(k, where, key=True)
+        if where == ("http",):
+            if not self.HTTP_KEY.match(k):
+                self.problems.append("outside the http key grammar: " + at)
+        elif where in self.JOINED_KEY_BLOCKS:
+            if not self.JOINED_KEY.match(k):
+                self.problems.append("outside the joined-identifier grammar: " + at)
+        elif not self.IDENT.match(k):
+            self.problems.append("outside the identifier grammar: " + at)
+
+    def _walk(self, node, where=()):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                self._check_key(k, where)
+                self._walk(v, where + (k,))
+        elif isinstance(node, (list, tuple)):
+            for i, v in enumerate(node):
+                self._walk(v, where + (i,))
+        elif isinstance(node, str):
+            self._check_text(node, where, key=False)
+
+    def test_no_key_or_string_in_the_served_snapshot_carries_a_path_an_id_or_planted_text(self):
+        self._plant()
+        snap = self.st.snapshot(ring_all=True)
+        self.assertEqual(set(snap), TOP_KEYS, "the walk covers the whole served shape")
+        self.assertIsNone(snap["stacks"], "the stack sample rides only under its switch; it is not part of this walk")
+        self.problems = []
+        self._walk(snap)
+        self.assertEqual(self.problems, [], "%d leak(s) in the served snapshot:\n  %s" % (len(self.problems), "\n  ".join(self.problems)))
+        # the diagnosis the folds keep: the reads per holder kind, the child's line as a size and a status, the per-session
+        # rows by rank, the sessions parsed as a count, the glossary lookups and the remote route as counts
+        ck = snap["checkpoints"]
+        self.assertEqual({k: v["bytes"] - self.reads_before[k]["bytes"] for k, v in ck["readByKind"].items()},
+                         {"leaf": 4096, "agent": 512, "states": 256, "postal": 128, "checkpoint": 64, "other": 32})
+        self.assertEqual((snap["judge"]["child"]["status"], snap["judge"]["child"]["failures"]), ("failed", 1))
+        self.assertEqual([r["rank"] for r in snap["builds"]["chat"]["bySession"]], [1])
+        self.assertEqual(snap["parses"]["perSession"], {"sessions": 1, "max": 1})
+        h = snap["http"]
+        self.assertEqual(h["GET /glossary/*"]["count"], 1)
+        self.assertEqual(h["GET /remote/*/sessions"]["count"], 1)
+        self.assertEqual(h["other"]["count"], 3, "the scanner's path, the remote path with a sid and the home path: %s" % sorted(h))
+        self.assertEqual(sorted(snap["pusher"]["connectPush"]["byApp"]), ["chat", "other"])
+        self.assertEqual(sorted(snap["pusher"]["clients"]["byApp"]), ["chat", "other"], "the per-client wire table follows the same rule")
+        self.assertEqual(snap["pusher"]["clients"]["byKind"]["other"]["frames"], 1)
+
 if __name__ == "__main__":
     unittest.main()
