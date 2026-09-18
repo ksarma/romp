@@ -724,7 +724,8 @@ class _PerfStats:
                                    and the push container are the pusher's alone and never appear
                                    here); push.chat, push.feed, push.timeline, push.send and
                                    push.feedFirst sum to at most ms_sum, a seam to at most its
-                                   container; cycleJobsMs
+                                   container, over closed pushes (the stages_ms row says how a
+                                   snapshot inside one reads); cycleJobsMs
                                    (2026-09-18) -> {job: ms}, the pusher thread's cumulative wall per
                                    cycle job (CYCLE_JOBS: beginCheckpointCycle, sessionsListing,
                                    applyPendingOps, turnNotify, persistCheckpoints,
@@ -732,7 +733,8 @@ class _PerfStats:
                                    nine listed at zero from the start). A `jobs.<job>` stage the
                                    pusher's owner closes counts here and not in stages_ms, whose
                                    `jobs.<job>` rows are the jobs thread's own; the nine sum to at
-                                   most stages_ms.jobs
+                                   most stages_ms.jobs over closed cycles (the stages_ms row says
+                                   how a snapshot inside one reads)
       stages_ms                    jobs: the pusher's cycle jobs outside _push_all, itemized under
                                    pusher.cycleJobsMs; jobsPass: the jobs thread's pass, and
                                    jobs.<job> one row per job of that thread (PASS_JOBS) plus
@@ -769,8 +771,14 @@ class _PerfStats:
                                    stagesForeign. Before, the push.* rows took every caller's
                                    walls, connect pushes included, so their sum could exceed
                                    `push`; now push.chat, push.feed, push.timeline, push.send,
-                                   push.warm and push.feedFirst sum to at most `push`, and a push.*
-                                   row does not compare across a capture pair spanning the change
+                                   push.warm and push.feedFirst sum to at most `push` over closed
+                                   pushes (a stage closes before its container and snapshot() copies
+                                   the rows at any instant, so a snapshot taken inside a push counts
+                                   that push's closed stages before its `push`; every container
+                                   bound in this docstring reads the same way, the cycle time
+                                   included, which cycle() takes after both containers close), and
+                                   a push.* row does not compare across a capture pair spanning the
+                                   change
       stagesForeign                {stage: ms}, a dotted jobs. stage closed by a thread that owns
                                    neither loop (no cycle_begin on it: a handler thread, a test that
                                    opened no cycle), or a push stage (`push`, push.*) closed under
@@ -1773,7 +1781,7 @@ class _PerfStats:
             pusher["stageRingLen"] = len(sr)                                          #  is up to a few MB of JSON (round one, low 3)
             pusher["stageRingMax"] = self.stage_ring.maxlen if self.stage_ring is not None else _stage_ring_len()
             pusher["cycleJobsMs"] = dict(self.cycle_jobs_ms)   # the pusher's cycle jobs, cumulative wall per job (2026-09-18)
-            foreign = dict(self.stages_foreign)               # `jobs.` stages from a thread owning neither loop
+            foreign = dict(self.stages_foreign)               # a `jobs.` stage from a thread owning neither loop, or a push stage from a thread with neither purpose (2026-09-18)
             jring = sorted(self.jobs_ring)
             jobs = dict(self.jobs)                          # the jobs thread's pass counters, the same shape as the pusher's
             jobs["firstPass"] = dict(self.first_pass) if self.first_pass is not None else None
@@ -1901,7 +1909,7 @@ class _PerfStats:
                 "process": _process_stats(), "heap": _heap_stats(),   # heap: where the resident size sits, now (2026-09-15)
                 "gc": gc_block,                                       # gc: the collector's collections and pauses (2026-09-16)
                 "pusher": pusher, "jobs": jobs, "stages_ms": stages,
-                "stagesForeign": foreign,                            # a `jobs.` stage written by a thread owning neither loop (2026-09-18)
+                "stagesForeign": foreign,                            # a `jobs.` stage written by a thread owning neither loop, or a push stage by a thread with neither purpose (2026-09-18)
                 "builds": builds, "sends": sends, "goals": goals, "memos": memos, "judge": judge, "skillLoadIndex": skill_idx, "http": http,
                 "fileSlice": file_slice,                   # T351: the preview popover's slice cache (hit / miss / bytes / warm)
                 "glossary": glossary_stats,                # T351 stage 2: files parsed, frames / terms / bytes BUILT per cycle, entries cut, files refused

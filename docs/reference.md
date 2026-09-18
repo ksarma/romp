@@ -2645,7 +2645,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   connect pushes ran (`push.warm` and the `push` container are the pusher's
   alone and never appear); `push.chat`, `push.feed`, `push.timeline`,
   `push.send` and `push.feedFirst` add up to at most `ms_sum`, a seam to at
-  most its container. Until that day these walls sat in the `stages_ms`
+  most its container, over closed pushes (a stage closes before `ms_sum`
+  takes the push's wall; the `stages_ms` entry says how a snapshot inside a
+  push reads). Until that day these walls sat in the `stages_ms`
   `push.*` rows beside the pusher's),
   `clients` (what each client's sender thread wrote to its socket,
   2026-09-18): `byApp`, per app the client declared on its socket URL,
@@ -2688,7 +2690,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `bootRowBackstop`, `kernelSample`, `apiHealth`). A `jobs.<job>` stage the
   pusher's thread closes counts here and not in `stages_ms`, whose
   `jobs.<job>` rows are the jobs thread's; the nine sum to at most
-  `stages_ms.jobs`.
+  `stages_ms.jobs` over closed cycles (the `stages_ms` entry says how a
+  snapshot inside one reads).
   The interval is 1.0 s (`PUSH_MIN_INTERVAL_S` in the kernel): a cycle starts
   no sooner than that after the previous one began unless the live tail of a
   chat tab a connected client is watching changed (a Claude Code session's
@@ -3105,8 +3108,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   connecting page gets, on its HTTP handler thread) runs the same stages,
   and its walls are counted under `pusher.connectPush.stagesMs.<stage>`, so
   `push.chat`, `push.feed`, `push.timeline`, `push.send`, `push.warm` and
-  `push.feedFirst` add up to at most `push`. A push stage from a thread that
-  is neither the pusher nor a connect push is counted under `stagesForeign`.
+  `push.feedFirst` add up to at most `push` over closed pushes. A stage
+  closes before its container and a snapshot copies the rows at any
+  instant, so a snapshot taken inside a push counts that push's closed
+  stages before its `push`, and a capture pair can read the children ahead
+  of the container by the one push in flight; every bound in this section
+  that sets rows against their container reads the same way (a seam against
+  its stage, the connect stages against `ms_sum`, the nine cycle jobs
+  against `stages_ms.jobs`, and the `romp perf` shares against the cycle
+  time, which `cycle_ms_sum` takes after both containers close). A push
+  stage from a thread that is neither the pusher nor a connect push is
+  counted under `stagesForeign`.
   Two discontinuities, both on 2026-09-18, for anyone comparing a capture
   from before that day with one from after it. The nine cycle jobs the
   pusher runs (`beginCheckpointCycle`, `sessionsListing`, `applyPendingOps`,
