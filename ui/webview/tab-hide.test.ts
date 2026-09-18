@@ -392,8 +392,16 @@ test("executed: the phone layout sections like the desktop with every section op
 });
 
 test("docs and the sheet: the guide's paragraph, the reference's section, the sheet's rules (tokens only, the one sub-line size), and no em dash in the new text", () => {
-  const para = GUIDE.slice(GUIDE.indexOf("**Hiding a session inside its group.**"), GUIDE.indexOf("### The feed"));
-  assert.ok(para.length > 200, "the paragraph is in the tab-groups part of the guide");
+  // ONE PARAGRAPH (2026-09-18, the fix PR 773 made to tab-snapshot-menu.test.ts's slices): the slice ends at the NEXT paragraph's bold
+  // opener, never at the section's heading. It had run to the feed heading, 9,263 chars over six paragraphs (the bold-opened Hiding a
+  // session inside its group, Coming back after a dropped connection, On a small screen and Several sessions at once, plus the reconnect
+  // figure and the hot-key paragraph), five of them never this feature's, and the floor alone let that pass: an em dash written into one
+  // of those five would have turned this test red naming the Hiding paragraph. The ceiling sits under the slice plus the paragraph after
+  // it (5,188 + 1,076 chars), so a slice that widens by a paragraph fails here
+  const guidePara = (from: string, to: string) => { const a = GUIDE.indexOf(from), b = GUIDE.indexOf(to, a + 1); assert.ok(a >= 0 && b > a, `the guide's markers moved: ${from} .. ${to}`); return GUIDE.slice(a, b); };
+  const para = guidePara("**Hiding a session inside its group.**", "**Coming back after a dropped connection.**");
+  assert.ok(para.length > 200 && para.length < 6000, `the guide's Hiding paragraph, whole and alone: ${para.length} chars against a ceiling of 6000`);
+  assert.ok(!para.trimEnd().includes("\n\n"), `the guide's Hiding slice holds a paragraph break: it runs past its paragraph (${para.length} chars)`);
   const flat = para.replace(/\s+/g, " ");   // the pins read the words, not the wrap
   assert.match(flat, /Each row in this view has a \*\*Hide\*\* button, or \*\*Show\*\* once the session is hidden\./, "round 1: the first sentence had claimed a Hide on every row");
   assert.match(flat, /moves its row under a \*\*Hidden \(N\)\*\* fold at the foot of the view, one click away; the row's \*\*Show\*\* button puts the tab back at once\./);
@@ -421,7 +429,8 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   assert.match(flat, /the hide wins, and the setting resumes when you show it again\./);
   assert.match(flat, /keeps the setting when its group is renamed, and shows again wherever it lands when it leaves the group\./);
   assert.match(GUIDE.replace(/\s+/g, " "), /click one to open that session, which also opens its section if the section is folded \(with several tags, the first folded group of them that does not hide it; a section that hides the session stays as it was; see the next paragraph\)\./, "the older sentence about a pick opening the section is exact for hidden members now (round 1) and for several tags (round 5)");
-  assert.ok(!para.includes("—"), "no em dash in the new guide text");
+  // the scan covers the narrowed slice: the Hiding paragraph, the guide text this feature owns, and no other paragraph's
+  assert.ok(!para.includes("\u2014"), "no em dash in the new guide text, the Hiding paragraph");
   assert.ok(!/fleet/i.test(para));
   const ref = REF.slice(REF.indexOf("### The tab strip's per-browser choices"), REF.indexOf("### Model and effort, from the statusline or a typed command")).replace(/\s+/g, " ");
   assert.match(ref, /`romp:tabgroups`, not on the kernel/);
