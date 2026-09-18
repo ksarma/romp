@@ -3,7 +3,7 @@ title: Jobs stage 1: the wake-only nudge look records and skips on the ten-file 
 status: candidate
 where: kernel/kernel.py (`_nudge_look_gated`, `_nudge_look_check`, `_nudge_look_done`, `_nudge_look_mode`, `_tick_miss_named`, `_wake_goal`, the goal walk in `_auto_nudge_session`, `_NUDGE_FILE_KEYED_ROADS`, `_NUDGE_WALK_STATS`); docs/reference.md; tests in `tests/test_nudge_walk_gate.py`, `tests/test_nudge_walk_parse_gate.py`
 added: 2026-09-18
-pr:
+pr: 784
 tier: fix
 offered:
 closed:
