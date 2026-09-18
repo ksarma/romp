@@ -3058,7 +3058,8 @@ CLIENT_DIAG_KEYS = {
     "outline": frozenset(("buildId", "slot", "rev")),
     "waiting": frozenset(("buildId",)),
     "kernel": frozenset(("app", "kind", "reconnect", "iid", "cid", "host", "sid", "type", "span", "events", "bytes", "head", "missing",
-                         "refused", "reason", "sent", "frames", "ageS")),
+                         "refused", "reason", "sent", "frames", "ageS",
+                         "frame", "withheld", "proto")),                                                   # implicitHandshake (_implicit_handshake)
 }
 _client_diag_said = set()      # (surface, key) pairs already said on stderr; one line each per kernel, CLIENT_DIAG_SAID_MAX of them
 _CLIENT_DIAG_SAID_FULL = (None, None)   # the latch's own entry once it is full: the one line past the bound
@@ -52893,9 +52894,15 @@ def _note_history_reply(client, sid, mtype, reply, nbytes, now=None, sent=True):
 
 def _note_chat_withheld_at_close(client, now=None):
     """One client-diag row for a socket that CLOSED without its handshake after chat frames were withheld from it: the permanent
-    case (an older shim's redial with no proto term, a page whose ready never came), told apart from the routine pre-ready race
-    (a pusher cycle between the accept and the bundle's ready, whose handshake then arrives and whose frames follow), which used
-    to file the same row (the tidy after PR 1642, low 1). Returns whether a row was filed."""
+    case, told apart from the routine pre-ready race (a pusher cycle between the accept and the bundle's ready, whose handshake
+    then arrives and whose frames follow), which used to file the same row (the tidy after PR 1642, low 1). The permanent case is
+    any chat socket whose wire was never declared while frames were withheld: one that sent nothing for its whole life (a page
+    whose ready never came and that asked for nothing), and one the vintage rule declines (a namespaced-iid relay, an ext pipe)
+    that sent frames and never a ready, which the rule leaves withheld; a chat socket the rule takes is taken at its first frame
+    instead (_implicit_handshake, 2026-09-18) and files no row here: an older hub's relay, an upstream pane shim's redial between
+    8610b8954 and 42ab10dd1 at the row it flushes, and an upstream pane shim of cd1625792 or later at the frame its open flushes
+    ahead of the ready it re-posts (no upstream shim announces caps, so the readyGate decline reaches none of them). Returns
+    whether a row was filed."""
     if client.get("handshake") is not False or not client.get("withheld"):
         return False
     try:
@@ -52906,6 +52913,120 @@ def _note_chat_withheld_at_close(client, now=None):
         return True
     except Exception:
         return False
+
+
+
+def _ws_op_word(t):
+    """The word a kernel-written record quotes for a client frame's type: the type when it is a str in WS_OPS, else "other"
+    (a type the kernel does not know, a missing type, a type that is not a string). Never the type itself, whatever it holds."""
+    return t if isinstance(t, str) and t in WS_OPS else "other"
+
+
+def _implicit_handshake(client, msg):
+    """The FIRST client frame from a chat socket of OLDER VINTAGE that has declared no chat wire stands as its handshake, on
+    the index wire (proto 1), and lifts the chat withhold (_send_chat_locked's gate). The event this keys on is that frame
+    itself; no clock is read. Two producers dial a chat socket that neither posts `ready` nor carries a `proto` term and
+    then ask this kernel for things: a hub page older than the federation's remote ready (b84f716a8 for a proto-2 page,
+    f7a80efee for every page) relaying to a newer kernel, whose federation sent the page's ready to the local socket alone;
+    and an upstream pane shim between 8610b8954 and 42ab10dd1 redialing after this kernel restarted: its dial carries
+    reconnect=1 (8610b8954's term) with no proto term (42ab10dd1's) and no caps term, and its open re-posts no ready: no
+    upstream build in that range does. The onopen at 8610b8954, be11455cd and 7390404be flushes its queue and posts nothing
+    (`readyQueued` there gates the dial term, it is not a re-send), and `ws.send(readyMsg)` first appears at cd1625792,
+    after the range. The LINE tells the two shims apart, not their age: a fork pane shim carrying a3a9e7385's re-send
+    (2026-09-03) announces the readyGate hold and then
+    re-posts a bare ready in its redial's onopen right after its queue flush, so it declares proto 1 itself one frame
+    later; it is declined below for that readyGate and served at that ready (review round 3). fd95b435a, the fork merge
+    in the bug report, is an instance of the fork case, and by wall clock it is NEWER than 7390404be (2026-09-11 against
+    2026-09-10): a reader debugging a declined shim reads its line, never its date. Until
+    2026-09-18 the gate withheld every chat frame from the two producers: strips and statuses flowed and every session
+    body was withheld, so an older dashboard attached to a newer kernel listed the remote's tabs with nothing behind them
+    (two relay sockets, 965 and 644 chat frames withheld, on the record). Both spoke the index wire before the gate
+    existed, and that is the wire they degrade to.
+    The rule reads the CLIENT'S VINTAGE, never the frame's kind (review round 1, 2026-09-18). The first cut took the first
+    decodable frame of any unhandshaken socket, and a CURRENT page's relay sent a held setting or bookkeeping frame ahead of
+    its ready on a fresh open (federation.ts flushed its pending frames before it posted the ready), so a proto-2 page's
+    relay was pinned to proto 1 for that window and a pusher cycle landing in it served an index session frame and a turn-0
+    build: the race b0fabb0a7 closed, reopened for remote sessions. Taken only for a socket that is all of:
+      a chat socket (app chat: every chat send site is chat-filtered, so a feed, Outline or timeline relay carries no chat
+        wire to declare and is neither stamped nor logged about);
+      announced no READY_GATE_CAP hold (read from `caps`, never from the effective `ready` flag) and ready from accept
+        (`ready` True): a socket held under the cap is a kernel-served pane whose bundle has not said ready, whose shim
+        flushes queued clientDiag rows at its open before that ready, the very race the gate closed; and a pane that
+        announced the cap and dialled reconnect=1 is ready from accept all the same (the accept's reconnect branch) while
+        its shim re-posts a bare ready right behind the rows it flushes (the fork's shims carrying a3a9e7385's re-send,
+        fd95b435a among them), so its flushed row must not stand in for the ready one frame behind it
+        (review round 3, 2026-09-18: the rule read `ready` alone and took that row, said the socket declared no wire, filed
+        a row for it, and a pusher cycle landing before the ready served one whole frame twice). Neither producer above
+        announces caps at all, so the check costs them nothing;
+      not the VS Code extension host's pipe (client["ext"], stamped at accept from the client=ext dial term _dial_kind
+        reads: every ext pipe forwards its webview's own ready, and on a reconnect it first replays the intents the user
+        typed or picked while it was down, which would otherwise pin the pipe to proto 1 until that ready);
+      of older vintage: its dial carries no NAMESPACED instance id (a colon-joined `iid`, which only a current hub's relay
+        sends: 8fe70da07 namespaces the page's iid by the hub's wid, and every hub of that vintage also posts its ready on
+        the relay, f7a80efee being older; the older hub's relay states app and wid alone, and the older shim's redial
+        carries a bare uuid iid). Neither `delta` nor `reconnect` is read: the older shim's redial carries delta=1 like a
+        current relay, and `reconnect` is popped by the first pusher cycle, which the redial's accept-time wake makes
+        precede its first frame.
+    Not taken besides: a `ready` (the arm declares the wire itself); a socket already handshaken (a redial's proto term, a
+    ready seen); an undecodable frame (msg None) or a decodable frame that is not an object. A socket that sends nothing
+    keeps the gate's behaviour: no chat frame, the chatWithheld row at its close. A real `ready` after this re-declares the
+    wire, resets the base as it always did and pops `implicitHandshake` from the record. Wakes the pusher: a frame that
+    wakes nothing itself (a settings post) would otherwise wait for the backstop cycle. Said once on stderr per socket,
+    with the frame that stood in and the frames withheld before it, and filed as one kernel-surface client-diag row (what
+    implicitHandshake: app, kind, frame, withheld, proto 1) beside the socket's wsopen row, in a try, so a file failure
+    never touches the socket. The frame is quoted on all three (the record, the line, the row) as a WORD from WS_OPS, the
+    kernel's own vocabulary of the ops _dispatch_ws and _drive accept, or as `other` for any type outside it (a string the
+    kernel does not know, a missing type, a type that is not a string), never as the type itself: a first frame's type is
+    client text, and str() of it let free text, a sid-shaped string or a dict's content into client-diag.jsonl and the
+    kernel log (review round 2, 2026-09-18). Returns whether the mark lifted here.
+    With federation.ts posting its ready before its flush (the same change), a current page's frame ahead of its ready can
+    no longer pin its socket under any kernel, and a current relay that opens before its page's proto is known sends no
+    ready at the open, is declined here by its namespaced iid, and is served when its ready comes, as before. Three
+    vintages are still taken and repair themselves at their ready, two intermediate (review round 2) and upstream's
+    current pane shim (the closing check, 2026-09-18): a hub whose federation is
+    between b84f716a8 (2026-09-11, the ready posted on the relay, behind its flush) and 8fe70da07 (2026-09-15, the
+    namespaced iid) dials app and wid alone and flushes a frame parked while the relay was down or connecting (a setting,
+    its active tab, an ask) before its ready, so that frame is taken here and a pusher cycle before the ready serves one
+    index session frame; and a VS Code extension host built between a6c57f42a (2026-09-11, the uuid wire) and f19808d19
+    (2026-09-15, the client=ext term) dials with no term to stand it down, so an intent it replays on a reconnect is taken
+    and the pipe is served the index wire until its webview's ready. An upstream pane shim of cd1625792 (2026-09-11) or
+    later is taken the same way and repairs the same way: from that commit its open re-posts the bundle's ready when no
+    caps frame ever answered it, and that re-post comes after the queue flush, so a frame the flush carries is taken here
+    and the re-posted ready (`{type:"ready",proto:2}` for a chat page) re-declares the wire one frame later. Such a dial
+    carries no reconnect term (the term needs `readyAcked`, the re-post needs `!readyAcked`), so it is not the silent
+    shape and no build at or after 42ab10dd1 can make that shape. The kernel cannot tell any of the three dials from the
+    older producers this exists for (app and wid alone, no header, no namespaced iid, no caps); each window ends at the
+    ready, which re-declares the wire, resets the base and pops the mark, and the implicitHandshake row is the record of
+    the window. No upstream shim announces caps at any vintage (`&caps=` appears nowhere in upstream/main's kernel.py
+    history), so the readyGate decline is the fork's alone: the fork's current shim carries the same re-post and is
+    declined for its `caps=readyGate` term, and an upstream shim of the same vintage is taken and repairs at its
+    re-posted ready."""
+    if not isinstance(msg, dict) or msg.get("type") == "ready":
+        return False
+    if client.get("app") != "chat":
+        return False
+    if client.get("handshake") is not False or not client.get("ready", True):
+        return False
+    if READY_GATE_CAP in (client.get("caps") or ()):
+        return False   # a kernel-served pane: its shim posts the ready itself, one frame behind the rows a redial flushes (round 3)
+    if client.get("ext") or ":" in str(client.get("iid") or ""):
+        return False
+    client["proto"] = 1
+    client["handshake"] = True
+    client["implicitHandshake"] = _ws_op_word(msg.get("type"))   # the frame that stood in, as a word from WS_OPS or `other`, never the client's text
+    withheld = int(client.get("withheld") or 0)
+    sys.stderr.write("ws: a %s socket (app %s) declared no chat wire; its first frame (%s) stands as a proto-1 handshake, "
+                     "%d chat frame(s) withheld before it\n"
+                     % (client.get("kind") or "page", client.get("app"), client["implicitHandshake"], withheld))
+    try:
+        _client_diag_append(jd.STATE / "client-diag.jsonl", json.dumps({"t": int(time.time()), "wid": str(client.get("wid") or ""), "surface": "kernel",
+                                                                         "what": "implicitHandshake",
+                                                                         "data": {"app": client.get("app"), "kind": client.get("kind"), "frame": client["implicitHandshake"],
+                                                                                  "withheld": withheld, "proto": 1}}) + "\n")
+    except Exception:
+        pass   # the durable record is a courtesy to the reader of the file; the socket's service never waits on it
+    _pusher_wake.set()
+    return True
 
 
 def _drop_dead_ws_client(client, why):
@@ -55626,6 +55747,15 @@ def _send_chat_locked(c, m, ms, change_from, led_changed):
         c["withheld"] = int(c.get("withheld") or 0) + 1   # counted, not filed: a pusher cycle between the accept and the bundle's ready is the ROUTINE
         return ms                                     # case, and a row for it read the same as the permanent one; the socket's close files the row
     #                                                    when the handshake never came (_note_chat_withheld_at_close; the tidy after PR 1642, low 1).
+    #                                                    A chat socket of OLDER VINTAGE (no readyGate announced, ready from accept, no namespaced iid,
+    #                                                    not an ext pipe) that declares no wire but sends any other frame is taken at that frame as a
+    #                                                    proto-1 client (_implicit_handshake, 2026-09-18): an older hub's relay and an upstream shim's
+    #                                                    redial between 8610b8954 and 42ab10dd1 (reconnect=1, no proto, no caps, no ready re-posted)
+    #                                                    got no chat frame for the socket's life, the remote's tabs listed with nothing behind them.
+    #                                                    A fork shim carrying a3a9e7385's re-send announces readyGate and re-posts a bare ready behind
+    #                                                    its flush, so it is declined for that readyGate and served at its own ready: the LINE tells
+    #                                                    the shims apart, not their age (fd95b435a is the fork case, and newer than 7390404be). A
+    #                                                    current page's relay (a namespaced iid) is never taken: its frames wait for its ready, as here.
     #                                                                                       # (T386 stage 2, round eleven). It used to get index frames, and a proto-2 page whose ready lost the
     #                                                    race to this push (the pusher fires from the socket's open; the bundle evaluates later) held an
     #                                                    index frame at its reload restore and took the older wire for a landing the window wire owns.
@@ -74164,6 +74294,7 @@ class Handler(BaseHTTPRequestHandler):
         try/except (see _ws) so a bug in one handler logs and the NEXT message still processes, instead of
         the exception escaping the recv loop and tearing the socket down — which made a reconnect blank the
         chat (the _session_list TypeError, the user 2026-06-22). A genuine socket error still propagates."""
+        _implicit_handshake(client, msg)   # a socket that declared no chat wire: its first frame stands as a proto-1 handshake (the gate in _send_chat_locked)
         if _drive(msg, client):   # per-session drive ops (send/interrupt/ask/model/…) → the owning backend
             return
         if msg and msg.get("type") == "activeTab":
@@ -74348,6 +74479,7 @@ class Handler(BaseHTTPRequestHandler):
         if msg and msg.get("type") == "ready":
             client["proto"] = 2 if msg.get("proto") == 2 else 1   # the chat wire it speaks (T323 stage 4b): 2 = uuid frames; absent = index frames
             client["handshake"] = True                            # …and the socket may be served chat frames from here (round eleven)
+            client.pop("implicitHandshake", None)                 # a real ready re-declares the wire an older-vintage socket's first frame stood in for (_implicit_handshake)
             # `ready` = the render bundle JUST evaluated, so this renderer holds NOTHING — but this
             # socket may already have been served: the pusher fires from the moment the WS opens
             # (the inline shim dials during HTML parse), while the 1.4MB bundle can still be
@@ -75517,6 +75649,9 @@ class Handler(BaseHTTPRequestHandler):
         # would block this handler forever (caught by tests/test_kernel.py's socket-error loop test)
         client, sendq, lock = _new_ws_client(app, wid, self.connection, lock=lock, ua=self.headers.get("User-Agent"))
         client["kind"] = _dial_kind(self.headers, q)   # page or relay: the one tell the wsopen row reads (and a planned connect-push split)
+        if (q.get("client") or [""])[0] == "ext":
+            client["ext"] = True                       # the VS Code extension host's pipe, by its own term (_dial_kind reads it too): every ext pipe
+            #                                            posts its webview's ready, so _implicit_handshake stands down for it (2026-09-18)
         client["caps"] = set(x for x in caps.split(",") if x)
         # Held until its bundle says `ready` when the page announced it will (READY_GATE_CAP — every kernel-
         # served pane does); ready from accept otherwise (a relay, a pipe, an older page: nothing to wait for).
@@ -76631,6 +76766,45 @@ def main():
     except KeyboardInterrupt:
         sys.stderr.write("\nromp-kernel: stopped\n")
 
+
+
+# WS_OPS sits at the END of the module on purpose: several tests read this file as text and take the FIRST
+# occurrence of a dispatch literal (tests/test_kernel_create_session_ack.py splits on "createSession"), so a table of
+# every op name placed above the dispatch would satisfy their anchor instead of the handler. _implicit_handshake and
+# _ws_op_word read the name at call time, so the position is free.
+# Every op _dispatch_ws and _drive accept from a client frame, by name: the kernel's own vocabulary of the wire, and the ONE
+# set a kernel-written record may quote a client frame's type from (_ws_op_word). A frame's type is client text until it
+# matches a name here: the implicitHandshake record, its stderr line and its client-diag row read the word or `other`, never
+# the type itself (review round 2 of the implicit handshake, 2026-09-18: str() of the type let a socket's first frame put free
+# text, a sid-shaped string or a dict's content into client-diag.jsonl and the kernel log). The dispatch has no table to read
+# this from (each arm tests its own literal), so the set is written out here and tests/test_chat_window_spans.py pins it equal
+# to every name the source of _dispatch_ws and _drive compares a frame's type against, read by AST, not by regex (review round
+# 3: each ast.Compare with msg's type, or a local bound to it, on one side and == or `in` between; a str, a tuple of str, a
+# tuple bound in the function such as _drive's ID_OPS or a module tuple such as _TARGET_NAME_OPS on the other; a comparator
+# the walk cannot resolve fails the pin loudly), so an arm added without its name here fails that pin in any spelling (no
+# spaces around ==, membership in a named tuple), and until then its op reads as `other` in the row.
+WS_OPS = frozenset((
+    "activeTab", "addCustomAsk", "answerAsk", "apiRetry", "askClear", "askClearMany", "askFollowUp", "askText",
+    "browseDir", "cancelAsk", "cancelCreate", "cancelQueued", "cancelWatch", "cardNotify", "cardOpened", "clearAll",
+    "clientDiag", "closeSession", "closeSubagent", "closeTab", "commentCreate", "commentDelete", "commentMerge",
+    "commentPromote", "commentReply", "commentResolve", "commentSeen", "compact", "compactSession", "createSession",
+    "deepLink", "dirComplete", "dismissEcho", "dismissLane", "dotHover", "dotOpen", "dropFile", "editTag",
+    "endSession", "expand", "fileComments", "fileCommentsSend", "fileGitLink", "forkSession", "hoverHighlight",
+    "imgRequest", "interrupt", "ledgerHover", "listDir", "loadAround", "loadEpisode", "loadNewer", "loadOlder",
+    "loadTurns", "locateDiag", "loginCancel", "loginCode", "loginRemove", "loginStart", "mcpAction", "moveSession",
+    "needFull", "needFullFeed", "needSlot", "nodeOverride", "noticeAction", "openByName", "openFile", "openFolder",
+    "openSession", "openSubagent", "openTagsDialog", "orderAudit", "pickFile", "pickResult", "quarantineDecision",
+    "ready", "redial", "redistill", "renameSession", "reorderTabs", "requestSessions", "reviveSession",
+    "rewindDelete", "rewindFiles", "rewindSend", "saveFile", "sendCommand", "sendMessage", "setAuth", "setAutoNudge",
+    "setColormap", "setCommentEffort", "setCommentFast", "setCommentModel", "setCompactSuggest", "setConserve",
+    "setDefaultDir", "setDistillEffort", "setDistillFast", "setDistillModel", "setEffort", "setFast",
+    "setFileEditing", "setGlobalRetryPaused", "setIndexEffort", "setIndexFast", "setIndexModel",
+    "setJudgeConcurrency", "setJudgeEffort", "setJudgeFast", "setJudgeModel", "setMode", "setModel", "setPalette",
+    "setSessionColor", "setSessionEmoji", "setSessionFlag", "setTaskTracking", "setThinkingSummaries",
+    "setTimelineViews", "setUpdateMode", "setUserTodos", "setWholeChatFrames", "showAskPath", "showOnTimeline",
+    "stopTask", "submitAsk", "tagEdit", "timelineHover", "toggleAsk", "undoClear", "unpinNote", "userTodoAnswer",
+    "userTodoDismiss", "viewReadOnly", "writeOrder",
+))
 
 if __name__ == "__main__":
     main()

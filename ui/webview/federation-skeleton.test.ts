@@ -18,7 +18,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { FederationManager, prefixInbound, routeOutbound, BOOKKEEPING } from "./federation";
+import { FederationManager, prefixInbound, routeOutbound, BOOKKEEPING, REMOTE_REDIAL_MS } from "./federation";
 
 const U = "11111111-2222-3333-4444-555555555555";
 const V = "99999999-8888-7777-6666-555555555555";
@@ -41,8 +41,8 @@ class FakeWS {
 }
 
 let clock = 1_000_000_000;
-function withManager(fn: (fm: any, emitted: any[], localSent: any[]) => void): void {
-  const emitted: any[] = [], localSent: any[] = [];
+function withManager(fn: (fm: any, emitted: any[], localSent: any[], diags: any[]) => void): void {
+  const emitted: any[] = [], localSent: any[] = [], diags: any[] = [];   // diags: the clientDiag rows the manager files on the local socket
   const store = new Map<string, string>();
   const g: any = globalThis;
   const saved: Record<string, any> = {};
@@ -56,12 +56,12 @@ function withManager(fn: (fm: any, emitted: any[], localSent: any[]) => void): v
   set("localStorage", { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
   set("window", {
     dispatchEvent: (ev: any) => { if (ev && ev.data) emitted.push(ev.data); },
-    __rompLocalSend: (m: any) => { if (m && m.type !== "clientDiag") localSent.push(m); },
+    __rompLocalSend: (m: any) => { if (!m) return; if (m.type === "clientDiag") diags.push(m); else localSent.push(m); },
     sessionStorage: { getItem: () => "" },
     parent: { postMessage: () => {} },
   });
   try {
-    fn(new FederationManager(), emitted, localSent);
+    fn(new FederationManager(), emitted, localSent, diags);
   } finally {
     Date.now = realNow;
     for (const [k, r] of Object.entries(saved)) { if (r.had) g[k] = r.v; else delete g[k]; }
@@ -229,7 +229,11 @@ test("the manager's outbound puts needFull(+why) on the owning kernel's wire —
 });
 
 // ── the page's chat protocol reaches every remote kernel (T323 stage 4b, round 2 item 16) ──────────────
-test("the page's ready (proto 2) goes to every OPEN remote socket at once, and to a later socket on its open, after the flush", () => {
+test("the page's ready (proto 2) goes to every OPEN remote socket at once, and to a later socket on its open, BEFORE the flush", () => {
+  // Before 2026-09-18 the ready was the LAST frame of the open, behind the pending flush, so a kernel reading the
+  // socket's first frame as its handshake (kernel.py _implicit_handshake, first cut) pinned a proto-2 page's relay
+  // to proto 1 at the flushed setting and served it an index session frame until the ready re-declared the wire.
+  // The ready now leads: the page's own closure, whatever the kernel's vintage; the flushed setting follows it.
   withManager((fm, _e, localSent) => {
     const a = attach(fm, "gpu1");
     fm.outbound({ type: "ready", proto: 2 });
@@ -238,13 +242,133 @@ test("the page's ready (proto 2) goes to every OPEN remote socket at once, and t
     fm.openRemote("gpu2", true);
     const b = FakeWS.made[FakeWS.made.length - 1];
     assert.deepEqual(b.sent, [], "nothing rides a socket that has not opened");
-    fm.outbound({ type: "setting", key: "k", value: 1, host: "gpu2" });   // parked for the socket: the flush sends it first
+    fm.outbound({ type: "setDistillModel", model: "m2" });   // a kernel setting (KERNEL_SETTING): parked for the CONNECTING socket, the flush sends it on the open
+    assert.deepEqual(b.sent, [], "still nothing before the open: the setting is held on the conn");
     b.open();
     const kinds = b.sent.map((m: any) => m.type);
-    assert.equal(kinds[kinds.length - 1], "ready", "the ready is the last frame of the open: after whatever the flush sent");
-    assert.deepEqual(b.sent[b.sent.length - 1], { type: "ready", proto: 2 });
+    assert.deepEqual(kinds, ["ready", "setDistillModel"], "the ready is the FIRST frame of the open, before what the flush sends");
+    assert.deepEqual(b.sent[0], { type: "ready", proto: 2 });
     assert.equal(b.sent.filter((m: any) => m.type === "ready").length, 1, "once per open");
     fm.conns.get("gpu1").closed = true; fm.conns.get("gpu2").closed = true;
+  });
+});
+
+// ── a held needFull behind the ready (review round 2 of the ready-first open, 2026-09-18) ────────────────────
+// The remote's ready arm answers the ready with a connect push. On a dial with no skeleton term that push serves every
+// session whole, so a needFull flushed behind the ready would reset that session's base at the remote and serve the
+// same frame again (one tail frame per held ask): every held ask is dropped. On a skeleton dial the push serves the
+// dial's active tab alone, so only that tab's ask is moot; a held ask for any other tab (a click or the idle prefetch
+// while the socket was down) is that tab's only load and stays, and so does every ask when the dial names no active.
+const hostconn = (diags: any[], ev: string) => diags.filter((d) => d.surface === "federation" && d.what === "hostconn" && d.data && d.data.ev === ev).pop();
+
+test("a held needFull is dropped behind the ready on a dial with NO skeleton term: the connect push serves every session whole, and the flushed ask would serve the same frame again", () => {
+  withManager((fm, _e, _l, diags) => {
+    fm.outbound({ type: "ready", proto: 2 });
+    fm.openRemote("gpu2", true);
+    const b = FakeWS.made[FakeWS.made.length - 1];
+    assert.doesNotMatch(b.url, /skeleton=|active=/, "this page states no dial terms: the bare dial, served whole at its ready");
+    fm.outbound({ type: "needFull", id: "gpu2:" + U, why: "gap" });          // asked while the socket was CONNECTING: held on the conn
+    fm.outbound({ type: "needFull", id: "gpu2:" + V, why: "prefetch" });
+    fm.outbound({ type: "setDistillModel", model: "m2" });                     // a setting: held, flushed as before
+    fm.outbound({ type: "activeTab", id: "gpu2:" + U });                       // other bookkeeping: held, flushed as before
+    assert.deepEqual(b.sent, [], "nothing rides a socket that has not opened");
+    b.open();
+    assert.deepEqual(b.sent.map((m: any) => m.type), ["ready", "setDistillModel", "activeTab"], "the ready leads, the setting and the active tab flush, neither ask does");
+    assert.equal(fm.conns.get("gpu2").pending.size, 0, "the asks are dropped, not kept for a later open");
+    assert.deepEqual(hostconn(diags, "open").data, { host: "gpu2", ev: "open", flushed: ["setDistillModel", "activeTab"] });
+    assert.deepEqual(hostconn(diags, "moot").data, { host: "gpu2", ev: "moot", pendingDropped: ["needFull", "needFull"] }, "the drop is journaled by type beside the open row");
+    fm.conns.get("gpu2").closed = true;
+  });
+});
+
+test("on a SKELETON dial only the held needFull for the dial's active tab is dropped behind the ready: the connect push serves that tab alone, and a held ask for any other tab is that tab's only load", () => {
+  withManager((fm, _e, _l, diags) => {
+    (globalThis as any).window.__rompDialTerms = () => ({ skeleton: 1, active: "gpu2:" + U, iid: "PAGEIID-0001", delta: 1 });   // the shim's terms: a skeleton posture watching gpu2's U
+    fm.outbound({ type: "ready", proto: 2 });
+    fm.openRemote("gpu2", true);
+    const b = FakeWS.made[FakeWS.made.length - 1];
+    const q = new URLSearchParams(b.url.split("?")[1] || "");
+    assert.equal(q.get("skeleton"), "1"); assert.equal(q.get("active"), U, "the dial names the watched tab, bare");
+    fm.outbound({ type: "needFull", id: "gpu2:" + U, why: "gap" });             // the active tab: the ready's connect push serves it whole
+    fm.outbound({ type: "needFull", id: "gpu2:" + V, why: "skeleton-click" });  // a clicked skeleton tab: nothing but this ask loads it
+    b.open();
+    assert.deepEqual(b.sent, [{ type: "ready", proto: 2 }, { type: "needFull", id: V, why: "skeleton-click" }], "the active tab's ask is dropped, the other tab's flushes behind the ready");
+    assert.deepEqual(hostconn(diags, "open").data, { host: "gpu2", ev: "open", flushed: ["needFull"] });
+    assert.deepEqual(hostconn(diags, "moot").data, { host: "gpu2", ev: "moot", pendingDropped: ["needFull"] });
+    fm.conns.get("gpu2").closed = true;
+  });
+});
+
+test("a skeleton dial that names no active tab keeps every held needFull (the remote skeletons every tab), and an open that posts no ready drops nothing", () => {
+  withManager((fm, _e, _l, diags) => {
+    (globalThis as any).window.__rompDialTerms = () => ({ skeleton: 1, active: "", iid: "PAGEIID-0001", delta: 1 });
+    fm.outbound({ type: "ready", proto: 2 });
+    fm.openRemote("gpu2", true);
+    const b = FakeWS.made[FakeWS.made.length - 1];
+    assert.match(b.url, /skeleton=1/); assert.doesNotMatch(b.url, /active=/);
+    fm.outbound({ type: "needFull", id: "gpu2:" + U, why: "gap" });
+    b.open();
+    assert.deepEqual(b.sent, [{ type: "ready", proto: 2 }, { type: "needFull", id: U, why: "gap" }], "kept: no tab is served whole at this ready");
+    assert.equal(hostconn(diags, "moot"), undefined, "nothing dropped, nothing journaled");
+    fm.conns.get("gpu2").closed = true;
+  });
+  withManager((fm, _e, _l, diags) => {
+    fm.openRemote("gpu2", true);                                  // the page has not said ready: no proto to post, the ask flushes as before
+    const b = FakeWS.made[FakeWS.made.length - 1];
+    fm.outbound({ type: "needFull", id: "gpu2:" + U, why: "gap" });
+    b.open();
+    assert.deepEqual(b.sent, [{ type: "needFull", id: U, why: "gap" }], "no ready went out, so nothing is moot");
+    assert.equal(hostconn(diags, "moot"), undefined);
+    fm.conns.get("gpu2").closed = true;
+  });
+});
+
+// ── a REDIAL posts no ready and drops nothing (review round 3 of the ready-first open, 2026-09-18) ────────────
+// The moot drop is keyed on the ready THIS open posted. A redial's reconnect=1&proto term is its handshake, it posts no
+// ready, and the remote's accept re-arms the skeleton set for it, so nothing on that open serves a session whole and a
+// held ask is that session's only load. Before this cell no test pinned the redial half of the guard: with the redial
+// condition removed from the moot line in federation.ts onopen, a clicked skeleton tab's only load was dropped on the
+// redial open and a moot row filed, and every webview test stayed green.
+test("a REDIAL (reconnect=1&proto) posts no ready and keeps every held needFull: the ask rides the redial open and no moot row is filed", () => {
+  withManager((fm, _e, _l, diags) => {
+    fm.outbound({ type: "ready", proto: 2 });
+    const a = attach(fm, "gpu2");
+    assert.deepEqual(a.sent, [{ type: "ready", proto: 2 }], "the first dial posts the page's ready");
+    a.frame({ type: "caps" });                                                   // the remote's ready arm acked it: readyAcked latches
+    a.readyState = 3;                                                            // the socket dies under the page with no onclose timer
+    fm.outbound({ type: "needFull", id: "gpu2:" + U, why: "skeleton-click" });   // a skeleton tab clicked while the socket was down: its only load
+    assert.equal(fm.conns.get("gpu2").pending.size, 1, "held on the conn for the next open");
+    clock += REMOTE_REDIAL_MS + 1000;
+    fm.watchdog(clock);
+    assert.equal(FakeWS.made.length, 2, "the watchdog dialed the redial");
+    const b = FakeWS.made[1];
+    const q = new URLSearchParams(b.url.split("?")[1] || "");
+    assert.equal(q.get("reconnect"), "1", "a redial after a ready acked states reconnect");
+    assert.equal(q.get("proto"), "2", "with the page's proto: the dial term is the handshake");
+    assert.equal(q.get("skeleton"), null, "this page states no skeleton term: the shape the ready-first open drops every held ask on");
+    assert.equal(fm.conns.get("gpu2").dialedReconnect, true);
+    b.open();
+    assert.deepEqual(b.sent, [{ type: "needFull", id: U, why: "skeleton-click" }], "no ready, and the held ask rides the redial open");
+    assert.equal(hostconn(diags, "moot"), undefined, "nothing was moot: no ready went out on this open");
+    assert.deepEqual(hostconn(diags, "open").data, { host: "gpu2", ev: "open", flushed: ["needFull"] });
+    fm.conns.get("gpu2").closed = true;
+  });
+  // the same on a skeleton dial naming the active tab, whose held ask the ready-first open drops: the redial keeps it
+  withManager((fm, _e, _l, diags) => {
+    (globalThis as any).window.__rompDialTerms = () => ({ skeleton: 1, active: "gpu2:" + U, iid: "PAGEIID-0001", delta: 1 });
+    fm.outbound({ type: "ready", proto: 2 });
+    const a = attach(fm, "gpu2");
+    a.frame({ type: "caps" });
+    a.readyState = 3;
+    fm.outbound({ type: "needFull", id: "gpu2:" + U, why: "gap" });
+    clock += REMOTE_REDIAL_MS + 1000;
+    fm.watchdog(clock);
+    const b = FakeWS.made[FakeWS.made.length - 1];
+    assert.match(b.url, /skeleton=1/); assert.match(b.url, /&reconnect=1&proto=2$/, "the redial's terms, the skeleton posture included");
+    b.open();
+    assert.deepEqual(b.sent, [{ type: "needFull", id: U, why: "gap" }], "kept: the redial's accept re-arms the skeleton set, and this ask is the tab's load");
+    assert.equal(hostconn(diags, "moot"), undefined);
+    fm.conns.get("gpu2").closed = true;
   });
 });
 

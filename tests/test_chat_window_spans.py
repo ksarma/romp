@@ -5,10 +5,15 @@ moves the client's base only when its span reaches the tail run, so the kernel n
 history (no client is ever detached). Over the render-floor fixture (a restored parse whose pre-cut turns are lazy) the pages
 before the floor and the floor'd list equal the whole build, so a span's events are checked against the whole. Synthetic
 transcripts only (the stage 4a served fixture's builder)."""
+import ast
+import contextlib
 import datetime
+import inspect
+import io
 import json
 import os
 import sys
+import textwrap
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -208,6 +213,274 @@ class WindowSpans(Harness):
         self.assertEqual([f.get("type") for f in sent], ["session"], "the first frame after the handshake is the session")
         self.assertEqual(sent[0].get("proto"), 2, "…in the wire the handshake declared: %r" % {k: sent[0].get(k) for k in ("proto", "tailLo", "headFrom")})
         self.assertIsInstance(sent[0].get("tailLo"), int, "a proto-2 frame names the tail run's first turn")
+
+    def test_an_older_vintage_sockets_first_frame_stands_as_a_proto1_handshake_and_a_silent_socket_stays_withheld(self):
+        """2026-09-18: an older hub's relay socket (no proto term, no ready ever: its page sent the ready to its local socket alone) and
+        an upstream shim's redial between 8610b8954 and 42ab10dd1 (reconnect=1 with no proto term and no caps term) got no chat frame
+        for the socket's life from the round-eleven gate above; the first client frame from such a socket now stands as a proto-1
+        handshake (_implicit_handshake) and the socket is served the index wire from there. That redial announces no caps, and its
+        open re-posts no ready: no upstream build in that range does. The onopen at 8610b8954, be11455cd and 7390404be flushes its
+        queue and posts nothing (`readyQueued` there gates the dial term, it is not a re-send), and `ws.send(readyMsg)` first appears
+        at cd1625792, after the range. A fork shim carrying a3a9e7385's re-send is told
+        from the upstream shim by its LINE, not its age (fd95b435a, the fork case in the bug report, is newer than 7390404be): it
+        announces readyGate and re-posts a bare ready behind its flush, so it is declined for that readyGate and declares proto 1
+        itself one frame later. The rule reads the client's VINTAGE, never the
+        frame's kind (review round 1, 2026-09-18): a current page's relay (a namespaced iid), the VS Code extension host's pipe
+        (client=ext) and a non-chat socket are never taken, whatever they send first, and neither `delta` nor `reconnect` is read,
+        since the older shim's redial carries both. The decision table, then the wire it brings, then the real ready that
+        re-declares the wire; the silent socket's withhold and its chatWithheld row are pinned by the test above and stand."""
+        whole, m, frame, c = self._boot()
+        sent, rows = [], []
+        real_append = km._client_diag_append
+        km._client_diag_append = lambda fp, line: rows.append(json.loads(line))
+        self.addCleanup(setattr, km, "_client_diag_append", real_append)
+        relay = {"send": (lambda s: sent.append(json.loads(s))), "echat": {}, "handshake": False, "ready": True, "kind": "relay", "app": "chat", "wid": "w1"}
+        km._send_chat_locked(relay, m, None, 0, False)                                  # a pusher cycle before any frame from the peer
+        self.assertEqual(sent, [], "withheld before the first frame"); self.assertEqual(relay["withheld"], 1)
+        ask = {"type": "needFull", "id": SID}
+        BARE_IID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"      # the shim mints a uuid per page load; a current hub's relay namespaces it: "<wid>:<uuid>"
+
+        def declined(client, msg, why):
+            """A cell that is not taken: the record untouched, nothing said, no row filed, the pusher not woken."""
+            before, nrows = dict(client), len(rows)
+            km._pusher_wake.clear()
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertFalse(km._implicit_handshake(client, msg), why)
+            self.assertEqual(client, before, why + ": the record is untouched")
+            self.assertEqual(err.getvalue(), "", why + ": nothing said")
+            self.assertEqual(len(rows), nrows, why + ": no row filed")
+            self.assertFalse(km._pusher_wake.is_set(), why + ": the pusher is not woken")
+
+        def taken(client, msg, why, stood_in):
+            """A cell that is taken: proto 1, the frame on the record, said once, the pusher woken (a settings post wakes nothing itself)."""
+            km._pusher_wake.clear()
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertTrue(km._implicit_handshake(client, msg), why)
+            self.assertEqual((client["handshake"], client["proto"], client["implicitHandshake"]), (True, 1, stood_in), why)
+            self.assertEqual(err.getvalue().count("stands as a proto-1 handshake"), 1, why + ": " + err.getvalue())
+            self.assertTrue(km._pusher_wake.is_set(), why + ": the pusher wakes on the event")
+            return err.getvalue()
+
+        # not taken: a ready (the arm declares the wire itself); an undecodable frame; a decodable frame that is not an object; a socket
+        # held under READY_GATE_CAP (a kernel-served pane before its bundle's ready, whose shim flushes queued clientDiag rows at its
+        # open); a socket already handshaken; a record without the mark (a test's dict modelling a socket past its handshake)
+        declined(relay, {"type": "ready", "proto": 2}, "a ready")
+        declined(relay, None, "an undecodable frame")
+        for odd in (["needFull"], "needFull", 3):
+            declined(relay, odd, "a decodable frame that is not an object: %r" % (odd,))
+        declined(dict(relay, ready=False, kind="page"), {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat"}}, "a held page's flushed row")
+        declined(dict(relay, handshake=True, proto=2), ask, "a socket already handshaken")
+        declined({"send": relay["send"], "echat": {}}, ask, "a record without the mark")
+        # ...nor, whatever it sends first, a socket of CURRENT vintage or one that carries no chat wire (review round 1):
+        # a feed relay (no chat frame is ever sent to it, so there is no wire to declare and nothing to say); a current page's relay,
+        # told by the namespaced iid federation.ts has dialled since 8fe70da07 (its held setting used to pin a proto-2 page to proto 1
+        # and serve it an index frame before its ready); the VS Code extension host's pipe (client=ext at accept: it forwards its
+        # webview's own ready, and a replayed intent on its reconnect must not stand in for it)
+        declined(dict(relay, app="feed"), {"type": "setAutoNudge", "value": True}, "a feed relay")
+        declined(dict(relay, app="fleet"), ask, "an Outline relay")
+        declined(dict(relay, iid="hubwid:" + BARE_IID, delta=True), {"type": "setAutoNudge", "value": True}, "a current page's relay, a held setting first")
+        declined(dict(relay, iid="hubwid:" + BARE_IID, delta=True), {"type": "activeTab", "id": SID}, "a current page's relay, its active tab first")
+        declined(dict(relay, iid="hubwid:" + BARE_IID, delta=True), ask, "a current page's relay, an ask first")
+        declined(dict(relay, kind="page", ext=True, delta=True), {"type": "sendMessage", "id": SID, "text": "a replayed intent"}, "the extension host's pipe")
+        declined(dict(relay, kind="page", ext=True, delta=True), {"type": "closeTab", "id": SID}, "the extension host's pipe, a non-drive intent")
+        # taken: the first frame of an older-vintage chat socket that is ready from accept, said once on stderr and filed once as a
+        # kernel-surface row beside the socket's wsopen row; the second frame changes nothing
+        said = taken(relay, ask, "the older hub's bare relay", "needFull")
+        self.assertIn("a relay socket (app chat) declared no chat wire; its first frame (needFull) stands as a proto-1 handshake, 1 chat frame(s) withheld before it", said)
+        self.assertEqual([(r["surface"], r["what"], r["wid"], r["data"]) for r in rows],
+                         [("kernel", "implicitHandshake", "w1", {"app": "chat", "kind": "relay", "frame": "needFull", "withheld": 1, "proto": 1})], rows)
+        self.assertIsInstance(rows[0]["t"], int)
+        self.assertLessEqual(set(rows[0]["data"]), km.CLIENT_DIAG_KEYS["kernel"], "the kernel surface's allowlist entry names the row's keys")
+        declined(relay, {"type": "activeTab", "id": SID}, "once: the mark has lifted")
+        # ...and the wire it brings is the index wire, the one every older producer speaks
+        km._send_chat_locked(relay, m, None, 0, False)
+        self.assertEqual([f.get("type") for f in sent], ["session"], "the next push serves the session")
+        f = sent[0]
+        self.assertNotEqual(f.get("proto"), 2, "the index wire, not the uuid wire: %r" % {k: f.get(k) for k in ("proto", "firstUuid", "tailLo", "headFrom")})
+        self.assertNotIn("firstUuid", f); self.assertNotIn("lastUuid", f)
+        self.assertIsInstance(relay["echat"][SID], tuple, "the index base (head uuid, headFrom), never a proto-2 dict: %r" % (relay["echat"][SID],))
+        self.assertTrue(km._chat_floor0_of([relay]), "an index client: the floor drops to 0 for it, as for a ready that names no proto")
+        self.assertFalse(km._note_chat_withheld_at_close(relay), "served: the frames withheld before its first frame file no row at its close")
+        # a real ready after the implicit handshake re-declares the wire (proto 2), resets the base (_client_reset_chat_base) and pops
+        # the implicit mark from the record: the next push serves the uuid wire over a dict base, as for any ready
+        class _Self:
+            def _push_one(self, client): pass
+        del sent[:]
+        with contextlib.redirect_stderr(io.StringIO()):
+            km.Handler._dispatch_ws(_Self(), {"type": "ready", "proto": 2}, relay)
+        self.assertEqual((relay["handshake"], relay["proto"], relay.get("ready")), (True, 2, True), "the ready arm re-declares the wire")
+        self.assertNotIn("implicitHandshake", relay, "the stand-in is popped: the socket has declared its wire")
+        self.assertEqual(relay["echat"], {}, "the base is reset by the arm")
+        km._send_chat_locked(relay, m, None, 0, False)
+        sessions = [f for f in sent if f.get("type") == "session"]
+        self.assertEqual(len(sessions), 1, [f.get("type") for f in sent])
+        self.assertEqual(sessions[0].get("proto"), 2, "the uuid wire from here")
+        self.assertIn("firstUuid", sessions[0])
+        self.assertIsInstance(relay["echat"][SID], dict, "a proto-2 base: %r" % (relay["echat"][SID],))
+        self.assertEqual([r["what"] for r in rows], ["implicitHandshake"], "the durable record of the event stands in the file")
+        # the silent shim's redial after this kernel restarted (upstream, between 8610b8954 and 42ab10dd1): reconnect=1 and no proto term
+        # (stamped ready at accept), NO caps term (upstream has no readyGate), delta=1 and a BARE uuid iid like every shim's dial, and the
+        # wsclose row the shim flushes at the redial's open is its first frame; the same road. Neither delta nor reconnect may key the
+        # decline: this socket carries both (reconnect is popped by the first pusher cycle)
+        silent = {"send": (lambda s: None), "echat": {}, "handshake": False, "ready": True, "reconnect": True, "redial": True, "delta": True,
+                  "caps": set(), "iid": BARE_IID, "kind": "page", "app": "chat", "wid": "w2"}   # ready: no hold announced
+        taken(silent, {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat"}}, "the silent shim's redial", "clientDiag")
+        taken(dict(silent, handshake=False, reconnect=False), ask, "the same redial once the first cycle popped reconnect", "needFull")
+        # ...and NOT a fork shim carrying a3a9e7385's re-send, fd95b435a among them (review round 3; the fork LINE, not an older vintage:
+        # fd95b435a is newer than 7390404be by wall clock): its redial announces caps=readyGate and dials reconnect=1 with
+        # no proto term, so the accept's reconnect branch makes it ready from accept, and its onopen flushes the wsclose row it queued while
+        # down and re-posts a bare ready right behind it. The rule reads the hold the socket ANNOUNCED, never the effective ready flag: the
+        # row is declined (the rule read `ready`, took the row, and the ready one frame behind then re-declared the wire, one whole frame
+        # served twice when a cycle landed between), and the shim's own bare ready declares proto 1 through the arm, with nothing stood in
+        fork_redial = {"send": (lambda s: None), "echat": {}, "handshake": False, "ready": True, "reconnect": True, "redial": True, "delta": True,
+                       "caps": {"readyGate"}, "iid": BARE_IID, "kind": "page", "app": "chat", "wid": "w3"}   # ready: the hold it announced, lifted by reconnect=1
+        declined(fork_redial, {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat"}}, "the fork shim's redial (fd95b435a), its flushed row")
+        declined(dict(fork_redial, reconnect=False), ask, "the fork shim's redial (fd95b435a) once the first cycle popped reconnect")
+        with contextlib.redirect_stderr(io.StringIO()):
+            km.Handler._dispatch_ws(_Self(), {"type": "ready"}, fork_redial)
+        self.assertEqual((fork_redial["handshake"], fork_redial["proto"], fork_redial.get("ready")), (True, 1, True), "its own bare ready declares the index wire")
+        self.assertNotIn("implicitHandshake", fork_redial, "nothing stood in for the ready it posts itself")
+        # the branches the first cut left unpinned (review round 1): a frame with no type stands in as `other` (review round 2; "?" before
+        # the vocabulary below); a record with the mark and no ready key reads as ready from accept (the accept path stamps every socket,
+        # so the default is never read live)
+        taken(dict(relay, handshake=False, proto=None, echat={}), {"id": SID}, "a frame with no type", "other")
+        taken({"send": relay["send"], "echat": {}, "handshake": False, "kind": "relay", "app": "chat"}, ask, "a record with no ready key", "needFull")
+        # a first frame's type is CLIENT TEXT until it matches an op the kernel accepts (review round 2, the privacy check): the record,
+        # the stderr line and the row quote a word from WS_OPS or `other`, never the type itself, so free text, a sid-shaped string and
+        # the content of a dict or list type never reach client-diag.jsonl or the kernel log; the socket is taken all the same
+        PLANTED = "PLANTED-FREE-TEXT-7c1d"
+        for odd_type, why in ((PLANTED + " path=/srv/notes/private.md", "a free-text type"),
+                              ("11111111-2222-3333-4444-000000000001", "a sid-shaped type"),
+                              ({"leak": PLANTED}, "a dict type"),
+                              ([PLANTED, "11111111-2222-3333-4444-000000000001"], "a list type"),
+                              (7, "a number type")):
+            nrows = len(rows)
+            said = taken(dict(relay, handshake=False, proto=None, echat={}), {"type": odd_type, "id": SID}, why, "other")
+            self.assertEqual(len(rows), nrows + 1, why + ": one row filed")
+            self.assertEqual(rows[-1]["data"], {"app": "chat", "kind": "relay", "frame": "other", "withheld": 1, "proto": 1}, why + ": the row reads the word")
+            self.assertIn("its first frame (other) stands as a proto-1 handshake", said, why)
+            for text in (PLANTED, "11111111-2222", "/srv/notes", "leak"):
+                self.assertNotIn(text, json.dumps(rows[-1]) + said, why + ": planted text on the row or stderr: %r" % text)
+        # a file failure never touches the socket: the row is a courtesy to the reader of the file
+        def refuse(fp, line):
+            raise OSError("the state directory is unwritable")
+        nrows = len(rows)
+        km._client_diag_append = refuse
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertTrue(km._implicit_handshake(dict(relay, handshake=False, echat={}), ask), "taken with the row refused")
+        self.assertEqual(len(rows), nrows, "the refused row is not in the file: %r" % [r["what"] for r in rows])
+
+    @staticmethod
+    def _ops_compared_to_a_frames_type(source, module):
+        """Every name `source` (a function's) compares a client frame's type against, read by AST (review round 3): each ast.Compare
+        with `msg.get("type")`, `msg["type"]` or a local bound to either on one side and == or `in` between; on the other side a str, a
+        tuple (list, set) of str, a name bound to one in the function (_drive's ID_OPS) or a tuple of str on `module` (_TARGET_NAME_OPS).
+        No spacing or layout is assumed, and a comparator the walk cannot resolve raises, so an arm in any shape either lands in the
+        set or fails the pin loudly; the regex this replaces read the canonical `msg.get("type") == "x"` form alone, and an arm written
+        without spaces around the comparison, or as membership in a named tuple, left it green while _ws_op_word read `other`."""
+        fdef = ast.parse(textwrap.dedent(source)).body[0]
+
+        def reads_msg_type(node):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get" \
+               and isinstance(node.func.value, ast.Name) and node.func.value.id == "msg" and node.args \
+               and isinstance(node.args[0], ast.Constant) and node.args[0].value == "type":
+                return True
+            return isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == "msg" \
+                and isinstance(node.slice, ast.Constant) and node.slice.value == "type"
+
+        def strs(node):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                return [node.value]
+            if isinstance(node, (ast.Tuple, ast.List, ast.Set)) and node.elts and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in node.elts):
+                return [e.value for e in node.elts]
+            return None
+
+        aliases, bound = set(), {}
+        for node in ast.walk(fdef):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                if reads_msg_type(node.value):
+                    aliases.add(node.targets[0].id)
+                elif strs(node.value) is not None:
+                    bound[node.targets[0].id] = strs(node.value)
+        reads = lambda node: reads_msg_type(node) or (isinstance(node, ast.Name) and node.id in aliases)
+
+        def resolve(node):
+            names = strs(node)
+            if names is None and isinstance(node, ast.Name):
+                names = bound.get(node.id)
+                if names is None:
+                    value = getattr(module, node.id, None)
+                    if isinstance(value, (tuple, list, set, frozenset)) and value and all(isinstance(x, str) for x in value):
+                        names = list(value)
+            if names is None:
+                raise AssertionError("line %d of %s compares a frame's type against a comparator this pin cannot resolve: %s"
+                                     % (node.lineno, fdef.name, ast.dump(node)))
+            return names
+
+        ops = set()
+        for node in ast.walk(fdef):
+            if not isinstance(node, ast.Compare):
+                continue
+            operands = [node.left] + node.comparators
+            for i, op in enumerate(node.ops):
+                left, right = operands[i], operands[i + 1]
+                if reads(right) and not reads(left):
+                    left, right = right, left
+                if not reads(left):
+                    continue
+                if not isinstance(op, (ast.Eq, ast.In)):
+                    raise AssertionError("line %d of %s compares a frame's type with %s, a shape this pin does not read"
+                                         % (node.lineno, fdef.name, type(op).__name__))
+                ops.update(resolve(right))
+        return ops
+
+    def test_the_word_a_kernel_record_quotes_a_frame_type_from_is_the_dispatchs_own_vocabulary(self):
+        """WS_OPS (review round 2) is the set of op names _dispatch_ws's arms, _drive's ID_OPS and _TARGET_NAME_OPS test a client
+        frame's type against, and _ws_op_word maps a type to its member or to `other`. Pinned equal to the names the SOURCE compares a
+        type against, read by AST (review round 3, _ops_compared_to_a_frames_type), so an arm added without its name fails here in any
+        spelling instead of reading as `other` in the implicitHandshake row for good. The walk's own claim is pinned first on synthetic
+        source: an arm with no spaces around ==, one on msg["type"], a local alias, membership in a tuple bound in the function and in
+        a module tuple all land; a comparator it cannot resolve, and a comparison shape it does not read, raise."""
+        class Vocabulary:
+            MODULE_OPS = ("compact", "sendCommand")
+        synthetic = '''
+def dispatch(self, msg, client):
+    LOCAL_OPS = ("alpha",
+                 "beta")
+    t = msg.get("type")
+    if msg.get("type")=="unspaced":
+        pass
+    elif msg["type"] == "subscripted":
+        pass
+    elif t in LOCAL_OPS and msg.get("id"):
+        pass
+    elif t in MODULE_OPS:
+        pass
+    elif "reversed" == msg.get("type"):
+        pass
+    elif msg.get("type") in ("one", "two") and client.get("x") == "not an op":
+        pass
+'''
+        self.assertEqual(self._ops_compared_to_a_frames_type(synthetic, Vocabulary),
+                         {"unspaced", "subscripted", "alpha", "beta", "compact", "sendCommand", "reversed", "one", "two"})
+        with self.assertRaisesRegex(AssertionError, "cannot resolve"):
+            self._ops_compared_to_a_frames_type("def f(msg):\n    if msg.get(\"type\") == somewhere_else:\n        pass\n", Vocabulary)
+        with self.assertRaisesRegex(AssertionError, "does not read"):
+            self._ops_compared_to_a_frames_type("def f(msg):\n    if msg.get(\"type\") != \"ready\":\n        pass\n", Vocabulary)
+        dispatch = self._ops_compared_to_a_frames_type(inspect.getsource(km.Handler._dispatch_ws), km)
+        self.assertGreater(len(dispatch), 90, "the dispatch's arms were found in its source: %d" % len(dispatch))
+        drive = self._ops_compared_to_a_frames_type(inspect.getsource(km._drive), km)
+        self.assertLessEqual(set(km._TARGET_NAME_OPS), drive, "the drive's module tuple resolved")
+        self.assertGreater(len(drive), 30, "the drive's ID_OPS and its arms were found: %d" % len(drive))
+        ops = dispatch | drive
+        self.assertEqual(set(km.WS_OPS), ops, "WS_OPS is exactly what the dispatch and the drive accept; missing %r, extra %r"
+                         % (sorted(ops - km.WS_OPS), sorted(km.WS_OPS - ops)))
+        self.assertNotIn("other", km.WS_OPS, "the placeholder is no op")
+        for w in km.WS_OPS:
+            self.assertTrue(w.isalpha(), "a word: %r" % (w,))
+        for t, want in (("needFull", "needFull"), ("ready", "ready"), ("sendMessage", "sendMessage"), ("NEEDFULL", "other"), ("needFull ", "other"),
+                        ("", "other"), (None, "other"), ({"type": "needFull"}, "other"), (["needFull"], "other"), (7, "other"), (True, "other")):
+            self.assertEqual(km._ws_op_word(t), want, repr(t))
 
     def test_load_newer_is_retired(self):
         self._boot()
