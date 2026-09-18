@@ -11,10 +11,12 @@ thread, per command, for a value nothing read. The review of #954 (#986) removed
 2026-09-07; the #923 merge the same day brought it back. tests/test_model_live_midturn pins the value
 of `queued`; this pins its cost. The gate is patched to a counter, so the counts are the gate's own
 evaluations and nothing underneath it runs. Synthetic only: a placeholder sid, invented values."""
+import io
 import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from romp_load import load_source
 from unittest import mock
 
@@ -116,7 +118,9 @@ class MetaCommandGateCost(unittest.TestCase):
             self.assertIn("Codex catalog does not offer", state["refused_effort"])
             self.assertIn("'ultra'", state["refused_effort"], "the refused level is named")
             self.assertIs(state["queued"], False)
-            self.assertEqual(sent, [{"type": "warn", "text": state["refused_effort"]}], "the client hears the same words")
+            self.assertEqual(sent, [{"type": "settingRefused", "gesture": "command", "sid": SID, "flag": "effort",
+                                     "text": state["refused_effort"]}],
+                             "the client hears the same words, on the timeline's own frame (never a bare warn)")
             self.assertEqual(self.be.calls, [("effort", "ultra")], "the backend was asked, and said no")
             self.assertNotIn(SID, km._pending_ops, "a refusal parks nothing")
 
@@ -146,6 +150,133 @@ class MetaCommandGateCost(unittest.TestCase):
         self.assertTrue(km._route_meta_command(km._UNOWNED, SID, "/effort future-level", state=state))
         self.assertIn("not delivered", state["refused"])
         self.assertNotIn(SID, km._pending_ops)
+
+
+class RefusalReachesTheClient(unittest.TestCase):
+    """What a CLIENT hears when the backend refuses an effort level or a fast toggle (the catch-up fold's review,
+    2026-09-18): the route and the setter are pinned above, these pin the arms that reach a pane. The frame is the
+    timeline's own settingRefused shape (type settingRefused, gesture command, the sid, the flag, the reason), never a
+    bare warn: the chat read a warn arriving during a create as that create's verdict and struck the provisional tab,
+    and the timeline page renders no warn at all, so a lane-menu pick's refusal was dropped and its optimistic dim ran
+    out its 20 s timer, though both pages already handle settingRefused. Three roads answer with it: the setEffort and
+    setFast ops in _drive (this pane's socket), _route_meta_command with a client (the lane menu's sendCommand, the
+    composer's typed command), and the parked-op drain (_send_to_app to the chat: no client is at hand when a pick
+    parked mid-compaction fires later and is refused then; before this the drain dropped set_effort's and set_fast's
+    verdicts, so the queued chip retired as if the level had landed, with no stderr line and no reply). POST /send
+    (_deliver_text) has no socket and answers ok false with the words instead. Synthetic only: a placeholder sid, an
+    invented level."""
+
+    def setUp(self):
+        self.be = _Backend()
+        self.be.effort_ok = False
+        self.verdict = False                   # _ops_gate: True parks the pick, False hands it over
+        self.frames = []                       # _send_to_app: (app, frame)
+        _forget_queue()
+        km._moving.discard(SID)
+        km._inflight_ops.pop(SID, None)
+        km._drain_hold.pop(SID, None)
+        stubs = {
+            "_ops_gate": lambda sid: self.verdict,
+            "_compacting_now": lambda sid, **k: False,   # the drain's own quiet gates
+            "_working_now": lambda sid: False,
+            "_limit_hold": lambda sid, usage=None: None,
+            "_codex": lambda: self.be,          # the pick is vouched as a Codex one; _effort_refusal picks the catalog words
+            "_name_of": lambda sid: "web",      # _drive's session gate admits a session this kernel has
+            "_send_to_app": lambda app, m: self.frames.append((app, m)),
+        }
+        for name, stub in stubs.items():
+            p = mock.patch.object(km, name, stub)
+            p.start()
+            self.addCleanup(p.stop)
+        p = mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: self.be))   # both arms resolve be here
+        p.start()
+        self.addCleanup(p.stop)
+        self.addCleanup(_forget_queue)
+
+    @staticmethod
+    def _client():
+        sent = []
+        return {"send": lambda t: sent.append(json.loads(t))}, sent
+
+    def _frame(self, flag, text):
+        return {"type": "settingRefused", "gesture": "command", "sid": SID, "flag": flag, "text": text}
+
+    def test_the_set_effort_op_answers_a_refused_level_with_one_setting_refused_frame_and_parks_nothing(self):
+        client, sent = self._client()
+        self.assertTrue(km._drive({"type": "setEffort", "id": SID, "value": "ultra"}, client))
+        why = km._effort_refusal(self.be, "ultra")
+        self.assertIn("Codex catalog does not offer", why)
+        self.assertEqual(sent, [self._frame("effort", why)], "one frame, on the timeline's shape: its own type and the sid")
+        self.assertEqual(self.be.calls, [("effort", "ultra")], "the backend was asked, and said no")
+        self.assertNotIn(SID, km._pending_ops, "a refusal parks nothing")
+
+    def test_the_set_fast_op_answers_its_refusal_on_the_same_frame(self):
+        self.be.set_fast = lambda sid, v: False          # a dormant SDK session, or a Codex one (no fast mode)
+        client, sent = self._client()
+        self.assertTrue(km._drive({"type": "setFast", "id": SID, "value": "on"}, client))
+        self.assertEqual(len(sent), 1)
+        self.assertEqual({k: sent[0].get(k) for k in ("type", "gesture", "sid", "flag")},
+                         {"type": "settingRefused", "gesture": "command", "sid": SID, "flag": "fast"})
+        self.assertIn("fast mode", sent[0]["text"])
+        self.assertNotIn(SID, km._pending_ops)
+
+    def test_the_command_route_answers_a_refused_fast_toggle_on_the_same_frame(self):
+        # the effort arm's frame is pinned above (a level the catalog does not offer); this is the /fast arm's
+        self.be.set_fast = lambda sid, v: False
+        client, sent = self._client()
+        state = {}
+        self.assertTrue(km._route_meta_command(self.be, SID, "/fast on", client, state=state))
+        self.assertIs(state["queued"], False)
+        self.assertEqual([(m["type"], m["gesture"], m["sid"], m["flag"]) for m in sent],
+                         [("settingRefused", "command", SID, "fast")])
+        self.assertIn("fast mode", sent[0]["text"])
+
+    def test_post_send_answers_a_refused_level_ok_false_with_the_words(self):
+        # _deliver_text is the POST /send door: (ok, error, queued). No socket, so no frame: the words ride the answer
+        # and the timeline's own HTTP arm draws the frame from them
+        self.assertEqual(km._deliver_text(SID, "/effort ultra"), (False, km._effort_refusal(self.be, "ultra"), False))
+        self.be.effort_ok = True
+        self.assertEqual(km._deliver_text(SID, "/effort ultra"), (True, "", False), "an offered level answers plain ok")
+        self.assertEqual(self.be.calls, [("effort", "ultra"), ("effort", "ultra")])
+        self.assertEqual(self.frames, [], "nothing broadcast: the answer is the reply")
+
+    def _park_then_drain(self, text):
+        """Park `text` under a busy gate (never applied before the gate lifts), then run one drain cycle with the
+        gate quiet; returns the drain's stderr."""
+        self.verdict = True
+        state = {}
+        self.assertTrue(km._route_meta_command(self.be, SID, text, state=state))
+        self.assertIs(state["queued"], True, "parked, not applied")
+        self.assertEqual(self.be.calls, [], "never applied before the gate lifts")
+        self.verdict = False
+        err = io.StringIO()
+        with redirect_stderr(err):
+            km._apply_pending_ops()
+        self.assertNotIn(SID, km._pending_ops, "popped: a refused pick is never replayed forever")
+        return err.getvalue()
+
+    def test_a_parked_level_the_backend_refuses_at_the_drain_is_said_to_the_chat_and_on_stderr(self):
+        err = self._park_then_drain("/effort ultra")
+        self.assertEqual(self.be.calls, [("effort", "ultra")], "fired once, at the drain, and refused there")
+        self.assertEqual(self.frames, [("chat", self._frame("effort", km._effort_refusal(self.be, "ultra")))],
+                         "the chat hears the refusal on the same frame the live op answers with")
+        self.assertIn("pending ops apply: _Backend refused '/effort ultra' for %s" % SID[:8], err,
+                      "the drain's own refusal line, as the command and compact arms write it")
+
+    def test_a_parked_fast_toggle_the_backend_refuses_at_the_drain_is_said_the_same_way(self):
+        self.be.set_fast = lambda sid, v: False
+        err = self._park_then_drain("/fast on")
+        self.assertEqual([(a, m["type"], m["gesture"], m["sid"], m["flag"]) for a, m in self.frames],
+                         [("chat", "settingRefused", "command", SID, "fast")])
+        self.assertIn("fast mode", self.frames[0][1]["text"])
+        self.assertIn("pending ops apply: _Backend refused '/fast on' for %s" % SID[:8], err)
+
+    def test_a_parked_level_the_backend_takes_at_the_drain_says_nothing(self):
+        self.be.effort_ok = True
+        err = self._park_then_drain("/effort ultra")
+        self.assertEqual(self.be.calls, [("effort", "ultra")])
+        self.assertEqual(self.frames, [], "nothing to say: the level landed")
+        self.assertEqual(err, "", "the refusal line is for refusals")
 
 
 if __name__ == "__main__":

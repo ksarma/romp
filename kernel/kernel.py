@@ -18916,7 +18916,10 @@ def _apply_new_session_prefs(sid, body):
     FRESH spawn the env was already born into the reg (_create_sdk_session), so the env leg here is
     the unchanged re-assert set_env skips the reconnect for — the echo still comes back. The handler
     validated env at the door and refused non-SDK targets, so the hasattr guard is only the backstop
-    for direct callers."""
+    for direct callers. A level the backend REFUSES (a Codex model whose catalog does not offer it) is
+    echoed as `refused`, the setter's own words, never as `effort`: the verdict used to be dropped here,
+    so `romp new` printed the level as applied and exited 0 while nothing changed (the catch-up fold's
+    review, 2026-09-18)."""
     out = {}
     m = str((body or {}).get("model") or "").strip()
     e = str((body or {}).get("effort") or "").strip()
@@ -18936,8 +18939,15 @@ def _apply_new_session_prefs(sid, body):
         _set_model_or_park(be, str(sid), m)
         out["model"] = m
     if e:
-        _set_effort_or_park(be, str(sid), e)
-        out["effort"] = e
+        took, _parked = _set_effort_or_park(be, str(sid), e)
+        if took:
+            out["effort"] = e
+        else:
+            # refused (a Codex model whose catalog does not offer the level, or a catalog the backend could not
+            # read): the echo carries the refusal in place of the level, so the caller is loud, and stderr says so
+            # once, as the typed route does
+            out["refused"] = _effort_refusal(be, e)
+            sys.stderr.write("effort %r for %s refused by %s (POST /new)\n" % (e, sid, type(be).__name__))
     if ev is not None and hasattr(be, "set_env"):
         _set_env_or_park(be, str(sid), dict(ev))
         out["env"] = dict(ev)
@@ -22644,16 +22654,22 @@ def _drive(msg, client):
         # SDK: reconnect with --effort; Codex: its engine's level at the next turn; mid-compaction → parked.
         # LOUD on refusal, as setFast below: a level the model's Codex catalog does not advertise (the menu
         # lists the catalog's levels, but a stale list or a model change under it can still send one) used
-        # to leave the badge on the old level with no reason given (the review of #1814)
+        # to leave the badge on the old level with no reason given (the review of #1814). The refusal rides
+        # the timeline's own settingRefused frame (gesture command, the sid, the flag), never a bare warn: a
+        # warn arriving while a create is in flight is read by the chat as that create's verdict and strikes
+        # the provisional tab, and the timeline page renders no warn at all, so a lane-menu pick's refusal
+        # was dropped there and its optimistic dim ran out its timer (the catch-up fold's review, 2026-09-18)
         if not _set_effort_or_park(be, sid, str(msg["value"]))[0]:
-            client["send"](json.dumps({"type": "warn", "text": _effort_refusal(be, str(msg["value"]))}))
+            client["send"](json.dumps({"type": "settingRefused", "gesture": "command", "sid": sid, "flag": "effort",
+                                       "text": _effort_refusal(be, str(msg["value"]))}))
         _push_soon()
     elif t == "setFast" and msg.get("value") in ("on", "off"):
         # the chat's fast badge — /fast on|off delivered like any slash command; mid-compaction → parked.
         # LOUD on refusal (fail loudly, never degrade silently): a dormant SDK session has no live CLI to
         # apply it, and silently swallowing the click would leave a toggle that "did nothing".
+        # The same settingRefused frame as setEffort above (flag fast), for the same two readers.
         if not _set_fast_or_park(be, sid, str(msg["value"]))[0]:
-            client["send"](json.dumps({"type": "warn",
+            client["send"](json.dumps({"type": "settingRefused", "gesture": "command", "sid": sid, "flag": "fast",
                                        "text": "Couldn't toggle fast mode — the session isn't connected right now."}))
         _push_soon()
     elif t == "setMode" and msg.get("value"):
@@ -39465,7 +39481,9 @@ def _route_meta_command(be, sid, text, client=None, floating=False, state=None):
     the client (fail loudly): a dormant SDK session has no live CLI to apply it, and the typed text
     used to at least draw the CLI's own refusal; a refused effort level (one the Codex model's catalog
     does not offer) is told the same way and filed as state["refused_effort"], so POST /send answers ok:false
-    with the words. `state`, when given, receives {"queued": bool}: whether
+    with the words. Both ride the timeline's own settingRefused frame (gesture command, the sid, the flag),
+    never a bare warn: the timeline page renders no warn, and the chat reads one arriving during a create as
+    that create's verdict (the catch-up fold's review, 2026-09-18). `state`, when given, receives {"queued": bool}: whether
     the change PARKED, taken from each setter's own return, so POST /send answers `queued` for a meta
     command exactly as for a text send (2026-09-03: a parked /model read as plain 'ok'). The effort/fast
     setters report whether they parked under _gate_or_park (the one _ops_gate evaluation those two pay),
@@ -39526,12 +39544,16 @@ def _route_meta_command(be, sid, text, client=None, floating=False, state=None):
             if state is not None:
                 state["refused_effort"] = why
             if client:
-                client["send"](json.dumps({"type": "warn", "text": why}))
+                # the timeline's own settingRefused frame (gesture command, the sid, the flag), as the setEffort op
+                # answers: a bare warn is read by the chat as an in-flight create's verdict and by the timeline page
+                # not at all (the catch-up fold's review, 2026-09-18)
+                client["send"](json.dumps({"type": "settingRefused", "gesture": "command", "sid": sid, "flag": "effort",
+                                           "text": why}))
             sys.stderr.write("effort %r for %s refused by %s\n" % (value, sid, type(be).__name__))
     elif head == "/fast" and value in ("on", "off"):
         took, parked = _set_fast_or_park(be, sid, value)          # took: applied or parked; parked: queued
         if not took and client:
-            client["send"](json.dumps({"type": "warn",
+            client["send"](json.dumps({"type": "settingRefused", "gesture": "command", "sid": sid, "flag": "fast",
                                        "text": "Couldn't toggle fast mode — the session isn't connected right now."}))
     else:
         return False
@@ -39752,12 +39774,16 @@ def _apply_pending_ops(now=None):
                     elif op[0] == "model":
                         be.set_model(sid, op[1])
                     elif op[0] == "effort":
-                        be.set_effort(sid, op[1])
+                        # the verdict is READ (the catch-up fold's review, 2026-09-18): a level the backend refuses at
+                        # fire time (a Codex model whose catalog does not offer it: a stale menu, a model change under
+                        # the park) is reported below, where the live op would have said so; dropped, the queued chip
+                        # retired as if the level had landed, with no stderr line and no reply
+                        refused = be.set_effort(sid, op[1]) is False
                     elif op[0] == "fast":
                         # fast ops parked by a pre-2026-08-09 kernel stored a BOOL; set_fast validates
                         # against "on"/"off", so coerce here or a queue that survived the upgrade wedges.
                         v = op[1] if isinstance(op[1], str) else ("on" if op[1] else "off")
-                        be.set_fast(sid, v)
+                        refused = be.set_fast(sid, v) is False     # its bool was dropped the same way
                     elif op[0] == "auth":
                         be.set_auth(sid, op[1])
                     elif op[0] == "env":
@@ -39793,6 +39819,21 @@ def _apply_pending_ops(now=None):
                             _mark_compacting(sid)         # a TYPED /compact gets the same instant cue as the button's op
                         _after_turn_opening(be, sid, _pending_ops.get(sid) or [])
                         break                             # its turn / compaction must end before anything behind it fires
+                    if op[0] in ("effort", "fast") and refused:
+                        # the backend refused the parked level or toggle when it fired (a Codex model whose catalog does
+                        # not offer the level, a session the backend holds no row for, a Codex session's fast toggle):
+                        # the same stderr line the command and compact arms write, and the refusal to the chat on the
+                        # settingRefused frame the live setEffort and setFast ops answer with (gesture command, the sid,
+                        # the flag), so the chip's retirement is not read as the pick landing. Said whether or not `took`:
+                        # a same-kind replacement delivering next does not unsay this one's refusal. No client is at hand
+                        # here, so the chat page is the addressee (_send_to_app). Nothing applies early: the gate lift is
+                        # still what fires the op (the catch-up fold's review, 2026-09-18).
+                        what = "/%s %s" % (op[0], op[1] if op[0] == "effort" else v)
+                        why = (_effort_refusal(be, op[1]) if op[0] == "effort"
+                               else "Couldn't toggle fast mode: the session's backend refused it.")
+                        sys.stderr.write("pending ops apply: %s refused %r for %s\n" % (type(be).__name__, what, sid[:8]))
+                        _send_to_app("chat", {"type": "settingRefused", "gesture": "command", "sid": sid,
+                                              "flag": op[0], "text": why})
                     # a settings op (or an unknown kind): delivery continues. `took` False means a same-kind pick
                     # replaced the head in place while it was with the backend — the replacement delivers next
             except Exception:

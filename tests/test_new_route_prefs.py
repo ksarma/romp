@@ -6,12 +6,14 @@ response so a caller can be loud when ignored; absent keys touch nothing.
 Drives the REAL Handler over HTTP (the test_kernel_ws_auth.py pattern). Synthetic only — placeholder
 UUIDs, temp dirs, no session state touched (the setters are recorded, never executed).
 """
+import io
 import json
 import os
 import tempfile
 import threading
 import unittest
 import urllib.request
+from contextlib import redirect_stderr
 from http.server import ThreadingHTTPServer
 from romp_load import load_source
 
@@ -49,17 +51,18 @@ class NewRoutePrefs(unittest.TestCase):
         self.calls = []
         self._saved = (km._live_names, km._live_map, km._set_model_or_park,
                        km._set_effort_or_park, km.Sessions.backend_for,
-                       km._sdk_ready, km._create_sdk_session, km._push_soon)
+                       km._sdk_ready, km._create_sdk_session, km._push_soon, km._codex)
         km._live_map = lambda: []
         km._set_model_or_park = lambda be, sid, v: self.calls.append(("model", sid, v))
-        km._set_effort_or_park = lambda be, sid, v: self.calls.append(("effort", sid, v))
+        # the effort setter answers (took, parked) and the prefs pass reads `took` (a refused level is not echoed as applied)
+        km._set_effort_or_park = lambda be, sid, v: (self.calls.append(("effort", sid, v)), (True, False))[1]
         km.Sessions.backend_for = staticmethod(lambda sid: object())
         km._push_soon = lambda: None
 
     def tearDown(self):
         (km._live_names, km._live_map, km._set_model_or_park,
          km._set_effort_or_park, km.Sessions.backend_for,
-         km._sdk_ready, km._create_sdk_session, km._push_soon) = self._saved
+         km._sdk_ready, km._create_sdk_session, km._push_soon, km._codex) = self._saved
 
     def _post(self, body):
         req = urllib.request.Request("http://127.0.0.1:%d/new" % self.port,
@@ -110,6 +113,29 @@ class NewRoutePrefs(unittest.TestCase):
         self.assertEqual(r.get("model"), "claude-fable-5")
         self.assertNotIn("effort", r)
         self.assertEqual(self.calls, [("model", SID, "claude-fable-5")])
+
+    def test_a_refused_effort_is_not_echoed_as_applied_and_the_echo_carries_the_refusal(self):
+        # the setter's verdict used to be dropped here too: a Codex level the model's catalog does not offer was echoed
+        # back as applied, so `romp new` printed it as applied and exited 0 while nothing changed (the catch-up fold's
+        # review, 2026-09-18). The echo now carries the refusal in the setter's own words, and stderr says so once.
+        km._live_names = lambda *_: {"opt": SID}
+        fake_codex = object()
+        km.Sessions.backend_for = staticmethod(lambda sid: fake_codex)
+        km._codex = lambda: fake_codex                                  # the Codex words: the catalog does not offer it
+        km._set_effort_or_park = lambda be, sid, v: (self.calls.append(("effort", sid, v)), (False, False))[1]
+        err = io.StringIO()
+        with redirect_stderr(err):
+            r = self._post({"name": "opt", "dir": self.dir, "model": "claude-fable-5", "effort": "bogus-level"})
+        self.assertTrue(r["ok"] and r["existing"], "the open itself stands: the session runs, one pref was refused")
+        self.assertEqual(r.get("model"), "claude-fable-5", "the model pick is echoed on its own verdict")
+        self.assertNotIn("effort", r, "a refused level is never echoed as applied")
+        self.assertEqual(r.get("refused"), km._effort_refusal(fake_codex, "bogus-level"))
+        self.assertIn("Codex catalog does not offer", r["refused"])
+        self.assertIn("'bogus-level'", r["refused"], "the refused level is named")
+        self.assertEqual(self.calls, [("model", SID, "claude-fable-5"), ("effort", SID, "bogus-level")],
+                         "the setter was asked, and said no")
+        self.assertIn("refused", err.getvalue(), "one stderr line, as the typed route writes")
+        self.assertIn("bogus-level", err.getvalue())
 
 
 class NewRouteEnv(unittest.TestCase):
