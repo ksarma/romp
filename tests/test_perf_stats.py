@@ -174,6 +174,10 @@ class Collector(unittest.TestCase):
         self.assertTrue({"jobs." + j for j in km._PerfStats.PASS_JOBS} <= set(snap["stages_ms"]), "every pass job's row, at zero")
         self.assertEqual(p["cycleJobsMs"], {j: 0.0 for j in km._PerfStats.CYCLE_JOBS})
         self.assertEqual(snap["stagesForeign"], {})
+        # the connect pushes' push.* stages (2026-09-18): no seed, so a fresh table is empty (a seeded push.warm or `push` row
+        # would be one a connect push can never move); the block's counters start at zero beside it
+        self.assertEqual(p["connectPush"]["stagesMs"], {})
+        self.assertEqual((p["connectPush"]["count"], p["connectPush"]["ms_sum"]), (0, 0.0))
         self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline", "feedJson", "thread"})   # thread: the comment popover's build (2026-09-08)
         self.assertEqual(set(snap["builds"]["timeline"]), {"cached", "built", "ms"})
         self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss", "moved",
@@ -587,6 +591,9 @@ class Collector(unittest.TestCase):
         self.assertEqual(self.st.parses["bySid"], {A[:8]: 2, B[:8]: 1})
 
     def test_stages_builds_judge(self):
+        self.st.cycle_begin()                                  # this thread stands for the pusher: a push stage is credited to its
+        #                                                        writer since 2026-09-18, and a thread with neither purpose and no
+        #                                                        cycle counts under stagesForeign instead (PushRowsByPurpose)
         self.st.stage("push.chat", 0.5); self.st.stage("push.chat", 0.25); self.st.stage("jobs", 0.1)
         self.st.build("chat", True); self.st.build("chat", False, 0.040); self.st.build("feed", False, 1.0)
         self.st.judge_pass(2.0); self.st.judge_pass(4.0); self.st.judge_cpu(0.25)
@@ -879,8 +886,10 @@ class Collector(unittest.TestCase):
         self.st.cycle(0.1); self.st.http_request("GET /x", 0.1)
         self.st.stage("jobs.autoNudge.parse", 0.001)          # a `jobs.` write from this thread owning no cycle: stagesForeign
         self.st.cycle_begin(); self.st.stage("jobs.apiHealth", 0.002); self.st.stage("jobs", 0.002); self.st.cycle(0.002)   # and the pusher's
+        km._stage_marked("connect")(lambda: self.st.stage("push.chat", 0.003))()   # and a connect push's stage (2026-09-18)
         self.assertEqual(self.st.snapshot()["stagesForeign"], {"jobs.autoNudge.parse": 1.0}, "premise: both blocks hold a row")
         self.assertEqual(self.st.snapshot()["pusher"]["cycleJobsMs"]["apiHealth"], 2.0)
+        self.assertEqual(self.st.snapshot()["pusher"]["connectPush"]["stagesMs"], {"push.chat": 3.0}, "premise: the connect table holds a row")
         before = self.st.snapshot()["since"]
         time.sleep(0.01)
         self.st.reset()
@@ -891,6 +900,7 @@ class Collector(unittest.TestCase):
         # the two owner-routed blocks start over with the rest (2026-09-18): the foreign block empty, the pusher's the nine at zero
         self.assertEqual(snap["stagesForeign"], {})
         self.assertEqual(snap["pusher"]["cycleJobsMs"], {j: 0.0 for j in km._PerfStats.CYCLE_JOBS})
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {}, "the connect table too")
 
     def test_writers_are_thread_safe(self):
         def hammer():
@@ -1058,6 +1068,132 @@ class JobRowsByOwner(unittest.TestCase):
         pusher_para = doc[doc.index("- `pusher`: `cycles`"):]
         pusher_para = pusher_para[:pusher_para.index("\n- `")]
         self.assertIn("`cycleJobsMs`", pusher_para)
+
+
+class PushRowsByPurpose(unittest.TestCase):
+    """The push stages (`push` and the push.* rows: push.chat and its seams, push.feed, push.timeline, push.send and its
+    seams, push.warm, push.feedFirst) are closed by two kinds of thread through one set of calls in _push: the pusher's
+    cycle, and a fresh client's full push on its HTTP handler thread (_push_one: _push(connect=True)). Until 2026-09-18
+    stage() added both to the one flat row, so stages_ms.push.chat over a window held every browser reload's build beside
+    the pusher's, and `romp perf` divided it by the pusher's cycle time (a chat share above the push share, or above one
+    hundred percent, while pages reloaded). Now stage() routes a push stage by the writer's PURPOSE, the thread's stage
+    mark: "connect" (what _push's decorator sets for connect=True) to pusher.connectPush.stagesMs under the stage name;
+    the pusher's own (the cycle's owner, whose `push` container closes outside the mark, or the "push" mark) to the flat
+    row; any other writer to stagesForeign. No seed: the connect table lists the stages connect pushes ran. No call site,
+    mark, split row, boot row or stage name changes."""
+
+    PUSHER = (("push.chat", 0.005), ("push.send", 0.001))                                # the pusher's push, under its mark
+    CONNECT = (("push.chat", 20.0), ("push.send", 0.5), ("push.feedFirst", 0.25))        # a reload's full push on a handler thread
+    FOREIGN = (("push.chat", 0.001), ("push", 0.002))                                    # a thread with neither purpose
+
+    def _three_writers(self):
+        """The pusher (this thread, the cycle's owner) closes push.chat and push.send under the "push" mark and then its `push`
+        container outside it, as _pusher_cycle_jobs does; a connect thread under the "connect" mark closes three stages and
+        the whole-wall counter _push_one keeps; a thread with no mark and no cycle closes two. Returns the snapshot."""
+        st = km._PerfStats()
+        st.cycle_begin()                                              # this thread is the pusher
+
+        @km._stage_marked("push")                                     # the mark _push carries when the pusher calls it
+        def pushers_push():
+            for name, dt in self.PUSHER:
+                st.stage(name, dt)
+        pushers_push()
+        done = {}
+
+        @km._stage_marked("connect")                                  # the mark _push carries for connect=True (_push_one)
+        def connect_push():
+            for name, dt in self.CONNECT:
+                st.stage(name, dt)
+            st.connect_push("chat", sum(dt for _, dt in self.CONNECT))   # _push_one's whole-wall counter, beside the stages
+            done["connect"] = True
+
+        def foreign_thread():                                         # no cycle_begin, no mark: a thread standing for neither
+            for name, dt in self.FOREIGN:
+                st.stage(name, dt)
+            done["foreign"] = True
+        for target in (connect_push, foreign_thread):
+            th = threading.Thread(target=target); th.start(); th.join(5)
+        self.assertEqual(done, {"connect": True, "foreign": True}, "both threads wrote")
+        st.stage("push", 0.006)                                       # the container: the pusher closes it outside the mark
+        st.cycle(0.008)
+        return st.snapshot()
+
+    def test_one_push_stage_from_three_threads_lands_by_each_writers_purpose(self):
+        snap = self._three_writers()
+        st = snap["stages_ms"]
+        self.assertAlmostEqual(st["push.chat"], 5.0, msg="the flat row is the pusher's 5 ms alone (20006 ms before: every writer's)")
+        self.assertAlmostEqual(st["push.send"], 1.0)
+        self.assertAlmostEqual(st["push"], 6.0, msg="the container, closed outside the mark, is the pusher's by its ownership of the cycle")
+        self.assertEqual(st["push.feedFirst"], 0.0, "the connect push's cards-first feed is not the pusher's")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"],
+                         {"push.chat": 20000.0, "push.send": 500.0, "push.feedFirst": 250.0}, "the connect push's stages, under their names, apart")
+        self.assertEqual(snap["pusher"]["connectPush"]["count"], 1)
+        self.assertEqual(snap["stagesForeign"], {"push.chat": 1.0, "push": 2.0}, "the thread with neither purpose is counted, not merged")
+        # the split rows keep the pusher's alone as before, and neither other writer reaches a split
+        self.assertEqual(sorted(snap["pusher"]["firstCycle"]["stages"]), ["push", "push.chat", "push.send"])
+        self.assertAlmostEqual(snap["pusher"]["firstCycle"]["stages"]["push.chat"]["ms"], 5.0)
+        self.assertEqual(snap["pusher"]["cycleJobsMs"], {j: 0.0 for j in km._PerfStats.CYCLE_JOBS}, "no `jobs.` write: the other routing untouched")
+
+    def test_the_flat_push_rows_roll_up_to_the_pushers_cycle_time_and_the_connect_rows_to_the_connect_pushes_wall(self):
+        """Over a run of both, the flat push.* rows are the pusher's, so the direct children of `push` sum to at most `push`,
+        which fits the pusher's cycle time (20757 ms of children against an 8 ms cycle before); the connect rows sum to at
+        most the connect pushes' whole wall, pusher.connectPush.ms_sum. A seam rolls up to its container, not to `push`."""
+        snap = self._three_writers()
+        st = snap["stages_ms"]
+        children = sorted(k for k in st if k.startswith("push.") and k.count(".") == 1)
+        self.assertEqual(children, ["push.chat", "push.feed", "push.feedFirst", "push.send", "push.timeline", "push.warm"])
+        self.assertLessEqual(sum(st[k] for k in children), st["push"] + 1e-9, "the push.* rows against the container: %r" % {k: st[k] for k in children})
+        self.assertLessEqual(st["push"], snap["pusher"]["cycle_ms_sum"] + 1e-9, "the pusher's push fits its cycles")
+        self.assertGreater(sum(st[k] for k in children), 0.0, "the pusher's writes are in them")
+        cst = snap["pusher"]["connectPush"]["stagesMs"]
+        self.assertLessEqual(sum(v for k, v in cst.items() if k.count(".") == 1), snap["pusher"]["connectPush"]["ms_sum"] + 1e-9)
+        self.assertGreater(sum(cst.values()), 0.0)
+
+    def test_a_push_under_the_push_mark_with_no_cycle_is_the_pushers_row(self):
+        """On a kernel only the pusher calls _push without connect (through _push_all, inside its cycle), so the "push" mark
+        names the pusher's purpose wherever it is read, and a bare _push in a test (PushStages below) carries it with no
+        cycle open and stands for the pusher. A container closed with no mark and no cycle is nobody's: stagesForeign."""
+        st = km._PerfStats()
+        out = {}
+
+        def bare_thread():
+            km._stage_marked("push")(lambda: st.stage("push.feed", 0.002))()
+            st.stage("push", 0.002)
+            out["done"] = True
+        th = threading.Thread(target=bare_thread); th.start(); th.join(5)
+        self.assertTrue(out.get("done"))
+        snap = st.snapshot()
+        self.assertAlmostEqual(snap["stages_ms"]["push.feed"], 2.0)
+        self.assertEqual(snap["stages_ms"]["push"], 0.0)
+        self.assertEqual(snap["stagesForeign"], {"push": 2.0})
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {})
+
+    def test_a_fresh_snapshot_seeds_no_connect_stage_row_and_reset_empties_the_table(self):
+        """No seed, and the docstring says so: a seeded push.warm or `push` row would be one a connect push can never move (the
+        warm runs for the pusher alone, and _push_one closes no container), reading as time connect pushes never spend
+        there. The table is its own attribute, copied into the served block; the live counters dict never holds it."""
+        st = km._PerfStats()
+        self.assertEqual(st.snapshot()["pusher"]["connectPush"]["stagesMs"], {})
+        self.assertNotIn("stagesMs", st.connect_push_stats)
+        km._stage_marked("connect")(lambda: st.stage("push.timeline", 0.004))()
+        self.assertEqual(st.snapshot()["pusher"]["connectPush"]["stagesMs"], {"push.timeline": 4.0})
+        st.reset()
+        self.assertEqual(st.snapshot()["pusher"]["connectPush"]["stagesMs"], {})
+        doc = km._PerfStats.__doc__
+        self.assertIn("No seed", doc[doc.index("      pusher  "):doc.index("      stages_ms  ")], "the pusher row says the table is unseeded")
+
+    def test_the_collectors_docstring_names_the_connect_table(self):
+        doc = km._PerfStats.__doc__
+        pusher_row = doc[doc.index("      pusher  "):doc.index("      stages_ms  ")]
+        self.assertIn("connectPush", pusher_row, "the pusher row documents the block the table rides")
+        self.assertIn("stagesMs", pusher_row)
+        stages_row = doc[doc.index("      stages_ms  "):doc.index("      stagesForeign  ")]
+        self.assertIn("pusher.connectPush.stagesMs", stages_row, "the stages_ms row sends the reader to the connect table")
+        self.assertIn("moved", stages_row, "and says the connect pushes' part moved there")
+        self.assertIn("2026-09-18", stages_row)
+        self.assertNotIn("EVERY caller", stages_row, "the fold sentence is gone")
+        foreign_row = doc[doc.index("      stagesForeign  "):doc.index("      builds  ")]
+        self.assertIn("push", foreign_row, "the foreign block names the push stages as a second family")
 
 
 class ProcessStatsFallback(unittest.TestCase):
@@ -2719,7 +2855,7 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         st.send(("chat", SID), "full", 10)
         st.send(("status", SID), "delta", 5)
         st.cycle(0.050)
-        st.stage("push.chat", 0.010)
+        km._stage_marked("push")(lambda: st.stage("push.chat", 0.010))()   # under the pusher's mark: the flat row's (2026-09-18)
         # the two owner-routed blocks (2026-09-18), populated so the walk covers them: a `jobs.` stage from this thread
         # while it owns no cycle lands in stagesForeign, then the same thread as the pusher's owner writes a cycle job
         # into pusher.cycleJobsMs. Both keys are the kernel's own literals (a stage name from the STAGES vocabulary, a

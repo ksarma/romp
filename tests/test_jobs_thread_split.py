@@ -300,8 +300,9 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
         self.assertEqual(snap["jobs"]["passes"], 1); self.assertEqual(snap["pusher"]["cycles"], 1)
 
     def test_the_stats_keep_two_owners_apart(self):
-        """A stage closed on the jobs thread lands in the jobs split and never in the pusher's, and the other way round, while
-        the cumulative totals take both."""
+        """A stage closed on the jobs thread lands in the jobs split and never in the pusher's, and the other way round. The
+        cumulative rows are each writer's own since 2026-09-18 (a flat `jobs.` row the jobs thread's, a flat push row the
+        pusher's, with nothing under pusher.connectPush.stagesMs when no connect push ran), where they took both before."""
         km = self.km
         ps = km._PerfStats()
         ps.cycle_begin()                                              # this thread is the pusher
@@ -326,6 +327,10 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
         self.assertAlmostEqual(snap["pusher"]["firstCycle"]["stages"]["jobs.apiHealth"]["ms"], 1.0)
         self.assertAlmostEqual(snap["pusher"]["cycleJobsMs"]["apiHealth"], 1.0)
         self.assertNotIn("jobs.apiHealth", snap["stages_ms"])
+        # the pusher's push stages (2026-09-18): the flat rows are its own by its ownership of the cycle, exact
+        self.assertAlmostEqual(snap["stages_ms"]["push.chat"], 10.0, "the pusher's push.chat, the flat row")
+        self.assertAlmostEqual(snap["stages_ms"]["push"], 10.0)
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {}, "no connect push in the run")
         self.assertEqual(snap["stagesForeign"], {}, "both writers owned a loop")
         self.assertEqual(ps._mine(), "pusher")
         self.assertEqual(snap["jobs"]["passes"], 1)
