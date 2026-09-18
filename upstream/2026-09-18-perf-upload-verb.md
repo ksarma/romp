@@ -3,7 +3,7 @@ title: romp perf upload: send one paste-safe export to a configured receiver, wi
 status: candidate
 where: cli/perf_upload.py, bin/romp-perf-upload, bin/romp (perf block: dispatch, usage line, help row), cli/perf_export.py (check_document takes the refusal tail), bin/README.md, cli/README.md, docs/reference.md, docs/guide.md; tests in tests/test_perf_upload.py, tests/romp-perf.bats
 added: 2026-09-18
-pr:
+pr: 782
 tier: feature
 offered:
 closed:
