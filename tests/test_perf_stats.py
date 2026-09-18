@@ -438,6 +438,44 @@ class Collector(unittest.TestCase):
         self.assertTrue(km._PerfStats._through_nested("push.chat.", "push.chat.sig.static", st))
         self.assertTrue(km._PerfStats._through_nested("push.", "push.chat.sig.deps", st))
 
+    def test_a_containers_kid_rows_are_cached_until_a_row_is_added(self):
+        """A container close sums its kid rows (the split's rows under its prefix, less those counted through a nested
+        container's row); the list is cached in the cycle's state per prefix and rebuilt only when a row appears (the row
+        count is the version), so the signature seam's per-tab closes walk no rows: under a counting _through_nested,
+        twenty tab closes after the rows exist make no call, a new row under the chat (the first build seam) makes one
+        rebuild and the next close none, and every sum stays exact (2026-09-18 review, low 3)."""
+        ps = self.st
+        calls = []
+        real = km._PerfStats._through_nested
+
+        def spy(pfx, key, stages):
+            calls.append((pfx, key)); return real(pfx, key, stages)
+
+        def sig_close(nbytes):
+            km.em._count_read("/lab/a.jsonl", nbytes)         # the signature's read: lands on the static row
+            ps.stage("push.chat.sig.static", 0.003); ps.stage("push.chat.sig.deps", 0.001); ps.stage("push.chat.sig", 0.004)
+        ps.cycle_begin(); ps.stage_boundary()
+        with mock.patch.object(km._PerfStats, "_through_nested", spy):
+            sig_close(100)                                     # the rows appear: the seam's first close builds its list
+            self.assertGreater(len(calls), 0, "the first container close walks the rows")
+            del calls[:]
+            for _ in range(20):
+                sig_close(10)
+            self.assertEqual(calls, [], "twenty tab closes over existing rows: no row walked")
+            ps.stage("push.chat.build", 0.002)                 # a new row under the chat, outside the seam's prefix
+            sig_close(5)
+            self.assertGreater(len(calls), 0, "a row was added: the seam's list is rebuilt once")
+            n = len(calls)
+            sig_close(5)
+            self.assertEqual(len(calls), n, "...and cached again")
+            ps.stage("push.chat.send", 0.001); ps.stage("push.chat", 0.006); ps.stage("push", 0.007); ps.cycle(0.008)
+        st = ps.snapshot()["pusher"]["firstCycle"]["stages"]
+        self.assertEqual(st["push.chat.sig.static"]["bytes"], 100 + 20 * 10 + 5 + 5)
+        self.assertEqual(st["push.chat.sig"]["bytes"], 310, "the seam's sum over every close")
+        self.assertEqual(st["push.chat.sig.deps"]["bytes"], 0)
+        self.assertEqual((st["push.chat"]["bytes"], st["push"]["bytes"]), (310, 310), "the chat and the push count the seam once")
+        self.assertNotIn("push.chat.sig.other", st)
+
     def test_the_cpu_stages_accumulate_user_and_sys_beside_the_wall(self):
         """Stage 1 of the chat-signature design (2026-09-18): stage(name, dt, cpu=(user_s, sys_s)) folds the caller's thread-CPU
         delta into stages_cpu_ms[name] = {user, sys} in ms, cumulative like stages_ms; the containers and the chat seams are
@@ -551,6 +589,17 @@ class Collector(unittest.TestCase):
         after = km._chat_sig_stats_report()
         self.assertEqual((after["pre"] - blk["pre"] + 1000, after["nosig"] - blk["nosig"]), (2, 1), "the bump adds under the lock")
         km._chat_sig_bump(pre=-2, nosig=-1)             # this module's table is shared by every test: put it back
+
+    def test_every_cpu_stage_is_named_in_the_collectors_stages_cpu_ms_row(self):
+        # the same rule for the CPU block: the docstring's stages_cpu_ms row (from its key to the next row's key) names
+        # every stage the snapshot serves a CPU row for from the start (2026-09-18 review, low 17: the row listed seven
+        # of the nine, the signature seam's two sub-seams missing)
+        lines = km._PerfStats.__doc__.splitlines()
+        start = next(i for i, l in enumerate(lines) if re.match(r"^\s{6}stages_cpu_ms\s", l))
+        end = next(i for i in range(start + 1, len(lines)) if re.match(r"^\s{6}\S", lines[i]))
+        row = "\n".join(lines[start:end])
+        for k in km._PerfStats.CPU_STAGES:
+            self.assertIn(k, row, "stages_cpu_ms row lacks %s" % k)
 
     def test_every_memo_key_is_named_in_the_collectors_docstring(self):
         # the /perf reader's reference for a memo block is _PerfStats's own docstring (its `memos` rows): a memo

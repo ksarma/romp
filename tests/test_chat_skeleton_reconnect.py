@@ -491,7 +491,9 @@ class SkeletonReconnect(unittest.TestCase):
 
         self.assertEqual(owners('"skeleton"') | owners('"skeletonOrder"'),
                          {"_client_reset_chat_base", "_release_skeleton_locked", "_resolve_reconnect",
-                          "_held_as_skeleton_by_all",   # the cold-tab gate's reader (2026-09-14), under the lock
+                          "_skeleton_held_here",        # the cold-tab gate's reader (2026-09-14): the per-client predicate, read under
+                          #                               its callers' hold (_held_as_skeleton_by_all per tab, _skeleton_census once per
+                          #                               push for the warm-tab census, 2026-09-18)
                           "_send_light_status",         # ...and its status send, membership re-checked under the lock (round three)
                           "_tab_order_frame", "_send_chat_or_status", "_send_tab_order",
                           # the two READERS of the connect query's skeleton=1 term (a later chat column's dial,

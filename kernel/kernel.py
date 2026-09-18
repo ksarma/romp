@@ -848,8 +848,9 @@ class _PerfStats:
                                    {stage: {user, sys}} in milliseconds from getrusage(RUSAGE_THREAD)
                                    read at the stage's open and close, for the containers push, jobs
                                    and jobsPass and the chat loop's seams push.chat, push.chat.sig,
-                                   push.chat.build and push.chat.send (CPU_STAGES; each listed at zero
-                                   from the start). Wall minus user minus sys over a window is the
+                                   push.chat.sig.static, push.chat.sig.deps, push.chat.build and
+                                   push.chat.send (CPU_STAGES; each listed at zero from the start).
+                                   Wall minus user minus sys over a window is the
                                    stage's wait (GIL and syscalls); the split between user and sys is
                                    tick-sampled by the kernel and scaled to the exact total, so read it
                                    over a window, never off one cycle. EMPTY where the platform has no
@@ -857,7 +858,7 @@ class _PerfStats:
                                    A row takes the CPU of a mark whose wall went to the flat stages_ms
                                    row of its name (stage()'s routing): a connect push's push.* stage,
                                    the pusher's jobs.<job> and a foreign writer's stage record no CPU
-                                   row, so a row's wall minus user minus sys is that row's own wait
+                                   row, so each row's CPU is the same writer's as its wall
       builds                       chat / feed / timeline / feedJson -> {cached, built, ms}: served
                                    from the build cache vs rebuilt, and the rebuild time. feedJson is
                                    GET /feed.json's own reads (_pure_feed), kept apart from `feed`,
@@ -1575,6 +1576,21 @@ class _PerfStats:
         head, dot, _rest = key[len(pfx):].partition(".")
         return bool(dot) and (pfx + head) in cls.CONTAINERS and (pfx + head) in stages
 
+    @classmethod
+    def _container_kids(cls, st, pfx):
+        """The rows a container's bytes sum over (the rows under its prefix, less those counted through a nested
+        container's row), cached in the cycle's state per prefix and rebuilt only when a row was added since: rows are
+        only ever added within a cycle, so the row count is the cache's version, and a new row anywhere (a nested
+        container's first close changes _through_nested's answers too) rebuilds the list. Without the cache every
+        container close walked every row of the split with _through_nested on each, under the collector's lock, and
+        the signature seam closes once per served tab and twice per rebuilt one (2026-09-18 review, low 3)."""
+        stages = st["stages"]
+        cache = st.setdefault("kids", {})
+        ent = cache.get(pfx)
+        if ent is None or ent[0] != len(stages):
+            ent = cache[pfx] = (len(stages), [v for k, v in stages.items()
+                                              if k.startswith(pfx) and not cls._through_nested(pfx, k, stages)])
+        return ent[1]
     @staticmethod
     def _purpose():
         """The calling thread's stage mark (_STAGE_TL, the thread-local _set_stage writes): "push" inside the pusher's _push and
@@ -1653,7 +1669,7 @@ class _PerfStats:
                     g = stages.setdefault(pfx + "other", {"ms": 0.0, "bytes": 0, "hydrated": 0})
                     g["bytes"] += max(0, marks[0] - prev[0]); g["hydrated"] += max(0, marks[1] - prev[1])
                 st["mark"] = marks
-                kids = [v for k, v in stages.items() if k.startswith(pfx) and not self._through_nested(pfx, k, stages)]
+                kids = self._container_kids(st, pfx)
                 cs["bytes"] = sum(v["bytes"] for v in kids)
                 cs["hydrated"] = sum(v["hydrated"] for v in kids)
             else:
@@ -1673,7 +1689,7 @@ class _PerfStats:
             for k in [k for k, ident in self._owners.items() if ident == tid and k != kind]:
                 del self._owners[k]                    # a thread owns one cycle kind at a time (a test drives both loops on one)
             self._owners[kind] = tid
-            self._cycle_state[kind] = {"stages": {}, "mark": marks, "gc": gc_mark}
+            self._cycle_state[kind] = {"stages": {}, "mark": marks, "gc": gc_mark, "kids": {}}   # kids: _container_kids' cache
 
     _GC_ZERO = (0, 0.0, 0.0, 0.0, 0)          # a generation's tally before its first collection: (collections, msSum, msMax, msLast, collectedLast)
 
@@ -37869,9 +37885,10 @@ def _chat_postal_relevant(ev):
 #   switchReads          reads of the user-todos switch file inside a signature (_user_todos_on)
 #   regReads             sdk_backend.read_reg file reads inside a signature (launch_error, a dead tab's queue)
 #   warmEligible         the warm-tab census: a tab with a cached build, watched by no connected chat client,
-#                        held as a skeleton by every connected chat client, with a transcript, and no plain
-#                        Outline connected: the cold gate's predicate minus its "not built" clause, so what a
-#                        warm-tab gate would skip (the cold tabs it skips today count under builds.chat.coldSkipped)
+#                        held as a skeleton by every connected chat client (the sets read once per push,
+#                        _skeleton_census), with a transcript, and no plain Outline connected: the cold gate's
+#                        predicate minus its "not built" clause, so what a warm-tab gate would skip (the cold
+#                        tabs it skips today count under builds.chat.coldSkipped)
 #   warmBlockedByOutline the same tab with a plain Outline pane connected (the pane needs every ledger slice)
 #   heldBody             a tab some connected chat client holds as a body, the watched tab included
 # Every push counts, connect pushes on handler threads included, so a per-cycle figure is a delta over pusher.cycles.
@@ -37936,19 +37953,20 @@ def _chat_sig_scope():
                        regReads=_reg_reads_on_thread() - r0)
 
 
-def _chat_sig_note_pre(sid, sig, hit, watched, clients, plain_outline):
+def _chat_sig_note_pre(sid, sig, hit, watched, held, plain_outline):
     """The push loop's per-tab counts after a pre-build signature (memos.chatSig): the signature taken (pre; nosig when
     none could be), the cache compare it is about to make (compares, and the components equal by object identity),
     and the warm-tab census. `hit` is the tab's cached entry before the compare, `watched` whether this push's or any
-    connected client's active tab is this one, `clients` every connected chat client (the floor's list) and
-    `plain_outline` whether an Outline pane without the provisional-row capability is connected. The transcript's
-    existence is read off the signature's own component (sig[0] is None when the file is missing), never a second
-    stat; _held_as_skeleton_by_all is asked only for an unwatched tab (a watched tab is a body by definition)."""
+    connected client's active tab is this one, `held` the push's census set (_skeleton_census: the tabs every connected
+    chat client holds as a skeleton, read once per push; None with no connected chat client) and `plain_outline`
+    whether an Outline pane without the provisional-row capability is connected. The transcript's existence is read
+    off the signature's own component (sig[0] is None when the file is missing), never a second stat; a watched tab is
+    a body by definition, whatever the set says."""
     n_id = compares = 0
     if hit is not None and sig is not None and isinstance(hit[0], tuple):
         compares = 1
         n_id = sum(1 for a, b in zip(hit[0], sig) if a is b)
-    skel = False if watched else _held_as_skeleton_by_all(sid, clients)
+    skel = held is not None and not watched and sid in held
     gated = hit is not None and not watched and skel and sig is not None and sig[0] is not None
     with _CHAT_SIG_STATS_LOCK:
         st = _CHAT_SIG_STATS
@@ -37959,7 +37977,7 @@ def _chat_sig_note_pre(sid, sig, hit, watched, clients, plain_outline):
         st["compareIdentity"] += n_id
         if gated:
             st["warmBlockedByOutline" if plain_outline else "warmEligible"] += 1
-        if clients and not skel:
+        if held is not None and not skel:
             st["heldBody"] += 1
 
 
@@ -54872,21 +54890,44 @@ def _held_as_skeleton_by_all(sid, clients):
         return False
     for c in clients:
         with _client_lock(c):
-            if sid in (c.get("skeleton") or ()):
-                continue
-            # A client that declared the diet but whose set is not resolved yet (its redial or skeleton dial armed
-            # `reconnect`, and no strip sender has reached it: round two, low 2, a connect push targeting another column)
-            # will hold every tab but its watched one as a skeleton once it is (_resolve_reconnect's rule), so it is read
-            # that way here; a client with no diet, or no watched tab, holds nothing as a skeleton. A RELAY diet client
-            # with NO watched tab holds EVERY tab as a skeleton (the federated no-active rule above), so the per-session
-            # push route does not build a tab the resolve is about to skeleton (2026-09-15, cost only).
-            _act = c.get("active")
-            _held_here = (_act and sid != str(_act)) or (not _act and c.get("dietSkeleton") and c.get("kind") == "relay")
-            if (c.get("reconnect") or c.get("skeletonOnReady")) and _held_here \
-                    and sid not in (c.get("echat") or {}):
-                continue
-            return False
+            if not _skeleton_held_here(c, sid):
+                return False
     return True
+
+
+def _skeleton_held_here(c, sid):
+    """Whether chat client `c` holds `sid` as a skeleton tab, read under the CALLER's hold of the client's slot lock: the
+    per-client half of _held_as_skeleton_by_all, one place for its rules (the census below asks it for every tab under
+    one hold). A client that declared the diet but whose set is not resolved yet (its redial or skeleton dial armed
+    `reconnect`, and no strip sender has reached it: round two, low 2, a connect push targeting another column) will
+    hold every tab but its watched one as a skeleton once it is (_resolve_reconnect's rule), so it is read that way
+    here; a client with no diet, or no watched tab, holds nothing as a skeleton. A RELAY diet client with NO watched
+    tab holds EVERY tab as a skeleton (the federated no-active rule above), so the per-session push route does not
+    build a tab the resolve is about to skeleton (2026-09-15, cost only)."""
+    if sid in (c.get("skeleton") or ()):
+        return True
+    _act = c.get("active")
+    _held_here = (_act and sid != str(_act)) or (not _act and c.get("dietSkeleton") and c.get("kind") == "relay")
+    return bool((c.get("reconnect") or c.get("skeletonOnReady")) and _held_here and sid not in (c.get("echat") or {}))
+
+
+def _skeleton_census(sids, clients):
+    """The sids among `sids` that EVERY chat client in `clients` holds as a skeleton (_held_as_skeleton_by_all's answer
+    for each), from ONE read of each client under its slot lock; None with no client. The warm-tab census's input
+    (memos.chatSig, _chat_sig_note_pre): taken once per push before the tab loop, so the census costs one lock hold
+    per connected chat client per push. Asked per tab it took the lock per client per tab (about 150 holds per cycle
+    at 38 tabs and four pages, each able to wait behind a handler thread's send to that client), a second full
+    clients-by-tabs walk on the hot loop beside the cold gate's (2026-09-18 review). A set the clients change during
+    the loop is read as it stood at the push's start: a count, not a gate."""
+    if not clients:
+        return None
+    held = set(sids)
+    for c in clients:
+        if not held:
+            break
+        with _client_lock(c):
+            held = {s for s in held if _skeleton_held_here(c, s)}
+    return held
 
 
 def _skeleton_for(c, act, chat_list):
@@ -60178,10 +60219,15 @@ def _repo_index_key(cwd):
         with os.scandir(tree) as it:
             for e in it:
                 if e.name != ".git" and e.is_dir(follow_symlinks=False):
+                    _chat_sig_count("stats")         # memos.chatSig: each stat as it is attempted, the other sites' rule
                     subs.append((e.name, e.stat().st_mtime))
-        _chat_sig_count("stats", len(subs) + 2)      # the subdirectory stats and the two getmtime calls (memos.chatSig)
-        return ((os.path.getmtime(os.path.join(os.path.dirname(gi), "index")) if gi else None),
-                os.path.getmtime(tree), tuple(sorted(subs)))
+        if gi:                                       # the index's mtime only when there is a git dir to hold one
+            _chat_sig_count("stats")
+            idx = os.path.getmtime(os.path.join(os.path.dirname(gi), "index"))
+        else:
+            idx = None
+        _chat_sig_count("stats")
+        return (idx, os.path.getmtime(tree), tuple(sorted(subs)))
     except (OSError, UnicodeDecodeError):
         return None
 
@@ -60833,6 +60879,7 @@ def _push(targets, connect=False, live_map=None):
             _live_scope.chat_floor0 = _chat_floor0_of(_all_chat)
             _all_active = {c.get("active") for c in _all_chat if c.get("active")}   # every connected column's watched tab,
             #                                                                          not this push's targets alone (round two, low 2)
+            _census = _skeleton_census([s["sid"] for s in build_order], _all_chat)   # memos.chatSig's warm-tab census: one read per client per push
             for s in build_order:
                 is_active = s["sid"] in active           # the watched tab(s): served like any tab while the key holds
                 # THE COLD-TAB GATE (2026-09-14; the user, after the boot review): on the 3:58 PM PT restart the first
@@ -60869,7 +60916,7 @@ def _push(targets, connect=False, live_map=None):
                     sig = None                           # an input that cannot be keyed: build, never cache
                 _chat_sig_seam_close(_t_seam, _c_seam)   # the seam and its static / deps sub-seams (stages_ms, the split)
                 hit = _built_chat.get(s["sid"])
-                _chat_sig_note_pre(s["sid"], sig, hit, is_active or s["sid"] in _all_active, _all_chat, _plain_outline)   # memos.chatSig
+                _chat_sig_note_pre(s["sid"], sig, hit, is_active or s["sid"] in _all_active, _census, _plain_outline)   # memos.chatSig
                 _claimed = False
                 if not (hit is not None and sig is not None and hit[0] == sig):
                     _ev = _chat_inflight_claim(s["sid"])            # single-flight (2026-09-14): another thread building this tab?
