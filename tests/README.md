@@ -68,12 +68,22 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   tunnels module `test_postal_via_dedupe.py`'s PeerRoutePrefersDirect resolve case
   answered an error instead of a relay and `test_kernel_remote_identity.py`'s absorb
   case missed its bus notice (5 of 6 full runs). The tunnels module now sets the value
-  per test (a setUp that saves what it found, a tearDown that restores it), both
-  readers pin the default the same way, and `tests/test_hermetic_kernel_postal.py`
-  holds the placement. From now on a module that needs `ROMP_POSTAL_PEERS` sets it in
-  setUp and restores it in tearDown, never at import; `ROMP_POSTAL_PORT` is the one
-  postal leg the kernel reads at import, and it stays before the load. A red in one of
-  these under `-n` is still judged by the module alone:
+  per test (a setUp that saves what it found and registers the restore as a cleanup; a
+  tearDown restore is skipped when a subclass's setUp fails part-way, and the value
+  leaks the same way), both readers pin the default the same way, and
+  `tests/test_hermetic_kernel_postal.py` holds the placement. The rule from now on has
+  two halves, held differently. The import-time half is pinned for every `.py` under
+  `tests/`: no module-level write of `ROMP_POSTAL_PEERS`, module-level `if`, `try`,
+  `for` and `with` bodies included. The per-test half, set in setUp and put back by a
+  cleanup registered right after the write (`restore_env` from `tests/conftest.py`, or a
+  method of the class), is a convention and not a pinned rule: the hermetic module
+  checks it for the tunnels module alone. The same shape leaked `ROMP_SESSIONS_FILE`
+  from `test_postal_bus_lifetime.py` (a tearDown that put back only a prior value; fixed
+  2026-09-18 with a cleanup and a pin that runs the case). conftest's
+  `_shared_state_restored` names such a leftover, but only in a run that collects no
+  module writing the seam at import, so the module alone is the run that shows it.
+  `ROMP_POSTAL_PORT` is the one postal leg the kernel reads at import, and it stays
+  before the load. A red in one of these under `-n` is still judged by the module alone:
   `python3 -m pytest tests/<module>.py -q`.
 - **`*.bats`** — the shell surfaces: `bin/romp`, the launch chain, hooks,
   postal CLI. Keep them GNU/BSD-portable (CI runs bats on ubuntu).

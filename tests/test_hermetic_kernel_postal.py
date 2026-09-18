@@ -23,22 +23,30 @@ it, as the runner, the shell suite's setup and kernel_env set; an inherited name
 tests/test_postal_fixed_port_belt.py.
 A module that loads the kernel in-process and exercises the bus still carries the trio, each leg where it is read: the
 port before the load (the kernel reads it at import), client-only before the load, and peers PER TEST, set in the setUp
-of every class that attaches or detaches and restored in its tearDown (the tunnel tests), or all three around the one
-call that provokes the revive (the peer-notify test), so its kernel never even asks. Peers is never set at import: the
-kernel reads it at call time, and under xdist every worker imports every collected module before it runs a test, so the
-"0" the tunnel tests once wrote at module level reached every module on every worker, and the remote-identity absorb
-case (a bus notice gated on peers) was red in 5 of 6 full runs (diagnosed 2026-09-18). The placement test below reads
-the module's assignments by position, and the probe beside it imports the module and runs one setUp to see the value.
+of every class that attaches or detaches and put back by a cleanup that setUp registers (the tunnel tests), or all
+three around the one call that provokes the revive (the peer-notify test), so its kernel never even asks. Peers is
+never set at import: the kernel reads it at call time, and under xdist every worker imports every collected module
+before it runs a test, so the "0" the tunnel tests once wrote at module level reached every module on every worker,
+and the remote-identity absorb case (a bus notice gated on peers) was red in 5 of 6 full runs (diagnosed 2026-09-18).
+The placement test below reads the module's assignments by position (a fault list, run over the real module and over
+synthetic copies with the leak planted, so it is known to be able to fail), the import-time half of the rule is held
+for EVERY module under tests/ (no module-level write of the variable, module-level if/try/for/with bodies included),
+and the probe beside them imports the module in a fresh interpreter and runs one setUp, and one that fails, to see the
+value. The restore is a cleanup rather than a tearDown since review round 1 (2026-09-18): unittest skips tearDown when
+a subclass's setUp raises after the base's returned, and a tearDown restore left the 0 in the worker on that path.
 
 The fixture rule below is static, so it holds for tests that skip here (no browser, no extension deps) and fails at
 the spawn site, naming the file.
 """
 import ast
+import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
 import unittest
 
@@ -92,14 +100,180 @@ def _env_writes(node):
     return keys
 
 
-def _env_pops(node):
-    """The keys `os.environ.pop(KEY, ...)` names anywhere under `node`."""
+def _env_pops(node, method="pop"):
+    """The keys `os.environ.pop(KEY, ...)` names anywhere under `node` (`method` picks another mutator, setdefault)."""
     keys = set()
     for n in ast.walk(node):
-        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "pop" and _is_environ(n.func.value)
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == method and _is_environ(n.func.value)
                 and n.args and isinstance(n.args[0], ast.Constant) and isinstance(n.args[0].value, str)):
             keys.add(n.args[0].value)
     return keys
+
+
+_COMPOUND = tuple(getattr(ast, name) for name in ("If", "For", "AsyncFor", "While", "With", "AsyncWith", "Try", "TryStar", "Match")
+                  if hasattr(ast, name))
+
+
+def _module_level_statements(body):
+    """The simple statements that run at import: the module's own, and those in the bodies of its if/for/while/with/try
+    (and match) blocks however nested; nothing inside a def or a class, which runs when called. A write of the peers
+    setting planted inside a module-level `if` body leaks exactly like a bare one (review round 1, 2026-09-18)."""
+    for s in body:
+        if isinstance(s, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if isinstance(s, _COMPOUND):
+            for attr in ("body", "orelse", "finalbody"):
+                yield from _module_level_statements(getattr(s, attr, None) or [])
+            for h in getattr(s, "handlers", []):
+                yield from _module_level_statements(h.body)
+            for c in getattr(s, "cases", []):
+                yield from _module_level_statements(c.body)
+        else:
+            yield s
+
+
+def _module_level_env_writes(tree):
+    """The environment keys the module writes at import: `os.environ[KEY] = ...` and `os.environ.setdefault(KEY, ...)`
+    in any statement _module_level_statements yields."""
+    keys = set()
+    for s in _module_level_statements(tree.body):
+        keys |= _env_writes(s) | _env_pops(s, "setdefault")
+    return keys
+
+
+def _cleanup_restores(funcs, cls, classes, tree):
+    """The environment keys the cleanups registered under `funcs` (`self.addCleanup(callee, ...)`) write or pop: the
+    callee resolved to a method of `cls` (`self.<name>`, its own or a base's through the module's classes) or to a
+    function defined at module level, plus any key named as a string argument of the registration (a helper that takes
+    the name, conftest's restore_env). A restore registered as a cleanup runs when a later setUp statement raises,
+    which a tearDown does not (review round 1, 2026-09-18)."""
+    module_funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    keys = set()
+    for f in funcs:
+        for n in ast.walk(f):
+            if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "addCleanup"
+                    and isinstance(n.func.value, ast.Name) and n.func.value.id == "self" and n.args):
+                continue
+            callee = n.args[0]
+            keys.update(a.value for a in n.args[1:] if isinstance(a, ast.Constant) and isinstance(a.value, str))
+            targets = []
+            if isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name) and callee.value.id == "self":
+                targets = _method_chain(cls, callee.attr, classes)
+            elif isinstance(callee, ast.Name) and callee.id in module_funcs:
+                targets = [module_funcs[callee.id]]
+            for t in targets:
+                keys |= _env_writes(t) | _env_pops(t)
+    return keys
+
+
+def _placement_faults(tree):
+    """Every way a module that loads the kernel in-process and attaches misplaces a leg of the trio; empty when the
+    placement holds. The port is assigned at module level before the kernel loads (the kernel reads it at import);
+    peers is NEVER written at module level (the leak of 2026-09-18, module-level if/try/for/with bodies included);
+    every class that attaches or detaches has a setUp (its own or through super()) that sets peers and registers a
+    cleanup that restores it, and client-only is set before the load or in that setUp. A list rather than assertions
+    so the check itself can be run over a synthetic module with the leak planted and shown to go red."""
+    faults = []
+    loads = [i for i, s in enumerate(tree.body) if _loads_kernel(s)]
+    if not loads:
+        return ["the module does not load the kernel in-process at module level"]
+    before_load = set()
+    for s in _module_level_statements(tree.body[:loads[0]]):
+        before_load |= _env_writes(s)
+    if "ROMP_POSTAL_PORT" not in before_load:
+        faults.append("the port is not set before the kernel module loads (it reads the port at import)")
+    if "ROMP_POSTAL_PEERS" in _module_level_env_writes(tree):
+        faults.append("peers is written at module level: the kernel reads it at call time, and under xdist a value written at "
+                      "import reaches every module on every worker (the remote-identity absorb case, red in 5 of 6 full runs)")
+    classes = {c.name: c for c in tree.body if isinstance(c, ast.ClassDef)}
+    attaching = [c for c in classes.values() if _attaches_or_detaches(c)]
+    if len(attaching) < 2:
+        faults.append("the scan sees fewer than two classes that attach or detach: %r" % [c.name for c in attaching])
+    for cls in attaching:
+        set_up = _method_chain(cls, "setUp", classes)
+        if not set_up:
+            faults.append("%s attaches or detaches and has no setUp" % cls.name)
+            continue
+        in_setup = set()
+        for f in set_up:
+            in_setup |= _env_writes(f)
+        if "ROMP_POSTAL_PEERS" not in in_setup:
+            faults.append("%s.setUp (own or through super()) does not set peers for its tests (a detach's refused bus notice "
+                          "revives the bus otherwise)" % cls.name)
+        if "ROMP_POSTAL_CLIENT_ONLY" not in before_load | in_setup:
+            faults.append("%s: client-only is neither before the load nor in its setUp" % cls.name)
+        if "ROMP_POSTAL_PEERS" not in _cleanup_restores(set_up, cls, classes, tree):
+            faults.append("%s.setUp (own or through super()) registers no cleanup that restores peers: a tearDown restore is "
+                          "skipped when a later setUp statement raises, and the 0 outlives the class (review round 1, "
+                          "2026-09-18)" % cls.name)
+    return faults
+
+
+def _tunnels_source():
+    return open(os.path.join(HERE, "test_kernel_tunnels.py"), encoding="utf-8", errors="replace").read()
+
+
+_PLANT_ANCHOR = 'os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"\n'
+
+
+def _plant(src, lines):
+    """`src` with `lines` inserted at module level just before the client-only assignment, that is before the kernel
+    load: the place the leaked "0" used to be written. Loud when the anchor is not there once."""
+    if src.count(_PLANT_ANCHOR) != 1:
+        raise AssertionError("the planting anchor %r is in the module %d times, not once" % (_PLANT_ANCHOR, src.count(_PLANT_ANCHOR)))
+    return src.replace(_PLANT_ANCHOR, lines + _PLANT_ANCHOR)
+
+
+def _teardown_only_restore(src):
+    """`src` (the tunnels module) with _PeersOff's restore moved back into a tearDown and no cleanup registered: the
+    shape the round-1 review found leaking on a subclass setUp that raises."""
+    out = src.replace("        self.addCleanup(self._restore_peers)\n", "        pass\n", 1)
+    out = out.replace("    def _restore_peers(self):\n", "    def tearDown(self):\n", 1)
+    peers_off = out.split("class _PeersOff", 1)[1].split("\nclass ", 1)[0]     # the rewritten class's body alone
+    if "addCleanup" in peers_off or "def tearDown(self):" not in peers_off or out.count("def _restore_peers") != 0:
+        raise AssertionError("the tunnels module no longer has the _PeersOff shape this synthetic copy rewrites")
+    return out
+
+
+_PROBE = textwrap.dedent("""
+    import json, os, shutil, sys, unittest
+    os.environ.pop("ROMP_POSTAL_PEERS", None)
+    here, planted = sys.argv[1], sys.argv[2]
+    sys.path.insert(0, here)
+    if planted:
+        # a synthetic copy of the module, compiled under the real file's name so its HERE and BIN resolve
+        real = os.path.join(here, "test_kernel_tunnels.py")
+        t = type(sys)("test_kernel_tunnels_planted")
+        t.__file__ = real
+        exec(compile(open(planted, encoding="utf-8").read(), real, "exec"), t.__dict__)
+    else:
+        import test_kernel_tunnels as t
+    out = {"after_import": os.environ.get("ROMP_POSTAL_PEERS")}
+    os.environ["ROMP_POSTAL_PEERS"] = "1"
+    case = t.TunnelConcierge("test_attach_requires_host")
+    case.setUp()
+    out["in_setup"] = os.environ.get("ROMP_POSTAL_PEERS")
+    case.tearDown()
+    out["after_teardown"] = os.environ.get("ROMP_POSTAL_PEERS")
+    case.doCleanups()
+    out["after_cleanups"] = os.environ.get("ROMP_POSTAL_PEERS")
+
+    class Raises(t._PeersOff):
+        def setUp(self):
+            super().setUp()
+            raise OSError("planted: the rest of a subclass's setUp failing after the peers write")
+
+        def test_never_reached(self):
+            pass
+
+    result = unittest.TestResult()
+    Raises("test_never_reached").run(result)
+    out["setup_raise_errors"] = len(result.errors)
+    out["after_setup_raise"] = os.environ.get("ROMP_POSTAL_PEERS")
+    for d in (case.td, os.environ.get("XDG_STATE_HOME")):
+        shutil.rmtree(d, ignore_errors=True)
+    print(json.dumps(out))
+""")
 
 
 def _loads_kernel(stmt):
@@ -191,62 +365,83 @@ class HermeticKernelPostal(unittest.TestCase):
             self.assertFalse(_spawns_kernel(src), "not a kernel spawn (a build, the other scripts, an in-process load): " + src)
 
     def test_the_module_that_loads_the_kernel_in_process_and_attaches_places_each_leg_of_the_trio_where_it_is_read(self):
-        """Read by position from the module's ast, not by text: the port is assigned at module level before the kernel
-        loads (the kernel reads it at import); client-only is assigned before the load or in the setUp of every class
-        that attaches or detaches; peers is assigned in each of those setUps and popped or restored in the matching
-        tearDown, and NEVER at module level. A module-level peers assignment is the leak of 2026-09-18 (the header)."""
-        tree = ast.parse(open(os.path.join(HERE, "test_kernel_tunnels.py"), encoding="utf-8", errors="replace").read())
-        loads = [i for i, s in enumerate(tree.body) if _loads_kernel(s)]
-        self.assertTrue(loads, "the module loads the kernel in-process at module level")
-        top = [s for s in tree.body if not isinstance(s, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))]
-        before_load = set().union(*(_env_writes(s) for s in tree.body[:loads[0]] if s in top)) if loads[0] else set()
-        module_level = set().union(*(_env_writes(s) for s in top)) if top else set()
-        self.assertIn("ROMP_POSTAL_PORT", before_load, "the port is set before the kernel module loads (it reads the port at import)")
-        self.assertNotIn("ROMP_POSTAL_PEERS", module_level,
-                         "peers is never set at module level: the kernel reads it at call time, and under xdist a value written at "
-                         "import reaches every module on every worker (the remote-identity absorb case, red in 5 of 6 full runs)")
-        classes = {c.name: c for c in tree.body if isinstance(c, ast.ClassDef)}
-        attaching = [c for c in classes.values() if _attaches_or_detaches(c)]
-        self.assertGreaterEqual(len(attaching), 2, "the scan sees the classes that attach or detach: %r" % [c.name for c in attaching])
-        for cls in attaching:
-            set_up, tear_down = _method_chain(cls, "setUp", classes), _method_chain(cls, "tearDown", classes)
-            self.assertTrue(set_up, "%s attaches or detaches and so has a setUp" % cls.name)
-            in_setup = set().union(*(_env_writes(f) for f in set_up))
-            self.assertIn("ROMP_POSTAL_PEERS", in_setup, "%s.setUp (own or through super()) sets peers for its tests (a detach's refused bus notice revives the bus otherwise)" % cls.name)
-            self.assertIn("ROMP_POSTAL_CLIENT_ONLY", before_load | in_setup, "%s: client-only before the load or in its setUp" % cls.name)
-            self.assertTrue(tear_down, "%s restores peers in a tearDown" % cls.name)
-            self.assertIn("ROMP_POSTAL_PEERS", set().union(*(_env_writes(f) | _env_pops(f) for f in tear_down)),
-                          "%s.tearDown (own or through super()) pops or restores peers, so the value never outlives the test" % cls.name)
+        """Read by position from the module's ast, not by text (_placement_faults): the port is assigned at module level
+        before the kernel loads (the kernel reads it at import); client-only is assigned before the load or in the setUp
+        of every class that attaches or detaches; peers is assigned in each of those setUps and put back by a cleanup
+        that setUp registers, and NEVER at module level. A module-level peers assignment is the leak of 2026-09-18 (the
+        header); a tearDown-only restore is the hole of review round 1 (a subclass setUp that raises skips it)."""
+        self.assertEqual(_placement_faults(ast.parse(_tunnels_source())), [])
+
+    def test_the_placement_check_reds_on_a_planted_module_level_write_and_on_a_teardown_only_restore(self):
+        """The check is run over synthetic copies of the real module so it is known to be able to fail (review round 1,
+        2026-09-18): a module-level `os.environ["ROMP_POSTAL_PEERS"] = "0"` restored before the load, bare and inside a
+        module-level `if` body; and the restore moved back into a tearDown with no cleanup registered."""
+        src = _tunnels_source()
+        for label, text in (("bare", _plant(src, 'os.environ["ROMP_POSTAL_PEERS"] = "0"\n')),
+                            ("in an if body", _plant(src, 'if True:\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\n')),
+                            ("by setdefault", _plant(src, 'os.environ.setdefault("ROMP_POSTAL_PEERS", "0")\n'))):
+            faults = _placement_faults(ast.parse(text))
+            self.assertTrue(any("written at module level" in f for f in faults), "%s planted write: %r" % (label, faults))
+        faults = _placement_faults(ast.parse(_teardown_only_restore(src)))
+        self.assertTrue(any("registers no cleanup" in f for f in faults), "tearDown-only restore: %r" % faults)
+        self.assertEqual(len(faults), 2, "one fault per attaching class, nothing else: %r" % faults)
+
+    def test_no_module_under_tests_writes_the_peers_setting_at_module_level(self):
+        """The import-time half of the rule, held for every .py under tests/ (review round 1, 2026-09-18): no module-level
+        write of ROMP_POSTAL_PEERS, module-level if/try/for/with bodies included. The per-test half (set in setUp, put
+        back by a cleanup) is a convention, checked above for the tunnels module alone; tests/README.md says so."""
+        paths = sorted(glob.glob(os.path.join(HERE, "**", "*.py"), recursive=True))
+        self.assertGreater(len(paths), 100, "the scan sees the test modules")
+        writers = []
+        for path in paths:
+            tree = ast.parse(open(path, encoding="utf-8", errors="replace").read(), filename=path)
+            if "ROMP_POSTAL_PEERS" in _module_level_env_writes(tree):
+                writers.append(os.path.relpath(path, HERE))
+        self.assertEqual(writers, [], "these modules write ROMP_POSTAL_PEERS at import; the kernel and the postal service "
+                                      "read it at call time, and under xdist every worker imports every collected module")
+        # the scan itself is known to see a planted write, bare and in an if body, and to ignore one inside a def
+        seen = _module_level_env_writes(ast.parse('import os\nif True:\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\n'))
+        self.assertIn("ROMP_POSTAL_PEERS", seen)
+        unseen = _module_level_env_writes(ast.parse('import os\ndef setUp(self):\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\n'))
+        self.assertNotIn("ROMP_POSTAL_PEERS", unseen)
+
+    def _tunnels_probe(self, planted_text=None):
+        """_PROBE in a fresh interpreter over the real module (imported) or over `planted_text`, a synthetic copy compiled
+        under the real file's name; returns the child's report."""
+        path = ""
+        if planted_text is not None:
+            d = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, d, True)
+            path = os.path.join(d, "planted_tunnels_module.py")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(planted_text)
+        env = dict(os.environ)
+        env.pop("ROMP_POSTAL_PEERS", None)
+        res = subprocess.run([sys.executable, "-c", _PROBE, HERE, path], capture_output=True, text=True, timeout=180, env=env, cwd=HERE)
+        self.assertEqual(res.returncode, 0, res.stderr[-2000:])
+        return json.loads(res.stdout.strip().splitlines()[-1])
 
     def test_importing_the_attaching_module_writes_no_peers_setting_and_its_setup_pins_one_for_the_test(self):
         """Executed, not read: a fresh interpreter pops ROMP_POSTAL_PEERS, imports tests/test_kernel_tunnels.py (which
         loads the kernel in-process against its own temp state and starts no bus) and reports the variable after the
-        import, inside an attaching class's setUp, and after its tearDown with a value a shell might have left. Before
-        2026-09-18 the import alone wrote "0"."""
-        probe = textwrap.dedent("""
-            import json, os, shutil, sys
-            os.environ.pop("ROMP_POSTAL_PEERS", None)
-            sys.path.insert(0, %r)
-            import test_kernel_tunnels as t
-            out = {"after_import": os.environ.get("ROMP_POSTAL_PEERS")}
-            os.environ["ROMP_POSTAL_PEERS"] = "1"
-            case = t.TunnelConcierge("test_attach_requires_host")
-            case.setUp()
-            out["in_setup"] = os.environ.get("ROMP_POSTAL_PEERS")
-            case.tearDown()
-            out["after_teardown"] = os.environ.get("ROMP_POSTAL_PEERS")
-            for d in (case.td, os.environ.get("XDG_STATE_HOME")):
-                shutil.rmtree(d, ignore_errors=True)
-            print(json.dumps(out))
-        """ % HERE)
-        env = dict(os.environ)
-        env.pop("ROMP_POSTAL_PEERS", None)
-        res = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=180, env=env, cwd=HERE)
-        self.assertEqual(res.returncode, 0, res.stderr[-2000:])
-        out = json.loads(res.stdout.strip().splitlines()[-1])
+        import, inside an attaching class's setUp, after its tearDown and after its cleanups with a value a shell might
+        have left, and after a subclass setUp that raises past the peers write. Before 2026-09-18 the import alone
+        wrote "0"; before review round 1 the raising setUp left the 0 behind (the restore was a tearDown)."""
+        out = self._tunnels_probe()
         self.assertIsNone(out["after_import"], "importing the module writes no peers setting (the kernel reads it at call time; a write at import leaks under xdist)")
         self.assertEqual(out["in_setup"], "0", "an attaching class's setUp turns peers off for its test")
-        self.assertEqual(out["after_teardown"], "1", "...and its tearDown restores what it found")
+        self.assertEqual(out["after_teardown"], "0", "the value is still set when tearDown returns: the subclass's detach there reads it, and the restore is a cleanup, which runs after tearDown")
+        self.assertEqual(out["after_cleanups"], "1", "...and the cleanup restores what it found")
+        self.assertEqual(out["setup_raise_errors"], 1, "the planted subclass setUp raised, as an error on the case")
+        self.assertEqual(out["after_setup_raise"], "1", "a subclass setUp that raises after the peers write still restores it: a tearDown restore is skipped on that path (review round 1, 2026-09-18)")
+
+    def test_the_import_probe_reds_on_a_planted_module_level_peers_write(self):
+        """The same planted assignment, run: a copy of the module with `os.environ["ROMP_POSTAL_PEERS"] = "0"` restored
+        before the load reports "0" after the import, so the probe is known to see the leak it guards against (review
+        round 1, 2026-09-18)."""
+        out = self._tunnels_probe(_plant(_tunnels_source(), 'os.environ["ROMP_POSTAL_PEERS"] = "0"\n'))
+        self.assertEqual(out["after_import"], "0", "the probe sees a module-level write at import")
+        self.assertEqual(out["after_cleanups"], "1", "the planted copy's own cleanup still restores the shell's value")
 
     def test_the_peer_notify_guard_test_carries_the_trio_around_the_call_it_forces_to_fail(self):
         src = open(os.path.join(HERE, "test_kernel.py"), encoding="utf-8", errors="replace").read()

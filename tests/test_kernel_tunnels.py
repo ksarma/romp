@@ -100,15 +100,21 @@ class _PeersOff(unittest.TestCase):
     """Peers off for the classes whose tests attach or detach. With peers on (the default) a detach tells the bus the
     peer is gone, nothing listens on this process's bus port, and the refused notice kicks _revive_postal_bus into
     running the postal service's ensure from inside the test process (kernel.py, _notify_bus_peer). The kernel reads
-    the variable at call time, so it is set here, per test, and restored in tearDown whatever the shell had; the module
-    header says why it is not set at import. A subclass calls super().setUp() first and super().tearDown() LAST, after
-    its own detach, which reads the value."""
+    the variable at call time, so it is set here, per test, and put back by a cleanup registered right after the
+    write, whatever the shell had; the module header says why it is not set at import. A subclass calls
+    super().setUp() first, and its own tearDown does the detach, which reads the value: cleanups run after tearDown,
+    so the restore is the last thing the test does."""
 
     def setUp(self):
         self._peers_env = os.environ.get("ROMP_POSTAL_PEERS")
         os.environ["ROMP_POSTAL_PEERS"] = "0"
+        # A cleanup, not a tearDown (review round 1, 2026-09-18): unittest skips tearDown when a subclass's setUp raises
+        # after this one returned, and both subclasses go on to make a temp dir and bind a server, so a tearDown
+        # restore left the 0 in the worker for every later module, the leak this class exists to end. A cleanup
+        # registered here runs whether or not the rest of setUp finishes, and after tearDown.
+        self.addCleanup(self._restore_peers)
 
-    def tearDown(self):
+    def _restore_peers(self):
         if self._peers_env is None:
             os.environ.pop("ROMP_POSTAL_PEERS", None)
         else:
@@ -139,7 +145,7 @@ class TunnelConcierge(_PeersOff):
         km._remotes.clear()
         self.srv.shutdown()
         self.srv.server_close()
-        super().tearDown()              # after the detach, which reads the peers setting
+        super().tearDown()              # the peers restore is a cleanup (_PeersOff.setUp): it runs after this, so the detach saw the 0
 
     def test_ssh_hosts_lists_concrete_config_aliases(self):
         status, body = _req(self.port, "GET", "/ssh-hosts")
@@ -304,7 +310,7 @@ class BootstrapRemoteKernel(_PeersOff):
         km._BOOT_WAIT_S = self.saved_wait
         self.srv.shutdown()
         self.srv.server_close()
-        super().tearDown()              # after the detach, which reads the peers setting
+        super().tearDown()              # the peers restore is a cleanup (_PeersOff.setUp): it runs after this, so the detach saw the 0
 
     def _mock(self, script):
         ssh = os.path.join(self.td, "mock-ssh")
