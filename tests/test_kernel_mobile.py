@@ -172,15 +172,16 @@ class LandingShell(unittest.TestCase):
         self.assertIn("data-tab", km._LANDING_MOBILE_JS)       # show() marks the active pane on <body>
 
     def test_lazy_panes_markup_loader_and_the_promotions_place_in_show(self):
-        # stage 0 (2026-09-18): the Waiting pane is served with data-src (the mobile script promotes it: at boot on the desktop, on
-        # its first tap on the phone); the chat keeps its src (the reveal landing reads its document) and so does the Files pane
-        # (its markup line is upstream's; a lazy Files pane is a one-line follow-up). The shell's loader for a loading pane is one
+        # stage 0 (2026-09-18): the Waiting and Files panes are served with data-src (the mobile script promotes them: at boot on
+        # the desktop, on their first tap on the phone; the Files line is the one upstream markup token this fork changes); the
+        # chat keeps its src (the reveal landing reads its document). The shell's loader for a loading pane is one
         # element, painted for the shown tab by body.pane-loading inside the phone media block, in _pane_spin's dress.
         html = km._landing()
         js = km._LANDING_MOBILE_JS
         self.assertIn("<iframe id=f-waiting data-src=/waiting>", html)
         self.assertIn("<iframe id=f-chat class=m-on src=/chat>", html)
-        self.assertIn("<iframe id=f-files src=/files>", html)
+        self.assertIn("<iframe id=f-files data-src=/files>", html)
+        self.assertNotIn("<iframe id=f-files src=", html)
         self.assertEqual(html.count("<div id=pane-load>"), 1)
         self.assertLess(html.index("<div id=romp-boot>"), html.index("<div id=pane-load>"))
         self.assertIn("#pane-load{display:none}", html)
@@ -1410,7 +1411,7 @@ rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
 # then runs where the document would load: after the tap (`before`), for a lazy pane; at the shell's boot, for the chat.
 _LAZY_PRE = r"""
 const ATTRS = {}, SRCSETS = [], DIVCLS = {};
-const mk = (id) => { const k = id.slice(2), a = (k === 'chat' || k === 'files') ? { src: '/' + k } : { 'data-src': '/' + k }; ATTRS[id] = a; DIVCLS[id] = new Set();
+const mk = (id) => { const k = id.slice(2), a = (k === 'chat') ? { src: '/' + k } : { 'data-src': '/' + k }; ATTRS[id] = a; DIVCLS[id] = new Set();   // the served markup: the chat alone ships src
   const dc = DIVCLS[id];
   return { id, parentNode: { classList: { add: (c) => dc.add(c), remove: (c) => dc.delete(c), contains: (c) => dc.has(c) } },
     classList: { toggle() {} }, contentDocument: {}, contentWindow: { addEventListener: () => {} },
@@ -1456,8 +1457,8 @@ global.__rompMobileTab('waiting');   // its tab again: the word shows it, it dia
 var t_dialed=sockets.length;open();   // the kernel accepts the redial
 var t_back={dialed:t_dialed,sockets:sockets.length,states:states().slice()};
 out({boot:t_boot,afterTap:t_afterTap,atLoad:t_atLoad,told:t_told,away:t_away,parked:t_parked,back:t_back});   // t_ prefixed: the scenario shares the shim core's function scope, whose own `parked` a bare name would shadow""")
-        self.assertEqual(r["boot"]["src"], {"f-chat": "/chat", "f-files": "/files", "f-feed": "/feed", "f-fleet": None, "f-timeline": None, "f-waiting": None},
-                         "at the shell's boot on the phone the Waiting pane has no src: no document, no shim, no socket")
+        self.assertEqual(r["boot"]["src"], {"f-chat": "/chat", "f-files": None, "f-feed": "/feed", "f-fleet": None, "f-timeline": None, "f-waiting": None},
+                         "at the shell's boot on the phone the Waiting pane has no src (nor the Files pane): no document, no shim, no socket")
         self.assertEqual(r["boot"]["lazy"]["f-waiting"], "/waiting", "its data-src is parked for the tap")
         self.assertEqual(r["boot"]["sets"], ["f-feed"], "one src set at boot, the exempt feed's")
         self.assertEqual(r["afterTap"]["src"], "/waiting", "the tap sets it")

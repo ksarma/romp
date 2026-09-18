@@ -11,15 +11,15 @@ baseline the fixes are measured against and asserts SHAPES only (rows present, f
 JSON artifact), never counts ahead of the fix that earns them. The count assertions arrive with each fix (relay redials
 that wait for the local socket: zero `watchdog-close connecting`; hidden panes that park their redial, LANDED as D2 on
 2026-09-18 and pinned in `_parked` below: on the phone every loaded pane but two tells the shell `parked` at the return (four at
-D2's landing, the Files pane alone since stage 0 made the other three lazy; see below) and two dial, the visible chat and the feed, which is exempt from parking by the user's ruling of
+D2's landing, none since stage 0 made the other four lazy, except a pane a leg tapped; see below) and two dial, the visible chat and the feed, which is exempt from parking by the user's ruling of
 2026-09-18 so the shell's bell keeps receiving card-trouble entries while the Feed tab is hidden, one extra redial per
 return accepted; the witness is the shell's wsState words the driver records, because a parked pane's own `return` row
 with `parked:true` waits in its queue for the tap, which no leg makes, so within a leg only the dialing panes' rows reach
 the kernel; the shell leading the visible pane's redial: zero pane `wsconnfail` and one `return-probe`), so a count
-pinned here ahead of its fix would pin today's storm. Since stage 0 (2026-09-18, `_lazy` below) the phone loads only the chat,
-the feed and the Files pane at boot: the Outline, the Sessions band and the Waiting pane have no document until their first tap,
-so the cold open's documents, sockets and connect pushes drop by three, the parked set at a return is the Files pane alone (plus
-a pane a leg tapped), and the tab-tap leg exercises the parked contract on a pane that did not exist at boot.
+pinned here ahead of its fix would pin today's storm. Since stage 0 (2026-09-18, `_lazy` below) the phone loads only the chat
+and the feed at boot: the Outline, the Sessions band, the Waiting pane and the Files pane have no document until their first tap,
+so the cold open's documents, sockets and connect pushes drop by four, the parked set at a return is empty (a pane a leg tapped
+excepted), and the tab-tap leg exercises the parked contract on a pane that did not exist at boot.
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), with ROMP_WS_KEEPALIVE=2 (WS_DEAD_S 6 s, a floor for a socket the
@@ -49,7 +49,7 @@ rather than discovered; no `pageshow` is dispatched (the design dispatches none)
 not the phone's dead path, which the HUNG regime emulates. The override is installed per DOCUMENT, by an init script and
 again at boot in any frame the init script missed: an iframe navigating from its initial about:blank to a same-origin
 page keeps its Window (Firefox and WebKit every time, Chromium sometimes), and playwright's init script never reached the
-eagerly created frames (chat, feed, files on the phone; every pane on the desktop) in Firefox, so without the late pass their shims read the browser's
+eagerly created frames (chat and feed on the phone; every pane on the desktop) in Firefox, so without the late pass their shims read the browser's
 real visibilityState and filed `keep` with `hiddenMs -1`; the artifact's `lateInstall` names the frames the pass caught.
 The kernel's dead-socket drop plays no part here: the driver's close at the suspend reaches the kernel at once (the
 kernel-side leg of every held socket closed 13 to 25 ms after the suspend, code 1006), so the kernel sees an immediate
@@ -100,8 +100,8 @@ DRIVER = os.path.join(HERE, "return_from_background_browser.mjs")
 APPS = ("chat", "timeline", "fleet", "feed", "waiting", "files")   # the six pane documents the shell serves iframes for; the shell itself dials app=shell
 FRESH_APPS = tuple(a for a in APPS if a != "files")                # the Files pane gets no resync frame, so it files no return-fresh
 # stage 0 (2026-09-18): on the phone these load on their FIRST TAP (no document, no shim, no socket at boot); the chat ships its src,
-# the feed is exempt (the bell), the Files pane keeps its src (its markup line is upstream's). The desktop loads all six at boot.
-LAZY_PHONE = ("timeline", "fleet", "waiting")
+# the feed is exempt (the bell). The desktop loads all six at boot.
+LAZY_PHONE = ("timeline", "fleet", "waiting", "files")
 
 
 def _eager(shell, tap=None):
@@ -386,9 +386,9 @@ class ReturnFromBackground(unittest.TestCase):
 
     # ---- stage 0's count pin (2026-09-18): the lazy panes' cold-open counts, and the tab-tap leg ----
     def _lazy(self, name, r, m, tap):
-        """T1 and T6, end to end (stage 0, 2026-09-18). On the phone the Outline, the Sessions band and the Waiting pane have no src, no
-        document and no socket at boot: the kernel's wsopen rows before the suspend name the eager panes alone, no lazy pane's shim says
-        a word, and the iframes read no src. The cold open's counts (documents, sockets, dials) drop by the three lazy panes; the
+        """T1 and T6, end to end (stage 0, 2026-09-18). On the phone the Outline, the Sessions band, the Waiting pane and the Files pane have
+        no src, no document and no socket at boot: the kernel's wsopen rows before the suspend name the eager panes alone, no lazy pane's shim says
+        a word, and the iframes read no src. The cold open's counts (documents, sockets, dials) drop by the four lazy panes; the
         desktop's do not. The tab-tap leg taps one lazy pane: its document loads on the tap (its src set, the shell's loader up while
         it loads), its shim says up, and at the return, off screen behind the chat, it parks like any pane (D2)."""
         where = name + ": "

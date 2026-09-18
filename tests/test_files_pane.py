@@ -212,7 +212,8 @@ class Shell(unittest.TestCase):
         _has(self, "<button data-pane=files>Files</button>", self.html)
 
     def test_the_column_sits_after_waiting_with_its_gutter_and_grow_var(self):
-        self.assertIn('<div class=gv id=gv-d></div><div class=pane id=files-pane><iframe id=f-files src=/files></iframe></div>',
+        # data-src since stage 0 (2026-09-18): the mobile script promotes it, at boot on the desktop and on its first tap on the phone
+        self.assertIn('<div class=gv id=gv-d></div><div class=pane id=files-pane><iframe id=f-files data-src=/files></iframe></div>',
                       self.html.replace('"\n            "', ""))
         self.assertLess(self.html.index("id=waiting-pane"), self.html.index("id=gv-d"))
         self.assertLess(self.html.index("id=gv-d"), self.html.index("id=files-pane"))

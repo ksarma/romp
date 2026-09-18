@@ -256,8 +256,8 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   counted from the show word rather than the return. A return in a shell that
   told a word and did not park says `parked: false`; a standalone page's row
   carries no `parked` field. On the phone layout the Outline, the Sessions
-  band and the Waiting pane load on their first tap (since 2026-09-18; the
-  chat, the feed and the Files pane load at boot), so a pane the phone never
+  band, the Waiting pane and the Files pane load on their first tap (since
+  2026-09-18; the chat and the feed load at boot), so a pane the phone never
   showed has no document and files no rows of any kind: its absence from the
   rows is the saving, not a field.
   A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's

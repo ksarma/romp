@@ -67463,6 +67463,7 @@ if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files
     if(cur!=='files'){window.__rompFilesTabFrom=cur;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
   var fwd=function(){try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null,at:m.at||null,frag:m.frag||null},'*');}catch(e){}};
   var rd='';try{rd=(ff&&ff.contentDocument)?ff.contentDocument.readyState:'';}catch(e){}
+  try{if(ff&&ff.contentDocument&&ff.contentDocument.URL==='about:blank')rd='loading';}catch(e){}   // [fork] stage 0 (2026-09-18): a LAZY Files pane the tab switch above just promoted still holds its initial about:blank (readyState complete) until the page commits; a forward into it would be lost, so it waits for the page's load below (the gear opener's own guard)
   if(ff&&rd!=='complete'){var once=function(){ff.removeEventListener('load',once);fwd();};ff.addEventListener('load',once);}else fwd();}
 // the Files pane's viewer closed (files.ts posts it on the close edge: nothing left up in the pane): on a
 // phone, where the arm above switched tabs to show it, go back to the tab the click came from; on desktop
@@ -67488,6 +67489,7 @@ if(m.romp==='browseFiles'&&(m.pane==='pane'||!feedHere())){var fb=document.getEl
     if(curb!=='files'){window.__rompFilesTabFrom=curb;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
   var fwdb=function(){try{fb&&fb.contentWindow&&fb.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid,identity:m.identity||null},'*');}catch(e){}};
   var rdb='';try{rdb=(fb&&fb.contentDocument)?fb.contentDocument.readyState:'';}catch(e){}
+  try{if(fb&&fb.contentDocument&&fb.contentDocument.URL==='about:blank')rdb='loading';}catch(e){}   // [fork] stage 0: the same wait for a just-promoted lazy Files pane (the viewFile arm above says why)
   if(fb&&rdb!=='complete'){var onceb=function(){fb.removeEventListener('load',onceb);fwdb();};fb.addEventListener('load',onceb);}else fwdb();}
 // A browse ask naming no pane surfaces the FILE BROWSER in the FEED pane, which is a different
 // document — so the shell relays it. If the feed pane is toggled off we turn it on for the duration
@@ -68353,10 +68355,10 @@ var F={chat:document.getElementById('f-chat'),fleet:document.getElementById('f-f
 var B=bar.querySelectorAll('button[data-pane]'),KT='romp-mobile-tab';
 function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')||'null');return !!(st&&st.showFilesControl===true);}catch(e){return false;}}   // the gear's Files-control setting (T317; off by default since T317b: shown only when the store holds the literal true under the fresh key, never the T317-era filesControl a whole-object save merged in): the same read the pane controller makes, which parses after this script
 // [fork] stage 0 (2026-09-18): LAZY PANES on the phone (the user's decision of 2026-09-18: a pane nobody is looking at costs
-// nothing until its tap). The served markup gives every pane but the chat and the Files pane a data-src (the optional panes
-// since 2026-09-10; the Waiting pane since this change), and on the desktop the pane controller (_LANDING_COLLAPSE_JS
-// reconcile) copies it to src at boot for every optional pane the gear shows, as before, while the Waiting pane, which has no
-// gear row and so is not in the controller's list, is promoted at boot below. On the phone layout only the chat, the feed
+// nothing until its tap). The served markup gives every pane but the chat a data-src (the optional panes since 2026-09-10;
+// the Waiting and Files panes since this change), and on the desktop the pane controller (_LANDING_COLLAPSE_JS reconcile)
+// copies it to src at boot for every optional pane the gear shows, as before, while the Waiting and Files panes, which have
+// no gear row and so are not in the controller's list, are promoted at boot below. On the phone layout only the chat, the feed
 // (exempt: its socket carries the card-trouble entries the shell's bell mirrors, the parking rule's exemption) and the stored
 // tab load at boot; every other pane loads on its FIRST show (a tap, a reveal, a relay's switch), so a cold open costs their
 // documents, sockets and connect pushes nothing. The controller's boot promotion reads data-src, so before it parses (this
@@ -68530,13 +68532,13 @@ shellWS();
 // [fork] stage 0: the lazy panes' boot. On the phone every pane's data-src but the chat's (it ships src), the feed's (exempt) and
 // the stored tab's (show(last) below promotes it) is parked under data-lazy-src before the pane controller parses, so its boot
 // promotion leaves them alone, and the feed is promoted here (the gear's word respected). On the desktop the controller's
-// eager boot stands, and the Waiting pane, outside its list, is promoted here. The stored tab is read here as the boot line
-// below reads it (that line is upstream's text; this one runs first).
+// eager boot stands, and the Waiting and Files panes, outside its list, are promoted here. The stored tab is read here as the
+// boot line below reads it (that line is upstream's text; this one runs first).
 try{var lazyTab='chat';try{var ls=localStorage.getItem(KT);if(ls&&F[ls])lazyTab=ls;}catch(e){}
 if(mobileOn()){for(var lk2 in F){var lf=F[lk2];if(!lf||lk2==='chat'||lk2==='feed'||lk2===lazyTab)continue;
 var lu=lf.getAttribute('data-src');if(lu&&!lf.getAttribute('src')){lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');}}
 promote('feed');}
-else promote('waiting');}catch(e){}
+else{promote('waiting');promote('files');}}catch(e){}
 var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);
 })();
 """
@@ -71167,12 +71169,15 @@ def _landing():
             "<div class=gv id=gv-c></div>"
             # data-src since stage 0 (2026-09-18): on the phone the pane loads on its first tap (_LANDING_MOBILE_JS, the lazy
             # panes); on the desktop the mobile script promotes it at boot, so the column loads as it always did. The chat keeps
-            # its src (the shell's reveal landing reads its document), the Files pane too (its line is upstream's).
+            # its src (the shell's reveal landing reads its document); the Files pane below is data-src too.
             "<div class=pane id=waiting-pane><iframe id=f-waiting data-src=/waiting></iframe></div>"
             # "Files" (2026-09-03): the file viewer as its own column, far right, OFF by default — the
             # shell's viewFile relay brings it forward when a chat file-link click routes here
             "<div class=gv id=gv-d></div>"
-            "<div class=pane id=files-pane><iframe id=f-files src=/files></iframe></div>"
+            # data-src since stage 0 (2026-09-18): the one upstream markup token this fork changes (src -> data-src). On the phone
+            # the pane loads on its first tap; on the desktop the mobile script promotes it at boot, so the column loads as it
+            # always did (its rail toggle is off by default and it has no gear row, so the controller's list does not carry it).
+            "<div class=pane id=files-pane><iframe id=f-files data-src=/files></iframe></div>"
             "</div>"
             "<div id=gv-ghost></div>"   # the divider drag's landing line (position:fixed; gutter() in _LANDING_JS moves it)
             "<div id=col-ghost></div>"   # a tab drag's provisional rectangle: the right half of the rightmost chat column (position:fixed; _LANDING_SPLIT_JS places it)
