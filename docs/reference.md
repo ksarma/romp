@@ -153,9 +153,10 @@ These are for scripting and for agents rather than daily use:
 | `romp url` | Print only the tokened dashboard URL, for piping |
 | `romp sessions [--json]` | The fleet with each session's state, identity colours, directory and backend |
 | `romp perf [--interval <s>] [--json]`, `romp perf log on\|off` | The kernel's performance counters as rates over two snapshots (below); `--json` prints one raw snapshot; `log on\|off` turns the `romp-perf` stderr log on or off without a restart |
+| `romp perf export --public [--from SNAPSHOT.json] [--usage] [--out PATH]` | Write one paste-safe copy of the kernel's counters (see [Kernel performance counters](#kernel-performance-counters)) as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json` under the state directory, or at `--out`, and print its path and size; `--from` takes a saved `romp perf --json` snapshot instead of the running kernel; `--usage` adds session and feature counts. The flag is required: the verb has no raw mode. Nothing leaves the machine |
 | `romp perf client [--minutes <n>] [--json]` | What the open dashboards' browsers spent on the frames they received (below): handler milliseconds per minute by frame type with window p50/p90/p99 and max, the worst minute's main-thread-free p90, long animation frames and their attributed callbacks, the worst minute, heap and DOM, the slowest frames, per dashboard and pane over the last `<n>` minutes (default 10) |
 | `romp api-health` | The API-health signal as JSON (see [The API-health signal](#the-api-health-signal)): per-credential, per-model-family retry and give-up rates over rolling windows, with a derived state |
-| `romp restart-metrics [--json] [--window day\|week] [--anchor D] [--since D] [--until D] [--tz Z] [--no-live]` | What kernel restarts do to the sessions (see [Restart metrics](#restart-metrics)): turns cut per restart and per window, outage and reconcile times, quiet-window waits, orphans and reaps, crash heals, redo cost, turn latency, per-session and kernel memory and CPU; a text summary per window, or the whole document as JSON |
+| `romp restart-metrics [--json [--public]] [--window day\|week] [--anchor D] [--since D] [--until D] [--tz Z] [--no-live]` | What kernel restarts do to the sessions (see [Restart metrics](#restart-metrics)): turns cut per restart and per window, outage and reconcile times, quiet-window waits, orphans and reaps, crash heals, redo cost, turn latency, per-session and kernel memory and CPU; a text summary per window, or the whole document as JSON |
 | `romp mail …` | The postal service from the shell (below) |
 | `romp send <session> [--tag <label>] <text>` | Hand a session a message, on either backend. Anything a script, cron job, or launcher composes SHOULD carry a tag (one word, letters/digits/dashes, up to 24 chars): the chat then renders it as machine-sent under that label instead of as the user's typed words. Raw POST /send callers pass it as the JSON `tag` field (`{name, text, tag}`; a malformed tag fails the whole send, loudly); `--tag` is the CLI's equivalent. Both resolve to the `<!-- romp-tag: <label> -->` marker in the delivered text. An unknown session is refused with the kernel's reason and exit 1; a session the kernel knows whose backend refuses it (an ended Claude Code session addressed by id, an ended comment thread by id or name) is refused the same way, with the kernel's reason, and the message is not delivered; a session an attached machine runs, addressed by the name that machine lists or by its id, receives it through that machine's kernel, whose refusal is relayed in its words. A kernel that took the request but answered late is exit 3: the message may already have been delivered, so do not retry blindly (`ROMP_KERNEL_HTTP_TIMEOUT_S`, under Messages across a restart) |
 | `romp new --model <id> <name>` | Model for the Claude Code session: a family alias such as `fable` (follows the family's newest release) or a full id such as `claude-fable-5` (a pin); re-asserted if `<name>` already runs |
@@ -3751,6 +3752,46 @@ romp-manager -f | grep romp-perf`; under launchd (macOS), `tail -f
 ~/.local/state/romp/manager.log | grep romp-perf`. Setting `ROMP_PERF=1` in the
 kernel's environment still turns it on at start.
 
+`romp perf export --public` writes one copy of the snapshot that is safe to
+paste in public. A raw snapshot is not: its keys carry the machine's own text
+(a transcript's absolute path in the read table, a session id in the chat
+rows and the parse table, a glossary term or a scanner's path in an http key,
+a client's declared app name, an exception message in the judges' child, the
+thread stacks, the pid). The export applies two rules to the whole document
+(`cli/perf_public.py`): every key and string value must be a code identifier
+in the browser's `ident` grammar (letters, digits, `_ . : -`, at most 32
+characters) or it becomes the word `other` (a folded key merges with its
+sibling, counts summed), with the `http` block judged against the kernel's
+own route register and the byte tables' joined `kind<-caller` keys against
+theirs; and a denylist drops what must not appear even as `other`: the read
+table by path, the child's first failure, the stacks, the pid and the clock
+stamps, and every key that names a session, a place, a host or a user. The
+result goes under a `schema` line (`romp-perf-export/1`) with the UTC minute
+of the export and, when the snapshot carries the kernel's commit, its
+twelve-character abbreviation; `--usage` adds a `usage` block, off by
+default, with the session counts, the user's actions and the panes opened
+(from the http table's route counts) and the kernel's uptime bucket, all from
+keys the snapshot already carries. Before writing, the document is walked
+once more for a uuid, a 32-hex token or an absolute path, and searched for
+the strings only this machine knows (its hostname, user and home directory,
+the session ids and working directories in the state directory's registry);
+either finding refuses the write and names the key path, never the value.
+The file lands as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json` under the
+state directory, readable by the owner alone, or at `--out`; the path and
+the byte size are printed. `--from SNAPSHOT.json` folds a snapshot saved
+earlier with `romp perf --json` (an older kernel's raw http paths are
+collapsed to their families the way the kernel does now). Without `--public`
+the verb refuses with one line and exit 2: there is no raw mode, so a raw
+snapshot is never written by habit. Nothing leaves the machine: the export
+reads `GET /perf` on `127.0.0.1` and writes a file, and posting it is the
+user's own act. Read the file before you paste it; two maintainers read a
+pasted export with `romp perf`'s rate arithmetic, and a bug report is best
+served by a snapshot taken after the kernel has been up for a while (the
+counters are lifetime totals) with the `romp perf` text output beside it.
+`romp restart-metrics --json --public` applies the same rules to the restart
+document (the session names, ids, pids, scope units and the label go; the
+counts and distributions stay).
+
 The counters describe a running kernel. To time the same builders offline, on
 a copy of a state directory and with no live kernel, `tools/perf-bench.py`
 loads a checkout's kernel in-process and reports each builder's cost on
@@ -5120,7 +5161,14 @@ missing ledger is named at the top, never a silent zero. `--json` prints the who
 (each cut row joined to the boot that followed it), `quietWindows` (each
 joined to the restart it released), `kernelSeries`, `events`, `buckets` (every
 metric above per window, with capped latency samples for the distribution
-figure), `sources`, and `live`.
+figure), `sources`, and `live`. `--json --public` prints the document's
+paste-safe form instead, through the same rules as `romp perf export --public`
+(see [Kernel performance counters](#kernel-performance-counters)): the session
+names on the cut rows and in the buckets' `cutSessions`, the sids, pids, scope
+units, the label and the kernel's sha are dropped, every other key and string
+folds to a code identifier or `other`, and the document is marked `public:
+true`; it is searched for the strings only this machine knows before it is
+printed, and a survivor refuses the print naming the key path.
 
 `scripts/restart_metrics_report.py` draws the before-versus-after figures from
 two or more of those JSON documents with cleanplots, which is not a romp
