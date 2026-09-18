@@ -19,6 +19,11 @@ for another); a window's entry goes with its last client; a copy is kept only wh
 with a socket the reaper dropped is retired at the reap, unless the window's redialed chat pane is already
 connected, whose first strip lands it.
 
+Review round 3 (2026-09-18): the retire never pops the park. A copy whose last target the reaper dropped becomes a
+plain park on every path: the reap ends the waiting-on-a-pong state, not the user's gesture, which stands until a pane
+consumes it or the window goes away (the ruling re-meaning the round-2 retire case below). The consequence of the
+no-wid entry's unbounded life is pinned as the behaviour kept on purpose.
+
 Synthetic clients only; the one socket-shaped fixture is a stub with a shutdown method. Placeholder uuids.
 """
 import contextlib
@@ -208,11 +213,14 @@ class FocusParks(unittest.TestCase):
         self.assertEqual(a_got, [{"type": "focus", "id": SID}])
         self.assertEqual((km._PENDING_REVEAL.get(W) or {}).get("sent"), [a], "A alone, unproven: the copy is kept for its redial")
 
-    def test_a_copy_tagged_only_with_a_socket_the_reaper_dropped_is_retired(self):
-        # review round 2 (2026-09-18): the copy for an unproven taker waited on its pong, and nothing retired it when the
-        # keepalive judged the socket dead (WS_DEAD_S with no pong), so it stood for the pane's next redial, minutes or
-        # hours later. The reaper's drop retires it, through the real beat: a socket-shaped client with a ping older than
-        # WS_DEAD_S and no other chat pane in the window.
+    def test_the_reap_ends_the_copys_wait_not_the_tap_the_park_stands_and_the_next_chat_redial_of_the_window_consumes_it(self):
+        """Review round 3 (2026-09-18), romp-manager's ruling re-meaning round 2's retire case: the reap ends the
+        waiting-on-a-pong state. It does not end the user's gesture. A tap is a user gesture and stands until a pane
+        consumes it or the window itself goes away, so after the reap the park remains, as a plain park, and the next chat
+        redial of that wid consumes it. Round 2's assertion here read "a reap cancels the tap" (the entry popped, the
+        journal saying retired), the behaviour removed on purpose: a keepalive beat landing between the tap and the redial
+        the tap itself caused lost the focus on the phone, and the same pop lost a push tap's boot copy. Through the real
+        beat: a socket-shaped client with a ping older than WS_DEAD_S and no other chat pane in the window."""
         a, a_got = self._register("chat", W)
         a["pingAt"] = 100.0
         a["sock"] = type("Sock", (), {"shutdown": lambda self, how: None})()   # judged (has a socket), no fileno: no outq read
@@ -223,15 +231,46 @@ class FocusParks(unittest.TestCase):
         with contextlib.redirect_stderr(buf):
             km._keepalive_all(now=100.0 + km.WS_DEAD_S)
         self.assertIs(a["alive"], False, "the beat judged the socket dead")
-        self.assertEqual(km._PENDING_REVEAL, {}, "the copy went with its only target")
-        self.assertIn("[reveal] sid=11111111 wid=W-phone: copy retired, its target was reaped", buf.getvalue())
+        self.assertEqual(km._PENDING_REVEAL.get(W), {"sid": SID, "wid": W}, "the copy's wait ended; the tap stands as a plain park")
+        self.assertIn("[reveal] sid=11111111 wid=W-phone: copy's target reaped, the park stands for the pane's redial", buf.getvalue())
+        self.assertNotIn("copy retired", buf.getvalue())
+        # the redial the tap caused registers after the beat, and its first strip consumes the park
+        fresh, fresh_got = _fake_ws_client("chat", W)
+        with mock.patch.object(km, "_live_map", return_value={SID: {}}):
+            km._consume_pending_reveal(fresh, why="the pane's redial")
+        self.assertEqual(fresh_got, [{"type": "focus", "id": SID, "live": True, "own": True}])
+        self.assertEqual(km._PENDING_REVEAL, {})
         # a copy with another target left keeps waiting on that one
-        km._PENDING_REVEAL.clear()
         a2, _ = self._register("chat", W)
         a2["pingAt"] = 100.0
         km._PENDING_REVEAL[W] = {"sid": SID, "wid": W, "sent": [a, a2]}
         km._retire_reveal_copy_at_reap(a)
         self.assertEqual(km._PENDING_REVEAL.get(W), {"sid": SID, "wid": W, "sent": [a2]})
+
+    def test_a_push_taps_boot_copy_survives_the_reap_of_the_previous_pages_socket_and_lands_on_the_new_pages_pane(self):
+        """The boot road of the same defect (review round 3, 2026-09-18): a deep-link tap boots the page on the phone, the
+        shell POSTs /reveal, and the kernel still holds the PREVIOUS page's chat socket wearing the same wid (ready, a ping
+        outstanding), so the reveal is delivered to it and a copy kept tagged with it. The beat judges that socket before
+        the new page's chat pane says ready: the copy becomes a plain park and the new pane's ready consumes it. The window's
+        shell socket is up throughout, so the last-client drop does not fire; a reaped socket that was the window's ONLY
+        client is the residual _retire_reveal_copy_at_reap names, not this case."""
+        shell, _ = self._register("shell", W)
+        held, held_got = self._register("chat", W)
+        held["pingAt"] = 100.0
+        held["sock"] = type("Sock", (), {"shutdown": lambda self, how: None})()
+        with mock.patch.object(km, "_live_map", return_value={SID: {}}), contextlib.redirect_stderr(io.StringIO()):
+            self.assertTrue(km._reveal_request(SID, W, boot=True, via="link"))
+        self.assertEqual(held_got, [{"type": "focus", "id": SID, "live": True}], "delivered to the held socket, as before")
+        self.assertEqual((km._PENDING_REVEAL.get(W) or {}).get("sent"), [held])
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._keepalive_all(now=100.0 + km.WS_DEAD_S)
+        self.assertIs(held["alive"], False)
+        self.assertEqual(km._PENDING_REVEAL.get(W), {"sid": SID, "wid": W}, "the park stands for the new page's pane")
+        new, new_got = self._register("chat", W)
+        with mock.patch.object(km, "_live_map", return_value={SID: {}}), contextlib.redirect_stderr(io.StringIO()):
+            km._consume_pending_reveal(new)
+        self.assertEqual(new_got, [{"type": "focus", "id": SID, "live": True, "own": True}])
+        self.assertEqual(km._PENDING_REVEAL, {})
 
     def test_the_reap_of_a_twin_keeps_the_park_for_the_redial_that_superseded_it(self):
         # the phone's tap, in the racy order: the focus reached the dead-held socket A (copy kept), the shell reveal showed
@@ -315,6 +354,30 @@ class FocusParks(unittest.TestCase):
             km._clients.remove(nowid)
             km._forget_pending_reveal_if_last(nowid)
         self.assertEqual(km._PENDING_REVEAL.get(""), {"sid": SID, "wid": ""}, "a park with no wid waits for the first chat pane, as before")
+
+    def test_a_stranded_no_wid_park_lands_on_the_next_chat_pane_of_any_window_the_legacy_match_kept_on_purpose(self):
+        """Review round 3 (2026-09-18, tests-2): the consequence of the no-wid entry's unbounded life, pinned as the
+        behaviour we keep. A shell that reports no wid (sessionStorage blocked) POSTs a boot reveal, which parks under the
+        empty key; its page dies, and the last-client drop names no window for it; a chat pane of an unrelated window
+        arrives later with nothing parked for its own wid and takes the no-wid entry, the legacy first-chat-pane match, as
+        a session switch or a revive prompt its user never asked for. Both refuters reproduced the same delivery at the
+        round-2 head, and a sweep of the park sites dropped live taps, so the ruling keeps it and names it (the
+        _PENDING_REVEAL comment). A change that bounds the entry goes red here and re-rules the case."""
+        shell, _ = self._register("shell", "")
+        with mock.patch.object(km, "_live_map", return_value={}), mock.patch.object(km, "_name_of", return_value="web"), \
+             contextlib.redirect_stderr(io.StringIO()):
+            self.assertFalse(km._reveal_request(SID_B, "", boot=True, via="link"))
+        self.assertEqual(km._PENDING_REVEAL.get(""), {"sid": SID_B, "wid": ""})
+        with km._clients_lock:
+            km._clients.remove(shell)
+            km._forget_pending_reveal_if_last(shell)
+        self.assertEqual(km._PENDING_REVEAL.get(""), {"sid": SID_B, "wid": ""}, "the page died; nothing bounds a park that names no window")
+        stranger, got = self._register("chat", "W-brand-new")
+        with mock.patch.object(km, "_live_map", return_value={}), mock.patch.object(km, "_name_of", return_value="web"), \
+             contextlib.redirect_stderr(io.StringIO()):
+            km._consume_pending_reveal(stranger)
+        self.assertEqual(got, [{"type": "confirmRevive", "id": SID_B, "name": "web", "own": True}], "the stranger's pane took the wid-less tap")
+        self.assertEqual(km._PENDING_REVEAL, {})
 
     def test_the_handlers_close_drops_the_window_park_with_its_last_client(self):
         # the same rule through the real handler: Handler._ws registers the client, reads the peer's close at once, and

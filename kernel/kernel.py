@@ -62545,7 +62545,13 @@ def _sw_js():
 # wid). A window's entry goes with its last client (_forget_pending_reveal_if_last, the way T347 drops the window's
 # active-chat record): before, nothing cleared a park on a disconnect, so a boot reveal whose page died before its
 # chat pane came up sat in the slot until the next tap overwrote it. A copy whose every target the reaper has
-# dropped is retired at the reap (_retire_reveal_copy_at_reap), never replayed at a later redial.
+# dropped becomes a plain park at the reap (_retire_reveal_copy_at_reap; review round 3, 2026-09-18): the reap ends
+# the wait on a pong, not the tap, which stands for the window's next chat redial. Two residuals of the keyed slot,
+# named and kept (review round 3): the no-wid entry is bounded only by a consume or another no-wid park, so a
+# wid-less park nobody consumed lands on the next chat pane of ANY window, the legacy match, however much later;
+# and a park for a wid whose page never connected a socket has no end but a consume, since the drop at the last
+# client sees no client leave. A sweep of the park sites was tried in review and dropped live taps (a dead-shell-socket
+# phone park, a storage-blocked page's own park), so neither is closed here.
 _PENDING_REVEAL = {}                         # wid -> {"sid": ..., "wid": ...[, "sent": [clients]]}; "" is the no-wid entry
 # The roads a shell may name in /reveal's `via`, the log line's first word (the ledger block above _push_ledger has
 # the design): the worker's message to a live window ('sw'), the deep link the page opened on or was navigated to
@@ -62703,7 +62709,11 @@ def _forget_pending_reveal_if_last(client):
     through sessionStorage could take a tap it never saw. Called under _clients_lock, after the client left
     _clients; a window with another pane still connected (the phone's shell and feed while its chat pane is
     parked) keeps the park for that pane's redial. The no-wid entry names no window and is left to the first
-    chat pane, as before."""
+    chat pane, as before. The rule reads "no client of this wid" as "the window is gone", and that is a residual
+    named in review round 3 (2026-09-18): a live window whose sockets all go dark together between the gesture and
+    the pane's dial (a page fully suspended for that instant), or a reaped socket that was the window's only client,
+    loses its park here although the gesture stands. Stamping the entry or carrying the page instance in it are the
+    shapes a fix would take; neither is this change's."""
     wid = str(client.get("wid") or "")
     if not wid or wid not in _PENDING_REVEAL:
         return
@@ -62716,13 +62726,22 @@ def _forget_pending_reveal_if_last(client):
 
 def _retire_reveal_copy_at_reap(client):
     """The reaper dropped `client` (review round 2, 2026-09-18): a copy of a focus or tap handed to it while it was
-    unproven is no longer waiting on its pong. Strike it from the copy's targets. A copy left with no target is
-    retired, unless another chat client of the window is connected, whose first strip or ready consumes the park:
-    the phone's tap redials the parked pane, the redial registers as the dead socket's twin and the twin is dropped
-    with the successor already in _clients, so the copy stands for it as a plain park. Before this, a copy tagged
-    only with a dead socket outlived the socket and replayed at the pane's next redial, minutes or hours later, as
-    a session switch or a revive prompt the user never asked for. Called from _keepalive_all after its drop, outside
-    _clients_lock, as the drop is."""
+    unproven is no longer waiting on its pong. Strike it from the copy's targets. A copy left with no target becomes
+    a PLAIN PARK, never a popped entry (review round 3, 2026-09-18, the ruling): the reap ends the waiting-on-a-pong
+    state, not the user's gesture. A tap stands until a pane consumes it or the window itself goes away, so the park
+    stays for the next chat redial of the window, whether that redial is already in _clients (the phone's tap in the
+    racy order: the shell reveal showed the pane, its redial registered as the dead socket's twin, the twin was
+    dropped with the successor present) or has not registered yet (the beat landing between the tap and the redial
+    the tap itself caused, a few hundred milliseconds on a good link; a push tap's boot copy whose previous page's
+    socket the beat judged first). Round 2 popped the entry on the no-successor path and lost both taps, the focus
+    road's and the boot road's, re-creating the loss round 1 fixed. The successor check below only words the journal
+    line; both branches do the same thing, and `c is not client` is required because the reaped client is still in
+    _clients here (the handler's finally removes it later). The stale-replay exposure the pop was cutting (a copy
+    nobody consumed replaying at a later redial) is bounded by _forget_pending_reveal_if_last: the park goes with
+    the window's last client. Residual, named: a park whose reaped socket was the window's ONLY client goes with it
+    through that rule when the handler's finally runs, so a boot tap on a page whose shell socket is also gone is
+    lost; out of this function's reach. Called from _keepalive_all after its drop, outside _clients_lock, as the
+    drop is."""
     key = str(client.get("wid") or "")
     p = _PENDING_REVEAL.get(key)
     if not p or not any(c is client for c in (p.get("sent") or ())):
@@ -62731,16 +62750,11 @@ def _retire_reveal_copy_at_reap(client):
     if left:
         p["sent"] = left
         return
+    p.pop("sent", None)
     with _clients_lock:
         successor = any(c is not client and c.get("app") == "chat" and str(c.get("wid") or "") == key for c in _clients)
-    if successor:
-        p.pop("sent", None)
-        print("[reveal] sid=%s wid=%s: copy's target reaped, the park stands for the window's other chat pane"
-              % (str(p["sid"])[:8], key[:8]), file=sys.stderr)
-        return
-    if _PENDING_REVEAL.get(key) is p:
-        _PENDING_REVEAL.pop(key, None)
-    print("[reveal] sid=%s wid=%s: copy retired, its target was reaped" % (str(p["sid"])[:8], key[:8]), file=sys.stderr)
+    print("[reveal] sid=%s wid=%s: copy's target reaped, the park stands for %s"
+          % (str(p["sid"])[:8], key[:8], "the window's other chat pane" if successor else "the pane's redial"), file=sys.stderr)
 
 
 def _cached_timeline(now, live_map, sig, connect=False):
