@@ -1,0 +1,278 @@
+// The browser driver for tests/test_return_from_background_served.py: the phone-emulated background-and-return leg
+// against a hermetic lab kernel. Opens the served dashboard shell in a playwright browser (Chromium; Firefox and WebKit
+// as optional legs), waits for every pane socket to open, then emulates a suspend, an outage on the WebSocket path, a
+// return from the background and the outage's end, and reads what the shim, the shell and the kernel recorded.
+//
+// The emulation, frame by frame (the repo dispatches no lifecycle event in a browser today, so this is new here):
+//   * document.visibilityState and document.hidden are overridden in every document (an init script installs the
+//     getters before any page script) to read a per-document flag; the driver flips the flag and dispatches
+//     `visibilitychange` in the top document and then every same-origin frame, in one task from the top document,
+//     recording the order in which the documents' handlers ran (top.__labVis).
+//   * every WebSocket dial the page makes is routed (page.routeWebSocket on /ws): outside the outage the route passes
+//     the dial through to the lab kernel and the driver keeps the route; at the suspend the driver closes every route it
+//     holds (code 1001, the OS or the kernel's dead-socket drop, emulated) and the outage begins; during the outage a new
+//     dial is REFUSED (the route closes it at once, never connecting) or HUNG (the route handler awaits the outage's end,
+//     so the page-side socket stays CONNECTING: playwright opens the page side only once the handler settles, and a dial
+//     the page cut while it hung is never connected afterwards, which would open a socket to the kernel that no page holds).
+//   * the return: the flag flips to visible and `visibilitychange` is dispatched the same way. No `pageshow`: the design
+//     dispatches none (iOS fires it on a back-forward navigation, not on a return from the background).
+//   * scripts keep running while the documents read hidden, which a suspended phone's do not: the hidden dwell is short
+//     (cfg.hiddenDwellMs) so the closes land as the FIN a thawed tab receives, and the timers the closes arm are still
+//     pending at the return.
+// Prints one compact `RESULT:` JSON line and writes the full result (every dial's record) to cfg.resultPath; exits 3 when
+// the browser does not launch (the Python side turns that into a skip).
+// Never touches a live kernel: cfg.healthz names the LAB port and is asserted before any request. Synthetic sessions only.
+import { createRequire } from "node:module";
+import fs from "node:fs";
+import http from "node:http";
+
+const require = createRequire(process.env.EXT_PKG);
+const playwright = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const engine = cfg.engine || "chromium";
+const APPS = cfg.apps || ["chat", "timeline", "fleet", "feed", "waiting", "files"];
+const FRESH_APPS = cfg.freshApps || APPS.filter((a) => a !== "files");   // the Files pane gets no resync frame, so it never files return-fresh
+const now = () => Date.now();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const out = { engine, shell: cfg.shell, regime: cfg.regime, outageMs: cfg.outageMs, hiddenDwellMs: cfg.hiddenDwellMs,
+              t: {}, dials: [], errors: [], notes: [] };
+
+// the lab port answers /healthz before anything is asked of it (a lab that never came up must not send a single request
+// anywhere else; the live kernel's port is never named in cfg)
+const healthz = await new Promise((resolve) => {
+  const req = http.get(cfg.healthz, (res) => { res.resume(); resolve({ status: res.statusCode, boot: res.headers["x-romp-boot"] || null }); });
+  req.on("error", (e) => resolve({ status: 0, error: String(e) }));
+  req.setTimeout(5000, () => { req.destroy(); resolve({ status: 0, error: "timeout" }); });
+});
+if (healthz.status !== 200) { console.error("lab kernel not healthy: " + JSON.stringify(healthz)); process.exit(4); }
+out.healthz = healthz;
+
+let browser;
+try { browser = await playwright[engine].launch(cfg.launch || {}); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+
+// the full result (every dial's record: hundreds in the refused regime) goes to cfg.resultPath; the RESULT: line stays
+// compact, since one writeSync to a pipe delivers 64 KiB and the rest is lost (the desktop refused leg, first run)
+const result = async (extra) => {
+  Object.assign(out, extra || {});
+  if (cfg.resultPath) { try { fs.writeFileSync(cfg.resultPath, JSON.stringify(out)); } catch (e) { out.resultWriteError = String(e).slice(0, 200); } }
+  const compact = { ...out, dials: undefined, dialsN: out.dials.length, wsWords: undefined, vis: undefined, resultPath: cfg.resultPath || null };
+  fs.writeSync(1, "RESULT:" + JSON.stringify(compact) + "\n");
+  try { await browser.close(); } catch (e) { /* closing */ }
+  process.exit(0);
+};
+const die = (why) => result({ died: why });
+
+// the two shells: a phone (an iPhone descriptor, the viewport the design names: under _MOBILE_MQ's 820 px, so the shell
+// loads six pane iframes with one .m-on) and a desktop window
+let ctxOpts;
+if (cfg.shell === "phone") {
+  const dev = { ...(playwright.devices["iPhone 14"] || {}) };
+  delete dev.defaultBrowserType;
+  ctxOpts = { ...dev, viewport: { width: 390, height: 844 } };
+  if (engine === "firefox") { delete ctxOpts.isMobile; }   // playwright: isMobile is not supported in Firefox
+} else {
+  ctxOpts = { viewport: { width: 1600, height: 760 } };
+}
+const context = await browser.newContext(ctxOpts);
+const page = await context.newPage();
+page.on("pageerror", (e) => { if (out.errors.length < 40) out.errors.push(String(e).slice(0, 300)); });
+
+// --- the routed WebSocket path: pass-through, then the outage regime ---
+const state = { outage: false, phase: "boot" };
+let outageEnded = null, endOutage = null;
+const armOutage = () => { outageEnded = new Promise((r) => { endOutage = r; }); };
+const live = new Set();   // routes passed through and still open, to close at the suspend
+const appOf = (u) => { try { const q = new URL(u).searchParams; return q.get("app") || (/\/remote\//.test(u) ? "relay" : "?"); } catch (e) { return "?"; } };
+const relayOf = (u) => { const m = /\/remote\/([^/]+)\/ws/.exec(u); return m ? m[1] : null; };
+const wire = (ws, d) => {
+  const server = ws.connectToServer();
+  d.connectedT = now();
+  server.onMessage((m) => { if (!d.firstServerMsgT) d.firstServerMsgT = now(); d.serverFrames = (d.serverFrames || 0) + 1; ws.send(m); });
+  ws.onMessage((m) => { d.pageFrames = (d.pageFrames || 0) + 1; server.send(m); });
+  server.onClose((code, reason) => { d.serverClosedT = now(); d.serverCloseCode = code; live.delete(ws); try { ws.close({ code: code || 1000, reason: reason || "" }); } catch (e) { /* closed */ } });
+  ws.onClose((code) => { d.pageClosedT = now(); d.pageCloseCode = code; live.delete(ws); try { server.close(); } catch (e) { /* closed */ } });
+  live.add(ws);
+};
+await page.routeWebSocket((u) => /\/ws(\?|$)/.test(u.pathname + (u.search || "")), async (ws) => {
+  const url = ws.url();
+  const d = { n: out.dials.length, app: appOf(url), relay: relayOf(url), reconnect: /[?&]reconnect=1/.test(url), t: now(), phase: state.phase };
+  out.dials.push(d);
+  try {
+    if (!state.outage) { d.verdict = "passed"; wire(ws, d); return; }
+    if (cfg.regime === "refused") {
+      d.verdict = "refused";
+      await ws.close({ code: 1006, reason: "lab-refused" });   // closed at once, never connected: the page's onclose sees a dial that never opened
+      return;
+    }
+    // hung: the handler stays pending, so the page-side socket stays CONNECTING until the outage ends. A cut by the page
+    // (the shim's 15 s watchdog) reaches the route's page-close handler: complete it so the page gets its `close` event
+    // (playwright's default chain would do the same by way of the absent server), and remember never to connect it.
+    d.verdict = "hung";
+    ws.onClose((code) => { d.cutByPage = true; d.cutT = now(); d.cutCode = code; try { ws.close({ code: code || 1000, reason: "lab-cut" }); } catch (e) { /* closed */ } });
+    await outageEnded;
+    if (d.cutByPage) { d.verdict = "hung-cut"; return; }
+    d.verdict = "hung-released";
+    wire(ws, d);
+  } catch (e) {
+    d.error = String(e).slice(0, 200);
+  }
+});
+
+// --- the per-document install: the visibility override, the order recorder, the shell's wsState words, the beacon's
+// switch. Registered as an init script (before any page script) AND re-run at boot in every frame the init script missed:
+// the guard inside `install` is per document, so an iframe whose Window survives its navigation from about:blank (below)
+// gets the override on the document that matters; the late pass is the backstop for any document the init script missed,
+// since in a frame without the override the shim reads the browser's real visibilityState and the emulation is void there.
+// A late install still drives the shim (it reads the getter at dispatch time); its recorder then runs after the shim's
+// handler in that document, which changes nothing about the order across documents.
+const install = (opts) => {
+  const w = window;
+  // the marker is the DOCUMENT's: an iframe navigating from its initial about:blank to a same-origin page keeps its Window
+  // (the HTML spec's reuse; Firefox and WebKit every time, Chromium sometimes), so a marker on the window made the init
+  // script's second run skip the new document, and the shim there read the browser's real visibilityState (first runs)
+  if (document.__labInit) return false;
+  document.__labInit = true;
+  if (w.__labHidden === undefined) w.__labHidden = false;
+  try {
+    Object.defineProperty(document, "visibilityState", { get: () => (w.__labHidden ? "hidden" : "visible"), configurable: true });
+    Object.defineProperty(document, "hidden", { get: () => !!w.__labHidden, configurable: true });
+  } catch (e) { try { w.top.__labErrors = (w.top.__labErrors || []).concat(["override: " + e]); } catch (e2) { /* cross-origin */ } }
+  // the order recorder: a capture listener, registered before any page script where the init script ran, so per document
+  // it runs first; the record is kept on the top document so one read gives every document's stamp in dispatch order
+  document.addEventListener("visibilitychange", () => {
+    try {
+      const T = w.top;
+      const doc = location.href === "about:blank" ? "about:blank" : location.pathname;
+      const id = w === T ? "top" : ((w.frameElement && w.frameElement.id) || "");
+      (T.__labVis = T.__labVis || []).push({ doc, id, state: document.visibilityState, t: Date.now(), n: (T.__labVisN = (T.__labVisN || 0) + 1) });
+    } catch (e) { /* cross-origin */ }
+  }, true);
+  if (w === w.top && !w.__labTopInit) {
+    w.__labTopInit = true;   // once per window: the shell's document is never replaced
+    w.__labWs = [];        // every {romp:'wsState',app,state} word a pane posted to the shell, stamped
+    w.__labWsNow = {};     // the latest state per app
+    w.addEventListener("message", (e) => {
+      const m = e && e.data;
+      if (!m || m.romp !== "wsState") return;
+      w.__labWs.push({ app: m.app, state: m.state, t: Date.now() });
+      w.__labWsNow[m.app] = m.state;
+    });
+    if (opts.perfShare) {
+      // the beacon extension's opt-in (PR 762): the browser's timing rows carry vis, wsBytes, free and rafGap; read raw
+      // from the store by the collector, so the literal true is what turns it on
+      try { const st = JSON.parse(localStorage.getItem("romp:settings") || "{}"); if (st.perfShare !== true) { st.perfShare = true; localStorage.setItem("romp:settings", JSON.stringify(st)); } } catch (e) { /* no storage */ }
+    }
+  }
+  return true;
+};
+const installOpts = { perfShare: !!cfg.perfShare };
+await page.addInitScript(install, installOpts);
+// the frames the init script missed, installed late (before the suspend); recorded so the note knows which engine needed it
+const ensureInstalled = async () => {
+  const late = [];
+  for (const f of page.frames()) {
+    try {
+      const did = await f.evaluate(install, installOpts);
+      if (did) { let id = ""; try { id = await f.evaluate(() => (window.frameElement && window.frameElement.id) || (window === window.top ? "top" : "")); } catch (e) { /* detached */ } late.push(id || f.url()); }
+    } catch (e) { late.push("ERR:" + String(e).slice(0, 80)); }
+  }
+  return late;
+};
+
+// one task from the top document: flip every document's flag and dispatch `visibilitychange` in each, top first then the
+// frames in tree order (the browser's own order is what the recorder is for; the emulation has to pick one)
+const flip = (hidden) => page.evaluate((h) => {
+  const docs = [window].concat(Array.from(window.frames));
+  const done = [];
+  for (const f of docs) {
+    try { f.__labHidden = h; f.document.dispatchEvent(new f.Event("visibilitychange")); done.push(f.location.pathname); }
+    catch (e) { done.push("ERR:" + String(e).slice(0, 80)); }
+  }
+  return done;
+}, hidden);
+
+const readDiag = () => {
+  let txt = "";
+  try { txt = fs.readFileSync(cfg.diag, "utf8"); } catch (e) { return []; }
+  const rows = [];
+  for (const ln of txt.split("\n")) { if (!ln) continue; try { rows.push(JSON.parse(ln)); } catch (e) { /* a partial last line */ } }
+  return rows;
+};
+
+try {
+  out.t.load = now();
+  await page.goto(cfg.url, { waitUntil: "load", timeout: 40000 });
+  // every pane socket open: the shim posts {romp:'wsState',app,state:'up'} to the shell on each open
+  const bootDeadline = now() + (cfg.bootTimeoutMs || 30000);
+  let up = {};
+  while (now() < bootDeadline) {
+    up = await page.evaluate(() => window.__labWsNow || {});
+    if (APPS.every((a) => up[a] === "up")) break;
+    await sleep(150);
+  }
+  out.t.bootUp = now();
+  out.bootUpApps = Object.keys(up).filter((a) => up[a] === "up").sort();
+  out.bootMs = out.t.bootUp - out.t.load;
+  out.wid = await page.evaluate(() => { try { return sessionStorage.getItem("romp:wid") || ""; } catch (e) { return ""; } });
+  out.frames = page.frames().map((f) => { try { return new URL(f.url()).pathname; } catch (e) { return f.url(); } });
+  out.bodyClass = await page.evaluate(() => document.body.className);
+  out.mobileShell = await page.evaluate(() => !!document.getElementById("mtabs") && getComputedStyle(document.getElementById("mtabs")).display !== "none");
+  await sleep(cfg.settleMs || 1500);   // the bundles' ready, the caps answer, the first pushes: the return is measured from a settled page
+  out.lateInstall = await ensureInstalled();
+  out.installed = await page.evaluate(() => { const docs = [window].concat(Array.from(window.frames)); return docs.map((f) => { try { return ((f === window ? "top" : (f.frameElement && f.frameElement.id)) || f.location.pathname) + (f.document.__labInit ? "" : ":MISSING"); } catch (e) { return "ERR"; } }); });
+  if (cfg.shots) await page.screenshot({ path: cfg.shots + "-boot.png" }).catch(() => {});
+
+  // --- the suspend: hidden in every document, the outage armed, every held socket closed ---
+  state.phase = "suspended";
+  armOutage();
+  state.outage = true;
+  out.t.suspend = now();
+  out.hiddenDispatch = await flip(true);
+  const held = Array.from(live);
+  out.closedAtSuspend = held.length;
+  for (const ws of held) { live.delete(ws); try { await ws.close({ code: 1001, reason: "lab-suspend" }); } catch (e) { /* gone */ } }
+  out.t.closed = now();
+  await sleep(cfg.hiddenDwellMs || 400);
+
+  // --- the return: visible in every document; the outage holds for cfg.outageMs from here ---
+  state.phase = "returned";
+  out.t.return = now();
+  out.visibleDispatch = await flip(false);
+  if (cfg.shots) page.screenshot({ path: cfg.shots + "-returned.png" }).catch(() => {});
+  await sleep(Math.max(0, out.t.return + cfg.outageMs - now()));
+  state.phase = "after";
+  state.outage = false;
+  out.t.outageEnd = now();
+  endOutage();
+
+  // --- fresh content: the shim files return-fresh on the first non-keepalive frame after a return; the rows reach the
+  // kernel's client-diag.jsonl on the reopened socket. Wait for every pane that files one (FRESH_APPS), bounded.
+  const tRetS = Math.floor(out.t.return / 1000) - 1;
+  const freshDeadline = now() + (cfg.freshTimeoutMs || 25000);
+  const freshSeen = {};
+  let rows = [];
+  while (now() < freshDeadline) {
+    rows = readDiag();
+    for (const r of rows) {
+      if (r.wid !== out.wid || r.surface !== "pane-shim" || r.what !== "return-fresh" || r.t < tRetS) continue;
+      const a = r.data && r.data.app;
+      if (a && freshSeen[a] === undefined) freshSeen[a] = now() - out.t.outageEnd;
+    }
+    if (FRESH_APPS.every((a) => freshSeen[a] !== undefined)) break;
+    await sleep(250);
+  }
+  out.freshSeenMsAfterOutage = freshSeen;   // wall clock at which the driver first saw each pane's row, from the outage's end
+  out.t.fresh = now();
+  await sleep(cfg.settleMs || 1500);       // wsconnfail rides the next open; the perf minute rows flush on their own clock
+  if (cfg.shots) await page.screenshot({ path: cfg.shots + "-fresh.png" }).catch(() => {});
+  out.t.done = now();
+  out.vis = await page.evaluate(() => window.__labVis || []);
+  out.wsWords = await page.evaluate(() => window.__labWs || []);
+  out.wsNow = await page.evaluate(() => window.__labWsNow || {});
+  out.overrideErrors = await page.evaluate(() => window.__labErrors || []);
+  out.liveAtEnd = live.size;
+  await result({});
+} catch (e) {
+  await die(String(e).slice(0, 600));
+}
