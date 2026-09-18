@@ -3090,24 +3090,25 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   counts the parent's rows through the parent's own row, once. The `push.*`
   stages count every push, including the one a connecting page gets, so they
   can add up to more than `push`.
-  Since 2026-09-18 (ledger entry `2026-09-18-stage-attribution`; the fork PR
-  number is filled in at filing) a `jobs.<job>` row is the jobs thread's time
-  under that name; before, it was every thread's, and the pusher thread's
-  nine cycle jobs (`beginCheckpointCycle`, `sessionsListing`,
-  `applyPendingOps`, `turnNotify`, `persistCheckpoints`,
-  `convergeCheckpoints`, `bootRowBackstop`, `kernelSample`, `apiHealth`) sat
-  in it. From that day they are counted under `pusher.cycleJobsMs.<job>` and
-  their `jobs.<job>` keys are gone from `stages_ms`, so those nine keys do
-  not compare across a capture pair spanning the change; the other
-  `jobs.<job>` rows keep their names and their values. A `jobs.<job>` write
-  from a thread owning neither loop is counted under `stagesForeign`.
+  Since 2026-09-18 a `jobs.<job>` row is the jobs thread's time under that
+  name; before, it was every thread's, and the pusher thread's nine cycle
+  jobs (`beginCheckpointCycle`, `sessionsListing`, `applyPendingOps`,
+  `turnNotify`, `persistCheckpoints`, `convergeCheckpoints`,
+  `bootRowBackstop`, `kernelSample`, `apiHealth`) sat in it. From that day
+  they are counted under `pusher.cycleJobsMs.<job>` and their `jobs.<job>`
+  keys are gone from `stages_ms`, so those nine keys do not compare across a
+  capture pair spanning the change; the other `jobs.<job>` rows keep their
+  names and their values. A `jobs.<job>` write from a thread owning neither
+  loop is counted under `stagesForeign`.
 - `stagesForeign`: `{stage: ms}`, a `jobs.<job>` stage closed by a thread
   that owns neither loop (a handler thread, a test that opened no cycle),
   cumulative wall under the stage name, so a write that fits no owner is
-  counted rather than merged into a row that names another thread. Empty on
-  a running kernel, where every job runs inside one of the two loops; a
-  non-empty block names a stage that ran outside them. The keys are the
-  kernel's own stage names.
+  counted rather than merged into a row that names another thread. On a
+  running kernel the block holds the `jobs.autoNudge.*` parts of the
+  act-now pass the dashboard's Auto Nudge and compaction-suggestion arms run
+  on the WS handler thread (`_ws_act_now_tick`: `key`, `snapshot`, `looks`,
+  and `parse` per session looked at); any other key names a stage that ran
+  outside both loops. The keys are the kernel's own stage names.
 - `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
   `chat` also carries `bySession`, one row per living session built since
   the boot, ordered by `max` (slowest first) and numbered by `rank` in that
