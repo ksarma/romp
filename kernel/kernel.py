@@ -750,9 +750,13 @@ class _PerfStats:
                                    neither loop (no cycle_begin on it: a handler thread, a test that
                                    opened no cycle), cumulative wall under the stage name, so a write
                                    that fits no owner is counted rather than merged into a row that
-                                   names another thread; empty on a running kernel, where every
-                                   _job_stage and _sub_stage call runs inside one of the two loops.
-                                   The keys are the kernel's own stage literals, never a client's text
+                                   names another thread. On a running kernel the block holds the
+                                   jobs.autoNudge.* parts of the act-now pass the dashboard's
+                                   setAutoNudge and setCompactSuggest arms run on the WS handler
+                                   thread (_ws_act_now_tick: key, snapshot, looks, and parse per
+                                   session looked at); any other key names a stage that ran outside
+                                   both loops. The keys are the kernel's own stage literals, never a
+                                   client's text
       builds                       chat / feed / timeline / feedJson -> {cached, built, ms}: served
                                    from the build cache vs rebuilt, and the rebuild time. feedJson is
                                    GET /feed.json's own reads (_pure_feed), kept apart from `feed`,
@@ -16021,8 +16025,12 @@ def _auto_nudge_pass(now, live_map, run_dead_wait):
     #                                                       node's own cleared flag, written in the same gesture, covers the gap
     _set_stage("jobs.autoNudge"); _PERF_STATS.stage("jobs.autoNudge.snapshot", time.monotonic() - _snap_t)
     _looks_t = time.monotonic(); _set_stage("jobs.autoNudge.looks")   # the looks: one mark over the loop (plans/nudge-walk-events.md)
-    _parse_ms0 = _PERF_STATS.stages.get("jobs.autoNudge.parse", 0.0)   # the parse marks its own time inside the loop: the looks
-    #                                                                     mark is the loop's wall OUTSIDE it, so the parts partition the job
+    _NUDGE_HORIZON.parse_s = 0.0                          # the parse marks its own time inside the loop and tallies its wall here, on
+    #                                                       the walking thread (_auto_nudge_session): the looks mark is the loop's wall
+    #                                                       OUTSIDE the parses, so the parts partition the job. The tally replaced a
+    #                                                       before-and-after read of the flat jobs.autoNudge.parse row (2026-09-18 review):
+    #                                                       stage() moves that row for the jobs owner alone, so the act-now pass on the WS
+    #                                                       handler thread read a zero delta and its looks carried every parse twice
     for _i, s in enumerate(alive):
         if _yielding and getattr(_NUDGE_HORIZON, "cold", 0) >= 1 and getattr(_NUDGE_HORIZON, "cold_last", False):
             _NUDGE_WALK_STATS["deferredSessions"] += len(alive) - _i
@@ -16057,7 +16065,7 @@ def _auto_nudge_pass(now, live_map, run_dead_wait):
             sys.stderr.write("auto-nudge (session %s): %s\n"
                              % (s.get("sid") or "?", traceback.format_exc()))
     _set_stage("jobs.autoNudge")                          # the looks close with the loop, however it ended: its wall less the parses' (1736 round two)
-    _PERF_STATS.stage("jobs.autoNudge.looks", max(0.0, time.monotonic() - _looks_t - (_PERF_STATS.stages.get("jobs.autoNudge.parse", 0.0) - _parse_ms0) / 1000.0))
+    _PERF_STATS.stage("jobs.autoNudge.looks", max(0.0, time.monotonic() - _looks_t - getattr(_NUDGE_HORIZON, "parse_s", 0.0)))
     # EVICT the sids that left the alive set from both walk memos (ruling A, the 2026-09-09 fold): nothing to
     # gate, and the gate memo alone would hold a dead session's view until its 512-entry cap. No stale-pin
     # sweep: the gate's key is the parse cache's own key, so a re-parsed transcript misses on its next visit
@@ -18116,8 +18124,13 @@ def _auto_nudge_session(s, now, live_map, nudged, waitfor, alive_ids=None, wake_
         # (a synthesized leading idle opens it, vs the human prompt), so the closer-gate below would never
         # match and the nudge was blocked forever (the user 2026-06-22, obsidian).
         _cold = jd._parse_entry(sid) is None          # no cached parse: this look pays it (T401 (2): the yield's event)
-        with _sub_stage("autoNudge.parse"):        # the parse-store read (a hit while the transcript stands) under its own mark
-            turns = jd.parsed_session(sid, [s["path"]], now)["turns"]
+        _t_parse = time.monotonic()
+        try:
+            with _sub_stage("autoNudge.parse"):        # the parse-store read (a hit while the transcript stands) under its own mark
+                turns = jd.parsed_session(sid, [s["path"]], now)["turns"]
+        finally:                                       # the pass's looks mark is the loop's wall less this thread's parses, tallied
+            _NUDGE_HORIZON.parse_s = getattr(_NUDGE_HORIZON, "parse_s", 0.0) + (time.monotonic() - _t_parse)   # here whatever the
+        #                                                                                                        walker's owner
         _NUDGE_HORIZON.parsed = True
         _NUDGE_WALK_STATS["parses"] += 1
         if _cold:
@@ -63591,8 +63604,11 @@ def _pusher_cycle_jobs(now, live_map, any_client):
     cycle (the user asked why the reminder walk had to finish before the UI showed at all), and their writers already end in
     _mark_views_dirty, which wakes this loop, so nothing they decide waits for anything here."""
     _t_jobs = time.monotonic()            # /perf: this function minus the _push_all below is the `jobs` stage
-    if not _PERF_STATS._mine():
-        _PERF_STATS.cycle_begin()         # a caller that did not open the cycle (a test driving the jobs alone) opens it here
+    if _PERF_STATS._mine() != "pusher":
+        _PERF_STATS.cycle_begin()         # a caller that did not open the cycle (a test driving the jobs alone) opens it here; a thread
+        #                                   owning the OTHER loop's cycle flips to this one (2026-09-18 review: the guard read "owns
+        #                                   none", so a test running both bodies on one thread kept the first owner and stage() credited
+        #                                   the nine below to the flat jobs. rows). The loop itself opens the cycle first (_pusher_cycle)
     try:                                  # the cycle's checkpoint byte budget, whole again, and the drops owed from the last one
         _job_stage('beginCheckpointCycle', lambda: _begin_checkpoint_cycle())         # (T362): before the builds below, whose quiescence drops write against it
     except Exception:
@@ -63655,8 +63671,10 @@ def _jobs_pass(now, live_map):
     _mark_views_dirty (a dirty mark plus the pusher's wake), so a card move a job decides rides the pusher's next cycle exactly
     as it did when the job ran on that thread. The stage container is `jobsPass`; each job is still its `jobs.<name>` stage."""
     _t_pass = time.monotonic()
-    if not _PERF_STATS._mine():
-        _PERF_STATS.cycle_begin("jobs")   # a caller that did not open the pass (a test driving the jobs alone) opens it here
+    if _PERF_STATS._mine() != "jobs":
+        _PERF_STATS.cycle_begin("jobs")   # a caller that did not open the pass (a test driving the jobs alone) opens it here; a thread
+        #                                   owning the pusher's cycle flips to the jobs owner (2026-09-18 review, as in _pusher_cycle_jobs),
+        #                                   so the jobs below are the flat rows' whatever ran before on this thread
     _own_stat = _files_stat_pass_open(live_map)   # the dirty set taken, the prelude's observers read, the pass's shared ten-file
     #                                               snapshot opened when the caller did not (closed below; the cycle's finally too)
     try:                                  # EXACT retraction first: dispatches returned → the stamp is spent,
