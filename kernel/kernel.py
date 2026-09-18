@@ -221,10 +221,12 @@ def _malloc_stats():
 # row (the boot row, written by the thread that lands the last boot mark or by the pusher's bootRowBackstop stage;
 # the cut row at exit). Each read is one task_info call, a single Mach trap (microseconds; the handle and the port
 # are resolved once per process), or on the ps path a fork of up to 2 s, at most once per 10 s of monotonic time:
-# the memo serves the reads between, and a failed run leaves its window with no figure (None: the peak stands in
-# under source "unavailable", never the figure before it). The cut row alone reads with fork False, the memo while
-# its window is fresh, else None, so the dying process never forks inside the exit's margin. The first fall of each
-# reader is said once per process on stderr (_DARWIN_RSS_SAID).
+# the memo serves the reads between runs and during the next run (a reader arriving while ps is out gets the
+# previous window's figure under source "ps", so a ps figure can be up to 10 s old plus the run in flight, 2 s at
+# most), and a failed run leaves its window with no figure once it ends (None: the peak stands in under source
+# "unavailable"; the figure before it is served only for the run's length). The cut row alone reads with fork
+# False, the memo while its window is fresh, else None, so the dying process never forks inside the exit's margin.
+# The first fall of each reader is said once per process on stderr (_DARWIN_RSS_SAID).
 _MACH_TASK_BASIC_INFO = 20                                      # the task_info flavor (mach/task_info.h)
 try:
     import ctypes as _ctypes
@@ -297,12 +299,13 @@ def _darwin_rss_fell(reader, e, then):
 def _darwin_ps_rss_kb(now=None, fork=True):
     """The current resident size in KB from `ps -o rss= -p <pid>` (argv only, no shell, a 2 s cap), the fallback when
     ctypes cannot reach task_info. ps forks a process, so it runs at most once per _DARWIN_PS_INTERVAL_S of monotonic
-    time and the memo serves the reads between: the last run's figure, or None when that run failed (a non-zero
-    exit, a timeout, a non-numeric answer), so a failed window is never served the figure before it; None until a
-    run has answered. With fork False (the exit's cut row) nothing forks: the memo's figure while its window is
-    fresh, else None. The window is claimed under _DARWIN_PS_LOCK before the fork, so a concurrent reader serves the
-    memo rather than forking too, and the figure is written under it after the run; the lock is never held across
-    the run itself."""
+    time and the memo serves the reads between runs and during the next run: the last run's figure (so a figure can
+    be up to _DARWIN_PS_INTERVAL_S old plus the run in flight), or None when that run failed (a non-zero exit, a
+    timeout, a non-numeric answer), so a failed window serves the figure before it only while its run is out and
+    None once it ends; None until a run has answered. With fork False (the exit's cut row) nothing forks: the memo's
+    figure while its window is fresh, else None. The window is claimed under _DARWIN_PS_LOCK before the fork, so a
+    concurrent reader serves the memo rather than forking too, and the figure is written under it after the run;
+    the lock is never held across the run itself."""
     now = time.monotonic() if now is None else now
     memo = _DARWIN_PS_MEMO
     with _DARWIN_PS_LOCK:

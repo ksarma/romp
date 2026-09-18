@@ -2491,11 +2491,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   platform: `VmRSS` from `/proc` on Linux; on macOS, which has no `/proc`, the
   Mach kernel's `task_info` resident size read through `ctypes`, or `ps -o rss=`
   when `ctypes` cannot reach it, run at most once per 10 s with the last answer
-  served between runs, so a `ps` figure can be up to 10 s old; a run that fails
-  leaves its 10 s window with no figure, and that window, like a Mac before its
-  first `ps` answer, shows the peak instead; `source` names the reader, `proc`,
-  `task_info` or `ps`, and reads `unavailable` when none answered and the peak
-  stands in), `rss_peak_kb` (macOS only: `ru_maxrss`, the
+  served between runs and during the next run, so a `ps` figure can be up to
+  10 s old plus the run in flight (2 s at most); a run that fails leaves its
+  10 s window with no figure once it ends, and that window, like a Mac before
+  its first `ps` answer, shows the peak instead; `source` names the reader,
+  `proc`, `task_info` or `ps`, and reads `unavailable` when none answered and
+  the peak stands in), `rss_peak_kb` (macOS only: `ru_maxrss`, the
   lifetime peak, which was `rss_kb` there before 2026-09-18, so memory over
   uptime on a Mac only ever climbed), `threads`, `cpu_s`, `pid`, and the exact
   memory gauges: `rss_anon_kb` and `hwm_kb` (the anonymous and the peak

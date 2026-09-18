@@ -921,11 +921,14 @@ class ProcessStatsFallback(unittest.TestCase):
 
     def test_the_boot_row_and_every_other_caller_still_fork(self):
         # only the cut row passes fork False; the boot row is not time-critical and reads like GET /perf and the
-        # kernel sample do, so a Mac on its ps fallback gets a figure there
+        # kernel sample do, so a Mac on its ps fallback gets a figure there. The clock is a constant so the two
+        # reads share one window whatever the box is doing (review round 2: the real clock flaked the one-fork
+        # assertion under a stall of 10 s or more, the shape round 1 fixed in the failed-window case above)
         ps = mock.Mock(return_value=self._ps("777\n"))
         with self._no_proc("darwin"), \
                 mock.patch.object(km, "_darwin_task_rss_bytes", side_effect=OSError("no ctypes")), \
-                mock.patch.object(km.subprocess, "run", ps):
+                mock.patch.object(km.subprocess, "run", ps), \
+                mock.patch.object(km.time, "monotonic", return_value=1000.0):
             self.assertEqual(km._kernel_process_sample()["rssKb"], 777, "the boot row's read, the default")
             self.assertEqual(km._process_stats()["rss_kb"], 777)
         ps.assert_called_once()
@@ -961,8 +964,21 @@ class ProcessStatsFallback(unittest.TestCase):
         # review round 1 (a free-threaded-only race): the window is claimed under the lock BEFORE the fork, so a
         # second reader that arrives while ps is out serves the memo (the figure before, or None) rather than
         # forking too; the lock is not held across the run (a GET /perf handler must not queue behind a 2 s
-        # fork). Simulated from inside the run itself: the stand-in ps reads the memo the way a peer thread would
+        # fork). Simulated from inside the run itself: the stand-in ps reads the memo the way a peer thread would.
+        # Review round 2: the memo is a stand-in that asserts the lock is held at every read and write (the check,
+        # the claim, the write), so the case is red with the lock blocks removed; the behaviour assertions alone
+        # passed without the lock, since the stand-in ps runs on the test's own thread
         inner = []
+        test = self
+
+        class _LockedMemo(dict):
+            def __getitem__(self, key):
+                test.assertTrue(km._DARWIN_PS_LOCK.locked(), "memo read outside the lock: %s" % key)
+                return dict.__getitem__(self, key)
+
+            def __setitem__(self, key, value):
+                test.assertTrue(km._DARWIN_PS_LOCK.locked(), "memo write outside the lock: %s" % key)
+                dict.__setitem__(self, key, value)
 
         def slow_ps(*a, **kw):
             self.assertTrue(km._DARWIN_PS_LOCK.acquire(blocking=False), "the lock is not held across the run")
@@ -970,7 +986,8 @@ class ProcessStatsFallback(unittest.TestCase):
             inner.append(km._darwin_ps_rss_kb(now=1000.5))       # a peer arriving mid-run
             return self._ps("100\n")
         ps = mock.Mock(side_effect=slow_ps)
-        with mock.patch.object(km.subprocess, "run", ps):
+        with mock.patch.object(km.subprocess, "run", ps), \
+                mock.patch.object(km, "_DARWIN_PS_MEMO", _LockedMemo(t=None, kb=None)):
             self.assertEqual(km._darwin_ps_rss_kb(now=1000.0), 100)
             self.assertEqual(km._darwin_ps_rss_kb(now=1001.0), 100)
         self.assertEqual(ps.call_count, 1, "one fork for the window, the peer's read included")
