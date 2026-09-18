@@ -14384,6 +14384,15 @@ def _tick_key_miss_by(job, st, prev):
                 by[name] = by.get(name, 0) + 1
 
 
+def _tick_miss_named(job, name):
+    """Count a miss under a named position that is not one of the key's stats: the nudge walk's mode tag (`mode`), a row of another
+    look mode under a matched key (jobs stage 1). Reconciles with the other buckets the way _tick_key_miss_by's do."""
+    with _TICK_SEEN_LOCK:
+        j = _TICK_SEEN_STATS.setdefault(job, {"hits": 0, "misses": 0, "neverSeen": 0, "noTranscript": 0, "clockParse": 0, "missBy": {}})
+        j["misses"] += 1
+        j["missBy"][name] = j["missBy"].get(name, 0) + 1
+
+
 def _tick_seen_report():
     with _TICK_SEEN_LOCK:
         by_job = {job: {k: (dict(v) if k == "missBy" else v) for k, v in j.items()} for job, j in _TICK_SEEN_STATS.items()}
@@ -14540,9 +14549,12 @@ def _tick_job_skips(job, s):
 # decline on the wall clock (the parked dead-man, the wake dead-man, the lost-send dead-man, the moot dead-man), so
 # _tick_job_check alone would hold a due nudge past its time. Each clock leg that declines NOTES the instant it could flip
 # (_nudge_clock); a leg whose release is not one of this session's files (a deferral, retired by a judge pass watermark) notes
-# None. A completed look records the files' stat, the earliest flip and the verdict (_nudge_look_done); the next look skips
+# None. A completed look records the files' stat, its mode (the legs it ran: the full road, or the wake-only walk with or
+# without the debt reminders), the earliest flip and the verdict (_nudge_look_done); the next look of the same mode skips
 # the parse only while the files are unchanged AND no noted flip has come (_nudge_look_check), repeating the recorded verdict
-# so the walk's bookkeeping does not flap. The first boot with per-stage byte rows (dc8ad7fb, 2026-09-13) spent 58.9 s of a
+# so the walk's bookkeeping does not flap. Since jobs stage 1 (2026-09-18) the wake-only look records and skips too: the
+# toggle is the tenth keyed file (the ledger), so a flip re-evaluates every session once, and the mode tag keeps a row from
+# serving a look that runs other legs. The first boot with per-stage byte rows (dc8ad7fb, 2026-09-13) spent 58.9 s of a
 # 63 s first cycle in this walk, parsing every alive session cold before a single nudge could be due.
 _NUDGE_HORIZON = threading.local()    # the walking thread's collector: .notes (the flips a look's clock legs declined on)
 _NUDGE_WALK_STATS = {"looks": 0, "stats": 0, "served": 0, "skippedParses": 0, "parses": 0, "coldParses": 0, "deferredSessions": 0, "unbounded": 0,
@@ -14661,11 +14673,25 @@ def _nudge_clock(t, leg=None):
             by[leg] = by.get(leg, 0) + 1
 
 
-def _nudge_look_check(s, now):
+def _nudge_look_mode(wake_only, reminders):
+    """The legs a look runs, as the memo row's mode tag (jobs stage 1): `full` (nudges on, tracking on: every leg), `wake`
+    (the awaiting dead-man alone: nudges off) or `wake+reminders` (the dead-man and the debt reminders: tracking off with
+    nudges on). A row serves a look of the same mode only. A wake-only row says nothing about the nudge legs a full look
+    runs, so that direction is a correctness rule; the other is kept symmetric so the rows read plainly and a toggle flip
+    costs one evaluation per session either way (the toggle files are keyed, so the flip re-evaluates once regardless)."""
+    if not wake_only:
+        return "full"
+    return "wake+reminders" if reminders else "wake"
+
+
+def _nudge_look_check(s, now, mode="full"):
     """(skip, stat, verdict): whether the walk may skip `s`'s parse this look. It may when the ten files the memo keys on
     (_session_files_stat) are unchanged since the last COMPLETED look (this kernel's or a previous one's, the persisted memo) and that look noted
     no clock leg that could have flipped by `now` (the earliest flip is in the memo; None there means a leg whose release is
-    not one of these files, never skipped). `verdict` is the recorded look's result, repeated by the skip."""
+    not one of these files, never skipped). `verdict` is the recorded look's result, repeated by the skip. `mode` is the
+    look's mode tag (_nudge_look_mode): the row must carry the same one (a row of another mode misses under missBy.mode, a
+    row of the old shape without a tag once under shape), so a wake-only look never repeats a full look's verdict or the
+    reverse (jobs stage 1). The row is the key, the mode, the earliest flip and the verdict, in that order."""
     sid = str(s.get("sid") or "")
     st = _NUDGE_LOOK_STATS.get(sid)                             # the pass's key, taken before its snapshots (round seven); a caller
     if st is None:                                              #  outside a pass takes its own here
@@ -14680,10 +14706,15 @@ def _nudge_look_check(s, now):
     if prev is None:
         _tick_seen_bump("auto-nudge", "neverSeen")
         return False, st, None
-    if not isinstance(prev, (list, tuple)) or len(prev) != len(st) + 2 or tuple(prev[:len(st)]) != tuple(st):
-        _tick_key_miss_by("auto-nudge", tuple(st), tuple(prev[:-2]) if isinstance(prev, (list, tuple)) else prev)   # the walk's key
-        return False, st, None                                                                   #  beside the tick jobs' (memos.tickSeen)
-    flip, verdict = prev[len(st)], prev[len(st) + 1]
+    if not isinstance(prev, (list, tuple)) or len(prev) != len(st) + 3 or tuple(prev[:len(st)]) != tuple(st):
+        _tick_key_miss_by("auto-nudge", tuple(st), tuple(prev[:-3]) if isinstance(prev, (list, tuple)) else prev)   # the walk's key
+        return False, st, None                                                                   #  beside the tick jobs' (memos.tickSeen);
+    #                                                                                               a row of the pre-tag shape (two trailing
+    #                                                                                               elements) counts once under shape here
+    prev_mode, flip, verdict = prev[len(st)], prev[len(st) + 1], prev[len(st) + 2]
+    if prev_mode != mode:
+        _tick_miss_named("auto-nudge", "mode")            # a matched key under another look mode: the row's verdict came from other legs
+        return False, st, None
     if verdict == "closer-unsettled" and not jd.CLOSER_ON:
         _tick_seen_bump("auto-nudge", "clockParse")   # a matched key the clock legs refuse to serve: a parse, not a hit (round two)
         return False, st, None                        # recorded under the closer toggle, read with it off (an import-time toggle,
@@ -14700,13 +14731,15 @@ def _nudge_look_check(s, now):
     return True, st, verdict
 
 
-def _nudge_look_done(s, st, notes, verdict):
-    """The look of `s` completed with its parse paid: the files' stat `st`, the earliest flip its clock legs noted (-1.0 when
-    none declined on the clock; None when one declined on something not in the files) and its verdict become the memo."""
+def _nudge_look_done(s, st, notes, verdict, mode="full"):
+    """The look of `s` completed with its parse paid: the files' stat `st`, the look's `mode` tag (_nudge_look_mode), the
+    earliest flip its clock legs noted (-1.0 when none declined on the clock; None when one declined on something not in the
+    files) and its verdict become the memo. The tag sits between the key and the (flip, verdict) tail, so the tail's readers
+    keep their positions."""
     flip = None if any(n is None for n in notes) else (min(notes) if notes else -1.0)
     key = ("auto-nudge", str(s.get("sid") or ""))
     with _TICK_SEEN_LOCK:
-        _TICK_SEEN[key] = tuple(st) + (flip, verdict if isinstance(verdict, str) else None)
+        _TICK_SEEN[key] = tuple(st) + (mode, flip, verdict if isinstance(verdict, str) else None)
         _TICK_SEEN_DIRTY[0] = True
         if len(_TICK_SEEN) > 4096:
             _TICK_SEEN.clear()
@@ -17951,6 +17984,11 @@ _NUDGE_FILE_KEYED_ROADS = {       # the functions each marked verdict's road rea
     "planner-queue": ("_nudge_placement_gate",),
     "walk-completed": ("_debt_asks", "_asker_row_alive", "_nudge_asks_by_target"),   # the other skippable exit (r is False with the walk
     #                                    completed) rides the debt leg: its readers are traced too (round three, low 2)
+    "wake-only": ("_goal_awaiting_stamp_full", "_peer_answered", "_nudge_all_delegated", "_all_outstanding_delegated",
+                  "_wait_for_graph"),   # the wake-only goal loop's own readers (jobs stage 1): the stamp it walks and the peer-answer
+    #                                    supersede (the store, the postal log), the delegated check (the store) and the peer-wait graph
+    #                                    (the postal log, the alive set); _wake_goal itself is not traced, since its exits are keyed
+    #                                    files, the instants it notes, or None notes under named legs (the walk-gate tests pin them)
     "interrupt-block": ("_interrupt_block_key", "_session_working", "_suspended_after", "_interrupt_marks", "_last_machine_cut",
                         "_interrupt_marks_atoms", "_machine_cut_cause", "_intr_blocked", "_record_interrupt_block",
                         "_interrupt_focus_top", "_intr_block_stands", "_lift_interrupt_block"),   # the interrupt tick's skip road
@@ -17973,23 +18011,28 @@ def _nudge_look_gated(fn):
     unchanged since its last completed look and no clock leg that look declined on has come due (_nudge_look_check); a
     skipped look repeats the recorded verdict and does nothing else (every send sits behind the full road's gates). A look
     that parses collects its clock legs' flips and records them with the files' stat when it
-    completes; an exception records nothing (the next tick evaluates, the fault-boundary rule); a wake-only look (nudges
-    off) neither skips nor records, since the toggle is not a file of the session. A decorator, so the look's own source
-    stays what the pinning tests read."""
+    completes; an exception records nothing (the next tick evaluates, the fault-boundary rule). A wake-only look (nudges
+    off, or tracking off) checks and records like any other, under its own mode tag (jobs stage 1, 2026-09-18): until then
+    it did neither, on the premise that the toggle is not a file of the session, and with the toggle off every alive
+    session paid the state gates, the parse-cache lookup, the awaiting probe, a shared store view and a goal walk on every
+    pass (looks equal to parses, 7353 per 120 s on one box). The toggle is the ledger, the tenth keyed file, so a flip
+    re-evaluates every session once, and the mode tag keeps a row from serving a look that runs other legs. A decorator,
+    so the look's own source stays what the pinning tests read."""
     @functools.wraps(fn)
     def gated(s, now, live_map, nudged, waitfor, alive_ids=None, wake_only=False, cleared=None, reminders=None):
         sid = str(s.get("sid") or "")
         _NUDGE_WALK_STATS["looks"] += 1
-        files_st = None
-        if not wake_only:
-            skip, files_st, verdict = _nudge_look_check(s, now)
-            if skip:
-                _NUDGE_WALK_STATS["skippedParses"] += 1
-                if _NUDGE_WALK_FIRST_OPEN[0] and len(_NUDGE_WALK_FIRST["skipped"]) < 40:
-                    _NUDGE_WALK_FIRST["skipped"].append(sid[:8])
-                return verdict                        # the recorded verdict and nothing else: the full road's gates (idle, judged,
-        else:                                         #  unqueued) precede every send, the debt reminder's included (round one, medium 1)
-            _NUDGE_WALK_STATS["wakeOnly"] += 1        # nudges off: the toggle is not a file, so the look neither skips nor records
+        mode = _nudge_look_mode(wake_only, reminders)
+        if wake_only:
+            _NUDGE_WALK_STATS["wakeOnly"] += 1        # the dead-man walk alone (nudges off, or tracking off): counted, and gated like
+        #                                               every look under its own mode tag (jobs stage 1)
+        skip, files_st, verdict = _nudge_look_check(s, now, mode)
+        if skip:
+            _NUDGE_WALK_STATS["skippedParses"] += 1
+            if _NUDGE_WALK_FIRST_OPEN[0] and len(_NUDGE_WALK_FIRST["skipped"]) < 40:
+                _NUDGE_WALK_FIRST["skipped"].append(sid[:8])
+            return verdict                            # the recorded verdict and nothing else: the full road's gates (idle, judged,
+        #                                               unqueued) precede every send, the debt reminder's included (round one, medium 1)
         _NUDGE_HORIZON.notes, _NUDGE_HORIZON.parsed, _NUDGE_HORIZON.walk_completed = [], False, False
         _keyed, _over = _NUDGE_LOOK_ASKERS.get(sid, ((), ()))
         _NUDGE_HORIZON.keyed_askers, _NUDGE_HORIZON.over_askers = set(_keyed), set(_over)   # for the debt leg: the keyed askers'
@@ -17999,7 +18042,7 @@ def _nudge_look_gated(fn):
             notes, parsed = getattr(_NUDGE_HORIZON, "notes", []) or [], getattr(_NUDGE_HORIZON, "parsed", False)
             _NUDGE_HORIZON.notes = None
             _NUDGE_HORIZON.keyed_askers = _NUDGE_HORIZON.over_askers = None   # the sets die with the look (round three, low 1)
-        if parsed and not wake_only and r is not True:    # a fire moved the files anyway; a look that never parsed has nothing to skip
+        if parsed and r is not True:                      # a fire moved the files anyway; a look that never parsed has nothing to skip
             file_keyed = (r in _NUDGE_FILE_KEYED_VERDICTS) or (r is False and getattr(_NUDGE_HORIZON, "walk_completed", False))
             if not file_keyed:
                 if None not in notes:                    # the default fires only when no named leg noted this look, so unboundedBy
@@ -18008,7 +18051,7 @@ def _nudge_look_gated(fn):
                         by = _NUDGE_WALK_STATS["unboundedBy"] = {}
                     by[_leg] = by.get(_leg, 0) + 1
                 notes = list(notes) + [None]             # the default: an exit no audited road claimed is unbounded
-            _nudge_look_done(s, files_st, notes, r)
+            _nudge_look_done(s, files_st, notes, r, mode)
         return r
     return gated
 

@@ -494,6 +494,249 @@ class WakeGoalUnkeyedExitsNoteTheirLegs(_Base):
         self.assertEqual(self._by(), {"dormantOwner": 1})
 
 
+SID2 = "77777777-8888-9999-aaaa-dddddddddddd"    # a second alive session for the skip tests (private to this module)
+SID3 = "77777777-8888-9999-aaaa-eeeeeeeeeeee"    # a third, the delegated top of the byte-identity proof
+
+
+class WakeOnlyLooksSkipOnTheKey(_Base):
+    """Jobs stage 1 (2026-09-18): with the auto-nudge gear off, a wake-only look neither skipped nor recorded, so every alive
+    session paid the state gates, a parse-cache lookup, the awaiting probe, a shared store view and a goal walk on every
+    jobs pass (looks equal to parses, 7353 per 120 s on one box). The wake-only look now records a row under its own mode
+    tag, keyed on the same ten files as the full look, and skips while the key stands and no noted instant has come. The
+    tests drive the real pass (_auto_nudge_tick) over real transcript files with the toggle off: the second pass skips
+    every session and parses nothing (and takes no shared load, so fold ruling A condition 7's exactly-one shared load per
+    alive session becomes at most one, zero on a skip); a keyed file of one session releases that session alone; the
+    postal log's stat releases a stamped top and a delegated top (the release the design names, since a peer's reply,
+    bounce, recall or return is a row of that log); the dead-man still fires on the first pass at or after its instant; a
+    skipping pass leaves the goal stores, the ledger and the memo rows byte-identical to a full pass over the same world;
+    the boot's first pass with no memo on record parses every session as it always did."""
+
+    def setUp(self):
+        super().setUp()
+        td = Path(self.td.name)
+        self.paths = {}
+        for sid in (SID, SID2, SID3):
+            p = td / (sid + ".jsonl")
+            p.write_text(json.dumps({"type": "user", "uuid": sid[:8], "timestamp": "2026-09-10T00:00:00Z",
+                                     "message": {"role": "user", "content": "x"}}) + "\n")
+            os.utime(p, (NOW - 3600, NOW - 3600))
+            self.paths[sid] = str(p)
+        self.rows = {SID: {"sid": SID, "path": self.paths[SID], "name": "web", "mtime": NOW - 3600},
+                     SID2: {"sid": SID2, "path": self.paths[SID2], "name": "api", "mtime": NOW - 3700},
+                     SID3: {"sid": SID3, "path": self.paths[SID3], "name": "tests", "mtime": NOW - 3800}}
+        self.alive = [SID, SID2]
+        km._alive_sessions = lambda now, live: [self.rows[s] for s in self.alive]
+        real_parsed = jd.parsed_session; self.parsed = []
+        jd.parsed_session = lambda sid, paths, now: (self.parsed.append(sid), real_parsed(sid, paths, now))[1]
+        self._stats_saved = {k: (dict(v) if isinstance(v, dict) else v) for k, v in km._NUDGE_WALK_STATS.items()}
+        for k, v in list(km._NUDGE_WALK_STATS.items()):
+            km._NUDGE_WALK_STATS[k] = {} if isinstance(v, dict) else 0
+        self._seen_saved = dict(km._TICK_SEEN)
+        km._TICK_SEEN.clear()
+        self._first_saved = ({k: (list(v) if isinstance(v, list) else v) for k, v in km._NUDGE_WALK_FIRST.items()}, km._NUDGE_WALK_FIRST_OPEN[0])
+        km._NUDGE_WALK_FIRST_OPEN[0] = False
+        self.addCleanup(self._restore_walk)
+
+    def _restore_walk(self):
+        km._NUDGE_WALK_STATS.update(self._stats_saved)
+        km._TICK_SEEN.clear(); km._TICK_SEEN.update(self._seen_saved)
+        first, open_ = self._first_saved
+        for k, v in first.items():
+            if isinstance(v, list):
+                km._NUDGE_WALK_FIRST[k][:] = v
+            else:
+                km._NUDGE_WALK_FIRST[k] = v
+        km._NUDGE_WALK_FIRST_OPEN[0] = open_
+        for sid in (SID2, SID3):
+            try:
+                (jd._overrides_dir() / (sid + ".jsonl")).unlink()
+            except OSError:
+                pass
+
+    KEYS = ("looks", "parses", "skippedParses", "wakeOnly", "clockDue", "unbounded")
+
+    def _pass(self, now=NOW):
+        """One pass over the alive sessions with the toggle as set: the walk's counter deltas, the shared loads, the writer loads
+        and the sids parsed."""
+        before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
+        c0 = dict(self.calls); self.parsed.clear()
+        km._auto_nudge_tick(now, {s: {"state": ""} for s in self.alive})
+        d = {k: km._NUDGE_WALK_STATS[k] - before[k] for k in self.KEYS}
+        d["shared"] = self.calls["load_goals_shared"] - c0["load_goals_shared"]
+        d["writer"] = self.calls["load_goals"] - c0["load_goals"]
+        d["parsedSids"] = list(self.parsed)
+        return d
+
+    def _row(self, sid):
+        return km._TICK_SEEN.get(("auto-nudge", sid))
+
+    def _store_bytes(self, sid):
+        return (jd.GOALDIR / (sid + ".json")).read_bytes()
+
+    def test_the_second_pass_with_the_gear_off_skips_every_session_and_parses_nothing(self):
+        self._toggle(False)
+        self._seed(stamped=False)                                  # a plain working top
+        self._seed(kind="job", age=5 * H, sid=SID2)                # a stamped top whose dead-man is an hour away
+        p1 = self._pass()
+        self.assertEqual((p1["looks"], p1["parses"], p1["skippedParses"], p1["wakeOnly"]), (2, 2, 0, 2), p1)
+        self.assertEqual(sorted(p1["parsedSids"]), sorted([SID, SID2]))
+        self.assertGreater(p1["shared"], 0, "the first pass reads the shared view")
+        p2 = self._pass(NOW + 5)
+        self.assertEqual((p2["looks"], p2["skippedParses"]), (2, 2), "the second pass skips every session: skippedParses equals looks")
+        self.assertEqual((p2["parses"], p2["parsedSids"]), (0, []), "and parses nothing")
+        self.assertEqual((p2["shared"], p2["writer"]), (0, 0), "a skip takes no shared load and no writer load (ruling A condition 7: at most one)")
+        self.assertEqual(p2["wakeOnly"], 2, "still counted as wake-only looks")
+        st = km._session_files_stat(self.rows[SID])
+        for sid, flip in ((SID, -1.0), (SID2, NOW - 5 * H + km.AWAITING_DEADMAN_SECS)):
+            row = self._row(sid)
+            self.assertIsNotNone(row, sid)
+            self.assertEqual((row[len(st)], row[-2]), ("wake", flip), "%s: the wake mode tag and the leg's instant" % sid[-4:])
+        self.assertEqual(self.fb.sent, []); self.assertEqual(self._lifts(), [])
+
+    def test_a_ten_file_key_change_on_one_session_releases_only_that_session(self):
+        self._toggle(False)
+        self._seed(stamped=False); self._seed(kind="job", age=5 * H, sid=SID2)
+        self._pass(); self._pass(NOW + 5)
+        states = jd.STATE / "states" / (SID + ".jsonl")            # the state log, the second keyed file, of SID alone
+        states.parent.mkdir(parents=True, exist_ok=True)
+        states.write_text(json.dumps({"state": "waiting", "t": NOW}) + "\n")
+        p3 = self._pass(NOW + 10)
+        self.assertEqual((p3["parses"], p3["skippedParses"], p3["parsedSids"]), (1, 1, [SID]), "the moved session parses; the other skips")
+        p4 = self._pass(NOW + 15)
+        self.assertEqual((p4["parses"], p4["skippedParses"]), (0, 2), "and the pass after it skips both again")
+
+    def test_the_postal_log_stat_releases_a_stamped_top_and_a_delegated_top(self):
+        self._toggle(False)
+        self._seed(kind="job", age=5 * H)                          # a stamped top: no None note of its own since stage 1
+        self._seed(stamped=False, delegated=True, sid=SID2)        # an all-delegated top: its release is the store and the postal log
+        p1 = self._pass()
+        self.assertEqual(p1["parses"], 2)
+        self.assertEqual(km._auto_nudge_data()["walkGates"][SID2 + ":g1"]["gate"], "all-delegated")
+        p2 = self._pass(NOW + 5)                                   # the gate write moved the ledger, one file for the box: both re-evaluate once
+        self.assertEqual((p2["parses"], p2["skippedParses"]), (2, 0), p2)
+        p3 = self._pass(NOW + 10)
+        self.assertEqual((p3["parses"], p3["skippedParses"]), (0, 2), "the stamped and the delegated top both skip while the files stand")
+        self.assertEqual(dict(km._NUDGE_WALK_STATS["unboundedBy"]), {}, "no stampedWait, no allDelegated")
+        log = jd.STATE / "timeline" / "messages.jsonl"             # a peer's reply, bounce, recall or return is a row of this log
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a") as f:
+            f.write(json.dumps({"id": "11111111-2222-3333-4444-000000000002", "t": NOW + 12, "from": SID2, "to": SID,
+                                "kind": "coordinate", "text": "the watcher is wired"}) + "\n")
+        miss0 = (km._tick_seen_report()["byJob"].get("auto-nudge") or {}).get("missBy", {}).get("messages", 0)
+        p4 = self._pass(NOW + 15)
+        self.assertEqual((p4["parses"], p4["skippedParses"], sorted(p4["parsedSids"])), (2, 0, sorted([SID, SID2])),
+                         "the postal log's stat releases both tops")
+        self.assertEqual((km._tick_seen_report()["byJob"]["auto-nudge"]["missBy"].get("messages", 0)) - miss0, 2, "named as the postal log's position")
+        p5 = self._pass(NOW + 20)
+        self.assertEqual((p5["parses"], p5["skippedParses"]), (0, 2))
+
+    def test_a_due_dead_man_lifts_on_the_first_pass_at_its_instant_after_skipping(self):
+        self._toggle(False)
+        self.alive = [SID]
+        self._seed(kind="job", age=5 * H)                          # due at NOW + 1 h
+        due = NOW - 5 * H + km.AWAITING_DEADMAN_SECS
+        self.assertEqual(self._pass()["parses"], 1)
+        for t in (NOW + 5, NOW + 1800, due - 1):
+            d = self._pass(t)
+            self.assertEqual((d["parses"], d["skippedParses"], d["writer"]), (0, 1, 0), "before the instant: skipped, nothing filed (%d)" % (t - NOW))
+        self.assertEqual(self._lifts(), [])
+        d = self._pass(due)
+        self.assertEqual((d["parses"], d["clockDue"], d["writer"]), (1, 1, 1), "at the instant the look evaluates and takes the writer's load")
+        self.assertEqual(len(self._lifts()), 1, "the lift files on the first pass at or after its instant, as before")
+        self.assertIsNone(self._node().get("awaitingWhy"))
+        d = self._pass(due + 5)
+        self.assertEqual((d["parses"], d["writer"]), (1, 0), "the lift moved the store: one re-evaluation, nothing more to file")
+        d = self._pass(due + 10)
+        self.assertEqual((d["parses"], d["skippedParses"]), (0, 1), "steady again")
+        self.assertEqual(len(self._lifts()), 1); self.assertEqual(self.fb.sent, [])
+
+    def test_a_fresh_read_fault_on_the_due_look_leaves_the_row_unbounded_and_the_next_pass_lifts(self):
+        self._toggle(False)
+        self.alive = [SID]
+        self._seed(kind="job", age=5 * H)
+        due = NOW - 5 * H + km.AWAITING_DEADMAN_SECS
+        self._pass(); self._pass(NOW + 5)
+        real = jd.load_goals; calls = [0]
+        def failing_once(sid):
+            calls[0] += 1
+            if calls[0] == 1:
+                raise OSError(5, "Input/output error")
+            return real(sid)
+        jd.load_goals = failing_once
+        d = self._pass(due)
+        self.assertEqual((d["parses"], self._lifts()), (1, []), "the due look evaluated; the faulted re-read filed nothing")
+        self.assertIsNone(self._row(SID)[-2], "the row is unbounded (freshFault): the next look must evaluate")
+        self.assertEqual(dict(km._NUDGE_WALK_STATS["unboundedBy"]), {"freshFault": 1})
+        d = self._pass(due + 5)
+        self.assertEqual((d["parses"], d["skippedParses"], len(self._lifts())), (1, 0, 1), "the healed pass lifts")
+
+    def test_an_all_delegated_top_skips_while_the_store_stands_and_evaluates_when_it_moves(self):
+        self._toggle(False)
+        self.alive = [SID]
+        self._seed(stamped=False, delegated=True)
+        self._pass(); self._pass(NOW + 5)                           # the gate write, then the re-evaluation it costs
+        d = self._pass(NOW + 10)
+        self.assertEqual((d["parses"], d["skippedParses"]), (0, 1), "the delegated top skips while the store stands")
+        self.assertEqual(self._row(SID)[-2], -1.0, "no clock leg: bounded by the key alone")
+        p = jd.GOALDIR / (SID + ".json"); store = json.loads(p.read_text())
+        store["nodes"][self.gid + "c"]["nodeComplete"] = True      # the peer's return: the courier completes the handoff node
+        p.write_text(json.dumps(store)); km._SESSION_STAMP_CACHE.clear()
+        d = self._pass(NOW + 15)
+        self.assertEqual(d["parses"], 1, "the store moved: the look evaluates")
+        self.assertNotIn(self.gid, km._auto_nudge_data().get("walkGates", {}), "the walk reached the goal: its gate is popped")
+        self.assertNotIn("allDelegated", km._NUDGE_WALK_STATS["unboundedBy"])
+
+    def test_a_skipping_pass_leaves_every_output_byte_identical_to_a_full_pass(self):
+        """The invariant the frames rest on: a skip writes nothing, and a full evaluation over the same world writes nothing new.
+        Three sessions (a plain top, a stamped top, a delegated top), the gear off. After the memo settles, one pass that skips
+        every look and one pass over the same world with the memo forgotten (the road as it ran before stage 1) leave the goal
+        stores, the ledger and the walk's memo rows byte-identical; the placement gate is not consulted on a skip and is served
+        on the full pass; the walk's counters differ only in the parse and skip tallies."""
+        self._toggle(False)
+        self.alive = [SID, SID2, SID3]
+        self._seed(stamped=False); self._seed(kind="job", age=5 * H, sid=SID2); self._seed(stamped=False, delegated=True, sid=SID3)
+        self._pass(); self._pass(NOW + 5)
+        ledger = jd.STATE / "auto-nudge.json"
+        def world():
+            return {sid: self._store_bytes(sid) for sid in self.alive} | {"ledger": ledger.read_bytes()}
+        def rows():
+            return {k: tuple(v) for k, v in km._TICK_SEEN.items() if k[0] == "auto-nudge"}
+        w2, r2 = world(), rows()
+        self.assertEqual(len(r2), 3, "the memo settled for all three")
+        gate0 = dict(km._NUDGE_GATE_STATS)
+        p3 = self._pass(NOW + 10)
+        self.assertEqual((p3["parses"], p3["skippedParses"], p3["looks"]), (0, 3, 3), "the skipping pass")
+        self.assertEqual(world(), w2, "a skip writes nothing: stores and ledger byte-identical")
+        self.assertEqual(rows(), r2, "and the rows stand")
+        self.assertEqual(dict(km._NUDGE_GATE_STATS), gate0, "the placement gate is not consulted on a skip")
+        km._nudge_memos_forget()                                     # the full road over the same world, as before stage 1
+        gate0 = dict(km._NUDGE_GATE_STATS)
+        p4 = self._pass(NOW + 15)
+        self.assertEqual((p4["parses"], p4["skippedParses"], p4["looks"]), (3, 0, 3), "the full pass")
+        self.assertEqual(world(), w2, "the full evaluation writes nothing new either: byte-identical")
+        self.assertEqual(rows(), r2, "and records the same rows: same key, same mode, same instants, same verdicts")
+        self.assertEqual(km._NUDGE_GATE_STATS["served"] - gate0["served"], 3, "the full pass serves the placement gate once per session")
+        differ = {k for k in self.KEYS if p3[k] != p4[k]}
+        self.assertEqual(differ, {"parses", "skippedParses"}, "the counters differ only in what the skip is: %r vs %r" % (p3, p4))
+        self.assertEqual((p3["shared"], p4["shared"]), (0, 3), "zero shared loads on the skipping pass, one per session on the full one")
+        self.assertEqual(self.fb.sent, [])
+
+    def test_the_boot_pass_parses_every_session_once_with_no_memo_on_record_and_skips_on_a_persisted_one(self):
+        self._toggle(False)
+        self._seed(stamped=False); self._seed(kind="job", age=5 * H, sid=SID2)
+        km._NUDGE_WALK_FIRST["skipped"][:] = []; km._NUDGE_WALK_FIRST["parsed"][:] = []; km._NUDGE_WALK_FIRST["deferred"] = 0
+        km._NUDGE_WALK_FIRST_OPEN[0] = True
+        p1 = self._pass()
+        self.assertEqual((p1["parses"], p1["skippedParses"]), (2, 0), "no memo on record: the boot's first pass parses every session, as before")
+        self.assertEqual((sorted(km._NUDGE_WALK_FIRST["parsed"]), km._NUDGE_WALK_FIRST["skipped"]), (sorted([SID[:8], SID2[:8]]), []))
+        self.assertTrue(km._persist_tick_seen(force=True), "the rows persist with the tick memo")
+        km._TICK_SEEN.clear()
+        self.assertGreaterEqual(km._load_tick_seen(), 2, "and the next kernel loads them")
+        p2 = self._pass(NOW + 5)
+        self.assertEqual((p2["parses"], p2["skippedParses"]), (0, 2), "a boot over a persisted wake-mode memo skips the unchanged sessions")
+        self.assertEqual(sorted(km._NUDGE_WALK_FIRST["skipped"]), sorted([SID[:8], SID2[:8]]), "and the boot row says which")
+
+
 class FileWakeAnswerLoadsItsOwnCopy(_Base):
     def test_the_answer_row_files_on_a_writer_copy_while_a_frozen_view_is_held(self):
         self._toggle(False)

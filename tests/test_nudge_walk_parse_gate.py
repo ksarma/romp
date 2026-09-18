@@ -243,7 +243,8 @@ class NudgeWalkParseGate(unittest.TestCase):
             self.assertEqual(sent, [[]], "a dead asker's ask is owed to nobody now")
             memo = km._TICK_SEEN[("auto-nudge", SID_OLD)]
             self.assertIsNotNone(memo[-2], "the asker's row is keyed: the debtor's memo is bounded, not None")
-            self.assertEqual(len(memo) - 2, 22, "ten files plus the asker's (mtime, size), zeros for an absent row: %r" % (memo,))
+            self.assertEqual(len(memo) - 3, 22, "ten files plus the asker's (mtime, size), zeros for an absent row, before the mode tag, "
+                             "the flip and the verdict (jobs stage 1 added the tag): %r" % (memo,))
             self.assertEqual(km._NUDGE_WALK_STATS["unboundedBy"], before, "no leg notes anything for a keyed asker")
             self._dead_asker_look(r, now + 1, calls, quiet)                    # a skipped look answers from its memo
             self.assertEqual(calls, [SID_OLD], "the second look skipped: nothing of the debtor's or the asker's moved")
@@ -482,6 +483,8 @@ class NudgeWalkParseGate(unittest.TestCase):
             "_intr_marks_memo",                     # a memo keyed on the parse identity plus the state log's machineCut pair
             "_intr_marks_memo_stats", "_INTR_MARKS_STATS_LOCK",   # that memo's hit/miss counters and their lock (no input)
             "_nudge_gate_memo", "_NUDGE_GATE_STATS",   # the placement gate's memo (the parse identity, the store view, the episode log's stat) and its counters
+            "_nudge_deleg_memo",                    # the delegated check's memo, keyed on the shared view object's identity (one object per store
+            #                                         version: the store, its journal and archive, keyed files 3 to 5) and holding a pure function of it
             "_last_state_cache", "_machine_cut_cache",   # _fold_records cursors over the state log (a keyed file), keyed by its path and stat
             "_stat_key",                            # a (mtime, size) reader
             "_NUDGE_HORIZON",                       # the look's thread-local horizon: its notes, and the keyed and overflow asker sets the
@@ -500,7 +503,8 @@ class NudgeWalkParseGate(unittest.TestCase):
             #                                         keyed files) and the parse's own sdk-ownership bit (jd._sdk_owned, the input
             #                                         parsed_session reads as sdk_human), holding only the tally's own two maxima
         }
-        DISPLAY_ONLY = {"_name_of": "the asker's display name for the reminder's TEXT (the names snapshot): never a verdict input"}
+        DISPLAY_ONLY = {"_name_of": "the asker's display name for the reminder's TEXT (the names snapshot): never a verdict input",
+                        "_name_color": "the awaited peer's chip color in the wait-for graph's rows (the names registry): display only"}
         ROAD_FORBIDDEN = {                          # a road whose KEY writes constants at some positions must never read those files (T401 (3)):
             "interrupt-block": {"names": {"_postal_wait_maps", "_nudge_asks_by_target", "_postal_index_memo"},
                                 "jd": {"MESSAGES", "EPIDIR", "episode_floor"},
@@ -517,14 +521,17 @@ class NudgeWalkParseGate(unittest.TestCase):
                                              "(the eighth keyed file); its internals are that cache and the alias history, which mirror the log",
                         "_auto_nudge_data": "the nudge ledger (the tenth keyed file), read through _ledger_read's cache on its (mtime_ns, size); "
                                             "the interrupt tick's key carries this session's own row from it, so a row change busts the memo "
-                                            "and another session's does not (T401 (3)); its internals are that cache and the fault latches"}
+                                            "and another session's does not (T401 (3)); its internals are that cache and the fault latches",
+                        "_postal_returned": "the postal log's returned-sends map, kept by the same scan as the wait maps and warmed with them "
+                                            "on the log's stat (the eighth keyed file); its internal is that scan's cache (jobs stage 1)"}
         JD_ALLOW = {"parsed_session", "_parse_entry", "_segs", "plan_units", "_placed_key", "_unit_key", "_closed_turns", "EPIDIR", "STATE",
                     "GOALDIR", "CLOSER_ON", "load_goals_shared_or_fault", "_seg_key", "_segment_id", "episode_floor", "_view_cleared",
                     "GOALARCHDIR", "_overrides_dir",   # the two keyed-file paths _session_files_stat itself names (the interrupt tick's key)
                     "load_goals_or_fault", "record_verdict", "append_block", "rollup_status", "save_goals", "INTERRUPT_BLOCK_WHY",
                     "_intr_paused_only",   # the interrupt arms' store readers and writers (T401 (3) round two): they load and write
                     "_pending_cut",    # the armed bare-rollback cut the judge parse reads live (no file): the marks memo takes NO key while it is armed
-                    "_sdk_owned"}      # the parse's sdk-ownership bit (parsed_session hands it to the adapter as sdk_human): the
+                    "_sdk_owned",      # the parse's sdk-ownership bit (parsed_session hands it to the adapter as sdk_human): the
+                    "FrozenStore"}     # the shared view's type, checked by the delegated memo (a type test on the store object: pure)
         #                                    marks memo's key carries the bit itself (round three, low 2)
         #                                    the goal store through its own API, the store, its journal and its archive being keyed
         #                                    files 3 to 5, and the override replay inside load_goals reads the clears log (keyed file 7,
@@ -555,8 +562,8 @@ class NudgeWalkParseGate(unittest.TestCase):
                     for a in n.names: names.add((a.asname or a.name).split(".")[0])
             return names
         problems = []; self.maxDiff = None
-        for verdict in sorted(set(km._NUDGE_FILE_KEYED_VERDICTS) | {"walk-completed", "interrupt-block"}):   # the debt leg's exit and
-            #                                                                                              the interrupt tick's road too
+        for verdict in sorted(set(km._NUDGE_FILE_KEYED_VERDICTS) | {"walk-completed", "interrupt-block", "wake-only"}):   # the debt leg's
+            #                                          exit, the interrupt tick's road and the wake-only goal loop's readers (jobs stage 1)
             todo = list(km._NUDGE_FILE_KEYED_ROADS[verdict]); seen = set()
             self.assertTrue(todo, "%s: its road functions are named" % verdict)
             while todo:
@@ -824,16 +831,59 @@ class NudgeWalkParseGate(unittest.TestCase):
         finally:
             km._NUDGE_WALK_FIRST["parsed"][:] = saved[0]; km._NUDGE_WALK_FIRST_OPEN[0] = saved[1]
 
-    def test_a_wake_only_look_neither_skips_nor_records_and_is_counted(self):
+    def test_a_wake_only_look_records_a_wake_mode_row_and_skips_while_its_key_stands(self):
+        """Jobs stage 1 (2026-09-18), the inverse of the retired pin: a wake-only look neither skipped nor recorded, so with the
+        toggle off every alive session parsed on every pass. It records a row under its own mode tag and skips like any look."""
         d = tempfile.mkdtemp(); r = _row(d, SID_OLD, old=True); calls = []; now = time.time()
         with mock.patch.multiple(km, **COMMON), \
              mock.patch.object(km.jd, "parsed_session", side_effect=lambda sid, paths, now: (calls.append(sid), {"turns": STOPPED})[1]), \
              mock.patch.object(km.jd, "_parse_entry", side_effect=lambda sid, session=None, turns=None: None):
-            for i in range(2):
-                km._auto_nudge_session(r, now + i, {}, {}, {}, alive_ids={r["sid"]}, wake_only=True)
-        self.assertEqual(calls, [SID_OLD, SID_OLD], "two parses: a wake-only look never skips")
-        self.assertNotIn(("auto-nudge", SID_OLD), km._TICK_SEEN, "and records nothing: the toggle is not a file")
-        self.assertEqual(km._NUDGE_WALK_STATS["wakeOnly"], 2)
+            self.assertEqual(km._auto_nudge_session(r, now, {}, {}, {}, alive_ids={r["sid"]}, wake_only=True), "working")
+            self.assertEqual(km._auto_nudge_session(r, now + 1, {}, {}, {}, alive_ids={r["sid"]}, wake_only=True), "working",
+                             "the skip repeats the recorded verdict")
+        self.assertEqual(calls, [SID_OLD], "one parse across two wake-only looks of an unchanged session")
+        self.assertEqual((km._NUDGE_WALK_STATS["looks"], km._NUDGE_WALK_STATS["parses"], km._NUDGE_WALK_STATS["skippedParses"],
+                          km._NUDGE_WALK_STATS["wakeOnly"]), (2, 1, 1, 2))
+        memo = km._TICK_SEEN.get(("auto-nudge", SID_OLD))
+        self.assertIsNotNone(memo, "the wake-only look records")
+        st = km._session_files_stat(r)
+        self.assertEqual(len(memo), len(st) + 3, "the key, the mode tag, the flip and the verdict")
+        self.assertEqual((memo[len(st)], memo[-2], memo[-1]), ("wake", -1.0, "working"), "the tag sits between the key and the tail")
+        with mock.patch.multiple(km, **COMMON), \
+             mock.patch.object(km.jd, "parsed_session", side_effect=lambda sid, paths, now: (calls.append(sid), {"turns": STOPPED})[1]), \
+             mock.patch.object(km.jd, "_parse_entry", side_effect=lambda sid, session=None, turns=None: None):
+            km._TICK_SEEN.clear()
+            km._auto_nudge_session(r, now + 2, {}, {}, {}, alive_ids={r["sid"]}, wake_only=True, reminders=True)
+        self.assertEqual(km._TICK_SEEN[("auto-nudge", SID_OLD)][len(st)], "wake+reminders", "tracking off with nudges on: its own tag")
+        km._TICK_SEEN.clear(); calls.clear()
+        with mock.patch.multiple(km, **dict(COMMON, _session_flag=lambda sid, flag: True)), \
+             mock.patch.object(km.jd, "parsed_session", side_effect=lambda sid, paths, now: (calls.append(sid), {"turns": STOPPED})[1]):
+            self.assertEqual(km._auto_nudge_session(r, now + 3, {}, {}, {}, alive_ids={r["sid"]}, wake_only=True), "muted")
+        self.assertNotIn(("auto-nudge", SID_OLD), km._TICK_SEEN, "a wake-only look that never parsed records nothing, as any look")
+        self.assertEqual(calls, [])
+
+    def test_rows_never_serve_across_modes_and_an_old_shape_row_misses_once_under_shape(self):
+        """Jobs stage 1: a wake-only row says nothing about the nudge legs a full look runs, so a row serves a look of the same
+        mode only (missBy.mode counts the refusal); a row of the pre-tag shape misses once under shape and is rewritten."""
+        d = tempfile.mkdtemp(); r = _row(d, SID_OLD, old=True); now = time.time()
+        st = km._session_files_stat(r)
+        def job():
+            return dict(km._tick_seen_report()["byJob"].get("auto-nudge") or {"missBy": {}})
+        m0 = job()["missBy"].get("mode", 0); s0 = job()["missBy"].get("shape", 0)
+        km._nudge_look_done(r, st, [], "working", "wake")
+        self.assertEqual(km._nudge_look_check(r, now)[0], False, "a wake row does not serve a full look")
+        self.assertEqual(km._nudge_look_check(r, now, "wake+reminders")[0], False, "nor a wake look with the reminders on")
+        self.assertEqual(job()["missBy"].get("mode", 0) - m0, 2)
+        self.assertEqual(km._nudge_look_check(r, now, "wake")[0::2], (True, "working"), "the same mode skips")
+        km._nudge_look_done(r, st, [], "working")
+        self.assertEqual(km._nudge_look_check(r, now, "wake")[0], False, "a full row does not serve a wake look")
+        self.assertEqual(km._nudge_look_check(r, now)[0::2], (True, "working"))
+        with km._TICK_SEEN_LOCK:
+            km._TICK_SEEN[("auto-nudge", SID_OLD)] = tuple(st) + (-1.0, "working")   # the pre-tag shape, as a previous kernel left it
+        self.assertEqual(km._nudge_look_check(r, now)[0], False, "an old-shape row misses")
+        self.assertEqual(job()["missBy"].get("shape", 0) - s0, 1, "once, under shape")
+        km._nudge_look_done(r, st, [], "working")
+        self.assertEqual(km._nudge_look_check(r, now)[0], True, "and the rewritten row serves")
 
 
 
