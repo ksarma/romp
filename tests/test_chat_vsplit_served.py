@@ -195,7 +195,18 @@ const settled = () => page.waitForFunction(() => {
   const band = document.getElementById("tl-pane").getBoundingClientRect().height;
   const want = Math.min(d.body.scrollHeight + 2, Math.round(window.innerHeight * 0.7));
   return Math.abs(band - want) <= 1 ? { band: band, want: want } : false;
-}, null, { timeout: 40000 }).then((h) => h.jsonValue());
+}, null, { timeout: 40000 }).then((h) => h.jsonValue()).catch(async (e) => {
+  // The generic waitForFunction timeout names no step, so the failure this wait exists to catch would read like every
+  // other wait's (review of PR 771). Name the step and say what the band looked like when the wait gave up.
+  const seen = await page.evaluate(() => {
+    const tf = document.getElementById("f-timeline"); const d = tf && tf.contentDocument;
+    const ld = d && d.querySelector(".tl-loader"), svg = d && d.querySelector("svg"), tl = document.getElementById("tl-pane");
+    return { poTimeline: document.body.classList.contains("po-timeline"), band: tl ? Math.round(tl.getBoundingClientRect().height) : null,
+             want: d && d.body ? Math.min(d.body.scrollHeight + 2, Math.round(window.innerHeight * 0.7)) : null,
+             loader: ld ? (ld.style.display || "shown") : "absent", plot: svg ? (svg.style.display || "shown") : "absent" };
+  }).catch(() => null);
+  throw new Error("the timeline band never settled (loader hidden, plot shown, band at its content height) within 40 s; seen " + JSON.stringify(seen) + "; " + ((e && e.message) || e));
+});
 const frameOf = async (fid) => { const h = await page.$("#" + fid); return h ? await h.contentFrame() : null; };
 const rectIn = async (fid, sel) => { const fr = await frameOf(fid); if (!fr) return null; const h = await fr.$(sel); if (!h) return null; const b = await h.boundingBox(); return b ? { x: b.x + b.width / 2, y: b.y + b.height / 2 } : null; };
 // the fill observable for the bottom pane (the dragged session): scroll #content to the top twice, let the observer
