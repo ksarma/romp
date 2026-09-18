@@ -78,8 +78,12 @@ test("federation applies deltas onto the LOCAL host's held frame and re-emits; n
   assert.match(FED, /import \{ applyFeedDelta \} from "\.\/feed-delta";/);
   const i = FED.indexOf('if (m && m.type === "feedDelta") {');
   assert.ok(i > 0, "inbound has a feedDelta branch");
-  const branch = FED.slice(i, i + 1800);
-  assert.match(branch, /const base = host === LOCAL \? this\.perHostFeed\[host\] : null;/, "only the local socket announces, so only it may carry deltas");
+  const branch = FED.slice(i, i + 2400);
+  // a REMOTE host's delta applies onto the raw frame held for it, its kernel's own ids (applyRemoteFeedDelta; the
+  // relay dial announces REMOTE_DIAL_CAPS since 2026-09-18, federation-remote-feed-delta.test.ts runs that path);
+  // the local host's applies onto the frame the merge reads, as it always did
+  assert.match(branch, /if \(host !== LOCAL\) \{ this\.applyRemoteFeedDelta\(host, msg\); return; \}/, "the remote path takes the RAW frame (msg), never the prefixed copy");
+  assert.match(branch, /const base = this\.perHostFeed\[host\];/, "the local path's base is the merge's frame");
   assert.match(branch, /this\.diag\("feedDelta-nobase"/);
   assert.match(branch, /s\(\{ type: "needFullFeed" \}\)/);
   assert.match(branch, /this\.perHostFeed\[host\] = applyFeedDelta\(base, m\);\s*\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);[^\n]*\n\s*this\.emitMergedFeed\(\);/,
@@ -226,7 +230,8 @@ test("federation stamps the arrival beside the frame on both wire paths, drops i
   assert.match(FED, /delete this\.perHostFeed\[host\];\n\s*delete this\.perHostFeedAt\[host\];/, "a detach forgets both");
   assert.match(FED, /mergeHostFeeds\(this\.perHostFeed, this\.hostSeq, this\.view\(\), dead, this\.perHostFeedAt, this\.hostsRead\)/,
     "every emit carries the arrivals (fifth), then upstream's hostsRead (sixth: whether a /tunnels poll has answered yet, so a pane's absence-driven writers stand down until it has)");
-  assert.equal((FED.match(/perHostFeedAt\[host\] = Date\.now\(\)/g) || []).length, 2, "stamped on the two wire paths and nowhere else — never on an emit");
+  assert.match(FED, /this\.perHostFeed\[host\] = prefixInbound\(host, next\);\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);[^\n]*\n\s*this\.emitMergedFeed\(\);/, "a remote delta's arrival (applyRemoteFeedDelta, 2026-09-18)");
+  assert.equal((FED.match(/perHostFeedAt\[host\] = Date\.now\(\)/g) || []).length, 3, "stamped on the three wire paths (a full frame, a local delta, a remote delta) and nowhere else, never on an emit");
 });
 
 

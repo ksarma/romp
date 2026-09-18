@@ -858,6 +858,16 @@ export const REMOTE_REDIAL_MS = 8000;
 // end stays open), and only the kernel's next frame can tell; until one lands the watchdog runs at this bound
 // instead of REMOTE_STALE_MS.
 export const REMOTE_PROVISIONAL_MS = 15000;
+// The capabilities a REMOTE socket announces (its `caps` dial term), this manager's own statement about what it
+// can apply to a frame from that host: feedDelta, because the feedDelta branch below decodes one for any host
+// (kernel.py FEED_DELTA_CAP; the shim announces the same for its local socket on the feed, Outline and Waiting
+// pages). Not the page's caps (readyGate is the shim's hold, and this manager posts its own ready), and not read
+// from the shim's __rompDialTerms: the decoder lives here, so the announcement does too. Without the term a
+// remote kernel served the feed on its view-delta slot path ({type:"delta", slot:"feed"}, which nothing on this
+// side decodes: the shim's reassembler reads its LOCAL socket alone), so a remote Outline froze after its first
+// full frame, each dropped frame filing a `delta-unapplied` row and a needSlot the LOCAL kernel could not answer
+// (86 rows in 2.4 minutes on the user's phone, 2026-09-18).
+export const REMOTE_DIAL_CAPS = "feedDelta";
 
 /** What the watchdog should do about ONE remote socket, from its state alone (pure, unit-tested):
  *  "close" — force-close so the onclose→redial chain runs (open but silent past the keepalive bound,
@@ -946,6 +956,7 @@ export class FederationManager {
   private perHostSids: Record<string, Set<string>> = {};
   private perHostFeed: Record<string, any> = {}; // last feed snapshot per host — merged so they don't clobber
   private perHostFeedAt: Record<string, number> = {}; // host -> local ms its snapshot ARRIVED (feed or the delta that updated it): the merged frame's clock anchor (mergeHostFeeds `nowAt`), so a re-emit anchors exactly as the arrival did
+  private perHostFeedRaw: Record<string, any> = {}; // a REMOTE host's last feed frame as its kernel sent it, ids unprefixed: the base its feedDelta frames apply onto (applyRemoteFeedDelta); the prefixed copy above is what the merge reads
   private perHostTl: Record<string, any> = {}; //   last timeline lanes payload ({type:"data"}.data) per host
   private perHostTlBars: Record<string, any> = {}; // last timeline {type:"bars"} detail per host
   private tlBarsHeld = false; // a bars emission waited for the LOCAL lanes skeleton: their arrival emits it (emitMergedTimeline)
@@ -1269,6 +1280,7 @@ export class FederationManager {
       return;
     }
     if (m && m.type === "feed") {
+      if (host !== LOCAL) this.perHostFeedRaw[host] = msg;   // the frame as sent, the base for that host's deltas (applyRemoteFeedDelta)
       this.perHostFeed[host] = m;
       this.perHostFeedAt[host] = Date.now();   // the wire arrival: the one moment the frame's `now` was current
       this.ensureHost(host);
@@ -1277,17 +1289,21 @@ export class FederationManager {
     }
     if (m && m.type === "feedDelta") {
       // The kernel streams the feed as DELTAS to a caught-up socket that announced it can take them (the
-      // shim's ?caps=feedDelta, 2026-09-02). Only the LOCAL socket announces — remote sockets never do,
-      // so a delta from one is a protocol error (its ids would also have escaped prefixInbound). Apply
-      // onto the last full frame held for the host and re-emit the merge exactly as a full frame would:
-      // every consumer downstream keeps seeing whole `feed` frames. No base to apply onto (a delta before
-      // any full frame on this socket) cannot be repaired here: say so and ask for a full frame, the way
+      // shim's ?caps=feedDelta on the LOCAL socket, 2026-09-02; this manager's REMOTE_DIAL_CAPS on each
+      // remote socket, 2026-09-18). Apply onto the last full frame held for the host and re-emit the merge
+      // exactly as a full frame would: every consumer downstream keeps seeing whole `feed` frames. A remote
+      // host's delta names its kernel's own ids (bare sids under ledgers and removeLedgers, bare itemIds
+      // under removeAsks), so it applies onto the RAW frame held for that host, and the result is prefixed
+      // whole, as a full frame from it is (applyRemoteFeedDelta); the local host's applies onto the frame
+      // the merge reads, the identity prefix. No base to apply onto (a delta before any full frame on this
+      // socket) cannot be repaired here: say so and ask THE KERNEL THAT SENT IT for a full frame, the way
       // the chat asks (needFull) when a chatTail starts past what it holds.
-      const base = host === LOCAL ? this.perHostFeed[host] : null;
+      if (host !== LOCAL) { this.applyRemoteFeedDelta(host, msg); return; }
+      const base = this.perHostFeed[host];
       if (!base) {
-        this.diag("feedDelta-nobase", { host: host || "local", buildId: m.buildId });
+        this.diag("feedDelta-nobase", { host: "local", buildId: m.buildId });
         const s = (window as any).__rompLocalSend;
-        if (host === LOCAL && typeof s === "function") s({ type: "needFullFeed" });
+        if (typeof s === "function") s({ type: "needFullFeed" });
         return;
       }
       this.perHostFeed[host] = applyFeedDelta(base, m);
@@ -1321,6 +1337,30 @@ export class FederationManager {
       return;
     }
     window.dispatchEvent(new MessageEvent("message", { data: m }));
+  }
+
+  /** A REMOTE host's {type:"feedDelta"}, as its kernel sent it (`d` is the raw frame, before prefixInbound). It
+   *  applies onto the raw full frame held for that host (perHostFeedRaw), and the whole result is prefixed the way
+   *  a full frame from the host is, so the merge reads exactly what a full frame would have given it. Applying onto
+   *  the PREFIXED frame instead would miss every removal (removeLedgers names bare sids, the held ledgers carry
+   *  "host:sid") and append every upserted ledger beside its prefixed twin. No raw base (a delta before any full
+   *  frame on this socket, or after a detach dropped the host's state): the local kernel holds nothing for this
+   *  host, so the ask goes to the kernel that sent the delta, on its own conn (needFullFeed: it forgets what it
+   *  believes this socket holds and serves a full frame at once, kernel.py's handler), and the merge is left as it
+   *  was, never emitted from a half-applied state. The socket is open (the frame just arrived on it), so the send
+   *  goes now. */
+  private applyRemoteFeedDelta(host: string, d: any): void {
+    const raw = this.perHostFeedRaw[host];
+    if (!raw) {
+      this.diag("feedDelta-nobase", { host, buildId: d.buildId });
+      this.sendRemote(host, { type: "needFullFeed" });
+      return;
+    }
+    const next = applyFeedDelta(raw, d);
+    this.perHostFeedRaw[host] = next;
+    this.perHostFeed[host] = prefixInbound(host, next);
+    this.perHostFeedAt[host] = Date.now();   // the delta's arrival, as on the local path: the merge's clock anchor when no local frame anchors it
+    this.emitMergedFeed();
   }
 
   // The viewer's own session order, re-read per emit. It is a handful of strings out of localStorage and
@@ -1782,7 +1822,10 @@ export class FederationManager {
   // remote knows. reconnect=1&proto rides a REDIAL that already got a ready acked (the shim's
   // everConnected && bundleReady && readyAcked gate: the remote served this page whole and holds its
   // sessions), so the remote holds what it served this page and skeletons the rest; a socket that opened but
-  // never got a ready acked dials as a first dial, holding nothing to reconnect to.
+  // never got a ready acked dials as a first dial, holding nothing to reconnect to. `caps` is this manager's
+  // own term, not one of the page's (REMOTE_DIAL_CAPS): it names what THIS side decodes on a frame from that
+  // host, so the remote kernel serves its feed as feedDelta frames, which the feedDelta branch applies per
+  // host, instead of the view-delta slot frames nothing here could reassemble (2026-09-18).
   private remoteDialUrl(conn: Conn, redial: boolean): string {
     const host = conn.host;
     const proto = location.protocol === "https:" ? "wss://" : "ws://";
@@ -1790,7 +1833,8 @@ export class FederationManager {
     let t: any = null;
     try { const f = (window as any).__rompDialTerms; if (typeof f === "function") t = f(); } catch (e) { /* no terms → the bare dial, the pre-2026-09-15 behaviour */ }
     let url = `${proto}${location.host}/remote/${encodeURIComponent(host)}/ws?app=${encodeURIComponent(this.app)}`
-      + (w ? `&wid=${encodeURIComponent(w)}` : "");
+      + (w ? `&wid=${encodeURIComponent(w)}` : "")
+      + `&caps=${encodeURIComponent(REMOTE_DIAL_CAPS)}`;
     if (t) {
       if (t.delta) url += "&delta=1";
       if (t.iid) url += `&iid=${encodeURIComponent(this.iidNamespace() + ":" + t.iid)}`;
@@ -1998,6 +2042,7 @@ export class FederationManager {
     delete this.perHostSids[host];
     delete this.perHostFeed[host];
     delete this.perHostFeedAt[host];
+    delete this.perHostFeedRaw[host];   // with them: a re-attach's first delta must find no stale base to apply onto
     const hadTl = host in this.perHostTl || host in this.perHostTlBars;
     delete this.perHostTl[host];
     delete this.perHostTlBars[host];
