@@ -3185,7 +3185,10 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   decisions 52 and 53 here against the module (`literalizeUnclosedTags`, `VOID_ELEMENTS`), both callers (mdBlock's
   three steps, `placeTokens`' lex line, one void list), the retired one-cell machinery and the anchor line in
   anchor-map.ts, the guide's sentences, plans/markdown-viewer.md's two pointer sentences, this bullet's modules
-  against the tree, and `tools/file-review-plan-about.test.mjs`'s DECISIONS_END.
+  against the tree, and `tools/file-review-plan-about.test.mjs`'s DECISIONS_END;
+  `tools/file-review-plan-inlinetag-rawblock.test.mjs` runs marked over a document with an unclosed `<kbd>`,
+  `<pre>`, `<code>` or `<script>` and holds decision 52's scope sentence to the lexer (every later block unescaped
+  until an end tag of any of the four names or the document's end, `inLink` the same).
 
 ## Docs
 
@@ -3906,10 +3909,16 @@ document stands on its own, each with the reasoning it was given.
     parser; a start tag whose end tag stands in a LATER block renders as text now, and the later block's end tag is
     a stray, where the parser used to wrap the blocks between in its element; a block-level element closed within
     its block mid-line (`<div>x</div>`) still splits the paragraph in the parser, a known gap; marked's inline lexer
-    state is not rewound, so after an unclosed `<kbd>`, `<pre>`, `<code>` or `<script>` it lexes the block's
-    remaining text unescaped (`inRawBlock`) and after an unclosed `<a` it autolinks no bare URL (`inLink`), as
-    before. Two consequences the build found and kept: inside an inline `<svg>` or `<math>` the rule applies by
-    name, so a child written without its own end tag (`<svg><title>icon</svg>`, `<svg><foreignObject><b>x</svg>`,
+    state is not rewound between blocks: one Lexer lexes every block's inline run in turn, so a flag one block sets
+    stays set for the rest of the document. After an unclosed `<kbd>`, `<pre>`, `<code>` or `<script>` it lexes the
+    remaining text of that block and of every later block unescaped (`inRawBlock`), until an end tag of any of those
+    four names (a stray `</code>` closes an open `<kbd>`) or the document's end; a later block with a `<` before a
+    letter then loses the text from that `<` to the next `>` in the rendered view, where the browser's parser reads
+    a tag, and is refused with the mismatch sentence. After an unclosed `<a` it autolinks no bare URL in that block
+    or any later one (`inLink`), until an `</a>`. Both as before: the rule runs after the lex and changes no lexer
+    state, and main's path lexes the same. Two consequences the build found and kept: inside an inline `<svg>` or
+    `<math>` the rule applies by name, so a child written without its own end tag (`<svg><title>icon</svg>`,
+    `<svg><foreignObject><b>x</svg>`,
     `<math><annotation-xml encoding="text/html"><b>x</math>`) is text too and the root's own end tag closes the root
     (in the DOM those characters are svg text, present in the textContent the map and the reader match and drawn
     nowhere, or go with a dropped `<math>`; the alternative, `</svg>` and `</math>` closing every tag opened after
@@ -3920,8 +3929,8 @@ document stands on its own, each with the reasoning it was given.
     `ma6 x y6`, the reader `ma6 y6`; recorded there with its reason). Two divergences the Slice 5 build note of
     plans/markdown-viewer.md recorded (item 4) are agreements now: an inline `<textarea>` left open, and an
     `<annotation-xml>` whose encoding value carries a blank with a `<b>` left open inside it; the `/>` forms keep
-    the divergence, since the self-closing syntax stays HTML. The other inline tags the assessment counted in the
-    note, placeholders of the `<cell>` kind the sanitizer used to drop with nothing shown, render as visible text
+    the divergence, since the self-closing syntax stays HTML. The assessment counted other placeholder tags in the
+    note, start tags with no end tag that the sanitizer dropped with nothing shown; they render as visible text
     now. mdBlock calls marked's lexer and parser directly, so a throw from them no longer carries the report-this
     sentence marked.parse appends to its message (`fellMessage`'s cut is a no-op for the viewer's own parse and
     stands). docs/guide.md says so in its paragraph on a file's own HTML; CONTEXT.md is unchanged, since no
@@ -3943,7 +3952,10 @@ document stands on its own, each with the reasoning it was given.
     mdBlock replicas render through the rule), and the source pins over mdBlock's parse in
     `ui/webview/file-view.test.ts`, `ui/webview/file-view-links.test.ts`, `ui/webview/render-sanitize.test.ts` and
     `ui/webview/anchor-map.test.ts`. `tools/file-review-plan-inlinetag.test.mjs` holds this record and decision 53
-    to the module, both callers, the guide and the tree.
+    to the module, both callers, the guide and the tree; `tools/file-review-plan-inlinetag-rawblock.test.mjs` runs
+    marked over a document with an unclosed `<kbd>`, `<pre>`, `<code>` or `<script>` and holds the scope sentence
+    above to the lexer: every later block unescaped, an end tag of any of the four names clearing it, `inLink` the
+    same.
 53. **A selection across several cells of one table anchors to its span** (2026-09-18). Slice 8 of
     plans/markdown-viewer.md (item 3, the brief's open question 3) refused a Rendered selection whose source span
     covered two or more cells of one table with the sentence "This selection spans more than one cell of a table;

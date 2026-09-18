@@ -13,12 +13,17 @@
 // text is the raw escaped as marked's inline text tokenizer escapes text (escapeInlineText), so marked's text renderer writes
 // `&lt;table&gt;`, the reader sees `<table>` and the map's `text` case emits the raw's characters (anchor-map.ts walkInline,
 // plainInline and lenientInline), with no case for the shape on either side. Everything else is left as lexed: a start tag
-// closed within its block (`<b>x</b>`, `<span class="a">y</span>`, `<kbd>Ctrl</kbd>`), a void element (VOID_ELEMENTS),
-// the self-closing syntax `<x/>`, an end tag (a stray one keeps anchor-map.ts blockEnds' reading), a comment, a processing
-// instruction, a declaration and a CDATA section. Matching is by element name, ASCII case-insensitive, innermost first: one
-// list of the open start tags over the block's inline tokens flattened in document order (a tag inside emphasis, a link's
-// label or a highlight counts), an end tag closing the latest open tag of its name, so `<b>x<b>y</b>` keeps the inner pair
-// as HTML and makes the first `<b>` text, `<B>x</b>` is closed and `<b>x *y</b>*` is closed through the emphasis. The block is
+// closed within its block (`<b>x</b>`, `<span class="a">y</span>`, `<kbd>Ctrl</kbd>`), a void element (VOID_ELEMENTS, and
+// the `image` start tag the parser rewrites to `img`, IMG_ALIAS), the self-closing syntax `<x/>` (the flag read as the HTML
+// tokenizer reads a tag, isSelfClosingTag: the `/` that ends an unquoted attribute value, `<a href=http://a.test/>`, is the
+// value's own last character, not the flag, so that tag is an open start tag like `<a href="http://a.test/">`), an end tag
+// (a stray one keeps anchor-map.ts blockEnds' reading), a comment, a processing instruction, a declaration and a CDATA
+// section. Matching is by element name, ASCII case-insensitive, innermost first: a stack per name of the open start tags
+// over the block's inline tokens flattened in document order (a tag inside emphasis, a link's label or a highlight counts),
+// an end tag popping the latest open tag of its name and no other (linear in the run's tags: one list scanned from its end
+// on every end tag was quadratic when thousands of stray end tags followed thousands of open start tags of another name),
+// so `<b>x<b>y</b>` keeps the inner pair as HTML and makes the first `<b>` text, `<B>x</b>` is closed and `<b>x *y</b>*`
+// is closed through the emphasis. The block is
 // the token that owns the inline run, each on its own: a paragraph, a heading, a tight list item's text, a footnote
 // definition, a table cell; a list, a quote and a callout are walked into for the blocks they hold. Block-level `html` tokens
 // are not read here: the tag scan (anchor-map.ts topTags) models what the parser makes of an html block.
@@ -38,12 +43,51 @@ import type { Token, Tokens } from "marked";
  *  scans of anchor-map.ts (topTags, blockEnds, leafTag, nextIsTablePart) read this same set. */
 export const VOID_ELEMENTS: ReadonlySet<string> = new Set(["AREA", "BASE", "BR", "COL", "EMBED", "HR", "IMG", "INPUT", "LINK", "META", "PARAM", "SOURCE", "TRACK", "WBR"]);
 
+/** The one start tag the HTML parser rewrites to a void element: an `image` start tag becomes `img` (the in-body insertion mode's
+ *  rule for the obsolete alias), so `<image src="a.png">` in prose opens nothing and the browser draws the picture, and the rule
+ *  leaves it HTML as it leaves `<img>`. Kept out of VOID_ELEMENTS, HTML's own void set, which the map's tag scans read: inside
+ *  an inline `<svg>` an `<image>` is an element with an end tag of its own, and the scans read it so. The other start tags the
+ *  parser inserts and pops at once beyond the void set (`keygen`, `basefont`, `bgsound`) are left to the rule: the sanitizer
+ *  drops those elements and shows nothing, and the record prefers the characters shown (decision 52, the placeholders of the
+ *  `<cell>` kind); `image` alone had visible content, the picture. */
+const IMG_ALIAS = "IMAGE";
+
 /** An inline `html` token's tag: `/` for an end tag, then the name (marked's inline tag rule: a letter, then letters, digits, `_`,
  *  `-` and, in an end tag, `:`). No match for a comment, a declaration, a processing instruction or a CDATA section. */
 const TAG_RE = /^<(\/?)([a-zA-Z][\w:-]*)/;
-/** The self-closing syntax, `<x/>` or `<x />`: left as HTML (the parser ignores the flag on an HTML element and closes the element
- *  at once in foreign content; anchor-map.ts leafTag reads it so). */
-const SELF_CLOSING_RE = /\/>$/;
+/** The HTML tokenizer's blanks between a tag's parts: tab, line feed, form feed, carriage return, space. */
+const BLANK = /[\t\n\f\r ]/;
+
+/** Whether a start tag's raw carries the self-closing flag, `<x/>`, `<x />`, `<x a="b"/>`, `<x a=b />`: left as HTML (the parser
+ *  ignores the flag on an HTML element and closes the element at once in foreign content; anchor-map.ts leafTag reads it so).
+ *  The tag is read as the HTML tokenizer reads it, attribute by attribute: a quoted value runs to its closing quote, an unquoted
+ *  value to the next blank or `>`, and the flag is a `/` right before the `>` outside them all; a `/` anywhere else in the tag
+ *  is read past (the tokenizer's unexpected-solidus-in-tag). A suffix test on the raw (`/\/>$/`) misread `<a href=http://a.test/>`
+ *  as self-closing, since marked's unquoted value takes the `/` (its class is anything but a blank, a quote, `=`, `<`, `>` and a
+ *  backtick) and the raw ends in `/>`, where the tokenizer keeps that `/` as the value's last character and opens the element:
+ *  a start tag with no end tag in its block that the rule then left HTML, so the browser wrapped every later block in it, the
+ *  shape the header names. Exported for the tests; false for an end tag or a non-tag. */
+export function isSelfClosingTag(raw: string): boolean {
+  const m = TAG_RE.exec(raw);
+  if (!m || m[1]) return false;
+  const n = raw.length;
+  let i = m[0].length;
+  while (i < n) {
+    const c = raw[i];
+    if (BLANK.test(c)) { i++; continue; }
+    if (c === ">") return false;
+    if (c === "/") { if (raw[i + 1] === ">") return true; i++; continue; }
+    while (i < n && !BLANK.test(raw[i]) && raw[i] !== "/" && raw[i] !== ">" && raw[i] !== "=") i++;   // the attribute's name
+    while (i < n && BLANK.test(raw[i])) i++;
+    if (raw[i] !== "=") continue;   // a bare attribute: the next part follows
+    i++;
+    while (i < n && BLANK.test(raw[i])) i++;
+    const q = raw[i];
+    if (q === '"' || q === "'") { const close = raw.indexOf(q, i + 1); i = close < 0 ? n : close + 1; }
+    else while (i < n && !BLANK.test(raw[i]) && raw[i] !== ">") i++;   // an unquoted value, a `/` inside it the value's
+  }
+  return false;
+}
 
 /** marked's escape of inline text (marked 12's escape$1 with `encode` false, the inline text tokenizer's call): `<`, `>`, `"`
  *  and `'` always, `&` unless it begins a character reference, which the browser decodes to one character (the map refuses
@@ -81,19 +125,21 @@ export function literalizeUnclosedTags(tokens: Token[]): void {
 }
 
 /** One block's inline run: its html tokens in document order, a tag inside emphasis, a link's label or a highlight included,
- *  matched by name innermost first; the start tags left open at the run's end are converted. */
+ *  matched by name innermost first (a stack per name, its last entry the innermost open tag of that name; an end tag pops it, an
+ *  end tag naming no open tag is a stray, blockEnds' to read); the start tags left open at the run's end are converted. */
 function literalizeRun(tokens: Token[]): void {
-  const open: { name: string; token: Token }[] = [];
+  const open = new Map<string, Token[]>();
   const read = (list: Token[]): void => {
     for (const t of list) {
       if (t.type === "html") {
         const m = TAG_RE.exec(t.raw);
         if (!m) continue;   // a comment, a declaration, a processing instruction, a CDATA section
         const name = m[2].toUpperCase();
-        if (m[1]) {
-          // an end tag closes the latest open start tag of its name; naming none, it is a stray, blockEnds' to read
-          for (let i = open.length - 1; i >= 0; i--) if (open[i].name === name) { open.splice(i, 1); break; }
-        } else if (!VOID_ELEMENTS.has(name) && !SELF_CLOSING_RE.test(t.raw)) open.push({ name, token: t });
+        if (m[1]) open.get(name)?.pop();
+        else if (!VOID_ELEMENTS.has(name) && name !== IMG_ALIAS && !isSelfClosingTag(t.raw)) {
+          const stack = open.get(name);
+          if (stack) stack.push(t); else open.set(name, [t]);
+        }
         continue;
       }
       const kids = (t as { tokens?: Token[] }).tokens;
@@ -101,7 +147,7 @@ function literalizeRun(tokens: Token[]): void {
     }
   };
   read(tokens);
-  for (const o of open) toText(o.token);
+  for (const stack of open.values()) for (const t of stack) toText(t);
 }
 
 /** The token as a `text` token: its raw kept, its text the raw escaped as marked's inline text tokenizer escapes text (marked's
