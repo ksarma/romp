@@ -3764,8 +3764,12 @@ characters) or it becomes the word `other` (a folded key merges with its
 sibling, counts summed), with the `http` block judged against the kernel's
 own route register and the byte tables' joined `kind<-caller` keys against
 theirs; and a denylist drops what must not appear even as `other`: the read
-table by path, the child's first failure, the stacks, the pid and the clock
-stamps, and every key that names a session, a place, a host or a user. The
+table by path, the child's first failure, the stacks, a pid under any
+spelling, the clock stamps (`uptime_s` stays: it is the span the lifetime
+totals cover, and with the export minute beside it places the kernel's start
+within a minute, which names no one), and every key that names a session, a
+place, a host or a user where its value can carry text (the same key over a
+count, such as the chat build's per-label miss counters, stays). The
 result goes under a `schema` line (`romp-perf-export/1`) with the UTC minute
 of the export and, when the snapshot carries the kernel's commit, its
 twelve-character abbreviation; `--usage` adds a `usage` block, off by
@@ -3774,8 +3778,10 @@ default, with the session counts, the user's actions and the panes opened
 keys the snapshot already carries. Before writing, the document is walked
 once more for a uuid, a 32-hex token or an absolute path, and searched for
 the strings only this machine knows (its hostname, user and home directory,
-the session ids and working directories in the state directory's registry);
-either finding refuses the write and names the key path, never the value.
+the session ids and working directories in the state directory's registry; a
+hostname or user is matched as whole words, so a user named `mark` is not
+found in the counter `intrMarks`); either finding refuses the write and
+names the key path, never the value.
 The file lands as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json` under the
 state directory, readable by the owner alone, or at `--out`; the path and
 the byte size are printed. `--from SNAPSHOT.json` folds a snapshot saved
@@ -3784,13 +3790,13 @@ collapsed to their families the way the kernel does now). Without `--public`
 the verb refuses with one line and exit 2: there is no raw mode, so a raw
 snapshot is never written by habit. Nothing leaves the machine: the export
 reads `GET /perf` on `127.0.0.1` and writes a file, and posting it is the
-user's own act. Read the file before you paste it; two maintainers read a
-pasted export with `romp perf`'s rate arithmetic, and a bug report is best
-served by a snapshot taken after the kernel has been up for a while (the
-counters are lifetime totals) with the `romp perf` text output beside it.
+user's own act. Read the file before you paste it. The counters are
+lifetime totals, so a bug report is best served by an export taken after the
+kernel has been up for a while, with the `romp perf` text output (the rates
+over a live window, which the export does not carry) pasted beside it.
 `romp restart-metrics --json --public` applies the same rules to the restart
-document (the session names, ids, pids, scope units and the label go; the
-counts and distributions stay).
+document (the session names, ids, pids, scope units, the label and the
+generation stamps go; the counts and distributions stay).
 
 The counters describe a running kernel. To time the same builders offline, on
 a copy of a state directory and with no live kernel, `tools/perf-bench.py`
@@ -5164,10 +5170,12 @@ metric above per window, with capped latency samples for the distribution
 figure), `sources`, and `live`. `--json --public` prints the document's
 paste-safe form instead, through the same rules as `romp perf export --public`
 (see [Kernel performance counters](#kernel-performance-counters)): the session
-names on the cut rows and in the buckets' `cutSessions`, the sids, pids, scope
-units, the label and the kernel's sha are dropped, every other key and string
-folds to a code identifier or `other`, and the document is marked `public:
-true`; it is searched for the strings only this machine knows before it is
+names on the cut rows and in the buckets' `cutSessions`, the sids, pids under
+every spelling, scope units, the label, the kernel's sha and the generation
+stamps (`generatedAt`, `live.t`) are dropped, every other key and string
+folds to a code identifier or `other` (a week bucket's key is respelled
+`week-of-YYYY-MM-DD` so the weeks stay distinct), and the document is marked
+`public: true`; it is searched for the strings only this machine knows before it is
 printed, and a survivor refuses the print naming the key path.
 
 `scripts/restart_metrics_report.py` draws the before-versus-after figures from
