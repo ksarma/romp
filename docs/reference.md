@@ -2490,9 +2490,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
 - `process`: `rss_kb` (the resident set size in KB, the CURRENT size on every
   platform: `VmRSS` from `/proc` on Linux; on macOS, which has no `/proc`, the
   Mach kernel's `task_info` resident size read through `ctypes`, or `ps -o rss=`
-  when `ctypes` cannot reach it, run at most once per 10 s; `source` names the
-  reader, `proc`, `task_info` or `ps`, and reads `unavailable` when none
-  answered and the peak stands in), `rss_peak_kb` (macOS only: `ru_maxrss`, the
+  when `ctypes` cannot reach it, run at most once per 10 s with the last answer
+  served between runs, so a `ps` figure can be up to 10 s old; a run that fails
+  leaves its 10 s window with no figure, and that window, like a Mac before its
+  first `ps` answer, shows the peak instead; `source` names the reader, `proc`,
+  `task_info` or `ps`, and reads `unavailable` when none answered and the peak
+  stands in), `rss_peak_kb` (macOS only: `ru_maxrss`, the
   lifetime peak, which was `rss_kb` there before 2026-09-18, so memory over
   uptime on a Mac only ever climbed), `threads`, `cpu_s`, `pid`, and the exact
   memory gauges: `rss_anon_kb` and `hwm_kb` (the anonymous and the peak
@@ -2507,7 +2510,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   blocks flat while rss climbs points at the allocator, blocks climbing at an
   object graph, a `caches` gauge climbing at that cache. `romp perf` prints
   them on a `memory` line with the window's deltas beside the levels (on macOS
-  with `peak` beside the current size).
+  with `peak` beside the current size, and `source` beside `rss` whenever the
+  reader is neither `/proc` nor `task_info`).
 - `heap`: where that resident size sits at the moment of the read, so a
   large `process.rss_kb` can be attributed live, without a restart or a
   debugger (the lag investigation, 2026-09-15, had to attribute a 5-6 GiB
