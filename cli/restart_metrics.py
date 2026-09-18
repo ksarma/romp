@@ -47,8 +47,12 @@ fault row relays (requestId, callbackId, toolUseId) are dropped; durations (outa
 settleS, waitedS) and every count and distribution stay, so two documents from one machine remain linkable
 through them by design; the kernel's uptime (live.kernel.uptimeS) is rounded down to whole minutes; every
 other key and string is folded to a code identifier or `other` (a week bucket's key is respelled
-`week-of-YYYY-MM-DD` first, so the weeks stay distinct), and the finished document is searched for the strings
-only this machine knows before it is printed. The public form is a paste artefact, not the report's input:
+`week-of-YYYY-MM-DD` first, so the weeks stay distinct), and the finished document goes through the export's two
+checks before it is printed (perf_export.check_document: the search for the strings only this machine knows,
+then the walk for a uuid, a 32-hex or 40-hex token, an absolute path or free text, of which the identifier
+grammar admits only a 32-hex token); either finding refuses the print the way the export refuses its write,
+naming the kind of finding and the key path of the shallowest one, never the string. The public form is a
+paste artefact, not the report's input:
 scripts/restart_metrics_report.py reads the raw `--json` documents (its time axis needs the stamps) and, handed
 a public one, leaves that document's kernel-memory series out with a note.
 """
@@ -67,6 +71,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))   # cli/, whether run through the bin/ symlink or loaded by path
 import perf_public  # noqa: E402  the public shape (`--public`), shared with `romp perf export`
+import perf_export  # noqa: E402  check_document: the export's two checks and its refusal, run here before the print
 
 SCHEMA = 1
 SCOPE_RE = re.compile(r"romp-session-([0-9a-fA-F]{1,8})-(\d+)-\d+\.scope\Z")
@@ -922,10 +927,13 @@ def main(argv=None) -> int:
                   label=a.label)
     if a.public:
         doc = public_form(doc)
-        hits = perf_public.identifier_hits(doc, perf_public.machine_probes(state))
-        if hits:    # structured (a Hit), formatted here: the kind and the place, never the string
-            sys.stderr.write("romp restart-metrics: refused: a string this machine knows (%s) survives as %s; nothing printed\n"
-                             % (hits[0].kind, perf_public.place(hits[0])))
+        # the export's two checks (the identifier scan, then the paste walk) and its refusal, the shallowest finding
+        # named by kind and key path, never the string; this document's blocks sit at the root. The scan alone let a
+        # 32-hex token on an event row through (the closing check, 2026-09-18): the grammar admits one and the fold
+        # keeps it, and only the walk knows the shape
+        reason = perf_export.check_document(doc, state, under=(), tail="nothing printed")
+        if reason:
+            sys.stderr.write("romp restart-metrics: refused: %s\n" % reason)
             return 1
     if a.json:
         sys.stdout.write(json.dumps(doc, indent=1, sort_keys=True) + "\n")

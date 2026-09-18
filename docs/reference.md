@@ -5235,8 +5235,11 @@ linkable through them by design. The kernel's uptime
 (`live.kernel.uptimeS`) is rounded down to whole minutes, every other key and string
 folds to a code identifier or `other` (a week bucket's key is respelled
 `week-of-YYYY-MM-DD` so the weeks stay distinct), and the document is marked
-`public: true`; it is searched for the strings only this machine knows before it is
-printed, and a survivor refuses the print naming the key path.
+`public: true`; before it is printed it goes through the two checks the export runs
+(`check_document`: the search for the strings only this machine knows, then the walk
+for a uuid, a 32-hex or 40-hex token, an absolute path or free text), and either
+finding refuses the print the way the export refuses its write, naming the kind of
+finding and the key path of the shallowest finding, never the string.
 
 `scripts/restart_metrics_report.py` draws the before-versus-after figures from
 two or more of the raw `--json` documents with cleanplots, which is not a romp

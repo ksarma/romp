@@ -260,7 +260,7 @@ def export_document(snap: dict, usage=False, now=None) -> dict:
     return doc
 
 
-def check_document(doc: dict, state: Path):
+def check_document(doc: dict, state: Path, under=("perf",), tail="nothing written"):
     """None when the finished document may be written; else the one-line reason, built from the finding's fields:
     the kind of string or rule and the key path (a value's own path; for a key, the path of the dict holding it),
     never the key or the value itself. Both mechanisms run, the identifier scan and the walk, and the SHALLOWEST
@@ -272,14 +272,20 @@ def check_document(doc: dict, state: Path):
     finding, and a key either mechanism flags is a finding of its own at a strictly shallower depth, so the
     shallowest finding cannot sit beneath one. Naming the scan's finding first whatever its depth (round 1) printed
     a 32-hex token, the class of key the walk refuses, when a hostname sat beneath it; naming the walk's first (the
-    version before) printed a key spelling the hostname when free text sat beneath that."""
+    version before) printed a key spelling the hostname when free text sat beneath that.
+
+    `under` is the key path the document's blocks sit below (the export's `perf`; the root for the restart
+    document, whose blocks are its top-level keys) and `tail` what the refusal says was not done. `romp
+    restart-metrics --json --public` runs this same function over its document (`under=()`, "nothing printed"): it
+    ran the scan alone and printed a 32-hex token planted in an event row's nested field, the one place raw ledger
+    rows pass through, where this verb refused the same document (the export's closing check, 2026-09-18)."""
     findings = [(h.depth, 0, "a string this machine knows (%s) survives as %s" % (h.kind, pp.place(h)))
                 for h in pp.identifier_hits(doc, pp.machine_probes(state), skip=("schema",))]
     findings += [(p.depth, 1, "the public form still fails the walk (%s, %s)" % (p.kind, pp.place(p)))
-                 for p in pp.paste_problems(doc, skip=("schema",), under=("perf",))]
+                 for p in pp.paste_problems(doc, skip=("schema",), under=under)]
     if not findings:
         return None
-    return "%s; nothing written" % min(findings, key=lambda f: f[:2])[2]    # min is stable: walk order among equals
+    return "%s; %s" % (min(findings, key=lambda f: f[:2])[2], tail)    # min is stable: walk order among equals
 
 
 def default_path(state: Path, now=None) -> Path:

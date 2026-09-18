@@ -637,6 +637,62 @@ class PublicForm(unittest.TestCase):
         self.assertEqual([(e["requestId"], e["callbackId"], e["toolUseId"]) for e in raw],
                          [(HOST_FAULT_IDS["requestId"], HOST_FAULT_IDS["callbackId"], HOST_FAULT_IDS["toolUseId"])])
 
+    def test_a_32_hex_token_on_an_event_row_refuses_the_print_the_way_the_export_refuses_the_write(self):
+        """events.recent is the one place raw ledger rows pass through, and a 32-hex token fits the identifier grammar,
+        so the fold keeps it as a key and as a value; the identifier scan does not know it. `romp perf export` refuses
+        such a document through check_document, which runs the paste walk beside the scan; this verb ran the scan alone
+        and PRINTED the token (the export PR's closing check, 2026-09-18). Both verbs now run
+        check_document: the print is refused, exit 1, nothing on stdout, and the refusal names the kind and the key
+        path of the shallowest finding (a value's own path; a key's the dict holding it) and never the token. Fails
+        before: the public run returned 0 with both tokens in its document. No writer today carries a nested object or
+        such a token on a session-events row; the fixture is the defensive case the check exists for."""
+        key_token, value_token = "d" * 32, "e" * 32
+        for token in (key_token, value_token):
+            self.assertTrue(pp.IDENT.fullmatch(token), "the token fits the grammar, so the fold keeps it")
+        self.assertEqual(pp.fold({"detail": {key_token: 1, "token": value_token}}), {"detail": {key_token: 1, "token": value_token}})
+
+        def plant(detail, t):
+            row = {"t": t, "pid": 102, "kind": "host.hook-self-answered", "sid": SID, "name": "web",
+                   "event": "PreToolUse", "parkedS": 1.0, "detail": detail}
+            with open(self.state / "session-events.jsonl", "a") as f:
+                f.write(json.dumps(row) + "\n")
+
+        def run(*flags):
+            err, out = io.StringIO(), io.StringIO()
+            with mock.patch("sys.stderr", err), redirect_stdout(out), \
+                    mock.patch.object(pp, "machine_probes", return_value=SYNTHETIC_PROBES):
+                rc = rm.main(["--json"] + list(flags) + ["--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state)])
+            return rc, out.getvalue(), err.getvalue()
+
+        def planted_rows(raw_text):
+            return [i for i, e in enumerate(json.loads(raw_text)["events"]["recent"]) if "detail" in e]
+
+        # the value alone: named by its own path
+        plant({"token": value_token}, D0 + 7200 + 130)
+        rc, raw, err = run()
+        self.assertEqual((rc, err), (0, ""), "the raw document is not checked")
+        self.assertIn(value_token, raw, "the raw run carries the value, so the flag is what refuses it")
+        (i,) = planted_rows(raw)
+        rc, out, err = run("--public")
+        self.assertEqual(rc, 1)
+        self.assertEqual(out, "", "nothing printed")
+        self.assertEqual(err, "romp restart-metrics: refused: the public form still fails the walk (a 32-hex token, "
+                              "the value at events/recent/%d/detail/token); nothing printed\n" % i)
+        # a second row with the token as a key: the dict holding it is one component shallower than the first row's
+        # value, so the key finding is the one named, whichever row came first
+        plant({key_token: 1, "token": value_token}, D0 + 7200 + 140)
+        rc, raw, err = run()
+        self.assertEqual(rc, 0)
+        i, j = planted_rows(raw)
+        self.assertIn('"%s": 1' % key_token, raw, "the raw run carries the key")
+        rc, out, err = run("--public")
+        self.assertEqual(rc, 1)
+        self.assertEqual(out, "", "nothing printed")
+        self.assertEqual(err, "romp restart-metrics: refused: the public form still fails the walk (a 32-hex token, "
+                              "a key under events/recent/%d/detail); nothing printed\n" % j)
+        for token in (key_token, value_token):
+            self.assertNotIn(token, out + err, "the token never reaches stdout or stderr")
+
     def test_public_without_json_is_refused(self):
         err = io.StringIO()
         with mock.patch("sys.stderr", err):
