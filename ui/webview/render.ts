@@ -20146,6 +20146,12 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     panesAvail = avail;
     return;
   }
+  // [fork] D3 (2026-09-18, review round 2): the shell's link word ({romp:'link', link}), posted to every iframe outside the six
+  // pane frames on the shell socket's open, close and abandon (kernel.py _LANDING_COLLAPSE_JS tellLink), so a split chat
+  // column's pane shim can end its return await on it. The shim reads it on window itself; this handler has nothing to do with
+  // it, and it is not a kernel message: without this return a link-DOWN word fell through to retryFailedPreviews below, and
+  // each split column re-fetched its failed previews on a path the shell had just declared down.
+  if (m.romp === "link") return;
   // the pipe's down edge is the VS Code twin of the shim's romp:wsdown: unconfirmed sends say so (markPendingLost), and it
   // clears awaitingFull (an ask lost with the pipe must not suppress the re-ask after the reconnect's resync; see
   // requestFullSession; onWireDown clears the chat wire's window asks, not this set)
