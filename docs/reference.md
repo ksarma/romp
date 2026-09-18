@@ -3303,8 +3303,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   recorded under; a debtor's key also carries the registry row
   (`STATE/sdk/<asker>.json`, an absent row as a stable absent marker) of
   each peer with an open ask on it, oldest asks first and at most eight
-  (the persisted memo row is 22 to 38 elements: the ten files and up to
-  eight rows), because a dead asker's ask becomes owed again only when the
+  (the persisted memo row is 23 to 39 elements: the ten files, up to eight
+  rows, then the mode tag, the earliest flip and the verdict), because a
+  dead asker's ask becomes owed again only when the
   asker revives and a revival writes that row; the debt leg reads a keyed
   asker's aliveness from that same row (alive true or false, the SDK
   backend's own liveness record), never from the pass's alive set, which is

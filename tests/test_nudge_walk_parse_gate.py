@@ -927,6 +927,32 @@ class NudgeWalkParseGate(unittest.TestCase):
         self.assertIn("Task tracking", field, "and the second switch that makes a look wake-only")
         self.assertNotIn("dead-man walk alone", field)
 
+    def test_the_persisted_row_length_the_prose_states_is_the_one_the_kernel_records(self):
+        """Review round 1 of jobs stage 1 (fresh-2): the mode tag made the row one element longer and the two prose statements of
+        its length still said 22 to 38. The digits are pinned by execution, against the constants and against rows the kernel
+        records with no asker and with the eight the key can carry, and the prose against both."""
+        low = 2 * len(km._TICK_KEY_FILES) + 3                       # the ten files' (mtime, size), the mode, the flip, the verdict
+        high = low + 2 * km._NUDGE_ASKER_ROWS_MAX                   # plus one (mtime, size) per keyed asker row
+        self.assertEqual((low, high), (23, 39))
+        d = tempfile.mkdtemp(); r = _row(d, SID_OLD, old=True)
+        st = tuple(km._session_files_stat(r))
+        km._TICK_SEEN.clear()
+        try:
+            km._nudge_look_done(r, st, [], "working", "wake")
+            self.assertEqual(len(km._TICK_SEEN[("auto-nudge", SID_OLD)]), low, "no asker: the ten files, the mode, the flip, the verdict")
+            km._nudge_look_done(r, st + (0.0, 0) * km._NUDGE_ASKER_ROWS_MAX, [], "working")
+            self.assertEqual(len(km._TICK_SEEN[("auto-nudge", SID_OLD)]), high, "eight absent asker rows: the bound")
+        finally:
+            km._TICK_SEEN.clear()
+        text = "%d to %d elements" % (low, high)
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()   # boolean asserts: a failure must not dump the reference
+        self.assertTrue(text in doc, "the reference states the row's length (%s)" % text)
+        self.assertFalse("22 to 38" in doc, "the pre-tag length is gone from the reference")
+        self.assertTrue("then the mode tag, the earliest flip and the verdict" in doc, "and its colon list accounts for every element")
+        gloss = km._nudge_look_stat.__doc__
+        self.assertIn(text, gloss, "the key builder's docstring states it too"); self.assertNotIn("22 to 38", gloss)
+        self.assertIn("the key, the mode, the", gloss, "in the words _nudge_look_check's docstring already uses")
+
     def test_the_pass_keeps_its_stats_in_a_side_map_and_leaves_the_shared_rows_untouched(self):
         """Follow-up, low 1: the pass wrote _look_stat into the session rows _sessions memoises per cycle and hands out read-only;
         a later reader of a row would have read a stale key. The stats live in a side map keyed by sid, cleared per pass."""

@@ -14638,7 +14638,8 @@ _NUDGE_POSTAL_KEY_AT = 14              # the postal log's (mtime, size) sits at 
 
 def _nudge_look_stat(s, index=None, postal_stat=None):
     """(the debtor's memo key, the askers keyed, the askers beyond the bound): the ten files' stats plus one (mtime, size) per
-    keyed asker's registry row, zeros for an absent row, so the persisted memo row is 22 to 38 elements. `postal_stat`, when
+    keyed asker's registry row, zeros for an absent row, so the persisted memo row is 23 to 39 elements (the key, the mode, the
+    earliest flip and the verdict; the mode tag came with jobs stage 1). `postal_stat`, when
     the pass hands it, is the postal log's (mtime, size) taken BEFORE the asker index was built from that log, and it
     replaces the key's own stat of the log: the asker selection is an input to the key, so the key must not claim a newer
     log than the selection read (round three, low 5)."""
