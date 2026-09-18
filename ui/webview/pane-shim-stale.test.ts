@@ -9,7 +9,8 @@
 // spoke on — abandon() disowns its onclose, so it runs the close rule itself; the why names the path that
 // ARMED, reconnect-quiet or foreground-quiet), and by nothing else — no
 // timer (every scenario runs the pending timers afterwards and asserts nothing fired, and asserts no timer
-// is armed on open; the watchdog's interval is captured and ticked by hand); the first non-keepalive frame
+// is armed on open; the shim's 5 s intervals, the watchdog and, since D3, the link backstop, are captured and ticked
+// by hand together, as the page fires them); the first non-keepalive frame
 // retires it; a keepalive never reaches the bundle. Also run here: the close breadcrumbs (one `wsclose` per
 // socket that OPENED and was closed by the browser — an abandoned socket leaves none: the watchdog's own
 // `watchdog-close` row went down the quiet socket before the abandon, and an armed socket's `-quiet` raise
@@ -63,15 +64,19 @@ class Harness {
   reloads: any[] = [];         // what the shim handed the reload core (T265; an OFFER since 2026-09-16: raiseBuild hands the keepalive's dv to noteDv)
   sockets: any[] = [];
   timers: Array<() => void> = [];
-  interval: (() => void) | null = null;   // the progress watchdog's 5 s tick, run by hand (tick)
+  intervals: Array<() => void> = [];   // the shim's 5 s ticks, run by hand (tick): the progress watchdog, and since D3 (2026-09-18) the link backstop
   visibility: Array<() => void> = [];
+  messages: Array<(e: any) => void> = [];   // the shim's window `message` listeners (D3: the shell's panes word carries the link)
   now = 1_000_000;
   win: any;                    // the sandbox window (the shim hangs __rompLocalSend on it)
   bars: any[] = [];            // the bars a standalone page raised (selfBar): {text, kind, buttons}
   liveBar: any = null;         // the one bar standing (the #romp-stale-self slot)
   notified: any[] = [];        // what the shell's own write path (__rompNotify on the parent) received, synchronously
   perfNow = 1234;              // performance.now() as the shim reads it (the beacon extension's marks, 2026-09-18)
-  constructor(js: string, opts: { standalone?: boolean; session?: Map<string, string>; pathname?: string; parentNotify?: boolean; store?: Map<string, string> } = {}) {
+  // opts.link: what the fake shell publishes as window.parent.__rompLink (D3, 2026-09-18). A function returning {up, connT} is
+  // the shell's link publication, so the pane's return awaits the link; absent (the default: an older shell, the VS Code webview)
+  // or anything but a function, the pane runs the standalone path, which every case before D3 drives
+  constructor(js: string, opts: { standalone?: boolean; session?: Map<string, string>; pathname?: string; parentNotify?: boolean; store?: Map<string, string>; link?: unknown } = {}) {
     const h = this;
     const session = opts.session || new Map<string, string>();
     class FakeWS {
@@ -86,11 +91,12 @@ class Harness {
     const sandbox: any = {
       window: {
         parent: opts.standalone ? undefined : Object.assign({ postMessage: (m: any) => h.posted.push(m) },   // embedded: the shell owns the banner
-          opts.parentNotify ? { __rompNotify: (kind: string, text: string) => h.notified.push({ kind, text }) } : {}),
+          opts.parentNotify ? { __rompNotify: (kind: string, text: string) => h.notified.push({ kind, text }) } : {},
+          "link" in opts ? { __rompLink: opts.link } : {}),
         sessionStorage: { getItem: (k: string) => (session.has(k) ? session.get(k) : ""), setItem: (k: string, v: string) => { session.set(k, String(v)); },
                           removeItem: (k: string) => { session.delete(k); } },
         dispatchEvent: (e: any) => { if (e && e.data !== undefined) h.toBundle.push(e.data); return true; },
-        addEventListener: () => {}, innerWidth: 800, innerHeight: 600,
+        addEventListener: (t: string, f: (e: any) => void) => { if (t === "message") h.messages.push(f); }, innerWidth: 800, innerHeight: 600,
         // T265 (upstream 2026-09-08, an OFFER since 2026-09-16): the build raise hands the keepalive's dv to the reload core
         // embedded above the shim (noteDv), not the shell directly, and the flush and the resync frame tell it a hold ended.
         // The core's own tests are tests/test_dashboard_auto_reload.py; the offer bar's side of the shim is driven below with
@@ -118,7 +124,7 @@ class Harness {
       Event: class { type: string; constructor(t: string) { this.type = t; } },
       MessageEvent: class { type: string; data: any; constructor(t: string, o: any) { this.type = t; this.data = o.data; } },
       setTimeout: (f: () => void) => { h.timers.push(f); return h.timers.length; },
-      clearTimeout: () => {}, setInterval: (f: () => void) => { h.interval = f; return 1; },
+      clearTimeout: () => {}, setInterval: (f: () => void) => { h.intervals.push(f); return h.intervals.length; },
       // 2026-09-07: the shim hands frames to the bundle through a MessageChannel-flushed queue. Delivered
       // synchronously here, so `toBundle` reads in wire order exactly as before; the slicing has its own tests
       // (tests/test_pane_shim_return.py). `performance` backs the page-load breadcrumb's navigation type.
@@ -134,8 +140,12 @@ class Harness {
   }
   get ws() { return this.sockets[this.sockets.length - 1]; }
   runTimers() { const t = this.timers.splice(0); for (const f of t) f(); }
-  /** one tick of the progress watchdog (the shim's setInterval body) */
-  tick() { assert.ok(this.interval, "the watchdog is armed"); this.interval!(); }
+  /** one 5 s tick: every interval the shim armed, in arming order (the progress watchdog, then D3's link backstop), as the
+   *  page fires them. One slot held only the LAST interval armed, so once D3 added the backstop, tick() ran it alone and
+   *  the watchdog never abandoned a silent socket (three cases red, 2026-09-18) */
+  tick() { assert.ok(this.intervals.length, "the watchdog is armed"); for (const f of this.intervals) f(); }
+  /** the shell's panes word, carrying the link (D3): the shell re-tells it on its socket's open, close and abandon */
+  panes(link: "up" | "down") { for (const f of this.messages) f({ data: { romp: "panes", on: {}, avail: {}, link } }); }
   stale() { return this.posted.filter((m) => m.romp === "wsStale" && !m.build).length; }
   fresh() { return this.posted.filter((m) => m.romp === "wsFresh").length; }
   builds() { return this.reloads.filter((r) => r.reason === "build"); }   // the dv raises the shim handed the fake core (every entry, since noteDv is the one road)
@@ -388,6 +398,95 @@ test("a redial armed as FOREGROUND that then stays silent raises when the watchd
   h.ws.msg({ type: "feed", asks: [] });
   assert.equal(h.fresh(), 1, "the redial's resync retires it");
   h.settles(1);
+});
+
+// D3 (2026-09-18): the shell leads a framed pane's return redial when, and only when, the shell publishes its link —
+// window.parent.__rompLink is a function (the ruling of 2026-09-18: not the phone media query, not a foreign parent alone).
+// Every case above runs with a fake shell that publishes none, so they drive today's path; these two pin the gate from
+// both sides. The full D3 behaviour (the backstop's 20 s bound, the in-window close cadence by link state, the restarting
+// latch) runs in tests/test_pane_shim_return.py ShellLedReturn.
+test("a standalone page (no shell, so no link publication) returning to a quiet socket keeps today's path: dials at once, awaits nothing, and its watchdog still raises", () => {
+  const h = new Harness(shimJs("feed", "feedDelta"), { standalone: true });
+  h.ws.open(); h.bundleReady(); h.ws.msg({ type: "feed", asks: [] });
+  h.now += 31_000;
+  for (const f of h.visibility) f();                      // foregrounded onto a socket quiet past the bound
+  assert.equal(h.sockets.length, 2, "dialed at once: there is no link to wait for");
+  assert.equal(h.timers.length, 0, "no timer is armed");
+  h.tick();                                               // both intervals: the watchdog sees a CONNECTING socket inside its cut, the backstop has no publication to read
+  assert.equal(h.sockets.length, 2, "the tick dials nothing more");
+  h.ws.open();
+  const ret = h.diags("return");
+  assert.equal(ret.length, 1);
+  assert.equal(ret[0].data.decision, "redial-stale");
+  assert.equal("awaitLink" in ret[0].data, false, "the return row carries no awaitLink: the link-led block never ran");
+  h.now += 31_000;
+  h.tick();                                               // the redial said nothing either: the watchdog abandons it
+  assert.equal(h.bars.filter((b) => b.kind === "conn").length, 1, "the raise is the page's own bar: no shell to post to");
+  assert.equal(h.posted.length, 0, "nothing posted: there is no shell");
+  assert.equal(h.sockets.length, 3, "…and the same tick redialed");
+  h.ws.open();
+  assert.deepEqual(h.diags("stale-raise").map((m) => m.data.why), ["foreground-quiet"]);
+  assert.equal(h.diags("link-backstop").length, 0, "the backstop never fires without a publication");
+  h.ws.msg({ type: "feed", asks: [] });
+  const fresh = h.diags("return-fresh");
+  assert.equal(fresh.length, 1);
+  assert.equal("linkUpMs" in fresh[0].data, false, "no linkUpMs: this return awaited no link");
+  h.runTimers();
+  assert.equal(h.bars.filter((b) => b.kind === "conn").length, 1, "nothing raises the prompt later");
+});
+
+test("a pane whose shell publishes its link (window.parent.__rompLink is a function) returning to a quiet socket puts it down and dials on the link: on the link-up word while down, at once while up; a publication that is not a function is no shell", () => {
+  let link = { up: false, connT: 0 };
+  const h = new Harness(shimJs("feed", "feedDelta"), { link: () => link });
+  h.ws.open(); h.bundleReady(); h.ws.msg({ type: "feed", asks: [] });
+  const dead = h.ws;
+  h.now += 31_000; link = { up: false, connT: h.now };     // the shell's link is down, its own attempt fresh (its loop is alive)
+  for (const f of h.visibility) f();
+  assert.equal(h.sockets.length, 1, "no dial: the shell's probe says the path is down");
+  assert.equal(dead.onclose, null, "the quiet socket was put down (abandoned) for the wait");
+  assert.equal(h.timers.length, 0, "no timer is armed: the link-up word is the event");
+  h.now += 5_000; h.tick();                                // the watchdog is inert with no socket; the backstop reads a down link with a live attempt
+  assert.equal(h.sockets.length, 1, "the tick dials nothing while the link is down and the shell's loop is alive");
+  h.panes("down");
+  assert.equal(h.sockets.length, 1, "a routine panes word with the link still down dials nothing");
+  h.now += 4_000; link = { up: true, connT: link.connT };
+  h.panes("up");
+  assert.equal(h.sockets.length, 2, "the link-up word is the redial");
+  h.panes("up");
+  assert.equal(h.sockets.length, 2, "…once: the await ended with the first");
+  assert.equal(h.timers.length, 0, "no timer is armed");
+  h.ws.open();
+  assert.equal(h.timers.length, 0, "no timer is armed on open");
+  let ret = h.diags("return");
+  assert.equal(ret.length, 1);
+  assert.equal(ret[0].data.awaitLink, true, "the return row says it awaited the link");
+  h.ws.msg({ type: "feed", asks: [] });
+  let fresh = h.diags("return-fresh");
+  assert.equal(fresh.length, 1);
+  assert.equal(fresh[0].data.linkUpMs, 9_000, "foreground to link-up: the path's own recovery, split from the code-owned wait");
+  assert.equal(h.stale(), 0, "the resync retired the arm: no raise");
+  // the link is UP at the decision: the pane dials at once, and says it awaited nothing
+  h.now += 31_000; link = { up: true, connT: h.now };
+  for (const f of h.visibility) f();
+  assert.equal(h.sockets.length, 3, "dialed at once into a proven path");
+  h.ws.open();
+  ret = h.diags("return");
+  assert.equal(ret.length, 2);
+  assert.equal(ret[1].data.awaitLink, false);
+  h.ws.msg({ type: "feed", asks: [] });
+  fresh = h.diags("return-fresh");
+  assert.equal(fresh.length, 2);
+  assert.equal(fresh[1].data.linkUpMs, 0, "the link was up at the decision: the whole wait is code-owned");
+  h.settles(0);
+  // the gate is the publication's SHAPE: a parent that is not the page but publishes something other than a function is no shell
+  const g = new Harness(shimJs("feed", "feedDelta"), { link: true });
+  g.ws.open(); g.bundleReady(); g.ws.msg({ type: "feed", asks: [] });
+  g.now += 31_000;
+  for (const f of g.visibility) f();
+  assert.equal(g.sockets.length, 2, "dialed at once: no publication, today's path");
+  g.ws.open();
+  assert.equal("awaitLink" in g.diags("return")[0].data, false, "and its return row carries no awaitLink");
+  g.settles(0);
 });
 
 test("every close the browser reports for a socket that OPENED leaves a wsclose breadcrumb with the code, the socket's age and the quiet gap", () => {

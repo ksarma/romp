@@ -64146,9 +64146,11 @@ data:{app:APP,why:why||"",ready:ws?ws.readyState:-1,quietMs:lastRecv?Date.now()-
 var frozeAt=0,resumedAt=0,resumeQuiet=-1,hiddenAt=0,foregroundedAt=0,returnAt=0,returnBytes=0,returnRedialed=false,returnRow=null,eagerDial=false;   // eagerDial: the one immediate redial each return window gets   // returnRow: a keep-decision row held until a close inside the return window (or the watchdog, at the provisional bound) proves its socket was already dead; retired by the flush once its return-fresh has filed
 var awaitLink=false,linkUpMs=-1;   // [fork] D3 (2026-09-18): this return is waiting for the shell socket's link to come up (the shell is the page's one probe, kernel.py _LANDING_MOBILE_JS); linkUpMs is foreground->link-up, the path's own recovery split from the code-owned wait (return-fresh.ms minus it); reset each return, in the fast path below
 // [fork] D3: the shell's published link, read SYNCHRONOUSLY for a same-origin pane iframe so the return decision does
-// not depend on the order the documents' visibilitychange handlers run. undefined for a standalone page, the VS Code
-// webview, or a shell too old to publish one: those keep the upstream fast-path lines below, byte for byte.
-function parentLink(){try{return (window.parent!==window&&window.parent.__rompLink)?window.parent.__rompLink():undefined;}catch(e){return undefined;}}
+// not depend on the order the documents' visibilitychange handlers run. The shell is PRESENT when its publication
+// exists: window.parent.__rompLink is a function (the ruling of 2026-09-18: not the phone media query, not a foreign
+// parent alone). undefined for a standalone page, the VS Code webview, or a shell too old to publish one: those keep
+// the upstream fast-path lines below, byte for byte.
+function parentLink(){try{return (window.parent!==window&&typeof window.parent.__rompLink==="function")?window.parent.__rompLink():undefined;}catch(e){return undefined;}}
 function returnDiag(what,data){try{data.app=APP;send({type:"clientDiag",surface:"pane-shim",what:what,data:data});}catch(e){}}
 var nav="";try{var ne=performance.getEntriesByType("navigation");nav=(ne&&ne[0]&&ne[0].type)||"";}catch(e){}
 // the page-load row exists to catch a tab the browser DISCARDED and reloaded on return (Memory Saver: the return is a
