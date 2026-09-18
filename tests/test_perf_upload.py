@@ -7,13 +7,14 @@ a pinned hostname) or, for the request itself, through bin/romp: the receiver ad
 else ROMP_PERF_RECEIVER, else ~/.config/romp/perf-receiver, and with none set the verb refuses naming all
 three; the address must be https with a host and no userinfo, query or fragment (http for 127.0.0.1 and
 localhost alone), and a refused address is never echoed; the file must exist, be at most 1 MiB, parse as strict
-JSON to an object with the schema line and pass the export's own scan and walk as it stands, an edited file
-refused by kind and key path and never by value; the send needs a yes on a terminal or --yes, off a terminal
+JSON (no NaN or Infinity, no repeated key at any depth, nesting within the parser's reach) to an object with the schema
+line and pass the export's own scan and walk as it stands, an edited file refused by kind and key path and never by
+value; the line before the prompt names the URL the verb will dial, a path in the address included; the send needs a yes on a terminal or --yes, off a terminal
 without the flag it refuses before dialling, and no environment variable stands in for the flag (an AST census
 of the module's environment reads, plus an executed check with tempting names set); the one answer accepted is
-201 with exactly {receipt: uuid4, retention_days: int, av: ok|skipped}, every other status (a redirect among
-them, never followed), body or error refused with a fixed line carrying the status code or the error class and
-nothing of the body; and an enumeration of the request a recording receiver saw: the request line, every header
+201 with exactly {receipt: uuid4, retention_days: int, av: ok|skipped} in a body of at most 64 KiB, every other status
+(a redirect among them, never followed, its Location never parsed), body or error refused with a fixed line carrying
+the status code or the error class and nothing of the body or of any exception's message; and an enumeration of the request a recording receiver saw: the request line, every header
 and the body bytes, which equal the file's.
 
 Nothing here reads a live kernel, a real state directory or a real setting: the child's HOME is synthetic or a
@@ -34,6 +35,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
@@ -225,6 +227,17 @@ class ReceiverSetting(unittest.TestCase):
             self._file("   \n\n")
             self.assertEqual(pu.receiver_setting(None, env={}), (None, None), "a blank file is unset")
 
+    def test_a_file_that_is_not_utf8_text_is_an_address_the_grammar_refuses_with_the_file_as_its_source(self):
+        d = os.path.join(self.home, ".config", "romp")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "perf-receiver"), "wb") as fh:
+            fh.write(b"https://receiver.example/\xff\xfe\n")
+        with mock.patch.dict(os.environ, {"HOME": self.home}):
+            text, source = pu.receiver_setting(None, env={})
+        self.assertEqual(source, "~/.config/romp/perf-receiver", "the file is named as the source, so the refusal points at it")
+        self.assertIsNone(pu.receiver_url(text), "and what it holds is refused as an address, never decoded by halves")
+        self.assertNotIn("receiver.example", text or "")
+
 
 class ReceiverAddress(unittest.TestCase):
     """receiver_url and upload_url: the address grammar and the route appended to it."""
@@ -235,6 +248,7 @@ class ReceiverAddress(unittest.TestCase):
                              ("https://r.example:8443/base/", "https://r.example:8443/base/v1/upload"),
                              ("  https://receiver-abc123-uc.a.b.example  ", "https://receiver-abc123-uc.a.b.example/v1/upload"),
                              ("http://127.0.0.1:8080", "http://127.0.0.1:8080/v1/upload"),
+                             ("https://r.example/base%20one/", "https://r.example/base%20one/v1/upload"),
                              ("http://localhost:1/", "http://localhost:1/v1/upload")):
             u = pu.receiver_url(text)
             self.assertIsNotNone(u, text)
@@ -244,6 +258,8 @@ class ReceiverAddress(unittest.TestCase):
         for text in ("http://r.example", "http://r.example.localhost", "http://127.0.0.2/", "https://user@r.example", "https://user:pw@r.example",
                      "https://r.example/?x=1", "https://r.example/#frag", "https://", "https:///v1", "ftp://r.example", "r.example",
                      "https://r.example:abc", "https://ex ample.com", "https://r.example/a b", "https://[::1]/",
+                     "https://r.example/\u00e9", "https://r.example/caf\u00e9/", "https://r.example/a\u00a0b", "https://r.example/\x7f",
+                     "https://r.\u00e9xample/", "https://r.example/\u200b", "https://r.example/\n",
                      "", "   ", "https://r.exa\tmple", None, 42):
             self.assertIsNone(pu.receiver_url(text), repr(text))
 
@@ -292,7 +308,7 @@ class Cli(unittest.TestCase):
             fh.write(self.fake.url + "\n")
         r = _run([self.file, "--yes"], self.state, home=self.home)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout, "%s (%d bytes) to 127.0.0.1\n" % (self.file, len(self.data)) + SUCCESS % (RECEIPT, 180))
+        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (self.file, len(self.data), self.fake.url) + SUCCESS % (RECEIPT, 180))
         self.assertEqual(len(self.fake.requests), 1, "the file supplied the address")
         with open(os.path.join(self.home, ".config", "romp", "perf-receiver"), "w") as fh:
             fh.write(dead + "\n")
@@ -391,10 +407,62 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.returncode, 0, "the file as the export wrote it passes the same check")
         self.assertEqual(len(self.fake.requests), 1)
 
+    def test_the_line_before_the_prompt_names_the_url_dialled_with_a_path_and_port_in_the_address_included(self):
+        base = self.fake.url + "/u/" + SID                # an address whose path carries an identifier: it is dialled, so it is shown
+        r = _run([self.file, "--yes", "--receiver", base + "/"], self.state)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (self.file, len(self.data), base) + SUCCESS % (RECEIPT, 180))
+        self.assertEqual(self.fake.requests[0][0], "POST /u/%s/v1/upload HTTP/1.1" % SID, "what was shown is what was dialled")
+        r = self._refused(_run([self.file, "--receiver", base], self.state), 2, "pass --yes")
+        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (self.file, len(self.data), base), "shown before the prompt, so a refusal to answer is informed")
+        self.assertEqual(len(self.fake.requests), 1)
+
+    def test_a_file_that_repeats_a_key_is_refused_before_the_scan_since_the_bytes_and_the_parse_would_differ(self):
+        base = ["--yes", "--receiver", self.fake.url]
+        dup = os.path.join(self.xdg, "dup.json")
+        plants = '"note": "TESTHOST.example", "cwd": "/home/someone/secret-project"'       # the hostname pinned in the child, and a path
+        for text in ('{"schema": "romp-perf-export/1", "perf": {%s}, "perf": {"uptime_s": 1}}' % plants,               # at the top
+                     '{"schema": "romp-perf-export/1", "perf": {"uptime_s": 1, "pusher": {%s}, "pusher": {"cycles": 1}}}' % plants,   # nested
+                     '{"schema": "romp-perf-export/1", "perf": {"uptime_s": 1, "builds": [{%s, "note": "x"}]}}' % plants,   # in a list
+                     '{"schema": "romp-perf-export/1", "schema": "romp-perf-export/1", "perf": {"uptime_s": 1}}'):        # the same value twice
+            with open(dup, "w") as fh:
+                fh.write(text)
+            r = self._refused(_run([dup] + base, self.state), 1, "refused: %s is not strict JSON (a key repeats); nothing sent" % dup)
+            self.assertEqual(r.stdout, "")
+            self.assertNotIn("TESTHOST", r.stdout + r.stderr)
+            self.assertNotIn("someone", r.stdout + r.stderr)
+        self.assertEqual(self.fake.requests, [], "json.loads alone would keep the last copy, pass the scan, and send the bytes with both")
+
+    def test_a_file_nested_past_the_parser_is_refused_as_not_strict_json_and_one_within_its_reach_takes_the_ordinary_path(self):
+        base = ["--yes", "--receiver", self.fake.url]
+        deep = os.path.join(self.xdg, "deep.json")
+        with open(deep, "w") as fh:
+            fh.write('{"schema": "romp-perf-export/1", "perf": ' + "[" * 100000 + "]" * 100000 + "}")        # 200 KB, under the size cap
+        r = self._refused(_run([deep] + base, self.state), 1, "refused: %s is not strict JSON; nothing sent" % deep)
+        self.assertEqual(r.stdout, "")
+        self.assertNotIn("Recursion", r.stderr)
+        self.assertEqual(self.fake.requests, [])
+        with open(deep, "w") as fh:
+            fh.write('{"schema": "romp-perf-export/1", "perf": {"uptime_s": 1, "x": ' + '{"a": ' * 900 + "1" + "}" * 900 + "}}")
+        r = _run([deep] + base, self.state)
+        self.assertEqual(r.returncode, 0, r.stderr + " (the receiver's depth rule is the receiver's; the verb parses, walks and sends)")
+        self.assertEqual(len(self.fake.requests), 1)
+
+    def test_a_setting_file_that_is_not_utf8_text_is_refused_naming_the_file_and_never_its_bytes(self):
+        os.makedirs(os.path.join(self.home, ".config", "romp"))
+        with open(os.path.join(self.home, ".config", "romp", "perf-receiver"), "wb") as fh:
+            fh.write(b"https://receiver.example/\xff\xfe\n")
+        r = self._refused(_run([self.file, "--yes"], self.state, home=self.home), 2,
+                          "refused: the receiver address from ~/.config/romp/perf-receiver is not an https URL", "nothing sent")
+        self.assertEqual(r.stdout, "")
+        self.assertNotIn("receiver.example", r.stderr)
+        self.assertNotIn("codec", r.stderr)
+        self.assertEqual(self.fake.requests, [])
+
     def test_off_a_terminal_without_yes_the_verb_refuses_after_the_summary_line_and_dials_nothing(self):
         r = self._refused(_run([self.file, "--receiver", self.fake.url], self.state), 2, "refused: not on a terminal", "pass --yes",
                           "the form an agent uses", "no setting or variable stands in for it", "nothing sent")
-        self.assertEqual(r.stdout, "%s (%d bytes) to 127.0.0.1\n" % (self.file, len(self.data)))
+        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (self.file, len(self.data), self.fake.url))
         self.assertEqual(self.fake.requests, [])
 
     def test_no_environment_variable_stands_in_for_yes(self):
@@ -426,7 +494,7 @@ class Cli(unittest.TestCase):
         self.assertEqual({n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "getenv"}, set())
 
     def test_on_a_terminal_the_prompt_is_asked_and_y_or_yes_sends_while_anything_else_does_not(self):
-        summary = "%s (%d bytes) to 127.0.0.1\n" % (self.file, len(self.data))
+        summary = "%s (%d bytes) to %s/v1/upload\n" % (self.file, len(self.data), self.fake.url)
         r = _run_tty([self.file, "--receiver", self.fake.url], self.state, "y\n")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout, summary + "send it? [y/N] " + SUCCESS % (RECEIPT, 180))
@@ -459,7 +527,7 @@ class Cli(unittest.TestCase):
         self.fake.answer = (201, {}, json.dumps({"av": "skipped", "retention_days": 7, "receipt": RECEIPT.upper()}))
         r = _run([self.file, "--yes", "--receiver", self.fake.url], self.state)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout, "%s (%d bytes) to 127.0.0.1\n" % (self.file, len(self.data)) + SUCCESS % (RECEIPT.upper(), 7))
+        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (self.file, len(self.data), self.fake.url) + SUCCESS % (RECEIPT.upper(), 7))
         self.assertEqual(r.stderr, "")
         self.assertEqual(len(self.fake.requests), 1)
         self.assertEqual(self.fake.requests[0][2], self.data, "the body is the file's bytes")
@@ -477,7 +545,7 @@ class Answers(unittest.TestCase):
         cls.file = _export(cls.xdg, cls.state)
         with open(cls.file, "rb") as fh:
             cls.data = fh.read()
-        cls.summary = "%s (%d bytes) to 127.0.0.1\n" % (cls.file, len(cls.data))
+        cls.summary = "%s (%d bytes) to %s/v1/upload\n" % (cls.file, len(cls.data), cls.fake.url)
 
     @classmethod
     def tearDownClass(cls):
@@ -490,7 +558,7 @@ class Answers(unittest.TestCase):
     def _refused(self, line, url=None):
         r = _run([self.file, "--yes", "--receiver", url or self.fake.url], self.state)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        self.assertEqual(r.stdout, self.summary)
+        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (self.file, len(self.data), url or self.fake.url))
         self.assertEqual(r.stderr, "romp perf upload: %s\n" % line)
         self.assertNotIn(MARKER, r.stdout + r.stderr)
         return r
@@ -511,6 +579,77 @@ class Answers(unittest.TestCase):
             self.assertEqual([line for line, _h, _b in self.fake.requests], ["POST /v1/upload HTTP/1.1"], "one request, the redirect target never dialled")
             self.fake.requests.clear()
 
+    def test_a_redirect_whose_location_urllib_cannot_parse_is_refused_by_its_code_alone_and_the_text_never_shown(self):
+        # HTTPRedirectHandler.http_error_30x parse the Location before they ask redirect_request; a bracketed host makes
+        # urlsplit raise a ValueError quoting the receiver's text, so the handler must never reach that parse
+        for location in ("http://[%s your export leaked see pastebin.example]/x" % MARKER, "http://[x", "http://[::1]:99999/", "http://[::1]/" + MARKER):
+            for status in (301, 302, 303, 307, 308):
+                self.fake.answer = (status, {"Location": location}, MARKER)
+                r = self._refused("refused: the receiver answered HTTP %d where the 201 receipt was expected; no receipt" % status)
+                self.assertNotIn("Traceback", r.stderr)
+                self.assertNotIn("pastebin", r.stderr)
+                self.assertEqual([line for line, _h, _b in self.fake.requests], ["POST /v1/upload HTTP/1.1"], (location, status))
+                self.fake.requests.clear()
+
+    def test_a_201_body_nested_past_the_parser_is_refused_by_the_shape_line_alone(self):
+        self.fake.answer = (201, {}, "[" * 30000 + "]" * 30000)            # 60,000 bytes: under the cap, past the parser's reach
+        r = self._refused(pu.NOT_THE_SHAPE)
+        self.assertNotIn("Recursion", r.stderr)
+        with self.assertRaises(pu.Refusal) as cm:
+            pu.receipt(201, b"[" * 30000 + b"]" * 30000)
+        self.assertEqual(str(cm.exception), pu.NOT_THE_SHAPE)
+
+    def test_a_201_body_over_the_cap_is_refused_and_one_under_it_is_read_whole(self):
+        ok = json.dumps({"receipt": RECEIPT, "retention_days": 180, "av": "ok"})
+        self.fake.answer = (201, {}, ok + " " * (64 * 1024))               # the receipt, then padding past the cap: not the shape
+        self._refused(pu.NOT_THE_SHAPE)
+        self.fake.answer = (201, {}, ok + " " * 100)                       # the receipt, then padding under the cap: the receipt
+        r = _run([self.file, "--yes", "--receiver", self.fake.url], self.state)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, self.summary + SUCCESS % (RECEIPT, 180))
+        body = ok.encode()
+        self.assertEqual(pu.receipt(201, body + b" " * (pu.ANSWER_MAX - len(body))), (RECEIPT, 180, "ok"), "exactly the cap is read whole")
+        with self.assertRaises(pu.Refusal) as cm:
+            pu.receipt(201, body + b" " * (pu.ANSWER_MAX - len(body) + 1))
+        self.assertEqual(str(cm.exception), pu.NOT_THE_SHAPE)
+        self.assertEqual(pu.ANSWER_MAX, 64 * 1024)
+
+    def test_post_reads_at_most_the_cap_plus_one_byte_of_a_201_body_however_long_the_receiver_makes_it(self):
+        # the resource bound under the shape rule: a 201 body is read to ANSWER_MAX + 1 and no further, so a receiver
+        # answering with megabytes costs that much memory and no more; the extra byte is what marks it over the cap
+        asked = []
+
+        class Response:
+            status = 201
+
+            def read(self, n=-1):
+                asked.append(n)
+                return b" " * (n if n is not None and n >= 0 else 8 * 1024 * 1024)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        with mock.patch.object(urllib.request.OpenerDirector, "open", return_value=Response()):
+            status, body = pu.post(self.fake.url + "/v1/upload", b"{}")
+        self.assertEqual((status, len(body)), (201, pu.ANSWER_MAX + 1))
+        self.assertEqual(asked, [pu.ANSWER_MAX + 1], "one bounded read, never an unbounded one")
+        Response.status = 500
+        with mock.patch.object(urllib.request.OpenerDirector, "open", return_value=Response()):
+            status, body = pu.post(self.fake.url + "/v1/upload", b"{}")
+        self.assertEqual((status, body), (500, b""), "another status is not read at all")
+        self.assertEqual(asked, [pu.ANSWER_MAX + 1])
+
+    def test_an_error_of_any_other_class_while_dialling_is_refused_by_its_class_alone(self):
+        # the belt under the specific clauses: whatever else the client raises, the class and never the message
+        with mock.patch.object(urllib.request.OpenerDirector, "open", side_effect=ValueError(MARKER)):
+            with self.assertRaises(pu.Refusal) as cm:
+                pu.post(self.fake.url + "/v1/upload", b"{}")
+        self.assertEqual(str(cm.exception), "refused: no answer from the receiver (ValueError); no receipt")
+        self.assertEqual(cm.exception.code, 1)
+        self.assertEqual(self.fake.requests, [])
+
     def test_a_201_whose_body_is_not_exactly_the_receipt_is_refused_by_the_shape_line_alone(self):
         ok = {"receipt": RECEIPT, "retention_days": 180, "av": "ok"}
         bodies = [MARKER, "<html>%s</html>" % MARKER, "", json.dumps([ok]), json.dumps(RECEIPT), json.dumps(None),
@@ -527,7 +666,9 @@ class Answers(unittest.TestCase):
                   json.dumps({**ok, "av": "other"}), json.dumps({**ok, "av": "OK"}), json.dumps({**ok, "av": 1}), json.dumps({**ok, "av": None}),
                   json.dumps({**ok, "av": ["ok"]}),
                   '{"receipt": "%s", "retention_days": NaN, "av": "ok"}' % RECEIPT,
-                  json.dumps(ok) + json.dumps(ok), json.dumps(ok)[:-1], json.dumps({**ok, "note": "x" * (64 * 1024)})]
+                  json.dumps(ok) + json.dumps(ok), json.dumps(ok)[:-1], json.dumps({**ok, "note": "x" * (64 * 1024)}),
+                  '{"receipt": "%s", "receipt": "%s", "retention_days": 180, "av": "ok"}' % (MARKER, RECEIPT),      # a repeated key
+                  '{"receipt": "%s", "retention_days": 1, "retention_days": 180, "av": "ok"}' % RECEIPT]
         for body in bodies:
             self.fake.answer = (201, {}, body)
             self._refused(pu.NOT_THE_SHAPE)
@@ -609,7 +750,7 @@ class Enumeration(unittest.TestCase):
         r = subprocess.run([ROMP, "perf", "upload", out, "--yes", "--receiver", fake.url], capture_output=True, text=True, timeout=60,
                            env=env, stdin=subprocess.DEVNULL)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout, "%s (%d bytes) to 127.0.0.1\n" % (out, len(data)) + SUCCESS % (RECEIPT, 180))
+        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (out, len(data), fake.url) + SUCCESS % (RECEIPT, 180))
         self.assertEqual(r.stderr, "")
 
         self.assertEqual(len(fake.requests), 1, "one POST, no other request")

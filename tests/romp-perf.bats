@@ -495,10 +495,9 @@ _upload_fixture() {
     _upload_fixture
     HOME="$UP_HOME" run "$ROMP_SCRIPT" perf upload "$UP_FILE" --yes --receiver http://127.0.0.1:1
     [ "$status" -eq 1 ]
-    [[ "$output" == *"$UP_FILE ("*" bytes) to 127.0.0.1"* ]]              # the path, the size and the receiver host, before the send
-    [[ "$output" == *"romp perf upload: refused: no answer from the receiver (ConnectionRefusedError); no receipt"* ]]
+    [[ "$output" == *"$UP_FILE ("*" bytes) to http://127.0.0.1:1/v1/upload"* ]]   # the path, the size and the URL dialled, before the send
+    [[ "$output" == *"romp perf upload: refused: no answer from the receiver (ConnectionRefusedError); no receipt"* ]]   # the refusal whole: the class, no URL, no message
     [[ "$output" != *"Errno"* ]]                                            # the error's class, never its message
-    [[ "$output" != *"/v1/upload"* ]]                                       # never the URL beyond the host
     run "$ROMP_SCRIPT" perf --nope
     [ "$status" -eq 2 ]
     [[ "$output" == *"romp perf upload FILE [--yes] [--receiver URL]"* ]]   # the usage line names the verb
@@ -519,7 +518,7 @@ _upload_fixture() {
     # the file is one of the three: written there, the verb proceeds (and stops at the next gate, the terminal)
     mkdir -p "$UP_HOME/.config/romp"
     printf 'http://127.0.0.1:1\n' > "$UP_HOME/.config/romp/perf-receiver"
-    HOME="$UP_HOME" run "$ROMP_SCRIPT" perf upload "$UP_FILE"
+    HOME="$UP_HOME" run "$ROMP_SCRIPT" perf upload "$UP_FILE" </dev/null        # never bats's own stdin: on a terminal the verb would prompt and wait
     [ "$status" -eq 2 ]
     [[ "$output" != *"no receiver is set"* ]]
     [[ "$output" == *"--yes"* ]]
@@ -529,7 +528,7 @@ _upload_fixture() {
     _upload_fixture
     HOME="$UP_HOME" run "$ROMP_SCRIPT" perf upload "$UP_FILE" --receiver http://127.0.0.1:1 </dev/null
     [ "$status" -eq 2 ]
-    [[ "$output" == *"$UP_FILE ("*" bytes) to 127.0.0.1"* ]]
+    [[ "$output" == *"$UP_FILE ("*" bytes) to http://127.0.0.1:1/v1/upload"* ]]
     [[ "$output" == *"not on a terminal"* ]]
     [[ "$output" == *"pass --yes"* ]]
     [[ "$output" == *"nothing sent"* ]]

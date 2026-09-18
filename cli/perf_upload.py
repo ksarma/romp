@@ -10,30 +10,36 @@ default that sends anything. Stage two of the usage-data plan (2026-09-18).
 The receiver's address comes from `--receiver`, else the ROMP_PERF_RECEIVER environment variable, else the
 file ~/.config/romp/perf-receiver (one line, the `romp default-dir` pattern); with none set the verb refuses
 naming the three settings, exit 2, so an installation nobody configured sends nowhere. The address must be an
-https URL with a host and no userinfo, query or fragment (http is allowed for 127.0.0.1 and localhost alone, for
-tests); anything else is refused without echoing the value, exit 2. The receiver is unauthenticated: no
-credential exists for it, and the verb reads no token from anywhere and sends none.
+https URL in printable ASCII with a host and no userinfo, query or fragment (http is allowed for 127.0.0.1 and
+localhost alone, for tests); it may carry a path, the base the route is appended to; anything else, a setting
+file that is not UTF-8 text among it, is refused without echoing the value, exit 2. The receiver is
+unauthenticated: no credential exists for it, and the verb reads no token from anywhere and sends none.
 
-The file must exist, be a regular file of at most 1 MiB, parse as strict JSON (no NaN or Infinity literals)
-with the top-level `schema` line `romp-perf-export/1`, and pass the export's own check again as the file
-stands, since the user may have edited it: the scan for the strings only this machine knows and the
-paste-safety walk of cli/perf_public.py, through perf_export.check_document, so a problem is reported by its
-kind and key path and never by the key or the value. Any of these refuses with exit 1.
+The file must exist, be a regular file of at most 1 MiB, parse as strict JSON (no NaN or Infinity literals, no
+key repeated within one object at any depth, since json.loads would keep the last copy while the bytes sent
+carry every copy, and nesting within the parser's reach) with the top-level `schema` line `romp-perf-export/1`,
+and pass the export's own check again as the file stands, since the user may have edited it: the scan for the
+strings only this machine knows and the paste-safety walk of cli/perf_public.py, through
+perf_export.check_document, so a problem is reported by its kind and key path and never by the key or the
+value. Any of these refuses with exit 1.
 
-Before sending, the verb prints the path, the byte size and the receiver's host, then asks for a yes on a
-terminal (stdin is a tty). Off a terminal it refuses, exit 2, unless `--yes` is passed: that flag is the form
+Before sending, the verb prints the path, the byte size and the URL it will dial (the address as configured
+with the route appended, so a path in the setting is seen at the prompt), then asks for a yes on a terminal
+(stdin is a tty). Off a terminal it refuses, exit 2, unless `--yes` is passed: that flag is the form
 an agent uses, and its presence in the command is the visible record of the confirmation. No configuration
 file or environment variable stands in for it, so nothing sends from a cron by default.
 
-The send is ONE POST to <receiver>/v1/upload, the file's bytes as the body, `Content-Type: application/json`
-and `Content-Length`, a fixed `User-Agent: romp-perf-upload/1` (no version detail, no hostname), a 30 s
-timeout, stdlib urllib through an opener that refuses redirects (a 3xx is an unexpected answer, never a second
-request), reads no proxy variables, and carries no cookies. The one answer accepted is status 201 with a JSON
-body of exactly the shape {"receipt": <uuid4 string>, "retention_days": <integer>, "av": "ok"|"skipped"}; the
-verb then prints `uploaded: receipt <uuid> (kept <N> days; delete by sending the receipt to the project)`, exit
-0. Any other status, a body that is not JSON, an extra or missing key, a value outside that shape, a connection
-error or a timeout is a refusal with a fixed message carrying only the status code or the error's class name:
-never the body, never the URL beyond the host, never an exception's message, exit 1.
+The send is ONE POST to <receiver>/v1/upload, the file's bytes as the body, under six headers: the verb sets
+`Content-Type: application/json`, `Content-Length` and a fixed `User-Agent: romp-perf-upload/1` (no version
+detail, no hostname); the HTTP client adds `Host` (the receiver's own name), `Accept-Encoding: identity` and
+`Connection: close`. A 30 s timeout, stdlib urllib through an opener that refuses redirects (a 3xx is an
+unexpected answer, never a second request, and its Location is never parsed), reads no proxy variables, and
+carries no cookies. The one answer accepted is status 201 with a body of at most 64 KiB that is exactly the JSON
+shape {"receipt": <uuid4 string>, "retention_days": <integer>, "av": "ok"|"skipped"}; the verb then prints
+`uploaded: receipt <uuid> (kept <N> days; delete by sending the receipt to the project)`, exit 0. Any other
+status, a body that is not JSON, an extra, missing or repeated key, a value outside that shape, a connection
+error, a timeout or any other error the client raises is a refusal with a fixed message carrying only the status
+code or the error's class name: never the body, never the URL, never an exception's message, exit 1.
 """
 import argparse
 import http.client
@@ -61,7 +67,7 @@ USER_AGENT = "romp-perf-upload/1"
 ANSWER_MAX = 64 * 1024               # a receipt is under 200 bytes; a longer 201 body is not the shape
 LOOPBACK = frozenset({"127.0.0.1", "localhost"})
 HOST = re.compile(r"^[A-Za-z0-9.-]+$")
-CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+ADDRESS = re.compile(r"[\x21-\x7e]+")     # printable ASCII, no space: what http.client can put on the wire, and nothing urlsplit strips (fullmatch: $ would pass a trailing newline)
 UUID4 = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
 AV = ("ok", "skipped")
 ANSWER_KEYS = frozenset({"receipt", "retention_days", "av"})
@@ -82,7 +88,9 @@ class Refusal(Exception):
 def receiver_setting(flag, env=None):
     """(text, source): the address as configured and which setting supplied it, in order --receiver, the
     environment variable, the file's first non-empty line; (None, None) when none is set. An empty variable
-    is unset. The file is read under HOME, the way `romp default-dir` reads its own."""
+    is unset. The file is read under HOME, the way `romp default-dir` reads its own; a file that is not UTF-8
+    text is returned as the empty string with the file as its source, an address the grammar refuses, so the
+    caller's refusal names the file and nothing of its bytes."""
     if flag is not None:
         return flag, "--receiver"
     env = os.environ if env is None else env
@@ -90,9 +98,13 @@ def receiver_setting(flag, env=None):
     if value:
         return value, RECEIVER_VAR
     try:
-        text = Path(os.path.expanduser(RECEIVER_FILE)).read_text(encoding="utf-8")
+        raw = Path(os.path.expanduser(RECEIVER_FILE)).read_bytes()
     except OSError:
         return None, None
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return "", RECEIVER_FILE
     for line in text.splitlines():
         if line.strip():
             return line.strip(), RECEIVER_FILE
@@ -100,11 +112,13 @@ def receiver_setting(flag, env=None):
 
 
 def receiver_url(text):
-    """The address split, or None: it must be https (http for 127.0.0.1 and localhost alone), carry a host of
-    letters, digits, dots and dashes with a numeric port at most, no userinfo, no query, no fragment, and a path
-    without whitespace (the base the route is appended to). None says nothing about which rule failed on
-    purpose: the caller's refusal never echoes the value, which may be anything the user typed."""
-    if not isinstance(text, str) or CONTROL.search(text):   # urlsplit would strip a tab or a newline; refuse instead
+    """The address split, or None: it must be printable ASCII (spaces around it dropped; urlsplit would silently
+    strip a tab or a newline, and http.client cannot encode a character outside ASCII), https (http for 127.0.0.1
+    and localhost alone), carry a host of letters, digits, dots and dashes with a numeric port at most, no
+    userinfo, no query, no fragment, and a path starting with a slash (the base the route is appended to). None
+    says nothing about which rule failed on purpose: the caller's refusal never echoes the value, which may be
+    anything the user typed."""
+    if not isinstance(text, str) or not ADDRESS.fullmatch(text.strip(" ")):
         return None
     try:
         u = urllib.parse.urlsplit(text.strip(" "))
@@ -117,7 +131,7 @@ def receiver_url(text):
         return None
     if u.scheme == "http" and u.hostname not in LOOPBACK:
         return None
-    if u.path and (not u.path.startswith("/") or re.search(r"\s", u.path)):
+    if u.path and not u.path.startswith("/"):
         return None
     return u
 
@@ -127,16 +141,41 @@ def upload_url(u):
     return urllib.parse.urlunsplit((u.scheme, u.netloc, u.path.rstrip("/") + ROUTE, "", ""))
 
 
-# ── the file ─────────────────────────────────────────────────────────────────────────────────────────────
+# ── strict JSON ──────────────────────────────────────────────────────────────────────────────────────────
+class RepeatedKey(ValueError):
+    """An object spells the same key twice: json.loads would keep the last copy and drop the rest, so the
+    document checked and the bytes sent would differ. The key itself is not carried: it may be anything."""
+
+
 def _no_constant(name):
     raise ValueError("not strict JSON: " + name)
 
 
+def _no_repeat(pairs):
+    if len({k for k, _v in pairs}) != len(pairs):
+        raise RepeatedKey("not strict JSON: a key repeats")
+    return dict(pairs)
+
+
+def strict_loads(data):
+    """The document `data` (bytes) spells, or a ValueError: UTF-8, no NaN or Infinity, no key repeated within
+    one object at any depth (RepeatedKey, a ValueError), and nesting within the parser's reach (json raises
+    RecursionError past it; here that is a ValueError like any other unparseable input, never a traceback)."""
+    try:
+        return json.loads(data.decode("utf-8"), parse_constant=_no_constant, object_pairs_hook=_no_repeat)
+    except RecursionError:
+        raise ValueError("not strict JSON: nested past the parser")
+
+
+# ── the file ─────────────────────────────────────────────────────────────────────────────────────────────
+
 def read_export(path, state):
     """The file's bytes, once every check passes: it exists and is a regular file, it is at most MAX_BYTES, it
-    parses as strict JSON to an object with the schema line, and it passes perf_export.check_document (the
-    machine-string scan, then the paste-safety walk) as it stands. A Refusal otherwise, naming the file path the
-    user passed and, for a walk or scan finding, the kind and the key path, never the value."""
+    parses as strict JSON (strict_loads: a repeated key is named as the reason, since the file may be one the
+    user edited by hand and an editor calls it valid) to an object with the schema line, and it passes
+    perf_export.check_document (the machine-string scan, then the paste-safety walk) as it stands. A Refusal
+    otherwise, naming the file path the user passed and, for a walk or scan finding, the kind and the key path,
+    never the value."""
     p = Path(path)
     try:
         st = p.stat()
@@ -155,7 +194,9 @@ def read_export(path, state):
     if len(data) > MAX_BYTES:    # grew between the stat and the read
         raise Refusal("refused: %s is %d bytes and the receiver takes at most %d (1 MiB); nothing sent" % (path, len(data), MAX_BYTES), 1)
     try:
-        doc = json.loads(data.decode("utf-8"), parse_constant=_no_constant)
+        doc = strict_loads(data)
+    except RepeatedKey:
+        raise Refusal("refused: %s is not strict JSON (a key repeats); nothing sent" % path, 1)
     except ValueError:           # UnicodeDecodeError and JSONDecodeError are both ValueErrors
         raise Refusal("refused: %s is not strict JSON; nothing sent" % path, 1)
     if not isinstance(doc, dict) or doc.get("schema") != SCHEMA:
@@ -188,8 +229,16 @@ def confirmed(yes, stdin=None, stdout=None):
 
 # ── the send ─────────────────────────────────────────────────────────────────────────────────────────────
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """A 3xx answer is an error to the caller: None here means urllib makes no second request, and the status
-    surfaces as an HTTPError with the 3xx code, refused like any other status."""
+    """A 3xx answer is an error to the caller, refused by its code like any other status, and its Location is
+    never read: the parent's http_error_30x parse the target (urlparse raises a ValueError quoting a bracketed
+    host, receiver text) before they ask redirect_request, so each is overridden to return None, which leaves
+    the status to HTTPDefaultErrorHandler, an HTTPError with the 3xx code and no second request. Standing in
+    for the default handler is what keeps build_opener from adding the parent."""
+
+    def _refuse(self, req, fp, code, msg, headers):
+        return None
+
+    http_error_301 = http_error_302 = http_error_303 = http_error_307 = http_error_308 = _refuse
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -198,9 +247,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 def post(url, data, timeout=None):
     """One POST of `data` to `url`: (status, body) for any HTTP answer (the body read only on 201, capped at
     ANSWER_MAX + 1 so a long one is judged by its length, empty for every other status), or a Refusal naming the
-    error's class alone when no answer came. The opener has no proxy (ProxyHandler({}) reads no *_proxy
-    variable: the address configured is the address dialled), no cookie jar, and refuses redirects; TLS is
-    urllib's default context, which verifies the certificate against the system store."""
+    error's class alone when no answer came or the client raised anything else (the last clause is the belt:
+    whatever the class, its message is never printed). The opener has no proxy (ProxyHandler({}) reads no
+    *_proxy variable: the address configured is the address dialled), no cookie jar, and refuses redirects; TLS
+    is urllib's default context, which verifies the certificate against the system store."""
     timeout = TIMEOUT_S if timeout is None else timeout
     req = urllib.request.Request(url, data=data, method="POST",
                                  headers={"Content-Type": "application/json", "User-Agent": USER_AGENT})
@@ -219,18 +269,21 @@ def post(url, data, timeout=None):
         raise Refusal("refused: no answer from the receiver (%s); no receipt" % name, 1)
     except (OSError, http.client.HTTPException) as e:
         raise Refusal("refused: no answer from the receiver (%s); no receipt" % e.__class__.__name__, 1)
+    except Exception as e:       # a ValueError from a header or URL the client could not handle, say
+        raise Refusal("refused: no answer from the receiver (%s); no receipt" % e.__class__.__name__, 1)
 
 
 def receipt(status, body):
-    """(receipt, retention_days, av) of the one answer accepted: status 201 and a JSON object with exactly the
-    keys receipt (a uuid4 string), retention_days (a non-negative integer, not a bool) and av (ok or skipped).
+    """(receipt, retention_days, av) of the one answer accepted: status 201 and a body of at most ANSWER_MAX bytes
+    that is one strict JSON object (strict_loads: a repeated key is not the shape either) with exactly the keys
+    receipt (a uuid4 string), retention_days (a non-negative integer, not a bool) and av (ok or skipped).
     Anything else is a Refusal whose text carries the status code and nothing of the body."""
     if status != 201:
         raise Refusal("refused: the receiver answered HTTP %d where the 201 receipt was expected; no receipt" % status, 1)
     if len(body) > ANSWER_MAX:
         raise Refusal(NOT_THE_SHAPE, 1)
     try:
-        answer = json.loads(body.decode("utf-8"), parse_constant=_no_constant)
+        answer = strict_loads(body)
     except ValueError:
         raise Refusal(NOT_THE_SHAPE, 1)
     if not isinstance(answer, dict) or set(answer) != ANSWER_KEYS:
@@ -265,10 +318,11 @@ def main(argv=None, stdin=None) -> int:
             raise Refusal("refused: the receiver address from %s is not an https URL with a host and no userinfo, query or "
                           "fragment (http is allowed for 127.0.0.1 and localhost only); nothing sent" % source, 2)
         data = read_export(a.file, pe.state_dir())
-        print("%s (%d bytes) to %s" % (a.file, len(data), u.hostname))
+        url = upload_url(u)
+        print("%s (%d bytes) to %s" % (a.file, len(data), url))     # the URL dialled, so a path in the setting is seen before the yes
         sys.stdout.flush()
         confirmed(a.yes, stdin=stdin)
-        status, body = post(upload_url(u), data)
+        status, body = post(url, data)
         rid, days, _av = receipt(status, body)
     except Refusal as e:
         sys.stderr.write("%s: %s\n" % (PROG, e))
