@@ -3690,7 +3690,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the `judge` line, since the judge's CPU share alone cannot tell a cheaper
   pass from a faster cadence.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
-  OPTIONS, the query string removed and `/dist/*`, `/media/*` and
+  OPTIONS, the query string removed and `/dist/*`, `/media/*`, `/glossary/*`
+  (the term is the user's text; its lookups count under one key) and
   `/remote/*/…` collapsed to one key each, for at most 256 keys; further keys
   fold into `other`. A WebSocket upgrade is counted when it arrives and not
   timed, since its handler runs for the life of the socket.

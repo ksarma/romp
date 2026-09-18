@@ -739,6 +739,8 @@ class Collector(unittest.TestCase):
         self.assertEqual(key("GET", "/dist/render.js"), "GET /dist/*")
         self.assertEqual(key("GET", "/dist/fonts/a-b-c.woff2"), "GET /dist/*", "sixty font files: one key")
         self.assertEqual(key("GET", "/media/romp-app-192.png"), "GET /media/*")
+        self.assertEqual(key("GET", "/glossary/Quarterly%20Roadmap"), "GET /glossary/*", "a glossary term is the user's text: the lookups count, the term does not")
+        self.assertEqual(key("GET", "/glossary/"), "GET /glossary/*")
         self.assertEqual(key("GET", "/remote/TESTHOST/ws"), "GET /remote/*/ws", "no host name in a key")
         self.assertEqual(key("HEAD", "/remote/TESTHOST/file"), "HEAD /remote/*/file")
         self.assertEqual(key("GET", "/remote/TESTHOST"), "GET /remote/*")

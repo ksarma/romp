@@ -1795,13 +1795,16 @@ def _perf_http_key(method, path):
     """The `http` counter key for one request: "METHOD /path" with the query string gone and the
     high-cardinality families collapsed — /dist/* and /media/* (the bundles, fonts, icons and source
     maps a dashboard loads: dozens of names that would otherwise fill the HTTP_PATHS slots before a
-    script's first /sessions call) and /remote/<host>/… (a host name per attached kernel; a tailnet
-    host name is not something `romp perf` should print). The route table's fixed paths stay as they
-    are, so GET /perf and POST /perf are separate rows."""
+    script's first /sessions call), /glossary/* (one route per glossary TERM: a term is the user's
+    own text, and the lookups are what the counter is for, 2026-09-18) and /remote/<host>/… (a host
+    name per attached kernel; a tailnet host name is not something `romp perf` should print). The
+    route table's fixed paths stay as they are, so GET /perf and POST /perf are separate rows."""
     if path.startswith("/dist/"):
         path = "/dist/*"
     elif path.startswith("/media/"):
         path = "/media/*"
+    elif path.startswith("/glossary/"):
+        path = "/glossary/*"
     elif path.startswith("/remote/"):
         rest = path[len("/remote/"):]
         i = rest.find("/")
