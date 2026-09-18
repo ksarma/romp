@@ -1420,6 +1420,7 @@ def _views_reads_fault():
 class CommentOps(CommentBase):
     def setUp(self):
         super().setUp()
+        self._stubs = []               # (name, the value before): _stub's record, undone first thing in tearDown
         self.be = FakeBackend()
         self._saved_backend_for = km.Sessions.backend_for
         self._saved_ready = km._sdk_ready
@@ -1437,6 +1438,8 @@ class CommentOps(CommentBase):
         km._push_session_now = lambda sid: None
 
     def tearDown(self):
+        for name, before in reversed(self._stubs):   # BEFORE CommentBase's restore below: a cleanup would run after it
+            setattr(km, name, before)
         km.Sessions.backend_for = self._saved_backend_for
         km._sdk_ready = self._saved_ready
         km._sessions = self._saved_sessions
@@ -1474,7 +1477,11 @@ class CommentOps(CommentBase):
         self.assertEqual(row["anchorUuid"], "a1")
 
     def _stub(self, name, value):
-        self.addCleanup(setattr, km, name, getattr(km, name))
+        """Replace a kernel name for this test, undone in tearDown before CommentBase's own restore. Not addCleanup: a
+        cleanup runs AFTER tearDown, so for a name CommentBase.setUp also stubs (_sdk) it put the setUp stub back over the
+        original tearDown had just restored, and the stub leaked onto the shared kernel module for every test module
+        ordered after this one (2026-09-18: their _sdk() read None). The last class in this file pins the module clean."""
+        self._stubs.append((name, getattr(km, name)))
         setattr(km, name, value)
 
     def test_a_parent_idle_past_the_discovery_window_still_takes_a_comment(self):
@@ -2062,6 +2069,21 @@ class ForkCommentRoutes(CommentBase):
         self.assertIn('if u.path in ("/fork-comment", "/fork-promote"):', src)
         self.assertIn('res = (_fork_comment_request(b) if u.path == "/fork-comment"', src)
         self.assertIn('return self._send(res.pop("_status", 200), json.dumps(res), "application/json")', src)
+
+
+class ZzTheModuleLeavesTheSharedKernelAsItFoundIt(unittest.TestCase):
+    """Last in the file and last alphabetically, so it runs after every class above under pytest (file order) and
+    unittest (name order): the shared romp_kernel module's _sdk is the kernel's own def, not a stub of this module's.
+    CommentOps once left CommentBase.setUp's stub on it: its _stub helper restored through addCleanup, which runs
+    AFTER tearDown, so for _sdk (a name CommentBase.setUp stubs too) the cleanup put the setUp stub back over the
+    original tearDown had just restored, and every module ordered after this one read _sdk() as None (2026-09-18).
+    Checked by the def's qualified name, not object identity: load_source re-executes the kernel into the same module
+    object for every test module collected, so the function object a module found at import is not the one that
+    stands when its tests run."""
+
+    def test_sdk_is_the_kernels_own_def(self):
+        self.assertEqual(getattr(km._sdk, "__qualname__", None), "_sdk",
+                         "a class above left a stub on the shared kernel module: %r" % (km._sdk,))
 
 
 if __name__ == "__main__":
