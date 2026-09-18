@@ -3,7 +3,7 @@ title: GET /perf says what the feed frame is made of and what each pane would re
 status: candidate
 where: kernel/kernel.py (_FeedComposition, FEED_APP_FIELDS, FEED_PROJECTIONS, _feed_parts), docs/reference.md, tests/test_feed_composition.py
 added: 2026-09-18
-pr:
+pr: 785
 tier: feature
 offered:
 closed:
