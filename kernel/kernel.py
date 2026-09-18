@@ -2718,11 +2718,12 @@ def _client_diag_append(fp, line):
 # sheds its per-minute figures first (CLIENT_DIAG_MINUTE_SHED, _client_diag_line): the collector sends nav, res, marks
 # and env exactly once per page, and a whole-row marker lost them for the page's life (review find, 2026-09-18). The
 # bound is derived from the collector's own caps (perf-telemetry.ts), so no row it can build is shed or capped:
-# MAX_FRAME_TYPES named wire types plus their fold and as many fed: keys are 66 frame entries, each a key of at most 38
-# characters (the `delta:` prefix and a 32-character identifier) and a 14-bucket histogram, 16.3 KB at six-digit
-# counts; MAX_TOP long-frame keys at the string cut, the free sample, the slow counts and the envelope add about
-# 1.4 KB (17.7 KB with share off); the shared fields (MAX_RES named resources and the fold, nav, marks, env, vis,
-# wsBytes, rafGap) add about 3.4 KB (21.1 KB with share on). 24 KiB holds both with margin (today's minute rows run
+# MAX_FRAME_TYPES named wire types plus their fold and as many `fed:` keys are 66 frame entries, the wire keys at most
+# 38 characters (the `delta:` prefix and a 32-character identifier) and the `fed:` keys at most 42 (`fed:delta:` and the
+# identifier, since federation.ts times a frame as `fed:` plus its classified type), each with a 14-bucket histogram,
+# 16.5 KB at six-digit counts; MAX_TOP long-frame keys at the string cut, the free sample, the slow counts and the
+# envelope add about 1.4 KB (17.9 KB share off); the shared fields (MAX_RES named resources and the fold, nav, marks,
+# env, vis, wsBytes, rafGap) add about 3.4 KB (21.3 KB share on). 24 KiB holds both with margin (today's minute rows run
 # to 2.5 KB); above it the shed and the marker are the backstops for a row no collector builds. The table lists the
 # keys as the posters build them: perf-telemetry.ts (minute, slowframe), the pane shim (staleDiag, the return rows,
 # wsclose, wsconnfail, page-load), the reload core's held row, the shell scripts, federation.ts, render.ts and
@@ -2731,7 +2732,7 @@ def _client_diag_append(fp, line):
 # (said once per what), so a forged wsopen cannot land beside the kernel's; the entry names the kernel's own keys. A
 # surface not in the table keeps no key at all, and a data that is not an object is stored as null.
 CLIENT_DIAG_STR_MAX = 64
-CLIENT_DIAG_ROW_MAX = 24 * 1024   # above the collector's worst case with share on (21.1 KB; the derivation above)
+CLIENT_DIAG_ROW_MAX = 24 * 1024   # above the collector's worst case with share on (21.3 KB; the derivation above)
 CLIENT_DIAG_DEPTH_MAX = 8      # nesting past this reads null: the rows are flat or two deep
 CLIENT_DIAG_SAID_MAX = 512     # (surface, key) pairs the stderr latch holds; at the bound one more line says so and nothing else is said
 CLIENT_DIAG_ROW_SAY_MAX = 8    # foreign keys of ONE row said by name; the rest are one counting line, so a row spends at most this many latch entries and one

@@ -4122,7 +4122,7 @@ frames it received is measured in the panes themselves, by
   shared row adds about 2 KB of `res`, `env`, `nav` and `marks`. Every row is
   bounded at 24 KiB of JSON, a bound derived from the collector's own caps so
   that no row it can build is touched (its worst case, every cap reached at
-  once, is about 17.7 KB with share off and 21.1 KB with share on): a `perf`
+  once, is about 17.9 KB with share off and 21.3 KB with share on): a `perf`
   minute row over the bound sheds `frames`, `loaf`, `free` and `slow` in that
   order until it fits, keeps its other keys, and carries
   `capped: {bytes, dropped}` (the line's bytes before the shed and the keys

@@ -382,7 +382,11 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         # types lost its frames where main stored it whole, and the shared row lost more (review find, 2026-09-18: 16481 B
         # share off, 19110 B share on, measured). The bound is now derived from the collector's caps; this builds the row
         # the collector would send with every cap reached at once, from the constants as perf-telemetry.ts declares them,
-        # and asserts it lands whole, no shed, no marker, nothing said. A 16 KiB bound would still have shed it.
+        # and asserts it lands whole, no shed, no marker, nothing said. A 16 KiB bound would still have shed it. The fed:
+        # keys are spelled in their longest form, fed:delta: plus the 32-character identifier, 42 characters: federation.ts
+        # times a frame as fed: plus classifyFrame(msg), which reads delta: plus the identifier for a delta frame. This test
+        # first spelled them fed: plus the identifier, 36 characters, and the row it proved whole was 198 B under the row
+        # the collector can build (review find, round 2, 2026-09-18).
         src = open(os.path.join(UI, "perf-telemetry.ts"), encoding="utf-8").read()
         def const(name):
             m = re.search(r"^export const %s(?:: [^=]+)? = ([^;]+);" % name, src, re.M)
@@ -400,8 +404,10 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         frames = {}
         for i in range(max_types + 1):                       # the named types and the fold ("other" / "fed:other") are max_types + 1 keys each
             frames["delta:" + "w" * (ident_cap - 6) + "%06d" % i] = dict(st)      # the longest prefix (a raw delta by slot) and an identifier at the cap
-            frames["fed:" + "f" * (ident_cap - 6) + "%06d" % i] = dict(st)
+            frames["fed:delta:" + "f" * (ident_cap - 6) + "%06d" % i] = dict(st)   # the federation layer's key for the same frame: fed: plus the classified type
         self.assertEqual(len(frames), 2 * (max_types + 1))
+        self.assertEqual(max(len(k) for k in frames if not k.startswith("fed:")), 38, "a wire key is at most delta: plus the identifier cap")
+        self.assertEqual(max(len(k) for k in frames), 42, "the longest key the collector emits is fed:delta: plus the identifier cap")
         top = [{"k": "k" * km.CLIENT_DIAG_STR_MAX, "ms": ms, "n": big, "inv": "i" * km.CLIENT_DIAG_STR_MAX} for _ in range(max_top)]
         minute = {"app": "timeline", "since": 1700000000000, "span_ms": 600000, "frames": frames,
                   "free": {"n": free_ring, "p50": ms, "p90": ms, "max": ms},
