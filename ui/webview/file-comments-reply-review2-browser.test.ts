@@ -149,6 +149,7 @@ async function replyOn(page: any, id: string): Promise<void> {
   await btn.click();
   await page.waitForFunction(() => { const ta = (window as any).__ta(); return !!ta && document.activeElement === ta; });
 }
+let settles = 0;                                     // settledBox's per-call nonce
 /** The box as __box() reads it, once its scroll offset has stood still across two consecutive animation frames. Firefox lands
  *  the caret's scroll after typing in two steps (the 2026-09-18 bisect, 104 isolated runs of this file: a baseline read straight
  *  after keyboard.type() saw 42, one 15-pixel line short of the 57 it settles at, in about a quarter of the runs of the file
@@ -160,7 +161,6 @@ async function replyOn(page: any, id: string): Promise<void> {
  *  waitForFunction polls on requestAnimationFrame by default and does not await a Promise from its predicate (a Promise is
  *  truthy), so the predicate is synchronous and keeps the last frame's reading on the window, keyed by a per-call nonce so an
  *  earlier settle's reading never counts as this one's first frame; playwright's default timeout bounds it. */
-let settles = 0;
 async function settledBox(page: any): Promise<any> {
   await page.waitForFunction((k: number) => {
     const w = window as any, ta = w.__ta(), now = ta ? ta.scrollTop : null;
