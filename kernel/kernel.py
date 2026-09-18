@@ -54879,10 +54879,16 @@ class _FeedComposition:
     that estimate again. The one figure not read from an encode is an app's card FIELDS (fleet.ts reads a few fields of
     each card): _ask_fields_est estimates those from lengths, and says how.
 
-    Cost per pass, bounded: the two sums _feed_est takes (one int per card and per ledger), one len() per remainder
-    field, and for the apps that read card fields an O(cards x fields) pass of len() calls memoized with the cards on
-    the build's asks list (_feed_cards_memo), plus the projections' O(cards) passes memoized with it, so a ledgers
-    refill pays none of it; no encode anywhere. About a millisecond per thousand cards.
+    Cost per build, on the pusher's thread: the two sums _feed_est takes (one int per card and per ledger), one
+    len() per remainder field, and for the apps that read card fields an O(cards x fields) pass of len() calls, plus
+    the projections' O(cards) passes, both memoized with the cards on the build's asks list (_feed_cards_memo), so a
+    ledgers refill pays none of the card-field and projection estimates (it re-encodes the ledgers and the remainder,
+    as it always did). About two milliseconds per thousand cards per build, about a third of it the projections'
+    pass. The remainder's per-field encode costs more than the one whole encode it replaces, per field rather than
+    per byte: about one and a half times the whole-remainder encode at a 16 KB remainder and about three and a third
+    times at a 1.4 KB one, measured before the pass shared one json.JSONEncoder over its fields, which takes about
+    forty percent off that overhead. The lengths are always computed, never only while a reader is present: that
+    would add a real second encode and an undefined event.
 
     Paste-safe: identifier keys (the frame's own field names, the kernel's app names), numbers only, and the `by`
     table is published FOLDED (public_by, applied in report() to the last and the lifetime tables alike): the flag
@@ -55044,12 +55050,14 @@ def _feed_parts(feed):
             if k not in ("type", "asks", "ledgers") and k not in _DEDUP_VOLATILE}
     # The remainder, encoded per field and joined into the sort_keys string the frame always carried, byte for byte
     # (tests/test_feed_composition.py pins the identity): the same one encode, in pieces, so the composition probe
-    # reads each field's bytes (its quoted name, the separators, its value) from the frame's own encode. The table
-    # is keyed by the checked-in names (_FEED_BY_NAMES): a key outside them is counted under `other`, so a runtime
-    # key never stands as a row. A key that is not a str (never the frame's case) takes the whole encode as before,
-    # under that one name.
+    # reads each field's bytes (its quoted name, the separators, its value) from the frame's own encode. One
+    # json.JSONEncoder per pass, whose encode() is what json.dumps runs with the same arguments (a fresh encoder per
+    # field was about forty percent of the per-field overhead). The table is keyed by the checked-in names
+    # (_FEED_BY_NAMES): a key outside them is counted under `other`, so a runtime key never stands as a row. A key
+    # that is not a str (never the frame's case) takes the whole encode as before, under that one name.
     if all(isinstance(k, str) for k in rest):
-        pairs = [(json.dumps(k), json.dumps(rest[k], sort_keys=True, default=dflt)) for k in sorted(rest)]
+        enc = json.JSONEncoder(sort_keys=True, default=dflt).encode
+        pairs = [(enc(k), enc(rest[k])) for k in sorted(rest)]
         rest_ms = "{" + ", ".join(kj + ": " + s for kj, s in pairs) + "}"
         by = {}
         for k, (kj, s) in zip(sorted(rest), pairs):

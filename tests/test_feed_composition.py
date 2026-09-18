@@ -34,8 +34,8 @@ published row is the length of one string, while the remainder still equals the 
 per-app projections keep their build-time per-field sums; a key outside the checked-in names is counted under `other`
 at build time; (h) the card-field and projection estimates run inside their own guard: a raise is counted, said once,
 memoized with the cards so a refill neither re-raises nor repeats it, and the frame goes out unchanged at every call
-site; (i) the block's shape is pinned from the kernel's constants, and the estimates run once per build and not on a
-refill.
+site; (i) the block's shape is pinned from the kernel's constants, the estimates run once per build and not on a
+refill, and the remainder's fields go through one encoder per pass.
 
 Synthetic only: the notes-api demo world, TESTHOST, placeholder ids."""
 import base64
@@ -1019,26 +1019,54 @@ class SyntheticBuild(unittest.TestCase):
             km._feed_parts(mixed)
 
     def test_a_build_encodes_each_part_once_and_a_refill_encodes_no_card(self):
+        """Every encode of a pass, counted at json.JSONEncoder.encode (json.dumps with any argument constructs an
+        encoder and calls it; the remainder goes through ONE encoder per pass since the review of 2026-09-18, whose
+        encode() is what json.dumps ran per field): one per card, per ledger, and per remainder field name and value on
+        a build; the ledgers and the remainder, no card, on a refill; and one sort_keys encoder constructed per pass
+        (fails before: one per remainder field, about forty percent of the per-field overhead)."""
         feed = _feed(n=12)
-        real = km.json.dumps
-        calls = []
-
-        def counting(obj, *a, **kw):
-            calls.append(obj)
-            return real(obj, *a, **kw)
-        with mock.patch.object(km.json, "dumps", side_effect=counting):
-            km._feed_parts(feed)
         rest = _rest_of(feed)
-        self.assertEqual(len(calls), 12 + len(feed["ledgers"]) + 2 * len(rest),
+        real_dumps, Real = km.json.dumps, km.json.JSONEncoder
+        dumps_calls, encodes, made = [], [], []
+
+        class Counting(Real):
+            def __init__(self, *a, **kw):
+                made.append(kw)
+                super().__init__(*a, **kw)
+
+            def encode(self, o):
+                encodes.append(o)
+                return super().encode(o)
+
+        def counting_dumps(obj, *a, **kw):
+            dumps_calls.append(obj)
+            return real_dumps(obj, *a, **kw)
+
+        def cards_in(objs):
+            return sum(1 for o in objs if isinstance(o, dict) and "itemId" in o)
+        patches = (mock.patch.object(km.json, "JSONEncoder", Counting), mock.patch.object(km.json, "dumps", side_effect=counting_dumps))
+        with patches[0], patches[1]:
+            km._feed_parts(feed)
+        self.assertEqual(len(encodes), 12 + len(feed["ledgers"]) + 2 * len(rest),
                          "one encode per card, per ledger, and per remainder field (its name and its value)")
-        self.assertEqual(sum(1 for o in calls if isinstance(o, dict) and "itemId" in o), 12)
-        calls.clear()
+        self.assertEqual(cards_in(encodes), 12)
+        self.assertEqual(len(dumps_calls), 12 + len(feed["ledgers"]), "json.dumps runs per card and per ledger; the "
+                         "remainder's fields go through the pass's one encoder")
+        self.assertEqual(sum(1 for kw in made if kw.get("sort_keys")), 1, "one sort_keys encoder per pass")
+        self.assertEqual(len(made), 12 + len(feed["ledgers"]) + 1)
+        # the remainder's names and values are each encoded once, in sorted order, name then value
+        tail = encodes[-2 * len(rest):]
+        self.assertEqual(tail[0::2], sorted(rest))
+        self.assertEqual(tail[1::2], [rest[k] for k in sorted(rest)])
+        del encodes[:], dumps_calls[:], made[:]
         refill = dict(feed)
         refill["ledgers"] = [_ledger(tops=1)]
-        with mock.patch.object(km.json, "dumps", side_effect=counting):
+        with patches[0], patches[1]:
             km._feed_parts(refill)
-        self.assertEqual(len(calls), 1 + 2 * len(rest), "a refill encodes the ledgers and the remainder, no card")
-        self.assertFalse(any(isinstance(o, dict) and "itemId" in o for o in calls))
+        self.assertEqual(len(encodes), 1 + 2 * len(rest), "a refill encodes the ledgers and the remainder, no card")
+        self.assertEqual(cards_in(encodes), 0)
+        self.assertEqual(len(dumps_calls), 1)
+        self.assertEqual(sum(1 for kw in made if kw.get("sort_keys")), 1)
         # the wire's signature and delta read the same strings as before
         self.assertEqual(km._feed_sig(km._feed_parts(feed))[0], json.dumps(rest, sort_keys=True))
 
