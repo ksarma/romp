@@ -999,6 +999,29 @@ class JobRowsByOwner(unittest.TestCase):
         self.assertEqual(set(km._PerfStats().pusher) & {"cycleJobsMs"}, set(),
                          "the block is its own attribute, copied into the served pusher block, never the live dict")
 
+    def test_every_job_row_key_fits_the_paste_safe_grammar_and_the_export_keeps_it(self):
+        """The two new blocks are keyed by the kernel's own literals: a job name from CYCLE_JOBS under cycleJobsMs and a stage
+        name (`jobs.` + a _job_stage or _sub_stage literal) under stagesForeign; never a client's or a user's text, so
+        every key fits _PERF_IDENT (the served grammar) and the export's IDENT, is neither denied nor coarsened by
+        cli/perf_public.py, and the values are numbers. The sub-stage names are read from the kernel's source, so a part
+        added later is held to the same grammar."""
+        src = inspect.getsource(km)
+        parts = set(re.findall(r'_sub_stage\("([A-Za-z0-9_.]+)"\)', src)) | set(re.findall(r'stage\("jobs\.([A-Za-z0-9_.]+)"', src))
+        self.assertTrue({"autoNudge.key", "autoNudge.parse", "autoNudge.snapshot", "autoNudge.looks"} <= parts, sorted(parts))
+        names = set(km._PerfStats.STAGES) | set(km._PerfStats.JOBS) | {"jobs." + j for j in km._PerfStats.JOBS} \
+            | {"jobs." + p for p in parts} | set(parts) | {"cycleJobsMs", "stagesForeign"}
+        for k in sorted(names):
+            self.assertTrue(km._PERF_IDENT.fullmatch(k), "outside the served grammar: %s" % k)
+            self.assertTrue(pp.IDENT.fullmatch(k), "outside the export's grammar: %s" % k)
+            self.assertFalse(pp.denied(k, 0.0), "denied by the export: %s" % k)
+            self.assertNotIn(k, pp.BOUND_KEYS, "coarsened by the export: %s" % k)
+        snap = self._three_writers()
+        block = {"pusher": {"cycleJobsMs": snap["pusher"]["cycleJobsMs"]}, "stagesForeign": snap["stagesForeign"]}
+        self.assertEqual(pp.fold(block), block, "the export keeps every key and value as served")
+        for v in list(snap["pusher"]["cycleJobsMs"].values()) + list(snap["stagesForeign"].values()):
+            self.assertIsInstance(v, float)
+        self.assertEqual(pp.paste_problems(block), [])
+
     def test_the_collectors_docstring_names_the_new_rows(self):
         doc = km._PerfStats.__doc__
         pusher_row = doc[doc.index("      pusher  "):doc.index("      stages_ms  ")]
@@ -2691,6 +2714,14 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         st.send(("status", SID), "delta", 5)
         st.cycle(0.050)
         st.stage("push.chat", 0.010)
+        # the two owner-routed blocks (2026-09-18), populated so the walk covers them: a `jobs.` stage from this thread
+        # while it owns no cycle lands in stagesForeign, then the same thread as the pusher's owner writes a cycle job
+        # into pusher.cycleJobsMs. Both keys are the kernel's own literals (a stage name from the STAGES vocabulary, a
+        # job name from CYCLE_JOBS), never a client's or a user's text: stage() is called with names spelled in the
+        # kernel's source alone, so no planted string can reach either block; the walk holds them to the grammar anyway
+        st.stage("jobs.autoNudge.parse", 0.001)
+        st.cycle_begin()
+        st.stage("jobs.persistCheckpoints", 0.002)
 
     def _unplant_reads(self):
         with self.em._READ_BYTES_LOCK:
@@ -2761,6 +2792,8 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         self.assertEqual(sorted(snap["pusher"]["connectPush"]["byApp"]), ["chat", "other"])
         self.assertEqual(sorted(snap["pusher"]["clients"]["byApp"]), ["chat", "other"], "the per-client wire table follows the same rule")
         self.assertEqual(snap["pusher"]["clients"]["byKind"]["other"]["frames"], 1)
+        self.assertEqual(snap["stagesForeign"], {"jobs.autoNudge.parse": 1.0}, "the foreign write rode in the walk")
+        self.assertEqual(snap["pusher"]["cycleJobsMs"]["persistCheckpoints"], 2.0, "and the pusher's cycle job")
 
     def test_the_route_mark_is_the_registers_word_never_the_requesters(self):
         """_route_seg (2026-09-18): GET /perf?stacks=1 and ROMP_PERF_STACKS serve each thread's stage mark, and a handler's is
