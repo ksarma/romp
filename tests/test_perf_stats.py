@@ -2474,6 +2474,46 @@ class PusherRecords(unittest.TestCase):
             self.assertEqual(after["push"], before["push"])
             self.assertAlmostEqual(after["jobs"] - before["jobs"], (reads[0] - n_first - 1) * 1.0, places=6, msg="the no-client cycle's jobs span every read but its first")
 
+    def test_cycle_jobs_split_their_thread_cpu_into_push_and_jobs(self):
+        # the CPU twin of the wall split above (2026-09-18 review, medium 8): under a fake getrusage that advances one ms of
+        # user and half a ms of system time per read, with _push_all a stub that reads the thread clock ONCE, the push row's
+        # CPU is that read plus the closing read (2 ms exactly), jobs is the function's CPU span less the push's, the two
+        # summing to every read but the first, and a cycle with no client moves jobs alone. The snapshots are taken inside
+        # the patch, so the block is served whatever the platform's clock; their own reads are discarded from the count
+        for nm in self.JOBS:
+            setattr(km, nm, lambda *a, **k: None)
+        km._push_all = lambda live_map=None: km._thread_cpu()
+        reads = []
+
+        def fake(who):
+            reads.append(who)
+            return types.SimpleNamespace(ru_utime=0.001 * len(reads), ru_stime=0.0005 * len(reads), ru_maxrss=0)
+
+        def cpu():
+            s = km._PERF_STATS.snapshot()["stages_cpu_ms"]
+            return {k: dict(s[k]) for k in ("push", "jobs")}
+        with mock.patch.object(km, "_RUSAGE_THREAD", 11), mock.patch.object(km.resource, "getrusage", fake):
+            before = cpu()
+            del reads[:]
+            km._pusher_cycle_jobs(int(time.time()), {}, True)
+            n = len(reads)
+            after = cpu()
+            push = after["push"]["user"] - before["push"]["user"]
+            jobs = after["jobs"]["user"] - before["jobs"]["user"]
+            self.assertAlmostEqual(push, 2.0, places=6, msg="the push's CPU spans the stub's read and the closing read")
+            self.assertGreater(jobs, 0.0, "the jobs' CPU is the function's less the push's, never negative")
+            self.assertAlmostEqual(push + jobs, (n - 1) * 1.0, places=6, msg="push plus jobs is the function's whole CPU span: every read but the first")
+            self.assertAlmostEqual(after["push"]["sys"] - before["push"]["sys"], 1.0, places=6, msg="the system half rides too")
+            self.assertAlmostEqual(after["jobs"]["sys"] - before["jobs"]["sys"], jobs / 2.0, places=6)
+            before = cpu()
+            del reads[:]
+            km._pusher_cycle_jobs(int(time.time()), {}, False)   # no client: no push, the jobs still run
+            n = len(reads)
+            after = cpu()
+            self.assertEqual(after["push"], before["push"], "no client: the push row stands")
+            self.assertAlmostEqual(after["jobs"]["user"] - before["jobs"]["user"], (n - 1) * 1.0, places=6,
+                                   msg="the no-client cycle's jobs span every read but its first")
+
     def test_a_connect_serves_the_build_it_tested_when_the_cache_is_replaced_between_its_reads(self):
         # _cached_timeline tested the cached payload and returned it as two reads of the shared list while the
         # pusher thread assigns _built_timeline[:] on a rebuild; a connect on the handler thread whose two reads

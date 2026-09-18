@@ -413,8 +413,16 @@ class ByteIdenticalFrames(unittest.TestCase):
         to compare against), at least one stat per signature (the transcript's), and no census count with no chat client
         registered (the harness's clients are the push's targets, not connected clients)."""
         ps = km._PERF_STATS
+        pairs = []
+        real_note = km._chat_sig_note_pre
+
+        def note(sid, sig, hit, watched, held, plain_outline):
+            if hit is not None and sig is not None:
+                pairs.append((hit[0], sig))                # the compare's two operands, for the identity count below
+            return real_note(sid, sig, hit, watched, held, plain_outline)
         before, b0 = km._chat_sig_stats_report(), ps.snapshot()["builds"]["chat"]
-        _wire, calls, _rows = self._run(km._chat_diff, perf=ps)
+        with mock.patch.object(km, "_chat_sig_note_pre", note):
+            _wire, calls, _rows = self._run(km._chat_diff, perf=ps)
         self.assertEqual(calls, [False, True, False, True, False, True], "premise: rebuilt, served, alternating")
         after, b1 = km._chat_sig_stats_report(), ps.snapshot()["builds"]["chat"]
         d = {k: after[k] - before[k] for k in after}
@@ -424,9 +432,27 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertEqual(d["nosig"], 0)
         self.assertEqual(d["post"], built - d["nosig"], "one post-build signature per rebuild that had a signature")
         self.assertEqual(d["compares"], 5, "every cycle after the first meets the cached entry")
-        self.assertGreaterEqual(d["compareIdentity"], 0)
-        self.assertLessEqual(d["compareIdentity"], 5 * len(km._CHAT_SIG_LABELS))
-        self.assertGreaterEqual(d["stats"], d["pre"] + d["post"], "every signature stats the transcript at least")
+        # compareIdentity is the count the compare itself sees, pinned from its operands (2026-09-18 review, medium 7): the
+        # components the two signatures hold as ONE object (None, a bool, an empty tuple, a small int: the interpreter's
+        # singletons) against those rebuilt per signature (a fresh stat pair, a tuple of them)
+        self.assertEqual(len(pairs), 5)
+        expected = sum(sum(1 for a, b in zip(old, new) if a is b) for old, new in pairs)
+        self.assertEqual(d["compareIdentity"], expected)
+        self.assertGreater(expected, 0); self.assertLess(expected, 5 * len(km._CHAT_SIG_LABELS))
+        for old, new in pairs:
+            same = {lab for lab, a, b in zip(km._CHAT_SIG_LABELS, old, new) if a is b}
+            self.assertTrue({"needs", "floor", "taskout", "pathlink", "postal", "downtime"} <= same,
+                            "the two bools, the empty tails, the None postal and the small-int downtime are one object: %r" % sorted(same))
+            self.assertFalse({"transcript", "states"} & same, "a stat pair is built per signature, never the same object")
+        # stats is exact (medium 9): per signature the transcript, the states file (one key, the fsid: no anchor here), the
+        # archive, episodes and gone identities, the working note's and one CLAUDE.md on the chain (a session with no cwd:
+        # the global file alone). The tail's sites (_chat_stat_key, _chat_postal_key, _repo_index_key) stat nothing with
+        # no cached dependency record, and the shared identities are the push's, read once outside any signature
+        per_sig = 6 + len(km._claudemd_paths(""))
+        self.assertEqual(per_sig, 7)
+        self.assertEqual(d["stats"], per_sig * (d["pre"] + d["post"]), "seven stats per signature, pre and post alike")
+        self.assertEqual(d["regReads"], d["pre"] + d["post"], "one registry read per signature")
+        self.assertEqual(d["thread"], 0, "no comments store: no thread signature")
         self.assertEqual(d["waited"], 0)
         self.assertEqual((d["warmEligible"], d["warmBlockedByOutline"], d["heldBody"]), (0, 0, 0), "no connected chat client: no census")
 
@@ -526,13 +552,22 @@ class ByteIdenticalFrames(unittest.TestCase):
             del reg_calls[:]
             sig = km._chat_build_sig(sess, None, self.NOW, live_map={})
             after = km._chat_sig_stats_report()
+            first_reg = list(reg_calls)                     # the first signature's read_reg calls (the next signature adds its own)
+            with mock.patch.object(km._live_scope, "names", None):   # no snapshot on the thread: _names_parts reads the file
+                b2 = km._chat_sig_stats_report()
+                km._chat_build_sig(sess, None, self.NOW, live_map={})
+                a2 = km._chat_sig_stats_report()
+        self.assertEqual(a2["namesReads"] - b2["namesReads"], 2,
+                         "with no names snapshot: the stamp's read and _names_parts's fallback read (2026-09-18 review, low 14)")
         self.assertIsNotNone(sig)
         d = {k: after[k] - before[k] for k in after}
         self.assertEqual(d["namesReads"], 1, "the stamp read's names read, and no other")
         self.assertEqual(d["switchReads"], 1)
-        self.assertEqual(d["regReads"], len(reg_calls), "every read_reg the signature made: %r" % (reg_calls,))
+        self.assertEqual(d["regReads"], len(first_reg), "every read_reg the signature made: %r" % (first_reg,))
         self.assertGreaterEqual(d["regReads"], 1)
-        self.assertGreaterEqual(d["stats"], 5, "the transcript, the states file and the archive, episodes and gone identities at least")
+        self.assertEqual(d["stats"], 10, "exact (2026-09-18 review, medium 9): the transcript, the states file, the archive, episodes "
+                                        "and gone identities, the working note's, one CLAUDE.md on the chain, and, outside a push (no "
+                                        "shared scope on the thread), the three shared identities session-flags, notify-cards and cleared")
         self.assertEqual((d["pre"], d["post"], d["compares"]), (0, 0, 0), "a signature outside the push loop is not a loop count")
 
     def test_the_frames_are_byte_identical_with_the_signature_counters_disabled(self):
@@ -545,6 +580,22 @@ class ByteIdenticalFrames(unittest.TestCase):
             off, calls_off, _ = self._run(km._chat_diff)
         self.assertEqual(off, live, "the same wire strings, per client, with the counters off")
         self.assertEqual(calls_off, calls_live)
+        # the census branch (2026-09-18 review, low 13): the same comparison with a connected chat page that holds the tab as
+        # a skeleton from the second cycle on (the branch the run above never reaches with no connected client), the census
+        # read switched off with the counters
+        held = {"app": "chat", "alive": True, "sent": {}, "skeleton": set(), "proto": 2, "ready": True, "handshake": True}
+
+        def between(i):
+            held["skeleton"] = {self.SID} if i >= 1 else set()
+        with mock.patch.object(km, "_clients", [held]):
+            live2, calls_live2, _ = self._run(km._chat_diff, between=between)
+            with mock.patch.object(km, "_chat_sig_count", noop), mock.patch.object(km, "_chat_sig_bump", noop), \
+                    mock.patch.object(km, "_chat_sig_note_pre", noop), mock.patch.object(km, "_thread_cpu", lambda: None), \
+                    mock.patch.object(km, "_skeleton_census", lambda sids, clients: None):
+                off2, calls_off2, _ = self._run(km._chat_diff, between=between)
+        self.assertEqual(calls_live2, [False, True, False, True, False, True], "the census changed no build")
+        self.assertEqual(off2, live2, "...and the same wire strings with a connected page whose skeleton set the census reads")
+        self.assertEqual(calls_off2, calls_live2)
 
     def test_the_signature_seam_is_split_into_its_static_and_deps_sub_seams(self):
         """Stage 1 of the chat-signature design (2026-09-18): push.chat.sig is a container of push.chat.sig.static (the
@@ -615,6 +666,15 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertGreater(d["push.chat.build"]["user"], 0.0)
         self.assertGreaterEqual(d["push.chat"]["user"] + 1e-6, sum(d[k]["user"] for k in ("push.chat.sig", "push.chat.build", "push.chat.send")),
                                 "the container's CPU covers its seams")
+        # the sub-seams' CPU (2026-09-18 review, low 12): static is the seam's CPU net of the deps tail, so the two sum to the
+        # seam exactly. Under the fake clock a pre-build signature is three reads apart (the tail's pair inside the seam's
+        # pair) and a post-build one a single read, so over six pre and three post: sig 21, deps 6, static 15, in ms of user
+        for c, per_read in (("user", 1.0), ("sys", 0.5)):
+            self.assertAlmostEqual(d["push.chat.sig.static"][c] + d["push.chat.sig.deps"][c], d["push.chat.sig"][c], places=6,
+                                   msg="%s: static plus deps is the seam" % c)
+            self.assertAlmostEqual(d["push.chat.sig"][c], 21 * per_read, places=6, msg=c)
+            self.assertAlmostEqual(d["push.chat.sig.deps"][c], 6 * per_read, places=6, msg=c)
+            self.assertAlmostEqual(d["push.chat.sig.static"][c], 15 * per_read, places=6, msg=c)
         for row in rows:
             self.assertEqual(set(row["push.chat.sig"]), {"ms", "bytes", "hydrated"}, "the split's rows carry no CPU column")
 
@@ -654,8 +714,19 @@ class ByteIdenticalFrames(unittest.TestCase):
 
         def build(frame):
             raise RuntimeError("synthetic build failure")
+        reads = []
+
+        def fake(who):
+            reads.append(who)
+            return types.SimpleNamespace(ru_utime=0.001 * len(reads), ru_stime=0.0005 * len(reads), ru_maxrss=0)
         before = ps.snapshot()["stages_ms"]
-        wire, calls, rows = self._run(km._chat_diff, perf=ps, build=build, tolerate=("push build: chat ",))
+        with mock.patch.object(km, "_RUSAGE_THREAD", 11), mock.patch.object(km.resource, "getrusage", fake):
+            before_cpu = ps.snapshot()["stages_cpu_ms"]["push.chat.build"]
+            wire, calls, rows = self._run(km._chat_diff, perf=ps, build=build, tolerate=("push build: chat ",))
+            after_cpu = ps.snapshot()["stages_cpu_ms"]["push.chat.build"]
+        self.assertAlmostEqual(after_cpu["user"] - before_cpu["user"], 6.0, places=6,
+                               msg="the failed build's CPU is build CPU too (2026-09-18 review, low 15): one read pair per failed build, six cycles")
+        self.assertAlmostEqual(after_cpu["sys"] - before_cpu["sys"], 3.0, places=6)
         self.assertEqual(calls, [], "no build ever stored: the diff never ran")
         self.assertEqual(len(rows), 6)
         for i, row in enumerate(rows):
@@ -666,8 +737,8 @@ class ByteIdenticalFrames(unittest.TestCase):
             self.assertIn("push.chat", chat)
         after = ps.snapshot()["stages_ms"]
         self.assertGreater(after["push.chat.build"], before["push.chat.build"])
-        types = [json.loads(s)["type"] for s in wire["chat"]]
-        self.assertNotIn("session", types); self.assertNotIn("chatTail", types)
+        kinds = [json.loads(s)["type"] for s in wire["chat"]]
+        self.assertNotIn("session", kinds); self.assertNotIn("chatTail", kinds)
 
     def test_a_rebuild_closes_the_sig_seam_twice_and_a_served_tab_once(self):
         """The post-build signature (the check that the static components held across the build) is signature time
