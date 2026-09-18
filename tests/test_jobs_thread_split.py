@@ -302,7 +302,8 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
     def test_the_stats_keep_two_owners_apart(self):
         """A stage closed on the jobs thread lands in the jobs split and never in the pusher's, and the other way round. The
         cumulative rows are each writer's own since 2026-09-18 (a flat `jobs.` row the jobs thread's, a flat push row the
-        pusher's, with nothing under pusher.connectPush.stagesMs when no connect push ran), where they took both before."""
+        pusher's, a connect push's push.chat under pusher.connectPush.stagesMs and not in the flat row), where they took
+        every writer's before: the flat push.chat read 30 ms under the fold, the pusher's 10 and the connect thread's 20."""
         km = self.km
         ps = km._PerfStats()
         ps.cycle_begin()                                              # this thread is the pusher
@@ -315,23 +316,29 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
             done.set()
         th = threading.Thread(target=jobs_thread); th.start(); th.join(5)
         self.assertTrue(done.is_set())
+        connected = threading.Event()
+        def connect_thread():                                         # a fresh client's handler thread: no cycle, _push's "connect" mark
+            km._stage_marked("connect")(lambda: ps.stage("push.chat", 0.020))()
+            connected.set()
+        th = threading.Thread(target=connect_thread); th.start(); th.join(5)
+        self.assertTrue(connected.is_set())
         ps.stage("jobs.apiHealth", 0.001); ps.stage("jobs", 0.001)
         ps.cycle(0.012)
         snap = ps.snapshot()
         self.assertEqual(sorted(snap["pusher"]["firstCycle"]["stages"]), ["jobs", "jobs.apiHealth", "push", "push.chat"])
         self.assertEqual(sorted(snap["jobs"]["firstPass"]["stages"]), ["jobs.autoNudge", "jobsPass"])
         self.assertAlmostEqual(snap["jobs"]["firstPass"]["stages"]["jobsPass"]["ms"], 20.0)
-        self.assertAlmostEqual(snap["stages_ms"]["jobs.autoNudge"], 20.0, "the flat row takes the jobs thread's job")
+        self.assertAlmostEqual(snap["stages_ms"]["jobs.autoNudge"], 20.0, msg="the flat row takes the jobs thread's job")
         # the pusher's `jobs.apiHealth` (2026-09-18): its split row as before, its cumulative wall under pusher.cycleJobsMs
         # and not in stages_ms, which holds no cycle job's key since the change
         self.assertAlmostEqual(snap["pusher"]["firstCycle"]["stages"]["jobs.apiHealth"]["ms"], 1.0)
         self.assertAlmostEqual(snap["pusher"]["cycleJobsMs"]["apiHealth"], 1.0)
         self.assertNotIn("jobs.apiHealth", snap["stages_ms"])
         # the pusher's push stages (2026-09-18): the flat rows are its own by its ownership of the cycle, exact
-        self.assertAlmostEqual(snap["stages_ms"]["push.chat"], 10.0, "the pusher's push.chat, the flat row")
+        self.assertAlmostEqual(snap["stages_ms"]["push.chat"], 10.0, msg="the pusher's push.chat, the flat row (30.0 under the fold)")
         self.assertAlmostEqual(snap["stages_ms"]["push"], 10.0)
-        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {}, "no connect push in the run")
-        self.assertEqual(snap["stagesForeign"], {}, "both writers owned a loop")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {"push.chat": 20.0}, "the connect thread's, apart")
+        self.assertEqual(snap["stagesForeign"], {}, "every writer had an owner or a purpose")
         self.assertEqual(ps._mine(), "pusher")
         self.assertEqual(snap["jobs"]["passes"], 1)
         self.assertEqual(snap["pusher"]["cycles"], 1)

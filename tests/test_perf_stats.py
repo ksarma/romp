@@ -1211,13 +1211,14 @@ class PushRowsByPurpose(unittest.TestCase):
             self.assertFalse(pp.denied(k, 0.0), "denied by the export: %s" % k)
             self.assertNotIn(k, pp.BOUND_KEYS, "coarsened by the export: %s" % k)
         snap = self._three_writers()
+        tab = snap["pusher"]["connectPush"].get("stagesMs")           # the premise first: a kernel without the table fails here, by name
+        self.assertEqual(sorted(tab or {}), ["push.chat", "push.feedFirst", "push.send"], "premise: the table is populated")
         block = {"pusher": {"connectPush": snap["pusher"]["connectPush"]}, "stagesForeign": snap["stagesForeign"],
                  "stages_ms": {k: v for k, v in snap["stages_ms"].items() if k.startswith("push")}}
         self.assertEqual(pp.fold(block), block, "the export keeps every key and value as served")
         for v in list(snap["pusher"]["connectPush"]["stagesMs"].values()) + list(snap["stagesForeign"].values()) + list(block["stages_ms"].values()):
             self.assertIsInstance(v, float)
         self.assertEqual(pp.paste_problems(block), [])
-        self.assertEqual(sorted(snap["pusher"]["connectPush"]["stagesMs"]), ["push.chat", "push.feedFirst", "push.send"], "premise: the table is populated")
 
     def test_the_collectors_docstring_names_the_connect_table(self):
         doc = km._PerfStats.__doc__
@@ -1226,7 +1227,7 @@ class PushRowsByPurpose(unittest.TestCase):
         self.assertIn("stagesMs", pusher_row)
         stages_row = doc[doc.index("      stages_ms  "):doc.index("      stagesForeign  ")]
         self.assertIn("pusher.connectPush.stagesMs", stages_row, "the stages_ms row sends the reader to the connect table")
-        self.assertIn("moved", stages_row, "and says the connect pushes' part moved there")
+        self.assertRegex(stages_row, r"moved to pusher\.connectPush\.stagesMs", "and says the connect pushes' part moved there")
         self.assertIn("2026-09-18", stages_row)
         self.assertNotIn("EVERY caller", stages_row, "the fold sentence is gone")
         foreign_row = doc[doc.index("      stagesForeign  "):doc.index("      builds  ")]
