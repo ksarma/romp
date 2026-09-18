@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { freePorts } = require(path.join(__dirname, 'manager-ports'));
 
 process.env.ROMP_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-op-env-'));
 const mgr = require(path.join(__dirname, '..', 'bin', 'romp-manager'));
@@ -66,16 +67,18 @@ test('startManager refuses before it opens the control port (source pin: the che
 // environment exits 1 and its one log line NAMES the variables to remove, never their values, so the operator
 // reading manager.log knows which lines to take out of service.env. One more fact of the resolved order rides
 // along: the `romp down` marker is cleared first (the start was asked for, so `romp status` does not call the
-// kernel stopped on purpose while the manager refuses to run). Private ports: on the default port a live manager
-// would answer the probe and the exit would be its "already running" refusal, not this one.
-test('romp-manager up: the exit-1 line names every retired variable found, values stay out, the marker is cleared', () => {
+// kernel stopped on purpose while the manager refuses to run). Private ports, from this file's block
+// (tests/manager-ports.js): on the default port a live manager would answer the probe and the exit would be its
+// "already running" refusal, not this one.
+test('romp-manager up: the exit-1 line names every retired variable found, values stay out, the marker is cleared', async () => {
+  const [managerPort, servePort] = await freePorts(__filename, 2);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-refusal-'));
   try {
     const bin = path.join(dir, 'bin'), state = path.join(dir, 'state');   // bin: an empty PATH, so nothing of the machine's is reached
     fs.mkdirSync(bin); fs.mkdirSync(state);
     const marker = path.join(state, 'down-by-romp');
     fs.writeFileSync(marker, JSON.stringify({ t: 1700000000, cmd: 'romp down' }) + '\n');
-    const env = { PATH: bin, HOME: '/nonexistent', ROMP_STATE_DIR: state, ROMP_MANAGER_PORT: '7625', ROMP_SERVE_PORT: '7626',
+    const env = { PATH: bin, HOME: '/nonexistent', ROMP_STATE_DIR: state, ROMP_MANAGER_PORT: String(managerPort), ROMP_SERVE_PORT: String(servePort),
       ROMP_EXPECTED_AUTH: 'key',
       ANTHROPIC_API_KEY: 'synthetic-value-never-printed', ROMP_API_KEY_REF: 'op://synthetic-vault/synthetic-item/field' };
     const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'romp-manager'), 'up'], { env, encoding: 'utf8', timeout: 20000 });

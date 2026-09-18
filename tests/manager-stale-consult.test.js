@@ -16,6 +16,7 @@ const path = require('node:path');
 // mtime moves after the require is what a deploy does to the real file under a supervised manager; a stand-in kernel
 // records the SIGTERM it gets; the child is allowed to exit on its own (shutdownAll exits after 800 ms).
 const { spawnSync } = require('node:child_process');
+const { freePort } = require(path.join(__dirname, 'manager-ports'));
 const ROOTS = [];
 const tmpRoot = (prefix) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); ROOTS.push(d); return d; };
 process.on('exit', () => { for (const d of ROOTS) fs.rmSync(d, { recursive: true, force: true }); });
@@ -43,9 +44,9 @@ const standIn = `
   fs.utimesSync(COPY, past, past);   // the deploy: the file moved under the running manager
 `;
 
-test('a stale supervised manager asked to restart one kernel (/restart) exits for its own respawn instead, stopping the kernel with trigger refresh', () => {
+test('a stale supervised manager asked to restart one kernel (/restart) exits for its own respawn instead, stopping the kernel with trigger refresh', async () => {
   const copy = staleCopy();
-  const port = 20000 + Math.floor(Math.random() * 20000);
+  const port = await freePort(__filename);   // the manager binds this for real: a port from this file's block, probed, never a bare random pick
   // startManager spawns every boot spec once it listens: a stub launcher that sleeps stands in for the kernel (its
   // record replaces the seeded one, so the row is judged by kernel and trigger, not by the stand-in's pid)
   const stubRoot = tmpRoot('romp-mgr-stale-stub-');
