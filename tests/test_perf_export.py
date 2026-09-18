@@ -537,10 +537,14 @@ class FoldInvariant(unittest.TestCase):
     def test_the_denylist_walk_refuses_a_bound_off_a_power_of_two_and_a_number_the_size_of_a_stamp_and_passes_every_fold(self):
         """The two findings added with the third review round's rules (2026-09-18), so the upload's re-check matches the
         fold's full fixed point: a memory-fraction bound (BOUND_KEYS) the fold would have rounded up to a power of two, a
-        value finding at its own path; and a numeric leaf at or above STAMP_FLOOR anywhere outside a bound, dict or list,
-        int or float, which is round 3's property (no absolute clock stamp survives the fold under any key) turned into a
-        check over a file. The fixed point holds: a fold of every fixture at that round's head, the epoch-shifted leak
-        snapshot and the ten real-sized bounds among them (budgetBytes floors at 4 GiB, past the floor), raises no finding."""
+        value finding at its own path; and a FLOAT leaf at or above STAMP_FLOOR anywhere outside a bound, dict or list,
+        which is round 3's property (no absolute clock stamp survives the fold under any key) turned into a check over a
+        file. An integer that large is exempt whatever its size: a time.time() value is a float, and the kernel's
+        cumulative byte and count totals are integers that pass 1.5e9 within hours on a busy kernel (the ws tables'
+        `bytes`, `parses.bytes`), so a fresh export from a long-lived kernel must pass its own belt (a rule over every
+        number refused it, 2026-09-18). The fixed point holds: a fold of every fixture at that round's head, the
+        epoch-shifted leak snapshot and the ten real-sized bounds among them (budgetBytes floors at 4 GiB, past the
+        floor), raises no finding."""
         for snap in (leak_snapshot(), _epoch(leak_snapshot()), bounds_snapshot(), bounds_snapshot(8 * 1024 ** 3)):
             for usage in (False, True):
                 doc = pe.export_document(snap, usage=usage)
@@ -562,11 +566,11 @@ class FoldInvariant(unittest.TestCase):
             doc = pe.export_document(bounds_snapshot())
             doc["perf"]["heap"]["hydrated"]["capBytes"] = ok
             self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], repr(ok))
-        # the floor: a numeric leaf at or above STAMP_FLOOR under a key the denylist does not know, in a dict or a list, int or
-        # float, in `usage` too; the value at the floor is refused, one below it passes
+        # the floor: a FLOAT leaf at or above STAMP_FLOOR under a key the denylist does not know, in a dict or a list, in
+        # `usage` too; the value at the floor is refused, one below it passes
         for path, raw, where in (((("perf", "pusher", "startedAt"), 1.6e9, "perf/pusher/startedAt")),
                                  ((("perf", "heap", "marks"), [1, 1.5e9], "perf/heap/marks/1")),
-                                 ((("usage", "firstSeen"), 1_700_000_000, "usage/firstSeen"))):
+                                 ((("usage", "firstSeen"), 1_700_000_000.0, "usage/firstSeen"))):
             doc = pe.export_document(leak_snapshot(), usage=True)
             node = doc
             for k in path[:-1]:
@@ -578,13 +582,31 @@ class FoldInvariant(unittest.TestCase):
         doc = pe.export_document(leak_snapshot())
         doc["perf"]["pusher"]["cycles"] = 1_499_999_999
         self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "below the floor a number is a count")
+        # an INTEGER at or above the floor is a count or a byte total, not a stamp, whatever its size and wherever it sits:
+        # under a bytes-named key (the kernel's lifetime wire totals pass 2e9 within hours), under a key the denylist does
+        # not know, in a list, in `usage`; the same value as a float is the stamp finding (fails before: every one refused)
+        doc = pe.export_document(leak_snapshot(), usage=True)
+        doc["perf"]["pusher"]["clients"]["byKind"]["chrome"]["bytes"] = 2_000_000_000
+        doc["perf"]["pusher"]["clients"]["byApp"]["chat"]["bytes"] = 2_000_000_000
+        doc["perf"]["parses"]["bytes"] = 2_000_000_000
+        doc["perf"]["pusher"]["startedAt"] = 2_000_000_000
+        doc["perf"]["heap"]["marks"] = [1, 2_000_000_000, 1 << 40]
+        doc["usage"]["firstSeen"] = 1_700_000_000
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "an integer past the floor is a total, not a stamp")
+        self.assertIsNone(_check(doc))
+        doc["perf"]["pusher"]["startedAt"] = 2_000_000_000.0
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",))],
+                         [("a number the size of a clock stamp", "perf/pusher/startedAt")], "the same value as a float is a stamp")
         # one finding per leaf: under an uptime key the grain is judged first (1.6e9 is off it), and on the grain the floor
-        # (1.5e9 is 25 million whole minutes); under a denied key nothing beneath is walked, so the key finding stands alone
+        # (1.5e9 is 25 million whole minutes) as a float; the same as an integer is what public_uptime writes and passes;
+        # under a denied key nothing beneath is walked, so the key finding stands alone
         doc = pe.export_document(leak_snapshot())
         doc["perf"]["uptime_s"] = 1.6e9
         self.assertEqual([p.kind for p in pp.denylist_problems(doc, under=("perf",))], ["an uptime not rounded to whole minutes"])
         doc["perf"]["uptime_s"] = 1.5e9
         self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",))], [("a number the size of a clock stamp", "perf/uptime_s")])
+        doc["perf"]["uptime_s"] = 1_500_000_000
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "an integer uptime on the grain is the fold's own")
         doc = pe.export_document(leak_snapshot())
         doc["perf"]["pusher"]["firstCycle"]["t"] = 1.7e9
         self.assertEqual([(p.kind, p.is_key, p.path) for p in pp.denylist_problems(doc, under=("perf",))],

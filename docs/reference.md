@@ -3813,9 +3813,12 @@ registry; a hostname or user is matched as whole words, so a user named
 uuid, a 32-hex or 40-hex token, an absolute path or free text (a string
 carrying whitespace), and checked against the denylist (a key the export
 drops, an uptime not rounded to whole minutes, a bound not rounded to a power
-of two, or, under any other key, a number the size of a clock stamp, 1.5e9 or
-more: a check the export's own output passes by construction, and which `romp
-perf upload` runs again over a file you may have edited); any finding refuses
+of two, or, under any other key, a float the size of a clock stamp, 1.5e9 or
+more, a number written with a point or an exponent as `time.time()` values
+are; an integer that large is a byte total or a count, which a long-lived
+kernel's lifetime totals reach within hours, and passes: a check the export's
+own output passes by construction, and which `romp perf upload` runs again
+over a file you may have edited); any finding refuses
 the write and names the kind of
 finding and the key path (a value's own path, or the path of the dict holding
 a key), never the key or the value; when more than one check finds something,
@@ -3859,12 +3862,12 @@ file must be a regular file of at most 1 MiB that parses as strict JSON (no
 walk and denylist check again, as it stands, since you may have edited it. The
 rule is the export's: the public form is paste-safe, not unlinkable. What the
 export dropped or coarsened is refused (a `t` put back on a split row, an
-uptime typed to the second, a bound typed to the byte, a number the size of a clock
-stamp under any key), and the measurements it keeps pass, so a fresh export
-passes whole and two uploads from one kernel remain linkable through them by
-design. A finding is reported by kind and key path, never by value. The verb
-then prints the path, the byte
-size and the URL it will dial (the address as configured with `/v1/upload`
+uptime typed to the second, a bound typed to the byte, a float the size of a
+clock stamp under any key), and the measurements it keeps pass (an integer
+that large is a byte total or a count), so a fresh export passes whole and two
+uploads from one kernel remain linkable through them by design. A finding is
+reported by kind and key path, never by value. The verb then prints the path,
+the byte size and the URL it will dial (the address as configured with `/v1/upload`
 appended, so whatever the setting carries is seen before the yes) and asks for
 a yes. Off a terminal it refuses unless `--yes` is passed. That flag is the form an agent
 uses, and the command line that carries it is the record of the confirmation;

@@ -26,8 +26,9 @@ of these refuses with exit 1. The rule the re-check holds the file to is the exp
 strings and every absolute clock stamp and coarsens the uptime and the memory-fraction bounds; durations, counts and
 per-process measurements stay, so two exports from one kernel remain linkable through them by design. The re-check
 refuses what the export would have dropped or coarsened (a `t` put back on a split row, an uptime typed to the
-second, a bound typed to the byte, a number the size of a clock stamp under any key) and passes what it keeps, so a
-fresh export passes whole.
+second, a bound typed to the byte, a float the size of a clock stamp under any key) and passes what it keeps (an
+integer that large is a byte total or a count, which a long-lived kernel's totals reach within hours), so a fresh
+export passes whole.
 
 Before sending, the verb prints the path, the byte size and the URL it will dial (the address as configured
 with the route appended, so a path in the setting is seen at the prompt), then asks for a yes on a terminal

@@ -9,7 +9,8 @@ three; the address must be https with a host and no userinfo, query or fragment 
 localhost alone), and a refused address is never echoed; the file must exist, be at most 1 MiB, parse as strict
 JSON (no NaN or Infinity, no repeated key at any depth, nesting within the parser's reach) to an object with the schema
 line and pass the export's own scan, walk and denylist walk as it stands (what the export dropped or coarsened is refused:
-a key it drops, an uptime off whole minutes, a bound off a power of two, a number the size of a clock stamp under any key), an
+a key it drops, an uptime off whole minutes, a bound off a power of two, a float the size of a clock stamp under any key; an
+integer that large is a byte total or a count and passes, so an export from a long-lived kernel is sent whole), an
 edited file refused by kind and key path and never by value; the line before the prompt names the URL the verb will dial, a path in the address included; the send needs a yes on a terminal or --yes, off a terminal
 without the flag it refuses before dialling, and no environment variable stands in for the flag (an AST census
 of the module's environment reads, plus an executed check with tempting names set); the one answer accepted is
@@ -492,9 +493,11 @@ class Cli(unittest.TestCase):
 
     def test_an_edited_file_with_a_number_the_size_of_a_clock_stamp_is_refused_naming_the_value_path_and_never_the_number(self):
         """The export writes no absolute clock stamp: every one the snapshot carries is denied by key, and round 3's property
-        test pins that none survives the fold under any key. So a numeric leaf at or above perf_public.STAMP_FLOOR (1.5e9,
+        test pins that none survives the fold under any key. So a FLOAT leaf at or above perf_public.STAMP_FLOOR (1.5e9,
         an epoch second from 2017 on) anywhere outside a coarsened bound was typed in after the export, whatever key it
-        sits under; the denylist walk refuses it, naming the value's path and not the number. A fresh export passes."""
+        sits under (a time.time() value is a float, and JSON keeps the distinction: a number written with a point or an
+        exponent loads as one); the denylist walk refuses it, naming the value's path and not the number. An integer that
+        large is a count or a byte total and passes whatever its size (the next case). A fresh export passes."""
         base = ["--yes", "--receiver", self.fake.url]
         edited = os.path.join(self.xdg, "edited.json")
         self.assertEqual(pp.STAMP_FLOOR, 1.5e9)
@@ -508,7 +511,7 @@ class Cli(unittest.TestCase):
         self.assertNotIn("1.6e", r.stdout + r.stderr)
         self.assertEqual(r.stdout, "", "refused before the summary line")
         doc = json.loads(self.data)
-        doc["perf"]["pusher"]["marks"] = [1, 1600000000]                             # an int, in a list: the path carries the index
+        doc["perf"]["pusher"]["marks"] = [1, 1600000000.5]                           # a float, in a list: the path carries the index
         with open(edited, "w") as fh:
             json.dump(doc, fh)
         r = self._refused(_run([edited] + base, self.state), 1, "(a number the size of a clock stamp, the value at perf/pusher/marks/1); nothing sent")
@@ -523,6 +526,40 @@ class Cli(unittest.TestCase):
         r = _run([self.file] + base, self.state)
         self.assertEqual(r.returncode, 0, "a fresh export from the export verb passes the same check")
         self.assertEqual(len(self.fake.requests), 2)
+
+    def test_an_export_whose_byte_totals_passed_the_stamp_floor_is_sent_since_an_integer_that_large_is_a_total_not_a_stamp(self):
+        """The kernel's cumulative byte and count totals are integers, and on a busy kernel the wire totals (pusher.clients
+        byKind and byApp `bytes`, `parses.bytes`) pass 1.5e9 within hours, so an export from a long-lived kernel carries
+        integers the size of a clock stamp under keys the denylist does not know by name. The re-check exempts an integer
+        whatever its size (a time.time() value is a float) and the file is sent whole, the totals in the body; the same
+        total written as a float is the stamp finding, so the type decides and never the key. Fails before: the export
+        was refused by its own belt, naming perf/parses/bytes (the shallowest of the four), and nothing was sent."""
+        base = ["--yes", "--receiver", self.fake.url]
+        doc = json.loads(self.data)
+        self.assertNotIn("clients", doc["perf"]["pusher"], "the planted snapshot carries no wire table; the case plants one")
+        doc["perf"]["pusher"]["clients"] = {
+            "byKind": {"chrome": {"frames": 400_000, "bytes": 2_000_000_000, "sendMs": 12345.5, "sendMax": 250.5, "sends": 400_000}},
+            "byApp": {"chat": {"frames": 400_000, "bytes": 2_000_000_000}}}
+        doc["perf"]["parses"]["bytes"] = 2_000_000_000
+        doc["perf"]["pusher"]["startedAt"] = 2_000_000_000                             # an integer under a key the denylist does not know
+        edited = os.path.join(self.xdg, "edited.json")
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        with open(edited, "rb") as fh:
+            data = fh.read()
+        self.assertEqual(data.count(b"2000000000"), 4, "four integers past the floor, written without a point")
+        r = _run([edited] + base, self.state)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (edited, len(data), self.fake.url) + SUCCESS % (RECEIPT, 180))
+        self.assertEqual(len(self.fake.requests), 1, "the export with byte totals past the floor was sent")
+        self.assertEqual(self.fake.requests[0][2], data, "the body is the file's bytes, totals included")
+        doc["perf"]["pusher"]["clients"]["byKind"]["chrome"]["bytes"] = 2_000_000_000.0   # the same total as a float: a stamp
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        r = self._refused(_run([edited] + base, self.state), 1,
+                          "refused: the public form still fails the denylist (a number the size of a clock stamp, the value at perf/pusher/clients/byKind/chrome/bytes); nothing sent")
+        self.assertNotIn("2000000000", r.stdout + r.stderr)
+        self.assertEqual(len(self.fake.requests), 1, "nothing more was sent")
 
     def test_the_line_before_the_prompt_names_the_url_dialled_with_a_path_and_port_in_the_address_included(self):
         base = self.fake.url + "/u/" + SID                # an address whose path carries an identifier: it is dialled, so it is shown

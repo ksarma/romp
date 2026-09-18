@@ -500,13 +500,15 @@ def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=(), stacks_key=S
 # The STAMP FLOOR, the fourth finding of denylist_problems (2026-09-18, with the third review round's rules): every absolute
 # clock stamp the two documents carry is denied by KEY (DENY_KEYS, DENY_PATHS), and the export's property test
 # (tests/test_perf_export.py, no absolute clock stamp survives the export) pins that none survives the fold under any key. Over
-# a FILE the upload verb re-checks, that property becomes a check: an epoch second from 2017 on is at or above 1.5e9, and a
-# numeric leaf that large under a key the denylist does not know is a stamp typed in after the export. The one leaf of the fold's
-# own output that reaches the floor is a coarsened bound (BOUND_KEYS: recordCache.budgetBytes floors at 4 GiB on every machine),
-# which is judged as a bound, a power of two, and not against the floor. The fold passes every other number through, so a
-# counter that reached the floor would be refused with it: none of the export's fixtures does and a served export passes
-# (ServedKernel), and the lifetime byte totals (the ws tables' `bytes`, `sends`, `parses.bytes`) are the counters that could,
-# past 1.5 GB in one kernel life.
+# a FILE the upload verb re-checks, that property becomes a belt for a stamp under a key the denylist does not know: an epoch
+# second from 2017 on is at or above 1.5e9, and a time.time() value is a FLOAT, which JSON keeps (a number written with a point
+# or an exponent loads as one), so a float leaf that large is a stamp typed in after the export. An INTEGER is exempt whatever
+# its size: the kernel's cumulative byte and count totals are integers, and on a busy kernel the wire totals (pusher.clients
+# byKind and byApp `bytes`, hundreds of megabytes to one client within an hour; `parses.bytes`) pass 1.5e9 within hours, so a
+# rule over every number refused a fresh export from a long-lived kernel by its own belt, and the upload verb with it (the
+# defect this replaces, 2026-09-18). A memory-fraction bound (BOUND_KEYS) is judged by the power-of-two rule alone, never
+# against the floor (recordCache.budgetBytes floors at 4 GiB on every machine). The fixed point holds over every fixture and
+# a served export (ServedKernel).
 STAMP_FLOOR = 1.5e9
 
 
@@ -519,15 +521,16 @@ def denylist_problems(doc, under=()):
     path the snapshot's blocks sit below, as paste_problems takes it), a KEY finding at the dict holding it, its value not
     walked; an uptime (UPTIME_KEYS) whose value is not what public_uptime would have written, a VALUE finding at its own
     path; a memory-fraction bound (BOUND_KEYS) whose value is not what public_bound would have written, a value finding at
-    its own path; and a numeric leaf at or above STAMP_FLOOR anywhere else, in a dict or a list, int or float, a value
-    finding at its own path (the fold's output carries no absolute clock stamp under any key, so one in a file was typed in
-    after the export, whatever key it sits under; a coarsened bound past the floor is the fold's own and is judged as a
-    bound alone). One finding per leaf, the coarsening's first. The number itself is not carried in the kind, and a caller
-    prints the kind and the path alone. The walk (paste_problems) is a shape rule and passes all four: `t` fits the
-    identifier grammar and any number is a number, so a document that a fold produced passes here by construction, and one
-    a user edited after the export (a `t` put back on a split row, an uptime typed to the second, a bound typed to the byte, a
-    stamp under a new key) is refused with the same wording the export's own check uses (`romp perf upload`,
-    2026-09-18)."""
+    its own path; and a FLOAT leaf at or above STAMP_FLOOR anywhere else, in a dict or a list, a value finding at its own
+    path (the fold's output carries no absolute clock stamp under any key, so one in a file was typed in after the export,
+    whatever key it sits under; a time.time() value is a float, and an integer that large is a count or a byte total, which
+    the kernel's lifetime totals reach within hours, so it passes whatever its size; a bound is judged as a bound alone,
+    never against the floor). One finding per leaf, the coarsening's first. The number itself is not carried in the kind,
+    and a caller prints the kind and the path alone. The walk (paste_problems) is a shape rule and passes all four: `t`
+    fits the identifier grammar and any number is a number, so a document that a fold produced passes here by
+    construction, and one a user edited after the export (a `t` put back on a split row, an uptime typed to the second, a
+    bound typed to the byte, a float stamp under a new key) is refused with the same wording the export's own check uses
+    (`romp perf upload`, 2026-09-18)."""
     problems = []
     n = len(under)
 
@@ -545,8 +548,8 @@ def denylist_problems(doc, under=()):
             rounded = public_bound(v)
             if not (rounded is v or rounded == v):
                 value_problem("a bound not rounded to a power of two", v, here)
-            return                          # a bound past the floor is the fold's own: judged as a bound alone
-        if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= STAMP_FLOOR:
+            return                          # a bound is judged as a bound alone, never against the floor
+        if isinstance(v, float) and v >= STAMP_FLOOR:   # a float alone: an integer that large is a total (STAMP_FLOOR's comment)
             value_problem("a number the size of a clock stamp", v, here)
 
     def walk(node, where):
