@@ -3,7 +3,7 @@ title: Pusher: an exact chat-diff return, timing seams inside push.chat and push
 status: candidate
 where: kernel/kernel.py (`_chat_diff`, `_PerfStats.STAGES` and `CONTAINERS`, `_push`, `_delta_split`, `_send_slot_delta`, `_wire_stats`, `_ua_kind`, `_ws_sender`, `_PerfStats.client_send`); docs/reference.md; tests in `tests/test_kernel_delta_send.py`, `tests/test_first_cycle_stage_split.py`, `tests/test_wire_once_per_build.py`, `tests/test_perf_stats.py`
 added: 2026-09-18
-pr:
+pr: 759
 tier: fix
 offered:
 closed:
