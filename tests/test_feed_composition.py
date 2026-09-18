@@ -25,7 +25,8 @@ whole sort_keys encode, and a build encodes each card, ledger and remainder fiel
 client's feed slot carrying a face per active card (the address, the title, the state and the age: fields feed.ts
 reads off a card today) plus one summary row per session with a card: on the 60-card fixture it sits far below the feed
 row, a fixture with every card active projects more than one with none, and the reader pin skips the row, with no bundle
-to pin it against.
+to pin it against; (f) the populated block, from cards in every column and two ledgers, passes the export's paste-safe walk
+(cli/perf_public.py, the check `romp perf export --public` runs over its output) and the fold keeps it whole.
 
 Synthetic only: the notes-api demo world, TESTHOST, placeholder ids."""
 import base64
@@ -60,6 +61,7 @@ os.makedirs(os.path.join(_ROOT, "romp"), exist_ok=True)
 with open(os.path.join(_ROOT, "romp", "session-hosts"), "w") as _fh:
     _fh.write("off")
 km = load_source("romp_kernel_feedcomp", os.path.join(BIN, "romp-kernel"))
+pp = load_source("romp_perf_public", os.path.join(ROOT, "cli", "perf_public.py"))   # the export's paste-safe walk
 
 SID = "11111111-2222-3333-4444-555555555555"
 SID_B = "11111111-2222-3333-4444-666666666666"
@@ -70,6 +72,15 @@ NOW = 1781100000
 # the live board's cards are larger and the gap smaller. The tolerance is the stated bound on that gap.
 FRAME_TOLERANCE = 0.15
 VOLATILE = {"type", "now", "buildId"}
+# The fixture's own strings, planted for the export's walk (cli/perf_public.py): a key or string value of the block that
+# carries one is a leak. The block is counts and byte totals only, so none can reach it; the walk holds it to that.
+PLANTED = (SID, SID_B, SID[:8], "TESTHOST", "example/notes-api", "notes-api", "Synthetic goal", "Decide the response shape",
+           "pulled 3 commits", "tags unavailable")
+# The export's identifier scan, with synthetic probes in place of the machine's own (tests/test_perf_export.py's shape).
+SYNTHETIC_HOME = "/home/tester"                                       # a synthetic home; never this machine's
+SYNTHETIC_PROBES = (("hostname", "testhost"), ("username", "tester"), ("home directory", SYNTHETIC_HOME),
+                    ("session id", SID.lower()), ("session id", SID[:8].lower()),
+                    ("session directory", SYNTHETIC_HOME + "/code/notes-api"))
 
 
 def _card(i, now=NOW, provisional=False, **over):
@@ -134,6 +145,24 @@ def _leaves(v, path=""):
             yield from _leaves(x, path + "[]")
     else:
         yield path, v
+
+
+def _paste_safe(tc, block):
+    """The block as `romp perf export --public` and the served-snapshot invariant test walk it (cli/perf_public.py), under
+    memos/feedComposition: the walk (paste_problems) finds no problem under the served snapshot's key grammar (the
+    kernel's _PERF_IDENT: no colon, 32 characters) with the fixture's strings planted, nor under the export's own; the
+    fold keeps the block whole (no key on the denylist, none folded to `other`, no bound or uptime coarsened, so the
+    export carries every number); the identifier scan finds no hit against synthetic probes; and every leaf is an int,
+    a count or a byte total (never a bool, a float, a string or null)."""
+    doc = {"memos": {"feedComposition": block}}
+    problems = pp.paste_problems(doc, planted=PLANTED, ident=km._PERF_IDENT)
+    tc.assertEqual(problems, [], "%d problem(s) in the block:\n  %s" % (len(problems), "\n  ".join(map(str, problems))))
+    tc.assertEqual(pp.paste_problems(doc, planted=PLANTED), [], "and under the export's own grammar")
+    tc.assertEqual(pp.fold(doc), doc, "the export keeps the block whole: no key denied, none folded, nothing coarsened")
+    tc.assertEqual(pp.identifier_hits(doc, SYNTHETIC_PROBES), [])
+    for path, leaf in _leaves(block):
+        tc.assertIsInstance(leaf, int, "%s = %r" % (path, leaf))
+        tc.assertNotIsInstance(leaf, bool, path)
 
 
 def _connect(port, query):
@@ -210,6 +239,12 @@ class ServedBlock(unittest.TestCase):
         port = srv.server_address[1]
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         s = None
+        # a fresh accumulator for this pass, so the block walked below holds this fixture alone (the module-global one
+        # carries every other test's passes in this process, odd remainder keys among them); the served path is the
+        # same: the memo reader and the pusher's pass read the module attribute at call time
+        fresh = mock.patch.object(km, "_FEED_COMP", km._FeedComposition())
+        fresh.start()
+        self.addCleanup(fresh.stop)
         passes0 = km._FEED_COMP.report()["passes"]
         try:
             s, buf = _connect(port, "app=feed&wid=wfc1&caps=feedDelta")
@@ -279,6 +314,9 @@ class ServedBlock(unittest.TestCase):
             bad = sorted(k for k in keys if not km._PERF_IDENT.fullmatch(k))
             self.assertEqual(bad, [], "every key of the block is an identifier")
             json.dumps(snap)
+            # the served block through the export's own walk (cli/perf_public.py), after a real pass with the cards and
+            # the ledgers attached: the paste-safe contract GET /perf's public form is held to, on the populated block
+            _paste_safe(self, block)
         finally:
             if s is not None:
                 s.close()
@@ -528,6 +566,57 @@ class SyntheticBuild(unittest.TestCase):
             self.assertEqual(fresh.report()["wire"], {"bytes": km._feed_est(parts), "exact": 0})
             lazy.text()
             self.assertEqual(fresh.report()["wire"], {"bytes": len(km._feed_body(feed)), "exact": 1})
+
+    def test_the_populated_block_passes_the_exports_paste_safe_walk_on_cards_in_every_column(self):
+        """(f): the served /perf document is paste-safe by contract (cli/perf_public.py: identifier keys; no id, path, text
+        or clock stamp; measurements stay), and the served walks (tests/test_perf_stats.py ServedSnapshotIsPasteSafe,
+        tests/test_perf_export.py ServedKernel) read whatever the module-global accumulator holds when they run, which in
+        a parallel run may be no pass at all (the lifetime rows zeroed, `last` empty). So the populated block is walked
+        here: cards in every column (working, needs_input, completed; a provisional card among them; two sessions) and
+        two ledgers through the pusher's per-entry pass, then a frame carrying the views fault marker and the off flag,
+        each report as GET /perf serves it. Beyond the fixture, every name the block can ever carry is held to the grammar
+        and to the export's fold: its fixed names, every frame field a `by` row can be keyed by (FEED_FRAME_FIELDS), the
+        app names and the projection names."""
+        fresh = mock.patch.object(km, "_FEED_COMP", km._FeedComposition())
+        fresh.start()
+        self.addCleanup(fresh.stop)
+        asks = ([_card(i, column="working") for i in range(4)]
+                + [_card(10 + i, column="needs_input", provisional=(i == 0)) for i in range(3)]
+                + [_card(20 + i, column="completed") for i in range(3)]
+                + [_card(40 + i, sid=SID_B, column=("working", "needs_input", "completed")[i]) for i in range(3)])
+        self.assertEqual({a["column"] for a in asks}, set(km.FEED_PHONE_FACE_ACTIVE) | {"completed"}, "cards in every column")
+        feed = _feed(asks=asks)
+        self.assertEqual(len(feed["ledgers"]), 2)
+        km._feed_parts(feed)
+        block = km._feed_composition_report()
+        last = block["last"]
+        self.assertEqual((block["passes"], last["cardCount"], last["ledgerCount"], last["ledgersAttached"]), (1, 13, 2, 1))
+        self.assertEqual(set(last["apps"]), {"feed", "fleet", "waiting", "phoneFace"}, "the app rows and the projection row")
+        self.assertTrue(all(row["today"] > row["projected"] > 0 for row in last["apps"].values()), last["apps"])
+        self.assertEqual(set(last["by"]), set(_rest_of(feed)), "one `by` row per remainder field of the frame")
+        _paste_safe(self, block)
+        # the two frame fields the fixture frame does not carry: the views fault marker (free text on the frame; a byte
+        # count here) and the off frame's flag
+        faulted = _feed(asks=asks, viewsFault="tags unavailable: synthetic", off=True)
+        del faulted["views"]
+        km._feed_parts(faulted)
+        block2 = km._feed_composition_report()
+        self.assertEqual(block2["passes"], 2)
+        self.assertLessEqual({"viewsFault", "off"}, set(block2["last"]["by"]))
+        self.assertLessEqual({"viewsFault", "off", "views"}, set(block2["lifetime"]["by"]), "the lifetime table carries both passes")
+        _paste_safe(self, block2)
+        # every name the block can carry, whatever the frame: an identifier the kernel's own grammar admits, and a key the
+        # export neither drops (the denylist) nor coarsens (a bound, an uptime), so a `by` row keyed by any frame field
+        # and every app or projection row survive the export whole
+        names = (set(km._FeedComposition.SUMS) | {"passes", "failed", "lifetime", "last", "wire", "bytes", "exact",
+                                                   "ledgersAttached", "by", "apps", "today", "projected", "other"}
+                 | set(km.FEED_FRAME_FIELDS) | set(km.FEED_APP_FIELDS) | set(km.FEED_PROJECTIONS))
+        for name in sorted(names):
+            self.assertTrue(km._PERF_IDENT.fullmatch(name), name)
+            self.assertFalse(pp.denied(name, 1), "%s: a key the export drops" % name)
+            self.assertNotIn(name, pp.BOUND_KEYS | pp.UPTIME_KEYS, "%s: a key the export coarsens" % name)
+        table = {"memos": {"feedComposition": {"last": {"by": {n: 1 for n in names}}}}}
+        self.assertEqual(pp.fold(table), table)
 
     def test_the_phone_face_projection_sits_far_below_the_feed_row_and_counts_the_active_cards(self):
         """(e): the 60-card, 2-ledger fixture (every card in the Working column, so every card active) against the

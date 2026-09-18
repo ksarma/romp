@@ -54846,8 +54846,9 @@ class _FeedComposition:
     field, and for the apps that read card fields an O(cards x fields) pass of len() calls memoized with the cards on
     the build's asks list (_feed_cards_memo), plus the projections' O(cards) passes memoized with it, so a ledgers
     refill pays none of it; no encode anywhere. About a millisecond per thousand cards. Paste-safe: identifier keys
-    (the frame's own field names, the kernel's app names), numbers only. A pass whose accounting raises is counted
-    under `failed` and said once; the frame is unaffected."""
+    (the frame's own field names, the kernel's app names), numbers only; tests/test_feed_composition.py walks the
+    populated block through cli/perf_public's check, the one `romp perf export --public` runs over its output. A pass
+    whose accounting raises is counted under `failed` and said once; the frame is unaffected."""
     __slots__ = ("lock", "passes", "failed", "life", "last", "said")
     SUMS = ("frame", "cards", "ledgers", "rest", "cardCount", "ledgerCount")
 

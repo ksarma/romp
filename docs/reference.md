@@ -3740,7 +3740,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   against the bundles skips the row. `wire` is the served body's length as the kernel holds it now,
   with `exact` 1 once a whole frame has gone out and 0 while it is the
   estimate. Every number comes from the encode the wire needs anyway; the
-  accounting adds a few length sums per pass and no second encode.
+  accounting adds a few length sums per pass and no second encode. The block
+  is counts and byte totals under identifier keys, and the public export
+  (`romp perf export --public`) carries it whole.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the workers' share is `cpu_ms_workers`; the
