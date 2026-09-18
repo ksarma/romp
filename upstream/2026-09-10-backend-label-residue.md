@@ -1,6 +1,6 @@
 ---
 title: Backend labels a person reads follow the T288 rule everywhere
-status: candidate
+status: approved
 where: kernel/kernel.py 17561, 18706, 18759, 19239, 52005, 56926; kernel/sdk_backend.py 2832-2834, 8120, 11741, 11746; docs/reference.md 145, 146, 147, 153, 520, 595-597, 2282; ui/webview/backend-names.test.ts (the retired phrases), kernel/kernel.py:52998, bin/romp:679, bin/romp:3013, bin/romp:3019, bin/romp:3024, bin/romp-sdk-setup:141, docs/reference.md:585-587, docs/reference.md:2337, docs/reference.md:2559 (the indicator section's first bullet), tests/romp.bats:243, tests/romp.bats:1189, tests/romp.bats:3271, tests/romp.bats:3379, tests/romp.bats:3382, tests/test_api_health_hover_browser.py:412, tests/test_api_health_hover_browser.py:821
 added: 2026-09-10
 pr:
@@ -32,3 +32,5 @@ Fork-only copy of the same class, absent from upstream's tree and renamed in the
 bin/romp 3001 ("--env/--no-env need a Claude Code session", pinned by tests/romp.bats:3396), docs/install.md 30 ("the
 Claude Code backend's venv") and 38 ("every Claude Code session then fails"). docs/install.md 19, 38, 41 and 43 ("the
 SDK venv") name the Agent SDK's venv and stay.
+
+2026-09-18: approved for offer by the user (batch 3 of the 2026-09-18 plan; his answer covers the fix and docs entries of batches 2 to 7, batch by batch, features excluded).
