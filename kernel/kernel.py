@@ -53140,8 +53140,46 @@ def _send_to_view(app, msg, wid):
     s = json.dumps(msg)
     with _clients_lock:
         targets = [c for c in _clients if c["app"] == app and (c.get("wid") or "") == wid and _client_ready(c)]
-    for c in targets:
-        _client_send(c, s)
+    # the clients that took the frame (review round 1, 2026-09-18): _send_focus_to_view parks a focus nobody took,
+    # and keeps a copy when a taker is unproven; every other caller ignores the list
+    return [c for c in targets if _client_send(c, s)]
+
+
+def _send_focus_to_view(focus_msg, wid):
+    """The chat half of a reveal, on _reveal_request's road (review round 1, 2026-09-18, on the phone's parked
+    panes). A wid-targeted focus went through _send_to_view alone, which sends to the READY same-wid chat
+    clients and otherwise to nobody, parking nothing. On the phone that dropped every session tap made from
+    the feed, Sessions, Outline or the Log after a return on a non-chat tab: the chat pane is parked (no
+    socket) until the Chat tab is shown, or the kernel still holds the previous socket, dead without a close
+    for up to WS_DEAD_S. The shell reveal still went out, so the Chat tab opened, but on the pane's stored
+    session instead of the tapped one, and a dead session's revive prompt never appeared.
+
+    So the focus parks the way a push tap does: sent through _send_to_view to every ready same-wid chat
+    client as before (it returns the clients that took the frame); a copy kept in _PENDING_REVEAL, tagged
+    with the takers, while any of them is UNPROVEN (pingAt set: a ping on the wire nobody answered; the pong
+    retires the copy, _reveal_proven, and a socket that never pongs is redialed, whose first tab strip
+    consumes it); parked alone only when no ready target took it. Not "parked when no ready client exists":
+    the phone's usual shape is the dead socket still held, a ready target that swallows its frame. The
+    redial's first strip and the ready handler consume the park (_consume_pending_reveal), which re-mints the
+    frame from the sid alone: the focus that lands names the session and its liveness (a dead session gets
+    confirmRevive, as _reveal_or_confirm would have sent), but the original message's `anchor`, `cite` and
+    `anchorEventT` are lost, so a parked jump into a transcript lands on the session's tail rather than the
+    turn. Widening the slot to carry the message is a follow-on. An empty wid keeps _send_to_view's legacy
+    broadcast; a focus with no id has nothing to park. One journal line when the focus parks or keeps a copy,
+    none for a plain delivery: a click on a healthy dashboard is not an event the [reveal] journal needs."""
+    sid = str((focus_msg or {}).get("id") or "")
+    if not wid or not sid:
+        _send_to_view("chat", focus_msg, wid)
+        return
+    taken = _send_to_view("chat", focus_msg, wid) or []
+    unproven = [c for c in taken if c.get("pingAt") is not None]   # read after the send, as _reveal_request reads it
+    if not taken:
+        _PENDING_REVEAL[0] = {"sid": sid, "wid": str(wid)}
+        print("[reveal] focus sid=%s wid=%s: parked" % (sid[:8], str(wid)[:8]), file=sys.stderr)
+    elif unproven:
+        _PENDING_REVEAL[0] = {"sid": sid, "wid": str(wid), "sent": unproven}
+        print("[reveal] focus sid=%s wid=%s: delivered, copy parked (target unproven)" % (sid[:8], str(wid)[:8]),
+              file=sys.stderr)
 
 
 def _reveal_chat_for(client, focus_msg):
@@ -53168,7 +53206,7 @@ def _reveal_chat_for(client, focus_msg):
     # views dirty. The picker's explicit "Hidden — reveal" row keeps the real unhide (a deliberate
     # choice from the hidden list, via setTimelineViews), and the dead-session confirmRevive path
     # below this call is unchanged. tests/test_timeline_views.py pins the no-mutation contract.
-    _send_to_view("chat", focus_msg, wid)
+    _send_focus_to_view(focus_msg, wid)   # sends, or parks for the pane's redial or ready (the helper above)
     _send_to_view("shell", {"type": "reveal", "pane": "chat"}, wid)
 
 
@@ -64165,6 +64203,7 @@ function parentMobile(){try{return (window.parent!==window&&typeof window.parent
 // (_LANDING_ERRS_JS reads parked as its own state). romp:wsdown still tells this page's bundle and loader the wire is down.
 function park(){var d=ws;if(d){d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;}
 if(d&&stalePending&&openSock===d){var qw=stalePending;stalePending="";raiseStale(qw+"-quiet");}
+freshPending=false;window.__rompFreshPending=false;try{if(window.__rompReload)window.__rompReload.ended();}catch(e){}   // [fork] D2 (review round 1, 2026-09-18): the fast path armed the reload core's fresh hold a line before the park branch (the upstream armFresh line), and only a frame on a socket ends it; a parked pane dials nothing until its tap, so the hold would stand for FRESH_HOLD_MS with nothing coming and the core would hold an accepted reload on this pane's word. End it here, as onmessage's resync line does, and tell the core so a reload already held goes now; the tap's open arms it again with its own stamp (ws.onopen's wasReconn branch)
 parked=true;returnParked=true;netState("parked");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}
 function returnDiag(what,data){try{data.app=APP;send({type:"clientDiag",surface:"pane-shim",what:what,data:data});}catch(e){}}
 var nav="";try{var ne=performance.getEntriesByType("navigation");nav=(ne&&ne[0]&&ne[0].type)||"";}catch(e){}
@@ -64512,7 +64551,13 @@ pendingWhy="foreground";freshPending=true;armFresh();   // the reconnect's arm r
 // dials: not the blind timer (connect()'s guard), not the link-up word (awaitLink stays false). The pane dials once when its
 // word says on screen (the panes listener above). Standalone / VS Code / an older shell (no word) and the desktop layout fall
 // through to the D3 block and the upstream lines below.
-if(onScreen===false&&parentMobile()===true){park();row.parked=true;returnDiag("return",row);return;}
+// The FEED pane is EXEMPT (the user's ruling of 2026-09-18, after review round 1): its socket carries the card-trouble entries the
+// shell's bell mirrors (warning chips, failed follow-ups, retry storms, sync faults), and the bell surfaces trouble the user was not
+// looking at, so a parked feed would defer those entries to the Feed tab's tap and lose any whose episode ended first. It falls
+// through to the D3 block and dials on return like the visible pane; one extra redial per return is the accepted cost. Keyed on the
+// pane's app alone, never on width or timing.
+if(onScreen===false&&parentMobile()===true&&APP!=="feed"){park();row.parked=true;returnDiag("return",row);return;}
+parked=false;   // [fork] D2 (review round 1, 2026-09-18): a return on an ALREADY parked pane that passes the branch above (the layout no longer the phone's, with no panes word yet to end the park) ends the park here, so the D3 block and the upstream lines below can dial and the row's parked:false, set above, is the truth
 // [fork] D3 (2026-09-18): when this pane sits in a shell that publishes a link, put the socket down for EVERY state
 // (abandon nulls ws, so the tick is inert and no onclose timer arms) and dial only once the link is up: now if it
 // already is (linkUpMs 0, the whole wait is code-owned), else on the shell's link-up word (awaitLink; the panes
@@ -65606,8 +65651,11 @@ if(col){var sc=(m.state==='up')?'up':'down',pc=stc[col];stc[col]=sc;
 if(sc==='down'&&pc!=='down'&&shown('chat'))window.__rompNotify('conn','Kernel connection lost: chat split '+col+' (reconnecting)');else paint();return;}
 // A PARKED pane (2026-09-18: off screen on the phone, its redial waiting for its tab; the shim's netState("parked")) is its
 // own state here, never 'down': nothing is lost and nothing is reconnecting, so the cue stays dark and the log silent; its
-// later drop or open moves it like any other pane's.
-var s=(m.state==='up')?'up':(m.state==='parked'?'parked':'down'),prev=st[m.app];st[m.app]=s;
+// later drop still logs, since the rule below then reads prev as parked, not down. One fork-only line, ahead of the tracking
+// line, which is upstream's and stays byte for byte (review round 1, 2026-09-18: the PR had rewritten that line, and two
+// upstream test pins went red).
+if(m.state==='parked'){st[m.app]='parked';paint();return;}
+var s=(m.state==='up')?'up':'down',prev=st[m.app];st[m.app]=s;
 if(s==='down'&&prev!=='down'&&shown(m.app))
 window.__rompNotify('conn','Kernel connection lost: '+paneLabel(m.app)+' pane (reconnecting)');
 else paint();});

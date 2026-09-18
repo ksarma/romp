@@ -84,14 +84,17 @@ function out(o){process.stdout.write(JSON.stringify(o));}
 """
 
 
-def _run(scenario, pre=""):
+def _run(scenario, pre="", app="test", **shim_kw):
+    """`app` and `shim_kw` reach km._shim_core_js as a served page's would (D2, review round 1, 2026-09-18: the park's
+    feed exemption and the chat pane's fresh hold are keyed on APP, so a test names the pane it builds; the Files pane's
+    no_stale rides shim_kw). The default, "test", keeps every earlier scenario's core byte for byte."""
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node not installed")
     fx = tempfile.mkdtemp()
     path = os.path.join(fx, "run.js")
     with open(path, "w") as f:
-        f.write(pre + HARNESS + km._shim_core_js() + "\n" + scenario)
+        f.write(pre + HARNESS + km._shim_core_js(app, **shim_kw) + "\n" + scenario)
     r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise AssertionError("node failed:\n" + r.stderr)
@@ -1352,6 +1355,130 @@ out({twice:twice,after:{sockets:sockets.length,parked:parked}});""")
         self.assertEqual(r["twice"]["states"], ["up", "parked", "parked"])
         self.assertEqual(r["after"], {"sockets": 2, "parked": False}, "the desktop keeps its background redial: the flip ends the park")
 
+    def test_the_park_ends_the_reload_cores_fresh_hold_and_the_tap_arms_it_again_with_its_own_stamp(self):
+        # correctness-2 + regression-2 (review round 1, 2026-09-18): the fast path arms the reload core's fresh hold (the upstream
+        # armFresh line; the chat pane alone) BEFORE the park branch runs, and only a frame on a socket ends it. A parked pane
+        # dials nothing until its tap, so the hold stood for FRESH_HOLD_MS (60 s) with nothing coming: the core's busyHere()
+        # answered 'fresh' and a reload the user had accepted sat held on this pane's word. The park ends the hold and tells a
+        # core that holds a reload, as onmessage's resync line does; the tap's open arms it again with a stamp of its own.
+        r = _run(r"""
+var ended=0;window.__rompReload={ended:function(){ended++;},inShell:function(){return true;}};   // the reload core as the shim sees it: a pane in a shell
+parentMobileVal=true;parentLinkVal={up:true,connT:NOW};open();recv({type:"ka"});word({chat:false});var e0=ended;   // the first open's flush ended the sends hold once (T265): the count from here is the park's
+hide();NOW+=46000;sock().readyState=3;show();
+var atPark={fp:window.__rompFreshPending,pending:freshPending,ended:ended-e0,parked:parked,sockets:sockets.length};
+NOW+=60000;word({chat:true});NOW+=200;open();                                  // the tap, a minute on; the dial opens
+var atOpen={fp:window.__rompFreshPending,since:window.__rompFreshPendingSince,now:NOW,pending:freshPending};
+NOW+=100;recv({type:"feed",asks:[]});                                            // the resync frame ends the hold the open armed
+out({atPark:atPark,atOpen:atOpen,atFresh:{fp:window.__rompFreshPending,pending:freshPending}});""", app="chat")
+        self.assertEqual(r["atPark"], {"fp": False, "pending": False, "ended": 1, "parked": True, "sockets": 1},
+                         "the park ends the fresh hold the fast path armed a line earlier, and tells the core so a reload already held goes now")
+        o = r["atOpen"]
+        self.assertEqual((o["fp"], o["pending"]), (True, True), "the tap's open arms the hold again")
+        self.assertEqual(o["since"], o["now"], "...with a stamp of its own: armFresh stamps only a hold that was down, so a hold left armed at the park would keep the return's stamp")
+        self.assertEqual(r["atFresh"], {"fp": False, "pending": False}, "the tap's first real frame ends it, as today")
+
+    def test_the_park_runs_the_quiet_stale_rule_for_a_reconnect_that_armed_and_never_resynced(self):
+        # tests-2 (review round 1, 2026-09-18): park() carries abandon()'s quiet-stale rule for the socket it puts down: a
+        # redial that OPENED and armed the stale prompt ("reconnect") and then said nothing before its resync is disowned at the
+        # park, so nothing can rule on it later; the rule files the raise now (why reconnect-quiet) and the row waits for the
+        # tap's socket. In the real off-screen phone iframe the pane reads hidden (display:none: innerWidth 0), so the raise is
+        # suppressed and no wsStale reaches the shell; both faces are pinned.
+        scenario = r"""
+parentMobileVal=true;open();recv({type:"ka"});word({test:false});
+sock().readyState=3;sock().onclose({code:1006});fireTimers();open();         // the drop, the blind redial, its open: the prompt arms as "reconnect"; no resync frame comes
+var armed={pending:stalePending,onOpened:openSock===sock(),sockets:sockets.length};
+%s
+hide();NOW+=46000;show();                                                       // OPEN but quiet past STALE_MS, off screen on the phone: the park
+var atPark={pending:stalePending,parked:parked,sockets:sockets.length,posts:count(parentPosts.map(function(p){return p.romp;}),"wsStale"),
+raised:queued("stale-raise").map(function(m){return m.data.why;}),suppressed:queued("stale-suppressed-hidden").map(function(m){return m.data.why;})};
+out({armed:armed,atPark:atPark});"""
+        r = _run(scenario % "")
+        self.assertEqual(r["armed"], {"pending": "reconnect", "onOpened": True, "sockets": 2})
+        self.assertEqual(r["atPark"], {"pending": "", "parked": True, "sockets": 2, "posts": 1, "raised": ["reconnect-quiet"], "suppressed": []},
+                         "the park clears the arm, queues one stale row saying reconnect-quiet, and posts wsStale once")
+        r = _run(scenario % "window.innerWidth=0;")                            # the off-screen phone iframe: display:none, the pane reads hidden
+        self.assertEqual(r["atPark"], {"pending": "", "parked": True, "sockets": 2, "posts": 0, "raised": [], "suppressed": ["reconnect-quiet"]},
+                         "hidden: the same rule files stale-suppressed-hidden and posts nothing")
+
+    def test_a_return_on_an_already_parked_pane_that_the_gate_no_longer_holds_dials_and_files_a_truthful_row(self):
+        # tests-3 (review round 1, 2026-09-18): a return on an ALREADY parked pane whose gate now reads false (the layout flipped
+        # to the desktop's; no panes word has reached this pane to end the park) does not take the park branch, and before the
+        # fix it left the latch set: connect()'s guard held the dial, no await, and the row said parked:false over a pane that
+        # stayed parked. A return that passes the branch ends the park, so the D3 block and the upstream lines below dial.
+        r = _run(r"""
+parentMobileVal=true;open();recv({type:"ka"});word({test:false});hide();NOW+=46000;sock().readyState=3;show();
+var first={sockets:sockets.length,parked:parked};
+parentMobileVal=false;                                                          // the layout is the desktop's now; no word yet
+hide();NOW+=100000;show();                                                      // a second return: the gate reads false, the branch is not taken
+out({first:first,second:{sockets:sockets.length,parked:parked,timers:liveTimers(),rows:queued("return").map(function(m){return [m.data.decision,m.data.parked];})}});""")
+        self.assertEqual(r["first"], {"sockets": 1, "parked": True})
+        s = r["second"]
+        self.assertEqual(s["sockets"], 2, "the return dials: passing the park branch ends the park")
+        self.assertIs(s["parked"], False)
+        self.assertEqual(s["timers"], [])
+        self.assertEqual(s["rows"], [["redial-closed", True], ["redial-closed", False]], "...and the second row tells the truth")
+
+    def test_every_return_resets_returnParked_so_a_non_parking_return_before_any_fresh_files_a_plain_fresh(self):
+        # tests-4 (review round 1, 2026-09-18, the refuter's ordering): returnParked is set at the park for the fresh the tap will
+        # bring, and reset at EVERY return. The reset is load-bearing only when a non-parking return lands before any fresh
+        # consumed the flag: the tap dials, and the tab is hidden and shown again while that dial is still CONNECTING, so D3
+        # abandons it and redials on screen; the fresh that answers THAT return is not a parked one. (A fresh between the two
+        # returns would consume the flag itself, which is why the ordering matters.)
+        r = _run(r"""
+parentMobileVal=true;parentLinkVal={up:true,connT:NOW};open();recv({type:"ka"});word({test:false});
+hide();NOW+=46000;sock().readyState=3;show();                                    // the park
+NOW+=60000;word({test:true});                                                    // the tap dials...
+var atTap={sockets:sockets.length,ready:sock().readyState,parked:parked,rp:returnParked};
+hide();NOW+=100;show();                                                          // ...and the tab is hidden and shown while that dial is CONNECTING: a return on screen
+var atReturn={sockets:sockets.length,parked:parked,rp:returnParked,awaiting:awaitLink};
+NOW+=200;open();NOW+=100;recv({type:"feed",asks:[]});
+out({atTap:atTap,atReturn:atReturn,ret:rows(sock(),"return").map(function(x){return x.data.parked;}),rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
+        self.assertEqual(r["atTap"], {"sockets": 2, "ready": 0, "parked": False, "rp": True}, "the tap's dial stands CONNECTING with the parked stamp owed")
+        self.assertEqual(r["atReturn"], {"sockets": 3, "parked": False, "rp": False, "awaiting": False}, "the return abandons the hung dial and redials; the owed stamp is cancelled")
+        self.assertEqual(r["ret"], [True, False], "both rows ride the third socket: the parked return, then the plain one")
+        self.assertEqual(len(r["rf"]), 1)
+        self.assertNotIn("parked", r["rf"][0], "the fresh answers the plain return, so it carries no parked key")
+
+    def test_the_feed_pane_is_exempt_a_hidden_feed_on_the_phone_dials_while_hidden_chat_and_files_panes_park(self):
+        # kernel-1 and the user's ruling of 2026-09-18: the feed pane is EXEMPT from parking on the phone. Its socket carries the
+        # card-trouble entries the shell's bell mirrors (warning chips, failed follow-ups, retry storms, sync faults): the bell
+        # surfaces trouble the user was not looking at, so a parked feed would defer every such entry to the Feed tab's tap and
+        # lose any whose episode ended first. The feed dials on return like the visible pane, through D3's link rule (now with
+        # the link up; on the link-up word with it down); one extra redial per return is the accepted cost. The exemption is
+        # keyed on the pane's app alone, never on width or timing; every other pane parks as before.
+        def leg(app, link="up", **kw):
+            return _run(r"""
+parentMobileVal=true;parentLinkVal={up:%s,connT:NOW};open();recv({type:"ka"});word({%s:false},"%s");
+hide();NOW+=46000;sock().readyState=3;show();
+var at={sockets:sockets.length,parked:parked,awaiting:awaitLink,states:states()};
+if(awaitLink){NOW+=3000;parentLinkVal={up:true,connT:NOW};word({%s:false},"up");}   // the shell's socket opens: the link-up word, this pane still off screen
+var afterLink={sockets:sockets.length,parked:parked,awaiting:awaitLink};
+if(sockets.length>1){NOW+=100;open();NOW+=10;recv({type:"feed",asks:[]});}
+var dialed=sockets.length>1;
+out({at:at,afterLink:afterLink,ret:(dialed?rows(sock(),"return"):queued("return")).map(function(x){return x.data;}),
+rf:dialed?rows(sock(),"return-fresh").map(function(x){return x.data;}):[]});""" % ("true" if link == "up" else "false", app, link, app), app=app, **kw)
+        feed = leg("feed")
+        self.assertEqual(feed["at"], {"sockets": 2, "parked": False, "awaiting": False, "states": ["up", "down"]},
+                         "a hidden feed pane on the phone dials at the return through D3 (abandon, the link up, dial now), and the shell hears down, not parked")
+        self.assertEqual(len(feed["ret"]), 1)
+        self.assertEqual((feed["ret"][0]["decision"], feed["ret"][0]["parked"], feed["ret"][0]["awaitLink"]), ("redial-closed", False, False),
+                         "its return row says parked:false")
+        self.assertEqual(len(feed["rf"]), 1)
+        self.assertNotIn("parked", feed["rf"][0], "...and its fresh carries no parked key")
+        self.assertEqual(feed["rf"][0]["linkUpMs"], 0)
+        down = leg("feed", link="down")
+        self.assertEqual(down["at"], {"sockets": 1, "parked": False, "awaiting": True, "states": ["up", "down"]}, "with the link down the feed awaits the link-up word, as the visible pane does; it is not parked")
+        self.assertEqual(down["afterLink"], {"sockets": 2, "parked": False, "awaiting": False}, "the link-up word dials it, tab or no tab")
+        self.assertEqual((down["ret"][0]["parked"], down["ret"][0]["awaitLink"]), (False, True))
+        self.assertEqual(down["rf"][0]["linkUpMs"], 3000)
+        for app, kw in (("chat", {}), ("files", {"no_stale": True})):
+            r = leg(app, **kw)
+            self.assertEqual(r["at"], {"sockets": 1, "parked": True, "awaiting": False, "states": ["up", "parked"]}, "the %s pane parks as before" % app)
+            self.assertEqual(r["afterLink"], {"sockets": 1, "parked": True, "awaiting": False})
+            self.assertEqual((r["ret"][0]["decision"], r["ret"][0]["parked"]), ("redial-closed", True), app)
+            self.assertNotIn("awaitLink", r["ret"][0])
+            self.assertEqual(r["rf"], [])
+
     def test_source_the_park_is_inserted_lines_and_the_upstream_shim_lines_stand(self):
         js = km._shim("feed", 3)
         # the upstream lines this change sits beside, byte for byte
@@ -1361,7 +1488,11 @@ out({twice:twice,after:{sockets:sockets.length,parked:parked}});""")
         self.assertIn("function abandon(){var d=ws;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;", js)
         self.assertIn('function park(){var d=ws;if(d){d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;}', js, "the park is its own function")
         self.assertIn('parked=true;returnParked=true;netState("parked");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}', js)
-        self.assertIn('if(onScreen===false&&parentMobile()===true){park();row.parked=true;returnDiag("return",row);return;}', js, "the decision point, gated on the phone layout")
+        # review round 1 (2026-09-18): the park ends the reload core's fresh hold on its own line, between the quiet-stale rule and the latch
+        self.assertIn('raiseStale(qw+"-quiet");}\nfreshPending=false;window.__rompFreshPending=false;try{if(window.__rompReload)window.__rompReload.ended();}catch(e){}', js,
+                      "park() ends the fresh hold the fast path armed, mirroring onmessage's resync line")
+        self.assertIn('if(onScreen===false&&parentMobile()===true&&APP!=="feed"){park();row.parked=true;returnDiag("return",row);return;}\nparked=false;', js,
+                      "the decision point, gated on the phone layout and the pane's app (the feed is exempt, the user's ruling of 2026-09-18); a return that passes it ends an earlier park on the next line")
         self.assertEqual(js.count('netState("parked")'), 1, "one place says parked")
         self.assertIn("function parentMobile(){try{return (window.parent!==window&&typeof window.parent.__rompMobileOn===\"function\")?!!window.parent.__rompMobileOn():undefined;}catch(e){return undefined;}}", js,
                       "the shell is present when its probe is a function, as parentLink() reads the link (the ruling of 2026-09-18)")

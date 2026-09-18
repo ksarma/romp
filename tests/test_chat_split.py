@@ -215,9 +215,8 @@ class SplitSourcePins(unittest.TestCase):
         self.assertIn("if(col){var sc=(m.state==='up')?'up':'down',pc=stc[col];stc[col]=sc;", errs)
         self.assertIn("for(var c in stc){if(stc[c]==='down'&&shown('chat'))return true;}", errs)
         self.assertIn("window.__rompColGone=function(c){delete stc[String(c)];paint();};", errs)
-        # the first column's tracking keeps its own key beside the per-column map (since 2026-09-18 it reads a parked pane as
-        # its own state, never down: a hidden phone pane waiting for its tab is not a lost connection)
-        self.assertIn("var s=(m.state==='up')?'up':(m.state==='parked'?'parked':'down'),prev=st[m.app];st[m.app]=s;", errs)
+        # the first column's tracking is byte-for-byte what it was
+        self.assertIn("var s=(m.state==='up')?'up':'down',prev=st[m.app];st[m.app]=s;", errs)
         # Alt+Arrow walks every chat column, the ring follows, later columns are wired as they are made
         focus = km._LANDING_FOCUS_JS
         self.assertIn("window.__rompFocusedChatId=function(){return document.getElementById(lastChat)?lastChat:'f-chat';};", focus)
