@@ -17206,10 +17206,13 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, live_map, wake_on
         # until 2026-09-11 a box with no tmux even took every file-derived session here, alive included),
         # so the death is corroborated with the liveness owner first; unconfirmable stands down — the stamp
         # stays and the next walk re-asks.
-        _nudge_clock(None, "dormantOwner")           # the corroboration reads the registry row, the gone record and the names entry,
-        if _dead_wait_corroborated(sid) is not True:   #  none of them a keyed file: the next look must evaluate (jobs stage 1)
-            return False
-        return _dead_wait_block(sid, gid, at, why, nudged, now)
+        if _dead_wait_corroborated(sid) is True and _dead_wait_block(sid, gid, at, why, nudged, now):
+            return True                              # a corroborated death and the block filed: a fire, and a look that fires
+        #                                              records no row, so it counts no note (review round 1 of jobs stage 1)
+        _nudge_clock(None, "dormantOwner")           # both declining exits: the corroboration reads the registry row, the gone
+        return False                                 #  record and the names entry, and the block's writer declines on a write
+        #                                              fault or a stand-down with no file moved, none of them a keyed file, so the
+        #                                              next look must evaluate (jobs stage 1)
     rec = nudged.get(gid) or {}
     if not rec.get("wake"):
         rec = {}                                     # a REGULAR nudge record (predates the stamp): the wake

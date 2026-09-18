@@ -535,6 +535,36 @@ class WakeGoalUnkeyedExitsNoteTheirLegs(_Base):
             km._NUDGE_HORIZON.notes = None
         self.assertEqual(self._by(), {"dormantOwner": 1})
 
+    def test_a_corroborated_dormant_death_files_the_block_as_a_fire_with_no_note_and_a_faulted_block_write_stays_unbounded(self):
+        """Review round 1 (kernel-1): the dormantOwner note sat above the corroboration check, so a corroborated death that filed
+        the block and reported a fire also counted an unbounded note. The note sits below the fire now, on both declining exits:
+        the uncorroborated death (the test above) and a corroborated one whose block write faulted, which moves no file and must
+        not latch a skippable row (moving the note inside the uncorroborated branch alone would have opened that hole)."""
+        self._toggle(False)
+        self._seed(kind="job", age=7 * H)
+        store = jd.load_goals(SID)
+        stamp = km._goal_awaiting_stamp_full(store["nodes"], self.gid)
+        nudged = {}
+        km._NUDGE_HORIZON.notes = []
+        try:
+            with mock.patch.object(km, "_dead_wait_corroborated", return_value=True), \
+                    mock.patch.object(jd, "record_verdict", side_effect=OSError(5, "Input/output error")):
+                fired = km._wake_goal(SID, self.gid, stamp, nudged, self.turns, store, NOW, self.turns[-1], {}, True)
+            self.assertFalse(fired, "the block's write faulted: nothing filed")
+            self.assertEqual(km._NUDGE_HORIZON.notes, [None], "a decline with no file moved: unbounded")
+            self.assertEqual(self._by(), {"dormantOwner": 1})
+            self.assertFalse(self._node().get("blocked"))
+            km._NUDGE_HORIZON.notes = []
+            with mock.patch.object(km, "_dead_wait_corroborated", return_value=True):
+                fired = km._wake_goal(SID, self.gid, stamp, nudged, self.turns, store, NOW + 5, self.turns[-1], {}, True)
+            self.assertTrue(fired, "the corroborated death files the block: a fire")
+            self.assertEqual(km._NUDGE_HORIZON.notes, [], "and counts no note")
+            self.assertEqual(self._by(), {"dormantOwner": 1}, "unchanged by the fire")
+            self.assertTrue(self._node().get("blocked"))
+            self.assertEqual(nudged[self.gid].get("deadWait"), True, "the once-per-episode record")
+        finally:
+            km._NUDGE_HORIZON.notes = None
+
 
 SID2 = "77777777-8888-9999-aaaa-dddddddddddd"    # a second alive session for the skip tests (private to this module)
 SID3 = "77777777-8888-9999-aaaa-eeeeeeeeeeee"    # a third, the delegated top of the byte-identity proof
