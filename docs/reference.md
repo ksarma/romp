@@ -3776,7 +3776,8 @@ twelve-character abbreviation; `--usage` adds a `usage` block, off by
 default, with the session counts, the user's actions and the panes opened
 (from the http table's route counts) and the kernel's uptime bucket, all from
 keys the snapshot already carries. Before writing, the document is walked
-once more for a uuid, a 32-hex token or an absolute path, and searched for
+once more for a uuid, a 32-hex or 40-hex token, an absolute path or free text
+(a string carrying whitespace), and searched for
 the strings only this machine knows (its hostname, user and home directory,
 the session ids and working directories in the state directory's registry; a
 hostname or user is matched as whole words, so a user named `mark` is not

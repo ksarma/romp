@@ -29,9 +29,13 @@ construction, so a block added to the kernel later costs nothing here (2026-09-1
    anchored at the document's root; DENY_KEYS, PID_KEY and IDENTITY_KEYS apply wherever a dict key appears
    (`denied` is the one test).
 
-The walk (paste_problems) is the invariant test's: every key against its block's grammar, every key and string
-against a uuid, a 32-hex token, an absolute path and any planted text. The export runs it over its own output
-as a self-check and refuses to write on a problem. The identifier scan (machine_probes, identifier_hits) is the
+The walk (paste_problems) is the invariant test's: every key against its block's grammar (`ident` for a plain
+block; membership in the register's image for `http`, http_key_ok; the stack sample's `<ident> <kind>` for
+`stacks`, a block the export drops and the served snapshot carries under its switch; JOINED_KEY for the joined
+tables), every key and string against a uuid, a 32-hex token, a 40-hex token (a checkpoint document's name),
+an absolute path and any planted text, and every string value against free text (whitespace: an exception
+message, a URL, a bare host name), except a stack frame, "function (file:line)", which has its own grammar. The
+export runs it over its own output as a self-check and refuses to write on a problem. The identifier scan (machine_probes, identifier_hits) is the
 last backstop: strings only this machine knows (its hostname, user and home directory; the session ids and
 working directories the state directory's sdk registry holds) are searched for in every key and string value of
 the finished document, case-insensitively, and a hit refuses the write naming the key path and the kind of
@@ -94,14 +98,15 @@ HTTP_ROUTES = {
 HTTP_ROUTES["OPTIONS"] = tuple(sorted(set(HTTP_ROUTES["GET"]) | set(HTTP_ROUTES["HEAD"]) | set(HTTP_ROUTES["POST"])))
 HTTP_FAMILIES = ("/dist/*", "/media/*", "/glossary/*", "/remote/*")
 _ROUTE_SETS = {m: frozenset(v) for m, v in HTTP_ROUTES.items()}
-# The key grammar the invariant walk checks the http block against: a method, a space, a path of route
-# characters, or the fold's own word.
-HTTP_KEY = re.compile(r"^(?:GET|HEAD|POST|OPTIONS) /[A-Za-z0-9_./*-]*$|^other$")
 
 
 def http_key_ok(key):
     """Is `key` a "METHOD /path" the kernel's register can produce: a fixed route of that method, a collapsed
-    family, or a remote route (`/remote/*` alone or `/remote/*/<route of the same method>`), or `other`."""
+    family, or a remote route (`/remote/*` alone or `/remote/*/<route of the same method>`), or `other`. This is
+    the image of the kernel's _perf_http_key over the register (tests/test_perf_stats.py enumerates it from the
+    kernel's own copy, 457 keys on the register of 2026-09-18, and holds every member to this test), and the
+    check the invariant walk applies to the http block: a character grammar stood there first and admitted any
+    path-shaped key (the served-leak review, 2026-09-18)."""
     if key == OTHER:
         return True
     if not isinstance(key, str) or " " not in key:
@@ -249,15 +254,33 @@ def fold(node, where=()):
 # ── the invariant walk ───────────────────────────────────────────────────────────────────────────────────
 UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 HEX32 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}(?![0-9a-fA-F])")
+HEX40 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])")   # a sha1: a checkpoint document's name, a commit
 ABS_PATH = re.compile(r"(?:^|[\s\"'=(:,])/(?:[^/\s]+/)+[^/\s]*")   # a slash-rooted path of two or more segments
+WHITESPACE = re.compile(r"\s")                                       # free text: an exception message, a URL, a bare host name
+# The stack sample (GET /perf?stacks=1, ROMP_PERF_STACKS; the kernel's _thread_stacks): a row per thread keyed
+# "<ident> <kind>", the kind a thread's name before the naming convention's separator, a default name's target
+# function or a pool worker's prefix, and `?` the kernel's own token for a thread gone between its two
+# enumerations, never a name. The export drops the block (DENY_KEYS); the served snapshot carries it under its
+# switch, so the walk knows its grammars.
+STACKS_KEY = re.compile(r"^[0-9]+ (?:[A-Za-z0-9_.-]+|\?)$")
+# A frame string, "function (file:line)": a code object's name and its file's BASENAME, the interpreter's <lambda>
+# and <frozen ...> forms included; never a directory.
+FRAME = re.compile(r"^(?:[A-Za-z0-9_]+|<[a-z]+>) \(<?[A-Za-z0-9_. -]+>?:[0-9]+\)$")
+
+
+def _frame_value(block):
+    """Is a value at `block` (a key path below `under`) one of the stack sample's frame strings: stacks/<row>/frames/<i>."""
+    return block is not None and len(block) > 2 and block[0] == "stacks" and block[2] == "frames"
 
 
 def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=()):
     """Every way `doc` fails to be paste-safe, as one line each (empty when it is): a key outside its block's
-    grammar (`ident` for plain blocks, HTTP_KEY for `http`, JOINED_KEY for the joined tables), a key or string
-    value carrying a uuid, a 32-hex token, an absolute path or any of the `planted` strings. `skip` names
-    top-level keys whose string value is not walked (an export's schema line); `under` is the key path the
-    snapshot's blocks sit below (`("perf",)` in an export; the root in a served snapshot)."""
+    grammar (`ident` for plain blocks, the register's image for `http` (http_key_ok), STACKS_KEY for `stacks`,
+    JOINED_KEY for the joined tables), a key or string value carrying a uuid, a 32-hex or 40-hex token, an
+    absolute path or any of the `planted` strings, a string value carrying whitespace (free text) anywhere but
+    the stack sample's frames, and a frame outside FRAME. `skip` names top-level keys whose string value is not
+    walked (an export's schema line); `under` is the key path the snapshot's blocks sit below (`("perf",)` in an
+    export; the root in a served snapshot)."""
     problems = []
     n = len(under)
 
@@ -274,8 +297,16 @@ def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=()):
             problems.append("a uuid-shaped token: " + at)
         if HEX32.search(s):
             problems.append("a 32-hex token: " + at)
+        if HEX40.search(s):
+            problems.append("a 40-hex token: " + at)
         if not (key and block(where) == ("http",)) and ABS_PATH.search(s):   # a route key is a path by design;
-            problems.append("an absolute path: " + at)                       #  its grammar is checked below
+            problems.append("an absolute path: " + at)                       #  its membership is checked below
+        if not key:
+            if _frame_value(block(where)):
+                if not FRAME.match(s):
+                    problems.append("outside the frame grammar: " + at)
+            elif WHITESPACE.search(s):
+                problems.append("free text: " + at)
 
     def check_key(k, where):
         at = "key %r at %s" % (k, "/".join(str(p) for p in where))
@@ -284,8 +315,11 @@ def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=()):
             return
         text(k, where, True)
         if block(where) == ("http",):
-            if not HTTP_KEY.match(k):
-                problems.append("outside the http key grammar: " + at)
+            if not http_key_ok(k):
+                problems.append("outside the image of the route register: " + at)
+        elif block(where) == ("stacks",):
+            if not STACKS_KEY.match(k):
+                problems.append("outside the stack sample's key grammar: " + at)
         elif block(where) in JOINED_KEY_BLOCKS:
             if not JOINED_KEY.match(k):
                 problems.append("outside the joined-identifier grammar: " + at)

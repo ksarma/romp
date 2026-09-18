@@ -87,7 +87,7 @@ def leak_snapshot():
                  "GET " + HOME: {"count": 3, "ms": 1.0}, "HEAD /file": {"count": 1, "ms": 0.5}, "OPTIONS /perf": {"count": 1, "ms": 0.1},
                  "GET /ws": {"count": 3, "ms": 0.0}},
         "parses": {"kernel": 12, "hits": 30, "bytes": 4096, "bySid": {SID: 3, SID2: 9}},
-        "checkpoints": {"restored": 2, "readBytes": 8192,
+        "checkpoints": {"restored": 2, "readBytes": 8192, "lastDocument": SHA,
                         "readByPath": {HOME + "/.claude/projects/-home-tester-code-notes-api/%s.jsonl" % SID: 4096, HOME + "/notes/scratch.jsonl": 32},
                         "readByKind": {"leaf": {"files": 1, "bytes": 4096}, "other": {"files": 1, "bytes": 32}}},
         "recordCache": {"entries": 3, "wholeReads": {"leaf<-_parse": {"count": 2, "bytes": 10}},
@@ -96,7 +96,7 @@ def leak_snapshot():
         "stacks": {"11 pusher": {"self": False, "stage": "jobs.autoNudge", "frames": ["_pusher (%s/kernel.py:100)" % HOME]}},
         "caches": {"session_stamp": {"entries": 31}, "jsonl": {"entries": 120}},
         "glossary": {"parses": 1, "termsBuilt": 40, "sample": TERM},
-        "heap": {"tracing": False, "note": "a value longer than thirty-two characters is text"},
+        "heap": {"tracing": False, "note": "a value longer than thirty-two characters is text", "host": "TESTHOST up"},
     }
 
 
@@ -109,6 +109,16 @@ def _run(args, env_extra=None, state=None):
                 "HOME": HOME, "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1"})
     env.update(env_extra or {})
     return subprocess.run([sys.executable, EXPORT] + list(args), capture_output=True, text=True, timeout=60, env=env)
+
+
+SYNTHETIC_PROBES = [("hostname", "testhost"), ("username", "tester"), ("home directory", HOME)]
+
+
+def _check(doc):
+    """pe.check_document with the machine's own strings replaced by synthetic probes (the export module's import of
+    perf_public is its own module object, so the patch lands there), so the verdict is the document's alone."""
+    with mock.patch.object(pe.pp, "machine_probes", return_value=SYNTHETIC_PROBES):
+        return pe.check_document(doc, pe.Path(tempfile.mkdtemp()))
 
 
 def _state_root():
@@ -188,7 +198,62 @@ class FoldInvariant(unittest.TestCase):
 
     def test_string_values_outside_the_grammar_become_other(self):
         self.assertEqual(self.perf["glossary"], {"parses": 1, "termsBuilt": 40, "sample": "other"})
-        self.assertEqual(self.perf["heap"], {"tracing": False, "note": "other"})
+        self.assertEqual(self.perf["heap"], {"tracing": False, "note": "other"}, "a host under an identity key goes; long text folds")
+
+    def test_a_40_hex_token_and_free_text_are_folded_by_the_export_and_refused_by_the_walk(self):
+        # the served-leak review's two rules (2026-09-18) live in the shared module so the export applies them too: a
+        # 40-hex token (a checkpoint document's name, a commit) and a string carrying whitespace (an exception message,
+        # a URL, a bare host name) fold to `other` (the grammar's cap and character set), and the walk names either
+        # one that survives, so the export's self-check refuses a document carrying them
+        self.assertEqual(self.perf["checkpoints"]["lastDocument"], "other")
+        self.assertEqual(pp.fold({"doc": SHA, "note": "a b", "term": TERM, "ok": "lt1h", "hex32": "a" * 32}),
+                         {"doc": "other", "note": "other", "term": "other", "ok": "lt1h", "hex32": "a" * 32},
+                         "the fold is the grammar: a 32-hex token fits it and is the walk's to catch")
+        kinds = lambda doc, **kw: [line.split(":", 1)[0] for line in pp.paste_problems(doc, **kw)]
+        self.assertEqual(kinds({"a": {"doc": SHA}}), ["a 40-hex token"])
+        self.assertEqual(kinds({"a": {"note": "a b"}}), ["free text"])
+        self.assertEqual(kinds({"a": {"note": "tab\there"}}), ["free text"])
+        self.assertEqual(kinds({"a": {"hex32": "a" * 32}}), ["a 32-hex token"])
+        self.assertEqual(kinds({SHA: 1}), ["a 40-hex token", "outside the identifier grammar"], "a key is held to the same rule")
+        self.assertEqual(kinds({"a b": 1}), ["outside the identifier grammar"], "a key with whitespace is a grammar failure already")
+        self.assertEqual(kinds({"a": {"ok": "lt1h", "stamp": "2026-09-18T08:53Z", "n": 1}}), [])
+        # the export's own check refuses a document that carries either, naming the key path and never the value
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["checkpoints"]["lastDocument"] = SHA
+        reason = _check(doc)
+        self.assertIn("still fails the walk", reason)
+        self.assertIn("perf/checkpoints/lastDocument", reason)
+        self.assertNotIn(SHA, reason)
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["heap"]["note"] = "TESTHOST up"
+        reason = _check(doc)
+        self.assertIn("perf/heap/note", reason)
+        self.assertNotIn("TESTHOST", reason)
+        self.assertIsNone(_check(pe.export_document(leak_snapshot(), usage=True)))
+
+    def test_the_walk_holds_the_http_block_to_the_registers_image_and_the_stack_sample_to_its_grammars(self):
+        # the walk's http check is membership in what the kernel's fold can return (http_key_ok), not a character grammar:
+        # a path-shaped key the register never makes is named. The stack sample rides in a served snapshot under its
+        # switch (the export drops it, DENY_KEYS): its keys are "<ident> <kind>" and its frames "function (file:line)"
+        kinds = lambda doc, **kw: [line.split(":", 1)[0] for line in pp.paste_problems(doc, **kw)]
+        self.assertEqual(kinds({"http": {"GET /perf": {"count": 1}, "POST /remote/*/send": {"count": 1}, "GET /dist/*": {"count": 1}, "other": {"count": 1}}}), [])
+        self.assertEqual(kinds({"http": {"GET /nope": {"count": 1}}}), ["outside the image of the route register"])
+        self.assertEqual(kinds({"http": {"HEAD /perf": {"count": 1}}}), ["outside the image of the route register"], "a route of another method")
+        self.assertEqual(kinds({"http": {"GET /remote/TESTHOST/sessions": {"count": 1}}}), ["outside the image of the route register"])
+        self.assertEqual(kinds({"perf": {"http": {"GET /nope": 1}}}, under=("perf",)), ["outside the image of the route register"], "below the export's envelope")
+        self.assertEqual(kinds({"http": {"GET /nope": 1}}, under=("perf",)), ["outside the identifier grammar"], "at the root of an export, http is a plain block")
+        stacks = {"stacks": {"11 pusher": {"self": False, "stage": "http.GET.other",
+                                           "frames": ["_pusher (kernel.py:100)", "<lambda> (kernel.py:7)", "<module> (<frozen importlib._bootstrap>:1)", "run (threading.py:1000)"]},
+                             "12 ?": {"self": True, "stage": None, "frames": []}}}
+        self.assertEqual(kinds(stacks), [])
+        self.assertEqual(kinds({"stacks": {"pusher": {}}}), ["outside the stack sample's key grammar"], "no ident")
+        self.assertEqual(kinds({"stacks": {"11 sdk:web": {}}}), ["outside the stack sample's key grammar"], "a thread name's payload")
+        self.assertEqual(kinds({"stacks": {"11 pusher": {"frames": ["go (%s/kernel.py:3)" % HOME]}}}), ["an absolute path", "outside the frame grammar"])
+        self.assertEqual(kinds({"stacks": {"11 pusher": {"frames": ["go kernel.py:3"]}}}), ["outside the frame grammar"], "free text in a frame slot is the frame rule's")
+        self.assertEqual(kinds({"stacks": {"11 pusher": {"stage": "jobs auto"}}}), ["free text"], "a stage value is not a frame")
+        self.assertEqual(kinds({"stacks": {"11 pusher": {"frames": ["_pusher (kernel.py:100)"]}}}, ident=re.compile(r"^[A-Za-z0-9_.-]+$")), [])
+        self.assertIn("stacks", pp.DENY_KEYS, "the export never carries the block; the grammars are for the served walk")
+        self.assertNotIn("stacks", pe.export_document(leak_snapshot())["perf"])
 
     def test_the_envelope(self):
         self.assertEqual(self.doc["schema"], "romp-perf-export/1")
@@ -580,6 +645,44 @@ class RouteRegisterCopy(unittest.TestCase):
         for bad in ("GET /nope", "GET /remote/TESTHOST/sessions", "PUT /perf", "GET /glossary/" + TERM, "GET " + HOME,
                     "/perf", "GET", "", "GET /remote/*/nope", "HEAD /perf"):
             self.assertFalse(pp.http_key_ok(bad), bad)
+
+    def test_the_membership_test_is_the_image_of_the_kernels_fold(self):
+        # the set tests/test_perf_stats.py enumerates from the kernel's register (routes by method, the families per
+        # method, the remote star form, other: 457 keys on the register of 2026-09-18) is exactly what http_key_ok
+        # accepts, member by member, so the two walks hold the http block to one set
+        image = {"other"}
+        for method, routes in km._PERF_HTTP_ROUTES.items():
+            image.update(method + " " + p for p in routes)
+            image.update(method + " " + fam for fam in km._PERF_HTTP_FAMILIES)
+            image.update(method + " /remote/*" + p for p in routes)
+        self.assertGreaterEqual(len(image), 457, "the register shrank: %d keys" % len(image))
+        self.assertEqual([k for k in sorted(image) if not pp.http_key_ok(k)], [])
+        near = {k + "x" for k in image} | {k.replace(" /", " //") for k in image} | {k.lower() for k in image} | {"GET /remote/*//perf"}
+        self.assertEqual([k for k in sorted(near - image) if pp.http_key_ok(k)], [], "a near miss is refused")
+
+    def test_the_route_segment_rule_is_the_kernels_alone(self):
+        """The kernel's _route_seg (the served-leak review, 2026-09-18) folds the stage mark a request handler carries to a
+        segment the register holds a route under (_PERF_ROUTE_SEGMENTS), else `other`; the mark is served in the stack
+        sample's `stage` values and in the joined `*ByStage` keys. The export needs no copy of that rule: the stack sample is
+        dropped whole by the denylist, an http key never carries a route segment (it is the register's path through
+        _perf_http_key, which http_public_key holds to the register), and a mark an OLDER kernel made from a requester's
+        path in a `*ByStage` key names nothing the walk or the scan would not refuse (a session id is a uuid; this
+        machine's host name is a probe)."""
+        self.assertIn("stacks", pp.DENY_KEYS)
+        self.assertFalse(hasattr(pp, "ROUTE_SEGMENTS"), "no segment register in the shared module, by decision")
+        segs = {p.strip("/").split("/", 1)[0] for p in km._PERF_HTTP_ANY | set(km._PERF_HTTP_FAMILIES) if p.strip("/")}
+        self.assertEqual(segs, km._PERF_ROUTE_SEGMENTS, "the kernel derives its segments from the register the copy mirrors")
+        snap = {"uptime_s": 1, "process": {}, "pusher": {}, "http": {"GET /perf": {"count": 1}},
+                "stacks": {"11 handler": {"self": False, "stage": "http.GET." + SID, "frames": []}},
+                "recordCache": {"wholeReadsByStage": {"http.GET.%s:leaf<-_parse" % SID: {"count": 1, "bytes": 5},
+                                                      "http.GET.other:leaf<-_parse": {"count": 1, "bytes": 5}}}}
+        doc = pe.export_document(snap)
+        self.assertNotIn("stacks", doc["perf"], "the old kernel's mark in the stack sample goes with the block")
+        reason = _check(doc)
+        self.assertIn("perf/recordCache/wholeReadsByStage", reason, "an old kernel's sid-bearing stage key: refused, not written")
+        self.assertNotIn(SID, reason)
+        del snap["recordCache"]["wholeReadsByStage"]["http.GET.%s:leaf<-_parse" % SID]
+        self.assertIsNone(_check(pe.export_document(snap)), "the register's word passes")
 
 
 if __name__ == "__main__":
