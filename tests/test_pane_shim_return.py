@@ -1363,7 +1363,8 @@ out({twice:twice,after:{sockets:sockets.length,parked:parked}});""")
         self.assertIn('parked=true;returnParked=true;netState("parked");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}', js)
         self.assertIn('if(onScreen===false&&parentMobile()===true){park();row.parked=true;returnDiag("return",row);return;}', js, "the decision point, gated on the phone layout")
         self.assertEqual(js.count('netState("parked")'), 1, "one place says parked")
-        self.assertIn("function parentMobile(){try{return (window.parent!==window&&window.parent.__rompMobileOn)?!!window.parent.__rompMobileOn():undefined;}catch(e){return undefined;}}", js)
+        self.assertIn("function parentMobile(){try{return (window.parent!==window&&typeof window.parent.__rompMobileOn===\"function\")?!!window.parent.__rompMobileOn():undefined;}catch(e){return undefined;}}", js,
+                      "the shell is present when its probe is a function, as parentLink() reads the link (the ruling of 2026-09-18)")
 
 
 if __name__ == "__main__":

@@ -64156,8 +64156,9 @@ function parentLink(){try{return (window.parent!==window&&typeof window.parent._
 // [fork] D2 (2026-09-18): the phone LAYOUT, read synchronously from the shell (its _MOBILE_MQ probe, _LANDING_MOBILE_JS
 // window.__rompMobileOn) the way parentLink() reads the link, so the decision does not depend on a cached word from before a
 // layout flip. Parking is phone-only (the user's ruling): the desktop's rail-collapsed panes keep their background redial
-// byte for byte. undefined off a shell (standalone, VS Code, an older shell): parks nothing.
-function parentMobile(){try{return (window.parent!==window&&window.parent.__rompMobileOn)?!!window.parent.__rompMobileOn():undefined;}catch(e){return undefined;}}
+// byte for byte. The shell is present when its probe exists, window.parent.__rompMobileOn is a function, as parentLink()'s
+// gate reads the link; undefined off a shell (standalone, VS Code, an older shell): parks nothing.
+function parentMobile(){try{return (window.parent!==window&&typeof window.parent.__rompMobileOn==="function")?!!window.parent.__rompMobileOn():undefined;}catch(e){return undefined;}}
 // [fork] D2: park this pane's socket. abandon()'s teardown (the four handlers detached, close, ws nulled, so the watchdog tick
 // is inert on !ws and no onclose timer can arm) and its quiet-stale rule, but ONE state word to the shell, "parked", never
 // abandon()'s "down": a parked pane is not a broken one, so the shell's connection log stays silent and its cue dark
