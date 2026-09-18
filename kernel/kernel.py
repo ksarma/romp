@@ -1674,36 +1674,48 @@ def _set_stage(name):
 
 _THREAD_NAME_SEP = ":"            # the one naming convention for every worker the kernel or a backend names with an identity
 #                                   in it: "<kind>:<payload>" (sdk:<session name>, sdk-intr:<session name>, codex:<session
-#                                   name>, end-host:<sid8>, peer:<host>); the kind rule below keeps the kind and drops the
-#                                   payload, so no session name, sid, host or path reaches the stack sample (T401 round two).
-#                                   The writers (sdk_backend, codex_backend, postal) spell the colon themselves, since they do
-#                                   not import the kernel: the census test over every construction site is the guard
+#                                   name>, end-host:<sid8>, port-up:<host>, peer:<host>); the kind rule below keeps the kind
+#                                   when the register beside _PERF_ROUTE_SEGMENTS holds it and drops the payload, so no
+#                                   session name, sid, host or path reaches the stack sample (T401 round two). The writers
+#                                   (sdk_backend, codex_backend, postal) spell the colon themselves, since they do not import
+#                                   the kernel: the census test over every construction site is the guard
 
 
 def _thread_kind(name):
-    """A thread's KIND from its name, never a session's name, sid, host or path: a name with the convention's separator keeps
-    the part before it (sdk, sdk-intr, codex, end-host, peer); Python's default "Thread-N (target)" keeps the target function
-    (the identity a slow-boot read needs: _ask_poll, _parent_watch, _update_check_loop, serve_forever, ...), "handler" for
-    the HTTP server's process_request_thread; a pool worker "<prefix>_N" keeps its prefix (the judge tiers' pools are
-    prefixed judge-<tier>), a default "ThreadPoolExecutor-K_N" is "pool"; MainThread is "main"; the rest (pusher, producer,
-    index, triage, parse-warm, ...) are kinds already. The stack sample keys its rows by ident and kind (T401 round one,
-    medium 1: a key carried a live session name where the reference promised no session content; round two: the Codex
-    worker's hyphenated name and the end-host's sid slipped past a colon-only rule, and every default name read as handler)."""
-    n = name or "?"
-    if _THREAD_NAME_SEP in n:
-        return n.split(_THREAD_NAME_SEP, 1)[0] or "?"
-    m = re.match(r"Thread-\d+(?: \((.+)\))?$", n)
-    if m:
-        fn = m.group(1) or "thread"
-        return "handler" if fn == "process_request_thread" else fn
+    """A thread's KIND from its name: a word from the checked-in register beside _PERF_ROUTE_SEGMENTS (_THREAD_KINDS, the
+    constant names the kernel gives its threads; _THREAD_KIND_PREFIXES, the kinds spelled "<kind>:<payload>"; and the fixed
+    forms), or "other" for every name outside it. A registered constant name (pusher, jobs, index, ws-send, ...) is its own
+    kind; a name with the convention's separator keeps the part before it when that part is a registered prefix (sdk,
+    sdk-intr, codex, end-host, port-up, peer, romp-refused-mark); Python's default "Thread-N" and "Thread-N (target)" are
+    "thread", except the HTTP server's "Thread-N (process_request_thread)", which is "handler" (the target function is the
+    row's own fourth frame, so the word loses nothing the row does not carry); MainThread is "main"; a default
+    "ThreadPoolExecutor-K_N" is "pool"; a judge pool's worker, "judge-<tier>_N" (judge.py's _TimedPool names its workers after
+    the thread that built the pool), is "judge-" plus that thread's kind (judge-index, judge-triage, judge-serve-pass; judge-jobs
+    for a pool a tick job built in-process). Everything else is "other": a library's thread named with free text (pytest-timeout
+    names its watchdog with the running test's node id, and the colon rule that stood here kept the test's path up to the node
+    id's first "::", the 2026-09-18 CI failure), a name carrying a path, a uuid or a session name spelled without the
+    separator, and no name at all (a thread gone between the sample's two enumerations, or one the threading module never
+    saw); the ident half of the sample's key keeps two such threads two rows. Never a session's name, sid, host or path (T401
+    round one, medium 1: a key carried a live session name where the reference promised no session content; round two: the
+    Codex worker's hyphenated name and the end-host's sid slipped past a colon-only rule)."""
+    n = name or ""
+    if n in _THREAD_KINDS:
+        return n
     if n == "MainThread":
         return "main"
+    if _THREAD_NAME_SEP in n:
+        head = n.split(_THREAD_NAME_SEP, 1)[0]
+        return head if head in _THREAD_KIND_PREFIXES else "other"
+    m = re.match(r"Thread-\d+(?: \((.+)\))?$", n)
+    if m:
+        return "handler" if m.group(1) == "process_request_thread" else "thread"
     if re.match(r"ThreadPoolExecutor-\d+_\d+$", n):
         return "pool"
-    m = re.match(r"(.+)_\d+$", n)
+    m = re.match(r"judge-(.+)_\d+$", n)
     if m:
-        return m.group(1)
-    return n
+        inner = _thread_kind(m.group(1))
+        return "other" if inner == "other" else "judge-" + inner
+    return "other"
 
 
 def _thread_stacks(limit=40):
@@ -1867,6 +1879,32 @@ _PERF_HTTP_ANY = frozenset(_PERF_HTTP_ROUTES["OPTIONS"])
 _PERF_ROUTE_SEGMENTS = frozenset(p.strip("/").split("/", 1)[0]          # the first segments a stage mark may keep (_route_seg,
                                  for p in _PERF_HTTP_ANY | set(_PERF_HTTP_FAMILIES) if p.strip("/"))   # above): the register's,
 #                                                                       every method, and the families' (dist, media, glossary, remote)
+
+_THREAD_KINDS = frozenset((          # the register of the kernel's own thread kinds, for the stack sample's keys (_thread_kind;
+    # kernel.py                      # 2026-09-18): the constant name= of every thread the kernel and the modules it loads
+    "pusher", "jobs", "producer", "parse-warm", "boot-warm", "sdk-boot", "first-cycle-sampler", "model-catalog",
+    "price-refresh", "remote-ws", "romp-move", "user-todo-lost", "ws-send", "judge-child-end",
+    # sdk_backend.py
+    "sdk-boot-notices", "sdk-boot-reconcile", "sdk-idle-queue-drive", "sdk-lease-beat", "sdk-push-session", "test-root-sweep",
+    # codex_backend.py (codex-handshake-clock is a Timer named after construction)
+    "codex-pump", "codex-handshake-clock",
+    # judge.py: the tier threads; their pools' workers read judge-<tier> through the composite rule
+    "index", "triage", "serve-pass",
+))                                   # in-process start, by file. A thread named outside the register reads "other" in the sample
+#                                      (a library's watchdog named with a test path, pytest-timeout's, was served verbatim through
+#                                      a colon rule and failed CI's key grammar); the census test over every construction site
+#                                      holds the register equal to the source both ways, so a new kernel thread kind is caught at
+#                                      review time and a retired one leaves no dead word. A thread that must show its kind is
+#                                      named here, never by a looser rule in _thread_kind.
+_THREAD_KIND_PREFIXES = frozenset((  # the kinds spelled "<kind>:<payload>" (_THREAD_NAME_SEP): the payload (a session name, a sid,
+    "sdk", "sdk-intr",               # a host) never reaches the sample; peer is the postal service's, a separate process the census
+    "codex", "end-host",             # walks all the same
+    "port-up", "romp-refused-mark", "peer",
+))
+_THREAD_KIND_FIXED = frozenset(("main", "handler", "thread", "pool"))   # the words _thread_kind's fixed rules make: MainThread,
+#                                                                        the HTTP server's request threads, Python's default names
+_THREAD_KIND_WORDS = _THREAD_KINDS | _THREAD_KIND_PREFIXES | _THREAD_KIND_FIXED   # every word a key may carry but "other" and the
+#                                                                                   judge-<word> composites: the served key grammar
 
 
 def _perf_http_key(method, path):

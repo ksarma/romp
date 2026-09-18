@@ -1662,8 +1662,8 @@ class PerfRoutes(unittest.TestCase):
         rows = snap["stacks"]
         self.assertIsInstance(rows, dict, "?stacks=1 fills the slot the plain snapshot leaves null")
         self.assertTrue(rows and all(set(r) == {"self", "stage", "frames"} for r in rows.values()), list(rows.items())[:1])
-        key = "%d probe-thread" % th.ident
-        self.assertIn(key, rows, sorted(rows))                              # keyed "<ident> <kind>" (T358's duplicate-worker case)
+        key = "%d other" % th.ident                                         # a test-only name is outside the register: the kind
+        self.assertIn(key, rows, sorted(rows))                              #  reads other, the ident finds the row (T358's case)
         mine = rows[key]
         self.assertEqual(mine["stage"], "jobs.probe", mine)
         self.assertTrue(any(f.startswith("wait (threading.py:") for f in mine["frames"]), mine["frames"])
@@ -1679,8 +1679,9 @@ class PerfRoutes(unittest.TestCase):
 
     def test_the_sample_keys_threads_by_kind_never_by_a_session_name(self):
         """Round one, medium 1: an SDK session thread is named "sdk:<session name>", and the sample's key carried it where
-        the reference promised no session content. Keys are "<ident> <kind>", the kind _thread_kind's (the name before the
-        convention's separator, a default name's target function, a pool worker's prefix)."""
+        the reference promised no session content. Keys are "<ident> <kind>", the kind _thread_kind's: a word from the register
+        beside _PERF_ROUTE_SEGMENTS (a registered prefix before the convention's separator, a registered constant name, the fixed
+        forms for Python's default names, the HTTP server's threads and the main thread) or `other` (2026-09-18)."""
         gate = threading.Event()
         th = threading.Thread(target=gate.wait, name="sdk:notes-api-web", daemon=True); th.start()
         try:
@@ -1690,31 +1691,47 @@ class PerfRoutes(unittest.TestCase):
         self.assertIn("%d sdk" % th.ident, rows, sorted(rows))
         self.assertNotIn("notes-api-web", json.dumps(rows), "no session name anywhere in the sample")
         self.assertEqual((km._thread_kind("sdk-intr:web"), km._thread_kind("Thread-12 (process_request_thread)"), km._thread_kind("pusher"),
-                          km._thread_kind("MainThread"), km._thread_kind(None)), ("sdk-intr", "handler", "pusher", "main", "?"))
-        # round two: every identity-bearing worker follows kind:payload, and a default name keeps its target function
+                          km._thread_kind("MainThread"), km._thread_kind(None)), ("sdk-intr", "handler", "pusher", "main", "other"))
+        # round two: every identity-bearing worker follows kind:payload; the register (2026-09-18): a default name reads thread,
+        # its target function being the row's own fourth frame, and a judge pool's worker carries the kind of the thread that
+        # built the pool, a nested pool and one built on a request handler included
         self.assertEqual((km._thread_kind("codex:notes-api-web"), km._thread_kind("end-host:11111111"), km._thread_kind("peer:TESTHOST")),
                          ("codex", "end-host", "peer"))
         self.assertEqual((km._thread_kind("Thread-7 (_ask_poll)"), km._thread_kind("Thread-9 (serve_forever)"), km._thread_kind("Thread-3")),
-                         ("_ask_poll", "serve_forever", "thread"), "a default name keeps the target function, the identity a slow-boot read needs")
-        self.assertEqual((km._thread_kind("judge-index_2"), km._thread_kind("ThreadPoolExecutor-0_4")), ("judge-index", "pool"))
+                         ("thread", "thread", "thread"), "a default name is the register's word for it, never the target's text")
+        self.assertEqual((km._thread_kind("judge-index_2"), km._thread_kind("ThreadPoolExecutor-0_4"), km._thread_kind("judge-jobs_0"),
+                          km._thread_kind("judge-judge-index_2_0"), km._thread_kind("judge-Thread-4 (process_request_thread)_1")),
+                         ("judge-index", "pool", "judge-jobs", "judge-judge-index", "judge-handler"))
+        # outside the register: a prefix the convention never named, a session name spelled without the separator, a pool
+        # built on an unregistered thread, a library's watchdog named with a test path, the empty name
+        self.assertEqual((km._thread_kind("watchdog:notes-api-web"), km._thread_kind("notes-api-web"), km._thread_kind("judge-nope_0"),
+                          km._thread_kind("pytest_timeout tests/test_perf_stats.py::Case::test"), km._thread_kind("")),
+                         ("other",) * 5, "a name outside the register reads other")
         gate = threading.Event()
         th = threading.Thread(target=gate.wait, daemon=True); th.start()   # unnamed: Python's "Thread-N (wait)"
         try:
             rows = km._thread_stacks()
         finally:
             gate.set(); th.join(5)
-        self.assertIn("%d wait" % th.ident, rows, sorted(rows))
+        self.assertIn("%d thread" % th.ident, rows, sorted(rows))
 
     def test_every_named_thread_site_maps_to_a_kind_without_an_identity(self):
         """Round two, medium 1, and round three's medium 1: a census of every thread and pool construction site in the kernel,
         every module the kernel loads in-process (the backends, the judge, the credentials helper) and the postal service,
         walked with the ast module (a regex could not cross a newline and missed five named sites, the Codex worker's among
-        them). A constant name is a kind already; a name with a dynamic part (a session name, a sid, a host) must carry it after
-        the convention's separator so _thread_kind drops it; a name built any other way fails, and so does a name the census
-        cannot see: a Thread's positional name (its third positional argument), a Timer with a positional beyond its interval
-        and function, keywords passed through **kwargs, or an aliased constructor (an assignment whose value is one of the
-        constructors; ctor_of resolves Name and Attribute spellings only, so an alias would hide every site built through it).
-        Every kind family the census derives must appear in the reference's kind list, so a new kind cannot ship undocumented."""
+        them). The register beside _PERF_ROUTE_SEGMENTS is held equal to the census both ways (2026-09-18, after a library's
+        watchdog thread reached CI's served sample by name): a constant name must be a word of _THREAD_KINDS, so a new kernel
+        thread kind the sample would read as `other` is caught here, and every word there must be a name some site starts, so a
+        retired thread leaves no dead word; a name with a dynamic part (a session name, a sid, a host) must carry it after the
+        convention's separator with a prefix in _THREAD_KIND_PREFIXES, held equal to the census the same way, so _thread_kind
+        keeps the prefix and drops the payload. A Thread renamed after construction (`<thread>.name = "..."`, the Codex handshake
+        clock) is a site too when the name is a constant; a dynamic rename cannot be told from a session object's name field
+        statically and is left to the fold, which reads it `other`. A name built any other way fails, and so does a name the
+        census cannot see: a Thread's positional name (its third positional argument), a Timer with a positional beyond its
+        interval and function, keywords passed through **kwargs, or an aliased constructor (an assignment whose value is one of
+        the constructors; ctor_of resolves Name and Attribute spellings only, so an alias would hide every site built through
+        it). Every kind family the census derives must appear in the reference's kind list, so a new kind cannot ship
+        undocumented."""
         import ast, re
         root = os.path.dirname(BIN)
         files = [os.path.join(root, "kernel", f) for f in ("kernel.py", "sdk_backend.py", "codex_backend.py", "session_host.py",
@@ -1737,7 +1754,7 @@ class PerfRoutes(unittest.TestCase):
             if isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr == "format" and isinstance(v.func.value, ast.Constant):
                 return v.func.value.value.split("{")[0], True
             return None, None
-        sites, named, bad, dyn_kinds, per_file = 0, [], [], set(), {}
+        sites, named, bad, dyn_kinds, consts, per_file = 0, [], [], set(), set(), {}
         for f in files:
             src = open(f, encoding="utf-8").read()
             tree = ast.parse(src)
@@ -1749,6 +1766,12 @@ class PerfRoutes(unittest.TestCase):
                 if isinstance(node, ast.Assign) and isinstance(node.value, (ast.Name, ast.Attribute)) and ctor_of(ast.Call(func=node.value, args=[], keywords=[])) \
                         and not all(isinstance(tg, ast.Name) and tg.id in CTORS for tg in node.targets):   # judge.py rebinds ThreadPoolExecutor
                     bad.append(("%s:%d" % (os.path.basename(f), node.lineno), "a constructor aliased into a name the census cannot follow", ast.dump(node.value)[:60]))   # to its timed subclass: both names are constructors, so every site stays visible
+                if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Attribute) \
+                        and node.targets[0].attr == "name" and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                    label = "%s:%d" % (os.path.basename(f), node.lineno)    # a Thread renamed after construction with a constant
+                    named.append(label); consts.add(node.value.value)        #  (the Codex handshake clock): a register word too
+                    if km._thread_kind(node.value.value) != node.value.value:
+                        bad.append((label, "a constant rename outside the register (_THREAD_KINDS): the sample would read it other", node.value.value))
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call) or ctor_of(node) is None:
                     continue
@@ -1776,14 +1799,21 @@ class PerfRoutes(unittest.TestCase):
                     dyn_kinds.add(kind)                          # a kind with a payload is a documented family (sdk, codex, ...)
                 else:
                     kind = km._thread_kind(static if kw.arg == "name" else static + "_0")   # a pool prefix names its workers <prefix>_N
+                    if kw.arg == "name":
+                        consts.add(static)
                     if kind != static or re.search(r"[/\\]|[0-9a-f]{8}-", static):
-                        bad.append((label, "a constant name that is not a plain kind", kind))
+                        bad.append((label, "a constant name outside the register (_THREAD_KINDS): the sample would read it other", kind))
         self.assertGreaterEqual(sites, 60, "the census walked the construction sites: %d" % sites)
         self.assertGreaterEqual(len(named), 23, "the census found every named site, the multi-line ones included: %r" % named)
         self.assertTrue(any(l.startswith("codex_backend.py:") for l in named), "the Codex worker's site is walked: %r" % named)
         self.assertGreaterEqual(per_file.get("credentials.py", 0), 1, "the credentials helper's Timer is a construction site the census walked: %r" % per_file)
         self.assertGreaterEqual(per_file.get("judge.py", 0), 7, "the judge tiers' pools are construction sites the census walked: %r" % per_file)
-        self.assertEqual(bad, [], "every named thread maps to a kind with no identity in it")
+        self.assertEqual(bad, [], "every named thread maps to a register word with no identity in it")
+        self.assertEqual(sorted(km._THREAD_KINDS - consts), [], "every register word is a constant name some site starts: a retired thread leaves no dead word")
+        self.assertEqual(sorted(km._THREAD_KIND_PREFIXES - dyn_kinds), [], "every registered prefix is a kind some site spells with a payload")
+        self.assertEqual(sorted(dyn_kinds - km._THREAD_KIND_PREFIXES), [], "every kind spelled with a payload is a registered prefix")
+        self.assertTrue(km._THREAD_KINDS.isdisjoint(km._THREAD_KIND_PREFIXES) and km._THREAD_KIND_FIXED.isdisjoint(km._THREAD_KINDS | km._THREAD_KIND_PREFIXES)
+                        and "other" not in km._THREAD_KIND_WORDS, "the register's three parts are disjoint, and other is the fold's word alone")
         ref = open(os.path.join(root, "docs", "reference.md"), encoding="utf-8").read()
         para = ref[ref.index("- `stacks`: every live thread's stack"):]
         para = para[:para.index("\n- ", 10)]
@@ -1913,20 +1943,22 @@ class PerfRoutes(unittest.TestCase):
 
 class StacksField(unittest.TestCase):
     """The perf route's `stacks` (T358, a debugging aid behind ROMP_PERF_STACKS; T401's sample): every thread's frames, keyed by
-    the thread's ident WITH its kind, so two workers sharing a kind stay two entries (the duplicate-worker case the aid is for);
-    None without the switch."""
+    the thread's ident WITH its kind, so two workers sharing a kind stay two entries (the duplicate-worker case the aid is for),
+    two threads outside the register, both `other`, included; None without the switch."""
     def test_two_threads_sharing_a_name_are_two_entries(self):
         import threading
         from unittest import mock
         gate = threading.Event()
-        ths = [threading.Thread(target=gate.wait, name="same-name-worker", daemon=True) for _ in range(2)]
+        ths = [threading.Thread(target=gate.wait, name="ws-send", daemon=True) for _ in range(2)]   # a register kind, shared
         for t in ths:
             t.start()
         try:
             with mock.patch.dict(os.environ, {"ROMP_PERF_STACKS": "1"}):
                 snap = km._PerfStats().snapshot()
-            keys = [k for k in (snap.get("stacks") or {}) if k.endswith(" same-name-worker")]
-            self.assertEqual(len(keys), 2, "one entry per thread, the name carried: %s" % sorted(snap.get("stacks") or {}))
+            idents = {t.ident for t in ths}
+            keys = [k for k in (snap.get("stacks") or {}) if int(k.split()[0]) in idents]
+            self.assertEqual(len(keys), 2, "one entry per thread: %s" % sorted(snap.get("stacks") or {}))
+            self.assertTrue(all(k.endswith(" ws-send") for k in keys), "the kind carried: %s" % keys)
             self.assertEqual(len(set(keys)), 2, "keyed by ident: distinct")
             self.assertTrue(all(str(t.ident) in k for t, k in zip(sorted(ths, key=lambda t: t.ident), sorted(keys, key=lambda k: int(k.split()[0])))))
             for k in keys:                                                   # the value shape (T401): the row the served
@@ -1942,6 +1974,29 @@ class StacksField(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("ROMP_PERF_STACKS", None)
             self.assertIsNone(km._PerfStats().snapshot()["stacks"], "None without the switch")
+
+    def test_two_threads_outside_the_register_are_two_entries_keyed_other(self):
+        """2026-09-18: two threads whose names the register does not hold (a library's watchdog named with a test path, a worker
+        named with an id) both read `other` and stay two rows, the ident half of the key keeping them apart; neither name
+        reaches the sample."""
+        gate = threading.Event()
+        names = ("pytest_timeout tests/test_perf_stats.py::StacksField::test_x", "worker 11111111-2222-3333-4444-555555555555")
+        ths = [threading.Thread(target=gate.wait, name=n, daemon=True) for n in names]
+        for t in ths:
+            t.start()
+        try:
+            rows = km._thread_stacks()
+        finally:
+            gate.set()
+            for t in ths:
+                t.join(timeout=5)
+        keys = ["%d other" % t.ident for t in ths]
+        self.assertEqual(len(set(keys)), 2, keys)
+        for k in keys:
+            self.assertIn(k, rows, sorted(rows))
+            self.assertTrue(rows[k]["frames"][-1].startswith("wait ("), rows[k]["frames"])
+        text = json.dumps(rows)
+        self.assertFalse(any(n in text for n in names), "no planted name in the sample")
 
 class UserAgentKind(unittest.TestCase):
     """_ua_kind: the browser kind of a dial's User-Agent header, one of WS_UA_KINDS, never the header and never a version
@@ -2069,9 +2124,14 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
     test modules filled in this process are walked too; the planted reads are removed after."""
 
     IDENT = re.compile(r"^[A-Za-z0-9_.-]+$")
-    STACKS_KEY = re.compile(r"^[0-9]+ (?:[A-Za-z0-9_.-]+|\?)$")   # the stack sample's "<ident> <kind>" (_thread_stacks); `?` is
-    #                                                              _thread_kind's own token for a thread gone between the two
-    #                                                              enumerations (seen under xdist), not a name
+    _KIND_WORDS = getattr(km, "_THREAD_KIND_WORDS", None)         # the stack sample's "<ident> <kind>" (_thread_stacks): a word of
+    STACKS_KEY = re.compile(r"^[0-9]+ (?:(?:judge-)*(?:%s)|other)$" % "|".join(sorted(map(re.escape, _KIND_WORDS)))) if _KIND_WORDS \
+        else re.compile(r"^[0-9]+ (?:[A-Za-z0-9_.-]+|\?)$")       # the kernel's register (a judge pool's worker composes one
+    #                                                              with judge-) or other, nothing else: a thread's name is never
+    #                                                              a key (2026-09-18: a library's watchdog named with a test path
+    #                                                              reached CI's sample verbatim). A tree before the register gets
+    #                                                              the character grammar that stood here, so the fails-before run
+    #                                                              names the leaking sites, not this class
     FRAME = re.compile(r"^(?:[A-Za-z0-9_]+|<[a-z]+>) \(<?[A-Za-z0-9_. -]+>?:[0-9]+\)$")   # "function (file:line)": a code object's
     #                                                                                     name and its file's basename, the
     #                                                                                     interpreter's <lambda> and <frozen ...>
@@ -2238,6 +2298,29 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
                 self._walk(v, where + (i,))
         elif isinstance(node, str):
             self._check_text(node, where, key=False)
+
+    def test_a_thread_named_with_a_path_and_an_id_is_keyed_other_and_the_walk_stays_clean(self):
+        """2026-09-18, CI red on every Python cell: pytest-timeout names its watchdog "pytest_timeout <node id>" (the running
+        test's path, then ::Class::test), and the sample's colon rule kept the name up to the first "::", so the served key
+        read "<ident> pytest_timeout tests/test_perf_stats.py", outside the key grammar; a thread named with a path, a uuid or
+        free text by any library reached the snapshot the same way. The kind is a word from the kernel's register or `other`,
+        the ident keeping the row its own; the planted name, a node id with a session id and a home path appended, is nowhere
+        in the snapshot, and the whole walk stays clean with the thread alive."""
+        gate = threading.Event()
+        name = "pytest_timeout tests/test_perf_stats.py::ServedSnapshotIsPasteSafe::test_x %s %s" % (SID, self.home)
+        th = threading.Thread(target=gate.wait, name=name, daemon=True); th.start()
+        try:
+            self._plant()
+            snap = self._snapshot_under_a_request("/" + SID + "?stacks=1")
+        finally:
+            gate.set(); th.join(5)
+        key = "%d other" % th.ident
+        self.assertIn(key, snap["stacks"] or {}, sorted(snap["stacks"] or {}))
+        self.assertTrue(snap["stacks"][key]["frames"][-1].startswith("wait ("), "the row is the planted thread's")
+        self.assertNotIn(name, json.dumps(snap), "the name is nowhere in the snapshot")
+        self.problems = []
+        self._walk(snap)
+        self.assertEqual(self.problems, [], "%d leak(s) in the served snapshot:\n  %s" % (len(self.problems), "\n  ".join(self.problems)))
 
     def test_no_key_or_string_in_the_served_snapshot_carries_a_path_an_id_or_planted_text(self):
         self._plant()

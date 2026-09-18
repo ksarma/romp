@@ -2881,19 +2881,27 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   walks whose memo could not be read or stored (`fallback`: a document state
   of the wrong shape, or no reader entry after the walk).
 - `stacks`: every live thread's stack, keyed `"<ident> <kind>"`. The kind
-  is the thread's name up to the naming convention's colon (`sdk` and
+  is a word from the kernel's register of its own thread kinds
+  (`_THREAD_KINDS` and `_THREAD_KIND_PREFIXES`, beside the route table in
+  `kernel/kernel.py`), never the thread's name itself: the name up to the
+  naming convention's colon when that part is a registered prefix (`sdk` and
   `sdk-intr` for a session's threads, `codex` for a Codex session's worker,
-  `end-host` for a session's end hook, `port-up` for a dial's port watch, `peer` for a postal peer loop,
-  `romp-refused-mark` for the refused-echo mark a cut-off boot re-delivery writes aside), the
-  target function for a thread the code left unnamed (`_ask_poll`,
-  `_parent_watch`, `_update_check_loop`, `_tunnel_supervisor`,
-  `serve_forever`, ...), `handler` for the HTTP server's request threads,
-  `judge-index`, `judge-triage` and the other tiers' pool workers, `pool`
-  for an unprefixed pool worker, `thread` for a default name with no target,
-  `pusher`, `producer`, `index`, `triage`, `parse-warm`, `boot-warm`,
-  `sdk-boot`, `first-cycle-sampler`, `jobs` (the housekeeping loop split off the pusher), `main`; never a
-  session's name, sid, host or path (the ident
-  keeps two workers sharing a kind apart). Each row has `self` (the thread building the
+  `end-host` for a session's end hook, `port-up` for a dial's port watch,
+  `peer` for a postal peer loop, `romp-refused-mark` for the refused-echo
+  mark a cut-off boot re-delivery writes aside); a registered constant name
+  (`pusher`, `jobs` (the housekeeping loop split off the pusher), `producer`,
+  `index`, `triage`, `serve-pass`, `parse-warm`, `boot-warm`, `sdk-boot`,
+  `first-cycle-sampler`, `ws-send`, `model-catalog`, `price-refresh`, and
+  the rest of the register); `handler` for the HTTP server's request
+  threads; `thread` for a thread the code left unnamed (its target function
+  is the row's own fourth frame); `pool` for an unprefixed pool worker;
+  `judge-<kind>` for a judge pool's workers (`judge-index`, `judge-triage`,
+  `judge-serve-pass`: the kind of the thread that built the pool); `main`;
+  and `other` for every name outside the register: a library's thread named
+  with free text (pytest-timeout names its watchdog with the running test's
+  path), a name carrying a path or an id, or no name at all. Never a
+  session's name, sid, host or path (the ident keeps two workers sharing a
+  kind apart, two `other` threads included). Each row has `self` (the thread building the
   sample), `stage` (the thread's current stage mark: the pusher's
   `jobs.<job>` or `push`, a handler's `connect`, `null` outside one) and
   `frames`, "function (file:line)" strings innermost last, at most 40; no
