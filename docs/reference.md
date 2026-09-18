@@ -654,12 +654,11 @@ a per-session pick shows), and those sessions keep following the default (no
 pick is written for them). A third choice, Automatic, is the rule that held
 before: the API key when a helper is configured, else the login; it clears
 the explicit default, the group's sub-line says which rule holds, and the
-sessions following the default are reconnected the same way. Until the
-default is set here, the last per-session pick is remembered as the
-preselected choice in the new-session picker and nothing more: a session
-created with no pick of its own follows the machine default, not that pick;
-once set here, a per-session pick is about that session alone and moves no
-default. A
+sessions following the default are reconnected the same way. A per-session
+pick, before or after the default is set here, is about that session alone
+and moves no default: the new-session picker preselects the machine default
+(the explicit one, else the rule that holds), and a session created with no
+pick of its own follows the machine default, not the last pick. A
 remote session's flyout names its host, and the pick sets that host's default
 (the op routes to the session's owning kernel). The judges follow the same
 resolution: a judge on a session with no pick of its own bills the machine's

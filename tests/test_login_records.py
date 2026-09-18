@@ -448,9 +448,13 @@ class AvailabilityLists(unittest.TestCase):
         self.assertEqual(a["logins"][1]["why"], km.jd._cred.WHY_MANAGED_HELPER)
 
     def test_a_remembered_stored_login_is_the_default_while_usable(self):
+        # the picker's preselection follows the launch's rule (round 1 of the review, 2026-09-18): a stored login
+        # written by a per-session pick (no authExplicit) preselects nothing; the EXPLICIT default of one does
         self._world(FAKE_KEY, "aaaaaaaaaaaa")
         ok = _rec(self.state, "Work")
         (self.state / "sdk-defaults.json").write_text(json.dumps({"auth": "login", "authLogin": ok["id"]}))
+        self.assertEqual(km._auth_avail()["default"], "key", "a per-session pick's stored login preselects nothing: the helper rule")
+        (self.state / "sdk-defaults.json").write_text(json.dumps({"auth": "login", "authLogin": ok["id"], "authExplicit": True}))
         self.assertEqual(km._auth_avail()["default"], "login:" + ok["id"])
         lg.mark_refused(self.state, ok["id"], "refused by the API")
         self.assertEqual(km._auth_avail()["default"], "login", "a refused stored login falls through the machine rules")

@@ -150,7 +150,7 @@ class DeclarationInvertsTheMismatch(_Declared):
         # 2026-09-08, so the parenthetical sent the reader to a source that no longer exists. Every branch
         # of the check is driven here and its remedy pinned exactly as the row's tail (the ring row's text
         # is the logged line verbatim, so nothing follows the remedy): a declaration contradicted, in both
-        # its wordings (the env word and the remembered pick); an explicit key pick that launched with
+        # its wordings (the env word and the machine default); an explicit key pick that launched with
         # nothing injected and landed on the login; and the launch-intent comparison, both directions.
         RETIRED = "service.env, where your installation allows a key in a file"
         HELPER = "Check the helper and the manager's environment."
@@ -187,7 +187,7 @@ class DeclarationInvertsTheMismatch(_Declared):
         sb.write_sdk_default(Path(self.d), auth="login", authExplicit=True)   # written last: the env word is inert after it
         s = self._sess(36)
         s._launched_keyed = False
-        rows.append((filed(s, "apiKeyHelper"), "the remembered Billing pick is login", HELPER))
+        rows.append((filed(s, "apiKeyHelper"), "the machine's default billing is login", HELPER))
 
         for text, lead, remedy in rows:
             self.assertIn(lead, text)
@@ -263,9 +263,11 @@ class GearPickMakesTheDeclarationInert(_Declared):
         s2._launched_keyed = False
         self.be._note_auth_source(s2, "apiKeyHelper")      # a keyed landing: contradicts the DEFAULT
         texts = self._problem_texts()[n:]
-        self.assertTrue(any("the remembered Billing pick is login" in t and "billing the API key" in t
+        self.assertTrue(any("the machine's default billing is login" in t and "billing the API key" in t
                             for t in texts),
-                        "a landing contradicting the default rings, NAMING THE PICK not the env var: %r" % texts)
+                        "a landing contradicting the default rings, NAMING THE MACHINE DEFAULT not the env var: %r" % texts)
+        self.assertFalse(any("remembered Billing pick" in t for t in texts),
+                         "the row names what the user is looking at, the explicit default, never a pick (round 1 of the review)")
         self.assertFalse(any("ROMP_EXPECTED_AUTH" in t for t in texts),
                          "the env var no longer speaks anywhere once the default is explicit")
 
@@ -280,8 +282,8 @@ class GearPickMakesTheDeclarationInert(_Declared):
         texts = self._problem_texts()
         self.assertTrue(any("billing the login" in t for t in texts),
                         "the seeded session is still judged (against its own pick side): %r" % texts)
-        self.assertFalse(any("remembered Billing pick" in t for t in texts),
-                         "...but nothing pretends a remembered default was an explicit box-wide pick")
+        self.assertFalse(any("default billing is" in t or "remembered Billing pick" in t for t in texts),
+                         "...but nothing pretends a remembered default was an explicit machine default")
 
     def test_all_keyed_gate_follows_the_explicit_default(self):
         os.environ["ROMP_EXPECTED_AUTH"] = "login"
@@ -326,7 +328,7 @@ class GearPickMakesTheDeclarationInert(_Declared):
         s = self._sess(17)
         s._launched_keyed = True                           # the helper box: an unpicked launch means the key
         self.be._note_auth_source(s, "apiKeyHelper")       # ...and lands there
-        self.assertFalse(any("remembered Billing pick" in t for t in self._problem_texts()),
+        self.assertFalse(any("default billing is" in t for t in self._problem_texts()),
                          "a seeded value rings nothing: the launch never followed it: %r" % self._problem_texts())
         self.assertFalse(any("billing the API key" in t for t in self._problem_texts()), "the intended landing is quiet")
         self.assertTrue(self.be.set_auth_default("login"))   # the machine default: the launch follows it, so the check does
@@ -334,7 +336,7 @@ class GearPickMakesTheDeclarationInert(_Declared):
         s2._launched_keyed = True                          # a stale stamp (a launch from before the default) landing keyed
         self.be._note_auth_source(s2, "apiKeyHelper")
         texts = self._problem_texts()
-        self.assertTrue(any("the remembered Billing pick is login" in t and "billing the API key" in t for t in texts),
+        self.assertTrue(any("the machine's default billing is login" in t and "billing the API key" in t for t in texts),
                         "the same landing contradicts the explicit default and rings: %r" % texts)
 
 

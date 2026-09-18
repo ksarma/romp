@@ -21922,10 +21922,14 @@ def _auth_avail():
     refuses it with the same reason). key = an apiKeyHelper is configured in Claude Code's settings (read,
     never run; romp holds no key: see _auth_key_present). acct = the login's display name
     (_claude_account_label), so 'Login' can say WHICH account it means. default = what a fresh session
-    would use absent an explicit pick: the remembered pick when this box can bill it, else the side that
-    exists, in BOTH directions (the user 2026-09-08: a remembered login pick on a box with no login falls
-    to the key, exactly as a remembered key pick on a helper-less box already fell to the login). The
-    reason sentences are credentials.py's, one vocabulary for every surface."""
+    would use absent an explicit pick, the rule the LAUNCH follows (round 1 of the review, 2026-09-18): the
+    machine's EXPLICIT default (sdk-defaults.json `auth` beside `authExplicit`, the Set default billing
+    submenu) when this box can bill it, else the side that exists (the helper rule), in BOTH directions (the
+    user 2026-09-08: an explicit login default on a box with no login falls to the key, exactly as an explicit
+    key default on a helper-less box falls to the login). A per-session pick's flag-less write preselects
+    nothing: read here, it made every session created from the picker carry that pick as its OWN while a
+    session created any other way followed the machine default, and the two creation roads billed different
+    sides. The reason sentences are credentials.py's, one vocabulary for every surface."""
     key = _auth_key_present()
     d = {}
     try:
@@ -21941,10 +21945,11 @@ def _auth_avail():
     # review 2026-09-09: a remembered login pick must not fall to the key on a read failure)
     login_ok = (bool(_claude_account()) or _claude_account_state() == "unreadable") and not managed
     logins = _login_choices(login_ok, managed)
-    default = d.get("auth") if d.get("auth") in ("login", "key") else ("key" if key else "login")
-    # a remembered pick of a STORED login (T346) stands as "login:<id>" while that login is usable; otherwise
-    # it falls through the machine-login rules below like any remembered login pick
-    dlid = _reg_login(d) if (default == "login" and d.get("auth") == "login") else ""
+    explicit = bool(d.get("authExplicit")) and d.get("auth") in ("login", "key")   # the launch's gate (_explicit_default)
+    default = d.get("auth") if explicit else ("key" if key else "login")
+    # an explicit default of a STORED login (T346) stands as "login:<id>" while that login is usable; otherwise
+    # it falls through the machine-login rules below like any explicit login default
+    dlid = _reg_login(d) if (explicit and default == "login") else ""
     if dlid:
         stored = next((row for row in logins if row.get("id") == dlid), None)
         if stored and stored.get("available"):
@@ -21957,7 +21962,7 @@ def _auth_avail():
            "acct": _claude_account_label(), "default": default, "logins": logins,
            # T380: the default is EXPLICIT (set in the Billing flyout's Default group) or the helper rule; the
            # group marks Automatic otherwise and its sub-line says which
-           "defaultExplicit": bool(d.get("authExplicit")) and d.get("auth") in ("login", "key")}
+           "defaultExplicit": explicit}
     if not login_ok:
         out["loginWhy"] = jd._cred.WHY_MANAGED_HELPER if managed else jd._cred.WHY_NO_LOGIN
     if not key:
@@ -21967,9 +21972,10 @@ def _auth_avail():
 
 def _auth_avail_status():
     """_auth_avail's availability half for the per-session status payload: {login, key, loginWhy?, keyWhy?,
-    default} — no acct (authAcct rides beside it); `default` is the machine's seed, carried since T380 so the
+    default}, with no acct (authAcct rides beside it); `default` is the machine default, carried since T380 so the
     tab menu's Billing flyout can mark it in its "Default for this machine" group (a live session has its own
-    pick; the default is what a NEW one, or one with no pick, launches on). Computed ONCE per
+    pick; the default is what a NEW one, or one with no pick, launches on: the explicit default when this box can
+    bill it, else the helper rule, the same read _auth_avail makes for the new-session picker). Computed ONCE per
     pusher cycle (the cycle's _live_scope memo, the same idiom as its liveness snapshot): build_session asks
     for it per session per push, and each answer re-read sdk-defaults.json and both operator settings files
     (review 2026-09-09). Outside a cycle (a connect push on a handler thread, a test) it computes fresh."""
@@ -23346,7 +23352,9 @@ def _drive(msg, client):
         # the machine's DEFAULT billing (T380, the user 2026-09-12): the seed every new session and every
         # session with no pick of its own launches on ("auto" = the helper rule again). Written on THIS kernel
         # (the op routes to the session's owning host, so a remote session's flyout sets that host's default);
-        # no session's own pick is touched, so nothing reconnects. LOUD on refusal, the same reason vocabulary as
+        # no session's own pick is written, and every session following the default whose CLI runs on the other
+        # side is asked to reconnect, as a per-session pick asks (the backend's _reconnect_default_followers, the
+        # user 2026-09-18). LOUD on refusal, the same reason vocabulary as
         # a per-session pick; a backend that keeps no machine default (Codex) is refused by name, never a raise
         # swallowed inside the drive (review). A STORED login ("login:<id>") is a machine default too since
         # 2026-09-14 (the user: the Set default billing submenu offers every billing the picks do); the backend's

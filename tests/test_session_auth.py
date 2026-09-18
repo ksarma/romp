@@ -627,8 +627,8 @@ class AccountReadStates(unittest.TestCase):
             a = km._auth_avail()
             self.assertTrue(a["login"], "cannot tell is not 'no login'")
             self.assertNotIn("loginWhy", a)
-            p.write_text(json.dumps({"auth": "login"}))
-            self.assertEqual(km._auth_avail()["default"], "login", "a remembered login pick does not fall on a read failure")
+            p.write_text(json.dumps({"auth": "login", "authExplicit": True}))
+            self.assertEqual(km._auth_avail()["default"], "login", "an explicit login default does not fall on a read failure")
             km._claude_account_state = lambda: "none"
             self.assertEqual(km._auth_avail()["default"], "key", "…and falls once the read says: no account")
             self.assertEqual(km._auth_avail()["loginWhy"], km.jd._cred.WHY_NO_LOGIN)
@@ -712,17 +712,23 @@ class FallbackBothWays(_Keyed):
         self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid), "unpicked: bills the key by the box's fallback")
         self.assertEqual(self.be.default_auth(sb.read_reg(self.be.state_dir, sid)), "key")
         self.be.spawn("m", "/tmp")
-        rows = [p["text"] for p in self.be.problems(20) if "remembered Billing pick is the login" in p["text"]]
+        rows = [p["text"] for p in self.be.problems(20) if "the machine's default billing is the login" in p["text"]]
         self.assertEqual(len(rows), 1, "once per process")
         self.assertIn(sb._cred.WHY_NO_LOGIN, rows[0])
+        # the row names the machine default and a remedy that works (round 1 of the review, 2026-09-18): a pick on a
+        # session seeds nothing any more, so it is not offered as one
+        self.assertIn("set the default billing again (the Set default billing submenu)", rows[0])
+        self.assertNotIn("Billing pick", rows[0]); self.assertNotIn("pick a login", rows[0])
         # the mirror (review find 2026-09-07) still holds beside it
         sb.write_sdk_default(self.be.state_dir, auth="key")
         self._no_helper()
         self.be.login_ok = lambda: True
         sid = self.be.spawn("k", "/tmp")
         self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid))
-        rows = [p["text"] for p in self.be.problems(20) if "remembered Billing pick is the API key" in p["text"]]
+        rows = [p["text"] for p in self.be.problems(20) if "the machine's default billing is the API key" in p["text"]]
         self.assertEqual(len(rows), 1)
+        self.assertIn("configure apiKeyHelper in", rows[0]); self.assertNotIn("the pick", rows[0])
+        self.assertFalse(any("remembered Billing pick" in p["text"] for p in self.be.problems(20)))
 
     def test_availability_names_the_reason_for_each_missing_side(self):
         self.assertEqual(self.be.auth_avail(), {"login": True, "key": True})
@@ -999,9 +1005,14 @@ class SetAuth(_Keyed):
         self.assertNotEqual(sb.read_sdk_defaults(self.be.state_dir).get("auth"), "key")
 
     def test_the_picker_pick_beats_the_remembered_default(self):
-        sb.write_sdk_default(self.be.state_dir, auth="login")
+        # the default a spawn reads is the EXPLICIT machine default (2026-09-18); a flag-less value is read by nothing, so
+        # a pick "beating" it proved nothing (round 1 of the review): the contest is an explicit login default against
+        # an explicit key pick at spawn
+        sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
         sid = self.be.spawn("n", "/tmp", auth="key")
         self.assertEqual(sb.read_reg(self.be.state_dir, sid)["auth"], "key")
+        sid = self.be.spawn("m", "/tmp")
+        self.assertEqual(sb.read_reg(self.be.state_dir, sid)["auth"], "login", "...and the explicit default seeds a pick-less spawn")
 
     def test_refuses_junk_and_a_key_pick_on_a_helperless_box(self):
         sid = self.be.spawn("n", "/tmp")
@@ -1039,12 +1050,30 @@ class SetAuth(_Keyed):
         self.assertEqual(len(chips), 1, "an idle session's switch must still show SOMETHING in the chat")
 
     def test_a_stranded_pending_flag_heals_on_construction(self):
-        sid = self.be.spawn("n", "/tmp")
+        # a PICKED session's pending heals: its pick rides the next connect through the reg
+        sid = self.be.spawn("n", "/tmp", auth="login")
         self.be._update_reg(sid, authPending=True)
         self._sess(1, sid=sid)
         s = sb.SdkSession(self.be, sb.read_reg(self.be.state_dir, sid))
         self.assertFalse(sb.read_reg(self.be.state_dir, sid).get("authPending"),
                          "a fresh construction applies the reg on its next connect — pending is over")
+        self.assertEqual(s._auth_pending, "")
+
+    def test_a_followers_pending_stands_across_construction(self):
+        # a FOLLOWER's pending is set_auth_default's ask to move onto the machine default (round 1 of the review,
+        # 2026-09-18): the CLI outlives the kernel and still runs the old side, so a fresh construction keeps the flag
+        # and carries the ask, targeted at the side the default resolves to now; the first landing decides
+        sid = self.be.spawn("n", "/tmp")                              # spawned before the default: a follower (a spawn after it would be seeded)
+        sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
+        self.be._update_reg(sid, authPending=True, effortPending=True, apiKeyAuth=True)
+        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid))
+        s = sb.SdkSession(self.be, sb.read_reg(self.be.state_dir, sid))
+        reg = sb.read_reg(self.be.state_dir, sid)
+        self.assertTrue(reg.get("authPending"), "the follower's ask stands on the reg")
+        self.assertFalse(reg.get("effortPending"), "...while the effort flag heals as before")
+        self.assertEqual(s._auth_pending, "login", "the carried ask targets the machine default")
+        self.assertEqual(s.auth_live, "key", "the CLI's last report is kept: it describes the process that still runs")
+        self.assertTrue(s.snapshot()["authPending"])
 
     def test_snapshot_and_dormant_rows_both_carry_the_choice(self):
         sid = self.be.spawn("n", "/tmp", auth="login")
@@ -1282,24 +1311,28 @@ class Availability(unittest.TestCase):
         self.assertNotIn(FAKE_KEY, json.dumps(km._auth_avail()), "the reasons carry no key material either")
 
     def test_the_default_falls_to_the_side_that_exists_both_ways(self):
-        """A remembered login pick on a box with no login defaults to the key (the user 2026-09-08), exactly
-        as a remembered key pick on a helper-less box already defaulted to the login."""
+        """An explicit login default on a box with no login defaults to the key (the user 2026-09-08), exactly
+        as an explicit key default on a helper-less box already defaulted to the login. The value read is the
+        EXPLICIT default, the launch's own rule (round 1 of the review, 2026-09-18): a per-session pick's
+        flag-less write preselects nothing, so the picker and a pick-less spawn agree on the side."""
         p = km.jd.STATE / "sdk-defaults.json"
         p.parent.mkdir(parents=True, exist_ok=True)
         try:
             self._world(FAKE_KEY, "")
             self.assertEqual(km._auth_avail()["default"], "key", "unpicked, no login: the key")
-            p.write_text(json.dumps({"auth": "login"}))
-            self.assertEqual(km._auth_avail()["default"], "key", "a remembered login pick with no login: the key")
+            p.write_text(json.dumps({"auth": "login", "authExplicit": True}))
+            self.assertEqual(km._auth_avail()["default"], "key", "an explicit login default with no login: the key")
             self._world(FAKE_KEY, "aaaaaaaaaaaa")
-            self.assertEqual(km._auth_avail()["default"], "login", "…and with a login, the pick stands")
+            self.assertEqual(km._auth_avail()["default"], "login", "…and with a login, the default stands")
+            p.write_text(json.dumps({"auth": "login"}))
+            self.assertEqual(km._auth_avail()["default"], "key", "a per-session pick's flag-less write preselects nothing: the helper rule")
             self._world("", "aaaaaaaaaaaa")
-            p.write_text(json.dumps({"auth": "key"}))
-            self.assertEqual(km._auth_avail()["default"], "login", "the mirror: a remembered key pick with no helper")
+            p.write_text(json.dumps({"auth": "key", "authExplicit": True}))
+            self.assertEqual(km._auth_avail()["default"], "login", "the mirror: an explicit key default with no helper")
             self._world("", "")
             self.assertEqual(km._auth_avail()["default"], "login", "neither: the login, the CLI's own resolution")
-            p.write_text(json.dumps({"auth": "login"}))
-            self.assertEqual(km._auth_avail()["default"], "login", "…a login pick with nothing to fall to stands")
+            p.write_text(json.dumps({"auth": "login", "authExplicit": True}))
+            self.assertEqual(km._auth_avail()["default"], "login", "…an explicit login default with nothing to fall to stands")
         finally:
             p.unlink(missing_ok=True)
 
