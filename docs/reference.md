@@ -3808,13 +3808,21 @@ default, with the session counts, the user's actions and the panes opened
 keys the snapshot already carries. Before writing, the document is searched
 for the strings only this machine knows (its hostname, user and home
 directory, the session ids and working directories in the state directory's
-registry; a hostname or user is matched as whole words, so a user named
-`mark` is not found in the counter `intrMarks`), then walked once more for a
-uuid, a 32-hex or 40-hex token, an absolute path or free text (a string
+registry, and the lines of `~/.config/romp/private-strings.txt` when that
+file exists, the list the repository's pre-push hook reads, one string per
+line with `#` comments, `ROMP_PRIVATE_STRINGS` naming another file and
+`XDG_CONFIG_HOME` honoured, absent on a clone that never set one up, so a
+no-op there; a hostname, user or private string is matched as whole words,
+so a user named `mark` is not found in the counter `intrMarks`), then walked
+once more for a uuid, a 32-hex or 40-hex token, an absolute path or free text
+(a string
 carrying whitespace), and checked against the denylist (a key the export
-drops, an uptime not rounded to whole minutes, a bound not rounded to a power
-of two, or, under any other key, a float inside a clock stamp's epoch window,
-1.5e9 to 2.0e9 for seconds or 1.5e12 to 2.0e12 for milliseconds, a number
+drops, a string value the fold would have folded to `other`, a key the
+grammar's anchored match admits but the fold would have replaced (one ending
+in a newline), an uptime not rounded to whole minutes, a bound not rounded to
+a power of two, or, under any other key, a float inside a clock stamp's epoch
+window, 1.5e9 to 2.0e9 for seconds or 1.5e12 to 2.0e12 for milliseconds, a
+number
 written with a point or an exponent as `time.time()` values are; an integer
 is a byte total or a count, which a long-lived kernel's lifetime totals carry
 into the window within hours, and passes whatever its size, and so does a
@@ -3869,11 +3877,16 @@ file must be a regular file of at most 1 MiB that parses as strict JSON (no
 `NaN` or `Infinity`, no key repeated within an object) with the
 `romp-perf-export/1` schema line. It must also pass the export's own scan,
 walk and denylist check again, as it stands, since you may have edited it. The
-rule is the export's: the public form is paste-safe, not unlinkable. What the
-export dropped or coarsened is refused (a `t` put back on a split row, an
-uptime typed to the second, a bound typed to the byte, a float inside a clock
-stamp's epoch window, 1.5e9 to 2.0e9 seconds or 1.5e12 to 2.0e12
-milliseconds, with no duration key on its path), and the measurements it keeps
+rule is the export's: the public form is paste-safe, not unlinkable, and the
+file is held to the export's own fold, not only to its checks. What the
+export dropped or coarsened is refused (a `t` put back on a split row, a
+string value the export would have folded to `other`, a key it would have
+replaced, one ending in a newline among them, an uptime typed to the second,
+a bound typed to the byte, a float inside a clock stamp's epoch window, 1.5e9
+to 2.0e9 seconds or 1.5e12 to 2.0e12 milliseconds, with no duration key on
+its path), and, as the belt under those, every top-level block outside the
+envelope (`schema`, `exported_at`, `kernel_commit`) must equal its own fold,
+or the verb refuses naming the block; the measurements the export keeps
 pass (an integer is a byte total or a count; a float outside both windows is a
 measurement; a float inside a window under a duration key, a name carrying the
 token `ms`, its own or any key above it, is a millisecond total),
@@ -3922,8 +3935,9 @@ check, so no free text is ever kept, and an antivirus pass over the body;
 nothing in an upload is executed or rendered. Accepted uploads are kept 180
 days and then deleted. To have one deleted earlier, send the receipt id to the
 project (an issue or a mail) and the object is deleted by that name; the
-receipt is the only handle, so keep it. The platform's request log keeps the
-source address for 30 days.
+receipt is the only handle, so keep it: the verb prints it once and records
+it nowhere, so record it yourself if you may want a deletion. The platform's
+request log keeps the source address for 30 days.
 
 The counters describe a running kernel. To time the same builders offline, on
 a copy of a state directory and with no live kernel, `tools/perf-bench.py`
@@ -5323,11 +5337,16 @@ linkable through them by design. The kernel's uptime
 (`live.kernel.uptimeS`) is rounded down to whole minutes, every other key and string
 folds to a code identifier or `other` (a week bucket's key is respelled
 `week-of-YYYY-MM-DD` so the weeks stay distinct), and the document is marked
-`public: true`; before it is printed it goes through the two checks the export runs
-(`check_document`: the search for the strings only this machine knows, then the walk
-for a uuid, a 32-hex or 40-hex token, an absolute path or free text), and either
-finding refuses the print the way the export refuses its write, naming the kind of
-finding and the key path of the shallowest finding, never the string.
+`public: true`; before it is printed it goes through the three checks the export runs
+(`check_document`: the search for the strings only this machine knows, the hostname,
+login, home, the registry's ids and directories and the machine-local private-strings
+list when one exists, then the walk for a uuid, a 32-hex or 40-hex token, an absolute
+path or free text, then the denylist walk, which refuses what the fold would have
+dropped or coarsened: a key the export drops, a string or key the fold would have
+replaced, an uptime off whole minutes, a bound off a power of two, a float inside a
+clock stamp's epoch window with no duration key on its path), and any finding
+refuses the print the way the export refuses its write, naming the kind of finding
+and the key path of the shallowest finding, never the string.
 
 `scripts/restart_metrics_report.py` draws the before-versus-after figures from
 two or more of the raw `--json` documents with cleanplots, which is not a romp
