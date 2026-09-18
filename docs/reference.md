@@ -2474,7 +2474,10 @@ serialized until a request reads them. `romp perf` takes two snapshots
 `--interval` seconds apart (default 10) and prints the difference as rates on
 one screen: pusher cycles and wakes per second, the cycles the minimum
 interval between cycle starts held and the watched-tab wakes exempt from it,
-cycle time percentiles, the share of cycle time in each stage, CPU split between the pusher thread, the
+cycle time percentiles, the share of the pusher's cycle time in each stage
+with the connect pushes' count, wall and per-stage wall printed apart (since
+2026-09-18; a share of the pusher's cycle time would be a share of time the
+pusher never spent), CPU split between the pusher thread, the
 judge threads and the rest of the process, builds served from cache against
 rebuilds, bytes sent per slot as full frames, deltas and deduplicated frames,
 goal-store loads and writes per second, judge passes and their durations
