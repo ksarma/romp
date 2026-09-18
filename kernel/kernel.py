@@ -487,6 +487,13 @@ def _stage_ring_len(mem_total=None):
     return _STAGE_RING_LEN[0]                                    #  deque(maxlen=) raise inside cycle() (round two, low 2)
 
 
+# The browser kinds a /perf key may name (pusher.clients.byKind, 2026-09-18): a FIXED list, so the served keys are
+# paste-safe whatever a dial's User-Agent header carries. _ua_kind derives one from the header at the handshake; the header
+# itself is never kept and never served. A client made without a header (a relay's splice, the extension's pipe) is "none";
+# a header no rule names is "other". Bound before the collector: its reset() seeds one row per kind.
+WS_UA_KINDS = ("safari-ios", "safari-mac", "chrome", "firefox", "other", "none")
+
+
 class _PerfStats:
     """Always-on counters behind GET /perf (`romp perf`): where the kernel's threads spend their time,
     kept cheap enough to leave running. Every writer takes the lock and does a few dict operations;
@@ -548,7 +555,16 @@ class _PerfStats:
                                    cycle_ms_p50 / cycle_ms_p90 / cycle_ms_ring_max / ring_n from a
                                    ring of the last RING cycle durations; sends (every client payload);
                                    idle_cycles / idle_ms_sum / idle_cpu_ms_sum (cycles that set no wake,
-                                   sent no payload and saved no store: what a longer wait would skip)
+                                   sent no payload and saved no store: what a longer wait would skip);
+                                   clients (what each client's sender thread wrote to its socket,
+                                   2026-09-18) -> byApp {app: {frames, bytes}} by the app the client
+                                   declared (identifier names, at most APPS of them, else "other";
+                                   "none" when it declared none) and byKind {kind: {frames, bytes,
+                                   sendMs, sendMax, sends}} by the browser kind its User-Agent header
+                                   classed to at the handshake (WS_UA_KINDS, a fixed list; the header
+                                   is never served): the text frames written and their wire bytes, and
+                                   the writes' wall ms (sum, max) with their count (sendMs / sends is the
+                                   mean; a write the socket refused is not counted)
       stages_ms                    jobs: the cycle's tick jobs outside _push_all; push: _push_all as
                                    the cycle calls it; push.chat (the tab strip, the build_session
                                    loop and the chat sends), push.feed (the view signature,
@@ -790,6 +806,8 @@ class _PerfStats:
     # below the table itself). test_perf_stats pins it at 1.5x the literal count.
     HTTP_PATHS = 256
     SLOTS = 32
+    APPS = 16                                 # distinct client app names connectPush.byApp keys; the rest, and any name outside
+    #                                           _PERF_IDENT, count under "other" (2026-09-18: the name is the client's own text)
     JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "turnNotify", "liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
             "unreadableStores",   # the fork's unreadable-store warn (PR 322), a housekeeping stage on the jobs thread since the 2026-09-15 pull-in
             "autoNudge", "interruptBlock", "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "persistCheckpoints", "convergeCheckpoints", "bootRowBackstop",
@@ -833,6 +851,12 @@ class _PerfStats:
             # a fresh client's full push on its handler thread (2026-09-14): the browser's own first draw after a reload or a
             # restart, per app; the pusher's cycles never see it, so the restart's logo phase had no number before this
             self.connect_push_stats = {"count": 0, "ms_sum": 0.0, "ms_max": 0.0, "ms_last": 0.0, "byApp": {}}
+            # what each client's sender thread wrote to its socket (2026-09-18, for the phone measurements): text frames and their
+            # wire bytes by the app the client declared and by the browser kind its User-Agent header classed to (WS_UA_KINDS,
+            # one row per kind from the start, so the key set is fixed), and per kind the write's wall ms (sum and max) and the
+            # timed writes (`sends`, the divisor of sendMs; one timed write per frame, so it equals frames). See client_send.
+            self.client_stats = {"byApp": {},
+                                 "byKind": {k: {"frames": 0, "bytes": 0, "sendMs": 0.0, "sendMax": 0.0, "sends": 0} for k in WS_UA_KINDS}}
             self.ring = collections.deque(maxlen=self.RING)
             self.stages = {k: 0.0 for k in self.STAGES}
             # T397: the stage split PER CYCLE. `cycle_stages` fills as the cycle's stages close (wall ms, the reader's bytes
@@ -946,6 +970,35 @@ class _PerfStats:
             a["count"] += 1; a["ms_sum"] += ms; a["ms_last"] = ms
             if ms > a["ms_max"]:
                 a["ms_max"] = ms
+
+    def client_send(self, app, kind, nbytes, dt):
+        """One text frame a client's sender thread wrote to its socket (_ws_sender): its wire bytes (header and payload)
+        and the write's wall seconds, from the frame's encode to sendall's return, under the app the client declared and
+        the kind its User-Agent header classed to (WS_UA_KINDS; anything else counts under "other"). A write the socket
+        refused is not counted: the client is dropped. The app is the client's own text (chat, feed, timeline, ...): a
+        name outside _PERF_IDENT's grammar, or past the APPS distinct names, counts under "other", and a client that
+        declared none under "none" (the snapshot is meant to be pasteable, and a key is a leak vector; the same rule the
+        perf-served-leaks branch gives connectPush.byApp)."""
+        ms = dt * 1000.0
+        app = str(app) if app else "none"
+        if not _PERF_IDENT.match(app):
+            app = "other"
+        if kind not in WS_UA_KINDS:
+            kind = "other"
+        with self.lock:
+            c = self.client_stats
+            a = c["byApp"].get(app)
+            if a is None:
+                if len(c["byApp"]) >= self.APPS:
+                    app = "other"
+                    a = c["byApp"].get(app)
+                if a is None:
+                    a = c["byApp"][app] = {"frames": 0, "bytes": 0}
+            a["frames"] += 1; a["bytes"] += int(nbytes)
+            k = c["byKind"][kind]
+            k["frames"] += 1; k["bytes"] += int(nbytes); k["sends"] += 1; k["sendMs"] += ms
+            if ms > k["sendMax"]:
+                k["sendMax"] = ms
 
     def cycle_failed(self):
         """A pusher cycle that raised out of the loop and was skipped (the loop's guard): counted under its lock like every
@@ -1400,6 +1453,8 @@ class _PerfStats:
             pusher = dict(self.pusher)
             pusher["connectPush"] = {k: (dict(v) if k != "byApp" else {a: dict(row) for a, row in v.items()}) if isinstance(v, dict) else v
                                      for k, v in self.connect_push_stats.items()}
+            pusher["clients"] = {"byApp": {a: dict(row) for a, row in self.client_stats["byApp"].items()},   # per-client wire
+                                 "byKind": {k: dict(row) for k, row in self.client_stats["byKind"].items()}}   #  counters (2026-09-18)
             pusher["firstCycle"] = dict(self.first_cycle) if self.first_cycle is not None else None   # T397: the boot's
             sr = list(self.stage_ring) if self.stage_ring is not None else []                           #  first cycle's split
             pusher["stageRing"] = sr if ring_all else sr[-self.STAGE_RING_SERVED:]   # the newest few by default: the whole ring
@@ -1711,6 +1766,10 @@ class _CountedEvent(threading.Event):
             self._on_set()
 
 
+
+
+_PERF_IDENT = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")   # a name a /perf key may carry when the name is a client's own text (the
+#                                                        browser's perf-telemetry `ident` grammar, without its colon): else "other"
 
 
 def _perf_http_key(method, path):
@@ -51964,7 +52023,9 @@ def _ws_sender(q, sock, lock, client):
                 with lock:
                     sock.sendall(s)
             else:
-                _ws_send(sock, lock, s)
+                _t0 = time.perf_counter()
+                n = _ws_send(sock, lock, s)
+                _PERF_STATS.client_send(client.get("app"), client.get("uaKind"), n, time.perf_counter() - _t0)   # pusher.clients
         except OSError:
             client["alive"] = False
             return
@@ -52034,16 +52095,19 @@ def _ws_ping_frame(payload: bytes) -> bytes:
     return bytes([0x89, len(data)]) + data
 
 
-def _new_ws_client(app, wid, sock, lock=None, q=None, start_sender=True):
+def _new_ws_client(app, wid, sock, lock=None, q=None, start_sender=True, ua=None):
     """One connected dashboard pane: its queue, its sender thread and the liveness bookkeeping the heartbeat
     reads. `since` and `lastIn` stamp the last moment the PEER proved itself alive (any inbound frame: a
     message or a pong); `pingAt` is the send time of the OLDEST unanswered ping, None when nothing is
-    outstanding. Factored out of the handler so the liveness rules are testable on a loopback pair."""
+    outstanding. Factored out of the handler so the liveness rules are testable on a loopback pair. `ua` is
+    the dial's User-Agent header, classed here to one of WS_UA_KINDS (`uaKind`, what pusher.clients.byKind
+    counts under) and not kept."""
     q = q if q is not None else queue.Queue()
     lock = lock if lock is not None else threading.Lock()
     now = _ws_clock()
     client = {"app": app, "wid": wid, "alive": True, "qbytes": 0, "qlock": threading.Lock(), "t0": now, "handshake": False,   # no `ready` yet: no chat frame until it declares its wire (T386 stage 2, round eleven)
               "cid": uuid.uuid4().hex[:12],   # this connection's id
+              "uaKind": _ua_kind(ua),         # the browser kind, from the dial's User-Agent (pusher.clients.byKind); never the header
               "dlock": threading.RLock(),   # serializes _send_slot per client: the handler's connect push and the
               #                               pusher both send slots to one client (see _send_slot)
               "sock": sock, "since": now, "lastIn": now, "pingAt": None,
@@ -52115,6 +52179,33 @@ def _dial_kind(headers, q):
     if headers.get("Origin") or headers.get("User-Agent"):
         return "page"
     return "relay"
+
+
+# The User-Agent rules, in the order they are tried; the first that matches names the kind. The safari-ios rule is the
+# browser's own (ui/webview/perf-telemetry.ts uaClass: an iPhone, iPad or iPod token; the browser also reads an iPad's
+# desktop-mode Macintosh header from its touch points, which a header alone cannot, so that iPad reads safari-mac here),
+# so a frame this table counts under safari-ios is one the browser's own telemetry classes the same. Every iOS browser
+# shares WebKit and carries the device token, so Chrome or Firefox on an iPhone is safari-ios, the engine the frame reaches.
+# Firefox before Chrome before Safari: a Chrome header carries "Safari/" too, and a Firefox header neither of the others.
+# "Chrome/" covers the Chromium browsers (Edge among them). Compiled once; the classification runs per handshake.
+_UA_KIND_RULES = ((re.compile(r"iPhone|iPad|iPod"), "safari-ios"),
+                  (re.compile(r"Firefox/"), "firefox"),
+                  (re.compile(r"Chrome/|Chromium/"), "chrome"),
+                  (re.compile(r"Macintosh.*Safari/"), "safari-mac"))
+
+
+def _ua_kind(ua):
+    """The browser kind of a dial's User-Agent header: one of WS_UA_KINDS, never the header's text and never a version
+    (2026-09-18; the served key list is fixed). No header, or an empty one, is "none": a relay's splice forwards only the
+    six upgrade headers and the VS Code extension's pipe dials from Node's ws client, so neither carries one. A header no
+    rule names (curl, a websocket library, a browser these rules do not know) is "other"."""
+    if not ua:
+        return "none"
+    ua = str(ua)
+    for rx, kind in _UA_KIND_RULES:
+        if rx.search(ua):
+            return kind
+    return "other"
 
 
 _ws_open_row_failed = False   # set once a wsopen row could not be written, so the stderr line below is said once per process
@@ -52199,7 +52290,8 @@ def _drop_dead_ws_client(client, why):
 
 
 def _ws_send(sock, lock, text):
-    """Frame and write one text message. Called ONLY from that client's sender thread (see _ws_sender)."""
+    """Frame and write one text message. Called ONLY from that client's sender thread (see _ws_sender). Returns the
+    bytes written, header and payload: the frame's wire size, which pusher.clients counts per client."""
     data = text.encode("utf-8")
     n = len(data)
     hdr = bytearray([0x81])                   # FIN + text frame
@@ -52209,8 +52301,10 @@ def _ws_send(sock, lock, text):
         hdr.append(126); hdr += struct.pack(">H", n)
     else:
         hdr.append(127); hdr += struct.pack(">Q", n)
+    frame = bytes(hdr) + data
     with lock:
-        sock.sendall(bytes(hdr) + data)
+        sock.sendall(frame)
+    return len(frame)
 
 
 def _ws_pong(wfile, lock, payload):
@@ -74630,7 +74724,7 @@ class Handler(BaseHTTPRequestHandler):
         # frames answered on this client's own handler thread, and both paths serialise on the same `lock`.
         # `q` above is the connect QUERY; the client's send queue gets its own name — a Queue.get("delta")
         # would block this handler forever (caught by tests/test_kernel.py's socket-error loop test)
-        client, sendq, lock = _new_ws_client(app, wid, self.connection, lock=lock)
+        client, sendq, lock = _new_ws_client(app, wid, self.connection, lock=lock, ua=self.headers.get("User-Agent"))
         client["kind"] = _dial_kind(self.headers, q)   # page or relay: the one tell the wsopen row reads (and a planned connect-push split)
         client["caps"] = set(x for x in caps.split(",") if x)
         # Held until its bundle says `ready` when the page announced it will (READY_GATE_CAP — every kernel-

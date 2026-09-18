@@ -540,6 +540,61 @@ class Collector(unittest.TestCase):
         self.assertEqual(len(d), km._PerfStats.SLOTS + 1)
         self.assertEqual(d["other"]["count"], 40 - km._PerfStats.SLOTS)
 
+    def test_the_clients_block_starts_with_no_app_and_one_zero_row_per_kind(self):
+        """pusher.clients (2026-09-18): what each client's sender thread wrote to its socket, by the app the client
+        declared and by the browser kind its User-Agent header classed to. The kind rows are seeded from WS_UA_KINDS,
+        so the served key set is fixed before any client dials and a header can never become a key."""
+        self.assertEqual(km.WS_UA_KINDS, ("safari-ios", "safari-mac", "chrome", "firefox", "other", "none"))
+        c = self.st.snapshot()["pusher"]["clients"]
+        self.assertEqual(set(c), {"byApp", "byKind"})
+        self.assertEqual(c["byApp"], {})
+        self.assertEqual(set(c["byKind"]), set(km.WS_UA_KINDS))
+        for kind, row in c["byKind"].items():
+            self.assertEqual(row, {"frames": 0, "bytes": 0, "sendMs": 0.0, "sendMax": 0.0, "sends": 0}, kind)
+
+    def test_client_sends_count_frames_and_bytes_by_app_and_the_write_time_by_kind(self):
+        self.st.client_send("chat", "safari-ios", 1000, 0.002)
+        self.st.client_send("chat", "safari-ios", 500, 0.006)
+        self.st.client_send("feed", "chrome", 40, 0.001)
+        snap = self.st.snapshot()["pusher"]
+        c = snap["clients"]
+        self.assertEqual(c["byApp"], {"chat": {"frames": 2, "bytes": 1500}, "feed": {"frames": 1, "bytes": 40}})
+        ios, chrome = c["byKind"]["safari-ios"], c["byKind"]["chrome"]
+        self.assertEqual((ios["frames"], ios["bytes"], ios["sends"]), (2, 1500, 2))
+        self.assertAlmostEqual(ios["sendMs"], 8.0)
+        self.assertAlmostEqual(ios["sendMax"], 6.0)
+        self.assertAlmostEqual(ios["sendMs"] / ios["sends"], 4.0, msg="the mean is derivable from the sum and the count")
+        self.assertEqual((chrome["frames"], chrome["bytes"], chrome["sends"]), (1, 40, 1))
+        self.assertAlmostEqual(chrome["sendMs"], 1.0)
+        for kind in ("safari-mac", "firefox", "other", "none"):
+            self.assertEqual(c["byKind"][kind], {"frames": 0, "bytes": 0, "sendMs": 0.0, "sendMax": 0.0, "sends": 0}, kind)
+        self.assertEqual(snap["sends"], 0, "a client's write is not a pusher payload: pusher.sends is the pusher's own count")
+        self.assertEqual(self.st.snapshot()["sends"], {"full": {}, "delta": {}, "deduped": {}}, "nor a slot send")
+
+    def test_client_app_keys_are_identifiers_capped_and_the_kind_is_one_of_the_list(self):
+        """The app is the client's own text off its socket URL and the kind whatever the caller hands over, and a served
+        key is a leak vector: an app outside _PERF_IDENT's grammar (a path, a space, 33 characters) counts under other,
+        no app under none, the table stops at APPS distinct names, and a kind outside WS_UA_KINDS counts under other."""
+        self.st.client_send("/some/dir/x", "chrome", 1, 0.0)
+        self.st.client_send("has space", "chrome", 1, 0.0)
+        self.st.client_send("a" * 33, "chrome", 1, 0.0)
+        self.st.client_send(None, "chrome", 1, 0.0)
+        self.st.client_send("", "chrome", 1, 0.0)
+        self.st.client_send("chat", "Mozilla/5.0 (X11) Gecko", 1, 0.0)
+        c = self.st.snapshot()["pusher"]["clients"]
+        self.assertEqual(c["byApp"], {"other": {"frames": 3, "bytes": 3}, "none": {"frames": 2, "bytes": 2}, "chat": {"frames": 1, "bytes": 1}})
+        self.assertEqual(c["byKind"]["other"]["frames"], 1, "a kind outside the list counts under other, never as itself")
+        self.assertEqual(c["byKind"]["chrome"]["frames"], 5)
+        self.assertEqual(km._PerfStats.APPS, 16)
+        self.assertEqual(km._PERF_IDENT.pattern, r"^[A-Za-z0-9_.-]{1,32}$")
+        st = km._PerfStats()
+        for i in range(40):
+            st.client_send("app%d" % i, "chrome", 1, 0.0)
+        by_app = st.snapshot()["pusher"]["clients"]["byApp"]
+        self.assertEqual(len(by_app), km._PerfStats.APPS + 1)
+        self.assertEqual(by_app["other"]["frames"], 40 - km._PerfStats.APPS)
+        self.assertTrue(all(km._PERF_IDENT.match(a) for a in by_app), sorted(by_app))
+
     def test_http_keys_are_capped_and_ws_adds_no_time(self):
         cap = km._PerfStats.HTTP_PATHS
         for i in range(cap + 36):
@@ -1669,6 +1724,83 @@ class StacksField(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("ROMP_PERF_STACKS", None)
             self.assertIsNone(km._PerfStats().snapshot()["stacks"], "None without the switch")
+
+class UserAgentKind(unittest.TestCase):
+    """_ua_kind: the browser kind of a dial's User-Agent header, one of WS_UA_KINDS, never the header and never a version
+    (pusher.clients.byKind, 2026-09-18). The strings below are invented in the shape each browser publishes (the public
+    User-Agent templates), never recorded headers."""
+
+    IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    IPAD = "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    IPHONE_CHROME = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.0.0 Mobile/15E148 Safari/604.1"
+    IPHONE_FIREFOX = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/120.0 Mobile/15E148 Safari/605.1.15"
+    MAC_SAFARI = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+    MAC_CHROME = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    MAC_FIREFOX = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:120.0) Gecko/20100101 Firefox/120.0"
+    WINDOWS_CHROME = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    WINDOWS_EDGE = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0"
+    ANDROID_CHROME = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+    ANDROID_FIREFOX = "Mozilla/5.0 (Android 14; Mobile; rv:120.0) Gecko/120.0 Firefox/120.0"
+    LINUX_FIREFOX = "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0"
+    CURL = "curl/8.5.0"
+    WSLIB = "Python/3.12 websockets/12.0"
+
+    def test_each_shape_reads_its_kind(self):
+        cases = {self.IPHONE: "safari-ios", self.IPAD: "safari-ios",
+                 self.IPHONE_CHROME: "safari-ios", self.IPHONE_FIREFOX: "safari-ios",   # every iOS browser is WebKit: the device token wins
+                 self.MAC_SAFARI: "safari-mac", self.MAC_CHROME: "chrome", self.MAC_FIREFOX: "firefox",
+                 self.WINDOWS_CHROME: "chrome", self.WINDOWS_EDGE: "chrome", self.ANDROID_CHROME: "chrome",
+                 self.ANDROID_FIREFOX: "firefox", self.LINUX_FIREFOX: "firefox",
+                 self.CURL: "other", self.WSLIB: "other"}
+        for ua, kind in cases.items():
+            self.assertEqual(km._ua_kind(ua), kind, ua)
+
+    def test_no_header_is_none_and_every_answer_is_in_the_fixed_list(self):
+        self.assertEqual(km._ua_kind(None), "none")
+        self.assertEqual(km._ua_kind(""), "none")
+        for ua in (self.IPHONE, self.MAC_SAFARI, self.MAC_CHROME, self.LINUX_FIREFOX, self.CURL, "", None,
+                   "anything/1.0 (with; tokens) at all", "Chrome", "Safari/605.1.15"):
+            self.assertIn(km._ua_kind(ua), km.WS_UA_KINDS, repr(ua))
+        self.assertEqual(km._ua_kind("Safari/605.1.15"), "other", "a Safari token with no Macintosh is not a Mac's Safari")
+
+    def test_the_header_and_its_version_never_reach_the_kind(self):
+        """A served key is a leak vector: the classification is a fixed word, never a slice of the header."""
+        for ua in (self.MAC_CHROME, self.IPHONE, self.CURL, self.WINDOWS_EDGE):
+            kind = km._ua_kind(ua)
+            self.assertNotIn("/", kind)
+            self.assertNotIn(".", kind)
+            self.assertFalse(any(tok in kind for tok in ua.split()), "a header token in the served kind: %r" % kind)
+        self.assertEqual(km._ua_kind("Chrome/120.0.0.0"), "chrome", "a version-bearing token names a kind, no version")
+
+    def test_the_safari_ios_rule_is_the_browsers_own(self):
+        """The kernel's first rule mirrors ui/webview/perf-telemetry.ts uaClass (an iPhone, iPad or iPod token), so a frame
+        counted under safari-ios is one the browser's own telemetry classes the same; the browser also reads an iPad's
+        desktop-mode Macintosh header from its touch points, which a header alone cannot, so that iPad reads safari-mac
+        here, the documented limit."""
+        ts = open(os.path.join(os.path.dirname(HERE), "ui", "webview", "perf-telemetry.ts"), encoding="utf-8").read()
+        m = re.search(r'if \(/(iPhone\|iPad\|iPod)/\.test\(ua\)[^\n]*return "safari-ios";', ts)
+        self.assertIsNotNone(m, "the browser's safari-ios rule moved: re-mirror it")
+        rx, kind = km._UA_KIND_RULES[0]
+        self.assertEqual((rx.pattern, kind), (m.group(1), "safari-ios"))
+        self.assertEqual(km._ua_kind(self.MAC_SAFARI), "safari-mac")
+
+    def test_a_client_carries_the_kind_and_not_the_header(self):
+        client, _q, _lock = km._new_ws_client("chat", "w1", object(), start_sender=False, ua=self.IPHONE)
+        self.assertEqual(client["uaKind"], "safari-ios")
+        self.assertFalse(any(isinstance(v, str) and "AppleWebKit" in v for v in client.values()), "the header is not kept")
+        bare, _q, _lock = km._new_ws_client("chat", "w1", object(), start_sender=False)
+        self.assertEqual(bare["uaKind"], "none", "no header given: none, the same word a relay's splice or a pipe reads")
+
+    def test_the_handshake_hands_the_header_to_the_client(self):
+        src = inspect.getsource(km)
+        self.assertIn('_new_ws_client(app, wid, self.connection, lock=lock, ua=self.headers.get("User-Agent"))', src,
+                      "the ws handler classes the dial's User-Agent through _new_ws_client")
+        i = src.index("def _ws_sender(")
+        sender = src[i:src.index("\ndef ", i + 1)]
+        self.assertIn("n = _ws_send(sock, lock, s)", sender)
+        self.assertIn('_PERF_STATS.client_send(client.get("app"), client.get("uaKind"), n,', sender,
+                      "the sender thread counts the frame it wrote under the client's app and kind")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -23,6 +23,7 @@ import collections
 import io
 import json
 import os
+import socket
 import tempfile
 import threading
 import time
@@ -863,6 +864,151 @@ class ARaisingSerializerLeavesThePusherAlive(unittest.TestCase):
         jobs = src[src.index("def _pusher_cycle_jobs("):]; jobs = jobs[:jobs.index("\ndef ")]
         i = jobs.index("_push_all(live_map=live_map)")
         self.assertLess(i, jobs.index("except Exception:", i)); self.assertLess(jobs.index("except Exception:", i), jobs.index("finally:", i))
+
+
+class PerClientWireCounters(unittest.TestCase):
+    """pusher.clients (2026-09-18): the frames each client's sender thread writes to its socket, counted by the app the
+    client declared and by the browser kind its User-Agent header classed to, with the write's wall time per kind. Real
+    loopback TCP pairs and the real client (_new_ws_client: queue, sender thread, enqueueing send), so what is counted is
+    what left on the wire; the User-Agent strings are invented in the shape the browsers publish, never recorded."""
+
+    IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    MAC_CHROME = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+    def setUp(self):
+        self.closeables, self.queues = [], []
+        self.saved_stats = km._PERF_STATS
+        km._PERF_STATS = km._PerfStats()          # the sender thread looks the collector up at call time: a fresh one per test
+
+    def tearDown(self):
+        km._PERF_STATS = self.saved_stats
+        for q in self.queues:
+            q.put(None)                             # end every sender thread the test started
+        for s in self.closeables:
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                s.close()
+            except OSError:
+                pass
+
+    def _pair(self):
+        srv = socket.socket(); srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0)); srv.listen(1)
+        peer = socket.create_connection(srv.getsockname())
+        kern, _ = srv.accept()
+        srv.close()
+        self.closeables += [peer, kern]
+        return kern, peer
+
+    def _client(self, app, ua):
+        kern, peer = self._pair()
+        client, q, _lock = km._new_ws_client(app, "w-" + app, kern, ua=ua)
+        self.queues.append(q)
+        client["ready"] = True
+        return client, peer.makefile("rb")
+
+    @staticmethod
+    def _read_texts(rf, n):
+        """The next n text frames off a peer's socket, each as (payload, wire bytes): the header the kernel framed it with
+        (2, 4 or 10 bytes by the payload's length) plus the payload."""
+        out = []
+        while len(out) < n:
+            op, payload, _fin = km._ws_recv(rf)   # server frames are unmasked; the reader tolerates that
+            if op is None:
+                break
+            if op == 0x1:
+                ln = len(payload)
+                out.append((payload, ln + (2 if ln < 126 else 4 if ln < 65536 else 10)))
+        return out
+
+    def _settle(self, pred, timeout=5.0):
+        """The counter lands on the sender thread after sendall returned, so a peer can have read the frame before it is
+        counted: wait for the predicate, bounded."""
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < timeout:
+            if pred():
+                return True
+            time.sleep(0.005)
+        return pred()
+
+    def _clients_block(self):
+        return km._PERF_STATS.snapshot()["pusher"]["clients"]
+
+    def test_two_clients_of_different_apps_and_kinds_are_counted_apart_by_what_left_on_the_wire(self):
+        chat, chat_rf = self._client("chat", self.IPHONE)
+        feed, feed_rf = self._client("feed", self.MAC_CHROME)
+        self.assertEqual((chat["uaKind"], feed["uaKind"]), ("safari-ios", "chrome"))
+        chat["send"](json.dumps({"type": "session", "n": 1}))
+        chat["send"](json.dumps({"type": "chatTail", "text": "x" * 200}))   # a 4-byte header: the length rides two more bytes
+        feed["send"](json.dumps({"type": "feed", "cards": []}))
+        chat_frames = self._read_texts(chat_rf, 2)
+        feed_frames = self._read_texts(feed_rf, 1)
+        self.assertEqual([json.loads(p)["type"] for p, _ in chat_frames], ["session", "chatTail"])
+        self.assertEqual([json.loads(p)["type"] for p, _ in feed_frames], ["feed"])
+        self.assertTrue(self._settle(lambda: self._clients_block()["byApp"].get("chat", {}).get("frames") == 2
+                                    and self._clients_block()["byApp"].get("feed", {}).get("frames") == 1))
+        c = self._clients_block()
+        self.assertEqual(c["byApp"], {"chat": {"frames": 2, "bytes": sum(w for _, w in chat_frames)},
+                                      "feed": {"frames": 1, "bytes": sum(w for _, w in feed_frames)}},
+                         "the bytes are the frames' wire sizes, header and payload")
+        ios, chrome = c["byKind"]["safari-ios"], c["byKind"]["chrome"]
+        self.assertEqual((ios["frames"], ios["bytes"], ios["sends"]), (2, c["byApp"]["chat"]["bytes"], 2))
+        self.assertEqual((chrome["frames"], chrome["bytes"], chrome["sends"]), (1, c["byApp"]["feed"]["bytes"], 1))
+        for row in (ios, chrome):
+            self.assertGreaterEqual(row["sendMs"], 0.0)
+            self.assertGreaterEqual(row["sendMs"], row["sendMax"])
+            self.assertLess(row["sendMs"], 5000.0, "a loopback write is not seconds")
+        self.assertTrue(ios["sendMax"] > 0.0 or ios["sendMs"] == 0.0)
+        for kind in ("safari-mac", "firefox", "other", "none"):
+            self.assertEqual(c["byKind"][kind]["frames"], 0, kind)
+
+    def test_a_liveness_ping_is_not_a_frame_and_the_wire_size_counts_utf8_bytes(self):
+        chat, rf = self._client("chat", self.IPHONE)
+        chat["q"].put(km._ws_ping_frame(b"beat"))            # the heartbeat's control frame rides the same queue
+        chat["send"]("\u00e9" * 200)                          # 200 two-byte characters: 400 payload bytes, a 4-byte header
+        frames = self._read_texts(rf, 1)
+        self.assertEqual(frames[0], ("\u00e9".encode("utf-8") * 200, 404))
+        self.assertTrue(self._settle(lambda: self._clients_block()["byApp"].get("chat", {}).get("frames") == 1))
+        c = self._clients_block()
+        self.assertEqual(c["byApp"], {"chat": {"frames": 1, "bytes": 404}}, "the ping counted nothing; the text frame its wire bytes")
+        self.assertEqual((c["byKind"]["safari-ios"]["frames"], c["byKind"]["safari-ios"]["bytes"]), (1, 404))
+
+    def test_ws_send_answers_the_wire_bytes_it_wrote(self):
+        kern, peer = self._pair()
+        n = km._ws_send(kern, threading.Lock(), "abc")
+        self.assertEqual(n, 5)
+        self.assertEqual(peer.recv(64), b"\x81\x03abc")
+        n = km._ws_send(kern, threading.Lock(), "y" * 70000)
+        self.assertEqual(n, 70010, "a 64 KiB-plus payload: the 10-byte header")
+
+    def test_a_push_to_a_feed_and_a_timeline_client_counts_each_under_its_app_and_kind(self):
+        """Through the real _push: a feed pane on an iPhone and a timeline pane in a Mac Chrome, whole frames (no delta
+        term), each client's frames counted under its own app and kind, and byKind's bytes equal to byApp's for the
+        one client of that kind."""
+        _World(self, feed=_feed(), timeline=_timeline())
+        feed, feed_rf = self._client("feed", self.IPHONE)
+        tl, tl_rf = self._client("timeline", self.MAC_CHROME)
+        ps = km._PERF_STATS
+        ps.cycle_begin()
+        t0 = time.monotonic(); km._push([feed, tl]); ps.cycle(time.monotonic() - t0)
+        self.assertTrue(self._settle(lambda: sum(r["frames"] for r in self._clients_block()["byApp"].values()) >= 3))
+        c = self._clients_block()
+        self.assertEqual(set(c["byApp"]), {"feed", "timeline"})
+        feed_frames = self._read_texts(feed_rf, c["byApp"]["feed"]["frames"])
+        tl_frames = self._read_texts(tl_rf, c["byApp"]["timeline"]["frames"])
+        self.assertIn("feed", [json.loads(p)["type"] for p, _ in feed_frames])
+        self.assertEqual([json.loads(p)["type"] for p, _ in tl_frames], ["data", "bars"])
+        self.assertEqual(c["byApp"]["feed"], {"frames": len(feed_frames), "bytes": sum(w for _, w in feed_frames)})
+        self.assertEqual(c["byApp"]["timeline"], {"frames": len(tl_frames), "bytes": sum(w for _, w in tl_frames)})
+        ios, chrome = c["byKind"]["safari-ios"], c["byKind"]["chrome"]
+        self.assertEqual((ios["frames"], ios["bytes"]), (c["byApp"]["feed"]["frames"], c["byApp"]["feed"]["bytes"]))
+        self.assertEqual((chrome["frames"], chrome["bytes"]), (c["byApp"]["timeline"]["frames"], c["byApp"]["timeline"]["bytes"]))
+        self.assertEqual(ios["sends"], ios["frames"])
+        self.assertEqual(chrome["sends"], chrome["frames"])
+        self.assertEqual(c["byKind"]["none"]["frames"], 0)
 
 
 if __name__ == "__main__":
