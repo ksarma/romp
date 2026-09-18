@@ -319,7 +319,17 @@ def _merge(a, b):
     """Two values whose keys folded to the same name: numbers add, dicts merge, lists join; anything else that
     disagrees is `other`. None is the identity: a non-finite number is nulled by _finite before it gets here, and
     a counter beside it must stay a number (and a bool a bool), not become the word `other`; a null beside a null
-    is null."""
+    is null. Inside a merged dict a memory-fraction bound (BOUND_KEYS) is coarsened AGAIN after the sum: the two sides
+    were each rounded up to a power of two by fold before the merge, and a sum of two powers of two is one only when
+    they are equal (1024 + 2048 is 3072), so without this the fold's own output failed its denylist walk at every
+    collision of two out-of-grammar sibling keys whose subtrees carry a bound (the upload's second review round,
+    2026-09-18); the collision is always at an ANCESTOR key folded to `other` (two bound keys cannot collide in one
+    dict, each is its own identifier), so the fold's coarsening at the leaf cannot see it and the merge must. An uptime
+    (UPTIME_KEYS) needs no second pass: a sum of whole minutes is whole minutes. NOT closed here: two measurement
+    FLOATS summed under a merged key can land inside a stamp window (STAMP_WINDOWS) and read as a clock stamp to the
+    denylist walk; no coarsening is involved, so neither this pass nor a key-aware sum fixes it, and whether to exempt a
+    value whose key folded to `other` from the stamp rule at the merge sites, or accept the hole, is a separate
+    decision."""
     if a is None or b is None:
         return b if a is None else a
     if isinstance(a, bool) or isinstance(b, bool):
@@ -330,6 +340,8 @@ def _merge(a, b):
         out = dict(a)
         for k, v in b.items():
             out[k] = _merge(out[k], v) if k in out else v
+            if k in BOUND_KEYS and k in a:
+                out[k] = public_bound(out[k])     # the sum of two coarsened bounds is not a power of two: coarsen again
         return out
     if isinstance(a, list) and isinstance(b, list):
         return a + b
@@ -348,10 +360,11 @@ def _public_key(key, where):
 
 def fold(node, where=()):
     """The public form of `node`: the denylist dropped, every key and string outside its grammar folded to
-    `other` (colliding keys merged), non-finite numbers null, the kernel's uptime rounded down to whole minutes
-    (UPTIME_KEYS), every memory-fraction bound rounded up to a power of two (BOUND_KEYS). `where` is the path of
-    ORIGINAL keys, which the denylist and the block grammars are keyed on. Returns a new document; the input is not
-    touched."""
+    `other` (colliding keys merged, a bound inside a merged subtree coarsened again after the sum, see _merge),
+    non-finite numbers null, the kernel's uptime rounded down to whole minutes (UPTIME_KEYS), every memory-fraction
+    bound rounded up to a power of two (BOUND_KEYS). `where` is the path of ORIGINAL keys, which the denylist and the
+    block grammars are keyed on. Returns a new document; the input is not touched. The output is a fixed point of the
+    denylist walk (denylist_problems) except for the float case _merge names."""
     if isinstance(node, dict):
         out = {}
         for k, v in node.items():

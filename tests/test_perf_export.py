@@ -654,6 +654,39 @@ class FoldInvariant(unittest.TestCase):
         doc["perf"]["heap"]["hydrated"]["t"] = 1
         self.assertEqual(_check(doc), "the public form still fails the denylist (a number the size of a clock stamp, the value at perf/startedAt); nothing written")
 
+    def test_a_bound_under_two_keys_that_fold_to_the_same_name_is_re_coarsened_after_the_merge(self):
+        """Two sibling keys outside the grammar fold to one `other` and their subtrees merge, numbers summed; each side's
+        bound had already been rounded up to a power of two, and a sum of two powers of two is one only when they are
+        equal, so the fold's own output failed its denylist walk (a bound not rounded to a power of two) at every such
+        collision and the export refused itself (the upload's second review round, 2026-09-18). The collision is always at
+        an ancestor folded to `other` (two bound keys cannot collide in one dict), so the fix is in _merge, after the sum.
+        The uptime needs none and is pinned as already closed: a sum of whole minutes is whole minutes. Fails before: 3072,
+        and 12 for 3 and 5 (each coarsened to 4 and 8 before the sum), both refused as a bound not rounded to a power of
+        two. The float variant, two measurement floats summed into a stamp window, is not closed here and is not claimed."""
+        self.assertEqual(pp.fold({"memos": {"a table name": {"bound": 1024}, "another table name": {"bound": 2048}}}),
+                         {"memos": {"other": {"bound": 4096}}})
+        self.assertEqual(pp.fold({"heap": {"a b": {"capBytes": 3, "bytes": 1}, "c d": {"capBytes": 5, "bytes": 2}}}),
+                         {"heap": {"other": {"capBytes": 16, "bytes": 3}}}, "3 and 5 coarsen to 4 and 8, sum to 12, coarsen to 16; the occupancy is summed")
+        self.assertEqual(pp.fold({"x": {"a b": {"cap": 1}, "c d": {"cap": 1}}}), {"x": {"other": {"cap": 2}}}, "equal powers sum to a power")
+        self.assertEqual(pp.fold({"x": {"a b": {"deep": {"bound": 6}}, "c d": {"deep": {"bound": 6}}}}), {"x": {"other": {"deep": {"bound": 16}}}},
+                         "and at depth inside the merged subtrees")
+        self.assertEqual(pp.fold({"memos": {"a k": {"uptime_s": 100}, "b k": {"uptime_s": 100}}}), {"memos": {"other": {"uptime_s": 120}}},
+                         "the uptime is closed under the merge already")
+        for snap in ({"memos": {"a table name": {"bound": 1024}, "another table name": {"bound": 2048}}},
+                     {"heap": {"a b": {"capBytes": 3}, "c d": {"capBytes": 5}}},
+                     {"memos": {"a k": {"uptime_s": 100}, "b k": {"uptime_s": 100}}}):
+            self.assertEqual(pp.denylist_problems(pp.fold(snap)), [], repr(snap))
+        # through the export: a snapshot with such a collision folds to a document that passes its own check (fails before:
+        # refused as a bound not rounded to a power of two at perf/memos/other/bound)
+        snap = leak_snapshot()
+        snap["memos"]["a table name"] = {"bytes": 10, "bound": 1024}
+        snap["memos"]["another table name"] = {"bytes": 11, "bound": 2048}
+        doc = pe.export_document(snap, usage=True)
+        self.assertEqual(doc["perf"]["memos"]["other"], {"bytes": 21, "bound": 4096})
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [])
+        self.assertIsNone(_check(doc))
+        self.assertEqual(pp.fold(doc["perf"]), doc["perf"], "and the output is its own fold")
+
     def test_a_float_under_a_duration_key_is_never_judged_against_the_stamp_windows(self):
         """The kernel's millisecond totals are FLOATS and cumulative: pusher.cycle_cpu_ms_sum read 1,779,484.0 after one
         hour on a busy kernel, about 35 days to 1.5e9 and twelve more across the seconds window, and the other ms sums
