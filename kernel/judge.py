@@ -46,9 +46,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # load (set_worker_cpu_sink), so the workers' share stands in the kernel's live counters as each
 # future ends and a live read of those counters agrees with a snapshot (until 2026-09-18 the kernel
 # added this module counter to its snapshot COPY at read time, so two readings of one counter
-# disagreed by the whole total). The module counter stays: the serve child runs this file with no
-# kernel in its process and reads it for the done line's workerCpuMs (_serve_pass), and a standalone
-# romp-judge run has nothing else. This module names no kernel object: it holds a callable.
+# disagreed by the whole total). With no sink armed only the module counter moves, and a kernel
+# collector nothing armed serves no cpu_ms_workers key at all rather than a zero (the setter's
+# docstring says who arms it and where). The module counter stays: the serve child runs this file
+# with no kernel in its process and reads it for the done line's workerCpuMs (_serve_pass), and a
+# standalone romp-judge run has nothing else. This module names no kernel object: it holds a callable.
 _JUDGE_CPU = {"worker_ms": 0.0}
 _JUDGE_CPU_LOCK = threading.Lock()
 _WORKER_CPU_SINK = None        # kernel wiring: fn(cpu_ms) called on the pool worker's thread as each future ends, or None
@@ -56,11 +58,21 @@ _WORKER_CPU_SINK = None        # kernel wiring: fn(cpu_ms) called on the pool wo
 
 def set_worker_cpu_sink(fn):
     """Kernel wiring: `fn(cpu_ms)` receives every pool worker's CPU milliseconds as its future ends, on the worker's
-    thread and under no lock of this module, besides the module counter judge_worker_cpu_ms reads. None (the default: the
-    serve child, a standalone run, a test that does not care) keeps the module counter alone. A kernel load re-executes
-    this module and so clears the sink; the kernel arms it again right after it builds its collector. `fn` must not
-    raise: it runs in the future's finally, so a raise there would stand in for the future's own result. Returns the
-    previous sink, so a test can restore it."""
+    thread and under no lock of this module, besides the module counter judge_worker_cpu_ms reads.
+    WITHOUT a sink (None, the default) the module counter still accumulates and _serve_pass still reports workerCpuMs
+    from it, but no kernel's live counters take the share: a kernel collector nothing armed serves NO judge.cpu_ms_workers
+    key (its arming is what creates the key) and its judge.cpu_ms_sum is the tier threads' and the child's CPU alone, so
+    the absent key reads "not reported" where a 0.0 would have passed for a measurement (the review ruling on the
+    write-time fold, 2026-09-18, as set_sdk_owner_provider's docstring names what its absence costs).
+    WHO ARMS IT: in production the kernel, once per load, right after it builds its collector
+    (_PerfStats.arm_judge_worker_sink installs its judge_worker_cpu here); in a test, the test itself in setUp when it
+    asserts on its own kernel's counters, because every kernel load re-executes this module and clears the hook, so the
+    LAST kernel a test process loaded holds it (the property set_sdk_owner_provider and set_pending_cut_provider share,
+    module globals set the same way). Nobody arms it in the serve child (no kernel in its process) or a standalone
+    romp-judge run, and no log line marks an unarmed future: in a kernel process the arming precedes every pool future,
+    so that state is reachable only in a test.
+    `fn` must not raise: it runs in the future's finally, so a raise there would stand in for the future's own result.
+    Returns the previous sink, so a test can restore it."""
     global _WORKER_CPU_SINK
     prev = _WORKER_CPU_SINK
     _WORKER_CPU_SINK = fn

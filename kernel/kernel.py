@@ -996,11 +996,21 @@ class _PerfStats:
                                    producer thread's own per-pass work, the episode tick, the goals
                                    snapshot and the compaction, is not in it and lands under "other";
                                    the workers' share lands in the live dict as each pool future
-                                   ends, through the sink the kernel installs in judge.py at load
-                                   (jd.set_worker_cpu_sink(_PERF_STATS.judge_worker_cpu)), so a
+                                   ends, through the sink the kernel arms in judge.py right after
+                                   it builds _PERF_STATS (arm_judge_worker_sink, which installs
+                                   judge_worker_cpu as jd.set_worker_cpu_sink's callable), so a
                                    live read of the stats dict and a snapshot() read agree and a
-                                   delta may take either; until 2026-09-18 snapshot() added judge.py's
-                                   module counter to its copy at read time and the two disagreed),
+                                   delta may take either; the arming is what creates
+                                   cpu_ms_workers, so a judge block WITHOUT that key is from a
+                                   collector nothing armed and its cpu_ms_sum holds no workers'
+                                   share: the key is absent, never a 0.0 that could pass for a
+                                   measurement (the review ruling on the write-time fold,
+                                   2026-09-18; a kernel serving /perf always arms, so the shape
+                                   is a collector built outside one, or an earlier kernel load
+                                   in a test process after a later load re-armed judge.py, and
+                                   `romp perf` says "workers' share not reported" over such a
+                                   pair); until 2026-09-18 snapshot() added judge.py's module
+                                   counter to its copy at read time and the two disagreed),
                                    wakes (every _producer_wake.set() call: the backends' pokes, POST
                                    /tick, the two kernel-internal sites; one SDK turn fires several,
                                    so wakes/s is an upper bound on the poke-episode rate, not the
@@ -1152,8 +1162,10 @@ class _PerfStats:
             #                                           deltas as the call sites take them; served by rank, never by sid
             self.sends = {k: {} for k in self.SEND_KINDS}
             self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0, "cpu_ms_sum": 0.0,
-                          "cpu_ms_workers": 0.0,          # the in-process pool workers' share of cpu_ms_sum, fed by judge_worker_cpu
-                          #                                 as each future ends (judge.py's sink): a live counter, copied by snapshot()
+                          # no cpu_ms_workers yet: arm_judge_worker_sink creates it, at 0.0, when this collector becomes judge.py's
+                          # worker-CPU sink, and judge_worker_cpu feeds it as each pool future ends. A collector nothing armed serves
+                          # no such key, so its judge block cannot pass a missing workers' share off as a measured zero (the review
+                          # ruling on the write-time fold, 2026-09-18: an unarmed sink must be distinguishable from a genuine zero)
                           "wakes": 0, "wakes_event": 0, "wakes_backstop": 0,
                           "tierStarts": 0,                # judge tier threads started (T404: the lab's proof that off starts nothing)
                           "passesLost": 0, "childRestarts": 0, "childFallbacks": 0, "orphansSwept": 0,
@@ -1714,15 +1726,32 @@ class _PerfStats:
         with self.lock:
             self.judge["cpu_ms_sum"] += cpu_dt * 1000.0
 
+    def arm_judge_worker_sink(self):
+        """Make this collector judge.py's worker-CPU sink (jd.set_worker_cpu_sink(self.judge_worker_cpu)) and open
+        cpu_ms_workers in the live dict at 0.0. The kernel calls it once per load, right after _PERF_STATS is built; a
+        test that asserts on its own kernel's counters calls it in setUp, because every kernel load re-executes judge.py
+        and the LAST load holds the sink. The key is created HERE and not in the constructor so that a collector nothing
+        armed serves no cpu_ms_workers at all: with the workers' share folded at write time, an unarmed collector would
+        otherwise read a plausible 0.0 that means nobody told it (the review ruling on the write-time fold, 2026-09-18).
+        Present at 0.0 is a genuine zero: armed, no pool future yet. Returns the previous sink, so a test can restore
+        it. In a kernel process no pool future can run before this call (judge.py is loaded at the kernel's import, the
+        producer starts after it), so an unarmed future in a process that built a collector is a test-only state and no
+        log line marks it."""
+        with self.lock:
+            self.judge.setdefault("cpu_ms_workers", 0.0)
+        return jd.set_worker_cpu_sink(self.judge_worker_cpu)
+
     def judge_worker_cpu(self, ms):
         """One pool worker's CPU milliseconds for one future, from judge.py's _TimedPool through the sink this kernel
-        installs at load (jd.set_worker_cpu_sink, right after the collector is built): into cpu_ms_sum and
+        installs at load (arm_judge_worker_sink, right after the collector is built): into cpu_ms_sum and
         cpu_ms_workers at write time, so the live dict carries the published figure and a snapshot copies it. Called on
-        the worker's thread with no judge.py lock held; this lock is the only one taken here."""
+        the worker's thread with no judge.py lock held; this lock is the only one taken here. A write creates the key
+        when the arming did not (a test's recording wrapper around this method): the write is itself the evidence that
+        the share is reported, and the sink must not raise (judge.py runs it in the future's finally)."""
         with self.lock:
             j = self.judge
             j["cpu_ms_sum"] += ms
-            j["cpu_ms_workers"] += ms
+            j["cpu_ms_workers"] = j.get("cpu_ms_workers", 0.0) + ms
 
     def judge_wake(self):
         """One _producer_wake.set() call (the producer's _CountedEvent)."""
@@ -1857,7 +1886,8 @@ class _PerfStats:
         jobs["pass_ms_ring_max"] = jring[-1] if jring else 0.0
         judge["ms_mean"] = (judge["ms_sum"] / judge["passes"]) if judge["passes"] else 0.0
         # cpu_ms_sum and cpu_ms_workers ride the copy as they stand: the pool workers' share landed in the live dict as
-        # each future ended (judge_worker_cpu, judge.py's sink), so nothing is added here and a live read agrees
+        # each future ended (judge_worker_cpu, judge.py's sink), so nothing is added here and a live read agrees; a
+        # collector nothing armed has no cpu_ms_workers and the copy carries none (arm_judge_worker_sink), never a 0.0
         try:
             judge["tiers"] = jd.tier_stats()               # the evidence gate's per-tier counters
         except Exception:
@@ -1964,9 +1994,9 @@ class _PerfStats:
 
 
 _PERF_STATS = _PerfStats()
-jd.set_worker_cpu_sink(_PERF_STATS.judge_worker_cpu)   # the judge pools' CPU lands in this collector as each future ends (the
-#                                                        write-time fold); every kernel load re-executes judge.py, which clears the
-#                                                        sink, so the arming stands here, after the collector, on every load
+_PERF_STATS.arm_judge_worker_sink()   # the judge pools' CPU lands in this collector as each future ends (the write-time fold), and
+#                                       the arming opens judge.cpu_ms_workers; every kernel load re-executes judge.py, which clears
+#                                       the sink, so the arming stands here, after the collector, on every load
 
 
 _STAGE_TL = threading.local()     # the calling thread's current stage name (T401): set by _job_stage and the push, read by the

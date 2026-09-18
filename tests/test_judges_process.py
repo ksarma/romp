@@ -95,10 +95,10 @@ class _Child(unittest.TestCase):
         if hasattr(km, "_JUDGE_CHILD"):
             km._JUDGE_CHILD.__init__()                    # a fresh child slot: no process, seq 0, never started
         self._reset_judge_counters()
-        if hasattr(self.jd, "set_worker_cpu_sink"):         # this kernel's counters take the in-process pools' CPU for the test:
-            prev = self.jd.set_worker_cpu_sink(km._PERF_STATS.judge_worker_cpu)   # judge.py is one module object for every
-            self.addCleanup(self.jd.set_worker_cpu_sink, prev)                     #  kernel a process loads, and the LAST load
-        #                                                                              holds the sink (the base has no setter)
+        if hasattr(km._PERF_STATS, "arm_judge_worker_sink"):   # this kernel's counters take the in-process pools' CPU for the
+            prev = km._PERF_STATS.arm_judge_worker_sink()       # test, through the road the kernel's own load takes: judge.py is
+            self.addCleanup(self.jd.set_worker_cpu_sink, prev)  #  one module object for every kernel a process loads, and the
+        #                                                          LAST load holds the sink (the base has no setter)
         self.switch = self.jd.STATE / getattr(km, "JUDGES_PROCESS_FILE", "judges-process")
         self.jd.GOALDIR.mkdir(parents=True, exist_ok=True)
 

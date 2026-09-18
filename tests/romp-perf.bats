@@ -180,6 +180,24 @@ teardown() { rm -rf "$TEST_DIR"; }
     [ "$status" -eq 0 ]
     # 0.5 s of process CPU in 10 s; 300 ms of it on the pusher thread, 50 ms in the judge threads
     [[ "$output" == *"cpu 5.0% of one core (pusher 3.0%, judge 0.5%, other 1.5%)"* ]]
+    [[ "$output" != *"not reported"* ]]                  # the fixtures' judge blocks carry cpu_ms_workers: the figure is the whole
+}
+
+@test "romp perf: a judge block with no cpu_ms_workers prints its CPU as not the workers' share, never 0.0 as fact" {
+    # the kernel opens judge.cpu_ms_workers when it arms judge.py's worker-CPU sink at load, so a block without the key
+    # is from a collector nothing armed and its cpu_ms_sum has no pool workers' share in it (the review ruling on the
+    # write-time fold, 2026-09-18): the process line's judge share and the judge line's cpu/pass both say so
+    python3 - "$SNAP_A" "$SNAP_B" <<'PY'
+import json, sys
+for p in sys.argv[1:]:
+    d = json.load(open(p))
+    del d["judge"]["cpu_ms_workers"]
+    json.dump(d, open(p, "w"))
+PY
+    run "$ROMP_SCRIPT" perf --interval 0
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"cpu 5.0% of one core (pusher 3.0%, judge 0.5% (workers' share not reported), other 1.5%)"* ]]
+    [[ "$output" == *"cpu/pass 25 ms (workers' share not reported)   chain memo"* ]]
 }
 
 @test "romp perf: the memory line carries the window's deltas beside the levels, and the caches line the levels" {

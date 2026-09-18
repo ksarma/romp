@@ -3811,11 +3811,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   workers riding `cpu_ms_child_workers`; the
   producer thread's own per-pass work is not included and shows under the
   process line's "other"; the workers' share reaches the kernel's live
-  counters as each pool future ends, through the sink the kernel installs in
-  judge.py at load (`set_worker_cpu_sink`), so a live read of the stats dict
-  and a `/perf` snapshot agree and a delta may take either; judge.py's own
-  counter, `judge_worker_cpu_ms()`, serves the judge child, which runs with
-  no kernel in its process), `wakes` (every wake of the producer: the backends'
+  counters as each pool future ends, through the sink the kernel arms in
+  judge.py right after it builds its collector (`set_worker_cpu_sink`), so a
+  live read of the stats dict and a `/perf` snapshot agree and a delta may
+  take either; the arming is what creates `cpu_ms_workers`, so a judge block
+  without that key is from a collector nothing armed and its `cpu_ms_sum`
+  holds no workers' share: the key is absent, never a zero that could pass
+  for a measurement (a kernel serving `/perf` always arms; the shape is a
+  collector built outside one, and `romp perf` says "workers' share not
+  reported" over such a pair); judge.py's own counter,
+  `judge_worker_cpu_ms()`, serves the judge child, which runs with no kernel
+  in its process), `wakes` (every wake of the producer: the backends'
   pokes, `POST /tick`, and two kernel-internal sites; one SDK turn fires
   several, so this is an upper bound on the poke rate), `wakes_event` and
   `wakes_backstop` (how the producer's 3 s wait ended; `wakes - wakes_event`

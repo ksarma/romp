@@ -793,6 +793,12 @@ held, held_ms, exempt = dl("pusher", "held"), dl("pusher", "held_ms"), dl("pushe
 cpu_proc = 100.0 * dl("process", "cpu_s") / dt
 cpu_pusher = 100.0 * dl("pusher", "cycle_cpu_ms_sum") / (dt * 1000.0)
 cpu_judge = 100.0 * dl("judge", "cpu_ms_sum") / (dt * 1000.0)
+# the judge's CPU is the tier threads' (and the child's) alone when the newer snapshot's judge block has no
+# cpu_ms_workers: the kernel opens that key when it arms judge.py's worker-CPU sink at load, so a block without it
+# is from a collector nothing armed and the pool workers' share is not in the figure; the two lines that print it
+# say so rather than pass the smaller number off as the whole (the review ruling on the write-time fold, 2026-09-18)
+_jb = b.get("judge")
+workers_note = "" if "cpu_ms_workers" in (_jb if isinstance(_jb, dict) else {}) else " (workers' share not reported)"
 up = int(g(b, "uptime_s"))
 
 
@@ -822,8 +828,8 @@ def share(ms):                    # a pusher-owned stage's share of the PUSHER'S
 
 print("romp perf: %.1f s window, kernel up %s, pid %d, romp-perf log %s"
       % (dt, hms(up), g(b, "process", "pid"), "on" if b.get("log") else "off"))
-print("process   rss %d MB   threads %d   cpu %.1f%% of one core (pusher %.1f%%, judge %.1f%%, other %.1f%%)"
-      % (g(b, "process", "rss_kb") // 1024, g(b, "process", "threads"), cpu_proc, cpu_pusher, cpu_judge,
+print("process   rss %d MB   threads %d   cpu %.1f%% of one core (pusher %.1f%%, judge %.1f%%%s, other %.1f%%)"
+      % (g(b, "process", "rss_kb") // 1024, g(b, "process", "threads"), cpu_proc, cpu_pusher, cpu_judge, workers_note,
          cpu_proc - cpu_pusher - cpu_judge))
 pb, pa = (b.get("process") or {}), (a.get("process") or {})
 if "allocated_blocks" in pb:
@@ -949,10 +955,10 @@ jw, jev, jbs = dl("judge", "wakes"), dl("judge", "wakes_event"), dl("judge", "wa
 # late in the window whose wake lands in the next reads as one short here, clamped at zero. The chain memo's hits and
 # misses read this process's judge module: zero on the child road, where the memo lives in the child (docs/reference.md,
 # the child-road notes under the judges' child).
-print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms   cpu/pass %s ms   chain memo %d hits / %d misses   "
+print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms   cpu/pass %s ms%s   chain memo %d hits / %d misses   "
       "wakes %d (event %d, backstop %d, %d sets absorbed)"
       % (jp, jp / dt, g(b, "judge", "ms_last"), ("%.0f" % (dl("judge", "ms_sum") / jp)) if jp else "-",
-         ("%.0f" % (dl("judge", "cpu_ms_sum") / jp)) if jp else "-",
+         ("%.0f" % (dl("judge", "cpu_ms_sum") / jp)) if jp else "-", workers_note,
          dl("memos", "chain", "hit"), dl("memos", "chain", "miss"), jw, jev, jbs, max(0, jw - jev)))
 # the evidence gate, per gated tier: per-session runs the tier made against the ones it declined. On the child
 # road (judge.child present) the gate runs in the child and this process's counters stay at zero, so the line

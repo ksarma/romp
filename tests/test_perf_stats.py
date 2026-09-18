@@ -239,7 +239,9 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["sends"]), {"full", "delta", "deduped"})
         self.assertEqual(snap["judge"]["ms_mean"], 0.0, "no passes: the mean is 0, not a division error")
         self.assertIn("cpu_ms_sum", snap["judge"])
-        self.assertIn("cpu_ms_workers", snap["judge"])
+        self.assertNotIn("cpu_ms_workers", snap["judge"],
+                         "nothing armed this collector as judge.py's worker-CPU sink: the workers' share is ABSENT, never a 0.0 "
+                         "that reads as measured; arm_judge_worker_sink opens the key (the review ruling, 2026-09-18)")
         self.assertEqual({k: snap["judge"][k] for k in ("wakes", "wakes_event", "wakes_backstop")},
                          {"wakes": 0, "wakes_event": 0, "wakes_backstop": 0},
                          "the producer's wake counters: present and zero on a fresh collector")
@@ -655,8 +657,10 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["judge"]["passes"], 2)
         self.assertAlmostEqual(snap["judge"]["ms_last"], 4000.0)
         self.assertAlmostEqual(snap["judge"]["ms_mean"], 3000.0)
-        self.assertAlmostEqual(snap["judge"]["cpu_ms_sum"] - snap["judge"]["cpu_ms_workers"], 250.0,
-                               msg="the tier threads' CPU, apart from the pool workers' share")
+        self.assertAlmostEqual(snap["judge"]["cpu_ms_sum"], 250.0,
+                               msg="the tier threads' CPU alone: nothing armed this collector, so no pool workers' share is in the sum")
+        self.assertNotIn("cpu_ms_workers", snap["judge"],
+                         "and no workers' key stands beside it to be mistaken for a measured zero (the review ruling, 2026-09-18)")
 
     def test_judge_child_is_served_as_a_size_and_a_status_never_the_line(self):
         """judge.child stood as the judges' child's done line verbatim (2026-09-18, a paste-safety review of the snapshot):
@@ -688,6 +692,9 @@ class Collector(unittest.TestCase):
         self.assertEqual((child.get("recordCache"), child.get("goalIo"), "asmCheckpoint" in child), (None, {"loads": 2}, False),
                          "a block rides only as a dict, and only when sent")
         self.assertEqual(self.st.snapshot()["judge"]["cpu_ms_child_workers"], 4.0, "the CPU folds as before")
+        self.assertNotIn("cpu_ms_workers", self.st.snapshot()["judge"],
+                         "the child's report lands with no sink armed (the child road needs none) and opens no in-process "
+                         "workers' key: only the arming, or an in-process future, creates it (the review ruling, 2026-09-18)")
         line = json.dumps(done) + "\n"
         self.st.judge_child_done(done, pid=4242, chars=len(line))
         self.assertEqual(self.st.snapshot()["judge"]["child"]["chars"], len(line), "the reader's own count when it has one")
@@ -2088,14 +2095,17 @@ class JudgeCpu(unittest.TestCase):
     def _arm(self, stats):
         """Point judge.py's sink at `stats` for this test, recording every delta it is handed. judge.py is one module
         object for every kernel a test process loads and the LAST load holds the sink, so a test that asserts on its
-        own kernel's counters arms them itself; the previous sink comes back at cleanup."""
+        own kernel's counters arms them itself; the previous sink comes back at cleanup. The arming goes through the
+        collector's own road (arm_judge_worker_sink, which opens cpu_ms_workers at 0.0 as the kernel's load does) and
+        the recording wrapper is laid over the writer it installed."""
         jd = km.jd
         received = []
 
         def sink(ms):
             received.append(ms)
             stats.judge_worker_cpu(ms)
-        prev = jd.set_worker_cpu_sink(sink)
+        prev = stats.arm_judge_worker_sink()
+        jd.set_worker_cpu_sink(sink)
         self.addCleanup(jd.set_worker_cpu_sink, prev)
         return received
 
@@ -2161,10 +2171,54 @@ class JudgeCpu(unittest.TestCase):
         self.assertEqual((live1["cpu_ms_workers"], live1["cpu_ms_sum"]), (live0["cpu_ms_workers"], live0["cpu_ms_sum"]),
                          "no sink, no write to the kernel's counters")
 
+    def test_an_unarmed_collector_serves_no_workers_key_and_the_arming_opens_it_at_a_genuine_zero(self):
+        """(ii) The review ruling on the write-time fold (2026-09-18): an unarmed sink must be distinguishable from a
+        genuine zero. A collector nothing armed has no cpu_ms_workers in its live dict or its snapshot (red before: the
+        constructor opened the key at 0.0, the reading a process that never armed the sink would have served as fact);
+        arm_judge_worker_sink opens it at 0.0 with no pool future yet run, a genuine zero, and installs this collector's
+        writer; pool work then moves it; and a write through judge_worker_cpu on a collector no arming touched opens the
+        key too, the write being the evidence. cpu_ms_sum stands in every case: the tier threads' and the child's CPU."""
+        jd = km.jd
+        st = km._PerfStats()
+        self.assertNotIn("cpu_ms_workers", self._live(st), "unarmed: no key in the live dict")
+        self.assertNotIn("cpu_ms_workers", st.snapshot()["judge"], "the snapshot copies the live dict: no key, not a zero")
+        self.assertEqual(st.snapshot()["judge"]["cpu_ms_sum"], 0.0, "cpu_ms_sum is served regardless")
+        prev = st.arm_judge_worker_sink()
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+        self.assertEqual(self._live(st).get("cpu_ms_workers"), 0.0, "armed, no future yet: a genuine zero, present")
+        self.assertEqual(st.snapshot()["judge"]["cpu_ms_workers"], 0.0)
+        installed = jd.set_worker_cpu_sink(None)
+        self.assertIs(getattr(installed, "__self__", None), st, "the arming installed this collector's writer: %r" % (installed,))
+        self.assertEqual(installed.__name__, "judge_worker_cpu")
+        st.arm_judge_worker_sink()
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        snap = st.snapshot()["judge"]
+        self.assertGreaterEqual(snap["cpu_ms_workers"], 4.0, "the value, once a future ran: %r" % snap["cpu_ms_workers"])
+        self.assertEqual(snap["cpu_ms_sum"], snap["cpu_ms_workers"], "no tier ran: the sum is the workers' share")
+        bare = km._PerfStats()
+        bare.judge_worker_cpu(2.5)
+        self.assertEqual((self._live(bare)["cpu_ms_workers"], self._live(bare)["cpu_ms_sum"]), (2.5, 2.5),
+                         "a write opens the key on a collector no arming touched: the write is the evidence")
+
+    def test_the_reference_and_the_docstring_say_the_key_is_absent_until_the_sink_is_armed(self):
+        """(e) The two places PR 788 wrote its interim one-source sentence, the _PerfStats docstring's judge entry and
+        docs/reference.md's judge bullet, now describe the write-time fold and the unarmed shape: the arming creates
+        cpu_ms_workers, a block without it is from a collector nothing armed, and neither still says a delta comes from
+        one source, never one of each (the review ruling, 2026-09-18)."""
+        doc = km._PerfStats.__doc__ or ""
+        ref = Path(HERE).parent.joinpath("docs", "reference.md").read_text(encoding="utf-8")
+        for name, text in (("the _PerfStats docstring", doc), ("docs/reference.md", ref)):
+            self.assertRegex(text, r"the arming is what creates\s+`?cpu_ms_workers`?", name)
+            self.assertRegex(text, r"collector nothing armed", name)
+            self.assertRegex(text, r"workers' share not\s+reported", "%s names the CLI's wording for the absent key" % name)
+            self.assertNotRegex(text, r"one source,\s+never\s+one\s+of\s+each", "%s: PR 788's interim sentence is gone" % name)
+
     def test_the_kernel_arms_the_sink_at_load(self):
-        """A kernel load installs its collector's judge_worker_cpu as judge.py's sink, and a judge module no kernel has
-        loaded has none. Observed in a child process: judge.py is one module object per process and every kernel load
-        re-arms it, so only a load this test controls can show the state before and after."""
+        """A kernel load installs its collector's judge_worker_cpu as judge.py's sink and opens judge.cpu_ms_workers at
+        0.0 (armed, no pool future yet: a genuine zero, present), and a judge module no kernel has loaded has none, as a
+        collector built beside the kernel's has no key. Observed in a child process: judge.py is one module object per
+        process and every kernel load re-arms it, so only a load this test controls can show the state before and after."""
         state = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, state, True)
         env = dict(os.environ)
@@ -2180,6 +2234,9 @@ class JudgeCpu(unittest.TestCase):
                 "sink = jd.set_worker_cpu_sink(None)\n"
                 "assert getattr(sink, '__self__', None) is km._PERF_STATS, sink\n"
                 "assert sink.__name__ == 'judge_worker_cpu', sink\n"
+                "snap = km._PERF_STATS.snapshot()['judge']\n"
+                "assert snap.get('cpu_ms_workers') == 0.0, snap.get('cpu_ms_workers')\n"
+                "assert 'cpu_ms_workers' not in km._PerfStats().snapshot()['judge'], 'a collector nothing armed: no key'\n"
                 "print('armed')\n"
                 % (HERE, os.path.join(BIN, "romp-event-model"), os.path.join(BIN, "romp-judge"), os.path.join(BIN, "romp-kernel")))
         r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=180)
