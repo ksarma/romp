@@ -792,8 +792,10 @@ class _PerfStats:
                                    parses a look skipped on unchanged files, paid, or paid cold),
                                    deferredSessions (sessions the yield deferred past the cycle),
                                    unbounded / clockDue (memos refused as unbounded or clock-due),
-                                   wakeOnly (looks with the gear off: the dead-man walk alone, which
-                                   records and skips under its own mode tag since jobs stage 1),
+                                   wakeOnly (looks the nudge toggle off or the Task tracking switch
+                                   off made wake-only: the awaiting dead-man, plus the debt reminders
+                                   while the nudge toggle is on; such a look records and skips under
+                                   its own mode tag since jobs stage 1),
                                    wakeOnlyRecorded (the memo rows those looks recorded), and
                                    unboundedBy (the refusals per leg); nudgeGate
                                    (the walk's placement gate, _nudge_placement_gate) -> served /

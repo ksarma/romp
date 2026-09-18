@@ -910,6 +910,23 @@ class NudgeWalkParseGate(unittest.TestCase):
         finally:
             km._NUDGE_HORIZON.notes = None
 
+    def test_the_wakeOnly_gloss_names_the_debt_reminders_that_ride_the_nudge_toggle(self):
+        """Review round 1 of jobs stage 1 (correctness-1): the counter also counts looks with the nudge toggle ON and Task tracking
+        OFF, and those run the debt-reminder leg and can send, so a gloss reading "the dead-man walk alone" named the wrong
+        population. Both glosses, the reference's and the _PerfStats field docstring's, name the reminders and the toggle."""
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        entry = doc[doc.index("`wakeOnly` (looks"):]
+        entry = entry[:entry.index("`wakeOnlyRecorded`")]
+        self.assertIn("debt reminders", entry, "the reference's wakeOnly entry names the reminders")
+        self.assertIn("nudge toggle is on", entry, "and the toggle they ride")
+        self.assertNotIn("dead-man walk alone", entry)
+        gloss = km._PerfStats.__doc__
+        field = gloss[gloss.index("wakeOnly ("):]
+        field = field[:field.index("wakeOnlyRecorded")]
+        self.assertIn("debt reminders", field, "the field docstring names the reminders")
+        self.assertIn("Task tracking", field, "and the second switch that makes a look wake-only")
+        self.assertNotIn("dead-man walk alone", field)
+
     def test_the_pass_keeps_its_stats_in_a_side_map_and_leaves_the_shared_rows_untouched(self):
         """Follow-up, low 1: the pass wrote _look_stat into the session rows _sessions memoises per cycle and hands out read-only;
         a later reader of a row would have read a stale key. The stats live in a side map keyed by sid, cleared per pass."""

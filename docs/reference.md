@@ -3279,7 +3279,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   peers the live map still shows alive, an owed reminder a refused ledger
   write left standing), `clockDue` (memos refused because a noted flip has come),
   `wakeOnly` (looks with injected follow-ups off, or Task tracking off: the
-  awaiting dead-man walk alone; since 2026-09-18 such a look checks and
+  awaiting dead-man, plus the debt reminders when the nudge toggle is on;
+  since 2026-09-18 such a look checks and
   records like any other, under its own mode tag, so with the gear off
   `skippedParses` rises toward `looks` on a quiet board, where until then
   every wake-only look parsed) and `wakeOnlyRecorded` (memo rows a wake-only
