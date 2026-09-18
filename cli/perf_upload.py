@@ -45,7 +45,12 @@ file or environment variable stands in for it, so nothing sends from a cron by d
 The send is ONE POST to <receiver>/v1/upload, the file's bytes as the body, under six headers: the verb sets
 `Content-Type: application/json`, `Content-Length` and a fixed `User-Agent: romp-perf-upload/1` (no version
 detail, no hostname); the HTTP client adds `Host` (the receiver's own name), `Accept-Encoding: identity` and
-`Connection: close`. A 30 s timeout, stdlib urllib through an opener that refuses redirects (a 3xx is an
+`Connection: close`. A 30 s DEADLINE over the whole exchange (TIMEOUT_S): the connect and, for https, the handshake
+are bounded by the connection's own timeout, and from the moment the connection is up a timer shuts its socket down
+when the time left runs out, so the send, the status line, the headers and the body together take at most the rest,
+and a receiver that answers in pieces each under the limit cannot hold an unattended --yes run open (a per-operation
+timeout alone let it, round 2, 2026-09-18); the refusal is the same fixed line whatever phase the deadline cut. Stdlib
+urllib through an opener that refuses redirects (a 3xx is an
 unexpected answer, never a second request, and its Location is never parsed), reads no proxy variables, and
 carries no cookies. The one answer accepted is status 201 with a body of at most 64 KiB that is exactly the JSON
 shape {"receipt": <uuid4 string>, "retention_days": <integer>, "av": "ok"|"skipped"}; the verb then prints
@@ -59,8 +64,11 @@ import http.client
 import json
 import os
 import re
+import socket
 import stat
 import sys
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -77,7 +85,7 @@ RECEIVER_FILE = "~/.config/romp/perf-receiver"
 RECEIVER_FILE_MAX = 4096             # the setting file is one line of printable ASCII; past this it is not an address (fresh-5)
 ROUTE = "/v1/upload"
 MAX_BYTES = 1 << 20                  # the receiver's cap on Content-Length and on the bytes it reads
-TIMEOUT_S = 30
+TIMEOUT_S = 30                       # a deadline over the whole exchange (_Deadline), not a per-operation timeout
 USER_AGENT = "romp-perf-upload/1"
 ANSWER_MAX = 64 * 1024               # a receipt is under 200 bytes; a longer 201 body is not the shape
 LOOPBACK = frozenset({"127.0.0.1", "localhost"})
@@ -87,6 +95,7 @@ UUID4 = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9
 AV = ("ok", "skipped")
 ANSWER_KEYS = frozenset({"receipt", "retention_days", "av"})
 NOT_THE_SHAPE = "refused: the receiver answered 201 without the receipt shape this verb accepts (receipt, retention_days, av); no receipt"
+NO_ANSWER = "refused: no answer from the receiver (%s); no receipt"     # the error's class name, or TimeoutError when the deadline cut it
 
 
 class Refusal(Exception):
@@ -286,36 +295,137 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class _Deadline:
+    """The budget over the whole exchange: TIMEOUT_S from post()'s start, held by a timer. A socket timeout is
+    per operation (each read waits up to the limit and a receiver answering in pieces each under it is never late),
+    and the header phase runs inside urllib where a caller cannot budget it, so the bound is a timer instead: armed on
+    the connection's socket once the connection is up (_DeadlineConnection.connect), it shuts the socket down in both
+    directions when the time left runs out, so whatever phase the exchange is in, the send, the status line, the
+    headers or the body, the blocked read returns end of stream or the write fails at once, and `fired` says the
+    deadline was the cause. The shutdown reaches the socket itself, whichever object holds it (the connection, or the
+    response's file after urllib drops the connection's reference), and touches no private attribute; a socket the
+    exchange already closed has nothing to shut, and that error is ignored. The timer thread is a daemon, and post()
+    cancels it once the exchange ends, so a quick answer leaves nothing running. Preferred over re-arming the socket
+    timeout before every read, which reaches two private attributes and cannot see the header phase (round 2,
+    2026-09-18)."""
+
+    def __init__(self, seconds):
+        self.end = time.monotonic() + seconds
+        self.fired = False
+        self._timer = None
+
+    def remaining(self):
+        return max(0.0, self.end - time.monotonic())
+
+    def arm(self, sock):
+        self.cancel()
+        timer = threading.Timer(self.remaining(), self._fire, (sock,))
+        timer.daemon = True
+        self._timer = timer
+        timer.start()
+
+    def _fire(self, sock):
+        self.fired = True                    # set before the shutdown, so the thread it wakes reads the cause
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def cancel(self):
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+
+
+class _DeadlineConnection:
+    """Mixed into the two connection classes: the connection's own timeout is cut to the time the deadline has left
+    (it bounds the connect and, for https, the handshake, the phases before a socket exists to arm), and once the
+    connection is up the deadline is armed on its socket."""
+
+    def __init__(self, *args, deadline=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._deadline = deadline
+
+    def connect(self):
+        if self._deadline is not None and isinstance(self.timeout, (int, float)):
+            self.timeout = max(min(self.timeout, self._deadline.remaining()), 0.001)    # a zero would make the socket non-blocking
+        super().connect()
+        if self._deadline is not None:
+            self._deadline.arm(self.sock)
+
+
+class _DeadlineHTTPConnection(_DeadlineConnection, http.client.HTTPConnection):
+    pass
+
+
+class _DeadlineHTTPSConnection(_DeadlineConnection, http.client.HTTPSConnection):
+    pass
+
+
+class _DeadlineHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, deadline):
+        super().__init__()
+        self._deadline = deadline
+
+    def http_open(self, req):
+        return self.do_open(_DeadlineHTTPConnection, req, deadline=self._deadline)
+
+
+class _DeadlineHTTPSHandler(urllib.request.HTTPSHandler):
+    """The default handler's https_open with the deadline connection in place of http.client's, and NO context
+    argument: HTTPSConnection builds urllib's default verified context itself when none is passed, so certificate
+    verification is the library's own and this module holds no context object at all (the census in
+    tests/test_perf_upload.py forbids one here)."""
+
+    def __init__(self, deadline):
+        super().__init__()
+        self._deadline = deadline
+
+    def https_open(self, req):
+        return self.do_open(_DeadlineHTTPSConnection, req, deadline=self._deadline)
+
+
 def post(url, data, timeout=None):
     """One POST of `data` to `url`: (status, body) for any HTTP answer (the body read only on 201, capped at
     ANSWER_MAX + 1 so a long one is judged by its length, empty for every other status), or a Refusal naming the
     error's class alone when no answer came or the client raised anything else (the last clause is the belt:
-    whatever the class, its message is never printed). The verb sets its three headers itself, Content-Type,
-    Content-Length (the body's own length, so the attribution the docs make is true by construction, and a body that
-    is not bytes fails at the call instead of going out chunked) and User-Agent; the client adds Host, Accept-Encoding
-    and Connection. The opener has no proxy (ProxyHandler({}) reads no *_proxy variable: the address configured is the
-    address dialled), no cookie jar, and refuses redirects; TLS is urllib's default context, which verifies the
-    certificate against the system store."""
+    whatever the class, its message is never printed). `timeout` (TIMEOUT_S) is a DEADLINE over the whole exchange
+    (_Deadline): when it fires, the refusal names TimeoutError whatever the client made of the socket that ended
+    under it (an OSError, a RemoteDisconnected, an IncompleteRead, a ValueError, a truncated body or headers that
+    parsed short), which every clause below and the success path check first. The verb sets its three headers
+    itself, Content-Type, Content-Length (the body's own length, so the attribution the docs make is true by
+    construction, and a body that is not bytes fails at the call instead of going out chunked) and User-Agent; the
+    client adds Host, Accept-Encoding and Connection. The opener has no proxy (ProxyHandler({}) reads no *_proxy
+    variable: the address configured is the address dialled), no cookie jar, and refuses redirects; TLS is urllib's
+    default context, which verifies the certificate against the system store."""
     timeout = TIMEOUT_S if timeout is None else timeout
+    deadline = _Deadline(timeout)
     req = urllib.request.Request(url, data=data, method="POST",
                                  headers={"Content-Type": "application/json", "Content-Length": str(len(data)), "User-Agent": USER_AGENT})
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect(),
+                                         _DeadlineHTTPHandler(deadline), _DeadlineHTTPSHandler(deadline))
+
+    def name_of(e):
+        return "TimeoutError" if deadline.fired else e.__class__.__name__
     try:
         with opener.open(req, timeout=timeout) as r:
             status = r.status
             body = r.read(ANSWER_MAX + 1) if status == 201 else b""
-            return status, body
     except urllib.error.HTTPError as e:
         e.close()
-        return e.code, b""
+        status, body = e.code, b""
     except urllib.error.URLError as e:
         reason = e.reason
-        name = reason.__class__.__name__ if isinstance(reason, BaseException) else e.__class__.__name__
-        raise Refusal("refused: no answer from the receiver (%s); no receipt" % name, 1)
+        raise Refusal(NO_ANSWER % name_of(reason if isinstance(reason, BaseException) else e), 1)
     except (OSError, http.client.HTTPException) as e:
-        raise Refusal("refused: no answer from the receiver (%s); no receipt" % e.__class__.__name__, 1)
+        raise Refusal(NO_ANSWER % name_of(e), 1)
     except Exception as e:       # a ValueError from a header or URL the client could not handle, say
-        raise Refusal("refused: no answer from the receiver (%s); no receipt" % e.__class__.__name__, 1)
+        raise Refusal(NO_ANSWER % name_of(e), 1)
+    finally:
+        deadline.cancel()
+    if deadline.fired:           # the socket ended under the deadline and the client made a status or a short body of it
+        raise Refusal(NO_ANSWER % "TimeoutError", 1)
+    return status, body
 
 
 def receipt(status, body):

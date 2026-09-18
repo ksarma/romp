@@ -18,7 +18,9 @@ without the flag it refuses before dialling, and no environment variable stands 
 of the module's environment reads, plus an executed check with tempting names set); the one answer accepted is
 201 with exactly {receipt: uuid4, retention_days: int, av: ok|skipped} in a body of at most 64 KiB, every other status
 (a redirect among them, never followed, its Location never parsed), body or error refused with a fixed line carrying
-the status code or the error class and nothing of the body or of any exception's message; and an enumeration of the request a recording receiver saw: the request line, every header
+the status code or the error class and nothing of the body or of any exception's message; the thirty seconds are a
+deadline over the whole exchange, so a receiver answering in pieces each under the limit is cut at the total (a
+raw-socket drip receiver pins it); and an enumeration of the request a recording receiver saw: the request line, every header
 and the body bytes, which equal the file's.
 
 Nothing here reads a live kernel, a real state directory or a real setting: the child's HOME is synthetic or a
@@ -270,6 +272,62 @@ class Receiver:
     def stop(self):
         self.srv.shutdown()
         self.srv.server_close()
+
+
+class DripReceiver:
+    """A raw-socket receiver on 127.0.0.1 for one POST: it reads the request head to the blank line and Content-Length
+    bytes of body, then writes its answer in `pieces`, sleeping `gap` seconds before each, so the answer arrives slowly by
+    parts with every gap under a per-operation timeout and the whole over it: the shape a socket timeout cannot see and a
+    deadline over the exchange must."""
+
+    def __init__(self, pieces, gap):
+        self.pieces, self.gap = pieces, gap
+        self.requests = []
+        self.srv = socket.socket()
+        self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.srv.bind(("127.0.0.1", 0))
+        self.srv.listen(1)
+        self.port = self.srv.getsockname()[1]
+        self.url = "http://127.0.0.1:%d" % self.port
+        self.thread = threading.Thread(target=self._serve, daemon=True)
+        self.thread.start()
+
+    def _serve(self):
+        try:
+            conn, _peer = self.srv.accept()
+        except OSError:
+            return
+        try:
+            conn.settimeout(10)
+            head = b""
+            while b"\r\n\r\n" not in head:
+                chunk = conn.recv(65536)
+                if not chunk:
+                    return
+                head += chunk
+            head, _sep, body = head.partition(b"\r\n\r\n")
+            n = int(re.search(rb"(?i)content-length:\s*(\d+)", head).group(1))
+            while len(body) < n:
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                body += chunk
+            self.requests.append((head, body))
+            for piece in self.pieces:
+                time.sleep(self.gap)
+                conn.sendall(piece)
+            time.sleep(0.2)                 # let the client read the tail before the close
+        except OSError:
+            pass                            # the client shut the socket down: the deadline fired
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def stop(self):
+        self.srv.close()
+        self.thread.join(5)
 
 
 class ReceiverSetting(unittest.TestCase):
@@ -1247,6 +1305,43 @@ class Answers(unittest.TestCase):
         r = self._refused("refused: no answer from the receiver (RemoteDisconnected); no receipt")
         self.assertNotIn("Remote end closed", r.stderr, "the class, never the message")
         self.assertEqual(len(self.fake.requests), 1)
+
+    def test_the_timeout_is_a_deadline_over_the_whole_exchange_and_a_receiver_answering_in_pieces_cannot_hold_it_open(self):
+        """The documented thirty seconds was a per-operation socket timeout: every read waited up to the limit and started
+        over, so a receiver answering in pieces each under it held an unattended --yes run open for as long as it liked
+        (the refuter measured 60 s and a 201 at the real value). The bound is now a deadline over the whole exchange, a
+        timer that shuts the connection's socket down when the budget runs out, so it covers the header phase inside
+        urllib, which a budgeted read after open() cannot, as well as the body. Two legs against a raw-socket receiver
+        with TIMEOUT_S at 1.0 and every gap 0.6 s, the total over the budget in both: the status line and headers at
+        once and the receipt body in two pieces; the status line, the headers and the body in three pieces (the header
+        phase alone). Each ends in the fixed TimeoutError line, code 1, after at least the budget and under about twice
+        it, whatever the client made of the shut socket (a truncated body, a short header set). The control leg, the same
+        drip with the total under the budget, is accepted as 201 with the receipt body whole. Fails before: both legs
+        returned 201 after the total elapsed."""
+        ok = json.dumps({"receipt": RECEIPT, "retention_days": 180, "av": "ok"}).encode()
+        head = b"HTTP/1.1 201 Created\r\n"
+        headers = b"Content-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(ok)
+        body_legs = ([head + headers + ok[:20], ok[20:]],                 # the body in two pieces
+                     [head, headers, ok])                               # the status line, the headers, the body
+        for pieces in body_legs:
+            fake = DripReceiver(pieces, gap=0.6)
+            self.addCleanup(fake.stop)
+            started = time.monotonic()
+            with mock.patch.object(pu, "TIMEOUT_S", 1.0):
+                with self.assertRaises(pu.Refusal) as cm:
+                    pu.post(fake.url + "/v1/upload", b"{}")
+            elapsed = time.monotonic() - started
+            self.assertEqual(str(cm.exception), "refused: no answer from the receiver (TimeoutError); no receipt", pieces[0][:12])
+            self.assertEqual(cm.exception.code, 1)
+            self.assertGreaterEqual(elapsed, 1.0, "not before the budget")
+            self.assertLess(elapsed, 2.0, "and not long after it: %.2f s for %d pieces at 0.6 s gaps (%.1f s total)" % (elapsed, len(pieces), 0.6 * len(pieces)))
+            self.assertEqual(len(fake.requests), 1, "the one request reached the receiver whole")
+            self.assertEqual(fake.requests[0][1], b"{}")
+        fake = DripReceiver([head, headers, ok[:20], ok[20:]], gap=0.15)      # the same drip, the total under the budget
+        self.addCleanup(fake.stop)
+        with mock.patch.object(pu, "TIMEOUT_S", 1.0):
+            self.assertEqual(pu.post(fake.url + "/v1/upload", b"{}"), (201, ok), "a slow but timely receiver is accepted, the body whole")
+        self.assertEqual(pu.receipt(201, ok), (RECEIPT, 180, "ok"))
 
     def test_a_timeout_is_refused_by_its_class_alone_after_the_fixed_wait(self):
         self.fake.delay = 1.5
