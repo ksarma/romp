@@ -132,6 +132,18 @@ def _stamps(doc):
     return [(p, v) for p, v in _numbers(doc) if any(lo <= v <= hi for lo, hi in EPOCH_WINDOWS)]
 
 
+def _epoch(node, key=None):
+    """`node` with every stamp of the leak snapshot (`t`, `now`, `since`; the fixture's own are small numbers) moved into the
+    seconds epoch window, so a survivor would stand out as a number inside one of the EPOCH_WINDOWS."""
+    if isinstance(node, dict):
+        return {k: _epoch(v, k) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_epoch(v) for v in node]
+    if key in ("t", "now", "since") and isinstance(node, (int, float)) and not isinstance(node, bool):
+        return node + 1.7e9
+    return node
+
+
 def leak_snapshot():
     """A GET /perf snapshot in the shape of a kernel from BEFORE the served-leak fixes, so every leak the export
     must fold or drop is present at once; a few numbers ride beside them so the diagnosis they leave is checked."""
@@ -521,6 +533,73 @@ class FoldInvariant(unittest.TestCase):
         doc["perf"]["heap"]["a b"] = 1
         doc["perf"]["heap"]["t"] = 1
         self.assertEqual(_check(doc), "the public form still fails the walk (outside the identifier grammar, a key under perf/heap); nothing written")
+
+    def test_the_denylist_walk_refuses_a_bound_off_a_power_of_two_and_a_number_the_size_of_a_stamp_and_passes_every_fold(self):
+        """The two findings added with the third review round's rules (2026-09-18), so the upload's re-check matches the
+        fold's full fixed point: a memory-fraction bound (BOUND_KEYS) the fold would have rounded up to a power of two, a
+        value finding at its own path; and a numeric leaf at or above STAMP_FLOOR anywhere outside a bound, dict or list,
+        int or float, which is round 3's property (no absolute clock stamp survives the fold under any key) turned into a
+        check over a file. The fixed point holds: a fold of every fixture at that round's head, the epoch-shifted leak
+        snapshot and the ten real-sized bounds among them (budgetBytes floors at 4 GiB, past the floor), raises no finding."""
+        for snap in (leak_snapshot(), _epoch(leak_snapshot()), bounds_snapshot(), bounds_snapshot(8 * 1024 ** 3)):
+            for usage in (False, True):
+                doc = pe.export_document(snap, usage=usage)
+                self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "a fold's output is the walk's fixed point")
+                self.assertIsNone(_check(doc))
+        doc = pe.export_document(bounds_snapshot())
+        self.assertGreater(doc["perf"]["recordCache"]["budgetBytes"], pp.STAMP_FLOOR, "a coarsened bound past the floor is the fold's own and passes")
+        self.assertEqual(pp.STAMP_FLOOR, 1.5e9)
+        # a bound off a power of two: a value finding at its own path, the number in no printed field; a power of two, however
+        # large, and what is not a positive finite number pass, as public_bound leaves them
+        for raw in (4_210_310_144, 3, 2.5, 501, 20000, 1.7e9):
+            doc = pe.export_document(bounds_snapshot())
+            doc["perf"]["heap"]["hydrated"]["capBytes"] = raw
+            self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",))],
+                             [("a bound not rounded to a power of two", False, "perf/heap/hydrated/capBytes", 4)], repr(raw))
+            self.assertEqual(_check(doc), "the public form still fails the denylist (a bound not rounded to a power of two, "
+                                          "the value at perf/heap/hydrated/capBytes); nothing written", repr(raw))
+        for ok in (1, 2, 4096, 1 << 40, 4096.0, 0, -5, None, True, "other"):
+            doc = pe.export_document(bounds_snapshot())
+            doc["perf"]["heap"]["hydrated"]["capBytes"] = ok
+            self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], repr(ok))
+        # the floor: a numeric leaf at or above STAMP_FLOOR under a key the denylist does not know, in a dict or a list, int or
+        # float, in `usage` too; the value at the floor is refused, one below it passes
+        for path, raw, where in (((("perf", "pusher", "startedAt"), 1.6e9, "perf/pusher/startedAt")),
+                                 ((("perf", "heap", "marks"), [1, 1.5e9], "perf/heap/marks/1")),
+                                 ((("usage", "firstSeen"), 1_700_000_000, "usage/firstSeen"))):
+            doc = pe.export_document(leak_snapshot(), usage=True)
+            node = doc
+            for k in path[:-1]:
+                node = node[k]
+            node[path[-1]] = raw
+            self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",))],
+                             [("a number the size of a clock stamp", False, where, where.count("/") + 1)], where)
+            self.assertEqual(_check(doc), "the public form still fails the denylist (a number the size of a clock stamp, the value at %s); nothing written" % where)
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["pusher"]["cycles"] = 1_499_999_999
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "below the floor a number is a count")
+        # one finding per leaf: under an uptime key the grain is judged first (1.6e9 is off it), and on the grain the floor
+        # (1.5e9 is 25 million whole minutes); under a denied key nothing beneath is walked, so the key finding stands alone
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["uptime_s"] = 1.6e9
+        self.assertEqual([p.kind for p in pp.denylist_problems(doc, under=("perf",))], ["an uptime not rounded to whole minutes"])
+        doc["perf"]["uptime_s"] = 1.5e9
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",))], [("a number the size of a clock stamp", "perf/uptime_s")])
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["pusher"]["firstCycle"]["t"] = 1.7e9
+        self.assertEqual([(p.kind, p.is_key, p.path) for p in pp.denylist_problems(doc, under=("perf",))],
+                         [("a key the denylist drops", True, "perf/pusher/firstCycle")])
+        # the depth rule with the new findings: a shallower key finding wins over a deeper value finding, and a value finding
+        # at the root's child over a deeper key finding
+        doc = pe.export_document(bounds_snapshot())
+        doc["perf"]["heap"]["hydrated"]["capBytes"] = 3
+        doc["perf"]["heap"]["t"] = 1
+        self.assertEqual(_check(doc), "the public form still fails the denylist (a key the denylist drops, a key under perf/heap); nothing written")
+        doc = pe.export_document(bounds_snapshot())
+        doc["perf"]["startedAt"] = 1.7e9
+        doc["perf"]["heap"]["hydrated"]["t"] = 1
+        self.assertEqual(_check(doc), "the public form still fails the denylist (a number the size of a clock stamp, the value at perf/startedAt); nothing written")
+
     def test_the_walk_holds_the_http_block_to_the_registers_image_and_the_stack_sample_to_its_grammars(self):
         # the walk's http check is membership in what the kernel's fold can return (http_key_ok), not a character grammar:
         # a path-shaped key the register never makes is named. The stack sample rides in a served snapshot under its
@@ -668,15 +747,7 @@ class FoldInvariant(unittest.TestCase):
     def test_no_absolute_clock_stamp_survives_the_export(self):
         # the PROPERTY, not key names (round 3): with every stamp of the leak snapshot moved into the seconds epoch window
         # (the fixture's own are small numbers), no numeric leaf inside an epoch window survives anywhere in the export
-        def epoch(node, key=None):
-            if isinstance(node, dict):
-                return {k: epoch(v, k) for k, v in node.items()}
-            if isinstance(node, list):
-                return [epoch(v) for v in node]
-            if key in ("t", "now", "since") and isinstance(node, (int, float)) and not isinstance(node, bool):
-                return node + 1.7e9
-            return node
-        snap = epoch(leak_snapshot())
+        snap = _epoch(leak_snapshot())
         self.assertGreaterEqual(len(_stamps(snap)), 8, "the snapshot carries stamps: now, since, five split rows, the child's")
         doc = pe.export_document(snap, usage=True)
         survivors = _stamps(doc)

@@ -154,7 +154,7 @@ These are for scripting and for agents rather than daily use:
 | `romp sessions [--json]` | The fleet with each session's state, identity colours, directory and backend |
 | `romp perf [--interval <s>] [--json]`, `romp perf log on\|off` | The kernel's performance counters as rates over two snapshots (below); `--json` prints one raw snapshot; `log on\|off` turns the `romp-perf` stderr log on or off without a restart |
 | `romp perf export --public [--from SNAPSHOT.json] [--usage] [--out PATH]` | Write one paste-safe copy of the kernel's counters (see [Kernel performance counters](#kernel-performance-counters)) as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json` under the state directory, or at `--out`, and print its path and size; `--from` takes a saved `romp perf --json` snapshot instead of the running kernel; `--usage` adds session and feature counts. The flag is required: the verb has no raw mode. Nothing leaves the machine |
-| `romp perf upload <file> [--yes] [--receiver URL]` | Send one export written by `romp perf export --public` to the configured receiver (see [Kernel performance counters](#kernel-performance-counters)): the file is checked again as it stands, the path, the byte size and the URL it will dial are printed, a yes is asked for on a terminal (`--yes` is the form an agent uses; off a terminal the verb refuses without it), then one POST; the only answer accepted is a `201` receipt, printed with the retention period. The address is `--receiver`, else `ROMP_PERF_RECEIVER`, else `~/.config/romp/perf-receiver`; with none set the verb refuses and names them |
+| `romp perf upload <file> [--yes] [--receiver URL]` | Send one export written by `romp perf export --public` to the configured receiver (see [Kernel performance counters](#kernel-performance-counters)): the file is checked again as it stands against the export's rule (paste-safe, not unlinkable: what the export dropped or coarsened is refused, the measurements it keeps pass), the path, the byte size and the URL it will dial are printed, a yes is asked for on a terminal (`--yes` is the form an agent uses; off a terminal the verb refuses without it), then one POST; the only answer accepted is a `201` receipt, printed with the retention period. The address is `--receiver`, else `ROMP_PERF_RECEIVER`, else `~/.config/romp/perf-receiver`; with none set the verb refuses and names them |
 | `romp perf client [--minutes <n>] [--json]` | What the open dashboards' browsers spent on the frames they received (below): handler milliseconds per minute by frame type with window p50/p90/p99 and max, the worst minute's main-thread-free p90, long animation frames and their attributed callbacks, the worst minute, heap and DOM, the slowest frames, per dashboard and pane over the last `<n>` minutes (default 10) |
 | `romp api-health` | The API-health signal as JSON (see [The API-health signal](#the-api-health-signal)): per-credential, per-model-family retry and give-up rates over rolling windows, with a derived state |
 | `romp restart-metrics [--json [--public]] [--window day\|week] [--anchor D] [--since D] [--until D] [--tz Z] [--no-live]` | What kernel restarts do to the sessions (see [Restart metrics](#restart-metrics)): turns cut per restart and per window, outage and reconcile times, quiet-window waits, orphans and reaps, crash heals, redo cost, turn latency, per-session and kernel memory and CPU; a text summary per window, or the whole document as JSON |
@@ -3812,9 +3812,11 @@ registry; a hostname or user is matched as whole words, so a user named
 `mark` is not found in the counter `intrMarks`), then walked once more for a
 uuid, a 32-hex or 40-hex token, an absolute path or free text (a string
 carrying whitespace), and checked against the denylist (a key the export
-drops, or an uptime not rounded to whole minutes: a check the export's own
-output passes by construction, and which `romp perf upload` runs again over a
-file you may have edited); any finding refuses the write and names the kind of
+drops, an uptime not rounded to whole minutes, a bound not rounded to a power
+of two, or, under any other key, a number the size of a clock stamp, 1.5e9 or
+more: a check the export's own output passes by construction, and which `romp
+perf upload` runs again over a file you may have edited); any finding refuses
+the write and names the kind of
 finding and the key path (a value's own path, or the path of the dict holding
 a key), never the key or the value; when more than one check finds something,
 the finding with the shortest path is named, so the path printed never carries
@@ -3854,10 +3856,14 @@ so no credential exists for it: the verb reads no token and sends none. The
 file must be a regular file of at most 1 MiB that parses as strict JSON (no
 `NaN` or `Infinity`, no key repeated within an object) with the
 `romp-perf-export/1` schema line. It must also pass the export's own scan,
-walk and denylist check again, as it stands, since you may have edited it (a
-`t` put back on a split row or an uptime typed to the second is refused: the
-export would have dropped or rounded it); a finding is reported by kind and
-key path, never by value. The verb then prints the path, the byte
+walk and denylist check again, as it stands, since you may have edited it. The
+rule is the export's: the public form is paste-safe, not unlinkable. What the
+export dropped or coarsened is refused (a `t` put back on a split row, an
+uptime typed to the second, a bound typed to the byte, a number the size of a clock
+stamp under any key), and the measurements it keeps pass, so a fresh export
+passes whole and two uploads from one kernel remain linkable through them by
+design. A finding is reported by kind and key path, never by value. The verb
+then prints the path, the byte
 size and the URL it will dial (the address as configured with `/v1/upload`
 appended, so whatever the setting carries is seen before the yes) and asks for
 a yes. Off a terminal it refuses unless `--yes` is passed. That flag is the form an agent

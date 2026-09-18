@@ -497,18 +497,57 @@ def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=(), stacks_key=S
     return problems
 
 
+# The STAMP FLOOR, the fourth finding of denylist_problems (2026-09-18, with the third review round's rules): every absolute
+# clock stamp the two documents carry is denied by KEY (DENY_KEYS, DENY_PATHS), and the export's property test
+# (tests/test_perf_export.py, no absolute clock stamp survives the export) pins that none survives the fold under any key. Over
+# a FILE the upload verb re-checks, that property becomes a check: an epoch second from 2017 on is at or above 1.5e9, and a
+# numeric leaf that large under a key the denylist does not know is a stamp typed in after the export. The one leaf of the fold's
+# own output that reaches the floor is a coarsened bound (BOUND_KEYS: recordCache.budgetBytes floors at 4 GiB on every machine),
+# which is judged as a bound, a power of two, and not against the floor. The fold passes every other number through, so a
+# counter that reached the floor would be refused with it: none of the export's fixtures does and a served export passes
+# (ServedKernel), and the lifetime byte totals (the ws tables' `bytes`, `sends`, `parses.bytes`) are the counters that could,
+# past 1.5 GB in one kernel life.
+STAMP_FLOOR = 1.5e9
+
+
 def denylist_problems(doc, under=()):
-    """Every dict entry of `doc` the fold would not have written as it stands, one Problem each (empty when the
-    document is a fold's own output): a key the denylist drops (denied, wherever a dict key appears, and DENY_PATHS
-    anchored at `under`, the key path the snapshot's blocks sit below, as paste_problems takes it), reported as a key
-    finding at the dict holding it; and an uptime (UPTIME_KEYS) whose value is not what public_uptime would have
-    written, reported as a value finding at its own path (the number itself is not carried in the kind, and a caller
-    prints the kind and the path alone). The walk (paste_problems) is a shape rule and passes both: `t` fits the
-    identifier grammar and an uptime to the second is a number, so a document that a fold produced passes here by
-    construction, and one a user edited after the export (a `t` put back on a split row, an uptime typed to the
-    second) is refused with the same wording the export's own check uses (`romp perf upload`, 2026-09-18)."""
+    """Every entry of `doc` the fold would not have written as it stands, one Problem each; empty when the document is a
+    fold's own output, the walk's FIXED POINT, pinned over every fixture and a served export. THE RULE it enforces is the
+    fold's (the export's third review round, 2026-09-18): the public form is PASTE-SAFE, not unlinkable, so what the fold
+    drops or coarsens is refused here and what it keeps (durations, counts, per-process measurements) passes. Four
+    findings: a key the denylist drops (denied, wherever a dict key appears, and DENY_PATHS anchored at `under`, the key
+    path the snapshot's blocks sit below, as paste_problems takes it), a KEY finding at the dict holding it, its value not
+    walked; an uptime (UPTIME_KEYS) whose value is not what public_uptime would have written, a VALUE finding at its own
+    path; a memory-fraction bound (BOUND_KEYS) whose value is not what public_bound would have written, a value finding at
+    its own path; and a numeric leaf at or above STAMP_FLOOR anywhere else, in a dict or a list, int or float, a value
+    finding at its own path (the fold's output carries no absolute clock stamp under any key, so one in a file was typed in
+    after the export, whatever key it sits under; a coarsened bound past the floor is the fold's own and is judged as a
+    bound alone). One finding per leaf, the coarsening's first. The number itself is not carried in the kind, and a caller
+    prints the kind and the path alone. The walk (paste_problems) is a shape rule and passes all four: `t` fits the
+    identifier grammar and any number is a number, so a document that a fold produced passes here by construction, and one
+    a user edited after the export (a `t` put back on a split row, an uptime typed to the second, a bound typed to the byte, a
+    stamp under a new key) is refused with the same wording the export's own check uses (`romp perf upload`,
+    2026-09-18)."""
     problems = []
     n = len(under)
+
+    def value_problem(kind, v, here):
+        problems.append(Problem(kind, False, "/".join(str(x) for x in here), str(v), len(here)))
+
+    def leaf(key, v, here):
+        # one finding per leaf: the coarsening the fold applies under the key first, else the stamp floor
+        if key in UPTIME_KEYS:
+            rounded = public_uptime(v)
+            if not (rounded is v or rounded == v):
+                value_problem("an uptime not rounded to whole minutes", v, here)
+                return
+        elif key in BOUND_KEYS:
+            rounded = public_bound(v)
+            if not (rounded is v or rounded == v):
+                value_problem("a bound not rounded to a power of two", v, here)
+            return                          # a bound past the floor is the fold's own: judged as a bound alone
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= STAMP_FLOOR:
+            value_problem("a number the size of a clock stamp", v, here)
 
     def walk(node, where):
         if isinstance(node, dict):
@@ -519,15 +558,13 @@ def denylist_problems(doc, under=()):
                 if denied(key, v) or (anchored is not None and anchored in DENY_PATHS):
                     problems.append(Problem("a key the denylist drops", True, "/".join(str(x) for x in where), key, len(where)))
                     continue
-                if key in UPTIME_KEYS:
-                    rounded = public_uptime(v)
-                    if not (rounded is v or rounded == v):
-                        problems.append(Problem("an uptime not rounded to whole minutes", False,
-                                                "/".join(str(x) for x in here), str(v), len(here)))
+                leaf(key, v, here)
                 walk(v, here)
         elif isinstance(node, (list, tuple)):
             for i, v in enumerate(node):
-                walk(v, where + (i,))
+                here = where + (i,)
+                leaf(None, v, here)
+                walk(v, here)
 
     walk(doc, ())
     return problems

@@ -19,9 +19,15 @@ The file must exist, be a regular file of at most 1 MiB, parse as strict JSON (n
 key repeated within one object at any depth, since json.loads would keep the last copy while the bytes sent
 carry every copy, and nesting within the parser's reach) with the top-level `schema` line `romp-perf-export/1`,
 and pass the export's own check again as the file stands, since the user may have edited it: the scan for the
-strings only this machine knows, the paste-safety walk and the denylist walk of cli/perf_public.py (a `t` put
-back on a split row, an uptime typed to the second), through perf_export.check_document, so a problem is
-reported by its kind and key path and never by the key or the value. Any of these refuses with exit 1.
+strings only this machine knows, the paste-safety walk and the denylist walk of cli/perf_public.py, through
+perf_export.check_document, so a problem is reported by its kind and key path and never by the key or the value. Any
+of these refuses with exit 1. The rule the re-check holds the file to is the export's (its third review round,
+2026-09-18): the public form is PASTE-SAFE, not unlinkable. It removes identifiers, paths, free text, machine
+strings and every absolute clock stamp and coarsens the uptime and the memory-fraction bounds; durations, counts and
+per-process measurements stay, so two exports from one kernel remain linkable through them by design. The re-check
+refuses what the export would have dropped or coarsened (a `t` put back on a split row, an uptime typed to the
+second, a bound typed to the byte, a number the size of a clock stamp under any key) and passes what it keeps, so a
+fresh export passes whole.
 
 Before sending, the verb prints the path, the byte size and the URL it will dial (the address as configured
 with the route appended, so a path in the setting is seen at the prompt), then asks for a yes on a terminal
@@ -173,8 +179,9 @@ def read_export(path, state):
     """The file's bytes, once every check passes: it exists and is a regular file, it is at most MAX_BYTES, it
     parses as strict JSON (strict_loads: a repeated key is named as the reason, since the file may be one the
     user edited by hand and an editor calls it valid) to an object with the schema line, and it passes
-    perf_export.check_document (the machine-string scan, the paste-safety walk and the denylist walk, the
-    shallowest finding named) as it stands. A Refusal
+    perf_export.check_document (the machine-string scan, the paste-safety walk and the denylist walk, which holds
+    the file to the export's own rule, paste-safe, not unlinkable: what the export dropped or coarsened is refused
+    and the measurements it keeps pass; the shallowest finding named) as it stands. A Refusal
     otherwise, naming the file path the user passed and, for a walk or scan finding, the kind and the key path,
     never the value."""
     p = Path(path)
@@ -302,7 +309,10 @@ def receipt(status, body):
 def main(argv=None, stdin=None) -> int:
     ap = argparse.ArgumentParser(prog=PROG, description=__doc__.split("\n\n")[0],
                                  usage="%(prog)s FILE [--yes] [--receiver URL]")
-    ap.add_argument("file", metavar="FILE", help="an export written by `romp perf export --public`")
+    ap.add_argument("file", metavar="FILE",
+                    help="an export written by `romp perf export --public`, checked again as it stands: the public form is "
+                         "paste-safe, not unlinkable, so what the export dropped or coarsened (an identifier, a path, free text, "
+                         "a clock stamp, a bound to the byte) is refused and the measurements it keeps pass")
     ap.add_argument("--yes", action="store_true",
                     help="send without the prompt: the form an agent uses; off a terminal the verb refuses without it, "
                          "and no setting or variable stands in for it")

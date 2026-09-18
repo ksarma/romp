@@ -8,8 +8,9 @@ else ROMP_PERF_RECEIVER, else ~/.config/romp/perf-receiver, and with none set th
 three; the address must be https with a host and no userinfo, query or fragment (http for 127.0.0.1 and
 localhost alone), and a refused address is never echoed; the file must exist, be at most 1 MiB, parse as strict
 JSON (no NaN or Infinity, no repeated key at any depth, nesting within the parser's reach) to an object with the schema
-line and pass the export's own scan and walk as it stands, an edited file refused by kind and key path and never by
-value; the line before the prompt names the URL the verb will dial, a path in the address included; the send needs a yes on a terminal or --yes, off a terminal
+line and pass the export's own scan, walk and denylist walk as it stands (what the export dropped or coarsened is refused:
+a key it drops, an uptime off whole minutes, a bound off a power of two, a number the size of a clock stamp under any key), an
+edited file refused by kind and key path and never by value; the line before the prompt names the URL the verb will dial, a path in the address included; the send needs a yes on a terminal or --yes, off a terminal
 without the flag it refuses before dialling, and no environment variable stands in for the flag (an AST census
 of the module's environment reads, plus an executed check with tempting names set); the one answer accepted is
 201 with exactly {receipt: uuid4, retention_days: int, av: ok|skipped} in a body of at most 64 KiB, every other status
@@ -463,6 +464,65 @@ class Cli(unittest.TestCase):
         r = _run([edited] + base, self.state)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(len(self.fake.requests), 1, "a whole-minute uptime passes the same check")
+
+    def test_an_edited_file_with_a_bound_off_a_power_of_two_is_refused_naming_the_value_path_and_never_the_number(self):
+        """The export rounds every memory-fraction bound (perf_public.BOUND_KEYS) UP to a power of two (public_bound; round 3
+        of the export's review, 2026-09-18: each is a fixed fraction of the machine's MemTotal); a file carrying one off a
+        power of two was edited after the export. A number passes the walk; the denylist walk refuses it, naming the value's
+        path and not the number. The same bound at a power of two passes, however large: past the stamp floor, a coarsened
+        bound is the export's own."""
+        base = ["--yes", "--receiver", self.fake.url]
+        doc = json.loads(self.data)
+        self.assertNotIn("hydrated", doc["perf"]["heap"], "the planted snapshot carries no bound; the case plants one")
+        doc["perf"]["heap"]["hydrated"] = {"entries": 12, "bytes": 5000, "capBytes": 4_210_310_144}   # MemTotal / 32 of a 125.5 GiB machine, exact
+        edited = os.path.join(self.xdg, "edited.json")
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        r = self._refused(_run([edited] + base, self.state), 1,
+                          "refused: the public form still fails the denylist (a bound not rounded to a power of two, the value at perf/heap/hydrated/capBytes); nothing sent")
+        self.assertNotIn("4210310144", r.stdout + r.stderr)
+        self.assertEqual(r.stdout, "", "refused before the summary line")
+        self.assertEqual(self.fake.requests, [], "nothing was sent")
+        doc["perf"]["heap"]["hydrated"]["capBytes"] = 1 << 32                         # what the export would have written: the next power of two
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        r = _run([edited] + base, self.state)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.fake.requests), 1, "a bound at a power of two passes the same check, past the stamp floor too")
+
+    def test_an_edited_file_with_a_number_the_size_of_a_clock_stamp_is_refused_naming_the_value_path_and_never_the_number(self):
+        """The export writes no absolute clock stamp: every one the snapshot carries is denied by key, and round 3's property
+        test pins that none survives the fold under any key. So a numeric leaf at or above perf_public.STAMP_FLOOR (1.5e9,
+        an epoch second from 2017 on) anywhere outside a coarsened bound was typed in after the export, whatever key it
+        sits under; the denylist walk refuses it, naming the value's path and not the number. A fresh export passes."""
+        base = ["--yes", "--receiver", self.fake.url]
+        edited = os.path.join(self.xdg, "edited.json")
+        self.assertEqual(pp.STAMP_FLOOR, 1.5e9)
+        doc = json.loads(self.data)
+        doc["perf"]["pusher"]["startedAt"] = 1.6e9                                    # a stamp under a key the denylist does not know
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        r = self._refused(_run([edited] + base, self.state), 1,
+                          "refused: the public form still fails the denylist (a number the size of a clock stamp, the value at perf/pusher/startedAt); nothing sent")
+        self.assertNotIn("1600000000", r.stdout + r.stderr)
+        self.assertNotIn("1.6e", r.stdout + r.stderr)
+        self.assertEqual(r.stdout, "", "refused before the summary line")
+        doc = json.loads(self.data)
+        doc["perf"]["pusher"]["marks"] = [1, 1600000000]                             # an int, in a list: the path carries the index
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        r = self._refused(_run([edited] + base, self.state), 1, "(a number the size of a clock stamp, the value at perf/pusher/marks/1); nothing sent")
+        self.assertNotIn("1600000000", r.stdout + r.stderr)
+        self.assertEqual(self.fake.requests, [], "nothing was sent")
+        doc = json.loads(self.data)
+        doc["perf"]["pusher"]["cycles"] = 1_499_999_999                               # below the floor: a count, and it passes
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        r = _run([edited] + base, self.state)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = _run([self.file] + base, self.state)
+        self.assertEqual(r.returncode, 0, "a fresh export from the export verb passes the same check")
+        self.assertEqual(len(self.fake.requests), 2)
 
     def test_the_line_before_the_prompt_names_the_url_dialled_with_a_path_and_port_in_the_address_included(self):
         base = self.fake.url + "/u/" + SID                # an address whose path carries an identifier: it is dialled, so it is shown
