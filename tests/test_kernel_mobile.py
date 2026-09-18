@@ -1039,14 +1039,14 @@ shOut({socks:socks,rs:rs,rows:shProbeRows()});""")
         # review round 1 (tests-7): the row's integers, asserted with the fake clock moving (with it still, firstFailMs
         # and ms both read 0 and a kernel that hard-coded them would pass). Four refusals 500 ms apart, then the open.
         r = _run_probe(r"""
-shOpen();shRecv({type:'ka'});
-shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // hidden 100 ms, quiet 100 ms; the fast path dials at once
+shOpen();shRecv({type:'ka'});SHNOW+=300;
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // hidden 100 ms, quiet 400 ms (review round 2: two gaps that differ, so no constant satisfies both); the fast path dials at once
 function refuse(){SHNOW+=500;shRefuseNow();shFireDials();}
 refuse();refuse();refuse();refuse();                    // four refusals: the ladder, each 500 ms after its dial
 SHNOW+=500;shOpen();                                    // the fifth attempt opens 2500 ms after the foreground
 shOut({probe:shProbeRows()});""")
         self.assertEqual(len(r["probe"]), 1)
-        self.assertEqual(r["probe"][0], {"decision": "redial-closed", "hiddenMs": 100, "quietMs": 100, "attempts": 4, "firstFailMs": 2000, "ms": 2500},
+        self.assertEqual(r["probe"][0], {"decision": "redial-closed", "hiddenMs": 100, "quietMs": 400, "attempts": 4, "firstFailMs": 2000, "ms": 2500},
                          "hiddenMs and quietMs from the return, attempts the refusals, firstFailMs from the first refusal, ms foreground to open")
 
     def test_a_refused_attempt_backs_off_on_the_1_2_4_4s_ladder_reset_by_an_open(self):
@@ -1171,11 +1171,12 @@ shOut({timersBeforeReturn:timersBeforeReturn,liveAfterReturn:liveAfterReturn,max
         r = _run_probe(r"""
 shOpen();shRecv({type:'ka'});
 SHNOW+=100;shSock().readyState=3;shSock().onclose({code:1006});   // an ordinary drop: the blind redial arms
-var armed=shDialTimers().length,linkAfterClose=window.__rompLink().up;
+var armed=shDialTimers().length,armedMs=shDialTimers()[0].ms,linkAfterClose=window.__rompLink().up;
 SHNOW+=8001;shTick();                                   // the timer never fired; SH_REDIAL_MS (8 s) past the dial, the CLOSED arm dials
 var dialed=SHSOCKS.length,liveAfter=shDialTimers().length;
-shOut({armed:armed,linkAfterClose:linkAfterClose,dialed:dialed,liveAfter:liveAfter});""")
+shOut({armed:armed,armedMs:armedMs,linkAfterClose:linkAfterClose,dialed:dialed,liveAfter:liveAfter});""")
         self.assertEqual(r["armed"], 1)
+        self.assertEqual(r["armedMs"], 2000, "the blind redial after an ordinary drop outside any window is SH_BLIND_MS (2 s), the cadence the pane's 25 s backstop derivation rests on (review round 2: pinned by text alone before)")
         self.assertIs(r["linkAfterClose"], False, "a CLOSED shWs publishes the link down")
         self.assertEqual(r["dialed"], 2, "the CLOSED arm dials once the redial bound has passed")
         self.assertEqual(r["liveAfter"], 0, "and its dial cleared the lost timer, so no second chain follows")
@@ -1198,6 +1199,69 @@ shOut({onReturnAbandon:onReturnAbandon,onWatchdogAbandon:onWatchdogAbandon,onBro
         self.assertEqual(r["onReturnAbandon"], 1, "the return's abandon tells the detail once")
         self.assertEqual(r["onWatchdogAbandon"], 1, "the watchdog's abandon tells it once")
         self.assertEqual(r["onBrowserClose"], 1, "as a browser-reported close always did")
+
+    # ---- review round 2 (2026-09-18): the three shell fixes of that round
+    def test_a_long_standing_open_socket_crossing_the_quiet_bound_publishes_the_tick_stamp_as_connT_not_the_dial_time(self):
+        # regression-1: connT is the loop-alive stamp, the later of the last dial and the watchdog's last tick with a socket
+        # to watch. An OPEN socket that dialed an hour ago and then goes quiet past SH_STALE_MS reads down for up to one tick
+        # before the watchdog puts it down; in that tick the pane's backstop read the DIAL time, 3,631,000 ms stale, called
+        # the shell's loop dead and dialed on its own. Now it reads the last tick, 1 s old.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+for(var i=0;i<720;i++){SHNOW+=5000;shRecv({type:'ka'});shTick();}   // an hour of frames and ticks on the one socket
+for(var j=0;j<6;j++){SHNOW+=5000;shTick();}                        // 30 s quiet with the tick running: at the bound, kept
+SHNOW+=1000;                                                        // 31 s quiet: the link reads down, the tick not yet run
+var L=window.__rompLink();
+var before={up:L.up,stale:SHNOW-L.connT,socks:SHSOCKS.length};
+shTick();                                                           // the OPEN-quiet arm puts the socket down and redials
+var after=window.__rompLink();
+shOut({before:before,socks:SHSOCKS.length,afterStale:SHNOW-after.connT});""")
+        self.assertIs(r["before"]["up"], False, "31 s quiet: the link reads down")
+        self.assertEqual(r["before"]["socks"], 1, "...before the tick puts the socket down")
+        self.assertLess(r["before"]["stale"], 25000, "connT is the loop-alive stamp: under the pane's 25 s bound while the tick runs (the dial time alone read 3,631,000 ms stale here)")
+        self.assertEqual(r["before"]["stale"], 1000, "the last tick, one second ago")
+        self.assertEqual(r["socks"], 2, "the tick abandons the quiet socket and redials")
+        self.assertEqual(r["afterStale"], 0, "the redial stamps connT afresh")
+
+    def test_a_page_loaded_hidden_keeps_its_boot_dial_at_its_first_foreground_and_files_no_probe(self):
+        # kernel-1: the shim's not-yet-connected guard, in the shell's fast path. A dashboard opened in a background tab has
+        # its boot dial CONNECTING when it first comes to the foreground; the fast path read that as a dead socket, abandoned
+        # the boot dial, dialed a second socket and filed a return-probe row (hiddenMs -1, quietMs -1) for a return that
+        # never happened. The guard sits after the foreground stamp and the ring reset, as the shim's does, so a drop after
+        # the foreground still redials at the in-window cadence.
+        r = _run_probe(r"""
+var boot={socks:SHSOCKS.length,rs:SHSOCKS[0].readyState};           // the boot dial, CONNECTING; the page was never hidden
+var t0=TELLS,l0=LOST;
+shShow();                                                            // the first foreground, before the boot dial opened
+var atShow={socks:SHSOCKS.length,rs:SHSOCKS[0].readyState,tells:TELLS-t0,lost:LOST-l0};
+shOpen();                                                            // the boot dial opens
+var rows=shProbeRows();
+SHNOW+=100;shSock().readyState=3;shSock().onclose({code:1006});     // a drop 100 ms after the foreground: inside the window
+var t=SHTIMERS[SHTIMERS.length-1];
+shOut({boot:boot,atShow:atShow,rows:rows,drop:{fn:t.fn.name,ms:t.ms}});""")
+        self.assertEqual(r["boot"], {"socks": 1, "rs": 0})
+        self.assertEqual(r["atShow"], {"socks": 1, "rs": 0, "tells": 0, "lost": 0}, "the foreground leaves the CONNECTING boot dial alone: no abandon, no second socket, no tell")
+        self.assertEqual(r["rows"], [], "no return-probe row: there was no return")
+        self.assertEqual([r["drop"]["fn"], r["drop"]["ms"]], ["shellWS", 250], "the foreground was stamped before the guard: a drop inside the window redials at the in-window cadence")
+
+    def test_a_return_whose_probe_never_opened_before_the_next_return_files_its_row_at_that_return(self):
+        # fresh-3: the fast path overwrote a pending probe and reset the failure counters, so a return the path outlasted
+        # left no row and read-side.md's one row per return overstated. The pending row is filed at the next return (queued
+        # until the open) with ms and firstFailMs at the row's -1 sentinels and the attempts as they stand.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();                // return 1: the fast path dials
+SHNOW+=500;shRefuseNow();                                            // refused once: attempts 1, the ladder timer arms
+shHide();SHNOW+=100;shShow();                                        // return 2 before any open
+var socks=SHSOCKS.length;
+SHNOW+=200;shOpen();                                                 // return 2's dial opens: both rows flush onto it
+shOut({socks:socks,rows:shProbeRows()});""")
+        self.assertEqual(r["socks"], 3, "return 2 dialed afresh (the refused socket is CLOSED, so the guard lets it)")
+        self.assertEqual(len(r["rows"]), 2, "one row per return: the first filed at the second")
+        self.assertEqual(r["rows"][0], {"decision": "redial-closed", "hiddenMs": 100, "quietMs": 100, "attempts": 1, "firstFailMs": -1, "ms": -1},
+                         "return 1's row: its decision and gaps, the one refusal, ms and firstFailMs -1 (the next return came before the open)")
+        self.assertEqual(r["rows"][1], {"decision": "redial-closed", "hiddenMs": 100, "quietMs": 700, "attempts": 0, "firstFailMs": -1, "ms": 200},
+                         "return 2's row: its own gaps and counters, reset at the return")
 
 
 if __name__ == "__main__":

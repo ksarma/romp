@@ -403,7 +403,7 @@ test("a redial armed as FOREGROUND that then stays silent raises when the watchd
 // D3 (2026-09-18): the shell leads a framed pane's return redial when, and only when, the shell publishes its link:
 // window.parent.__rompLink is a function (the ruling of 2026-09-18: not the phone media query, not a foreign parent alone).
 // Every case above runs with a fake shell that publishes none, so they drive today's path; these two pin the gate from
-// both sides. The full D3 behaviour (the backstop's 20 s bound, the in-window close cadence by link state, the restarting
+// both sides. The full D3 behaviour (the backstop's 25 s bound, the in-window close cadence by link state, the restarting
 // latch) runs in tests/test_pane_shim_return.py ShellLedReturn.
 test("a standalone page (no shell, so no link publication) returning to a quiet socket keeps today's path: dials at once, awaits nothing, and its watchdog still raises", () => {
   const h = new Harness(shimJs("feed", "feedDelta"), { standalone: true });

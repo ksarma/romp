@@ -64241,6 +64241,7 @@ if(!o){if(mine)have.remove();return;}if(mine){have.firstChild.textContent=o.text
 function raiseBuild(dv){var R=window.__rompReload;if(R){R.noteDv(dv);return;}   // the core decides (an offer, deduped by build; in a shell, the shell's)
 if(buildRaised)return;buildRaised=true;selfBar("A newer romp build is available.","build");}   // no core on this page: the bar, once
 function connect(){if(ws&&(ws.readyState===0||ws.readyState===1))return;   // one live attempt at a time — a lost timer + the watchdog can both call in
+if(awaitLink)return;   // [fork] D3 (review round 2, 2026-09-18): while this return awaits the shell's link nothing dials. Every legitimate caller (the fast path's up branch, the link listener, the backstop's two arms, the next return) clears awaitLink before it calls in; the one that does not is the blind 1.5 s redial a close the page saw while hidden armed before the return, and it is refused here. Before this that stray dial stood as ws for the whole await: the link listener and the backstop (both inert with a socket up) never ended it, and the return-fresh carried no linkUpMs though the return row said awaitLink true
 if(returnAt)returnRedialed=true;   // a dial inside a return window (whatever path led here) → the return-fresh row says so
 connT=Date.now();var proto=location.protocol==="https:"?"wss://":"ws://";
 var active="";try{var st0=JSON.parse(localStorage.getItem(SK)||"null");active=(st0&&st0.activeId)||"";}catch(e){}
@@ -64446,8 +64447,12 @@ if(ws.readyState===3&&Date.now()-connT>8000){connect();}},5000);
 try{window.addEventListener("message",function(e){var m=e&&e.data;if(!m||(m.romp!=="panes"&&m.romp!=="link"))return;
 if(m.link==="up"&&awaitLink&&!ws){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;connect();}});}catch(e){}
 // the link backstop: re-read the shell's link every 5 s while awaiting with no socket. An `up` we missed the word for
-// dials; a link whose own connect attempt (connT) has not renewed for 25 s means the shell's redial loop is dead, so
-// dial anyway and say why loudly (a link-backstop diag row). 25 s is the shell's whole alive cycle on a hung path,
+// dials; a link whose loop-alive stamp (connT: the later of the shell's last dial and its watchdog's last tick with a
+// socket to watch, review round 2, 2026-09-18) has not renewed for 25 s means the shell's loop is dead, so dial anyway
+// and say why loudly (a link-backstop diag row). The stamp renews every tick while the shell has a socket in any state,
+// so an alive loop reads under one tick stale whatever its socket's age (before the stamp, a long-standing OPEN shell
+// socket crossing the quiet bound published its hours-old dial time for the tick that put it down, and a pane awaiting
+// in that tick filed a false link-backstop row and dialed on its own). 25 s is the shell's whole alive cycle on a hung path,
 // from its named constants (_LANDING_MOBILE_JS): the 15 s CONNECTING cut (SH_CONNECT_MS), the watchdog tick that
 // performs it (up to one SH_TICK_MS late) and the 2 s blind redial that follows (SH_BLIND_MS), 22 s, rounded up to
 // the next tick as a margin for late timers; tests/test_kernel_ws_heartbeat.py pins the sum against those constants
@@ -67935,12 +67940,16 @@ var shellOpened=false;   // T265: this socket's REOPEN is the kernel-restart sig
 // keeps its OWN copy of these rules rather than sharing the shim's (the shim is upstream text the fold touches weekly);
 // tests/test_kernel_ws_heartbeat.py pins the two copies to agree on the constants and the tick. The connect cut is a
 // named constant at today's 15 s (SH_CONNECT_MS, no behaviour change); the 5 s cut experiment is a later harness leg.
-var shWs=null,shLastRecv=0,shConnT=0,shResumeProvisional=0,shHiddenAt=0,shForegroundedAt=0,shFrozeAt=0,shResumedAt=0,shFailed=0,shFirstFailT=0,shRestartAnnounced=0,shReturnProbe=null,shRung=0,shTimer=0;   // shTimer: the ONE pending redial timer (review round 1, 2026-09-18: a dial clears it, so a return while the pre-return close's blind timer is pending makes one chain, not two on the ladder side by side)
+var shWs=null,shLastRecv=0,shConnT=0,shResumeProvisional=0,shHiddenAt=0,shForegroundedAt=0,shFrozeAt=0,shResumedAt=0,shFailed=0,shFirstFailT=0,shRestartAnnounced=0,shReturnProbe=null,shRung=0,shTimer=0,shTickT=0;   // shTimer: the ONE pending redial timer (review round 1, 2026-09-18: a dial clears it, so a return while the pre-return close's blind timer is pending makes one chain, not two on the ladder side by side); shTickT: the watchdog's last tick with a socket to watch, the loop-alive stamp __rompLink publishes as connT beside the dial time (review round 2)
 var SH_STALE_MS=30000,SH_PROVISIONAL_MS=15000,SH_CONNECT_MS=15000,SH_REDIAL_MS=8000,SH_TICK_MS=5000,SH_BLIND_MS=2000,SH_LADDER=[1000,2000,4000,4000];   // SH_BLIND_MS: the redial after an ordinary drop outside any window (today's shell), named so the pane's link backstop is derived from it (kernel.py _shim)
 // the shell publishes the page's link: a synchronous read for the same-origin pane iframes (their parentLink), and the
 // panes word (link:'up'|'down', _LANDING_COLLAPSE_JS panesMsg) re-told on this socket's open, close and abandon. up only
-// for a socket that is OPEN and heard a frame within SH_STALE_MS (the shim's rule); connT for the pane's 20 s backstop.
-window.__rompLink=function(){return {up:!!(shWs&&shWs.readyState===1&&Date.now()-shLastRecv<=SH_STALE_MS),connT:shConnT};};
+// for a socket that is OPEN and heard a frame within SH_STALE_MS (the shim's rule); connT for the pane's 25 s link backstop:
+// the loop-alive stamp, the later of this shell's last dial (shConnT) and its watchdog's last tick with a socket to watch
+// (shTickT), so a long-standing OPEN socket crossing the quiet bound does not publish an hours-old dial time for the tick
+// that puts it down (review round 2, 2026-09-18: a pane awaiting in that tick filed a false link-backstop row and dialed on
+// its own). The field keeps its name: the pane reads connT, and its derivation pin (tests/test_kernel_ws_heartbeat.py) too.
+window.__rompLink=function(){return {up:!!(shWs&&shWs.readyState===1&&Date.now()-shLastRecv<=SH_STALE_MS),connT:Math.max(shConnT,shTickT)};};
 function shTell(){try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}
 function shAbandon(){var d=shWs;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}shWs=null;   // detach + null so the abandoned socket's onclose is nobody's event (as the shim's abandon)...
 if(shellSock===d){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}shellSock=null;}   // ...so the API health detail is told HERE, in ws.onclose's order (the hook, then the null): a pause press this socket carried cannot be answered now (review round 1, 2026-09-18: unsaid, the redial's ready re-sent the last frame with the same seq and the press stayed acknowledged, the case onclose's own comment guards against)
@@ -68001,16 +68010,23 @@ shTimer=setTimeout(shellWS,shd);};}catch(e){}}   // the one pending redial timer
 // socket quiet past the bound (PROVISIONAL_MS while a resumed keep awaits a confirming frame, STALE_MS otherwise) is
 // abandoned and redialed; a CONNECTING one past the 15 s cut is closed (its onclose then redials); a CLOSED one past
 // the redial bound dials (a redial timer the browser lost; onclose keeps shWs so this arm can see it). Inert when
-// there is no socket (after an abandon), so an awaiting page runs nothing here.
+// there is no socket (after an abandon), so an awaiting page runs nothing here. Each tick with a socket stamps shTickT,
+// the loop-alive stamp __rompLink publishes as connT (review round 2, 2026-09-18): after the guard, so a shell left with
+// no socket at all goes stale and the pane's 25 s backstop can still call its loop dead.
 setInterval(function(){if(!shWs)return;
+shTickT=Date.now();   // [fork] D3 (review round 2): the loop-alive stamp, after the no-socket guard
 if(shWs.readyState===1){var b=shResumeProvisional?SH_PROVISIONAL_MS:SH_STALE_MS;if(shLastRecv&&Date.now()-shLastRecv>b){shAbandon();shellWS();}return;}
 if(shWs.readyState===0&&Date.now()-shConnT>SH_CONNECT_MS){try{shWs.close();}catch(e){}return;}
 if(shWs.readyState===3&&Date.now()-shConnT>SH_REDIAL_MS){shellWS();}},SH_TICK_MS);
 // [fork] D3: the shell's visibility fast path - the instant the app returns, if the shell socket is dead or quiet, put
 // it down (every state) and dial at once, and set up the ONE return-probe row filed at the next open (ms = foreground
-// -> open). A socket that stands files no probe. This is the page's one probe of the path; the panes follow its link.
+// -> open). A socket that stands files no probe; a page whose boot dial has not opened yet returns from nothing and
+// files none either; a probe the next return overtakes is filed at that return with ms -1 (review round 2, 2026-09-18).
+// This is the page's one probe of the path; the panes follow its link.
 document.addEventListener('visibilitychange',function(){if(document.visibilityState!=='visible'){shHiddenAt=Date.now();return;}
 shForegroundedAt=Date.now();shRung=0;
+if(!shellOpened)return;   // [fork] D3 (review round 2, 2026-09-18): the shim's own not-yet-connected guard. A dashboard opened in a background tab has its boot dial CONNECTING at its first foreground; without this the fast path abandoned that dial, dialed a second socket and filed a return-probe row (hiddenMs and quietMs -1) for a return that never happened. After the foreground stamp and the ring reset, as in the shim, so a boot dial the cut closes after the foreground still redials at the in-window cadence
+if(shReturnProbe){shReturnProbe.ms=-1;shReturnProbe.firstFailMs=-1;shReturnProbe.attempts=shFailed;shellDiag('return-probe',shReturnProbe);shReturnProbe=null;}   // [fork] D3 (review round 2): the last return's probe never opened before this return: file its row now (queued until the next open) with ms and firstFailMs at the row's unknown sentinels and the attempts as they stand, so a return the path outlasted still leaves its row (docs/read-side.md). Before this the fast path overwrote the pending probe and reset the counters, and the first return left no trace
 var shStale=!shWs||shWs.readyState!==1||Date.now()-shLastRecv>SH_STALE_MS;
 if(!shStale){shReturnProbe=null;return;}
 shReturnProbe={decision:(!shWs||shWs.readyState!==1)?'redial-closed':'redial-stale',hiddenMs:shHiddenAt?Date.now()-shHiddenAt:-1,quietMs:shLastRecv?Date.now()-shLastRecv:-1};
