@@ -517,7 +517,8 @@ are folded, which tabs show while their group is folded (**Show when folded**), 
 which sessions are hidden inside their group (**Hide**, in the section's at-a-glance
 view). The tab's right-click menu writes the same hide entry: **Hide tab** on a shown copy,
 **Show tab** on a hidden one (a hidden copy has no tab on the strip; the way back is the view's
-**Show**, and the group's count opens the view while the group is open). The row follows the copy
+**Show**, or the same menu from a right-click on its row there, and the group's count opens the view
+while the group is open). The row follows the copy
 the menu speaks for: the copy you right-clicked while its group holds the session, else the
 session's one remaining group, and none under two or more (the copy is known by its tag's id, and
 by its name when no tag has that id, so a rename keeps it and so does a tag made again under the

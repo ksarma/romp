@@ -165,7 +165,16 @@ function lift(): (H: Hooks) => Api {
   const prelude = `
     const H = HOOKS;
     let activeId = null, tabPointerHeld = false, renderPendingWhilePressed = false, draggedGroup = null;
+    let renameActive = false, renderPendingAfterRename = false;   // the strip's rename hold, which the view's rebuild honours since the row's menu (the user 2026-09-18)
     let ctxMenuEl = null, metaMenuEl = null, citePreviewEl = null, openCommentKey = null;
+    // the row's context menu (the user 2026-09-18): the host's listener and its gate read these; no case here right-clicks a row, and
+    // tab-snapshot-menu.test.ts executes the real ones (showTabMenu, the strip's renderKind gate, the anchor helper)
+    const showTabMenu = () => { H.calls.push("showTabMenu"); };
+    const menuAnchor = (e) => e;
+    let tabMenuSeat = "tab", rowRenameEnd = null;   // the menu's seat and the open row editor's end (startTabRename's, executed in tab-snapshot-menu.test.ts); the listener sets the one, hideSnapshot runs the other
+    const cssEscape = (s) => s.replace(/"/g, '\\"');   // rowSeatFor's selector
+    const skeletonTabs = { ids: new Set() };
+    const renderKind = (st, id, has) => (st.ids.has(id) ? "skeleton" : has ? "loaded" : "placeholder");
     const settings = { stripGroupRows: false };   // the fork's default (W1); no case here paints the untagged trail, the one reader
     let order = H.order, lastStripItems = H.lastStripItems, collapsedTabIds = H.collapsed;
     const sessions = H.sessions, ledgers = H.ledgers, tabMeta = H.tabMeta, closingTabs = H.closingTabs, views = H.views;

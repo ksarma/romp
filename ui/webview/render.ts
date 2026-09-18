@@ -57,7 +57,7 @@ import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, setPinned, isHidden, setHidden, prunePinned, reachableFrom, headWords,
          followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, revealedTabs, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem, type StripHead, type TabGroupsState, type SectionRef } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, standInPip, type SnapModel, type SnapRow } from "./tab-snapshot";
-import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick } from "./tab-snapshot-view";
+import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick, menuAnchor } from "./tab-snapshot-view";
 import { tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick } from "./tab-state";
 import { composeTabWidgets, composeTabRing, ringSwitch, tabHotkey, miniChord } from "./tab-widgets";   // the tab-title widgets (T379): the dot, the context bar and the hot-key keycap compose onto every tab from the registry, and the rings too, one class at a time; miniChord is the chord the strip signature reads
 import { titleWithKey, keyHint, chordOf, effectiveChord, loadOverrides, saveOverride, KEYS_EVENT } from "./keybindings";
@@ -7634,6 +7634,16 @@ function stripAftermath(visibleIds: readonly string[], ids: readonly string[]): 
 // outside click, Escape, scroll, or losing window focus.
 let ctxMenuEl: HTMLElement | null = null;   // the open tab or selection menu's card (the shared builder's), read by the composer's typing gates
 let ctxMenuAt: { x: number; y: number } | null = null;   // the tab menu's last (clamped) corner: where its emoji picker opens
+// WHERE THE OPEN TAB MENU WAS OPENED FROM (the user 2026-09-18): a tab on the strip ("tab", what showTabMenu sets at every open) or a
+// row of the section view ("row", what the view's contextmenu listener sets once showTabMenu has returned). Rename reads it at the
+// pick, which runs after the card has closed, so the pick seats its editor on the surface the user right-clicked: the row's menu
+// edits the row, a tab's menu edits the tab, whatever the view shows (round 1 of the review: a row-first rule moved a tab's Rename
+// into the pane, and into the closed Hidden fold's list for a copy hidden in the viewed section, where no input can take the focus).
+let tabMenuSeat: "tab" | "row" = "tab";
+// THE OPEN ROW EDITOR'S END (startTabRename's row path sets it to its done, and done clears it): the view's exit runs it, because a
+// chord or a host message can close the view (setActive, showActive, hideSnapshot) under a focused input, and an input hidden with
+// its host may never blur, which would leave renameActive true and every later render deferred (round 1 of the review)
+let rowRenameEnd: ((commit: boolean, viewLeft?: boolean) => void) | null = null;
 // THE OPEN MENU FOLLOWS EVERY CHANGE TO WHAT THE STRIP READS (round 4 of the tab menu review, widened in round 5): a change
 // that lands while the tab menu is open runs this, and the menu re-dresses for it (the Hide tab row's refresh, the Tags row's
 // sub-line, and the Tags flyout's rows when the change altered what they show), the same path the flyout's own edits take.
@@ -7867,6 +7877,7 @@ function wireFlyout(menu: HTMLElement, item: HTMLElement, sel: string, open: (by
 function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: the group the right-clicked copy sits in (T264b), a plain string so the menu stays id-keyed
   dismissTabMenu();
   closeEmojiPrompt();   // a menu opening closes the emoji picker the last one spawned (the swatches' dismissal rule)
+  tabMenuSeat = "tab";   // the strip's tabs open it; the section view's listener says "row" once this returns (the Rename pick reads it)
   const menu = menuCard();   // the shared card: the standard rows through addMenuItem, the swatches and the flyouts appended beside them
   // Four sections, dividers only; the titles live here and in tab-menu-sections.test.ts (the user
   // 2026-09-11, who asked for the menu regrouped by what each item changes about the session).
@@ -8765,18 +8776,28 @@ window.addEventListener("keydown", (e) => { if (e.key === "Escape" && emojiPromp
 function startTabRename(id: string, copy?: string) {   // `copy`: which copy of a multi-tag session to edit in place (T264b); the first one when it is gone
   const s = sessions.get(id);
   if (!s) return;
+  // THE SEAT FOLLOWS THE MENU (the user 2026-09-18, who wanted a hidden session to reach its settings from the section view): a
+  // Rename picked from a ROW of the section view edits the name on that row (the row is where a hidden session, which has no
+  // tab, now opens those settings); one picked from a tab edits the tab's label, as before, whatever the view shows
+  // (tabMenuSeat, set at the open). The row must be rendered (rowSeatFor: the view up, the row shown or its fold open), else the
+  // tab, else nothing; a row-first rule here moved a tab's Rename into the pane, and into the closed fold's list, where no input
+  // can take the focus (round 1 of the review). Resolved NOW, by id, on either surface (the rule below).
+  const row = tabMenuSeat === "row" ? rowSeatFor(id) : null;
+  const item = row ? row.parentElement : null;
   // Resolve the tab NOW, by id. The old signature took the nodes captured at menu-open time, and a
   // kernel push while the menu sat open replaced the strip under it — so the first Rename click did all
   // its work on a detached orphan (invisible input, focus() a no-op) and left renameActive stuck true,
   // since only that orphan input's Enter/Esc/blur could clear it. The frozen strip is why a SECOND
-  // attempt always worked, and why committing it healed everything (the user 2026-08-08: "rename only
-  // takes on the second try"). A vanished tab (session closed mid-menu) bails out BEFORE the flag.
-  const bar = document.getElementById("tabs");
+  // attempt always worked, and why committing it healed everything (the user 2026-08-08, who saw the
+  // rename take only on a second try). A vanished tab (session closed mid-menu) bails out BEFORE the flag.
+  const bar = row ? null : document.getElementById("tabs");
   const tab = bar && (Array.from(bar.children).find(
     (t): t is HTMLElement => t instanceof HTMLElement && t.dataset.id === id && (copy === undefined || t.dataset.copy === copy))
     ?? Array.from(bar.children).find((t): t is HTMLElement => t instanceof HTMLElement && t.dataset.id === id));   // the right-clicked copy (T264b), else the first
   const label = tab && tab.querySelector<HTMLElement>(".tab-label");
-  if (!tab || !label || tab.querySelector(".tab-rename")) return;
+  if (row) { if (item!.querySelector(".tab-rename")) return; }   // an editor already stands on the row
+  else if (!tab || !label || tab.querySelector(".tab-rename")) return;
+  const seat = (row ?? label)!;   // the label the input stands in for: the row's button, or the tab's label
   // A remote session displays as "host:name", where "host:" is METADATA this viewer added (see
   // ./host-prefix) — the far kernel knows the session by the bare name alone. Seeding the editor with
   // the whole display string handed the user the host to edit and sent it back on the other side of the
@@ -8792,22 +8813,25 @@ function startTabRename(id: string, copy?: string) {   // `copy`: which copy of 
   input.size = Math.max(base.length, 4);
   const fixed = p ? el("span", "host-prefix") : null;
   if (fixed) fixed.textContent = p!.host;
-  renameActive = true;
-  tab.draggable = false;            // dragging would eat the text selection
-  label.style.display = "none";
-  label.after(input);
+  if (tab) tab.draggable = false;   // dragging would eat the text selection
+  seat.style.display = "none";
+  seat.after(input);
   if (fixed) input.before(fixed);
+  const unseat = () => { input.remove(); fixed?.remove(); seat.style.display = ""; if (tab) tab.draggable = !fedMissing && !settings.tabsLocked; };
   let finished = false;
-  const done = (commit: boolean) => {
+  // `viewLeft`: the section view is leaving with this row's editor open (hideSnapshot runs the end): the edit commits as a click
+  // away commits, the row takes no focus back (the host is about to hide, and the exit's own focus rule runs after), and the
+  // deferred strip render flushes a tick later, the release idiom (releaseTabStrip), since the exit runs inside a render
+  const done = (commit: boolean, viewLeft = false) => {
     if (finished) return;
     finished = true;
     const v = input.value.trim();
-    input.remove();
-    fixed?.remove();
-    label.style.display = "";
-    tab.draggable = !fedMissing && !settings.tabsLocked;
+    const hadFocus = document.activeElement === input;   // Enter or Escape on the row's editor: the row takes the focus back (a blur has moved it already), so a keyboard user is not dropped to body
+    unseat();
+    if (row && hadFocus && row.isConnected && !viewLeft) row.focus({ preventScroll: true });
     renameActive = false;
-    if (renderPendingAfterRename) { renderPendingAfterRename = false; renderTabs(); }
+    rowRenameEnd = null;
+    if (renderPendingAfterRename) { renderPendingAfterRename = false; if (viewLeft) setTimeout(() => renderTabs(), 0); else renderTabs(); }
     // The bare name, never the display string: the host prefix is this viewer's, and the kernel that
     // owns the session is addressed by `id` (federation routes on the prefix there).
     if (commit && v && v !== base && vscodeApi) vscodeApi.postMessage({ type: "renameSession", id, name: v });
@@ -8821,7 +8845,13 @@ function startTabRename(id: string, copy?: string) {   // `copy`: which copy of 
   // keep clicks inside the input from selecting/dragging the tab underneath
   for (const ev of ["click", "mousedown", "dblclick", "contextmenu"]) input.addEventListener(ev, (e) => e.stopPropagation());
   input.focus();
+  // THE HOLD ONLY ONCE THE FOCUS TOOK: an input the engine refused to focus (a seat that is not rendered after all) has no Enter,
+  // Escape or blur to end it, and a hold taken for it would defer every later render for good (the freeze this function's history
+  // above describes); so the seat is undone and nothing is held
+  if (document.activeElement !== input) { unseat(); return; }
   input.select();
+  renameActive = true;
+  if (row) rowRenameEnd = done;
 }
 
 // Keyboard nav on a focused tab: ←/→ step prev/next; ↑/↓ jump to the nearest tab
@@ -14245,6 +14275,27 @@ let snapKeep: { v: View; scrollTop: number; stick: boolean } | null = null;
 // default: the fold's head carries the count and the needs-you chip, so the hidden members' one mark that matters
 // is on screen without opening it, and a fold that opened itself on a needs-you would move on no gesture.
 const snapHiddenOpen = new Set<string>();
+/** Whether the strip gives this session's tab the context menu, the gate a row of the section view opens it under: a
+ *  loaded session that is no subagent viewer (renderTabs wires the menu on those tabs alone), or a skeleton (makeSkeletonTab
+ *  wires it too); a placeholder, the kernel still building the session, has none. Read at the gesture, by id. */
+function rowHasTabMenu(id: string): boolean {
+  const s = sessions.get(id);
+  if (renderKind(skeletonTabs, id, !!s) === "skeleton") return true;
+  return !!s && !s.sub;
+}
+/** The row of the section view a Rename picked from the row's menu seats its editor on, for `id`: the row's button while the
+ *  view is up and the row is RENDERED, which for a row under the Hidden fold means the fold is open (a folded list is
+ *  display:none, and an input placed there could not take the focus, so the editor's hold would never end); null otherwise,
+ *  and startTabRename edits the tab, or nothing. Read at the pick, by id: the rows keep their nodes across a push
+ *  (tab-snapshot-view.ts reconcileRows), but a row can leave, the fold can close and the view can close between the menu's
+ *  open and the click. */
+function rowSeatFor(id: string): HTMLElement | null {
+  const host = document.getElementById("tab-snapshot");
+  if (!snapView || !host || host.style.display === "none") return null;
+  const item = host.querySelector<HTMLElement>(`.snap-item[data-id="${cssEscape(id)}"]`);
+  if (!item || (item.closest(".snap-hidden-list") && !snapHiddenOpen.has(snapView))) return null;
+  return item.querySelector<HTMLElement>(":scope > .snap-row");
+}
 function snapshotHost(): HTMLElement | null {
   let host = document.getElementById("tab-snapshot");
   if (host) return host;
@@ -14299,6 +14350,34 @@ function snapshotHost(): HTMLElement | null {
   // (pointerup / pointercancel / blur on the window, releaseTabStrip's one path), and the deferred flush
   // repaints the strip and the view together. One latch for two surfaces one gesture can span.
   host.addEventListener("pointerdown", () => { tabPointerHeld = true; });
+  // THE ROW'S CONTEXT MENU (the user 2026-09-18, who wanted a hidden session, which has no tab, to reach its settings from
+  // the section view). The row is where those settings now open. A right-click on a row, a long-press on a touch screen or
+  // the keyboard's menu key on a focused row (the engines dispatch all three as contextmenu) opens THE TAB'S MENU for the
+  // row's session: showTabMenu,
+  // the strip's own builder, called as the tab's handler calls it, so the rows, their words and their states are the tab
+  // menu's own and a row added there is here at once (a hidden copy's Hide tab row reads Show tab). ONE listener on the
+  // stable host, never on a row (click safety: the rows are rebuilt on every push that changes one). The gate is the
+  // strip's (rowHasTabMenu): a placeholder tab and a subagent viewer's tab have no menu, so their rows open none, and the
+  // heading, the fold's head and the gaps between rows keep the engine's own menu, as the strip's gaps do. The copy the menu
+  // speaks for is the section the pane shows, the string a tab's dataset.copy carries for its copy in that section (T264b),
+  // so the Hide tab row and the Tags flyout's Move to and Show when folded rows resolve the copy the user is looking at. The
+  // event stops here as it stops at a tab: #content's own contextmenu (showSelectionMenu) would otherwise dismiss the menu
+  // just opened and put the selection menu up over a selection in the pane's OWN heading (the h2.snap-head is ordinary
+  // selectable text inside #content: a drag or a double-click there selects it, and a right-click on a row would then
+  // reach that listener with the selection standing); not the transcript, whose selection stringifies empty once the pane
+  // hides it, and not a row, since no selection anchors inside a button in any engine (round 1 of the review, 2026-09-18:
+  // the comment had named the transcript). The place: the pointer's, or
+  // the row's corner for the keyboard's event, which carries none (tab-snapshot-view.ts menuAnchor); showTabMenu reads the
+  // event's clientX and clientY alone, so the anchored stand-in serves it as the pointer's event does.
+  host.addEventListener("contextmenu", (e) => {
+    const item = (e.target as HTMLElement | null)?.closest?.(".snap-item") as HTMLElement | null;
+    const id = item?.dataset.id;
+    if (!item || !id || !snapView || !rowHasTabMenu(id)) return;
+    e.preventDefault(); e.stopPropagation();
+    const row = item.querySelector<HTMLElement>(":scope > .snap-row") ?? item;
+    showTabMenu(menuAnchor(e, () => row.getBoundingClientRect()) as MouseEvent, id, snapView);
+    tabMenuSeat = "row";   // the pick's Rename edits this row, not a tab the session may also have on the strip
+  });
   return host;
 }
 /** The overview MODE's one switch (T322): the body carries the class (the footer hides by it, the Classic strip's active
@@ -14309,6 +14388,7 @@ function setSnapMode(on: boolean): void {
   document.getElementById("tabs")?.classList.toggle("snap-mode", on);
 }
 function hideSnapshot(): void {
+  if (rowRenameEnd) rowRenameEnd(true, true);   // a row being renamed as the view leaves: the edit ends as a click away ends it (a commit), before the host hides the input
   const host = document.getElementById("tab-snapshot");
   if (host) host.style.display = "none";
   setSnapMode(false);
@@ -14388,6 +14468,10 @@ function renderSnapshot(): boolean {
   // land here mid-press (the active tab's payload arriving), so the rebuild waits for the release: the flush
   // renders the strip, and the strip renders this. The times above still ticked in place: no node was lost.
   if (tabPointerHeld && host.childElementCount) { renderPendingWhilePressed = true; return true; }
+  // a rebuild while a row's name is being edited in place (startTabRename's row editor) would rewrite the row under the
+  // input, or take the row away with it: the strip's rename hold covers the view too, and the editor's end flushes both
+  // through renderTabs (which renders this)
+  if (renameActive && host.childElementCount) { renderPendingAfterRename = true; host.style.display = ""; return true; }   // a true answer always matches a shown view
   snapModel = next;
   // TWO LISTS (the user 2026-09-08): the shown members, then the Hidden fold with the members hidden inside the
   // section, each row with its Hide or Show button; the heading counts both and says how many are hidden
