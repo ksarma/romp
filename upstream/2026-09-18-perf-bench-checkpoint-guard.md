@@ -3,7 +3,7 @@ title: perf-bench: the fold checkpoints land in the tool's shadow, not the state
 status: candidate
 where: tools/perf-bench.py (`install_guards`); tests in `tests/test_perf_bench.py` (CheckpointShadow, Recorders)
 added: 2026-09-18
-pr:
+pr: 757
 tier: fix
 offered:
 closed:
