@@ -3813,16 +3813,19 @@ registry; a hostname or user is matched as whole words, so a user named
 uuid, a 32-hex or 40-hex token, an absolute path or free text (a string
 carrying whitespace), and checked against the denylist (a key the export
 drops, an uptime not rounded to whole minutes, a bound not rounded to a power
-of two, or, under any other key, a float the size of a clock stamp, 1.5e9 or
-more, a number written with a point or an exponent as `time.time()` values
-are; an integer that large is a byte total or a count, which a long-lived
-kernel's lifetime totals reach within hours, and passes, and so does a float
-that large under a duration key, a name that carries the token `ms` between
-underscores or camelCase boundaries (`cycle_cpu_ms_sum`, `wallMs`; `sendMax`
-and `startedAt` are not), its own key or any key above it (`stages_ms` names
-the measure and its entries the stages), a millisecond total the kernel's
-sums reach in weeks: a check the export's own output passes by construction,
-and which
+of two, or, under any other key, a float inside a clock stamp's epoch window,
+1.5e9 to 2.0e9 for seconds or 1.5e12 to 2.0e12 for milliseconds, a number
+written with a point or an exponent as `time.time()` values are; an integer
+is a byte total or a count, which a long-lived kernel's lifetime totals carry
+into the window within hours, and passes whatever its size, and so does a
+float outside both windows, a measurement whatever its size (the allocator's
+arena on a long-lived kernel passes 2.0e9), and a float inside a window under
+a duration key, a name that carries the token `ms` between underscores or
+camelCase boundaries (`cycle_cpu_ms_sum`, `wallMs`; `sendMax` and `startedAt`
+are not), its own key or any key above it (`stages_ms` names the measure and
+its entries the stages), a millisecond total the kernel's sums carry through
+the seconds window in weeks: a check the export's own output passes by
+construction, and which
 `romp perf upload` runs again over a file you may have edited); any finding
 refuses
 the write and names the kind of
@@ -3868,11 +3871,12 @@ file must be a regular file of at most 1 MiB that parses as strict JSON (no
 walk and denylist check again, as it stands, since you may have edited it. The
 rule is the export's: the public form is paste-safe, not unlinkable. What the
 export dropped or coarsened is refused (a `t` put back on a split row, an
-uptime typed to the second, a bound typed to the byte, a float the size of a
-clock stamp with no duration key on its path), and the measurements it keeps
-pass (an integer that large is a byte total or a count; a float that large
-under a duration key, a name carrying the token `ms`, its own or any key
-above it, is a millisecond total),
+uptime typed to the second, a bound typed to the byte, a float inside a clock
+stamp's epoch window, 1.5e9 to 2.0e9 seconds or 1.5e12 to 2.0e12
+milliseconds, with no duration key on its path), and the measurements it keeps
+pass (an integer is a byte total or a count; a float outside both windows is a
+measurement; a float inside a window under a duration key, a name carrying the
+token `ms`, its own or any key above it, is a millisecond total),
 so a fresh export passes whole and two
 uploads from one kernel remain linkable through them by design. A finding is
 reported by kind and key path, never by value. The verb then prints the path,

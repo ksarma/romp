@@ -25,8 +25,8 @@ counter), because they are the data a reader wants, so two exports from one kern
 remain linkable through them. No hostname, path, pid, session id, username or clock stamp is written; the finished document
 is searched for the strings only this machine knows (perf_public.identifier_hits), walked once more
 (perf_public.paste_problems) and walked for the denylist (perf_public.denylist_problems: a key the fold drops, an
-uptime not on whole minutes, a bound not on a power of two, a number the size of a clock stamp under any other key; a
-fold's own output carries none of the four, so here it is a belt, and for `romp perf upload`, which runs the same
+uptime not on whole minutes, a bound not on a power of two, a float inside a clock stamp's epoch window under any other
+key; a fold's own output carries none of the four, so here it is a belt, and for `romp perf upload`, which runs the same
 check over a file the user may have edited, it is the check that what the export dropped or coarsened does not
 travel, while the measurements it keeps pass, the export's own rule: paste-safe, not unlinkable); any finding refuses
 the write, and the SHALLOWEST finding across the three is
@@ -270,9 +270,11 @@ def check_document(doc: dict, state: Path, under=("perf",), tail="nothing writte
     the kind of string or rule and the key path (a value's own path; for a key, the path of the dict holding it),
     never the key or the value itself. All three mechanisms run, the identifier scan, the walk and the denylist
     walk (pp.denylist_problems: a key the fold drops, an uptime not on whole minutes, a bound not on a power of two,
-    or a float the size of a clock stamp with no duration key on its path; an integer that large is a byte total or
-    a count, and a float under a duration key, a name carrying the token `ms`, its own or any key above it, is a
-    millisecond total, both of which a long-lived kernel's totals reach, so both pass; none of the four a fold's own
+    or a float inside a clock stamp's epoch window, 1.5e9 to 2.0e9 seconds or 1.5e12 to 2.0e12 milliseconds
+    (pp.STAMP_WINDOWS), with no duration key on its path; an integer is a byte total or a count, a float outside both
+    windows is a measurement the export keeps, the allocator's figures on a long-lived kernel among them, and a float
+    under a duration key, a name carrying the token `ms`, its own or any key above it, is a millisecond total, all of
+    which a long-lived kernel's figures reach, so all pass; none of the four a fold's own
     output carries, so for
     this verb it is a
     belt; for `romp perf upload`, over a file as it stands, it is what refuses a `t` the user put back, an uptime

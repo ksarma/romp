@@ -9,8 +9,9 @@ three; the address must be https with a host and no userinfo, query or fragment 
 localhost alone), and a refused address is never echoed; the file must exist, be at most 1 MiB, parse as strict
 JSON (no NaN or Infinity, no repeated key at any depth, nesting within the parser's reach) to an object with the schema
 line and pass the export's own scan, walk and denylist walk as it stands (what the export dropped or coarsened is refused:
-a key it drops, an uptime off whole minutes, a bound off a power of two, a float the size of a clock stamp under any key; an
-integer that large is a byte total or a count and passes, so an export from a long-lived kernel is sent whole), an
+a key it drops, an uptime off whole minutes, a bound off a power of two, a float inside a clock stamp's epoch window, seconds
+or milliseconds, under any key but a duration key; an integer, a float outside both windows and a float under a duration key
+are measurements and pass, so an export from a long-lived kernel is sent whole), an
 edited file refused by kind and key path and never by value; the line before the prompt names the URL the verb will dial, a path in the address included; the send needs a yes on a terminal or --yes, off a terminal
 without the flag it refuses before dialling, and no environment variable stands in for the flag (an AST census
 of the module's environment reads, plus an executed check with tempting names set); the one answer accepted is
@@ -470,8 +471,8 @@ class Cli(unittest.TestCase):
         """The export rounds every memory-fraction bound (perf_public.BOUND_KEYS) UP to a power of two (public_bound; round 3
         of the export's review, 2026-09-18: each is a fixed fraction of the machine's MemTotal); a file carrying one off a
         power of two was edited after the export. A number passes the walk; the denylist walk refuses it, naming the value's
-        path and not the number. The same bound at a power of two passes, however large: past the stamp floor, a coarsened
-        bound is the export's own."""
+        path and not the number. The same bound at a power of two passes, however large: a coarsened bound is the export's
+        own (and no power of two lies in a stamp window)."""
         base = ["--yes", "--receiver", self.fake.url]
         doc = json.loads(self.data)
         self.assertNotIn("hydrated", doc["perf"]["heap"], "the planted snapshot carries no bound; the case plants one")
@@ -489,20 +490,21 @@ class Cli(unittest.TestCase):
             json.dump(doc, fh)
         r = _run([edited] + base, self.state)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(len(self.fake.requests), 1, "a bound at a power of two passes the same check, past the stamp floor too")
+        self.assertEqual(len(self.fake.requests), 1, "a bound at a power of two passes the same check, however large")
 
     def test_an_edited_file_with_a_number_the_size_of_a_clock_stamp_is_refused_naming_the_value_path_and_never_the_number(self):
         """The export writes no absolute clock stamp: every one the snapshot carries is denied by key, and round 3's property
-        test pins that none survives the fold under any key. So a FLOAT leaf at or above perf_public.STAMP_FLOOR (1.5e9,
-        an epoch second from 2017 on) anywhere outside a coarsened bound or a duration key (test_an_export_whose_millisecond_
-        totals_passed_the_stamp_floor_is_sent_since_a_float_under_a_duration_key_is_a_total) was typed in after the export,
-        whatever other key it sits under (a time.time() value is a float, and JSON keeps the distinction: a
-        number written with a point or an exponent loads as one); the denylist walk refuses it, naming the value's path and
-        not the number. An integer that
-        large is a count or a byte total and passes whatever its size (the next case). A fresh export passes."""
+        test pins that none survives the fold under any key. So a FLOAT leaf inside one of perf_public.STAMP_WINDOWS (1.5e9 to
+        2.0e9, an epoch second from 2017 to 2033; 1.5e12 to 2.0e12, the same span in milliseconds) anywhere outside a
+        coarsened bound or a duration key (test_an_export_whose_millisecond_totals_reached_the_stamp_window_is_sent_since_a_
+        float_under_a_duration_key_is_a_total) was typed in after the export, whatever other key it sits under (a time.time()
+        value is a float, and JSON keeps the distinction: a number written with a point or an exponent loads as one); the
+        denylist walk refuses it, naming the value's path and not the number. An integer is a count or a byte total and
+        passes whatever its size (the next case), and so does a float outside both windows (the allocator case). A fresh
+        export passes."""
         base = ["--yes", "--receiver", self.fake.url]
         edited = os.path.join(self.xdg, "edited.json")
-        self.assertEqual(pp.STAMP_FLOOR, 1.5e9)
+        self.assertEqual(pp.STAMP_WINDOWS, ((1.5e9, 2.0e9), (1.5e12, 2.0e12)))
         doc = json.loads(self.data)
         doc["perf"]["pusher"]["startedAt"] = 1.6e9                                    # a stamp under a key the denylist does not know
         with open(edited, "w") as fh:
@@ -518,9 +520,16 @@ class Cli(unittest.TestCase):
             json.dump(doc, fh)
         r = self._refused(_run([edited] + base, self.state), 1, "(a number the size of a clock stamp, the value at perf/pusher/marks/1); nothing sent")
         self.assertNotIn("1600000000", r.stdout + r.stderr)
+        doc = json.loads(self.data)
+        doc["perf"]["pusher"]["bootAt"] = 1.6e12                                      # a millisecond stamp under a key the denylist does not know
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        r = self._refused(_run([edited] + base, self.state), 1, "(a number the size of a clock stamp, the value at perf/pusher/bootAt); nothing sent")
+        self.assertNotIn("1600000000000", r.stdout + r.stderr)
+        self.assertNotIn("1.6e", r.stdout + r.stderr)
         self.assertEqual(self.fake.requests, [], "nothing was sent")
         doc = json.loads(self.data)
-        doc["perf"]["pusher"]["cycles"] = 1_499_999_999                               # below the floor: a count, and it passes
+        doc["perf"]["pusher"]["cycles"] = 1_499_999_999                               # below the seconds window: a count, and it passes
         with open(edited, "w") as fh:
             json.dump(doc, fh)
         r = _run([edited] + base, self.state)
@@ -529,13 +538,14 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.returncode, 0, "a fresh export from the export verb passes the same check")
         self.assertEqual(len(self.fake.requests), 2)
 
-    def test_an_export_whose_byte_totals_passed_the_stamp_floor_is_sent_since_an_integer_that_large_is_a_total_not_a_stamp(self):
+    def test_an_export_whose_byte_totals_reached_the_stamp_window_is_sent_since_an_integer_that_large_is_a_total_not_a_stamp(self):
         """The kernel's cumulative byte and count totals are integers, and on a busy kernel the wire totals (pusher.clients
         byKind and byApp `bytes`, `parses.bytes`) pass 1.5e9 within hours, so an export from a long-lived kernel carries
         integers the size of a clock stamp under keys the denylist does not know by name. The re-check exempts an integer
         whatever its size (a time.time() value is a float) and the file is sent whole, the totals in the body; the same
-        total written as a float is the stamp finding, so the type decides and never the key. Fails before: the export
-        was refused by its own belt, naming perf/parses/bytes (the shallowest of the four), and nothing was sent."""
+        total written as a float, at the seconds window's ceiling, is the stamp finding, so the type decides and never the
+        key. Fails before: the export was refused by its own belt, naming perf/parses/bytes (the shallowest of the four),
+        and nothing was sent."""
         base = ["--yes", "--receiver", self.fake.url]
         doc = json.loads(self.data)
         self.assertNotIn("clients", doc["perf"]["pusher"], "the planted snapshot carries no wire table; the case plants one")
@@ -553,7 +563,7 @@ class Cli(unittest.TestCase):
         r = _run([edited] + base, self.state)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (edited, len(data), self.fake.url) + SUCCESS % (RECEIPT, 180))
-        self.assertEqual(len(self.fake.requests), 1, "the export with byte totals past the floor was sent")
+        self.assertEqual(len(self.fake.requests), 1, "the export with byte totals inside the seconds window was sent")
         self.assertEqual(self.fake.requests[0][2], data, "the body is the file's bytes, totals included")
         doc["perf"]["pusher"]["clients"]["byKind"]["chrome"]["bytes"] = 2_000_000_000.0   # the same total as a float: a stamp
         with open(edited, "w") as fh:
@@ -563,10 +573,11 @@ class Cli(unittest.TestCase):
         self.assertNotIn("2000000000", r.stdout + r.stderr)
         self.assertEqual(len(self.fake.requests), 1, "nothing more was sent")
 
-    def test_an_export_whose_millisecond_totals_passed_the_stamp_floor_is_sent_since_a_float_under_a_duration_key_is_a_total(self):
+    def test_an_export_whose_millisecond_totals_reached_the_stamp_window_is_sent_since_a_float_under_a_duration_key_is_a_total(self):
         """The kernel's millisecond totals are FLOATS and cumulative (pusher.cycle_cpu_ms_sum read 1,779,484.0 after one
-        hour on a busy kernel, about 35 days to 1.5e9; the wire tables' sendMs behind it), so an export from a long-lived
-        kernel carries floats the size of a clock stamp under duration keys. The re-check exempts a float under a
+        hour on a busy kernel, about 35 days to 1.5e9 and twelve more across the seconds window; the wire tables' sendMs
+        behind it), so an export from a long-lived kernel carries floats the size of a clock stamp under duration keys,
+        every one of them inside the seconds window for those twelve days. The re-check exempts a float under a
         duration key (perf_public.duration_key: a name whose tokens carry `ms`), its own or any key above it (stages_ms,
         the lifetime sum per stage, whose leaf keys are stage names), and the file is sent whole, the sums in the body;
         the same value under a key whose path carries no `ms` token (sendMax) is the stamp finding, so the key decides
@@ -590,7 +601,7 @@ class Cli(unittest.TestCase):
         r = _run([edited] + base, self.state)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (edited, len(data), self.fake.url) + SUCCESS % (RECEIPT, 180))
-        self.assertEqual(len(self.fake.requests), 1, "the export with millisecond totals past the floor was sent")
+        self.assertEqual(len(self.fake.requests), 1, "the export with millisecond totals inside the seconds window was sent")
         self.assertEqual(self.fake.requests[0][2], data, "the body is the file's bytes, sums included")
         doc["perf"]["pusher"]["clients"]["byKind"]["chrome"]["sendMax"] = 1.6e9     # no `ms` token in the name: a stamp
         with open(edited, "w") as fh:
@@ -598,6 +609,42 @@ class Cli(unittest.TestCase):
         r = self._refused(_run([edited] + base, self.state), 1,
                           "refused: the public form still fails the denylist (a number the size of a clock stamp, the value at perf/pusher/clients/byKind/chrome/sendMax); nothing sent")
         self.assertNotIn("1600000000", r.stdout + r.stderr)
+        self.assertEqual(len(self.fake.requests), 1, "nothing more was sent")
+
+    def test_an_export_whose_allocator_figures_passed_the_stamp_window_is_sent_since_a_float_outside_both_windows_is_a_measurement(self):
+        """A clock stamp lands in an epoch window (perf_public.STAMP_WINDOWS: 1.5e9 to 2.0e9 seconds, 1.5e12 to 2.0e12
+        milliseconds); a float outside both tells no time and is a measurement the export keeps on purpose (the export's
+        fifth review round, 2026-09-18: glibc's allocator figures on a long-lived kernel, process.malloc.arena 2931437568
+        and uordblks 2731423520, exceeded a floor at 1.5e9 in the served export's property test, and the re-check's own
+        floor refused a file carrying them as floats). The re-check passes a float above the seconds window, one between
+        the windows and one above the milliseconds window, under keys the denylist does not know and in a list, and the
+        file is sent whole, the figures in the body; the same arena figure moved into the seconds window is the stamp
+        finding, so the size decides with the type and the key. Fails before: refused by its own belt naming
+        perf/process/malloc/arena, nothing sent."""
+        base = ["--yes", "--receiver", self.fake.url]
+        doc = json.loads(self.data)
+        self.assertNotIn("malloc", doc["perf"]["process"], "the planted snapshot carries no allocator block; the case plants one")
+        doc["perf"]["process"]["malloc"] = {"arena": 2931437568.0, "hblkhd": 0.0, "uordblks": 2731423520.0, "fordblks": 200014048.0}
+        doc["perf"]["pusher"]["marks"] = [2.9e9, 1.0e12, 2.5e12]
+        edited = os.path.join(self.xdg, "edited.json")
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        with open(edited, "rb") as fh:
+            data = fh.read()
+        self.assertIn(b'"arena": 2931437568.0', data, "the figure is written as a float, with a point")
+        self.assertIn(b"2731423520.0", data)
+        self.assertIn(b"2500000000000.0", data)
+        r = _run([edited] + base, self.state)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (edited, len(data), self.fake.url) + SUCCESS % (RECEIPT, 180))
+        self.assertEqual(len(self.fake.requests), 1, "the export with allocator figures above the seconds window was sent")
+        self.assertEqual(self.fake.requests[0][2], data, "the body is the file's bytes, figures included")
+        doc["perf"]["process"]["malloc"]["arena"] = 1_931_437_568.0                  # the same kind of figure inside the seconds window: a stamp
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        r = self._refused(_run([edited] + base, self.state), 1,
+                          "refused: the public form still fails the denylist (a number the size of a clock stamp, the value at perf/process/malloc/arena); nothing sent")
+        self.assertNotIn("1931437568", r.stdout + r.stderr)
         self.assertEqual(len(self.fake.requests), 1, "nothing more was sent")
 
     def test_the_line_before_the_prompt_names_the_url_dialled_with_a_path_and_port_in_the_address_included(self):

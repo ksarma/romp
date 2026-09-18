@@ -26,10 +26,12 @@ of these refuses with exit 1. The rule the re-check holds the file to is the exp
 strings and every absolute clock stamp and coarsens the uptime and the memory-fraction bounds; durations, counts and
 per-process measurements stay, so two exports from one kernel remain linkable through them by design. The re-check
 refuses what the export would have dropped or coarsened (a `t` put back on a split row, an uptime typed to the
-second, a bound typed to the byte, a float the size of a clock stamp under any key but a duration key) and passes what
-it keeps (an integer that large is a byte total or a count, which a long-lived kernel's totals reach within hours; a
-float that large under a duration key, a name carrying the token `ms` such as `cycle_cpu_ms_sum` or `wallMs`, is a
-millisecond total, which the kernel's sums reach in weeks), so a fresh export passes whole.
+second, a bound typed to the byte, a float inside a clock stamp's epoch window, 1.5e9 to 2.0e9 seconds or 1.5e12 to
+2.0e12 milliseconds, under any key but a duration key) and passes what it keeps (an integer is a byte total or a count,
+which a long-lived kernel's totals carry into the window within hours; a float outside both windows is a measurement,
+the allocator's arena on a long-lived kernel among them; a float inside a window under a duration key, a name carrying
+the token `ms` such as `cycle_cpu_ms_sum` or `wallMs`, is a millisecond total, which the kernel's sums carry through
+the seconds window in weeks), so a fresh export passes whole.
 
 Before sending, the verb prints the path, the byte size and the URL it will dial (the address as configured
 with the route appended, so a path in the setting is seen at the prompt), then asks for a yes on a terminal
