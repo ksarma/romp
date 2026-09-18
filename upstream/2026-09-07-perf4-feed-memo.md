@@ -1,9 +1,9 @@
 ---
 title: Perf P1+P2-A: the feed reads its live store through the shared read-only cache, memoizes each session's store-and-parse-derived values (seam maps, tree shape, flattened goal trees) across builds, and stamps the age tint at serialization
 status: resolved-upstream
-where: fork branch `perf4-feed` (stacked on `perf4-lift`; PR pending): `kernel/kernel.py` (`_feed_goals` / `_feed_goals_view`, `_FeedSegs`, `_feed_segs_build`, `_feed_segs_for`, `_names_key`, `build_feed`, `_node_anchor_uuids`, `_stamp_trgb`, `_tinted_asks`, `_strip_trgb`, `_feed_body`, `/feed.json`, `_cached_feed`, `_PerfStats`; `/perf memos.goals_snap` live/snap, `memos.feed_segs`, `builds.feed.dirty`), `docs/reference.md`; tests `tests/test_feed_goals_shared.py` (new), `tests/test_feed_session_memo.py` (new), `tests/test_kernel_goal_cache_wiring.py`, `tests/test_perf_stats.py`, `tests/test_feed_delta.py`, `tests/test_kernel.py`, `tests/test_kernel_cardtime.py`, `tests/test_feed_live_clobber.py`, `tests/test_user_todos.py`, `tests/test_ledger_anchors.py`, `tests/test_handoff_card_title.py`, `tests/test_kernel_agent_open_authority.py`, `tests/test_parked_cue.py`; `ui/webview/feed-delta.test.ts`, `ui/webview/blocked-rollup.test.ts`, `ui/webview/reviewed-fold.test.ts`
+where: fork PR #359 (`perf4-feed`, stacked on `perf4-lift`, merged 2026-09-07): `kernel/kernel.py` (`_feed_goals` / `_feed_goals_view`, `_FeedSegs`, `_feed_segs_build`, `_feed_segs_for`, `_names_key`, `build_feed`, `_node_anchor_uuids`, `_stamp_trgb`, `_tinted_asks`, `_strip_trgb`, `_feed_body`, `/feed.json`, `_cached_feed`, `_PerfStats`; `/perf memos.goals_snap` live/snap, `memos.feed_segs`, `builds.feed.dirty`), `docs/reference.md`; tests `tests/test_feed_goals_shared.py` (new), `tests/test_feed_session_memo.py` (new), `tests/test_kernel_goal_cache_wiring.py`, `tests/test_perf_stats.py`, `tests/test_feed_delta.py`, `tests/test_kernel.py`, `tests/test_kernel_cardtime.py`, `tests/test_feed_live_clobber.py`, `tests/test_user_todos.py`, `tests/test_ledger_anchors.py`, `tests/test_handoff_card_title.py`, `tests/test_kernel_agent_open_authority.py`, `tests/test_parked_cue.py`; `ui/webview/feed-delta.test.ts`, `ui/webview/blocked-rollup.test.ts`, `ui/webview/reviewed-fold.test.ts`
 added: 2026-09-07
-pr:
+pr: 359
 tier: fix
 offered:
 closed: 2026-09-18

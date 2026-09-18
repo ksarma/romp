@@ -3,7 +3,7 @@ title: Planner gate: the skip counters are bumped under a lock (a lost update on
 status: resolved-upstream
 where: kernel/judge.py: _PLANNER_STATS_LOCK, _planner_stat, planner_skip_stats; tests/test_planner_skip.py
 added: 2026-09-12
-pr:
+pr: 750
 tier: fix
 offered:
 closed: 2026-09-18

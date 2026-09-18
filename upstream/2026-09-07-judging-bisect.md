@@ -1,9 +1,9 @@
 ---
 title: Perf round 4 B: `_run_judging` finds each usage row's gloss by bisect on the sorted artifact-mark times and starts its horizon walk at bisect_left(t0 - 1) on the judge-usage rows when the reader's order fact holds; the reader verifies numeric `t` within 2 s of the running maximum and run end at most `t + 1` per appended row, hands the flag out with the snapshot, and says once on stderr when it clears
 status: resolved-upstream
-where: fork branch `perf4-judging-bisect` (PR pending): `kernel/kernel.py` (`_JudgeUsageSnapshot`, `_judge_usage_row_in_order`, `_judge_usage_rows_locked`, `_run_judging`); tests `tests/test_kernel_judging_bisect.py` (equivalence against a private copy of the pre-bisect function, the reader's flag, the horizon edges, growth between calls, the access-count proof that the walk starts at the horizon)
+where: fork PR #352 (`perf4-judging-bisect`, merged 2026-09-07): `kernel/kernel.py` (`_JudgeUsageSnapshot`, `_judge_usage_row_in_order`, `_judge_usage_rows_locked`, `_run_judging`); tests `tests/test_kernel_judging_bisect.py` (equivalence against a private copy of the pre-bisect function, the reader's flag, the horizon edges, growth between calls, the access-count proof that the walk starts at the horizon)
 added: 2026-09-07
-pr:
+pr: 352
 tier: fix
 offered:
 closed: 2026-09-18

@@ -3,7 +3,7 @@ title: Stat-keyed memos for the per-lane readers every timeline build re-read (c
 status: resolved-upstream
 where: fork branch `perf4-readers` (kernel/kernel.py `_captions` / `_Caps` / `_seg_caption` / `_seg_work_caption` / `_states_awaiting_overlay` / `_thread_reg` / `_process_stats` / `_cache_gauges` / `_PerfStats.snapshot`; kernel/event_model.py `fold_records(on=)` and `cache_gauges`; kernel/judge.py `cache_gauges`; bin/romp `perf`; tools/perf-bench.py; tests/test_kernel_captions_memo.py, tests/test_kernel_msgcaption.py, tests/test_perf_stats.py, tests/test_perf_bench.py, tests/romp-perf.bats; docs/reference.md)
 added: 2026-09-07
-pr:
+pr: 353
 tier: fix
 offered:
 closed: 2026-09-18
