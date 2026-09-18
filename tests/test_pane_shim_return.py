@@ -1479,6 +1479,23 @@ rf:dialed?rows(sock(),"return-fresh").map(function(x){return x.data;}):[]});""" 
             self.assertNotIn("awaitLink", r["ret"][0])
             self.assertEqual(r["rf"], [])
 
+    def test_a_parked_pane_hears_the_shells_own_link_word_and_dials_nothing_until_its_tap(self):
+        # PR 768's round 1 (2026-09-18) gives every shim-bearing iframe a link word of its own ({romp:'link',link}) beside the
+        # panes word's link field, and the shim's link listener accepts both. A parked pane must hear it without dialing: a park
+        # never awaits the link (the park branch returns before the D3 block sets awaitLink), so the listener's `awaitLink&&!ws`
+        # gate holds, and connect()'s parked guard would hold a dial anyway. The tap still dials once, through the link now up.
+        r = _run(r"""
+parentMobileVal=true;parentLinkVal={up:false,connT:NOW};open();recv({type:"ka"});word({test:false},"down");
+hide();NOW+=46000;sock().readyState=3;show();                                    // the park, with the shell's link down
+var atPark={sockets:sockets.length,parked:parked,awaiting:awaitLink};
+NOW+=3000;parentLinkVal={up:true,connT:NOW};fireWin("message",{romp:"link",link:"up"});   // the shell's own link word: the link is up
+var afterLink={sockets:sockets.length,parked:parked,awaiting:awaitLink};
+NOW+=1000;word({test:true},"up");                                                 // the tap
+out({atPark:atPark,afterLink:afterLink,atTap:{sockets:sockets.length,parked:parked,ready:sock().readyState}});""")
+        self.assertEqual(r["atPark"], {"sockets": 1, "parked": True, "awaiting": False}, "a park awaits nothing")
+        self.assertEqual(r["afterLink"], {"sockets": 1, "parked": True, "awaiting": False}, "the link word is heard and dials nothing while parked")
+        self.assertEqual(r["atTap"], {"sockets": 2, "parked": False, "ready": 0}, "the tap dials once, the link being up")
+
     def test_source_the_park_is_inserted_lines_and_the_upstream_shim_lines_stand(self):
         js = km._shim("feed", 3)
         # the upstream lines this change sits beside, byte for byte
