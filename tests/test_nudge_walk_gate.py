@@ -450,6 +450,20 @@ class WakeGoalUnkeyedExitsNoteTheirLegs(_Base):
         self.assertEqual(self._by(), {}, "the delegated check is pure over the store, a keyed file: no allDelegated")
         self.assertEqual(km._auto_nudge_data()["walkGates"][self.gid]["gate"], "all-delegated", "the gate is journaled as before")
 
+    def test_a_patient_stamped_top_and_a_delegated_top_note_no_unbounded_release_with_nudges_on(self):
+        """The retirement's claim in the mode the round-1 tests did not run (kernel-2): with the gear on the same two tops note
+        nothing unbounded either. A symmetry pin beside the gear-off pair above, not a staleness guard (see the due twin in
+        WakeOnlyLooksSkipOnTheKey for that)."""
+        self._toggle(True)
+        self._seed(kind="job", age=5 * H)
+        self._tick()
+        self.assertEqual((self._by(), self.fb.sent), ({}, []), "the stamped top notes its dead-man instant alone")
+        (jd.GOALDIR / (SID + ".json")).unlink(); km._SESSION_STAMP_CACHE.clear(); jd._shared_clear()
+        self._seed(stamped=False, delegated=True)
+        self._tick(NOW + 5)
+        self.assertEqual((self._by(), self.fb.sent), ({}, []), "the delegated top notes nothing: pure over the store")
+        self.assertEqual(km._auto_nudge_data()["walkGates"][self.gid]["gate"], "all-delegated")
+
     def test_a_fresh_read_fault_on_the_due_lift_notes_freshFault_and_the_healed_pass_lifts(self):
         self._toggle(False)
         self._seed(kind="job", age=7 * H)                        # due
@@ -678,6 +692,76 @@ class WakeOnlyLooksSkipOnTheKey(_Base):
         d = self._pass(due + 10)
         self.assertEqual((d["parses"], d["skippedParses"]), (0, 1), "steady again")
         self.assertEqual(len(self._lifts()), 1); self.assertEqual(self.fb.sent, [])
+
+    def test_a_due_dead_man_with_nudges_on_wakes_on_the_first_pass_at_its_instant_after_skipping(self):
+        """The gear-ON twin of the due test above, and the load-bearing pin of review round 1 (tests-1, regression-1, kernel-2):
+        with the toggle on a stamped top records a bounded row for the first time since the stampedWait note retired, so the
+        dead-man instant _wake_goal notes is the only bound on the gear-ON skip. A mutant that notes the instant on the wake-only
+        road alone (`if wake_only:` around the note) leaves the rest of the nudge, wake and awaiting suites green while the
+        check-in wake never fires; this test fails under it twice over: the first row's flip reads -1.0 where the instant
+        belongs, and at the instant the pass skips, (0, 0) != (1, 1). The byte-identity twin below cannot fail for that defect:
+        a skip against a full pass over an unchanged world records the same row whether or not the instant was noted."""
+        self._toggle(True)
+        self.alive = [SID]
+        self._seed(kind="job", age=5 * H)                          # due at NOW + 1 h
+        due = NOW - 5 * H + km.AWAITING_DEADMAN_SECS
+        p1 = self._pass()
+        self.assertEqual((p1["parses"], p1["wakeOnly"], self.fb.sent), (1, 0, []), "a full look, not due")
+        st = km._session_files_stat(self.rows[SID])
+        self.assertEqual((self._row(SID)[len(st)], self._row(SID)[-2]), ("full", due), "the full-mode row carries the dead-man instant")
+        for t in (NOW + 5, NOW + 1800, due - 1):
+            d = self._pass(t)
+            self.assertEqual((d["parses"], d["skippedParses"], d["writer"]), (0, 1, 0), "before the instant: skipped, nothing filed (%d)" % (t - NOW))
+        self.assertEqual(self.fb.sent, [])
+        d = self._pass(due)
+        self.assertEqual((d["parses"], d["clockDue"]), (1, 1), "at the instant the look evaluates")
+        self.assertEqual(d["writer"], 2, "the fire path's two writer reads: the wake's fresh re-read and the check-in's wording")
+        self.assertEqual(len(self._wakes()), 1, "the check-in wake goes out on the first pass at or after its instant")
+        self.assertEqual(self._lifts(), [], "nudges on: a wake, not a lift")
+        self.assertIsNotNone(self._node().get("awaitingWhy"), "the stamp stands")
+        rec = self._ledger_rec()
+        self.assertEqual((rec.get("wake"), rec.get("anchor"), rec.get("at")), (True, NOW - 5 * H, due), "the ledger holds the wake record")
+        self.assertEqual(self._row(SID)[-2], due, "a look that fires records no row: the pre-fire row stands, its instant past")
+        d = self._pass(due + 5)
+        self.assertEqual((d["parses"], d["writer"], len(self._wakes())), (1, 0, 1), "the ledger moved: one re-evaluation, the wake in flight, no second fire")
+        d = self._pass(due + 10)
+        self.assertEqual((d["parses"], d["skippedParses"]), (0, 1), "steady again")
+
+    def test_a_skipping_pass_with_nudges_on_leaves_every_output_byte_identical_to_a_full_pass(self):
+        """The gear-ON twin of the byte-identity proof, filed as a LOW regression pin (review round 1: tests-1, regression-1,
+        kernel-2). It cannot catch a staleness defect: a skip and a full pass over a STATIC world record the same row whether or
+        not a leg noted the input that could move, so an unnoted gear-ON exit passes it while a due wake never fires (the
+        refuters proved this by injecting one). What it does pin: with the toggle on a stamped top and a delegated top skip at
+        all (the stampedWait and allDelegated notes retired: at the base every gear-on pass over them parsed), and the skip
+        writes nothing a full evaluation would. The plain working top stays out of this world: with the gear on it takes the
+        status nudge, a fire that records no row. The load-bearing gear-ON pin is the due twin above."""
+        self._toggle(True)
+        self.alive = [SID2, SID3]
+        self._seed(kind="job", age=5 * H, sid=SID2); self._seed(stamped=False, delegated=True, sid=SID3)
+        self._pass(); self._pass(NOW + 5)                          # the delegated top's gate write moves the ledger: two settling passes
+        ledger = jd.STATE / "auto-nudge.json"
+        def world():
+            return {sid: self._store_bytes(sid) for sid in self.alive} | {"ledger": ledger.read_bytes()}
+        def rows():
+            return {k: tuple(v) for k, v in km._TICK_SEEN.items() if k[0] == "auto-nudge"}
+        w2, r2 = world(), rows()
+        self.assertEqual(len(r2), 2, "the memo settled for both")
+        st = km._session_files_stat(self.rows[SID2])
+        self.assertEqual({r2[("auto-nudge", sid)][len(st)] for sid in self.alive}, {"full"}, "full-mode rows")
+        self.assertEqual(dict(km._NUDGE_WALK_STATS["unboundedBy"]), {}, "no stampedWait, no allDelegated with the gear on either")
+        # the rows' instants are deliberately NOT asserted here: the due twin above pins the stamped top's dead-man instant, and
+        # this test is the equivalence pin alone, so it stays green under the mutant that test catches (its blindness stated)
+        p3 = self._pass(NOW + 10)
+        self.assertEqual((p3["parses"], p3["skippedParses"], p3["looks"]), (0, 2, 2), "the skipping pass")
+        self.assertEqual(world(), w2, "a skip writes nothing"); self.assertEqual(rows(), r2, "and the rows stand")
+        km._nudge_memos_forget()                                     # the full road over the same world, as before stage 1
+        p4 = self._pass(NOW + 15)
+        self.assertEqual((p4["parses"], p4["skippedParses"], p4["looks"]), (2, 0, 2), "the full pass")
+        self.assertEqual(world(), w2, "the full evaluation writes nothing new either: byte-identical")
+        self.assertEqual(rows(), r2, "and records the same rows: same key, same mode, same instants, same verdicts")
+        self.assertEqual({k for k in self.KEYS if p3[k] != p4[k]}, {"parses", "skippedParses"}, "%r vs %r" % (p3, p4))
+        self.assertEqual((p3["shared"], p4["shared"]), (0, 2), "zero shared loads on the skipping pass, one per session on the full one")
+        self.assertEqual(self.fb.sent, [])
 
     def test_a_fresh_read_fault_on_the_due_look_leaves_the_row_unbounded_and_the_next_pass_lifts(self):
         self._toggle(False)
