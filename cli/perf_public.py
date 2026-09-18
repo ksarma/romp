@@ -21,9 +21,11 @@ construction, so a block added to the kernel later costs nothing here (2026-09-1
    (`checkpoints.readByPath`, absolute transcript paths), the judges' child's first failure (an exception
    message), the thread stacks, a process id under any spelling (PID_KEY), the stamps that fix a process in
    time (`now`, `since`, `started`, `generatedAt`; not `uptime_s`, the span the lifetime totals cover, which a
-   reader needs and which names no one), a sid in any spelling, and every key that names an identity or a
-   place (a session or unit name, a scope, a label, a path, a working directory, a host, a user, a command
-   line) where its value can carry text. The same key over a plain number is a COUNTER and stays: the chat
+   reader needs and which names no one), a sid in any spelling, the restart document's free-text fields (an
+   event row's `text`, the prose of a session problem; a cut row's `drainError` and `reasonError`, exception
+   messages), which a one-token message would otherwise carry through the grammar verbatim, and every key
+   that names an identity or a place (a session or unit name, a scope, a label, a path, a working directory,
+   a host, a user, a command line) where its value can carry text. The same key over a plain number is a COUNTER and stays: the chat
    build's per-label miss counts (`builds.chat.bg_miss.names`, `.host`, `.cwd`) and the sessions listing's
    miss reasons (`memos.sessionsListing.missBy.names`) are integers under identity-shaped keys. DENY_PATHS are
    anchored at the document's root; DENY_KEYS, PID_KEY and IDENTITY_KEYS apply wherever a dict key appears
@@ -34,9 +36,11 @@ block; membership in the register's image for `http`, http_key_ok; the stack sam
 `stacks`, a block the export drops and the served snapshot carries under its switch; JOINED_KEY for the joined
 tables), every key and string against a uuid, a 32-hex token, a 40-hex token (a checkpoint document's name),
 an absolute path and any planted text, and every string value against free text (whitespace: an exception
-message, a URL, a bare host name), except a stack frame, "function (file:line)", which has its own grammar. The
-export runs it over its own output as a self-check and refuses to write on a problem. The identifier scan (machine_probes, identifier_hits) is the
-last backstop: strings only this machine knows (its hostname, user and home directory; the session ids and
+message, a URL, a bare host name), except a stack frame, "function (file:line)", which has its own grammar. It
+reports each finding as a Problem (the kind of finding, whether a key or a value, the key path, the offending
+string), formatted by the caller: the export runs it over its own output as a self-check and refuses to write
+on a problem naming the kind and the path alone, while the invariant tests print the whole line (str(problem))
+so a failure says what leaked. The identifier scan (machine_probes, identifier_hits) is the last backstop: strings only this machine knows (its hostname, user and home directory; the session ids and
 working directories the state directory's sdk registry holds) are searched for in every key and string value of
 the finished document, case-insensitively, and a hit refuses the write naming the key path and the kind of
 string, never the value. A hostname or a login is a WORD and is matched as a run of whole tokens (a key or
@@ -50,6 +54,7 @@ kernel keys its tables by sid or rank and the denylist drops every name field), 
 produce that false refusal. A hostname or login that IS one of romp's identifiers (a user named root and the
 `POST /walk-root` route) still refuses; that is rare, and the refusal names the kind of string and the key
 path."""
+import collections
 import glob
 import json
 import math
@@ -165,12 +170,16 @@ JOINED_KEY_BLOCKS = JOINED | frozenset(("judge", "child") + b for b in JOINED if
 DENY_PATHS = frozenset({("checkpoints", "readByPath"), ("judge", "child", "failures", "first"),
                         ("now",), ("since",), ("judge", "child", "t")})
 # Dropped wherever they appear as a dict key, whatever the value: by-identity tables, thread stacks and the perf
-# log switch, session ids in every spelling this repository uses, and the stamps that fix a process in time
-# (an event's `t` is the measurement and stays).
+# log switch, session ids in every spelling this repository uses, the stamps that fix a process in time (an
+# event's `t` is the measurement and stays), and the restart document's free-text fields: a session-events
+# row's `text` (problem_row's prose) and a cut row's `drainError` and `reasonError` (exception messages). None
+# of the three is ever a counter, and a message that happens to be one token of at most 32 characters would
+# pass the grammar verbatim (the export's review, 2026-09-18).
 DENY_KEYS = frozenset({
     "bySid", "byPath", "readByPath", "stacks", "log",
     "sid", "sids", "sid8", "fsid", "lastSid", "sessionId",
     "kernelSha", "bootId", "started", "generatedAt",
+    "text", "drainError", "reasonError",
 })
 # A process id under any spelling the ledgers write (pid, ppid, pids, cliPid, hostPid, managerPid, hub_pid,
 # boundary_pids) and the next one: `pid`, `ppid` or `pids` in any case as the whole key or after `_`, or `Pid`/`Pids`
@@ -200,7 +209,11 @@ def _finite(x):
 
 def _merge(a, b):
     """Two values whose keys folded to the same name: numbers add, dicts merge, lists join; anything else that
-    disagrees is `other`."""
+    disagrees is `other`. None is the identity: a non-finite number is nulled by _finite before it gets here, and
+    a counter beside it must stay a number (and a bool a bool), not become the word `other`; a null beside a null
+    is null."""
+    if a is None or b is None:
+        return b if a is None else a
     if isinstance(a, bool) or isinstance(b, bool):
         return a if a == b else OTHER
     if isinstance(a, (int, float)) and isinstance(b, (int, float)):
@@ -275,8 +288,20 @@ def _frame_value(block):
     return block is not None and len(block) > 2 and block[0] == "stacks" and block[2] == "frames"
 
 
+class Problem(collections.namedtuple("Problem", "kind is_key path text")):
+    """One finding of the walk: `kind` is the rule that failed (a fixed phrase from the list in paste_problems),
+    `is_key` whether the string is a dict key (True) or a string value, `path` the key path as `a/b/0/c` (a key's
+    is the path of the dict holding it; the root is the empty string), `text` the offending string itself.
+    Callers format it: the export's refusal prints the kind and the path and never `text` (the leak a refusal
+    exists to prevent must not travel in the refusal); the invariant tests print str(problem), the whole line."""
+    __slots__ = ()
+
+    def __str__(self):
+        return "%s: %s %r at %s" % (self.kind, "key" if self.is_key else "value", self.text, self.path)
+
+
 def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=(), stacks_key=STACKS_KEY):
-    """Every way `doc` fails to be paste-safe, as one line each (empty when it is): a key outside its block's
+    """Every way `doc` fails to be paste-safe, one Problem each (empty when it is): a key outside its block's
     grammar (`ident` for plain blocks, the register's image for `http` (http_key_ok), `stacks_key` for `stacks`
     (STACKS_KEY, the character grammar, unless the caller holds the kernel's register of thread kinds and passes
     its grammar, as the served-snapshot test does), JOINED_KEY for the joined tables), a key or string value
@@ -284,51 +309,54 @@ def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=(), stacks_key=S
     absolute path or any of the `planted` strings, a string value carrying whitespace (free text) anywhere but
     the stack sample's frames, and a frame outside FRAME. `skip` names top-level keys whose string value is not
     walked (an export's schema line); `under` is the key path the snapshot's blocks sit below (`("perf",)` in an
-    export; the root in a served snapshot)."""
+    export; the root in a served snapshot). A Problem is structured, not a line, so a caller that must not print
+    the offending string (the export's refusal) cannot: a key or value that itself contains " at " used to hand a
+    fragment of the flagged material to a caller splitting the line (the export's review, 2026-09-18)."""
     problems = []
     n = len(under)
 
     def block(where):
         return where[n:] if where[:n] == tuple(under) else None
 
+    def found(kind, s, where, key):
+        problems.append(Problem(kind, key, "/".join(str(p) for p in where), s))
+
     def text(s, where, key):
-        at = "%s %r at %s" % ("key" if key else "value", s, "/".join(str(p) for p in where))
         for probe in planted:
             if probe and probe in s:
-                problems.append("planted text survives: " + at)
+                found("planted text survives", s, where, key)
                 break
         if UUID.search(s):
-            problems.append("a uuid-shaped token: " + at)
+            found("a uuid-shaped token", s, where, key)
         if HEX32.search(s):
-            problems.append("a 32-hex token: " + at)
+            found("a 32-hex token", s, where, key)
         if HEX40.search(s):
-            problems.append("a 40-hex token: " + at)
+            found("a 40-hex token", s, where, key)
         if not (key and block(where) == ("http",)) and ABS_PATH.search(s):   # a route key is a path by design;
-            problems.append("an absolute path: " + at)                       #  its membership is checked below
+            found("an absolute path", s, where, key)                          #  its membership is checked below
         if not key:
             if _frame_value(block(where)):
                 if not FRAME.match(s):
-                    problems.append("outside the frame grammar: " + at)
+                    found("outside the frame grammar", s, where, key)
             elif WHITESPACE.search(s):
-                problems.append("free text: " + at)
+                found("free text", s, where, key)
 
     def check_key(k, where):
-        at = "key %r at %s" % (k, "/".join(str(p) for p in where))
         if not isinstance(k, str):
-            problems.append("a non-string key: " + at)
+            found("a non-string key", str(k), where, True)
             return
         text(k, where, True)
         if block(where) == ("http",):
             if not http_key_ok(k):
-                problems.append("outside the image of the route register: " + at)
+                found("outside the image of the route register", k, where, True)
         elif block(where) == ("stacks",):
             if not stacks_key.match(k):
-                problems.append("outside the stack sample's key grammar: " + at)
+                found("outside the stack sample's key grammar", k, where, True)
         elif block(where) in JOINED_KEY_BLOCKS:
             if not JOINED_KEY.match(k):
-                problems.append("outside the joined-identifier grammar: " + at)
+                found("outside the joined-identifier grammar", k, where, True)
         elif not ident.match(k):
-            problems.append("outside the identifier grammar: " + at)
+            found("outside the identifier grammar", k, where, True)
 
     def walk(node, where):
         if isinstance(node, dict):

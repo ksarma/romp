@@ -35,8 +35,10 @@ days or weeks (--window), the week anchored on --anchor (default: the day of the
 in the machine's local time unless --tz names a zone. Missing sources are said, never silently zero.
 `--json --public` writes the document's PUBLIC form (cli/perf_public.py, the shape `romp perf export --public`
 writes): the session names the cut rows and the buckets carry (cutSessions), the sids, pids under every
-spelling, scope units, labels, the kernel's sha and the generation stamps (generatedAt and live.t) are dropped,
-every other key and string is folded to a code identifier or `other` (a week bucket's key is respelled
+spelling, scope units, labels, the kernel's sha, the generation stamps (generatedAt and live.t) and the
+document's free-text fields (an event row's `text`, the prose of a session problem; a cut row's `drainError`
+and `reasonError`, exception messages: a one-token message would otherwise pass the grammar verbatim) are
+dropped, every other key and string is folded to a code identifier or `other` (a week bucket's key is respelled
 `week-of-YYYY-MM-DD` first, so the weeks stay distinct), and the finished document is searched for the strings
 only this machine knows before it is printed.
 """
@@ -874,7 +876,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="romp restart-metrics", description=__doc__.split("\n\n")[0])
     ap.add_argument("--json", action="store_true", help="print the whole document as JSON")
     ap.add_argument("--public", action="store_true",
-                    help="with --json: the paste-safe form (cli/perf_public.py): no session name, id, pid under any spelling, scope, label or generation stamp")
+                    help="with --json: the paste-safe form (cli/perf_public.py): no session name, id, pid under any spelling, scope, label, "
+                         "generation stamp or free text (an event row's text, a cut row's drainError and reasonError)")
     ap.add_argument("--window", choices=("day", "week"), default="day")
     ap.add_argument("--anchor", help="YYYY-MM-DD the weeks start from (default: the first restart's day)")
     ap.add_argument("--since", help="YYYY-MM-DD, inclusive")

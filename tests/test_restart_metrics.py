@@ -375,15 +375,39 @@ class Document(unittest.TestCase):
         self.assertEqual(rm.main(["--since", "not-a-date", "--no-live", "--state", str(self.state)]), 2)
 
 
+def _plant_free_text(state: Path):
+    """The restart document's free-text fields on the fixture's rows, as ONE-TOKEN values: a cut row's drainError
+    and reasonError (exception messages) and an event row's text (problem_row's prose). A longer message folds to
+    `other` by the grammar alone; a one-token message of at most 32 characters passes it, so only the denylist
+    keeps the fields out (the export's review, 2026-09-18). Planted on the second cut row and the drain event, so
+    no count the other cases assert moves."""
+    for name, match, fields in (("restart-cuts.jsonl", ("reason", "p2p-update"), {"drainError": "TESTHOST", "reasonError": "boom42"}),
+                                ("session-events.jsonl", ("kind", "drain.unjoined"), {"text": "TESTHOST"})):
+        rows = (state / name).read_text().splitlines()
+        out = []
+        for ln in rows:
+            try:
+                r = json.loads(ln)
+            except ValueError:
+                out.append(ln)
+                continue
+            if isinstance(r, dict) and r.get(match[0]) == match[1]:
+                r.update(fields)
+            out.append(json.dumps(r))
+        (state / name).write_text("\n".join(out) + "\n")
+
+
 class PublicForm(unittest.TestCase):
     """`--json --public` (2026-09-18): the document's paste-safe form through cli/perf_public.py, the shape `romp perf
     export --public` writes. The fixture's session names (web, api) ride the cut rows' cutSessions lists and the
-    buckets' cutSessions counts, the sids and pids ride the events, and the label is free text; none may survive,
-    while the counts they stood beside do. Before the flag, argparse refused `--public`."""
+    buckets' cutSessions counts, the sids and pids ride the events, the label is free text, and a cut row's
+    drainError and reasonError and an event row's text are planted as one-token messages (_plant_free_text); none
+    may survive, while the counts they stood beside do. Before the flag, argparse refused `--public`."""
 
     def setUp(self):
         self.state = Path(tempfile.mkdtemp())
         _fixture(self.state)
+        _plant_free_text(self.state)
 
     def _public(self, *extra):
         out = io.StringIO()
@@ -395,7 +419,8 @@ class PublicForm(unittest.TestCase):
     def test_no_session_name_id_pid_scope_or_label_survives_and_the_counts_do(self):
         doc = self._public("--label", "TESTHOST")
         text = json.dumps(doc)
-        for planted in ('"web"', '"api"', SID, SID2, SID[:8], "TESTHOST", "this machine", "cutSessions", '"label"', '"pids"', '"sid"', '"name"'):
+        for planted in ('"web"', '"api"', SID, SID2, SID[:8], "TESTHOST", "this machine", "cutSessions", '"label"', '"pids"', '"sid"', '"name"',
+                        "boom42", "drainError", "reasonError", '"text"'):
             self.assertNotIn(planted, text, planted)     # the names as JSON tokens: `api` is a substring of the apiS latency key
         self.assertIs(doc["public"], True)
         self.assertEqual(doc["schema"], 1)
@@ -404,6 +429,14 @@ class PublicForm(unittest.TestCase):
         self.assertEqual((first["cutTurns"], first["stopped"], first["reason"]), (2, 5, "other"), "the count stays, the names go, free text folds")
         self.assertNotIn("pid", first)
         self.assertEqual(doc["restarts"][1]["reason"], "p2p-update", "a reason that is an identifier stays")
+        self.assertEqual(sorted(k for k in doc["restarts"][1] if k in ("drainError", "reasonError", "stopped")), ["stopped"],
+                         "the two exception-message fields go whatever their value; the count beside them stays")
+        drains = [e for e in doc["events"]["recent"] if e.get("kind") == "drain.unjoined"]
+        self.assertEqual(drains, [{"t": drains[0]["t"], "kind": "drain.unjoined", "inflight": 1, "reaped": True}],
+                         "the event row's prose goes, its flat counters stay")
+        self.assertEqual(rm.public_form({"restarts": [{"drainError": "boom", "reasonError": "TESTHOST", "stopped": 1}],
+                                         "events": {"recent": [{"kind": "crash.heal", "text": "boom", "attempt": 1}]}}),
+                         {"restarts": [{"stopped": 1}], "events": {"recent": [{"kind": "crash.heal", "attempt": 1}]}, "public": True})
         b = [x for x in doc["buckets"] if x["key"] == "2026-09-10"][0]
         self.assertEqual((b["restarts"], b["cutTurns"], b["cleanRestarts"]), (2, 3, 0))
         self.assertEqual(b["reasons"], {"manager-sigterm": 1, "p2p-update": 1})
@@ -420,8 +453,8 @@ class PublicForm(unittest.TestCase):
         self.assertEqual(attached[0], {"t": attached[0]["t"], "kind": "host.attached", "boot": True, "replayFrom": 3})
         self.assertEqual(doc["events"]["byKind"]["reconcile.duplicate-cli"], 1)
         self.assertEqual(doc["notes"], ["other", "other"], "prose is not an identifier")
-        problems = pp.paste_problems(doc, planted=(SID, SID2, "TESTHOST", "this machine"))   # the walk's probes are substrings
-        self.assertEqual(problems, [], "%d leak(s):\n  %s" % (len(problems), "\n  ".join(problems)))
+        problems = pp.paste_problems(doc, planted=(SID, SID2, "TESTHOST", "this machine", "boom42"))   # the walk's probes are substrings
+        self.assertEqual(problems, [], "%d leak(s):\n  %s" % (len(problems), "\n  ".join(map(str, problems))))
 
     def test_week_buckets_keep_distinct_keys(self):
         # the raw key is "week of YYYY-MM-DD", which the ident grammar folds to `other`, so every week would collapse
@@ -451,6 +484,8 @@ class PublicForm(unittest.TestCase):
         self.assertEqual(rc, 0)
         doc = json.loads(out.getvalue())
         self.assertEqual(doc["restarts"][0]["cutSessions"], ["web", "api"])
+        self.assertEqual((doc["restarts"][1]["drainError"], doc["restarts"][1]["reasonError"]), ("TESTHOST", "boom42"))
+        self.assertEqual([e["text"] for e in doc["events"]["recent"] if e.get("kind") == "drain.unjoined"], ["TESTHOST"])
         self.assertNotIn("public", doc)
 
     def test_public_without_json_is_refused(self):
@@ -461,8 +496,10 @@ class PublicForm(unittest.TestCase):
         self.assertIn("--json --public", err.getvalue())
 
     def test_a_machine_string_that_survives_the_fold_refuses_the_print(self):
-        # an anchor is a date the fold keeps; a probe planted as the label would be dropped, so the scan is exercised
-        # through a value the fold keeps: the window's tz, set to a probe-shaped zone name
+        # a real document has no machine string left after the fold (the label is dropped by the denylist before the
+        # scan), so the refusal leg is reached by patching public_form to plant a hostname-shaped key past the fold;
+        # the first leg pins that the label alone does not refuse, the third that a value the fold keeps (the
+        # window's tz, an identifier) is scanned too, through identifier_hits' value branch
         probes = [("hostname", "testhost")]
         with mock.patch.object(pp, "machine_probes", return_value=probes):
             err, out = io.StringIO(), io.StringIO()
@@ -480,6 +517,15 @@ class PublicForm(unittest.TestCase):
             self.assertIn("hostname", err.getvalue())
             self.assertIn("a key under the root", err.getvalue())
             self.assertNotIn("TESTHOST", err.getvalue(), "never the value")
+        # a value the fold keeps: the window's tz is an identifier, and a machine named like it is found there
+        with mock.patch.object(pp, "machine_probes", return_value=[("hostname", TZ.lower())]):
+            err, out = io.StringIO(), io.StringIO()
+            with mock.patch("sys.stderr", err), redirect_stdout(out):
+                rc = rm.main(["--json", "--public", "--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state)])
+        self.assertEqual(rc, 1)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("(hostname) survives as the value at window/tz; nothing printed", err.getvalue())
+        self.assertNotIn(TZ, err.getvalue(), "the value is never printed")
 
 
 class LiveHelpers(unittest.TestCase):

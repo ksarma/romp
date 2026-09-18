@@ -1,7 +1,7 @@
 ---
 title: romp perf export --public and romp restart-metrics --json --public: one paste-safe copy of the performance counters, from a shared shape module
 status: candidate
-where: cli/perf_export.py, cli/perf_public.py, cli/restart_metrics.py, bin/romp (perf block), bin/romp-perf-export, docs/reference.md; tests in tests/test_perf_export.py, tests/test_restart_metrics.py, tests/romp-perf.bats, tests/test_perf_stats.py
+where: cli/perf_export.py, cli/perf_public.py, cli/restart_metrics.py, bin/romp (perf block, the restart-metrics help row and comment), bin/romp-perf-export, bin/README.md, cli/README.md, docs/reference.md; tests in tests/test_perf_export.py, tests/test_restart_metrics.py, tests/romp-perf.bats, tests/test_perf_stats.py
 added: 2026-09-18
 pr: 764
 tier: feature

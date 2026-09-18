@@ -425,6 +425,11 @@ assert lines[i + 1:i + 6] == ["    _pusher (kernel.py:100)", "    _job_stage (ke
     run "$ROMP_SCRIPT" help
     [ "$status" -eq 0 ]
     [[ "$output" == *"romp perf"* ]]
+    # the restart-metrics row names the flag this branch adds, the way docs/reference.md's row and the verb's
+    # own --help do (2026-09-18: the rendered row spelled [--json|--window day|week] and never said --public,
+    # so a user reading `romp help` had no way to learn the paste-safe form existed)
+    [[ "$output" == *"romp restart-metrics [--json [--public]|--window day|week]"* ]]
+    [[ "$output" == *"--public with --json: the paste-safe form"* ]]
 }
 
 @test "romp perf export: dispatches to romp-perf-export with its flags, which writes the public form of a saved snapshot" {

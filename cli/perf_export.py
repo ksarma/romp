@@ -8,13 +8,20 @@ state directory's serve-token file, the port from ROMP_KERNEL_PORT or 29855, a t
 kernel, a refused token and a ROMP_KERNEL_PORT that is not a port number each said plainly, never replaced by
 the default), or takes a snapshot `romp perf --json` saved earlier (--from); either must carry GET /perf's fixed
 top-level blocks (SNAPSHOT_KEYS), so a registry row or a sessions listing handed to --from is refused at the
-read rather than folded and labelled an export. It writes the PUBLIC form of the snapshot: the shape rule and
-the denylist of cli/perf_public.py applied to the whole snapshot, under a top-level `schema` line
+read rather than folded and labelled an export. From a running kernel the verb also reads GET /version on the
+same port (auth-exempt) for the kernel's commit, `kernel_sha` (git's short sha, `-dirty` appended when the
+checkout has uncommitted edits), and sets it on the snapshot; a /version that does not answer, or answers no
+hex sha, leaves the snapshot as it was. It writes the PUBLIC form of the snapshot: the shape rule and the
+denylist of cli/perf_public.py applied to the whole snapshot, under a top-level `schema` line
 (`romp-perf-export/1`), the UTC minute of the export (no seconds) and, when the snapshot carries the kernel's
-commit, its twelve-character abbreviation. No hostname, path, pid, session id or username is written; the
-finished document is walked once more (perf_public.paste_problems) and searched for the strings only this
-machine knows (perf_public.identifier_hits), and either finding refuses the write naming the key path, never
-the value. `--usage` adds a `usage` block, off by default: the session counts, the feature counts (the user's
+commit (from /version, or written beside a saved snapshot), its abbreviation to at most twelve hex characters,
+the `-dirty` suffix stripped. No hostname, path, pid, session id or username is written; the finished document
+is searched for the strings only this machine knows (perf_public.identifier_hits) and then walked once more
+(perf_public.paste_problems), in that order so a walk problem beneath a machine-named key is reported as the
+machine string, not as a path spelling the key; either finding refuses the write. The refusal is built from the
+finding's fields (the kind of string or rule, and the key path: a value's own path, or the path of the dict
+holding a key), never from a line that carries the flagged text, so a key or value containing " at " cannot
+put a fragment of itself into the refusal. `--usage` adds a `usage` block, off by default: the session counts, the feature counts (the user's
 own actions and the panes opened, from the http table's route counts) and the kernel's uptime bucket, all from
 keys the snapshot already carries and folded the same way.
 
@@ -25,6 +32,7 @@ habit: without --public it refuses with one line and exit 2. A reader for the te
 """
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -97,15 +105,31 @@ def _snapshot(snap, what: str) -> dict:
     return snap
 
 
+def _commit_text(v):
+    """`v` as a commit: a string of 7 to 64 hex characters, a trailing `-dirty` (what the kernel's _kernel_sha
+    appends when the checkout has uncommitted edits) removed first; None for anything else."""
+    if not isinstance(v, str):
+        return None
+    v = v[:-len("-dirty")] if v.endswith("-dirty") else v
+    return v if COMMIT.fullmatch(v) else None
+
+
 def read_kernel(state: Path) -> dict:
-    """One GET /perf, the token on the header (never argv), `romp perf`'s wording for what can go wrong."""
+    """One GET /perf, the token on the header (never argv), `romp perf`'s wording for what can go wrong; then one
+    GET /version on the same port for the kernel's commit (`kernel_sha`), set on the snapshot when it answers a
+    JSON object carrying a hex sha, the snapshot left as it was when it does not (a failure to answer, another
+    shape). GET /perf has no commit key of its own, so without this read an export from a running kernel would
+    never carry a kernel identity (the export's review, 2026-09-18)."""
     port = _port()
-    url = "http://127.0.0.1:%d/perf" % port
     tok = _token(state)
-    req = urllib.request.Request(url, headers={"X-Romp-Token": tok} if tok else {})
-    try:
+    headers = {"X-Romp-Token": tok} if tok else {}
+
+    def get(route):
+        req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, route), headers=headers)
         with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
-            raw = r.read().decode("utf-8")
+            return r.read().decode("utf-8")
+    try:
+        raw = get("/perf")
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
             raise ReadError("the kernel on :%d refused the serve token (HTTP %d); is ROMP_KERNEL_PORT pointing at another kernel?"
@@ -117,7 +141,14 @@ def read_kernel(state: Path) -> dict:
         snap = json.loads(raw)
     except ValueError:
         raise ReadError("the kernel on :%d did not answer JSON on GET /perf" % port)
-    return _snapshot(snap, "the kernel's answer on :%d" % port)
+    snap = _snapshot(snap, "the kernel's answer on :%d" % port)
+    try:
+        version = json.loads(get("/version"))
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError):   # HTTPError is a URLError
+        return snap
+    if isinstance(version, dict) and _commit_text(version.get("kernel_sha")):
+        snap["kernel_sha"] = version["kernel_sha"]
+    return snap
 
 
 def read_file(path: str) -> dict:
@@ -134,11 +165,13 @@ def read_file(path: str) -> dict:
 
 
 def kernel_commit(snap: dict):
-    """The snapshot's kernel commit, abbreviated to twelve hex characters, or None when it carries none. /perf
-    carries none today; a later kernel may add one, and a saved snapshot may have had one written beside it."""
+    """The snapshot's kernel commit, abbreviated to at most twelve hex characters (a short sha is shorter), or
+    None when it carries none. /perf carries none of its own; read_kernel sets GET /version's `kernel_sha` on the
+    snapshot (git's short sha, `-dirty` appended for a checkout with uncommitted edits: stripped here), and a
+    saved snapshot may have had one written beside it."""
     for k in COMMIT_KEYS:
-        v = snap.get(k)
-        if isinstance(v, str) and COMMIT.fullmatch(v):
+        v = _commit_text(snap.get(k))
+        if v:
             return v[:12].lower()
     return None
 
@@ -186,8 +219,8 @@ def usage_block(snap: dict) -> dict:
         elif method == "GET" and path in VIEW_ROUTES:
             out["views"][_feature_name(path)] = count
     up = _num(snap.get("uptime_s"))
-    if up is not None:
-        out["kernelUptime"] = next(name for bound, name in UPTIME_BUCKETS if up < bound)
+    if up is not None and math.isfinite(up):   # a NaN or an infinite uptime (json.load accepts both literals) fits no
+        out["kernelUptime"] = next(name for bound, name in UPTIME_BUCKETS if up < bound)   # bucket: the key is left out
     return out
 
 
@@ -208,14 +241,19 @@ def export_document(snap: dict, usage=False, now=None) -> dict:
 
 
 def check_document(doc: dict, state: Path):
-    """None when the finished document may be written; else the one-line reason (a key path, never a value)."""
-    problems = pp.paste_problems(doc, skip=("schema",), under=("perf",))
-    if problems:
-        return "the public form still fails the walk (%s); nothing written" % problems[0].split(" at ", 1)[-1]
+    """None when the finished document may be written; else the one-line reason, built from the finding's fields:
+    the kind of string or rule and the key path (a value's own path; for a key, the path of the dict holding it),
+    never the key or the value itself. The identifier scan runs first: a walk problem that sits beneath a key
+    spelling one of this machine's strings is then reported as that string, not as a path that spells it."""
     hits = pp.identifier_hits(doc, pp.machine_probes(state), skip=("schema",))
     if hits:
         kind, where = hits[0]
         return "a string this machine knows (%s) survives as %s; nothing written" % (kind, where)
+    problems = pp.paste_problems(doc, skip=("schema",), under=("perf",))
+    if problems:
+        p = problems[0]
+        where = ("a key under %s" if p.is_key else "the value at %s") % (p.path or "the root")
+        return "the public form still fails the walk (%s, %s); nothing written" % (p.kind, where)
     return None
 
 
@@ -225,17 +263,26 @@ def default_path(state: Path, now=None) -> Path:
 
 
 def write_file(path: Path, text: str) -> int:
-    """Create or replace `path` as a regular file readable by the owner alone; the byte count written."""
+    """Create or replace `path` as a regular file readable by the owner alone; the byte count written, which is
+    every byte of `text`: os.write may write fewer than asked (a full disk, a size limit, an interruption), so the
+    write loops over what is left and a write that makes no progress is an OSError, never a truncated file
+    reported as a success (the export's review, 2026-09-18)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     data = text.encode("utf-8")
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(str(path), flags, 0o600)
     try:
         os.fchmod(fd, 0o600)
-        os.write(fd, data)
+        view = memoryview(data)
+        written = 0
+        while written < len(data):
+            n = os.write(fd, view[written:])
+            if n <= 0:
+                raise OSError("short write: %d of %d bytes" % (written, len(data)))
+            written += n
     finally:
         os.close(fd)
-    return len(data)
+    return written
 
 
 def main(argv=None) -> int:

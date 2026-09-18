@@ -2483,7 +2483,8 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
     JOINED_KEY_BLOCKS = pp.JOINED_KEY_BLOCKS
 
     def _paste_problems(self, doc):
-        """The shared walk with this class's grammars: the stricter ident, the register's stack keys, the planted strings."""
+        """The shared walk with this class's grammars: the stricter ident, the register's stack keys, the planted strings.
+        Each finding is a perf_public.Problem (kind, is_key, path, text); str(problem) is the line a failure prints."""
         return pp.paste_problems(doc, planted=self.planted, ident=self.IDENT, stacks_key=self.STACKS_KEY)
 
     @staticmethod
@@ -2590,10 +2591,10 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         self.assertTrue(snap["stacks"][key]["frames"][-1].startswith("wait ("), "the row is the planted thread's")
         self.assertNotIn(name, json.dumps(snap), "the name is nowhere in the snapshot")
         self.problems = self._paste_problems(snap)
-        self.assertEqual(self.problems, [], "%d leak(s) in the served snapshot:\n  %s" % (len(self.problems), "\n  ".join(self.problems)))
+        self.assertEqual(self.problems, [], "%d leak(s) in the served snapshot:\n  %s" % (len(self.problems), "\n  ".join(map(str, self.problems))))
         # the grammar the walk applied is the register's, not the shared module's character one: the planted name as a
         # kind, which the module's own grammar admits, is refused here
-        self.assertEqual([l.split(":", 1)[0] for l in self._paste_problems({"stacks": {"%d probe-thread" % th.ident: {}}})],
+        self.assertEqual([p.kind for p in self._paste_problems({"stacks": {"%d probe-thread" % th.ident: {}}})],
                          ["outside the stack sample's key grammar"], "a thread's name is not a kind under the served walk")
         self.assertEqual(pp.paste_problems({"stacks": {"%d probe-thread" % th.ident: {}}}), [], "the module's default admits the token")
 
@@ -2604,7 +2605,7 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         me = self._my_stacks_key()
         self.assertIn(me, snap["stacks"] or {}, "the stack sample rides in the walk under its switch, this thread's row among the rest")
         self.problems = self._paste_problems(snap)
-        self.assertEqual(self.problems, [], "%d leak(s) in the served snapshot:\n  %s" % (len(self.problems), "\n  ".join(self.problems)))
+        self.assertEqual(self.problems, [], "%d leak(s) in the served snapshot:\n  %s" % (len(self.problems), "\n  ".join(map(str, self.problems))))
         self.assertEqual(snap["stacks"][me]["stage"], "http.GET.other", "the request's mark carries the fold's word, not the path's")
         # the diagnosis the folds keep: the reads per holder kind, the child's line as a size and a status, the per-session
         # rows by rank, the sessions parsed as a count, the glossary lookups and the remote route as counts
@@ -2664,7 +2665,7 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         self.assertEqual(km._perf_http_key("GET", "/nope/" + SID), "other")
         for k in ("GET /nope/" + SID, "GET /glossary/Quarterly Roadmap", "GET /remote/TESTHOST/sessions", "HEAD /perf", "PUT /perf"):
             self.assertFalse(pp.http_key_ok(k), k)
-            self.assertEqual(pp.paste_problems({"http": {k: {"count": 1}}}, ident=self.IDENT)[-1].split(":", 1)[0],
+            self.assertEqual(pp.paste_problems({"http": {k: {"count": 1}}}, ident=self.IDENT)[-1].kind,
                              "outside the image of the route register", k)
 
 if __name__ == "__main__":

@@ -15,7 +15,8 @@ subprocess over that snapshot (--from, --out, --usage, the refusals), and a kern
 the suite's fixtures (the real Handler on a loopback port, the test_perf_stats.py PerfRoutes pattern) with the
 same leaks planted through the collector's own writers. Nothing here reads a live kernel or a real state
 directory: the state root is the suite's floor, the machine strings the scan learns are synthetic (HOME and USER
-are set for the child), every id is a placeholder."""
+are set for the child, and socket.gethostname is pinned to TESTHOST.example in it, so no real hostname is read by
+any test), every id is a placeholder."""
 import json
 import os
 import re
@@ -26,7 +27,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 from romp_load import load_source
 
@@ -100,18 +101,35 @@ def leak_snapshot():
     }
 
 
+HOSTNAME = "TESTHOST.example"                                # the child's hostname; never this machine's
+# The child runs the verb's file under a pinned socket.gethostname: machine_probes reads it and no environment
+# variable overrides it, so without the pin the Cli and ServedKernel cases would learn the real hostname of the
+# machine running the suite (and a key spelled like it would refuse an export there and nowhere else).
+CHILD = ("import runpy, socket, sys; socket.gethostname = lambda: %r; sys.argv = sys.argv[1:]; "
+         "runpy.run_path(sys.argv[0], run_name='__main__')" % HOSTNAME)
+
+
 def _run(args, env_extra=None, state=None):
     """bin/romp-perf-export as a child, hermetic: the suite's interpreter, a private state root, a synthetic
-    HOME and USER, no live kernel port and no token unless the caller says so."""
+    HOME, USER and hostname (CHILD), no live kernel port and no token unless the caller says so."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k != "CLAUDE_CODE_SESSION_ID"}
     state = state or tempfile.mkdtemp()
     env.update({"XDG_STATE_HOME": os.path.dirname(state) if os.path.basename(state) == "romp" else state,
                 "HOME": HOME, "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1"})
     env.update(env_extra or {})
-    return subprocess.run([sys.executable, EXPORT] + list(args), capture_output=True, text=True, timeout=60, env=env)
+    return subprocess.run([sys.executable, "-c", CHILD, EXPORT] + list(args), capture_output=True, text=True, timeout=60, env=env)
 
 
 SYNTHETIC_PROBES = [("hostname", "testhost"), ("username", "tester"), ("home directory", HOME)]
+
+
+def _kinds(doc, **kw):
+    """The walk's findings by kind alone."""
+    return [p.kind for p in pp.paste_problems(doc, **kw)]
+
+
+def _lines(problems):
+    return "%d leak(s):\n  %s" % (len(problems), "\n  ".join(map(str, problems)))
 
 
 def _check(doc):
@@ -141,7 +159,7 @@ class FoldInvariant(unittest.TestCase):
 
     def test_no_planted_text_id_or_path_survives_and_every_key_fits_its_grammar(self):
         problems = pp.paste_problems(self.doc, planted=PLANTED, skip=("schema",), under=("perf",))
-        self.assertEqual(problems, [], "%d leak(s):\n  %s" % (len(problems), "\n  ".join(problems)))
+        self.assertEqual(problems, [], _lines(problems))
         self.assertNotIn(HOME, json.dumps(self.doc))
         self.assertNotIn("TESTHOST", json.dumps(self.doc))
 
@@ -209,7 +227,7 @@ class FoldInvariant(unittest.TestCase):
         self.assertEqual(pp.fold({"doc": SHA, "note": "a b", "term": TERM, "ok": "lt1h", "hex32": "a" * 32}),
                          {"doc": "other", "note": "other", "term": "other", "ok": "lt1h", "hex32": "a" * 32},
                          "the fold is the grammar: a 32-hex token fits it and is the walk's to catch")
-        kinds = lambda doc, **kw: [line.split(":", 1)[0] for line in pp.paste_problems(doc, **kw)]
+        kinds = _kinds
         self.assertEqual(kinds({"a": {"doc": SHA}}), ["a 40-hex token"])
         self.assertEqual(kinds({"a": {"note": "a b"}}), ["free text"])
         self.assertEqual(kinds({"a": {"note": "tab\there"}}), ["free text"])
@@ -222,20 +240,84 @@ class FoldInvariant(unittest.TestCase):
         doc["perf"]["checkpoints"]["lastDocument"] = SHA
         reason = _check(doc)
         self.assertIn("still fails the walk", reason)
-        self.assertIn("perf/checkpoints/lastDocument", reason)
+        self.assertIn("(a 40-hex token, the value at perf/checkpoints/lastDocument)", reason)
         self.assertNotIn(SHA, reason)
         doc = pe.export_document(leak_snapshot())
+        doc["perf"]["heap"]["note"] = "some words here"
+        reason = _check(doc)
+        self.assertIn("(free text, the value at perf/heap/note)", reason)
+        self.assertNotIn("some words", reason)
         doc["perf"]["heap"]["note"] = "TESTHOST up"
         reason = _check(doc)
-        self.assertIn("perf/heap/note", reason)
-        self.assertNotIn("TESTHOST", reason)
+        self.assertEqual(reason, "a string this machine knows (hostname) survives as the value at perf/heap/note; nothing written",
+                         "the identifier scan runs before the walk, so the machine string is what is named")
         self.assertIsNone(_check(pe.export_document(leak_snapshot(), usage=True)))
+
+    def test_the_walk_reports_structured_problems_and_the_refusal_never_carries_a_fragment_of_the_text(self):
+        # the walk's finding is a tuple (the kind, key or value, the key path, the string), formatted by the caller:
+        # the export's refusal prints the kind and the path alone. A caller that split a line at " at " printed
+        # whatever followed the FIRST one, and a key or value that itself contains " at " put a fragment of the
+        # flagged material (a hostname, a home path) into the refusal (the review's medium, 2026-09-18). A real
+        # --from document cannot reach this (the fold keeps no whitespace), a doctored one can: the self-check
+        # guards that road too
+        problems = pp.paste_problems({"a": {"note": "TESTHOST at %s/x" % HOME}})
+        self.assertEqual([(p.kind, p.is_key, p.path) for p in problems],
+                         [("an absolute path", False, "a/note"), ("free text", False, "a/note")])
+        self.assertEqual(problems[0].text, "TESTHOST at %s/x" % HOME, "the string rides in its own field, for a test's diagnostics")
+        self.assertEqual(str(problems[1]), "free text: value 'TESTHOST at /home/tester/x' at a/note", "the line a test prints")
+        problems = pp.paste_problems({"a": {"TESTHOST at %s/x" % HOME: 1}})
+        self.assertEqual([(p.kind, p.is_key, p.path) for p in problems],
+                         [("an absolute path", True, "a"), ("outside the identifier grammar", True, "a")],
+                         "a key's path is the path of the dict holding it")
+        self.assertEqual([(p.kind, p.is_key, p.path) for p in pp.paste_problems({"a b": 1})],
+                         [("outside the identifier grammar", True, "")], "the root is the empty path")
+        self.assertEqual([(p.kind, p.text) for p in pp.paste_problems({5: 1})], [("a non-string key", "5")])
+        # a VALUE containing " at ": the refusal names the value's path and nothing of the value (a path no probe
+        # knows, so the walk is the leg that refuses; the scan's leg is below)
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["heap"]["note"] = "peer at /srv/data/x"
+        reason = _check(doc)
+        self.assertIn("(an absolute path, the value at perf/heap/note); nothing written", reason)
+        for fragment in ("peer", "/srv", "/data", "/x", " at /"):
+            self.assertNotIn(fragment, reason, reason)
+        # a KEY containing " at ": the refusal names the dict holding it and nothing of the key
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["heap"]["peer at /srv/data/x"] = 1
+        reason = _check(doc)
+        self.assertIn("(an absolute path, a key under perf/heap); nothing written", reason)
+        for fragment in ("peer", "/srv", "/data", "/x", " at /"):
+            self.assertNotIn(fragment, reason, reason)
+        # the same two shapes carrying this machine's strings (a hostname, a home path): the scan refuses first, and
+        # its report is the kind and the path, no fragment either
+        for plant in ("TESTHOST at %s/x" % HOME, "%s at TESTHOST" % HOME):
+            doc = pe.export_document(leak_snapshot())
+            doc["perf"]["heap"]["note"] = plant
+            reason = _check(doc)
+            self.assertTrue(reason.endswith("survives as the value at perf/heap/note; nothing written"), reason)
+            doc = pe.export_document(leak_snapshot())
+            doc["perf"]["heap"][plant] = 1
+            reason2 = _check(doc)
+            self.assertTrue(reason2.endswith("survives as a key under perf/heap; nothing written"), reason2)
+            for fragment in ("TESTHOST", HOME, "/x", "tester", " at /", " at T"):
+                self.assertNotIn(fragment, reason, reason)
+                self.assertNotIn(fragment, reason2, reason2)
+        # a key at the export's root: "the root", as the identifier scan spells it
+        doc = pe.export_document(leak_snapshot())
+        doc["a b"] = 1
+        self.assertIn("(outside the identifier grammar, a key under the root); nothing written", _check(doc))
+        # the identifier scan runs BEFORE the walk: a walk problem beneath a key spelling a machine string is reported
+        # as that string, never as a key path that spells it (the walk's path would read perf/memos/TESTHOST/note)
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["memos"]["TESTHOST"] = {"note": "a b"}
+        reason = _check(doc)
+        self.assertEqual(reason, "a string this machine knows (hostname) survives as a key under perf/memos; nothing written")
+        self.assertNotIn("TESTHOST", reason)
 
     def test_the_walk_holds_the_http_block_to_the_registers_image_and_the_stack_sample_to_its_grammars(self):
         # the walk's http check is membership in what the kernel's fold can return (http_key_ok), not a character grammar:
         # a path-shaped key the register never makes is named. The stack sample rides in a served snapshot under its
         # switch (the export drops it, DENY_KEYS): its keys are "<ident> <kind>" and its frames "function (file:line)"
-        kinds = lambda doc, **kw: [line.split(":", 1)[0] for line in pp.paste_problems(doc, **kw)]
+        kinds = _kinds
         self.assertEqual(kinds({"http": {"GET /perf": {"count": 1}, "POST /remote/*/send": {"count": 1}, "GET /dist/*": {"count": 1}, "other": {"count": 1}}}), [])
         self.assertEqual(kinds({"http": {"GET /nope": {"count": 1}}}), ["outside the image of the route register"])
         self.assertEqual(kinds({"http": {"HEAD /perf": {"count": 1}}}), ["outside the image of the route register"], "a route of another method")
@@ -282,6 +364,19 @@ class FoldInvariant(unittest.TestCase):
         self.assertEqual(pp.fold({"a b": "same", "c d": "same"}), {"other": "same"})
         self.assertEqual(pp.fold({"a b": True, "c d": False}), {"other": "other"})
         self.assertEqual(pp.fold(["x y", "ok", 1.5, None, True]), ["other", "ok", 1.5, None, True])
+        # a non-finite number is nulled before the merge, and null is the identity: the counter beside it stays a
+        # number (it used to become the word `other`, a counter losing its type and its measurement), a dict a
+        # dict, a bool a bool; two nulls are null
+        nan = float("nan")
+        self.assertEqual(pp.fold({"a b": nan, "c d": 2.0}), {"other": 2.0})
+        self.assertEqual(pp.fold({"a b": 2.0, "c d": nan}), {"other": 2.0}, "either side")
+        self.assertEqual(pp.fold({"a b": 3, "c d": float("inf"), "e f": 4}), {"other": 7})
+        self.assertEqual(pp.fold({"a b": None, "c d": {"x": 1}}), {"other": {"x": 1}})
+        self.assertEqual(pp.fold({"a b": None, "c d": True}), {"other": True}, "null beside a bool keeps the bool")
+        self.assertEqual(pp.fold({"a b": None, "c d": None}), {"other": None})
+        self.assertEqual(pp.fold({"a b": None, "c d": "ok"}), {"other": "ok"})
+        self.assertEqual(pp._merge(None, 5), 5)
+        self.assertEqual(pp._merge(False, None), False)
         self.assertEqual(pp.fold({"k" * 33: 1, "k" * 32: 2}), {"other": 1, "k" * 32: 2}, "the 32-character cap")
         self.assertEqual(pp.fold({"a:b": 1}), {"a:b": 1}, "the browser grammar keeps the colon")
         self.assertEqual(pp.fold({"sid": SID, "n": 1}), {"n": 1})
@@ -325,6 +420,16 @@ class FoldInvariant(unittest.TestCase):
         self.assertIn(("judge", "child", "failures", "first"), pp.DENY_PATHS)
         for key in ("bySid", "byPath", "readByPath", "stacks", "pid", "sid", "name", "cutSessions", "scope", "label", "path", "cwd", "host", "hostname", "user"):
             self.assertTrue(pp.denied(key, "text"), key)
+        # the restart document's free-text fields: a session-events row's `text` (problem_row's prose), a cut row's
+        # `drainError` and `reasonError` (exception messages). A message that is one token of at most 32 characters
+        # passes the grammar, so the keys are denied whatever the value; none is ever a counter
+        for key in ("text", "drainError", "reasonError"):
+            self.assertIn(key, pp.DENY_KEYS, key)
+            self.assertTrue(pp.denied(key, "boom"), key)
+            self.assertTrue(pp.denied(key, 1), key)
+        self.assertEqual(pp.fold({"events": [{"kind": "drain.unjoined", "text": "TESTHOST", "n": 1}],
+                                  "restarts": [{"drainError": "boom", "reasonError": "TESTHOST", "stopped": 5}]}),
+                         {"events": [{"kind": "drain.unjoined", "n": 1}], "restarts": [{"stopped": 5}]})
         for key in ("first", "t"):
             self.assertFalse(pp.denied(key, "text"), key)
         self.assertNotIn("first", pp.DENY_KEYS | pp.IDENTITY_KEYS, "the chat rows' `first` timing is not an exception message")
@@ -349,6 +454,18 @@ class Usage(unittest.TestCase):
         self.assertEqual(u["kernelUptime"], "1d-7d")
         self.assertEqual(pe.usage_block({}), {"sessions": {}, "actions": {}, "views": {}})
         self.assertEqual(pp.paste_problems(pp.fold(pe.usage_block(leak_snapshot()))), [])
+
+    def test_a_non_finite_uptime_fits_no_bucket_and_raises_nothing(self):
+        # json.load accepts the NaN and Infinity literals, so a --from file can carry either; the bucket search used
+        # to run off the end of UPTIME_BUCKETS on NaN (every comparison false) and raise StopIteration, and the verb
+        # printed a traceback carrying the checkout's path instead of writing (the review, 2026-09-18)
+        for up in (float("nan"), float("inf"), float("-inf")):
+            u = pe.usage_block({"uptime_s": up, "http": {"POST /send": {"count": 1}}})
+            self.assertNotIn("kernelUptime", u, repr(up))
+            self.assertEqual(u["actions"], {"send": 1}, "the rest of the block is unaffected")
+        self.assertEqual(pe.usage_block({"uptime_s": 0})["kernelUptime"], "lt1h")
+        self.assertEqual(pe.usage_block({"uptime_s": 8 * 86400.0})["kernelUptime"], "gt7d")
+        self.assertNotIn("kernelUptime", pe.usage_block({"uptime_s": "100"}), "a string is not an uptime")
 
 
 class Cli(unittest.TestCase):
@@ -403,6 +520,22 @@ class Cli(unittest.TestCase):
         self.assertEqual(doc["usage"]["actions"], {"send": 7, "new": 2})
         self.assertEqual(doc["usage"]["sessions"]["parsed"], 2)
         self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), "--out means no default file")
+
+    def test_a_snapshot_with_a_nan_uptime_exports_under_usage_with_no_traceback(self):
+        snap = leak_snapshot()
+        snap["uptime_s"] = float("nan")
+        with open(self.src, "w") as fh:
+            json.dump(snap, fh)                       # json writes the NaN literal, which json.load reads back
+        out = os.path.join(self.xdg, "nan.json")
+        r = _run(["--public", "--from", self.src, "--usage", "--out", out], state=self.state)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stderr, "", "no traceback, no warning")
+        self.assertNotIn("Traceback", r.stdout + r.stderr)
+        with open(out, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        self.assertNotIn("kernelUptime", doc["usage"])
+        self.assertEqual(doc["usage"]["actions"], {"send": 7, "new": 2})
+        self.assertIsNone(doc["perf"]["uptime_s"], "the fold nulls the non-finite number")
 
     def test_a_missing_or_unreadable_snapshot_is_said(self):
         r = _run(["--public", "--from", os.path.join(self.xdg, "none.json")], state=self.state)
@@ -478,6 +611,34 @@ class Cli(unittest.TestCase):
         os.chmod(path, 0o644)
         self.assertEqual(pe.write_file(path, "second\n"), 7)
         self.assertEqual((open(path).read(), stat.S_IMODE(os.stat(path).st_mode)), ("second\n", 0o600))
+
+    def test_a_short_write_is_completed_and_a_write_that_makes_no_progress_is_an_error(self):
+        # os.write may write fewer bytes than asked (a full disk, a size limit, an interruption); the writer used to
+        # take one call's word for it and report the whole size over a truncated file (the review, 2026-09-18)
+        path = os.path.join(self.xdg, "short.json")
+        real = os.write
+        calls = []
+
+        def three_at_a_time(fd, data):
+            calls.append(len(data))
+            return real(fd, bytes(data[:3]))
+        with mock.patch.object(pe.os, "write", side_effect=three_at_a_time):
+            n = pe.write_file(pe.Path(path), "twelve bytes")
+        self.assertEqual(n, 12)
+        self.assertEqual(open(path).read(), "twelve bytes")
+        self.assertEqual(calls, [12, 9, 6, 3], "each call is offered what is left")
+        with mock.patch.object(pe.os, "write", return_value=0):
+            with self.assertRaises(OSError) as cm:
+                pe.write_file(pe.Path(path), "never lands")
+        self.assertIn("short write", str(cm.exception))
+        self.assertEqual(open(path).read(), "", "the file was truncated for the write and holds no stale text")
+        # the verb: the same failure is one cannot-write line, exit 1, no size reported
+        with mock.patch.object(pe.os, "write", return_value=0), mock.patch("sys.stdout", new_callable=lambda: __import__("io").StringIO()) as out, \
+                mock.patch("sys.stderr", new_callable=lambda: __import__("io").StringIO()) as err:
+            rc = pe.main(["--public", "--from", self.src, "--out", path])
+        self.assertEqual(rc, 1)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("cannot write %s (OSError)" % path, err.getvalue())
         # a symlink where the file would go is not followed
         link = os.path.join(self.xdg, "link.json")
         os.symlink(os.path.join(self.xdg, "target.json"), link)
@@ -512,6 +673,16 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stderr)
         self.assertIn("username", r.stderr)
         self.assertNotIn("tester-app", r.stderr)
+        # the child's hostname is the pinned one (CHILD), not this machine's: a key spelled like it is refused as
+        # a hostname, and the snapshot's own TESTHOST strings (an http key, an identity value) are gone by then
+        snap = leak_snapshot()
+        snap["pusher"]["connectPush"]["byApp"]["TESTHOST"] = {"count": 1}
+        with open(self.src, "w") as fh:
+            json.dump(snap, fh)
+        r = _run(["--public", "--from", self.src], state=self.state)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("(hostname) survives as a key under perf/pusher/connectPush/byApp", r.stderr)
+        self.assertNotIn("TESTHOST", r.stderr)
 
     def test_the_probe_list_is_the_machines_strings_and_the_registrys_ids(self):
         os.makedirs(os.path.join(self.state, "sdk"))
@@ -612,7 +783,7 @@ class ServedKernel(unittest.TestCase):
         with open(path, encoding="utf-8") as fh:
             doc = json.load(fh)
         problems = pp.paste_problems(doc, planted=self.planted, skip=("schema",), under=("perf",))
-        self.assertEqual(problems, [], "%d leak(s) in the export:\n  %s" % (len(problems), "\n  ".join(problems)))
+        self.assertEqual(problems, [], _lines(problems))
         perf = doc["perf"]
         self.assertNotIn("stacks", perf)
         self.assertNotIn("pid", perf["process"])
@@ -626,7 +797,33 @@ class ServedKernel(unittest.TestCase):
         self.assertIn("other", perf["pusher"]["connectPush"]["byApp"])
         self.assertGreaterEqual(doc["usage"]["actions"]["send"], 1)
         self.assertGreaterEqual(doc["usage"]["sessions"]["parsed"], 1)
-        self.assertNotIn("kernel_commit", doc, "GET /perf carries no commit today")
+        # the envelope's commit is what the served kernel's own /version answers (git's short sha for the tree running
+        # the suite, -dirty stripped), or absent when git did not answer; the next case pins the read with a known value
+        sha = pe._commit_text(km._kernel_sha() or "")
+        self.assertEqual(doc.get("kernel_commit"), sha[:12].lower() if sha else None)
+
+    def test_the_kernels_commit_comes_from_get_version(self):
+        # GET /perf has no commit key; the kernel's /version (auth-exempt) answers kernel_sha, git's short sha with
+        # -dirty appended for a checkout with uncommitted edits. The verb reads it after /perf and the envelope carries
+        # the abbreviation, the suffix stripped; without the read an export from a running kernel never named its
+        # kernel (the review, 2026-09-18). _SHA is the kernel's resolved answer, pinned so the case does not depend on
+        # what git says about the tree running the suite
+        with mock.patch.object(km, "_SHA", "0123456789abcdef-dirty"):
+            r = self._export()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(r.stdout.split(" (")[0], encoding="utf-8") as fh:
+            doc = json.load(fh)
+        self.assertEqual(doc["kernel_commit"], "0123456789ab")
+        self.assertNotIn("kernel_sha", doc["perf"])
+        self.assertNotIn("0123456789abcdef", json.dumps(doc), "the whole sha is nowhere; the abbreviation alone")
+        self.assertNotIn("-dirty", json.dumps(doc))
+        self.assertIsNone(_check(doc))
+        with mock.patch.object(km, "_SHA", "abc1234"):
+            r = self._export()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(r.stdout.split(" (")[0], encoding="utf-8") as fh:
+            doc = json.load(fh)
+        self.assertEqual(doc["kernel_commit"], "abc1234", "a short sha is carried whole")
 
     def test_a_refused_token_is_named_and_nothing_written(self):
         r = self._export(token="not-the-token")
@@ -634,6 +831,95 @@ class ServedKernel(unittest.TestCase):
         self.assertIn("refused the serve token (HTTP 403)", r.stderr)
         self.assertNotIn("not reachable", r.stderr)
         self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")))
+
+
+class PlainServer(unittest.TestCase):
+    """The verb against a server that is not a kernel: the answer-shape refusals (a body that is not JSON, a JSON
+    body that is not a GET /perf snapshot, an HTTP error), each one line with its exact wording, nothing of the
+    served body on stderr, nothing written; and GET /version's failure modes, each leaving the export without a
+    commit rather than failing it."""
+    MARKER = "SERVED-BODY-MARKER-4242"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.answers = {}    # route -> (status, body)
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                status, body = cls.answers.get(self.path.split("?", 1)[0], (404, "no such route"))
+                data = body.encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json" if body.startswith(("{", "[")) else "text/plain")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *a):
+                pass
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def setUp(self):
+        self.xdg, self.state = _state_root()
+        self.addCleanup(shutil.rmtree, self.xdg, True)
+        self.answers.clear()
+
+    def _export(self, *args):
+        return _run(["--public"] + list(args), state=self.state, env_extra={"ROMP_KERNEL_PORT": str(self.port), "ROMP_SERVE_TOKEN": "t"})
+
+    def _refused(self, perf_answer, wording):
+        self.answers["/perf"] = perf_answer
+        r = self._export()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(r.stdout, "")
+        self.assertEqual(r.stderr, "romp perf export: %s\n" % (wording % self.port), r.stderr)
+        self.assertNotIn(self.MARKER, r.stderr, "the served body is not echoed")
+        self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")))
+
+    def test_a_kernel_that_does_not_answer_json_is_refused_in_one_line(self):
+        self._refused((200, "<html>%s</html>" % self.MARKER), "the kernel on :%d did not answer JSON on GET /perf")
+
+    def test_a_json_answer_that_is_not_a_snapshot_is_refused_naming_the_missing_blocks(self):
+        self._refused((200, json.dumps({"name": self.MARKER, "uptime_s": 1, "process": {}})),
+                      "the kernel's answer on :%d is not a GET /perf snapshot (no pusher, http)")
+        self._refused((200, json.dumps([self.MARKER])), "the kernel's answer on :%d is not a JSON object (a `romp perf --json` snapshot)")
+
+    def test_an_http_error_that_is_not_a_token_refusal_is_said_with_its_code(self):
+        self._refused((500, self.MARKER), "the kernel on :%d answered HTTP 500")
+        self._refused((404, self.MARKER), "the kernel on :%d answered HTTP 404")
+        self._refused((401, self.MARKER), "the kernel on :%d refused the serve token (HTTP 401); is ROMP_KERNEL_PORT pointing at another kernel?")
+
+    def _exported(self, version_answer):
+        snap = leak_snapshot()
+        del snap["kernel_sha"]
+        self.answers["/perf"] = (200, json.dumps(snap))
+        self.answers.pop("/version", None)
+        if version_answer is not None:
+            self.answers["/version"] = version_answer
+        r = self._export()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stderr, "")
+        with open(r.stdout.split(" (")[0], encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def test_get_version_supplies_the_commit_and_its_failures_leave_the_export_without_one(self):
+        self.assertEqual(self._exported((200, json.dumps({"kernel_sha": "0123456789abcdef-dirty", "pid": 4242})))["kernel_commit"],
+                         "0123456789ab", "the suffix is stripped, the abbreviation is twelve characters")
+        self.assertEqual(self._exported((200, json.dumps({"kernel_sha": "ABC1234"})))["kernel_commit"], "abc1234")
+        for answer, why in ((None, "no route"), ((500, self.MARKER), "an error"), ((200, "<html>"), "not JSON"),
+                            ((200, json.dumps(["x"])), "not an object"), ((200, json.dumps({"kernel_sha": "not a sha"})), "no hex sha"),
+                            ((200, json.dumps({"kernel_sha": "-dirty"})), "the suffix alone"), ((200, json.dumps({"kernel_sha": 1234567})), "a number")):
+            doc = self._exported(answer)
+            self.assertNotIn("kernel_commit", doc, why)
+            self.assertNotIn(self.MARKER, json.dumps(doc), why)
+        self.assertIsNone(pe._commit_text("0123456789abcdef-dirty-dirty"), "one suffix, not two")
+        self.assertEqual(pe._commit_text("0123456789abcdef-dirty"), "0123456789abcdef")
 
 
 class RouteRegisterCopy(unittest.TestCase):
