@@ -2617,6 +2617,30 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `ms_max`, `ms_last`, and the same per app under `byApp`; the pusher's
   cycles never see this push, so before it the restart's logo phase had no
   number),
+  `clients` (what each client's sender thread wrote to its socket,
+  2026-09-18): `byApp`, per app the client declared on its socket URL,
+  `frames` and `bytes` (the text frames written and their wire bytes, header
+  and payload; the liveness pings are not counted), and `byKind`, per
+  browser kind, the same two plus `sendMs`, `sends` and `sendMax` (the
+  writes' wall ms in total, their count and the largest, so the mean is
+  `sendMs / sends`). A write is measured on the client's sender thread from
+  the frame's encode to `sendall`'s return; a write the socket refused is
+  not counted, since that client is dropped. The kind is one of a fixed
+  list (`WS_UA_KINDS` in the kernel: `safari-ios`, `safari-mac`, `chrome`,
+  `firefox`, `other`, `none`), classed at the handshake from the dial's
+  `User-Agent` header; the header itself is never kept or served. An
+  iPhone, iPad or iPod token is `safari-ios`, the browser-side telemetry's
+  own rule (an iPad that reports a desktop Macintosh header reads
+  `safari-mac` here, since the kernel has no touch points to tell it
+  apart); then `Firefox/`, then `Chrome/` (the Chromium browsers, Edge
+  among them), then a Macintosh header with `Safari/`. `none` is a dial
+  with no header (a relay's splice, the VS Code extension's pipe), `other` a
+  header no rule names (curl, a websocket library). Every kind has a row
+  from the start, at zero. The app is the client's own text, so a name is a
+  key only when it fits the identifier grammar (letters, digits, underscore,
+  dot, dash, at most 32 characters) and while the table holds fewer than 16
+  distinct names; everything else counts under `other`, and a client that
+  declared no app under `none`.
   `cycle_ms_sum`, `cycle_ms_max` (since start), `cycle_ms_last`,
   `cycle_cpu_ms_sum` (the pusher thread's own CPU time), `cycle_ms_p50`,
   `cycle_ms_p90`, `cycle_ms_ring_max`, `ring_n` from the last 256 cycles,
