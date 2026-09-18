@@ -913,7 +913,8 @@ class NudgeWalkParseGate(unittest.TestCase):
     def test_the_wakeOnly_gloss_names_the_debt_reminders_that_ride_the_nudge_toggle(self):
         """Review round 1 of jobs stage 1 (correctness-1): the counter also counts looks with the nudge toggle ON and Task tracking
         OFF, and those run the debt-reminder leg and can send, so a gloss reading "the dead-man walk alone" named the wrong
-        population. Both glosses, the reference's and the _PerfStats field docstring's, name the reminders and the toggle."""
+        population. All three statements of it, the reference's, the _PerfStats field docstring's and the comment at the
+        counter's own increment in the gated look, name the reminders and the toggle (the third since round 2)."""
         doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
         entry = doc[doc.index("`wakeOnly` (looks"):]
         entry = entry[:entry.index("`wakeOnlyRecorded`")]
@@ -926,6 +927,18 @@ class NudgeWalkParseGate(unittest.TestCase):
         self.assertIn("debt reminders", field, "the field docstring names the reminders")
         self.assertIn("Task tracking", field, "and the second switch that makes a look wake-only")
         self.assertNotIn("dead-man walk alone", field)
+        lines = inspect.getsource(km._nudge_look_gated).splitlines()
+        at = [i for i, ln in enumerate(lines) if '"wakeOnly"] += 1' in ln]
+        self.assertEqual(len(at), 1, "one increment of the counter in the gated look")
+        site = [lines[at[0]]]
+        for ln in lines[at[0] + 1:]:                                # the comment's continuation lines, up to the next statement
+            if not ln.strip().startswith("#"):
+                break
+            site.append(ln)
+        site = "\n".join(site)
+        self.assertIn("debt", site, "the increment site's comment names the reminders too")
+        self.assertIn("nudge toggle is on", site, "and the toggle they ride")
+        self.assertNotIn("dead-man walk alone", site, "the third statement of the population matches the other two")
 
     def test_the_persisted_row_length_the_prose_states_is_the_one_the_kernel_records(self):
         """Review round 1 of jobs stage 1 (fresh-2): the mode tag made the row one element longer and the two prose statements of

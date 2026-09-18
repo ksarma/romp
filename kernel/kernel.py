@@ -18053,8 +18053,9 @@ def _nudge_look_gated(fn):
         _NUDGE_WALK_STATS["looks"] += 1
         mode = _nudge_look_mode(wake_only, reminders)
         if wake_only:
-            _NUDGE_WALK_STATS["wakeOnly"] += 1        # the dead-man walk alone (nudges off, or tracking off): counted, and gated like
-        #                                               every look under its own mode tag (jobs stage 1)
+            _NUDGE_WALK_STATS["wakeOnly"] += 1        # wake-only (nudges off, or tracking off): the awaiting dead-man, plus the debt
+        #                                               reminders while the nudge toggle is on; counted, and gated like every look
+        #                                               under its own mode tag (jobs stage 1)
         skip, files_st, verdict = _nudge_look_check(s, now, mode)
         if skip:
             _NUDGE_WALK_STATS["skippedParses"] += 1
