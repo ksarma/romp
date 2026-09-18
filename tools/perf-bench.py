@@ -163,7 +163,8 @@ error, never a silent skip):
     glibc consult the name service — AF_UNIX connects to nscd and systemd-userdb, local, not network.
   * The state shadow: every kernel _atomic_write (the ONE write door for the small JSON state files
     among them), every Path.write_text the kernel import performs against the state directory (the
-    repo-root marker) and the order audit log's append are redirected to <private dir>/shadow/<same
+    repo-root marker), the order audit log's append and the event model's fold checkpoints (its
+    directory provider is pointed at the shadow) are redirected to <private dir>/shadow/<same
     relative path>, and the kernel's ONE strict reader of the small JSON state files
     (_read_state_json) reads a shadowed file from the shadow, so a read-modify-write such as the
     session order's append of new sids lands once, as it does live, instead of re-firing on every
@@ -560,6 +561,25 @@ def install_guards(km, sbmod, shadow, rec, no_git=False):
     names[-1] = "km._read_state_json (shadow overlay)"
     stub("_order_audit_path", lambda: shadow.target(Path(km.jd.STATE) / "order-audit.jsonl"))
     names[-1] = "km._order_audit_path (shadowed)"
+    # The fold checkpoints (kernel/event_model.py, 2026-09-11): one JSON document per folded JSONL file, written at run
+    # time with Path.write_text and os.replace into the directory a provider names at call time (kernel/judge.py
+    # installs `lambda: STATE / "checkpoints"` at import). Neither door above takes that write: the write_text
+    # diversion in load_kernel covers the import only, and the document is not an _atomic_write. So a run wrote one
+    # document per transcript into the copy (91 files after one bounded run against a 39-session copy, 2026-09-18;
+    # the census reported them as new) and warmed the next run's cold rows, since a fresh process folds only the tail
+    # past a document it finds. The provider is replaced with one that names the shadow's checkpoints directory,
+    # computed once (the bench never rebinds the state root) and recorded as a diverted path when the guard installs,
+    # so the report names the directory whether or not a document lands in the run. An event model without the
+    # setter but with the directory provider is a renamed door and an error, as the notification stubs are; one with
+    # neither predates the checkpoints and has nothing to divert.
+    em = getattr(km, "em", None)
+    if callable(getattr(em, "set_checkpoint_dir", None)):
+        ckpt_dir = shadow.target(Path(km.jd.STATE) / "checkpoints")
+        em.set_checkpoint_dir(lambda: ckpt_dir)
+        names.append("em.set_checkpoint_dir (shadowed)")
+    elif hasattr(em, "_CKPT_DIR_FN"):
+        raise BenchError("this kernel's event model has a fold-checkpoint directory but no set_checkpoint_dir; the "
+                         "harness's guard list needs adjusting for this revision")
     for fn in ("getpwnam", "getpwuid"):            # os.path.expanduser's name-service lookups, counted
         real = getattr(pwd, fn)
 
