@@ -387,6 +387,28 @@ class ThreadProjection(CommentBase):
             km._views_dirty[0] = 0.0
             km._built_thread.clear()
 
+    def test_a_thread_signature_counts_under_thread_and_its_reads_fold_like_the_push_loops(self):
+        """memos.chatSig (stage 1 of the chat-signature design, 2026-09-18 review): the thread's signature is
+        _chat_build_sig too, so its reads fold into stats, namesReads, switchReads and regReads like a tab's; it is
+        counted under `thread`, one per frame per thread (the served frame takes it too, to compare the key), and never
+        under pre or post, the push loop's own, so the per-signature figure stats / (pre + post + thread) has every
+        signature the reads came from in its denominator."""
+        self._seed_thread()
+        km._built_thread.clear()
+        km._views_dirty[0] = 0.0
+        try:
+            before = km._chat_sig_stats_report()
+            km._comments_frame(PARENT)                  # the first frame: built
+            km._comments_frame(PARENT)                  # the second: served on the same key, the signature still taken
+            after = km._chat_sig_stats_report()
+            d = {k: after[k] - before[k] for k in after}
+            self.assertEqual(d["thread"], 2, "one thread signature per frame, the served frame's included")
+            self.assertEqual((d["pre"], d["post"], d["nosig"]), (0, 0, 0), "a thread's signature is not a tab's")
+            self.assertGreaterEqual(d["stats"], 2 * 2, "each signature stats the thread's transcript and states file at least")
+        finally:
+            km._views_dirty[0] = 0.0
+            km._built_thread.clear()
+
     def test_a_build_that_raises_stores_nothing_and_the_next_frame_rebuilds(self):
         # a transient read fault mid-build must not be served as the thread's (empty) events: nothing is stored
         # for it, the next frame builds again, and that good build is what gets served (review 2026-09-08)
@@ -481,6 +503,7 @@ class ThreadProjection(CommentBase):
                 km._comments_frame(PARENT)
             seen.append(err.getvalue())
             return seen[-1].count(head)
+        t0 = km._chat_sig_stats_report()["thread"]
         try:
             self.assertEqual(frame(), 1, "the first frame says it")
             self.assertIn(head + ": Traceback (most recent call last)", seen[-1], "...with the traceback")
@@ -488,6 +511,8 @@ class ThreadProjection(CommentBase):
             self.assertEqual(frame(), 0, "the second frame, same fault: not again")
             self.assertEqual(frame(), 0)
             self.assertEqual(calls.count(THREAD), 3, "a build is attempted every frame while the key cannot be taken")
+            self.assertEqual(km._chat_sig_stats_report()["thread"] - t0, 3,
+                             "memos.chatSig.thread counts a raising thread signature too (its reads folded)")
             self.assertNotIn(THREAD, km._built_thread, "nothing is stored")
             self.assertEqual(len(km._SYNC_NOTICES), 1, "one episode, one bell row")
             self.assertIn("thread-x", km._SYNC_NOTICES[-1]["text"], "the row names the thread")

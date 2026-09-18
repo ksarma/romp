@@ -3803,7 +3803,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   pre-build signatures the push loop took (one per tab past the cold gate, a
   raising one included) and the post-build ones (over a window `pre` equals
   `builds.chat` `cached` plus `built` less the targeted push's builds, which
-  take no signature, and `post` equals `built` less `nosig`); `nosig`,
+  take no signature, and `post` equals `built` less `nosig`); `thread`, the
+  comment-thread signatures (one per non-promoted thread of every session
+  with a comments store, per push and per comments frame, a raising one
+  included: the third taker of the signature, so a per-signature figure for
+  the read counts below divides by `pre` plus `post` plus `thread`); `nosig`,
   signatures that raised or found no transcript path (the tab built, never
   cached); `waited`, tabs served after waiting for another thread's build of
   the same tab; `compares`, cache checks that met a cached entry and a
