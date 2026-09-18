@@ -1,7 +1,7 @@
 ---
 title: GET /perf names no file path and quotes no judge text
 status: candidate
-where: kernel/event_model.py (_read_kind, read_bytes_by_kind, checkpoint_stats), kernel/kernel.py (_PerfStats.judge_child_done, _JudgeChild.pass_); tests/test_fold_checkpoints.py test_the_served_read_table_names_holder_kinds_never_paths, tests/test_perf_stats.py test_judge_child_is_served_as_a_size_and_a_status_never_the_line
+where: kernel/event_model.py (_read_kind, read_bytes_by_kind, checkpoint_stats), kernel/kernel.py (_PerfStats.judge_child_done, _JudgeChild.pass_); docs/reference.md (the checkpoints readByKind and judge.child passages); tests/test_fold_checkpoints.py test_the_served_read_table_names_holder_kinds_never_paths, tests/test_perf_stats.py test_judge_child_is_served_as_a_size_and_a_status_never_the_line, tests/test_asm_checkpoint_served.py, tests/test_chat_proto2_served.py, tests/test_fold_checkpoints_served.py (readByKind pins), tests/test_judges_process.py (judge.child pins, shared with perf-served-keys)
 added: 2026-09-18
 pr: 761
 tier: fix

@@ -1730,18 +1730,27 @@ def _thread_stacks(limit=40):
     return out
 
 
-_ROUTE_TWO_SEGMENTS = ("push", "tunnels", "usage")   # prefixes whose roads differ by their second segment (/push/relay, /tunnels/dial,
+_ROUTE_TWO_SEGMENTS = ("push", "tunnels", "usage")   # prefixes whose roads differ by their second segment (/push/relay, /tunnels/of,
 #                                                      /usage/fleet): the mark keeps both, so eight push roads never share one row
 
 def _route_seg(path):
-    """A request path's route for the stage mark: its first segment ("/chat/x" -> "chat", "/ws" -> "ws", "/remote/h/ws" -> "remote",
-    "/" -> "root"), or its first two for the prefixes above ("/push/relay" -> "push.relay", "/usage/fleet" -> "usage.fleet";
-    T401 (5a): a request handler's reads, builds and hydrations count under http.<METHOD>.<route>)."""
+    """A request path's route for the stage mark, in the register's words and never the requester's: its first segment when
+    the checked-in route table (_PERF_HTTP_ROUTES over every method, and the collapsed _PERF_HTTP_FAMILIES, both below; a
+    mark is made at request time, long after the module loaded) holds a path equal to it or under it ("/chat/x" -> "chat",
+    "/ws" -> "ws", "/remote/h/ws" -> "remote", "/" -> "root"), its first two for the prefixes above when that two-segment path
+    is itself a route ("/push/relay" -> "push.relay", "/usage/fleet" -> "usage.fleet"), and "other" for every other path
+    ("/<sid>", "/tunnels/nope"). The fold (2026-09-18, the paste-safety review's last road): GET /perf?stacks=1 serves each
+    thread's mark, and a handler's mark carried the first segment of any in-flight URL, a session id, a host name or a
+    scanner's probe included. T401 (5a): a request handler's reads, builds and hydrations count under http.<METHOD>.<route>."""
     parts = str(path or "").split("?", 1)[0].strip("/").split("/")
-    seg = parts[0] if parts else ""
+    seg = parts[0]
+    if not seg:
+        return "root"
+    if seg not in _PERF_ROUTE_SEGMENTS:
+        return "other"
     if seg in _ROUTE_TWO_SEGMENTS and len(parts) > 1 and parts[1]:
-        return seg + "." + parts[1]
-    return seg or "root"
+        return seg + "." + parts[1] if "/%s/%s" % (seg, parts[1]) in _PERF_HTTP_ANY else "other"
+    return seg
 
 
 def _stage_marked(name):
@@ -1814,9 +1823,11 @@ _PERF_IDENT = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")   # a name a /perf key may c
 
 
 # The kernel's own route table, checked in (2026-09-18): the "METHOD /path" keys GET /perf's `http` table may carry, one
-# tuple per do_* method, spelled exactly as the dispatches spell them (tests/test_perf_stats.py derives the same sets from
-# the do_* source and holds this constant equal to them, so a route added to a dispatch without a line here fails that
-# test rather than counting under `other` for the kernel's lifetime). A request whose method and path are not in its
+# tuple per do_* method, spelled exactly as the dispatches spell them. tests/test_perf_stats.py derives two sets from the
+# do_* source and holds the register equal to both: the literal comparisons (`p == "/x"`, `u.path == "/x"`, the `in`
+# tuples) against this constant, method by method, and the `startswith` prefixes against _PERF_HTTP_FAMILIES (below), each
+# prefix also asserted to fold in _perf_http_key; so a route or a prefix added to a dispatch without a line here fails that
+# test rather than counting under `other` for the kernel's lifetime. A request whose method and path are not in its
 # method's tuple, or in the collapsed families _perf_http_key folds (below), counts under `other`: a scanner's path, a
 # session id or a home path typed into a URL, a glossary term, a host name. A CORS preflight (OPTIONS) is a request for
 # any of these paths, so it is allowed the union. The route table itself is the dispatches; this is their register.
@@ -1853,6 +1864,9 @@ _PERF_HTTP_ROUTES["OPTIONS"] = tuple(sorted(                 # a preflight asks 
 _PERF_HTTP_FAMILIES = ("/dist/*", "/media/*", "/glossary/*", "/remote/*")   # the collapsed families, keys in their own right
 _PERF_HTTP_ROUTE_SETS = {m: frozenset(v) for m, v in _PERF_HTTP_ROUTES.items()}
 _PERF_HTTP_ANY = frozenset(_PERF_HTTP_ROUTES["OPTIONS"])
+_PERF_ROUTE_SEGMENTS = frozenset(p.strip("/").split("/", 1)[0]          # the first segments a stage mark may keep (_route_seg,
+                                 for p in _PERF_HTTP_ANY | set(_PERF_HTTP_FAMILIES) if p.strip("/"))   # above): the register's,
+#                                                                       every method, and the families' (dist, media, glossary, remote)
 
 
 def _perf_http_key(method, path):

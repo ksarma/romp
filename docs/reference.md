@@ -2965,8 +2965,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   submits to (the mark rides the submit, as the pass frame does, since a
   thread-local does not cross into a pool worker), `http.<METHOD>.<route>`
   for every request and the socket a GET becomes (the route is the path's
-  first segment, or its first two under `/push`, `/tunnels` and `/usage`,
-  whose roads differ by the second), `warm.parse`, `warm.boot`,
+  first segment when the route table holds a path under it, or its first two
+  under `/push`, `/tunnels` and `/usage`, whose roads differ by the second,
+  when the two-segment path is itself a route; any other path, a session id
+  or a host name typed into a URL, reads `other`, since `stacks` serves the
+  mark), `warm.parse`, `warm.boot`,
   `producer`, `revive`, `rewind.migration`, `rewind.holds`, `move`,
   `remote-ws`, `federation.push`, `federation.pull`, `federation.ask`,
   `ask-poll`, `todo.lost` (the SDK backend's lost-answer seam, whose landed
@@ -3053,6 +3056,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   stages count every push, including the one a connecting page gets, so they
   can add up to more than `push`.
 - `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
+  `chat` also carries `bySession`, one row per living session built since
+  the boot, ordered by `max` (slowest first) and numbered by `rank` in that
+  order, each with `first`, `last` and `max` (build times in ms: the first
+  build after the boot, the latest, the largest), `n` (the rebuild count),
+  `cached` (the builds served from the cache) and `bytes` (the transcript's
+  size at the last build); no session id is served, and a row leaves with its
+  session's certified death.
   `feed` also carries `dirty`, the rebuilds a kernel-side mutation forced past
   the view signature (a card reply, a clear, a follow-up: the mutation is
   invisible to the signature and must not wait out the rebuild interval).

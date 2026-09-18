@@ -12,6 +12,7 @@ increments on the hot paths and no formatting until a read.
 Drives the REAL Handler over HTTP and the REAL _push with stubbed builders (the test_color_route.py
 and test_tab_meta_push.py patterns). Synthetic fixtures only: placeholder UUIDs, invented names."""
 import base64
+import collections
 import concurrent.futures
 import inspect
 import io
@@ -759,7 +760,13 @@ class Collector(unittest.TestCase):
         on 2026-09-07). The count comes from the do_* dispatch source (`p == "/x"`, `u.path == "/x"` and the
         `in ("/x", "/y")` tuples; inspect.getsource unwraps the timing decorator), so this trips when routes
         outgrow the headroom: 1.5x the literal count, room for the collapsed /dist/*, /media/* and /remote/*/…
-        families and an OPTIONS preflight per cross-origin POST route."""
+        families and an OPTIONS preflight per cross-origin POST route. The same source gives the register
+        its two halves and this test holds both: the literal routes, equal to _PERF_HTTP_ROUTES method by
+        method, and the `startswith` prefixes (`p.startswith("/x/")`, `u.path.startswith(...)`, a tuple of
+        them), equal to _PERF_HTTP_FAMILIES and each folding in _perf_http_key, so a prefix-dispatched family
+        added later without a family line and a fold branch fails here instead of counting under `other`
+        (2026-09-18, the review's finding: the test held the literals alone while the register's comment
+        claimed any unregistered route failed it)."""
         lit = re.compile(r'(?:\bp|u\.path) (?:==|in) (?:"(/[^"]*)"|\(((?:"/[^"]*"(?:, )?)+)\))')
         n = 0
         derived = {}
@@ -782,6 +789,28 @@ class Collector(unittest.TestCase):
                              "%s: the register and the dispatches differ by %s" % (meth, sorted(set(km._PERF_HTTP_ROUTES[meth]) ^ derived[meth])))
             self.assertEqual(list(km._PERF_HTTP_ROUTES[meth]), sorted(set(km._PERF_HTTP_ROUTES[meth])), "%s: sorted, no repeats" % meth)
         self.assertEqual(set(km._PERF_HTTP_ROUTES["OPTIONS"]), derived["GET"] | derived["HEAD"] | derived["POST"], "a preflight for any route")
+        # the prefix families: a prefix-dispatched route (the shape /dist/, /media/, /glossary/ and /remote/ use; do_HEAD and
+        # do_POST dispatch /remote/ on u.path) is neither a literal nor a register line, so the checks above would let one
+        # fold to `other` silently. The prefixes come from the same source and equal the families, and each folds in
+        # _perf_http_key ITSELF: a family line without an elif branch there passes the set comparison and still counts
+        # under other
+        pre = re.compile(r'(?:\bp|u\.path)\.startswith\((?:"(/[^"]*)"|\(((?:"/[^"]*"(?:, )?)+),?\))\)')
+        prefixes = {}
+        for meth in ("do_GET", "do_HEAD", "do_OPTIONS", "do_POST"):
+            src = inspect.getsource(getattr(km.Handler, meth))
+            found = set()
+            for m in pre.finditer(src):
+                found.update([m.group(1)] if m.group(1) is not None else re.findall(r'"(/[^"]*)"', m.group(2)))
+            prefixes[meth[3:]] = found
+        families = {fam[:-1] for fam in km._PERF_HTTP_FAMILIES}
+        self.assertTrue(all(fam.endswith("/*") for fam in km._PERF_HTTP_FAMILIES), km._PERF_HTTP_FAMILIES)
+        self.assertEqual(set().union(*prefixes.values()), families,
+                         "the startswith prefixes in the dispatches and the collapsed families differ by %s"
+                         % sorted(set().union(*prefixes.values()) ^ families))
+        for meth, found in sorted(prefixes.items()):
+            for prefix in sorted(found):
+                self.assertEqual(km._perf_http_key(meth, prefix + "x"), "%s %s*" % (meth, prefix),
+                                 "%s %s: a family the register names has to fold in _perf_http_key too" % (meth, prefix))
 
     def test_http_key_is_method_plus_normalized_path(self):
         key = km._perf_http_key
@@ -2024,17 +2053,29 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
     takes from the machine or from a client: the JSONL reader's per-path byte table (a transcript under a home
     directory), the judges' child's done line (an exception message naming that path), the per-session chat timer
     and the cold-parse table (sids), the http table (a glossary term, a scanner's path with a sid in it, an
-    attached host's name, a home path) and a client's declared app name, on its connect push and on a frame its
-    sender wrote. Keys are the leak vectors, so every dict
+    attached host's name, a home path), a client's declared app name, on its connect push and on a frame its
+    sender wrote, and the stack sample's stage mark (a request handler's, made from the in-flight URL through
+    _route_seg, with the sample switched on so the `stacks` block rides in the walk and no served block sits outside
+    it). Keys are the leak vectors, so every dict
     key must fit an identifier grammar (letters, digits, underscore, dot, dash) except inside the blocks named
-    below: `http` (METHOD /path over the checked-in route list, or `other`) and the tables whose keys join fixed
+    below: `http` (a member of the image of _perf_http_key: METHOD /path over the checked-in route list, the
+    families, the remote star form, or `other`; a character grammar stood here first and admitted any path-shaped
+    key), `stacks` (an ident and a kind), and the tables whose keys join fixed
     identifiers with `:` and `<-` (JOINED_KEY_BLOCKS: a stage mark, a reader kind and a calling function in the byte
-    tables; a phase and a reason code in the assembly counters; the same tables again under judge.child). The walk
+    tables; a phase and a reason code in the assembly counters; the same tables again under judge.child). A string
+    value is held to the same rules and to two more: no free text (whitespace) outside the frame strings of the
+    stack sample, which have their own grammar, and no 40-hex token (a checkpoint document's name). The walk
     runs over a fresh collector's snapshot(), the same function the route serves, so the module-global counters other
     test modules filled in this process are walked too; the planted reads are removed after."""
 
     IDENT = re.compile(r"^[A-Za-z0-9_.-]+$")
-    HTTP_KEY = re.compile(r"^(?:GET|HEAD|POST|OPTIONS) /[A-Za-z0-9_./*-]*$|^other$")
+    STACKS_KEY = re.compile(r"^[0-9]+ (?:[A-Za-z0-9_.-]+|\?)$")   # the stack sample's "<ident> <kind>" (_thread_stacks); `?` is
+    #                                                              _thread_kind's own token for a thread gone between the two
+    #                                                              enumerations (seen under xdist), not a name
+    FRAME = re.compile(r"^(?:[A-Za-z0-9_]+|<[a-z]+>) \(<?[A-Za-z0-9_. -]+>?:[0-9]+\)$")   # "function (file:line)": a code object's
+    #                                                                                     name and its file's basename, the
+    #                                                                                     interpreter's <lambda> and <frozen ...>
+    #                                                                                     forms included; never a directory
     NAME = r"(?:[A-Za-z0-9_.?-]+|<[a-z]+>)"           # a fixed name, a stage mark, a reason code, or a code object's name as the
     #                                                   interpreter spells it (<lambda>, <genexpr>): a caller read through a lambda
     JOINED_KEY = re.compile(r"^%s(?::%s)?(?:<-%s)?$" % (NAME, NAME, NAME))
@@ -2051,11 +2092,34 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
     JOINED_KEY_BLOCKS = JOINED | {("judge", "child") + b for b in JOINED if b[0] in ("recordCache", "asmCheckpoint")}
     UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
     HEX32 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}(?![0-9a-fA-F])")
+    HEX40 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])")   # a sha1: a checkpoint document's name
     ABS_PATH = re.compile(r"(?:^|[\s\"'=(:,])/(?:[^/\s]+/)+[^/\s]*")   # a slash-rooted path of two or more segments
+    WHITESPACE = re.compile(r"\s")
+
+    HTTP_KEY_BEFORE_THE_REGISTER = re.compile(r"^(?:GET|HEAD|POST|OPTIONS) /[A-Za-z0-9_./*-]*$|^other$")   # a tree without the
+    #                                                          register (main before this change): the character grammar the image
+    #                                                          replaced, so the fails-before run names the leaking sites, not this class
+
+    @staticmethod
+    def _http_keys():
+        """The image of _perf_http_key over the register: "METHOD /path" for every method's routes (OPTIONS, the union,
+        included), "METHOD /family" for the collapsed families, "METHOD /remote/*<op>" for the same method's routes, and
+        `other`. The fold returns nothing else (its last line spells a method and one of those paths, or `other`), and
+        test_the_http_key_set_is_the_image_of_the_fold reaches every member with one request, so membership here is
+        exact: no path-shaped key the fold never makes passes the walk. None on a tree without the register."""
+        if not hasattr(km, "_PERF_HTTP_ROUTES"):
+            return None
+        keys = {"other"}
+        for method, routes in km._PERF_HTTP_ROUTES.items():
+            keys.update(method + " " + p for p in routes)
+            keys.update(method + " " + fam for fam in km._PERF_HTTP_FAMILIES)
+            keys.update(method + " /remote/*" + p for p in routes)
+        return keys
 
     def setUp(self):
         self.st = km._PerfStats()
         self.em = km.em
+        self.http_keys = self._http_keys()
         self.home = os.path.join(tempfile.mkdtemp(), "home", "tester")          # an absolute home path under a temp dir
         self.addCleanup(shutil.rmtree, os.path.dirname(os.path.dirname(self.home)), True)
         proj = os.path.join(self.home, ".claude", "projects", "-home-tester-code-notes-api")
@@ -2072,7 +2136,10 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         self.planted = [SID, SID[:8], self.home, "TESTHOST", self.term, self.first, self.app, "-home-tester-code-notes-api"]
 
     def _plant(self):
-        self.reads_before = self.em.read_bytes_by_kind()   # the process's other reads (a peer module's, under xdist): deltas below
+        by_kind = getattr(self.em, "read_bytes_by_kind", None)   # the process's other reads (a peer module's, under xdist): deltas
+        self.reads_before = by_kind() if by_kind else collections.defaultdict(lambda: {"bytes": 0})   # below. A tree before the
+        #                                                        fix has no per-kind table: a zeroed one, so the walk runs first
+        #                                                        and the failure names every leaking site, not this attribute
         for path, n in self.reads.items():
             self.em._count_read(path, n)
         self.addCleanup(self._unplant_reads)
@@ -2106,6 +2173,19 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
             for path in self.reads:
                 self.em._READ_BYTES.pop(path, None)
 
+    def _snapshot_under_a_request(self, path):
+        """The snapshot taken while this thread handles a request for `path`: the read runs under the stage-mark decorator
+        the do_* methods carry (tests/test_stage_marks.py pins its text on each of the four), over a stand-in with the one
+        attribute the route lambda reads, so the mark rides in through _route_seg the way an in-flight request's does; the
+        sample's switch is set so `stacks` fills its slot and this thread's row carries the mark."""
+        st = self.st
+        read = km._stage_marked(lambda req: "http.GET." + km._route_seg(req.path))(lambda req: st.snapshot(ring_all=True))
+        with mock.patch.dict(os.environ, {"ROMP_PERF_STACKS": "1"}):
+            return read(type("Request", (), {"path": path})())
+
+    def _my_stacks_key(self):
+        return "%s %s" % (threading.get_ident(), km._thread_kind(threading.current_thread().name))
+
     def _check_text(self, s, where, key):
         at = "%s %r at %s" % ("key" if key else "value", s, "/".join(str(p) for p in where))
         for probe in self.planted:
@@ -2116,8 +2196,16 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
             self.problems.append("a uuid-shaped token: " + at)
         if self.HEX32.search(s):
             self.problems.append("a 32-hex token: " + at)
+        if self.HEX40.search(s):
+            self.problems.append("a 40-hex token: " + at)
         if not (key and where == ("http",)) and self.ABS_PATH.search(s):   # a route key is a path by design; its
             self.problems.append("an absolute path: " + at)                     #  grammar is checked in _check_key
+        if not key:                                                              # a value: no free text (an exception message,
+            if len(where) > 2 and where[0] == "stacks" and where[2] == "frames":   # a URL, a bare host name); a frame string
+                if not self.FRAME.match(s):                                        # has its own grammar
+                    self.problems.append("outside the frame grammar: " + at)
+            elif self.WHITESPACE.search(s):
+                self.problems.append("free text: " + at)
 
     def _check_key(self, k, where):
         at = "key %r at %s" % (k, "/".join(str(p) for p in where))
@@ -2126,8 +2214,14 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
             return
         self._check_text(k, where, key=True)
         if where == ("http",):
-            if not self.HTTP_KEY.match(k):
-                self.problems.append("outside the http key grammar: " + at)
+            if self.http_keys is None:
+                if not self.HTTP_KEY_BEFORE_THE_REGISTER.match(k):
+                    self.problems.append("outside the http key grammar: " + at)
+            elif k not in self.http_keys:
+                self.problems.append("outside the image of _perf_http_key: " + at)
+        elif where == ("stacks",):
+            if not self.STACKS_KEY.match(k):
+                self.problems.append("outside the stack sample's key grammar: " + at)
         elif where in self.JOINED_KEY_BLOCKS:
             if not self.JOINED_KEY.match(k):
                 self.problems.append("outside the joined-identifier grammar: " + at)
@@ -2147,12 +2241,14 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
 
     def test_no_key_or_string_in_the_served_snapshot_carries_a_path_an_id_or_planted_text(self):
         self._plant()
-        snap = self.st.snapshot(ring_all=True)
+        snap = self._snapshot_under_a_request("/" + SID + "?stacks=1")   # a session id as the in-flight URL, the sample on
         self.assertEqual(set(snap), TOP_KEYS, "the walk covers the whole served shape")
-        self.assertIsNone(snap["stacks"], "the stack sample rides only under its switch; it is not part of this walk")
+        me = self._my_stacks_key()
+        self.assertIn(me, snap["stacks"] or {}, "the stack sample rides in the walk under its switch, this thread's row among the rest")
         self.problems = []
         self._walk(snap)
         self.assertEqual(self.problems, [], "%d leak(s) in the served snapshot:\n  %s" % (len(self.problems), "\n  ".join(self.problems)))
+        self.assertEqual(snap["stacks"][me]["stage"], "http.GET.other", "the request's mark carries the fold's word, not the path's")
         # the diagnosis the folds keep: the reads per holder kind, the child's line as a size and a status, the per-session
         # rows by rank, the sessions parsed as a count, the glossary lookups and the remote route as counts
         ck = snap["checkpoints"]
@@ -2168,6 +2264,44 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         self.assertEqual(sorted(snap["pusher"]["connectPush"]["byApp"]), ["chat", "other"])
         self.assertEqual(sorted(snap["pusher"]["clients"]["byApp"]), ["chat", "other"], "the per-client wire table follows the same rule")
         self.assertEqual(snap["pusher"]["clients"]["byKind"]["other"]["frames"], 1)
+
+    def test_the_route_mark_is_the_registers_word_never_the_requesters(self):
+        """_route_seg (2026-09-18): GET /perf?stacks=1 and ROMP_PERF_STACKS serve each thread's stage mark, and a handler's is
+        made from the in-flight URL, so the segment it keeps is one the register (every method's routes and the families)
+        holds a path under, the second segment under /push, /tunnels and /usage only when the two-segment path is itself a
+        route, and `other` for everything else: a session id, a host name, a scanner's probe."""
+        seg = km._route_seg
+        self.assertEqual(seg("/" + SID), "other", "a session id as the path")
+        self.assertEqual(seg("/" + SID + "/sessions"), "other")
+        self.assertEqual(seg("/nope/" + SID), "other", "a scanner's probe")
+        self.assertEqual(seg("/TESTHOST"), "other", "a host name")
+        self.assertEqual(seg("/tunnels/" + SID), "other", "a two-segment prefix whose second segment is no route: the whole mark folds")
+        self.assertEqual(seg("/push/relay?x=1"), "push.relay"); self.assertEqual(seg("/push"), "push", "the prefix alone: a route sits under it")
+        self.assertEqual(seg("/remote/TESTHOST/ws"), "remote", "the family keeps its name and the host stays out")
+        self.assertEqual(seg("/"), "root"); self.assertEqual(seg(""), "root")
+        for method, routes in km._PERF_HTTP_ROUTES.items():   # every registered route keeps its first segment, or its two
+            for p in routes:
+                parts = p.strip("/").split("/")
+                want = ".".join(parts[:2]) if parts[0] in km._ROUTE_TWO_SEGMENTS else (parts[0] or "root")
+                self.assertEqual(seg(p), want, "%s %s" % (method, p))
+        for fam in km._PERF_HTTP_FAMILIES:
+            self.assertEqual(seg(fam[:-1] + "x"), fam[1:-2], fam)
+
+    def test_the_http_key_set_is_the_image_of_the_fold(self):
+        """The set the walk holds the http table to is what _perf_http_key can return, and nothing else (2026-09-18, the
+        review's finding: a character grammar stood here and admitted any path-shaped key). Its size is the register's
+        arithmetic (routes twice, once plain and once behind /remote/*, the families per method, and other: 457 on the
+        register of 2026-09-18), so no key is counted twice, and one request reaches every member, so the check has no
+        false positives; the fold's other direction is its source, whose last line spells one of these or `other`."""
+        keys = self._http_keys()
+        routes = sum(len(r) for r in km._PERF_HTTP_ROUTES.values())
+        self.assertEqual(len(keys), 1 + 2 * routes + len(km._PERF_HTTP_ROUTES) * len(km._PERF_HTTP_FAMILIES), sorted(keys))
+        self.assertGreaterEqual(len(keys), 457, "the register shrank: %d keys" % len(keys))
+        for k in sorted(keys - {"other"}):
+            method, path = k.split(" ", 1)
+            asked = path.replace("/remote/*", "/remote/TESTHOST").replace("/*", "/x")
+            self.assertEqual(km._perf_http_key(method, asked), k, "%s %s reaches %s" % (method, asked, k))
+        self.assertEqual(km._perf_http_key("GET", "/nope/" + SID), "other")
 
 if __name__ == "__main__":
     unittest.main()

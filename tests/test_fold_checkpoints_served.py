@@ -326,6 +326,10 @@ class ExitThenBoot(unittest.TestCase):
             self.assertGreaterEqual(by["states"]["bytes"], sum(sizes.values()), "the states logs: whole, the parse's read (bytes by kind: %s)" % report)
             self.assertLessEqual(by["states"]["bytes"], sum(2 * n + 8 * 64 for n in now_sizes.values()),
                                  "the states logs: the parse's whole read, at most one more whole read each, plus guard reads and captures")
+            # the per-file bound the per-kind table keeps through its max: the kind's sum alone lets one log read whole many
+            # times pass while the rest read once (2026-09-18)
+            self.assertLessEqual(by["states"]["max"], 2 * max(now_sizes.values()) + 8 * 64,
+                                 "one states log: at most the parse's whole read, one more whole read, and guard reads and captures")
             self.assertEqual(by["leaf"]["files"], len(self.leaf_files), "one leaf transcript per session read: %s" % by)
             self.assertGreaterEqual(by["leaf"]["bytes"], sum(os.path.getsize(lp) for lp in self.leaf_files.values()),
                                     "the leaf transcripts: whole, the parse's read (stage 4)")

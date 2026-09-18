@@ -636,9 +636,11 @@ def _who(rec): return sys.modules.get("romp_event_model").author_of(rec)
         self.assertIn('_set_stage("judge." + name)', inspect.getsource(km.jd._run_tier), "the tier threads (the shared runner)")
 
     def test_the_route_names_the_stage_with_two_segments_where_the_roads_differ_by_the_second(self):
+        # a segment the register holds no route under, and a second segment that is no route, read `other` (2026-09-18: the
+        # mark is served by the stack sample, so it carries the register's word and never the requester's)
         self.assertEqual([km._route_seg(p) for p in ("/chat/x/y", "/ws", "/remote/h/ws", "/", "", "/perf?stacks=1", "/state?x=1",
-                                                      "/push/relay", "/push", "/tunnels/dial?x=1", "/usage/fleet", "/usage")],
-                         ["chat", "ws", "remote", "root", "root", "perf", "state", "push.relay", "push", "tunnels.dial", "usage.fleet", "usage"])
+                                                      "/push/relay", "/push", "/tunnels/of?x=1", "/tunnels/dial", "/usage/fleet", "/usage")],
+                         ["chat", "ws", "remote", "root", "root", "perf", "other", "push.relay", "push", "tunnels.of", "other", "usage.fleet", "usage"])
 
     def test_the_rows_noted_flag_is_set_by_compare_and_set_under_the_notes_lock(self):
         """1610 low 4, pinned by source: the race (two threads finding the corrupt row at once) is not observable in a test (60
