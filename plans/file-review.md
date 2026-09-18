@@ -3258,7 +3258,9 @@ between them as the file holds them, and that a formula is what cannot be mapped
 (`tests/test_guide_files_cells_and_code_lines.py` holds the sentences to the map's source), and, in the paragraph on a
 file's own HTML, that a tag opened in a line of prose and not closed in the same block is shown as the characters
 typed rather than read as HTML, a tag closed in the same block or a void tag staying HTML, a chat message not read
-this way (`tools/file-review-plan-inlinetag.test.mjs` holds the sentence to the guide and the module).
+this way (`tools/file-review-plan-inlinetag.test.mjs` holds the sentence to the guide and the module), and that a
+tag first on its line, which markdown reads as an HTML block, is HTML as before, the same placeholder included
+(`tools/guide-own-html-block-tag.test.mjs` holds those clauses to the guide, the installed marked's lexer and the map).
 `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,

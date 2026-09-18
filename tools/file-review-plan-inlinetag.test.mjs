@@ -170,7 +170,11 @@ test('the guide says a selection across several cells can be commented from the 
   assert.ok(guide.includes('A table cell, a selection across several cells of a table and a line of a code block can be commented from the Rendered view like any passage; a comment across cells quotes the pipes between them as the file holds them. When a passage cannot be mapped from the Rendered view (a formula), the panel says so, keeps your comment, and offers the Raw view with the passage selected.'));
   assert.ok(!guide.includes('(a selection across two cells of a table, a formula)'), 'the parenthetical before decision 53 is gone');
   assert.ok(!guide.includes('select within one cell'), 'the guide promises no one-cell refusal');
-  assert.ok(guide.includes('A tag opened in a line of prose and not closed in the same paragraph, heading, list item or table cell (a placeholder typed as `<table>`, say) is shown as the characters typed, not read as HTML, and can be commented on like any passage; a tag closed in the same block, and a tag that never takes an end tag such as `<br>` or `<img>`, is HTML as before. A chat message is not read this way.'));
+  // the rule's sentence as the guide states it since the second round (the placeholder typed mid-sentence), the opening of the
+  // HTML-block passage that follows it, and the closing sentence; the passage's clauses are held one by one by
+  // tools/guide-own-html-block-tag.test.mjs
+  assert.ok(guide.includes('A tag opened in a line of prose and not closed in the same paragraph, heading, list item or table cell (a placeholder typed mid-sentence as `<table>`, say) is shown as the characters typed, not read as HTML, and can be commented on like any passage; a tag closed in the same block, and a tag that never takes an end tag such as `<br>` or `<img>`, is HTML as before. A tag the viewer reads as an HTML block rather than as prose is HTML as before too:'));
+  assert.ok(guide.includes('and a comment on the passage goes through the Raw view. A chat message is not read this way.'));
   for (const name of ['br', 'img']) assert.ok(mod.includes(`"${name.toUpperCase()}"`), `the guide's examples of a tag with no end tag are in the module's void list: ${name}`);
 });
 
@@ -194,4 +198,5 @@ test('the UX section, the Tests bullet and the Docs sentence carry the two decis
   for (const m of named) assert.ok(exists(...m.split('/')), `${m} exists`);
   assert.ok(docs.includes('With decisions 52 and 53 (2026-09-18), that a table cell, a selection across several cells of a table and a line of a code block can be commented from the Rendered view like any passage'));
   assert.ok(docs.includes('(`tools/file-review-plan-inlinetag.test.mjs` holds the sentence to the guide and the module)'));
+  assert.ok(docs.includes('and that a tag first on its line, which markdown reads as an HTML block, is HTML as before, the same placeholder included (`tools/guide-own-html-block-tag.test.mjs` holds those clauses to the guide, the installed marked\'s lexer and the map)'), 'the Docs sentence carries the guide\'s HTML-block limit and names its pin module');
 });
