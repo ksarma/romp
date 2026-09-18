@@ -651,14 +651,32 @@ with no pick of its own follows it, in its status at once and at its next
 launch; changing the machine default reconnects every session following it
 that runs on the other side, at its next quiet moment (the same pending dots
 a per-session pick shows), and those sessions keep following the default (no
-pick is written for them). A third choice, Automatic, is the rule that held
-before: the API key when a helper is configured, else the login; it clears
-the explicit default, the group's sub-line says which rule holds, and the
-sessions following the default are reconnected the same way. A per-session
-pick, before or after the default is set here, is about that session alone
-and moves no default: the new-session picker preselects the machine default
-(the explicit one, else the rule that holds), and a session created with no
-pick of its own follows the machine default, not the last pick. A
+pick is written for them). The relaunches are staggered on the bounded budget
+boot resumes use (three at a time): a follower keeps its CLI, and keeps
+serving, until its slot is granted, so a message sent while it waits is
+answered by the CLI it still has and the relaunch takes the next quiet moment
+after it. A follower that carried its ask across a kernel restart holds it
+for the background work its surviving CLI still runs (counted from the
+registry's record at the re-attach; the first turn's end drops what the CLI
+never confirmed). A follower whose CLI bills a credential in the CLI's own
+environment that romp's per-session settings layer cannot suppress (Claude
+Code's settings carry no apiKeyHelper) is left where it is, said once in the
+kernel log. A follower's move leaves no record in its chat: the pending dots
+are the only session-side signal and they clear at the landing; the kernel
+log's per-session line is the durable record. A third choice, Automatic, is
+the rule that held before: the API key when a helper is configured, else the
+login; it clears the explicit default, the group's sub-line says which rule
+holds, and the sessions following the default are reconnected the same way.
+A per-session pick, before or after the default is set here, is about that
+session alone and moves no default: the new-session picker preselects the
+machine default (the explicit one, else the rule that holds), and a session
+created with no pick of its own follows the machine default, not the last
+pick. A session created while an explicit default stands is seeded with it as
+a pick of its own and is not moved by a later change of the default; a session
+created while none stood follows the default wherever it moves. Since a
+per-session pick's remembered value seeds no new session, a box whose last
+per-session pick was the login and whose settings carry an apiKeyHelper bills
+new sessions on the key from this kernel on, until a default is set here. A
 remote session's flyout names its host, and the pick sets that host's default
 (the op routes to the session's owning kernel). The judges follow the same
 resolution: a judge on a session with no pick of its own bills the machine's

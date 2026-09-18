@@ -9541,6 +9541,13 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
     sids of this class's own; every name is invented."""
 
     SID = "5e771e5d-9a1c-4b0f-8d2e-000000000500"   # the walk's follower; peers take 501, 502, ...
+    # the walk's line discloses the stagger for a relaunch that can arm (round 1 of the reviewer's review, 2026-09-18): the
+    # relaunch waits for a spawn slot with the CLI still serving (_arm_reconnect_if_quiet); the _Now double has no loop
+    # Event, so the arm fires at once here, and the line still says what the live loop does
+    STAGGER = ", staggered: the relaunch waits for a spawn slot and the CLI serves until its turn"
+    UNCONTROLLED = ("(Claude Code's settings carry no apiKeyHelper: a credential in the CLI's own environment), and a relaunch "
+                    "cannot change that; left as it is")   # the wording since round 1 of the reviewer's review (regression-6):
+    #   romp's per-session settings layer sits above the project files, so a project setting's helper is not this shape
 
     class _Now:
         """A loop double: request_reconnect's call_soon_threadsafe runs the callback at once, here."""
@@ -9620,7 +9627,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         lines = self._walk_lines()
         self.assertEqual(len(lines), 1, self.logs)
         self.assertEqual(lines[0], "auth (web): the machine default is now login; this session follows the default but runs on the key; "
-                                   "reconnecting to apply")
+                                   "reconnecting to apply" + self.STAGGER)
         self.assertEqual([str(m) for m in self.logs if "set to" in str(m)], [], "no per-session pick line: nothing was picked")
         self.assertEqual(self.be._live.get(s.sid, {}), {}, "no /auth chip: the session made no pick")
 
@@ -9699,7 +9706,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertEqual(keyed._auth_pending, "")
         lines = self._walk_lines()
         self.assertEqual(lines, ["auth (s2): the machine default is now automatic (the key on this box); this session follows the default "
-                                 "but runs on the login; reconnecting to apply"])
+                                 "but runs on the login; reconnecting to apply" + self.STAGGER])
 
     def test_a_connect_in_progress_launching_the_new_side_is_not_asked_again(self):
         sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
@@ -9757,7 +9764,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         rec = self._record("Work")
         sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True, authLogin=rec["id"])
         s = self._sess()
-        s._auth_pending = "login"; self.be._update_reg(s.sid, authPending=True)
+        s._auth_pending = "login"; s._auth_pending_login = rec["id"]; self.be._update_reg(s.sid, authPending=True)   # the walk's ask, to Work
         s._launching = self.be._launch_shape(s)
         self.assertEqual((s._launching["auth"], s._launching["login"]), ("login", rec["id"]))
         s._launched_login = rec["id"]                                # _stamp_launch_login: the launch carried the stored login's helper
@@ -9869,7 +9876,8 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertEqual(s.auth_live, "", "the arm cleared the report, as a pick's arm does: the reconnect replaces the process it described")
         lines = [str(m) for m in self.logs if "attached to this session's surviving CLI" in str(m)]
         self.assertEqual(lines, ["auth (web): attached to this session's surviving CLI, which runs on the key while the machine default is "
-                                 "login; this session follows the default, so the reconnect it was asked for is asked again; reconnecting to apply"])
+                                 "login; this session follows the default, so the reconnect it was asked for is asked again; reconnecting to apply"
+                                 + self.STAGGER])
 
     def test_a_connect_in_progress_that_turns_out_to_be_a_launch_clears_the_pending_at_its_landing(self):
         sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
@@ -9918,13 +9926,18 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertTrue(any("attached to this session's surviving CLI, which runs on the key" in str(m) for m in self.logs), self.logs)
 
     def test_a_carried_ask_clears_at_a_launch_of_the_default_or_an_attach_to_a_cli_already_on_it(self):
+        # the ask is asserted BEFORE each landing (the reviewer's tests-4, round 1, 2026-09-18): without that the test passed
+        # on the base too, where the constructor cleared authPending and there was no ask for the landing to clear, and
+        # the attach half is the only case covering an attach to a CLI already on the default
         sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
         launched = self._sess(1, landed=False, authPending=True, apiKeyAuth=True)
+        self.assertEqual(launched._auth_pending, "login", "the constructor carried the ask"); self.assertTrue(self._reg(launched).get("authPending"))
         launched._launching = self.be._launch_shape(launched); launched._connecting = True   # a fresh spawn of the login
         launched._connect_landed()
         self.assertEqual(launched._auth_pending, ""); self.assertFalse(self._reg(launched).get("authPending"))
         self.assertFalse(launched._reconnect)
         attached = self._sess(2, landed=False, authPending=True, apiKeyAuth=False)          # the survivor already bills the login
+        self.assertEqual(attached._auth_pending, "login", "the constructor carried the ask"); self.assertTrue(self._reg(attached).get("authPending"))
         attached._launching = self.be._launch_shape(attached); attached._connecting = True; attached._host_is_attach = True
         attached._connect_landed()
         self.assertEqual(attached._launched_auth, "login")
@@ -9945,8 +9958,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
             self.assertEqual(asked, [], "a relaunch cannot change what that CLI bills")
             self.assertEqual(s._auth_pending, ""); self.assertFalse(self._reg(s).get("authPending"))
             self.assertEqual(self._walk_lines(), ["auth (web): the machine default is now login, but this session's CLI bills a key romp does "
-                                                  "not control (Claude Code's settings carry no apiKeyHelper: a project setting or the CLI's "
-                                                  "own environment), and a relaunch cannot change that; left as it is"])
+                                                  "not control " + self.UNCONTROLLED])
 
     def test_the_landing_clears_a_followers_pending_against_the_login_the_connect_composed_not_a_live_read(self):
         # finding 7 (round 1 of the review): the clear compared the launched login against effective_login(), a live
@@ -9955,7 +9967,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         rec = self._record("Work")
         sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True, authLogin=rec["id"])
         s = self._sess()
-        s._auth_pending = "login"; self.be._update_reg(s.sid, authPending=True)
+        s._auth_pending = "login"; s._auth_pending_login = rec["id"]; self.be._update_reg(s.sid, authPending=True)   # the walk's ask, to Work
         s._launching = self.be._launch_shape(s); s._connecting = True
         self.assertEqual((s._launching["auth"], s._launching["login"]), ("login", rec["id"]))
         s._launched_login = rec["id"]                                # the launch carried Work
@@ -10037,12 +10049,19 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertTrue(self.be.set_auth_default("login"))
         self.assertEqual(fired, [1], "the landing ran inside the walk's step")
         self.assertFalse(s._connecting, "the landing closed the window"); self.assertEqual(s._launched_auth, "key", "the attach stamped the CLI's report")
-        self.assertEqual(asked, [1], "the walk found the window closed and asked itself")
+        self.assertEqual(asked, [1], "one ask, made with the stamps truthful")
         self.assertEqual((s._launching or {}).get("auth"), "login", "the ask's arm opened the next window on the default")
         self.assertEqual(s._auth_pending, "login"); self.assertTrue(self._reg(s).get("authPending"))
         self.assertTrue(s._reconnect, "...and the ask armed against the truthful stamp")
-        self.assertEqual(self._walk_lines(), ["auth (web): the machine default is now login; this session follows the default but "
-                                              "runs on the key; reconnecting to apply"])
+        # the ATTRIBUTION moved in round 1 of the reviewer's review (2026-09-18; its fresh-2): every landing of a follower
+        # runs the step, an ask standing or not, so the landing inside the gap made the ask itself, and the walk's re-read
+        # then found the connect the ask's arm opened launching the default and said nothing; the outcome is the same one
+        # ask, and the walk asking itself stays the road when the landing left nothing (a landing that served an ask)
+        self.assertEqual(self._walk_lines(), [])
+        self.assertEqual([str(m) for m in self.logs if "attached to this session's surviving CLI" in str(m)],
+                         ["auth (web): attached to this session's surviving CLI, which runs on the key while the machine default is login; "
+                          "this session follows the default, so the reconnect it was asked for is asked again; reconnecting to apply"
+                          + self.STAGGER])
 
     def test_a_carried_ask_at_the_attach_rides_a_standing_arm_and_survives_the_other_picks_revert(self):
         # finding 3 (round 2 of the review): at the attach landing the step returned early when an arm stood, recording
@@ -10116,8 +10135,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
             self.assertNotIn("auth", s._reconnect_surfaces)
             self.assertEqual([str(m) for m in self.logs if "does not control" in str(m)],
                              ["auth (web): attached to this session's surviving CLI, but this session's CLI bills a key romp does "
-                              "not control (Claude Code's settings carry no apiKeyHelper: a project setting or the CLI's own "
-                              "environment), and a relaunch cannot change that; left as it is; the pending login reconnect is withdrawn"])
+                              "not control " + self.UNCONTROLLED + "; the pending login reconnect is withdrawn"])
             del self.logs[:]
             s.request_reconnect = real_req
             self.assertTrue(self.be.set_auth(s.sid, "login:" + rec["id"]))   # a pick after it: a new request, not "already applying"
@@ -10160,7 +10178,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
             self.assertTrue(self.be.set_auth_default("login"))
             self.assertEqual(s._auth_pending, "login"); self.assertTrue(s._reconnect); self.assertTrue(s._relaunch_bounded)
             self.assertEqual(self._walk_lines(), ["auth (web): the machine default is now login; this session follows the default but "
-                                                  "runs on the key; reconnecting to apply"])
+                                                  "runs on the key; reconnecting to apply" + self.STAGGER])
             self.assertFalse(any("does not control" in str(m) for m in self.logs), self.logs)
 
     def test_settings_that_cannot_be_read_are_cannot_tell_and_the_follower_is_asked(self):
@@ -10194,10 +10212,9 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
             self.assertEqual(logged_in._auth_pending, ""); self.assertFalse(logged_in._reconnect)
             self.assertEqual(self._walk_lines(), [
                 "auth (s1): the machine default is now automatic (the login on this box); this session follows the default but runs on "
-                "the key; reconnecting to apply",
+                "the key; reconnecting to apply" + self.STAGGER,
                 "auth (s2): the machine default is now automatic (the login on this box), but this session's CLI bills a key romp does "
-                "not control (Claude Code's settings carry no apiKeyHelper: a project setting or the CLI's own environment), and a "
-                "relaunch cannot change that; left as it is"])
+                "not control " + self.UNCONTROLLED])
 
     def test_the_walk_and_the_landing_write_the_reg_with_the_hold_released_on_every_branch(self):
         # finding 1 (round 3 of the review, 2026-09-18): round 2 wrote the reg flag INSIDE the attaching branch's hold, so
@@ -10353,7 +10370,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertTrue(s._reconnect); self.assertTrue(s._relaunch_bounded)
         self.assertEqual([str(m) for m in self.logs if "this session's connect landed" in str(m)],
                          ["auth (web): this session's connect landed on the key while the machine default is login; this session "
-                          "follows the default, so the reconnect it was asked for is asked again; reconnecting to apply"])
+                          "follows the default, so the reconnect it was asked for is asked again; reconnecting to apply" + self.STAGGER])
 
     def test_a_launch_retires_the_replaced_clis_report_so_a_restart_before_its_first_turn_restores_none(self):
         # finding 4 (round 3 of the review, 2026-09-18): round 1 kept the reg's apiKeyAuth through the walk's ask (the report
@@ -10379,13 +10396,20 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertEqual(s2.auth_live, "", "no report yet: the new CLI has not spoken"); self.assertEqual(s2._auth_pending, "")
         s2._launching = self.be._launch_shape(s2); s2._connecting = True; s2._host_is_attach = True
         s2._connect_landed()
-        self.assertEqual(s2._launched_auth, "login", "the attach stamped nothing false: the composed side, no report to outrank it")
+        # an attach with no report is CANNOT-TELL (round 1 of the reviewer's review, 2026-09-18; its correctness-1): stamped
+        # from the composed side, a survivor that had not spoken was read as on the default for good. Nothing false is
+        # stamped either way; the CLI's own first init stamps it (below)
+        self.assertIsNone(s2._launched_auth, "the attach stamped nothing: no report to stamp, and the composed side is not the CLI's word")
         asked = []
         s2.request_reconnect = lambda *a, **k: asked.append(1)
         del self.logs[:]
         self.assertTrue(self.be.set_auth_default("login"))
-        self.assertEqual(asked, [], "nothing to apply: the CLI runs the default"); self.assertEqual(s2._auth_pending, "")
+        self.assertEqual(asked, [], "nothing to apply: no report, no live host lease (hosts off here), so its first init decides")
+        self.assertEqual(s2._auth_pending, "")
         self.assertEqual(self._walk_lines(), [])
+        self.be._note_auth_source(s2, "none")                        # the new CLI's first init: the login, as the launch composed
+        self.assertEqual(s2._launched_auth, "login", "the init is the stamp for a survivor that had not spoken")
+        self.assertEqual(asked, [], "...and it runs the default: nothing to apply"); self.assertEqual(s2._auth_pending, "")
 
     def test_a_spawn_with_a_dead_clis_report_standing_stamps_the_launch_not_the_report(self):
         # finding 4's spawn shape: hosts off, or the host died with the kernel, and the reg carries the dead CLI's report;
@@ -10430,6 +10454,258 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertEqual(landed._auth_pending, ""); self.assertFalse(self._reg(landed).get("authPending"))
         self.assertFalse(landed._relaunch_bounded, "the landing that served the ask spent its flag")
 
+    def test_a_booting_follower_whose_surviving_cli_has_not_reported_is_decided_by_its_first_init_not_stranded(self):
+        # the reviewer's correctness-1 (round 1, 2026-09-18): with no report on the reg (the survivor streamed no init before
+        # the restart) the walk skipped the follower as never connected, its attach then stamped the composed side, and
+        # every later default write read it as already on the default: excluded for good, silently. The cannot-tell class
+        # is keyed on a live host lease holding a CLI for the session too, so the ask parks; the attach with no report
+        # stamps nothing; the CLI's own first init is the deciding event
+        sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
+        s = self._sess(landed=False)
+        self.assertEqual(s.auth_live, ""); self.assertIsNone(s._launched_auth)
+        start = sb.proc_start(os.getpid())
+        sb.write_lease(self.be.state_dir, {"sid": s.sid, "pid": os.getpid(), "start": start, "t": time.time(),
+                                            "holder": {"kind": "host", "pid": os.getpid(), "start": start}})
+        self.assertTrue(self.be._host_lease_live(s), "a live host lease holds a CLI for this session")
+        asked = []
+        real = s.request_reconnect
+        s.request_reconnect = lambda *a, **k: (asked.append(1), real(*a, **k))
+        self.assertTrue(self.be.set_auth_default("login"))
+        self.assertEqual(asked, [], "no request: the CLI has not said what it bills")
+        self.assertEqual(s._auth_pending, "login", "the ask parks for the landing instead of the follower being skipped as never connected")
+        self.assertTrue(self._reg(s).get("authPending")); self.assertFalse(s._relaunch_bounded)
+        self.assertEqual(self._walk_lines(), ["auth (web): the machine default is now login; this session follows the default, and the CLI "
+                                              "the connect to come may attach to has not reported which side it bills: its first init decides"])
+        del self.logs[:]
+        s._launching = self.be._launch_shape(s); s._connecting = True; s._host_is_attach = True   # the boot re-attach
+        s._connect_landed()
+        self.assertIsNone(s._launched_auth, "cannot tell: an attach with no report stamps nothing")
+        self.assertEqual(s._auth_pending, "login", "the parked ask stands"); self.assertEqual(asked, [])
+        self.assertTrue(any("attached to this session's surviving CLI; this session follows the default, and the surviving CLI it "
+                            "attached has not reported which side it bills: its first init decides" in str(m) for m in self.logs), self.logs)
+        del self.logs[:]
+        self.be._note_auth_source(s, "apiKeyHelper")                # the CLI's first init: it bills the key
+        self.assertEqual(s._launched_auth, "key", "the report is the stamp")
+        self.assertEqual(asked, [1], "asked at the init, the deciding event"); self.assertTrue(s._reconnect); self.assertTrue(s._relaunch_bounded)
+        self.assertEqual([str(m) for m in self.logs if "reported its billing" in str(m)],
+                         ["auth (web): this session's CLI reported its billing on the key while the machine default is login; this session "
+                          "follows the default, so the reconnect it was asked for is asked again; reconnecting to apply" + self.STAGGER])
+
+    def test_a_parked_ask_is_withdrawn_at_the_first_init_of_a_survivor_already_on_the_default(self):
+        # the other half of the init as the deciding event: the survivor reports the default's side, so the parked ask ends
+        sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
+        s = self._sess(landed=False, authPending=True)               # the ask carried across the restart; no report
+        self.assertEqual(s._auth_pending, "login"); self.assertIsNone(s._launched_auth)
+        s._launching = self.be._launch_shape(s); s._connecting = True; s._host_is_attach = True
+        s._connect_landed()
+        self.assertIsNone(s._launched_auth); self.assertEqual(s._auth_pending, "login", "cannot tell yet: the ask stands")
+        asked = []
+        s.request_reconnect = lambda *a, **k: asked.append(1)
+        self.be._note_auth_source(s, "none")                         # the first init: the login
+        self.assertEqual(s._launched_auth, "login")
+        self.assertEqual(s._auth_pending, "", "the survivor runs the default: the ask is withdrawn"); self.assertFalse(self._reg(s).get("authPending"))
+        self.assertEqual(asked, [])
+        self.assertTrue(any("this session's CLI reported its billing, and it already runs the machine default (login); the pending "
+                            "login reconnect is withdrawn" in str(m) for m in self.logs), self.logs)
+
+    def test_a_follower_with_no_ask_standing_is_asked_at_the_attach_to_a_surviving_cli_on_the_other_side(self):
+        # the reviewer's fresh-2 (round 1, 2026-09-18): the default moved while this session had no live object (a reg-only
+        # follower whose hosted CLI survived), so the walk left it no ask, and the attach landing ran the step only for an
+        # ask standing: never moved. Every landing of a follower runs the step
+        sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
+        s = self._sess(1, landed=False, apiKeyAuth=True)             # built at the boot after the write: no ask on the reg
+        self.assertEqual(s._auth_pending, "")
+        s._launching = self.be._launch_shape(s); s._connecting = True; s._host_is_attach = True
+        s._connect_landed()
+        self.assertEqual(s._launched_auth, "key")
+        self.assertEqual(s._auth_pending, "login", "asked at the landing: the walk never saw this session")
+        self.assertTrue(self._reg(s).get("authPending")); self.assertTrue(s._reconnect); self.assertTrue(s._relaunch_bounded)
+        self.assertTrue(any("attached to this session's surviving CLI, which runs on the key while the machine default is login"
+                            in str(m) for m in self.logs), self.logs)
+
+    def test_a_default_moved_between_two_stored_logins_inside_the_landings_window_is_asked_and_the_landing_keeps_the_newer_ask(self):
+        # the reviewer's regression-2 and correctness-3 (round 1, 2026-09-18): the no-new-ask guard compared side words and
+        # the pending carried no login, so a default moved from stored login Alpha to Beta while Alpha's relaunch was
+        # landing produced no ask, no dots and no line, the landing then cleared the standing ask as served (a side-word
+        # compare too), and the follower kept billing Alpha. The pending carries its login and both compares use the pair
+        a, b = self._record("Alpha"), self._record("Beta")
+        sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True, authLogin=a["id"])
+        s = self._sess()
+        s.auth_live = "key"; s._launched_auth = "key"
+        self.assertTrue(self.be.set_auth_default("login:" + a["id"]))
+        self.assertEqual((s._auth_pending, s._auth_pending_login), ("login", a["id"]), "the ask carries the stored login it targets")
+        self.assertTrue(s._reconnect)
+        # the relaunch it armed composed Alpha and is landing now
+        s._launching = self.be._launch_shape(s); self.assertEqual(s._launching["login"], a["id"])
+        self.be._stamp_launch_login(s, a["id"]); s._connecting = True
+        with s._hold_write():
+            s._reconnect = False; s._reconnect_when_idle = False; s._reconnect_surfaces.clear(); s._reconnect_riding.clear()
+        s._effort_pending = s.effort                                 # the effort block's file write is the window's real seam
+        del self.logs[:]
+        real, fired = sb.append_effort_applied, []
+
+        def hooked(*args, **kw):
+            r = real(*args, **kw)
+            if not fired:
+                fired.append(1)
+                self.assertTrue(self.be.set_auth_default("login:" + b["id"]))   # the default moves to Beta inside the window
+            return r
+        with mock.patch.object(sb, "append_effort_applied", hooked):
+            s._connect_landed()
+        self.assertEqual(fired, [1])
+        self.assertEqual((s._auth_pending, s._auth_pending_login), ("login", b["id"]), "the Beta ask stands: the landing served Alpha's, not it")
+        self.assertTrue(self._reg(s).get("authPending"))
+        self.assertTrue(s._reconnect, "a reconnect is coming for Beta"); self.assertTrue(s._relaunch_bounded, "...through a slot")
+        self.assertEqual(len([l for l in self._walk_lines() if "now Beta" in l]), 1, self.logs)
+
+    def test_a_request_the_running_process_already_serves_clears_the_pending_it_was_written_with(self):
+        # the reviewer's tests-1 and kernel-1 (round 1, 2026-09-18): the walk's ask branch writes the pending from a window
+        # read a few microseconds before; an init report landing in that gap (the realistic trigger) is promoted into the
+        # stamp by the walk's own restamp, the served check then withdraws the request as already running, and the pending
+        # and reg flag stood with no arm behind them: dots for good, a restart re-read the flag as an ask, and a later pick
+        # of that side was refused as already applying. The served withdrawal clears the pending it decided
+        sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
+        s = self._sess()
+        s.auth_live = ""; s._launched_auth = "key"                   # a launch retired the report; the stamp says key
+        real, fired = self.be._launch_shape, []
+
+        def shape_then_init(sess, **kw):
+            r = real(sess, **kw)
+            if sess is s and not fired:
+                fired.append(1)
+                s.auth_live = "login"                                # the CLI's init lands in the gap: it runs the login after all
+            return r
+        self.be._launch_shape = shape_then_init
+        self.assertTrue(self.be.set_auth_default("login"))
+        self.assertEqual(fired, [1])
+        self.assertTrue(self._served_lines(), "the request was withdrawn as already served")
+        self.assertEqual(s._auth_pending, "", "...and the pending it was written with is cleared with it")
+        self.assertFalse(self._reg(s).get("authPending")); self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle)
+        self.assertFalse(s._relaunch_bounded)
+        self.assertEqual(s._launched_auth, "login")
+        fresh = sb.SdkSession(self.be, sb.read_reg(self.be.state_dir, s.sid))
+        self.assertEqual(fresh._auth_pending, "", "a restart carries no ask")
+        # the same hole through a per-session pick (pre-existing at the base): a connect composing the login lands between
+        # set_auth's write of the pending and its request
+        self.be._launch_shape = real
+        p = self._sess(1)
+        p.auth_live = ""; p._launched_auth = "key"
+        real_hold, landed = p._hold_write, []
+
+        @contextlib.contextmanager
+        def hold_then_land():
+            if not landed:
+                landed.append(1)
+                p._launching = self.be._launch_shape(p, auth="login", login_id=""); p._connecting = True
+                self.be._stamp_launch_login(p, "")
+                p._connect_landed()
+            with real_hold():
+                yield
+        p._hold_write = hold_then_land
+        self.assertTrue(self.be.set_auth(p.sid, "login"))
+        self.assertEqual(landed, [1])
+        self.assertEqual(p._auth_pending, "", "the pick's pending is cleared where its request was withdrawn as served")
+        self.assertFalse(self._reg(p).get("authPending")); self.assertEqual(p.auth, "login", "the pick stands")
+        self.assertFalse(p._reconnect)
+
+    def test_one_followers_reg_write_refusal_does_not_abort_the_walk_and_leaves_that_follower_clean(self):
+        # the reviewer's regression-4 and kernel-2 (round 1, 2026-09-18): one follower's reg write refused mid-step (a
+        # read-only or full state directory) raised out of set_auth_default after the default was written, the followers
+        # after it were never asked, and the failed one was left half-asked (a pending with no arm, no reg flag). The
+        # refusal is the filesystem's own error, raised from the reg write for that one session
+        a, b, c = self._sess(1), self._sess(2), self._sess(3)
+        for s in (a, b, c):
+            s.auth_live = "key"; s._launched_auth = "key"
+        real_write = sb.write_reg
+
+        def refused(state_dir, sid, reg):
+            if sid == b.sid and reg.get("authPending"):
+                raise PermissionError(13, "Permission denied", str(sb._reg_path(state_dir, sid)))
+            return real_write(state_dir, sid, reg)
+        with mock.patch.object(sb, "write_reg", refused):
+            self.assertTrue(self.be.set_auth_default("login"), "the default stands and the walk finishes")
+        for s in (a, c):
+            self.assertEqual(s._auth_pending, "login", s.name); self.assertTrue(self._reg(s).get("authPending")); self.assertTrue(s._reconnect)
+        self.assertEqual(b._auth_pending, "", "the failed follower is left clean, not half-asked"); self.assertFalse(b._relaunch_bounded)
+        self.assertFalse(self._reg(b).get("authPending")); self.assertFalse(b._reconnect); self.assertFalse(b._reconnect_when_idle)
+        rows = [p["text"] for p in self.be.problems(10) if "step failed" in p["text"]]
+        self.assertEqual(len(rows), 1, self.be.problems(10))
+        self.assertIn("auth (s2): the machine default is now login, but this session's step failed (PermissionError", rows[0])
+        self.assertIn("it stays on the key until its next connect or the next default write, with no ask standing", rows[0])
+        del self.logs[:]
+        self.assertTrue(self.be.set_auth(b.sid, "login"))            # the user's own later pick of that side applies
+        self.assertTrue(any("auth (s2): set to login; reconnecting to apply" in str(m) for m in self.logs), self.logs)
+
+    def test_a_same_side_relaunch_keeps_the_clis_true_report_and_a_side_change_retires_it(self):
+        # the reviewer's kernel-4 (round 1, 2026-09-18): round 3 retired the report at EVERY launch, so an effort pick's
+        # relaunch of a keyed session lost a true report: the keyed gate read False until the first turn, the offline
+        # spend tools' keyed set lost the session, and the walk lost sight of it after a restart. The report goes only
+        # when the side the launch composed differs from it
+        s = self._sess(apiKeyAuth=True)
+        self.assertEqual(s.auth_live, "key")
+        s._launching = dict(self.be._launch_shape(s), auth="key")   # a same-side relaunch (an effort pick's)
+        self.be._stamp_launch_login(s, "")
+        self.assertEqual(s.auth_live, "key", "a same-side relaunch keeps the report")
+        self.assertIs(self._reg(s).get("apiKeyAuth"), True, "...on the reg too")
+        s._launching = dict(s._launching, auth="login")            # a relaunch onto the other side
+        self.be._stamp_launch_login(s, "")
+        self.assertEqual(s.auth_live, "", "a side change retires the replaced process's report")
+        self.assertIsNone(self._reg(s).get("apiKeyAuth"))
+        s.auth_live = "key"; self.be._update_reg(s.sid, apiKeyAuth=True)
+        s._launching = None                                          # no window shape (a double): the blanket clear, as before
+        self.be._stamp_launch_login(s, "")
+        self.assertEqual(s.auth_live, ""); self.assertIsNone(self._reg(s).get("apiKeyAuth"))
+
+    def test_the_slot_flag_is_written_in_the_same_hold_as_the_pending_it_belongs_to(self):
+        # the reviewer's regression-3 (round 1, 2026-09-18): the flag was the one field of the ask written with the hold
+        # released, so the landing's guarded clear could run between the pending's write and the flag's. The first hold
+        # whose close shows the pending written shows the flag with it
+        s = self._sess()
+        s.auth_live = "key"; s._launched_auth = "key"
+        real, seen = s._hold_write, []
+
+        @contextlib.contextmanager
+        def recording():
+            with real():
+                yield
+                seen.append((s._auth_pending, s._relaunch_bounded))   # the state at each hold's close
+        s._hold_write = recording
+        self.assertTrue(self.be.set_auth_default("login"))
+        self.assertTrue(s._relaunch_bounded)
+        first = next(x for x in seen if x[0] == "login")
+        self.assertEqual(first, ("login", True), "the pending and its flag left one hold together: %r" % (seen,))
+
+    def test_the_reg_flag_mirrors_the_live_pending_at_the_write_not_the_writers_view(self):
+        # round 3's headline fix (_update_reg's live_fields form, _mirror_auth_pending), pinned by execution (the
+        # reviewer's correctness-5, round 1, 2026-09-18): the mirror blocks on the reg lock while the other thread's
+        # landing clears the ask; the write records the pending as it stands at the write, not as the caller saw it. An
+        # Event handshake, not a sleep: the writer signals when it reaches the reg lock
+        s = self._sess()
+        with s._hold_write():
+            s._auth_pending = "login"
+        inside = threading.Event()
+        real_lock = self.be._reg_lock
+
+        class _Gate:
+            def __enter__(self):
+                inside.set()                                         # about to block on the lock the test holds
+                return real_lock.__enter__()
+
+            def __exit__(self, *a):
+                return real_lock.__exit__(*a)
+        self.be._reg_lock = _Gate()
+        self.addCleanup(setattr, self.be, "_reg_lock", real_lock)
+        real_lock.acquire()
+        t = threading.Thread(target=s._mirror_auth_pending, daemon=True)
+        t.start()
+        self.assertTrue(inside.wait(5), "the writer reached the reg lock")
+        with s._hold_write():
+            s._auth_pending = ""                                     # the landing clears the ask while the mirror waits
+        real_lock.release()
+        t.join(5)
+        self.assertFalse(t.is_alive())
+        self.assertFalse(self._reg(s).get("authPending"), "the mirror recorded the pending as it stood at the write")
+
     def test_the_reference_says_a_default_change_reconnects_its_followers(self):
         doc = " ".join(open(os.path.join(os.path.dirname(HERE), "docs", "reference.md"), encoding="utf-8").read().split())
         self.assertIn("a session with no pick of its own follows it, in its status at once and at its next launch; "
@@ -10443,6 +10719,20 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertNotIn("A remembered key pick on a box", doc)
         self.assertIn("A new session is preselected on the machine's explicit default when the box can bill it, else on the rule "
                       "that holds without one: the key when a helper is configured, else the login.", doc)
+        # round 1 of the reviewer's review (2026-09-18): the stagger and what a follower keeps through it (correctness-2,
+        # kernel-3), the survivor's work at a re-attach (regression-1), the credential romp cannot move (regression-6), the
+        # absent chat record (tests-6), and the new-session billing transition plus the seed's semantics (tests-2, fresh-1)
+        self.assertIn("The relaunches are staggered on the bounded budget boot resumes use (three at a time): a follower keeps its "
+                      "CLI, and keeps serving, until its slot is granted", doc)
+        self.assertIn("holds it for the background work its surviving CLI still runs", doc)
+        self.assertIn("A follower whose CLI bills a credential in the CLI's own environment that romp's per-session settings layer "
+                      "cannot suppress (Claude Code's settings carry no apiKeyHelper) is left where it is, said once in the kernel log.", doc)
+        self.assertIn("A follower's move leaves no record in its chat: the pending dots are the only session-side signal and they "
+                      "clear at the landing; the kernel log's per-session line is the durable record.", doc)
+        self.assertIn("a box whose last per-session pick was the login and whose settings carry an apiKeyHelper bills new sessions "
+                      "on the key from this kernel on", doc)
+        self.assertIn("A session created while an explicit default stands is seeded with it as a pick of its own and is not moved "
+                      "by a later change of the default", doc)
 
 
 class RelaunchSlotWait(unittest.TestCase):
@@ -11936,11 +12226,18 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self._wait(lambda: s.auth_live == "login", "the new CLI's init reported the login")
         self.assertEqual(sem.releases, [1], "one release per slot")
 
+    def _taker_blocks(self, sem):
+        """The relaunch's slot taker is blocked in its acquire (no acquire recorded, the thread alive)."""
+        self._wait(lambda: sem.acquires == [] and any(t.name == "sdk-slot:web" and t.is_alive() for t in threading.enumerate()),
+                   "the taker blocks in its acquire")
+
     def test_a_walk_flagged_relaunch_waits_for_a_free_slot_while_the_loop_serves_a_pick(self):
         # the bound is the semaphore: with every slot held (boot resumes in flight) the relaunch waits for one, and the
-        # session's loop keeps serving meanwhile (the acquire runs off the loop): a pick made during the wait wakes it,
-        # the wait goes on, and the connect composes from the session, so the pick rides the relaunch (round 1 of the
-        # review, 2026-09-18: the wait's wake branch had no executed case, and the negative check was a sleep)
+        # session's loop keeps serving meanwhile (the acquire runs off the loop): a pick made during the wait is recorded
+        # and rides the relaunch, since the connect composes from the session (round 1 of the review, 2026-09-18). THE
+        # WAIT RUNS WITH THE CLI STILL UP (round 1 of the reviewer's review, 2026-09-18; its correctness-2): the client is
+        # torn down at the grant, not at the arm, so a follower behind others keeps serving instead of going dark for
+        # its wait. Round 1 pinned the old ordering (torn down first, then the wait); this test moved with the fix
         self._helper()
         sem = self._CountingSem(1)
         self.be._spawn_sem = sem
@@ -11952,27 +12249,130 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.addCleanup(lambda: threading.Semaphore.release(sem) if sem._value == 0 and not sem.releases else None)
         self._keyed_follower(s)
         self.assertTrue(self.be.set_auth_default("login"))
-        self._wait(lambda: c1.torn_down, "the old client was torn down for the relaunch")
-        self._wait(lambda: sem.acquires == [] and any(t.name == "sdk-slot:web" and t.is_alive() for t in threading.enumerate()),
-                   "the taker blocks in its acquire")
+        self._taker_blocks(sem)
+        self.assertFalse(c1.torn_down, "the CLI serves through the wait: nothing is torn down before the slot is granted")
+        self.assertIs(s.client, c1)
         self.assertEqual(len(self._Client.instances), 1, "no relaunch while every slot is held")
         self.assertTrue(s.thread.is_alive())
         self.assertEqual(s._auth_pending, "login")
-        self.assertTrue(self.be.set_effort(self.SID, "low"))  # a pick during the wait: its wake is read and the wait goes on
-        self._wait(lambda: s._effort_pending == "low" and not s._wake.is_set(), "the pick's wake was read and cleared")
-        self.assertEqual(len(self._Client.instances), 1, "still waiting: the wake was a pick's, not an end")
+        self.assertTrue(s._relaunch_bounded, "the flag stands with the ask until the grant's arm spends it")
+        self.assertTrue(any("waiting for a relaunch slot" in l and "the CLI still serving" in l for l in self.lines), self.lines[-6:])
+        self.assertTrue(self.be.set_effort(self.SID, "low"))  # a pick during the wait: recorded, and it arms nothing of its own
+        self._wait(lambda: s._effort_pending == "low", "the pick was recorded")
+        self._settled("the pick's request")
+        self.assertFalse(c1.torn_down, "still serving: the pick waits with the ask for the grant")
+        self.assertEqual(len(self._Client.instances), 1, "still waiting")
         threading.Semaphore.release(sem)                       # a boot resume's CLI reached its init: one slot frees
         self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client and s._launching is None,
                    "the relaunch took the freed slot and landed")
         self._settled("the landing")
+        self.assertTrue(c1.torn_down, "torn down at the grant, not before")
         self.assertEqual(sem.acquires, [True])
         c2 = self._Client.instances[1]
         self.assertEqual(c2.options.effort, "low", "the pick rode the relaunch: the connect composed from the session")
         self.assertEqual(s._effort_pending, "", "...and the landing cleared it")
         self.assertEqual(sem.releases, [1], "the handshake freed the slot")
+        self.assertFalse(s._relaunch_bounded, "the grant's arm spent the flag: the loop top drew no second slot")
+        self.assertTrue(any("relaunch slot granted; the reconnect fires now" in l for l in self.lines), self.lines[-8:])
         self.assertFalse(c2.torn_down, "the relaunched client is not torn down by a wake left standing")
         time.sleep(0.2)
         self.assertEqual(len(self._Client.instances), 2)
+
+    def test_a_walk_flagged_follower_keeps_serving_until_its_slot_is_granted_and_quietness_is_re_checked_at_the_grant(self):
+        # the reviewer's correctness-2 (round 1, 2026-09-18), the executed case: every slot held, the follower's CLI stays
+        # up and serves a turn during the wait; the grant that lands under that open turn finds the session busy, gives
+        # the slot straight back and waits for the settle; the settle starts a fresh wait, the free slot is granted at
+        # once, quietness holds, and only then is the client torn down and relaunched. Before the fix the CLI was gone
+        # within milliseconds of the default write and the turn could not have been served at all
+        self._helper()
+        sem = self._CountingSem(1)
+        self.be._spawn_sem = sem
+        old_slot = sb.BOOT_RESUME_SLOT_S
+        sb.BOOT_RESUME_SLOT_S = 5.0
+        self.addCleanup(setattr, sb, "BOOT_RESUME_SLOT_S", old_slot)
+        s, c1 = self.s, self._connect()
+        self.assertTrue(threading.Semaphore.acquire(sem, timeout=1))   # every slot held (unrecorded: not the kernel's)
+        self.addCleanup(lambda: threading.Semaphore.release(sem) if sem._value == 0 and len(sem.acquires) == len(sem.releases) else None)
+        self._keyed_follower(s)
+        self.assertTrue(self.be.set_auth_default("login"))
+        self._taker_blocks(sem)
+        self.assertFalse(c1.torn_down); self.assertIs(s.client, c1)
+        # a turn the CLI starts during the wait is served on the client the session still has
+        self._push(c1, self._Sys("init", {"model": "claude-x", "permissionMode": "default", "session_id": self.FSID,
+                                          "apiKeySource": "apiKeyHelper"}, self._uid()))
+        self._push(c1, self._Asst("working on it", self._uid()))
+        self._wait(lambda: s.inflight == 1, "a turn opened on the serving CLI")
+        threading.Semaphore.release(sem)                       # the slot frees while the turn runs
+        self._wait(lambda: sem.acquires == [True] and sem.releases == [1], "the grant found the session busy: the slot went straight back")
+        self._settled("the grant's re-check")
+        self.assertFalse(c1.torn_down, "no teardown under the open turn")
+        self.assertEqual(len(self._Client.instances), 1)
+        self.assertTrue(any("relaunch slot granted, but the session is not quiet any more" in l for l in self.lines), self.lines[-8:])
+        self.assertTrue(s._reconnect_when_idle, "the reconnect waits for the settle")
+        self.assertTrue(s._relaunch_bounded, "the ask still owes a bounded relaunch")
+        self.assertIsNone(s._relaunch_slot, "no slot is held while the session is busy")
+        # the turn settles: the arm starts a fresh wait, the slot is free, the grant re-checks quiet and the relaunch goes
+        self._push(c1, type("ResultMessage", (_ResultMessage,), dict(
+            uuid=self._uid(), subtype="success", is_error=False, num_turns=1, session_id=self.FSID,
+            duration_ms=1, duration_api_ms=1, total_cost_usd=0.01, usage={"input_tokens": 1, "output_tokens": 1},
+            result="ok", parent_tool_use_id=None))())
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client and s._launching is None,
+                   "the relaunch landed after the settle")
+        self._settled("the landing")
+        self.assertTrue(c1.torn_down, "torn down once the grant found the session quiet")
+        self.assertEqual(sem.acquires, [True, True], "one grant given back, one taken")
+        self.assertEqual(sem.releases, [1, 1], "the give-back, and the handshake's release")
+        self.assertFalse(s._relaunch_bounded)
+        self.assertEqual(s._launched_auth, "login", "the relaunch composed the new default")
+        self._wait(lambda: s._auth_pending == "" and not (sb.read_reg(self.be.state_dir, self.SID) or {}).get("authPending"),
+                   "the landing cleared the follower's pending dots")
+
+    def test_a_flagged_teardown_retires_the_abandoned_clients_work_before_it_waits_for_a_slot(self):
+        # the reviewer's tests-5 (round 1, 2026-09-18): the loop top's teardown bookkeeping (the fed-text restore, the
+        # dead work's retirement and notice, the stranded turn's reconcile) ran BEHIND the slot wait, so a flagged
+        # relaunch whose arm skipped the arm-time wait (a pending rewind's road, modelled here by an arm made directly
+        # with the flag standing) left the abandoned client's work counted as live, and the session untold, for the whole
+        # wait. The bookkeeping is hoisted above the wait; the reconnect state's reset stays below it (a pick landing
+        # during the wait must fold into the connect: the refuter's probe F). The send after the wait reaches the new
+        # client behind the notice
+        self._helper()
+        sem = self._CountingSem(1)
+        self.be._spawn_sem = sem
+        old_slot = sb.BOOT_RESUME_SLOT_S
+        sb.BOOT_RESUME_SLOT_S = 5.0
+        self.addCleanup(setattr, sb, "BOOT_RESUME_SLOT_S", old_slot)
+        s, c1 = self.s, self._connect()
+        self.assertTrue(threading.Semaphore.acquire(sem, timeout=1))
+        self.addCleanup(lambda: threading.Semaphore.release(sem) if sem._value == 0 and not sem.releases else None)
+        s.loop.call_soon_threadsafe(s._on_task_event, "task_started",
+                                    {"task_id": "t-1", "task_type": "bash", "description": "a long sweep", "tool_use_id": "tu-1"})
+        self._settled("the task registered")
+        self.assertEqual(s._live_work_counts(), (0, 1))
+
+        def arm():
+            with s._hold_write():
+                s._relaunch_bounded = True                     # the walk's flag, with an arm that drew no slot at the arm
+            s._arm_now(settle=False)
+        s.loop.call_soon_threadsafe(arm)
+        self._wait(lambda: c1.torn_down, "the arm tore the client down")
+        self._taker_blocks(sem)
+        self.assertEqual(s._live_work_counts(), (0, 0), "the abandoned client's work is retired before the wait, not behind it")
+        self.assertEqual(len(s.pending()), 1, "the session is told what it lost, before the wait")
+        self.assertIn("a long sweep", str(s.pending()[0]))
+        self.assertEqual((sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks"), [], "the reg mirror is cleared before the wait")
+        self.assertTrue(any("dropped 0 subagents and 1 background task on reconnect" in l for l in self.lines), self.lines[-8:])
+        self.assertTrue(self.be.send(self.SID, "still here?"))  # a send during the wait queues behind the notice
+        threading.Semaphore.release(sem)
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client and s._launching is None,
+                   "the relaunch landed")
+        c2 = self._Client.instances[1]
+        self._wait(lambda: len(c2.writes) == 1, "the notice was fed to the new client first")
+        self.assertIn("a long sweep", c2.writes[0])
+        self.assertEqual([str(p) for p in s.pending()], ["still here?"], "the send waits behind the notice's turn (the fed-text hold)")
+        self._turn(c2, apiKeySource="none")                    # the CLI takes the notice and replies; the settle feeds the next text
+        self._wait(lambda: len(c2.writes) == 2, "the send reached the new client after the wait")
+        self.assertEqual(c2.writes[1], "still here?")
+        self.assertEqual(sem.acquires, [True]); self.assertEqual(sem.releases, [1])
 
     def test_the_slot_waits_backstop_relaunches_anyway_and_holds_no_slot(self):
         # finding 17 (round 1 of the review): the timeout branch, a problem line and a relaunch that parks no release
@@ -12012,11 +12412,12 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.assertTrue(threading.Semaphore.acquire(sem, timeout=1))   # every slot held (unrecorded: not the kernel's)
         self._keyed_follower(s)
         self.assertTrue(self.be.set_auth_default("login"))
-        self._wait(lambda: c1.torn_down, "the old client was torn down for the relaunch")
         self._wait(lambda: any(t.name == "sdk-slot:web" and t.is_alive() for t in threading.enumerate()), "the taker blocks")
+        self.assertFalse(c1.torn_down, "the CLI serves through the wait (round 1 of the reviewer's review): the end is what tears it down")
         s.shutdown()                                           # the session ends during the wait
         s.thread.join(timeout=10)
         self.assertFalse(s.thread.is_alive(), "the thread ended: nothing to launch")
+        self.assertTrue(c1.torn_down)
         self.assertEqual(len(self._Client.instances), 1, "no second client for an ended session")
         threading.Semaphore.release(sem)                       # the held slot frees only now: the taker acquires it after the waiter left
         self._wait(lambda: sem.acquires == [True] and sem.releases == [1], "the late acquire was given back, once, by the taker")
@@ -12110,7 +12511,11 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         # finding 6 (round 2 of the review): the loop top cleared the flag BEFORE the wait, and a second default write
         # during the wait set it again (the request path, since the arm's stamp launched the first default); the connect
         # after the grant served both writes, and the flag stood for the next reconnect, a pick's, which then drew a boot
-        # slot and could wait the backstop behind boot's and the drive's. The flag is re-cleared after the wait
+        # slot and could wait the backstop behind boot's and the drive's. Since round 1 of the reviewer's review
+        # (2026-09-18) the wait runs at the ARM with the CLI up and the flag standing; a second write during it re-asks
+        # (the pending moves to the stored login) and the grant's one arm serves both, spending the flag; the landing's
+        # clear of the ask the connect serves (compared as a pair) is what spends a re-flag, so the loop top's second
+        # clear is gone (the reviewer's correctness-5)
         self._helper()
         sem = self._CountingSem(1)
         self.be._spawn_sem = sem
@@ -12123,20 +12528,22 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.addCleanup(lambda: threading.Semaphore.release(sem) if sem._value == 0 and not sem.releases else None)
         self._keyed_follower(s)
         self.assertTrue(self.be.set_auth_default("login"))
-        self._wait(lambda: c1.torn_down, "the old client was torn down for the relaunch")
-        self._wait(lambda: sem.acquires == [] and any(t.name == "sdk-slot:web" and t.is_alive() for t in threading.enumerate()),
-                   "the taker blocks in its acquire")
-        self.assertFalse(s._relaunch_bounded, "the loop top consumed the flag before the wait")
+        self._taker_blocks(sem)
+        self.assertFalse(c1.torn_down, "the CLI serves through the wait")
+        self.assertTrue(s._relaunch_bounded, "the flag stands with the ask until the grant's arm spends it")
         self.assertTrue(self.be.set_auth_default("login:" + rec["id"]))   # a second default during the wait
-        self._wait(lambda: s._relaunch_bounded, "the second walk re-flagged the session")
+        self._wait(lambda: s._auth_pending_login == rec["id"], "the second walk moved the ask to the stored login")
+        self.assertTrue(s._relaunch_bounded)
         self.assertEqual(len(self._Client.instances), 1, "still waiting")
         threading.Semaphore.release(sem)                                  # a slot frees: the relaunch composes the current default
         self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client and s._launching is None,
                    "the relaunch landed")
         self._settled("the landing")
         self.assertEqual(sem.acquires, [True]); self.assertEqual(sem.releases, [1])
-        self.assertFalse(s._relaunch_bounded, "the re-flag was spent by the connect that served both writes")
+        self.assertFalse(s._relaunch_bounded, "the flag was spent by the connect that served both writes")
         self.assertEqual(s._launched_auth, "login")
+        self._wait(lambda: s._auth_pending == "" and not (sb.read_reg(self.be.state_dir, self.SID) or {}).get("authPending"),
+                   "the landing served the stored-login ask")
         self.assertTrue(self.be.set_effort(self.SID, "low"))               # the next reconnect is a pick's
         self._wait(lambda: len(self._Client.instances) == 3 and self._Client.instances[2] is s.client and s._effort_pending == "",
                    "the pick's reconnect landed")
@@ -12279,6 +12686,97 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         self.assertFalse(s._reconnect_held_for_work)
         self.assertIsNone(s.snapshot()["pickHeld"])
         self.assertEqual(s.snapshot()["effort"], "low")
+
+    def _survivor_with_a_carried_ask(self):
+        """The reg a kernel restart leaves for a follower asked to move (authPending), whose hosted CLI survived on the key
+        with one background task the previous kernel mirrored (bgTasks), the CLI's identity named (spawnedAtCli); the first
+        connect is the boot re-attach to that CLI (the hello names the same identity), later connects spawn as the class does."""
+        sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
+        reg = sb.read_reg(self.be.state_dir, self.SID)
+        reg.update(authPending=True, apiKeyAuth=True, spawnedAtCli="4301:c1",
+                   bgTasks=[{"taskId": "t-1", "type": "bash", "desc": "a long sweep", "since": int(time.time()) - 600,
+                             "toolUseId": "tu-1", "lastTool": ""}])
+        sb.write_reg(self.be.state_dir, self.SID, reg)
+        self.s = sb.SdkSession(self.be, dict(reg))
+        self.be.sessions[self.SID] = self.s
+        be, spawn_for = self.be, self.be._host_transport_for
+
+        async def attach_first(sess, opts, msg_classes):
+            if self.hosted:
+                return await spawn_for(sess, opts, msg_classes)     # every later connect spawns a fresh host and CLI
+            hello = {"host": {"pid": 7001, "start": "h1", "version": "test"},
+                     "cli": {"pid": 4301, "start": "c1", "fsid": self.FSID, "spawnedAt": 1700000001, "login": ""},
+                     "journal": {"next": 0}, "parked": [], "inflight": 0}
+            t = self._Transport(hello, lambda h, sess=sess: be._on_host_hello(sess, h))
+            sess._host_is_attach = True
+            sess._host = t
+            self.hosted.append(t)
+            return t
+        be._host_transport_for = attach_first
+        return self.s
+
+    def test_a_carried_ask_holds_at_the_boot_attach_for_the_surviving_clis_work_seeded_from_the_reg(self):
+        """The reviewer's regression-1 (round 1, 2026-09-18), executed: the ask a follower carried across a kernel restart
+        is re-made at the attach to the surviving CLI, and the live-work guard read the in-memory sets, empty after a
+        restart, so it armed at once and the survivor's background work was torn down with no notice. The set is seeded
+        from the reg's mirror at the hello (a survivor: the hello's CLI identity is the reg's), before the landing, so the
+        guard holds; the CLI's own stream then owns the rows: a progress frame confirms the task, and its end frame is
+        what lets the next settle arm."""
+        self._helper()
+        s = self._survivor_with_a_carried_ask()
+        self.assertEqual(s._auth_pending, "login", "the carried ask")
+        c1 = self._connect()
+        t1 = self.hosted[0]
+        self.assertEqual(s._live_work_counts(), (0, 1), "the survivor's task is counted from the reg's mirror at the hello")
+        self.assertEqual(s._launched_auth, "key", "the attach stamped the CLI's report")
+        self.assertFalse(s._reconnect, "the carried ask did NOT arm at the attach: the guard read the survivor's work")
+        self.assertTrue(s._reconnect_when_idle); self.assertTrue(s._reconnect_held_for_work)
+        self.assertEqual(t1.sent, [], "the host is not asked to end its CLI")
+        self.assertEqual(s._auth_pending, "login"); self.assertTrue(s._relaunch_bounded)
+        self.assertTrue(any("counted as live from the attach" in l for l in self.lines), self.lines[-8:])
+        self.assertTrue(any("reconnect held for 0 subagents and 1 background task" in l for l in self.lines), self.lines[-8:])
+        # the CLI's own stream confirms the task: a settle finds it live and the hold stands
+        self._push(c1, self._Sys("task_progress", {"task_id": "t-1", "task_type": "bash", "description": "a long sweep",
+                                                   "tool_use_id": "tu-1", "last_tool_name": "Bash"}, self._uid()))
+        self._turn(c1, apiKeySource="apiKeyHelper")
+        self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "the first turn after the attach settled")
+        self._settled("the first settle")
+        self.assertEqual(s._live_work_counts(), (0, 1), "confirmed by the stream: the first settle drops nothing")
+        self.assertTrue(s._reconnect_held_for_work, "the settle found the work and the hold stands (announced once, at the request)")
+        self.assertFalse(s._reconnect); self.assertEqual(t1.sent, []); self.assertEqual(len(self._Client.instances), 1)
+        # the task ends on the CLI's own stream; its delivery turn's settle arms, the slot is granted at once (the real
+        # three-permit budget is free), and only then is the host asked to end its CLI for the relaunch
+        self._push(c1, self._Sys("task_notification", {"task_id": "t-1", "status": "completed"}, self._uid()))
+        self._wait(lambda: s._live_work_counts() == (0, 0), "the end frame popped the seeded row")
+        self._turn(c1, apiKeySource="apiKeyHelper")
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client and s._launching is None,
+                   "the relaunch landed on a fresh host")
+        self._settled("the landing")
+        self.assertEqual(t1.sent, ["end"], "the reconnect's teardown ended the host's CLI, after the work")
+        self.assertEqual(s._launched_auth, "login")
+        self._wait(lambda: s._auth_pending == "" and not (sb.read_reg(self.be.state_dir, self.SID) or {}).get("authPending"),
+                   "the landing served the carried ask")
+
+    def test_a_seeded_row_the_clis_stream_never_confirms_is_dropped_at_the_first_settle_and_the_hold_releases(self):
+        """The reconcile half of the reviewer's regression-1: a mirror row nothing ever ends (a stale write, a task that
+        ended while no kernel heard) cannot hold the ask forever. Unconfirmed through the first turn after the attach, the
+        row is dropped at that settle, said in the log, the reg mirror rewritten, and the settle arms."""
+        self._helper()
+        s = self._survivor_with_a_carried_ask()
+        c1 = self._connect()
+        t1 = self.hosted[0]
+        self.assertEqual(s._live_work_counts(), (0, 1)); self.assertFalse(s._reconnect); self.assertEqual(t1.sent, [])
+        self._turn(c1, apiKeySource="apiKeyHelper")               # the first turn after the attach: no frame spoke for t-1
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client and s._launching is None,
+                   "the settle dropped the unconfirmed row, armed, and the relaunch landed")
+        self._settled("the landing")
+        self.assertTrue(any("sent no frame through the first turn after the attach; no longer counted as live" in l for l in self.lines),
+                        self.lines[-10:])
+        self.assertEqual(t1.sent, ["end"])
+        self.assertEqual(s._live_work_counts(), (0, 0))
+        self.assertEqual((sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks"), [], "the mirror is rewritten at the reconcile")
+        self.assertFalse(any("cut off when the claude process" in str(p) for p in s.pending()), "no death notice: nothing says the task died")
+        self.assertEqual(s._launched_auth, "login")
 
 
 class WorkflowProgressShapeIsLoud(unittest.TestCase):

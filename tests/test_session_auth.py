@@ -875,8 +875,10 @@ class SetAuth(_Keyed):
         self.assertEqual(sb.read_sdk_defaults(self.be.state_dir).get("auth"), "login", "remembered: the picker's preselected choice")
         self.assertFalse(sb.read_sdk_defaults(self.be.state_dir).get("authExplicit"))
         # ...and the next spawn with no pick of its own is NOT seeded from it (2026-09-18): the launch and the init check
-        # follow the file's auth only beside authExplicit, and so does the spawn now, so a session created with no pick
-        # follows the machine default wherever it moves instead of carrying a pick of the remembered side
+        # follow the file's auth only beside authExplicit, and so does the spawn now, so a session created while no
+        # explicit default stands carries no pick and follows the machine default wherever it moves; one created while an
+        # explicit default stands is seeded with it as a pick of its own (three lines down) and a later move does not
+        # reach it (round 1 of the reviewer's review, 2026-09-18: the comment overstated followership)
         sid2 = self.be.spawn("m", "/tmp")
         self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid2), "a follower, not a pick of the remembered side")
         self.assertTrue(self.be.set_auth_default("login"))

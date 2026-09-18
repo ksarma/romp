@@ -87,7 +87,13 @@ class EffortReconnect(unittest.TestCase):
         i_clear = stmts.index("self._reconnect = False")
         self.assertTrue(stmts[i_clear + 1].startswith("self._reset_reconnect_state()   # every request is served by this connect (a held pick rides it)"),
                         stmts[:i_clear + 2])
-        self.assertLess(loop.index("self._reset_reconnect_state()"), loop.index('self._drop_live_work("reconnect")'))
+        # the teardown's bookkeeping (the fed-text restore, _drop_live_work, _reconcile_stranded) runs BEFORE the relaunch
+        # slot wait and so before the reset (round 1 of the reviewer's review of the machine-default change, 2026-09-18;
+        # its tests-5): behind the wait it left the abandoned client's work counted as live for the whole wait; the reset
+        # stays below the wait, so a pick landing during it folds into the connect (until then the reset preceded the drop)
+        self.assertLess(loop.index('self._drop_live_work("reconnect")'), loop.index("await self._take_relaunch_slot()"))
+        self.assertLess(loop.index("self._reconcile_stranded()"), loop.index("await self._take_relaunch_slot()"))
+        self.assertLess(loop.index("await self._take_relaunch_slot()"), loop.index("self._reset_reconnect_state()"))
         self.assertNotIn("self._reconnect = False   #", loop[:loop.index("self._reset_reconnect_state()")])
         # and the stamps land with the connect: _connect_landed follows the launch-error clear, inside the loop; its
         # return is the landing's mode decision, read under the same hold (review round 7)
