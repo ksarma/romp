@@ -2614,7 +2614,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   early from a hold counts in both),
   `connectPush` (a fresh client's full push on its handler thread, the
   browser's own first draw after a reload or a restart: `count`, `ms_sum`,
-  `ms_max`, `ms_last`, and the same per app under `byApp`; the pusher's
+  `ms_max`, `ms_last`, and the same per app under `byApp`, keyed by the app
+  the client declared under the identifier-and-cap rule `clients.byApp`
+  states below, so `other` and `none` are keys there too; the pusher's
   cycles never see this push, so before it the restart's logo phase had no
   number),
   `clients` (what each client's sender thread wrote to its socket,

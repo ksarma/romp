@@ -696,6 +696,40 @@ class Collector(unittest.TestCase):
         self.assertNotIn("none", by_app)
         self.assertEqual(by_app["other"]["frames"], 41 - km._PerfStats.APPS, "none is a name like any other to the cap")
 
+    def test_connect_push_keys_only_identifier_app_names_and_caps_them(self):
+        """connectPush.byApp keyed a connect push by the app name the client DECLARED on its socket URL, verbatim and
+        unbounded (2026-09-18, a paste-safety review of the snapshot): a client could put any text, a session id or a home
+        path included, into a served key. A name is a key only when it fits the identifier grammar (_PERF_IDENT) and while
+        the table holds fewer than APPS distinct names; everything else counts under `other`, a missing name under `none`
+        while the table has room for that word and under `other` past the cap (the rule pusher.clients.byApp follows); the
+        aggregate counts every push as before."""
+        self.st.connect_push("chat", 0.010)
+        self.st.connect_push("<b>%s</b> /home/tester" % SID, 0.020)
+        self.st.connect_push("chat\n", 0.050)   # $ matches before a trailing newline: the check is a fullmatch (match let this through as a key)
+        self.st.connect_push("", 0.030); self.st.connect_push(None, 0.040)
+        by = self.st.snapshot()["pusher"]["connectPush"]["byApp"]
+        self.assertNotIn(SID, json.dumps(by)); self.assertNotIn("/home/", json.dumps(by))
+        self.assertNotIn("chat\n", by, "a name ending in a newline is not a key")
+        self.assertEqual(sorted(by), ["chat", "none", "other"])
+        self.assertEqual((by["other"]["count"], by["none"]["count"], by["chat"]["count"]), (2, 2, 1))
+        self.assertAlmostEqual(by["other"]["ms_sum"], 70.0); self.assertAlmostEqual(by["none"]["ms_max"], 40.0)
+        self.assertEqual(self.st.snapshot()["pusher"]["connectPush"]["count"], 5, "the aggregate counts every push")
+        for i in range(km._PerfStats.APPS + 5):
+            self.st.connect_push("app%d" % i, 0.001)
+        by = self.st.snapshot()["pusher"]["connectPush"]["byApp"]
+        self.assertEqual(len(by), km._PerfStats.APPS, "at most APPS names; other, already held, is one of them (the http table's rule)")
+        self.assertEqual(by["other"]["count"], 2 + (km._PerfStats.APPS + 5) - (km._PerfStats.APPS - 3),
+                         "the names past the cap join other (chat, none and other held three of the slots)")
+        self.st.connect_push("chat", 0.001)
+        self.assertEqual(self.st.snapshot()["pusher"]["connectPush"]["byApp"]["chat"]["count"], 2, "a held name still counts under itself")
+        st = km._PerfStats()
+        for i in range(km._PerfStats.APPS):
+            st.connect_push("app%d" % i, 0.001)
+        st.connect_push(None, 0.001)                            # an app-less client past the cap: other, no none row seated
+        by = st.snapshot()["pusher"]["connectPush"]["byApp"]
+        self.assertNotIn("none", by)
+        self.assertEqual((len(by), by["other"]["count"]), (km._PerfStats.APPS + 1, 1), "none is a name like any other to the cap; other seats past it")
+
     def test_http_keys_are_capped_and_ws_adds_no_time(self):
         cap = km._PerfStats.HTTP_PATHS
         for i in range(cap + 36):

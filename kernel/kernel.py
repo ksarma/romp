@@ -808,9 +808,9 @@ class _PerfStats:
     # below the table itself). test_perf_stats pins it at 1.5x the literal count.
     HTTP_PATHS = 256
     SLOTS = 32
-    APPS = 16                                 # distinct client app names pusher.clients.byApp keys (client_send); the rest, and any
-    #                                           name outside _PERF_IDENT, count under "other" (2026-09-18: the name is the client's
-    #                                           own text). connectPush.byApp takes the same rule when the served-/perf leak branch lands.
+    APPS = 16                                 # distinct client app names either byApp table keys: pusher.clients.byApp (client_send) and
+    #                                           pusher.connectPush.byApp (connect_push); the rest, and any name outside _PERF_IDENT, count
+    #                                           under "other" (2026-09-18: the name is the client's own text; both tables are capped)
     JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "turnNotify", "liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
             "unreadableStores",   # the fork's unreadable-store warn (PR 322), a housekeeping stage on the jobs thread since the 2026-09-15 pull-in
             "autoNudge", "interruptBlock", "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "persistCheckpoints", "convergeCheckpoints", "bootRowBackstop",
@@ -963,14 +963,28 @@ class _PerfStats:
         with self.lock:
             self.pusher["exempt"] += 1
     def connect_push(self, app, dt):
-        """One connect push (a fresh client's full state on its handler thread): its wall seconds, per app too."""
+        """One connect push (a fresh client's full state on its handler thread): its wall seconds, per app too. The app
+        is the name the client DECLARED on its socket URL (chat, feed, timeline, ...), so it is the client's own text: a
+        name outside _PERF_IDENT's grammar, or past the APPS distinct names, counts under "other", and a client that
+        declared none under "none" while the table has room for that word, else under "other" like any name the cap
+        refuses (2026-09-18: the snapshot is meant to be pasteable, and a key is a leak vector; the same rule client_send
+        gives pusher.clients.byApp)."""
         ms = dt * 1000.0
+        app = str(app) if app else "none"
+        if not _PERF_IDENT.fullmatch(app):   # fullmatch, not match: the pattern's $ also matches before a trailing newline, and match let a name ending in one through as a key
+            app = "other"
         with self.lock:
             c = self.connect_push_stats
             c["count"] += 1; c["ms_sum"] += ms; c["ms_last"] = ms
             if ms > c["ms_max"]:
                 c["ms_max"] = ms
-            a = c["byApp"].setdefault(str(app or "?"), {"count": 0, "ms_sum": 0.0, "ms_max": 0.0, "ms_last": 0.0})
+            a = c["byApp"].get(app)
+            if a is None:
+                if len(c["byApp"]) >= self.APPS:
+                    app = "other"
+                    a = c["byApp"].get(app)
+                if a is None:
+                    a = c["byApp"][app] = {"count": 0, "ms_sum": 0.0, "ms_max": 0.0, "ms_last": 0.0}
             a["count"] += 1; a["ms_sum"] += ms; a["ms_last"] = ms
             if ms > a["ms_max"]:
                 a["ms_max"] = ms
@@ -982,8 +996,8 @@ class _PerfStats:
         refused is not counted: the client is dropped. The app is the client's own text (chat, feed, timeline, ...): a
         name outside _PERF_IDENT's grammar, or past the APPS distinct names, counts under "other"; a client that
         declared none counts under "none" while the table has room for that word, else under "other" like any name the
-        cap refuses (the snapshot is meant to be pasteable, and a key is a leak vector; the same rule the
-        perf-served-leaks branch gives connectPush.byApp)."""
+        cap refuses (the snapshot is meant to be pasteable, and a key is a leak vector; the same rule connect_push
+        gives pusher.connectPush.byApp)."""
         ms = dt * 1000.0
         app = str(app) if app else "none"
         if not _PERF_IDENT.fullmatch(app):   # fullmatch, not match: the pattern's $ also matches before a trailing newline, and match let a name ending in one through as a key
