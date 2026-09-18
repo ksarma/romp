@@ -2607,10 +2607,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   skipped), `splitFailed`, `firstPass` (the boot's first pass's stage split,
   the shape of `pusher.firstCycle`) and `stageRing`. The pass's container
   stage is `jobsPass`, its opening `jobs.prelude`; each job is still its
-  `jobs.<job>` stage, so a stage name says which thread ran it by the list
-  in `_pusher_cycle_jobs` (the pusher's: the checkpoint cycle, pending ops,
-  turn notify, the checkpoint persist and converge, the boot row backstop,
-  the kernel sample, the API health frame) against `_jobs_pass`.
+  `jobs.<job>` stage, and a `jobs.<job>` row in `stages_ms` is this thread's
+  own (since 2026-09-18); the pusher's cycle jobs are counted under
+  `pusher.cycleJobsMs`.
 - `caches`: one block per cache the kernel, the judge and the event model keep,
   each an exact occupancy (a `len()` or a sum of `len()`s under the cache's
   lock; nothing estimated): `jsonl` with `entries`, `file_bytes` and `records`
@@ -2671,6 +2670,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   longer wait between cycles would have skipped; a conservative undercount,
   since a wake set by another thread or a periodic repost of an unchanged
   frame marks a cycle busy).
+  `cycleJobsMs` (2026-09-18): `{job: ms}`, the pusher thread's cumulative
+  wall per cycle job, the nine listed at zero from the start
+  (`beginCheckpointCycle`, `sessionsListing`, `applyPendingOps`,
+  `turnNotify`, `persistCheckpoints`, `convergeCheckpoints`,
+  `bootRowBackstop`, `kernelSample`, `apiHealth`). A `jobs.<job>` stage the
+  pusher's thread closes counts here and not in `stages_ms`, whose
+  `jobs.<job>` rows are the jobs thread's; the nine sum to at most
+  `stages_ms.jobs`.
   The interval is 1.0 s (`PUSH_MIN_INTERVAL_S` in the kernel): a cycle starts
   no sooner than that after the previous one began unless the live tail of a
   chat tab a connected client is watching changed (a Claude Code session's
@@ -3061,9 +3068,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   no client connected reads `kernel` zero, and a connecting chat client adds
   at most its shown tabs.
 - `stages_ms`: `prelude` (the cycle's opening: the liveness snapshot and the
-  names), `jobs` (the cycle's tick jobs outside the push) and inside it one
-  `jobs.<job>` per tick job (`jobs.interruptBlock`, `jobs.autoNudge`,
-  `jobs.convergeCheckpoints` and the rest, T398), `push`, and inside it
+  names), `jobs` (the pusher's cycle jobs outside the push, itemized under
+  `pusher.cycleJobsMs`), `jobsPass` (the jobs thread's pass) and one
+  `jobs.<job>` per job of the jobs thread (`jobs.interruptBlock`,
+  `jobs.autoNudge` and the rest, T398) plus `jobs.prelude`, its opening,
+  `push`, and inside it
   `push.chat`, `push.feed`, `push.timeline`, `push.send`, `push.warm`,
   `push.feedFirst`; a fresh snapshot lists every one at zero. Two of those
   are split further: inside `push.chat`, `push.chat.sig` (each tab's build
@@ -3081,6 +3090,24 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   counts the parent's rows through the parent's own row, once. The `push.*`
   stages count every push, including the one a connecting page gets, so they
   can add up to more than `push`.
+  Since 2026-09-18 (ledger entry `2026-09-18-stage-attribution`; the fork PR
+  number is filled in at filing) a `jobs.<job>` row is the jobs thread's time
+  under that name; before, it was every thread's, and the pusher thread's
+  nine cycle jobs (`beginCheckpointCycle`, `sessionsListing`,
+  `applyPendingOps`, `turnNotify`, `persistCheckpoints`,
+  `convergeCheckpoints`, `bootRowBackstop`, `kernelSample`, `apiHealth`) sat
+  in it. From that day they are counted under `pusher.cycleJobsMs.<job>` and
+  their `jobs.<job>` keys are gone from `stages_ms`, so those nine keys do
+  not compare across a capture pair spanning the change; the other
+  `jobs.<job>` rows keep their names and their values. A `jobs.<job>` write
+  from a thread owning neither loop is counted under `stagesForeign`.
+- `stagesForeign`: `{stage: ms}`, a `jobs.<job>` stage closed by a thread
+  that owns neither loop (a handler thread, a test that opened no cycle),
+  cumulative wall under the stage name, so a write that fits no owner is
+  counted rather than merged into a row that names another thread. Empty on
+  a running kernel, where every job runs inside one of the two loops; a
+  non-empty block names a stage that ran outside them. The keys are the
+  kernel's own stage names.
 - `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
   `chat` also carries `bySession`, one row per living session built since
   the boot, ordered by `max` (slowest first) and numbered by `rank` in that

@@ -1010,6 +1010,27 @@ class JobRowsByOwner(unittest.TestCase):
 
 
 
+    def test_the_reference_names_the_new_rows_and_the_discontinuity(self):
+        """docs/reference.md's stages_ms entry names the two blocks and says, with the date, that the nine cycle jobs' keys
+        left stages_ms and do not compare across a capture pair spanning the change; the jobs entry sends the reader to
+        pusher.cycleJobsMs; the pusher entry lists the block."""
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        para = doc[doc.index("- `stages_ms`:"):]
+        para = " ".join(para[:para.index("\n- `stagesForeign`:")].split())   # the reference wraps at 80 columns: one line
+        self.assertIn("`pusher.cycleJobsMs`", para)
+        self.assertIn("2026-09-18", para, "the day the meaning changed")
+        self.assertIn("do not compare across a capture pair", para, "the discontinuity, said plainly")
+        for j in km._PerfStats.CYCLE_JOBS:
+            self.assertIn("`%s`" % j, para, "the nine are named: %s" % j)
+        self.assertIn("- `stagesForeign`:", doc, "the foreign block is documented as a top-level block")
+        jobs_para = doc[doc.index("- `jobs`: the jobs thread"):]
+        jobs_para = jobs_para[:jobs_para.index("\n- `")]
+        self.assertIn("`pusher.cycleJobsMs`", jobs_para)
+        pusher_para = doc[doc.index("- `pusher`: `cycles`"):]
+        pusher_para = pusher_para[:pusher_para.index("\n- `")]
+        self.assertIn("`cycleJobsMs`", pusher_para)
+
+
 class ProcessStatsFallback(unittest.TestCase):
     """_process_stats reads VmRSS from /proc/self/status. A platform without /proc gets ru_maxrss, which
     Linux reports in KB and macOS in bytes; on macOS that figure is the LIFETIME PEAK, so since 2026-09-18
