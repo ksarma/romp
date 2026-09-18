@@ -18014,8 +18014,10 @@ _NUDGE_FILE_KEYED_ROADS = {       # the functions each marked verdict's road rea
     "wake-only": ("_goal_awaiting_stamp_full", "_peer_answered", "_nudge_all_delegated", "_all_outstanding_delegated",
                   "_wait_for_graph"),   # the wake-only goal loop's own readers (jobs stage 1): the stamp it walks and the peer-answer
     #                                    supersede (the store, the postal log), the delegated check (the store) and the peer-wait graph
-    #                                    (the postal log, the alive set); _wake_goal itself is not traced, since its exits are keyed
-    #                                    files, the instants it notes, or None notes under named legs (the walk-gate tests pin them)
+    #                                    (the postal log, the alive set); _wake_goal itself is not traced (its fire, block and send
+    #                                    path reads live state by design): its declining exits, and the goal loop's, are read by
+    #                                    the EXIT census in the parse-gate tests instead, which requires each to note its clock
+    #                                    leg or to be named with the keyed file it stands behind (jobs stage 1, round 2)
     "interrupt-block": ("_interrupt_block_key", "_session_working", "_suspended_after", "_interrupt_marks", "_last_machine_cut",
                         "_interrupt_marks_atoms", "_machine_cut_cause", "_intr_blocked", "_record_interrupt_block",
                         "_interrupt_focus_top", "_intr_block_stands", "_lift_interrupt_block"),   # the interrupt tick's skip road
