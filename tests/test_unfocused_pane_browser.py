@@ -5,7 +5,11 @@ frame a host relay going down produces, and the merged strip without that host's
 active tab, the body names the session that vanished, the composer disabled with no session name, no session colour on
 the box. A tabOrder push that adds a NEW session changes nothing (no adoption). A tabOrder push listing the vanished
 session again restores focus to it,
-and its transcript comes back. Screenshots of the unfocused state, dark and light (PV_SHOTS names the folder).
+and its transcript comes back. The lab kernel is told the same story through the session's registry row (dead while its
+tab is away, live again once it is re-listed): while the kernel listed the session live, any push of its own could carry
+the session's frame, and the pane restored focus off that frame (the product's rule for a session that is back, not this
+scenario's), so the driver waits for the kernel's own strip without the session before the other session appears.
+Screenshots of the unfocused state, dark and light (PV_SHOTS names the folder).
 The reload road (the review's HIGH, the user's actual trigger): the persisted state names a REMOTE tab this kernel never
 lists; after a reload the pane stays unfocused naming it, the local sessions adopt nothing, the remote strip entry
 restores focus to it, and a pick made before the relay wins.
@@ -82,6 +86,23 @@ const state = () => page.evaluate(() => {
            theme: document.body.classList.contains("theme-light") ? "light" : "dark" };
 });
 const inject = (frame) => page.evaluate((f) => { window.postMessage(f, "*"); }, frame);
+// The lab kernel's word on A: its registry row (the seam the lab seeded A through; the backend's kill flips the same
+// field). The scenario's host drop is the page's alone, and while the kernel still listed A live, any push of its own
+// could carry A's frame: the pane appends an arriving session to its strip and T357's restore takes the tab back. The
+// probe of 2026-09-18 saw it (1 run in 3, CI and an idle box alike): the idle prefetch for the skeleton tab injected
+// below asked the kernel for that tab's frame, the answer was a full push, and A's frame rode it. So A goes dead here
+// while its tab is away, and live again once the scenario re-lists it. Written as the backend writes it: a temp name
+// the registry scan never reads (not .json), then a rename.
+const setAlive = (alive) => { const reg = JSON.parse(fs.readFileSync(cfg.regA, "utf8")); reg.alive = alive; const tmp = cfg.regA + "." + process.pid + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(reg)); fs.renameSync(tmp, cfg.regA); };
+// The kernel's own strips as the pane hears them: federation's direct delivery (window.__rompFed.onFrame), not a window
+// message; a fresh push of the local kernel (freshHost "") and never a re-emission, which is nobody's fresh word.
+await page.evaluate(() => {
+  const w = window;
+  if (!w.__rompFed || typeof w.__rompFed.onFrame !== "function") throw new Error("no federation frame door on the page");
+  w.__kernelStrips = [];
+  w.__rompFed.onFrame((e) => { const d = e.data; if (d && d.type === "tabOrder" && d.reemit !== true && d.freshHost === "") w.__kernelStrips.push(d.order); });
+});
+const kernelStripWithout = (sid) => page.waitForFunction((s) => window.__kernelStrips.some((o) => Array.isArray(o) && !o.includes(s)), sid, { timeout: 10000 });
 const out = {};
 // the user picks A
 await page.click('#tabs .tab[data-id="' + cfg.sidA + '"]');
@@ -96,7 +117,11 @@ const C_TAB = { id: cfg.sidC, name: "docs", color: { bg: "#b5e3a1", fg: "#0f1f0a
 await inject({ type: "closed", id: cfg.sidA, hostDrop: true });
 await inject({ type: "tabOrder", order: [cfg.sidB], tabs: [B_TAB], live: [cfg.sidB], skeleton: [] });
 await page.waitForFunction((sid) => !document.querySelector("#tabs .tab.active[data-id]") && !document.querySelector('#tabs .tab[data-id="' + sid + '"]'), cfg.sidA, { timeout: 10000 });
-await page.waitForTimeout(300);
+// ...and the kernel agrees: A dead in its registry, and its own strip without A awaited. From that frame on no push of
+// the kernel's can carry A (its tab list and its session frames come from the same liveness read), so what the reads
+// below see is the page's rule alone
+setAlive(false);
+await kernelStripWithout(cfg.sidA);
 out.unfocused = await state();
 const shot = async (name) => { if (!cfg.shots) return; fs.mkdirSync(cfg.shots, { recursive: true }); await page.screenshot({ path: cfg.shots + "/" + name + ".png" }); };   // the whole pane: the strip, the body's line, the disabled box
 await shot("romp_chat-unfocused-pane-dark");
@@ -109,8 +134,12 @@ await page.waitForFunction((sid) => !!document.querySelector('#tabs .tab[data-id
 await page.waitForTimeout(300);
 out.otherArrived = await state();
 // A's tab is re-listed (the host re-attached): the kernel's strip names it a skeleton (this page holds no frame for it
-// any more), focus goes back to it, the skeleton branch asks for its frame, and its transcript returns
+// any more), focus goes back to it, the skeleton branch asks for its frame, and its transcript returns. A is live to
+// the lab kernel again right behind the strip: the ask is answered with A's frame either way (at once when the kernel
+// reads the row live by then, else by the first cycle that does: the ask dropped the kernel's memory of what this
+// page holds for A, so its next push of A is a full)
 await inject({ type: "tabOrder", order: [cfg.sidA, cfg.sidB, cfg.sidC], tabs: [A_TAB, B_TAB, C_TAB], live: [cfg.sidA, cfg.sidB, cfg.sidC], skeleton: [cfg.sidA, cfg.sidC] });
+setAlive(true);
 await page.waitForFunction((sid) => { const a = document.querySelector("#tabs .tab.active[data-id]"); return !!a && a.dataset.id === sid; }, cfg.sidA, { timeout: 10000 });
 // the restore lands in two steps: the strip's skeleton tab takes focus at once, and its session frame follows (the
 // skeleton branch asks for it); the state is read once the transcript is on screen, which is when the window border
@@ -356,6 +385,7 @@ class ServedUnfocusedPane(unittest.TestCase):
         cfg = os.path.join(self.lab, "cfg.json")
         with open(cfg, "w") as f:
             json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "shell": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token), "sidA": SID_A, "sidB": SID_B, "sidC": SID_C, "remote": REMOTE, "provisional": PROVISIONAL,
+                       "regA": os.path.join(self.lab, "xdg", "romp", "sdk", SID_A + ".json"),   # A's registry row: the driver flips its liveness
                        "shots": os.environ.get("PV_SHOTS", "")}, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
