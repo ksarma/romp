@@ -209,6 +209,101 @@ def _malloc_stats():
     return {"arena": int(m.arena), "hblkhd": int(m.hblkhd), "uordblks": int(m.uordblks), "fordblks": int(m.fordblks)}
 
 
+# The kernel's CURRENT resident size on macOS, where /proc is absent (2026-09-18). Before this the darwin figure was
+# ru_maxrss, the LIFETIME PEAK, under the same rss_kb name as Linux's current VmRSS, so a Mac's memory over uptime
+# (the /perf process block, the hourly kernel sample, the restart ledger's boot and cut rows) read as a line that
+# only ever climbed. Two readers, neither a dependency: the Mach kernel's own task_info(MACH_TASK_BASIC_INFO)
+# resident_size through ctypes (what Activity Monitor and psutil read), else `ps -o rss= -p <pid>`. The peak stays
+# visible as rss_peak_kb.
+#
+# Cost bound: _process_stats runs once per GET /perf and once per kernel sample, never inside the pusher's cycle, and
+# each read is at most one task_info call, a single Mach trap (microseconds; the handle and the port are resolved
+# once per process). The ps fallback forks, so it runs at most once per 10 s of monotonic time and its memo serves
+# the reads between, a failed run included.
+_MACH_TASK_BASIC_INFO = 20                                      # the task_info flavor (mach/task_info.h)
+try:
+    import ctypes as _ctypes
+
+    class _MachTaskBasicInfo(_ctypes.Structure):
+        """struct mach_task_basic_info (mach/task_info.h): three mach_vm_size_t, two time_value_t ({integer_t
+        seconds, microseconds}), a policy_t and an integer_t: 48 bytes, MACH_TASK_BASIC_INFO_COUNT 12 natural_t."""
+        _fields_ = [("virtual_size", _ctypes.c_uint64), ("resident_size", _ctypes.c_uint64),
+                    ("resident_size_max", _ctypes.c_uint64),
+                    ("user_time_s", _ctypes.c_int32), ("user_time_us", _ctypes.c_int32),
+                    ("system_time_s", _ctypes.c_int32), ("system_time_us", _ctypes.c_int32),
+                    ("policy", _ctypes.c_int32), ("suspend_count", _ctypes.c_int32)]
+except Exception:
+    _MachTaskBasicInfo = None
+_DARWIN_TASK_INFO = []                                          # [(task_info, task port)] once resolved; see _darwin_task_rss_bytes
+_DARWIN_PS_MEMO = {"t": None, "kb": None}                       # the ps fallback's monotonic memo: the last run's clock and figure
+_DARWIN_PS_INTERVAL_S = 10.0                                    # one ps fork per 10 s at most
+
+
+def _darwin_libsystem():
+    """The library task_info lives in on macOS: libSystem, else the process's own symbols (dlopen(NULL))."""
+    try:
+        return _ctypes.CDLL("libSystem.B.dylib", use_errno=True)
+    except OSError:
+        return _ctypes.CDLL(None, use_errno=True)
+
+
+def _darwin_task_rss_bytes():
+    """This process's CURRENT resident size in bytes from task_info(mach_task_self(), MACH_TASK_BASIC_INFO), the Mach
+    kernel's own figure. Raises on any failure (no ctypes, no symbol, a non-zero kern_return_t) and the caller falls
+    to ps: a kern_return_t is never read as a size. The setup (the library handle, the task port, the argument
+    types) is done once per process; every call after it is one Mach trap."""
+    if _MachTaskBasicInfo is None:
+        raise RuntimeError("ctypes unavailable")
+    if not _DARWIN_TASK_INFO:
+        lib = _darwin_libsystem()
+        fn = lib.task_info
+        fn.restype = _ctypes.c_int32
+        fn.argtypes = [_ctypes.c_uint32, _ctypes.c_uint32, _ctypes.c_void_p, _ctypes.POINTER(_ctypes.c_uint32)]
+        try:
+            lib.mach_task_self.restype = _ctypes.c_uint32
+            task = int(lib.mach_task_self())
+        except AttributeError:                                  # newer headers make it a macro over this variable
+            task = int(_ctypes.c_uint32.in_dll(lib, "mach_task_self_").value)
+        _DARWIN_TASK_INFO.append((fn, task))
+    fn, task = _DARWIN_TASK_INFO[0]
+    info = _MachTaskBasicInfo()
+    count = _ctypes.c_uint32(_ctypes.sizeof(info) // _ctypes.sizeof(_ctypes.c_uint32))
+    kr = fn(task, _MACH_TASK_BASIC_INFO, _ctypes.byref(info), _ctypes.byref(count))
+    if kr != 0:
+        raise OSError("task_info: kern_return_t %d" % kr)
+    return int(info.resident_size)
+
+
+def _darwin_ps_rss_kb(now=None):
+    """The current resident size in KB from `ps -o rss= -p <pid>` (argv only, no shell, a 2 s cap), the fallback when
+    ctypes cannot reach task_info. ps forks a process, so it runs at most once per _DARWIN_PS_INTERVAL_S of monotonic
+    time and the memo's figure is served in between, a failed run included (it is not retried before the interval
+    passes); None until a run has answered."""
+    now = time.monotonic() if now is None else now
+    memo = _DARWIN_PS_MEMO
+    if memo["t"] is not None and now - memo["t"] < _DARWIN_PS_INTERVAL_S:
+        return memo["kb"]
+    memo["t"] = now
+    try:
+        out = subprocess.run(["ps", "-o", "rss=", "-p", str(os.getpid())], capture_output=True, text=True,
+                             timeout=2, check=True).stdout
+        memo["kb"] = int(out.strip())
+    except Exception:
+        pass
+    return memo["kb"]
+
+
+def _darwin_current_rss_kb(now=None):
+    """(kb, source) of this process's CURRENT resident size on macOS: task_info through ctypes ("task_info"), else ps
+    ("ps"), else (None, None) and the caller keeps the peak under source "unavailable"."""
+    try:
+        return _darwin_task_rss_bytes() // 1024, "task_info"
+    except Exception:
+        pass
+    kb = _darwin_ps_rss_kb(now)
+    return (kb, "ps") if kb is not None else (None, None)
+
+
 def _process_stats():
     """rss_kb, thread count, CPU seconds and pid for the /perf snapshot, plus the exact memory gauges
     (perf round 4, M1-lite): rss_anon_kb and hwm_kb (RssAnon and VmHWM from /proc/self/status, the
@@ -217,10 +312,15 @@ def _process_stats():
     snapshots an hour apart answer the RSS question: blocks flat while rss climbs points at the
     allocator, blocks climbing at an object graph, a `caches` gauge climbing at that cache.
 
-    VmRSS from /proc is the CURRENT resident size; where /proc is absent (macOS) ru_maxrss is the PEAK,
-    in bytes there, so it is scaled to KB and the field is still called rss_kb, and the two /proc gauges
-    are null with `source` "unavailable": a peak is never passed off as an anonymous or current figure."""
-    rss, anon, hwm, source = 0, None, None, "unavailable"
+    VmRSS from /proc is the CURRENT resident size. Where /proc is absent, on macOS, the current size comes from
+    the Mach kernel's task_info through ctypes, else from `ps` (_darwin_current_rss_kb; `source` names which),
+    and ru_maxrss, the lifetime PEAK, in bytes there, is reported beside it as rss_peak_kb (before 2026-09-18
+    the peak WAS rss_kb on a Mac, so memory over uptime there only ever climbed). Any other platform without
+    /proc keeps ru_maxrss (in KB) as rss_kb under `source` "unavailable", as does a Mac where both current
+    readers fail: the source says a peak stands in. The two /proc gauges are null wherever /proc is absent:
+    a peak is never passed off as an anonymous or current figure."""
+    rss, anon, hwm, source, peak = 0, None, None, "unavailable", None
+    darwin = getattr(sys, "platform", "") == "darwin"           # read once; a stub sys without it is not a Mac
     try:
         with open("/proc/self/status") as fh:
             for line in fh:
@@ -235,9 +335,14 @@ def _process_stats():
         try:
             import resource
             r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-            rss = int(r // 1024) if sys.platform == "darwin" else int(r)
+            rss = int(r // 1024) if darwin else int(r)
         except Exception:
             rss = 0
+        if darwin:                                              # the peak keeps its own field; rss_kb is the current size
+            peak = rss
+            cur, src = _darwin_current_rss_kb()
+            if cur is not None:
+                rss, source = cur, src
     try:
         blocks = int(sys.getallocatedblocks())
     except Exception:
@@ -246,9 +351,12 @@ def _process_stats():
         gen2 = int(gc.get_stats()[2]["collections"])
     except Exception:
         gen2 = None
-    return {"rss_kb": rss, "rss_anon_kb": anon, "hwm_kb": hwm, "source": source,
-            "allocated_blocks": blocks, "gc_gen2": gen2, "malloc": _malloc_stats(),
-            "threads": threading.active_count(), "cpu_s": time.process_time(), "pid": os.getpid()}
+    out = {"rss_kb": rss, "rss_anon_kb": anon, "hwm_kb": hwm, "source": source,
+           "allocated_blocks": blocks, "gc_gen2": gen2, "malloc": _malloc_stats(),
+           "threads": threading.active_count(), "cpu_s": time.process_time(), "pid": os.getpid()}
+    if darwin:
+        out["rss_peak_kb"] = peak                               # darwin's alone: every other platform keeps its shape
+    return out
 
 
 def _gauge_values(d, tries=3):
@@ -509,11 +617,13 @@ class _PerfStats:
     milliseconds of wall time, `*_s` seconds:
       now, since, uptime_s, log    clock; when the counters started (a restart resets them); seconds
                                    since the process started; whether the romp-perf stderr log is on
-      process                      rss_kb (the CURRENT resident size on Linux, from /proc; the PEAK,
-                                   ru_maxrss, on macOS: _process_stats), threads, cpu_s
+      process                      rss_kb (the CURRENT resident size: VmRSS from /proc on Linux; task_info
+                                   through ctypes, else ps, on macOS, `source` naming the reader:
+                                   _process_stats), rss_peak_kb (macOS only: ru_maxrss, the lifetime
+                                   peak, which was rss_kb there before 2026-09-18), threads, cpu_s
                                    (time.process_time), pid, and the exact memory gauges (perf round 4,
                                    M1-lite): rss_anon_kb / hwm_kb (RssAnon and VmHWM from /proc; null
-                                   with source "unavailable" where /proc is absent), allocated_blocks
+                                   where /proc is absent), allocated_blocks
                                    (sys.getallocatedblocks), gc_gen2 (generation-2 collections) and
                                    malloc {arena, hblkhd, uordblks, fordblks} (glibc mallinfo2 in
                                    bytes, the malloc half of the heap; null where glibc 2.33+ is absent)
@@ -29644,7 +29754,8 @@ def _kernel_process_sample() -> dict:
     """{rssKb, cpuS} of THIS kernel process (T304): its resident size and CPU seconds, sampled at the two
     events the restart ledger already records, the exit (the cut row: the process at the end of its life)
     and the settled boot (the boot row: the process just born), so the kernel's own growth between restarts
-    is a series with no sampler of its own. _process_stats reads /proc (macOS: ru_maxrss, the peak). Never
+    is a series with no sampler of its own. _process_stats reads /proc (macOS: task_info, the current size too
+    since 2026-09-18; before it ru_maxrss, the peak, so the two rows there could never show a fall). Never
     raises; an unreadable process is an empty dict, and the row simply lacks the two fields."""
     try:
         ps = _process_stats()

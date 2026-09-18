@@ -793,6 +793,8 @@ if "allocated_blocks" in pb:
         parts.append("anon %s" % mbk(pb["rss_anon_kb"]))
     if pb.get("hwm_kb") is not None:
         parts.append("hwm %s" % mbk(pb["hwm_kb"]))
+    if pb.get("rss_peak_kb") is not None:                   # macOS: ru_maxrss, the lifetime peak beside the current size (2026-09-18)
+        parts.append("peak %s" % mbk(pb["rss_peak_kb"]))
     if pb.get("allocated_blocks") is not None:
         parts.append("blocks %d (%+d)" % (pb["allocated_blocks"], pb["allocated_blocks"] - (pa.get("allocated_blocks") or pb["allocated_blocks"])))
     if pb.get("gc_gen2") is not None:

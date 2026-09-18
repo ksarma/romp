@@ -27,6 +27,7 @@ import shutil
 import socket
 import urllib.request
 from unittest import mock
+import contextlib
 from contextlib import redirect_stderr
 from http.server import ThreadingHTTPServer
 from romp_load import load_source
@@ -313,7 +314,8 @@ class Collector(unittest.TestCase):
         for blk in ("caps", "captions", "thread_reg"):
             for k, v in snap["memos"][blk].items():
                 self.assertIsInstance(v, int, "%s.%s" % (blk, k))
-        self.assertEqual(set(snap["process"]), PROCESS_KEYS)
+        self.assertEqual(set(snap["process"]), PROCESS_KEYS | ({"rss_peak_kb"} if sys.platform == "darwin" else set()),
+                         "rss_peak_kb is darwin's alone (2026-09-18); every other platform keeps its shape")
         self.assertGreater(snap["process"]["threads"], 0)
         self.assertGreaterEqual(snap["process"]["rss_kb"], 0)
         self.assertEqual(set(snap["caches"]), CACHE_NAMES, "one exact-occupancy block per declared cache (M1-lite)")
@@ -333,9 +335,10 @@ class Collector(unittest.TestCase):
         # rss_kb: the anonymous and peak resident sizes from /proc, the interpreter's live allocation count,
         # the gen-2 collection count, and glibc's malloc arena figures (the large-object half of the heap;
         # pymalloc's arenas are mmap'd and invisible to it). Where a source is absent the field is null and
-        # `source` says so; a peak from ru_maxrss is never passed off as a current figure.
+        # `source` says so; a peak from ru_maxrss is never passed off as a current figure (on macOS it is
+        # rss_peak_kb, and rss_kb is the current size from task_info or ps, since 2026-09-18).
         p = km._PERF_STATS.snapshot()["process"]
-        self.assertIn(p["source"], ("proc", "unavailable"))
+        self.assertIn(p["source"], ("proc", "task_info", "ps", "unavailable"), "the reader rss_kb came from")
         if p["source"] == "proc":
             self.assertGreater(p["rss_anon_kb"], 0)
             self.assertGreaterEqual(p["hwm_kb"], p["rss_kb"], "the high-water mark is at or above the current size")
@@ -723,15 +726,31 @@ class Collector(unittest.TestCase):
 
 
 class ProcessStatsFallback(unittest.TestCase):
-    """_process_stats reads VmRSS from /proc/self/status; a platform without /proc (macOS) gets
-    ru_maxrss, which the kernel there reports in bytes and Linux in KB, so only the darwin branch
-    scales. Both branches are driven here: /proc is made to fail on every platform, and the
-    platform name and the rusage read are patched so the figure is exact."""
+    """_process_stats reads VmRSS from /proc/self/status. A platform without /proc gets ru_maxrss, which
+    Linux reports in KB and macOS in bytes; on macOS that figure is the LIFETIME PEAK, so since 2026-09-18
+    the darwin branch reads the CURRENT size from the Mach kernel's task_info through ctypes, else from a
+    rate-limited `ps`, and keeps the peak beside it as rss_peak_kb. This box is Linux: /proc is made to
+    fail, and the platform name, the rusage read and the two darwin readers are patched, so every figure
+    is exact and no test assumes a Mac."""
 
     class _Usage:
         ru_maxrss = 2048 * 1024                              # bytes on darwin, KB on linux
 
-    def _stats(self, platform):
+    def setUp(self):
+        self._reset()
+        self.addCleanup(self._reset)
+
+    @staticmethod
+    def _reset():
+        km._DARWIN_TASK_INFO.clear()
+        km._DARWIN_PS_MEMO.update(t=None, kb=None)
+
+    @staticmethod
+    def _ps(stdout):
+        return mock.Mock(stdout=stdout, returncode=0)
+
+    def _no_proc(self, platform):
+        """/proc failing, sys.platform and ru_maxrss patched: the fallback branch on the named platform."""
         real_open = open
 
         def no_proc(path, *a, **kw):
@@ -739,32 +758,130 @@ class ProcessStatsFallback(unittest.TestCase):
                 raise FileNotFoundError(path)
             return real_open(path, *a, **kw)
         import resource
-        with mock.patch("builtins.open", side_effect=no_proc), \
-                mock.patch.object(resource, "getrusage", return_value=self._Usage()), \
-                mock.patch.object(sys, "platform", platform):
-            return km._process_stats()
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch("builtins.open", side_effect=no_proc))
+        stack.enter_context(mock.patch.object(resource, "getrusage", return_value=self._Usage()))
+        stack.enter_context(mock.patch.object(sys, "platform", platform))
+        return stack
 
     def test_without_proc_rss_comes_from_ru_maxrss(self):
-        st = self._stats("linux")
+        # linux without /proc: ru_maxrss in KB as is, the darwin readers never consulted, no peak field;
+        # the darwin reader is patched to RAISE (the call is outside every try), so a linux branch that
+        # reached it would fail here rather than quietly return a figure
+        with self._no_proc("linux"), \
+                mock.patch.object(km, "_darwin_current_rss_kb", side_effect=AssertionError("darwin reader on linux")):
+            st = km._process_stats()
         self.assertIsInstance(st["rss_kb"], int)
         self.assertEqual(st["rss_kb"], 2048 * 1024, "linux reports ru_maxrss in KB: taken as is")
+        self.assertEqual(st["source"], "unavailable")
+        self.assertNotIn("rss_peak_kb", st, "the peak field is darwin's; every other platform keeps its shape")
         for k in ("threads", "cpu_s", "pid"):
             self.assertIn(k, st)
         self.assertEqual(st["pid"], os.getpid())
 
-    def test_on_darwin_ru_maxrss_is_bytes_and_is_scaled_to_kb(self):
-        st = self._stats("darwin")
-        self.assertEqual(st["rss_kb"], 2048, "ru_maxrss // 1024")
+    def test_on_darwin_rss_is_the_current_size_from_task_info_and_the_peak_moves_to_rss_peak_kb(self):
+        # the Mach kernel says 300 MiB resident now, ru_maxrss (bytes on darwin) says the peak was 2 MiB: a
+        # synthetic pair whose point is which field each figure lands in. Before 2026-09-18 rss_kb was the
+        # peak (2048 here) and there was no rss_peak_kb, so a Mac's memory over uptime only ever climbed.
+        ps = mock.Mock(side_effect=AssertionError("ps forked with task_info answering"))
+        with self._no_proc("darwin"), \
+                mock.patch.object(km, "_darwin_task_rss_bytes", return_value=300 * 1024 * 1024), \
+                mock.patch.object(km.subprocess, "run", ps):
+            st = km._process_stats()
+        self.assertEqual(st["rss_kb"], 300 * 1024, "task_info's resident_size, bytes scaled to KB")
+        self.assertEqual(st["source"], "task_info")
+        self.assertEqual(st["rss_peak_kb"], 2048, "ru_maxrss // 1024: the old rss_kb, under its own name")
+        self.assertIsNone(st["rss_anon_kb"]); self.assertIsNone(st["hwm_kb"])
+        ps.assert_not_called()
+        json.dumps(st)
+
+    def test_on_darwin_a_failing_task_info_falls_to_ps_in_kb(self):
+        ps = mock.Mock(return_value=self._ps(" 123456\n"))
+        with self._no_proc("darwin"), \
+                mock.patch.object(km, "_darwin_task_rss_bytes", side_effect=OSError("task_info: kern_return_t 4")), \
+                mock.patch.object(km.subprocess, "run", ps):
+            st = km._process_stats()
+        self.assertEqual(st["rss_kb"], 123456, "ps -o rss= prints KB on darwin: taken as is")
+        self.assertEqual(st["source"], "ps")
+        self.assertEqual(st["rss_peak_kb"], 2048)
+        ps.assert_called_once()
+        args, kwargs = ps.call_args
+        self.assertEqual(args[0], ["ps", "-o", "rss=", "-p", str(os.getpid())], "argv only, this process")
+        self.assertFalse(kwargs.get("shell"), "no shell")
+        self.assertLessEqual(kwargs.get("timeout"), 5, "a bounded run: a hung ps cannot hold the read")
+
+    def test_the_ps_fallback_runs_at_most_once_per_ten_seconds(self):
+        # ps is a fork, so the reader memoizes it on the monotonic clock: three reads inside 10 s are one
+        # run, and the read at 10 s runs again
+        ps = mock.Mock(side_effect=[self._ps("100\n"), self._ps("200\n")])
+        with mock.patch.object(km.subprocess, "run", ps), \
+                mock.patch.object(km, "_darwin_task_rss_bytes", side_effect=OSError("no ctypes")):
+            self.assertEqual(km._darwin_current_rss_kb(now=1000.0), (100, "ps"))
+            self.assertEqual(km._darwin_current_rss_kb(now=1005.0), (100, "ps"), "the memo serves the reads inside 10 s")
+            self.assertEqual(km._darwin_current_rss_kb(now=1009.99), (100, "ps"))
+            self.assertEqual(ps.call_count, 1)
+            self.assertEqual(km._darwin_current_rss_kb(now=1010.0), (200, "ps"), "a second run once 10 s have passed")
+            self.assertEqual(ps.call_count, 2)
+
+    def test_a_failed_ps_is_not_retried_inside_the_window_and_the_peak_stands_in(self):
+        # both current readers down: rss_kb keeps the peak, the way every no-/proc platform reports it, and
+        # `source` says so; the failed fork is not retried until the 10 s pass
+        ps = mock.Mock(side_effect=km.subprocess.CalledProcessError(1, "ps"))
+        with self._no_proc("darwin"), \
+                mock.patch.object(km, "_darwin_task_rss_bytes", side_effect=OSError("no ctypes")), \
+                mock.patch.object(km.subprocess, "run", ps):
+            st1 = km._process_stats()
+            st2 = km._process_stats()
+        self.assertEqual(ps.call_count, 1, "a failed fork is not retried before 10 s pass")
+        for st in (st1, st2):
+            self.assertEqual((st["rss_kb"], st["source"], st["rss_peak_kb"]), (2048, "unavailable", 2048),
+                             "with no current reader the peak stands in, and source says so")
+
+    def test_the_task_info_reader_reads_resident_size_from_the_mach_struct(self):
+        # the ctypes plumbing against a stand-in libSystem: the task port, the flavor (MACH_TASK_BASIC_INFO, 20),
+        # the count (MACH_TASK_BASIC_INFO_COUNT, 12 natural_t for the 48-byte struct), the struct written
+        # through the out pointer and read back in bytes, the setup done once per process, and a non-zero
+        # kern_return_t raised rather than read as a size
+        import ctypes
+        self.assertEqual(ctypes.sizeof(km._MachTaskBasicInfo), 48, "struct mach_task_basic_info")
+        seen = {}
+
+        class _Lib:
+            def __init__(self, kr, resident):
+                def task_info(task, flavor, info_p, count_p):
+                    seen.update(task=task, flavor=flavor,
+                                count=ctypes.cast(count_p, ctypes.POINTER(ctypes.c_uint32)).contents.value)
+                    ctypes.cast(info_p, ctypes.POINTER(km._MachTaskBasicInfo)).contents.resident_size = resident
+                    return kr
+
+                def mach_task_self():
+                    return 0x103
+                self.task_info = task_info                   # plain functions: they take .restype and .argtypes
+                self.mach_task_self = mach_task_self
+        factory = mock.Mock(return_value=_Lib(0, 77 * 1024 * 1024))
+        with mock.patch.object(km, "_darwin_libsystem", factory):
+            self.assertEqual(km._darwin_task_rss_bytes(), 77 * 1024 * 1024)
+            self.assertEqual(km._darwin_task_rss_bytes(), 77 * 1024 * 1024)
+        factory.assert_called_once()                         # the handle and the port are resolved once
+        self.assertEqual((seen["task"], seen["flavor"], seen["count"]), (0x103, 20, 12))
+        self._reset()
+        with mock.patch.object(km, "_darwin_libsystem", return_value=_Lib(4, 1)):   # KERN_INVALID_ARGUMENT
+            with self.assertRaises(OSError):
+                km._darwin_task_rss_bytes()
 
     def test_with_proc_present_the_fallback_is_not_used(self):
         import resource
-        with mock.patch.object(resource, "getrusage", side_effect=AssertionError("fallback taken")):
+        with mock.patch.object(resource, "getrusage", side_effect=AssertionError("fallback taken")), \
+                mock.patch.object(km, "_darwin_current_rss_kb", side_effect=AssertionError("darwin reader with /proc")):
             try:
                 with open("/proc/self/status"):
                     pass
             except OSError:
                 self.skipTest("no /proc on this platform")
-            self.assertGreater(km._process_stats()["rss_kb"], 0, "VmRSS read from /proc")
+            st = km._process_stats()
+        self.assertGreater(st["rss_kb"], 0, "VmRSS read from /proc")
+        self.assertEqual(st["source"], "proc")
+        self.assertNotIn("rss_peak_kb", st, "linux's block is unchanged")
 
 
 class WakeCounting(unittest.TestCase):

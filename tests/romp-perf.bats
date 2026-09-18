@@ -196,6 +196,24 @@ PY
     [[ "$output" == *"rss 410 MB"* ]]
 }
 
+@test "romp perf: a macOS kernel's memory line carries the peak beside the current size and no /proc gauges" {
+    # a darwin kernel (2026-09-18): rss_kb is the CURRENT size (task_info, else ps) and rss_peak_kb the lifetime
+    # peak that ru_maxrss used to report under rss_kb's name, so the line prints both; the /proc-only gauges
+    # are null there and print nothing
+    python3 - "$SNAP_A" "$SNAP_B" <<'PY'
+import json, sys
+for p, peak in zip(sys.argv[1:], (450000, 460000)):
+    d = json.load(open(p))
+    d["process"].update({"rss_anon_kb": None, "hwm_kb": None, "source": "task_info", "rss_peak_kb": peak})
+    json.dump(d, open(p, "w"))
+PY
+    run "$ROMP_SCRIPT" perf --interval 0
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"memory    rss 410 MB (+10 MB)   peak 449 MB   blocks 1001000 (+1000)"* ]]
+    [[ "$output" != *"anon "* ]]
+    [[ "$output" != *"hwm "* ]]
+}
+
 @test "romp perf: the cycle line's max is the ring's, and the parenthetical names the ring" {
     run "$ROMP_SCRIPT" perf --interval 0
     [ "$status" -eq 0 ]
