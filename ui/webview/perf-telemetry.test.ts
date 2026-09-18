@@ -1,7 +1,8 @@
 // perf-telemetry.ts on a fake clock: the frame classifier, the per-type log2 histogram and its quantiles,
 // the minute flush (one row, its shape; an idle minute sends nothing), the free-main-thread sample two
 // animation frames after a handler and every way it is cancelled or dropped, nested brackets recording each
-// level's own time, the slowframe threshold, cap and long-frame attribution, the long-animation-frame
+// level's own time, the slowframe threshold, cap and long-frame attribution (the cap's budget is the timer's
+// minute: a hide flush neither re-arms it nor sends a row held for its report), the long-animation-frame
 // aggregation from synthetic entries (with and without `scripts`, the key cap, the longtask fallback), the
 // identifier-only contract for attribution keys and invokers, and the feature guards when
 // performance.memory, PerformanceObserver, requestAnimationFrame or performance.now itself are absent. The
@@ -488,6 +489,64 @@ test("slowframe backstops: a later report that starts after it, or the minute ti
   assert.equal(rows[1].data.ms, 150);
   assert.equal("loaf" in rows[1].data, false);
   assert.equal(minuteRows(h.posted)[0].data.slow.suppressed, 6);
+});
+
+test("slowframe budget: a hide flush inside the minute does not re-arm the cap; each minute row books the rows it held, additive across the two", () => {
+  const doc = new EventTarget();
+  let vis = true;
+  const h = harness({ documentEvents: doc, visible: () => vis });
+  const p = createPerfTelemetry("feed", h.deps);
+  for (let i = 0; i < 7; i++) h.frame(p, { type: "feed" }, 100 + i);   // 100..106: five sent, two counted with the worst
+  assert.equal(slowRows(h.posted).length, SLOW_ROWS_PER_MINUTE);
+  h.clock.t += 5000; h.clock.wall += 5000;
+  vis = false;
+  doc.dispatchEvent(new Event("visibilitychange"));   // the hide flushes the minute row
+  assert.equal(minuteRows(h.posted).length, 1);
+  assert.deepEqual(minuteRows(h.posted)[0].data.slow, { sent: 5, suppressed: 2, suppressed_worst_ms: 106 });
+  h.clock.t += 5000; h.clock.wall += 5000;
+  vis = true;
+  doc.dispatchEvent(new Event("visibilitychange"));   // back inside the same timer minute
+  for (let i = 0; i < 7; i++) h.frame(p, { type: "feed" }, 110 + i);
+  assert.equal(slowRows(h.posted).length, SLOW_ROWS_PER_MINUTE, "the budget is the timer's minute: the return re-armed nothing");
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.equal(minuteRows(h.posted).length, 2);
+  assert.deepEqual(minuteRows(h.posted)[1].data.slow, { sent: 0, suppressed: 7, suppressed_worst_ms: 116 }, "the second row books its own frames only: the two rows' counts add up to the fourteen");
+  assert.equal(slowRows(h.posted).length, SLOW_ROWS_PER_MINUTE, "five rows in all");
+  // the timer re-armed it: the next minute sends again
+  h.frame(p, { type: "feed" }, 200);
+  assert.equal(slowRows(h.posted).length, SLOW_ROWS_PER_MINUTE + 1);
+});
+
+test("slowframe held for its report: the hide flush leaves it pending, the covering report sends it once with its attribution, and the next tick sends nothing more for it", () => {
+  const doc = new EventTarget();
+  let vis = true;
+  const h = harness({ observer: FakeObserver as any, supportedEntryTypes: ["long-animation-frame"], documentEvents: doc, visible: () => vis });
+  const p = createPerfTelemetry("feed", h.deps);
+  h.frame(p, { type: "feed" }, 130);         // 1000..1130, held for the browser's report
+  assert.equal((p.snapshot() as any).pending_slow, 1);
+  vis = false;
+  doc.dispatchEvent(new Event("visibilitychange"));
+  assert.equal(minuteRows(h.posted).length, 1, "the hide flushed the minute row");
+  assert.equal(minuteRows(h.posted)[0].data.slow.sent, 1, "booked in the row of the minute that held it");
+  assert.equal((p.snapshot() as any).pending_slow, 1, "still waiting for its report");
+  assert.equal(slowRows(h.posted).length, 0, "the hide sent it neither bare nor at all");
+  FakeObserver.deliver([{
+    startTime: 998, duration: 140, blockingDuration: 90,
+    scripts: [{ sourceURL: "http://h:1/dist/feed.js?v=1", sourceFunctionName: "render", sourceCharPosition: 10, invoker: "WebSocket.onmessage", duration: 120 }],
+  }]);
+  const rows = slowRows(h.posted);
+  assert.equal(rows.length, 1, "the covering report sent it");
+  assert.deepEqual(rows[0].data, { app: "feed", type: "feed", ms: 130, dom: 1234, loaf: { ms: 140, blocking_ms: 90, top: [{ k: "feed.js:render@10", ms: 120, inv: "WebSocket.onmessage" }] } });
+  assert.equal((p.snapshot() as any).pending_slow, 0);
+  vis = true;
+  doc.dispatchEvent(new Event("visibilitychange"));
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.equal(slowRows(h.posted).length, 1, "the tick found nothing held: the row went once");
+  assert.equal(minuteRows(h.posted).length, 2, "the report itself made the second minute worth a row");
+  assert.equal(minuteRows(h.posted)[1].data.slow.sent, 0, "the second row books no row for it");
+  assert.equal(minuteRows(h.posted)[1].data.loaf.n, 1);
 });
 
 // ── long-frame aggregation ──
@@ -1105,7 +1164,7 @@ test("share OFF: the minute row's keys are exactly today's, whatever the page co
   assert.equal(h.rafQueue.length, 1, "the free sample's frame alone: no gap loop runs with the switch off");
 });
 
-test("share ON: the first row carries nav, res, marks and env once, every row vis, wsBytes and rafGap; a rotation re-sends env alone", () => {
+test("share ON: the first row carries nav, res, marks and env once, every row vis, wsBytes and rafGap; a flip of the pane's own aspect re-sends env alone", () => {
   const h = beaconHarness({ share: true, mute: false }, { raf: null });
   const p = createPerfTelemetry("chat", h.deps);
   h.frame(p, { type: "session" }, 10);
@@ -1130,7 +1189,7 @@ test("share ON: the first row carries nav, res, marks and env once, every row vi
   const e = minuteRows(h.posted)[1].data;
   assert.deepEqual(Object.keys(e).sort(), [...TODAY_KEYS, "rafGap", "vis", "wsBytes"].sort());
   assert.equal(e.wsBytes, 700);
-  // a rotation: env again, nothing else of the once-per-page set
+  // the pane's aspect flips (a divider drag, a resize, a rotation): env again, nothing else of the once-per-page set
   h.env.vw = 664; h.env.vh = 390;
   h.frame(p, { type: "session" }, 10);
   h.clock.wall += 60_000;
@@ -1138,12 +1197,45 @@ test("share ON: the first row carries nav, res, marks and env once, every row vi
   const f = minuteRows(h.posted)[2].data;
   assert.deepEqual(Object.keys(f).sort(), [...TODAY_KEYS, "env", "rafGap", "vis", "wsBytes"].sort());
   assert.equal(f.env.vw, 664);
-  // the same orientation again: no env
+  // the same aspect again: no env
   h.frame(p, { type: "session" }, 10);
   h.clock.wall += 60_000;
   p.tick();
   assert.equal("env" in minuteRows(h.posted)[3].data, false);
   assert.equal(slowRows(h.posted).length, 0);
+});
+
+test("wsBytes carry: a minute that sent no row, idle or muted, passes its byte baseline on, so the next row counts the characters since the previous row", () => {
+  const h = beaconHarness({ share: true, mute: false }, { raf: null });
+  const p = createPerfTelemetry("chat", h.deps);
+  h.frame(p, { type: "session" }, 10);
+  h.clock.wall += 60_000;
+  h.marks.wsBytes = MARKS.wsBytes + 40;
+  p.tick();
+  assert.equal(minuteRows(h.posted)[0].data.wsBytes, 40);
+  // an idle minute: the shim counts characters (a keepalive, a frame the pane never handles) but no frame is timed, so the tick sends nothing
+  h.clock.wall += 60_000;
+  h.marks.wsBytes = MARKS.wsBytes + 40 + 250;
+  p.tick();
+  assert.equal(minuteRows(h.posted).length, 1, "an idle minute sends nothing");
+  h.frame(p, { type: "session" }, 10);
+  h.clock.wall += 60_000;
+  h.marks.wsBytes = MARKS.wsBytes + 40 + 250 + 60;
+  p.tick();
+  assert.equal(minuteRows(h.posted)[1].data.wsBytes, 310, "the idle minute's 250 and this minute's 60: the baseline carried");
+  // a muted minute: the frame is measured, no row is built, and the baseline carries the same way
+  h.sw.mute = true;
+  h.frame(p, { type: "session" }, 10);
+  h.clock.wall += 60_000;
+  h.marks.wsBytes = MARKS.wsBytes + 40 + 250 + 60 + 500;
+  p.tick();
+  assert.equal(minuteRows(h.posted).length, 2, "a muted minute sends nothing");
+  h.sw.mute = false;
+  h.frame(p, { type: "session" }, 10);
+  h.clock.wall += 60_000;
+  h.marks.wsBytes = MARKS.wsBytes + 40 + 250 + 60 + 500 + 70;
+  p.tick();
+  assert.equal(minuteRows(h.posted)[2].data.wsBytes, 570, "the muted minute's 500 and this minute's 70: the row after unmuting covers both");
 });
 
 test("share ON on a page without the APIs: nav and res are null, marks empty, wsBytes null, never a guess", () => {

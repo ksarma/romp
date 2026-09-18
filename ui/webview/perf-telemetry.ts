@@ -22,7 +22,9 @@
 // what "minute") on the channel the panes already use for breadcrumbs, so the kernel appends it to
 // client-diag.jsonl beside the shim's wsclose rows. A frame whose whole synchronous handling ran 100 ms or
 // more also sends a "slowframe" row at once, carrying the long-frame attribution when the browser reports
-// one for that frame; at most SLOW_ROWS_PER_MINUTE of those a minute, the rest counted in the minute row.
+// one for that frame; at most SLOW_ROWS_PER_MINUTE of those per timer minute, the rest counted in the minute
+// row. That budget is re-armed by the minute timer and by pagehide only: the hide flush below starts a new
+// minute row without re-arming it, so a page that hides and returns inside a minute posts one cap's worth.
 //
 // Rows carry numbers and code identifiers only: frame type strings, script file basenames, function names
 // with their character position, and invoker names reduced to a tag and event (element ids and any URL
@@ -50,18 +52,20 @@
 // row) `nav` (the navigation entry's type and three timestamps), `res` (resource timing folded per same-origin
 // bundle basename, query stripped, at most MAX_RES then `other`), `marks` (ms from the time origin to the socket
 // open, the bundle's ready and the first delivered frame, stamped by the shim on window.__rompPerfMarks, and the
-// paint entries); `env` once and again after a rotation (standalone, iOS major version, touch, viewport, pixel
-// ratio, the entry types the browser supports from a fixed list, requestIdleCallback, the dist token); every row
-// `vis` (visibility transitions and hidden time inside the minute), `wsBytes` (text-frame characters the shim
-// received in the minute, from its counter) and `rafGap` (animation-frame gaps over RAF_GAP_MS while visible, from
-// a loop that runs only while the switch is on and the document visible). A Performance API the browser lacks
+// paint entries); `env` once and again when the pane's own width/height aspect flips (standalone, iOS major version,
+// touch, viewport, pixel ratio, the entry types the browser supports from a fixed list, requestIdleCallback, the dist
+// token); every row `vis` (visibility transitions and hidden time inside the minute), `wsBytes` (text-frame characters
+// the shim received in the minute, from its counter) and `rafGap` (animation-frame gaps over RAF_GAP_MS while visible,
+// from a loop that runs only while the switch is on and the document visible). A Performance API the browser lacks
 // reads as null, never a guess. The pending minute also flushes on visibilitychange to hidden: iOS fires that on an
-// app switch and then freezes the page, and pagehide, a navigation event, never comes.
+// app switch and then freezes the page, and pagehide, a navigation event, never comes. That flush leaves a held
+// slowframe row for its long-frame report (the timer tick and pagehide stay its backstops) and does not re-arm the
+// slowframe budget.
 
 export const SLOW_FRAME_MS = 100;      // a frame whose whole handling is at or over this sends a slowframe row
 export const LONG_FRAME_MS = 50;       // the browser's own long-frame threshold; entries under it are ignored
 export const DROPPED_FRAME_MS = 16.7;  // one frame at 60 Hz: handlers over this drop at least one paint
-export const SLOW_ROWS_PER_MINUTE = 5; // slowframe rows sent per pane per minute; the rest are counted in the minute row
+export const SLOW_ROWS_PER_MINUTE = 5; // slowframe rows sent per pane per timer minute (PerfTelemetry.slowBudget); the rest are counted in the minute row
 export const FREE_RING = 64;           // main-thread-free samples kept for the minute's percentiles
 export const MAX_FRAME_TYPES = 32;     // distinct wire frame types per minute, the rest fold into "other"; the federation layer's fed:<type> keys have the same cap of their own (fed:other)
 export const MAX_TOP = 5;              // attributed keys reported per minute
@@ -355,7 +359,9 @@ export function envInfo(s: EnvSource): EnvInfo {
            entryTypes: ENV_ENTRY_TYPES.filter((t) => s.entryTypes.indexOf(t) >= 0), ric: !!s.ric };
 }
 
-/** The viewport's class whose change re-sends `env`: landscape or portrait (a rotation). */
+/** The viewport class whose change re-sends `env`: the pane's own width/height aspect, landscape (wider than tall) or
+ *  portrait. The figures are the pane iframe's innerWidth and innerHeight, not the device's, so a divider drag, a window
+ *  resize or a device rotation can flip it. */
 export function orientation(vw: number, vh: number): string { return vw > vh ? "landscape" : "portrait"; }
 
 /** The scripts of one long-frame entry as `{k, ms, inv}` rows, summed per key, largest first. */
@@ -383,7 +389,7 @@ interface Bucket {
   frames: Map<string, TypeStat>;
   free: Ring;
   loaf: { n: number; blocking_ms: number; worst_ms: number; top: Map<string, TopStat> };
-  slowSent: number;                    // slowframe rows sent or held this minute
+  slowSent: number;                    // slowframe rows sent or held in this bucket (the row's slow.sent); the cap's counter is the collector's slowBudget
   slowSuppressed: number;              // slow frames past the cap: counted, not sent
   slowSuppressedWorst: number;
   wireTypes: number;                   // distinct keys in `frames` that are wire types, and fed:<type> keys, for the two caps
@@ -404,13 +410,14 @@ export class PerfTelemetry implements RompPerf {
   private freeFrom = 0;
   private rafId = 0;
   private pendingSlow: PendingSlow[] = [];
+  private slowBudget = 0;              // slowframe rows sent or held since the timer's last tick: the cap slow() checks. Each bucket books the same rows for its row's `slow`, but a hide flush starts a new bucket inside the timer's minute and must not re-arm the cap (2026-09-18)
   readonly observerKind: ObserverKind = "none";
   // the beacon extension
   private sw: BeaconSwitches = { share: false, mute: false };
   private hiddenAt = -1;               // d.now() when the document went hidden; -1 while visible
   private pageSent = false;            // nav, res and marks have gone out (once per page life)
   private envSent = false;
-  private envOrient = "";              // the orientation the last env went out with; a change re-sends it
+  private envOrient = "";              // the pane's aspect (orientation()) the last env went out with; a change re-sends it
   private gap = { running: false, id: 0, last: -1 };   // the animation-frame gap loop: on only while share is on and the document visible
 
   constructor(readonly app: string, private readonly d: PerfDeps) {
@@ -468,12 +475,22 @@ export class PerfTelemetry implements RompPerf {
     return (e: MessageEvent) => this.frame(e ? e.data : null, () => handler(e));
   }
 
-  /** The minute timer's callback, also run on pagehide and on visibilitychange to hidden: send the minute if
-   *  anything happened, start the next. The switches are re-read first, so a save lands within a minute. */
+  /** The minute timer's callback, also run on pagehide: send any slowframe row still waiting for a long-frame report
+   *  (none is coming for a frame this old), re-arm the slowframe budget, and flush the minute. The budget is the
+   *  timer's minute, not the minute row's: the hide flush (onVisibility) starts a new row without re-arming it, so a
+   *  page that hides and returns inside a minute posts one cap's worth of rows, not one per return. The switches are
+   *  re-read first, so a save lands within a minute. */
   tick(): void {
     this.refreshSwitches();
-    // slowframe rows still waiting for a long-frame report: no report is coming for a frame this old
     for (const p of this.pendingSlow.splice(0)) this.sendSlow(p, null);
+    this.slowBudget = 0;
+    this.flush();
+  }
+
+  /** Send the minute if anything happened and start the next. tick() and the hide flush share it; the caller has
+   *  re-read the switches. A held slowframe row is left alone: it waits for its long-frame report, and the later
+   *  report, tick() and pagehide are its backstops. */
+  private flush(): void {
     const b = this.bucket;
     this.settleHidden(b);
     // a muted minute builds no row at all: extend() would otherwise spend the once-per-page fields on a row that never leaves
@@ -513,14 +530,16 @@ export class PerfTelemetry implements RompPerf {
 
   /** The document's visibility flipped: count the transition, keep the hidden clock, and on hidden cancel the
    *  free sample, stop the gap loop and FLUSH the minute (iOS fires this on an app switch and then freezes the
-   *  page; pagehide never comes, and the minute was lost with it). */
+   *  page; pagehide never comes, and the minute was lost with it). The flush is flush(), not tick(): it leaves a
+   *  held slowframe row for its long-frame report and does not re-arm the slowframe budget, which is the timer's. */
   private onVisibility(): void {
     const now = this.d.now();
     if (!this.d.visible()) {
       this.cancelFree();
       if (this.hiddenAt < 0) { this.bucket.vis.hiddenN++; this.hiddenAt = now; }   // the count and the clock move together: a hide the clock already holds (a page that began hidden) is no transition
       this.gapStop();
-      this.tick();
+      this.refreshSwitches();
+      this.flush();
     } else {
       this.bucket.vis.visibleN++;
       if (this.hiddenAt >= 0) { this.bucket.vis.hiddenMs += now - this.hiddenAt; this.hiddenAt = -1; }
@@ -677,13 +696,16 @@ export class PerfTelemetry implements RompPerf {
 
   private slow(type: string, ms: number, t0: number, t1: number): void {
     const b = this.bucket;
-    if (b.slowSent >= SLOW_ROWS_PER_MINUTE) {
+    if (this.slowBudget >= SLOW_ROWS_PER_MINUTE) {
       // a pane that is slow on every frame would post one row per frame; past the cap the frames are counted
-      // in the minute row with the worst of them, and the rows already sent are the minute's first
+      // in the minute row with the worst of them, and the rows already sent are the minute's first. The cap is
+      // the budget's, per timer minute; the bucket's own counts book what its row reports and are additive
+      // across rows (a hide flush inside the minute splits them over two rows, never counts one twice)
       b.slowSuppressed++;
       if (ms > b.slowSuppressedWorst) b.slowSuppressedWorst = ms;
       return;
     }
+    this.slowBudget++;
     b.slowSent++;
     const row: PendingSlow = { type, ms, dom: this.safeDom(), t0, t1 };
     if (this.observerKind !== "loaf") { this.sendSlow(row, null); return; }

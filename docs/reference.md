@@ -4073,14 +4073,29 @@ frames it received is measured in the panes themselves, by
   that reports neither long animation frames nor long tasks gives the shell
   nothing to observe, and an idle minute posts nothing, so no shell row
   appears there.
-- Once a minute the pane posts ONE `clientDiag` row on the socket it already
+- Once a minute the pane posts a `clientDiag` row on the socket it already
   uses for breadcrumbs, only when something happened that minute (a frame
-  arrived or a long frame was observed); the kernel appends it to
+  arrived, a long frame was observed, or, with the share switch below on, an
+  animation-frame gap over 50 ms was seen while the document was visible). A
+  minute can yield more than one row: the pending minute also flushes on
+  `pagehide` and on `visibilitychange` to hidden (iOS fires the latter on an
+  app switch and then freezes the page; `pagehide`, a navigation event, never
+  comes there), and neither flush resets the interval timer, so rows stay
+  additive but shorter. The kernel admits the surface's known top-level `data`
+  keys (`CLIENT_DIAG_KEYS` in `kernel/kernel.py`; a dropped key is said once
+  per surface and key on stderr, at most eight of one row's by name plus one
+  line counting the rest, and the whole latch holds 512 pairs, then says so
+  once), cuts every string value at 64 characters at any depth, reads nesting
+  past 8 levels as `null`, stores a `data` that is not an object as `null`,
+  keeps no key for a surface the table does not name, refuses a page's row
+  under the kernel's own surface `kernel`, and appends the row to
   `client-diag.jsonl` under the state directory with the dashboard id (`wid`)
   and its own clock. A frame whose whole synchronous handling ran 100 ms or
   more also posts a `slowframe` row at once, carrying the long-frame
   attribution when the browser reports one for that frame; at most five such
-  rows a minute per pane, the rest counted in the minute row.
+  rows per timer minute per pane (a hide flush does not re-arm that budget,
+  and leaves a row still waiting for its long-frame report waiting), the rest
+  counted in the minute row.
 - The kernel files one `wsopen` row (surface `kernel`) per socket it accepts: the
   app, the dashboard id, whether the dial was a reconnect, and the `kind`, decided
   by the terms the producers state: `relay` when the dial states `relay=1`, the
@@ -4101,13 +4116,28 @@ frames it received is measured in the panes themselves, by
   the same `kind`.
 - The kernel rotates `client-diag.jsonl` once it reaches 8 MB: the file
   becomes `client-diag.jsonl.1` (replacing the previous one) and a new file
-  starts, so at most two files, about 16 MB, are kept. A minute row is about
-  1 KB, so one open dashboard writes a few MB a day.
+  starts, so at most two files, about 16 MB, are kept. A minute row runs to
+  2.5 KB today (p99 1.8 KB, measured over a day of a busy dashboard), so one
+  open dashboard writes a few MB a day; with the share switch on, the first
+  shared row adds about 2 KB of `res`, `env`, `nav` and `marks`. Every row is
+  bounded at 24 KiB of JSON, a bound derived from the collector's own caps so
+  that no row it can build is touched (its worst case, every cap reached at
+  once, is about 17.7 KB with share off and 21.1 KB with share on): a `perf`
+  minute row over the bound sheds `frames`, `loaf`, `free` and `slow` in that
+  order until it fits, keeps its other keys, and carries
+  `capped: {bytes, dropped}` (the line's bytes before the shed and the keys
+  shed); any other row over the bound, and a minute row that does not fit
+  even bare, is stored as `data: {capped: true, bytes: N, app}` (`app` where
+  the row had one) with `t`, `wid`, `surface`, `what` and `reconnect` kept.
+  `romp perf client` skips the whole-row markers and counts both shapes in
+  its header line and its `--json`.
 
 Rows carry numbers and code identifiers only, never card text, session names,
 file paths or transcript content: an element id inside an invoker name is
 stripped (`DIV#tab-web.onclick` is recorded as `DIV.onclick`), an element
-source as `[src]`, and a script URL as its basename.
+source as `[src]`, and a script URL as its basename. The kernel enforces the
+shape on its side: only the keys its table names reach the file, and every
+string is cut.
 
 The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
 
@@ -4115,7 +4145,8 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   span_ms, frames: {<type>: {n, ms_sum, ms_max, n16, n100, hist}}, free: {n,
   p50, p90, max} | null, loaf: {n, blocking_ms, worst_ms, top: [{k, ms, n,
   inv}], src}, slow: {sent, suppressed, suppressed_worst_ms}, heap_mb?, dom,
-  visible, hidden_pane, ua}}`. `app` is the pane (`chat`, `feed`, `fleet`,
+  visible, hidden_pane, ua, nav?, res?, marks?, env?, vis?, wsBytes?, rafGap?,
+  capped?}}`. `app` is the pane (`chat`, `feed`, `fleet`,
   `waiting`, `timeline`, `files`), or `shell` for the top-level window; `since`
   is the minute's start on the browser's clock (epoch ms) and `span_ms` its
   length (shorter than a minute when the page was hidden or closed); `hist` is
@@ -4129,7 +4160,41 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   the pane shim's test for a pane the shell has set to `display:none`: its
   zero-viewport probe, or the word the pane published as
   `window.__rompPaneHidden` from its own visibility events; `ua` is
-  `chrome-desktop`, `safari-ios` or `other`.
+  `chrome-desktop`, `safari-ios` or `other`. The seven optional fields after
+  it are the shared fields, present only while the browser's share switch
+  (below) is on, numbers, booleans and fixed-vocabulary identifiers only, a
+  Performance API the browser lacks reading as `null`, never a guess. Once per
+  page, in the first shared row after load or after the switch went on: `nav`
+  is `{type, responseEnd, domContentLoaded, loadEventEnd}` from the Navigation
+  Timing entry (`type` one of `navigate`, `reload`, `back_forward`,
+  `prerender`, anything else `other`; whole ms from the time origin; `-1`
+  where the browser gave no figure); `res` is Resource Timing folded per
+  basename, query and fragment stripped, `{transferSize, encodedBodySize,
+  duration}` summed per key, the 24 largest by encoded body named and the
+  rest in `other` (a key is a same-origin asset under `/dist/` or `/media/`
+  whose basename is a plain asset name, or `sw.js`, `manifest.webmanifest` or
+  `favicon.ico` at the root; a cross-origin fetch, a route, any other root
+  name and a `data:` or `blob:` URL fold into `other`); `marks` is whole ms
+  from the time origin to the first socket open (`wsOpen`), the bundle's
+  `ready` (`bundleReady`) and the first frame handed to the bundle
+  (`firstFrame`), stamped once each by the pane shim on
+  `window.__rompPerfMarks`, plus `fp` and `fcp` from the paint entries, only
+  what is known present; `env` is `standalone` (the installed app),
+  `iosMajor` (an integer, 0 outside iOS and for an iPad with the desktop user
+  agent, which `touch` tells apart), `touch`, `vw` and `vh` (the pane's own
+  inner size), `dpr` (one decimal), `entryTypes` (the supported entry types
+  from a fixed list, in its order), `ric` (`requestIdleCallback` exists) and
+  `dv` (the dist token the shim exposes; absent on the shell), sent again when
+  the pane's own width/height aspect flips, which a divider drag, a window
+  resize or a device rotation can do. In every shared row: `vis` is
+  `{hiddenN, visibleN, hiddenMs}`, the visibility transitions and the ms
+  hidden since this pane's previous row (an idle or muted minute hands its
+  counts on to the row that follows); `wsBytes` is the text-frame characters
+  the shim received on this pane's sockets since the previous row (`null`
+  without a shim: the shell, VS Code); `rafGap` is `{n, worst}`, the
+  animation-frame gaps over 50 ms while the document was visible, from a loop
+  that runs only while share is on and the document visible. `capped` is
+  present only on a row the kernel shed or replaced (the bound above).
 - `{"t", "wid", "surface": "perf", "what": "slowframe", "data": {app, type, ms,
   dom, loaf?: {ms, blocking_ms, top: [{k, ms, inv}]}}}`. `type` is the frame
   as received on the wire and `ms` its whole synchronous handling, the
@@ -4158,11 +4223,37 @@ older than the window are reported with their age. `--json` prints the folded
 panes, with a per-minute array (`t`, `since`, `total_ms`, `loaf_n`,
 `blocking_ms`) so a spike is visible without re-reading the file.
 
+Two per-browser switches sit under the gear's Debug tab, section
+Diagnostics, both off by default, stored under `romp:settings` as `perfShare`
+and `perfMute`; only the literal `true` turns one on, the store's idiom for
+off-by-default booleans, so a store from before the keys reads both off.
+**Share this browser's timing rows** (`perfShare`) adds the shared fields
+above to the minute row and runs the animation-frame gap loop while the
+document is visible; off, the row's keys are exactly the set without them.
+**Stop all timing rows from this browser** (`perfMute`) stops every
+`clientDiag` row from a browser on a kernel page: the collector's minute and
+slowframe rows in every pane and on the shell, the pane shim's `return`,
+`return-fresh`, `page-load`, `wsclose`, `wsconnfail`, `watchdog-close` and
+stale rows, the reload core's `held` row, the panes' own breadcrumbs and the
+shell script's rows, the rows the shim and the shell queued for a redial
+included (each re-reads the switch at the open that flushes its queue); the
+collector keeps measuring, so `snapshot()` still answers. In VS Code the
+collector's rows stop, but a pane's breadcrumbs reach the kernel through the
+extension's forwarder, which passes every webview message and cannot read
+the webview's store, so the switch does not reach them. A save in the gear
+fires the browser's `storage` event in every other document of the dashboard
+(each pane's iframe and the shell), and the collector re-reads both switches
+on that event and again at every flush, so a change lands at once there and
+within a minute whatever happens to the event; the shim and the shell read
+the store at each row they post.
+
 In DevTools, `window.__rompPerf.snapshot()` in a pane's frame is the minute
 in progress in the same shape, plus a derived `p90_le` per type, `active`
 (whether it will be sent), `observer` (`loaf`, `longtask`, `none`),
-`pending_slow` (slow frames waiting for their long-frame report) and
-`free_pending` (a main-thread sample armed). A page without `performance.now`
+`pending_slow` (slow frames waiting for their long-frame report),
+`free_pending` (a main-thread sample armed), `share` and `mute` (the two
+switches as last read) and `gap_running` (whether the animation-frame gap
+loop is running). A page without `performance.now`
 (the node test stand-ins) gets no telemetry and an unwrapped handler; every
 other browser API is behind a feature check, and nothing in the module throws
 into the pane.

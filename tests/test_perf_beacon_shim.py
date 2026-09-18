@@ -2,10 +2,11 @@
 """The beacon extension's hooks in the pane shim and the shell script (2026-09-18): the marks object the page's collector
 reads (window.__rompPerfMarks: the first socket open, the bundle's ready and the first delivered frame, each stamped once;
 a running count of received characters; the dist token), and the kill switch the gear's perfMute holds, read from the
-store at each row by the shim's send() and by the shell's shellDiag ahead of any send or queue, and again by the shim's
-onopen flush for the rows that waited in its queue. Source pins over the
+store at each row by the shim's send() and by the shell's shellDiag ahead of any send or queue, and again by each open
+flush (the shim's onopen and the shell socket's onopen) for the rows that waited in its queue. Source pins over the
 rendered shim (km._shim) and the shell script, the way tests/test_kernel_disconnect_banner.py pins the breadcrumb lines;
-ui/webview/pane-shim-stale.test.ts runs the shim and exercises both. Nothing here starts a kernel."""
+ui/webview/pane-shim-stale.test.ts runs the shim and exercises both, and tests/test_kernel_mobile.py
+(MobileShellDiagExecutes) executes the shell's switch under node, its open flush included. Nothing here starts a kernel."""
 import os
 import tempfile
 import unittest
@@ -69,6 +70,9 @@ class PerfBeaconShimTest(unittest.TestCase):
         self.assertLess(js.index("function diagMuted()"), js.index("function shellDiag("), "defined first")
         self.assertLess(js.index("if(diagMuted())return;"), js.index("if(shellSock&&shellSock.readyState===1){try{shellSock.send(JSON.stringify(m));}catch(e){}}"))
         self.assertLess(js.index("if(diagMuted())return;"), js.index("else if(diagQ.length<DIAGQ_MAX)diagQ.push(m);"))
+        # the shell socket's open flush re-reads the switch for the rows it holds: the shim's flush did, the shell's did not (review find, 2026-09-18)
+        self.assertIn("shellSock=ws;var q=diagQ;diagQ=[];if(!diagMuted())q.forEach(function(m){try{ws.send(JSON.stringify(m));}catch(e){}});", js)
+        self.assertNotIn("diagQ=[];q.forEach(", js, "no ungated flush remains")
         html = km._landing()
         self.assertEqual(html.count(READER), 1, "the shell page carries the reader once (the panes carry their own in the shim)")
 

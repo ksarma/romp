@@ -242,6 +242,75 @@ assert f["loaf"] == {"per_min": 0.0, "blocking_ms_per_min": 0.0, "worst_ms": 0, 
 '
 }
 
+@test "romp perf client: the kernel's capped rows are counted in the header and --json, a whole-row marker is skipped, and no phantom pane appears" {
+    # Since 2026-09-18 the kernel bounds a client-diag row at 24 KiB (kernel.py _client_diag_line) in two shapes: a
+    # perf minute row over the bound sheds its per-minute figures (frames first) and names them under its capped key,
+    # keeping its span, heap and DOM; any other row over the bound becomes a marker, data {"capped": true, "bytes": N}
+    # plus the pane's app when the row had one. The reader used to fold a marker as a pane with one zero-ms minute,
+    # and a marker without app landed under a pane named "?"; a shed row read as an empty minute with nothing said.
+    # Now the markers are skipped and both kinds are counted, in the header and in --json, so the loss is visible.
+    run "$ROMP_SCRIPT" perf client
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"capped whole"* ]]                  # nothing lost: the clause is absent, not zeroed
+    run "$ROMP_SCRIPT" perf client --json
+    [ "$status" -eq 0 ]
+    echo "$output" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["shed_minute_rows"] == 0 and d["capped_rows"] == 0, (d["shed_minute_rows"], d["capped_rows"])
+'
+    python3 - "$DIAG" <<'PY'
+import json, sys, time
+now = int(time.time())
+W1 = "11111111-2222-3333-4444-555555555555"
+def row(t, wid, what, data): return json.dumps({"t": t, "wid": wid, "surface": "perf", "what": what, "data": data})
+# a chat minute row the kernel stored without its frames (its once-per-page nav survived the shed, as intended)
+shed = {"app": "chat", "since": (now - 75) * 1000, "span_ms": 60000,
+        "free": {"n": 4, "p50": 9, "p90": 14, "max": 22},
+        "loaf": {"n": 0, "blocking_ms": 0, "worst_ms": 0, "top": [], "src": "none"},
+        "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 90.0, "dom": 3000, "visible": True, "hidden_pane": True, "ua": "chrome-desktop",
+        "nav": {"ttfb": 120}, "capped": {"bytes": 30000, "dropped": ["frames"]}}
+with open(sys.argv[1], "a") as f:
+    f.write(row(now - 15, W1, "minute", shed) + "\n"
+            + row(now - 8, W1, "minute", {"capped": True, "bytes": 40000, "app": "chat"}) + "\n"
+            + row(now - 5, W1, "slowframe", {"capped": True, "bytes": 30000}) + "\n")
+PY
+    run "$ROMP_SCRIPT" perf client
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"· ?"* ]]                           # the marker without app makes no phantom pane
+    # the shed row counts as a minute row, the two markers count as capped, and neither marker counts as a row of either kind
+    [[ "$output" == *"2 dashboards, 3 panes, 6 minute rows, 1 slow frame row; 1 minute row shed frames, 2 rows capped whole"* ]]
+    # the chat pane folds the shed row by its span: one minute became two, with the last sample's heap and DOM unchanged
+    [[ "$output" == *"dashboard 11111111 · chat   chrome-desktop   2 min reported   heap 90.0 MB   dom 3000   hidden (no viewport)"* ]]
+    [[ "$output" == *"chatTail       15.0/min     30 ms/min"* ]]   # 30 frames and 60 ms over two minutes now
+    # the feed pane's own screen is unchanged
+    [[ "$output" == *"feed           14.4/min    360 ms/min   p50 <4   p90 <32   p99 <128 ms   max 130   >16.7 ms 25%   >=100 ms 6%"* ]]
+    run "$ROMP_SCRIPT" perf client --json
+    [ "$status" -eq 0 ]
+    echo "$output" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["shed_minute_rows"] == 1 and d["capped_rows"] == 2, (d["shed_minute_rows"], d["capped_rows"])
+panes = {(p["wid"], p["app"]): p for p in d["panes"]}
+assert set(panes) == {("11111111", "feed"), ("11111111", "chat"), ("22222222", "feed")}, set(panes)
+assert not any(p["app"] == "?" for p in d["panes"]), [p["app"] for p in d["panes"]]
+c = panes[("11111111", "chat")]
+assert c["minutes"] == 2 and c["rows"] == 2 and c["frames"]["chatTail"]["n"] == 30 and c["heap_mb"] == 90.0 and c["dom"] == 3000, c
+assert [m["total_ms"] for m in c["minutes_detail"]] == [60, 0], c["minutes_detail"]
+'
+    # a window holding cap markers alone is a loss to report, not an idle dashboard: the refusal names them
+    python3 - "$DIAG" <<'PY'
+import json, sys, time
+now = int(time.time())
+W1 = "11111111-2222-3333-4444-555555555555"
+open(sys.argv[1], "w").write(json.dumps({"t": now - 10, "wid": W1, "surface": "perf", "what": "minute", "data": {"capped": True, "bytes": 40000, "app": "chat"}}) + "\n")
+PY
+    run "$ROMP_SCRIPT" perf client
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no browser telemetry in the last 10 min (the newest perf row is 0 min old) (1 row in the window was capped whole by the kernel and holds no figures)"* ]]
+
+}
+
 @test "romp perf client --minutes: narrows the window, and a half-minute row is rated by its span" {
     run "$ROMP_SCRIPT" perf client --minutes 1
     [ "$status" -eq 0 ]

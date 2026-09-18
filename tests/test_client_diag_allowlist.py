@@ -3,12 +3,14 @@
 extension). The file used to take whatever a page posted, of any shape and size. Now: a key outside the surface's
 allowlist (CLIENT_DIAG_KEYS) is dropped and said once on stderr per surface and key; a data that is not an object is
 stored as null; every string value is cut at CLIENT_DIAG_STR_MAX characters at any depth; a row whose JSON runs past
-CLIENT_DIAG_ROW_MAX bytes keeps its surface and what and carries {"capped": true, "bytes": N} as its data, except a perf
-minute row, which sheds its per-minute figures (CLIENT_DIAG_MINUTE_SHED, in order) until it fits and names them under
-`capped`, so the once-per-page nav, res, marks and env survive; the surface and what strings are cut too, once, and the
-stderr latch is bounded at CLIENT_DIAG_SAID_MAX pairs. Today's rows (the collector's minute and slowframe, the shim's
-return, close and stale rows) pass whole, so the desktop readers keep every key they depend on, and one fixture row per
-call site of every bundle and shell poster ties the table to what the posters send.
+CLIENT_DIAG_ROW_MAX bytes keeps its surface, what and app and carries {"capped": true, "bytes": N, "app": ...} as its
+data, except a perf minute row, which sheds its per-minute figures (CLIENT_DIAG_MINUTE_SHED, in order) until it fits and
+names them under `capped`, so the once-per-page nav, res, marks and env survive; the bound is derived from the collector's
+own caps, so the row it builds at every cap at once is stored whole; the surface and what strings are cut too, once; the
+stderr latch is bounded at CLIENT_DIAG_SAID_MAX pairs and one row can have at most CLIENT_DIAG_ROW_SAY_MAX of its keys
+said; and a page's row under the kernel's own surface is refused. Today's rows (the collector's minute and slowframe,
+the shim's return, close and stale rows) pass whole, so the desktop readers keep every key they depend on, and one
+fixture row per call site of every bundle and shell poster ties the table to what the posters send.
 
 Drives the REAL Handler's WS dispatch (_dispatch_ws with a clientDiag message, the way the pane shim delivers one)
 against a hermetic state directory. Synthetic fixtures only: a placeholder dashboard id, invented numbers."""
@@ -17,6 +19,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import tempfile
 import unittest
 from romp_load import load_source
@@ -24,7 +27,7 @@ from romp_load import load_source
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 
-# Hermetic state BEFORE the loads — they resolve their state root at import time, and only pytest runs
+# Hermetic state BEFORE the loads: they resolve their state root at import time, and only pytest runs
 # conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
@@ -35,6 +38,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 km = load_source("romp_kernel_cdiag_allow", os.path.join(BIN, "romp-kernel"))
 
 WID = "11111111-2222-3333-4444-555555555555"
+UI = os.path.join(os.path.dirname(HERE), "ui", "webview")
 
 # a minute row as ui/webview/perf-telemetry.ts builds it today (perf-telemetry.test.ts pins the same keys)
 MINUTE = {"app": "chat", "since": 1700000000000, "span_ms": 60000,
@@ -80,7 +84,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
 
     def test_the_constants_and_the_table(self):
         self.assertEqual(km.CLIENT_DIAG_STR_MAX, 64)
-        self.assertEqual(km.CLIENT_DIAG_ROW_MAX, 8 * 1024)
+        self.assertEqual(km.CLIENT_DIAG_ROW_MAX, 24 * 1024, "above the collector's worst case (test_the_collectors_worst_case_minute_row_is_stored_whole)")
         self.assertEqual(sorted(km.CLIENT_DIAG_KEYS), ["chat", "federation", "feed", "kernel", "outline", "pane-shim", "perf", "reload-core", "shell", "strip", "waiting"])
         for surface, keys in km.CLIENT_DIAG_KEYS.items():
             self.assertIsInstance(keys, frozenset, surface)
@@ -91,6 +95,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(km.CLIENT_DIAG_MINUTE_SHED, ("frames", "loaf", "free", "slow"), "the per-minute figures a minute row over the cap sheds, largest first")
         self.assertTrue(set(km.CLIENT_DIAG_MINUTE_SHED) <= km.CLIENT_DIAG_KEYS["perf"])
         self.assertEqual(km.CLIENT_DIAG_SAID_MAX, 512)
+        self.assertEqual(km.CLIENT_DIAG_ROW_SAY_MAX, 8, "the foreign keys of one row said by name; the rest are counted in one line")
 
     def test_todays_rows_pass_whole_and_quietly(self):
         err = self.post("perf", "minute", MINUTE)
@@ -113,6 +118,11 @@ class ClientDiagAllowlistTest(unittest.TestCase):
     def test_every_surface_in_the_table_admits_every_key_it_names(self):
         for surface, keys in sorted(km.CLIENT_DIAG_KEYS.items()):
             data = {k: i for i, k in enumerate(sorted(keys))}
+            if surface == "kernel":
+                # the kernel's own surface: the handler refuses a page's row under it (the test below), so the entry is
+                # checked at the admit step alone; it names the keys the kernel's own writers use
+                self.assertEqual(km._client_diag_admit(surface, data), data)
+                continue
             err = self.post(surface, "probe", data)
             self.assertEqual(err, "", surface)
             self.assertEqual(self.rows()[-1]["data"], data, surface)
@@ -170,9 +180,10 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(depth, km.CLIENT_DIAG_DEPTH_MAX, "lists at depths 0 to the cap less one, then null")
 
     def test_a_row_over_the_cap_is_stored_capped_with_its_surface_and_what_and_said_once(self):
-        # a slowframe row whose long-frame report grew past the cap (the minute row has its own rule, below)
+        # a slowframe row whose long-frame report grew past the cap, a shape the collector never builds (its top is five
+        # entries): the marker is the backstop for a row no first-party poster sends (the minute row has its own rule, below)
         big = {"app": "chat", "type": "session", "ms": 150.2, "dom": 53306,
-               "loaf": {"ms": 160, "blocking_ms": 110, "top": [{"k": "render.js:paint%03d@9000" % i, "ms": 1, "n": 1, "inv": "WebSocket.onmessage"} for i in range(200)]}}
+               "loaf": {"ms": 160, "blocking_ms": 110, "top": [{"k": "render.js:paint%03d@9000" % i, "ms": 1, "n": 1, "inv": "WebSocket.onmessage"} for i in range(400)]}}
         self.assertGreater(len(json.dumps(big)), km.CLIENT_DIAG_ROW_MAX)
         err = self.post("perf", "slowframe", big)
         self.assertEqual(len(err.splitlines()), 1, err)
@@ -182,23 +193,37 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(row["what"], "slowframe")
         self.assertEqual(row["wid"], WID)
         self.assertIn("reconnect", row)
-        self.assertEqual(sorted(row["data"]), ["bytes", "capped"])
+        self.assertEqual(sorted(row["data"]), ["app", "bytes", "capped"], "the marker keeps the pane, so the row still groups under it (review find, 2026-09-18)")
+        self.assertEqual(row["data"]["app"], "chat")
         self.assertIs(row["data"]["capped"], True)
         self.assertGreater(row["data"]["bytes"], km.CLIENT_DIAG_ROW_MAX)
         self.assertLess(len(json.dumps(row)), 400, "the stored row is small")
         self.assertEqual(self.post("perf", "slowframe", big), "", "said once per surface and what")
         self.assertEqual(len(self.post("perf", "probe", big).splitlines()), 1, "another what: its own line")
-        # a row just under the cap passes whole
-        near = dict(MINUTE, frames={"type%03d" % i: {"n": i, "hist": [0] * 14} for i in range(90)})
-        line = json.dumps({"t": 1700000000, "wid": WID, "surface": "perf", "what": "minute", "reconnect": False, "data": near})
+        # a row with no string app takes the bare marker
+        self.post("pane-shim", "probe", {"code": [1] * 20000, "app": 7})
+        self.assertEqual(sorted(self.rows()[-1]["data"]), ["bytes", "capped"], "app is kept only where the poster sent a string")
+        # a row just under the cap passes whole: frame types added until one more would not fit
+        env = {"t": 1700000000, "wid": WID, "surface": "perf", "what": "minute", "reconnect": False}
+        frames = {}
+        while True:
+            more = dict(frames, **{"type%03d" % len(frames): {"n": len(frames), "hist": [0] * 14}})
+            if len(json.dumps(dict(env, data=dict(MINUTE, frames=more)))) > km.CLIENT_DIAG_ROW_MAX:
+                break
+            frames = more
+        near = dict(MINUTE, frames=frames)
+        line = json.dumps(dict(env, data=near))
         self.assertLess(len(line), km.CLIENT_DIAG_ROW_MAX)
+        self.assertGreater(len(line), km.CLIENT_DIAG_ROW_MAX - 100, "within one frame entry of the bound")
         self.assertEqual(self.post("perf", "minute", near), "")
         self.assertEqual(self.rows()[-1]["data"], near)
 
     def test_a_minute_row_over_the_cap_sheds_its_frames_and_keeps_the_once_per_page_fields(self):
-        # a chat pane's first shared minute with 40 frame types: the row the whole-row marker used to swallow, and with it
-        # nav, res, marks and env for the page's life, since the collector sends them once (review find, 2026-09-18)
-        frames = {("fed:" if i % 2 else "") + "type%02d" % i: {"n": 12 + i, "ms_sum": 340.5 + i, "ms_max": 88.1, "n16": 5, "n100": 1, "hist": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]} for i in range(48)}
+        # a first shared minute over the bound: the row the whole-row marker used to swallow, and with it nav, res, marks
+        # and env for the page's life, since the collector sends them once (review find, 2026-09-18). The bound now sits
+        # above the collector's own worst case (the test below), so this shape (260 frame types) is one no collector
+        # builds; the shed is the backstop
+        frames = {("fed:" if i % 2 else "") + "type%03d" % i: {"n": 12 + i, "ms_sum": 340.5 + i, "ms_max": 88.1, "n16": 5, "n100": 1, "hist": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]} for i in range(260)}
         res = {"bundle%02d.js" % i: {"transferSize": 120000 + i, "encodedBodySize": 119700 + i, "duration": 88 + i} for i in range(24)}
         res["other"] = {"transferSize": 600, "encodedBodySize": 400, "duration": 45}   # MAX_RES named entries and the fold, as the collector builds it
         shared = dict(SHARED, res=res)
@@ -219,8 +244,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertIn("stored without some of its per-minute figures", err)
         self.assertEqual(self.post("perf", "minute", data), "", "said once per surface and what")
         # a minute whose long-frame report is big too: frames goes first, then loaf; free, slow and the shared fields stay
-        loaf = {"n": 120, "blocking_ms": 900, "worst_ms": 200, "src": "loaf",
-                "top": [{"k": "render.js:paint%03d@9000" % i, "ms": 90, "n": 1, "inv": "WebSocket.onmessage"} for i in range(120)]}
+        loaf = {"n": 320, "blocking_ms": 900, "worst_ms": 200, "src": "loaf",
+                "top": [{"k": "render.js:paint%03d@9000" % i, "ms": 90, "n": 1, "inv": "WebSocket.onmessage"} for i in range(320)]}
         self.post("perf", "minute", dict(MINUTE, frames=frames, loaf=loaf, **shared))
         d = self.rows()[-1]["data"]
         self.assertEqual(d["capped"]["dropped"], ["frames", "loaf"])
@@ -230,10 +255,11 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(d["res"], res)
         self.assertLessEqual(len(json.dumps(self.rows()[-1])), km.CLIENT_DIAG_ROW_MAX)
         # a minute row that does not fit even without all four (a resource fold no collector builds) takes the whole-row marker
-        wide = {"asset%03d.js" % i: {"transferSize": 100000 + i, "encodedBodySize": 99000 + i, "duration": 88} for i in range(150)}
+        wide = {"asset%03d.js" % i: {"transferSize": 100000 + i, "encodedBodySize": 99000 + i, "duration": 88} for i in range(400)}
         err = self.post("perf", "minute", dict(MINUTE, **dict(SHARED, res=wide)))
         d = self.rows()[-1]["data"]
-        self.assertEqual(sorted(d), ["bytes", "capped"])
+        self.assertEqual(sorted(d), ["app", "bytes", "capped"])
+        self.assertEqual(d["app"], "chat")
         self.assertIs(d["capped"], True)
         self.assertIn("is stored capped", err)
         # the shed is the minute row's alone: a slowframe row over the cap takes the marker whole (the test above)
@@ -257,23 +283,147 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(self.rows()[-1]["surface"], str({"k": "v" * 200})[:64])
         self.assertLess(max(len(l) for l in err.splitlines()), 200)
 
-    def test_the_stderr_latch_is_bounded_and_says_so_once(self):
+    def test_one_row_with_many_foreign_keys_has_a_handful_said_and_the_rest_counted(self):
+        # one row with 600 foreign keys used to print 513 lines and spend the whole latch, so every other surface was
+        # silent for the kernel's life (review find, 2026-09-18); now a row has at most CLIENT_DIAG_ROW_SAY_MAX of its keys
+        # said by name and one line counting the rest, every key still dropped
+        n = km.CLIENT_DIAG_ROW_SAY_MAX
         foreign = {"zz%03d" % i: i for i in range(600)}
         err = self.post("perf", "minute", dict(MINUTE, **foreign))
         lines = err.splitlines()
-        self.assertEqual(len(lines), km.CLIENT_DIAG_SAID_MAX + 1, "one line per dropped key up to the bound, then the one that says so")
-        self.assertTrue(all("dropping a key" in l for l in lines[:-1]), lines[-2])
-        self.assertIn("nothing more is said", lines[-1])
+        self.assertEqual(len(lines), n + 1, err)
+        for i in range(n):
+            self.assertIn("key 'zz%03d'" % i, lines[i], "the row's first keys, in its order")
+            self.assertIn("dropping a key the surface's allowlist does not admit", lines[i])
+        self.assertIn("and %d more keys dropped from one row, unnamed" % (600 - n), lines[-1])
+        self.assertEqual(len(km._client_diag_said), n + 1, "the named keys and the counting line: a handful of the latch, not all of it")
+        self.assertEqual(self.rows()[-1]["data"], MINUTE, "every foreign key is dropped regardless")
+        # a second surface still says (the line the old pin held silent)
+        self.assertEqual(len(self.post("mystery", "probe", {"q": 1}).splitlines()), 1, "one wide row did not spend the latch")
+        # another wide row on the same surface: its first keys are new and are named; the counting line is said once per surface
+        more = {"yy%03d" % i: i for i in range(100)}
+        lines = self.post("perf", "minute", dict(MINUTE, **more)).splitlines()
+        self.assertEqual(len(lines), n, lines)
+        self.assertTrue(all("key 'yy" in l for l in lines), lines)
+        # the same wide row again: every named key is latched, the counting line too
+        self.assertEqual(self.post("perf", "minute", dict(MINUTE, **more)), "")
+        # the same bound on a surface no allowlist names
+        lines = self.post("nowhere", "probe", {"k%03d" % i: i for i in range(50)}).splitlines()
+        self.assertEqual(len(lines), n + 1, lines)
+        self.assertTrue(all("a surface no allowlist names" in l for l in lines[:-1]), lines)
+        self.assertIn("and %d more keys" % (50 - n), lines[-1])
+
+    def test_the_stderr_latch_is_bounded_and_says_so_once(self):
+        # a flood of distinct pairs across rows: the latch holds CLIENT_DIAG_SAID_MAX, one closing line, then silence
+        for i in range(600):
+            err = self.post("perf", "minute", dict(MINUTE, **{"zz%03d" % i: i}))
+            if i < km.CLIENT_DIAG_SAID_MAX:
+                self.assertEqual(len(err.splitlines()), 1, (i, err))
+                self.assertIn("dropping a key", err)
+            elif i == km.CLIENT_DIAG_SAID_MAX:
+                self.assertEqual(len(err.splitlines()), 1, (i, err))
+                self.assertIn("nothing more is said", err)
+            else:
+                self.assertEqual(err, "", (i, err))
         self.assertEqual(len(km._client_diag_said), km.CLIENT_DIAG_SAID_MAX + 1, "the pairs and the latch's own entry")
-        self.assertEqual(self.rows()[-1]["data"], MINUTE, "the row lands whole regardless")
+        self.assertEqual(len(self.rows()), 600, "every row lands regardless")
+        self.assertEqual(self.rows()[-1]["data"], MINUTE)
         # more foreign keys, another surface, a capped row: nothing more is said and the latch does not grow
         self.assertEqual(self.post("perf", "minute", dict(MINUTE, another=1)), "")
         self.assertEqual(self.post("mystery", "probe", {"q": 1}), "")
-        big = {"app": "chat", "type": "x", "ms": 1, "loaf": {"top": [{"k": "render.js:paint%03d@9000" % i, "ms": 1, "n": 1, "inv": "WebSocket.onmessage"} for i in range(200)]}}
+        big = {"app": "chat", "type": "x", "ms": 1, "loaf": {"top": [{"k": "render.js:paint%03d@9000" % i, "ms": 1, "n": 1, "inv": "WebSocket.onmessage"} for i in range(400)]}}
         self.assertGreater(len(json.dumps(big)), km.CLIENT_DIAG_ROW_MAX)
         self.assertEqual(self.post("perf", "slowframe", big), "")
-        self.assertEqual(sorted(self.rows()[-1]["data"]), ["bytes", "capped"], "the cap still applies, unsaid")
+        self.assertEqual(sorted(self.rows()[-1]["data"]), ["app", "bytes", "capped"], "the cap still applies, unsaid")
         self.assertEqual(len(km._client_diag_said), km.CLIENT_DIAG_SAID_MAX + 1)
+
+    def test_a_page_row_under_the_kernels_surface_is_refused_and_said_once(self):
+        # the table admitted surface kernel from a page, so a forged wsopen landed indistinguishable from the kernel's own
+        # rows (_note_ws_open and its siblings write those directly, never through the handler); the handler now refuses
+        # it, said once per what (review find, 2026-09-18). The table keeps the entry: it names the kernel's own keys.
+        forged = {"app": "chat", "kind": "page", "iid": "forged", "reconnect": False}
+        err = self.post("kernel", "wsopen", forged)
+        self.assertFalse(self.fp.exists(), "no row: the file is not even created")
+        lines = err.splitlines()
+        self.assertEqual(len(lines), 1, err)
+        self.assertIn("refusing a page's row under the kernel's own surface", lines[0])
+        self.assertIn("surface 'kernel', what 'wsopen'", lines[0])
+        self.assertEqual(self.post("kernel", "wsopen", forged), "", "said once per what")
+        self.assertEqual(len(self.post("kernel", "historyReply", {"sid": "11111111-2222-3333-4444-555555555555"}).splitlines()), 1, "another what: its own line")
+        self.assertFalse(self.fp.exists())
+        self.assertIn("kernel", km.CLIENT_DIAG_KEYS, "the entry stays for the kernel's own rows")
+        # a surface that merely begins with the word is another surface: unknown, so it keeps no key and lands
+        self.post("kernel-ish", "wsopen", forged)
+        self.assertEqual((self.rows()[-1]["surface"], self.rows()[-1]["data"]), ("kernel-ish", {}))
+
+    def test_the_collectors_key_lists_are_admitted_by_the_perf_entry(self):
+        # the collector's executed row is pinned against TODAY_KEYS and SHARED_KEYS in ui/webview/perf-telemetry.test.ts,
+        # and the table here against hand-written fixtures; nothing tied the two, so a key the collector grows or renames
+        # kept both suites green while the kernel dropped it from the file (review find, 2026-09-18). Parsed by regex, the way
+        # tests/test_perf_stats.py reads perf-telemetry.ts; a subset, not equality: the perf entry is a union that also
+        # carries the slowframe row's type and ms.
+        ts = open(os.path.join(UI, "perf-telemetry.test.ts"), encoding="utf-8").read()
+        lists = {}
+        for name in ("TODAY_KEYS", "SHARED_KEYS"):
+            m = re.search(r'^const %s = (\[[^\]]*\]);$' % name, ts, re.M)
+            self.assertIsNotNone(m, "perf-telemetry.test.ts no longer declares %s on one line: re-aim this parse" % name)
+            lists[name] = json.loads(m.group(1))
+            self.assertTrue(lists[name] and all(isinstance(k, str) for k in lists[name]), name)
+        table = km.CLIENT_DIAG_KEYS["perf"]
+        for name, keys in lists.items():
+            missing = sorted(set(keys) - table)
+            self.assertEqual(missing, [], "%s in perf-telemetry.test.ts names %s, which CLIENT_DIAG_KEYS['perf'] does not admit: "
+                                          "add the key to the table, or take it out of the collector and its list" % (name, missing))
+        self.assertEqual(sorted(lists["TODAY_KEYS"]), sorted(MINUTE), "this module's MINUTE fixture is the same list")
+        self.assertEqual(sorted(lists["SHARED_KEYS"]), sorted(SHARED), "and SHARED the same")
+
+    def test_the_collectors_worst_case_minute_row_is_stored_whole(self):
+        # CLIENT_DIAG_ROW_MAX sat at 8 KiB, below the collector's own worst case, so a share-off minute with 28 or more frame
+        # types lost its frames where main stored it whole, and the shared row lost more (review find, 2026-09-18: 16481 B
+        # share off, 19110 B share on, measured). The bound is now derived from the collector's caps; this builds the row
+        # the collector would send with every cap reached at once, from the constants as perf-telemetry.ts declares them,
+        # and asserts it lands whole, no shed, no marker, nothing said. A 16 KiB bound would still have shed it.
+        src = open(os.path.join(UI, "perf-telemetry.ts"), encoding="utf-8").read()
+        def const(name):
+            m = re.search(r"^export const %s(?:: [^=]+)? = ([^;]+);" % name, src, re.M)
+            self.assertIsNotNone(m, name)
+            return m.group(1)
+        max_types = int(const("MAX_FRAME_TYPES")); max_top = int(const("MAX_TOP")); free_ring = int(const("FREE_RING"))
+        slow_rows = int(const("SLOW_ROWS_PER_MINUTE")); max_res = int(const("MAX_RES"))
+        buckets = len(json.loads(const("HIST_EDGES"))) + 1
+        ident_cap = int(re.search(r"\^\[A-Za-z0-9_\.:-\]\{1,(\d+)\}\$", src).group(1))    # ident(): a frame type at most this long
+        self.assertEqual((max_types, max_top, free_ring, slow_rows, max_res, buckets, ident_cap), (32, 5, 64, 5, 24, 14, 32), "the constants this derivation was made with")
+        entry_types = json.loads(re.search(r"^export const ENV_ENTRY_TYPES: readonly string\[\] = (\[[^\]]*\]);", src, re.M).group(1))
+        big = 999999                                         # six-digit counts: more than a minute of frames at 60 Hz can hold
+        ms = 60000.0                                         # one-decimal ms, a whole minute
+        st = {"n": big, "ms_sum": ms, "ms_max": ms, "n16": big, "n100": big, "hist": [big] * buckets}
+        frames = {}
+        for i in range(max_types + 1):                       # the named types and the fold ("other" / "fed:other") are max_types + 1 keys each
+            frames["delta:" + "w" * (ident_cap - 6) + "%06d" % i] = dict(st)      # the longest prefix (a raw delta by slot) and an identifier at the cap
+            frames["fed:" + "f" * (ident_cap - 6) + "%06d" % i] = dict(st)
+        self.assertEqual(len(frames), 2 * (max_types + 1))
+        top = [{"k": "k" * km.CLIENT_DIAG_STR_MAX, "ms": ms, "n": big, "inv": "i" * km.CLIENT_DIAG_STR_MAX} for _ in range(max_top)]
+        minute = {"app": "timeline", "since": 1700000000000, "span_ms": 600000, "frames": frames,
+                  "free": {"n": free_ring, "p50": ms, "p90": ms, "max": ms},
+                  "loaf": {"n": big, "blocking_ms": 600000.0, "worst_ms": ms, "top": top, "src": "longtask"},
+                  "slow": {"sent": slow_rows, "suppressed": big, "suppressed_worst_ms": ms},
+                  "dom": 9999999, "visible": False, "hidden_pane": False, "ua": "chrome-desktop", "heap_mb": 99999.9}
+        res = {"r" * 20 + "%03d.woff2" % i: {"transferSize": 99999999, "encodedBodySize": 99999999, "duration": ms} for i in range(max_res)}
+        res["other"] = {"transferSize": 99999999, "encodedBodySize": 99999999, "duration": ms}
+        shared = {"nav": {"type": "back_forward", "responseEnd": big, "domContentLoaded": big, "loadEventEnd": big}, "res": res,
+                  "marks": {"wsOpen": big, "bundleReady": big, "firstFrame": big, "fp": big, "fcp": big},
+                  "env": {"standalone": True, "iosMajor": 17, "touch": True, "vw": 99999, "vh": 99999, "dpr": 3.5, "entryTypes": entry_types, "ric": True, "dv": 1757100000000},
+                  "vis": {"hiddenN": big, "visibleN": big, "hiddenMs": 99999999}, "wsBytes": 999999999, "rafGap": {"n": big, "worst": big}}
+        env = {"t": 1700000000, "wid": WID, "surface": "perf", "what": "minute", "reconnect": False}
+        off, on = len(json.dumps(dict(env, data=minute))), len(json.dumps(dict(env, data=dict(minute, **shared))))
+        self.assertGreater(off, 16 * 1024, "the share-off worst case is over 16 KiB, so the old 8 KiB bound shed its frames")
+        self.assertLess(on, km.CLIENT_DIAG_ROW_MAX, "the share-on worst case fits under the bound (%d of %d bytes)" % (on, km.CLIENT_DIAG_ROW_MAX))
+        for data in (minute, dict(minute, **shared)):
+            self.assertEqual(self.post("perf", "minute", data), "", "nothing shed, nothing said")
+            row = self.rows()[-1]
+            self.assertEqual(row["data"], data, "stored whole")
+            self.assertNotIn("capped", row["data"])
+            self.assertEqual(len(row["data"]["frames"]), 2 * (max_types + 1), "every frame type intact")
 
     def test_one_fixture_row_per_poster_call_site_passes_whole_and_the_table_names_nothing_else(self):
         """The table against the posters: one synthetic row per clientDiag call site in the bundles (render.ts and

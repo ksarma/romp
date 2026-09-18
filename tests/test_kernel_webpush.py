@@ -1921,7 +1921,7 @@ class LandingRevealPins(unittest.TestCase):
                         "defined before the script's first early return")
         self.assertIn("else if(diagQ.length<DIAGQ_MAX)diagQ.push(m);", js)
         self.assertIn("'/ws?app=shell&wid='+encodeURIComponent(wid())", js)
-        self.assertIn("shellSock=ws;var q=diagQ;diagQ=[];q.forEach(", js, "queued rows go out on open")
+        self.assertIn("shellSock=ws;var q=diagQ;diagQ=[];if(!diagMuted())q.forEach(", js, "queued rows go out on open, unless the kill switch was flipped on while the socket was down (2026-09-18; tests/test_kernel_mobile.py executes it)")
         self.assertIn("if(shellSock===ws)shellSock=null;", js)
         html = km._landing()
         self.assertLess(html.index("window.__rompShellDiag=shellDiag;"), html.index("function activeSession(){"))

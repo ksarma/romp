@@ -389,7 +389,7 @@ var GEAR_HTML =
   // both off by default; read raw from the store by every pane's collector, the pane shim and the shell script (perf-telemetry.ts)
   '<label class=rs-row><input type=checkbox id=rs-perfshare>' +
   "<span><b>Share this browser's timing rows</b>" +
-  "<span class=rs-sub>Adds page-load, download, screen, visibility, socket-byte and frame-gap figures to the timing rows this browser already sends to its kernel. Numbers and fixed names only, never text. Off by default.</span>" +
+  "<span class=rs-sub>Adds page-load, download, visibility, socket-byte and frame-gap figures to the timing rows this browser already sends to its kernel, and a description of the browser's environment: whether it runs as an installed app, its iOS major version, touch, viewport size, pixel ratio and the timing features it supports (sent once, and again when the pane's viewport flips between wider and taller). Numbers and fixed names only, never text. Off by default.</span>" +
   '</span></label>' +
   '<label class=rs-row><input type=checkbox id=rs-perfmute>' +
   '<span><b>Stop all timing rows from this browser</b>' +
