@@ -14,4 +14,4 @@ A fix in the SDK feeder, which upstream ships in the same shape: `inputs()` forw
 
 2026-09-18: the kernel.py re-slotting note in the first paragraph is obsolete: the 2026-09-15 pull-in adopted the project's qid identity (the note above), so an offer carries the feeder hold and its cases alone.
 
-2026-09-18: approved for offer by the user (batch 2 of the 2026-09-18 plan; his answer covers the fix and docs entries of batches 2 to 7, batch by batch, features excluded).
+2026-09-18: approved for offer by the user (batch 2 of the 2026-09-18 plan; his answer covers the fix and docs entries of batches 2 to 7, batch by batch, features excluded). Filed stacked on dropped-sends-card-posted-on-the-boot-road (shared file kernel/sdk_backend.py), after https://github.com/romp-on/romp/pull/1827 merges or rebased around its three inputs() hunks.

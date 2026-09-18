@@ -10,4 +10,4 @@ closed:
 ---
 Follows the strip-inline offer (their PR #1168): under one group per row, upstream default, every header already opens its row and neither defect shows; the fix matters wherever the inline flow is on. Two defects from the fork PRs 401 to 404: T264 excluded .tab-group-sep from the hairline rows for the breaks, which dropped the visible inline divider too; and a header that fit at the end of a row while its first tab wrapped read as a caption over the tabs it stood above.
 
-2026-09-18: approved for offer by the user (batch 5 of the 2026-09-18 plan; his answer covers the fix and docs entries of batches 2 to 7, batch by batch, features excluded).
+2026-09-18: approved for offer by the user (batch 5 of the 2026-09-18 plan; his answer covers the fix and docs entries of batches 2 to 7, batch by batch, features excluded). Filed stacked on codex-effort-menu-final-answer (shared file ui/webview/render.ts; its styles.css hunks are in another block than bg-box-list-cap's), its own PR at the end of the stack.

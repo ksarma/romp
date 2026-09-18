@@ -33,4 +33,4 @@ bin/romp 3001 ("--env/--no-env need a Claude Code session", pinned by tests/romp
 Claude Code backend's venv") and 38 ("every Claude Code session then fails"). docs/install.md 19, 38, 41 and 43 ("the
 SDK venv") name the Agent SDK's venv and stay.
 
-2026-09-18: approved for offer by the user (batch 3 of the 2026-09-18 plan; his answer covers the fix and docs entries of batches 2 to 7, batch by batch, features excluded).
+2026-09-18: approved for offer by the user (batch 3 of the 2026-09-18 plan; his answer covers the fix and docs entries of batches 2 to 7, batch by batch, features excluded). Filed stacked on pusher-min-cycle-interval (shared files kernel/kernel.py and kernel/sdk_backend.py), an entry that now waits for the user's word on its tier.

@@ -12,4 +12,4 @@ closed:
 
 2026-09-11: their #1336 (https://github.com/romp-on/romp/pull/1336, lczh) landed the relay half by id only: the when-idle deferral forwarded, ok:false naming the host on a dead tunnel, the far reply verbatim; its body calls name resolution a separate defect. What remains offerable on top of it is the 404 for a name nothing answers to, the far refusal relayed with its status, and the deferral forwarded for /end only.
 
-2026-09-18: approved for offer by the user (batch 4 of the 2026-09-18 plan; his answer covers the fix and docs entries of batches 2 to 7, batch by batch, features excluded).
+2026-09-18: approved for offer by the user (batch 4 of the 2026-09-18 plan; his answer covers the fix and docs entries of batches 2 to 7, batch by batch, features excluded). Filed against main but rebased, not stacked, over romp-down-polls-past-the-kill-grace (shared file bin/romp), after https://github.com/romp-on/romp/pull/1831 lands, and cut as two stacked PRs: the gate and the 404 first, the romp send, interrupt and end help and usage second, with the tmux arms and the relay half left out.

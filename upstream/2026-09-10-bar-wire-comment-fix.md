@@ -10,4 +10,4 @@ closed:
 ---
 From the fold's slice 4g scout. Verified 2026-09-10 but not worth its own PR: one word (below to above) at kernel/kernel.py:37728 on the tip; the fork's main already says above. Ride along on the next offer that touches that block.
 
-2026-09-18: approved for offer by the user (batch 2 of the 2026-09-18 plan; his answer covers the fix and docs entries of batches 2 to 7, batch by batch, features excluded).
+2026-09-18: approved for offer by the user (batch 2 of the 2026-09-18 plan; his answer covers the fix and docs entries of batches 2 to 7, batch by batch, features excluded). Rides in prod-converge-rebuild's PR, no PR of its own.
