@@ -453,6 +453,12 @@ class ValidatorLockstep(unittest.TestCase):
          "NOTES_API_KEY": _secret_value("notes-key")},
         {"EMPTY_TOKEN": ""}, {"SPACES_TOKEN": "  "}, {"ROMP_SERVE_TOKEN": "control"},
         {"NOTES_API_TOKEN": 1}, {"NOTES_API_TOKEN": "a\x00b"},
+        # the suffixes fold case (the spawn-spec fix's review round 1, 2026-09-18, carried into the door's
+        # predicate): a lowercase or mixed-case spelling is the same shape; the control-token exclusion is
+        # the exact name romp reads, so another spelling of it is refused like any other; a name whose suffix
+        # only begins with the shape passes in any case
+        {"notes_api_token": _secret_value("notes-token")}, {"Notes_Api_Key": _secret_value("notes-key")},
+        {"romp_serve_token": _secret_value("control-lower")}, {"editor_tokenizer": "x"}, {"empty_token": ""},
     )
 
     @staticmethod
@@ -495,7 +501,8 @@ class ValidatorLockstep(unittest.TestCase):
         km = self._kernel()
         val = _secret_value("notes-token")
         for auth in ("", "key", "login"):
-            for p in ({"NOTES_API_TOKEN": val}, {"OP_SESSION_notes": val}, {**PLAIN, "NOTES_API_KEY": val}):
+            for p in ({"NOTES_API_TOKEN": val}, {"OP_SESSION_notes": val}, {**PLAIN, "NOTES_API_KEY": val},
+                      {"notes_api_token": val}, {**PLAIN, "Notes_Api_Key": val}):   # the fold, in both copies
                 a, b = km._env_error(p, auth), sb.env_request_error(p, auth)
                 self.assertEqual(a, b, "the copies must stay in lockstep (auth=%r, payload %r)" % (auth, sorted(p)))
                 self.assertTrue(a, "refused (auth=%r, payload %r)" % (auth, sorted(p)))
@@ -637,6 +644,27 @@ class CredentialShapedNamesAtTheDoor(unittest.TestCase):
         self.assertEqual(sb.env_request_error({"EMPTY_TOKEN": ""}), "")
         self.assertEqual(sb.env_request_error({**PLAIN, "EMPTY_API_KEY": ""}), "")
 
+    def test_a_lowercase_or_mixed_case_credential_shaped_name_is_refused_with_the_same_words(self):
+        """The spawn-spec fix's review round 1 (2026-09-18) made the writer's suffix test fold case, since a
+        notes_api_token was otherwise written to spawn.json with its value; the door's predicate compared the
+        suffixes exactly, so the same name typed into the pick passed the door and landed in the registry and
+        the flag-settings file. One shape rule, never two: the door refuses the lowercase and mixed-case
+        spellings, under their own spelling, with the refusal an upper-case name gets, the value in no message;
+        an empty value and a name whose suffix only begins with the shape pass in any case."""
+        for name, upper in (("notes_api_token", "NOTES_API_TOKEN"), ("Notes_Api_Key", "NOTES_API_KEY"),
+                            ("hf_token", "HF_TOKEN")):
+            val = _secret_value("value")
+            for auth in ("", "key", "login"):
+                err = sb.env_request_error({**PLAIN, name: val}, auth)
+                self.assertTrue(err, "%s must be refused for auth=%r" % (name, auth))
+                self.assertEqual(err, sb._cred.credential_env_refusal([name]), "the one wording, naming this spelling")
+                self.assertEqual(err.replace(name, upper), sb.env_request_error({**PLAIN, upper: val}, auth),
+                                 "the same refusal text as the upper-case spelling gets")
+                self.assertNotIn(val, err, "the VALUE is never in the message")
+                self.assertNotIn("NOTES_ENDPOINT", err, "the plain name is not blamed")
+        self.assertEqual(sb.env_request_error({**PLAIN, "empty_token": "", "editor_tokenizer": "x"}), "",
+                         "an empty value holds no secret and a prefix-only suffix is not the shape, in any case")
+
     def test_the_three_login_names_keep_their_own_words(self):
         # the loop's refusal of the three stands first, whatever the value, with the wording other tests pin
         for name in sb.AUTH_ENV_NAMES:
@@ -735,3 +763,20 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         self.assertFalse(any(val in m for m, _p, _k in self.logged))
         self.assertTrue(self.be.set_env(sid, dict(ENV)), "the redaction re-declares the env without the name")
         self.assertEqual(self._reg(sid)["env"], ENV)
+
+    def test_a_stored_lowercase_credential_shaped_name_is_said_too(self):
+        """The stored-offender line judges by the writer's rule, which folds case since the spawn-spec fix's
+        review round 1 (2026-09-18): a reg holding notes_api_token from before the door refused it launches
+        whole, like the upper-case case above, and is said once under its own spelling, never its value."""
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        val = _secret_value("notes-token")
+        self.be._update_reg(sid, env={**ENV, "notes_api_token": val})
+        s = self._sess(sid)
+        kw = self.be._options(s, dict)
+        self.assertEqual(json.loads(Path(kw["settings"]).read_text())["env"], {**ENV, "notes_api_token": val},
+                         "the stored env launches whole; nothing is dropped")
+        rows = [(m, kw2) for m, problem, kw2 in self.logged if problem and "notes_api_token" in m]
+        self.assertEqual(len(rows), 1, "one problem row names the stored lowercase variable: %r" % (self.logged,))
+        self.assertNotIn(val, rows[0][0], "the value is never in the line")
+        self.assertEqual(rows[0][1].get("key"), ("env-stored-credential", sid))
+        self.assertFalse(any(val in m for m, _p, _k in self.logged))

@@ -66,6 +66,31 @@ class PureNames(unittest.TestCase):
         self.assertEqual(self.names({"notes_api_token": "x", "Notes_Api_Key": "y", "editor_tokenizer": "z"}),
                          ["Notes_Api_Key", "notes_api_token"])
 
+    def test_the_doors_predicate_and_this_helper_agree_over_every_spelling(self):
+        """One shape rule, never two (2026-09-18): the per-session env door judges a pick by credentials.py's
+        is_credential_env_name and credential_env_names, and this helper delegates to the same; so does the
+        spawn.json writer (spawn_env_secret_names). The list of names is built at run time from stems, suffixes
+        and casings, so the four readers are compared over spellings no one wrote out, and the expected verdict
+        is this module's own _shaped (the suffixes fold case, the op names do not) with the control token's
+        exact name as the one exclusion of the value-bearing readers."""
+        names = []
+        for stem in ("NOTES", "notes", "Notes", "HF", "my_secret", "ROMP_SERVE", "romp_serve", "OP_SESSION"):
+            for suffix in ("_API_KEY", "_TOKEN", "_api_key", "_token", "_Api_Key", "_Token", "_TOKENIZER", "_tokenizer",
+                           "_KEY", "", "_ENDPOINT"):
+                names.append(stem + suffix)
+        names += ["OP_SESSION_testacct", "OP_ACCOUNT", "op_account", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN",
+                  "OPTIONS_FOR_X", "TOKEN_FIRST", "API_KEY_HOLDER", "_TOKEN", "_API_KEY", "_token"]
+        self.assertGreater(len(set(names)), 80)
+        for n in names:
+            self.assertIs(sb._cred.is_credential_env_name(n), _shaped(n), "the door's predicate on %r" % (n,))
+            expect = [n] if _shaped(n) and n != "ROMP_SERVE_TOKEN" else []
+            self.assertEqual(sb._cred.credential_env_names({n: "v"}), expect, "credentials.py over %r" % (n,))
+            self.assertEqual(self.names({n: "v"}), expect, "this helper over %r" % (n,))
+            self.assertEqual(sb.spawn_env_secret_names({n: "v"}), expect, "the spawn.json writer over %r" % (n,))
+            self.assertEqual(bool(sb.env_request_error({n: "v"})), bool(expect), "the door over %r" % (n,))
+        self.assertEqual(self.names({"romp_serve_token": "v"}), ["romp_serve_token"],
+                         "the exclusion is the exact name romp reads; another spelling is not romp's token")
+
     def test_empty_or_whitespace_values_are_not_named(self):
         self.assertEqual(self.names({"FOO_API_KEY": "", "BAR_TOKEN": "   ", "BAZ_API_KEY": "v"}), ["BAZ_API_KEY"])
 

@@ -228,13 +228,13 @@ per-session files and the session registry under `~/.local/state/romp/`. A
 credential never goes in `--env`, and never in `service.env` either: a payload
 naming `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN`
 is refused outright, and so is one naming any other credential-shaped variable
-with a non-empty value (a name ending `_API_KEY` or `_TOKEN`, or one of
-1Password's `OP_*` names; the same rule the hosted launch uses to keep such a
-name out of its `spawn.json`). The refusal names the variable, never its value,
-and nothing is saved: a running session's env stays what it was. A value of
-that shape belongs in the process environment, not in a per-session pick: the
-environment romp's service starts with reaches every session's Claude process
-(the boot line described under
+with a non-empty value (a name ending `_API_KEY` or `_TOKEN` in any letter
+case, or one of 1Password's `OP_*` names; the same rule the hosted launch uses
+to keep such a name out of its `spawn.json`). The refusal names the variable,
+never its value, and nothing is saved: a running session's env stays what it
+was. A value of that shape belongs in the process environment, not in a
+per-session pick: the environment romp's service starts with reaches every
+session's Claude process (the boot line described under
 [Service environment and credentials](#service-environment-and-credentials)
 names those variables), and a session's own shells can load one from a secret
 manager themselves. A session's credential is Claude Code's own resolution,
@@ -250,7 +250,7 @@ stored files that still carry such a name, by name only:
         try: env = json.load(open(p)).get("env") or {}
         except (OSError, ValueError): continue
         for n in sorted(env):
-            if (env[n] or "").strip() and (n.endswith(("_API_KEY", "_TOKEN")) or n.startswith("OP_SESSION_") or n in ("OP_SERVICE_ACCOUNT_TOKEN", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN", "OP_ACCOUNT")):
+            if (env[n] or "").strip() and (n.upper().endswith(("_API_KEY", "_TOKEN")) or n.startswith("OP_SESSION_") or n in ("OP_SERVICE_ACCOUNT_TOKEN", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN", "OP_ACCOUNT")):
                 print(p, n)'
 
 Two things to know before building on `romp sessions --json`. **`waiting` means

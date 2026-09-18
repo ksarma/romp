@@ -1,7 +1,7 @@
 ---
 title: The per-session env pick refuses credential-shaped names
 status: candidate
-where: kernel/sdk_backend.py env_request_error and the pick doors; docs/reference.md
+where: kernel/credentials.py (is_credential_env_name, credential_env_names, credential_env_refusal); kernel/sdk_backend.py (env_request_error, env_credential_names' delegation, _options' stored-offender line, set_env's refusal line); kernel/kernel.py (_env_error); docs/reference.md (the --env section); tests/test_session_env.py, tests/test_new_route_prefs.py, tests/test_env_credential_names.py
 added: 2026-09-18
 pr:
 tier: fix

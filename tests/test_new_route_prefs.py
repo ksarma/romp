@@ -222,6 +222,19 @@ class NewRouteEnv(unittest.TestCase):
         self.assertEqual(self.created, [], "nothing was created")
         self.assertEqual(self.calls, [], "no env reached a setter")
 
+    def test_a_lowercase_credential_shaped_name_400s_like_the_upper_case_one(self):
+        # the shape rule folds case (the spawn-spec fix's review round 1, 2026-09-18, carried into the door's
+        # predicate): notes_api_token is refused at this door under its own spelling, before anything is created
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+        code, body = self._post({"name": "opt", "dir": self.dir,
+                                 "env": {"NOTES_ENDPOINT": "http://notes.test", "notes_api_token": val}})
+        self.assertEqual(code, 400, "a lowercase credential-shaped name must 400, not spawn")
+        self.assertIn("notes_api_token", body["error"], "the refusal names the variable as spelled")
+        self.assertNotIn(val, body["error"], "the refusal never carries the value")
+        self.assertIn("the pick was not saved", body["error"])
+        self.assertEqual(self.created, [], "nothing was created")
+        self.assertEqual(self.calls, [], "no env reached a setter")
+
     def test_a_non_object_or_non_string_value_refuses(self):
         code, body = self._post({"name": "opt", "dir": self.dir, "env": "FEATURE_FLAG=1"})
         self.assertEqual(code, 400)
