@@ -338,6 +338,11 @@ export function stripHost(host: string, id: string): string {
   return host && typeof id === "string" && id.startsWith(host + ":") ? id.slice(host.length + 1) : id;
 }
 
+/** The jump ops a kernel answers with a chat focus (kernel.py _reveal_chat_for, or _reveal_or_confirm for a dead
+ *  session's revive prompt). A jump routed to a REMOTE host posts the shell's chat reveal from the sending pane
+ *  (FederationManager.outbound): the remote kernel tells its OWN shell clients to reveal the chat and has none here. */
+export const REMOTE_CHAT_REVEAL_OPS: ReadonlySet<string> = new Set(["openSession", "showOnTimeline", "deepLink", "viewReadOnly", "reviveSession"]);
+
 export function routeOutbound(msg: any, knownHosts?: ReadonlySet<string>): Route[] {
   if (!msg || typeof msg !== "object") return [{ host: LOCAL, msg }];
 
@@ -1510,6 +1515,21 @@ export class FederationManager {
       this.lastClearHosts = routes.length ? routes.map((r) => r.host) : [LOCAL];
     }
     for (const r of routes) this.sendTo(r.host, r.msg);
+    // A jump to a REMOTE host's session brings the chat pane forward from HERE (review round 2 of the parked-pane
+    // change, 2026-09-18). The kernel that answers a jump with a chat focus also tells its OWN shell clients to reveal
+    // the chat, and a remote kernel has none (the shell socket is local-only), so a tap on a remote session from the
+    // feed, Sessions or Outline reached the shell through one road alone: the chat pane's revealSelfPane when the focus
+    // landed on its relay. On the phone a chat pane parked since a return holds its local socket down and defers its
+    // relay dials until it is shown (the shim's park; this module's __rompLocalUp gate), so the remote's focus found no
+    // chat client, parked at that kernel, and the Chat tab never came forward. The pane that sends the jump posts the
+    // reveal waiting.ts openSession and render.ts revealSelfPane post: the shell shows the chat pane, the parked pane
+    // dials, its romp:wsup runs localUp() and the relay dials, and the remote's parked copy lands on the relay's first
+    // strip. Once per outbound, whatever the route count; a local route needs none (the local kernel's shell line does
+    // it), and a chat pane posting for itself duplicates revealSelfPane, idempotently. On the desktop the shell's reveal
+    // un-hides a collapsed chat pane, what the local kernel's shell line already does for a local tap.
+    if (m && REMOTE_CHAT_REVEAL_OPS.has(m.type) && routes.some((r) => r.host !== LOCAL)) {
+      try { if (window.parent && window.parent !== window) window.parent.postMessage({ romp: "reveal", pane: "chat" }, "*"); } catch (e) { /* standalone page: no shell to ask */ }
+    }
   }
 
   /** One send to one kernel: the local one through the page's own socket, a remote one through its conn. */

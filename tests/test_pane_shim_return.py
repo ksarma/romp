@@ -1305,6 +1305,23 @@ out({sockets:sockets.length,parked:parked,q:queued("return").map(function(m){ret
         self.assertIs(r["parked"], False)
         self.assertIs(r["q"][0]["parked"], False, "the shell told a word, so the row says the return did not park")
 
+    def test_a_layout_probe_that_throws_fails_closed_to_todays_redial(self):
+        # a parent the pane cannot read (cross-origin) or a probe that raises: parentMobile()'s catch answers undefined and
+        # the gate holds no park. Pinned by execution, not the source text alone (review round 2, 2026-09-18): the fake
+        # shell is replaced after the core loads, since the shim reads window.parent at every call (a replacement in pre=
+        # would run before the harness defines window), keeping postMessage so states() still hears the pane's words.
+        r = _run(r"""
+parentMobileVal=true;open();recv({type:"ka"});word({test:false});
+window.parent={postMessage:function(m){parentPosts.push(m);},get __rompLink(){return parentLinkVal===undefined?undefined:function(){return parentLinkVal;};},
+get __rompMobileOn(){throw new Error("cross-origin");}};
+hide();NOW+=46000;sock().readyState=3;show();
+out({sockets:sockets.length,parked:parked,q:queued("return").map(function(m){return m.data;}),states:states()});""")
+        self.assertEqual(r["sockets"], 2, "the probe threw: no park, the redial as today")
+        self.assertIs(r["parked"], False)
+        self.assertIs(r["q"][0]["parked"], False, "the shell told a word, so the row says the return did not park")
+        self.assertNotIn("parked", r["states"], "the shell never hears a parked word")
+        self.assertEqual(r["states"][0], "up")
+
     def test_the_desktop_layout_dials_at_the_return_exactly_as_before(self):
         # the user's ruling: a rail-collapsed desktop pane (on[APP] false) whose socket died keeps its background redial.
         # With a shell link (D3): abandon and dial at once, awaitLink false; without one: the upstream path, byte for byte.

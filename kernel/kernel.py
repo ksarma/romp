@@ -53097,6 +53097,7 @@ def _keepalive_all(now=None):
                     why = "no pong for %ds (last heard %ds ago)" % (int(now - pa), int(now - c.get("lastIn", 0)))
             if why:
                 _drop_dead_ws_client(c, why)
+                _retire_reveal_copy_at_reap(c)   # a reveal copy waiting on this socket's pong stops waiting (review round 2, 2026-09-18)
                 continue
             # not judged this beat — but still BEATEN: the ka must keep flowing to a client the kernel is
             # busy serving, or the shim's own silence watchdog closes a connection that is merely waiting
@@ -53155,11 +53156,16 @@ def _send_focus_to_view(focus_msg, wid):
     session instead of the tapped one, and a dead session's revive prompt never appeared.
 
     So the focus parks the way a push tap does: sent through _send_to_view to every ready same-wid chat
-    client as before (it returns the clients that took the frame); a copy kept in _PENDING_REVEAL, tagged
-    with the takers, while any of them is UNPROVEN (pingAt set: a ping on the wire nobody answered; the pong
-    retires the copy, _reveal_proven, and a socket that never pongs is redialed, whose first tab strip
-    consumes it); parked alone only when no ready target took it. Not "parked when no ready client exists":
-    the phone's usual shape is the dead socket still held, a ready target that swallows its frame. The
+    client as before (it returns the clients that took the frame); a copy kept in the window's _PENDING_REVEAL
+    entry, tagged with the takers, while EVERY taker is UNPROVEN (pingAt set: a ping on the wire nobody
+    answered; the pong retires the copy, _reveal_proven, and a socket that never pongs is redialed, whose first
+    tab strip consumes it); parked alone only when no ready target took it. Not "parked when no ready client
+    exists": the phone's usual shape is the dead socket still held, a ready target that swallows its frame.
+    Every taker, not any (review round 2, 2026-09-18, a deliberate departure from round 1's wording, which
+    mirrored _reveal_request): a proven live pane beside an unproven one displayed the focus, and a copy kept
+    for the unproven one outlived it as a stale replay at the pane's next redial, hours later, as a session
+    switch or a revive prompt the user never asked for. _reveal_request's own unproven road keeps the any
+    shape for push taps, pre-existing and not changed here. The
     redial's first strip and the ready handler consume the park (_consume_pending_reveal), which re-mints the
     frame from the sid alone: the focus that lands names the session and its liveness (a dead session gets
     confirmRevive, as _reveal_or_confirm would have sent), but the original message's `anchor`, `cite` and
@@ -53174,10 +53180,10 @@ def _send_focus_to_view(focus_msg, wid):
     taken = _send_to_view("chat", focus_msg, wid) or []
     unproven = [c for c in taken if c.get("pingAt") is not None]   # read after the send, as _reveal_request reads it
     if not taken:
-        _PENDING_REVEAL[0] = {"sid": sid, "wid": str(wid)}
+        _PENDING_REVEAL[str(wid)] = {"sid": sid, "wid": str(wid)}
         print("[reveal] focus sid=%s wid=%s: parked" % (sid[:8], str(wid)[:8]), file=sys.stderr)
-    elif unproven:
-        _PENDING_REVEAL[0] = {"sid": sid, "wid": str(wid), "sent": unproven}
+    elif unproven and len(unproven) == len(taken):
+        _PENDING_REVEAL[str(wid)] = {"sid": sid, "wid": str(wid), "sent": unproven}
         print("[reveal] focus sid=%s wid=%s: delivered, copy parked (target unproven)" % (sid[:8], str(wid)[:8]),
               file=sys.stderr)
 
@@ -62527,11 +62533,20 @@ def _sw_js():
 # then delivered to it at once with a copy kept here). Otherwise it parks here and is delivered on the exact event it was waiting
 # for: that window's chat pane saying "ready" (matched by wid — the per-dashboard id the shell
 # mints and every same-window pane shares — so a second dashboard's reload cannot steal it). One
-# slot, latest wins: two taps before a boot completes should land on the newer notification.
+# slot per window, latest wins within it: two taps before a boot completes should land on the newer notification.
 # `sent` (2026-09-06): the clients a LIVE tap was already handed to while unproven — see
 # _reveal_request; a pong from one of them retires the slot, a redial's first tab strip consumes it (a
 # redialed socket carries no ready, so _resolve_reconnect stamps it and its strip sender consumes).
-_PENDING_REVEAL = [None]                     # {"sid": ..., "wid": ...[, "sent": [clients]]} or None
+# Keyed by wid (review round 2, 2026-09-18): the slot was ONE for every window, so a session click in one window
+# (the chat focus road, _send_focus_to_view, which parks on this road since review round 1) overwrote a push tap
+# parked for another window, and that tap was lost. Each window's park is its own entry now, read and written by
+# _reveal_request, _send_focus_to_view, _reveal_proven and _consume_pending_reveal under the client's wid; the
+# empty-wid entry keeps the legacy match (a park with no wid lands on the first chat pane to arrive, whatever its
+# wid). A window's entry goes with its last client (_forget_pending_reveal_if_last, the way T347 drops the window's
+# active-chat record): before, nothing cleared a park on a disconnect, so a boot reveal whose page died before its
+# chat pane came up sat in the slot until the next tap overwrote it. A copy whose every target the reaper has
+# dropped is retired at the reap (_retire_reveal_copy_at_reap), never replayed at a later redial.
+_PENDING_REVEAL = {}                         # wid -> {"sid": ..., "wid": ...[, "sent": [clients]]}; "" is the no-wid entry
 # The roads a shell may name in /reveal's `via`, the log line's first word (the ledger block above _push_ledger has
 # the design): the worker's message to a live window ('sw'), the deep link the page opened on or was navigated to
 # ('link' — on Apple the OS's own tap callback for a killed app), the kernel's own clicked row ('ack') and the shown
@@ -62624,9 +62639,9 @@ def _reveal_request(sid, wid, boot=False, via=""):
         except Exception:
             pass
     if not delivered:
-        _PENDING_REVEAL[0] = {"sid": str(sid), "wid": str(wid or "")}
+        _PENDING_REVEAL[str(wid or "")] = {"sid": str(sid), "wid": str(wid or "")}
     elif sent:
-        _PENDING_REVEAL[0] = {"sid": str(sid), "wid": str(wid or ""), "sent": sent}
+        _PENDING_REVEAL[str(wid or "")] = {"sid": str(sid), "wid": str(wid or ""), "sent": sent}
     outcome = ("delivered, copy parked (%s)" % ("booting page" if boot else "target unproven") if sent else "delivered") if delivered else "parked"
     print("[reveal] %s sid=%s wid=%s%s: %s" % (via or "shell", str(sid)[:8], str(wid or "")[:8],
                                              " boot" if boot else "", outcome), file=sys.stderr)
@@ -62636,9 +62651,10 @@ def _reveal_request(sid, wid, boot=False, via=""):
 def _reveal_proven(client):
     """A pong or message from `client`: if the parked reveal was HANDED to it while unproven, the
     socket is alive and the focus frame ahead of this pong has landed — retire the copy."""
-    p = _PENDING_REVEAL[0]
+    key = str(client.get("wid") or "")   # a copy's targets wear its window's wid, so the client's wid names its entry
+    p = _PENDING_REVEAL.get(key)
     if p and any(c is client for c in (p.get("sent") or ())):
-        _PENDING_REVEAL[0] = None
+        _PENDING_REVEAL.pop(key, None)
         print("[reveal] sid=%s: copy retired — its target answered" % str(p["sid"])[:8], file=sys.stderr)
 
 
@@ -62651,13 +62667,17 @@ def _consume_pending_reveal(client, why="the pane's ready"):
     popped the flag): a redialed socket never carries a ready, so that strip is the event that
     consumes; the strip is sent first, for the same reason the ready push precedes the arm's
     consume. `why` names the event on the journal line, so a park's end says which of the two
-    landed it."""
-    p = _PENDING_REVEAL[0]
-    if not p or client.get("app") != "chat":
+    landed it. The park is the client's own window's entry; a chat pane whose window parked nothing takes the
+    no-wid entry, the legacy match (review round 2, 2026-09-18: one entry per window)."""
+    if client.get("app") != "chat":
         return
-    if p["wid"] and (client.get("wid") or "") != p["wid"]:
+    key = str(client.get("wid") or "")
+    p = _PENDING_REVEAL.get(key)
+    if p is None and key:
+        key, p = "", _PENDING_REVEAL.get("")
+    if not p:
         return
-    _PENDING_REVEAL[0] = None
+    _PENDING_REVEAL.pop(key, None)
     print("[reveal] sid=%s wid=%s: consumed — %s" % (str(p["sid"])[:8], str(p["wid"] or "")[:8], why), file=sys.stderr)
     try:
         m = _reveal_msg(p["sid"])
@@ -62673,6 +62693,54 @@ def _consume_pending_reveal(client, why="the pane's ready"):
         client["send"](json.dumps(m))
     except Exception:
         pass
+
+
+def _forget_pending_reveal_if_last(client):
+    """Drop a window's parked reveal when the client leaving was the last client of that wid (review round 2,
+    2026-09-18), the way _forget_active_chat_if_last drops the window's active-chat record: the entries are keyed
+    by dashboard window id, and nothing cleared one on a disconnect, so a boot reveal whose page died before its
+    chat pane came up sat in the slot until the next tap overwrote it, and a later page minting the same wid
+    through sessionStorage could take a tap it never saw. Called under _clients_lock, after the client left
+    _clients; a window with another pane still connected (the phone's shell and feed while its chat pane is
+    parked) keeps the park for that pane's redial. The no-wid entry names no window and is left to the first
+    chat pane, as before."""
+    wid = str(client.get("wid") or "")
+    if not wid or wid not in _PENDING_REVEAL:
+        return
+    if any(str(c.get("wid") or "") == wid for c in _clients):
+        return
+    p = _PENDING_REVEAL.pop(wid, None)
+    if p:
+        print("[reveal] sid=%s wid=%s: dropped, its window's last client left" % (str(p["sid"])[:8], wid[:8]), file=sys.stderr)
+
+
+def _retire_reveal_copy_at_reap(client):
+    """The reaper dropped `client` (review round 2, 2026-09-18): a copy of a focus or tap handed to it while it was
+    unproven is no longer waiting on its pong. Strike it from the copy's targets. A copy left with no target is
+    retired, unless another chat client of the window is connected, whose first strip or ready consumes the park:
+    the phone's tap redials the parked pane, the redial registers as the dead socket's twin and the twin is dropped
+    with the successor already in _clients, so the copy stands for it as a plain park. Before this, a copy tagged
+    only with a dead socket outlived the socket and replayed at the pane's next redial, minutes or hours later, as
+    a session switch or a revive prompt the user never asked for. Called from _keepalive_all after its drop, outside
+    _clients_lock, as the drop is."""
+    key = str(client.get("wid") or "")
+    p = _PENDING_REVEAL.get(key)
+    if not p or not any(c is client for c in (p.get("sent") or ())):
+        return
+    left = [c for c in p["sent"] if c is not client]
+    if left:
+        p["sent"] = left
+        return
+    with _clients_lock:
+        successor = any(c is not client and c.get("app") == "chat" and str(c.get("wid") or "") == key for c in _clients)
+    if successor:
+        p.pop("sent", None)
+        print("[reveal] sid=%s wid=%s: copy's target reaped, the park stands for the window's other chat pane"
+              % (str(p["sid"])[:8], key[:8]), file=sys.stderr)
+        return
+    if _PENDING_REVEAL.get(key) is p:
+        _PENDING_REVEAL.pop(key, None)
+    print("[reveal] sid=%s wid=%s: copy retired, its target was reaped" % (str(p["sid"])[:8], key[:8]), file=sys.stderr)
 
 
 def _cached_timeline(now, live_map, sig, connect=False):
@@ -75734,6 +75802,7 @@ class Handler(BaseHTTPRequestHandler):
                     _clients.remove(client)
             with _clients_lock:
                 _forget_active_chat_if_last(client)   # the window's focus record goes with its last pane (T347)
+                _forget_pending_reveal_if_last(client)   # and its parked reveal (review round 2, 2026-09-18)
 
     def _remote_ws(self, host, query):
         """GET /remote/<host>/ws — relay a federated-dashboard WebSocket to an attached host's

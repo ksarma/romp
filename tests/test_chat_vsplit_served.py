@@ -522,9 +522,12 @@ class VSplitDrag(_VSplitLab):
 
 
 class VSplitDragLateTimeline(VSplitDrag):
-    """The same drag with the timeline's document held until the tabs are ready, so its loader and then its bars land
-    after the point the driver measures from: the shape a slow runner produced on 2026-09-18 (the pane 533 px tall at
-    the zone, 686 at the ghost). The drag still lands because the driver waits for the band to settle before it measures."""
+    """The same drag with the timeline's document held until the tabs are ready, so the band's loader and then its bars
+    land while the driver waits: the settle wait is a real wait here (the band moves from its loader height to its content
+    height before the drag begins), where VSplitDrag's timeline has usually settled before the driver looks. It does not
+    reproduce the 2026-09-18 CI shape (the band collapsing mid-drag, the pane 533 px at the zone and 686 at the ghost, the
+    drop missed): on a fast box the drop lands with or without the wait. test_0 pins the witness and the equal heights
+    against the late loader; a case that expected the miss would pin the shell's stale drop zone instead."""
     CFG_EXTRA = {"holdTimeline": True}
     _cache = None
 

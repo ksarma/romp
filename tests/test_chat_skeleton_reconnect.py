@@ -525,7 +525,7 @@ class SkeletonReconnect(unittest.TestCase):
         # (`skeletonOnReady`) re-arms the flag for the connect push the page CAN hear — the same view, and THAT push's one
         # full is the only one. Until that ready the client is not stamped and a parked reveal stands: the arm's own stamp
         # and consume land it, as for any fresh page.
-        km._PENDING_REVEAL[0] = None
+        km._PENDING_REVEAL.clear()
         km._live_map = lambda: {S1: {}}       # the tapped session is live, so the reveal is a focus, not a revive
         try:
             trail = io.StringIO()
@@ -544,7 +544,7 @@ class SkeletonReconnect(unittest.TestCase):
             self.assertEqual(sorted(s for s, _ in self._statuses(c)), sorted([S2, S3]), "a status per other tab")
             self.assertEqual(c.get("echat") or {}, {}, "…and nothing is believed held: the arm's push sends the full, not a delta")
             self.assertNotIn("ready", c, "a pre-ready pop stamps nothing: the page has no listener yet")
-            self.assertEqual(km._PENDING_REVEAL[0], {"sid": S1, "wid": "W1"}, "…and consumes nothing: the park stands for the ready arm")
+            self.assertEqual(km._PENDING_REVEAL.get("W1"), {"sid": S1, "wid": "W1"}, "…and consumes nothing: the park stands for the ready arm")
             self.assertEqual(self._frames(c, "focus"), [])
             self.assertIsNone(c.get("reconnect"), "the pop consumed the handshake's flag")
             self.assertIs(c.get("skeletonOnReady"), True, "the survivor is untouched by the pop")
@@ -565,7 +565,7 @@ class SkeletonReconnect(unittest.TestCase):
             self.assertEqual(self._sessions(c), [S1, S4], "the one full (+ the transcript-less), from this push alone")
             self.assertEqual(sorted(s for s, _ in self._statuses(c)), sorted([S2, S3]))
             self.assertIs(c.get("ready"), True)
-            self.assertIsNone(km._PENDING_REVEAL[0], "the park was consumed at the ready")
+            self.assertEqual(km._PENDING_REVEAL, {}, "the park was consumed at the ready")
             types = [f["type"] for f in c["_frames"]]
             self.assertEqual(types.count("focus"), 1, "one focus")
             self.assertLess(types.index("tabOrder"), types.index("focus"), "behind the strip that names its tab")
@@ -578,7 +578,7 @@ class SkeletonReconnect(unittest.TestCase):
             self.assertEqual(self._sessions(c), [], "no full for a skeleton sid, and the active is held")
             self.assertEqual(self._frames(c, "focus"), [])
         finally:
-            km._PENDING_REVEAL[0] = None
+            km._PENDING_REVEAL.clear()
 
     def test_11_d_a_pusher_iteration_landing_in_the_ready_arms_gap_sends_no_full(self):
         # THE SECOND FULL ON A NEW COLUMN'S SOCKET (a slow runner, 2026-09-12; reproduced at the wire: 18 of 27 opens carried
@@ -649,7 +649,7 @@ class SkeletonReconnect(unittest.TestCase):
         # for the page's life — no reveal aimed at it, a parked one never consumed (review find 2026-09-11). _ws arms
         # `reconnect` alone for it (test_09's fourth dial), and the redial is served like any redial (test_12): the first
         # strip stamps the client, still carries the skeleton list, and the park lands behind it.
-        km._PENDING_REVEAL[0] = None
+        km._PENDING_REVEAL.clear()
         km._live_map = lambda: {S1: {}}       # the tapped session is live, so the reveal is a focus, not a revive
         got = []
         real_reg, real_recv = km._register_ws_client, km._ws_recv
@@ -671,7 +671,7 @@ class SkeletonReconnect(unittest.TestCase):
             with contextlib.redirect_stderr(trail):
                 km._push([c])
             self.assertIs(c.get("ready"), True, "the redial's first strip stamps the client, as for any redial")
-            self.assertIsNone(km._PENDING_REVEAL[0], "the park was consumed")
+            self.assertEqual(km._PENDING_REVEAL, {}, "the park was consumed")
             self.assertIsNone(c.get("reconnect"))
             self.assertNotIn("skeletonOnReady", c)
             types = [f["type"] for f in c["_frames"]]
@@ -687,9 +687,9 @@ class SkeletonReconnect(unittest.TestCase):
             with contextlib.redirect_stderr(trail):
                 self.assertTrue(km._reveal_request(S1, "W1", via="sw"), "a stamped client for the window takes the tap")
             self.assertEqual([f["type"] for f in c["_frames"]], ["focus"])
-            self.assertIsNone(km._PENDING_REVEAL[0])
+            self.assertEqual(km._PENDING_REVEAL, {})
         finally:
-            km._PENDING_REVEAL[0] = None
+            km._PENDING_REVEAL.clear()
 
     def test_11_b_a_relay_skeleton_dial_with_no_active_diets_all_its_tabs_through_the_cycle_and_ready(self):
         # LOW (2026-09-15, the federated dial), the full flow that pins the ready arm's reset ORDER: a RELAY fresh
@@ -745,17 +745,17 @@ class SkeletonReconnect(unittest.TestCase):
         # its bundle, which posted ready once, never posts another, so no ready arm runs for the new socket. The
         # pusher's first strip for the redial is the event that stands in: it stamps the client, sends the strip,
         # then delivers the parked focus, so the focus names a tab the strip has already listed.
-        km._PENDING_REVEAL[0] = None
+        km._PENDING_REVEAL.clear()
         km._live_map = lambda: {S1: {}}       # the tapped session is live, so the reveal is a focus, not a revive
         try:
             trail = io.StringIO()
             with contextlib.redirect_stderr(trail):
                 self.assertFalse(km._reveal_request(S1, "W1", via="vanish"), "no socket for the window: parked")
-                self.assertEqual(km._PENDING_REVEAL[0], {"sid": S1, "wid": "W1"})
+                self.assertEqual(km._PENDING_REVEAL.get("W1"), {"sid": S1, "wid": "W1"})
                 c = self._client(active=S1, reconnect=True, wid="W1")
                 km._push([c])
             self.assertIs(c.get("ready"), True, "the redial's first strip stamps the client as the ready arm would")
-            self.assertIsNone(km._PENDING_REVEAL[0], "the park was consumed")
+            self.assertEqual(km._PENDING_REVEAL, {}, "the park was consumed")
             types = [f["type"] for f in c["_frames"]]
             self.assertIn("focus", types, "the parked focus landed on the redialed socket")
             self.assertLess(types.index("tabOrder"), types.index("focus"), "behind the strip that names its tab")
@@ -777,14 +777,14 @@ class SkeletonReconnect(unittest.TestCase):
                 km._push([fresh])
             self.assertEqual(self._frames(fresh, "focus"), [], "no redial: the strip consumes nothing")
             self.assertNotIn("ready", fresh)
-            self.assertEqual(km._PENDING_REVEAL[0], {"sid": S1, "wid": "W2"}, "the park stands for the ready arm")
+            self.assertEqual(km._PENDING_REVEAL.get("W2"), {"sid": S1, "wid": "W2"}, "the park stands for the ready arm")
         finally:
-            km._PENDING_REVEAL[0] = None
+            km._PENDING_REVEAL.clear()
 
     def _park_for_a_redialing_page(self, via):
         """A tap parked while the window had no socket, then the page's redial registered at its handshake:
         the client is in _clients with the flag and no stamp, exactly as _ws leaves it before any strip."""
-        km._PENDING_REVEAL[0] = None
+        km._PENDING_REVEAL.clear()
         km._live_map = lambda: {S1: {}}       # the tapped session is live, so the reveal is a focus, not a revive
         trail = io.StringIO()
         with contextlib.redirect_stderr(trail):
@@ -796,7 +796,7 @@ class SkeletonReconnect(unittest.TestCase):
     def _assert_landed_behind_the_first_strip(self, c, trail, via):
         self.assertIs(c.get("ready"), True, "stamped by the strip sender that popped the flag")
         self.assertIsNone(c.get("reconnect"))
-        self.assertIsNone(km._PENDING_REVEAL[0], "the park was consumed")
+        self.assertEqual(km._PENDING_REVEAL, {}, "the park was consumed")
         types = [f["type"] for f in c["_frames"]]
         self.assertIn("focus", types)
         self.assertLess(types.index("tabOrder"), types.index("focus"), "behind the strip that names its tab")
@@ -813,7 +813,7 @@ class SkeletonReconnect(unittest.TestCase):
                 self.assertTrue(km._confirm_close_now(GONE))
             self._assert_landed_behind_the_first_strip(c, trail, "sw")
         finally:
-            km._PENDING_REVEAL[0] = None
+            km._PENDING_REVEAL.clear()
 
     def test_12c_a_session_push_as_the_redials_first_strip_lands_the_park_too(self):
         # the other off-cycle sender (a create or a handshake for one tab, test_05), as the redial's first strip
@@ -824,7 +824,7 @@ class SkeletonReconnect(unittest.TestCase):
             self._assert_landed_behind_the_first_strip(c, trail, "link")
             self.assertEqual(self._sessions(c), [S3], "the push's own full still follows")
         finally:
-            km._PENDING_REVEAL[0] = None
+            km._PENDING_REVEAL.clear()
 
     def test_12d_the_ready_arm_over_a_still_flagged_client_lands_the_park_once_as_the_ready(self):
         # the arm's path and the strip's cannot both land one park: _client_reset_chat_base pops the flag before the
@@ -837,7 +837,7 @@ class SkeletonReconnect(unittest.TestCase):
                 km.Handler._dispatch_ws(h, {"type": "ready"}, c)
             self.assertEqual(h.calls, [c])
             self.assertIs(c.get("ready"), True)
-            self.assertIsNone(km._PENDING_REVEAL[0])
+            self.assertEqual(km._PENDING_REVEAL, {})
             for k in ("skeleton", "skeletonOrder", "reconnect"):
                 self.assertNotIn(k, c, k)
             types = [f["type"] for f in c["_frames"]]
@@ -847,7 +847,7 @@ class SkeletonReconnect(unittest.TestCase):
             self.assertRegex(trail.getvalue(), r"consumed \S+ the pane's ready")
             self.assertNotIn("the pane's redial", trail.getvalue(), "the strip inside the arm's push resolved no flag")
         finally:
-            km._PENDING_REVEAL[0] = None
+            km._PENDING_REVEAL.clear()
 
 
 

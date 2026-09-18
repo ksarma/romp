@@ -137,9 +137,9 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         # (return-fresh.parked, beside D3's linkUpMs). A bool, approved field by field; the one key this change adds.
         err = self.post("pane-shim", "return", {"decision": "redial-closed", "resumed": False, "hiddenMs": 181000,
                                                  "frozenMs": 0, "quietMs": 181500, "quietAtResumeMs": -1, "ready": 3,
-                                                 "app": "feed", "parked": True})
+                                                 "app": "files", "parked": True})
         err += self.post("pane-shim", "return-fresh", {"ms": 800, "bytesSince": 240000, "redialed": True,
-                                                       "linkUpMs": 0, "parked": True, "app": "feed"})
+                                                       "linkUpMs": 0, "parked": True, "app": "files"})
         err += self.post("pane-shim", "return", {"decision": "redial-closed", "resumed": False, "hiddenMs": 181000,
                                                  "frozenMs": 0, "quietMs": 181500, "quietAtResumeMs": -1, "ready": 3,
                                                  "app": "chat", "awaitLink": True, "parked": False})
