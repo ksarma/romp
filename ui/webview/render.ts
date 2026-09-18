@@ -17385,8 +17385,15 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     const head = el("div");
     head.textContent = kind === "model" ? "No model list from Codex" : "No effort list from Codex";
     const sub = el("div", "meta-item-sub");
-    sub.textContent = CODEX_MODELS_ERROR || "asking for the list now";
-    if (!CODEX_MODELS_ERROR) sub.appendChild(metaDots());   // a wait wears the loader's dots
+    // The effort kind with a catalog HELD has its final answer, not a wait: codexEffortChoices reads [] for a model
+    // whose catalog entry lists no levels and for one the catalog does not know, and the kernel serves the catalog
+    // from a once-per-process cache, so the re-read below cannot change it. The row states it in the timeline lane
+    // menu's words and wears no dots (ui/CLAUDE.md, waiting states); the wait copy is for a menu with no catalog yet.
+    const catalogHeld = () => CODEX_MODEL_CHOICES.some((m) => Array.isArray(m.efforts));
+    const NO_LEVELS = "no effort levels from Codex for this model";
+    const finalNow = kind === "effort" && catalogHeld();
+    sub.textContent = CODEX_MODELS_ERROR || (finalNow ? NO_LEVELS : "asking for the list now");
+    if (!CODEX_MODELS_ERROR && !finalNow) sub.appendChild(metaDots());   // a wait wears the loader's dots
     empty.append(head, sub);
     menu.appendChild(empty);
     onModelChoicesLoaded = () => {
@@ -17398,7 +17405,7 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
       // its own sid and is never the active tab, so its rebuild below is unchanged.
       if (!forThread && activeId !== opSid) { closeMetaMenu(); return; }
       const now = metaChoices(kind, s.status).filter((c) => !c.sdkOnly || s.status.backend === "sdk");
-      if (!now.length) { sub.textContent = CODEX_MODELS_ERROR || (kind === "model" ? "no model list yet" : "no effort list yet"); return; }   // textContent drops the dots
+      if (!now.length) { sub.textContent = CODEX_MODELS_ERROR || (kind === "model" ? "no model list yet" : catalogHeld() ? NO_LEVELS : "no effort list yet"); return; }   // textContent drops the dots
       // The list landed: rebuild against the badge as it stands now, not the one captured at open. The spawn
       // that makes the list readable also pushes, and every push rebuilds the statusline, so the captured
       // button is often detached by the time the re-read lands; with no live badge for this kind and session
@@ -20256,6 +20263,13 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
       dropPendingFlag(pendingFlags, m.sid, m.flag as SessionFlag);   // the click's expectation ends here, not after three frames
       const s = sessions.get(m.sid);
       if (s && typeof m.value === "boolean") (s as any)[m.flag] = m.value;
+    }
+    if (m.gesture === "command" && typeof m.sid === "string" && typeof m.flag === "string" && m.sid && m.flag) {
+      // a refused setEffort or setFast pick (the kernel's catalog check on a Codex session): the pick's local loader
+      // (armMetaPending's 20 s timer) ends on THIS event, as the timeline's dim does on the same frame; the kernel's
+      // state did not change, so no push follows to repaint the badge, and the active tab's line repaints here
+      metaPending.delete(`${m.sid}:${m.flag}`);
+      if (m.sid === activeId) updateStatusline();
     }
     notifyShell("refused", m.text, typeof m.sid === "string" ? m.sid : "");
     warnToast(m.text);
