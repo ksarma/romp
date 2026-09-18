@@ -745,7 +745,11 @@ class _PerfStats:
                                    was every thread's and held the pusher's nine cycle jobs too:
                                    those nine moved to pusher.cycleJobsMs.<job>, their keys are gone
                                    from this block, and they do not compare across a capture pair
-                                   spanning the change; push: _push_all as
+                                   spanning the change, while the other jobs.<job> rows keep their
+                                   names and their values, those jobs running on this thread alone,
+                                   except that a dotted part of one (jobs.autoNudge.*, run off both
+                                   loops) sheds what a thread owning neither wrote, now under
+                                   stagesForeign; push: _push_all as
                                    the cycle calls it; push.chat (the tab strip, the build_session
                                    loop and the chat sends), push.feed (the view signature,
                                    _cached_feed and the ledgers attach), push.timeline (the skeleton
