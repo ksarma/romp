@@ -605,8 +605,8 @@ class Collector(unittest.TestCase):
 
     def test_stages_builds_judge(self):
         self.st.cycle_begin()                                  # this thread stands for the pusher: a push stage is credited to its
-        #                                                        writer since 2026-09-18, and a thread with neither purpose and no
-        #                                                        cycle counts under stagesForeign instead (PushRowsByPurpose)
+        #                                                        writer since 2026-09-18, and a thread owning no cycle, under no connect
+        #                                                        mark, counts under stagesForeign instead (PushRowsByPurpose)
         self.st.stage("push.chat", 0.5); self.st.stage("push.chat", 0.25); self.st.stage("jobs", 0.1)
         self.st.build("chat", True); self.st.build("chat", False, 0.040); self.st.build("feed", False, 1.0)
         self.st.judge_pass(2.0); self.st.judge_pass(4.0); self.st.judge_cpu(0.25)
