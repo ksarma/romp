@@ -171,15 +171,15 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   whose wait outlived the shell's loop-alive stamp (its `connT`, the later of
   its last dial and its watchdog's last tick with a socket to watch, 25 s stale)
   dials on its own and files a `link-backstop` stale row, the loud sign that the
-  shell's redial loop died. On the phone layout a pane the shell's panes word says is off screen
-  parks instead (the feed excepted: its socket carries the bell's card-trouble
-  entries): a `return` that found its socket dead or quiet carries `parked:
-  true` and dials nothing until the shell shows its tab or the layout is no
-  longer the phone's; the `return-fresh` that answers the show carries
-  `parked: true` too, with `ms` and `linkUpMs` counted from the show word
-  rather than the return. A return in a shell that told a word and did not
-  park says `parked: false`; a standalone page's row carries no `parked`
-  field.
+  shell's redial loop died. On the phone layout a pane the shell's panes word
+  says is off screen parks instead (the feed excepted: its socket carries the
+  bell's card-trouble entries): a `return` that found its socket dead or quiet
+  carries `parked: true` and dials nothing until the shell shows its tab or
+  the layout is no longer the phone's; the `return-fresh` that answers the
+  show carries `parked: true` too, with `ms` and `linkUpMs` counted from the
+  show word rather than the return. A return in a shell that told a word and
+  did not park says `parked: false`; a standalone page's row carries no
+  `parked` field.
   A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's
   caps frame has answered the bundle's ready; before that, with the ready still
   queued, or after a socket that died before the caps frame came back, it dials
