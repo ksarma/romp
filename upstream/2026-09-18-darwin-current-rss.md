@@ -3,7 +3,7 @@ title: The kernel's rss_kb is the CURRENT resident size on macOS, with the peak 
 status: candidate
 where: kernel/kernel.py (_process_stats, _darwin_task_rss_bytes, _darwin_ps_rss_kb, _darwin_current_rss_kb), bin/romp (the perf memory line), docs/reference.md
 added: 2026-09-18
-pr:
+pr: 763
 tier: fix
 offered:
 closed:
