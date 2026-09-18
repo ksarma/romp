@@ -971,6 +971,49 @@ class Cli(unittest.TestCase):
                                   "load_verify_locations", "wrap_socket", "SSLContext", "set_ciphers", "minimum_version"}, set())
         self.assertEqual({n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "ssl"}, set())
 
+    def test_a_refused_run_a_failed_send_and_a_successful_send_leave_no_file_behind_and_change_none(self):
+        """The verb keeps no state: it writes nothing under the state root or HOME and touches no file beside the export,
+        whatever the run's outcome (refused by the checks, a send that found no receiver, a 201 receipt), and the receipt
+        is printed once and kept nowhere. Pinned by execution: a snapshot of every regular file under the test's tree (the
+        state root, HOME and the export's own directory all live under it) is taken before the runs and compared whole
+        after each, names and bytes, so a new entry, a removed one or a line appended to an existing file (a receipt log,
+        a remembered receiver address) is caught. Nothing under the tree is excluded; the child's __pycache__ lands in
+        cli/, outside it. Fails before: it is a pin; a mutant that appends one line per run under the state directory
+        turns it red."""
+        base = ["--yes", "--receiver", self.fake.url]
+        edited = os.path.join(self.xdg, "edited.json")
+        doc = json.loads(self.data)
+        doc["perf"]["note"] = "/home/someone/code/notes-api/scratch.jsonl"           # refused by the walk: an absolute path
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        trees = list(dict.fromkeys((self.xdg, os.path.dirname(self.file))))           # the export's directory is the tree's root here
+
+        def snapshot():
+            out = {}
+            for tree in trees:
+                for root, _dirs, files in os.walk(tree):
+                    for name in files:
+                        path = os.path.join(root, name)
+                        if os.path.isfile(path) and not os.path.islink(path):
+                            with open(path, "rb") as fh:
+                                out[os.path.relpath(path, self.xdg)] = fh.read()
+            return out
+        before = snapshot()
+        self.assertIn(os.path.relpath(self.file, self.xdg), before)
+        self.assertIn(os.path.join("romp", "session-hosts"), before)
+        r = _run([edited] + base, self.state, home=self.home)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertEqual(snapshot(), before, "a refused run left nothing behind and changed nothing")
+        r = _run([self.file, "--yes", "--receiver", "http://127.0.0.1:%d" % _free_port()], self.state, home=self.home)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("(ConnectionRefusedError)", r.stderr)
+        self.assertEqual(snapshot(), before, "a send that found no receiver left nothing behind and changed nothing")
+        r = _run([self.file] + base, self.state, home=self.home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.fake.requests), 1)
+        self.assertIn("receipt " + RECEIPT, r.stdout)
+        self.assertEqual(snapshot(), before, "a successful send left nothing behind and changed nothing: the receipt is printed once and kept nowhere")
+
     def test_success_prints_the_receipt_and_the_retention_and_exits_0(self):
         self.fake.answer = (201, {}, json.dumps({"av": "skipped", "retention_days": 7, "receipt": RECEIPT.upper()}))
         r = _run([self.file, "--yes", "--receiver", self.fake.url], self.state)
