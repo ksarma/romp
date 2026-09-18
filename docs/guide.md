@@ -986,8 +986,9 @@ that leaves your machine is `claude` itself, both the agents' own model calls an
 the LLM calls in Romp's judge pipeline. The one exception is `romp perf
 upload`, which you run yourself: it sends a paste-safe copy of the kernel's
 performance counters (the file `romp perf export --public` writes, naming no
-session, path, host or user) to the project's receiver, and only after you
-confirm it; see [Kernel performance counters](reference.md#kernel-performance-counters).
+session, path, host or user) to a receiver you configure yourself (none ships,
+so nothing can be sent until you set one), and only after you confirm it; see
+[Kernel performance counters](reference.md#kernel-performance-counters).
 
 The kernel runs as a login service, so it is up whenever you are logged in. To
 stop it on purpose, run `romp down`: it gives the agents a few seconds to
