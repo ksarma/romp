@@ -3722,22 +3722,28 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   splits `rest` by top-level field, each row the field's quoted name, its
   separators and its value, and publishes a fixed set of rows: the flag and
   count fields (`userTodosOn`, `dismissedCount`, `showDismissed`,
-  `canUndoClear`, `off`), the off frame's four empty federation lists
-  (`items`, `hosts`, `pendingHosts`, `pendingDead`) and `other`. Every field
-  whose value can carry a string (`selfHost`, `working`, `awaiting`,
+  `canUndoClear`, `off`: the checked-in list `FEED_BY_ROWS` in
+  `kernel/kernel.py`), the off frame's four empty federation lists (`items`,
+  `hosts`, `pendingHosts`, `pendingDead`) and `other`. Every field whose
+  value can carry a string (`selfHost`, `working`, `awaiting`,
   `stateUnknown`, `order`, `sessions`, `userTodos`, `userTodoRows`, `views`,
   `viewsFault`, `judgeLimit`, `bgServices`, `clearedForeign`,
-  `clearNotices`, `sdkNotices` and `syncNotices`, a checked-in list in
-  `kernel/kernel.py`) is folded into `other` when the block is reported, and
-  so is any field outside the checked-in frame fields. A row of its own for
-  one of those would have been the length of one string (the machine's
-  hostname under `selfHost`, a session name under `working`, a todo's text
-  under `userTodoRows`); `other` mixes them, and on any board with a session
-  its length tells the reader nothing. `rest` is the exact sum of the
-  published rows, in `last` and in `lifetime`, because the fold regroups
-  bytes and drops none. `apps` has one row per consuming app and one
-  projection row, `phoneFace`: `today`, the whole frame it receives, beside
-  `projected`, the bytes of the fields its bundle reads, from the checked-in
+  `clearNotices`, `sdkNotices` and `syncNotices`: the checked-in list
+  `FEED_BY_FOLDED` beside it) is folded into `other` when the block is
+  reported, and a key outside `FEED_FRAME_FIELDS` and the off frame's lists
+  is counted under `other` when the table is built. A row of its own for one
+  of the folded fields would have been the length of one string (the
+  machine's hostname under `selfHost`, a session name under `working`, a
+  todo's text under `userTodoRows`); `other` mixes them, and on any board
+  with a session its length tells the reader nothing. On a board with no
+  session, no open todo, no tag and no notice it is a constant plus the
+  hostname's length and the digit width of `views.seq`, which the frame's
+  whole length on `push.send` and the served body has always carried. `rest`
+  is the exact sum of the published rows, in `last` and in `lifetime`,
+  because the fold regroups bytes and drops none. `apps` has one row per
+  consuming app and one projection row, `phoneFace`: `today`, the whole frame
+  it receives, beside `projected`, the bytes of the fields its bundle reads,
+  from the checked-in
   table `FEED_APP_FIELDS` in `kernel/kernel.py`, which a test pins against
   the bundles' source and against `federation.ts`: the merge reads
   `clearedForeign` off the local frame for the feed pane and the Outline (it
@@ -3771,12 +3777,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   card-field and projection estimates are memoised with the cards, so a
   ledgers refill pays none of that work, only the two part sums, the
   per-field lengths and the record. Taking the remainder's encode in pieces
-  (one per field name and one per value, with one encoder reused per pass)
-  costs about one and a half times the whole-remainder encode at a 16 KB
-  remainder and about three and a third times at a 1.4 KB one, a cost per
-  field, not per byte. The block is counts and byte totals under identifier
-  keys, and the public export (`romp perf export --public`) carries it
-  whole.
+  (one per field name and one per value) costs about one and a half times
+  the whole-remainder encode at a 16 KB remainder and about three and a
+  third times at a 1.4 KB one, a cost per field, not per byte, measured
+  before the pass shared one encoder over its fields, which takes about
+  forty percent off that overhead. The block is counts and byte totals under
+  identifier keys, and the public export (`romp perf export --public`)
+  carries it whole.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the workers' share is `cpu_ms_workers`; the
