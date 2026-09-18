@@ -11,6 +11,7 @@ import os
 import tempfile
 import unittest
 from romp_load import load_source
+from tests.conftest import restore_env
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -37,6 +38,16 @@ class _Proc:
 
 class RemoteIdentity(unittest.TestCase):
     def setUp(self):
+        # The absorb tells the bus about the old name only with peers on (attach_remote's _postal_peers_on gate, read
+        # per call), so the default is pinned here, whatever an earlier module in this process left, and put back by
+        # the cleanup registered right after the pop. A cleanup, not a tearDown (review round 2, 2026-09-18): unittest
+        # skips tearDown when setUp raises, so a tearDown restore escapes the class on that path, the hole the tunnels
+        # module's _PeersOff had until round 1; RemoteIdentitySetUpFailureRestore below runs that path. The
+        # fails-before: this module alone with ROMP_POSTAL_PEERS=0 in the environment reds the absorb case, which is
+        # how 5 of 6 full runs under xdist read until tests/test_kernel_tunnels.py stopped writing the value at import
+        # (2026-09-18; every worker imports every collected module before it runs a test).
+        self._peers_env = os.environ.pop("ROMP_POSTAL_PEERS", None)
+        self.addCleanup(restore_env, "ROMP_POSTAL_PEERS", self._peers_env)
         km._remotes.clear()
         with km._known_lock:
             km._known.clear()
@@ -108,6 +119,36 @@ class RemoteIdentity(unittest.TestCase):
             {"host": "mobile-new", "kernelPort": 12345, "busPort": 12346, "token": "TOK-M"})
         self.assertEqual(status, 200)
         self.assertEqual(set(km._remotes), {"mobile-new"}, "a renamed mobile keeps one row")
+
+
+class RemoteIdentitySetUpFailureRestore(unittest.TestCase):
+    """Executed pin for the restore in RemoteIdentity.setUp (review round 2, 2026-09-18): a subclass whose setUp raises
+    after super().setUp() is run through unittest with ROMP_POSTAL_PEERS set the way a shell exports it to keep tests
+    off the bus, and the value must be back afterwards. Red on the tearDown restore this module carried until round 2:
+    unittest skips tearDown when setUp raises, so the pop escaped the class, the hole the tunnels module's _PeersOff had
+    until round 1. Green on the cleanup registered right after the pop. The subclass is local to the test, so no loader
+    collects it."""
+
+    def test_a_subclass_setup_that_raises_after_the_pop_still_restores_the_value(self):
+        prior = os.environ.get("ROMP_POSTAL_PEERS")
+        self.addCleanup(restore_env, "ROMP_POSTAL_PEERS", prior)
+        os.environ["ROMP_POSTAL_PEERS"] = "0"
+
+        class Raises(RemoteIdentity):
+            def setUp(self):
+                super().setUp()
+                raise OSError("planted: the rest of a subclass's setUp failing after the pop")
+
+            def test_never_reached(self):
+                pass
+
+        result = unittest.TestResult()
+        Raises("test_never_reached").run(result)
+        self.assertEqual(len(result.errors), 1, "the planted setUp raised, as an error on the case: %r" % (result.errors,))
+        # the key is named: an assertIn over os.environ prints the whole environment when it fails
+        self.assertEqual(os.environ.get("ROMP_POSTAL_PEERS"), "0",
+                         "the value the setUp popped is back although tearDown never ran: the restore is a cleanup "
+                         "registered right after the pop")
 
 
 if __name__ == "__main__":

@@ -21,8 +21,8 @@ with no current event loop for the settle to schedule on, a fake whose init stre
 comment says which. Judge this module BOTH ways before calling it green, plain and with the README's PYTHONPATH
 recipe:
     python -m pytest tests/test_sdk_backend.py -q                (or -k <ClassName> for one class)
-The postal module's PeerRoutePrefersDirect red under -n 4 is a different import-time leak (ROMP_POSTAL_PEERS, set at
-module level by tests/test_kernel_tunnels.py); its own header says so.
+The postal module's PeerRoutePrefersDirect red under -n 4 was a different import-time leak (ROMP_POSTAL_PEERS, set at
+module level by tests/test_kernel_tunnels.py until 2026-09-18); its own header says so.
 """
 import asyncio
 import inspect
