@@ -414,11 +414,14 @@ class WakeGoalUnkeyedExitsNoteTheirLegs(_Base):
     after every delegated top, so those looks could never record a skippable memo whatever the files did (191 unbounded
     looks per 120 s on one box). Both notes are retired: every ending of a stamped wait is a keyed file (the store, the
     postal log, the ledger) or the dead-man instant _wake_goal notes, and the delegated check is pure over the store, whose
-    handoff nodes and the postal log both move when a peer returns. The exits of _wake_goal that read no file name their
-    own legs instead, so no ladder input goes stale under a memo: `freshFault` (the writer's re-read raised), `refusedWrite`
-    (the lift's row, or the wake's ledger record, refused), `peerAlive` (the awaited peers' liveness is the live map),
-    `dormantOwner` (the holder's death corroboration reads the registry row). Each test reads memos.nudgeWalk.unboundedBy
-    over one tick; the fixtures are the module's, with the toggle off unless the leg is a nudges-on one."""
+    handoff nodes and the postal log both move when a peer returns. The walk's exits that read no keyed file name their
+    own legs instead, so no ladder input goes stale under a memo. Four sit in _wake_goal: `freshFault` (the writer's
+    re-read raised), `refusedWrite` (the lift's row, or the wake's ledger record, refused), `peerAlive` (the awaited
+    peers' liveness is the live map), `dormantOwner` (the holder's death corroboration reads the registry row). The fifth
+    sits in _auto_nudge_session's goal loop, gear on only, below the wake-only continue: `todoStandDown` (the status nudge
+    stood down behind an open user todo, read from STATE/user-todos.json, a file outside the memo's ten; review round 1's
+    high, closed in round 2). Each test reads memos.nudgeWalk.unboundedBy over one tick; the fixtures are the module's,
+    with the toggle off unless the leg is a nudges-on one."""
 
     def setUp(self):
         super().setUp()
