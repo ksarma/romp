@@ -1218,35 +1218,32 @@ test("no refusal names a token type: over every element of the obsidian and refu
 // obstacle it meets, a refused block or a hole; the Raw offer for each refusal is what it was.
 const OBSTACLES = "Intro para.\n\n```\ncode line one\ncode line two\n```\n\nMiddle para.\n\n| Col A | Col B |\n|-------|-------|\n| cell one | cell two |\n\nBetween para.\n\n<div class=\"note\">Html block text</div>\n\nAfter para.\n";
 
-test("the first obstacle in document order is the one named: a selection from a table cell into an html block after it is refused by the one-cell rule (the Slice 5 shape was touching the table), one from a code line across the table into the html block at the table as well (since Slice 8 the code is positioned; before it: the code block), each with the Raw view offered on the covered cells' span (before Slice 5: the HTML block, the refused block named ahead of any hole in the span); a span with no hole before the html block still names it, one ending in the table names it, one starting in the code and ending in prose maps, and the whitespace between two blocks is still only whitespace", () => {
+test("the first obstacle in document order is the one named: a selection from a table cell into an html block after it is refused as the HTML block, the cells it crosses no obstacle (since decision 53 of plans/file-review.md a selection across cells anchors; Slice 8 named the one-cell rule here, Slice 5 the table's hole), one from a code line across the table into the html block the same, a span with no hole before the html block names it, and one ending in the table, one starting in the code and ending in the table, one from two cells, and one starting in the code and ending in prose each map, the pipes, the delimiter row and the fence's lines inside the quote as a Raw selection mints them; the whitespace between two blocks is still only whitespace", () => {
   const src = OBSTACLES;
   const box = buildRendered(src);
   const span = (from: string, to: string) => mapRenderedSelection(sel(point(box, from), point(box, to, true)), El(box), src);
   const lineOf = (needle: string) => src.slice(0, src.indexOf(needle)).split("\n").length - 1;
-  // since Slice 8 the cells are positioned and a span from `cell one` covers `cell two` as well, so the table's obstacle is the
-  // one-cell rule, still named ahead of the html block after it, with the Raw view offered on the two cells' exact span (the
-  // Slice 5 shape was "touches a table" with the table's offset)
+  // since decision 53 a span across the table's cells is no obstacle, so the html block after the table is the first one met,
+  // named with the Raw view at the block (Slice 8 named the one-cell rule here with the Raw view on the two cells' span, Slice 5
+  // "touches a table" with the table's offset)
   let r = bad(span("cell one", "Html block text"), "a table cell to the html block");
-  assert.match(r.reason, /^This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view\.$/, "the table comes first (before: an HTML block): " + r.reason);
-  assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("| cell one"), src.indexOf("cell one")], "the Raw offer starts at the first covered cell");
-  assert.equal(r.rawHasQuote, true);
-  assert.equal(src.slice(r.rawRange!.start, r.rawRange!.end), "cell one | cell two", "the exact span of the covered cells");
-  // since Slice 8 the code's lines are positioned too, so a span from a code line across the table to the html block meets the
-  // table first: the one-cell rule, with the Raw view offered on the table's covered cells (the Slice 5 shape named the code block)
+  assert.match(r.reason, /^This selection touches an HTML block; comment on it from the Raw view\.$/, "the html block is the first obstacle (before: the one-cell rule): " + r.reason);
+  assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("<div"), src.indexOf("<div")], "the Raw offer at the html block");
+  // the code's lines and the table's cells are positioned, so a span from a code line across the table to the html block meets
+  // the html block first as well (Slice 8 named the one-cell rule, Slice 5 the code block)
   r = bad(span("code line one", "Html block text"), "a code line across the table to the html block");
-  assert.match(r.reason, /^This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view\.$/, "the table comes first (before Slice 8: the code block; before Slice 5: an HTML block): " + r.reason);
-  assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("| Col A"), src.indexOf("Col A")], "the Raw offer starts at the first covered cell");
-  assert.equal(src.slice(r.rawRange!.start, r.rawRange!.end), "Col A | Col B |\n|-------|-------|\n| cell one | cell two", "the covered cells, first through last");
-  // as before: a span with no hole before the html block names it; one ending in the table or starting in the code names them
+  assert.match(r.reason, /an HTML block/, "the html block is the first obstacle (before: the one-cell rule): " + r.reason);
+  assert.equal(r.blockStartOffset, src.indexOf("<div"));
+  // as before: a span with no hole before the html block names it
   r = bad(span("Between para.", "Html block text"), "the paragraph before the html block into it");
   assert.match(r.reason, /an HTML block/, r.reason);
   assert.equal(r.blockStartOffset, src.indexOf("<div"));
-  assert.match(bad(span("Middle para.", "Html block text"), "prose across the table to the html block").reason, /a table/, "the table stands between them");
-  assert.match(bad(span("Middle para.", "cell two"), "prose into the table").reason, /a table/);
-  assert.match(bad(span("code line one", "cell two"), "code across the table").reason, /spans more than one cell/, "the table's rule (before Slice 8: the code block)");
+  assert.match(bad(span("Middle para.", "Html block text"), "prose across the table to the html block").reason, /an HTML block/, "the html block, the table no obstacle (before: the table)");
+  // a span ending in the table, one starting in the code and ending in it, and two cells anchor to the selected characters
+  assert.equal(ok(span("Middle para.", "cell two"), "prose into the table (before: the one-cell rule)").quote, "Middle para.\n\n| Col A | Col B |\n|-------|-------|\n| cell one | cell two", "the header row, the delimiter row and the body row inside the quote");
+  assert.equal(ok(span("code line one", "cell two"), "code across the table (before: the one-cell rule)").quote, "code line one\ncode line two\n```\n\nMiddle para.\n\n| Col A | Col B |\n|-------|-------|\n| cell one | cell two", "the fence's closer and the table's rows inside the quote");
   assert.equal(ok(span("Intro para.", "code line two"), "prose into the code (before Slice 8: refused as a code block)").quote, "Intro para.\n\n```\ncode line one\ncode line two", "the fence's opener inside the quote, as a Raw selection mints it");
-  assert.match(bad(span("cell one", "cell two"), "two cells").reason, /a table/);
-  assert.match(bad(span("cell one", "cell two"), "two cells").reason, /spans more than one cell/, "the one-cell rule (Slice 8)");
+  assert.equal(ok(span("cell one", "cell two"), "two cells (before: the one-cell rule)").quote, "cell one | cell two", "the pipe between the cells inside the quote");
   // the whitespace node between the middle paragraph and the table: its start snaps to the table and its end to the paragraph, and
   // the table's text, which the person did not select, is not read for its hole
   const middle = allText(box).find((t) => t.data === "Middle para.")!;

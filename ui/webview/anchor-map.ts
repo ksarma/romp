@@ -15,11 +15,13 @@
 //     never mis-anchored. A table's cells and a code block's lines are positioned as prose is (Slice 8 of
 //     plans/markdown-viewer.md: walkTable re-cuts each row as marked's splitCells does, walkCode finds
 //     each text line in its raw line), so a selection inside a cell or a code line maps to the source; a
-//     selection spanning two cells of a table is refused with the reason named and the Raw view offered
-//     on the exact span, and a table or a code block whose raw the reading cannot lay out keeps a hole
-//     with the Raw offer (the fallback the plan keeps). HTML, entity-bearing prose, and escaped link
-//     labels refuse by design (the plan's list); an inline start tag with no end tag in its block is literal
-//     text on both sides (md-literal-tags.ts, run on this lex as on the viewer's parse), so it maps.
+//     selection across several cells of one table maps to its span, the pipes, the delimiter row and the
+//     line feeds between the cells inside the quote as a Raw selection over the same characters mints them
+//     (decision 53 of plans/file-review.md, which overturned Slice 8's one-cell refusal); and a table or a
+//     code block whose raw the reading cannot lay out keeps a hole with the Raw offer (the fallback the
+//     plan keeps). HTML, entity-bearing prose, and escaped link labels refuse by design (the plan's list);
+//     an inline start tag with no end tag in its block is literal text on both sides (md-literal-tags.ts,
+//     run on this lex as on the viewer's parse), so it maps.
 //   - makeAnchor / locateComment delegate to the vendored track-changents engine, so the browser's anchor
 //     is byte-identical to the one `track-comment` would build.
 //   - paintRaw / paintRendered wrap exactly the text nodes of a source range in mark elements; in the Rendered view an
@@ -774,10 +776,10 @@ type Hole = { reason: string; startN: number; endN: number };
  *  row's segment trimmed as marked trims the cell's text (walkRow). Every cell whose trimmed source holds something has one: a
  *  cell that shows a character, a cell the per-cell fallback holds (its characters in a hole), and a cell whose source emits no
  *  character at all, a formula alone or a picture, with an empty range `startK === endK` (the Slice 8 review, round 4; before,
- *  such a cell had no record, and the one-cell rule, which counts cells, never saw two of them in one span). A padded cell,
- *  which has no source, has none, nor a cell whose trimmed source is empty. Slice 8 of plans/markdown-viewer.md: the one-cell
- *  rule of the selection map reads them (mapRenderedSelection), and a change's point places inside one and nowhere else in the
- *  table (renderedSpot). */
+ *  such a cell had no record). A padded cell, which has no source, has none, nor a cell whose trimmed source is empty. Read by
+ *  the change points (renderedSpot): a point places inside one cell's own characters and nowhere else in the table. Slice 8's
+ *  one-cell rule of the selection map counted them too, until decision 53 of plans/file-review.md let a selection across cells
+ *  anchor (mapRenderedSelection). */
 type Cell = { startK: number; endK: number; startN: number; endN: number };
 /** A table's place in its block: its raw's span in N, its characters' range in the block's chars and its cells,
  *  `cells[cellFrom, cellTo)`; a list item or a quote can hold several. `endsLf` says whether the raw ends with a line feed (the
@@ -1065,11 +1067,12 @@ function cellView(row: View, cs: number, ce: number, text: string): View | null 
 }
 /** One row of a table, `line` at `lv`, against marked's cells for it (`count` the header's width for a body row, none for the
  *  header): each cell's inline tokens over the cell's own characters (cellView, walkInline), its extent recorded (Emitter.cells;
- *  a cell that emits no character, a formula alone, is recorded with an empty range so the one-cell rule counts it); a cell the
- *  reading cannot place a hole of its own over the cell's span, its shown text put through the hole, with the walk's reason where
- *  the walk refused (an entity: the sentence the table read before Slice 8) and the table's where the re-cut is not marked's
- *  text. A padded cell shows nothing; a row's tail past the header's width is not rendered and is left unpositioned. Throws
- *  Refusal when the row does not cut into the token's cells, and the caller keeps the whole table a hole. */
+ *  a cell that emits no character, a formula alone, is recorded with an empty range, the cell a change's point inside it reads
+ *  and keeps its card by, renderedSpot); a cell the reading cannot place a hole of its own over the cell's span, its shown text
+ *  put through the hole, with the walk's reason where the walk refused (an entity: the sentence the table read before Slice 8)
+ *  and the table's where the re-cut is not marked's text. A padded cell shows nothing; a row's tail past the header's width is
+ *  not rendered and is left unpositioned. Throws Refusal when the row does not cut into the token's cells, and the caller keeps
+ *  the whole table a hole. */
 function walkRow(line: string, lv: View, cells: Tokens.TableCell[], count: number | undefined, em: Emitter): void {
   const segs = rowCells(line, count);
   if (segs.length !== cells.length) throw new Refusal("a table the mapping could not place");
@@ -2849,12 +2852,11 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
   const sa = boundaryAt(a, idx.total), sf = boundaryAt(f, idx.total);
   const gs = Math.min(sa, sf), ge = Math.max(sa, sf);
   const FORMULA_TOUCHED = "This selection touches a formula; comment on it from the Raw view.";
-  const ONE_CELL = "This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view.";
   // a formula at the selection's END is an obstacle like a hole's: named after the obstacles before it in the span (the pass
-  // below), so a drag from a table's first cell into a formula's glyphs after the table names the table's one-cell rule, the
-  // obstacle the person's eye meets first, while one from the table's last cell names the formula (a positioned cell is no
-  // obstacle since Slice 8; before it the table was a hole and a drag from any cell named it); one at the START is the first
-  // obstacle and is named at once
+  // below), so a drag from a paragraph through an html block into a formula's glyphs names the html block, the obstacle the
+  // person's eye meets first, while one from a table's cell into the formula names the formula (a positioned cell is no
+  // obstacle since Slice 8, and since decision 53 neither are several cells of one table; before Slice 8 the table was a hole
+  // and a drag from any cell named it); one at the START is the first obstacle and is named at once
   let formulaEnd: Partial<MapRefusal> | null = null;
   const covered: DNode[] = [];   // the formulas the selection covers whole, at its start or its end
   for (const [x, sx, other, o] of [[a, sa, sf, f], [f, sf, sa, a]] as const) {
@@ -2971,41 +2973,8 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
     }
     return descend(node, isStart ? c : c + 1, isStart);
   };
-  // The one-cell rule's count (Slice 8, item 3; the Slice 8 review, rounds 3 to 5): a table's cells whose trimmed SOURCE the
-  // selection's source span overlaps, so a cell that emits no positioned character, a formula alone or a picture alone (an empty
-  // character range, walkRow), counts where its source lies inside the span, wherever the drag's ends fell. The span is the
-  // selection's positioned characters' widened by the formulas it covered whole at either end (widened). Round 3 counted the
-  // covered formula's own cell alone; round 4 every cell of the table whose source holds something, but only through a formula
-  // the selection covered at its start or its end (this check), while the pass counted by positioned characters, so a drag from
-  // the prose before a table through a header row of formulas alone into a body cell, from a positioned cell through a trailing
-  // formula-only or picture-only cell into the prose after, or over a whole table of formulas between two paragraphs mapped with
-  // the pipes and the delimiter row inside the quote (round 5: the pass counts by source span too, cellsRule). Two or more cells
-  // refuse with the same sentence and the Raw view offered on the table's covered cells, the first's start through the last's
-  // end, clipped to the span (round 4; round 3 offered the whole widened span, the same offer for its shapes, which lay inside
-  // the table). Read in the pass for every table of the span's blocks, and through coveredCells for a covered formula's table the
-  // pass does not reach: a table with no positioned character in the selection (a drag begun on its formula-alone last cell or
-  // ended on its formula-alone first cell, whose block the endpoints leave), and, through orFormula, a selection whose
-  // characters are the covered formulas alone, two formula-only cells selected in one row or in two, the one-cell rule's before
-  // they are the formula's (before round 4: "touches a formula", the Raw offer on the first formula alone, one cell of the two).
-  const cellsRule = (blk: Block, tb: TableSpan, start: number, end: number): MapRefusal | null => {
-    const cells = blk.cells.slice(tb.cellFrom, tb.cellTo).filter((x) => nOf(idx, x.startN) < end && nOf(idx, x.endN) > start);
-    if (cells.length < 2) return null;
-    const s = Math.max(start, nOf(idx, cells[0].startN)), e = Math.min(end, nOf(idx, cells[cells.length - 1].endN));
-    return refuse(ONE_CELL, { blockStartLine: rawOffsetToLine(source, s), blockStartOffset: s, rawHasQuote: true, rawRange: { start: s, end: e } });
-  };
-  const coveredCells = (start: number, end: number): MapRefusal | null => {
-    for (const c of covered) {
-      const fh = formulaHole(idx, root, c);
-      if (!fh || !fh.hole) continue;
-      const hs = nOf(idx, fh.hole.startN);
-      const tb = fh.blk.tables.find((t) => nOf(idx, t.startN) <= hs && hs < nOf(idx, t.endN));
-      const r = tb ? cellsRule(fh.blk, tb, start, end) : null;
-      if (r) return r;
-    }
-    return null;
-  };
   /** The selection's source span [start, end) widened by the formulas it covered whole, each with its delimiters: the quote's
-   *  span, and the one-cell rule's; a formula whose hole is not found (the count disagrees) widens nothing. */
+   *  span; a formula whose hole is not found (the count disagrees) widens nothing. */
   const widened = (start: number, end: number): { start: number; end: number } => {
     for (const c of covered) {
       const fh = formulaHole(idx, root, c);
@@ -3016,23 +2985,13 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
     }
     return { start, end };
   };
-  /** The covered formulas' own span, for a selection with no positioned character: the first's start through the last's end. */
-  const coveredOnly = (): MapRefusal | null => {
-    let start = Infinity, end = -Infinity;
-    for (const c of covered) {
-      const fh = formulaHole(idx, root, c);
-      if (!fh || !fh.hole) continue;
-      const sp = formulaSpan(idx, fh.hole);
-      if (sp.start < start) start = sp.start;
-      if (sp.end > end) end = sp.end;
-    }
-    return start < end ? coveredCells(start, end) : null;
-  };
   // a selection the text cannot place, or of whitespace alone, that ends inside a formula still touched the formula; one that
-  // covered a formula whole and holds no text beside it selected the formula, unless the formulas it covered are two cells of a
-  // table (coveredCells)
+  // covered a formula whole and holds no text beside it selected the formula, the Raw view offered on the formula the drag began
+  // on (two formula-only cells of a table selected with nothing positioned between are this shape too: since decision 53 no rule
+  // counts a table's cells, and a selection of formulas alone is the formula's here as in a paragraph; the Slice 8 review's
+  // round 4 had made it the one-cell rule's)
   const orFormula = (r: MapResult): MapResult => formulaEnd ? refuse(FORMULA_TOUCHED, formulaEnd)
-    : covered.length ? (coveredOnly() || refuse(FORMULA_TOUCHED, formulaExtra(idx, root, covered[0], gs, ge))) : r;
+    : covered.length ? refuse(FORMULA_TOUCHED, formulaExtra(idx, root, covered[0], gs, ge)) : r;
   const S = locate(gs, true), E = locate(ge, false);
   if (!S || !E) return orFormula(refuse("The selection could not be matched to the file text.", rawExtra()));
   let { b: bs, k: ks } = S;
@@ -3042,16 +3001,18 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
   if (bs < 0 || be < 0) return orFormula(refuse("The selection is only whitespace.", rawExtra()));
   // The obstacles in the span, in document order, the first one named: a refused block with an element on the page (an html
   // block, a mismatch) refuses when the pass reaches it, and a mapped block's selected characters are read for a hole (a
-  // footnote's number, a cell or a code block the reading could not place) and its tables for the one-cell rule before the
-  // block after it is looked at, so a selection from a table's first cell into an html block after it is refused by the
-  // one-cell rule, the obstacle the person's eye meets first, and one from the table's LAST cell, one cell covered, as touching
-  // the html block (before this, every refused block in the span was named ahead of any hole, and a span from a table into a
-  // `<details>` summary named the HTML block; until Slice 8 every cell was a hole and a drag from any cell named the table). A
-  // refused block that rendered nothing (a comment, a closing tag alone) is never in the way: its source
-  // travels inside the quote. The span's characters are read only when the endpoints stand in order (bs <= be): a
-  // selection of the whitespace between two blocks lands its start on the block after and its end on the block before, and
-  // that block's text, which the person did not select, is not scanned for a hole. A formula the selection ends inside
-  // (formulaEnd) stands after every character the pass reads, so it is named last, when the pass met nothing before it.
+  // footnote's number, a cell or a code block the reading could not place) before the block after it is looked at, so a
+  // selection from a paragraph through a table the reading could not lay out into an html block names the table's hole, the
+  // obstacle the person's eye meets first, and one from a positioned cell into the html block names the html block (before
+  // Slice 5, every refused block in the span was named ahead of any hole, and a span from a table into a `<details>` summary
+  // named the HTML block; until Slice 8 every cell was a hole and a drag from any cell named the table; from Slice 8 to decision
+  // 53 of plans/file-review.md the cells of one table the selection covered had to be ONE, and a drag from a table's first cell
+  // into the html block was refused with the one-cell sentence, its Raw view offered on the covered cells' span). A refused block
+  // that rendered nothing (a comment, a closing tag alone) is never in the way: its source travels inside the quote. The span's
+  // characters are read only when the endpoints stand in order (bs <= be): a selection of the whitespace between two blocks
+  // lands its start on the block after and its end on the block before, and that block's text, which the person did not select,
+  // is not scanned for a hole. A formula the selection ends inside (formulaEnd) stands after every character the pass reads, so
+  // it is named last, when the pass met nothing before it.
   const lo = Math.min(bs, be), hi = Math.max(bs, be);
   for (let b = lo; b <= hi; b++) {
     const blk = idx.blocks[b];
@@ -3065,39 +3026,27 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
       const p = blk.pos[k];
       if (p < 0) { const h = blk.holes[-p - 1]; return refuse(`This selection touches ${h.reason}; comment on it from the Raw view.`, blockExtra(blk, h.startN)); }
     }
-    // The one-cell rule (Slice 8, item 3; the brief's open question 3): the cells of one table the selection covers must be ONE.
-    // A quote across two cells would carry the pipe between them, and the row's line feed across two rows, raw delimiters the
-    // person did not select as text (the ruling that declined raw html in a quote for the wrappers), so the selection is refused
-    // with the reason named, and the Raw view is offered on the exact span, the first covered cell's start through the last's end,
-    // clipped to the selection's (rawRange, with blockStartOffset that start so rawTarget's search begins there and not at an
-    // earlier identical row), where Save works: two body cells, prose before the table into a body cell (the header's cells lie
-    // in the span), the whole table. One cell and the prose after the table maps, the row's closing pipe and line feed inside the
-    // quote as a Raw selection over the same characters mints. The cells are counted by SOURCE SPAN (cellsRule) against the
-    // selection's span in this block: its first positioned character's offset in the first block and its last's plus one in the
-    // last (both positioned, the hole scan above having passed them), the block's whole extent between, widened by a formula the
-    // selection covered whole at either end. So a cell that emits no positioned character, a formula alone or a picture alone,
-    // counts where its source lies inside the span, wherever the drag's ends fell (the Slice 8 review, round 5; before, this
-    // count read the positioned characters and the covered formulas' tables alone (coveredCells), so a drag from the prose before
-    // a table through a header row of formulas alone into a body cell, from a positioned cell through a trailing formula-only or
-    // picture-only cell into the prose after, or over a whole table of formulas between two paragraphs mapped with the pipes and
-    // the delimiter row inside the quote, and the offer stopped at the positioned characters). Before this slice every cell was
-    // a hole and the loop above refused at the first, "touches a table", the Raw offer an indexOf of the tab-joined selection
-    // that found nothing.
-    if (blk.tables.length && (from < to || (b !== bs && b !== be))) {
-      const sp = widened(b === bs ? nOf(idx, blk.pos[from]) : -Infinity, b === be ? nOf(idx, blk.pos[to - 1]) + 1 : Infinity);
-      for (const tb of blk.tables) { const r = cellsRule(blk, tb, sp.start, sp.end); if (r) return r; }
-    }
   }
   if (formulaEnd) return refuse(FORMULA_TOUCHED, formulaEnd);
   if (bs > be || (bs === be && ks >= ke)) return orFormula(refuse("The selection is only whitespace.", rawExtra()));
-  // a formula covered whole at an end of the selection travels inside the quote, with its delimiters, as one between two
-  // selected words does (widened; where its hole is not found, the count disagreeing, the prose alone is the quote)
+  // The anchor: the selection's first positioned character through its last, widened by a formula covered whole at an end of
+  // the selection, which travels inside the quote with its delimiters as one between two selected words does (widened; where
+  // its hole is not found, the count disagreeing, the prose alone is the quote). A selection across several cells of one table
+  // anchors so as well, since decision 53 of plans/file-review.md (the owner overturned Slice 8's one-cell ruling, 2026-09-18):
+  // the quote is the source between the two characters, the pipes, the delimiter row and the line feeds between the cells
+  // included, the characters a Raw selection over the same text mints, and every cell the span covers lies inside it, a
+  // formula-only or picture-only cell the span runs through among them; the rendered paint of such an anchor covers each cell's
+  // characters (paintRendered's exact path, wrapBetween: one mark per cell's run of text, the whitespace between the cells'
+  // boxes skipped). From Slice 8 to that decision the cells of one table a selection covered had to be ONE (item 3 of
+  // plans/markdown-viewer.md's Slice 8, the brief's open question 3: a quote across two cells carries the pipe between them,
+  // raw delimiters the person did not select as text), counted by source span against this widened span for every table of
+  // the span's blocks and for a covered formula's table, and two or more refused with the one-cell sentence and the Raw view
+  // offered on the covered cells' span, where Save worked; the owner accepted the raw delimiters in the quote, so the refusal,
+  // its sentence and its count are gone, and the Raw offer stands for the refusals that remain (a formula, a hole, a refused
+  // block). A picture alone in a cell is no formula, so a drag released on the pad past one covers nothing of that cell and the
+  // anchor ends at the positioned cell before it (anchor-map-cells-formulas.test.ts); a formula-only cell covered whole at an
+  // end widens the anchor to itself.
   const { start, end } = widened(nOf(idx, idx.blocks[bs].pos[ks]), nOf(idx, idx.blocks[be].pos[ke - 1]) + 1);
-  // the one-cell rule over the widened span for a covered formula whose table the pass did not read: a table with no positioned
-  // character in the selection, the drag begun on its formula-alone last cell or ended on its formula-alone first cell, whose
-  // block the endpoints leave (coveredCells)
-  const cellsRefusal = coveredCells(start, end);
-  if (cellsRefusal) return cellsRefusal;
   return { ok: true, range: { start, end }, quote: source.slice(start, end) };
 }
 

@@ -6,28 +6,28 @@
 // its `<td>`: the panel's mouseup offers the Comment float, its click opens the composer quoting `cell one` with Save, the
 // save posts the exact source slice with the cell's offset as the hint (the anchor the host stores byte for byte), the mark
 // stands inside that `<td>` once the store answers, and a switch to Raw shows the same comment's mark on the table's row.
-// The same comment served before a fresh open paints in both views. Then a drag from `cell one` into `cell two` is refused
-// with the one-cell sentence, the Raw button promising the passage, and Switch to Raw preselects `cell one | cell two` on the
-// row with the composer quoting it and Save offered. Before this slice the probe (the Slice 5 report's section (j)) recorded
-// the cell drag refused as "touches a table" with the Raw view preselecting the cell after the switch, and the two-cell drag
-// refused with no preselect. The table's width is read before and after the cell's mark paints, for the build note (the
-// brief's open question 15). A last leg times the index, one map and forty marks over a 1,000-row table for the build note
-// (the brief's open question 13; diagnostics, not a bound). A leg of the Slice 8 review's round 1 serves a table whose hole cell
-// holds an emoji beside an entity (an astral character the per-cell fallback shows): the served comment and deletion point on
-// later cells land in their own cells and a real drag's Save posts the exact slice, where the build's head, counting a hole's
-// characters by code point, shifted every later cell of the table by one code unit and stored a quote spanning the pipe into
-// the next row. A leg of the review's round 4 serves a table whose header row is two formulas alone over the REAL KaTeX fill:
-// a real drag from the paragraph before the table to past the second header formula's glyphs is refused with the one-cell
-// sentence and Switch to Raw preselects `$h$ | $k$`, the table's covered cells (before: the composer quoted `Intro para. |
-// $h$ | $k$` with Save, the pipe between two cells inside a Rendered quote, since a cell holding a formula alone had no record
-// and the count never saw two), while a drag to past the first formula's glyphs maps `Intro para.\n\n| $h$`, one cell and the
-// prose before it. A leg of the review's round 5 serves a note with a table whose last body cell is a picture alone and one whose
-// last body cell is a formula alone (the real KaTeX fill): a real drag from the positioned cell beside either into the paragraph
-// after the table is refused with the one-cell sentence and Switch to Raw preselects the two cells, `pl-a | ![p](x.png)` and
-// `fl-a | $n$` (before: the composer quoted the cells with the pipe and the prose after them, Save offered, and the save posted
-// that quote, since a cell that emits no positioned character was counted only through a formula at the drag's end), while a
-// drag over the positioned cell alone maps it. Skips LOUDLY without a playwright browser (CI installs none), as the other browser
-// legs do. Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
+// The same comment served before a fresh open paints in both views. Then a drag from `cell one` into `cell two` opens the
+// composer quoting `cell one | cell two` with Save (decision 53 of plans/file-review.md: a selection across several cells of
+// one table anchors to its span; Slice 8 refused it with the one-cell sentence and Switch to Raw preselected the row's span),
+// the save posts that exact slice with the row's offset, the panel's own pass paints one mark in each of the two cells and
+// none over the pipe, and the Raw view paints the same comment across the row. Before Slice 8 the probe (the Slice 5 report's
+// section (j)) recorded the cell drag refused as "touches a table" with the Raw view preselecting the cell after the switch,
+// and the two-cell drag refused with no preselect. The table's width is read before and after the cell's mark paints, for the
+// build note (the brief's open question 15). A leg times the index, one map and forty marks over a 1,000-row table for the
+// build note (the brief's open question 13; diagnostics, not a bound). A leg of the Slice 8 review's round 1 serves a table
+// whose hole cell holds an emoji beside an entity (an astral character the per-cell fallback shows): the served comment and
+// deletion point on later cells land in their own cells and a real drag's Save posts the exact slice, where the build's head,
+// counting a hole's characters by code point, shifted every later cell of the table by one code unit and stored a quote
+// spanning the pipe into the next row. A leg over a table whose header row is two formulas alone, the REAL KaTeX fill: a real
+// drag from the paragraph before the table to past the second header formula's glyphs opens the composer quoting `Intro
+// para.\n\n| $h$ | $k$` with Save, the save posts that slice, and the mark stands in the paragraph and in both header cells,
+// each cell's mark holding its formula (Slice 8's review refused it with the one-cell sentence, the Raw view on `$h$ | $k$`),
+// while a drag to past the first formula's glyphs maps `Intro para.\n\n| $h$`, one cell and the prose before it. A leg over a
+// table whose last body cell is a picture alone and one whose last body cell is a formula alone (the real KaTeX fill): a real
+// drag from the positioned cell beside either into the paragraph after the table opens the composer quoting the cells, the
+// pipe and the prose after them with Save (Slice 8's review refused it and preselected the two cells in Raw), while a drag over
+// the positioned cell alone maps it. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do.
+// Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -41,7 +41,6 @@ const NOTE = "Check this cell against the spec.";
 const CELL_Q = "cell one";
 const ROW_Q = "cell one | cell two";
 const FINAL_Q = "Final paragraph here.";
-const ONE_CELL = "This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view.";
 
 /** A comment in the host's shape on the fixture's passage `quote`: the exact source slice, its context, its position. */
 function comment(quote: string, k: number): Record<string, unknown> {
@@ -51,6 +50,7 @@ function comment(quote: string, k: number): Record<string, unknown> {
 }
 const FINAL = comment(FINAL_Q, 1);
 const CELL = comment(CELL_Q, 2);
+const ROW = comment(ROW_Q, 3);
 const id = (c: Record<string, unknown>): string => c.id as string;
 /** The kernel's status with `comments` in the store, `n` bumping the store's mtime so each reply reads as a new write. */
 const withComments = (comments: Record<string, unknown>[], n: number): Record<string, unknown> =>
@@ -128,21 +128,21 @@ async function saveComment(page: any, c: Record<string, unknown>, next: Record<s
 }
 const posted = (page: any): Promise<any[]> => page.evaluate(() => (window as any).__posted);
 
-type CellRead = { marks: number; text: string; cell: { tag: string; index: number; row: number } | null; tableWidth: number };
-/** The comment's marks in the Rendered view: their count, their text, the cell and row the first stands in, and the table's width. */
+type CellMark = { tag: string; index: number; row: number; text: string };
+type CellRead = { marks: number; text: string; cells: CellMark[]; tableWidth: number };
+/** The comment's marks in the Rendered view: their count, their text, per mark the cell (its tag, its column, its row in its
+ *  section) it stands in and the mark's own text, and the table's width. */
 const readCell = (page: any, cid: string): Promise<CellRead> => page.evaluate((c: string) => {
   const md = document.querySelector(".fileview-md") as HTMLElement;
   const marks = Array.from(md.querySelectorAll('.fc-hl[data-act="fcopen"][data-id="' + c + '"]')) as HTMLElement[];
-  const m = marks[0];
-  const td = m ? m.closest("td, th") : null;
-  const tr = td ? td.parentElement as HTMLElement : null;
-  const tbody = tr ? tr.parentElement as HTMLElement : null;
   const table = md.querySelector("table") as HTMLElement;
-  return {
-    marks: marks.length, text: marks.map((x) => x.textContent).join(" ").replace(/\s+/g, " ").trim(),
-    cell: td && tr && tbody ? { tag: td.tagName, index: Array.from(tr.children).indexOf(td), row: Array.from(tbody.children).indexOf(tr) } : null,
-    tableWidth: table ? table.getBoundingClientRect().width : -1,
-  };
+  const cells = marks.map((m) => {
+    const td = m.closest("td, th") as HTMLElement | null;
+    const tr = td ? td.parentElement as HTMLElement : null;
+    const section = tr ? tr.parentElement as HTMLElement : null;
+    return { tag: td ? td.tagName : "", index: td && tr ? Array.from(tr.children).indexOf(td) : -1, row: tr && section ? Array.from(section.children).indexOf(tr) : -1, text: (m.textContent || "").replace(/\s+/g, " ").trim() };
+  });
+  return { marks: marks.length, text: marks.map((x) => x.textContent).join(" ").replace(/\s+/g, " ").trim(), cells, tableWidth: table ? table.getBoundingClientRect().width : -1 };
 }, cid);
 const tableWidth = (page: any): Promise<number> => page.evaluate(() => { const t = document.querySelector(".fileview-md table") as HTMLElement | null; return t ? t.getBoundingClientRect().width : -1; });
 /** The comment's marks in the Raw view: their count and the text of the row the first stands on. */
@@ -152,12 +152,6 @@ const readRaw = (page: any, cid: string): Promise<{ marks: number; row: string; 
   const row = marks[0] ? marks[0].closest(".fv-cl") : null;
   return { marks: marks.length, row: row ? (row.textContent || "").trim() : "", text: marks.map((m) => m.textContent).join("") };
 }, cid);
-/** The Raw view's preselection: the marks' text in order and the rows they stand on. */
-const preselRead = (page: any): Promise<{ text: string; rows: number }> => page.evaluate(() => {
-  const body = document.querySelector(".fileview-body") as HTMLElement;
-  const marks = Array.from(body.querySelectorAll(".fc-presel")) as HTMLElement[];
-  return { text: marks.map((m) => m.textContent).join(""), rows: new Set(marks.map((m) => m.closest(".fv-cl"))).size };
-});
 const squash = (s: string): string => s.replace(/\s+/g, "");
 async function toRaw(page: any): Promise<void> {
   await page.click('.fileview-acts .fileview-btn:text-is("Raw")');
@@ -170,7 +164,7 @@ async function toRendered(page: any): Promise<void> {
   await frames(page, 3);
 }
 
-test("in a browser, the real viewer and panel on the Files pane at 900 and 380 px and in the chat modal: a REAL drag over `cell one` in Rendered offers the float, the composer quotes the cell with Save (before: the refusal `touches a table` and Switch to Raw), the save posts the exact slice at the cell's offset, the mark stands in the row's first cell, the Raw view shows it on the row; then a drag from `cell one` into `cell two` is refused with the one-cell sentence and Switch to Raw preselects the row's span with the composer quoting it (before: refused with nothing preselected)", { timeout: 300000 }, async (t) => {
+test("in a browser, the real viewer and panel on the Files pane at 900 and 380 px and in the chat modal: a REAL drag over `cell one` in Rendered offers the float, the composer quotes the cell with Save (before Slice 8: the refusal `touches a table` and Switch to Raw), the save posts the exact slice at the cell's offset, the mark stands in the row's first cell, the Raw view shows it on the row; then a drag from `cell one` into `cell two` opens the composer quoting `cell one | cell two` with Save (decision 53; before: the one-cell sentence and Switch to Raw preselecting the row's span), the save posts that slice at the row's offset, the panel paints one mark in each cell and none over the pipe, and the Raw view paints the comment across the row", { timeout: 300000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     for (const [mode, width] of [["pane", 900], ["pane", 380], ["chat", 1000]] as [Mode, number][]) {
       const what = mode + " " + width + "px";
@@ -195,7 +189,7 @@ test("in a browser, the real viewer and panel on the Files pane at 900 and 380 p
       const r = await readCell(page, id(CELL));
       assert.ok(r.marks >= 1, what + ": the cell's mark painted: " + JSON.stringify(r));
       assert.equal(r.text, CELL_Q, what + ": the mark reads the cell's text");
-      assert.deepEqual(r.cell, { tag: "TD", index: 0, row: 0 }, what + ": inside the first body row's first cell");
+      assert.deepEqual(r.cells.map((c) => [c.tag, c.index, c.row]), [["TD", 0, 0]], what + ": inside the first body row's first cell");
       t.diagnostic(what + ": table width before the mark " + widthBefore + " px, after " + r.tableWidth + " px (the mark's side padding; the brief's open question 15)");
       // the Raw view: the same comment's mark on the table's row
       await toRaw(page);
@@ -204,7 +198,7 @@ test("in a browser, the real viewer and panel on the Files pane at 900 and 380 p
       assert.ok(raw.marks >= 1, what + ": the Raw view paints the comment: " + JSON.stringify(raw));
       assert.equal(raw.text, CELL_Q, what + ": over the cell's characters");
       assert.ok(raw.row.includes("| cell one | cell two |"), what + ": on the table's row: " + JSON.stringify(raw.row));
-      // back in Rendered: two cells
+      // back in Rendered: two cells anchor to the row's span (decision 53)
       await toRendered(page);
       await markPainted(page, id(CELL));
       const two = await dragRendered(page, "cell one", "cell two");
@@ -214,22 +208,21 @@ test("in a browser, the real viewer and panel on the Files pane at 900 and 380 p
       await frames(page, 2);
       const c2 = await composerState(page);
       assert.equal(c2.open, true, what + ": the composer opens on the two cells");
-      assert.equal(c2.refused, ONE_CELL, what + ": the one-cell sentence (before: touches a table)");
-      assert.equal(c2.rawTitle, "Raw view, with this passage selected", what + ": the Raw button promises the passage (before: 'scrolled to the block; select the passage there')");
-      assert.equal(c2.save, null, what + ": no Save under the refusal");
-      await page.click('.fc-composer [data-act="fcraw"]');
-      await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
-      await frames(page, 3);
-      const p = await preselRead(page);
-      assert.equal(squash(p.text), squash(ROW_Q), what + ": the Raw view preselects the row's span, pipe included (before: nothing): " + JSON.stringify(p));
-      assert.equal(p.rows, 1, what + ": one row");
-      const c3 = await composerState(page);
-      assert.equal(c3.refused, null, what + ": the refusal is answered");
-      assert.equal(c3.quote, ROW_Q, what + ": the composer quotes the span");
-      assert.equal(c3.save, true, what + ": Save is offered from Raw");
-      await page.click('.fc-composer [data-act="fccancel"]');
-      await frames(page, 2);
-      assert.equal((await composerState(page)).open, false, what + ": Cancel closes the box");
+      assert.equal(c2.refused, null, what + ": no refusal (before: the one-cell sentence with Switch to Raw): " + JSON.stringify(c2));
+      assert.equal(c2.raw, false, what + ": no Switch to Raw");
+      assert.equal(c2.quote, ROW_Q, what + ": the composer quotes the two cells with the pipe between them");
+      assert.equal(c2.save, true, what + ": Save is offered");
+      await saveComment(page, ROW, withComments([FINAL, CELL, ROW], 2));
+      const rowWrites = (await posted(page)).filter((x: any) => x.type === "fileComments" && x.verb === "comment");
+      assert.deepEqual(rowWrites.map((w: any) => [w.args.anchor.quote, w.args.hintOffset]), [[CELL_Q, PLAIN.indexOf(CELL_Q)], [ROW_Q, PLAIN.indexOf(ROW_Q)]], what + ": the stored quote is the exact source slice across the two cells, the pipe inside it, at the row's offset");
+      const r2 = await readCell(page, id(ROW));
+      assert.deepEqual(r2.cells.map((c) => [c.tag, c.index, c.row, c.text]), [["TD", 0, 0, "cell one"], ["TD", 1, 0, "cell two"]], what + ": one mark in each of the row's two cells, each reading its cell's text, none over the pipe: " + JSON.stringify(r2));
+      // the Raw view: the same comment's marks across the row, the pipe under them
+      await toRaw(page);
+      await markPainted(page, id(ROW));
+      const raw2 = await readRaw(page, id(ROW));
+      assert.equal(squash(raw2.text), squash(ROW_Q), what + ": the Raw view paints the comment over the two cells and the pipe: " + JSON.stringify(raw2));
+      assert.ok(raw2.row.includes("| cell one | cell two |"), what + ": on the table's row");
       assert.deepEqual(errors, [], what + ": no script error");
       await page.close();
     }
@@ -246,7 +239,7 @@ test("in a browser, the real viewer and panel: the cell comment served before a 
       const r = await readCell(page, id(CELL));
       assert.ok(r.marks >= 1, what + ": painted in Rendered: " + JSON.stringify(r));
       assert.equal(r.text, CELL_Q, what + ": the cell's text");
-      assert.deepEqual(r.cell, { tag: "TD", index: 0, row: 0 }, what + ": inside the cell");
+      assert.deepEqual(r.cells.map((c) => [c.tag, c.index, c.row]), [["TD", 0, 0]], what + ": inside the cell");
       await toRaw(page);
       await markPainted(page, id(CELL));
       const raw = await readRaw(page, id(CELL));
@@ -396,7 +389,7 @@ async function dragProseToFormula(page: any, start: string, katexIndex: number):
   return page.evaluate(() => String(getSelection()));
 }
 
-test("in a browser, the real viewer and panel on the Files pane over a table whose header row is two formulas alone, rendered by the real KaTeX fill: a REAL drag from the paragraph before the table to past the second header formula's glyphs is refused with the one-cell sentence, the Raw button promising the passage, and Switch to Raw preselects `$h$ | $k$`, the table's covered cells, with the composer quoting it and Save offered (the review's round 4; before: the composer quoted `Intro para. | $h$ | $k$` with Save, two cells and the pipe between them inside a Rendered quote, since a cell holding a formula alone had no record and the one-cell count never saw two); a drag to past the FIRST header formula's glyphs maps one cell and the prose before it, the control", { timeout: 120000 }, async (t) => {
+test("in a browser, the real viewer and panel on the Files pane over a table whose header row is two formulas alone, rendered by the real KaTeX fill: a REAL drag from the paragraph before the table to past the second header formula's glyphs opens the composer quoting `Intro para. | $h$ | $k$` (the source slice with its line breaks folded) with Save, the save posts the exact slice `Intro para.\n\n| $h$ | $k$` at the paragraph's offset, and the panel's own pass paints a mark in the paragraph and one in each header cell, each cell's mark holding its formula (decision 53; the Slice 8 review's round 4 refused it with the one-cell sentence and Switch to Raw preselected `$h$ | $k$`); a drag to past the FIRST header formula's glyphs maps one cell and the prose before it, the control", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
     const errors: string[] = [];
@@ -419,20 +412,21 @@ test("in a browser, the real viewer and panel on the Files pane over a table who
     await frames(page, 2);
     const c1 = await composerState(page);
     assert.equal(c1.open, true, "the composer opens");
-    assert.equal(c1.refused, ONE_CELL, "the one-cell sentence (before: no refusal, the quote `Intro para. | $h$ | $k$` with Save): " + JSON.stringify(c1));
-    assert.equal(c1.rawTitle, "Raw view, with this passage selected", "the Raw button promises the passage");
-    assert.equal(c1.save, null, "no Save under the refusal");
-    await page.click('.fc-composer [data-act="fcraw"]');
-    await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
-    await frames(page, 3);
-    const p = await preselRead(page);
-    assert.equal(squash(p.text), squash("$h$ | $k$"), "the Raw view preselects the table's covered cells, the pipe between them (not the prose, not the formula alone): " + JSON.stringify(p));
-    assert.equal(p.rows, 1, "one row");
-    const c2 = await composerState(page);
-    assert.deepEqual([c2.refused, c2.quote, c2.save], [null, "$h$ | $k$", true], "the refusal is answered, the composer quotes the span, Save is offered from Raw");
-    await page.click('.fc-composer [data-act="fccancel"]');
-    await frames(page, 2);
-    await toRendered(page);
+    assert.equal(c1.refused, null, "no refusal (decision 53; before: the one-cell sentence, the Raw view on `$h$ | $k$`): " + JSON.stringify(c1));
+    assert.equal(c1.raw, false, "no Switch to Raw");
+    assert.equal(c1.quote, "Intro para. | $h$ | $k$", "the composer quotes the paragraph and both header formulas with their delimiters, the quote's line breaks folded to blanks");
+    assert.equal(c1.save, true, "Save is offered");
+    const HK_Q = "Intro para.\n\n| $h$ | $k$";
+    const HK = commentIn(FORMULAS, HK_Q, 7);
+    await saveComment(page, HK, withComments([HK], 1));
+    const writes = (await posted(page)).filter((x: any) => x.type === "fileComments" && x.verb === "comment");
+    assert.deepEqual(writes.map((w: any) => [w.args.anchor.quote, w.args.hintOffset]), [[HK_Q, FORMULAS.indexOf("Intro para.")]], "the stored quote is the exact source slice, the formulas with their delimiters and the pipes inside it");
+    const hosts: [string, number, boolean, string][] = await page.evaluate((cid: string) => Array.from(document.querySelectorAll('.fileview-md .fc-hl[data-act="fcopen"][data-id="' + cid + '"]')).map((m) => {
+      const host = m.closest("th, td, p") as HTMLElement | null;
+      return [host ? host.tagName : "", host && host.parentElement ? Array.from(host.parentElement.children).indexOf(host) : -1, !!m.querySelector(".katex"), (m.textContent || "").replace(/\s+/g, " ").trim()];
+    }), id(HK));
+    assert.deepEqual(hosts.map((h) => [h[0], h[1], h[2]]), [["P", 0, false], ["TH", 0, true], ["TH", 1, true]], "the marks stand in the paragraph and in each header cell, the two cell marks holding the formulas' glyphs: " + JSON.stringify(hosts));
+    assert.equal(hosts[0][3], "Intro para.", "the paragraph's mark reads its text");
     // the control: one formula-only header cell and the prose before it map
     const one = await dragProseToFormula(page, "Intro para.", 0);
     assert.ok(one.startsWith("Intro para.") && one.includes("h") && !one.includes("k"), "the drag selected the paragraph and the first header formula: " + JSON.stringify(one));
@@ -451,7 +445,7 @@ test("in a browser, the real viewer and panel on the Files pane over a table who
 // ── the Slice 8 review, round 5: a picture-only or formula-only cell the drag runs THROUGH, counted by its source span ──
 const EDGE_CELLS = "Intro para.\n\n| PL1 | PL2 |\n|-----|-----|\n| pl-a | ![p](x.png) |\n\nAfter the picture-last table.\n\n| FL1 | FL2 |\n|-----|-----|\n| fl-a | $n$ |\n\nAfter the formula-last table.\n";
 
-test("in a browser, the real viewer and panel on the Files pane over a table whose last body cell is a picture alone and one whose last body cell is a formula alone, rendered by the real KaTeX fill: a REAL drag from the positioned cell beside either into the paragraph after the table is refused with the one-cell sentence, the Raw button promising the passage, and Switch to Raw preselects the two cells, `pl-a | ![p](x.png)` and `fl-a | $n$`, with the composer quoting them and Save offered (the review's round 5; before: the composer quoted the cells with the pipe between them and the prose after, Save offered, and the save posted that quote, since a cell emitting no positioned character was counted only through a formula at the drag's end and the pass counted positioned characters); a drag over the positioned cell alone maps it, the control", { timeout: 120000 }, async (t) => {
+test("in a browser, the real viewer and panel on the Files pane over a table whose last body cell is a picture alone and one whose last body cell is a formula alone, rendered by the real KaTeX fill: a REAL drag from the positioned cell beside either into the paragraph after the table opens the composer quoting the cell, the picture's markup or the formula, the row's pipes and the prose after them, `pl-a | ![p](x.png) | After the picture-last table.` and `fl-a | $n$ | After the formula-last table.` with the line breaks folded, and Save offered (decision 53; the Slice 8 review's round 5 refused it with the one-cell sentence and Switch to Raw preselected the two cells); a drag over the positioned cell alone maps it, the control", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
     const errors: string[] = [];
@@ -471,7 +465,7 @@ test("in a browser, the real viewer and panel on the Files pane over a table who
       return [(own.textContent || "").trim(), c.querySelectorAll("img").length, c.querySelectorAll(".katex").length, c.querySelectorAll("[data-fv-figerr]").length];
     }));
     assert.deepEqual(cells, [["pl-a", 0, 0, 0], ["", 1, 0, 1], ["fl-a", 0, 0, 0], ["n", 0, 1, 0]], "the two tables' body cells: a positioned cell, then a picture alone wearing its failed-load label; a positioned cell, then a formula alone");
-    for (const [label, start, end, span] of [["the picture-last table", "pl-a", "After the picture-last table.", "pl-a | ![p](x.png)"], ["the formula-last table", "fl-a", "After the formula-last table.", "fl-a | $n$"]] as const) {
+    for (const [label, start, end, quote] of [["the picture-last table", "pl-a", "After the picture-last table.", "pl-a | ![p](x.png) | After the picture-last table."], ["the formula-last table", "fl-a", "After the formula-last table.", "fl-a | $n$ | After the formula-last table."]] as const) {
       const selected = await dragRendered(page, start, end);
       assert.ok(selected.startsWith(start) && selected.endsWith(end), label + ": the drag selected the cell and the paragraph after: " + JSON.stringify(selected));
       await floatShown(page);
@@ -479,20 +473,13 @@ test("in a browser, the real viewer and panel on the Files pane over a table who
       await frames(page, 2);
       const c1 = await composerState(page);
       assert.equal(c1.open, true, label + ": the composer opens");
-      assert.equal(c1.refused, ONE_CELL, label + ": the one-cell sentence (before: no refusal, the quote with the pipe and the prose after, Save offered): " + JSON.stringify(c1));
-      assert.equal(c1.rawTitle, "Raw view, with this passage selected", label + ": the Raw button promises the passage");
-      assert.equal(c1.save, null, label + ": no Save under the refusal");
-      await page.click('.fc-composer [data-act="fcraw"]');
-      await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
-      await frames(page, 3);
-      const p = await preselRead(page);
-      assert.equal(squash(p.text), squash(span), label + ": the Raw view preselects the two cells, the pipe between them, and not the prose: " + JSON.stringify(p));
-      assert.equal(p.rows, 1, label + ": one row");
-      const c2 = await composerState(page);
-      assert.deepEqual([c2.refused, c2.quote, c2.save], [null, span, true], label + ": the refusal is answered, the composer quotes the span, Save is offered from Raw");
+      assert.equal(c1.refused, null, label + ": no refusal (decision 53; before: the one-cell sentence, the Raw view on the two cells): " + JSON.stringify(c1));
+      assert.equal(c1.raw, false, label + ": no Switch to Raw");
+      assert.equal(c1.quote, quote, label + ": the composer quotes the cell, the cell beside it and the prose after, the row's pipes inside (its line breaks folded)");
+      assert.equal(c1.save, true, label + ": Save is offered");
       await page.click('.fc-composer [data-act="fccancel"]');
       await frames(page, 2);
-      await toRendered(page);
+      assert.equal((await composerState(page)).open, false, label + ": Cancel closes the box");
     }
     // the control: the positioned cell alone maps
     const one = await dragRendered(page, "pl-a", "pl-a");

@@ -673,13 +673,15 @@ test("a tab-indented fence inside a list item, a fence whose lines open with tab
   mapsWhole(box, after, "c = 3"); mapsWhole(box, after, "b");
 });
 
-test("the Raw offer stands where the mapping still refuses: a selection from a code line into an html block after it names the html block with the Raw view at the block, and one across a table's cells names the one-cell rule, the code no longer the first obstacle", () => {
+test("the Raw offer stands where the mapping still refuses: a selection from a code line into an html block after it names the html block with the Raw view at the block, the code and the table between them no obstacle (since decision 53 of plans/file-review.md a selection across cells anchors; Slice 8 named the one-cell rule here), and one from a code line across the table's cells anchors, the fence's closer and the table's rows inside the quote", () => {
   const src = "```\ncode line one\ncode line two\n```\n\n| Col A | Col B |\n|-------|-------|\n| cell one | cell two |\n\n<div class=\"note\">Html block text</div>\n\nAfter para.\n";
   const box = buildRendered(src);
   const pre = find(box, "PRE", "code line one");
   const html = bad(mapRenderedSelection(sel(point(pre, "code line two"), point(box, "Html block text", true)), El(box), src), "the second code line to the html block");
-  assert.match(html.reason, /spans more than one cell of a table/, "the table between them is the first obstacle (before: the code block itself)");
-  assert.equal(src.slice(html.rawRange!.start, html.rawRange!.end), "Col A | Col B |\n|-------|-------|\n| cell one | cell two");
+  assert.match(html.reason, /an HTML block/, "the html block is the first obstacle (before: the one-cell rule; before Slice 8: the code block itself): " + html.reason);
+  assert.equal(html.blockStartOffset, at(src, "<div"));
+  const across = ok(mapRenderedSelection(sel(point(pre, "code line two"), point(box, "cell two", true)), El(box), src), "the second code line across the table's cells (before: the one-cell rule)");
+  assert.equal(across.quote, "code line two\n```\n\n| Col A | Col B |\n|-------|-------|\n| cell one | cell two");
   const noTable = "```\ncode line one\n```\n\n<div class=\"note\">Html block text</div>\n\nAfter para.\n";
   const box2 = buildRendered(noTable);
   const r = bad(mapSpan(box2, noTable, "code line one", "Html block text"), "the code line to the html block");
