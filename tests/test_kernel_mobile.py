@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import unittest
 from romp_load import load_source
 import tempfile
@@ -19,6 +20,8 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_mobile", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+from test_pane_shim_return import HARNESS as _PANE_HARNESS   # noqa: E402  the pane shim's node fakes (never its TestCases), for the linked runs below
 
 
 def _mobile_js():
@@ -946,6 +949,36 @@ def _run_probe(scenario):
     return json.loads(r.stdout.strip().splitlines()[-1])
 
 
+# The shell script AND one pane's shim in one node process on one fake clock (review round 3, 2026-09-18): the pane's
+# parentLink() reads the window.__rompLink the shell really publishes, and the shell's tell hands the pane the panes
+# word broadcastAll builds (panesMsg's link field, up or down), so a case asserts the PANE's response to the shell's
+# stamp (a link-backstop row and a dial, or neither) rather than a connT number alone. The shell runs first, at module
+# scope against the global fakes, exactly as _run_probe runs it; the pane harness and the shim core run inside a
+# function scope, so their `var window`, `var document`, `var setInterval` and `function WebSocket` shadow nothing the
+# shell reads. From the scenario the shell's helpers (shOpen, shRecv, shTick, shHide, shShow, shSock, SHSOCKS,
+# shDialTimers) and the pane's (open, recv, tick, hide, show, sock, rows, sockets, awaitLink) are both in reach; the
+# shell's own publication is global.__rompLink(). One clock: advance NOW only (the glue points both at it).
+_LINK_GLUE = r"""
+SHNOW=NOW;Date.now=function(){return NOW;};   // one clock for the page (the shell's boot dial ran at SHNOW, the same 1,000,000)
+Object.defineProperty(window.parent,"__rompLink",{configurable:true,get:function(){return global.__rompLink;}});   // the pane reads the shell's real publication
+var shellTell=global.__rompPanesTell;global.__rompPanesTell=function(){shellTell();fireWin("message",{romp:"panes",on:{},link:global.__rompLink().up?"up":"down"});};   // the shell's tell reaches the pane as the panes word broadcastAll builds
+"""
+
+
+def _run_linked(scenario):
+    node = shutil.which("node")
+    if not node:
+        raise unittest.SkipTest("node not installed")
+    fx = tempfile.mkdtemp()
+    path = os.path.join(fx, "run.js")
+    with open(path, "w") as f:
+        f.write(_FIT_HARNESS + _SHELL_PROBE_HARNESS + _mobile_js() + "\n(function(){\n" + _PANE_HARNESS + km._shim_core_js() + "\n" + _LINK_GLUE + scenario + "\n})();\n")
+    r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        raise AssertionError("node failed:\n" + r.stderr)
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
 class ShellLinkProbe(unittest.TestCase):
     """D3 (2026-09-18): the shell socket is the page's one link probe. It gets the shim's liveness rules with the
     shell's OWN copy of the constants (romp-manager's ruling; tests/test_kernel_ws_heartbeat.py pins the two copies to
@@ -956,7 +989,11 @@ class ShellLinkProbe(unittest.TestCase):
     standing socket that files no probe, the watchdog's OPEN-quiet arm with the freeze and resume stamps, the two 250 ms
     cadences, the publication order, the probe row's integers; and the three shell fixes of that round: one pending
     redial timer (a dial clears it), the CLOSED arm that can fire (onclose keeps shWs), and the abandon that tells the
-    API health detail."""
+    API health detail.
+
+    Review round 3 (2026-09-18) added the two linked cases at the tail (_run_linked: the shell script and one pane's shim
+    in one node process, the pane reading the shell's real publication), the loop-alive stamp's two halves, each pinned
+    by the pane's own response."""
 
     def test_the_shell_dials_one_socket_with_the_dashboards_wid_and_publishes_the_link(self):
         r = _run_probe(r"""
@@ -1262,6 +1299,77 @@ shOut({socks:socks,rows:shProbeRows()});""")
                          "return 1's row: its decision and gaps, the one refusal, ms and firstFailMs -1 (the next return came before the open)")
         self.assertEqual(r["rows"][1], {"decision": "redial-closed", "hiddenMs": 100, "quietMs": 700, "attempts": 0, "firstFailMs": -1, "ms": 200},
                          "return 2's row: its own gaps and counters, reset at the return")
+
+    # ---- review round 3 (2026-09-18): the loop-alive stamp's two halves, the pane following the shell's real publication
+    def test_a_shell_whose_loop_died_with_no_socket_goes_stale_and_the_panes_backstop_dials_with_its_row(self):
+        # tests-1 and kernel-1: the half of the stamp that keeps a DEAD shell from reading alive. The stamp sits AFTER the
+        # tick's no-socket guard (round 2, item 2), so a shell left with no socket at all stops renewing connT and the
+        # pane's 25 s link-backstop can call its loop dead. The phone's shape: both sockets quiet in the background; at
+        # the return the path is so broken that the WebSocket constructor itself throws, so the shell's abandon dials
+        # nothing and arms nothing (no socket, no timer: a dead loop). The pane, its socket dead and the link down,
+        # awaits; each tick the shell's watchdog runs first (a no-op with no socket) and the pane's poll follows. connT
+        # ages 5 s a tick; at 30 s the pane dials on its own and files its link-backstop row. With the stamp one line up,
+        # before the guard, every tick renews connT with no socket to watch: the walk reads 0 for good and the backstop
+        # never fires, a dead shell reading alive forever.
+        r = _run_linked(r"""
+shOpen();shRecv({type:'ka'});open();recv({type:"ka"});               // the shell's socket and the pane's, both OPEN and fresh
+NOW+=5000;shTick();tick();                                            // one tick each with a socket: the shell's stamp is set once
+shHide();hide();                                                      // the phone goes to the background (no ticks run while hidden)
+NOW+=40000;sock().readyState=3;                                       // 45 s quiet: the pane's socket dead, the shell's quiet past the bound
+global.WebSocket=function(){throw new Error('no socket');};         // the shell's redial cannot even construct a socket
+shShow();                                                             // the shell's fast path: redial-stale, abandon, the dial throws
+var shell={socks:SHSOCKS.length,timers:shDialTimers().length,up:global.__rompLink().up,stale:NOW-global.__rompLink().connT};
+show();                                                               // the pane's return: its socket dead, the link down: await
+var pane={sockets:sockets.length,awaiting:awaitLink};
+var walk=[];
+for(var i=0;i<6;i++){NOW+=5000;shTick();tick();walk.push({stale:NOW-global.__rompLink().connT,sockets:sockets.length,awaiting:awaitLink});}
+if(sockets.length>1)open();                                           // the backstop's socket opens: its queued link-backstop row flushes onto it
+out({shell:shell,pane:pane,walk:walk,backstop:rows(sock(),"link-backstop").length});""")
+        self.assertEqual(r["shell"], {"socks": 1, "timers": 0, "up": False, "stale": 0},
+                         "the shell's loop is dead: no socket, no pending redial, the link down, connT the abandon's dial time")
+        self.assertEqual(r["pane"], {"sockets": 1, "awaiting": True}, "the pane awaits the link")
+        self.assertEqual([w["stale"] for w in r["walk"]], [5000, 10000, 15000, 20000, 25000, 30000],
+                         "with no socket to watch the tick does not renew connT: the stamp sits after the no-socket guard")
+        self.assertEqual([w["sockets"] for w in r["walk"]], [1, 1, 1, 1, 1, 2], "at the bound (25,000 ms) no dial; past it the pane's backstop dials on its own")
+        self.assertIs(r["walk"][5]["awaiting"], False)
+        self.assertEqual(r["backstop"], 1, "...and files its loud link-backstop row")
+
+    def test_a_shell_whose_loop_is_alive_publishes_its_fresh_dial_as_connT_and_the_pane_files_no_backstop(self):
+        # tests-1: the dial half of the published maximum, connT: Math.max(shConnT, shTickT). Two reads where the halves
+        # differ: the boot dial before any tick (the stamp unset: connT is the dial's age, 0), and the phone's return after
+        # an hour in the background with no ticks (the stamp an hour old, the return's dial fresh). The pane returns in the
+        # same dispatch, finds the link down (the shell's dial is CONNECTING) and awaits; its 5 s poll lands before the
+        # shell's own watchdog has ticked since the return, a phase the two intervals can take, and reads connT 5 s old: no
+        # backstop, no dial. The shell's socket then opens, the tell hands the pane the link-up word, and the pane dials
+        # once on it (linkUpMs 5000) with no link-backstop row. With the dial half dropped (connT: shTickT) the boot read
+        # is the unset stamp (1,000,000 ms) and the return read the hour-old tick: the pane's first poll files a false
+        # link-backstop row and dials while the shell's loop is alive and dialing.
+        r = _run_linked(r"""
+var boot={stale:NOW-global.__rompLink().connT,socks:SHSOCKS.length,rs:SHSOCKS[0].readyState};   // the boot dial, CONNECTING, before any tick
+shOpen();shRecv({type:'ka'});open();recv({type:"ka"});
+for(var i=0;i<3;i++){NOW+=5000;shRecv({type:'ka'});recv({type:"ka"});shTick();tick();}   // 15 s of frames and ticks on both sockets: the stamp is set
+shHide();hide();                                                      // the phone goes to the background: no ticks run while hidden
+NOW+=3600000;SHSOCKS[0].readyState=3;sock().readyState=3;            // an hour later both sockets are dead
+shShow();                                                             // the shell's fast path: redial-closed, a fresh dial (CONNECTING)
+var atReturn={socks:SHSOCKS.length,rs:shSock().readyState,up:global.__rompLink().up,stale:NOW-global.__rompLink().connT};
+show();                                                               // the pane's return: the link down, so it awaits
+var pane={sockets:sockets.length,awaiting:awaitLink};
+NOW+=5000;tick();                                                     // the pane's poll, before the shell's watchdog has ticked since the return
+var afterPoll={sockets:sockets.length,awaiting:awaitLink,stale:NOW-global.__rompLink().connT};
+shTick();                                                             // the shell's tick: its dial 5 s in, under the cut, kept
+shOpen();                                                             // the shell's socket opens: the tell hands the pane the link-up word
+var afterOpen={sockets:sockets.length,awaiting:awaitLink,up:global.__rompLink().up};
+open();NOW+=50;recv({type:"feed",asks:[]});                           // the pane's socket opens; its return-fresh files on the first real frame
+out({boot:boot,atReturn:atReturn,pane:pane,afterPoll:afterPoll,afterOpen:afterOpen,backstop:rows(sock(),"link-backstop").length,
+rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
+        self.assertEqual(r["boot"], {"stale": 0, "socks": 1, "rs": 0}, "before the first tick connT is the boot dial's age (the dial half of the max), not the unset stamp")
+        self.assertEqual(r["atReturn"], {"socks": 2, "rs": 0, "up": False, "stale": 0}, "the return's fresh dial is connT, not the hour-old tick stamp")
+        self.assertEqual(r["pane"], {"sockets": 1, "awaiting": True}, "the pane awaits the link (the shell's dial is CONNECTING)")
+        self.assertEqual(r["afterPoll"], {"sockets": 1, "awaiting": True, "stale": 5000}, "the pane's poll reads the shell's dial 5 s old: the loop is alive, no backstop dial")
+        self.assertEqual(r["afterOpen"], {"sockets": 2, "awaiting": False, "up": True}, "the link-up word dials the pane once")
+        self.assertEqual(r["backstop"], 0, "no link-backstop row: the shell's loop was alive throughout")
+        self.assertEqual(len(r["rf"]), 1)
+        self.assertEqual(r["rf"][0]["linkUpMs"], 5000, "the word's time")
 
 
 if __name__ == "__main__":

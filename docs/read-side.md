@@ -163,14 +163,15 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   code-owned wait (`ms` minus `linkUpMs`). The shell's own socket files one
   `return-probe` row (surface `shell`) per return that found it dead or quiet:
   the `decision` (`redial-closed` or `redial-stale`; a standing socket files
-  none), the `hiddenMs` and `quietMs` gaps, and the path's recovery on that one
-  socket, `attempts`, `firstFailMs` and `ms` (foreground to open); `ms` and
-  `firstFailMs` are -1 when the next return came before the open, the row filed
-  at that return with the attempts as they stood. A pane whose wait outlived the
-  shell's loop-alive stamp (its `connT`, the later of its last dial and its
-  watchdog's last tick with a socket to watch, 25 s stale) dials on its own and
-  files a `link-backstop` stale row, the loud sign that the shell's redial loop
-  died.
+  none, nor does a return before the shell socket's first open: until then the
+  boot dial is the probe), the `hiddenMs` and `quietMs` gaps, and the path's
+  recovery on that one socket, `attempts`, `firstFailMs` and `ms` (foreground to
+  open); `ms` and `firstFailMs` are -1 when the next return came before the
+  open, the row filed at that return with the attempts as they stood. A pane
+  whose wait outlived the shell's loop-alive stamp (its `connT`, the later of
+  its last dial and its watchdog's last tick with a socket to watch, 25 s stale)
+  dials on its own and files a `link-backstop` stale row, the loud sign that the
+  shell's redial loop died.
   A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's
   caps frame has answered the bundle's ready; before that, with the ready still
   queued, or after a socket that died before the caps frame came back, it dials
