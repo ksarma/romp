@@ -796,7 +796,10 @@ class _PerfStats:
                                    and _cached_timeline), push.send (the feed/bars serialization and
                                    sends). Inside push.chat, its seams (2026-09-18): push.chat.sig
                                    (each tab's _chat_build_sig, every tab every cycle, the post-build
-                                   one included), push.chat.build (build_session, a rebuild only) and
+                                   one included; itself a container of push.chat.sig.static, the
+                                   signature less its dependency tail, and push.chat.sig.deps, the
+                                   tail _chat_sig_deps evaluates over the cached build's record,
+                                   recorded only when the tail ran), push.chat.build (build_session, a rebuild only) and
                                    push.chat.send (the events diff and the per-client chat sends);
                                    inside push.send: push.send.feedParts (the feed's per-entry pass
                                    and its signature, a wire miss only), push.send.barsSplit (the
@@ -1179,6 +1182,7 @@ class _PerfStats:
     JOBS = CYCLE_JOBS + PASS_JOBS
     STAGES = ("prelude", "jobs", "push",
               "push.chat", "push.chat.sig", "push.chat.build", "push.chat.send",         # the chat stage and its seams (2026-09-18)
+              "push.chat.sig.static", "push.chat.sig.deps",                              # the signature seam's two sub-seams (the chat-signature design, stage 1)
               "push.feed", "push.timeline",
               "push.send", "push.send.feedParts", "push.send.barsSplit", "push.send.compare",   # the send stage and its seams
               "push.warm", "push.feedFirst",
@@ -1193,12 +1197,16 @@ class _PerfStats:
     # the incremental-push design, 2026-09-18): a seam's bytes count in the seam, the container's glue in `<container>.other`,
     # and a container counts a nested container's rows through that container's own row (`_through_nested` below), so `push`
     # counts the chat's bytes once, not again through push.chat.build; a dotted stage under a plain job (jobs.autoNudge.parse)
-    # counts directly, as it did before the seams
-    CONTAINERS = {"push": "push.", "push.chat": "push.chat.", "push.send": "push.send.", "jobs": "jobs.", "jobsPass": "jobs."}
+    # counts directly, as it did before the seams. push.chat.sig is a container of its own two sub-seams (the static
+    # components and the dependency tail, _chat_sig_seam_close), so push.chat counts the signature's bytes once, through
+    # the seam's row
+    CONTAINERS = {"push": "push.", "push.chat": "push.chat.", "push.send": "push.send.", "jobs": "jobs.", "jobsPass": "jobs.",
+                  "push.chat.sig": "push.chat.sig."}
     # the stages whose callers hand stage() a thread-CPU delta beside the wall (stages_cpu_ms, 2026-09-18): the two threads'
     # containers and the chat loop's seams; a fresh snapshot lists each at zero, and a caller may add a CPU figure for any
     # other stage name, which then appears too
-    CPU_STAGES = ("push", "jobs", "jobsPass", "push.chat", "push.chat.sig", "push.chat.build", "push.chat.send")
+    CPU_STAGES = ("push", "jobs", "jobsPass", "push.chat", "push.chat.sig", "push.chat.sig.static", "push.chat.sig.deps",
+                  "push.chat.build", "push.chat.send")
     BUILDS = ("chat", "feed", "timeline", "feedJson", "thread")
     # builds.chat's bg_miss labels: _chat_build_sig's components, a tab with no cached build, and a tab whose
     # signature could not be taken
@@ -37943,6 +37951,29 @@ def _chat_sig_note_pre(sid, sig, hit, watched, clients, plain_outline):
             st["heldBody"] += 1
 
 
+def _chat_sig_seam_close(t0, c0):
+    """Close the push.chat.sig seam opened at wall `t0` (time.monotonic) and thread CPU `c0` (_thread_cpu), recording its
+    two sub-seams first (stage 1 of the chat-signature design, 2026-09-18): push.chat.sig.deps, the dependency tail
+    (_chat_sig_deps: the task-output stats, the path-token re-resolves and the postal values), from the wall and CPU
+    _chat_build_sig left on the thread-local, and push.chat.sig.static, the rest of the signature, as the remainder;
+    then the seam itself, a container of the two (CONTAINERS), so the chat container counts the signature's bytes once,
+    through the seam's row. The deps sub-seam is recorded only when the tail ran (a post-build signature, deps=False,
+    skips it); the static one always. Bytes read inside the signature land on the static row, the first of the two
+    closed since the last byte mark (the seam's reads are the names read and a registry decode, both static
+    components); the deps row records its wall and CPU. The thread-local is cleared here, and _chat_sig_scope zeroes it
+    at every signature's entry, so a signature taken outside a seam never hands a stale tail to the next seam."""
+    dt = time.monotonic() - t0
+    cpu = _cpu_delta(c0)
+    tl = _CHAT_SIG_TL
+    d_dt, d_cpu, ran = getattr(tl, "deps_dt", 0.0), getattr(tl, "deps_cpu", None), getattr(tl, "deps_ran", False)
+    tl.deps_dt, tl.deps_cpu, tl.deps_ran = 0.0, None, False
+    s_cpu = (cpu[0] - d_cpu[0], cpu[1] - d_cpu[1]) if (cpu is not None and d_cpu is not None) else cpu
+    _PERF_STATS.stage("push.chat.sig.static", max(0.0, dt - d_dt), cpu=s_cpu)
+    if ran:
+        _PERF_STATS.stage("push.chat.sig.deps", d_dt, cpu=d_cpu)
+    _PERF_STATS.stage("push.chat.sig", dt, cpu=cpu)
+
+
 def _chat_stat_key(path):
     """(mtime, size) of a file, or None when it is missing — the task-output gate's identity."""
     _chat_sig_count("stats")
@@ -38521,7 +38552,15 @@ def _chat_build_sig(sess, tm=None, now=None, live_map=None, deps=None):
         # floor: the render floor decision (T323 stage 4b): True while a proto-1 client is connected (the pusher's
         # per-push flag), so a payload built from turn 0 is never served from the cache once the floor climbs
         sig.append(bool(getattr(_live_scope, "chat_floor0", False)))
-        sig.extend(((), (), None) if deps is False else _chat_sig_deps(sid, deps))   # taskout, pathlink, postal
+        if deps is False:
+            sig.extend(((), (), None))                      # taskout, pathlink, postal: empty for a static-only signature
+        else:
+            _t_deps = time.monotonic()                      # push.chat.sig.deps: the tail's own wall and thread CPU, left on the
+            _c_deps = _thread_cpu()                         #  thread-local for the seam close (_chat_sig_seam_close)
+            sig.extend(_chat_sig_deps(sid, deps))           # taskout, pathlink, postal
+            _CHAT_SIG_TL.deps_dt = time.monotonic() - _t_deps
+            _CHAT_SIG_TL.deps_cpu = _cpu_delta(_c_deps)
+            _CHAT_SIG_TL.deps_ran = True
         return tuple(sig)
 
 
@@ -60816,7 +60855,7 @@ def _push(targets, connect=False, live_map=None):
                 except Exception as e:
                     _chat_sig_fault(s, e)                # once per fault episode: stderr and a bell row
                     sig = None                           # an input that cannot be keyed: build, never cache
-                _PERF_STATS.stage("push.chat.sig", time.monotonic() - _t_seam, cpu=_cpu_delta(_c_seam))
+                _chat_sig_seam_close(_t_seam, _c_seam)   # the seam and its static / deps sub-seams (stages_ms, the split)
                 hit = _built_chat.get(s["sid"])
                 _chat_sig_note_pre(s["sid"], sig, hit, is_active or s["sid"] in _all_active, _all_chat, _plain_outline)   # memos.chatSig
                 _claimed = False
@@ -60886,7 +60925,7 @@ def _push(targets, connect=False, live_map=None):
                             post = _chat_build_sig(s, _tm, now, live_map=live_map, deps=False)
                         except Exception:
                             post = None
-                        _PERF_STATS.stage("push.chat.sig", time.monotonic() - _t_seam, cpu=_cpu_delta(_c_seam))
+                        _chat_sig_seam_close(_t_seam, _c_seam)   # static only: deps=False ran no tail
                         _chat_sig_bump(post=1)
                     # WHY a tab rebuilt (2026-09-09): the labelled _chat_build_sig components that moved
                     # against the cached signature, so /perf can say which input drives the rebuilds; the

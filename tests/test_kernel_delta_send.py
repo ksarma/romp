@@ -516,6 +516,48 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertEqual(off, live, "the same wire strings, per client, with the counters off")
         self.assertEqual(calls_off, calls_live)
 
+    def test_the_signature_seam_is_split_into_its_static_and_deps_sub_seams(self):
+        """Stage 1 of the chat-signature design (2026-09-18): push.chat.sig is a container of push.chat.sig.static (the
+        signature less its dependency tail) and push.chat.sig.deps (the tail _chat_sig_deps evaluates), in stages_ms, in
+        stages_cpu_ms and in the cycle's split. Every pre-build signature records both (a cold tab's tail runs and answers
+        empty); the post-build one, deps=False, records static alone: a served tab closes static once and deps once, a
+        rebuilt tab static twice and deps once, and per row the two sum to the seam within rounding."""
+        ps = km._PERF_STATS
+        names = []
+        real_stage = ps.stage
+
+        def stage(name, dt, cpu=None):
+            names.append(name); return real_stage(name, dt, cpu=cpu)
+        before = ps.snapshot()
+        with mock.patch.object(ps, "stage", stage):
+            _wire, calls, rows = self._run(km._chat_diff, perf=ps)
+        after = ps.snapshot()
+        self.assertEqual(calls, [False, True, False, True, False, True], "premise: rebuilt, served, alternating")
+        for k in ("push.chat.sig.static", "push.chat.sig.deps"):
+            self.assertIn(k, before["stages_ms"], "%s is listed at zero from the start" % k)
+            self.assertGreater(after["stages_ms"][k], before["stages_ms"][k], "%s moved" % k)
+            self.assertIn(k, after["stages_cpu_ms"] or {k: None}, "%s has a CPU row where the platform has the clock" % k)
+        self.assertAlmostEqual(after["stages_ms"]["push.chat.sig"] - before["stages_ms"]["push.chat.sig"],
+                               sum(after["stages_ms"][k] - before["stages_ms"][k] for k in ("push.chat.sig.static", "push.chat.sig.deps")),
+                               places=6, msg="the two sub-seams are the seam, cumulatively")
+        for i, row in enumerate(rows):
+            self.assertIn("push.chat.sig.static", row, "cycle %d" % i); self.assertIn("push.chat.sig.deps", row, "cycle %d" % i)
+            self.assertLessEqual(abs(row["push.chat.sig"]["ms"] - row["push.chat.sig.static"]["ms"] - row["push.chat.sig.deps"]["ms"]), 0.2,
+                                 "cycle %d: the split's rows sum within their rounding (%r)" % (i, {k: v["ms"] for k, v in row.items() if k.startswith("push.chat.sig")}))
+        # the closes per cycle, in the order the seam close records them
+        cycles, cur = [], []
+        for n in names:
+            if n == "push.chat":
+                cycles.append(cur); cur = []
+            elif n.startswith("push.chat.sig"):
+                cur.append(n)
+        self.assertEqual(len(cycles), 6)
+        for i, seen in enumerate(cycles):
+            served = calls[i]
+            self.assertEqual(seen.count("push.chat.sig.static"), 1 if served else 2, "cycle %d: %r" % (i, seen))
+            self.assertEqual(seen.count("push.chat.sig.deps"), 1, "cycle %d: the tail runs once, in the pre-build signature: %r" % (i, seen))
+            self.assertEqual(seen[:3], ["push.chat.sig.static", "push.chat.sig.deps", "push.chat.sig"], "cycle %d: the sub-seams close before the seam: %r" % (i, seen))
+
     def test_the_chat_seams_record_their_thread_cpu_from_a_bounded_number_of_rusage_reads(self):
         """Stage 1 of the chat-signature design (2026-09-18): the chat loop reads getrusage(RUSAGE_THREAD) at each seam's
         open and close and stages_cpu_ms carries the delta beside the wall. Under a fake clock that advances one ms of
