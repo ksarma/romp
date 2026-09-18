@@ -275,6 +275,7 @@ class ChatTabSingleFlight(unittest.TestCase):
         a, b = self._client(active=S1), self._client(active=S1)
         km._clients[:] = [a, b]
         w0 = km._VIEW_STATS["chatWaited"]
+        cs0 = km._chat_sig_stats_report()["waited"]
         _race_fns = [lambda: km._push([a, b]), lambda: km._push([b], connect=True)]
         go = threading.Event()
         def run(i):
@@ -285,6 +286,8 @@ class ChatTabSingleFlight(unittest.TestCase):
         for t in ths: t.join(30)
         self.assertEqual(sorted(self.builds), [S1, S2], "each tab built once across the two pushes: %r" % self.builds)
         self.assertGreaterEqual(km._VIEW_STATS["chatWaited"] - w0, 1, "the later push waited and served the cache")
+        self.assertGreaterEqual(km._chat_sig_stats_report()["waited"] - cs0, 1,
+                                "memos.chatSig.waited moved beside it (2026-09-18 review, low 10)")
         self.assertEqual({f["id"] for f in b["_frames"] if f["type"] == "session"}, {S1, S2}, "the connect client still got both tabs")
         self.assertEqual(km._CHAT_INFLIGHT, {}, "no claim left behind")
 

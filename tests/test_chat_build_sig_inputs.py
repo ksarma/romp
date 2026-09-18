@@ -1517,10 +1517,25 @@ class Pusher(unittest.TestCase):
             return err.getvalue().count("push build: chat signature %s" % SID_B[:8])
         try:
             c0 = self._chat()
+            cs0 = km._chat_sig_stats_report()
             self.assertEqual(push(), 1, "the first cycle says it")
             self.assertEqual(push(), 0, "the second cycle, same fault: not again")
             self.assertEqual(push(), 0)
             self.assertEqual(self.built.count(SID_B), 3, "the tab builds every cycle while its key cannot be taken")
+            d = {k: v - cs0[k] for k, v in km._chat_sig_stats_report().items()}
+            self.assertEqual((d["pre"], d["nosig"], d["post"]), (6, 3, 1),
+                             "memos.chatSig (2026-09-18 review, low 11): a pre-build signature per tab per push, the raising tab's "
+                             "three under nosig; one post-build signature, the other tab's first build (a tab with no signature "
+                             "takes no post-build one)")
+            # the raising signature's reads fold too (_chat_sig_scope's finally): a direct call that raises moves stats and
+            # none of the loop's counts
+            b0 = km._chat_sig_stats_report()
+            with self.assertRaises(OSError):
+                km._chat_build_sig({"sid": SID_B, "name": "api", "path": str(self.tx[SID_B]), "anchor": SID_B}, None,
+                                   int(time.time()), live_map={})
+            d2 = {k: v - b0[k] for k, v in km._chat_sig_stats_report().items()}
+            self.assertGreaterEqual(d2["stats"], 2, "the transcript and the states file were stat'ed before the watch component raised")
+            self.assertEqual((d2["pre"], d2["post"], d2["nosig"]), (0, 0, 0), "a signature outside the push loop is not a loop count")
             self.assertEqual(self.built.count(SID_A), 1, "the other tab is served")
             self.assertNotIn(SID_B, km._built_chat, "never cached")
             self.assertEqual(self._delta(c0, self._chat())["bg_miss"].get("nosig"), 3)
