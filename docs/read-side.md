@@ -255,7 +255,11 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   answers the show carries `parked: true` too, with `ms` and `linkUpMs`
   counted from the show word rather than the return. A return in a shell that
   told a word and did not park says `parked: false`; a standalone page's row
-  carries no `parked` field.
+  carries no `parked` field. On the phone layout the Outline, the Sessions
+  band and the Waiting pane load on their first tap (since 2026-09-18; the
+  chat, the feed and the Files pane load at boot), so a pane the phone never
+  showed has no document and files no rows of any kind: its absence from the
+  rows is the saving, not a field.
   A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's
   caps frame has answered the bundle's ready; before that, with the ready still
   queued, or after a socket that died before the caps frame came back, it dials
@@ -265,7 +269,12 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   other session as a `skeleton` on the tab strip with one small `status` frame
   each, and the chat pane loads a skeleton on click or one at a time in idle,
   never while the tab is hidden; one `skeleton` client-diag row (count, active)
-  records the regime.
+  records the regime. On the phone layout the chat pane's first dial declares
+  `skeleton=1` too (since 2026-09-18), so a cold open there is served the same
+  way: the strip, one full for the stored tab and a status per other tab, and
+  the `skeleton` row records it; the idle chain then starts from the moment the
+  stored tab's full has applied, or from the strip when it lists no such tab (a
+  stored tab that ended while the phone was away), never before.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire
