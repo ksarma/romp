@@ -2,7 +2,9 @@
 """T304: `romp restart-metrics` (cli/restart_metrics.py), the read-only reader of what kernel restarts do to
 the sessions. Hermetic: synthetic ledgers under a private state directory (placeholder uuids, TESTHOST, no
 live reads), every row kind the reader parses, the window arithmetic, the summary text, the live helpers on
-synthetic cgroup files and ps lines, and the JSON document's shape. Nothing here touches a kernel."""
+synthetic cgroup files and ps lines, and the JSON document's shape. Nothing here touches a kernel, and no test
+reads the machine's own hostname, login or home: every `--public` run replaces machine_probes with SYNTHETIC_PROBES
+or a probe list of its own."""
 import io
 import json
 import os
@@ -25,6 +27,10 @@ pp = rm.perf_public          # the public shape the --public flag applies (cli/p
 SID = "11111111-2222-4333-8444-000000000304"
 SID2 = "22222222-3333-4444-8555-000000000304"
 TZ = "UTC"
+# What the identifier scan learns in a `--public` run here, instead of this machine's strings: a run that read the
+# real hostname would refuse the print on any machine whose name is a token of the document (round 2 of the export's
+# review found two tests doing so)
+SYNTHETIC_PROBES = [("hostname", "testhost"), ("username", "tester"), ("home directory", "/home/tester")]
 D0 = rm.day_start("2026-09-10", TZ)          # the anchor day, midnight UTC
 
 
@@ -411,7 +417,7 @@ class PublicForm(unittest.TestCase):
 
     def _public(self, *extra):
         out = io.StringIO()
-        with redirect_stdout(out):
+        with redirect_stdout(out), mock.patch.object(pp, "machine_probes", return_value=SYNTHETIC_PROBES):
             rc = rm.main(["--json", "--public", "--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state)] + list(extra))
         self.assertEqual(rc, 0)
         return json.loads(out.getvalue())

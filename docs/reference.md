@@ -3788,10 +3788,13 @@ registry; a hostname or user is matched as whole words, so a user named
 uuid, a 32-hex or 40-hex token, an absolute path or free text (a string
 carrying whitespace); either finding refuses the write and names the kind of
 finding and the key path (a value's own path, or the path of the dict holding
-a key), never the key or the value.
+a key), never the key or the value; when both find something, the finding
+with the shortest path is named, so the path printed never carries a key
+either would refuse.
 The file lands as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json` under the
-state directory, readable by the owner alone, or at `--out`; the path and
-the byte size are printed. `--from SNAPSHOT.json` folds a snapshot saved
+state directory, readable by the owner alone, or at `--out` (a write that
+fails partway removes the file rather than leave a truncated one); the path
+and the byte size are printed. `--from SNAPSHOT.json` folds a snapshot saved
 earlier with `romp perf --json` (an older kernel's raw http paths are
 collapsed to their families the way the kernel does now). Without `--public`
 the verb refuses with one line and exit 2: there is no raw mode, so a raw

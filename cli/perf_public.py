@@ -288,16 +288,32 @@ def _frame_value(block):
     return block is not None and len(block) > 2 and block[0] == "stacks" and block[2] == "frames"
 
 
-class Problem(collections.namedtuple("Problem", "kind is_key path text")):
+class Problem(collections.namedtuple("Problem", "kind is_key path text depth")):
     """One finding of the walk: `kind` is the rule that failed (a fixed phrase from the list in paste_problems),
     `is_key` whether the string is a dict key (True) or a string value, `path` the key path as `a/b/0/c` (a key's
-    is the path of the dict holding it; the root is the empty string), `text` the offending string itself.
-    Callers format it: the export's refusal prints the kind and the path and never `text` (the leak a refusal
-    exists to prevent must not travel in the refusal); the invariant tests print str(problem), the whole line."""
+    is the path of the dict holding it; the root is the empty string), `text` the offending string itself, `depth`
+    the number of components in `path` (a key's is its dict's; the root is 0), counted at the finding because a key
+    may itself contain the separator (an http route key, `GET /perf`), so it cannot be recovered from the string.
+    Callers format it (place): the export's refusal prints the kind and the path and never `text` (the leak a
+    refusal exists to prevent must not travel in the refusal); the invariant tests print str(problem), the whole
+    line."""
     __slots__ = ()
 
     def __str__(self):
         return "%s: %s %r at %s" % (self.kind, "key" if self.is_key else "value", self.text, self.path)
+
+
+class Hit(collections.namedtuple("Hit", "kind is_key path depth")):
+    """One finding of the identifier scan (identifier_hits), shaped like Problem: `kind` the probe's kind (hostname,
+    username, home directory, session id, session directory), `is_key`, `path` and `depth` as Problem's. The string
+    that matched is not carried: a key IS the string, and the scan's callers print the finding in a refusal."""
+    __slots__ = ()
+
+
+def place(finding):
+    """Where a Hit or a Problem sits, as a refusal spells it: "a key under <path of the dict>" or "the value at <path>",
+    the root spelled `the root`; never the string itself."""
+    return ("a key under %s" if finding.is_key else "the value at %s") % (finding.path or "the root")
 
 
 def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=(), stacks_key=STACKS_KEY):
@@ -319,7 +335,7 @@ def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=(), stacks_key=S
         return where[n:] if where[:n] == tuple(under) else None
 
     def found(kind, s, where, key):
-        problems.append(Problem(kind, key, "/".join(str(p) for p in where), s))
+        problems.append(Problem(kind, key, "/".join(str(p) for p in where), s, len(where)))
 
     def text(s, where, key):
         for probe in planted:
@@ -437,17 +453,17 @@ def probe_in(kind, probe, s):
 
 
 def identifier_hits(doc, probes, skip=()):
-    """[(kind, where)] for every key or string value of `doc` that carries a probe (probe_in), case-insensitively:
-    `where` is "a key under <path of the dict>" or "the value at <path of the value>", so the string itself is
-    never in the report (a key IS the string, so its own path is not named). `skip` names top-level keys whose
-    string value is not searched."""
+    """[Hit] for every key or string value of `doc` that carries a probe (probe_in), case-insensitively, one per
+    string (the first probe that matches), in walk order. A Hit is structured like the walk's Problem (the kind,
+    key or value, the key path, its depth) and the caller formats it (place), so the string itself is never in the
+    report (a key IS the string, so its own path is not named, and its dict's is). `skip` names top-level keys
+    whose string value is not searched."""
     hits = []
 
     def scan(s, where, key):
         for kind, probe in probes:
             if probe_in(kind, probe, s):
-                path = "/".join(str(p) for p in where) or "the root"
-                hits.append((kind, ("a key under %s" if key else "the value at %s") % path))
+                hits.append(Hit(kind, key, "/".join(str(p) for p in where), len(where)))
                 return
 
     def walk(node, where):

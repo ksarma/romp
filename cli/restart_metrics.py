@@ -905,10 +905,9 @@ def main(argv=None) -> int:
     if a.public:
         doc = public_form(doc)
         hits = perf_public.identifier_hits(doc, perf_public.machine_probes(state))
-        if hits:
-            kind, where = hits[0]
+        if hits:    # structured (a Hit), formatted here: the kind and the place, never the string
             sys.stderr.write("romp restart-metrics: refused: a string this machine knows (%s) survives as %s; nothing printed\n"
-                             % (kind, where))
+                             % (hits[0].kind, perf_public.place(hits[0])))
             return 1
     if a.json:
         sys.stdout.write(json.dumps(doc, indent=1, sort_keys=True) + "\n")

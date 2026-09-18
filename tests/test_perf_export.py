@@ -15,12 +15,14 @@ subprocess over that snapshot (--from, --out, --usage, the refusals), and a kern
 the suite's fixtures (the real Handler on a loopback port, the test_perf_stats.py PerfRoutes pattern) with the
 same leaks planted through the collector's own writers. Nothing here reads a live kernel or a real state
 directory: the state root is the suite's floor, the machine strings the scan learns are synthetic (HOME and USER
-are set for the child, and socket.gethostname is pinned to TESTHOST.example in it, so no real hostname is read by
-any test), every id is a placeholder."""
+are set for the child, and socket.gethostname is pinned to TESTHOST.example in it; an in-process run of the verb or
+of its check replaces machine_probes with SYNTHETIC_PROBES, so no real hostname, login or home is read by any test),
+every id is a placeholder."""
 import json
 import os
 import re
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -121,6 +123,11 @@ def _run(args, env_extra=None, state=None):
 
 
 SYNTHETIC_PROBES = [("hostname", "testhost"), ("username", "tester"), ("home directory", HOME)]
+
+
+def _hits(doc, probes, **kw):
+    """The scan's findings as the refusal spells them: (kind, place)."""
+    return [(h.kind, pp.place(h)) for h in pp.identifier_hits(doc, probes, **kw)]
 
 
 def _kinds(doc, **kw):
@@ -250,7 +257,7 @@ class FoldInvariant(unittest.TestCase):
         doc["perf"]["heap"]["note"] = "TESTHOST up"
         reason = _check(doc)
         self.assertEqual(reason, "a string this machine knows (hostname) survives as the value at perf/heap/note; nothing written",
-                         "the identifier scan runs before the walk, so the machine string is what is named")
+                         "the scan and the walk find the same value: the tie goes to the scan, so the machine string is what is named")
         self.assertIsNone(_check(pe.export_document(leak_snapshot(), usage=True)))
 
     def test_the_walk_reports_structured_problems_and_the_refusal_never_carries_a_fragment_of_the_text(self):
@@ -305,13 +312,49 @@ class FoldInvariant(unittest.TestCase):
         doc = pe.export_document(leak_snapshot())
         doc["a b"] = 1
         self.assertIn("(outside the identifier grammar, a key under the root); nothing written", _check(doc))
-        # the identifier scan runs BEFORE the walk: a walk problem beneath a key spelling a machine string is reported
-        # as that string, never as a key path that spells it (the walk's path would read perf/memos/TESTHOST/note)
+        # the SHALLOWEST finding is named: a walk problem beneath a key spelling a machine string is reported as that
+        # string (the scan's key finding, one level up), never as a key path that spells it (the walk's path would
+        # read perf/memos/TESTHOST/note)
         doc = pe.export_document(leak_snapshot())
         doc["perf"]["memos"]["TESTHOST"] = {"note": "a b"}
         reason = _check(doc)
         self.assertEqual(reason, "a string this machine knows (hostname) survives as a key under perf/memos; nothing written")
         self.assertNotIn("TESTHOST", reason)
+
+    def test_the_shallowest_finding_is_named_so_the_refusal_never_prints_a_component_the_walk_would_refuse(self):
+        # round 1 ran the scan first and named ITS finding whatever its depth, so a machine string beneath a key that
+        # fits the fold's grammar but fails the walk (a 32-hex token, the class the walk refuses to write) put that key
+        # into the refusal as a path component; a walk-first order had the mirror problem (the test above). Both run
+        # and the finding with the fewest path components wins (a key finding counts the dict holding it), the scan's
+        # wording on a tie: every component of a printed path is a key above the finding, and a key either mechanism
+        # would flag is a finding of its own one level shallower, so the printed path cannot carry one (round 2)
+        token = "c" * 32
+        for planted, what in (("TESTHOST", "a hostname-shaped value"), ({"TESTHOST": 1}, "a dict with a hostname key")):
+            doc = pe.export_document(leak_snapshot())
+            doc["perf"]["heap"][token] = planted
+            reason = _check(doc)
+            self.assertEqual(reason, "the public form still fails the walk (a 32-hex token, a key under perf/heap); nothing written", what)
+            self.assertNotIn(token, reason, what)
+            self.assertNotIn("TESTHOST", reason, what)
+        # the same depth on both sides: the scan's wording (the pins above hold); a deeper walk finding loses to a
+        # shallower scan finding and the other way round, whichever key is the one flagged
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["heap"]["TESTHOST"] = {"a b": 1}
+        self.assertEqual(_check(doc), "a string this machine knows (hostname) survives as a key under perf/heap; nothing written")
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["heap"]["a b"] = {"TESTHOST": 1}
+        self.assertEqual(_check(doc), "the public form still fails the walk (outside the identifier grammar, a key under perf/heap); nothing written")
+        # the structured findings the rule is computed from: the scan's Hit is shaped like the walk's Problem, and
+        # both count their depth at the finding (a key's is its dict's; the root is depth 0 and the empty path)
+        hits = pp.identifier_hits({"a": {token: "TESTHOST", "TESTHOST": {"n": 1}}, "TESTHOST": 1}, SYNTHETIC_PROBES)
+        self.assertEqual(hits, [("hostname", False, "a/" + token, 2), ("hostname", True, "a", 1), ("hostname", True, "", 0)])
+        self.assertEqual([(h.kind, h.is_key, h.path, h.depth) for h in hits], hits)
+        self.assertEqual([pp.place(h) for h in hits], ["the value at a/" + token, "a key under a", "a key under the root"])
+        problems = pp.paste_problems({"a": {token: "x y"}, "GET /perf": {"c d": 1}})
+        self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in problems],
+                         [("a 32-hex token", True, "a", 1), ("free text", False, "a/" + token, 2),
+                          ("outside the identifier grammar", True, "", 0), ("outside the identifier grammar", True, "GET /perf", 1)],
+                         "a key that contains the separator is one component, so the depth rides in its own field")
 
     def test_the_walk_holds_the_http_block_to_the_registers_image_and_the_stack_sample_to_its_grammars(self):
         # the walk's http check is membership in what the kernel's fold can return (http_key_ok), not a character grammar:
@@ -631,14 +674,32 @@ class Cli(unittest.TestCase):
             with self.assertRaises(OSError) as cm:
                 pe.write_file(pe.Path(path), "never lands")
         self.assertIn("short write", str(cm.exception))
-        self.assertEqual(open(path).read(), "", "the file was truncated for the write and holds no stale text")
-        # the verb: the same failure is one cannot-write line, exit 1, no size reported
-        with mock.patch.object(pe.os, "write", return_value=0), mock.patch("sys.stdout", new_callable=lambda: __import__("io").StringIO()) as out, \
+        self.assertFalse(os.path.exists(path), "a write that fails leaves no file behind: the open truncated it, the failure removes it")
+        # a write that fails midway (a full disk, a size limit): the bytes that landed are not left as a truncated
+        # 0600 file at the target either (round 2). Not a temp file moved over the target: a replace would swap
+        # out a symlink at --out, which the open below refuses to follow
+        seen = []
+
+        def three_then_fail(fd, data):
+            if seen:
+                raise OSError(28, "No space left on device")
+            seen.append(len(data))
+            return real(fd, bytes(data[:3]))
+        with mock.patch.object(pe.os, "write", side_effect=three_then_fail):
+            with self.assertRaises(OSError):
+                pe.write_file(pe.Path(path), "twelve bytes")
+        self.assertEqual(seen, [12])
+        self.assertFalse(os.path.exists(path), "the three bytes that landed are gone with the file")
+        # the verb: the same failure is one cannot-write line, exit 1, no size reported, no file; the verb's check runs
+        # in this process, so its probes are the synthetic ones (never this machine's hostname, login or home)
+        with mock.patch.object(pe.os, "write", return_value=0), mock.patch.object(pe.pp, "machine_probes", return_value=SYNTHETIC_PROBES), \
+                mock.patch("sys.stdout", new_callable=lambda: __import__("io").StringIO()) as out, \
                 mock.patch("sys.stderr", new_callable=lambda: __import__("io").StringIO()) as err:
             rc = pe.main(["--public", "--from", self.src, "--out", path])
         self.assertEqual(rc, 1)
         self.assertEqual(out.getvalue(), "")
         self.assertIn("cannot write %s (OSError)" % path, err.getvalue())
+        self.assertFalse(os.path.exists(path))
         # a symlink where the file would go is not followed
         link = os.path.join(self.xdg, "link.json")
         os.symlink(os.path.join(self.xdg, "target.json"), link)
@@ -684,6 +745,25 @@ class Cli(unittest.TestCase):
         self.assertIn("(hostname) survives as a key under perf/pusher/connectPush/byApp", r.stderr)
         self.assertNotIn("TESTHOST", r.stderr)
 
+    def test_a_key_the_walk_refuses_is_never_printed_when_a_machine_string_sits_beneath_it(self):
+        # the round-2 medium, through the verb: a 32-hex token fits the fold's grammar (it survives --from) and fails
+        # the walk; with a hostname-shaped value or a hostname key beneath it, the refusal named the token as a path
+        # component. The shallowest finding is the walk's key finding one level up, so the refusal names perf/heap and
+        # neither the token nor the hostname reaches stdout or stderr
+        token = "c" * 32
+        for planted, what in (("TESTHOST", "a hostname-shaped value"), ({"TESTHOST": 1}, "a dict with a hostname key")):
+            snap = leak_snapshot()
+            snap["heap"][token] = planted
+            with open(self.src, "w") as fh:
+                json.dump(snap, fh)
+            r = _run(["--public", "--from", self.src], state=self.state)
+            self.assertEqual(r.returncode, 1, what + "\n" + r.stderr)
+            self.assertEqual(r.stdout, "", what)
+            self.assertEqual(r.stderr, "romp perf export: refused: the public form still fails the walk (a 32-hex token, a key under perf/heap); nothing written\n", what)
+            self.assertNotIn(token, r.stdout + r.stderr, what)
+            self.assertNotIn("TESTHOST", r.stdout + r.stderr, what)
+            self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), what)
+
     def test_the_probe_list_is_the_machines_strings_and_the_registrys_ids(self):
         os.makedirs(os.path.join(self.state, "sdk"))
         with open(os.path.join(self.state, "sdk", SID + ".json"), "w") as fh:
@@ -699,28 +779,28 @@ class Cli(unittest.TestCase):
         self.assertEqual(kinds["session id"], {SID, SID[:8], SID2, SID2[:8]})
         self.assertEqual(kinds["session directory"], {HOME + "/code/notes-api"})
         self.assertNotIn("chat", {s for _, s in probes}, "a session NAME is not a probe: it collides with romp's own identifiers")
-        self.assertEqual(pp.identifier_hits({"a": {"TestHost": 1}, "schema": "testhost/1"}, probes, skip=("schema",)),
+        self.assertEqual(_hits({"a": {"TestHost": 1}, "schema": "testhost/1"}, probes, skip=("schema",)),
                          [("hostname", "a key under a")])
-        self.assertEqual(pp.identifier_hits({"a": {"b": "x " + SID2[:8]}}, probes), [("session id", "the value at a/b")])
-        self.assertEqual(pp.identifier_hits({"TESTHOST": 1}, probes), [("hostname", "a key under the root")])
+        self.assertEqual(_hits({"a": {"b": "x " + SID2[:8]}}, probes), [("session id", "the value at a/b")])
+        self.assertEqual(_hits({"TESTHOST": 1}, probes), [("hostname", "a key under the root")])
 
     def test_a_name_probe_matches_whole_tokens_and_an_id_probe_matches_anywhere(self):
         # a hostname or a login is a word, and romp's own vocabulary contains common ones as substrings: a user named
         # mark, a machine named work or arch, must not refuse every export over intrMarks, cpu_ms_workers and archive
         names = [("username", "mark"), ("hostname", "work"), ("hostname", "arch"), ("hostname", "anchor"), ("username", "tester")]
-        self.assertEqual(pp.identifier_hits({"memos": {"intrMarks": 1, "cpu_ms_workers": 2, "summaryAnchor": 4},
+        self.assertEqual(_hits({"memos": {"intrMarks": 1, "cpu_ms_workers": 2, "summaryAnchor": 4},
                                              "checkpoints": {"fallbacks": {"archive": 3}}, "goals": {"archive": 1}}, names), [])
-        self.assertEqual(pp.identifier_hits({"a": {"summary-anchor": 1}}, names), [("hostname", "a key under a")], "a whole token, however joined")
-        self.assertEqual(pp.identifier_hits({"a": {"b": "tester-app"}}, names), [("username", "the value at a/b")])
-        self.assertEqual(pp.identifier_hits({"a": {"b": "app_Tester"}}, names), [("username", "the value at a/b")])
-        self.assertEqual(pp.identifier_hits({"a": {"b": "testers"}}, names), [])
+        self.assertEqual(_hits({"a": {"summary-anchor": 1}}, names), [("hostname", "a key under a")], "a whole token, however joined")
+        self.assertEqual(_hits({"a": {"b": "tester-app"}}, names), [("username", "the value at a/b")])
+        self.assertEqual(_hits({"a": {"b": "app_Tester"}}, names), [("username", "the value at a/b")])
+        self.assertEqual(_hits({"a": {"b": "testers"}}, names), [])
         two = [("hostname", "testhost.example")]
-        self.assertEqual(pp.identifier_hits({"chat.testhost.example": 1}, two), [("hostname", "a key under the root")], "a dotted hostname is a run of tokens")
-        self.assertEqual(pp.identifier_hits({"testhost": 1, "example": 1}, two), [], "the run must be contiguous")
+        self.assertEqual(_hits({"chat.testhost.example": 1}, two), [("hostname", "a key under the root")], "a dotted hostname is a run of tokens")
+        self.assertEqual(_hits({"testhost": 1, "example": 1}, two), [], "the run must be contiguous")
         # an id or a directory is not a word: glued to letters it is still the id
         ids = [("session id", SID2[:8]), ("session directory", HOME + "/code/notes-api")]
-        self.assertEqual(pp.identifier_hits({"a": "sid%sx" % SID2[:8]}, ids), [("session id", "the value at a")])
-        self.assertEqual(pp.identifier_hits({"a": "in %s/code/notes-api/x" % HOME}, ids), [("session directory", "the value at a")])
+        self.assertEqual(_hits({"a": "sid%sx" % SID2[:8]}, ids), [("session id", "the value at a")])
+        self.assertEqual(_hits({"a": "in %s/code/notes-api/x" % HOME}, ids), [("session directory", "the value at a")])
 
 
 class ServedKernel(unittest.TestCase):
@@ -847,9 +927,9 @@ class PlainServer(unittest.TestCase):
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 status, body = cls.answers.get(self.path.split("?", 1)[0], (404, "no such route"))
-                data = body.encode("utf-8")
+                data = body if isinstance(body, bytes) else body.encode("utf-8")      # bytes pass through as they are
                 self.send_response(status)
-                self.send_header("Content-Type", "application/json" if body.startswith(("{", "[")) else "text/plain")
+                self.send_header("Content-Type", "application/json" if data.startswith((b"{", b"[")) else "text/plain")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
@@ -884,6 +964,9 @@ class PlainServer(unittest.TestCase):
 
     def test_a_kernel_that_does_not_answer_json_is_refused_in_one_line(self):
         self._refused((200, "<html>%s</html>" % self.MARKER), "the kernel on :%d did not answer JSON on GET /perf")
+        # bytes that are not UTF-8: the body is decoded where it is parsed, inside the same catch, so this is the
+        # same one line and never a UnicodeDecodeError traceback naming the checkout (round 2)
+        self._refused((200, b"\xff\xfe{" + self.MARKER.encode("utf-8") + b"\xff"), "the kernel on :%d did not answer JSON on GET /perf")
 
     def test_a_json_answer_that_is_not_a_snapshot_is_refused_naming_the_missing_blocks(self):
         self._refused((200, json.dumps({"name": self.MARKER, "uptime_s": 1, "process": {}})),
@@ -920,6 +1003,92 @@ class PlainServer(unittest.TestCase):
             self.assertNotIn(self.MARKER, json.dumps(doc), why)
         self.assertIsNone(pe._commit_text("0123456789abcdef-dirty-dirty"), "one suffix, not two")
         self.assertEqual(pe._commit_text("0123456789abcdef-dirty"), "0123456789abcdef")
+
+
+def _http(status, body):
+    """A well-formed HTTP/1.1 answer as raw bytes, for RawServer."""
+    return (b"HTTP/1.1 %d X\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n"
+            % (status, len(body))) + body
+
+
+class RawServer(unittest.TestCase):
+    """The verb against a loopback socket that answers raw bytes: the shapes BaseHTTPRequestHandler cannot emit (a
+    status line that is not HTTP, a body shorter than its Content-Length, a header line past http.client's limit),
+    each an http.client.HTTPException at the reader rather than a URLError or an OSError. On /version each leaves the
+    export without a commit (exit 0, empty stderr); on /perf a status line that is not HTTP is the one-line
+    not-reachable refusal, built from the port alone, so nothing the socket served reaches stderr (BadStatusLine's own
+    text is the served line). Round 2: before it, each was a traceback naming the checkout's path."""
+    MARKER = b"SERVED-LINE-MARKER-4242"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.answers = {}    # route -> raw bytes
+        cls.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        cls.sock.bind(("127.0.0.1", 0))
+        cls.sock.listen(8)
+        cls.port = cls.sock.getsockname()[1]
+
+        def serve():
+            while True:
+                try:
+                    conn, _ = cls.sock.accept()
+                except OSError:
+                    return                         # the listening socket was closed: the class is done
+                with conn:
+                    conn.settimeout(5)
+                    head = b""
+                    try:
+                        while b"\r\n\r\n" not in head:
+                            chunk = conn.recv(4096)
+                            if not chunk:
+                                break
+                            head += chunk
+                        words = head.split(b"\r\n", 1)[0].split(b" ")
+                        route = words[1].split(b"?", 1)[0].decode("latin-1") if len(words) > 1 else ""
+                        conn.sendall(cls.answers.get(route, _http(404, b"no such route")))
+                    except OSError:
+                        continue
+        cls.thread = threading.Thread(target=serve, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.sock.close()
+        cls.thread.join(5)
+
+    def setUp(self):
+        self.xdg, self.state = _state_root()
+        self.addCleanup(shutil.rmtree, self.xdg, True)
+        self.answers.clear()
+        snap = leak_snapshot()
+        del snap["kernel_sha"]
+        self.answers["/perf"] = _http(200, json.dumps(snap).encode("utf-8"))
+
+    def _export(self):
+        return _run(["--public"], state=self.state, env_extra={"ROMP_KERNEL_PORT": str(self.port), "ROMP_SERVE_TOKEN": "t"})
+
+    def test_a_malformed_version_answer_leaves_the_export_without_a_commit(self):
+        for raw, why in ((b"NOT HTTP " + self.MARKER + b"\r\n\r\n", "a status line that is not HTTP"),
+                         (b"HTTP/1.1 200 X\r\nContent-Length: 500\r\n\r\n{\"kernel_sha\": \"", "a body shorter than its Content-Length"),
+                         (b"HTTP/1.1 200 X\r\nX-Long: " + b"a" * 70000 + b"\r\n\r\n", "a header line past the reader's limit")):
+            self.answers["/version"] = raw
+            r = self._export()
+            self.assertEqual(r.returncode, 0, why + "\n" + r.stderr)
+            self.assertEqual(r.stderr, "", why)
+            with open(r.stdout.split(" (")[0], encoding="utf-8") as fh:
+                doc = json.load(fh)
+            self.assertNotIn("kernel_commit", doc, why)
+            self.assertEqual(doc["schema"], "romp-perf-export/1", why)
+            self.assertNotIn(self.MARKER.decode("ascii"), json.dumps(doc) + r.stdout, why)
+
+    def test_a_perf_answer_that_is_not_http_is_the_one_line_refusal_and_the_served_line_stays_off_stderr(self):
+        self.answers["/perf"] = b"NOT HTTP " + self.MARKER + b"\r\n\r\n"
+        r = self._export()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(r.stdout, "")
+        self.assertEqual(r.stderr, "romp perf export: kernel not reachable on :%d (is romp running?)\n" % self.port)
+        self.assertNotIn(self.MARKER.decode("ascii"), r.stderr, "the served line is not echoed")
+        self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")))
 
 
 class RouteRegisterCopy(unittest.TestCase):

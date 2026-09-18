@@ -16,21 +16,25 @@ denylist of cli/perf_public.py applied to the whole snapshot, under a top-level 
 (`romp-perf-export/1`), the UTC minute of the export (no seconds) and, when the snapshot carries the kernel's
 commit (from /version, or written beside a saved snapshot), its abbreviation to at most twelve hex characters,
 the `-dirty` suffix stripped. No hostname, path, pid, session id or username is written; the finished document
-is searched for the strings only this machine knows (perf_public.identifier_hits) and then walked once more
-(perf_public.paste_problems), in that order so a walk problem beneath a machine-named key is reported as the
-machine string, not as a path spelling the key; either finding refuses the write. The refusal is built from the
-finding's fields (the kind of string or rule, and the key path: a value's own path, or the path of the dict
-holding a key), never from a line that carries the flagged text, so a key or value containing " at " cannot
-put a fragment of itself into the refusal. `--usage` adds a `usage` block, off by default: the session counts, the feature counts (the user's
-own actions and the panes opened, from the http table's route counts) and the kernel's uptime bucket, all from
-keys the snapshot already carries and folded the same way.
+is searched for the strings only this machine knows (perf_public.identifier_hits) and walked once more
+(perf_public.paste_problems); either finding refuses the write, and the SHALLOWEST finding across both is the one
+named (check_document), so a walk problem beneath a machine-named key is reported as the machine string, not as
+a path spelling the key, and a machine string beneath a key the walk refuses (a 32-hex token) is reported as
+that key's rule and its dict, not as a path spelling the token. The refusal is built from the finding's fields
+(the kind of string or rule, and the key path: a value's own path, or the path of the dict holding a key), never
+from a line that carries the flagged text, so a key or value containing " at " cannot put a fragment of itself
+into the refusal. `--usage` adds a `usage` block, off by default: the session counts, the feature counts (the
+user's own actions and the panes opened, from the http table's route counts) and the kernel's uptime bucket, all
+from keys the snapshot already carries and folded the same way.
 
 The file lands under the state directory as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json`, mode 0600, or at
---out; the path and the byte size are printed, exit 0. Nothing leaves the machine: the user reads the file and
+--out (a write that fails partway removes the file rather than leave a truncated one); the path and the byte
+size are printed, exit 0. Nothing leaves the machine: the user reads the file and
 posts it by hand. The flag is required and the verb has no other mode, so a raw snapshot is never written by
 habit: without --public it refuses with one line and exit 2. A reader for the terminal, never a kernel module.
 """
 import argparse
+import http.client
 import json
 import math
 import os
@@ -124,10 +128,19 @@ def read_kernel(state: Path) -> dict:
     tok = _token(state)
     headers = {"X-Romp-Token": tok} if tok else {}
 
+    # What a read can raise: HTTPError (an answer with an error status), URLError (a connection that failed, an
+    # OSError wrapped), OSError and TimeoutError (the socket), and http.client.HTTPException (an answer that is not
+    # HTTP: a status line that is not one, a body shorter than its Content-Length, a header line past the reader's
+    # limit); the last is not an OSError and was a traceback until round 2. Not str(e) in any line: BadStatusLine's
+    # text is the served line, and a refusal must carry nothing the socket served.
+    NOT_HTTP = (urllib.error.URLError, OSError, TimeoutError, http.client.HTTPException)
+
     def get(route):
+        """The body as bytes: decoded where it is parsed (json.loads reads bytes), so bytes that are not UTF-8 are
+        the did-not-answer-JSON refusal there, not a UnicodeDecodeError here."""
         req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, route), headers=headers)
         with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
-            return r.read().decode("utf-8")
+            return r.read()
     try:
         raw = get("/perf")
     except urllib.error.HTTPError as e:
@@ -135,16 +148,16 @@ def read_kernel(state: Path) -> dict:
             raise ReadError("the kernel on :%d refused the serve token (HTTP %d); is ROMP_KERNEL_PORT pointing at another kernel?"
                             % (port, e.code))
         raise ReadError("the kernel on :%d answered HTTP %d" % (port, e.code))
-    except (urllib.error.URLError, OSError, TimeoutError):
+    except NOT_HTTP:
         raise ReadError("kernel not reachable on :%d (is romp running?)" % port)
     try:
         snap = json.loads(raw)
-    except ValueError:
+    except ValueError:      # not JSON, or not UTF-8 (a UnicodeDecodeError is a ValueError)
         raise ReadError("the kernel on :%d did not answer JSON on GET /perf" % port)
     snap = _snapshot(snap, "the kernel's answer on :%d" % port)
     try:
         version = json.loads(get("/version"))
-    except (urllib.error.URLError, OSError, TimeoutError, ValueError):   # HTTPError is a URLError
+    except NOT_HTTP + (ValueError,):   # HTTPError is a URLError; a /version that does not answer leaves the snapshot as it was
         return snap
     if isinstance(version, dict) and _commit_text(version.get("kernel_sha")):
         snap["kernel_sha"] = version["kernel_sha"]
@@ -243,18 +256,23 @@ def export_document(snap: dict, usage=False, now=None) -> dict:
 def check_document(doc: dict, state: Path):
     """None when the finished document may be written; else the one-line reason, built from the finding's fields:
     the kind of string or rule and the key path (a value's own path; for a key, the path of the dict holding it),
-    never the key or the value itself. The identifier scan runs first: a walk problem that sits beneath a key
-    spelling one of this machine's strings is then reported as that string, not as a path that spells it."""
-    hits = pp.identifier_hits(doc, pp.machine_probes(state), skip=("schema",))
-    if hits:
-        kind, where = hits[0]
-        return "a string this machine knows (%s) survives as %s; nothing written" % (kind, where)
-    problems = pp.paste_problems(doc, skip=("schema",), under=("perf",))
-    if problems:
-        p = problems[0]
-        where = ("a key under %s" if p.is_key else "the value at %s") % (p.path or "the root")
-        return "the public form still fails the walk (%s, %s); nothing written" % (p.kind, where)
-    return None
+    never the key or the value itself. Both mechanisms run, the identifier scan and the walk, and the SHALLOWEST
+    finding is the one named: the fewest path components, a key finding counting the depth of the dict holding it
+    and a value finding its own, the scan's wording when the depths tie.
+
+    The rule this keeps: the refusal never prints a path component that the walk would refuse to write, nor one
+    that spells a string this machine knows. Every component of a printed path is a key of a dict above the
+    finding, and a key either mechanism flags is a finding of its own at a strictly shallower depth, so the
+    shallowest finding cannot sit beneath one. Naming the scan's finding first whatever its depth (round 1) printed
+    a 32-hex token, the class of key the walk refuses, when a hostname sat beneath it; naming the walk's first (the
+    version before) printed a key spelling the hostname when free text sat beneath that."""
+    findings = [(h.depth, 0, "a string this machine knows (%s) survives as %s" % (h.kind, pp.place(h)))
+                for h in pp.identifier_hits(doc, pp.machine_probes(state), skip=("schema",))]
+    findings += [(p.depth, 1, "the public form still fails the walk (%s, %s)" % (p.kind, pp.place(p)))
+                 for p in pp.paste_problems(doc, skip=("schema",), under=("perf",))]
+    if not findings:
+        return None
+    return "%s; nothing written" % min(findings, key=lambda f: f[:2])[2]    # min is stable: walk order among equals
 
 
 def default_path(state: Path, now=None) -> Path:
@@ -266,22 +284,33 @@ def write_file(path: Path, text: str) -> int:
     """Create or replace `path` as a regular file readable by the owner alone; the byte count written, which is
     every byte of `text`: os.write may write fewer than asked (a full disk, a size limit, an interruption), so the
     write loops over what is left and a write that makes no progress is an OSError, never a truncated file
-    reported as a success (the export's review, 2026-09-18)."""
+    reported as a success (the export's review, 2026-09-18). A write that fails once the file is open (the loop,
+    the mode, the close) removes the file before the error propagates: the open truncated whatever was there, so
+    nothing is lost by removing it, and a truncated 0600 file must not be left looking like an export (round 2).
+    Not a temporary file moved over the target: a replace would swap out a symlink at --out, which O_NOFOLLOW
+    refuses to follow."""
     path.parent.mkdir(parents=True, exist_ok=True)
     data = text.encode("utf-8")
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(str(path), flags, 0o600)
     try:
-        os.fchmod(fd, 0o600)
-        view = memoryview(data)
-        written = 0
-        while written < len(data):
-            n = os.write(fd, view[written:])
-            if n <= 0:
-                raise OSError("short write: %d of %d bytes" % (written, len(data)))
-            written += n
-    finally:
-        os.close(fd)
+        try:
+            os.fchmod(fd, 0o600)
+            view = memoryview(data)
+            written = 0
+            while written < len(data):
+                n = os.write(fd, view[written:])
+                if n <= 0:
+                    raise OSError("short write: %d of %d bytes" % (written, len(data)))
+                written += n
+        finally:
+            os.close(fd)
+    except OSError:
+        try:
+            os.unlink(str(path))
+        except OSError:
+            pass
+        raise
     return written
 
 
