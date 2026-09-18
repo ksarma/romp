@@ -3,7 +3,7 @@ title: GET /perf credits a stage to its writer: a jobs.<job> row in stages_ms is
 status: candidate
 where: kernel/kernel.py (_PerfStats.stage, the snapshot), bin/romp (the perf stages line), docs/reference.md, tests/test_perf_stats.py, tests/test_jobs_thread_split.py, tests/test_first_cycle_stage_split.py, tests/romp-perf.bats
 added: 2026-09-18
-pr:
+pr: 797
 tier: fix
 offered:
 closed:
