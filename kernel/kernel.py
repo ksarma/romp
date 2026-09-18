@@ -36784,7 +36784,9 @@ def _chat_diff(prev, cur):
     earlier card returns that card's index. 0 when there's no prior build (→ a full send)."""
     if not prev:
         return 0
-    n = min(len(prev), len(cur))
+    if prev is cur:                    # the served tab: _push re-stores the cache hit's own events list as the
+        return len(cur)                # baseline, so the walk below would visit every event to find no change
+    n = min(len(prev), len(cur))       # (the exact return, 2026-09-18; tests/test_kernel_delta_send.py)
     i = 0
     while i < n:
         a, b = prev[i], cur[i]
