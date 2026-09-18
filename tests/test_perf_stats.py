@@ -1114,7 +1114,12 @@ class PushRowsByPurpose(unittest.TestCase):
 
     PUSHER = (("push.chat", 0.005), ("push.send", 0.001))                                # the pusher's push, under its mark
     CONNECT = (("push.chat", 20.0), ("push.send", 0.5), ("push.feedFirst", 0.25))        # a reload's full push on a handler thread
-    FOREIGN = (("push.chat", 0.001), ("push", 0.002))                                    # a thread with no mark and no cycle
+    FOREIGN = (("push.chat", 0.001), ("push", 0.02))                                     # a thread with no mark and no cycle; its
+    #                                                                                      `push` wall exceeds the room left in the
+    #                                                                                      8 ms cycle beside the pusher's 6 ms, so
+    #                                                                                      a foreign write merged into the flat row
+    #                                                                                      is red at the cycle bound (at 0.002 the
+    #                                                                                      merged 8.0 sat exactly on the 8.0 cycle)
 
     def _three_writers(self):
         """The pusher (this thread, the cycle's owner) closes push.chat and push.send under the "push" mark and then its `push`
@@ -1158,7 +1163,7 @@ class PushRowsByPurpose(unittest.TestCase):
         self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"],
                          {"push.chat": 20000.0, "push.send": 500.0, "push.feedFirst": 250.0}, "the connect push's stages, under their names, apart")
         self.assertEqual(snap["pusher"]["connectPush"]["count"], 1)
-        self.assertEqual(snap["stagesForeign"], {"push.chat": 1.0, "push": 2.0}, "the thread with no mark and no cycle is counted, not merged")
+        self.assertEqual(snap["stagesForeign"], {"push.chat": 1.0, "push": 20.0}, "the thread with no mark and no cycle is counted, not merged")
         # the split rows keep the pusher's alone as before, and neither other writer reaches a split
         self.assertEqual(sorted(snap["pusher"]["firstCycle"]["stages"]), ["push", "push.chat", "push.send"])
         self.assertAlmostEqual(snap["pusher"]["firstCycle"]["stages"]["push.chat"]["ms"], 5.0)
@@ -1167,7 +1172,10 @@ class PushRowsByPurpose(unittest.TestCase):
     def test_the_flat_push_rows_roll_up_to_the_pushers_cycle_time_and_the_connect_rows_to_the_connect_pushes_wall(self):
         """Over a run of both, the flat push.* rows are the pusher's, so the direct children of `push` sum to at most `push`,
         which fits the pusher's cycle time (20757 ms of children against an 8 ms cycle before); the connect rows sum to at
-        most the connect pushes' whole wall, pusher.connectPush.ms_sum. A seam rolls up to its container, not to `push`."""
+        most the connect pushes' whole wall, pusher.connectPush.ms_sum. A seam rolls up to its container, not to `push`.
+        Each of the three mis-credits is red here: a connect push merged into the flat rows at the container bound, the
+        pusher's writes sent to stagesForeign at the greater-than-zero bound, and the foreign thread's merged into the
+        flat rows at the cycle bound (its 20 ms `push` beside the pusher's 6 ms in an 8 ms cycle: 26.0 against 8.0)."""
         snap = self._three_writers()
         st = snap["stages_ms"]
         children = sorted(k for k in st if k.startswith("push.") and k.count(".") == 1)
