@@ -3277,10 +3277,21 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   passes as there are cold parses), `unbounded` (memos refused because a leg's release is not one
   of the session's files: a deferral retired by a judge pass, a stamped wait
   a peer's bounce can end, an owed reminder a refused ledger write left
-  standing), `clockDue` (memos refused because a noted flip has come) and
-  `wakeOnly` (looks with injected follow-ups off, which neither skip nor
-  record because the toggle is not a file, so that configuration keeps the
-  boot's cold parses); the files the memo keys on are the transcript, the
+  standing), `clockDue` (memos refused because a noted flip has come),
+  `wakeOnly` (looks with injected follow-ups off, or Task tracking off: the
+  awaiting dead-man walk alone; since 2026-09-18 such a look checks and
+  records like any other, under its own mode tag, so with the gear off
+  `skippedParses` rises toward `looks` on a quiet board, where until then
+  every wake-only look parsed) and `wakeOnlyRecorded` (memo rows a wake-only
+  look recorded); a memo row is the ten files' stat, the look's mode tag
+  (`full`, `wake`, or `wake+reminders` for tracking off with nudges on), the
+  earliest flip and the verdict, and a row serves a look of the same mode
+  only (a row of another mode counts a miss under
+  `memos.tickSeen.byJob.auto-nudge.missBy.mode`, a row of the pre-tag shape
+  once under `shape`); the nudge toggle lives in the ledger, the tenth keyed
+  file, so its flip re-evaluates every session once, and a Task tracking
+  flip changes the mode, which the tag catches the same way; the files the
+  memo keys on are the transcript, the
   state log, the goal store with its override journal and archive, the
   episode log, the clears log, the postal log, the kernel's downtime log
   (the working verdict's suspension check reads a list that log refills)
@@ -3321,8 +3332,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   unbounded NOTES per leg at the look that recorded them; the legs the
   kernel emits are `askerOverflow`, `askerRowUnproved`, `debtUnproved`,
   `debtUnlanded`, `deferralNew`, `pausedTiers`, `deferralStanding`,
-  `queuedSend`, `storeFault`, `allDelegated`, `awaitingPeer`,
-  `stampedWait`, `unjudgeable`, `refusedWrite`, `legacyNoAnchor`, and
+  `queuedSend`, `storeFault`, `awaitingPeer`, `unjudgeable`,
+  `refusedWrite`, `legacyNoAnchor`, `freshFault`, `peerAlive`,
+  `dormantOwner` (the last three name the exits of the awaiting wake that
+  read no file: the writer's re-read raised, a peer wait on live local
+  peers, a holder absent from the live map; `allDelegated` and
+  `stampedWait` were retired on 2026-09-18, since the delegated check is
+  pure over the store and every ending of a stamped wait is a keyed file
+  or an instant the wake notes), and
   `unmarked:<verdict>` when no named leg noted the look (the None-site
   census in the gate's test pins that every site names its leg with a
   literal); the legs partition the NOTES,

@@ -548,12 +548,13 @@ class WakeOnlyLooksSkipOnTheKey(_Base):
                 km._NUDGE_WALK_FIRST[k] = v
         km._NUDGE_WALK_FIRST_OPEN[0] = open_
         for sid in (SID2, SID3):
+            jd.parse_cache_drop(sid)                              # the real parses of the other two sessions (the harness drops SID's)
             try:
                 (jd._overrides_dir() / (sid + ".jsonl")).unlink()
             except OSError:
                 pass
 
-    KEYS = ("looks", "parses", "skippedParses", "wakeOnly", "clockDue", "unbounded")
+    KEYS = ("looks", "parses", "skippedParses", "wakeOnly", "wakeOnlyRecorded", "clockDue", "unbounded")
 
     def _pass(self, now=NOW):
         """One pass over the alive sessions with the toggle as set: the walk's counter deltas, the shared loads, the writer loads
@@ -717,9 +718,27 @@ class WakeOnlyLooksSkipOnTheKey(_Base):
         self.assertEqual(rows(), r2, "and records the same rows: same key, same mode, same instants, same verdicts")
         self.assertEqual(km._NUDGE_GATE_STATS["served"] - gate0["served"], 3, "the full pass serves the placement gate once per session")
         differ = {k for k in self.KEYS if p3[k] != p4[k]}
-        self.assertEqual(differ, {"parses", "skippedParses"}, "the counters differ only in what the skip is: %r vs %r" % (p3, p4))
+        self.assertEqual(differ, {"parses", "skippedParses", "wakeOnlyRecorded"},
+                         "the counters differ only in what the skip is and the rows it did not need to record: %r vs %r" % (p3, p4))
         self.assertEqual((p3["shared"], p4["shared"]), (0, 3), "zero shared loads on the skipping pass, one per session on the full one")
         self.assertEqual(self.fb.sent, [])
+
+    def test_the_wake_mode_rows_recorded_are_counted_under_memos_nudgeWalk(self):
+        """Jobs stage 1: `wakeOnlyRecorded` counts the memo rows wake-only looks recorded, beside `wakeOnly` (the looks) and
+        `skippedParses`; with the gear off on a quiet board the rows rise to the alive count and then hold while every look skips."""
+        self._toggle(False)
+        self._seed(stamped=False); self._seed(kind="job", age=5 * H, sid=SID2)
+        p1 = self._pass()
+        self.assertEqual((p1["wakeOnly"], p1["wakeOnlyRecorded"]), (2, 2), "the first pass records a wake-mode row per session")
+        p2 = self._pass(NOW + 5)
+        self.assertEqual((p2["wakeOnly"], p2["skippedParses"], p2["wakeOnlyRecorded"]), (2, 2, 0), "a skip records nothing")
+        self.assertIn("wakeOnlyRecorded", km._PERF_STATS.snapshot()["memos"]["nudgeWalk"], "served under memos.nudgeWalk")
+        self._toggle(True)                                       # the ledger moved: every session re-evaluates, in full mode
+        p3 = self._pass(NOW + 10)
+        self.assertEqual((p3["parses"], p3["wakeOnly"], p3["wakeOnlyRecorded"]), (2, 0, 0), "full-mode rows are not counted here")
+        st = km._session_files_stat(self.rows[SID2])
+        self.assertEqual(self._row(SID2)[len(st)], "full", "the stamped top's full look recorded under its own tag")
+        self.assertEqual(len(self.fb.sent), 1, "the plain top took the full road's status nudge (r True: no row for it)")
 
     def test_the_boot_pass_parses_every_session_once_with_no_memo_on_record_and_skips_on_a_persisted_one(self):
         self._toggle(False)

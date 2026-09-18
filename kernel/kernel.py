@@ -792,7 +792,10 @@ class _PerfStats:
                                    parses a look skipped on unchanged files, paid, or paid cold),
                                    deferredSessions (sessions the yield deferred past the cycle),
                                    unbounded / clockDue (memos refused as unbounded or clock-due),
-                                   wakeOnly, and unboundedBy (the refusals per leg); nudgeGate
+                                   wakeOnly (looks with the gear off: the dead-man walk alone, which
+                                   records and skips under its own mode tag since jobs stage 1),
+                                   wakeOnlyRecorded (the memo rows those looks recorded), and
+                                   unboundedBy (the refusals per leg); nudgeGate
                                    (the walk's placement gate, _nudge_placement_gate) -> served /
                                    derived (answers served from the memo vs re-derived) / failed
                                    (derivations that raised: not unplanned, counted); cleared (the
@@ -14558,7 +14561,9 @@ def _tick_job_skips(job, s):
 # 63 s first cycle in this walk, parsing every alive session cold before a single nudge could be due.
 _NUDGE_HORIZON = threading.local()    # the walking thread's collector: .notes (the flips a look's clock legs declined on)
 _NUDGE_WALK_STATS = {"looks": 0, "stats": 0, "served": 0, "skippedParses": 0, "parses": 0, "coldParses": 0, "deferredSessions": 0, "unbounded": 0,
-                     "clockDue": 0, "wakeOnly": 0, "unboundedBy": {}}   # unboundedBy: the None notes per leg (T401 follow-up)
+                     "clockDue": 0, "wakeOnly": 0, "wakeOnlyRecorded": 0, "unboundedBy": {}}   # unboundedBy: the None notes per leg (T401
+#                                       follow-up); wakeOnlyRecorded: the memo rows wake-only looks recorded (jobs stage 1), read against
+#                                       wakeOnly and skippedParses on a quiet board with the gear off
 _NUDGE_LOOK_STATS = {}                # sid -> the stat the pass took before its snapshots, for the look (a side map: the session
 #                                       rows are shared, read-only and memoised per cycle, never written into)
 _NUDGE_LOOK_ASKERS = {}               # sid -> (the asker sids whose registry rows the key carries, the ones beyond the bound)
@@ -14678,7 +14683,8 @@ def _nudge_look_mode(wake_only, reminders):
     (the awaiting dead-man alone: nudges off) or `wake+reminders` (the dead-man and the debt reminders: tracking off with
     nudges on). A row serves a look of the same mode only. A wake-only row says nothing about the nudge legs a full look
     runs, so that direction is a correctness rule; the other is kept symmetric so the rows read plainly and a toggle flip
-    costs one evaluation per session either way (the toggle files are keyed, so the flip re-evaluates once regardless)."""
+    costs one evaluation per session either way. The nudge toggle lives in the ledger, a keyed file, so its flip re-evaluates
+    every session once whatever the tag says; the Task tracking file is not keyed, and the tag is what catches its flip."""
     if not wake_only:
         return "full"
     return "wake+reminders" if reminders else "wake"
@@ -18052,7 +18058,9 @@ def _nudge_look_gated(fn):
                     by[_leg] = by.get(_leg, 0) + 1
                 notes = list(notes) + [None]             # the default: an exit no audited road claimed is unbounded
             _nudge_look_done(s, files_st, notes, r, mode)
-        return r
+            if wake_only:
+                _NUDGE_WALK_STATS["wakeOnlyRecorded"] += 1   # a wake-mode row recorded (jobs stage 1): with the gear off, rows toward
+        return r                                             #  the alive count and skippedParses toward looks are the saving's signature
     return gated
 
 
