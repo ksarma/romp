@@ -40133,11 +40133,52 @@ def _set_auth_or_park(be, sid, value):
 
 
 # POST /billing's `reconnect` words, by the backend's outlook (SdkBackend.auth_apply_outlook), the words `romp billing`
-# prints from. "deferred" also names a pick the FIFO parked: the sweep applies it when the session is quiet.
-_BILLING_WORDS = {"now": "now", "deferred": "at the next quiet moment", "held": "held for live work",
-                  "next-launch": "at its next launch", "none": "none needed"}
+# prints from. "deferred" is a turn in flight (the one state --now cuts); "queued" a text waiting with no turn open
+# (round 1 of the review, 2026-09-18: busy, but nothing to cut); "landing" a pending no request stands for, on an
+# object no landing of this kernel has stamped, whose connect in progress or to come decides it (round 2 of the
+# review, 2026-09-18: it read "now", and the verb promised a reconnect nothing had asked for).
+_BILLING_WORDS = {"now": "now", "deferred": "at the end of the open turn", "queued": "at the next quiet moment",
+                  "held": "held for live work", "next-launch": "at its next launch", "none": "none needed",
+                  "landing": "when its connect lands"}
+# ...and a pick the FIFO parked, by the reason it waits (_park_reason): the drain applies it when the gate lifts.
+# "waiting" is busy with no turn open (a queued turn, an untaken text; round 2 of the review): the words the unparked
+# road's "queued" prints, so the verb offers --now only for "turn", the one park a cut can end.
+_BILLING_PARK_WORDS = {"turn": "at the end of the open turn", "compaction": "after the compaction",
+                       "queue": "after the work queued ahead of it", "move": "after the move finishes",
+                       "limit": "when the usage hold lifts", "waiting": "at the next quiet moment"}
 _BILLING_CHOICES = "'%s' is not a billing choice: key, login, login:<id> (a stored login) or default"
 _BILLING_NOT_SDK = "%s is not a Claude Code session: only a Claude Code session has a billing pick"
+
+
+def _drop_parked_auth(sid, why):
+    """Remove every parked ("auth", ...) op of `sid` but the one the drain is handing to the backend this instant, and
+    return how many went. The `now` and `default` roads of POST /billing bypass the FIFO, and so does the walk's write
+    on a follower (round 2 of the billing verb's review, 2026-09-18): a pick parked seconds earlier (the dashboard's,
+    mid-turn, or `romp billing <s> <pick>` without --now, which the verb's own parked line invites the user to follow
+    with --now) fired at the drain's next quiet cycle OVER the pick the verb had just applied, so the session ended on
+    the OLDER pick although the verb answered that it bills the newer one from now, and a parked ("auth", "key") fired
+    after `default` and gave the session a pick again. The newer gesture supersedes the parked one: it is dropped here,
+    counted in the answer (`superseded`) and said on stderr in the ✕ path's form (_cancel_parked). The op at
+    _inflight_slot is with the backend already and cannot be unsaid (the drain's `took` False path tolerates a removal,
+    but the call has run), so it stays and fires after this pick, the one race left. Locked as every queue mutation
+    is: the removal and the mirror write under _pending_ops_lock, the pusher wake after the release; an emptied queue
+    leaves no hold behind (the ✕ path's rule). Only auth ops go: a parked send, model or compact keeps its press order."""
+    sid = str(sid)
+    with _pending_ops_lock:
+        ops = _pending_ops.get(sid) or []
+        keep = _inflight_slot(sid, ops)
+        gone = [j for j, op in enumerate(ops) if op[0] == "auth" and j != keep]
+        if not gone:
+            return 0
+        for j in reversed(gone):
+            ops.pop(j)
+        if not ops:
+            _pending_ops.pop(sid, None)
+            _drain_hold.pop(sid, None)
+        _save_pending_ops()
+    sys.stderr.write("parked-op cancel: %s auth (%d superseded by %s)\n" % (sid, len(gone), why))
+    _mark_views_dirty()
+    return len(gone)
 
 
 def _billing_request(b):
@@ -40152,13 +40193,21 @@ def _billing_request(b):
         rule (deferred to the settle while a turn is open), and the interrupt after it ends that turn, so its settle
         arms the reconnect; parked instead, the pick would apply only when the pusher's sweep found the session
         quiet, and the interrupt would cut a turn with nothing pending. No new arm path. A compaction is refused, not
-        cut. Live work (subagents, background tasks) still holds the pick, and the answer says so.
+        cut, and so is a move in flight (round 2 of the review, 2026-09-18: _ops_gate holds every other op while
+        be.move() waits on its set_cwd answer, and the arm tore the client down under that request). Live work
+        (subagents, background tasks) still holds the pick, and the answer says so.
       * `default` has no dashboard value (the per-session op takes login, key or a stored login): it clears the
         session's own pick (SdkBackend.follow_default_auth), and the reconnect it may need takes the follower walk's
         own road, request_reconnect's arm rule, never the FIFO, whose replay could not apply the value (set_auth
-        refuses it) and would drop it in silence.
+        refuses it) and would drop it in silence. Never parked, it is refused during a move too.
+    Both roads DROP the sid's parked auth picks before the backend call (round 2 of the review; _drop_parked_auth): the
+    FIFO would have fired an earlier pick over the one just applied. The `now` road asks the backend's refusal first
+    (auth_unavailable_why, the reason set_auth refuses with), so a refused --now pick leaves the user's valid parked
+    pick in the queue. The answer carries the count (`superseded`).
     The walk (`allFollowing`) takes the SDK backend directly: it has no target, and only that backend keeps a machine
-    default with followers."""
+    default with followers; each follower it moves has its parked auth picks dropped the same way, and its outlook
+    (auth_apply_outlook, in the reconnect words) rides the answer per name (`outlooks`), so the verb says which
+    sessions reconnect and which already bill the pick (round 2 of the review: the head said every one reconnects)."""
     pick = str(b.get("pick") or "")
     now = bool(b.get("now"))
     if b.get("allFollowing"):
@@ -40176,9 +40225,15 @@ def _billing_request(b):
         if out is None:
             why = str(be.auth_unavailable_why(*lg.parse_pick(pick)) or "")
             return {"ok": False, "error": why or "the pick was refused", "_status": 409}
+        # a follower's parked dashboard pick would fire over the walk's write at the next quiet cycle (round 2 of the
+        # review): dropped per moved sid, as the `now` and `default` roads drop theirs
+        superseded = sum(_drop_parked_auth(s, "the --all-following pick") for s in (out.get("movedSids") or []))
         _push_soon()
-        return {"ok": True, "pick": pick, "moved": len(out["moved"]), "skipped": len(out["skipped"]),
-                "sessions": out["moved"], "skippedSessions": out["skipped"]}
+        unwritten = out.get("unwritten") or []    # the followers whose record would not read: nothing written, said apart
+        outlooks = {n: _BILLING_WORDS.get(w, w) for n, w in (out.get("outlook") or {}).items()}
+        return {"ok": True, "pick": pick, "moved": len(out["moved"]), "skipped": len(out["skipped"]), "unwritten": len(unwritten),
+                "sessions": out["moved"], "skippedSessions": out["skipped"], "unwrittenSessions": unwritten,
+                "outlooks": outlooks, "superseded": superseded}
     who = str(b.get("target") or "")
     if not who or not pick:
         return {"ok": False, "error": "target and pick required", "_status": 400}
@@ -40199,13 +40254,36 @@ def _billing_request(b):
         return {"ok": False, "error": "%s is compacting, and a compaction is not cut for a billing change; run it again "
                                       "without --now to queue the pick behind the compaction, or wait for it to end" % who,
                 "_status": 409}
+    # A MOVE IN FLIGHT (round 2 of the review, 2026-09-18): _ops_gate parks every drive op while `_moving` holds the sid,
+    # so nothing reaches the CLI while be.move() waits on its set_cwd answer (the _moving comment says why); the two
+    # roads below that bypass the FIFO (--now, and `default` in both forms) reached set_auth's request, whose arm on a
+    # quiet session tore the client down under that request, and the move failed or landed on a replaced process while
+    # the verb answered a clean apply. Refused as a compaction is, in the words the compaction gets; the check-then-apply
+    # race left is the one the compaction check accepts. str(sid), as _park_reason compares it; _moving is held across
+    # the whole move() call, so this covers a dormant session's revive window too
+    if str(sid) in _moving and (now or pick == "default"):
+        if now:
+            return {"ok": False, "error": "%s is moving, and a move is not cut for a billing change; run it again without "
+                                          "--now to queue the pick behind the move, or wait for it to end" % who,
+                    "_status": 409}
+        return {"ok": False, "error": "%s is moving, and a move is not cut for a billing change; `default` never queues, "
+                                      "so run it again after the move finishes" % who, "_status": 409}
     queued = False
+    superseded = 0
     out = {"ok": True, "session": _name_of(sid) or sid[:8], "sid": sid, "pick": pick}
     if pick == "default":
+        # the clear never parks, so a parked pick would fire over it at the next quiet cycle: dropped first (round 2)
+        superseded = _drop_parked_auth(sid, "the default pick")
         if not be.follow_default_auth(sid):
             return {"ok": False, "error": "%s's record would not read, so nothing was changed" % who, "_status": 409}
         out["default"] = _billing_default(be)["value"]   # what it follows now, for the caller's line
     elif now:
+        # the refusal FIRST, with the queue untouched (round 2 of the review): a --now pick this box cannot bill (a
+        # stored login gone) must not also discard the user's valid parked pick; set_auth refuses with this same reason
+        why = str(be.auth_unavailable_why(*lg.parse_pick(pick)) or "")
+        if why:
+            return {"ok": False, "error": why, "_status": 409}
+        superseded = _drop_parked_auth(sid, "the --now pick")
         if not be.set_auth(sid, pick):
             return _billing_refusal(be, who, pick)
     else:
@@ -40213,30 +40291,85 @@ def _billing_request(b):
         if verdict == "refused":
             return _billing_refusal(be, who, pick)
         queued = verdict == "parked"
-    outlook = "deferred" if queued else be.auth_apply_outlook(sid)
+    if queued:
+        # the park names the reason it waits (round 1 of the review, 2026-09-18): every park answered "at the next
+        # quiet moment", and a quiet session under a usage-limit hold, or one with a move in flight, was promised a
+        # quiet moment while the pick waited on something else
+        reason = _park_reason(be, sid)
+        _push_soon()
+        out.update(reconnect=_BILLING_PARK_WORDS[reason], cut=False, queued=True, parked=reason, superseded=0)
+        return out
+    outlook = be.auth_apply_outlook(sid)
     cut = False
-    if now and outlook in ("deferred", "held") and be.busy(sid):
+    # the cut asks for a turn IN FLIGHT (turn_open), never for busy (round 1 of the review, 2026-09-18): busy is also a
+    # queued or an untaken text with no turn open, and the interrupt ladder then SIGINTed a CLI being launched while the
+    # verb reported a cut; "held" is a hold for live work, whose turn may or may not be open
+    if now and outlook in ("deferred", "held") and be.turn_open(sid):
         if be.interrupt(sid) is not False:
             _mark_interrupt_clicked(sid)             # the chip reads interrupting now, as the /interrupt route's stop does
             cut = True
             if outlook == "deferred":
                 outlook = "now"                      # the cut turn's settle arms the reconnect; a hold for live work stands
     _push_soon()
-    out.update(reconnect=_BILLING_WORDS[outlook], cut=cut, queued=queued)
+    out.update(reconnect=_BILLING_WORDS[outlook], cut=cut, queued=False, superseded=superseded)
     return out
 
 
-def _billing_refusal(be, who, pick):
-    """The 409 for a pick the backend refused: the box's reason for the side and the stored login (the one vocabulary
-    every Billing surface uses), else the one other way set_auth answers False, a record that would not read."""
+def _park_reason(be, sid):
+    """Why the FIFO parked a drive op for `sid` just now, as one word for the caller's answer (`romp billing`, round 1 of
+    the review, 2026-09-18): "limit" (the account cannot serve a request: a usage-limit hold), "compaction", "move" (a
+    move in flight), "turn" (an open turn), "waiting" (busy with no turn open: a queued turn or an untaken text, held
+    for press order with nothing to cut; round 2 of the review), else "queue" (a queue already exists and the op lines
+    up behind it, the press-order rule). The same predicates _ops_gate reads, read again after the park, so a state
+    that changed between the two reads is named for what it is now; the order names the wait that governs longest
+    first. An auth pick is NOT exempted from the limit hold although switching billing is the escape from it: the hold
+    is the kernel's gate on every drive op (_ops_gate), the pick queues behind it like any other, and these words say
+    so. "turn" against "waiting" is `be`'s turn_open (round 2 of the review, 2026-09-18): _working_now is be.busy, true
+    for a queued or an untaken text with inflight 0, and the park answered "at the end of the open turn" for it, the one
+    word the verb attaches the --now offer to, so the user ran --now and it cut nothing (turn_open False) and answered
+    "a message waits to run first" against the line it had just acted on. None from turn_open (the backend does not run
+    the sid) keeps "turn": _working_now then answered from the cached transcript parse, where the open turn is real."""
+    sid = str(sid)
+    if _limit_hold(sid) is not None:
+        return "limit"
+    if _compacting_now(sid):
+        return "compaction"
+    if sid in _moving:
+        return "move"
+    if _working_now(sid):
+        open_ = getattr(be, "turn_open", lambda s: None)(sid)
+        return "turn" if open_ is not False else "waiting"
+    return "queue"
+
+
+def _auth_refusal(be, who, pick):
+    """The sentence a billing pick the backend refused is answered with: the box's reason for the side and the stored
+    login (auth_unavailable_why, the one vocabulary every Billing surface uses), else the one other way set_auth answers
+    False, a record that would not read. POST /billing's 409 and the parked-op drain's auth arm (round 1 of the review,
+    2026-09-18: the drain discarded set_auth's verdict) say the same words."""
     side, lid = lg.parse_pick(pick)
-    why = str(be.auth_unavailable_why(side, lid) or "")
-    return {"ok": False, "error": why or ("%s's record would not read, so nothing was changed" % who), "_status": 409}
+    why = str(getattr(be, "auth_unavailable_why", lambda *a: "")(side, lid) or "")
+    return why or ("%s's record would not read, so nothing was changed" % who)
+
+
+def _billing_refusal(be, who, pick):
+    """The 409 for a pick the backend refused, in _auth_refusal's words."""
+    return {"ok": False, "error": _auth_refusal(be, who, pick), "_status": 409}
 
 
 def _billing_far_answer(r, st, res, text, coda):
     """A far kernel's answer to a forwarded /billing, relayed as the /end arm relays: a non-200 in its words with its
-    status (_remote_refusal), a dead tunnel as ok:false naming the host with `coda`, a 200 body as is."""
+    status (_remote_refusal), a dead tunnel as ok:false naming the host with `coda`, a 200 body as is. One case is
+    named rather than relayed (round 2 of the review, 2026-09-18): a 404 whose body is no JSON error is the far
+    do_GET's or do_POST's text/plain catch-all, a kernel from before these routes, and the bare relay ("answered HTTP
+    404: not found") told the user neither the cause nor the remedy the local case names (bin/romp's _bl_pre_route)
+    and the emoji forwards name for a far kernel. The far resolver's 404 for an unknown session is a JSON error and
+    rides back verbatim with the host named, as before. The verb prints the kernel's sentence on both arms."""
+    if st == 404 and not (isinstance(res, dict) and res.get("error")):
+        host = r.get("host", "?")
+        return {"ok": False, "error": "the kernel on %s predates romp billing's routes (GET and POST /billing): run "
+                                      "`romp update %s` from here, or update romp there and restart it" % (host, host),
+                "_status": 404}
     if st and st != 200:
         out = _remote_refusal(r, st, res, text)
         out["_status"] = st
@@ -40250,24 +40383,37 @@ def _billing_far_answer(r, st, res, text, coda):
 
 def _billing_default(be):
     """The machine default as a session with no pick of its own BILLS it (the backend's fallback_auth: the explicit
-    default when this box can bill it, else the helper rule), with the stored login it names, whether it was set
-    explicitly, and a label (a stored login's, else the machine login's display name, "" for the key): {value, auth,
-    login, explicit, label}. Not _auth_avail's `default`: that is the new-session picker's preselected choice, which a
-    remembered per-session pick seeds while no explicit default is set, and a follower does not bill it (the reference's
-    rule, "Per-session billing"): the read said login for a default every follower launched on the key."""
+    default when this box can bill it, else the helper rule), with the stored login it names, whether an explicit
+    default is set, and a label (a stored login's, else the machine login's display name, "" for the key): {value,
+    auth, login, explicit, label, explicitPick, explicitWhy}. `explicit` describes the FLAG (sdk-defaults.json's
+    authExplicit), not the resolved side: fallback_auth falls to the other side when this box cannot bill the explicit
+    one (an explicit login default with no login signed in, a stored login whose record is gone), and the verb then
+    printed the fallen-to side as "set explicitly" (round 2 of the review, 2026-09-18). So the RAW explicit pick rides
+    beside the resolution (`explicitPick`: the pick value the user set, "" when none), with the box's reason when the
+    two differ (`explicitWhy`: auth_unavailable_why for the explicit side and its stored login, "" when they agree),
+    compared as pick VALUES: an explicit stored-login default whose record is unusable resolves to the machine's own
+    login, the same side word. Not _auth_avail's `default`: that is the new-session picker's preselected choice, which
+    a remembered per-session pick seeds while no explicit default is set, and a follower does not bill it (the
+    reference's rule, "Per-session billing"): the read said login for a default every follower launched on the key."""
     side = str(be.fallback_auth() or "")
     lid = str(be.explicit_default_login() or "") if side == "login" else ""
     label = be.login_display(lid) if lid else (_claude_account_label() if side == "login" else "")
-    return {"value": lg.pick_value(side, lid), "auth": side, "login": lid,
-            "explicit": bool(be.explicit_default_auth()), "label": label}
+    value = lg.pick_value(side, lid)
+    raw = getattr(be, "explicit_default_pick", lambda: "")() or ""
+    why = ""
+    if raw and raw != value:
+        why = str(be.auth_unavailable_why(*lg.parse_pick(raw)) or "")
+    return {"value": value, "auth": side, "login": lid, "explicit": bool(be.explicit_default_auth()), "label": label,
+            "explicitPick": raw, "explicitWhy": why}
 
 
 def _billing_read(target):
     """GET /billing?target=: {ok, session, sid, launched, launchedLogin, launchedLabel, live, pick: {auth, login, label,
-    explicit}, pending, held, default: {auth, login, explicit, label}} (SdkBackend.billing_view's fields, the machine
-    default from _billing_default: what an unpicked session bills, explicit or the helper rule, with a stored login's
-    label or the machine login's), or {ok: false, error} with its status: 400 no target, the resolver's 404 or 503, 409
-    a backend with no billing pick or a record that would not read."""
+    explicit}, pending, held, default: {auth, login, explicit, label, explicitPick, explicitWhy}} (SdkBackend.billing_view's
+    fields, the machine default from _billing_default: what an unpicked session bills, explicit or the helper rule, with
+    a stored login's label or the machine login's, and the raw explicit pick with the box's reason when it cannot bill
+    it, round 2 of the review), or {ok: false, error} with its status: 400 no target, the resolver's 404 or 503, 409 a
+    backend with no billing pick or a record that would not read."""
     if not target:
         return {"ok": False, "error": "target required", "_status": 400}
     sid, r, refusal, _live = _control_target(target, route="/billing")
@@ -40286,7 +40432,7 @@ def _billing_read(target):
     d = _billing_default(be)
     out = {"ok": True, "session": _name_of(sid) or sid[:8], "sid": sid}
     out.update(view)
-    out["default"] = {k: d[k] for k in ("auth", "login", "explicit", "label")}
+    out["default"] = {k: d[k] for k in ("auth", "login", "explicit", "label", "explicitPick", "explicitWhy")}
     return out
 
 
@@ -40632,7 +40778,12 @@ def _apply_pending_ops(now=None):
                         v = op[1] if isinstance(op[1], str) else ("on" if op[1] else "off")
                         refused = be.set_fast(sid, v) is False     # its bool was dropped the same way
                     elif op[0] == "auth":
-                        be.set_auth(sid, op[1])
+                        # the verdict is READ (round 1 of the billing verb's review, 2026-09-18): a pick the backend refuses
+                        # at fire time (a stored login removed or expired between the park and the settle, a record that
+                        # will not read) is reported below with the effort and fast arms; dropped, the queued chip retired
+                        # as if the pick had landed while the session kept billing the old side, and `romp billing` had
+                        # answered exit 0 with a promised apply
+                        refused = be.set_auth(sid, op[1]) is False
                     elif op[0] == "env":
                         be.set_env(sid, op[1])
                     # (an unknown op kind gets no call: it is popped below and dropped — never wedge the queue)
@@ -40666,18 +40817,23 @@ def _apply_pending_ops(now=None):
                             _mark_compacting(sid)         # a TYPED /compact gets the same instant cue as the button's op
                         _after_turn_opening(be, sid, _pending_ops.get(sid) or [])
                         break                             # its turn / compaction must end before anything behind it fires
-                    if op[0] in ("effort", "fast") and refused:
-                        # the backend refused the parked level or toggle when it fired (a Codex model whose catalog does
-                        # not offer the level, a session the backend holds no row for, a Codex session's fast toggle):
+                    if op[0] in ("effort", "fast", "auth") and refused:
+                        # the backend refused the parked level, toggle or billing pick when it fired (a Codex model whose
+                        # catalog does not offer the level, a session the backend holds no row for, a Codex session's fast
+                        # toggle, a stored login gone since the park):
                         # the same stderr line the command and compact arms write, and the refusal to the chat on the
                         # settingRefused frame the live setEffort and setFast ops answer with (gesture command, the sid,
                         # the flag), so the chip's retirement is not read as the pick landing. Said whether or not `took`:
                         # a same-kind replacement delivering next does not unsay this one's refusal. No client is at hand
                         # here, so the chat page is the addressee (_send_to_app). Nothing applies early: the gate lift is
                         # still what fires the op (the catch-up fold's review, 2026-09-18).
-                        what = "/%s %s" % (op[0], op[1] if op[0] == "effort" else v)
-                        why = (_effort_refusal(be, op[1]) if op[0] == "effort"
-                               else "Couldn't toggle fast mode: the session's backend refused it.")
+                        what = "/%s %s" % (op[0], v if op[0] == "fast" else op[1])
+                        if op[0] == "effort":
+                            why = _effort_refusal(be, op[1])
+                        elif op[0] == "auth":
+                            why = _auth_refusal(be, _name_of(sid) or sid[:8], str(op[1]))
+                        else:
+                            why = "Couldn't toggle fast mode: the session's backend refused it."
                         sys.stderr.write("pending ops apply: %s refused %r for %s\n" % (type(be).__name__, what, sid[:8]))
                         _send_to_app("chat", {"type": "settingRefused", "gesture": "command", "sid": sid,
                                               "flag": op[0], "text": why})

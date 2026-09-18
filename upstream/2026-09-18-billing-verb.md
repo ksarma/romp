@@ -1,7 +1,7 @@
 ---
 title: romp billing: a session's billing from the shell
 status: candidate
-where: bin/romp (`billing`), kernel/kernel.py (POST and GET /billing, _billing_request, _billing_read), kernel/sdk_backend.py (set_auth chip=, set_auth_followers, follow_default_auth, _reconnect_follower, auth_apply_outlook, billing_view), docs/reference.md, tests/test_billing_route.py, tests/test_cli_billing_kernel.py, tests/fixtures/fake_claude.py
+where: bin/romp (`billing`), kernel/kernel.py (POST and GET /billing, _billing_request, _billing_read, _billing_default, _billing_far_answer, _park_reason, _drop_parked_auth, the drain's auth arm), kernel/sdk_backend.py (set_auth chip= and bounded= and its never-landed branch, set_auth_followers, follow_default_auth, _follow_default_unlanded, _follow_default's hand-back, _connect_landed's picked re-ask, _default_label, auth_apply_outlook, turn_open, billing_view, explicit_default_pick, _mirror_auth), cli/perf_public.py (HTTP_ROUTES, the fork-only shared copy of the register that tests/test_perf_export.py holds equal to the kernel's), docs/reference.md, tests/test_billing_route.py, tests/test_cli_billing_kernel.py, tests/test_headless_verbs_help.py (billing joins the census; the no-kernel misuse cases; fork-only), tests/test_sdk_backend.py (the request_reconnect caller pin gains _follow_default_unlanded), tests/fixtures/fake_claude.py
 added: 2026-09-18
 pr:
 tier: feature

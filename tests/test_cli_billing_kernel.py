@@ -12,16 +12,30 @@ every session lands on the side romp composed and the walks read the truth. Four
 and tests follow the default and run; api carries a login pick and runs; docs follows the default and never runs (no
 CLI process: the read answers from its reg).
 
-Cases, in method order (one kernel, one roster; each case leaves the state the next one reads):
+Steps, in order, in ONE test method (one kernel, one roster; each step leaves the state the next one reads; one method
+because pytest-xdist's load distribution sends the methods of a class to different workers, each booting its own kernel,
+and a step that reads what an earlier one left then reads a fresh roster: round 1 of the review, 2026-09-18, the first run
+under -n 3; the traceback names the step that failed):
   1. the read prints three lines for a follower, a picked session and a dormant one;
-  2. `--all-following key` writes the pick on the two live followers, skips the picked one, chips nothing;
-  3. `romp billing web login` writes auth/authLogin/authPending into the reg and the session reconnects onto the login;
+  2. `--all-following login` writes the pick on the two live followers (running the key: the walk's reconnect road runs
+     against live CLIs and lands them on the login), skips the picked one, chips nothing;
+  3. `romp billing web key` writes auth/authLogin/authPending into the reg and the session reconnects onto the key;
   4. `romp billing api default` returns the picked session to following the default (its reconnect lands on the key);
-  5. `--now` cuts an in-flight turn and the reconnect follows at its settle;
+  4b. a pick mid-turn WITHOUT --now (the verb's default road): parked in the kernel's FIFO, the output names the open
+     turn, the pick applies at the turn's settle and the reconnect lands with no turn cut;
+  5. `--now` cuts an in-flight turn (read in the cut session's own transcript) and the reconnect follows its settle;
   6. an unknown session exits 1 with the resolver's error, a junk pick exits 1 with the kernel's, misuse exits 2.
+
+The class is skipped on a runner whose MANAGED Claude settings configure an apiKeyHelper (round 1 of the review, finding
+23): the lab's helper lives in the lab's user settings, but the kernel subprocess reads the platform's managed file, which
+has no environment seam, and a managed helper makes the backend refuse every login pick, so cases 2 and 5 could not pass
+there through any fault of their own.
 
 This file is deliberately NOT named `_served.py`: CI's extension job runs that suffix with ROMP_SERVED_TESTS_REQUIRE=1,
 which turns the SDK-venv skip below into a failure on a runner with no venv (tests/test_session_host_restart.py's rule).
+Unlike the served labs, a kernel that fails to BOOT here is red, not a skip (round 2 of the review, 2026-09-18): this
+class runs only where the venv exists, no require switch covers its name, and a SkipTest from setUpClass read as green
+on the one runner that could exercise the verb's live-CLI door while a startup regression kept the kernel from serving.
 Hermetic: a temp lab, and the class ends its whole process tree, the kernel and every fake CLI it spawned, as a CLASS
 CLEANUP (addClassCleanup), which unittest runs after a setUpClass that raised as well as after tearDownClass: the first
 runs of this file failed in setUpClass, tearDownClass never ran, and two kernels with their fake CLIs outlived their
@@ -51,6 +65,8 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment (named runner variables, never the whole environment)
 import lab_dist   # noqa: E402
+from romp_load import load_source   # noqa: E402
+_cred = load_source("romp_credentials_billing_lab", os.path.join(ROOT, "kernel", "credentials.py"))
 FAKE = os.path.join(HERE, "fixtures", "fake_claude.py")
 ROMP = os.path.join(BIN, "romp")
 SDKVENV = os.path.expanduser("~/.local/state/romp/sdkvenv")
@@ -59,6 +75,15 @@ SDKVENV = os.path.expanduser("~/.local/state/romp/sdkvenv")
 _tags = sorted(p.name for p in Path(SDKVENV, "lib").glob("python3.*")) if os.path.isdir(os.path.join(SDKVENV, "lib")) else []
 KERNEL_PYTHON = next((shutil.which(t) for t in _tags if shutil.which(t)), None)
 HAVE_SDK = KERNEL_PYTHON is not None
+
+
+def _managed_helper() -> bool:
+    """Whether the runner's MANAGED Claude settings configure an apiKeyHelper (the module docstring says why that skips
+    the class). A settings file that cannot be read is not a managed helper."""
+    try:
+        return _cred.helper_source() == "managed"
+    except Exception:
+        return False
 
 
 def _free_port():
@@ -76,6 +101,8 @@ def _dist_for_lab(dest):
 
 
 @unittest.skipUnless(HAVE_SDK, "no SDK venv (or no matching python) on this machine; the lab kernel needs the real SDK client to run the fake CLI")
+@unittest.skipIf(_managed_helper(), "this machine's managed Claude settings configure an apiKeyHelper, which the lab kernel reads "
+                                    "and which refuses every login pick (no seam points the managed path into the lab)")
 class BillingVerb(unittest.TestCase):
     NAMES = ("web", "api", "tests", "docs")
 
@@ -132,9 +159,13 @@ class BillingVerb(unittest.TestCase):
                     break
                 time.sleep(0.25)
         else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + cls._klog_tail())
+            # RED, never a skip (round 2 of the review, 2026-09-18): by this line every environmental cause has already
+            # skipped (the venv and its python, a managed helper, the dist copy's own SkipTest), so a kernel that does not
+            # serve is the code's fault, and this class runs only where the venv exists, where a skip read as green while
+            # the verb's one live-CLI door never ran
+            raise AssertionError("hermetic kernel never served /healthz here: " + cls._klog_tail())
         if cls.kernel.poll() is not None:
-            raise unittest.SkipTest("hermetic kernel exited at boot: " + cls._klog_tail())
+            raise AssertionError("hermetic kernel exited at boot: " + cls._klog_tail())
         # three sessions run: one short turn each, so their CLIs launch and their inits land (docs stays dormant)
         for name in ("web", "api", "tests"):
             cls._send(name, "hello sleep=0.2")
@@ -279,6 +310,14 @@ class BillingVerb(unittest.TestCase):
         return [r["cmdGesture"] for r in cls._states(name) if "cmdGesture" in r]
 
     @classmethod
+    def _interrupted_results(cls, name):
+        """How many turns of `name`'s OWN conversation ended interrupted: its transcript stand-in is the file the fake CLI
+        names by the session id it was resumed with, the reg's lastSid (round 1 of the review, finding 22: a scan over
+        every transcript under the lab discriminated only while no other case interrupted anything)."""
+        p = Path(cls.tdir, cls._reg(name)["lastSid"] + ".jsonl")
+        return p.read_text().count('"result":"interrupted"') if p.exists() else 0
+
+    @classmethod
     def _romp(cls, *args):
         """The REAL bin/romp, aimed at the lab kernel by the two names every verb reads (the port and the serve token)."""
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": cls.home,
@@ -292,7 +331,17 @@ class BillingVerb(unittest.TestCase):
         self.assertEqual(len(lines), 3, out.stdout)
         return lines
 
-    def test_1_the_read_prints_three_lines_for_a_follower_a_picked_and_a_dormant_session(self):
+    def test_the_verb_end_to_end_in_order(self):
+        for step in (self.step_1_the_read_prints_three_lines_for_a_follower_a_picked_and_a_dormant_session,
+                     self.step_2_all_following_moves_the_live_followers_and_skips_the_picked_one_without_a_chip,
+                     self.step_3_a_pick_writes_the_reg_and_the_session_reconnects_onto_it,
+                     self.step_4_default_returns_a_picked_session_to_the_machine_default,
+                     self.step_4b_a_pick_mid_turn_without_now_parks_and_applies_at_the_turns_settle,
+                     self.step_5_now_cuts_the_in_flight_turn_and_the_reconnect_follows_its_settle,
+                     self.step_6_refusals_and_misuse):
+            step()
+
+    def step_1_the_read_prints_three_lines_for_a_follower_a_picked_and_a_dormant_session(self):
         launched, pick, default = self._lines(self._romp("web"))
         self.assertEqual(launched, "launched: API key; the CLI reports: API key")
         self.assertEqual(pick, "pick: follows the machine default")
@@ -301,38 +350,47 @@ class BillingVerb(unittest.TestCase):
         self.assertEqual(launched, "launched: login; the CLI reports: login", "the login pick's launch blanked the helper")
         self.assertEqual(pick, "pick: login")
         launched, pick, default = self._lines(self._romp(self.sids["docs"]))   # a dormant session, by id as by name
-        self.assertEqual(launched, "launched: no CLI process running")
+        # docs never ran, so its reg carries no report and the head stands alone (round 2 of the review: the head says what
+        # the kernel knows, no landed launch under it, and a report it kept would ride as "the CLI last reported")
+        self.assertEqual(launched, "launched: no CLI is up under this kernel")
         self.assertEqual(pick, "pick: follows the machine default")
         self.assertEqual(default, "machine default: API key (the helper rule)")
-        self.assertEqual(self._lines(self._romp("docs"))[0], "launched: no CLI process running")
+        self.assertEqual(self._lines(self._romp("docs"))[0], "launched: no CLI is up under this kernel")
 
-    def test_2_all_following_moves_the_live_followers_and_skips_the_picked_one_without_a_chip(self):
-        out = self._romp("--all-following", "key")
+    def step_2_all_following_moves_the_live_followers_and_skips_the_picked_one_without_a_chip(self):
+        # the OTHER side from the one the followers run (round 1 of the review, finding 20): with `key` the walk wrote regs
+        # and reconnected nothing, so its reconnect road (the deferred or immediate request, the bounded relaunch slot
+        # and its release, the landing on the other side) never ran against a live CLI
+        out = self._romp("--all-following", "login")
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(out.stdout.strip(),
-                         "romp billing: 2 sessions now bill the API key (tests, web); 1 skipped (api): it has its own pick")
+                         "romp billing: 2 sessions following the default now carry their own pick, the login (tests, web); "
+                         "they reconnect at their next quiet moment; 1 skipped (api): it has its own pick")
         for name in ("tests", "web"):
             reg = self._reg(name)
-            self.assertEqual((reg["auth"], reg["authLogin"]), ("key", ""), name)
+            self.assertEqual((reg["auth"], reg["authLogin"]), ("login", ""), name)
             self.assertEqual(self._gestures(name), [], "%s: no /auth chip on the walk" % name)
-            self.assertEqual(self._romp(name).stdout.splitlines()[1], "pick: API key")
+        for name in ("tests", "web"):
+            self._landed_then_reported(name, "login")
+            self.assertEqual(self._romp(name).stdout.splitlines()[:2], ["launched: login; the CLI reports: login", "pick: login"], name)
         self.assertEqual(self._reg("api")["auth"], "login", "the picked session keeps its own pick")
+        self.assertEqual(self._lines(self._romp("api"))[0], "launched: login; the CLI reports: login", "not relaunched")
         self.assertNotIn("auth", self._reg("docs"), "a dormant follower is not in the walk: it launches on the default")
 
-    def test_3_a_pick_writes_the_reg_and_the_session_reconnects_onto_it(self):
-        out = self._romp("web", "login")
+    def step_3_a_pick_writes_the_reg_and_the_session_reconnects_onto_it(self):
+        out = self._romp("web", "key")
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(out.stdout.strip(), "romp billing: web bills the login from now; the session is reconnecting to apply it")
+        self.assertEqual(out.stdout.strip(), "romp billing: web bills the API key from now; the session is reconnecting to apply it")
         reg = self._reg("web")
-        self.assertEqual((reg["auth"], reg["authLogin"]), ("login", ""))
+        self.assertEqual((reg["auth"], reg["authLogin"]), ("key", ""))
         self.assertIn("authPending", reg, "set_auth's pending write, cleared by the landing")
-        self._landed_then_reported("web", "login")
-        self.assertEqual(self._gestures("web"), ["/auth login"], "the dashboard's chip: the CLI's pick is the same op")
+        self._landed_then_reported("web", "key")
+        self.assertEqual(self._gestures("web"), ["/auth key"], "the dashboard's chip: the CLI's pick is the same op")
         launched, pick, _ = self._lines(self._romp("web"))
-        self.assertEqual(launched, "launched: login; the CLI reports: login")
-        self.assertEqual(pick, "pick: login")
+        self.assertEqual(launched, "launched: API key; the CLI reports: API key")
+        self.assertEqual(pick, "pick: API key")
 
-    def test_4_default_returns_a_picked_session_to_the_machine_default(self):
+    def step_4_default_returns_a_picked_session_to_the_machine_default(self):
         out = self._romp("api", "default")
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(out.stdout.strip(),
@@ -345,19 +403,37 @@ class BillingVerb(unittest.TestCase):
         self.assertEqual(self._lines(self._romp("api"))[1], "pick: follows the machine default")
         self.assertEqual(self._gestures("api"), [], "no /auth chip: the session made no pick")
 
-    def test_5_now_cuts_the_in_flight_turn_and_the_reconnect_follows_its_settle(self):
+    def step_4b_a_pick_mid_turn_without_now_parks_and_applies_at_the_turns_settle(self):
+        # the verb's default road end to end (round 1 of the review, finding 19): the pick parks in the kernel's FIFO
+        # behind the open turn (the real _ops_gate, not a stub), the drain replays it at the settle, and the reconnect
+        # lands with no turn cut. tests runs the login since case 2; the pick is the key
+        before = self._interrupted_results("tests")
+        self._send("tests", "start long sleep=20")
+        self._wait(lambda: self._last_state("tests") == "working", "tests to be mid-turn")
+        out = self._romp("tests", "key")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.strip(),
+                         "romp billing: tests will bill the API key; the session reconnects when its open turn ends "
+                         "(--now cuts the turn and reconnects at once)")
+        self.assertEqual(self._reg("tests")["auth"], "login", "parked: nothing is written until the turn ends")
+        self._landed_then_reported("tests", "key", timeout=120)
+        self.assertEqual(self._reg("tests")["auth"], "key")
+        self.assertEqual(self._interrupted_results("tests"), before, "the open turn ran to its end; nothing was cut")
+
+    def step_5_now_cuts_the_in_flight_turn_and_the_reconnect_follows_its_settle(self):
+        before = self._interrupted_results("tests")
         self._send("tests", "start long sleep=40")
         self._wait(lambda: self._last_state("tests") == "working", "tests to be mid-turn")
         out = self._romp("tests", "login", "--now")
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(out.stdout.strip(),
                          "romp billing: the in-flight turn was cut; tests bills the login from now; the session is reconnecting to apply it")
-        self._wait(lambda: any('"result":"interrupted"' in p.read_text() for p in Path(self.tdir).glob("*.jsonl")),
-                   "the fake CLI's turn to end interrupted")
+        # the cut is read in the cut session's OWN transcript (finding 22), never any transcript under the lab
+        self._wait(lambda: self._interrupted_results("tests") > before, "the fake CLI's turn to end interrupted")
         self._landed_then_reported("tests", "login", timeout=120)
         self.assertEqual(self._reg("tests")["auth"], "login")
 
-    def test_6_refusals_and_misuse(self):
+    def step_6_refusals_and_misuse(self):
         out = self._romp("nosuch")
         self.assertEqual(out.returncode, 1, out.stdout)
         self.assertIn("nosuch", out.stderr)
