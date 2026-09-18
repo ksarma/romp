@@ -3702,47 +3702,81 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   each pane would receive if it were sent only the fields it reads. One feed
   frame goes whole to every client that rides the feed slot (the feed pane;
   the Outline, which dials as `fleet` on every layout; and the Waiting-on-you
-  pane, `waiting`), and each reads a part of it. `passes` counts the pusher's
-  per-entry encodes of the frame (a build, or a ledgers refill of the same
-  build); `failed` counts the passes whose accounting raised, which never
-  touches the frame. `lifetime` sums every pass and `last` is the latest one;
-  both carry the same fields. `frame` is the frame's bytes as the pusher's
-  size estimate counts them (the per-card strings minus their tints, the
-  per-ledger strings and the remainder), so it sits under the served body by
-  the key names, separators and tints it does not count. `cards`, `ledgers`
-  and `rest` are its three parts, and `cardCount` and `ledgerCount` their
-  counts. `by` splits `rest` by top-level field (`views`, `sessions`,
-  `userTodoRows`, the notice rings and every other field), each with its
-  quoted name and separators. `apps` has one row per consuming app and one
-  projection row, `phoneFace`: `today`,
-  the whole frame it receives, beside `projected`, the bytes of the fields its
-  bundle reads, from the checked-in table `FEED_APP_FIELDS` in
-  `kernel/kernel.py`, which a test pins against the bundles' source and
-  against `federation.ts`: the merge reads `clearedForeign` off the local
-  frame for the feed pane and the Outline (it drops the remote cards and
-  strikes the remote ledger tops the local ledger cleared), so those two rows
-  carry it. `last` also says whether the ledgers were attached
-  (`ledgersAttached`). One figure is estimated, not bounded: the Outline reads
-  a few fields of each card, not the card, and those fields are sized from
-  their text lengths, never re-encoded, so the figure over-counts by naming
-  every field of every card and under-counts JSON escapes. The `phoneFace`
-  row is a projection of a frame that does not exist yet (the table
-  `FEED_PROJECTIONS`): a phone client's feed slot carrying a face per active
-  card plus one summary row per session with a card. A card is active when
-  its `column` is `working` or `needs_input`, the Working and Blocked
-  columns. The face is five of the card's fields: `itemId` and `sid`, the
-  address a tap fetches the detail by; `text`, the title; `column`, the
-  state; and `t`, the age. A summary row is the session's `sid` and the count
-  of cards it holds. Both are sized the way the Outline's card fields are.
-  The row's `today` is the whole frame, as for every row (a phone's feed page
-  dials as `feed` and its Outline as `fleet`), so the row reads as the saving
-  the face would bring. No bundle reads such a frame, so the test's pin
-  against the bundles skips the row. `wire` is the served body's length as the kernel holds it now,
-  with `exact` 1 once a whole frame has gone out and 0 while it is the
-  estimate. Every number comes from the encode the wire needs anyway; the
-  accounting adds a few length sums per pass and no second encode. The block
-  is counts and byte totals under identifier keys, and the public export
-  (`romp perf export --public`) carries it whole.
+  pane, `waiting`), and each reads a part of it. `passes` counts the
+  per-entry encodes of a frame whose accounting completed, wherever the
+  encode runs: the pusher's send stage (a build, or a ledgers refill of the
+  same build), the cold serve on a handler thread (a `ready` handshake or a
+  re-base served while the pusher holds no fresh wire) and the cold kernel's
+  first frame. `/feed.json`, which encodes the frame on its own, and the
+  `/feed` page are not counted. `failed` counts the encodes whose accounting
+  raised; the fault is said once on stderr and the frame goes out unchanged
+  either way. `lifetime` sums every counted pass and `last` is the latest
+  one; `last` alone says whether the ledgers were attached
+  (`ledgersAttached`). `last` and `wire` are `{}` until the first counted
+  pass, and a cold kernel that has never had a feed-slot client serves
+  exactly that. `frame` is the frame's bytes as the pusher's size estimate
+  counts them (the per-card strings minus their tints, the per-ledger strings
+  and the remainder), so it sits under the served body by the key names,
+  separators and tints it does not count. `cards`, `ledgers` and `rest` are
+  its three parts, and `cardCount` and `ledgerCount` their counts. `by`
+  splits `rest` by top-level field, each row the field's quoted name, its
+  separators and its value, and publishes a fixed set of rows: the flag and
+  count fields (`userTodosOn`, `dismissedCount`, `showDismissed`,
+  `canUndoClear`, `off`), the off frame's four empty federation lists
+  (`items`, `hosts`, `pendingHosts`, `pendingDead`) and `other`. Every field
+  whose value can carry a string (`selfHost`, `working`, `awaiting`,
+  `stateUnknown`, `order`, `sessions`, `userTodos`, `userTodoRows`, `views`,
+  `viewsFault`, `judgeLimit`, `bgServices`, `clearedForeign`,
+  `clearNotices`, `sdkNotices` and `syncNotices`, a checked-in list in
+  `kernel/kernel.py`) is folded into `other` when the block is reported, and
+  so is any field outside the checked-in frame fields. A row of its own for
+  one of those would have been the length of one string (the machine's
+  hostname under `selfHost`, a session name under `working`, a todo's text
+  under `userTodoRows`); `other` mixes them, and on any board with a session
+  its length tells the reader nothing. `rest` is the exact sum of the
+  published rows, in `last` and in `lifetime`, because the fold regroups
+  bytes and drops none. `apps` has one row per consuming app and one
+  projection row, `phoneFace`: `today`, the whole frame it receives, beside
+  `projected`, the bytes of the fields its bundle reads, from the checked-in
+  table `FEED_APP_FIELDS` in `kernel/kernel.py`, which a test pins against
+  the bundles' source and against `federation.ts`: the merge reads
+  `clearedForeign` off the local frame for the feed pane and the Outline (it
+  drops the remote cards and strikes the remote ledger tops the local ledger
+  cleared), so those two rows carry it. `projected` is computed from the
+  per-field lengths before the fold, so a folded field still counts in full
+  for the app that reads it. One figure is estimated, not bounded: the
+  Outline reads a few fields of each card, not the card, and those fields
+  are sized from their text lengths, never re-encoded, so the figure
+  over-counts by naming every field of every card and under-counts JSON
+  escapes. The `phoneFace` row is a projection of a frame that does not
+  exist yet (the table `FEED_PROJECTIONS`): a phone client's feed slot
+  carrying a face per active card plus one summary row per session with a
+  card. A card is active when its `column` is `working` or `needs_input`,
+  the Working and Blocked columns. The face is five of the card's fields:
+  `itemId` and `sid`, the address a tap fetches the detail by; `text`, the
+  title; `column`, the state; and `t`, the age. A summary row is the
+  session's `sid` and the count of cards it holds. Both are sized the way
+  the Outline's card fields are. The row's `today` is the whole frame, as
+  for every row (a phone's feed page dials as `feed` and its Outline as
+  `fleet`), so the row reads as the saving the face would bring. No bundle
+  reads such a frame, so the test's pin against the bundles skips the row.
+  `wire` is the served body as the kernel holds it now: `bytes`, its length,
+  and `exact`, 1 once a whole frame has gone out and the body's text is
+  held, 0 while the length is the size estimate. A delta client never needs
+  the whole text, so 0 says the held body is still estimated, not that
+  nothing was sent. Every number comes from the encode the wire needs
+  anyway, and there is no second encode. The accounting costs about two
+  milliseconds per thousand cards per build, measured on cards carrying the
+  Outline's fields, about a third of it the projections' pass; the
+  card-field and projection estimates are memoised with the cards, so a
+  ledgers refill pays none of that work, only the two part sums, the
+  per-field lengths and the record. Taking the remainder's encode in pieces
+  (one per field name and one per value, with one encoder reused per pass)
+  costs about one and a half times the whole-remainder encode at a 16 KB
+  remainder and about three and a third times at a 1.4 KB one, a cost per
+  field, not per byte. The block is counts and byte totals under identifier
+  keys, and the public export (`romp perf export --public`) carries it
+  whole.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the workers' share is `cpu_ms_workers`; the
