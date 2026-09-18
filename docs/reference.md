@@ -3477,10 +3477,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `loaded`). `goalArchive` memoizes a readable archive only: an archive that
   exists and cannot be read or parsed is answered empty, marks the running
   judge stage incomplete, and is not memoized, so the next call reads the file
-  again. On the child road `chain`, `courierSkip`, `plannerSkip`, `backref`,
-  `captions` and `goalArchive` read this process's judge module, which does
-  not judge while the child does, so they read zero here; `shared` still
-  counts the pusher's loads.
+  again. On the child road `chain`, `courierSkip`, `plannerSkip`, `backref`
+  and `captions` read this process's judge module, which does not judge
+  while the child does, so they read zero here; `shared` still counts the
+  pusher's loads, and `goalArchive` moves here too: a store load that
+  replays a `restore` override (`_replay_overrides`, under `load_goals` and
+  `load_goals_shared`) reads the archive through the counted shared reader.
   `plannerSkip` is the planner's inner change gate (`skipped`,
   `planned`, `recorded`, and since T401 (5c) `restored`, `refused`,
   `persisted`: the gate's memo of "the key of the last pass that had
@@ -5502,10 +5504,11 @@ Bounds and counters, all on `/perf` under `judge`:
   sweep unmarked and the first request retries it.
 - On the child road `parses.judge` and the `goals` block read zero: the judges' parses and store writes happen in the
   child, and their per-pass figures ride its done line as `judge.child.parses` and `judge.child.goalIo`. So do
-  `judge.tiers` and the judge-module memos (`memos.chain`, `courierSkip`, `plannerSkip`, `backref`, `captions`,
-  `goalArchive`): the gate and those memos run in the child, the done line carries neither, and `romp perf` prints no
-  gated runs and zero chain memo hits while the child judges. `judge.cpu_ms_workers` is the in-process pools' share,
-  near zero on this road.
+  `judge.tiers` and the judge-module memos (`memos.chain`, `courierSkip`, `plannerSkip`, `backref`, `captions`): the
+  gate and those memos run in the child, the done line carries neither, and `romp perf` prints no gated runs and zero
+  chain memo hits while the child judges. `memos.goalArchive` moves here too: a store load that replays a `restore`
+  override (`_replay_overrides`, under `load_goals` and `load_goals_shared`) reads the archive through the counted
+  shared reader. `judge.cpu_ms_workers` is the in-process pools' share, near zero on this road.
 - `cpu_ms_sum` counts the child's tier and worker CPU as it counts the in-process tiers and pools; `cpu_ms_child_workers`
   is the workers' share alone; `child` is the last done line's numbers: `seq`, `pid`, `t`, `chars` (the line's length),
   `status` (`ok` or `failed`), `failures` (a count), `recovered`, `wallMs`, `tierStarts`, `tierCpuMs`, `workerCpuMs`,
