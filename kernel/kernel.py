@@ -21926,8 +21926,9 @@ def _auth_avail():
     would use absent an explicit pick, the rule the LAUNCH follows (round 1 of the review, 2026-09-18): the
     machine's EXPLICIT default (sdk-defaults.json `auth` beside `authExplicit`, the Set default billing
     submenu) when this box can bill it, else the side that exists (the helper rule), in BOTH directions (the
-    user 2026-09-08: an explicit login default on a box with no login falls to the key, exactly as an explicit
-    key default on a helper-less box falls to the login). A per-session pick's flag-less write preselects
+    user 2026-09-08, who wanted the fall both ways: a login default on a box with no login falls to the key,
+    exactly as a key default on a helper-less box falls to the login; the value read is the explicit default
+    since round 1 of the review, 2026-09-18). A per-session pick's flag-less write preselects
     nothing: read here, it made every session created from the picker carry that pick as its OWN while a
     session created any other way followed the machine default, and the two creation roads billed different
     sides. The reason sentences are credentials.py's, one vocabulary for every surface."""
@@ -21943,7 +21944,7 @@ def _auth_avail():
     except jd._cred.CredentialError:
         managed = False                        # the settings cannot be read just now: cannot tell, so not "managed"
     # a signed-in account, or an account file that cannot be read just now (cannot tell is never "no login",
-    # review 2026-09-09: a remembered login pick must not fall to the key on a read failure)
+    # review 2026-09-09: an explicit login default must not fall to the key on a read failure)
     login_ok = (bool(_claude_account()) or _claude_account_state() == "unreadable") and not managed
     logins = _login_choices(login_ok, managed)
     explicit = bool(d.get("authExplicit")) and d.get("auth") in ("login", "key")   # the launch's gate (_explicit_default)

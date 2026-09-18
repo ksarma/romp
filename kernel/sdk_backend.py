@@ -6384,9 +6384,21 @@ class SdkSession:
         release scheduled on the loop in the window between its last step and loop.close() is dropped unrun, so the
         thread that acquired after the waiter left returns the slot itself, and a waiter leaving after the acquire
         returns it on its own thread; neither returns it twice. The timeout is the boot path's own backstop, said as
-        a problem and relaunched anyway, as the drive does. Returns whether to go on to the connect."""
+        a problem and relaunched anyway, as the drive does. Returns whether to go on to the connect.
+
+        A SLOT ALREADY HELD COVERS THIS CONNECT (round 2 of the review, 2026-09-18): a flagged connect that failed before
+        its handshake and came back to the loop top (a rewind the CLI refused; an attach that reached the host's hello
+        and timed out, retried) still holds its slot, since only the handshake and the boot hook free it; re-flagged
+        meanwhile (a second default write during the connect), the retry drew a second slot and stored its release over
+        the first, which was never called: one permit of the machine-wide bound gone for the kernel's life, per flip
+        during a retry. No acquire while one is held, and the store pops any release found standing and fires it, so
+        two are never held."""
         sem = getattr(self.backend, "_spawn_sem", None)
         if sem is None:
+            return True
+        with self._lock:
+            held = self._relaunch_slot is not None
+        if held:
             return True
         fut = self.loop.create_future()
         abandoned = threading.Event()   # the waiter left (the session ended): a slot acquired after this goes back at once
@@ -6439,7 +6451,12 @@ class SdkSession:
                               % self.name, problem=True)
             return True
         with self._lock:
-            self._relaunch_slot = sem.release
+            prev, self._relaunch_slot = self._relaunch_slot, sem.release
+        if prev is not None:
+            try:
+                prev()                             # a slot stored meanwhile goes back at once, never overwritten
+            except Exception as e:
+                self.backend._log("relaunch slot release (%s) failed: %s" % (self.name, e))
         return True
 
     def _q_append(self, text: str, meta=None):
@@ -7671,6 +7688,12 @@ class SdkSession:
             # and never reconnected, and every consult then rang the contract problem
             self._launching = None
             self._connecting = False
+            # THE FOLLOWER'S PENDING IS READ IN THE HOLD THAT ENDS THE WINDOW (round 2 of the review, 2026-09-18): the
+            # walk's attaching branch (_follow_default) writes a follower's pending under this lock only while the
+            # window is open, so a pending read here is one it left for this landing to decide, and one written after
+            # this hold is one the walk asks for itself. Read bare below the hold, a pending the walk wrote between the
+            # clear above and that read was decided by nothing: no request, no landing coming, the dots for good
+            pending_auth = self._auth_pending
             # whatever rode THIS connect has landed (snapshot's pending flags); the names of an arm made while it
             # was in progress ride that arm's connect from here (review round 9): until then the clear took them
             # too, and a fast or mode pick armed in the window showed no pending flag for its own reload
@@ -7690,7 +7713,7 @@ class SdkSession:
                 self._effort_pending = ""
                 self.backend._update_reg(self.sid, effortPending=False)
                 self.backend._poke()
-        if self._auth_pending:
+        if pending_auth:
             # ...when this connect launched that side (or launched plain on an explicit key pick with no
             # helper, which must not wear the dots forever). A billing pick made during the spawn of the
             # OTHER side stays pending for the reconnect its own request armed (review round 2, 2026-09-09;
@@ -7702,20 +7725,21 @@ class SdkSession:
             # auth_login is "" while a stored-login default names a real id, so its dots never cleared; round 1 of the
             # review: effective_login is a live availability read, and a stored login refused between the compose and
             # this landing read as "", so the dots stayed on a launch that carried exactly what was composed). This
-            # block runs outside _hold_write; the launched stamps and the composed login were read under it above
+            # block runs outside _hold_write; the launched stamps, the composed login and the pending (pending_auth)
+            # were read under it above
             launched_login = getattr(self, "_launched_login", "") or ""
             auth = getattr(self, "auth", None)       # None: a __new__-built test double, which follows no default
             if auth in ("login", "key") or auth is None:
                 if (self._launched_auth is None or self._launched_unkeyed_pick
-                        or (self._auth_pending == self._launched_auth
-                            and (self._auth_pending != "login"
+                        or (pending_auth == self._launched_auth
+                            and (pending_auth != "login"
                                  or launched_login == (getattr(self, "auth_login", "") or "")))):
                     self._auth_pending = ""
                     self.backend._update_reg(self.sid, authPending=False)
                     self.backend._poke()
             elif (self._launched_auth is None
-                    or (self._auth_pending == self._launched_auth
-                        and (self._auth_pending != "login" or launched_login == composed_login))):
+                    or (pending_auth == self._launched_auth
+                        and (pending_auth != "login" or launched_login == composed_login))):
                 # the follower's connect launched the side (and login) it was asked to move to, or attached to a CLI
                 # already on it: the ask is served. A launch replaced the process the report described, so the report
                 # is history (the arm clears it for an armed ask; a first connect of a fresh thread had no arm)
@@ -8746,6 +8770,10 @@ class SdkSession:
                 self._relaunch_bounded = False
                 if not await self._take_relaunch_slot():
                     continue                     # the session ended while it waited: nothing to launch
+                # re-flagged during the wait (a second default write; round 2 of the review, 2026-09-18): the connect
+                # below composes from the current default and serves it, so the flag is spent; left standing, the next
+                # reconnect, a pick's, drew a boot slot
+                self._relaunch_bounded = False
             # a DELIBERATE reconnect (the waker tore the last client down for an effort or model change: _reconnect armed and
             # no attach retry pending) hands the same conversation to a fresh client and its forwarded sends land through the
             # resume, so the fresh-CLI block below stamps the epoch and heals the awaiting but does NOT mark held echoes
@@ -15013,8 +15041,9 @@ class SdkBackend:
                "effort": eff, "lastSid": "", "alive": True}
         if d.get("model") and d["model"] != "default":
             reg["model"] = d["model"]
-        # Auth: the picker's explicit pick wins; else the remembered default (a gear /auth pick on any
-        # session); unset stays unset — effective_auth's fallback IS the pre-selector behavior.
+        # Auth: the picker's explicit pick wins; else the machine's EXPLICIT default (set_auth_default, the Set default
+        # billing submenu); unset stays unset (effective_auth's fallback IS the pre-selector behavior). A per-session
+        # pick's flag-less write seeds nothing (round 2 of the review, 2026-09-18, matching the block below).
         a, lid = _logins.parse_pick(auth)       # "login:<id>" names a stored login (T346); junk reads as no pick
         seeded = not a
         if seeded:
@@ -17804,6 +17833,8 @@ class SdkBackend:
                 s.auth = side
                 s.auth_login = login_id
                 s._auth_pending = ""
+                s._relaunch_bounded = False   # a follower's withdrawn ask (round 2 of the review, 2026-09-18): the flag was
+                #   its, and the next relaunch is a pick's own, which draws no boot slot (_take_relaunch_slot says why)
                 self._update_reg(sid, auth=side, authLogin=login_id, authPending=False)
                 s._withdraw_held_pick("auth")
                 self._log("auth (%s): set to %s; the pending %s pick is withdrawn" % (s.name, value, reverted))
@@ -17932,31 +17963,58 @@ class SdkBackend:
         report restored from the reg is re-attaching to a surviving CLI, and the composed shape says nothing about
         what that CLI bills, so the pending is set for the dots and the landing decides (_connect_landed: a launch of
         the default clears it; an attach to the other side runs this step again, with the stamps truthful); no
-        request now, since the served check would read the composed shape as launched and drop it. A follower that
+        request now, since the served check would read the composed shape as launched and drop it. The window is
+        read ONCE under the hold lock and the pending is written under it against a re-read (round 2 of the review,
+        2026-09-18): the landing stamps and clears the window in one hold on the loop thread and snapshots the pending
+        there, so a pending written while the window is open is the landing's to decide, and a window found closed
+        here means the landing ran between the read and the write with no pending to decide, and this step asks
+        itself, with the stamps truthful; two bare reads straddled the landing's stamp before (an attach read as
+        none, the step silent), and a pending written after the landing's read was decided by nothing. At the attach
+        landing an arm already standing (a pick's, made during the attach) does not stop the ask (round 2 of the
+        review): request_reconnect tolerates a standing request, and the recorded auth surface keeps a deferred arm
+        alive for this ask when the other pick is withdrawn; the early return recorded no surface, and a revert of
+        the other pick disarmed the deferred request under the follower's pending. A follower that
         already runs the new side with ANY reconnect pending (an earlier default, reverted before its reconnect ran;
         a stored login's pending whose side word matches, round 1 of the review) has that pending withdrawn as
         set_auth withdraws a reverted pick: a follower's pending is always to the current default, its reconnect
         would relaunch the side the process runs, and the served check clears neither the pending nor the flag. A CLI
-        keyed by a credential romp does not control (auth_live key with no apiKeyHelper in Claude Code's settings: a
-        project setting, the CLI's environment) is left where it is, said in one line (round 1 of the review): a
-        relaunch composes nothing that could move it, so it landed keyed again and rang at every write. Each
+        whose report says key while romp's own launch meant another side (_launched_auth login: a wrong landing) on
+        a box whose settings carry no apiKeyHelper (key_state "missing") bills a credential romp does not control (a
+        project setting, the CLI's own environment) and is left where it is, any standing ask withdrawn, said in one
+        line (round 1 of the review, narrowed in round 2, 2026-09-18): a relaunch composes nothing that could move
+        it, so it landed keyed again and rang at every write. The report alone is not that shape: a keyed CLI romp
+        launched keyed (_launched_auth key: composed plain while a helper existed, since removed) IS asked, and its
+        relaunch lands on the login; settings that cannot be read (key_state "unknown") are cannot-tell, said in a
+        line, and the ask is made; an object that never landed (_launched_auth None: a restart's restored report
+        before its first attach) is cannot-tell too, and its landing runs this step with the stamp truthful (the
+        attach stamps the report, so the ask is made there: one relaunch, which lands on the login when the key was
+        a helper's, and keyed again when it is a project's, said by the per-init check, after which the walk reads
+        the wrong landing and leaves it). Round 1's guard read the report and the settings alone, and left every
+        keyed follower on a helper-less box, the standing ask included. Each
         session moved draws a spawn-stagger slot for its relaunch (_relaunch_bounded, _take_relaunch_slot: a box of
         followers relaunches in bounded bursts, as boot resumes do), flagged only when the request can arm (a thread
         that has not reached its loop yet composes its first connect from the default anyway and holds a slot of its
-        own). The reg keeps the CLI's last report (apiKeyAuth): it still describes the process that runs until the
+        own) and cleared with the ask when the pending is withdrawn, here or by a pick in set_auth (round 2 of the
+        review: left standing, the next reconnect, a pick's, drew a boot slot and could wait the backstop behind
+        boot's and the drive's). The reg keeps the CLI's last report (apiKeyAuth): it still describes the process that runs until the
         relaunch, whose own init overwrites it, and a restart in between restores it (the constructor keeps a
         follower's authPending for the same reason). One log line per session moved or withdrawn; the untouched
         ones are quiet. No /auth chip: the session made no pick."""
         at_attach = label is None
-        running_side = s.auth_live or s._launched_auth
+        # ONE READ of the connect window under the hold lock (round 2 of the review, 2026-09-18): the landing stamps
+        # _launched_auth and clears _launching in one hold on the loop thread (_connect_landed), and two bare reads here
+        # straddled it, so a stamp landing between them read as no attach in progress and the step returned silent
+        with s._hold_lock:
+            launching = s._launching
+            launched_auth = s._launched_auth
+        running_side = s.auth_live or launched_auth
         if not running_side:
             return
         shape = self._launch_shape(s)
         target = (shape["auth"], shape["login"])
         running = (running_side, (getattr(s, "_launched_login", "") or "") if running_side == "login" else "")
-        launching = s._launching
         launching_pick = (launching.get("auth"), launching.get("login") or "") if launching else None
-        attaching = launching is not None and s._launched_auth is None and bool(s.auth_live)
+        attaching = launching is not None and launched_auth is None and bool(s.auth_live)
         if at_attach:
             side, lid = self._explicit_default()
             label = (self.login_display(lid) if lid else side) or "automatic"
@@ -17967,17 +18025,30 @@ class SdkBackend:
         if launching_pick == target:
             if not attaching or running == target:
                 return
-            if s._auth_pending != target[0]:
-                s._auth_pending = target[0]
-                self._update_reg(s.sid, authPending=True)
-                self._poke()
-                self._log("%s; this session follows the default, and the connect in progress may be attaching to a CLI "
-                          "that runs on %s: its landing decides" % (head, runs))
-            return
+            # the pending is written under the hold, against a re-read of the window (round 2 of the review): the landing
+            # snapshots the pending in the hold that ends the window, so a pending written while it is open is what the
+            # landing decides; a window found closed here means the landing ran between the read above and now with no
+            # pending to decide, and nothing else would, so this step asks below, with the stamps truthful. The reg flag
+            # rides the same hold: written after it, it overwrote a landing's clear with a flag naming no ask, and the
+            # next construction carried that flag as one
+            with s._hold_write():
+                landed = s._launching is None
+                asked = not landed and s._auth_pending != target[0]
+                if asked:
+                    s._auth_pending = target[0]
+                    self._update_reg(s.sid, authPending=True)
+            if not landed:
+                if asked:
+                    self._poke()
+                    self._log("%s; this session follows the default, and the connect in progress may be attaching to a CLI "
+                              "that runs on %s: its landing decides" % (head, runs))
+                return
+            launching = launching_pick = None    # the connect landed meanwhile: the checks below read the world as it is
         if running == target and launching_pick is None:
             if s._auth_pending:
                 reverted = s._auth_pending
                 s._auth_pending = ""
+                s._relaunch_bounded = False   # the flag was the ask's (round 2 of the review; the docstring says why)
                 self._update_reg(s.sid, authPending=False)
                 s._withdraw_held_pick("auth")
                 self._poke()
@@ -17989,13 +18060,29 @@ class SdkBackend:
             return
         if s._auth_pending == target[0] and launching_pick is None and not at_attach:
             return
-        if at_attach and (s._reconnect or s._reconnect_when_idle):
-            return   # an arm already stands (the walk's request during this attach rode after it); its landing clears the pending
-        if running_side == "key" and not self.key_available:
-            self._log("%s, but this session's CLI bills a key romp does not control (Claude Code's settings carry no "
-                      "apiKeyHelper: a project setting or the CLI's own environment), and a relaunch cannot change that; "
-                      "left as it is" % head)
-            return
+        if s.auth_live == "key" and launched_auth is not None and launched_auth != "key":
+            # A REPORT OF KEY THAT ROMP'S OWN LAUNCH DID NOT MEAN (round 1 of the review, narrowed in round 2, 2026-09-18;
+            # the docstring says which shapes are not this one): with no apiKeyHelper in Claude Code's settings the key is
+            # a project setting's or the CLI's own environment's, and a relaunch composes nothing that could move it. Any
+            # ask standing is withdrawn with the same words a reverted pick gets: left standing, the dots never cleared,
+            # every construction carried the flag, and set_auth read the pending as "already applying" with no arm behind
+            # it, so a pick was written and never applied. Settings that cannot be read are cannot-tell, never this line
+            state = self.key_state()
+            if state == "missing":
+                withdrawn = s._auth_pending
+                if withdrawn:
+                    s._auth_pending = ""
+                    s._relaunch_bounded = False
+                    self._update_reg(s.sid, authPending=False)
+                    s._withdraw_held_pick("auth")
+                    self._poke()
+                self._log("%s, but this session's CLI bills a key romp does not control (Claude Code's settings carry no "
+                          "apiKeyHelper: a project setting or the CLI's own environment), and a relaunch cannot change that; "
+                          "left as it is%s" % (head, ("; the pending %s reconnect is withdrawn" % withdrawn) if withdrawn else ""))
+                return
+            if state == "unknown":
+                self._log("%s; this session's CLI bills a key, and whether Claude Code's settings carry the apiKeyHelper "
+                          "that supplies it cannot be told until they read; asked anyway" % head)
         if s.auth_live and s._launched_auth != s.auth_live:
             # THE STAMP FOLLOWS THE REPORT: the served check (_served_by_connect) and set_auth's guards read the launched
             # shape (_launched_auth) as what the running process bills, and after a kernel restart that stamp is the

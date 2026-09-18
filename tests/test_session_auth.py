@@ -78,6 +78,10 @@ class _Keyed(unittest.TestCase):
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
+        # per-session hosts are on by default (T348), and a backend over a state root with no `session-hosts` file starts
+        # a real host for any session it connects: a state root minted here writes `off` itself (the repo's testing
+        # rule; round 2 of the review, 2026-09-18), so a case that spawns and constructs a session stays inside the belt
+        open(os.path.join(self.d, "session-hosts"), "w").write("off")
         self.cfg = tempfile.mkdtemp()
         self._cfg_before = os.environ.get("CLAUDE_CONFIG_DIR")
         os.environ["CLAUDE_CONFIG_DIR"] = self.cfg
@@ -1311,9 +1315,10 @@ class Availability(unittest.TestCase):
         self.assertNotIn(FAKE_KEY, json.dumps(km._auth_avail()), "the reasons carry no key material either")
 
     def test_the_default_falls_to_the_side_that_exists_both_ways(self):
-        """An explicit login default on a box with no login defaults to the key (the user 2026-09-08), exactly
-        as an explicit key default on a helper-less box already defaulted to the login. The value read is the
-        EXPLICIT default, the launch's own rule (round 1 of the review, 2026-09-18): a per-session pick's
+        """The default falls to the side that exists, in both directions (the user 2026-09-08, who wanted the fall
+        both ways: a login default on a box with no login defaults to the key, exactly as a key default on a
+        helper-less box defaults to the login). The value read is the EXPLICIT default, the launch's own rule
+        (round 1 of the review, 2026-09-18; the explicit default itself is T380, 2026-09-12): a per-session pick's
         flag-less write preselects nothing, so the picker and a pick-less spawn agree on the side."""
         p = km.jd.STATE / "sdk-defaults.json"
         p.parent.mkdir(parents=True, exist_ok=True)

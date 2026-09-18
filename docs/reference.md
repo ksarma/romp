@@ -702,10 +702,12 @@ login-billed launches.
 The login is named by its account (the email the credential store records);
 the key option is labelled plainly `API key`. No fragment of the key, not even
 a last-4 tail, ever reaches a browser or a screen, and romp never sees the key
-at all. A new session defaults to the last pick made anywhere, and before any
-pick to the key when a helper is configured. A remembered key pick on a box
-whose settings carry no helper leaves new sessions unpicked, and the kernel
-log says so once, naming the settings file to configure.
+at all. A new session is preselected on the machine's explicit default when
+the box can bill it, else on the rule that holds without one: the key when a
+helper is configured, else the login. An explicit key default on a box whose
+settings carry no helper leaves new sessions unpicked, and the kernel log says
+so once, naming the settings file to configure and the Set default billing
+submenu.
 
 A tab not yet loaded after a reconnect shows "Not loaded yet — click to load"
 as its hover tooltip, until its transcript arrives. The strip's skeleton tabs
