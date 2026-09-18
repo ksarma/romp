@@ -560,6 +560,38 @@ class Collector(unittest.TestCase):
         self.assertAlmostEqual(snap["judge"]["cpu_ms_sum"] - snap["judge"]["cpu_ms_workers"], 250.0,
                                msg="the tier threads' CPU, apart from the pool workers' share")
 
+    def test_judge_child_is_served_as_a_size_and_a_status_never_the_line(self):
+        """judge.child stood as the judges' child's done line verbatim (2026-09-18, a paste-safety review of the snapshot):
+        its failures.first is an exception message, which names paths and quotes session text, and its blocks are whatever
+        the child sent. The served block is the line's length in characters, one of two fixed status tokens and the
+        line's per-pass numbers; the failures are a count; nothing the child wrote as text reaches the snapshot."""
+        home = "/home/tester/.claude/projects/-home-tester-code-notes-api/%s.jsonl" % SID
+        first = "OSError: [Errno 2] No such file or directory: '%s'" % home
+        done = {"op": "done", "seq": 7, "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0,
+                "failures": {"count": 2, "first": first}, "recovered": True,
+                "recordCache": {"entries": 1}, "asmCheckpoint": {"restored": 1}, "parses": {"misses": 1, "hits": 0},
+                "goalIo": {"loads": 1, "note": "a text field a later child might add"}}
+        self.st.judge_child_done(done, pid=4242)
+        child = self.st.snapshot()["judge"]["child"]
+        text = json.dumps(child)
+        self.assertNotIn(SID, text, "the session id in the first failure's path: %s" % text)
+        self.assertNotIn("/home/", text, "the path in the first failure: %s" % text)
+        self.assertNotIn("first", text, "the failure text itself: %s" % text)
+        t = child.pop("t")
+        self.assertIsInstance(t, float)
+        compact = len(json.dumps(done, separators=(",", ":")))
+        self.assertEqual(child, {"seq": 7, "pid": 4242, "chars": compact, "status": "failed", "failures": 2, "recovered": True,
+                                 "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0},
+                         "no reader count given: the line re-encoded compactly is its size")
+        self.assertEqual(self.st.snapshot()["judge"]["cpu_ms_child_workers"], 4.0, "the CPU folds as before")
+        line = json.dumps(done) + "\n"
+        self.st.judge_child_done(done, pid=4242, chars=len(line))
+        self.assertEqual(self.st.snapshot()["judge"]["child"]["chars"], len(line), "the reader's own count when it has one")
+        self.st.judge_child_done({"op": "done", "seq": 8, "wallMs": "12", "tierStarts": True, "failures": None}, pid=4242)
+        child = self.st.snapshot()["judge"]["child"]
+        self.assertEqual((child["status"], child["failures"], child["wallMs"], child["tierStarts"]), ("ok", 0, None, None),
+                         "a non-number where a number belongs is served as null, never as itself")
+
     def test_sends_classify_by_kind_and_slot_name(self):
         self.st.send(("chat", SID), "full", 1000)            # a tuple dedup key: the slot is its first element
         self.st.send(("chat", SID), "full", 500)

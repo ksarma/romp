@@ -190,7 +190,11 @@ class ChildRoad(_Child):
         self.assertEqual(j["cpu_ms_sum"] - cpu0, 7.0, "tier plus workers, as the in-process figure counts")
         self.assertEqual((j.get("child") or {}).get("seq"), 1)
         self.assertEqual((j.get("child") or {}).get("pid"), getattr(getattr(km, "_JUDGE_CHILD", None), "pid", None))
-        self.assertEqual((j.get("child") or {}).get("recordCache"), {"entries": 1})
+        child = j.get("child") or {}
+        self.assertEqual((child.get("status"), child.get("failures"), child.get("tierStarts")), ("ok", 0, 2),
+                         "the line's status and numbers: %r" % child)
+        self.assertGreater(child.get("chars"), 0, "the line's length as it arrived")
+        self.assertNotIn("recordCache", child, "the line's blocks are not served (2026-09-18): the kernel reads them, /perf does not")
 
     def test_a_pass_with_no_store_moved_bumps_no_generation(self):
         km = self.km

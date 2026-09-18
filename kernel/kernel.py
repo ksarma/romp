@@ -1417,16 +1417,30 @@ class _PerfStats:
     def judge_orphan_swept(self):
         with self.lock:
             self.judge["orphansSwept"] += 1
-    def judge_child_done(self, done, pid=None):
+    CHILD_NUMBERS = ("wallMs", "tierStarts", "tierCpuMs", "workerCpuMs")   # the done line's per-pass figures judge.child keeps
+
+    def judge_child_done(self, done, pid=None, chars=None):
         """The child's done line (plans/judges-process.md rule 1): its tier starts and tier CPU join the in-process
-        counters, its workers' CPU is kept apart (the in-process figure comes from this module's pools), and the line
-        itself stands as judge.child for the read."""
+        counters, its workers' CPU is kept apart (the in-process figure comes from this module's pools), and judge.child
+        carries the line's SIZE and STATUS with its per-pass numbers, never the line itself. The line used to stand
+        verbatim (2026-09-18): its failures.first is an exception message, which names paths and quotes session text,
+        and its blocks are whatever the child chose to send, so a snapshot could not be pasted anywhere public. `chars`
+        is the line's length as it arrived (the reader's count; the line re-encoded when none is given), `status` one
+        of two fixed tokens (`ok`, `failed`), `failures` a count, and every other field a number or a boolean."""
+        f = done.get("failures")
+        failures = int(f.get("count") or 0) if isinstance(f, dict) else 0
+
+        def num(v):                                       # a JSON number as itself, anything else (a string, a bool, None) as None
+            return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+        child = {"seq": num(done.get("seq")), "pid": pid, "t": time.time(),
+                 "chars": int(chars) if chars is not None else len(json.dumps(done, separators=(",", ":"))),
+                 "status": "failed" if failures else "ok", "failures": failures, "recovered": bool(done.get("recovered"))}
+        child.update({k: num(done.get(k)) for k in self.CHILD_NUMBERS})
         with self.lock:
             j = self.judge
             j["cpu_ms_sum"] += float(done.get("tierCpuMs") or 0.0) + float(done.get("workerCpuMs") or 0.0)   # tiers plus workers, as
             j["cpu_ms_child_workers"] += float(done.get("workerCpuMs") or 0.0)                                 #  the in-process figure is
-            j["child"] = dict({k: v for k, v in done.items() if k != "op"}, pid=pid, t=time.time())   # the done line verbatim: its
-            #                                 counters are per-pass deltas and its gauges current values (the child's round three)
+            j["child"] = child                                                                                 #  the in-process one
     def http_request(self, path, dt):
         """dt None: count the request, add no time (the WebSocket upgrade case)."""
         with self.lock:
@@ -62210,6 +62224,7 @@ class _JudgeChild:
         self.pid = None
         self.buf = b""
         self.lost_spawns = 0
+        self.done_chars = None                # the last done line's length in characters: judge.child's size (2026-09-18)
         self.swept = False
         self.in_pass = False
 
@@ -62420,6 +62435,7 @@ class _JudgeChild:
                     self._lost_spawn()
                 return None
             self.lost_spawns = 0
+            self.done_chars = len(line)
             return done
 
     def _lost_spawn(self):
@@ -62516,7 +62532,7 @@ def _judge_child_pass(tracking):
     if done is None:
         _PERF_STATS.judge_pass_lost()
         return None
-    _PERF_STATS.judge_child_done(done, pid=_JUDGE_CHILD.pid)
+    _PERF_STATS.judge_child_done(done, pid=_JUDGE_CHILD.pid, chars=_JUDGE_CHILD.done_chars)
     if done.get("recovered"):                              # the child's calls served again after failing: the edge is its own
         try:
             _n = jd.rearm_failed_summaries(int(time.time()), auto=True)
