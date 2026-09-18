@@ -9,7 +9,8 @@ The drift this guards is subtle and silent: vscode-extension/install.sh builds d
 time, and the kernel's _ensure_bundles() REBUILDS it whenever a .ts/.css looks newer. If only one
 passed --production, any later source touch would swap the served dashboard back to the slow
 bundle on the next kernel restart, with nothing saying so. Source-level assertions, because the
-real build needs npm install and a network.
+real build needs npm install and a network; the executed class at the end runs both kernel builders over a
+recording stand-in for subprocess, so it needs no build either.
 """
 import glob
 import os
@@ -22,6 +23,13 @@ from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
+# The executed class below loads bin/romp-kernel, and romp code resolves its state root at import time, so the
+# root is made hermetic here, at module top level, BEFORE any load (tests/test_state_isolation_order.py pins the
+# order; the same preamble as tests/test_kernel_bundle_vendor_inputs.py).
+os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
+os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()   # hermetic BEFORE any romp code loads
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 KERNEL = os.path.join(ROOT, "kernel", "kernel.py")
 EXT_INSTALL = os.path.join(ROOT, "vscode-extension", "install.sh")
 ESBUILD = os.path.join(ROOT, "vscode-extension", "esbuild.js")
