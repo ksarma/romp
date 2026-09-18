@@ -545,6 +545,12 @@ separate toggle rather than one of the two dropdowns. A bare `/model` (the
 CLI's own picker), a value the kernel cannot vouch for (a typo), or a longer
 message that merely opens with the command goes to the CLI verbatim, and the
 chat shows the CLI's own reply.
+On a Codex session a one-token `/effort X` is instead a setting change checked
+against the selected model's catalog, and a level the model does not list is
+refused with the reason, in the chat as a warning and on `POST /send` as
+`ok: false`, with nothing delivered to the session; a longer message that
+merely opens with `/effort` still goes verbatim (see [Codex sessions](codex.md)
+for the catalog).
 
 A Claude Code session switches model live but reloads to apply a new effort:
 the chat shows "Reloading session…" and the effort badge shows switching-dots
@@ -3077,6 +3083,15 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   as booleans, the billing offer's open window and its reset as the card
   renders them, a parse's trailing idle edge), so a served card shows what a
   rebuilt one would.
+  `failed` counts the per-session card builds that raised (cumulative since
+  boot; the guarded try covers the memoized entry's decode, the key, the
+  derivation, the dependency key, the serialization and the put) and
+  `failing` the sessions whose last build raised (a standing count, cleared
+  when a build serves or derives the session or it leaves the alive set); a
+  failing session's previous cards are served while its memoized entry
+  decodes, else absent for that build; the fault is said once per session per
+  cause episode on stderr and as a bell row of the refused kind, anew after a
+  build serves or derives the session.
 - `sends`: `full`, `delta`, `deduped`, each a map from slot name (`chat`,
   `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
   was built and compared, then not sent.
