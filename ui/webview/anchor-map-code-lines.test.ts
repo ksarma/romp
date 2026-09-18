@@ -10,8 +10,9 @@
 // the source holds them, and one across rows to the span from the first character to the last, the line feeds and a quoted
 // fence's markers inside the quote as a Raw selection over the same characters mints (the brief's open question 2). Driven over
 // the synthetic fixture anchor-map-fixtures/cells.md's code section and anchor-map-fixtures/fenced.md (both in the notes-api
-// demo domain) rebuilt as the viewer renders them: marked's output under the one configuration (md-config.ts) parsed into the
-// DOM stand-in, then every fence dressed as mdBlock dresses it (file-view.ts): a language the viewer registers highlighted into
+// demo domain) rebuilt as the viewer renders them: marked's output as mdBlock parses it (its lexer, the literal-tags rule of
+// md-literal-tags.ts, its parser: viewerHtml) under the one configuration (md-config.ts) parsed into the DOM stand-in, then
+// every fence dressed as mdBlock dresses it (file-view.ts): a language the viewer registers highlighted into
 // hljs spans, the lines cut into `.cl` rows by the real wrapLinesHtml (code-block.ts) with the line feeds dropped, the Copy
 // button parked in the `<pre>`, and a URL in a row split into an `<a>` as linkifyFileText splits it. The idiom of
 // anchor-map-cells.test.ts. The browser leg, anchor-map-code-lines-browser.test.ts, runs the real viewer and the real panel.
@@ -31,6 +32,7 @@ import bash from "highlight.js/lib/languages/bash";
 import python from "highlight.js/lib/languages/python";
 import javascript from "highlight.js/lib/languages/javascript";
 import { applyMdConfig } from "./md-config";
+import { literalizeUnclosedTags } from "./md-literal-tags";
 import { wrapLinesHtml } from "./code-block";
 import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, paintRendered, paintChangesRendered, unpaintChanges, type SelLike, type MapResult, type ChangePaint } from "./anchor-map";
 import { hideEdges } from "../test-dom-shim";
@@ -180,11 +182,20 @@ function dressCode(box: FakeElement): void {
     pre.appendChild(btn);
   }
 }
+/** marked's HTML as the viewer's mdBlock parses it (file-view.ts): its lexer, the literal-tags rule (md-literal-tags.ts: an inline
+ *  start tag with no end tag in its block is literal text, decision 52 of plans/file-review.md, the rule the map applies after its
+ *  own lex too), its parser, over a copy of the singleton's defaults as marked.parse copies them. */
+function viewerHtml(text: string): string {
+  const opts = { ...marked.defaults };
+  const tokens = marked.lexer(text, opts);
+  literalizeUnclosedTags(tokens);
+  return marked.parser(tokens, opts);
+}
 /** `.fileview-md > marked output`, filled and dressed as the viewer's body is. */
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   standInFill(box);
   dressCode(box);
   return box;
@@ -193,7 +204,7 @@ function buildRendered(text: string): FakeElement {
 function undressed(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   standInFill(box);
   return box;
 }

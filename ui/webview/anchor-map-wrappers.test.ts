@@ -2,9 +2,11 @@
 // Slice 5: "pair blocks inside an unclosed HTML container (a flattened walk)", the plan's High defect; the Slice 2
 // refusals (1) and (2) handed to this slice; Slice 1's merge-review finding, the text-alike html node; the Slice 4 build
 // note's item 10 (d), the resync across an html block). Driven behaviourally over the viewer's Rendered shape rebuilt as
-// anchor-map-obsidian.test.ts rebuilds it: marked's output under the one configuration (md-config.ts) parsed into the
-// DOM stand-in, which nests the nodes after an unclosed tag inside it as a browser does, with the sanitizer's drops stood
-// in for (a `<style>` goes with its text, a non-checkbox `<input>` goes, a form-associated element is unwrapped: md-sanitize.ts)
+// anchor-map-obsidian.test.ts rebuilds it: marked's output as mdBlock parses it (its lexer, the literal-tags rule of
+// md-literal-tags.ts, its parser: viewerHtml) under the one configuration (md-config.ts) parsed into the DOM stand-in, which
+// nests the nodes after an unclosed tag in an html block inside it as a browser does (an unclosed inline tag reaches it as
+// literal text, decision 52 of plans/file-review.md), with the sanitizer's drops stood in for (a `<style>` goes with its text,
+// a non-checkbox `<input>` goes, a form-associated element is unwrapped: md-sanitize.ts)
 // and KaTeX's fill stood in for (a `.katex` root where a placeholder stood). Before this slice the html block that left a
 // `<div align="center">` or a `<details><summary>` open took every node to the end of the document (its nested blocks'
 // text occurs in no top-level node, so the resync fit at no end), every later selection was refused as "an HTML block"
@@ -21,6 +23,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { marked } from "marked";
 import { applyMdConfig, resolveWikilink } from "./md-config";
+import { literalizeUnclosedTags } from "./md-literal-tags";
 import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, renderedBlockWrappers, paintRendered, type SelLike, type MapResult } from "./anchor-map";
 import { hideEdges, sameNodes } from "../test-dom-shim";
 
@@ -169,11 +172,22 @@ function standInFill(root: FakeElement): void {
     } else standInFill(el);
   }
 }
+/** marked's HTML as the viewer's mdBlock parses a file document (file-view.ts): its lexer, the literal-tags rule (md-literal-tags.ts:
+ *  an inline start tag with no end tag in its block is literal text, decision 52 of plans/file-review.md, the rule the map applies
+ *  after its own lex too), the file kind's wikilink stamp as the per-call walk marked.parse ran applied it before (resolveWikilink),
+ *  its parser, over a copy of the singleton's defaults as marked.parse copies them. */
+function viewerHtml(text: string): string {
+  const opts = { ...marked.defaults };
+  const tokens = marked.lexer(text, opts);
+  literalizeUnclosedTags(tokens);
+  marked.walkTokens(tokens, (t) => { resolveWikilink(t); });
+  return marked.parser(tokens, opts);
+}
 /** `.fileview-md > marked output`, sanitized and filled as the viewer's body is (the file kind's wikilink stamp applied as file-view-links.ts applies it). */
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text, { walkTokens: (t) => { resolveWikilink(t); } }) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   standInSanitize(box);
   standInFill(box);
   return box;

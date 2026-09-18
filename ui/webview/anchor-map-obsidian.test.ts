@@ -1,6 +1,7 @@
 // The anchor map over the Slice 4 constructs (plans/markdown-viewer.md: front matter, footnotes, callouts, ==mark==,
 // wikilinks and embeds, and math in every bundle), driven behaviourally over the viewer's Rendered shape rebuilt as
-// anchor-map.test.ts rebuilds it (marked's output parsed into the DOM stand-in; the one configuration applied through
+// anchor-map.test.ts rebuilds it (marked's output as mdBlock parses it, its lexer, the literal-tags rule of md-literal-tags.ts
+// and its parser, viewerHtml, parsed into the DOM stand-in; the one configuration applied through
 // md-config.ts, as the viewer applies it) with the fill's result stood in for: KaTeX replaces a placeholder with a
 // `.katex` root after the sanitize (math.ts), and the stand-in does the same, so the walk meets the element it meets in
 // the browser. The acceptance: a paragraph after front matter and after a footnote definition maps to its source
@@ -15,6 +16,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Lexer, marked } from "marked";
 import { applyMdConfig, resolveWikilink } from "./md-config";
+import { literalizeUnclosedTags } from "./md-literal-tags";
 import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, paintRendered, trimCollapsedMarks, refusalNoun, type SelLike, type MapResult } from "./anchor-map";
 import { hideEdges } from "../test-dom-shim";
 
@@ -153,9 +155,20 @@ function standInFill(root: FakeElement): void {
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text, { walkTokens: (t) => { resolveWikilink(t); } }) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   standInFill(box);
   return box;
+}
+/** marked's HTML as the viewer's mdBlock parses a file document (file-view.ts): its lexer, the literal-tags rule (md-literal-tags.ts:
+ *  an inline start tag with no end tag in its block is literal text, decision 52 of plans/file-review.md, the rule the map applies
+ *  after its own lex too), the file kind's wikilink stamp as the per-call walk marked.parse ran applied it before (resolveWikilink),
+ *  its parser, over a copy of the singleton's defaults as marked.parse copies them. */
+function viewerHtml(text: string): string {
+  const opts = { ...marked.defaults };
+  const tokens = marked.lexer(text, opts);
+  literalizeUnclosedTags(tokens);
+  marked.walkTokens(tokens, (t) => { resolveWikilink(t); });
+  return marked.parser(tokens, opts);
 }
 const El = (n: FakeNode) => n as unknown as Element;
 function allText(root: FakeNode): FakeText[] {

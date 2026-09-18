@@ -14,9 +14,11 @@
 // the quote is the source between, pipes, the delimiter row and line feeds included, the characters a Raw selection over the
 // same text mints; Slice 8 refused it with the one-cell sentence and the Raw view offered on the covered cells' span. Every
 // anchoring case here is held against the Raw path over the same characters (anchors, below). Driven over the synthetic
-// fixture anchor-map-fixtures/cells.md (the notes-api demo domain) rebuilt as the viewer renders it: marked's output under
-// the one configuration (md-config.ts) parsed into the DOM stand-in, which nests the nodes after an unclosed tag as a browser
-// does, KaTeX's fill stood in for; the idiom of anchor-map-obsidian.test.ts and anchor-map-wrappers.test.ts. The browser leg,
+// fixture anchor-map-fixtures/cells.md (the notes-api demo domain) rebuilt as the viewer renders it: marked's output as
+// mdBlock parses it (its lexer, the literal-tags rule of md-literal-tags.ts, its parser: viewerHtml) under the one
+// configuration (md-config.ts) parsed into the DOM stand-in, which nests the nodes after an unclosed tag in an html block as a
+// browser does (an unclosed inline tag reaches it as literal text, decision 52), KaTeX's fill stood in for; the idiom of
+// anchor-map-obsidian.test.ts and anchor-map-wrappers.test.ts. The browser leg,
 // anchor-map-cells-browser.test.ts, runs the real viewer and the real panel. Every case that maps a cell refuses "touches a
 // table" over the tree before Slice 8; the multi-cell cases refuse with the one-cell sentence over the tree before decision 53
 // (the FAILS BEFORE case names it). One case is the Slice 8 review's (round 1): an astral character in a cell the per-cell
@@ -30,6 +32,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { marked, Tokenizer, type Tokens } from "marked";
 import { applyMdConfig } from "./md-config";
+import { literalizeUnclosedTags } from "./md-literal-tags";
 import { mapRenderedSelection, mapRawSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, paintRendered, paintChangesRendered, unpaintChanges, type SelLike, type MapResult, type ChangePaint } from "./anchor-map";
 import { hideEdges } from "../test-dom-shim";
 
@@ -144,11 +147,20 @@ function standInFill(root: FakeElement): void {
     } else standInFill(el);
   }
 }
+/** marked's HTML as the viewer's mdBlock parses it (file-view.ts): its lexer, the literal-tags rule (md-literal-tags.ts: an inline
+ *  start tag with no end tag in its block is literal text, decision 52 of plans/file-review.md, the rule the map applies after its
+ *  own lex too), its parser, over a copy of the singleton's defaults as marked.parse copies them. */
+function viewerHtml(text: string): string {
+  const opts = { ...marked.defaults };
+  const tokens = marked.lexer(text, opts);
+  literalizeUnclosedTags(tokens);
+  return marked.parser(tokens, opts);
+}
 /** `.fileview-md > marked output`, filled as the viewer's body is. */
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   standInFill(box);
   return box;
 }
@@ -237,6 +249,20 @@ function anchors(r: MapResult, src: string, from: string, to: string, label: str
   assert.deepEqual([raw.range, raw.quote], [a.range, a.quote], label + ": the Raw view mints the same anchor over the same characters");
   return a.quote;
 }
+
+// ── the stand-in follows the viewer's recipe ──
+
+test("the stand-in renders as the viewer's mdBlock parses (its lexer, the literal-tags rule of md-literal-tags.ts, its parser): a cell holding `<b>open`, an inline start tag with no end tag in it, shows the tag's characters as text and opens no element (decision 52), the tag maps to its own offsets, and a drag from it into the next cell anchors with the pipe inside the quote, equal to the Raw path (decision 53); a paragraph holding `<i>lead` before the table the same (the review's consolidation pass, 2026-09-18: this file's stand-in parsed with marked.parse alone before it, which opened an element the viewer no longer opens; the fixture holds no such tag, so every other case here renders as it did)", () => {
+  const SRC = "Intro <i>lead here.\n\n| a | b |\n|---|---|\n| <b>open | z1 |\n\nAfter.\n";
+  const box = buildRendered(SRC);
+  assert.deepEqual(allOf(box, "TD").map(shape), [["#text(<b>open)"], ["#text(z1)"]], "the tag's characters are the cell's text, no element opened");
+  assert.equal(allOf(box, "B").length + allOf(box, "I").length, 0, "no b or i element in the tree");
+  assert.equal(allOf(box, "P")[0].textContent, "Intro <i>lead here.", "the paragraph shows its tag");
+  mapsWhole(box, SRC, "<b>open");
+  mapsWhole(box, SRC, "<i>lead");
+  mapsWhole(box, SRC, "After.");
+  anchors(mapRenderedSelection(sel(point(box, "<b>open"), point(box, "z1", true)), El(box), SRC), SRC, "<b>open", "z1", "the tag's cell into the next");
+});
 
 // ── the pairing: nothing about the block table changes ──
 

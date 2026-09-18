@@ -5,7 +5,11 @@
 // keeps as they are with one exception: an element in its FORBID_CONTENTS set (script always, style since
 // md-sanitize.ts forbade the tag) goes with its text, so a paragraph carrying one mid-line maps here and is
 // refused in the viewer as a rendered-text mismatch; md-sanitize-anchor-map-browser.test.ts pins that shape
-// over the real sanitizer. Fixtures are synthetic (a notes-api world) and live in anchor-map-fixtures/.
+// over the real sanitizer. Fixtures are synthetic (a notes-api world) and live in anchor-map-fixtures/. The Rendered
+// shape's HTML follows mdBlock's parse step by step (viewerHtml, below): marked's lexer, the literal-tags rule of
+// md-literal-tags.ts (an inline start tag with no end tag in its block is literal text, decision 52 of plans/file-review.md),
+// its parser; the fixtures hold no such tag, so the HTML is marked.parse's for them, and a note that holds one renders here
+// as the viewer renders it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { inspect } from "node:util";
@@ -19,6 +23,7 @@ import cssLang from "highlight.js/lib/languages/css";
 import markdown from "highlight.js/lib/languages/markdown";
 import { marked } from "marked";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, applied here as the viewer applies it
+import { literalizeUnclosedTags } from "./md-literal-tags";   // the rule mdBlock runs between marked's lexer and its parser (viewerHtml)
 import {
   mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered,
   rawOffsetToLine, rawRowForOffset, type SelLike, type MapResult, type SourceRange,
@@ -196,13 +201,22 @@ function buildRaw(text: string, filePath: string): RawDom { return buildRawWith(
 /** The viewer's grid since Slice 7 (the replica wrapNumberedHtml: the three-ending split), the highlighter included. */
 function buildRawViewer(text: string, filePath: string): RawDom { return buildRawWith(wrapNumberedHtml, text, filePath); }
 type MdDom = { body: FakeElement; box: FakeElement; before: FakeElement };
+/** marked's HTML as the viewer's mdBlock parses it (file-view.ts): its lexer, the literal-tags rule (md-literal-tags.ts: an inline
+ *  start tag with no end tag in its block is literal text, decision 52 of plans/file-review.md, the rule the map applies after its
+ *  own lex too), its parser, over a copy of the singleton's defaults as marked.parse copies them. */
+function viewerHtml(text: string): string {
+  const opts = { ...marked.defaults };
+  const tokens = marked.lexer(text, opts);
+  literalizeUnclosedTags(tokens);
+  return marked.parser(tokens, opts);
+}
 /** `.fileview-body > div.fileview-md > marked output` (mdBlock without DOMPurify, see the header). */
 function buildRendered(text: string): MdDom {
   const doc = new FakeDocument();
   const body = doc.createElement("div");
   const before = doc.createElement("div"); before.appendChild(doc.createTextNode("Rendered · Raw"));
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   body.appendChild(before); body.appendChild(box);
   return { body, box, before };
 }
@@ -1086,7 +1100,7 @@ test("caches re-analyze when a container's children are replaced or the source c
   const { box } = buildRendered(A);
   assert.equal(ok(mapRenderedSelection(wholeOf(firstEl(box, "H1")), El(box), A)).quote, "Alpha");
   for (const c of box.childNodes.slice()) box.removeChild(c);
-  for (const n of parseHTML(box.ownerDocument, marked.parse(B) as string)) box.appendChild(n);
+  for (const n of parseHTML(box.ownerDocument, viewerHtml(B))) box.appendChild(n);
   assert.equal(ok(mapRenderedSelection(wholeOf(firstEl(box, "H1")), El(box), B)).quote, "Beta");
   bad(mapRenderedSelection(wholeOf(firstEl(box, "H1")), El(box), A));
   // Raw: the same code element re-filled with another file

@@ -168,6 +168,22 @@ test('decision 52 records the heading id a converted tag changes as left, with t
   assert.ok(pin.includes('viewerHtml("## Results <b>\\n"), "<h2>Results &lt;b&gt;</h2>\\n"') && pin.includes('assert.equal(headingSlug(shown), "results-b");'), 'the test module holds the shape and the slug');
 });
 
+test('the anchor-map stand-in suites render through the viewer\'s recipe: each imports the rule and defines viewerHtml with it between marked\'s lexer and its parser, no buildRendered parses with marked.parse alone, and the cells suite holds a converted tag against the recipe', () => {
+  for (const f of ['anchor-map.test.ts', 'anchor-map-cells.test.ts', 'anchor-map-cells-formulas.test.ts', 'anchor-map-code-lines.test.ts', 'anchor-map-wrappers.test.ts', 'anchor-map-obsidian.test.ts']) {
+    const src = read('ui', 'webview', f);
+    assert.match(src, /^import \{ literalizeUnclosedTags \} from "\.\/md-literal-tags";/m, `${f} imports the rule`);
+    assert.match(src, /\nfunction viewerHtml\(text: string\): string \{\n  const opts = \{ \.\.\.marked\.defaults \};\n  const tokens = marked\.lexer\(text, opts\);\n  literalizeUnclosedTags\(tokens\);\n/, `${f}: the recipe, the rule right after the lexer`);
+    const at = src.indexOf('\nfunction buildRendered(');
+    assert.ok(at >= 0, `${f} builds the rendered stand-in`);
+    const body = src.slice(at, src.indexOf('\n}\n', at));
+    assert.ok(body.includes('viewerHtml(text)') && !body.includes('marked.parse('), `${f}: buildRendered parses through the recipe`);
+  }
+  const am = read('ui', 'webview', 'anchor-map.test.ts');
+  assert.ok(am.includes('parseHTML(box.ownerDocument, viewerHtml(B))') && !am.includes('marked.parse(B)'), 'the re-filled box in anchor-map.test.ts too');
+  const cells = read('ui', 'webview', 'anchor-map-cells.test.ts');
+  assert.ok(cells.includes('| <b>open | z1 |') && cells.includes('[["#text(<b>open)"], ["#text(z1)"]]'), 'the cells suite holds a converted tag in a cell against the recipe');
+});
+
 // ── the inventory, both ways ────────────────────────────────────────
 
 /** The test modules a record names in backticks, as repo-relative paths. */
