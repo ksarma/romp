@@ -487,6 +487,13 @@ def _stage_ring_len(mem_total=None):
     return _STAGE_RING_LEN[0]                                    #  deque(maxlen=) raise inside cycle() (round two, low 2)
 
 
+# The browser kinds a /perf key may name (pusher.clients.byKind, 2026-09-18): a FIXED list, so the served keys are
+# paste-safe whatever a dial's User-Agent header carries. _ua_kind derives one from the header at the handshake; the header
+# itself is never kept and never served. A client made without a header (a relay's splice, the extension's pipe) is "none";
+# a header no rule names is "other". Bound before the collector: its reset() seeds one row per kind.
+WS_UA_KINDS = ("safari-ios", "safari-mac", "chrome", "firefox", "other", "none")
+
+
 class _PerfStats:
     """Always-on counters behind GET /perf (`romp perf`): where the kernel's threads spend their time,
     kept cheap enough to leave running. Every writer takes the lock and does a few dict operations;
@@ -548,15 +555,34 @@ class _PerfStats:
                                    cycle_ms_p50 / cycle_ms_p90 / cycle_ms_ring_max / ring_n from a
                                    ring of the last RING cycle durations; sends (every client payload);
                                    idle_cycles / idle_ms_sum / idle_cpu_ms_sum (cycles that set no wake,
-                                   sent no payload and saved no store: what a longer wait would skip)
+                                   sent no payload and saved no store: what a longer wait would skip);
+                                   clients (what each client's sender thread wrote to its socket,
+                                   2026-09-18) -> byApp {app: {frames, bytes}} by the app the client
+                                   declared (identifier names, at most APPS of them, else "other";
+                                   "none" when it declared none) and byKind {kind: {frames, bytes,
+                                   sendMs, sendMax, sends}} by the browser kind its User-Agent header
+                                   classed to at the handshake (WS_UA_KINDS, a fixed list; the header
+                                   is never served): the text frames written and their wire bytes, and
+                                   the writes' wall ms (sum, max) with their count (sendMs / sends is the
+                                   mean; a write the socket refused is not counted)
       stages_ms                    jobs: the cycle's tick jobs outside _push_all; push: _push_all as
                                    the cycle calls it; push.chat (the tab strip, the build_session
                                    loop and the chat sends), push.feed (the view signature,
                                    _cached_feed and the ledgers attach), push.timeline (the skeleton
                                    and _cached_timeline), push.send (the feed/bars serialization and
-                                   sends). The push.* stages are measured inside _push for EVERY
-                                   caller, connect pushes on handler threads included, so their sum
-                                   can exceed `push`
+                                   sends). Inside push.chat, its seams (2026-09-18): push.chat.sig
+                                   (each tab's _chat_build_sig, every tab every cycle, the post-build
+                                   one included), push.chat.build (build_session, a rebuild only) and
+                                   push.chat.send (the events diff and the per-client chat sends);
+                                   inside push.send: push.send.feedParts (the feed's per-entry pass
+                                   and its signature, a wire miss only), push.send.barsSplit (the
+                                   bars' split, signature and estimate, or the unkeyable fallback's
+                                   whole dump) and push.send.compare (the per-client _send_feed and
+                                   _send_slot calls, whole or delta). A seam is recorded when its
+                                   work ran, so a served tab lists no build seam and a wire hit no
+                                   feedParts or barsSplit. The push.* stages are measured inside
+                                   _push for EVERY caller, connect pushes on handler threads
+                                   included, so their sum can exceed `push`
       builds                       chat / feed / timeline / feedJson -> {cached, built, ms}: served
                                    from the build cache vs rebuilt, and the rebuild time. feedJson is
                                    GET /feed.json's own reads (_pure_feed), kept apart from `feed`,
@@ -643,7 +669,12 @@ class _PerfStats:
                                    bars_sig_fallback (bars builds that could not be keyed and took
                                    the whole dump for their signature), default_str (values no
                                    wire encoder could serialize as JSON and shipped as str(), one
-                                   per encode; _wire_default says each type once on stderr);
+                                   per encode; _wire_default says each type once on stderr),
+                                   entries_walked / entries_encoded (the entries _delta_split
+                                   visited and the ones it json-encoded rather than served from
+                                   its per-entry memo, 2026-09-18) and feed_slot_split (feed sends
+                                   through the view-delta slot path: a ?delta=1 feed client without
+                                   FEED_DELTA_CAP, whose split re-encodes every card per build);
                                    intrMarks (the _interrupt_marks memo) -> hit / miss / evict and
                                    the gauge entries; sessions_scope (the cycle's discover memo) ->
                                    hit / miss / wide_hit / wide_miss; the per-lane reader memos:
@@ -775,18 +806,30 @@ class _PerfStats:
     # below the table itself). test_perf_stats pins it at 1.5x the literal count.
     HTTP_PATHS = 256
     SLOTS = 32
+    APPS = 16                                 # distinct client app names pusher.clients.byApp keys (client_send); the rest, and any
+    #                                           name outside _PERF_IDENT, count under "other" (2026-09-18: the name is the client's
+    #                                           own text). connectPush.byApp takes the same rule when the served-/perf leak branch lands.
     JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "turnNotify", "liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
             "unreadableStores",   # the fork's unreadable-store warn (PR 322), a housekeeping stage on the jobs thread since the 2026-09-15 pull-in
             "autoNudge", "interruptBlock", "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "persistCheckpoints", "convergeCheckpoints", "bootRowBackstop",
             "kernelSample", "autoPauseOnLimit", "usagePoll", "autoPauseOnSpend", "spendGuard", "autoResumeRetry", "apiHealth",
             "autoResumeSession", "autoRetry", "idleQueueDrive", "clearDoneNotes")   # the tick jobs, each a `jobs.<job>` stage (T398)
-    STAGES = ("prelude", "jobs", "push", "push.chat", "push.feed", "push.timeline", "push.send", "push.warm", "push.feedFirst",
+    STAGES = ("prelude", "jobs", "push",
+              "push.chat", "push.chat.sig", "push.chat.build", "push.chat.send",         # the chat stage and its seams (2026-09-18)
+              "push.feed", "push.timeline",
+              "push.send", "push.send.feedParts", "push.send.barsSplit", "push.send.compare",   # the send stage and its seams
+              "push.warm", "push.feedFirst",
               "jobsPass", "jobs.prelude") \
         + tuple("jobs." + j for j in JOBS)   # every stage a fresh snapshot lists at zero: the cycle's prelude, the containers, the sub-stages
     #                                          (`jobsPass` and `jobs.prelude` are the jobs thread's: its pass and its own opening)
     OWNERS = ("pusher", "jobs")              # the two threads whose per-cycle splits the stats keep (the jobs thread since the split
     #                                          of the housekeeping off the pusher, 2026-09-13; see _jobs_loop)
-    CONTAINERS = {"push": "push.", "jobs": "jobs.", "jobsPass": "jobs."}   # a container stage -> the prefix of its sub-stages
+    # a container stage -> the prefix of its sub-stages. push.chat and push.send are containers of their own seams (stage 1 of
+    # the incremental-push design, 2026-09-18): a seam's bytes count in the seam, the container's glue in `<container>.other`,
+    # and a container counts a nested container's rows through that container's own row (`_through_nested` below), so `push`
+    # counts the chat's bytes once, not again through push.chat.build; a dotted stage under a plain job (jobs.autoNudge.parse)
+    # counts directly, as it did before the seams
+    CONTAINERS = {"push": "push.", "push.chat": "push.chat.", "push.send": "push.send.", "jobs": "jobs.", "jobsPass": "jobs."}
     BUILDS = ("chat", "feed", "timeline", "feedJson", "thread")
     # builds.chat's bg_miss labels: _chat_build_sig's components, a tab with no cached build, and a tab whose
     # signature could not be taken
@@ -809,6 +852,12 @@ class _PerfStats:
             # a fresh client's full push on its handler thread (2026-09-14): the browser's own first draw after a reload or a
             # restart, per app; the pusher's cycles never see it, so the restart's logo phase had no number before this
             self.connect_push_stats = {"count": 0, "ms_sum": 0.0, "ms_max": 0.0, "ms_last": 0.0, "byApp": {}}
+            # what each client's sender thread wrote to its socket (2026-09-18, for the phone measurements): text frames and their
+            # wire bytes by the app the client declared and by the browser kind its User-Agent header classed to (WS_UA_KINDS,
+            # one row per kind from the start, so the key set is fixed), and per kind the write's wall ms (sum and max) and the
+            # timed writes (`sends`, the divisor of sendMs; one timed write per frame, so it equals frames). See client_send.
+            self.client_stats = {"byApp": {},
+                                 "byKind": {k: {"frames": 0, "bytes": 0, "sendMs": 0.0, "sendMax": 0.0, "sends": 0} for k in WS_UA_KINDS}}
             self.ring = collections.deque(maxlen=self.RING)
             self.stages = {k: 0.0 for k in self.STAGES}
             # T397: the stage split PER CYCLE. `cycle_stages` fills as the cycle's stages close (wall ms, the reader's bytes
@@ -922,6 +971,36 @@ class _PerfStats:
             a["count"] += 1; a["ms_sum"] += ms; a["ms_last"] = ms
             if ms > a["ms_max"]:
                 a["ms_max"] = ms
+
+    def client_send(self, app, kind, nbytes, dt):
+        """One text frame a client's sender thread wrote to its socket (_ws_sender): its wire bytes (header and payload)
+        and the write's wall seconds, from the frame's encode to sendall's return, under the app the client declared and
+        the kind its User-Agent header classed to (WS_UA_KINDS; anything else counts under "other"). A write the socket
+        refused is not counted: the client is dropped. The app is the client's own text (chat, feed, timeline, ...): a
+        name outside _PERF_IDENT's grammar, or past the APPS distinct names, counts under "other"; a client that
+        declared none counts under "none" while the table has room for that word, else under "other" like any name the
+        cap refuses (the snapshot is meant to be pasteable, and a key is a leak vector; the same rule the
+        perf-served-leaks branch gives connectPush.byApp)."""
+        ms = dt * 1000.0
+        app = str(app) if app else "none"
+        if not _PERF_IDENT.fullmatch(app):   # fullmatch, not match: the pattern's $ also matches before a trailing newline, and match let a name ending in one through as a key
+            app = "other"
+        if kind not in WS_UA_KINDS:
+            kind = "other"
+        with self.lock:
+            c = self.client_stats
+            a = c["byApp"].get(app)
+            if a is None:
+                if len(c["byApp"]) >= self.APPS:
+                    app = "other"
+                    a = c["byApp"].get(app)
+                if a is None:
+                    a = c["byApp"][app] = {"frames": 0, "bytes": 0}
+            a["frames"] += 1; a["bytes"] += int(nbytes)
+            k = c["byKind"][kind]
+            k["frames"] += 1; k["bytes"] += int(nbytes); k["sends"] += 1; k["sendMs"] += ms
+            if ms > k["sendMax"]:
+                k["sendMax"] = ms
 
     def cycle_failed(self):
         """A pusher cycle that raised out of the loop and was skipped (the loop's guard): counted under its lock like every
@@ -1058,6 +1137,16 @@ class _PerfStats:
                 cs = st["stages"].setdefault("jobs.other", {"ms": 0.0, "bytes": 0, "hydrated": 0})
                 cs["bytes"] += max(0, marks[0] - prev[0]); cs["hydrated"] += max(0, marks[1] - prev[1])
 
+    @classmethod
+    def _through_nested(cls, pfx, key, stages):
+        """Whether a row under a container's prefix is counted through a NESTED container's row rather than directly:
+        `push.chat.sig` under `push` when the split holds a `push.chat` row (its bytes are in that row's sum). A dotted
+        stage whose head is no container (`jobs.autoNudge.parse`, a job's part from _sub_stage) counts directly, as does
+        a seam whose container never closed (a raise that escaped the chat loop returns before `push.chat` closes):
+        the first reading, "direct children only", dropped both (2026-09-18 review)."""
+        head, dot, _rest = key[len(pfx):].partition(".")
+        return bool(dot) and (pfx + head) in cls.CONTAINERS and (pfx + head) in stages
+
     def stage(self, name, dt):
         marks = self._byte_marks()
         with self.lock:
@@ -1076,8 +1165,9 @@ class _PerfStats:
                     g = stages.setdefault(pfx + "other", {"ms": 0.0, "bytes": 0, "hydrated": 0})
                     g["bytes"] += max(0, marks[0] - prev[0]); g["hydrated"] += max(0, marks[1] - prev[1])
                 st["mark"] = marks
-                cs["bytes"] = sum(v["bytes"] for k, v in stages.items() if k.startswith(pfx))
-                cs["hydrated"] = sum(v["hydrated"] for k, v in stages.items() if k.startswith(pfx))
+                kids = [v for k, v in stages.items() if k.startswith(pfx) and not self._through_nested(pfx, k, stages)]
+                cs["bytes"] = sum(v["bytes"] for v in kids)
+                cs["hydrated"] = sum(v["hydrated"] for v in kids)
             else:
                 prev = st["mark"]
                 if prev is not None:
@@ -1365,6 +1455,8 @@ class _PerfStats:
             pusher = dict(self.pusher)
             pusher["connectPush"] = {k: (dict(v) if k != "byApp" else {a: dict(row) for a, row in v.items()}) if isinstance(v, dict) else v
                                      for k, v in self.connect_push_stats.items()}
+            pusher["clients"] = {"byApp": {a: dict(row) for a, row in self.client_stats["byApp"].items()},   # per-client wire
+                                 "byKind": {k: dict(row) for k, row in self.client_stats["byKind"].items()}}   #  counters (2026-09-18)
             pusher["firstCycle"] = dict(self.first_cycle) if self.first_cycle is not None else None   # T397: the boot's
             sr = list(self.stage_ring) if self.stage_ring is not None else []                           #  first cycle's split
             pusher["stageRing"] = sr if ring_all else sr[-self.STAGE_RING_SERVED:]   # the newest few by default: the whole ring
@@ -1441,7 +1533,7 @@ class _PerfStats:
                           ("backref", jd.backref_memo_stats), ("captions", jd.captions_memo_stats),
                           ("goalArchive", jd.goal_archive_memo_stats), ("plannerSkip", jd.planner_skip_stats),
                           ("liftGate", _lift_gate_report), ("bgTops", _bg_tops_report),
-                          ("wire", lambda: dict(_wire_stats)),
+                          ("wire", _wire_stats_report),
                           ("intrMarks", _intr_marks_memo_report), ("deadWait", lambda: dict(_DEAD_WAIT_STATS)),
                           ("tickSeen", _tick_seen_report),
                           ("sessions_scope", _sessions_scope_report), ("caps", _caps_memo_report),
@@ -1676,6 +1768,10 @@ class _CountedEvent(threading.Event):
             self._on_set()
 
 
+
+
+_PERF_IDENT = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")   # a name a /perf key may carry when the name is a client's own text (the
+#                                                        browser's perf-telemetry `ident` grammar, without its colon): else "other"
 
 
 def _perf_http_key(method, path):
@@ -36784,7 +36880,9 @@ def _chat_diff(prev, cur):
     earlier card returns that card's index. 0 when there's no prior build (→ a full send)."""
     if not prev:
         return 0
-    n = min(len(prev), len(cur))
+    if prev is cur:                    # the served tab: _push re-stores the cache hit's own events list as the
+        return len(cur)                # baseline, so the walk below would visit every event to find no change
+    n = min(len(prev), len(cur))       # (the exact return, 2026-09-18; tests/test_kernel_delta_send.py)
     i = 0
     while i < n:
         a, b = prev[i], cur[i]
@@ -51927,7 +52025,9 @@ def _ws_sender(q, sock, lock, client):
                 with lock:
                     sock.sendall(s)
             else:
-                _ws_send(sock, lock, s)
+                _t0 = time.perf_counter()
+                n = _ws_send(sock, lock, s)
+                _PERF_STATS.client_send(client.get("app"), client.get("uaKind"), n, time.perf_counter() - _t0)   # pusher.clients
         except OSError:
             client["alive"] = False
             return
@@ -51997,16 +52097,19 @@ def _ws_ping_frame(payload: bytes) -> bytes:
     return bytes([0x89, len(data)]) + data
 
 
-def _new_ws_client(app, wid, sock, lock=None, q=None, start_sender=True):
+def _new_ws_client(app, wid, sock, lock=None, q=None, start_sender=True, ua=None):
     """One connected dashboard pane: its queue, its sender thread and the liveness bookkeeping the heartbeat
     reads. `since` and `lastIn` stamp the last moment the PEER proved itself alive (any inbound frame: a
     message or a pong); `pingAt` is the send time of the OLDEST unanswered ping, None when nothing is
-    outstanding. Factored out of the handler so the liveness rules are testable on a loopback pair."""
+    outstanding. Factored out of the handler so the liveness rules are testable on a loopback pair. `ua` is
+    the dial's User-Agent header, classed here to one of WS_UA_KINDS (`uaKind`, what pusher.clients.byKind
+    counts under) and not kept."""
     q = q if q is not None else queue.Queue()
     lock = lock if lock is not None else threading.Lock()
     now = _ws_clock()
     client = {"app": app, "wid": wid, "alive": True, "qbytes": 0, "qlock": threading.Lock(), "t0": now, "handshake": False,   # no `ready` yet: no chat frame until it declares its wire (T386 stage 2, round eleven)
               "cid": uuid.uuid4().hex[:12],   # this connection's id
+              "uaKind": _ua_kind(ua),         # the browser kind, from the dial's User-Agent (pusher.clients.byKind); never the header
               "dlock": threading.RLock(),   # serializes _send_slot per client: the handler's connect push and the
               #                               pusher both send slots to one client (see _send_slot)
               "sock": sock, "since": now, "lastIn": now, "pingAt": None,
@@ -52078,6 +52181,33 @@ def _dial_kind(headers, q):
     if headers.get("Origin") or headers.get("User-Agent"):
         return "page"
     return "relay"
+
+
+# The User-Agent rules, in the order they are tried; the first that matches names the kind. The safari-ios rule is the
+# browser's own (ui/webview/perf-telemetry.ts uaClass: an iPhone, iPad or iPod token; the browser also reads an iPad's
+# desktop-mode Macintosh header from its touch points, which a header alone cannot, so that iPad reads safari-mac here),
+# so a frame this table counts under safari-ios is one the browser's own telemetry classes the same. Every iOS browser
+# shares WebKit and carries the device token, so Chrome or Firefox on an iPhone is safari-ios, the engine the frame reaches.
+# Firefox before Chrome before Safari: a Chrome header carries "Safari/" too, and a Firefox header neither of the others.
+# "Chrome/" covers the Chromium browsers (Edge among them). Compiled once; the classification runs per handshake.
+_UA_KIND_RULES = ((re.compile(r"iPhone|iPad|iPod"), "safari-ios"),
+                  (re.compile(r"Firefox/"), "firefox"),
+                  (re.compile(r"Chrome/|Chromium/"), "chrome"),
+                  (re.compile(r"Macintosh.*Safari/"), "safari-mac"))
+
+
+def _ua_kind(ua):
+    """The browser kind of a dial's User-Agent header: one of WS_UA_KINDS, never the header's text and never a version
+    (2026-09-18; the served key list is fixed). No header, or an empty one, is "none": a relay's splice forwards only the
+    six upgrade headers and the VS Code extension's pipe dials from Node's ws client, so neither carries one. A header no
+    rule names (curl, a websocket library, a browser these rules do not know) is "other"."""
+    if not ua:
+        return "none"
+    ua = str(ua)
+    for rx, kind in _UA_KIND_RULES:
+        if rx.search(ua):
+            return kind
+    return "other"
 
 
 _ws_open_row_failed = False   # set once a wsopen row could not be written, so the stderr line below is said once per process
@@ -52162,7 +52292,8 @@ def _drop_dead_ws_client(client, why):
 
 
 def _ws_send(sock, lock, text):
-    """Frame and write one text message. Called ONLY from that client's sender thread (see _ws_sender)."""
+    """Frame and write one text message. Called ONLY from that client's sender thread (see _ws_sender). Returns the
+    bytes written, header and payload: the frame's wire size, which pusher.clients counts per client."""
     data = text.encode("utf-8")
     n = len(data)
     hdr = bytearray([0x81])                   # FIN + text frame
@@ -52172,8 +52303,10 @@ def _ws_send(sock, lock, text):
         hdr.append(126); hdr += struct.pack(">H", n)
     else:
         hdr.append(127); hdr += struct.pack(">Q", n)
+    frame = bytes(hdr) + data
     with lock:
-        sock.sendall(bytes(hdr) + data)
+        sock.sendall(frame)
+    return len(frame)
 
 
 def _ws_pong(wfile, lock, payload):
@@ -52745,9 +52878,19 @@ def _dedup_sig(msg, s):
 # (_wire_default, one per encode). Bumped through _wire_bump, under a lock: the pusher and a handler-thread connect
 # push both split, and whichever sender thread first materializes a _LazyWire bumps its counter, so a bare `+= 1`
 # here would be a read-modify-write across threads (the tests assert exact counts). /perf reports them under
-# memos.wire.
+# memos.wire. Three read the per-entry work itself (stage 1 of the incremental-push design, 2026-09-18):
+# entries_walked (entries a _delta_split visited: every entry of every collection it split, a rebuild's new
+# collection object walks them all, an unchanged collection object is served from _delta_split_memo and walks
+# none), entries_encoded (those it json-encoded: the walked entries the per-entry memo did not hold as the same
+# object, so walked minus encoded is what the memo saved) and feed_slot_split (feed sends through the view-delta
+# SLOT path, _send_slot_delta with no parts handed down, counted per send whether a frame crossed or the dedup
+# held it: a ?delta=1 feed client without FEED_DELTA_CAP, whose _delta_parts("feed") encodes every card again
+# per build. Cumulative since kernel start like every counter here: nonzero means such a client has connected
+# since start, a value rising between two snapshots means one is connected now, and it stays at zero from the
+# first restart after stage 3 retires that path).
 _wire_stats = {"feed_cards_hit": 0, "feed_cards_miss": 0, "split_hit": 0, "split_miss": 0, "feed_body": 0,
-               "bars_body": 0, "feed_sig_fallback": 0, "feed_first": 0, "bars_sig_fallback": 0, "default_str": 0}
+               "bars_body": 0, "feed_sig_fallback": 0, "feed_first": 0, "bars_sig_fallback": 0, "default_str": 0,
+               "entries_walked": 0, "entries_encoded": 0, "feed_slot_split": 0}
 _WIRE_STATS_LOCK = threading.Lock()
 _wire_default_said = set()   # type names _wire_default has written to stderr: a type is said once, not per value
 
@@ -52755,6 +52898,13 @@ _wire_default_said = set()   # type names _wire_default has written to stderr: a
 def _wire_bump(key, n=1):
     with _WIRE_STATS_LOCK:
         _wire_stats[key] = _wire_stats.get(key, 0) + n
+
+
+def _wire_stats_report():
+    """memos.wire for /perf: the counters copied under their lock, so a pair a split adds in one acquisition
+    (entries_walked and entries_encoded) is read whole, never with one half advanced."""
+    with _WIRE_STATS_LOCK:
+        return dict(_wire_stats)
 
 
 def _wire_default(o, enc="wire"):
@@ -53414,7 +53564,10 @@ def _delta_split(kind, value, memo_key=None):
     key = _delta_keyer(kind)                            # …and the kind parsed once, not per item
     prev = _delta_entry_memo.get(memo_key) if memo_key is not None else None
     cur = {} if memo_key is not None else None
+    encoded = 0                                        # entries this split json-encoded (memos.wire entries_encoded)
+
     def put(kk, v, pre=""):
+        nonlocal encoded
         if kk is None or kk in ents:
             n = len(order)
             while True:                            # positional, with its lane prefix so the shim files it by lane —
@@ -53423,34 +53576,44 @@ def _delta_split(kind, value, memo_key=None):
                     break
                 n += 1
         hit = prev.get(id(v)) if prev else None
-        pair = hit if (hit is not None and hit[0] is v) else (v, enc(v))   # a hit hands back the LAST split's own pair: no new
-        if cur is not None:                                                 #  tuple; a miss mints ONE, shared by the memo and the
-            cur[id(v)] = pair                                               #  entries (2026-09-16: two fresh (object, json) tuples
-        ents[kk] = pair; order.append(kk)                                   #  per bar per build, both tracked for life, see the docstring)
-    if kind == "dict" and isinstance(value, dict):
-        for kk, v in value.items():
-            put(str(kk), v)
-    elif kind.startswith(("byid", "bykeys:")) and isinstance(value, list):
-        for it in value:
-            put(key(it), it)
-    elif kind.startswith("dictlist:") and isinstance(value, dict):
-        for dk, lst in value.items():
-            if _DELTA_SEP in str(dk):
-                raise ValueError("lane key carries the separator")
-            pre = str(dk) + _DELTA_SEP
-            if not isinstance(lst, list) or not lst:
-                put(pre, lst)                      # an empty or non-list lane: one entry under its bare prefix
-                continue
-            for it in lst:
-                put(key(it, pre), it, pre)
-    else:
-        # a value the kind cannot key (None where a list belongs, a list where a dict does): NOT zero entries —
-        # that split carried the value nowhere, and the client kept its assembled [] / {} while the kernel held
-        # something else, with no resync ever asked (review find, 2026-09-04). Unkeyable → the whole frame goes.
-        raise ValueError("%s collection is a %s, not a %s" % (
-            kind, type(value).__name__, "dict" if kind == "dict" or kind.startswith("dictlist:") else "list"))
-    if cur is not None:
-        _delta_entry_memo[memo_key] = cur
+        if hit is not None and hit[0] is v:                                 # a hit hands back the LAST split's own pair: no new
+            pair = hit                                                      #  tuple; a miss mints ONE, shared by the memo and the
+        else:                                                               #  entries (2026-09-16: two fresh (object, json) tuples
+            pair = (v, enc(v)); encoded += 1                                #  per bar per build, both tracked for life, see the docstring)
+        if cur is not None:
+            cur[id(v)] = pair
+        ents[kk] = pair; order.append(kk)
+    try:
+        if kind == "dict" and isinstance(value, dict):
+            for kk, v in value.items():
+                put(str(kk), v)
+        elif kind.startswith(("byid", "bykeys:")) and isinstance(value, list):
+            for it in value:
+                put(key(it), it)
+        elif kind.startswith("dictlist:") and isinstance(value, dict):
+            for dk, lst in value.items():
+                if _DELTA_SEP in str(dk):
+                    raise ValueError("lane key carries the separator")
+                pre = str(dk) + _DELTA_SEP
+                if not isinstance(lst, list) or not lst:
+                    put(pre, lst)                  # an empty or non-list lane: one entry under its bare prefix
+                    continue
+                for it in lst:
+                    put(key(it, pre), it, pre)
+        else:
+            # a value the kind cannot key (None where a list belongs, a list where a dict does): NOT zero entries.
+            # That split carried the value nowhere, and the client kept its assembled [] / {} while the kernel held
+            # something else, with no resync ever asked (review find, 2026-09-04). Unkeyable: the whole frame goes.
+            raise ValueError("%s collection is a %s, not a %s" % (
+                kind, type(value).__name__, "dict" if kind == "dict" or kind.startswith("dictlist:") else "list"))
+        if cur is not None:
+            _delta_entry_memo[memo_key] = cur
+    finally:
+        with _WIRE_STATS_LOCK:                         # the pair under ONE acquisition: walked minus encoded is what the memo
+            _wire_stats["entries_walked"] += len(order)   #  saved, and a /perf copy (taken under this lock, _wire_stats_report)
+            _wire_stats["entries_encoded"] += encoded     #  must never read walked ahead of encoded; in a finally, so a split
+            #                                              that raised mid-walk still counts every entry it visited (one `put`
+            #                                              each) and every one it encoded
     return ents, order
 
 
@@ -53588,6 +53751,8 @@ def _send_slot_delta(c, key, ftype, payload, pre, sig, parts=None):
         c.get("dstate", {}).pop(ftype, None)
         c.get("sent", {}).pop(key, None)
     if parts is None:
+        if ftype == "feed":                            # the feed through the view-delta slot path: a ?delta=1 feed client
+            _wire_bump("feed_slot_split")              #  without FEED_DELTA_CAP (memos.wire feed_slot_split, see _wire_stats)
         parts = _delta_parts(ftype, payload)
     states = c.setdefault("dstate", {})
     if parts is None:                                  # cannot be keyed: whole, and the client holds nothing
@@ -58592,12 +58757,14 @@ def _push(targets, connect=False, live_map=None):
                     if want_fleet:                       # the Outline's row for the skipped tab, from the store alone (the attach merges it in build order)
                         _prov_rows.append(_provisional_row(s["sid"], s.get("name", ""), _light))
                     continue
+                _t_seam = time.monotonic()               # push.chat.sig: the signature every tab pays every cycle (2026-09-18)
                 try:
                     sig = _chat_build_sig(s, _tm, now, live_map=live_map)
                     _chat_sig_ok(s["sid"])               # a signature that was taken ends its fault episode
                 except Exception as e:
                     _chat_sig_fault(s, e)                # once per fault episode: stderr and a bell row
                     sig = None                           # an input that cannot be keyed: build, never cache
+                _PERF_STATS.stage("push.chat.sig", time.monotonic() - _t_seam)
                 hit = _built_chat.get(s["sid"])
                 _claimed = False
                 if not (hit is not None and sig is not None and hit[0] == sig):
@@ -58635,6 +58802,7 @@ def _push(targets, connect=False, live_map=None):
                         # every cycle would freeze the board for as long as its input stands (2026-09-06).
                         # Said ONCE per fault episode, on stderr and as a dashboard bell row, so the pane
                         # that stopped updating is not a silent degrade (review find, 2026-09-08).
+                        _PERF_STATS.stage("push.chat.build", time.monotonic() - _t0)   # a failed build's time is build time too
                         _chat_build_fault(s, e)
                         _chat_dep_scope.deps = None      # the failed build's record is nobody's
                         if _claimed:
@@ -58649,6 +58817,7 @@ def _push(targets, connect=False, live_map=None):
                     # it back; the post-send cache store below keeps whatever materialized.
                     ms = None
                     _dt = time.monotonic() - _t0
+                    _PERF_STATS.stage("push.chat.build", _dt)   # push.chat.build: build_session alone (2026-09-18)
                     # The build's dependency record (_chat_build_deps) and the POST-build signature: the cache
                     # entry is stored only when the static components held across the build (an input that
                     # moved mid-build would otherwise be served stale); the dependency tail is skipped here
@@ -58656,10 +58825,12 @@ def _push(targets, connect=False, live_map=None):
                     _rec = _chat_build_deps(s["sid"], m) if (sig is not None and m) else None
                     _chat_dep_scope.deps = None          # consumed: a reader outside a build must not append to it
                     if sig is not None:
+                        _t_seam = time.monotonic()       # the post-build signature is signature time too
                         try:
                             post = _chat_build_sig(s, _tm, now, live_map=live_map, deps=False)
                         except Exception:
                             post = None
+                        _PERF_STATS.stage("push.chat.sig", time.monotonic() - _t_seam)
                     # WHY a tab rebuilt (2026-09-09): the labelled _chat_build_sig components that moved
                     # against the cached signature, so /perf can say which input drives the rebuilds; the
                     # watched tab's rebuilds are counted under active_built and not attributed
@@ -58700,6 +58871,7 @@ def _push(targets, connect=False, live_map=None):
                 # only the changed suffix (chatTail) if it's caught up, else the full session. Keeps the whole
                 # transcript resident in the browser (instant scrollback) while the per-change wire payload
                 # drops from the whole events array to just what changed.
+                _t_seam = time.monotonic()               # push.chat.send: the diff and the per-client sends (2026-09-18)
                 change_from = _chat_diff(_prev_chat_events.get(m["id"]), m.get("events") or [])
                 led_changed = m.get("ledger") != _prev_chat_ledger.get(m["id"])
                 # The baseline is SHARED by every client, so only a push that reaches them all may advance it.
@@ -58718,6 +58890,7 @@ def _push(targets, connect=False, live_map=None):
                     # serialization ONCE and every later client (and the cache below) reuses it. A tab the
                     # client holds as a skeleton gets only its status (2026-09-07)
                     ms = _send_chat_or_status(c, m, ms, change_from, led_changed)
+                _PERF_STATS.stage("push.chat.send", time.monotonic() - _t_seam)
                 # cache AFTER the sends, so a serialization a full send just paid for is kept — the next
                 # connect-push for this unchanged tab reuses it instead of dumping again
                 if sig is not None:
@@ -58982,18 +59155,22 @@ def _push(targets, connect=False, live_map=None):
                     if w is not None and w[0] is feed_src and w[1] == feed.get("ledgers"):
                         feed, feed_body, feed_sig, feed_parts = w[2], w[3], w[4], w[5]
                     else:
+                        _t_seam = time.monotonic()           # push.send.feedParts: the per-entry pass and its signature (2026-09-18)
                         feed_parts = _feed_parts(feed)       # the one per-entry encode (cards memoized on the build's asks)
                         feed_sig = _feed_sig(feed_parts)     # …which is also the dedup signature
+                        _PERF_STATS.stage("push.send.feedParts", time.monotonic() - _t_seam)
                         feed_body = _LazyWire(lambda f=feed: _feed_body(f), _feed_est(feed_parts), "feed_body")
                         _feed_wire = (feed_src, feed.get("ledgers"), feed, feed_body, feed_sig, feed_parts)
                     feed_ms = _feed_ms_lazy(feed_body, feed.get("now"))   # this build's clock in front, if a whole frame goes
                 # Two delta protocols meet here. A page whose bundle announced FEED_DELTA_CAP takes the feed's own
                 # itemId deltas (_send_feed; feed-delta.ts applies them); every other client takes the view-delta
                 # slot path (_send_slot: keyed deltas for a ?delta=1 client, the whole frame for anyone else).
+                _t_seam = time.monotonic()                   # push.send.compare: this client's compare and send (2026-09-18)
                 if FEED_DELTA_CAP in (c.get("caps") or ()):
                     _send_feed(c, feed, feed_ms, feed_sig, feed_parts)
                 else:
                     _send_slot(c, "feed", feed, feed_ms, feed_sig)
+                _PERF_STATS.stage("push.send.compare", time.monotonic() - _t_seam)
             elif c["app"] == "timeline" and timeline is not None:
                 if bars_down:
                     continue
@@ -59004,6 +59181,7 @@ def _push(targets, connect=False, live_map=None):
                     else:
                         bars = {"type": "bars", "turns": timeline["turns"], "judging": timeline["judging"],
                                 "messages": timeline["messages"], "now": timeline["now"], "warming": tl_warming}
+                        _t_seam = time.monotonic()           # push.send.barsSplit: the split, its signature and estimate, or the fallback's dump (2026-09-18)
                         bars_parts = _delta_parts("bars", bars)   # the one per-entry encode, handed down to the delta path
                         if bars_parts is not None:
                             bars_sig = _parts_sig(bars_parts)
@@ -59013,8 +59191,11 @@ def _push(targets, connect=False, live_map=None):
                             s = json.dumps(bars, default=_wire_default_in("_push bars"))
                             bars_ms, bars_sig = _LazyWire(None, len(s), text=s), _dedup_sig(bars, s)
                             _wire_bump("bars_sig_fallback")
+                        _PERF_STATS.stage("push.send.barsSplit", time.monotonic() - _t_seam)
                         _bars_wire = (timeline, tl_warming, bars, bars_ms, bars_sig, bars_parts)
+                _t_seam = time.monotonic()
                 _send_slot(c, "bars", bars, bars_ms, bars_sig, bars_parts)
+                _PERF_STATS.stage("push.send.compare", time.monotonic() - _t_seam)
         except Exception:
             is_feed = c["app"] in ("feed", "fleet", "waiting")
             if (feed_ms if is_feed else bars_ms) is None:    # the FILL raised (nothing assigned): stand the slot down this cycle
@@ -74547,7 +74728,7 @@ class Handler(BaseHTTPRequestHandler):
         # frames answered on this client's own handler thread, and both paths serialise on the same `lock`.
         # `q` above is the connect QUERY; the client's send queue gets its own name — a Queue.get("delta")
         # would block this handler forever (caught by tests/test_kernel.py's socket-error loop test)
-        client, sendq, lock = _new_ws_client(app, wid, self.connection, lock=lock)
+        client, sendq, lock = _new_ws_client(app, wid, self.connection, lock=lock, ua=self.headers.get("User-Agent"))
         client["kind"] = _dial_kind(self.headers, q)   # page or relay: the one tell the wsopen row reads (and a planned connect-push split)
         client["caps"] = set(x for x in caps.split(",") if x)
         # Held until its bundle says `ready` when the page announced it will (READY_GATE_CAP — every kernel-

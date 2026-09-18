@@ -2617,6 +2617,31 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `ms_max`, `ms_last`, and the same per app under `byApp`; the pusher's
   cycles never see this push, so before it the restart's logo phase had no
   number),
+  `clients` (what each client's sender thread wrote to its socket,
+  2026-09-18): `byApp`, per app the client declared on its socket URL,
+  `frames` and `bytes` (the text frames written and their wire bytes, header
+  and payload; the liveness pings are not counted), and `byKind`, per
+  browser kind, the same two plus `sendMs`, `sends` and `sendMax` (the
+  writes' wall ms in total, their count and the largest, so the mean is
+  `sendMs / sends`). A write is measured on the client's sender thread from
+  the frame's encode to `sendall`'s return; a write the socket refused is
+  not counted, since that client is dropped. The kind is one of a fixed
+  list (`WS_UA_KINDS` in the kernel: `safari-ios`, `safari-mac`, `chrome`,
+  `firefox`, `other`, `none`), classed at the handshake from the dial's
+  `User-Agent` header; the header itself is never kept or served. An
+  iPhone, iPad or iPod token is `safari-ios`, the browser-side telemetry's
+  own rule (an iPad that reports a desktop Macintosh header reads
+  `safari-mac` here, since the kernel has no touch points to tell it
+  apart); then `Firefox/`, then `Chrome/` (the Chromium browsers, Edge
+  among them), then a Macintosh header with `Safari/`. `none` is a dial
+  with no header (a relay's splice, the VS Code extension's pipe), `other` a
+  header no rule names (curl, a websocket library). Every kind has a row
+  from the start, at zero. The app is the client's own text, so a name is a
+  key only when it fits the identifier grammar (letters, digits, underscore,
+  dot, dash, at most 32 characters) and while the table holds fewer than 16
+  distinct names; everything else counts under `other`. A client that
+  declared no app counts under `none` while the table has room for that
+  word, else under `other` like any name the cap refuses.
   `cycle_ms_sum`, `cycle_ms_max` (since start), `cycle_ms_last`,
   `cycle_cpu_ms_sum` (the pusher thread's own CPU time), `cycle_ms_p50`,
   `cycle_ms_p90`, `cycle_ms_ring_max`, `ring_n` from the last 256 cycles,
@@ -3005,7 +3030,20 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `jobs.<job>` per tick job (`jobs.interruptBlock`, `jobs.autoNudge`,
   `jobs.convergeCheckpoints` and the rest, T398), `push`, and inside it
   `push.chat`, `push.feed`, `push.timeline`, `push.send`, `push.warm`,
-  `push.feedFirst`; a fresh snapshot lists every one at zero. The `push.*`
+  `push.feedFirst`; a fresh snapshot lists every one at zero. Two of those
+  are split further: inside `push.chat`, `push.chat.sig` (each tab's build
+  signature, every tab every cycle, the post-build check included),
+  `push.chat.build` (the session build alone, a rebuild only) and
+  `push.chat.send` (the events diff and the per-client chat sends); inside
+  `push.send`, `push.send.feedParts` (the feed's per-card pass and its
+  signature, on a wire miss), `push.send.barsSplit` (the bars' split,
+  signature and size estimate, or the unkeyable fallback's whole dump) and
+  `push.send.compare` (the per-client compare and send, whole or delta). A
+  seam is recorded when its work ran, so a served tab lists no build seam
+  and an unchanged build no `feedParts` or `barsSplit`; the cycle's split
+  (`pusher.firstCycle`, `pusher.stageRing`) carries a seam's own bytes, its
+  parent's glue under `push.chat.other` or `push.send.other`, and `push`
+  counts the parent's rows through the parent's own row, once. The `push.*`
   stages count every push, including the one a connecting page gets, so they
   can add up to more than `push`.
 - `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
@@ -3408,7 +3446,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   each), `bars_sig_fallback` (bars builds that could not be keyed and took the
   whole dump for their signature), and `default_str` (values no wire encoder
   could serialize as JSON and shipped as `str()`, one per encode; the kernel's
-  stderr names each such type once).
+  stderr names each such type once). Three more read the per-entry work
+  itself: `entries_walked` (every entry the keyed split visited; a rebuild's
+  new collection object walks them all, an unchanged collection object is
+  served from the split memo and walks none), `entries_encoded` (the walked
+  entries it serialized rather than served from its per-entry memo, so walked
+  minus encoded is what the memo saved) and `feed_slot_split` (feed sends
+  through the view-delta slot path, counted per send whether a frame crossed
+  or the dedup held it; that is the one path that re-encodes every card per
+  build: a `?delta=1` feed client that did not announce the feed delta
+  capability. The counter is cumulative since kernel start, like the rest of
+  the block: nonzero means such a client has connected since start, and a
+  value that rises between two snapshots means one is connected now).
   `intrMarks` is the interrupt-marks
   memo behind the interrupt tick, the nudge tick and the feed's badge, one
   entry per (session, parse family) keyed on the parse object's identity and

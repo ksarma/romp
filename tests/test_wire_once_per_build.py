@@ -23,6 +23,7 @@ import collections
 import io
 import json
 import os
+import socket
 import tempfile
 import threading
 import time
@@ -161,9 +162,11 @@ class OneEncodePerBuild(unittest.TestCase):
             self.assertEqual([f["type"] for f in dfeed["frames"]], ["feed"]); self.assertNotIn("_keys", dfeed["frames"][0], "no full carries a key list (T278c)")
             self.assertEqual([f["type"] for f in legacy["frames"]], ["feed"]); self.assertNotIn("_keys", legacy["frames"][0])
             self.assertEqual([f["type"] for f in tl["frames"]], ["data", "bars"]); self.assertNotIn("_keys", tl["frames"][1], "no full carries a key list (T278c)")
-            self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_miss": 1, "feed_body": 1, "bars_body": 1, "split_miss": 4},
+            self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_miss": 1, "feed_body": 1, "bars_body": 1, "split_miss": 4,
+                                                          "entries_walked": 7, "entries_encoded": 7, "feed_slot_split": 1},
                              "one whole frame each, shared by the keyed full and the legacy client; the cards encoded once; "
-                             "four collections split")
+                             "four collections split, walking the five cards and the two bars and encoding every one (a first "
+                             "split holds no memo); the cap-less delta client took the feed's slot path once")
             self.assertEqual(km._feed_wire[4], km._feed_sig(km._feed_wire[5]), "the feed's signature is its per-card pass's tuple")
             self.assertEqual(km._bars_wire[4], km._parts_sig(km._bars_wire[5]), "the bars' is the split's tuple")
             self.assertEqual(legacy["sent"][("feed",)][0], km._feed_wire[4])
@@ -172,7 +175,8 @@ class OneEncodePerBuild(unittest.TestCase):
             splits.clear(); calls.clear(); s0 = dict(km._wire_stats); n = [len(c["frames"]) for c in (cap, dfeed, legacy, tl)]
             km._push([cap, dfeed, legacy, tl])
             self.assertEqual(dict(splits), {}); self.assertEqual(dict(calls), {})
-            self.assertEqual(_delta(km._wire_stats, s0), {})
+            self.assertEqual(_delta(km._wire_stats, s0), {"feed_slot_split": 1},
+                             "nothing walked, nothing encoded; the cap-less client's slot path is taken per send, served from the identity cache")
             self.assertEqual([len(c["frames"]) for c in (cap, dfeed, legacy, tl)], n)
             # a rebuild seen only by delta clients: the per-entry passes run, no whole frame is ever made
             w.feed = _feed(build_id=2, asks=[_card(i, text="changed" if i == 2 else None) for i in range(5)])
@@ -180,8 +184,9 @@ class OneEncodePerBuild(unittest.TestCase):
             splits.clear(); calls.clear(); s0 = dict(km._wire_stats)
             km._push([cap, dfeed, tl])
             self.assertEqual(sum(splits.values()), 4); self.assertEqual(dict(calls), {"parts": 1})
-            self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_miss": 1, "split_miss": 4},
-                             "a new asks list and new collection objects: every pass ran")
+            self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_miss": 1, "split_miss": 4,
+                                                          "entries_walked": 8, "entries_encoded": 8, "feed_slot_split": 1},
+                             "a new asks list and new collection objects: every pass ran, over five new cards and three new bars")
             self.assertEqual(cap["frames"][-1]["type"], "feedDelta")
             self.assertEqual([a["itemId"] for a in cap["frames"][-1]["asks"]], ["%s:g2" % SID])
             self.assertEqual(dfeed["frames"][-1]["type"], "delta")
@@ -193,7 +198,7 @@ class OneEncodePerBuild(unittest.TestCase):
             splits.clear(); calls.clear(); s0 = dict(km._wire_stats)
             km._push([cap, dfeed, legacy, tl])
             self.assertEqual(dict(splits), {}); self.assertEqual(dict(calls), {"body": 1})
-            self.assertEqual(_delta(km._wire_stats, s0), {"feed_body": 1})
+            self.assertEqual(_delta(km._wire_stats, s0), {"feed_body": 1, "feed_slot_split": 1})
             self.assertEqual(legacy["frames"][-1]["buildId"], 2)
             self.assertTrue(km._feed_wire[3].materialized())
             self.assertEqual(km._feed_wire[3].size(), len(km._feed_body(w.feed)), "size() is exact once made")
@@ -241,14 +246,138 @@ class OneEncodePerBuild(unittest.TestCase):
         self.assertEqual([f["type"] for f in tl["frames"]], ["data", "bars", "bars"],
                          "a rebuild with unchanged lanes: no lanes frame, and the whole bars frame again")
 
+    def test_the_send_stage_is_split_into_its_seams(self):
+        """Stage 1 of the incremental-push design (2026-09-18): push.send is a container of three seams in stages_ms
+        and in the cycle's split: feedParts (the feed's per-entry pass and its signature), barsSplit (the bars'
+        split, signature and estimate, or the unkeyable fallback's whole dump) and compare (the per-client
+        _send_feed and _send_slot calls). A wire hit runs no pass and no split, so a repeat cycle over the same
+        builds records the compare alone."""
+        _World(self, feed=_feed(), timeline=_timeline())
+        cap, dfeed, tl = _client("feed", caps=(km.FEED_DELTA_CAP,)), _client("feed"), _client("timeline")
+        ps = km._PERF_STATS
+        seams = ("push.send.feedParts", "push.send.barsSplit", "push.send.compare")
+        before = ps.snapshot()["stages_ms"]
+        for k in seams:
+            self.assertIn(k, before, "%s is listed at zero from the start" % k)
+        ps.cycle_begin()
+        t0 = time.monotonic(); km._push([cap, dfeed, tl]); ps.cycle(time.monotonic() - t0)
+        row = ps.snapshot()["pusher"]["stageRing"][-1]["stages"]
+        self.assertEqual(sorted(k for k in row if k.startswith("push.send")),
+                         ["push.send", "push.send.barsSplit", "push.send.compare", "push.send.feedParts"])
+        after = ps.snapshot()["stages_ms"]
+        for k in seams:
+            self.assertGreater(after[k], before[k], "%s moved" % k)
+        self.assertGreaterEqual(after["push.send"] - before["push.send"] + 1e-6, sum(after[k] - before[k] for k in seams),
+                                "the seams sit inside the container's wall time")
+        ps.cycle_begin()
+        t0 = time.monotonic(); km._push([cap, dfeed, tl]); ps.cycle(time.monotonic() - t0)
+        row2 = ps.snapshot()["pusher"]["stageRing"][-1]["stages"]
+        self.assertEqual(sorted(k for k in row2 if k.startswith("push.send")), ["push.send", "push.send.compare"],
+                         "a wire hit: no per-entry pass, no split; the compare still ran")
+
+    def test_the_split_counts_what_it_walked_and_what_it_encoded_and_the_feed_slot_path_is_named(self):
+        """Stage 1 of the incremental-push design (2026-09-18): entries_walked is every entry a _delta_split visited,
+        entries_encoded the ones it json-encoded, so a rebuild that mints a new lanes dict around the SAME bar objects
+        (a memoized dead lane) walks them all and encodes none, and the difference is what the per-entry memo saved.
+        feed_slot_split counts feed sends through the view-delta slot path, the one path that re-encodes every card
+        per build: the cap-less ?delta=1 client alone, never the cap client (the feed's own deltas) or a whole-frame
+        client, once per send while it is connected."""
+        w = _World(self, feed=_feed(n=3), timeline=_timeline(nbars=4))
+        cap, dfeed, legacy, tl = _client("feed", caps=(km.FEED_DELTA_CAP,)), _client("feed"), _client("feed", delta=False), _client("timeline")
+        s0 = dict(km._wire_stats)
+        km._push([cap, legacy, tl])                               # no cap-less delta client: the feed never takes the slot path
+        d = _delta(km._wire_stats, s0)
+        self.assertNotIn("feed_slot_split", d, "the cap client and the whole-frame client never split the feed: %r" % d)
+        self.assertEqual((d["entries_walked"], d["entries_encoded"]), (4, 4), "the four bars, a first split: every one encoded")
+        s0 = dict(km._wire_stats)
+        km._push([cap, dfeed, legacy, tl])                        # the cap-less delta client joins: its slot path splits the cards
+        d = _delta(km._wire_stats, s0)
+        self.assertEqual(d.get("feed_slot_split"), 1, "one feed send through the slot path: %r" % d)
+        self.assertEqual((d["entries_walked"], d["entries_encoded"]), (3, 3), "the three cards")
+        s0 = dict(km._wire_stats)
+        km._push([cap, dfeed, legacy, tl])                        # a repeat cycle: the identity cache serves the split, the path is still taken
+        self.assertEqual(_delta(km._wire_stats, s0), {"feed_slot_split": 1})
+        same_bars = w.timeline["turns"][SID]                      # a rebuild's new lanes dict around the SAME bar objects (the dead-lane memo)
+        w.timeline = dict(_timeline(nbars=4, now=2), turns={SID: same_bars})
+        s0 = dict(km._wire_stats)
+        km._push([tl])
+        d = _delta(km._wire_stats, s0)
+        self.assertEqual((d["entries_walked"], d.get("entries_encoded", 0)), (4, 0),
+                         "walked every bar, encoded none: the per-entry memo held every object (%r)" % d)
+        for k in ("entries_walked", "entries_encoded", "feed_slot_split"):
+            self.assertIsInstance(km._wire_stats[k], int)
+            self.assertGreaterEqual(km._wire_stats[k], s0[k], "%s is monotonic" % k)
+
+    def test_a_split_that_raises_mid_walk_still_counts_what_it_visited(self):
+        """The counters are the design's evidence, so they count every entry a split visited, a split that raised
+        included: the bumps sit in a finally. A dictlist payload whose second lane key carries the separator
+        raises after the first lane's three bars were walked and encoded (2026-09-18 review, nit 3)."""
+        lanes = {SID: [{"id": "b%d" % i} for i in range(3)], "x" + km._DELTA_SEP + "y": [{"id": "b9"}]}
+        s0 = dict(km._wire_stats)
+        with self.assertRaises(ValueError):
+            km._delta_split("dictlist:id", lanes)
+        d = _delta(km._wire_stats, s0)
+        self.assertEqual((d.get("entries_walked", 0), d.get("entries_encoded", 0)), (3, 3),
+                         "the first lane's bars, walked and encoded before the raise: %r" % d)
+
+    def test_the_walked_and_encoded_pair_moves_together_and_the_snapshot_reads_under_the_lock(self):
+        """walked minus encoded is what the memo saved, so the two must never be read half advanced: one lock
+        acquisition adds both, and the /perf snapshot copies memos.wire under the same lock (2026-09-18 review,
+        low 2: two bumps under two acquisitions and a lockless dict() copy let a snapshot between them read walked
+        ahead by the split's whole encoded count)."""
+        real = km._WIRE_STATS_LOCK
+        seen = []                                              # (walked, encoded) at every release during the split
+
+        class Spy:
+            def __enter__(self):
+                real.acquire(); return self
+
+            def __exit__(self, *exc):
+                seen.append((km._wire_stats["entries_walked"], km._wire_stats["entries_encoded"])); real.release()
+                return False
+        w0, e0 = km._wire_stats["entries_walked"], km._wire_stats["entries_encoded"]
+        lanes = {SID: [{"id": "b%d" % i} for i in range(4)]}   # a first split: every bar encoded
+        with mock.patch.object(km, "_WIRE_STATS_LOCK", Spy()):
+            km._delta_split("dictlist:id", lanes)
+            self.assertTrue(seen, "the counters moved under the lock")
+            for w, e in seen:
+                self.assertEqual(w - w0, e - e0, "at no release is walked ahead of encoded: %r" % (seen,))
+            self.assertEqual(seen[-1], (w0 + 4, e0 + 4))
+            n = len(seen)
+            snap = km._PERF_STATS.snapshot()
+            self.assertEqual(len(seen), n + 1, "the snapshot's copy of memos.wire is taken under the lock")
+        self.assertEqual(snap["memos"]["wire"]["entries_walked"], w0 + 4)
+
+    def test_a_timeline_client_alone_records_the_bars_split_and_its_compare(self):
+        """The bars path has its own compare seam around _send_slot (2026-09-18 review, medium 6): a timeline client
+        with no feed client records barsSplit and compare on a rebuild, no feedParts, and the compare alone on a
+        wire hit."""
+        _World(self, feed=_feed(), timeline=_timeline())
+        tl = _client("timeline")
+        ps = km._PERF_STATS
+        ps.cycle_begin()
+        t0 = time.monotonic(); km._push([tl]); ps.cycle(time.monotonic() - t0)
+        row = ps.snapshot()["pusher"]["stageRing"][-1]["stages"]
+        self.assertEqual(sorted(k for k in row if k.startswith("push.send")),
+                         ["push.send", "push.send.barsSplit", "push.send.compare"], "no feed client: no feedParts")
+        self.assertEqual([f["type"] for f in tl["frames"]], ["data", "bars"])
+        ps.cycle_begin()
+        t0 = time.monotonic(); km._push([tl]); ps.cycle(time.monotonic() - t0)
+        row2 = ps.snapshot()["pusher"]["stageRing"][-1]["stages"]
+        self.assertEqual(sorted(k for k in row2 if k.startswith("push.send")), ["push.send", "push.send.compare"],
+                         "a wire hit: no split; the timeline client's compare still ran")
+
     def test_perf_reports_the_wire_counters(self):
         snap = km._PERF_STATS.snapshot()
         self.assertEqual(snap["memos"]["wire"], dict(km._wire_stats))
         self.assertEqual(set(snap["memos"]["wire"]),
                          {"feed_cards_hit", "feed_cards_miss", "split_hit", "split_miss", "feed_body", "bars_body",
-                          "feed_sig_fallback", "feed_first", "bars_sig_fallback", "default_str"},
+                          "feed_sig_fallback", "feed_first", "bars_sig_fallback", "default_str",
+                          "entries_walked", "entries_encoded", "feed_slot_split"},
                          "the feed's per-card memo (this fork), the slot path's split memo, the two bodies, upstream's cards-first "
-                         "connect frame and its one unkeyable path (feed_first, feed_sig_fallback), the bars fallback, str()")
+                         "connect frame and its one unkeyable path (feed_first, feed_sig_fallback), the bars fallback, str(), and "
+                         "the per-entry work itself (stage 1 of the incremental-push design, 2026-09-18): entries walked and "
+                         "encoded by the split, feed sends through the slot path")
 
 
 class ALedgersOnlyRefillEncodesNoCard(unittest.TestCase):
@@ -283,7 +412,8 @@ class ALedgersOnlyRefillEncodesNoCard(unittest.TestCase):
         with mock.patch.object(km, "_delta_split", side_effect=lambda kind, v, **kw: splits.update([kind]) or real_split(kind, v, **kw)):
             s0 = dict(km._wire_stats)
             p1 = km._delta_parts("feed", first)
-            self.assertEqual(dict(splits), {"byid:itemId": 1}); self.assertEqual(_delta(km._wire_stats, s0), {"split_miss": 1})
+            self.assertEqual(dict(splits), {"byid:itemId": 1})
+            self.assertEqual(_delta(km._wire_stats, s0), {"split_miss": 1, "entries_walked": 6, "entries_encoded": 6})
             splits.clear(); s0 = dict(km._wire_stats)
             p2 = km._delta_parts("feed", refill)
             self.assertEqual(dict(splits), {}, "the asks list is the same object: no card encoded")
@@ -295,7 +425,9 @@ class ALedgersOnlyRefillEncodesNoCard(unittest.TestCase):
             rebuilt = dict(refill, asks=list(src["asks"]))
             splits.clear(); s0 = dict(km._wire_stats)
             p3 = km._delta_parts("feed", rebuilt)
-            self.assertEqual(dict(splits), {"byid:itemId": 1}); self.assertEqual(_delta(km._wire_stats, s0), {"split_miss": 1})
+            self.assertEqual(dict(splits), {"byid:itemId": 1})
+            self.assertEqual(_delta(km._wire_stats, s0), {"split_miss": 1, "entries_walked": 6},
+                             "the same six card objects in a new list: walked, and every string served from the per-entry memo")
             self.assertEqual(km._parts_sig(p3), km._parts_sig(p2), "equal cards in a new list: an equal signature")
             self.assertIs(km._delta_split_memo[("feed", "asks")][0], rebuilt["asks"])
             splits.clear(); s0 = dict(km._wire_stats)
@@ -311,12 +443,14 @@ class ALedgersOnlyRefillEncodesNoCard(unittest.TestCase):
             s0 = dict(km._wire_stats)
             km._push([board])                                     # an app="fleet" client: the cycle attaches ledgers to the copy
             self.assertEqual(dict(splits), {"byid:itemId": 1}); self.assertEqual(km._feed_wire[1], [])
-            self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_miss": 1, "feed_body": 1, "split_miss": 1},
-                             "the feed's per-card pass and the slot path's split, each once")
+            self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_miss": 1, "feed_body": 1, "split_miss": 1,
+                                                          "entries_walked": 5, "entries_encoded": 5, "feed_slot_split": 1},
+                             "the feed's per-card pass and the slot path's split, each once, over the five cards; the Outline "
+                             "client took the slot path")
             splits.clear(); s0 = dict(km._wire_stats)
             km._push([dfeed])                                     # the same build without the attach: the wire tuple misses on its ledgers
             self.assertEqual(dict(splits), {}, "the refill served the cards from the memo")
-            self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_hit": 1, "feed_body": 1, "split_hit": 1},
+            self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_hit": 1, "feed_body": 1, "split_hit": 1, "feed_slot_split": 1},
                              "both memos hit on the same asks list: no card encoded on either path")
             self.assertIsNone(km._feed_wire[1]); self.assertIs(km._feed_wire[0], w.feed)
             self.assertEqual([f["type"] for f in dfeed["frames"]], ["feed"]); self.assertNotIn("ledgers", dfeed["frames"][0])
@@ -325,7 +459,8 @@ class ALedgersOnlyRefillEncodesNoCard(unittest.TestCase):
             splits.clear(); s0 = dict(km._wire_stats)
             km._push([dfeed])
             self.assertEqual(dict(splits), {"byid:itemId": 1})
-            self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_miss": 1, "split_miss": 1})
+            self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_miss": 1, "split_miss": 1,
+                                                          "entries_walked": 5, "entries_encoded": 5, "feed_slot_split": 1})
 
     def test_a_bars_payload_around_unchanged_collections_splits_no_bar(self):
         # the same path for the bars: a new bars dict around the SAME turns/judging/messages objects (a warming flip, or
@@ -336,7 +471,9 @@ class ALedgersOnlyRefillEncodesNoCard(unittest.TestCase):
         with mock.patch.object(km, "_delta_split", side_effect=lambda kind, v, **kw: splits.update([kind]) or real_split(kind, v, **kw)):
             s0 = dict(km._wire_stats)
             p1 = km._delta_parts("bars", _bars_of(tl, warming=True))
-            self.assertEqual(sum(splits.values()), 3); self.assertEqual(_delta(km._wire_stats, s0), {"split_miss": 3})
+            self.assertEqual(sum(splits.values()), 3)
+            self.assertEqual(_delta(km._wire_stats, s0), {"split_miss": 3, "entries_walked": 3, "entries_encoded": 3},
+                             "three collections split; the three bars are the only entries (judging and messages are empty)")
             splits.clear(); s0 = dict(km._wire_stats)
             p2 = km._delta_parts("bars", _bars_of(tl, warming=False))
             self.assertEqual(dict(splits), {}, "the same collection objects: no bar encoded")
@@ -347,7 +484,9 @@ class ALedgersOnlyRefillEncodesNoCard(unittest.TestCase):
             nxt = dict(tl, turns={SID: [dict(b) for b in tl["turns"][SID]]}, now=2)   # a rebuild's lanes: split again; the rest hit
             splits.clear(); s0 = dict(km._wire_stats)
             km._delta_parts("bars", _bars_of(nxt))
-            self.assertEqual(dict(splits), {"dictlist:id": 1}); self.assertEqual(_delta(km._wire_stats, s0), {"split_hit": 2, "split_miss": 1})
+            self.assertEqual(dict(splits), {"dictlist:id": 1})
+            self.assertEqual(_delta(km._wire_stats, s0), {"split_hit": 2, "split_miss": 1, "entries_walked": 3, "entries_encoded": 3},
+                             "copied bar dicts are new objects: walked and encoded")
             self.assertEqual(len(km._delta_split_memo), 3, "one entry per (frame type, collection)")
 
     def test_split_hit_and_miss_are_exact_under_a_forced_interleaving(self):
@@ -523,7 +662,8 @@ class ANonJsonValueOnTheWireIsCountedAndSaidOnce(unittest.TestCase):
         self.assertEqual([f["type"] for f in legacy["frames"]], ["data", "bars"])
         self.assertEqual(legacy["frames"][1]["turns"][SID][0]["tags"], "{'a'}", "shipped as str(), as the delta path did")
         self.assertNotIn("_keys", legacy["frames"][1])
-        self.assertEqual(_delta(km._wire_stats, s0), {"bars_body": 1, "default_str": 2, "split_miss": 3},
+        self.assertEqual(_delta(km._wire_stats, s0), {"bars_body": 1, "default_str": 2, "split_miss": 3,
+                                                      "entries_walked": 2, "entries_encoded": 2},
                          "one per encode of the value: the per-entry pass (_delta_split) and the whole frame (_push)")
         self.assertEqual(_wire_lines(err), ["wire: set serialized via str() in _delta_split"],
                          "said once, naming the encoder that met it first; the whole frame's encode adds no line")
@@ -558,7 +698,8 @@ class ANonJsonValueOnTheWireIsCountedAndSaidOnce(unittest.TestCase):
             km._push([tl])
         self.assertNotIn("_keys", tl["frames"][1], "no full carries a key list (T278c)")
         self.assertEqual(tl["frames"][1]["turns"][SID][0]["tags"], "{'a'}")
-        self.assertEqual(_delta(km._wire_stats, s0), {"bars_body": 1, "default_str": 2, "split_miss": 3}, "the split and the keyed full")
+        self.assertEqual(_delta(km._wire_stats, s0), {"bars_body": 1, "default_str": 2, "split_miss": 3,
+                                                      "entries_walked": 2, "entries_encoded": 2}, "the split and the keyed full")
         nxt = _timeline(nbars=3, now=2); nxt["turns"][SID][0]["tags"] = {"a"}; nxt["turns"][SID][1]["tags"] = {"b"}
         w.timeline = nxt
         s0 = dict(km._wire_stats)
@@ -569,8 +710,9 @@ class ANonJsonValueOnTheWireIsCountedAndSaidOnce(unittest.TestCase):
         self.assertEqual(sorted(sent), ["%s%sb1" % (SID, km._DELTA_SEP), "%s%sb2" % (SID, km._DELTA_SEP)],
                          "the unchanged bar (same entry string) does not ride")
         self.assertEqual(sent["%s%sb1" % (SID, km._DELTA_SEP)]["tags"], "{'b'}", "the delta frame ships the same str()")
-        self.assertEqual(_delta(km._wire_stats, s0), {"default_str": 3, "split_miss": 3},
-                         "two sets in the per-entry pass, and the changed entry's set again in the delta frame; no whole frame")
+        self.assertEqual(_delta(km._wire_stats, s0), {"default_str": 3, "split_miss": 3, "entries_walked": 3, "entries_encoded": 3},
+                         "two sets in the per-entry pass, and the changed entry's set again in the delta frame; no whole frame; "
+                         "a fresh build's three bars walked and encoded")
         self.assertEqual(_wire_lines(err), ["wire: set serialized via str() in _delta_split"], "still said once")
 
     def test_a_set_in_the_remainder_is_counted_by_the_parts_encoder_and_named(self):
@@ -722,6 +864,177 @@ class ARaisingSerializerLeavesThePusherAlive(unittest.TestCase):
         jobs = src[src.index("def _pusher_cycle_jobs("):]; jobs = jobs[:jobs.index("\ndef ")]
         i = jobs.index("_push_all(live_map=live_map)")
         self.assertLess(i, jobs.index("except Exception:", i)); self.assertLess(jobs.index("except Exception:", i), jobs.index("finally:", i))
+
+
+class PerClientWireCounters(unittest.TestCase):
+    """pusher.clients (2026-09-18): the frames each client's sender thread writes to its socket, counted by the app the
+    client declared and by the browser kind its User-Agent header classed to, with the write's wall time per kind. Real
+    loopback TCP pairs and the real client (_new_ws_client: queue, sender thread, enqueueing send), so what is counted is
+    what left on the wire; the User-Agent strings are invented in the shape the browsers publish, never recorded."""
+
+    IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    MAC_CHROME = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+    def setUp(self):
+        self.closeables, self.queues = [], []
+        self.saved_stats = km._PERF_STATS
+        km._PERF_STATS = km._PerfStats()          # the sender thread looks the collector up at call time: a fresh one per test
+
+    def tearDown(self):
+        km._PERF_STATS = self.saved_stats
+        for q in self.queues:
+            q.put(None)                             # end every sender thread the test started
+        for s in self.closeables:
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                s.close()
+            except OSError:
+                pass
+
+    def _pair(self):
+        srv = socket.socket(); srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0)); srv.listen(1)
+        peer = socket.create_connection(srv.getsockname())
+        kern, _ = srv.accept()
+        srv.close()
+        peer.settimeout(5.0)   # a frame that never arrives fails the read; it must never park the module and its xdist worker
+        self.closeables += [peer, kern]
+        return kern, peer
+
+    def _client(self, app, ua):
+        kern, peer = self._pair()
+        client, q, _lock = km._new_ws_client(app, "w-" + app, kern, ua=ua)
+        self.queues.append(q)
+        client["ready"] = True
+        return client, peer.makefile("rb")
+
+    @staticmethod
+    def _read_texts(rf, n):
+        """The next n text frames off a peer's socket, each as (payload, wire bytes): the header the kernel framed it with
+        (2, 4 or 10 bytes by the payload's length) plus the payload."""
+        out = []
+        while len(out) < n:
+            op, payload, _fin = km._ws_recv(rf)   # server frames are unmasked; the reader tolerates that
+            if op is None:
+                break
+            if op == 0x1:
+                ln = len(payload)
+                out.append((payload, ln + (2 if ln < 126 else 4 if ln < 65536 else 10)))
+        return out
+
+    def _settle(self, pred, timeout=5.0):
+        """The counter lands on the sender thread after sendall returned, so a peer can have read the frame before it is
+        counted: wait for the predicate, bounded."""
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < timeout:
+            if pred():
+                return True
+            time.sleep(0.005)
+        return pred()
+
+    def _clients_block(self):
+        return km._PERF_STATS.snapshot()["pusher"]["clients"]
+
+    def test_two_clients_of_different_apps_and_kinds_are_counted_apart_by_what_left_on_the_wire(self):
+        chat, chat_rf = self._client("chat", self.IPHONE)
+        feed, feed_rf = self._client("feed", self.MAC_CHROME)
+        self.assertEqual((chat["uaKind"], feed["uaKind"]), ("safari-ios", "chrome"))
+        chat["send"](json.dumps({"type": "session", "n": 1}))
+        chat["send"](json.dumps({"type": "chatTail", "text": "x" * 200}))   # a 4-byte header: the length rides two more bytes
+        feed["send"](json.dumps({"type": "feed", "cards": []}))
+        chat_frames = self._read_texts(chat_rf, 2)
+        feed_frames = self._read_texts(feed_rf, 1)
+        self.assertEqual([json.loads(p)["type"] for p, _ in chat_frames], ["session", "chatTail"])
+        self.assertEqual([json.loads(p)["type"] for p, _ in feed_frames], ["feed"])
+        self.assertTrue(self._settle(lambda: self._clients_block()["byApp"].get("chat", {}).get("frames") == 2
+                                    and self._clients_block()["byApp"].get("feed", {}).get("frames") == 1))
+        c = self._clients_block()
+        self.assertEqual(c["byApp"], {"chat": {"frames": 2, "bytes": sum(w for _, w in chat_frames)},
+                                      "feed": {"frames": 1, "bytes": sum(w for _, w in feed_frames)}},
+                         "the bytes are the frames' wire sizes, header and payload")
+        ios, chrome = c["byKind"]["safari-ios"], c["byKind"]["chrome"]
+        self.assertEqual((ios["frames"], ios["bytes"], ios["sends"]), (2, c["byApp"]["chat"]["bytes"], 2))
+        self.assertEqual((chrome["frames"], chrome["bytes"], chrome["sends"]), (1, c["byApp"]["feed"]["bytes"], 1))
+        for row in (ios, chrome):
+            self.assertGreaterEqual(row["sendMs"], 0.0)
+            self.assertGreaterEqual(row["sendMs"], row["sendMax"])
+            self.assertLess(row["sendMs"], 5000.0, "a loopback write is not seconds")
+        self.assertTrue(ios["sendMax"] > 0.0 or ios["sendMs"] == 0.0)
+        for kind in ("safari-mac", "firefox", "other", "none"):
+            self.assertEqual(c["byKind"][kind]["frames"], 0, kind)
+
+    def test_a_liveness_ping_is_not_a_frame_and_the_wire_size_counts_utf8_bytes(self):
+        chat, rf = self._client("chat", self.IPHONE)
+        chat["q"].put(km._ws_ping_frame(b"beat"))            # the heartbeat's control frame rides the same queue
+        chat["send"]("\u00e9" * 200)                          # 200 two-byte characters: 400 payload bytes, a 4-byte header
+        frames = self._read_texts(rf, 1)
+        self.assertEqual(frames[0], ("\u00e9".encode("utf-8") * 200, 404))
+        self.assertTrue(self._settle(lambda: self._clients_block()["byApp"].get("chat", {}).get("frames") == 1))
+        c = self._clients_block()
+        self.assertEqual(c["byApp"], {"chat": {"frames": 1, "bytes": 404}}, "the ping counted nothing; the text frame its wire bytes")
+        self.assertEqual((c["byKind"]["safari-ios"]["frames"], c["byKind"]["safari-ios"]["bytes"]), (1, 404))
+
+    def test_a_write_the_socket_refused_is_not_counted(self):
+        """The documented rule (docs/reference.md, pusher.clients): a write the socket refused is not counted, frames,
+        sends and the write time alike; the client is dropped. One frame lands and is counted; the kernel-side socket is
+        then closed under the client and a second frame enqueued, so the sender thread's write raises and the thread
+        exits. The probe settles on that exit (a join), not on the alive flag: the same thread flips the flag a moment
+        before it returns, so a wait on the flag races the read of the counters."""
+        before = set(threading.enumerate())
+        chat, rf = self._client("chat", self.IPHONE)
+        senders = [t for t in threading.enumerate() if t not in before and t.name == "ws-send"]
+        self.assertEqual(len(senders), 1, "the client's own sender thread, started by _new_ws_client")
+        sender = senders[0]
+        chat["send"](json.dumps({"type": "session", "n": 1}))
+        self.assertEqual(len(self._read_texts(rf, 1)), 1)
+        self.assertTrue(self._settle(lambda: self._clients_block()["byApp"].get("chat", {}).get("frames") == 1))
+        landed = self._clients_block()
+        chat["sock"].close()                                     # the kernel's side of the pair: the next write is refused
+        chat["send"](json.dumps({"type": "session", "n": 2}))    # enqueued, never blocks; the sender thread finds the dead socket
+        sender.join(5.0)
+        self.assertFalse(sender.is_alive(), "the refused write ends the sender thread")
+        self.assertFalse(chat["alive"], "and marks the client for reaping")
+        after = self._clients_block()
+        self.assertEqual(after["byApp"], landed["byApp"], "frames and bytes: the refused frame counted nothing")
+        self.assertEqual(after["byKind"]["safari-ios"], landed["byKind"]["safari-ios"], "sends, sendMs and sendMax too")
+        self.assertEqual((after["byApp"]["chat"]["frames"], after["byKind"]["safari-ios"]["sends"]), (1, 1))
+
+    def test_ws_send_answers_the_wire_bytes_it_wrote(self):
+        kern, peer = self._pair()
+        n = km._ws_send(kern, threading.Lock(), "abc")
+        self.assertEqual(n, 5)
+        self.assertEqual(peer.recv(64), b"\x81\x03abc")
+        n = km._ws_send(kern, threading.Lock(), "y" * 70000)
+        self.assertEqual(n, 70010, "a 64 KiB-plus payload: the 10-byte header")
+
+    def test_a_push_to_a_feed_and_a_timeline_client_counts_each_under_its_app_and_kind(self):
+        """Through the real _push: a feed pane on an iPhone and a timeline pane in a Mac Chrome, whole frames (no delta
+        term), each client's frames counted under its own app and kind, and byKind's bytes equal to byApp's for the
+        one client of that kind."""
+        _World(self, feed=_feed(), timeline=_timeline())
+        feed, feed_rf = self._client("feed", self.IPHONE)
+        tl, tl_rf = self._client("timeline", self.MAC_CHROME)
+        ps = km._PERF_STATS
+        ps.cycle_begin()
+        t0 = time.monotonic(); km._push([feed, tl]); ps.cycle(time.monotonic() - t0)
+        self.assertTrue(self._settle(lambda: sum(r["frames"] for r in self._clients_block()["byApp"].values()) >= 3))
+        c = self._clients_block()
+        self.assertEqual(set(c["byApp"]), {"feed", "timeline"})
+        feed_frames = self._read_texts(feed_rf, c["byApp"]["feed"]["frames"])
+        tl_frames = self._read_texts(tl_rf, c["byApp"]["timeline"]["frames"])
+        self.assertIn("feed", [json.loads(p)["type"] for p, _ in feed_frames])
+        self.assertEqual([json.loads(p)["type"] for p, _ in tl_frames], ["data", "bars"])
+        self.assertEqual(c["byApp"]["feed"], {"frames": len(feed_frames), "bytes": sum(w for _, w in feed_frames)})
+        self.assertEqual(c["byApp"]["timeline"], {"frames": len(tl_frames), "bytes": sum(w for _, w in tl_frames)})
+        ios, chrome = c["byKind"]["safari-ios"], c["byKind"]["chrome"]
+        self.assertEqual((ios["frames"], ios["bytes"]), (c["byApp"]["feed"]["frames"], c["byApp"]["feed"]["bytes"]))
+        self.assertEqual((chrome["frames"], chrome["bytes"]), (c["byApp"]["timeline"]["frames"], c["byApp"]["timeline"]["bytes"]))
+        self.assertEqual(ios["sends"], ios["frames"])
+        self.assertEqual(chrome["sends"], chrome["frames"])
+        self.assertEqual(c["byKind"]["none"]["frames"], 0)
 
 
 if __name__ == "__main__":
