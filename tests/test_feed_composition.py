@@ -32,7 +32,10 @@ empty federation lists and `other`, the sum of every text-bearing field (FEED_BY
 what a field can carry, never a byte floor), folded at report time on the last and the lifetime tables alike, so no
 published row is the length of one string, while the remainder still equals the sum of the published table and the
 per-app projections keep their build-time per-field sums; a key outside the checked-in names is counted under `other`
-at build time; (h) the block's shape is pinned from the kernel's constants.
+at build time; (h) the card-field and projection estimates run inside their own guard: a raise is counted, said once,
+memoized with the cards so a refill neither re-raises nor repeats it, and the frame goes out unchanged at every call
+site; (i) the block's shape is pinned from the kernel's constants, and the estimates run once per build and not on a
+refill.
 
 Synthetic only: the notes-api demo world, TESTHOST, placeholder ids."""
 import base64
@@ -952,6 +955,9 @@ class SyntheticBuild(unittest.TestCase):
         self.assertEqual(km._feed_composition_report()["last"]["apps"]["phoneFace"]["projected"], face)
 
     def test_an_accounting_fault_is_counted_and_said_once_and_the_frame_is_unaffected(self):
+        """The RECORDING half of the guard: record() raising is counted, said once and never reaches the frame. This
+        proves only that half; the estimates' half (a raise in _ask_fields_est or a projection estimator, which sat
+        outside the try until the review of 2026-09-18) is AccountingGuard's, with a card whose sid cannot be hashed."""
         feed = _feed(n=2)
         err = io.StringIO()
         with mock.patch.object(km._FeedComposition, "record", side_effect=KeyError("synthetic")), redirect_stderr(err):
@@ -1252,6 +1258,161 @@ class PublishedTable(unittest.TestCase):
             self.assertIn(key, row, key)
         self.assertIn("FEED_BY_ROWS", row, "the row names the published rows' list")
         self.assertIn("other", row)
+
+
+class AccountingGuard(unittest.TestCase):
+    """(h): the card-field and projection estimates run inside their own guard. Until the review of 2026-09-18 they sat
+    OUTSIDE the try that keeps an accounting fault off the frame, so a raise in an estimator propagated out of
+    _feed_parts and dropped the feed send for every feed-slot client that cycle, uncounted and unsaid. Now a raise is
+    counted under `failed`, said once, and memoized with the cards in the estimates' slot, so a refill of the same build
+    neither re-raises nor repeats the estimates and no pass records under-counted rows; the frame goes out unchanged at
+    every call site. The record-side test in SyntheticBuild proves only the recording half."""
+
+    def setUp(self):
+        km._feed_cards_memo = None
+
+    @staticmethod
+    def _raiser(asks):
+        raise RuntimeError("synthetic estimator fault")
+
+    def test_a_card_whose_sid_cannot_be_hashed_is_grouped_by_its_spelling_and_nothing_raises(self):
+        """No mock: a two-card frame whose sids are a list and a dict through _feed_parts (fails before: TypeError,
+        unhashable type, out of _phone_face_est's group map, propagating out of the pusher's pass). The group rows
+        are keyed by str(sid), so the face estimate counts one group row per spelling; the four parts are the test's
+        own encodes; nothing is counted as failed."""
+        feed = _feed(n=2)
+        feed["asks"][0]["sid"] = [1, 2]
+        feed["asks"][1]["sid"] = {"k": "v"}
+        comp = km._FeedComposition()
+        with mock.patch.object(km, "_FEED_COMP", comp):
+            parts = km._feed_parts(feed)
+        self.assertEqual((comp.failed, comp.passes), (0, 1))
+        self.assertEqual(parts[0], {a["itemId"]: json.dumps(km._strip_trgb(a)) for a in feed["asks"]})
+        self.assertEqual(parts[1], {l["sid"]: json.dumps(l) for l in feed["ledgers"]})
+        self.assertEqual(parts[3], json.dumps(_rest_of(feed), sort_keys=True))
+
+        def one(card, fs):
+            n = 2
+            for f in fs:
+                if f not in card:
+                    continue
+                v = card[f]
+                n += len(f) + (8 + len(v) if isinstance(v, str) else 6 + len(repr(v)))
+            return n
+        faces = sum(one(a, km.FEED_PHONE_FACE_FIELDS) for a in feed["asks"])
+        groups = one({"sid": "[1, 2]", "count": 1}, ("sid", "count")) + one({"sid": "{'k': 'v'}", "count": 1}, ("sid", "count"))
+        self.assertEqual(_report(comp)["last"]["apps"]["phoneFace"]["projected"], faces + groups,
+                         "a group row per spelling of the sid")
+        self.assertEqual(km._phone_face_est(feed["asks"]), faces + groups)
+
+    def _guarded(self, feed, patch):
+        """A build under `patch` (an estimator that raises), then a ledgers refill of the SAME build (a memo hit), then
+        a fresh build with the patch lifted; the assertions of the guard's contract at each step."""
+        clean = km._feed_parts(copy.deepcopy(feed))         # the unpatched pass over a copy: the bytes to match
+        km._feed_cards_memo = None
+        comp = km._FeedComposition()
+        err = io.StringIO()
+        s0 = dict(km._wire_stats)
+        with mock.patch.object(km, "_FEED_COMP", comp), patch, redirect_stderr(err):
+            parts = km._feed_parts(feed)                    # fails before: the raise propagates out of _feed_parts
+            self.assertEqual(parts, clean, "the four parts are byte-identical to the unpatched pass")
+            self.assertEqual((comp.failed, comp.passes), (1, 0), "counted as failed, not recorded")
+            self.assertEqual(err.getvalue().count("feed composition: the accounting raised"), 1, err.getvalue())
+            self.assertIn("RuntimeError: synthetic estimator fault", err.getvalue())
+            self.assertEqual(km._wire_stats["feed_cards_miss"] - s0["feed_cards_miss"], 1)
+            self.assertIsInstance(km._feed_cards_memo[2], Exception, "the fault is memoized in the estimates' slot")
+            refill = dict(feed)
+            refill["ledgers"] = [_ledger(tops=1)]
+            parts2 = km._feed_parts(refill)                 # the same asks list: a memo hit
+            self.assertEqual(km._wire_stats["feed_cards_hit"] - s0["feed_cards_hit"], 1)
+            self.assertEqual(parts2[0], clean[0])
+            self.assertEqual(parts2[1], {l["sid"]: json.dumps(l) for l in refill["ledgers"]})
+            self.assertEqual((comp.failed, comp.passes), (2, 0), "counted again from the memo, still not recorded")
+            self.assertEqual(err.getvalue().count("feed composition"), 1, "said once")
+            self.assertEqual(_report(comp)["last"], {}, "no pass was recorded")
+        with mock.patch.object(km, "_FEED_COMP", comp), redirect_stderr(err):
+            km._feed_cards_memo = None
+            km._feed_parts(_feed(n=3, build_id=2))        # the patch lifted: a fresh build records normally
+        self.assertEqual((comp.failed, comp.passes), (2, 1))
+        self.assertEqual(err.getvalue().count("feed composition"), 1)
+        self.assertEqual(_report(comp)["last"]["cardCount"], 3)
+
+    def test_a_raising_projection_estimator_is_counted_said_once_memoized_and_keeps_the_frame(self):
+        self._guarded(_feed(n=3), mock.patch.dict(km.FEED_PROJECTIONS, {"phoneFace": self._raiser}))
+
+    def test_a_raising_card_field_estimate_is_counted_said_once_memoized_and_keeps_the_frame(self):
+        self._guarded(_feed(n=3), mock.patch.object(km, "_ask_fields_est", side_effect=RuntimeError("synthetic estimator fault")))
+
+    def test_the_guard_covers_every_call_site_the_wire_serve_and_the_push_included(self):
+        """_feed_wire_now (a `ready` or a re-base on a client-less kernel) over a cached build whose estimator raises
+        returns the wire tuple (fails before: the raise propagated out of it), and the real _push hands a feed-slot
+        client the frame while the fault is counted."""
+        feed = _feed(n=2)
+        comp = km._FeedComposition()
+        err = io.StringIO()
+        saved = list(km._built_feed)
+        with mock.patch.object(km, "_FEED_COMP", comp), mock.patch.dict(km.FEED_PROJECTIONS, {"phoneFace": self._raiser}), \
+                mock.patch.object(km, "_feed_wire", None), redirect_stderr(err):
+            km._built_feed[:] = [None, feed, 0.0, 0.0]
+            try:
+                w = km._feed_wire_now()
+            finally:
+                km._built_feed[:] = saved
+            self.assertIsNotNone(w)
+            self.assertIs(w[0], feed)
+            self.assertEqual(w[5][3], json.dumps(_rest_of(feed), sort_keys=True))
+            self.assertEqual((comp.failed, comp.passes), (1, 0))
+            km._feed_cards_memo = None
+            received = _drive_push(self, ("feed", "waiting"), feed)
+        self.assertEqual({app for app, types in received.items() if "feed" in types}, {"feed", "waiting"},
+                         "the feed-slot clients receive the frame while the estimates fault")
+        self.assertGreaterEqual(comp.failed, 2)
+        self.assertEqual(comp.passes, 0)
+        self.assertEqual(err.getvalue().count("feed composition: the accounting raised"), 1)
+
+    def test_the_estimates_run_once_per_build_and_not_on_a_refill(self):
+        """The memoization claim, by counting (tests-2): the card-field estimate and the projection estimator are
+        wrapped, a build runs each at least once (bounded loosely: the face estimate calls the card-field estimate
+        twice itself), and a ledgers refill of the same build runs neither; a refill after a FAULTED build runs neither
+        either, the fault being memoized too. Fails under the mutation that drops the estimates from the memo."""
+        feed = _feed(n=6)
+        real_est, real_face = km._ask_fields_est, km.FEED_PROJECTIONS["phoneFace"]
+        est_calls, face_calls = [], []
+
+        def est(asks, fields):
+            est_calls.append(fields)
+            return real_est(asks, fields)
+
+        def face(asks):
+            face_calls.append(1)
+            return real_face(asks)
+        apps_with_fields = len(km._FEED_APP_ASK_FIELDS)
+        with mock.patch.object(km, "_ask_fields_est", est), mock.patch.dict(km.FEED_PROJECTIONS, {"phoneFace": face}):
+            km._feed_cards_memo = None
+            s0 = dict(km._wire_stats)
+            km._feed_parts(feed)
+            n_est, n_face = len(est_calls), len(face_calls)
+            self.assertGreaterEqual(n_est, apps_with_fields, "at least one card-field pass per app that reads card fields")
+            self.assertLessEqual(n_est, 4 * apps_with_fields + 4)
+            self.assertGreaterEqual(n_face, 1)
+            self.assertLessEqual(n_face, 4)
+            for tops in (1, 5):
+                km._feed_parts(dict(feed, ledgers=[_ledger(tops=tops)]))
+            self.assertEqual(km._wire_stats["feed_cards_hit"] - s0["feed_cards_hit"], 2)
+            self.assertEqual((len(est_calls), len(face_calls)), (n_est, n_face), "a refill runs no estimate")
+        # a faulted build: the estimates ran (and raised); the refill runs none of them again
+        del est_calls[:], face_calls[:]
+        comp = km._FeedComposition()
+        err = io.StringIO()
+        with mock.patch.object(km, "_FEED_COMP", comp), mock.patch.object(km, "_ask_fields_est", est), \
+                mock.patch.dict(km.FEED_PROJECTIONS, {"phoneFace": self._raiser}), redirect_stderr(err):
+            km._feed_cards_memo = None
+            km._feed_parts(feed)
+            n_est = len(est_calls)
+            self.assertGreaterEqual(n_est, 1)
+            km._feed_parts(dict(feed, ledgers=[_ledger(tops=2)]))
+            self.assertEqual(len(est_calls), n_est, "a refill after a faulted build repeats no estimate")
+        self.assertEqual((comp.failed, comp.passes), (2, 0))
 
 
 if __name__ == "__main__":

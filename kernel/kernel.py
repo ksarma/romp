@@ -54713,8 +54713,9 @@ _feed_cards_memo = None    # (a build's asks list, {itemId: json}, {app: card-fi
 #                            attach changed) re-encodes the ledgers and the remainder, not the cards. Identity-keyed like
 #                            _delta_parts_cache: no consumer mutates a cached build's cards (they copy). The third member
 #                            is the composition probe's per-app card-field estimate (_ask_fields_est) and its projection
-#                            rows' estimates (FEED_PROJECTIONS), memoized with the cards so a refill pays none of it
-#                            (2026-09-18)
+#                            rows' estimates (FEED_PROJECTIONS), memoized with the cards so a refill pays none of it, or
+#                            the exception those estimates raised, memoized the same way so a refill neither re-raises
+#                            nor repeats them (2026-09-18)
 _feed_dupes_said = set()   # itemIds already reported as duplicated within one build: said once per id
 
 
@@ -54844,12 +54845,13 @@ def _phone_face_est(asks):
     as the `phoneFace` projection (FEED_PROJECTIONS): a face per active card (FEED_PHONE_FACE_FIELDS of every card whose
     `column` is in FEED_PHONE_FACE_ACTIVE) plus one summary row per group (by `sid`: the key and the count of cards the
     group holds, every card counted, active or not). Lengths only, no encode; one O(cards) pass, memoized with the
-    cards (_feed_cards_memo)."""
+    cards (_feed_cards_memo). The groups are keyed by str(sid): a built card's sid is a string, and a card whose sid
+    is not hashable (a list, a dict) groups by its spelling instead of raising out of the pusher's pass."""
     active = [a for a in asks if isinstance(a, dict) and a.get("column") in FEED_PHONE_FACE_ACTIVE]
     groups = {}
     for a in asks:
         if isinstance(a, dict):
-            sid = a.get("sid")
+            sid = str(a.get("sid"))
             groups[sid] = groups.get(sid, 0) + 1
     rows = [{"sid": sid, "count": n} for sid, n in groups.items()]
     return _ask_fields_est(active, FEED_PHONE_FACE_FIELDS) + _ask_fields_est(rows, ("sid", "count"))
@@ -54888,7 +54890,9 @@ class _FeedComposition:
     field (FEED_BY_FOLDED), so no published row is the length of one string. The remainder still equals the sum of
     the published table exactly: the fold regroups bytes and drops none. tests/test_feed_composition.py walks the
     populated block through cli/perf_public's check, the one `romp perf export --public` runs over its output. A
-    pass whose accounting raises is counted under `failed` and said once; the frame is unaffected."""
+    pass whose accounting raises, the card-field and projection estimates included, is counted under `failed` and
+    said once; the frame is unaffected, and a fault in the estimates is memoized with the cards so a refill of the
+    same build counts it again without repeating them."""
     __slots__ = ("lock", "passes", "failed", "life", "last", "said")
     SUMS = ("frame", "cards", "ledgers", "rest", "cardCount", "ledgerCount")
 
@@ -55002,9 +55006,11 @@ def _feed_parts(feed):
     The cards are memoized on the build's asks list, so a refill for a changed ledgers attach encodes only
     the ledgers and the remainder. The remainder is encoded per field and joined (2026-09-18): the same
     bytes, and the composition probe (_FeedComposition, memos.feedComposition) reads every part's size
-    from this one pass. itemIds are unique by construction (goal ids are minted `<uuid>:g<seq>`,
-    every other card kind carries its own `kind:` prefix) and both the delta path and _feed_sig read one
-    card per id; a build that breaks that is said on stderr, once per id, not silently collapsed."""
+    from this one pass; the probe's own work, the estimates and the record, runs inside guards, so a
+    raise there is counted and never reaches the frame. itemIds are unique by construction (goal ids
+    are minted `<uuid>:g<seq>`, every other card kind carries its own `kind:` prefix) and both the
+    delta path and _feed_sig read one card per id; a build that breaks that is said on stderr, once
+    per id, not silently collapsed."""
     global _feed_cards_memo
     dflt = _wire_default_in("_feed_parts")
     asks = feed.get("asks")
@@ -55016,9 +55022,12 @@ def _feed_parts(feed):
         _wire_bump("feed_cards_hit")
     else:
         cards = {a["itemId"]: json.dumps(_strip_trgb(a), default=dflt) for a in asks}
-        askf = {app: _ask_fields_est(asks, fs) for app, fs in _FEED_APP_ASK_FIELDS.items()}   # the composition probe's
-        askf.update((name, est(asks)) for name, est in FEED_PROJECTIONS.items())             #  card-field and projection
-        _feed_cards_memo = (asks, cards, askf)                                              #  estimates, once per build
+        try:                                                                                 # the composition probe's
+            askf = {app: _ask_fields_est(asks, fs) for app, fs in _FEED_APP_ASK_FIELDS.items()}   # card-field and
+            askf.update((name, est(asks)) for name, est in FEED_PROJECTIONS.items())          # projection estimates,
+        except Exception as e:                                                               # once per build; a raise
+            askf = e                                                                         # is memoized in their
+        _feed_cards_memo = (asks, cards, askf)                                               # slot (counted below)
         _wire_bump("feed_cards_miss")
         if len(cards) != len(asks):
             seen, dup = set(), set()
@@ -55049,12 +55058,20 @@ def _feed_parts(feed):
     else:
         rest_ms = json.dumps(rest, sort_keys=True, default=dflt)
         by = {"other": len(rest_ms)}
-    try:
-        _FEED_COMP.record(sum(map(len, cards.values())), len(cards),
-                          sum(map(len, leds.values())) if leds else 0, len(leds) if leds else 0, leds is not None,
-                          len(rest_ms), by, askf)
-    except Exception as e:
-        _FEED_COMP.fail(e)
+    if isinstance(askf, Exception):
+        # the card-field and projection estimates raised on this build (the memo holds the exception in their slot):
+        # counted under `failed` and said once, record() skipped for this pass, and every refill of the same build
+        # counts it again from the memo without running the estimates, so a faulted build never re-raises and never
+        # records under-counted rows. Nothing above this line reads askf: the frame goes out unchanged at every call
+        # site (the pusher's fill, _feed_wire_now, the cards-first path).
+        _FEED_COMP.fail(askf)
+    else:
+        try:
+            _FEED_COMP.record(sum(map(len, cards.values())), len(cards),
+                              sum(map(len, leds.values())) if leds else 0, len(leds) if leds else 0, leds is not None,
+                              len(rest_ms), by, askf)
+        except Exception as e:
+            _FEED_COMP.fail(e)
     return cards, leds, rest, rest_ms
 
 
