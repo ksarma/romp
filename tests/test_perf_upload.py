@@ -25,6 +25,7 @@ temp directory under the test's own tree, USER and LOGNAME are `tester`, socket.
 TESTHOST.example in the child, every id is a placeholder, and the only receiver any case dials is a handler this
 module starts on 127.0.0.1 (or a loopback port nothing listens on). No request leaves the machine."""
 import ast
+import collections.abc
 import contextlib
 import io
 import json
@@ -162,6 +163,49 @@ def _keys_named(doc, name):
                 walk(v, where + (i,))
     walk(doc, ())
     return out
+
+
+class _RecordingEnv(collections.abc.MutableMapping):
+    """A stand-in for os.environ that records every read (a membership test, an item, get, keys, items, iteration,
+    len) in `touched` and holds nothing: what the consent decision must never consult, whatever the syntax."""
+
+    def __init__(self, touched):
+        self._d = {}
+        self.touched = touched
+
+    def __getitem__(self, k):
+        self.touched.append(("getitem", k))
+        return self._d[k]
+
+    def __setitem__(self, k, v):
+        self._d[k] = v
+
+    def __delitem__(self, k):
+        del self._d[k]
+
+    def __iter__(self):
+        self.touched.append(("iter", None))
+        return iter(self._d)
+
+    def __len__(self):
+        self.touched.append(("len", None))
+        return len(self._d)
+
+    def __contains__(self, k):
+        self.touched.append(("in", k))
+        return k in self._d
+
+    def get(self, k, default=None):
+        self.touched.append(("get", k))
+        return self._d.get(k, default)
+
+    def keys(self):
+        self.touched.append(("keys", None))
+        return self._d.keys()
+
+    def items(self):
+        self.touched.append(("items", None))
+        return self._d.items()
 
 
 def _free_port():
@@ -737,6 +781,30 @@ class Cli(unittest.TestCase):
                 names.add(literal(node.slice))
         self.assertEqual(names, {"ROMP_PERF_RECEIVER"})
         self.assertEqual({n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "getenv"}, set())
+        # the environ-node walk, ADDED to the name census (which alone reads four call shapes: a membership test, `"X" in
+        # os.environ`, has no call and passed it): every reference to `environ` in the module, an attribute or a bare
+        # name, paired with the function holding it, is the one read in receiver_setting (by function name and count,
+        # no line number: the function's body moves)
+        refs = []
+
+        def visit(node, fn):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                fn = node.name
+            if (isinstance(node, ast.Attribute) and node.attr == "environ") or (isinstance(node, ast.Name) and node.id == "environ"):
+                refs.append(fn)
+            for child in ast.iter_child_nodes(node):
+                visit(child, fn)
+        visit(tree, "<module>")
+        self.assertEqual(refs, ["receiver_setting"], "one environ reference, the receiver's address; confirmed holds none")
+        # the executed check, whatever the syntax (a getattr, a future access form): the environment replaced by a mapping
+        # that records every read, and confirmed off a terminal without --yes refuses having touched none of it
+        touched = []
+        with mock.patch.object(pu.os, "environ", _RecordingEnv(touched)):
+            with self.assertRaises(pu.Refusal) as cm:
+                pu.confirmed(False, stdin=io.StringIO(), stdout=io.StringIO())
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("pass --yes", str(cm.exception))
+        self.assertEqual(touched, [], "the decision read nothing from the environment under any access form")
 
     def test_on_a_terminal_the_prompt_is_asked_and_y_or_yes_sends_while_anything_else_does_not(self):
         summary = "%s (%d bytes) to %s/v1/upload\n" % (self.file, len(self.data), self.fake.url)
@@ -767,6 +835,37 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(len(self.fake.requests), 1, "the configured address was dialled, not the proxy")
         self.assertEqual(self.fake.requests[0][0], "POST /v1/upload HTTP/1.1", "origin form, not the absolute form a proxy is sent")
+
+    def test_an_https_address_at_a_plaintext_receiver_is_refused_by_its_ssl_error_class_with_no_cleartext_retry(self):
+        """An https address is dialled as https and nothing else. Against a receiver that speaks plain HTTP the TLS
+        handshake fails and the verb refuses by the error's class alone: an SSLError, or the SSLEOFError a server that
+        closes first leaves behind, so the class is pinned by its shape and not its exact name (the suite runs on five
+        interpreters and two platforms). The fake's log is the substance: a retry in the clear would leave one plaintext
+        request there whose body is the export, and there must be none. This case alone cannot see verification turned
+        off (with it off and no retry the same dial still ends in an SSL error); the census beside it does."""
+        r = _run([self.file, "--yes", "--receiver", "https://127.0.0.1:%d" % self.fake.port], self.state)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertRegex(r.stderr, r"^romp perf upload: refused: no answer from the receiver \((SSL[A-Za-z]*Error)\); no receipt\n$")
+        self.assertEqual(r.stdout, "%s (%d bytes) to https://127.0.0.1:%d/v1/upload\n" % (self.file, len(self.data), self.fake.port))
+        self.assertEqual(self.fake.requests, [], "no cleartext request reached the receiver: an https address is never retried as http")
+
+    def test_the_module_uses_urllibs_default_tls_context_and_nothing_weakens_it(self):
+        """The census over the transport module's text, load-bearing beside the https case above: disabling certificate
+        verification needs a context object from somewhere, and the module has none. No import of ssl, no `context=`
+        keyword at any call (the default HTTPSHandler and HTTPSConnection build the verified context themselves when
+        none is passed, so the deadline handlers pass none), no attribute that would loosen one, no bare name ssl. The
+        consent census (test_no_environment_variable_stands_in_for_yes) already collects every environ subscript, a
+        PYTHONHTTPSVERIFY write among them."""
+        with open(os.path.join(ROOT, "cli", "perf_upload.py"), encoding="utf-8") as fh:
+            tree = ast.parse(fh.read())
+        imported = [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
+        imported += [n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
+        self.assertEqual([m for m in imported if m == "ssl" or m.startswith("ssl.")], [], imported)
+        self.assertNotIn("context", {kw.arg for n in ast.walk(tree) if isinstance(n, ast.Call) for kw in n.keywords})
+        attrs = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+        self.assertEqual(attrs & {"check_hostname", "verify_mode", "_create_unverified_context", "_create_default_https_context",
+                                  "load_verify_locations", "wrap_socket", "SSLContext", "set_ciphers", "minimum_version"}, set())
+        self.assertEqual({n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "ssl"}, set())
 
     def test_success_prints_the_receipt_and_the_retention_and_exits_0(self):
         self.fake.answer = (201, {}, json.dumps({"av": "skipped", "retention_days": 7, "receipt": RECEIPT.upper()}))
