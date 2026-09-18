@@ -484,6 +484,7 @@ class OptionalPanes(unittest.TestCase):
             self.assertNotIn("<iframe id=f-%s src=" % k, html)
         self.assertIn("<iframe id=f-chat class=m-on src=/chat>", html, "the chat is required and loads at once")
         self.assertIn("<iframe id=f-files src=/files>", html, "the Files pane keeps its rail toggle, not this switch")
+        self.assertIn("<iframe id=f-waiting data-src=/waiting>", html, "the Waiting pane is served without a src too (stage 0, 2026-09-18): the mobile script promotes it, at boot on the desktop and on its first tap on the phone (LazyPanes below)")
         js = km._LANDING_COLLAPSE_JS
         self.assertIn("OPT=['timeline','fleet','feed']", js)
         self.assertIn("SK='romp:settings'", js)
@@ -631,7 +632,7 @@ class MobileScript(unittest.TestCase):
         self.assertEqual(self.out["unknown"]["tab"], "files", "a key the shell has no pane for switches nothing")
 
     def test_a_layout_flip_re_tells_the_panes(self):
-        self.assertEqual(self.out["flip"]["listeners"], 1, "one change listener on the media query")
+        self.assertEqual(self.out["flip"]["listeners"], 2, "two change listeners on the media query: the re-tell, and the lazy panes' promotion on a flip to the desktop (stage 0, 2026-09-18)")
         self.assertEqual(self.out["flip"]["tells"], ["files"])
 
     def test_a_tab_tap_drops_the_relays_remembered_tab_and_the_relays_own_switch_keeps_it(self):
@@ -994,6 +995,227 @@ class PaneEnabledReader(unittest.TestCase):
         self.assertEqual(out["falsy"], [True, True, True, True])
         self.assertEqual(out["corrupt"], [True, True, True, True])
         self.assertEqual(out["notObject"], [True, True, True, True])
+
+
+# ── the lazy panes (stage 0 of the reconnect design, 2026-09-18) ─────────────────────────────────────────
+# On the phone layout only the chat, the feed and the stored tab load at boot; every other pane loads on its first show (a tap,
+# a reveal, a relay's switch), with the src set BEFORE the re-tell and exactly once, and the shell paints its loader over the
+# pane area until the iframe's load event. The desktop keeps its eager boot. Both scripts run here in the served order (the
+# mobile script, then the pane controller) against fakes with attributes, a .pane parent per iframe and a body class list, so
+# the promotion, the parking of data-src under data-lazy-src, the controller's untouched promotion line and the loading state
+# are all executed. Synthetic only: TESTHOST, no session data.
+_LAZY_HARNESS = r"""
+'use strict';
+const STORE = {}, SETS = {}, LOG = [], POSTED = {}, LOADS = {}, TIMERS = [], MQL = [], MSGS = [], STORAGE = [];
+let MATCHES = __PHONE__;
+const KEYS = __KEYS__;
+// the served markup: the chat and the Files pane ship src (the Files line is upstream's), every other pane data-src
+const attrsOf = (k) => ((k === 'chat' || k === 'files') ? { src: '/' + k } : { 'data-src': '/' + k });
+const cls = (set) => ({ add: (c) => set.add(c), remove: (c) => set.delete(c), contains: (c) => set.has(c),
+  toggle: (c, on) => { if (on === undefined) on = !set.has(c); if (on) set.add(c); else set.delete(c); return on; } });
+const frames = {}, DIVS = {};
+KEYS.forEach((k) => {
+  const attrs = attrsOf(k); const divCls = new Set(['pane']);
+  DIVS[k] = { classList: cls(divCls), cls: divCls };
+  frames['f-' + k] = { id: 'f-' + k, attrs, parentNode: DIVS[k], contentDocument: {}, classList: cls(new Set()),
+    contentWindow: { postMessage: (m) => { (POSTED[k] = POSTED[k] || []).push(JSON.parse(JSON.stringify(m))); }, addEventListener() {} },
+    getAttribute: (a) => (a in attrs ? attrs[a] : null),
+    setAttribute: (a, v) => { attrs[a] = v; if (a === 'src') { SETS[k] = (SETS[k] || 0) + 1; LOG.push('src:' + k); } },
+    removeAttribute: (a) => { delete attrs[a]; },
+    addEventListener: (ev, f) => { if (ev === 'load') (LOADS[k] = LOADS[k] || []).push(f); } };
+});
+const BTNS = {};
+KEYS.forEach((k) => { BTNS[k] = { hidden: false, title: '', getAttribute: (a) => (a === 'data-pane' ? k : null), classList: cls(new Set()), addEventListener() {} }; });
+const BODY_CLS = new Set(['po-chat', 'po-feed', 'po-timeline']); let TAB = null;
+global.window = global;
+global.innerHeight = 844; global.innerWidth = 390; global.scrollY = 0; global.scrollTo = () => {};
+global.matchMedia = (q) => ({ get matches() { return MATCHES; }, query: q, addEventListener: (ev, f) => { if (ev === 'change') MQL.push(f); } });
+global.requestAnimationFrame = (f) => 1;
+global.addEventListener = (ev, f) => { if (ev === 'message') MSGS.push(f); if (ev === 'storage') STORAGE.push(f); };
+global.dispatchEvent = () => true;
+global.Event = class { constructor(t) { this.type = t; } };
+global.visualViewport = { height: 844, scale: 1, addEventListener: () => {} };
+global.WebSocket = class { constructor() { this.readyState = 0; } send() {} };
+global.location = { protocol: 'http:', host: 'TESTHOST:1', search: '' };
+global.URLSearchParams = class { get() { return null; } };
+global.sessionStorage = { getItem: () => 'wid1' };
+global.setTimeout = (f, ms) => { TIMERS.push({ f, ms }); return TIMERS.length; };
+global.setInterval = () => 0;
+global.localStorage = { getItem: (k) => (k in STORE ? STORE[k] : null), setItem: (k, v) => { STORE[k] = v; } };
+global.__rompPaneEnabled = (k) => { try { const s = JSON.parse(STORE['romp:settings'] || '{}'), p = s && s.panes; return !(p && typeof p === 'object' && p[k] === false); } catch (e) { return true; } };   // the head script's reader, as served
+const BAR = { offsetHeight: 44, querySelectorAll: (sel) => (sel === 'button[data-pane]' ? KEYS.map((k) => BTNS[k]) : []) };
+global.document = {
+  visibilityState: 'visible', addEventListener: () => {},
+  documentElement: { scrollTop: 0, style: { setProperty() {} } },
+  body: { classList: cls(BODY_CLS), setAttribute: (a, v) => { if (a === 'data-tab') TAB = v; }, getAttribute: (a) => (a === 'data-tab' ? TAB : null) },
+  querySelectorAll: (sel) => { if (sel === '.rail-btn[data-pane]') return KEYS.map((k) => BTNS[k]); if (sel === 'iframe') return KEYS.map((k) => frames['f-' + k]); const m = /data-pane=(\w+)/.exec(sel); return m && BTNS[m[1]] ? [BTNS[m[1]]] : []; },
+  getElementById: (id) => (id === 'mtabs' ? BAR : (frames[id] || null)),
+};
+__SEED__
+"""
+_LAZY_TOOLS = r"""
+const src = () => Object.fromEntries(KEYS.map((k) => [k, frames['f-' + k].getAttribute('src')]));
+const lazy = () => Object.fromEntries(KEYS.map((k) => [k, frames['f-' + k].getAttribute('data-lazy-src')]));
+const dataSrc = () => Object.fromEntries(KEYS.map((k) => [k, frames['f-' + k].getAttribute('data-src')]));
+const loading = () => KEYS.filter((k) => DIVS[k].cls.has('loading')).sort();
+const hidden = () => Object.fromEntries(KEYS.map((k) => [k, BTNS[k].hidden]));
+const words = (k) => (POSTED[k] || []).map((m) => m.on && m.on[k]);
+const out = {};
+const origTell = window.__rompPanesTell; window.__rompPanesTell = () => { LOG.push('tell'); origTell(); };
+"""
+_LAZY_PHONE_DRIVER = _LAZY_TOOLS + r"""
+out.boot = { tab: TAB, src: src(), lazy: lazy(), dataSrc: dataSrc(), sets: Object.assign({}, SETS), loading: loading(), bodyLoading: BODY_CLS.has('pane-loading'), hidden: hidden(), promote: typeof window.__rompPanePromote };
+LOG.length = 0;
+window.__rompMobileTab('waiting');   // the first tap on the Waiting tab
+out.tap = { tab: TAB, src: src(), lazy: lazy(), log: LOG.slice(), loading: loading(), bodyLoading: BODY_CLS.has('pane-loading'), words: words('waiting'), timers: TIMERS.filter((t) => t.ms === 30000).length };
+frames['f-waiting'].contentDocument = { URL: 'http://TESTHOST:1/waiting' };
+(LOADS.waiting || []).forEach((f) => f());   // the document loads: the controller's load hook re-tells it, the loading state ends
+out.loaded = { loading: loading(), bodyLoading: BODY_CLS.has('pane-loading'), words: words('waiting') };
+window.__rompMobileTab('chat'); window.__rompMobileTab('waiting');   // back and forth: the src is never reassigned
+out.again = { sets: Object.assign({}, SETS), src: src(), bodyLoading: BODY_CLS.has('pane-loading') };
+LOG.length = 0; MSGS.forEach((f) => f({ data: { romp: 'reveal', pane: 'fleet' } }));   // a reveal aimed at a lazy pane (the kernel's, a feed card's tap)
+out.reveal = { tab: TAB, src: src(), log: LOG.slice(), loading: loading(), bodyLoading: BODY_CLS.has('pane-loading') };
+window.__rompMobileTab('chat');
+out.awayFromLoading = { bodyLoading: BODY_CLS.has('pane-loading'), loading: loading() };   // the Outline still loads off screen: no loader over the chat
+window.__rompMobileTab('fleet');
+out.backToLoading = { bodyLoading: BODY_CLS.has('pane-loading') };
+TIMERS.filter((t) => t.ms === 30000).forEach((t) => t.f());   // the backstop: a load event that never comes cannot trap the loader
+out.backstop = { loading: loading(), bodyLoading: BODY_CLS.has('pane-loading') };
+window.__rompMobileTab('timeline');
+out.timeline = { src: src(), lazy: lazy(), sets: Object.assign({}, SETS) };
+// the gear turns the Outline off, then on again: on the phone the re-enabled pane waits for a tap (it loaded already here, so nothing moves)
+STORE['romp:settings'] = JSON.stringify({ showFilesControl: true, panes: { fleet: false } }); STORAGE.forEach((f) => f({ key: 'romp:settings' }));
+STORE['romp:settings'] = JSON.stringify({ showFilesControl: true, panes: {} }); STORAGE.forEach((f) => f({ key: 'romp:settings' }));
+out.gearCycle = { sets: Object.assign({}, SETS), tab: TAB };
+console.log(JSON.stringify(out));
+"""
+_LAZY_STORED_DRIVER = _LAZY_TOOLS + r"""
+out.boot = { tab: TAB, src: src(), lazy: lazy(), sets: Object.assign({}, SETS), loading: loading(), bodyLoading: BODY_CLS.has('pane-loading') };
+console.log(JSON.stringify(out));
+"""
+_LAZY_FEED_OFF_DRIVER = _LAZY_TOOLS + r"""
+out.boot = { tab: TAB, src: src(), lazy: lazy(), sets: Object.assign({}, SETS), hidden: hidden(), loading: loading() };
+STORE['romp:settings'] = JSON.stringify({ showFilesControl: true, panes: {} }); STORAGE.forEach((f) => f({ key: 'romp:settings' }));   // the gear turns the Feed back on
+out.feedOn = { src: src(), sets: Object.assign({}, SETS), hidden: hidden(), tab: TAB };
+window.__rompMobileTab('feed');
+out.feedTab = { tab: TAB, sets: Object.assign({}, SETS) };
+console.log(JSON.stringify(out));
+"""
+_LAZY_DESKTOP_DRIVER = _LAZY_TOOLS + r"""
+out.boot = { tab: TAB, src: src(), lazy: lazy(), sets: Object.assign({}, SETS), loading: loading(), bodyLoading: BODY_CLS.has('pane-loading') };
+window.__rompMobileTab('waiting');
+out.tap = { sets: Object.assign({}, SETS), loading: loading(), bodyLoading: BODY_CLS.has('pane-loading') };
+console.log(JSON.stringify(out));
+"""
+_LAZY_FLIP_DRIVER = _LAZY_TOOLS + r"""
+out.boot = { src: src(), lazy: lazy() };
+MATCHES = false; MQL.forEach((f) => f({}));   // a rotation across the breakpoint: the grid shows every pane the rail has on
+out.flipped = { src: src(), lazy: lazy(), sets: Object.assign({}, SETS), listeners: MQL.length, loading: loading() };
+console.log(JSON.stringify(out));
+"""
+
+
+def _lazy(seed, driver, phone=True):
+    keys = [k for k, _ in km._PANE_ORDER]
+    harness = _LAZY_HARNESS.replace("__KEYS__", json.dumps(keys)).replace("__PHONE__", "true" if phone else "false").replace("__SEED__", seed)
+    return _run(harness + km._LANDING_MOBILE_JS + km._LANDING_COLLAPSE_JS + driver)
+
+
+class LazyPanes(unittest.TestCase):
+    """T1 (stage 0, 2026-09-18), the shell side: on the phone an off-screen pane other than the feed has no src, so no document and
+    no socket, until its first tap; the tap sets it once, before the re-tell; the desktop still loads every pane at boot."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.seed = "STORE['romp:settings'] = JSON.stringify({ showFilesControl: true }); STORE['romp-mobile-tab'] = 'chat';"
+        cls.out = _lazy(cls.seed, _LAZY_PHONE_DRIVER)
+
+    def test_at_boot_on_the_phone_only_the_chat_the_feed_and_the_stored_tab_have_a_src(self):
+        b = self.out["boot"]
+        self.assertEqual(b["tab"], "chat")
+        self.assertEqual(b["src"], {"chat": "/chat", "feed": "/feed", "files": "/files", "timeline": None, "fleet": None, "waiting": None},
+                         "the chat and the Files pane ship src, the feed is promoted (exempt); the Outline, the Sessions band and the Waiting pane have no document")
+        self.assertEqual(b["lazy"], {"chat": None, "feed": None, "files": None, "timeline": "/timeline", "fleet": "/fleet", "waiting": "/waiting"},
+                         "the lazy panes' data-src is parked under data-lazy-src before the controller parses")
+        self.assertEqual(b["dataSrc"], {"chat": None, "feed": "/feed", "files": None, "timeline": None, "fleet": None, "waiting": None},
+                         "…so the controller's own promotion line (upstream's text) finds nothing to copy for them; the feed keeps its data-src beside its src, as any promoted pane does (a src is never reassigned)")
+        self.assertEqual(b["sets"], {"feed": 1}, "one src set at boot: the feed's")
+        self.assertEqual(b["loading"], ["feed"], "the feed's .pane wears loading until its document loads")
+        self.assertFalse(b["bodyLoading"], "the shown tab (the chat) is not loading: no loader over it")
+        self.assertEqual(b["hidden"], {k: False for k in b["hidden"]}, "every tab is a place to go")
+        self.assertEqual(b["promote"], "function", "window.__rompPanePromote is the one road")
+
+    def test_the_first_tap_sets_the_src_once_before_the_re_tell_and_paints_the_loader_until_the_load(self):
+        t = self.out["tap"]
+        self.assertEqual(t["tab"], "waiting")
+        self.assertEqual(t["src"]["waiting"], "/waiting", "the tap promotes the pane")
+        self.assertIsNone(t["lazy"]["waiting"], "…and consumes the parked attribute")
+        self.assertEqual(t["log"], ["src:waiting", "tell"], "the src is set BEFORE the re-tell (a word posted into a document not yet there is dropped; the pane hears it on its load)")
+        self.assertEqual(sorted(t["loading"]), ["feed", "waiting"], "the tapped pane's .pane wears loading")
+        self.assertTrue(t["bodyLoading"], "the shown tab is loading: the shell paints its loader (body.pane-loading)")
+        self.assertEqual(t["words"][-1], True, "the re-tell says the pane is on screen")
+        self.assertEqual(t["timers"], 2, "a 30 s backstop per promotion so far (the feed's and this one)")
+        l = self.out["loaded"]
+        self.assertEqual(l["loading"], ["feed"], "the load event ends the loading state")
+        self.assertFalse(l["bodyLoading"], "…and the loader goes")
+        self.assertEqual(l["words"][-1], True, "the controller's load hook tells the new document the set")
+        a = self.out["again"]
+        self.assertEqual(a["sets"], {"feed": 1, "waiting": 1}, "src set exactly once per pane: a second show never reassigns it")
+        self.assertFalse(a["bodyLoading"])
+
+    def test_a_reveal_promotes_too_and_the_loader_follows_the_shown_tab_with_a_backstop(self):
+        r = self.out["reveal"]
+        self.assertEqual(r["tab"], "fleet")
+        self.assertEqual(r["src"]["fleet"], "/fleet", "a reveal aimed at a lazy pane loads it")
+        self.assertEqual(r["log"][:2], ["src:fleet", "tell"], "the same order: the src, then the word")
+        self.assertIn("fleet", r["loading"]); self.assertTrue(r["bodyLoading"])
+        self.assertFalse(self.out["awayFromLoading"]["bodyLoading"], "a switch away from a loading pane takes the loader with it (the Outline keeps loading off screen)")
+        self.assertIn("fleet", self.out["awayFromLoading"]["loading"])
+        self.assertTrue(self.out["backToLoading"]["bodyLoading"], "…and back to it, the loader is back")
+        self.assertEqual(self.out["backstop"], {"loading": [], "bodyLoading": False}, "the 30 s backstop ends a loading state whose load event never came: the loader can never trap the user")
+        self.assertEqual(self.out["timeline"]["src"]["timeline"], "/timeline")
+        self.assertEqual(self.out["timeline"]["sets"], {"feed": 1, "waiting": 1, "fleet": 1, "timeline": 1})
+        self.assertEqual(self.out["gearCycle"]["sets"], {"feed": 1, "waiting": 1, "fleet": 1, "timeline": 1}, "a gear cycle on a loaded pane reassigns nothing")
+
+    def test_the_stored_tab_loads_at_boot_and_wears_the_loader(self):
+        o = _lazy("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true }); STORE['romp-mobile-tab'] = 'timeline';", _LAZY_STORED_DRIVER)["boot"]
+        self.assertEqual(o["tab"], "timeline")
+        self.assertEqual(o["src"], {"chat": "/chat", "feed": "/feed", "files": "/files", "timeline": "/timeline", "fleet": None, "waiting": None}, "the stored tab is eager; the other two wait for a tap")
+        self.assertEqual(o["lazy"], {"chat": None, "feed": None, "files": None, "timeline": None, "fleet": "/fleet", "waiting": "/waiting"})
+        self.assertEqual(o["sets"], {"feed": 1, "timeline": 1})
+        self.assertEqual(sorted(o["loading"]), ["feed", "timeline"])
+        self.assertTrue(o["bodyLoading"], "the shown tab is loading its document: the loader is up (under the boot splash at this point)")
+
+    def test_a_pane_off_in_the_gear_is_never_promoted_and_the_exempt_feed_loads_when_the_gear_turns_it_on(self):
+        o = _lazy("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true, panes: { feed: false } }); STORE['romp-mobile-tab'] = 'feed';", _LAZY_FEED_OFF_DRIVER)
+        b = o["boot"]
+        self.assertEqual(b["tab"], "chat", "a phone left on the hidden pane's tab goes back to the chat (the controller's rule)")
+        self.assertEqual(b["src"], {"chat": "/chat", "feed": None, "files": "/files", "timeline": None, "fleet": None, "waiting": None}, "the gear's off word wins over the feed's exemption: no document")
+        self.assertEqual(b["sets"], {}, "nothing promoted at boot")
+        self.assertTrue(b["hidden"]["feed"])
+        f = o["feedOn"]
+        self.assertEqual(f["src"]["feed"], "/feed", "the gear turns the Feed on: the controller's own line promotes it (its data-src was never parked, the feed being exempt), so the bell's pane loads off screen as designed")
+        self.assertEqual(f["sets"], {"feed": 1}); self.assertFalse(f["hidden"]["feed"])
+        self.assertEqual(o["feedTab"], {"tab": "feed", "sets": {"feed": 1}})
+
+    def test_the_desktop_loads_every_pane_at_boot_as_before_with_no_loading_state(self):
+        o = _lazy("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true });", _LAZY_DESKTOP_DRIVER, phone=False)
+        b = o["boot"]
+        self.assertEqual(b["src"], {k: "/" + k for k in b["src"]}, "every pane has its document at boot on the desktop")
+        self.assertEqual(b["lazy"], {k: None for k in b["lazy"]}, "nothing is parked")
+        self.assertEqual(b["sets"], {"waiting": 1, "timeline": 1, "fleet": 1, "feed": 1}, "the mobile script promotes the Waiting pane (no gear row), the controller the three optional panes")
+        self.assertEqual(b["loading"], []); self.assertFalse(b["bodyLoading"])
+        self.assertEqual(o["tap"], {"sets": b["sets"], "loading": [], "bodyLoading": False}, "a switch on the desktop layout promotes nothing and paints no loader")
+
+    def test_a_flip_to_the_desktop_layout_promotes_every_lazy_pane(self):
+        o = _lazy("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true }); STORE['romp-mobile-tab'] = 'chat';", _LAZY_FLIP_DRIVER)
+        self.assertEqual(o["boot"]["lazy"], {"chat": None, "feed": None, "files": None, "timeline": "/timeline", "fleet": "/fleet", "waiting": "/waiting"})
+        f = o["flipped"]
+        self.assertEqual(f["src"], {k: "/" + k for k in f["src"]}, "the grid shows the panes without a tap: all promoted on the media query's change event")
+        self.assertEqual(f["lazy"], {k: None for k in f["lazy"]})
+        self.assertEqual(f["sets"], {"feed": 1, "timeline": 1, "fleet": 1, "waiting": 1})
+        self.assertEqual(f["listeners"], 2, "the re-tell and the promotion, one listener each")
+        self.assertEqual(f["loading"], ["feed"], "the flip's promotions add no loading state off the phone layout (the feed's is the boot's, until its load event)")
 
 
 if __name__ == "__main__":

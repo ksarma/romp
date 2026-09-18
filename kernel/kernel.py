@@ -68352,11 +68352,45 @@ var F={chat:document.getElementById('f-chat'),fleet:document.getElementById('f-f
 // slash rule keys on, until the next paint event. A tab or a reveal decides which pane shows, nothing else.
 var B=bar.querySelectorAll('button[data-pane]'),KT='romp-mobile-tab';
 function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')||'null');return !!(st&&st.showFilesControl===true);}catch(e){return false;}}   // the gear's Files-control setting (T317; off by default since T317b: shown only when the store holds the literal true under the fresh key, never the T317-era filesControl a whole-object save merged in): the same read the pane controller makes, which parses after this script
+// [fork] stage 0 (2026-09-18): LAZY PANES on the phone (the user's decision of 2026-09-18: a pane nobody is looking at costs
+// nothing until its tap). The served markup gives every pane but the chat and the Files pane a data-src (the optional panes
+// since 2026-09-10; the Waiting pane since this change), and on the desktop the pane controller (_LANDING_COLLAPSE_JS
+// reconcile) copies it to src at boot for every optional pane the gear shows, as before, while the Waiting pane, which has no
+// gear row and so is not in the controller's list, is promoted at boot below. On the phone layout only the chat, the feed
+// (exempt: its socket carries the card-trouble entries the shell's bell mirrors, the parking rule's exemption) and the stored
+// tab load at boot; every other pane loads on its FIRST show (a tap, a reveal, a relay's switch), so a cold open costs their
+// documents, sockets and connect pushes nothing. The controller's boot promotion reads data-src, so before it parses (this
+// script runs first) the lazy panes' data-src is parked under data-lazy-src, an attribute the controller does not read, and
+// promote() reads either: the controller's own lines stay upstream's text, byte for byte. A layout flip to the desktop (a
+// rotation across the breakpoint) promotes every lazy pane, since the grid shows them without a tap. A promoted pane's
+// document hears the panes word on its own load (the controller's load hook) and dials as any pane does; from its first show
+// on it is a pane like any other (a return while it is off screen parks it, the shim's D2 rule). The measure of the saving is
+// the pane's absence from the timing rows: a never-tapped pane files none.
+// The loading state (ui/CLAUDE.md, loading states): from the promotion until the iframe's load event the pane's .pane div
+// wears `loading`, and while the SHOWN tab's div wears it the body wears `pane-loading`, which paints the shell's #pane-load,
+// the romp loader over the pane area (the .pane div is display:contents on the phone, so it can host no box of its own: one
+// shell element, painted for the tab in view). Event-based, with a 30 s backstop so it can never trap the user; the pane's own
+// loader (_pane_spin) takes over the instant its document paints, in the same dress, so the hand-over is not visible.
+var LAZY='data-lazy-src',LOAD_MS=30000;
+function paneDiv(f){try{var d=f&&f.parentNode;return (d&&d.classList&&typeof d.classList.contains==='function')?d:null;}catch(e){return null;}}
+function paintLoading(){try{var d=paneDiv(F[document.body.getAttribute('data-tab')]);document.body.classList.toggle('pane-loading',!!(d&&d.classList.contains('loading')));}catch(e){}}
+function loaded(k){try{var d=paneDiv(F[k]);if(d)d.classList.remove('loading');}catch(e){}paintLoading();}
+function promote(k){var f=F[k];if(!f)return false;var u=null;
+try{if(f.getAttribute('src'))return false;u=f.getAttribute('data-src')||f.getAttribute(LAZY);}catch(e){return false;}   // loaded already (a src is never reassigned: no reload of a live pane), or an element without attributes: nothing to do
+if(!u)return false;
+if(window.__rompPaneEnabled&&!window.__rompPaneEnabled(k))return false;   // off in the gear's Panes section: not in this dashboard at all (the controller's rule, read through the head's one reader)
+try{f.removeAttribute(LAZY);}catch(e){}
+if(mobileOn()){try{var d=paneDiv(f);if(d)d.classList.add('loading');}catch(e){}
+f.addEventListener('load',function(){try{if(f.contentDocument&&f.contentDocument.URL==='about:blank')return;}catch(e){}loaded(k);});   // the empty document's own load, not the page's (the gear opener's guard)
+setTimeout(function(){loaded(k);},LOAD_MS);}
+f.setAttribute('src',u);paintLoading();return true;}
+window.__rompPanePromote=promote;   // the one road a pane's src is set by on the phone (the tests drive it; a relay that must post into a lazy pane would promote first)
 function show(p){if(p==='files'&&!filesCtlM())p='chat';   // the Files tab is hidden while its control is off: the chat shows instead
 if(!F[p])return;for(var i=0;i<B.length;i++)if(B[i].getAttribute('data-pane')===p&&B[i].hidden)return;   // a tab the controller hid (its pane is off in the gear's Panes section) is not a place to go
 document.body.setAttribute('data-tab',p);for(var k in F)if(F[k])F[k].classList.toggle('m-on',k===p);   // a pane this shell lacks is skipped, never a TypeError
 for(var i=0;i<B.length;i++)B[i].classList.toggle('on',B[i].getAttribute('data-pane')===p);
 try{localStorage.setItem(KT,p);}catch(e){}
+try{if(mobileOn()){promote(p);paintLoading();}}catch(e){}   // [fork] stage 0: a lazy pane loads on its first show, BEFORE the re-tell below (the pane hears the word on its own load; a word posted into a document not yet there is dropped); the loader paints for a tab whose pane is still loading, and clears for one that is not
 // a tab switch changes what is on screen: re-tell the panes (the collapse script's broadcast; absent only
 // before that script parses, and its boot apply then tells them)
 try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}
@@ -68365,6 +68399,10 @@ window.__rompMobileTab=show;   // the shell's relays bring a pane's tab forward 
 // and no tab switch: the media query's own change event IS that flip, so re-tell the panes on it
 var retell=function(){try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}};
 if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',retell);else if(MQ.addListener)MQ.addListener(retell);}
+// [fork] stage 0: the desktop grid shows every pane the rail has on without a tap, so a flip TO the desktop layout promotes
+// every lazy pane left (its own listener on the same media query, beside the re-tell's)
+var lazyFlip=function(){try{if(!mobileOn())for(var lk in F)promote(lk);}catch(e){}};
+if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',lazyFlip);else if(MQ.addListener)MQ.addListener(lazyFlip);}
 // A REVEAL un-hides a desktop-toggled-off pane before the mobile tab switch (the user 2026-08-13: a feed
 // click that jumps into a CLOSED chat used to land invisibly — the hidden iframe's WS stays live, so the
 // scroll ran under display:none and nothing appeared to happen). Same __rompPaneToggle(…, true) the Log
@@ -68489,6 +68527,16 @@ shReturnProbe={decision:(!shWs||shWs.readyState!==1)?'redial-closed':'redial-sta
 shFailed=0;shFirstFailT=0;
 shAbandon();shellWS();});
 shellWS();
+// [fork] stage 0: the lazy panes' boot. On the phone every pane's data-src but the chat's (it ships src), the feed's (exempt) and
+// the stored tab's (show(last) below promotes it) is parked under data-lazy-src before the pane controller parses, so its boot
+// promotion leaves them alone, and the feed is promoted here (the gear's word respected). On the desktop the controller's
+// eager boot stands, and the Waiting pane, outside its list, is promoted here. The stored tab is read here as the boot line
+// below reads it (that line is upstream's text; this one runs first).
+try{var lazyTab='chat';try{var ls=localStorage.getItem(KT);if(ls&&F[ls])lazyTab=ls;}catch(e){}
+if(mobileOn()){for(var lk2 in F){var lf=F[lk2];if(!lf||lk2==='chat'||lk2==='feed'||lk2===lazyTab)continue;
+var lu=lf.getAttribute('data-src');if(lu&&!lf.getAttribute('src')){lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');}}
+promote('feed');}
+else promote('waiting');}catch(e){}
 var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);
 })();
 """
@@ -70083,6 +70131,12 @@ def _landing():
             # script lands a deep link at its own boot). A corrupt store reads as every pane shown, like reconcile.
             "window.__rompPaneEnabled=function(k){try{var s=JSON.parse(localStorage.getItem('romp:settings')||'{}'),p=s&&s.panes;"
             "return !(p&&typeof p==='object'&&p[k]===false);}catch(e){return true;}};"
+            # [fork] stage 0 (2026-09-18): the phone LAYOUT probe, defined in the head too, before any iframe, so a pane's shim can
+            # read window.parent.__rompMobileOn at its own load (the chat pane's first dial takes the skeleton diet on the phone,
+            # _shim). The mobile script (_LANDING_MOBILE_JS) defines the same probe over its cached media-query list and replaces
+            # this one when it parses, at the body's end, which on a fast origin can be after the chat document's inline shim has
+            # run (the wid mint above moved here for the same race). One constant, _MOBILE_MQ, so the two answers cannot differ.
+            "window.__rompMobileOn=function(){try{return !!(window.matchMedia&&matchMedia(" + json.dumps(_MOBILE_MQ) + ").matches);}catch(e){return false;}};"
             "if(navigator.standalone){document.documentElement.className+=' ios-standalone';"
             "var _vp=document.querySelector('meta[name=viewport]');"
             "_vp.setAttribute('content',_vp.getAttribute('content')+',viewport-fit=cover');}"
@@ -70131,12 +70185,6 @@ def _landing():
             # LANDSCAPE TABLET — too wide for both mobile breakpoints — took this branch and threw the
             # accurate measurement away (the user 2026-07-29, on an iPad).
             "html,body{margin:0;height:100%;height:100dvh;height:var(--app-h,100dvh);"
-            # [fork] stage 0 (2026-09-18): the phone LAYOUT probe, defined in the head too, before any iframe, so a pane's shim can
-            # read window.parent.__rompMobileOn at its own load (the chat pane's first dial takes the skeleton diet on the phone,
-            # _shim). The mobile script (_LANDING_MOBILE_JS) defines the same probe over its cached media-query list and replaces
-            # this one when it parses, at the body's end, which on a fast origin can be after the chat document's inline shim has
-            # run (the wid mint above moved here for the same race). One constant, _MOBILE_MQ, so the two answers cannot differ.
-            "window.__rompMobileOn=function(){try{return !!(window.matchMedia&&matchMedia(" + json.dumps(_MOBILE_MQ) + ").matches);}catch(e){return false;}};"
             "background:#1e1e1e;overflow:hidden}"
             # A pane whose document has not painted yet is a WHITE rectangle in the shell's dark frame
             # (Firefox shows it plainly). Give the frames the shell's own background so a slow or blank
@@ -70769,6 +70817,7 @@ def _landing():
             ".pane.pane-focused.split-v::after{display:none}"
             ".pane.pane-focused.split-v.focus-top>iframe,.pane.pane-focused.split-v.focus-bottom>.chat-sub{outline:2px solid rgba(156,210,255,0.55);outline-offset:-2px}"
             "#mtabs{display:none}"
+            "#pane-load{display:none}"   # the lazy pane loader (stage 0, 2026-09-18): hidden everywhere but the phone layout's loading state (the media block below)
             # narrow OR a touch device up to 1024px → one pane + bottom tabs; mouse desktops keep the grid
             # (_MOBILE_MQ: the same query the mobile script's __rompMobileOn probe answers by)
             "@media " + _MOBILE_MQ + "{"
@@ -70808,6 +70857,11 @@ def _landing():
             "iframe{position:static;display:none;width:100%;height:100%;border:0}"
             "#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on,#f-files.m-on{display:block}"
             "#f-timeline{flex:1 1 auto;min-height:0}#f-timeline.m-on{display:block}"
+            # the lazy pane loader (stage 0, 2026-09-18): while the shown tab's pane is loading its document the shell paints the
+            # romp loader over the pane area, above the pane's iframe and below the tab bar (z 20; the bar stays tappable, the
+            # loader stops at its reserved height), in the pane loader's dress (_pane_spin: the same backdrop, the same loader)
+            "#pane-load{position:fixed;left:0;right:0;top:0;bottom:var(--mtabs-h,2.6em);z-index:15;align-items:center;justify-content:center;background:#1e1e1e}"
+            "body.pane-loading #pane-load{display:flex}"
             "body[data-tab=timeline] .row{display:none}"    # timeline tab active → collapse the chat/feed row so the band fills
             # compact text-only switcher, FIXED to the visible viewport bottom so nothing can sit below it.
             # NO safe-area padding-bottom in the BROWSER: without viewport-fit=cover the viewport already sits
@@ -70970,6 +71024,7 @@ def _landing():
             "body.theme-light .gv:hover::after,body.theme-light .gh:hover::after{background:var(--accent)}"
             "body.theme-light .pane.pane-focused::after{box-shadow:inset 0 0 0 2px rgba(194,65,12,0.55)}"
             "body.theme-light #romp-boot{background:#F1EAE2}"
+            "body.theme-light #pane-load{background:#F1EAE2}"   # the lazy pane loader's backdrop goes warm-light with the page (stage 0)
             # (the loader dots' light rule rides in _LOADER_CSS, included below)
             # light cards: raised white over the warm page, dark warm text, hairline borders, soft shadows
             "body.theme-light #rerr-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
@@ -71046,6 +71101,11 @@ def _landing():
             "</style></head><body class='po-chat po-feed po-timeline'>"
             + _THEME_READER +
             "<div id=romp-boot>" + _loader_inner() + "</div>"
+            # the LAZY PANE loader (stage 0, 2026-09-18): the same loader, painted over the pane area on the phone while the
+            # shown tab's pane is loading its document (_LANDING_MOBILE_JS promote: body.pane-loading while the shown .pane wears
+            # `loading`, from the promotion to the iframe's load event). One element for every pane: a .pane div is
+            # display:contents on the phone and can host no box of its own.
+            "<div id=pane-load>" + _loader_inner() + "</div>"
             # the bell popover (2026-09-05; driven by _LANDING_PUSH_JS): the two switches that ONE bell
             # tap used to flip together — the kernel-wide master and this device's push subscription —
             # as separate rows, plus the turn-finished switch and a test button that shows the push
@@ -71105,7 +71165,10 @@ def _landing():
             # "Waiting on you" (2026-09-03): every session's open user todos in one place — the far-right
             # column, OFF by default like the Outline (the feature itself is off by default)
             "<div class=gv id=gv-c></div>"
-            "<div class=pane id=waiting-pane><iframe id=f-waiting src=/waiting></iframe></div>"
+            # data-src since stage 0 (2026-09-18): on the phone the pane loads on its first tap (_LANDING_MOBILE_JS, the lazy
+            # panes); on the desktop the mobile script promotes it at boot, so the column loads as it always did. The chat keeps
+            # its src (the shell's reveal landing reads its document), the Files pane too (its line is upstream's).
+            "<div class=pane id=waiting-pane><iframe id=f-waiting data-src=/waiting></iframe></div>"
             # "Files" (2026-09-03): the file viewer as its own column, far right, OFF by default — the
             # shell's viewFile relay brings it forward when a chat file-link click routes here
             "<div class=gv id=gv-d></div>"

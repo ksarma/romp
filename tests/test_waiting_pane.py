@@ -228,7 +228,8 @@ class Shell(unittest.TestCase):
         self.assertIn("<button data-pane=waiting>Waiting</button>", self.html)
 
     def test_the_column_sits_after_feed_with_its_gutter_and_grow_var(self):
-        self.assertIn('<div class=gv id=gv-c></div><div class=pane id=waiting-pane><iframe id=f-waiting src=/waiting></iframe></div>',
+        # data-src since stage 0 (2026-09-18): the mobile script promotes it, at boot on the desktop and on its first tap on the phone
+        self.assertIn('<div class=gv id=gv-c></div><div class=pane id=waiting-pane><iframe id=f-waiting data-src=/waiting></iframe></div>',
                       self.html.replace('"\n            "', ""))
         self.assertLess(self.html.index("id=feed-pane"), self.html.index("id=gv-c"))
         self.assertLess(self.html.index("id=gv-c"), self.html.index("id=waiting-pane"))

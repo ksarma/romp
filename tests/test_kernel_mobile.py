@@ -171,6 +171,34 @@ class LandingShell(unittest.TestCase):
         self.assertIn("#f-timeline.m-on{display:block}", html) # timeline is a mobile tab pane (it lives in the row now)
         self.assertIn("data-tab", km._LANDING_MOBILE_JS)       # show() marks the active pane on <body>
 
+    def test_lazy_panes_markup_loader_and_the_promotions_place_in_show(self):
+        # stage 0 (2026-09-18): the Waiting pane is served with data-src (the mobile script promotes it: at boot on the desktop, on
+        # its first tap on the phone); the chat keeps its src (the reveal landing reads its document) and so does the Files pane
+        # (its markup line is upstream's; a lazy Files pane is a one-line follow-up). The shell's loader for a loading pane is one
+        # element, painted for the shown tab by body.pane-loading inside the phone media block, in _pane_spin's dress.
+        html = km._landing()
+        js = km._LANDING_MOBILE_JS
+        self.assertIn("<iframe id=f-waiting data-src=/waiting>", html)
+        self.assertIn("<iframe id=f-chat class=m-on src=/chat>", html)
+        self.assertIn("<iframe id=f-files src=/files>", html)
+        self.assertEqual(html.count("<div id=pane-load>"), 1)
+        self.assertLess(html.index("<div id=romp-boot>"), html.index("<div id=pane-load>"))
+        self.assertIn("#pane-load{display:none}", html)
+        self.assertIn("#pane-load{position:fixed;left:0;right:0;top:0;bottom:var(--mtabs-h,2.6em);z-index:15;align-items:center;justify-content:center;background:#1e1e1e}", html)
+        self.assertIn("body.pane-loading #pane-load{display:flex}", html)
+        self.assertIn("body.theme-light #pane-load{background:#F1EAE2}", html)
+        self.assertLess(html.index("@media " + km._MOBILE_MQ + "{"), html.index("body.pane-loading #pane-load{display:flex}"), "the paint lives inside the phone media block")
+        self.assertLess(html.index("#pane-load{display:none}"), html.index("@media " + km._MOBILE_MQ + "{"), "hidden by default, outside it")
+        self.assertEqual(html.count("<script>"), 21, "no new script element: the mobile script carries the lazy panes")
+        # show(): the promotion sits between the persist and the re-tell (upstream's lines on both sides), so the pane hears the word on its load
+        self.assertIn("try{localStorage.setItem(KT,p);}catch(e){}\ntry{if(mobileOn()){promote(p);paintLoading();}}catch(e){}", js)
+        self.assertLess(js.index("try{if(mobileOn()){promote(p);paintLoading();}}catch(e){}"), js.index("try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}\nwindow.__rompMobileTab=show;"))
+        # the boot: the parking of data-src runs before the boot show, whose line is upstream's text
+        self.assertLess(js.index("lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');"), js.index("var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);"))
+        self.assertIn("var LAZY='data-lazy-src',LOAD_MS=30000;", js)
+        self.assertIn("window.__rompPanePromote=promote;", js)
+        self.assertIn("if(en){if(f&&!f.getAttribute('src')&&f.getAttribute('data-src'))f.setAttribute('src',f.getAttribute('data-src'));", km._LANDING_COLLAPSE_JS, "the controller's promotion line is untouched")
+
     def test_shell_reveal_listener_wired(self):
         html = km._landing()
         self.assertIn("app=shell", html)              # shell WS catches kernel reveals (feed/timeline tap)
@@ -1406,6 +1434,43 @@ class LazyPaneLinked(unittest.TestCase):
     pane like any other, parking at a return off screen (D2) and dialing on its tab (the linked harness of PR 768: one node
     process, one fake clock, the pane reading the shell's real publications). And the phone's first chat dial carries skeleton=1
     (the kernel's one-full-plus-statuses shape), where a standalone page, the VS Code webview or a desktop shell does not."""
+
+    def test_a_lazy_pane_dials_nothing_until_its_tap_then_one_socket_and_parks_like_any_pane_after(self):
+        r = _run_linked(app="waiting", pre=_LAZY_PRE, before=_MOBILE_GLUE + r"""
+var t_boot=global.lazySnap();   // the shell booted (show('chat')): read before the tap
+global.__rompMobileTab('waiting');   // the tap: the src is set, the document starts loading; the shim below is that document's
+var t_afterTap={src:PANES['f-waiting'].getAttribute('src'),lazy:PANES['f-waiting'].getAttribute('data-lazy-src'),sets:SRCSETS.slice(),loading:DIVCLS['f-waiting'].has('loading'),bodyLoading:global.document.body.classList.contains('pane-loading')};
+""", scenario=r"""
+global.__rompPanesTell=function(){shellTell();fireWin("message",{romp:"panes",on:{waiting:global.document.body.getAttribute('data-tab')==='waiting'},link:global.__rompLink().up?"up":"down"});};   // the shell's tell carries the real on-screen word for this pane
+var t_atLoad={sockets:sockets.length,url:sock().url,onScreen:onScreen};
+shOpen();shRecv({type:'ka'});   // the shell's link is up
+open();recv({type:"ka"});   // the pane's socket opens on the kernel
+global.__rompPanesTell();    // the controller's load hook: the word on the pane's own load (the harness has no controller; the tell stands in)
+var t_told={onScreen:onScreen,states:states().slice()};
+global.__rompMobileTab('chat');   // the person goes back to the chat: the pane is off screen now
+var t_away={onScreen:onScreen};
+hide();NOW+=40000;sock().readyState=3;show();   // a return from the background with the socket dead: D2 parks a pane off screen on the phone
+var t_parked={states:states().slice(),sockets:sockets.length};
+shRecv({type:'ka'});   // the shell's own socket stands and is fresh (its return redial is ShellLinkProbe's business): the link reads up at the tap
+global.__rompMobileTab('waiting');   // its tab again: the word shows it, it dials
+var t_dialed=sockets.length;open();   // the kernel accepts the redial
+var t_back={dialed:t_dialed,sockets:sockets.length,states:states().slice()};
+out({boot:t_boot,afterTap:t_afterTap,atLoad:t_atLoad,told:t_told,away:t_away,parked:t_parked,back:t_back});   // t_ prefixed: the scenario shares the shim core's function scope, whose own `parked` a bare name would shadow""")
+        self.assertEqual(r["boot"]["src"], {"f-chat": "/chat", "f-files": "/files", "f-feed": "/feed", "f-fleet": None, "f-timeline": None, "f-waiting": None},
+                         "at the shell's boot on the phone the Waiting pane has no src: no document, no shim, no socket")
+        self.assertEqual(r["boot"]["lazy"]["f-waiting"], "/waiting", "its data-src is parked for the tap")
+        self.assertEqual(r["boot"]["sets"], ["f-feed"], "one src set at boot, the exempt feed's")
+        self.assertEqual(r["afterTap"]["src"], "/waiting", "the tap sets it")
+        self.assertIsNone(r["afterTap"]["lazy"])
+        self.assertEqual(r["afterTap"]["sets"], ["f-feed", "f-waiting"], "exactly once")
+        self.assertTrue(r["afterTap"]["loading"] and r["afterTap"]["bodyLoading"], "the shell paints its loader over the shown, loading pane")
+        self.assertEqual(r["atLoad"]["sockets"], 1, "the document's shim dials one socket at its load")
+        self.assertIn("app=waiting", r["atLoad"]["url"])
+        self.assertIs(r["told"]["onScreen"], True, "the word on its load says the pane is on screen")
+        self.assertEqual(r["told"]["states"], ["up"])
+        self.assertIs(r["away"]["onScreen"], False, "the switch back to the chat re-tells: off screen")
+        self.assertEqual(r["parked"], {"states": ["up", "parked"], "sockets": 1}, "a return off screen parks the pane (D2): no dial, one parked word")
+        self.assertEqual(r["back"], {"dialed": 2, "sockets": 2, "states": ["up", "parked", "up"]}, "its tab shows it and it dials once, the shell's link being up; the open says up again")
 
     def test_the_phones_first_chat_dial_carries_skeleton_1_and_a_redial_or_another_layout_does_not(self):
         r = _run_linked(app="chat", pre=_LAZY_PRE, before=_MOBILE_GLUE, scenario=r"""
