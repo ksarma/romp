@@ -240,10 +240,6 @@ class RenderHandlesTheTail(unittest.TestCase):
         self.assertIn("s.headFrom = from;", r)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ByteIdenticalFrames(unittest.TestCase):
     """The stage 1 exact return in _chat_diff (2026-09-18) may skip work only where the output is unchanged: this
     runs the same six pusher cycles twice, once with a verbatim copy of the walk it replaced and once with the
@@ -309,9 +305,11 @@ class ByteIdenticalFrames(unittest.TestCase):
         t1, t2 = self._timeline(2, 1), self._timeline(3, 2)
         return [(a, f1, t1), (a, f1, t1), (b, f1, t1), (b, f1, t1), (c, f1, t1), (c, f2, t2)]
 
-    def _run(self, diff, perf=None):
+    def _run(self, diff, perf=None, build=None, tolerate=()):
         """Six cycles; returns (the raw wire strings per client, whether the diff met one object on both sides per
-        cycle, and with `perf` a _PerfStats each cycle's stage split, the cycle opened and closed on this thread)."""
+        cycle, and with `perf` a _PerfStats each cycle's stage split, the cycle opened and closed on this thread).
+        `build` replaces build_session's body (frame -> the session dict, or a raise); `tolerate` names stderr lines
+        the run expects (a failed build's own report)."""
         sid = self.SID
         td = tempfile.TemporaryDirectory(); self.addCleanup(td.cleanup)
         path = os.path.join(td.name, sid + ".jsonl")
@@ -353,7 +351,7 @@ class ByteIdenticalFrames(unittest.TestCase):
                 mock.patch.object(km, "_chat_tab_sessions", lambda now, tm: [dict(sess)]), \
                 mock.patch.object(km, "_warm_fleet_bg", lambda now: None), \
                 mock.patch.object(km, "_live_map", lambda: dict(live)), \
-                mock.patch.object(km, "build_session", lambda sid, now, live_map=None, **kw: dict(world["frame"])), \
+                mock.patch.object(km, "build_session", lambda sid, now, live_map=None, **kw: (build or dict)(world["frame"])), \
                 mock.patch.object(km, "_cached_feed", lambda now, live_map, sig, connect=False: world["feed"]), \
                 mock.patch.object(km, "_cached_timeline", lambda now, live_map, sig, connect=False: world["timeline"]), \
                 mock.patch.object(km, "build_timeline", lambda now, live_map, with_bars=True, live_only=False: world["timeline"]), \
@@ -375,6 +373,8 @@ class ByteIdenticalFrames(unittest.TestCase):
                     perf.cycle(time.monotonic() - t0)
                     rows.append(perf.snapshot()["pusher"]["stageRing"][-1]["stages"])
         for line in err.getvalue().splitlines():
+            if any(t in line for t in tolerate):
+                continue
             self.assertNotIn("push build:", line, "a cycle raised: %s" % err.getvalue())
             self.assertNotIn("push send", line, "a send raised: %s" % err.getvalue())
         return wire, same_object_calls, rows
@@ -428,3 +428,63 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertGreaterEqual(after["push.chat"] - before["push.chat"] + 1e-6, sum(after[k] - before[k] for k in seams),
                                 "the seams sit inside the container's wall time")
 
+    def test_a_build_that_raises_records_its_build_seam_and_no_send(self):
+        """A build_session that raises is build time too: the tab's per-build guard records push.chat.build before it
+        skips the tab, beside the signature it took; no frame, so no send seam (2026-09-18 review, medium 6)."""
+        ps = km._PERF_STATS
+        saved = dict(km._chat_build_faults)
+        self.addCleanup(lambda: (km._chat_build_faults.clear(), km._chat_build_faults.update(saved)))
+        km._chat_build_faults.pop(self.SID, None)
+
+        def build(frame):
+            raise RuntimeError("synthetic build failure")
+        before = ps.snapshot()["stages_ms"]
+        wire, calls, rows = self._run(km._chat_diff, perf=ps, build=build, tolerate=("push build: chat ",))
+        self.assertEqual(calls, [], "no build ever stored: the diff never ran")
+        self.assertEqual(len(rows), 6)
+        for i, row in enumerate(rows):
+            chat = sorted(k for k in row if k.startswith("push.chat"))
+            self.assertIn("push.chat.sig", chat, "cycle %d: the signature was taken (%r)" % (i, chat))
+            self.assertIn("push.chat.build", chat, "cycle %d: the failed build's time is build time (%r)" % (i, chat))
+            self.assertNotIn("push.chat.send", chat, "cycle %d: no frame, no send (%r)" % (i, chat))
+            self.assertIn("push.chat", chat)
+        after = ps.snapshot()["stages_ms"]
+        self.assertGreater(after["push.chat.build"], before["push.chat.build"])
+        types = [json.loads(s)["type"] for s in wire["chat"]]
+        self.assertNotIn("session", types); self.assertNotIn("chatTail", types)
+
+    def test_a_rebuild_closes_the_sig_seam_twice_and_a_served_tab_once(self):
+        """The post-build signature (the check that the static components held across the build) is signature time
+        too: a rebuilt tab closes push.chat.sig twice, before and after build_session, a served tab once
+        (2026-09-18 review, medium 6: the seams test alone could not tell the two apart)."""
+        ps = km._PERF_STATS
+        names = []
+        real_stage, real_begin = ps.stage, ps.cycle_begin
+
+        def stage(name, dt):
+            names.append(name); return real_stage(name, dt)
+
+        def begin(*a, **kw):
+            names.append(None); return real_begin(*a, **kw)
+        with mock.patch.object(ps, "stage", stage), mock.patch.object(ps, "cycle_begin", begin):
+            _wire, calls, rows = self._run(km._chat_diff, perf=ps)
+        self.assertEqual(calls, [False, True, False, True, False, True], "premise: rebuilt, served, alternating")
+        cycles, cur = [], None
+        for n in names:
+            if n is None:
+                cur = []; cycles.append(cur)
+            else:
+                cur.append(n)
+        self.assertEqual(len(cycles), 6)
+        for i, seen in enumerate(cycles):
+            served = calls[i]
+            self.assertEqual(seen.count("push.chat.sig"), 1 if served else 2,
+                             "cycle %d (%s): the pre-build signature, and the post-build one on a rebuild (%r)"
+                             % (i, "served" if served else "rebuilt", seen))
+            self.assertEqual(seen.count("push.chat.build"), 0 if served else 1)
+            self.assertEqual(seen.count("push.chat.send"), 1)
+            self.assertEqual(seen.count("push.chat"), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
