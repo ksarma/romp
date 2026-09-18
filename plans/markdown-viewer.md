@@ -7230,7 +7230,10 @@ test family re-verifies. Where the code as built departs from the text above, wh
    two-table shape's both outcomes over the fixture's two top-level tables and over two tables in one list item) and
    the browser leg's two-cell drag hold it; anchor-map-obsidian.test.ts's first-obstacle test (31) and
    anchor-map-wrappers.test.ts (38) are re-pinned where their spans now meet the rule or now map, each flip stated
-   with its before in the commit.
+   with its before in the commit. Overturned by decision 53 of plans/file-review.md (2026-09-18): a selection across
+   several cells of one table anchors to its span, the pipes and the delimiter row inside the quote, and the one-cell
+   sentence, `cellsRule`, `coveredCells` and `coveredOnly` are gone from the map; this item stands as the slice's
+   history.
 4. *Item 4, the change marks and the deletion points inside a fence or a table take the exact path.* This follows from
    items 1 and 2 with no code of its own (open question 10, the default): an insertion or a substitution inside a cell
    or a line paints by the change's own position with no count, where the fallback's ordinal had marked it under the
@@ -7579,7 +7582,10 @@ test family re-verifies. Where the code as built departs from the text above, wh
    note's not-modelled list); the formatting element a paragraph leaves open (`<b>`, `<i>`, `<a>`, `<code>`, `<em>`
    with no closer), routed here by the Slice 5 review's round 4 with its `Block.leaves` fix shape, is NOT built in
    this slice and stays open with that shape (the brief records it under its section 2 and routes it to no unit; the
-   pairing was not touched by the build, whose items are the walk and the paint); the 1,000-row table's numbers the
+   pairing was not touched by the build, whose items are the walk and the paint; built since as decision 52 of
+   plans/file-review.md, 2026-09-18, by a rule the viewer and the map share rather than by `Block.leaves`: an inline
+   start tag with no end tag in its block renders as its own characters on both sides, so the block maps and that
+   fix shape is moot); the 1,000-row table's numbers the
    brief asked for were taken beside the fence's (item 2), the table's emission running once per source on the Walked
    row as before and the one-cell rule's check being one scan of the table's cells per selection. Five sentences in
    earlier notes are history since this build: the Slice 5 note's guarantees paragraph (above) says "PRE and TD stay

@@ -623,6 +623,11 @@ target opens the file in the viewer, and a section link scrolls to it. An image 
 the `<title>` of an inline `svg`, the drawing's tooltip, stays. The same rules apply to the
 HTML in a chat message, where a link to an element's own `id` or `<a name>` lands on it under
 the prefix.
+A tag opened in a line of prose and not closed in the same paragraph, heading, list item or
+table cell (a placeholder typed as `<table>`, say) is shown as the characters typed, not read
+as HTML, and can be commented on like any passage; a tag closed in the same block, and a tag
+that never takes an end tag such as `<br>` or `<img>`, is HTML as before. A chat message is not
+read this way.
 
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file, where each card sits level with the passage it is about and scrolls with the text;
