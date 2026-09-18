@@ -229,7 +229,11 @@ test("the manager's outbound puts needFull(+why) on the owning kernel's wire —
 });
 
 // ── the page's chat protocol reaches every remote kernel (T323 stage 4b, round 2 item 16) ──────────────
-test("the page's ready (proto 2) goes to every OPEN remote socket at once, and to a later socket on its open, after the flush", () => {
+test("the page's ready (proto 2) goes to every OPEN remote socket at once, and to a later socket on its open, BEFORE the flush", () => {
+  // Before 2026-09-18 the ready was the LAST frame of the open, behind the pending flush, so a kernel reading the
+  // socket's first frame as its handshake (kernel.py _implicit_handshake, first cut) pinned a proto-2 page's relay
+  // to proto 1 at the flushed setting and served it an index session frame until the ready re-declared the wire.
+  // The ready now leads: the page's own closure, whatever the kernel's vintage; the flushed setting follows it.
   withManager((fm, _e, localSent) => {
     const a = attach(fm, "gpu1");
     fm.outbound({ type: "ready", proto: 2 });
@@ -238,11 +242,12 @@ test("the page's ready (proto 2) goes to every OPEN remote socket at once, and t
     fm.openRemote("gpu2", true);
     const b = FakeWS.made[FakeWS.made.length - 1];
     assert.deepEqual(b.sent, [], "nothing rides a socket that has not opened");
-    fm.outbound({ type: "setting", key: "k", value: 1, host: "gpu2" });   // parked for the socket: the flush sends it first
+    fm.outbound({ type: "setDistillModel", model: "m2" });   // a kernel setting (KERNEL_SETTING): parked for the CONNECTING socket, the flush sends it on the open
+    assert.deepEqual(b.sent, [], "still nothing before the open: the setting is held on the conn");
     b.open();
     const kinds = b.sent.map((m: any) => m.type);
-    assert.equal(kinds[kinds.length - 1], "ready", "the ready is the last frame of the open: after whatever the flush sent");
-    assert.deepEqual(b.sent[b.sent.length - 1], { type: "ready", proto: 2 });
+    assert.deepEqual(kinds, ["ready", "setDistillModel"], "the ready is the FIRST frame of the open, before what the flush sends");
+    assert.deepEqual(b.sent[0], { type: "ready", proto: 2 });
     assert.equal(b.sent.filter((m: any) => m.type === "ready").length, 1, "once per open");
     fm.conns.get("gpu1").closed = true; fm.conns.get("gpu2").closed = true;
   });

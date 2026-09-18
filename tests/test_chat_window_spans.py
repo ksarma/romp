@@ -214,33 +214,75 @@ class WindowSpans(Harness):
     def test_an_unhandshaken_sockets_first_frame_stands_as_a_proto1_handshake_and_a_silent_socket_stays_withheld(self):
         """2026-09-18: an older hub's relay socket (no proto term, no ready ever: its page sent the ready to its local socket alone) and
         an older shim's redial (reconnect=1 with no proto term, its page's one ready acked long ago) were held silent for the socket's
-        life by the round-eleven gate above; the first client frame now stands as a proto-1 handshake (_implicit_handshake) and the
-        socket is served the index wire from there. The decision table, then the wire it brings; the silent socket's withhold and its
-        chatWithheld row are pinned by the test above and stand."""
+        life by the round-eleven gate above; the first client frame from such a socket now stands as a proto-1 handshake
+        (_implicit_handshake) and the socket is served the index wire from there. The rule reads the client's VINTAGE, never the
+        frame's kind (review round 1, 2026-09-18): a current page's relay (a namespaced iid), the VS Code extension host's pipe
+        (client=ext) and a non-chat socket are never taken, whatever they send first, and neither `delta` nor `reconnect` is read,
+        since the older shim's redial carries both. The decision table, then the wire it brings, then the real ready that
+        re-declares the wire; the silent socket's withhold and its chatWithheld row are pinned by the test above and stand."""
         whole, m, frame, c = self._boot()
-        sent = []
-        relay = {"send": (lambda s: sent.append(json.loads(s))), "echat": {}, "handshake": False, "ready": True, "kind": "relay", "app": "chat"}
+        sent, rows = [], []
+        real_append = km._client_diag_append
+        km._client_diag_append = lambda fp, line: rows.append(json.loads(line))
+        self.addCleanup(setattr, km, "_client_diag_append", real_append)
+        relay = {"send": (lambda s: sent.append(json.loads(s))), "echat": {}, "handshake": False, "ready": True, "kind": "relay", "app": "chat", "wid": "w1"}
         km._send_chat_locked(relay, m, None, 0, False)                                  # a pusher cycle before any frame from the peer
         self.assertEqual(sent, [], "withheld before the first frame"); self.assertEqual(relay["withheld"], 1)
-        # not taken: a ready (the arm declares the wire itself), an undecodable frame, a socket held under READY_GATE_CAP (a kernel-served
-        # pane before its bundle's ready, whose shim flushes queued clientDiag rows at its open), a socket already handshaken, a record
-        # without the mark (a test's dict modelling a socket past its handshake)
-        self.assertFalse(km._implicit_handshake(relay, {"type": "ready", "proto": 2})); self.assertIs(relay["handshake"], False); self.assertNotIn("proto", relay)
-        self.assertFalse(km._implicit_handshake(relay, None)); self.assertIs(relay["handshake"], False)
-        held = dict(relay, ready=False, kind="page")
-        self.assertFalse(km._implicit_handshake(held, {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat"}}))
-        self.assertIs(held["handshake"], False); self.assertNotIn("proto", held)
-        done = dict(relay, handshake=True, proto=2)
-        self.assertFalse(km._implicit_handshake(done, {"type": "needFull", "id": SID})); self.assertEqual(done["proto"], 2)
-        bare = {"send": relay["send"], "echat": {}}
-        self.assertFalse(km._implicit_handshake(bare, {"type": "needFull", "id": SID})); self.assertNotIn("handshake", bare)
-        # taken: the first frame of an unhandshaken socket that is ready from accept, said once on stderr; the second frame changes nothing
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            self.assertTrue(km._implicit_handshake(relay, {"type": "needFull", "id": SID}))
-            self.assertFalse(km._implicit_handshake(relay, {"type": "activeTab", "id": SID}), "once: the mark has lifted")
-        self.assertEqual((relay["handshake"], relay["proto"], relay["implicitHandshake"]), (True, 1, "needFull"))
-        self.assertEqual(err.getvalue().count("stands as a proto-1 handshake"), 1, err.getvalue())
-        self.assertIn("a relay socket (app chat) declared no chat wire; its first frame (needFull) stands as a proto-1 handshake, 1 chat frame(s) withheld before it", err.getvalue())
+        ask = {"type": "needFull", "id": SID}
+        BARE_IID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"      # the shim mints a uuid per page load; a current hub's relay namespaces it: "<wid>:<uuid>"
+
+        def declined(client, msg, why):
+            """A cell that is not taken: the record untouched, nothing said, no row filed, the pusher not woken."""
+            before, nrows = dict(client), len(rows)
+            km._pusher_wake.clear()
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertFalse(km._implicit_handshake(client, msg), why)
+            self.assertEqual(client, before, why + ": the record is untouched")
+            self.assertEqual(err.getvalue(), "", why + ": nothing said")
+            self.assertEqual(len(rows), nrows, why + ": no row filed")
+            self.assertFalse(km._pusher_wake.is_set(), why + ": the pusher is not woken")
+
+        def taken(client, msg, why, stood_in):
+            """A cell that is taken: proto 1, the frame on the record, said once, the pusher woken (a settings post wakes nothing itself)."""
+            km._pusher_wake.clear()
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertTrue(km._implicit_handshake(client, msg), why)
+            self.assertEqual((client["handshake"], client["proto"], client["implicitHandshake"]), (True, 1, stood_in), why)
+            self.assertEqual(err.getvalue().count("stands as a proto-1 handshake"), 1, why + ": " + err.getvalue())
+            self.assertTrue(km._pusher_wake.is_set(), why + ": the pusher wakes on the event")
+            return err.getvalue()
+
+        # not taken: a ready (the arm declares the wire itself); an undecodable frame; a decodable frame that is not an object; a socket
+        # held under READY_GATE_CAP (a kernel-served pane before its bundle's ready, whose shim flushes queued clientDiag rows at its
+        # open); a socket already handshaken; a record without the mark (a test's dict modelling a socket past its handshake)
+        declined(relay, {"type": "ready", "proto": 2}, "a ready")
+        declined(relay, None, "an undecodable frame")
+        for odd in (["needFull"], "needFull", 3):
+            declined(relay, odd, "a decodable frame that is not an object: %r" % (odd,))
+        declined(dict(relay, ready=False, kind="page"), {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat"}}, "a held page's flushed row")
+        declined(dict(relay, handshake=True, proto=2), ask, "a socket already handshaken")
+        declined({"send": relay["send"], "echat": {}}, ask, "a record without the mark")
+        # ...nor, whatever it sends first, a socket of CURRENT vintage or one that carries no chat wire (review round 1):
+        # a feed relay (no chat frame is ever sent to it, so there is no wire to declare and nothing to say); a current page's relay,
+        # told by the namespaced iid federation.ts has dialled since 8fe70da07 (its held setting used to pin a proto-2 page to proto 1
+        # and serve it an index frame before its ready); the VS Code extension host's pipe (client=ext at accept: it forwards its
+        # webview's own ready, and a replayed intent on its reconnect must not stand in for it)
+        declined(dict(relay, app="feed"), {"type": "setAutoNudge", "value": True}, "a feed relay")
+        declined(dict(relay, app="fleet"), ask, "an Outline relay")
+        declined(dict(relay, iid="hubwid:" + BARE_IID, delta=True), {"type": "setAutoNudge", "value": True}, "a current page's relay, a held setting first")
+        declined(dict(relay, iid="hubwid:" + BARE_IID, delta=True), {"type": "activeTab", "id": SID}, "a current page's relay, its active tab first")
+        declined(dict(relay, iid="hubwid:" + BARE_IID, delta=True), ask, "a current page's relay, an ask first")
+        declined(dict(relay, kind="page", ext=True, delta=True), {"type": "sendMessage", "id": SID, "text": "a replayed intent"}, "the extension host's pipe")
+        declined(dict(relay, kind="page", ext=True, delta=True), {"type": "closeTab", "id": SID}, "the extension host's pipe, a non-drive intent")
+        # taken: the first frame of an older-vintage chat socket that is ready from accept, said once on stderr and filed once as a
+        # kernel-surface row beside the socket's wsopen row; the second frame changes nothing
+        said = taken(relay, ask, "the older hub's bare relay", "needFull")
+        self.assertIn("a relay socket (app chat) declared no chat wire; its first frame (needFull) stands as a proto-1 handshake, 1 chat frame(s) withheld before it", said)
+        self.assertEqual([(r["surface"], r["what"], r["wid"], r["data"]) for r in rows],
+                         [("kernel", "implicitHandshake", "w1", {"app": "chat", "kind": "relay", "frame": "needFull", "withheld": 1, "proto": 1})], rows)
+        self.assertIsInstance(rows[0]["t"], int)
+        self.assertLessEqual(set(rows[0]["data"]), km.CLIENT_DIAG_KEYS["kernel"], "the kernel surface's allowlist entry names the row's keys")
+        declined(relay, {"type": "activeTab", "id": SID}, "once: the mark has lifted")
         # ...and the wire it brings is the index wire, the one every older producer speaks
         km._send_chat_locked(relay, m, None, 0, False)
         self.assertEqual([f.get("type") for f in sent], ["session"], "the next push serves the session")
@@ -250,12 +292,42 @@ class WindowSpans(Harness):
         self.assertIsInstance(relay["echat"][SID], tuple, "the index base (head uuid, headFrom), never a proto-2 dict: %r" % (relay["echat"][SID],))
         self.assertTrue(km._chat_floor0_of([relay]), "an index client: the floor drops to 0 for it, as for a ready that names no proto")
         self.assertFalse(km._note_chat_withheld_at_close(relay), "served: the frames withheld before its first frame file no row at its close")
-        # the older shim's redial after this kernel restarted: reconnect=1 and no proto term, stamped ready at accept, and the wsclose
-        # row the shim flushes at the redial's open is its first frame; the same road
-        redial = {"send": (lambda s: None), "echat": {}, "handshake": False, "ready": True, "reconnect": True, "kind": "page", "app": "chat"}
+        # a real ready after the implicit handshake re-declares the wire (proto 2), resets the base (_client_reset_chat_base) and pops
+        # the implicit mark from the record: the next push serves the uuid wire over a dict base, as for any ready
+        class _Self:
+            def _push_one(self, client): pass
+        del sent[:]
         with contextlib.redirect_stderr(io.StringIO()):
-            self.assertTrue(km._implicit_handshake(redial, {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat"}}))
-        self.assertEqual((redial["handshake"], redial["proto"], redial["implicitHandshake"]), (True, 1, "clientDiag"))
+            km.Handler._dispatch_ws(_Self(), {"type": "ready", "proto": 2}, relay)
+        self.assertEqual((relay["handshake"], relay["proto"], relay.get("ready")), (True, 2, True), "the ready arm re-declares the wire")
+        self.assertNotIn("implicitHandshake", relay, "the stand-in is popped: the socket has declared its wire")
+        self.assertEqual(relay["echat"], {}, "the base is reset by the arm")
+        km._send_chat_locked(relay, m, None, 0, False)
+        sessions = [f for f in sent if f.get("type") == "session"]
+        self.assertEqual(len(sessions), 1, [f.get("type") for f in sent])
+        self.assertEqual(sessions[0].get("proto"), 2, "the uuid wire from here")
+        self.assertIn("firstUuid", sessions[0])
+        self.assertIsInstance(relay["echat"][SID], dict, "a proto-2 base: %r" % (relay["echat"][SID],))
+        self.assertEqual([r["what"] for r in rows], ["implicitHandshake"], "the durable record of the event stands in the file")
+        # the older shim's redial after this kernel restarted: reconnect=1 and no proto term (stamped ready at accept), delta=1 and a BARE
+        # uuid iid like every shim's dial, and the wsclose row the shim flushes at the redial's open is its first frame; the same road.
+        # Neither delta nor reconnect may key the decline: this socket carries both (reconnect is popped by the first pusher cycle)
+        redial = {"send": (lambda s: None), "echat": {}, "handshake": False, "ready": True, "reconnect": True, "redial": True, "delta": True,
+                  "iid": BARE_IID, "kind": "page", "app": "chat", "wid": "w2"}
+        taken(redial, {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat"}}, "the older shim's redial", "clientDiag")
+        taken(dict(redial, handshake=False, reconnect=False), ask, "the same redial once the first cycle popped reconnect", "needFull")
+        # the branches the first cut left unpinned (review round 1): a frame with no type stands in as "?"; a record with the mark and
+        # no ready key reads as ready from accept (the accept path stamps every socket, so the default is never read live)
+        taken(dict(relay, handshake=False, proto=None, echat={}), {"id": SID}, "a frame with no type", "?")
+        taken({"send": relay["send"], "echat": {}, "handshake": False, "kind": "relay", "app": "chat"}, ask, "a record with no ready key", "needFull")
+        # a file failure never touches the socket: the row is a courtesy to the reader of the file
+        def refuse(fp, line):
+            raise OSError("the state directory is unwritable")
+        nrows = len(rows)
+        km._client_diag_append = refuse
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertTrue(km._implicit_handshake(dict(relay, handshake=False, echat={}), ask), "taken with the row refused")
+        self.assertEqual(len(rows), nrows, "the refused row is not in the file: %r" % [r["what"] for r in rows])
 
     def test_load_newer_is_retired(self):
         self._boot()

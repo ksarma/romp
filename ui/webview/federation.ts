@@ -1828,19 +1828,24 @@ export class FederationManager {
     ws.onopen = () => {
       this.dialEvent(conn.host, false);
       conn.everOpened = true;   // a socket for this conn has opened (the shim's everConnected): part of the redial gate in connect()
-      // settings queued while the socket was down go out FIRST — on the open event itself, never a
-      // timer — so nothing sent after the reconnect can overtake them (see flushPending). That is
-      // also why the relay-up dispatch below comes AFTER the flush: the chat's upload re-ship rides
-      // that event, and a re-shipped dropFile must not get ahead of a queued setting on this socket.
-      const flushed = this.flushPending(conn);
       // the chat wire this page speaks, told to THIS host's kernel once the page has said it (T323 stage 4b): the
       // bundle's own ready reaches the local kernel alone, so a remote kernel would otherwise never learn the protocol
       // and serve index frames over a floor'd list; an older remote kernel ignores the field and answers as before.
+      // FIRST on the open, before the pending flush below (2026-09-18): a kernel since that date takes the first frame
+      // of an unhandshaken chat socket of older vintage as a proto-1 handshake, and this page's dial (its namespaced
+      // iid) keeps its socket out of that rule; the order is the page's own closure all the same, so no kernel of any
+      // vintage can read a flushed setting as this socket's first word and serve it index frames before the ready.
+      // pageProto is known here whenever the bundle has said ready (it posts the ready synchronously at evaluation).
       // NOT on a REDIAL socket (dialedReconnect): its reconnect=1&proto in the URL IS the handshake, and a `ready`
       // here would run the remote's ready reset (_client_reset_chat_base), which pops `reconnect` with nothing to
       // re-arm the skeleton set, so the redial would be served the whole board (2026-09-15, the shim posts no ready
       // on its own redial for the same reason).
       if (this.pageProto !== null && !conn.dialedReconnect) { try { ws.send(JSON.stringify({ type: "ready", proto: this.pageProto })); } catch (e) { /* the next frame says */ } }   // the proto the page speaks, 1 included (low 2)
+      // settings queued while the socket was down go out next, behind the ready and ahead of everything else, on the
+      // open event itself, never a timer, so nothing sent after the reconnect can overtake them (see flushPending). That
+      // is also why the relay-up dispatch below comes AFTER the flush: the chat's upload re-ship rides that event, and a
+      // re-shipped dropFile must not get ahead of a queued setting on this socket.
+      const flushed = this.flushPending(conn);
       this.diag("hostconn", flushed.length ? { host: conn.host, ev: "open", flushed }
                                            : { host: conn.host, ev: "open" });
       conn.lastRecv = Date.now();   // the watchdog measures this socket's silence from ITS open

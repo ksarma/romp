@@ -345,10 +345,12 @@ class RestartSeam(Harness):
                 self.assertEqual(len(keys), len(set(keys)), "no event twice on the wire")
 
 
-def _fake_self(path):
-    """A connect handler whose peer speaks through the stubbed _ws_recv (tests/test_chat_skeleton_reconnect.py's shape)."""
+def _fake_self(path, headers=None):
+    """A connect handler whose peer speaks through the stubbed _ws_recv (tests/test_chat_skeleton_reconnect.py's shape). `headers`
+    adds to the upgrade's own (an Origin makes _dial_kind read a browser's page; none, the splice's relay)."""
+    hdrs = dict(headers or {}, **{"Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="})
     class FakeSelf:
-        headers = {"Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}
+        headers = hdrs
         rfile = io.BytesIO(); wfile = io.BytesIO()
         connection = type("FakeSock", (), {"sendall": lambda self, b: None, "shutdown": lambda self, how: None})()
         close_connection = False
@@ -399,58 +401,167 @@ class RealArm(Harness):
             self.assertEqual(c.get("proto"), want, path)
             self.assertIsInstance(c.get("t0"), (int, float), "the registration is stamped for the ready wait")
 
-    def test_a_relay_socket_that_never_says_ready_is_served_the_index_wire_from_its_first_frame(self):
-        """An older hub's federation relays a page's socket to this kernel with the splice's terms alone (app, wid, relay=1: no proto
-        term) and never posts ready on it (the hub page sent its ready to its local socket alone, the shape before f7a80efee), then
-        asks for a session (needFull). Until 2026-09-18 the round-eleven gate held such a socket silent for its life (965 and 644
-        chat frames withheld over two relay sockets on the record; the remote's tabs listed with nothing behind them). The first
-        frame now stands as a proto-1 handshake and the socket is served the index wire from there, through the REAL handler: the
-        accept, a pusher cycle before the peer's first frame, the needFull arm, the close. A socket that sends nothing is unchanged
-        (tests/test_chat_window_spans.py pins the withhold and the chatWithheld row)."""
+    def _run(self, path, steps, headers=None, drive=None):
+        """The REAL Handler._ws over one socket, the peer's side scripted: each step is a client frame (a dict, sent as one text
+        message) or "cycle" (a forced pusher cycle, _push connect=True, before the peer's next frame); the peer closes after the last.
+        `drive` stands in for km._drive when given (a drive op's early return, with no backend to own the sid). Returns the client
+        the accept registered, every frame the kernel sent, the index into those at the start of each step and one past the last
+        (so sent[marks[i]:marks[i + 1]] is what step i produced), the client-diag rows filed, and what the kernel said on stderr."""
         recs = transcript(NOW - 86400, turns=120, compact_every=25)
         self.write(recs); self.whole(); self.document()
-        got, sent, rows, state = [], [], [], {"step": "silent"}
-        real = (km._register_ws_client, km._ws_recv, km._mk_ws_send, km._alive_sessions, km._client_diag_append)
+        got, sent, rows, marks = [], [], [], []
+        it = iter(steps)
+        real = (km._register_ws_client, km._ws_recv, km._mk_ws_send, km._alive_sessions, km._client_diag_append, km._drive)
         km._register_ws_client = lambda c: (got.append(c), km._clients.append(c))
         km._mk_ws_send = lambda q, sock, client: (lambda s: sent.append(json.loads(s)))
         km._alive_sessions = lambda now, tmux: list(self.rows)
         km._client_diag_append = lambda fp, line: rows.append(json.loads(line))
+        if drive is not None:
+            km._drive = drive
 
         def next_frame(rfile):
-            c = got[0]
-            if state["step"] == "silent":
-                state["step"] = "asked"
-                km._push([c], connect=True)                              # a pusher cycle before the peer's first frame
-                self.assertEqual([f.get("type") for f in sent if f.get("type") in ("session", "chatTail")], [],
-                                 "no chat frame before the first frame: %r" % [f.get("type") for f in sent])
-                self.assertGreaterEqual(int(c.get("withheld") or 0), 1, "the withheld frames are counted on the record")
-                state["before"] = len(sent)
-                return self._frame({"type": "needFull", "id": SID})     # the first frame the old page sends: an ask, never a ready
+            for step in it:
+                marks.append(len(sent))
+                if step == "cycle":
+                    km._push([got[0]], connect=True)
+                    continue
+                return self._frame(step)
+            marks.append(len(sent))
             return (0x8, b"", True)
 
         km._ws_recv = next_frame
         try:
             with contextlib.redirect_stderr(io.StringIO()) as err:
-                km.Handler._ws(_fake_self("/ws?app=chat&wid=w1&relay=1"))
+                km.Handler._ws(_fake_self(path, headers))
         finally:
-            km._register_ws_client, km._ws_recv, km._mk_ws_send, km._alive_sessions, km._client_diag_append = real
+            km._register_ws_client, km._ws_recv, km._mk_ws_send, km._alive_sessions, km._client_diag_append, km._drive = real
             with km._clients_lock:
                 for c in got:
                     if c in km._clients:
                         km._clients.remove(c)
-        self.assertEqual(len(got), 1); c = got[0]
+        self.assertEqual(len(got), 1)
+        return got[0], sent, marks, rows, err.getvalue()
+
+    @staticmethod
+    def _chat(frames):
+        return [f for f in frames if f.get("type") in ("session", "chatTail")]
+
+    HUB_RELAY = "/ws?app=chat&wid=w1&relay=1&delta=1&iid=hubwid%3Aaaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"   # a current hub's splice: the page's terms, the iid namespaced by its wid (8fe70da07)
+    OLD_RELAY = "/ws?app=chat&wid=w1&relay=1"                                                             # a hub older than the federation's remote ready: app, wid and the splice's own term alone
+    EXT_PIPE = "/ws?app=chat&wid=w1&client=ext&delta=1"                                                   # the VS Code extension host's chat pipe (vscode-extension/src/extension.ts)
+    OLD_REDIAL = "/ws?app=chat&delta=1&iid=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee&wid=w1&reconnect=1"        # a pane shim older than the redial's proto term: reconnect=1 alone, the bare uuid iid every shim mints
+    READY2 = {"type": "ready", "proto": 2}
+    INTENT = {"type": "sendMessage", "id": SID, "text": "a message typed while the pipe was down"}
+
+    def test_a_relay_socket_that_never_says_ready_is_served_the_index_wire_from_its_first_frame(self):
+        """An older hub's federation relays a page's socket to this kernel with the splice's terms alone (app, wid, relay=1: no proto
+        term, no iid) and never posts ready on it (the hub page sent its ready to its local socket alone, the shape before f7a80efee),
+        then asks for a session (needFull). Until 2026-09-18 the round-eleven gate held such a socket silent for its life (965 and 644
+        chat frames withheld over two relay sockets on the record; the remote's tabs listed with nothing behind them). The first
+        frame now stands as a proto-1 handshake and the socket is served the index wire from there, through the REAL handler: the
+        accept, a pusher cycle before the peer's first frame, the needFull arm, the close. The event is on the record twice: the
+        stderr line and one kernel-surface client-diag row beside the accept's wsopen row (review round 1). A socket that sends
+        nothing is unchanged (tests/test_chat_window_spans.py pins the withhold and the chatWithheld row)."""
+        c, sent, marks, rows, err = self._run(self.OLD_RELAY, ["cycle", {"type": "needFull", "id": SID}])
         self.assertEqual(c.get("kind"), "relay", "the splice's term names the producer")
-        after = sent[state["before"]:]
-        fulls = [f for f in after if f.get("type") == "session" and f.get("id") == SID]
-        self.assertEqual(len(fulls), 1, "the ask is answered with the session, once: %r" % [f.get("type") for f in after])
+        self.assertNotIn("ext", c); self.assertNotIn("iid", c)
+        self.assertEqual(self._chat(sent[marks[0]:marks[1]]), [], "no chat frame before the first frame: %r" % [f.get("type") for f in sent[:marks[1]]])
+        self.assertGreaterEqual(int(c.get("withheld") or 0), 1, "the withheld frames are counted on the record")
+        fulls = [f for f in sent[marks[1]:] if f.get("type") == "session" and f.get("id") == SID]
+        self.assertEqual(len(fulls), 1, "the ask is answered with the session, once: %r" % [f.get("type") for f in sent[marks[1]:]])
         f = fulls[0]
         self.assertNotEqual(f.get("proto"), 2, "the index wire, not the uuid wire: %r" % {k: f.get(k) for k in ("proto", "firstUuid", "tailLo", "headFrom")})
         self.assertNotIn("firstUuid", f); self.assertNotIn("lastUuid", f)
         self.assertIsInstance(c["echat"].get(SID), tuple, "the index base (head uuid, headFrom): %r" % (c["echat"].get(SID),))
         self.assertEqual((c["handshake"], c["proto"], c.get("implicitHandshake")), (True, 1, "needFull"))
-        self.assertIn("a relay socket (app chat) declared no chat wire; its first frame (needFull) stands as a proto-1 handshake", err.getvalue())
+        self.assertIn("a relay socket (app chat) declared no chat wire; its first frame (needFull) stands as a proto-1 handshake", err)
         self.assertEqual([r["what"] for r in rows if r.get("what") == "chatWithheld"], [], "served: no chatWithheld row at its close: %r" % rows)
-        self.assertEqual([r["what"] for r in rows], ["wsopen"], "the accept's own row stands alone: %r" % rows)
+        self.assertEqual([r["what"] for r in rows], ["wsopen", "implicitHandshake"], "the accept's row, then the event's: %r" % rows)
+        self.assertEqual((rows[1]["surface"], rows[1]["wid"], rows[1]["data"]),
+                         ("kernel", "w1", {"app": "chat", "kind": "relay", "frame": "needFull", "withheld": c["withheld"], "proto": 1}), rows[1])
+
+    def test_the_implicit_handshake_is_read_before_the_drive_arms_early_return(self):
+        """The order _dispatch_ws depends on (review round 1): _implicit_handshake runs BEFORE the _drive arm, whose True return ends
+        the dispatch, so an older-vintage socket whose first frame is a drive op (a typed message on the older hub's relay) is taken at
+        it, and that message is not the one frame that leaves the socket frozen. Red with the call moved below the _drive block."""
+        c, sent, marks, rows, err = self._run(self.OLD_RELAY, [self.INTENT], drive=lambda msg, client: msg.get("type") == "sendMessage")
+        self.assertEqual((c["handshake"], c["proto"], c.get("implicitHandshake")), (True, 1, "sendMessage"), "taken at the drive op")
+        self.assertIn("its first frame (sendMessage) stands as a proto-1 handshake", err)
+        self.assertEqual([r["what"] for r in rows], ["wsopen", "implicitHandshake"])
+
+    def test_a_current_pages_relay_is_never_taken_at_a_frame_ahead_of_its_ready(self):
+        """Review round 1, the defect in the first cut: a CURRENT hub's federation flushed its pending frames before it posted the
+        page's ready on a fresh relay open, so the first cut took that flushed frame as a proto-1 handshake, pinned the proto-2 page's
+        relay to proto 1 and, when a pusher cycle landed in the window, served it an index session frame and a turn-0 build before the
+        ready re-declared the wire: the race b0fabb0a7 closed, reopened for remote sessions. The rule now reads the client's vintage:
+        a relay dial carrying the namespaced iid every current hub sends (8fe70da07) is never taken, whatever it sends first, and its
+        frames wait for the ready as the gate always meant. Both orderings the refuters executed, deterministic (no race needed): an
+        active-tab hint, a forced pusher cycle, then the ready; and an ask, then the ready. Not one index frame on either road."""
+        for first, road in (({"type": "activeTab", "id": SID}, "an active tab, a cycle, then the ready"), ({"type": "needFull", "id": SID}, "an ask, then the ready")):
+            steps = [first, "cycle", self.READY2] if first["type"] == "activeTab" else [first, self.READY2]
+            c, sent, marks, rows, err = self._run(self.HUB_RELAY, steps)
+            self.assertEqual((c.get("kind"), c.get("iid")), ("relay", "hubwid:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"), road)
+            before_ready = sent[:marks[len(steps) - 1]]
+            self.assertEqual(self._chat(before_ready), [], road + ": no chat frame before the ready, withheld as the gate means: %r" % [f.get("type") for f in before_ready])
+            self.assertNotIn("implicitHandshake", c, road + ": never taken")
+            self.assertNotIn("stands as a proto-1 handshake", err, road)
+            after = [f for f in sent[marks[len(steps) - 1]:] if f.get("type") == "session" and f.get("id") == SID]
+            self.assertEqual(len(after), 1, road + ": the ready's connect push serves the session once: %r" % [f.get("type") for f in sent[marks[len(steps) - 1]:]])
+            self.assertEqual(after[0].get("proto"), 2, road + ": on the uuid wire the ready declared")
+            self.assertIn("firstUuid", after[0], road)
+            self.assertEqual((c["handshake"], c["proto"]), (True, 2), road)
+            self.assertIsInstance(c["echat"].get(SID), dict, road + ": a proto-2 base: %r" % (c["echat"].get(SID),))
+            self.assertTrue(all(f.get("proto") == 2 for f in sent if f.get("type") == "session"), road + ": not one index frame on this socket")
+            self.assertEqual([r["what"] for r in rows], ["wsopen"], road + ": the accept's row alone: %r" % rows)
+
+    def test_the_extension_hosts_pipe_is_never_taken_at_an_intent_it_replays_before_its_webviews_ready(self):
+        """Review round 1: the VS Code extension's chat pipe announces no readyGate, so it is ready from accept, and on a reconnect after
+        a kernel restart it first re-sends the frames the user typed or picked while it was down, then reloads its webview, whose fresh
+        ready follows. The first cut took the replayed intent as a proto-1 handshake and served every chat tab the index wire (and a
+        turn-0 floor) until that ready. The pipe states what it is (client=ext, the term _dial_kind reads), the accept stamps the record
+        (client["ext"]) and the rule stands down for it: the intent is driven, the frames wait, the ready serves the uuid wire once."""
+        c, sent, marks, rows, err = self._run(self.EXT_PIPE, [self.INTENT, "cycle", self.READY2], drive=lambda msg, client: msg.get("type") == "sendMessage")
+        self.assertEqual((c.get("kind"), c.get("ext"), c.get("ready")), ("page", True, True), "the pipe's own term, on the record; ready from accept")
+        self.assertEqual(self._chat(sent[:marks[2]]), [], "no chat frame before the webview's ready: %r" % [f.get("type") for f in sent[:marks[2]]])
+        self.assertNotIn("implicitHandshake", c); self.assertNotIn("stands as a proto-1 handshake", err)
+        after = [f for f in sent[marks[2]:] if f.get("type") == "session" and f.get("id") == SID]
+        self.assertEqual(len(after), 1, "the ready's connect push serves the session once: %r" % [f.get("type") for f in sent[marks[2]:]])
+        self.assertEqual(after[0].get("proto"), 2); self.assertIn("firstUuid", after[0])
+        self.assertEqual([r["what"] for r in rows], ["wsopen"], rows)
+
+    def test_a_real_ready_after_the_implicit_handshake_re_declares_the_wire_and_resets_the_base(self):
+        """Review round 1: the transition the first cut claimed and never pinned. An older-vintage relay taken at its needFull (an index
+        frame, a tuple base) then posts a real ready with proto 2 (a hub that updated under the page, say): the arm re-declares the wire,
+        _client_reset_chat_base forgets the index tail, the stand-in is popped from the record, and the connect push serves the session
+        again on the uuid wire over a dict base. The client-diag row of the event stays: it is the durable record of what happened."""
+        c, sent, marks, rows, err = self._run(self.OLD_RELAY, ["cycle", {"type": "needFull", "id": SID}, self.READY2])
+        first = [f for f in sent[marks[1]:marks[2]] if f.get("type") == "session" and f.get("id") == SID]
+        self.assertEqual(len(first), 1, [f.get("type") for f in sent[marks[1]:marks[2]]])
+        self.assertNotEqual(first[0].get("proto"), 2, "taken: the index wire first")
+        second = [f for f in sent[marks[2]:] if f.get("type") == "session" and f.get("id") == SID]
+        self.assertEqual(len(second), 1, "the ready's connect push serves the session again: %r" % [f.get("type") for f in sent[marks[2]:]])
+        self.assertEqual(second[0].get("proto"), 2, "on the wire the ready declared"); self.assertIn("firstUuid", second[0])
+        self.assertEqual((c["handshake"], c["proto"]), (True, 2))
+        self.assertNotIn("implicitHandshake", c, "the stand-in is popped when the socket declares its wire")
+        self.assertIsInstance(c["echat"].get(SID), dict, "the base was reset and re-based on the uuid wire: %r" % (c["echat"].get(SID),))
+        self.assertEqual([r["what"] for r in rows], ["wsopen", "implicitHandshake"], "the event's row stands: %r" % rows)
+
+    def test_an_older_shims_redial_with_a_bare_iid_is_taken_at_the_row_it_flushes(self):
+        """The other older producer, through the real handler: a pane shim older than the redial's proto term redials after this kernel
+        restarted with reconnect=1 alone (ready from accept, no proto: unhandshaken), delta=1 and the bare uuid iid every shim mints,
+        from a browser (an Origin: kind page), and the wsclose row it queued while its socket was down is its first frame. Taken there,
+        and the next cycle serves the index wire. This is why neither delta nor reconnect keys the decline (review round 1): a current
+        relay carries delta too, and reconnect is popped by the first pusher cycle, so either would have silenced this socket again."""
+        row = {"type": "clientDiag", "surface": "pane-shim", "what": "wsclose", "data": {"app": "chat", "code": 1006, "everConnected": True, "bundleReady": True}}
+        c, sent, marks, rows, err = self._run(self.OLD_REDIAL, [row, "cycle"], headers={"Origin": "http://TESTHOST:1", "User-Agent": "TestBrowser/1.0"})
+        self.assertEqual((c.get("kind"), c.get("redial"), c.get("ready"), c.get("delta"), c.get("iid")), ("page", True, True, True, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"))
+        self.assertEqual((c["handshake"], c["proto"], c.get("implicitHandshake")), (True, 1, "clientDiag"), "taken at the flushed row")
+        self.assertIn("a page socket (app chat) declared no chat wire; its first frame (clientDiag) stands as a proto-1 handshake", err)
+        fulls = [f for f in sent[marks[1]:] if f.get("type") == "session" and f.get("id") == SID]
+        self.assertEqual(len(fulls), 1, "the next cycle serves the session: %r" % [f.get("type") for f in sent[marks[1]:]])
+        self.assertNotEqual(fulls[0].get("proto"), 2, "the index wire"); self.assertNotIn("firstUuid", fulls[0])
+        self.assertEqual([r["what"] for r in rows][:2], ["wsopen", "implicitHandshake"], rows)
+        self.assertEqual([(r["surface"], r["what"]) for r in rows][2:], [("pane-shim", "wsclose")], "the shim's own row lands behind them: %r" % rows)
 
     def test_a_deep_link_then_a_span_to_the_tail_grows_the_tail_run_and_every_tail_change_is_a_delta(self):
         """T386 stage 2: a deep link (a window with its turn span), then the gap between the window and the tail asked as one

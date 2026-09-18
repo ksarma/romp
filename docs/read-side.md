@@ -68,17 +68,29 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   until it has declared its wire, by a `{type:"ready", proto}` message or by
   dialling with `reconnect=1&proto=N`. That rule exists because a proto-2 page
   once received an index frame before its `ready` and its reload restore took
-  the older wire. A socket that declares neither is taken as a proto-1 client
-  at the first frame it does send and is served the index wire from there
-  (`_implicit_handshake`): degraded rather than silent. An older hub's relay
-  socket is one such socket (its page sent its `ready` to its local socket
-  alone); an older shim's redial with no `proto` term is another. Before the
-  implicit handshake, an older dashboard attached to a newer kernel listed the
-  remote's tabs with nothing behind them (2026-09-18). A socket that sends
-  nothing at all gets no chat frame, and its close files a `chatWithheld` row
-  in `client-diag.jsonl` with the count of frames withheld. Keepalives and the
-  restart notice reach every socket, held or not: the shim consumes both
-  itself. On `ready`, a feed
+  the older wire. A chat socket of older vintage that declares neither is
+  taken as a proto-1 client at the first frame it does send and is served the
+  index wire from there (`_implicit_handshake`): degraded rather than silent.
+  Older vintage is read from the dial, never from the frame: the socket is
+  ready from accept (it announced no `readyGate` hold, or dialled with
+  `reconnect=1`), it is not the VS Code extension's pipe (`client=ext`, which
+  always forwards its webview's own `ready`), and it carries no namespaced
+  instance id (the colon-joined `iid` only a current hub's relay sends, and
+  every such hub posts its `ready` on the relay). An older hub's relay socket
+  is one such socket (its page sent its `ready` to its local socket alone); an
+  older shim's redial with no `proto` term is another. A held page's frames
+  before its `ready` (its shim's queued `clientDiag` rows) do not count, and a
+  current page's relay is never taken: its frames wait for its `ready`. On the
+  page side, federation posts the `ready` first on every non-redial open, ahead
+  of the settings it flushes, so no kernel of any vintage reads a flushed
+  setting as that socket's first word. Before the implicit handshake, an older
+  dashboard attached to a newer kernel listed the remote's tabs with nothing
+  behind them (2026-09-18). A socket that sends nothing at all gets no chat
+  frame, and its close files a `chatWithheld` row in `client-diag.jsonl` with
+  the count of frames withheld; a socket taken at its first frame files an
+  `implicitHandshake` row naming that frame and the count withheld before it.
+  Keepalives and the restart notice reach every socket, held or not: the shim
+  consumes both itself. On `ready`, a feed
   socket receives the cached `{type:"feed"}` frame at once, with no build, and the
   frame's `now` is rewritten to the time of the serve. The rewrite matters because
   the pusher builds only while a client is connected: after a night with no

@@ -3058,7 +3058,8 @@ CLIENT_DIAG_KEYS = {
     "outline": frozenset(("buildId", "slot", "rev")),
     "waiting": frozenset(("buildId",)),
     "kernel": frozenset(("app", "kind", "reconnect", "iid", "cid", "host", "sid", "type", "span", "events", "bytes", "head", "missing",
-                         "refused", "reason", "sent", "frames", "ageS")),
+                         "refused", "reason", "sent", "frames", "ageS",
+                         "frame", "withheld", "proto")),                                                   # implicitHandshake (_implicit_handshake)
 }
 _client_diag_said = set()      # (surface, key) pairs already said on stderr; one line each per kernel, CLIENT_DIAG_SAID_MAX of them
 _CLIENT_DIAG_SAID_FULL = (None, None)   # the latch's own entry once it is full: the one line past the bound
@@ -52911,33 +52912,68 @@ def _note_chat_withheld_at_close(client, now=None):
 
 
 def _implicit_handshake(client, msg):
-    """The FIRST client frame from a socket that has declared no chat wire stands as its handshake, on the index wire
-    (proto 1), and lifts the chat withhold (_send_chat_locked's gate). The event this keys on is that frame itself; no
-    clock is read. Two producers dial a socket that neither posts `ready` nor carries a `proto` term and then ask this
-    kernel for things: a hub page older than the federation's remote ready (f7a80efee) relaying to a newer kernel, whose
-    federation sent the page's ready to the local socket alone; and a pane shim older than the redial's proto term
-    redialing after this kernel restarted (reconnect=1 alone, its page's one ready acked long ago, so no ready follows).
-    Until 2026-09-18 both were held silent for the socket's life: strips and statuses flowed and every session body was
-    withheld, so an older dashboard attached to a newer kernel listed the remote's tabs with nothing behind them (two
-    relay sockets, 965 and 644 chat frames withheld, on the record). Both spoke the index wire before the gate existed,
-    and that is the wire they degrade to. Not taken: a `ready` (the arm declares the wire itself); a socket held under
-    READY_GATE_CAP (`ready` False: a kernel-served pane whose bundle has not said ready, whose shim flushes queued
-    clientDiag rows at its open before that ready, the very race the gate closed); a socket already handshaken (a
-    redial's proto term, a ready seen); an undecodable frame (msg None). A socket that sends nothing keeps the gate's
-    behaviour: no chat frame, the chatWithheld row at its close. A real `ready` after this re-declares the wire and
-    resets the base as it always did. Wakes the pusher: a frame that wakes nothing itself (a settings post) would
-    otherwise wait for the backstop cycle. Said once on stderr per socket, with the frame that stood in and the frames
-    withheld before it. Returns whether the mark lifted here."""
+    """The FIRST client frame from a chat socket of OLDER VINTAGE that has declared no chat wire stands as its handshake, on
+    the index wire (proto 1), and lifts the chat withhold (_send_chat_locked's gate). The event this keys on is that frame
+    itself; no clock is read. Two producers dial a chat socket that neither posts `ready` nor carries a `proto` term and
+    then ask this kernel for things: a hub page older than the federation's remote ready (f7a80efee) relaying to a newer
+    kernel, whose federation sent the page's ready to the local socket alone; and a pane shim older than the redial's proto
+    term redialing after this kernel restarted (reconnect=1 alone, its page's one ready acked long ago, so no ready
+    follows). Until 2026-09-18 both were held silent for the socket's life: strips and statuses flowed and every session
+    body was withheld, so an older dashboard attached to a newer kernel listed the remote's tabs with nothing behind them
+    (two relay sockets, 965 and 644 chat frames withheld, on the record). Both spoke the index wire before the gate
+    existed, and that is the wire they degrade to.
+    The rule reads the CLIENT'S VINTAGE, never the frame's kind (review round 1, 2026-09-18). The first cut took the first
+    decodable frame of any unhandshaken socket, and a CURRENT page's relay sent a held setting or bookkeeping frame ahead of
+    its ready on a fresh open (federation.ts flushed its pending frames before it posted the ready), so a proto-2 page's
+    relay was pinned to proto 1 for that window and a pusher cycle landing in it served an index session frame and a turn-0
+    build: the race b0fabb0a7 closed, reopened for remote sessions. Taken only for a socket that is all of:
+      a chat socket (app chat: every chat send site is chat-filtered, so a feed, Outline or timeline relay carries no chat
+        wire to declare and is neither stamped nor logged about);
+      ready from accept (`ready` True; a socket held under READY_GATE_CAP is a kernel-served pane whose bundle has not said
+        ready, whose shim flushes queued clientDiag rows at its open before that ready, the very race the gate closed);
+      not the VS Code extension host's pipe (client["ext"], stamped at accept from the client=ext dial term _dial_kind
+        reads: every ext pipe forwards its webview's own ready, and on a reconnect it first replays the intents the user
+        typed or picked while it was down, which would otherwise pin the pipe to proto 1 until that ready);
+      of older vintage: its dial carries no NAMESPACED instance id (a colon-joined `iid`, which only a current hub's relay
+        sends: 8fe70da07 namespaces the page's iid by the hub's wid, and every hub of that vintage also posts its ready on
+        the relay, f7a80efee being older; the older hub's relay states app and wid alone, and the older shim's redial
+        carries a bare uuid iid). Neither `delta` nor `reconnect` is read: the older shim's redial carries delta=1 like a
+        current relay, and `reconnect` is popped by the first pusher cycle, which the redial's accept-time wake makes
+        precede its first frame.
+    Not taken besides: a `ready` (the arm declares the wire itself); a socket already handshaken (a redial's proto term, a
+    ready seen); an undecodable frame (msg None) or a decodable frame that is not an object. A socket that sends nothing
+    keeps the gate's behaviour: no chat frame, the chatWithheld row at its close. A real `ready` after this re-declares the
+    wire, resets the base as it always did and pops `implicitHandshake` from the record. Wakes the pusher: a frame that
+    wakes nothing itself (a settings post) would otherwise wait for the backstop cycle. Said once on stderr per socket,
+    with the frame that stood in and the frames withheld before it, and filed as one kernel-surface client-diag row (what
+    implicitHandshake: app, kind, frame, withheld, proto 1) beside the socket's wsopen row, in a try, so a file failure
+    never touches the socket; the frame type is cut at CLIENT_DIAG_STR_MAX on the record and in the row, the way every
+    stored string is. Returns whether the mark lifted here.
+    With federation.ts posting its ready before its flush (the same change), a current page's frame ahead of its ready can
+    no longer pin its socket under any kernel, and a current relay that opens before its page's proto is known sends no
+    ready at the open, is declined here by its namespaced iid, and is served when its ready comes, as before."""
     if not isinstance(msg, dict) or msg.get("type") == "ready":
+        return False
+    if client.get("app") != "chat":
         return False
     if client.get("handshake") is not False or not client.get("ready", True):
         return False
+    if client.get("ext") or ":" in str(client.get("iid") or ""):
+        return False
     client["proto"] = 1
     client["handshake"] = True
-    client["implicitHandshake"] = str(msg.get("type") or "?")   # the frame that stood in, on the client's record
+    client["implicitHandshake"] = str(msg.get("type") or "?")[:CLIENT_DIAG_STR_MAX]   # the frame that stood in, on the client's record
+    withheld = int(client.get("withheld") or 0)
     sys.stderr.write("ws: a %s socket (app %s) declared no chat wire; its first frame (%s) stands as a proto-1 handshake, "
                      "%d chat frame(s) withheld before it\n"
-                     % (client.get("kind") or "page", client.get("app"), client["implicitHandshake"], int(client.get("withheld") or 0)))
+                     % (client.get("kind") or "page", client.get("app"), client["implicitHandshake"], withheld))
+    try:
+        _client_diag_append(jd.STATE / "client-diag.jsonl", json.dumps({"t": int(time.time()), "wid": str(client.get("wid") or ""), "surface": "kernel",
+                                                                         "what": "implicitHandshake",
+                                                                         "data": {"app": client.get("app"), "kind": client.get("kind"), "frame": client["implicitHandshake"],
+                                                                                  "withheld": withheld, "proto": 1}}) + "\n")
+    except Exception:
+        pass   # the durable record is a courtesy to the reader of the file; the socket's service never waits on it
     _pusher_wake.set()
     return True
 
@@ -55660,9 +55696,11 @@ def _send_chat_locked(c, m, ms, change_from, led_changed):
         c["withheld"] = int(c.get("withheld") or 0) + 1   # counted, not filed: a pusher cycle between the accept and the bundle's ready is the ROUTINE
         return ms                                     # case, and a row for it read the same as the permanent one; the socket's close files the row
     #                                                    when the handshake never came (_note_chat_withheld_at_close; the tidy after PR 1642, low 1).
-    #                                                    A socket that declares no wire but sends any other frame is taken at that frame as a
-    #                                                    proto-1 client (_implicit_handshake, 2026-09-18): an older hub's relay and an older shim's
-    #                                                    redial were held silent for the socket's life, the remote's tabs listed with nothing behind them.
+    #                                                    A chat socket of OLDER VINTAGE (ready from accept, no namespaced iid, not an ext pipe) that
+    #                                                    declares no wire but sends any other frame is taken at that frame as a proto-1 client
+    #                                                    (_implicit_handshake, 2026-09-18): an older hub's relay and an older shim's redial were held
+    #                                                    silent for the socket's life, the remote's tabs listed with nothing behind them. A current
+    #                                                    page's relay (a namespaced iid) is never taken: its frames wait for its ready, as here.
     #                                                                                       # (T386 stage 2, round eleven). It used to get index frames, and a proto-2 page whose ready lost the
     #                                                    race to this push (the pusher fires from the socket's open; the bundle evaluates later) held an
     #                                                    index frame at its reload restore and took the older wire for a landing the window wire owns.
@@ -74386,6 +74424,7 @@ class Handler(BaseHTTPRequestHandler):
         if msg and msg.get("type") == "ready":
             client["proto"] = 2 if msg.get("proto") == 2 else 1   # the chat wire it speaks (T323 stage 4b): 2 = uuid frames; absent = index frames
             client["handshake"] = True                            # …and the socket may be served chat frames from here (round eleven)
+            client.pop("implicitHandshake", None)                 # a real ready re-declares the wire an older-vintage socket's first frame stood in for (_implicit_handshake)
             # `ready` = the render bundle JUST evaluated, so this renderer holds NOTHING — but this
             # socket may already have been served: the pusher fires from the moment the WS opens
             # (the inline shim dials during HTML parse), while the 1.4MB bundle can still be
@@ -75555,6 +75594,9 @@ class Handler(BaseHTTPRequestHandler):
         # would block this handler forever (caught by tests/test_kernel.py's socket-error loop test)
         client, sendq, lock = _new_ws_client(app, wid, self.connection, lock=lock, ua=self.headers.get("User-Agent"))
         client["kind"] = _dial_kind(self.headers, q)   # page or relay: the one tell the wsopen row reads (and a planned connect-push split)
+        if (q.get("client") or [""])[0] == "ext":
+            client["ext"] = True                       # the VS Code extension host's pipe, by its own term (_dial_kind reads it too): every ext pipe
+            #                                            posts its webview's ready, so _implicit_handshake stands down for it (2026-09-18)
         client["caps"] = set(x for x in caps.split(",") if x)
         # Held until its bundle says `ready` when the page announced it will (READY_GATE_CAP — every kernel-
         # served pane does); ready from accept otherwise (a relay, a pipe, an older page: nothing to wait for).
