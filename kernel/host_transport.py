@@ -158,15 +158,19 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     be written, and the shape is deliberately not widened to catch them, since no such name has a road into
     the overlay today and a legitimate TOKEN_BUDGET or PRIVATE_KEY_PATH would be moved out of the file for
     nothing. A credential never lives in a file, the fork's rule, and the box admin's hazard review of the
-    pull-in, 2026-09-16, found the first cut moving the three login names alone."""
+    pull-in, 2026-09-16, found the first cut moving the three login names alone.
+    The file's mode is set on the descriptor BEFORE the write (os.fchmod): a
+    pre-existing file keeps its old mode through O_CREAT|O_TRUNC, and the trailing chmod this had until
+    2026-09-18 tightened it only after the overlay was already in it (PR 789, review round 1, the same
+    write-then-tighten window the reg and the parked-ops mirror lost). fchmod is exact under any umask."""
     d = host_dir(state_dir, sid)
     d.mkdir(parents=True, exist_ok=True)
     os.chmod(d, 0o700)
     p = d / "spawn.json"
     fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(spec, f)
-    os.chmod(p, 0o600)
     return p
 
 

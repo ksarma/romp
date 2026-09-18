@@ -11121,10 +11121,12 @@ class KillDuringRevive(unittest.TestCase):
 class RegistryFileIsOwnerOnly(unittest.TestCase):
     """sdk/<sid>.json carries the session's env block, whose values can be credentials: a pick under a
     token-shaped name lands in the reg verbatim (kernel-1 and extra5-2 of PR 776's review round, deferred
-    to their own fix, 2026-09-18). write_reg publishes it at 0600: the writer-unique temp is CREATED at that
-    mode (O_EXCL), never chmod'd to it after a write, and os.replace carries the mode onto the published
-    path, so a reg written before the change tightens on its next write. Every reader is the same uid.
-    Defence in depth behind the 0700 state root, not a live fix: the value still lives in a file."""
+    to their own fix, 2026-09-18). write_reg publishes it at 0600: the mode is set on the writer-unique temp's
+    DESCRIPTOR before the first write (os.fchmod: exact under any umask, never a chmod on a path after the
+    write; review round 1 of PR 789), and os.replace carries it onto the published path, so a reg written
+    before the change (every live one sat at 0664 under the 0700 root) tightens on its next write; a reg never
+    written again keeps its mode, and the owner-only root is what makes that safe. Every reader is the same
+    uid. Defence in depth behind the 0700 state root, not a live fix: the value still lives in a file."""
 
     SID = "11111111-2222-3333-4444-666666666666"
 
@@ -11158,21 +11160,43 @@ class RegistryFileIsOwnerOnly(unittest.TestCase):
 
     def test_the_temp_is_never_observable_wider_than_0600(self):
         import stat
-        seen, chmods = [], []
-        real_replace = os.replace
+        seen, fchmods, chmods = [], [], []
+        real_replace, real_fchmod = os.replace, os.fchmod
 
         def replace_probe(src, dst, *a, **k):
             seen.append(stat.S_IMODE(os.stat(src).st_mode))   # the temp's mode as the publish begins
             return real_replace(src, dst, *a, **k)
 
+        def fchmod_probe(fd, mode):
+            fchmods.append((mode, os.fstat(fd).st_size))     # the size at that moment: 0 is before the first write
+            return real_fchmod(fd, mode)
+
         def chmod_probe(path, mode, *a, **k):
             chmods.append((str(path), mode))               # recorded, not performed: a chmod after the
             #                                                 write is the very window this closes
-        with mock.patch.object(os, "replace", replace_probe), mock.patch.object(os, "chmod", chmod_probe):
+        with mock.patch.object(os, "replace", replace_probe), mock.patch.object(os, "fchmod", fchmod_probe), \
+                mock.patch.object(os, "chmod", chmod_probe):
             sb.write_reg(self.d, self.SID, self.reg)
-        self.assertEqual(seen, [0o600], "born 0600: the mode at the replace is the mode at the open")
-        self.assertEqual(chmods, [], "no chmod at all: the mode comes from the open, so there is no window")
+        self.assertEqual(seen, [0o600], "0600 at the replace: the publish carries the descriptor's mode")
+        self.assertEqual(fchmods, [(0o600, 0)], "one fchmod, on the descriptor, while the temp is still empty")
+        self.assertEqual(chmods, [], "no chmod on a path after the write: nothing tightens later")
         self.assertEqual(self._mode(), 0o600)
+
+    def test_a_leftover_temp_at_the_same_name_is_overwritten_and_published_at_0600(self):
+        # The temp name carries uuid4().hex[:8], so a collision needs the stub. PR 789's first cut opened the temp
+        # O_EXCL and would have refused the write with FileExistsError; review round 1 (2026-09-18) opens O_TRUNC
+        # and sets the mode on the descriptor, which also re-modes the leftover's inode, so the publish is 0600
+        # and not the leftover's 0644.
+        p = sb._reg_path(self.d, self.SID)
+        p.parent.mkdir(parents=True)
+        stale = p.with_name("%s.%d.%s.tmp" % (p.name, os.getpid(), "0badc0de"))
+        stale.write_text('{"stale": true}')
+        os.chmod(stale, 0o644)
+        with mock.patch.object(sb.uuid, "uuid4", lambda: types.SimpleNamespace(hex="0badc0de" + "0" * 24)):
+            sb.write_reg(self.d, self.SID, self.reg)
+        self.assertEqual(sb.read_reg(self.d, self.SID)["name"], "web", "published over the leftover, not refused")
+        self.assertEqual(self._mode(), 0o600, "the descriptor's mode, not the leftover's 0644")
+        self.assertFalse(stale.exists(), "the leftover became the temp and moved")
 
 
 if __name__ == "__main__":

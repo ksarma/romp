@@ -640,11 +640,12 @@ class TheMirrorIsWrittenPerWriter(_Drain):
 class TheMirrorIsOwnerOnly(_Drain):
     """A parked ("env", {...}) op carries the pick's VALUES, which can be credentials (the chip renders names
     only for that reason), and the mirror keeps them on disk until the op is delivered, across a kernel death.
-    pending-ops.json is therefore published at 0600 like the reg (write_reg): _atomic_write creates the
-    per-writer temp AT that mode (O_EXCL), never chmods it to that mode after the write, and os.replace carries
-    the mode onto the published path, so a mirror written before the change tightens on its next save. Only
-    the kernel reads it. Defence in depth behind the 0700 state root (extra5-2 of PR 776's review round,
-    deferred to its own fix, 2026-09-18): the values still live in a file."""
+    pending-ops.json is therefore published at 0600 like the reg (write_reg): _atomic_write sets the mode on the
+    per-writer temp's DESCRIPTOR before the first write (os.fchmod: exact under any umask, never a chmod on a
+    path after the write), and os.replace carries it onto the published path, so a mirror written before the
+    change (the live one sat at 0664 under the 0700 root) tightens on its next save. Only the kernel reads it.
+    Defence in depth behind the 0700 state root (extra5-2 of PR 776's review round, deferred to its own fix,
+    2026-09-18; the descriptor shape is review round 1 of PR 789): the values still live in a file."""
 
     def setUp(self):
         super().setUp()
@@ -671,22 +672,28 @@ class TheMirrorIsOwnerOnly(_Drain):
         self.assertEqual(self._mode(), 0o600, "os.replace carries the temp's mode onto the published path")
 
     def test_the_mirrors_temp_is_never_observable_wider_than_0600(self):
-        seen, chmods = [], []
-        real_replace = os.replace
+        seen, fchmods, chmods = [], [], []
+        real_replace, real_fchmod = os.replace, os.fchmod
 
         def replace_probe(src, dst, *a, **k):
             if str(dst) == str(km._PENDING_OPS_FILE):
                 seen.append(stat.S_IMODE(os.stat(src).st_mode))   # the temp's mode as the publish begins
             return real_replace(src, dst, *a, **k)
 
+        def fchmod_probe(fd, mode):
+            fchmods.append((mode, os.fstat(fd).st_size))     # the size at that moment: 0 is before the first write
+            return real_fchmod(fd, mode)
+
         def chmod_probe(path, mode, *a, **k):
             chmods.append((str(path), mode))               # recorded, not performed: a chmod after the
             #                                                 write is the very window this closes
         km._pending_ops[SID] = [("env", {"NOTES_API_TOKEN": self.val})]
-        with mock.patch.object(km.os, "replace", replace_probe), mock.patch.object(km.os, "chmod", chmod_probe):
+        with mock.patch.object(km.os, "replace", replace_probe), mock.patch.object(km.os, "fchmod", fchmod_probe), \
+                mock.patch.object(km.os, "chmod", chmod_probe):
             km._save_pending_ops()
-        self.assertEqual(seen, [0o600], "born 0600: the mode at the replace is the mode at the open")
-        self.assertEqual(chmods, [], "no chmod at all: the mode comes from the open, so there is no window")
+        self.assertEqual(seen, [0o600], "0600 at the replace: the publish carries the descriptor's mode")
+        self.assertEqual(fchmods, [(0o600, 0)], "one fchmod, on the descriptor, while the temp is still empty")
+        self.assertEqual(chmods, [], "no chmod on a path after the write: nothing tightens later")
         self.assertEqual(self._mode(), 0o600)
 
 

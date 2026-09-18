@@ -3308,17 +3308,23 @@ def write_reg(state_dir: Path, sid: str, reg: dict) -> None:
     # (FileNotFoundError, seen live 2026-07-06). os.replace stays atomic; last writer wins.
     tmp = p.with_name("%s.%d.%s.tmp" % (p.name, os.getpid(), uuid.uuid4().hex[:8]))
     try:
-        # Born 0600 (O_EXCL on the writer-unique name; no chmod afterwards). The reg carries the session's env
-        # block, whose values can be credentials (a pick under a token-shaped name lands here verbatim), and a
-        # temp created by write_text takes the umask (0664 on a box with umask 002), so the value was readable
-        # at that mode from the write on. Creating the temp at 0600 leaves no such window; os.replace carries
-        # the temp's mode onto the published path, so a reg written before this change tightens on its next
-        # write, and nothing needs a chmod. Every reader (the kernel, bin/romp, the judges, the postal service,
-        # the session host) is the same uid, so 0600 shuts nobody out. Defence in depth behind the 0700 state
-        # root (kernel/judge.py chmods it and says why), not a live fix: PR 776's review round asked for it
-        # (kernel-1, extra5-2) and the reviewer deferred it to its own fix (2026-09-18). The value still lives
-        # in a file; the mode is a mitigation, not the never-in-a-file rule.
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        # 0600, set on the descriptor before the first write (os.fchmod; no chmod on a path). The reg carries
+        # the session's env block, whose values can be credentials (a pick under a token-shaped name lands here
+        # verbatim), and a temp created by write_text takes the umask (0664 on a box with umask 002), so the
+        # value was readable at that mode from the write on; every live registry file sat at 0664 under the
+        # 0700 state root until this change. The descriptor's mode is exact (the umask does not apply to
+        # fchmod), so no window with the text at a wider mode, and os.replace carries it onto the published
+        # path, so a reg written before this change tightens on its next write. A reg never written again (a
+        # dead session's, since this backend never unlinks one) keeps its older mode, and no boot-time re-mode
+        # is added for it (the reviewer's call, review round 1, 2026-09-18): the owner-only root is what makes
+        # that interim safe. Round 1 also replaced the first cut's exclusive create, which would have refused a
+        # leftover temp at the same name and put the mode through the umask. Every reader (the kernel, bin/romp
+        # and the CLI tools it execs, the judges, the postal service) is the same uid, so 0600 shuts nobody out.
+        # Defence in depth behind the 0700 state root (kernel/judge.py chmods it and says why), not a live fix:
+        # PR 776's review round asked for it (kernel-1, extra5-2) and the reviewer deferred it to its own fix
+        # (2026-09-18). The value still lives in a file; the mode is a mitigation, not the never-in-a-file rule.
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(json.dumps(reg))
         os.replace(tmp, p)
@@ -5330,11 +5336,15 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
     try:
         os.makedirs(d, exist_ok=True)
         # 0600, the serve-token treatment: the env block can carry secrets, and a default-umask file is
-        # world-readable on a shared host (PR #889 review). Created private, then written.
+        # world-readable on a shared host (PR #889 review). The mode is set on the descriptor BEFORE the write:
+        # a pre-existing file keeps its old mode through O_CREAT|O_TRUNC, and the trailing chmod this had until
+        # 2026-09-18 tightened it only after the env block was already in it (PR 789, review round 1: the same
+        # write-then-tighten window the reg and the parked-ops mirror lost, here for a file created before the
+        # 0600 open of 2026-09-03). fchmod is exact under any umask, so nothing follows the write.
         fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(json.dumps(keys) + "\n")
-        os.chmod(p, 0o600)   # a pre-existing file keeps its old mode through O_CREAT — tighten it too
     except OSError as e:
         # no settings file → the session still launches, just without these keys — and the Log says
         # so (fail-loudly, the user 2026-07-03): for env especially, a silent drop here leaves the

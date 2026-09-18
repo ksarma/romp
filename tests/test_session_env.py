@@ -28,6 +28,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -541,6 +542,37 @@ class EnvSecretsStayPrivate(unittest.TestCase):
         self.assertIn("s3cret", open(p).read(), "…and the value is in it (the CLI reads it), private")
         p2 = sb.flag_settings_path(d, "11111111-2222-3333-4444-555555555555", env={"TOKEN": "other"})
         self.assertEqual(stat.S_IMODE(os.stat(p2).st_mode), 0o600, "a rewrite keeps it private")
+
+    def test_a_pre_existing_looser_file_is_tightened_before_the_env_block_lands_in_it(self):
+        # Until 2026-09-18 the writer opened the published path O_CREAT|O_TRUNC at 0600 and chmod'd it AFTER the
+        # write: a fresh file was born 0600, but a file created before the 0600 open (2026-09-03) kept its looser
+        # mode through the truncating open, took the env block at that mode, and tightened only afterwards. The
+        # mode now goes onto the descriptor before the write (PR 789, review round 1: the same write-then-tighten
+        # window the reg and the parked-ops mirror lost). os.chmod is interposed and NOT performed, so the old order
+        # leaves the file at 0644 and the case reads the descriptor's mode alone; os.fchmod is recorded with the
+        # file's size at that moment, so "before the write" is executed, not read off the source.
+        import stat
+        d = tempfile.mkdtemp()
+        p = Path(d, sb.FLAG_SETTINGS_DIR, "%s.json" % PARENT)
+        p.parent.mkdir(parents=True)
+        p.write_text('{"ultracode": true}\n')
+        os.chmod(p, 0o644)                                        # a file from before the 0600 open
+        fchmods, chmods = [], []
+        real_fchmod = os.fchmod
+
+        def fchmod_probe(fd, mode):
+            fchmods.append((mode, os.fstat(fd).st_size))
+            return real_fchmod(fd, mode)
+
+        def chmod_probe(path, mode, *a, **k):
+            chmods.append((str(path), mode))
+        with mock.patch.object(os, "fchmod", fchmod_probe), mock.patch.object(os, "chmod", chmod_probe):
+            out = sb.flag_settings_path(d, PARENT, env={"FEATURE_FLAG": "1"})
+        self.assertEqual(out, str(p))
+        self.assertEqual(stat.S_IMODE(os.stat(p).st_mode), 0o600, "tightened before the write, with no chmod performed")
+        self.assertEqual(fchmods, [(0o600, 0)], "one fchmod on the descriptor while the file is still empty")
+        self.assertEqual(chmods, [], "no chmod on the path after the write")
+        self.assertEqual(json.loads(p.read_text()), {"env": {"FEATURE_FLAG": "1"}}, "and the env block landed")
 
     def test_the_parked_chip_names_the_vars_but_never_their_values(self):
         km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))

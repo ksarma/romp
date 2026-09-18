@@ -6825,22 +6825,32 @@ def _atomic_write(path, text, mode=None):
     a temp the winner had already moved and crashed the push with FileNotFoundError (the user 2026-06-23).
     os.replace overwrites atomically + portably; the temp is removed if the write fails.
 
-    `mode` (e.g. 0o600) is the mode the TEMP is CREATED with (O_EXCL on the per-writer name), and os.replace
-    carries it onto the published path, so the published file is never briefly world-readable and a looser
-    existing file tightens on its next write: required for any file holding a CREDENTIAL. Without it the temp
-    inherits the umask (usually 0644): remotes.json stores every attached host's serve token, so at 0644 any
-    other local user could read those tokens and drive the REMOTE kernels, defeating the loopback token gate
-    for federation. Until 2026-09-18 the mode was a chmod AFTER write_text, which left the temp at the umask's
-    mode, with the text in it, between the two calls; PR 776's review round (kernel-1, extra5-2) asked for the
-    pending-ops mirror at 0600 with no such window and the reviewer deferred that to its own fix, so the mode
-    moved onto the open (tests/test_kernel_remotes_perms.py pins it: no chmod runs at all).
+    `mode` (e.g. 0o600) is set on the temp's DESCRIPTOR (os.fchmod) before the first write, and os.replace
+    carries it onto the published path, so the text never exists at a wider mode and a looser existing file
+    tightens on its next write: required for any file holding a CREDENTIAL. The mode is applied on the
+    descriptor before the write, so it is not subject to the umask. Without a mode the temp inherits the umask
+    (usually 0644). Every mode-bearing caller today passes 0600: the Web Push VAPID private key (push-vapid.json,
+    _vapid_keys; a credential travels this road, which is the strongest reason the mode is set before the
+    write), remotes.json (every attached host's serve token: at 0644 any other local user could read those
+    tokens and drive the REMOTE kernels, defeating the loopback token gate for federation) and its refused-rows
+    sidecar (_registry_set_aside forwards the mode), the push subscriptions (each carries a browser's auth
+    secret), the push ledger, the notified-cards snapshot (notify-prev.json, through _write_state_json), the
+    parked-ops mirror (pending-ops.json, _save_pending_ops) and the alias migration's reg rewrite
+    (_model_alias_boot_pass). The registry's own writer (sdk_backend.write_reg) does not call this helper; it
+    sets 0600 on its own descriptor the same way. `grep -n "_atomic_write(.*mode" kernel/` is the list's
+    source of truth: the list drifted once (review round 1 of PR 789, 2026-09-18).
 
-    A mode handed here is the temp's CREATION mode, so the umask applies to it: a create honours the umask, a
-    chmod after the fact does not, so the two roads are equivalent only for modes whose bits the umask leaves
-    alone. A caller wanting group or other bits set must not assume they survive. Every caller today passes
-    owner-only (the registry writer, remotes.json, the push subscriptions, the pending-ops mirror), which no
-    other-write umask touches; two call sites forward a mode VARIABLE rather than a literal, so the rule, not
-    the instance, is what a future caller must read (the reviewer's note on PR 789, 2026-09-18)."""
+    History. Until 2026-09-18 the mode was a chmod AFTER write_text, which left the temp at the umask's mode,
+    with the text in it, between the two calls (PR 776's review round, kernel-1 and extra5-2, deferred to its
+    own fix). PR 789's first cut created the temp exclusively at the mode, which made a leftover temp at the
+    same name a FileExistsError where this road had always overwritten it and put the mode through the umask;
+    review round 1 (2026-09-18) moved the mode onto the descriptor, the shape cli/perf_export.py's write_file
+    and kernel/codex_backend.py's registry lock already use. No boot-time walk re-modes files across the
+    state root (the reviewer's call, round 1): a file this helper has not rewritten since keeps its older
+    mode until its next write, and the owner-only state root (kernel/judge.py chmods it on import) is what
+    makes that interim safe. tests/test_kernel_remotes_perms.py pins the shape: one fchmod on the descriptor
+    while the temp is still empty, no chmod on any path, the requested mode published exactly under a
+    permissive and a restrictive umask, and a leftover temp overwritten rather than refused."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with _atomic_lock:
@@ -6851,7 +6861,10 @@ def _atomic_write(path, text, mode=None):
         if mode is None:
             tmp.write_text(text)
         else:
-            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)   # born at `mode`: no window at the umask's
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+            os.fchmod(fd, mode)                          # on the descriptor, BEFORE the first write: the exact mode, not
+            #                                              the umask's, and no window with the text at a wider one; also
+            #                                              what re-modes a leftover temp O_TRUNC reopened (round 1, 2026-09-18)
             with os.fdopen(fd, "w") as f:
                 f.write(text)
         os.replace(tmp, path)                            # atomic publish (overwrites; cross-platform)
@@ -39347,12 +39360,14 @@ def _save_pending_ops():
     restored as the queue (review find on #904, 2026-09-05)."""
     with _pending_ops_lock:
         try:
-            # 0600, born so (the mode is the temp's creation mode in _atomic_write): a parked ("env", {...}) op
-            # carries the pick's VALUES, which can be credentials (the chip renders names only for that reason),
-            # and this mirror keeps them until the op is delivered, across a kernel death. Only the kernel reads
-            # the file, and an older mirror at the umask's mode tightens on its next save through os.replace.
-            # Defence in depth behind the 0700 state root, like the reg (write_reg): PR 776's review round
-            # (extra5-2) asked for it and the reviewer deferred it to its own fix (2026-09-18).
+            # 0600, set on the temp's descriptor before the write (_atomic_write's mode road): a parked
+            # ("env", {...}) op carries the pick's VALUES, which can be credentials (the chip renders names only
+            # for that reason), and this mirror keeps them until the op is delivered, across a kernel death. Only
+            # the kernel reads the file. The live mirror sat at the umask's mode (0664) under the 0700 state root
+            # until this change; it re-saves on every park or delivery, so it tightens at the first mutation after
+            # the deploy, and no boot-time re-mode is added (the reviewer's call, round 1, 2026-09-18). Defence in
+            # depth behind the owner-only root, like the reg (write_reg): PR 776's review round (extra5-2) asked
+            # for it and the reviewer deferred it to its own fix (2026-09-18).
             _atomic_write(_PENDING_OPS_FILE,
                           json.dumps({k: [list(o) for o in v] for k, v in _pending_ops.items() if v}),
                           mode=0o600)

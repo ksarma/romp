@@ -609,7 +609,7 @@ class AliasMigration(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             km._model_alias_boot_pass()
         self.assertEqual(stat.S_IMODE(os.stat(jd.STATE / "sdk" / "a.json").st_mode), 0o600,
-                         "the rewrite is born 0600 and os.replace carries it onto the reg")
+                         "the rewrite's temp is 0600 from its descriptor and os.replace carries it onto the reg")
         self.assertEqual(self._read("a")["model"], "fable", "and it is the migrated reg")
 
     def test_nothing_to_migrate_on_a_fresh_state(self):
