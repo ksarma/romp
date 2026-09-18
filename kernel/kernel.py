@@ -761,14 +761,18 @@ class _PerfStats:
                                    _send_slot calls, whole or delta). A seam is recorded when its
                                    work ran, so a served tab lists no build seam and a wire hit no
                                    feedParts or barsSplit. Since 2026-09-18 `push` and the push.*
-                                   rows are the pusher's own (stage() routes a push stage by the
-                                   thread's purpose, the mark _push sets: "push" when the pusher
-                                   calls it, "connect" for a fresh client's full push on its
-                                   handler thread; the pusher's `push` container closes outside
-                                   the mark and is its by its ownership of the cycle): a connect
+                                   rows are the pusher's own (stage() routes a push stage under the
+                                   thread's "connect" mark, _push's decorator's for a fresh
+                                   client's full push on its handler thread, to the connect table,
+                                   and every other push stage by the thread's ownership of the
+                                   pusher's cycle: the pusher's push.* under the "push" mark are
+                                   the cycle owner's, and the pusher's `push` container closes
+                                   outside the mark and is its by its ownership of the cycle; a
+                                   "push" mark on a thread owning no cycle is no owner): a connect
                                    push's stages moved to pusher.connectPush.stagesMs, and a push
-                                   stage from a thread with neither purpose counts under
-                                   stagesForeign. Before, the push.* rows took every caller's
+                                   stage from a thread that neither carries the connect mark nor
+                                   owns the pusher's cycle counts under stagesForeign. Before, the
+                                   push.* rows took every caller's
                                    walls, connect pushes included, so their sum could exceed
                                    `push`; now push.chat, push.feed, push.timeline, push.send,
                                    push.warm and push.feedFirst sum to at most `push` over closed
@@ -781,8 +785,9 @@ class _PerfStats:
                                    change
       stagesForeign                {stage: ms}, a dotted jobs. stage closed by a thread that owns
                                    neither loop (no cycle_begin on it: a handler thread, a test that
-                                   opened no cycle), or a push stage (`push`, push.*) closed under
-                                   neither the pusher's purpose nor a connect push's (2026-09-18),
+                                   opened no cycle), or a push stage (`push`, push.*) closed by a
+                                   thread that neither owns the pusher's cycle nor carries a
+                                   connect push's mark (2026-09-18),
                                    cumulative wall under the stage name, so a write that fits no
                                    owner is counted rather than merged into a row that names another
                                    thread. On a running kernel the block holds the
@@ -1418,12 +1423,13 @@ class _PerfStats:
         flat row, the pusher's to cycleJobsMs under the job's name, and a thread that owns neither loop to stagesForeign
         under the stage name. Both loops run their jobs under the one `jobs.` prefix, so a flat row could not say whose
         time it held (the lists are disjoint, but a job that changed lists, or a test driving both loops on one thread,
-        merged the two without a trace). A push stage (`push`, push.*) by the writer's PURPOSE, the thread's stage mark:
-        "connect" (a fresh client's full push on its handler thread, _push_one, marked by _push's decorator) to
-        connect_stages_ms, served as pusher.connectPush.stagesMs; the pusher's own (the cycle's owner, whose `push`
-        container closes outside the mark, or the "push" mark _push sets when the pusher calls it; on a kernel only the
-        pusher calls _push without connect, so a test's bare _push stands for it) to the flat row; any other writer to
-        stagesForeign. A connect push runs the same stage calls as the cycle, and until then its walls were added to the
+        merged the two without a trace). A push stage (`push`, push.*) by the writer's PURPOSE or OWNER: the "connect"
+        stage mark (a fresh client's full push on its handler thread, _push_one, marked by _push's decorator) to
+        connect_stages_ms, served as pusher.connectPush.stagesMs; the pusher's cycle owner (its push.* under the "push"
+        mark _push sets when the pusher calls it, and its `push` container, closed outside the mark) to the flat row;
+        any other writer to stagesForeign, a "push"-marked write from a thread owning no cycle included (the mark says
+        what _push was called for, not whose cycle it ran in; a bare _push in a test opens a cycle first). A connect push
+        runs the same stage calls as the cycle, and until then its walls were added to the
         flat push.* rows, whose one consumer divides them by the pusher's cycle time. The split rows already keep the
         owners apart and are unchanged; every other stage (`jobs`, `jobsPass`, `prelude`) is a flat row for every
         writer, as before."""
@@ -1443,9 +1449,10 @@ class _PerfStats:
                 purpose = self._purpose()
                 if purpose == "connect":                    # a fresh client's full push on its handler thread (_push_one)
                     self.connect_stages_ms[name] = self.connect_stages_ms.get(name, 0.0) + ms
-                elif kind == "pusher" or purpose == "push":   # the pusher's own: its push, or its container closed outside the mark
+                elif kind == "pusher":                      # the cycle's owner: its push.* under the "push" mark, its `push` outside it
                     self.stages[name] = self.stages.get(name, 0.0) + ms
-                else:                                       # a thread with neither purpose: counted apart, never merged
+                else:                                       # neither a connect push nor the cycle's owner (a "push" mark alone is no
+                    #                                         owner): counted apart, never merged
                     self.stages_foreign[name] = self.stages_foreign.get(name, 0.0) + ms
             else:
                 self.stages[name] = self.stages.get(name, 0.0) + ms
@@ -1781,7 +1788,7 @@ class _PerfStats:
             pusher["stageRingLen"] = len(sr)                                          #  is up to a few MB of JSON (round one, low 3)
             pusher["stageRingMax"] = self.stage_ring.maxlen if self.stage_ring is not None else _stage_ring_len()
             pusher["cycleJobsMs"] = dict(self.cycle_jobs_ms)   # the pusher's cycle jobs, cumulative wall per job (2026-09-18)
-            foreign = dict(self.stages_foreign)               # a `jobs.` stage from a thread owning neither loop, or a push stage from a thread with neither purpose (2026-09-18)
+            foreign = dict(self.stages_foreign)               # a `jobs.` stage from a thread owning neither loop, or a push stage from a thread neither owning the pusher's cycle nor under a connect push's mark (2026-09-18)
             jring = sorted(self.jobs_ring)
             jobs = dict(self.jobs)                          # the jobs thread's pass counters, the same shape as the pusher's
             jobs["firstPass"] = dict(self.first_pass) if self.first_pass is not None else None
@@ -1909,7 +1916,7 @@ class _PerfStats:
                 "process": _process_stats(), "heap": _heap_stats(),   # heap: where the resident size sits, now (2026-09-15)
                 "gc": gc_block,                                       # gc: the collector's collections and pauses (2026-09-16)
                 "pusher": pusher, "jobs": jobs, "stages_ms": stages,
-                "stagesForeign": foreign,                            # a `jobs.` stage written by a thread owning neither loop, or a push stage by a thread with neither purpose (2026-09-18)
+                "stagesForeign": foreign,                            # a `jobs.` stage written by a thread owning neither loop, or a push stage by a thread neither owning the pusher's cycle nor under a connect push's mark (2026-09-18)
                 "builds": builds, "sends": sends, "goals": goals, "memos": memos, "judge": judge, "skillLoadIndex": skill_idx, "http": http,
                 "fileSlice": file_slice,                   # T351: the preview popover's slice cache (hit / miss / bytes / warm)
                 "glossary": glossary_stats,                # T351 stage 2: files parsed, frames / terms / bytes BUILT per cycle, entries cut, files refused

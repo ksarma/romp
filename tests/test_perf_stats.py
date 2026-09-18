@@ -1107,13 +1107,14 @@ class PushRowsByPurpose(unittest.TestCase):
     the pusher's, and `romp perf` divided it by the pusher's cycle time (a chat share above the push share, or above one
     hundred percent, while pages reloaded). Now stage() routes a push stage by the writer's PURPOSE, the thread's stage
     mark: "connect" (what _push's decorator sets for connect=True) to pusher.connectPush.stagesMs under the stage name;
-    the pusher's own (the cycle's owner, whose `push` container closes outside the mark, or the "push" mark) to the flat
-    row; any other writer to stagesForeign. No seed: the connect table lists the stages connect pushes ran. No call site,
-    mark, split row, boot row or stage name changes."""
+    the pusher's own (the cycle's owner: its push.* under the "push" mark and the `push` container it closes outside the
+    mark) to the flat row; any other writer to stagesForeign, a "push"-marked write from a thread owning no cycle included
+    (the mark says what _push was called for, not whose cycle it ran in). No seed: the connect table lists the stages
+    connect pushes ran. No stage name, mark, split row or boot row changes."""
 
     PUSHER = (("push.chat", 0.005), ("push.send", 0.001))                                # the pusher's push, under its mark
     CONNECT = (("push.chat", 20.0), ("push.send", 0.5), ("push.feedFirst", 0.25))        # a reload's full push on a handler thread
-    FOREIGN = (("push.chat", 0.001), ("push", 0.002))                                    # a thread with neither purpose
+    FOREIGN = (("push.chat", 0.001), ("push", 0.002))                                    # a thread with no mark and no cycle
 
     def _three_writers(self):
         """The pusher (this thread, the cycle's owner) closes push.chat and push.send under the "push" mark and then its `push`
@@ -1157,7 +1158,7 @@ class PushRowsByPurpose(unittest.TestCase):
         self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"],
                          {"push.chat": 20000.0, "push.send": 500.0, "push.feedFirst": 250.0}, "the connect push's stages, under their names, apart")
         self.assertEqual(snap["pusher"]["connectPush"]["count"], 1)
-        self.assertEqual(snap["stagesForeign"], {"push.chat": 1.0, "push": 2.0}, "the thread with neither purpose is counted, not merged")
+        self.assertEqual(snap["stagesForeign"], {"push.chat": 1.0, "push": 2.0}, "the thread with no mark and no cycle is counted, not merged")
         # the split rows keep the pusher's alone as before, and neither other writer reaches a split
         self.assertEqual(sorted(snap["pusher"]["firstCycle"]["stages"]), ["push", "push.chat", "push.send"])
         self.assertAlmostEqual(snap["pusher"]["firstCycle"]["stages"]["push.chat"]["ms"], 5.0)
@@ -1178,10 +1179,14 @@ class PushRowsByPurpose(unittest.TestCase):
         self.assertLessEqual(sum(v for k, v in cst.items() if k.count(".") == 1), snap["pusher"]["connectPush"]["ms_sum"] + 1e-9)
         self.assertGreater(sum(cst.values()), 0.0)
 
-    def test_a_push_under_the_push_mark_with_no_cycle_is_the_pushers_row(self):
-        """On a kernel only the pusher calls _push without connect (through _push_all, inside its cycle), so the "push" mark
-        names the pusher's purpose wherever it is read, and a bare _push in a test (PushStages below) carries it with no
-        cycle open and stands for the pusher. A container closed with no mark and no cycle is nobody's: stagesForeign."""
+    def test_a_push_under_the_push_mark_with_no_cycle_is_foreign_not_the_pushers_row(self):
+        """The "push" mark says what _push was called for, not whose cycle it ran in: a push stage under it from a thread
+        owning no cycle is neither a connect push nor the cycle's owner, so it counts under stagesForeign beside the
+        container the same thread closes with no mark, and the flat rows the CLI divides by the pusher's cycle time take
+        nothing from it. The mark alone as the pusher's stand-in (this test's first meaning, 2026-09-18 review) let a
+        _push(connect=False) from any other thread merge its walls into those rows: a push share above one hundred percent
+        with stagesForeign empty. Latent on a kernel: _push_all's one caller opens the cycle first and _push_one passes
+        connect=True, so no live caller takes this road; a bare _push in a test opens a cycle first (PushStages below)."""
         st = km._PerfStats()
         out = {}
 
@@ -1192,9 +1197,9 @@ class PushRowsByPurpose(unittest.TestCase):
         th = threading.Thread(target=bare_thread); th.start(); th.join(5)
         self.assertTrue(out.get("done"))
         snap = st.snapshot()
-        self.assertAlmostEqual(snap["stages_ms"]["push.feed"], 2.0)
+        self.assertEqual(snap["stages_ms"]["push.feed"], 0.0, "the flat row takes nothing from a thread owning no cycle, marked or not")
         self.assertEqual(snap["stages_ms"]["push"], 0.0)
-        self.assertEqual(snap["stagesForeign"], {"push": 2.0})
+        self.assertEqual(snap["stagesForeign"], {"push.feed": 2.0, "push": 2.0}, "both counted apart, under their names")
         self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {})
 
     def test_a_fresh_snapshot_seeds_no_connect_stage_row_and_reset_empties_the_table(self):
@@ -2131,7 +2136,13 @@ class PushStages(unittest.TestCase):
     """_push driven for real (the test_tab_meta_push.py pattern) with builders stubbed to sleep 5 ms
     each: every push.* stage grows by at least its builder's sleep, the chat build counts as built on
     the first push and as cached on the second (same transcript, background tab), and the timeline
-    client's bars go out in the send stage."""
+    client's bars go out in the send stage. setUp opens the pusher's cycle on the module collector
+    first (2026-09-18): stage() credits a push stage to the thread that owns the pusher's cycle, and
+    the "push" mark _push carries is no owner, so a bare _push with no cycle open counts under
+    stagesForeign and the flat rows read zero. Before that line the real-push test was green only
+    while an earlier class in this module (PusherRecords, through the real _pusher_cycle) had left
+    this thread registered as the pusher's owner, and red with the class run alone; tearDown puts
+    the owner map and the split state back so no later test inherits this class's cycle."""
 
     STUBS = ("NAMES", "_live_map", "_live_names", "_chat_tab_sessions", "build_session",
              "_cached_feed", "_cached_timeline", "build_timeline", "_fleet_view_sig", "_comments_frame",
@@ -2167,8 +2178,13 @@ class PushStages(unittest.TestCase):
         self.chat_frames, self.tl_frames = [], []
         self.chat = {"app": "chat", "alive": True, "sent": {}, "send": lambda s: self.chat_frames.append(json.loads(s))}
         self.tl = {"app": "timeline", "alive": True, "sent": {}, "send": lambda s: self.tl_frames.append(json.loads(s))}
+        self.saved_cycle = (dict(km._PERF_STATS._owners), dict(km._PERF_STATS._cycle_state))
+        km._PERF_STATS.cycle_begin()          # this thread is the pusher: its _push below is the cycle owner's (the class docstring)
 
     def tearDown(self):
+        owners, cycle_state = self.saved_cycle
+        km._PERF_STATS._owners.clear(); km._PERF_STATS._owners.update(owners)
+        km._PERF_STATS._cycle_state.clear(); km._PERF_STATS._cycle_state.update(cycle_state)
         for nm, v in self.saved.items():
             setattr(km, nm, v)
         st, bc, pe, pl, lo = self.saved_state
@@ -2915,23 +2931,25 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         st.send(("chat", SID), "full", 10)
         st.send(("status", SID), "delta", 5)
         st.cycle(0.050)
-        # the push stages by their writer's purpose (2026-09-18), all three routes populated so the walk covers them: the
-        # pusher's, under the "push" mark _push carries when the pusher calls it, to the flat row; a connect push's, under
-        # the "connect" mark, to pusher.connectPush.stagesMs; and a write under a request handler's route mark, neither
-        # purpose, to stagesForeign. Every key is a stage literal spelled in the kernel's source: stage() is never called
-        # with a client's or a user's text, so no planted string can reach any of the three; the walk holds them to the
-        # grammar anyway
-        km._stage_marked("push")(lambda: st.stage("push.chat", 0.010))()
-        km._stage_marked("connect")(lambda: (st.stage("push.chat", 0.003), st.stage("push.send.compare", 0.002)))()
+        # the push stages by their writer (2026-09-18), all three routes populated so the walk covers them: a write under a
+        # request handler's route mark from this thread while it owns no cycle, neither a connect push nor the cycle's
+        # owner, to stagesForeign; a connect push's, under the "connect" mark, to pusher.connectPush.stagesMs; and the
+        # pusher's, under the "push" mark _push carries when the pusher calls it, from this thread once it owns the
+        # pusher's cycle (below: the mark alone is no owner), to the flat row. Every key is a stage literal spelled in the
+        # kernel's source: stage() is never called with a client's or a user's text, so no planted string can reach any of
+        # the three; the walk holds them to the grammar anyway
         km._stage_marked("http.GET.other")(lambda: st.stage("push.feed", 0.004))()
+        km._stage_marked("connect")(lambda: (st.stage("push.chat", 0.003), st.stage("push.send.compare", 0.002)))()
         # the two owner-routed blocks (2026-09-18), populated so the walk covers them: a `jobs.` stage from this thread
         # while it owns no cycle lands in stagesForeign, then the same thread as the pusher's owner writes a cycle job
-        # into pusher.cycleJobsMs. Both keys are the kernel's own literals (a stage name from the STAGES vocabulary, a
-        # job name from CYCLE_JOBS), never a client's or a user's text: stage() is called with names spelled in the
-        # kernel's source alone, so no planted string can reach either block; the walk holds them to the grammar anyway
+        # into pusher.cycleJobsMs and its push.chat into the flat row. Both keys are the kernel's own literals (a stage
+        # name from the STAGES vocabulary, a job name from CYCLE_JOBS), never a client's or a user's text: stage() is
+        # called with names spelled in the kernel's source alone, so no planted string can reach either block; the walk
+        # holds them to the grammar anyway
         st.stage("jobs.autoNudge.parse", 0.001)
         st.cycle_begin()
         st.stage("jobs.persistCheckpoints", 0.002)
+        km._stage_marked("push")(lambda: st.stage("push.chat", 0.010))()
 
     def _unplant_reads(self):
         with self.em._READ_BYTES_LOCK:
