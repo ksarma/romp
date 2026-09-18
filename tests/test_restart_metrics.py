@@ -31,6 +31,23 @@ TZ = "UTC"
 # real hostname would refuse the print on any machine whose name is a token of the document (round 2 of the export's
 # review found two tests doing so)
 SYNTHETIC_PROBES = [("hostname", "testhost"), ("username", "tester"), ("home directory", "/home/tester")]
+
+
+def _keys_named(doc, name):
+    """The key paths of every dict holding a key named `name`, at any depth of `doc`; empty when none does."""
+    out = []
+
+    def walk(node, where):
+        if isinstance(node, dict):
+            if name in node:
+                out.append("/".join(str(p) for p in where))
+            for k, v in node.items():
+                walk(v, where + (k,))
+        elif isinstance(node, (list, tuple)):
+            for i, v in enumerate(node):
+                walk(v, where + (i,))
+    walk(doc, ())
+    return out
 D0 = rm.day_start("2026-09-10", TZ)          # the anchor day, midnight UTC
 
 
@@ -408,7 +425,10 @@ class PublicForm(unittest.TestCase):
     export --public` writes. The fixture's session names (web, api) ride the cut rows' cutSessions lists and the
     buckets' cutSessions counts, the sids and pids ride the events, the label is free text, and a cut row's
     drainError and reasonError and an event row's text are planted as one-token messages (_plant_free_text); none
-    may survive, while the counts they stood beside do. Before the flag, argparse refused `--public`."""
+    may survive, while the counts they stood beside do. Before the flag, argparse refused `--public`. Since 2026-09-18
+    every `t` goes too (the second of each restart, boot, quiet window, kernel-series point and event: this machine's
+    own history, an exact linkage key between two documents from it) and the kernel's uptime is rounded down to whole
+    minutes."""
 
     def setUp(self):
         self.state = Path(tempfile.mkdtemp())
@@ -438,8 +458,11 @@ class PublicForm(unittest.TestCase):
         self.assertEqual(sorted(k for k in doc["restarts"][1] if k in ("drainError", "reasonError", "stopped")), ["stopped"],
                          "the two exception-message fields go whatever their value; the count beside them stays")
         drains = [e for e in doc["events"]["recent"] if e.get("kind") == "drain.unjoined"]
-        self.assertEqual(drains, [{"t": drains[0]["t"], "kind": "drain.unjoined", "inflight": 1, "reaped": True}],
-                         "the event row's prose goes, its flat counters stay")
+        self.assertEqual(drains, [{"kind": "drain.unjoined", "inflight": 1, "reaped": True}],
+                         "the event row's prose and its stamp go, its flat counters stay")
+        self.assertEqual(_keys_named(doc, "t"), [], "no row keeps its wall-clock second")
+        self.assertEqual(len(doc["restarts"]), 3, "the rows themselves stay, in order")
+        self.assertEqual(doc["restarts"][0]["boot"]["settleS"], 0.2)
         self.assertEqual(rm.public_form({"restarts": [{"drainError": "boom", "reasonError": "TESTHOST", "stopped": 1}],
                                          "events": {"recent": [{"kind": "crash.heal", "text": "boom", "attempt": 1}]}}),
                          {"restarts": [{"stopped": 1}], "events": {"recent": [{"kind": "crash.heal", "attempt": 1}]}, "public": True})
@@ -456,7 +479,7 @@ class PublicForm(unittest.TestCase):
             self.assertNotIn(spelled, text, spelled)
         attached = [e for e in recent if e.get("kind") == "host.attached"]
         self.assertEqual(len(attached), 3, "the rows stay, their pids go")
-        self.assertEqual(attached[0], {"t": attached[0]["t"], "kind": "host.attached", "boot": True, "replayFrom": 3})
+        self.assertEqual(attached[0], {"kind": "host.attached", "boot": True, "replayFrom": 3}, "the row's second goes with its pids")
         self.assertEqual(doc["events"]["byKind"]["reconcile.duplicate-cli"], 1)
         self.assertEqual(doc["notes"], ["other", "other"], "prose is not an identifier")
         problems = pp.paste_problems(doc, planted=(SID, SID2, "TESTHOST", "this machine", "boom42"))   # the walk's probes are substrings
@@ -473,14 +496,15 @@ class PublicForm(unittest.TestCase):
         self.assertEqual(doc["window"]["kind"], "week")
 
     def test_the_generation_second_goes_with_generated_at(self):
-        # live.t is generatedAt under another key, to the second; the kernel's uptime (a duration the counters are
-        # read against) stays, its start stamp and pid go
+        # live.t is generatedAt under another key, to the second, and goes with every other `t` (the denylist's key);
+        # the kernel's uptime (a duration the counters are read against) stays, rounded down to whole minutes (to the
+        # second it is the boot to the second, a stamp constant for the life of the process), its start stamp and pid go
         out = rm.public_form({"schema": 1, "generatedAt": 1757500000, "label": "TESTHOST",
                               "live": {"t": 1757500000, "platform": "Linux", "sessionsCounted": 2,
                                        "kernel": {"port": 29855, "pid": 4242, "started": 1757400000.0, "uptimeS": 100000.0,
                                                   "kernelSha": "0123456789abcdef0123456789abcdef01234567", "bootId": "b1"}}})
         self.assertEqual(out, {"schema": 1, "public": True,
-                               "live": {"platform": "Linux", "sessionsCounted": 2, "kernel": {"port": 29855, "uptimeS": 100000.0}}})
+                               "live": {"platform": "Linux", "sessionsCounted": 2, "kernel": {"port": 29855, "uptimeS": 99960}}})
         self.assertEqual(rm.public_form({"live": {"skipped": True}})["live"], {"skipped": True})
 
     def test_the_raw_document_still_carries_the_names_so_the_flag_is_what_removes_them(self):

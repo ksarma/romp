@@ -10,7 +10,8 @@ walk plus a scan for the strings only this machine knows) that refuses to write 
 sources drive it here: a synthetic snapshot in an OLD kernel's shape carrying every leak the usage-data answer
 names (a home path in the read table, the judges' done line with an exception message, sids in the chat rows
 and the parse table, a glossary term, a scanner's path, a host and a home path in http keys, a client's own
-text as an app name, a thread stack, a path as a stage key, the pid and the clock stamps), the CLI run as a
+text as an app name, a thread stack, a path as a stage key, the pid, the clock stamps and the split rows' wall-clock
+stamps), the CLI run as a
 subprocess over that snapshot (--from, --out, --usage, the refusals), and a kernel this module starts under
 the suite's fixtures (the real Handler on a loopback port, the test_perf_stats.py PerfRoutes pattern) with the
 same leaks planted through the collector's own writers. Nothing here reads a live kernel or a real state
@@ -58,6 +59,10 @@ SHA = "0123456789abcdef0123456789abcdef01234567"
 PLANTED = (SID, SID[:8], SID2, SID2[:8], HOME, "tester", "TESTHOST", TERM, FIRST, APP, "-home-tester-code-notes-api")
 STAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$")
 FILE_NAME = re.compile(r"^perf-export-\d{8}T\d{4}\.json$")
+# One split row as the kernel's _split writes it (the boot's first cycle and first pass, each stage-ring row): `t` is
+# the wall clock at the cycle's close, which for the first cycle is the kernel's start to the millisecond, constant
+# for the life of the process; `s`, `stages` and `gc` are the split.
+SPLIT = {"s": 0.5, "t": 900.5, "stages": {"jobs": {"ms": 300.0, "bytes": 1024, "hydrated": 0}}, "gc": {"n0": 1, "n1": 0, "n2": 0, "ms2": 0.0}}
 
 
 def leak_snapshot():
@@ -68,7 +73,10 @@ def leak_snapshot():
         "process": {"rss_kb": 409600, "threads": 40, "cpu_s": 60.0, "pid": 4242, "ppid": 4241, "managerPid": 4240, "source": "proc", "cwd": HOME},
         "pusher": {"cycles": 100, "cycle_ms_p50": 180.0, "idle_cycles": 40,
                    "connectPush": {"count": 4, "byApp": {"chat": {"count": 1}, APP: {"count": 2}, HOME: {"count": 1}}},
-                   "clients": {"byApp": {"chat": {"frames": 3}, APP: {"frames": 1}}, "byKind": {"chrome": {"frames": 4}}}},
+                   "clients": {"byApp": {"chat": {"frames": 3}, APP: {"frames": 1}}, "byKind": {"chrome": {"frames": 4}}},
+                   "firstCycle": SPLIT, "stageRing": [SPLIT, dict(SPLIT, s=0.2, t=1000.4)], "stageRingLen": 2},
+        "jobs": {"passes": 50, "pass_ms_max": 30.0, "firstPass": dict(SPLIT, s=1.5, t=905.0),
+                 "stageRing": [dict(SPLIT, s=0.1, t=1000.1)], "stageRingLen": 1},
         "stages_ms": {"jobs": 5000.0, "push.chat": 15000.0, HOME + "/notes": 2.0, "push.chat.sig": float("nan")},
         "builds": {"chat": {"cached": 80, "built": 20, "ms": 800.0,
                             "bg_miss": {"transcript": 5, "names": 2, "host": 1, "cwd": 3, "cold": 1},
@@ -125,6 +133,23 @@ def _run(args, env_extra=None, state=None):
 SYNTHETIC_PROBES = [("hostname", "testhost"), ("username", "tester"), ("home directory", HOME)]
 
 
+def _keys_named(doc, name):
+    """The key paths (`a/b/0`) of every dict holding a key named `name`, at any depth of `doc`; empty when none does."""
+    out = []
+
+    def walk(node, where):
+        if isinstance(node, dict):
+            if name in node:
+                out.append("/".join(str(p) for p in where))
+            for k, v in node.items():
+                walk(v, where + (k,))
+        elif isinstance(node, (list, tuple)):
+            for i, v in enumerate(node):
+                walk(v, where + (i,))
+    walk(doc, ())
+    return out
+
+
 def _hits(doc, probes, **kw):
     """The scan's findings as the refusal spells them: (kind, place)."""
     return [(h.kind, pp.place(h)) for h in pp.identifier_hits(doc, probes, **kw)]
@@ -179,7 +204,21 @@ class FoldInvariant(unittest.TestCase):
             self.assertNotIn(key, self.perf, key)
         self.assertEqual(self.perf["process"], {"rss_kb": 409600, "threads": 40, "cpu_s": 60.0, "source": "proc"},
                          "the pid under every spelling and the working directory go; the gauges stay")
-        self.assertEqual(self.perf["uptime_s"], 100.5)
+        self.assertEqual(self.perf["uptime_s"], 60, "uptime_s stays, rounded down to whole minutes (100.5 s)")
+
+    def test_the_split_rows_lose_their_stamp_and_keep_the_split(self):
+        # every split row (the boot's first cycle and first pass, each stage-ring row) carries `t`, the wall clock at
+        # the cycle's close; the first's is the kernel's start to the millisecond, constant for the life of the process,
+        # so two exports from one kernel would share an exact linkage key (the receiver's review, 2026-09-18)
+        rows = [self.perf["pusher"]["firstCycle"], self.perf["jobs"]["firstPass"]] + self.perf["pusher"]["stageRing"] + self.perf["jobs"]["stageRing"]
+        self.assertEqual(len(rows), 5)
+        for row in rows:
+            self.assertNotIn("t", row, row)
+            self.assertEqual(sorted(row), ["gc", "s", "stages"], "the split itself stays")
+        self.assertEqual(self.perf["pusher"]["firstCycle"]["stages"], {"jobs": {"ms": 300.0, "bytes": 1024, "hydrated": 0}})
+        self.assertEqual([r["s"] for r in self.perf["pusher"]["stageRing"]], [0.5, 0.2])
+        self.assertEqual(self.perf["pusher"]["stageRingLen"], 2)
+        self.assertEqual(_keys_named(self.doc, "t"), [], "no key named t at any depth of the document")
 
     def test_the_child_keeps_its_counts_and_blocks_and_loses_the_text(self):
         child = self.perf["judge"]["child"]
@@ -473,10 +512,55 @@ class FoldInvariant(unittest.TestCase):
         self.assertEqual(pp.fold({"events": [{"kind": "drain.unjoined", "text": "TESTHOST", "n": 1}],
                                   "restarts": [{"drainError": "boom", "reasonError": "TESTHOST", "stopped": 5}]}),
                          {"events": [{"kind": "drain.unjoined", "n": 1}], "restarts": [{"stopped": 5}]})
-        for key in ("first", "t"):
-            self.assertFalse(pp.denied(key, "text"), key)
+        self.assertFalse(pp.denied("first", "text"))
         self.assertNotIn("first", pp.DENY_KEYS | pp.IDENTITY_KEYS, "the chat rows' `first` timing is not an exception message")
-        self.assertNotIn("t", pp.DENY_KEYS | pp.IDENTITY_KEYS, "an event's stamp is the measurement")
+        # `t` is a wall-clock stamp wherever GET /perf writes it (the split rows, the judge child's report) and never a
+        # counter (checked against the kernel's snapshot builders, 2026-09-18), so it goes at any depth whatever the value
+        self.assertIn("t", pp.DENY_KEYS)
+        for value in (900.5, 1, None, "text"):
+            self.assertTrue(pp.denied("t", value), repr(value))
+        self.assertNotIn(("judge", "child", "t"), pp.DENY_PATHS, "the child's stamp is denied by its key now")
+        self.assertEqual(pp.fold({"pusher": {"firstCycle": {"s": 0.5, "t": 900.5}, "stageRing": [{"s": 0.2, "t": 1000.4}]}}),
+                         {"pusher": {"firstCycle": {"s": 0.5}, "stageRing": [{"s": 0.2}]}})
+
+
+class UptimeRounding(unittest.TestCase):
+    """`uptime_s` stays (it is the span the lifetime totals cover) but rounded DOWN to whole minutes: to the second,
+    beside the export minute, it placed the kernel's start to the second, a stamp constant for the life of the process
+    and so an exact linkage key across every export from one kernel (the receiver's review, 2026-09-18)."""
+
+    def test_uptime_is_rounded_down_to_whole_minutes_wherever_it_sits(self):
+        self.assertEqual(pp.fold({"uptime_s": 3725}), {"uptime_s": 3720}, "62 min 5 s is 62 whole minutes")
+        doc = pe.export_document({"uptime_s": 3725, "process": {}, "pusher": {}, "http": {}})
+        self.assertEqual(doc["perf"]["uptime_s"], 3720)
+        self.assertIsInstance(doc["perf"]["uptime_s"], int)
+        for raw, rounded in ((100.5, 60), (59.999, 0), (0, 0), (3600, 3600), (3600.0, 3600), (7 * 86400 + 59, 7 * 86400)):
+            got = pp.fold({"uptime_s": raw})["uptime_s"]
+            self.assertEqual(got, rounded, raw)
+            self.assertIsInstance(got, int, raw)
+            self.assertEqual(got % 60, 0, raw)
+        self.assertEqual(pp.fold({"process": {"uptime_s": 3725}}), {"process": {"uptime_s": 3720}}, "at any depth")
+        self.assertEqual(pp.fold({"live": {"kernel": {"uptimeS": 100000.0}}}), {"live": {"kernel": {"uptimeS": 99960}}},
+                         "the restart document's spelling (GET /version's uptime under live.kernel)")
+        self.assertIsNone(pp.fold({"uptime_s": float("nan")})["uptime_s"], "a non-finite number is null, as before")
+        self.assertEqual(pp.fold({"uptime_s": "a b"})["uptime_s"], "other", "a string is not an uptime and takes the grammar")
+        self.assertIs(pp.fold({"uptime_s": True})["uptime_s"], True, "a bool is not a number here")
+        self.assertEqual(pp.public_uptime(3725), 3720)
+        self.assertEqual(pp.UPTIME_KEYS, frozenset({"uptime_s", "uptimeS"}))
+
+    def test_the_usage_bucket_reads_the_raw_uptime_and_agrees_with_the_rounded_one(self):
+        # usage_block reads the RAW snapshot's uptime_s (the block is built from the snapshot, before the fold); every
+        # bucket bound is a whole number of minutes, so the raw value and its rounded form land in the same bucket at
+        # every bound, and a bound that is not a whole minute fails here
+        for bound, _name in pe.UPTIME_BUCKETS[:-1]:
+            self.assertEqual(bound % 60, 0, bound)
+        for raw in (3599.9, 3600, 3600.5, 86399.9, 86400, 7 * 86400 - 0.1, 7 * 86400, 3725):
+            snap = {"uptime_s": raw, "process": {}, "pusher": {}, "http": {}}
+            doc = pe.export_document(snap, usage=True)
+            self.assertEqual(doc["usage"]["kernelUptime"], pe.usage_block(snap)["kernelUptime"], raw)
+            self.assertEqual(doc["usage"]["kernelUptime"], pe.usage_block({"uptime_s": doc["perf"]["uptime_s"]})["kernelUptime"], raw)
+        self.assertEqual(pe.usage_block({"uptime_s": 3599.9})["kernelUptime"], "lt1h")
+        self.assertEqual(pe.usage_block({"uptime_s": 3600})["kernelUptime"], "1h-24h")
 
 
 class Usage(unittest.TestCase):
@@ -866,6 +950,8 @@ class ServedKernel(unittest.TestCase):
         self.assertEqual(problems, [], _lines(problems))
         perf = doc["perf"]
         self.assertNotIn("stacks", perf)
+        self.assertEqual(_keys_named(perf, "t"), [], "no split row's or child report's stamp survives")
+        self.assertEqual(perf["uptime_s"] % 60, 0, perf["uptime_s"])
         self.assertNotIn("pid", perf["process"])
         self.assertNotIn("readByPath", perf["checkpoints"])
         self.assertIn("leaf", perf["checkpoints"]["readByKind"])

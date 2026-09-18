@@ -3765,11 +3765,17 @@ sibling, counts summed), with the `http` block judged against the kernel's
 own route register and the byte tables' joined `kind<-caller` keys against
 theirs; and a denylist drops what must not appear even as `other`: the read
 table by path, the child's first failure, the stacks, a pid under any
-spelling, the clock stamps (`uptime_s` stays: it is the span the lifetime
-totals cover, and with the export minute beside it places the kernel's start
-within a minute, which names no one), and every key that names a session, a
-place, a host or a user where its value can carry text (the same key over a
-count, such as the chat build's per-label miss counters, stays). The
+spelling, the clock stamps and every `t` at any depth (the wall clock on each
+split row, the boot's first cycle and first pass and each stage-ring row, and
+on the judge child's report; the first cycle's is the kernel's start to the
+millisecond, constant for the life of the process, so two exports from one
+kernel would share it as an exact linkage key), and every key that names a
+session, a place, a host or a user where its value can carry text (the same
+key over a count, such as the chat build's per-label miss counters, stays).
+`uptime_s` stays, rounded down to whole minutes: it is the span the lifetime
+totals cover, which a reader needs, and to the second, beside the export
+minute, it placed the kernel's start to the second, the same stamp under
+another name. The
 result goes under a `schema` line (`romp-perf-export/1`) with the UTC minute
 of the export and the kernel's commit cut to at most twelve hex characters
 (`kernel_commit`): from a running kernel the verb reads `GET /version` on the
@@ -3806,8 +3812,9 @@ kernel has been up for a while, with the `romp perf` text output (the rates
 over a live window, which the export does not carry) pasted beside it.
 `romp restart-metrics --json --public` applies the same rules to the restart
 document (the session names, ids, pids, scope units, the label, the
-generation stamps and the free-text fields, an event row's `text` and a cut
-row's `drainError` and `reasonError`, go; the counts and distributions stay).
+generation stamp, every row's `t` and the free-text fields, an event row's
+`text` and a cut row's `drainError` and `reasonError`, go; the kernel's uptime
+is rounded down to whole minutes; the counts and distributions stay).
 
 The counters describe a running kernel. To time the same builders offline, on
 a copy of a state directory and with no live kernel, `tools/perf-bench.py`
@@ -5183,9 +5190,13 @@ paste-safe form instead, through the same rules as `romp perf export --public`
 (see [Kernel performance counters](#kernel-performance-counters)): the session
 names on the cut rows and in the buckets' `cutSessions`, the sids, pids under
 every spelling, scope units, the label, the kernel's sha, the generation
-stamps (`generatedAt`, `live.t`) and the free-text fields (an event row's
+stamp (`generatedAt`), every `t` (the generation second under `live.t`, and
+the second of each restart, boot, quiet window, kernel-series point and
+event: this machine's own history, an exact linkage key between two of its
+documents) and the free-text fields (an event row's
 `text`, a cut row's `drainError` and `reasonError`: a one-token message would
-pass the grammar verbatim) are dropped, every other key and string
+pass the grammar verbatim) are dropped, the kernel's uptime
+(`live.kernel.uptimeS`) is rounded down to whole minutes, every other key and string
 folds to a code identifier or `other` (a week bucket's key is respelled
 `week-of-YYYY-MM-DD` so the weeks stay distinct), and the document is marked
 `public: true`; it is searched for the strings only this machine knows before it is

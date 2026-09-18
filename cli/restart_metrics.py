@@ -35,12 +35,15 @@ days or weeks (--window), the week anchored on --anchor (default: the day of the
 in the machine's local time unless --tz names a zone. Missing sources are said, never silently zero.
 `--json --public` writes the document's PUBLIC form (cli/perf_public.py, the shape `romp perf export --public`
 writes): the session names the cut rows and the buckets carry (cutSessions), the sids, pids under every
-spelling, scope units, labels, the kernel's sha, the generation stamps (generatedAt and live.t) and the
-document's free-text fields (an event row's `text`, the prose of a session problem; a cut row's `drainError`
-and `reasonError`, exception messages: a one-token message would otherwise pass the grammar verbatim) are
-dropped, every other key and string is folded to a code identifier or `other` (a week bucket's key is respelled
-`week-of-YYYY-MM-DD` first, so the weeks stay distinct), and the finished document is searched for the strings
-only this machine knows before it is printed.
+spelling, scope units, labels, the kernel's sha, the generation stamp (generatedAt), every `t` (the generation
+second under live.t, and the second of each restart, boot, quiet window, kernel-series point and event: this
+machine's own history, an exact linkage key between two of its documents; 2026-09-18) and the document's
+free-text fields (an event row's `text`, the prose of a session problem; a cut row's `drainError` and
+`reasonError`, exception messages: a one-token message would otherwise pass the grammar verbatim) are dropped,
+the kernel's uptime (live.kernel.uptimeS) is rounded down to whole minutes, every other key and string is
+folded to a code identifier or `other` (a week bucket's key is respelled `week-of-YYYY-MM-DD` first, so the
+weeks stay distinct), and the finished document is searched for the strings only this machine knows before it
+is printed.
 """
 import argparse
 import glob
@@ -852,16 +855,16 @@ WEEK_KEY = "week of "          # bucket_key's spelling; the public form's is wee
 
 def public_form(doc: dict) -> dict:
     """The document's paste-safe form: perf_public.fold over the whole document (the denylist drops cutSessions,
-    sid, name, every pid, scope, label and the rest; every other key and string folds to an identifier or
-    `other`), marked `public: true` so a reader knows the names were never there. Two of this document's own
-    strings are handled before the fold: `live.t`, the generation second (generatedAt under another key, which
-    the denylist drops; the kernel's uptime beside it would give the boot to the second), goes; a week bucket's
-    key, "week of YYYY-MM-DD", is respelled `week-of-YYYY-MM-DD` so it fits the grammar instead of folding every
-    week into one `other`."""
+    sid, name, every pid, scope, label, every `t` (the generation second under live.t, and each row's wall-clock
+    second: a restart's, a boot's, a quiet window's, a kernel-series point's, an event's; this machine's own
+    history, an exact linkage key between two of its documents) and the rest; the kernel's uptime
+    (live.kernel.uptimeS) is rounded down to whole minutes, since to the second it is the boot to the second;
+    every other key and string folds to an identifier or `other`), marked `public: true` so a reader knows the
+    names were never there. One of this document's own strings is handled before the fold: a week bucket's key,
+    "week of YYYY-MM-DD", is respelled `week-of-YYYY-MM-DD` so it fits the grammar instead of folding every week
+    into one `other`. (live.t was dropped here by hand until 2026-09-18, when `t` joined the denylist at every
+    depth.)"""
     doc = dict(doc)
-    live = doc.get("live")
-    if isinstance(live, dict) and "t" in live:
-        doc["live"] = {k: v for k, v in live.items() if k != "t"}
     buckets = doc.get("buckets")
     if isinstance(buckets, list):
         doc["buckets"] = [dict(b, key="week-of-" + b["key"][len(WEEK_KEY):])
@@ -877,7 +880,8 @@ def main(argv=None) -> int:
     ap.add_argument("--json", action="store_true", help="print the whole document as JSON")
     ap.add_argument("--public", action="store_true",
                     help="with --json: the paste-safe form (cli/perf_public.py): no session name, id, pid under any spelling, scope, label, "
-                         "generation stamp or free text (an event row's text, a cut row's drainError and reasonError)")
+                         "generation or row stamp (every t) or free text (an event row's text, a cut row's drainError and reasonError); "
+                         "the kernel's uptime rounded down to whole minutes")
     ap.add_argument("--window", choices=("day", "week"), default="day")
     ap.add_argument("--anchor", help="YYYY-MM-DD the weeks start from (default: the first restart's day)")
     ap.add_argument("--since", help="YYYY-MM-DD, inclusive")
