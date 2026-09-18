@@ -96,6 +96,19 @@ SYNTHETIC_PROBES = (("hostname", "testhost"), ("username", "tester"), ("home dir
                     ("session directory", SYNTHETIC_HOME + "/code/notes-api"))
 
 
+def _doc_row(doc, name):
+    """The _PerfStats docstring row whose entry line starts with `name`: from that line to the next line at or above its
+    indentation that begins an entry (a non-space after the indentation), or the docstring's end. The locator is RELATIVE
+    to the entry line's own indentation on purpose: Python 3.13 and later strip a docstring's common leading whitespace at
+    compile time, so a pin that counts leading spaces (the source's six before a row's name) passes on a 3.12 venv and
+    finds nothing on the 3.13 and 3.14t CI cells. Do not simplify it back to a space count."""
+    m = re.search(r"^( *)%s\s" % re.escape(name), doc, re.M)
+    if m is None:
+        raise ValueError("no docstring row starts with %r" % name)
+    nxt = re.compile(r"^ {0,%d}\S" % len(m.group(1)), re.M).search(doc, m.end())
+    return doc[m.start():nxt.start() if nxt else len(doc)]
+
+
 def _card(i, now=NOW, provisional=False, **over):
     t = now - i * 60
     c = {"itemId": "%s:g%d" % (SID, i), "sid": SID, "name": "web", "color": {"bg": "#123456", "fg": "#ffffff"},
@@ -1456,9 +1469,14 @@ class PublishedTable(unittest.TestCase):
         """The _PerfStats docstring's feedComposition row (the served snapshot's own reference) names every key of `last`
         (fails before on one word: ledgersAttached) and the published shape of `by`."""
         doc = km._PerfStats.__doc__
-        m = re.search(r"feedComposition \(.*?(?=\n {6}\S)", doc, re.S)
-        self.assertIsNotNone(m, "the docstring has a feedComposition row")
-        row = m.group(0)
+        # the feedComposition entry is the tail of the memos row, from its opening parenthesis to the row's end. The row is
+        # cut by _doc_row, relative to its own indentation: Python 3.13 and later strip a docstring's common leading
+        # whitespace at compile time, so the old lookahead on six spaces before the next row's name matched nothing on the
+        # 3.13 and 3.14t CI cells
+        memos = _doc_row(doc, "memos")
+        i = memos.find("feedComposition (")
+        self.assertNotEqual(i, -1, "the docstring has a feedComposition row")
+        row = memos[i:]
         rep = _report(_fresh_pass(_feed(n=2)))
         for key in rep["last"]:
             self.assertIn(key, row, "%s: a key of `last` the row does not name" % key)
