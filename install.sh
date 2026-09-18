@@ -355,12 +355,28 @@ if [[ -z "${ROMP_NO_SERVICE:-}" ]]; then
         # Don't tear down a HEALTHY manager just to ship a webview dist/VSIX change. `romp-service
         # install` boots the running romp-manager OUT (SIGTERM, drains every kernel) then re-bootstraps;
         # a bootstrap that loses the drain-race exits 1 and leaves the dashboard dead on :29855. A routine
-        # webview deploy needs NO manager restart (the kernel serves the rebuilt dist live), so skip the
-        # whole bootout when the manager already reports `running`. Only (re)install when it is NOT
+        # webview deploy needs NO manager restart (the kernel serves the rebuilt dist live), so the
+        # bootout is skipped when the manager already reports `running`. Only (re)install when it is NOT
         # running — and then FAIL LOUDLY on a non-zero exit rather than `|| echo`-swallowing it, so a
         # webview deploy can never silently leave the manager unloaded (the user's rescue_me, 2026-07-21).
+        # Under a running manager the unit is still REWRITTEN (2026-09-18, the box admin's hazard review of
+        # the pull-in, 2026-09-16): skipping the whole step, as this did until then, meant a unit change a
+        # release carried (the MALLOC_ARENA_MAX=2 line the memory fix needs) never reached a box that
+        # installed while its manager ran, and the administrator added a drop-in by hand. `romp-service
+        # rewrite` writes the unit (the plist on macOS), reloads systemd on Linux, and restarts nothing: a
+        # unit on disk is inert until the service manager reads it, and the running manager keeps the
+        # definition it started under until its next restart, which the one line it prints says, with the
+        # command. Never a restart from here: that is the user's call, on their own schedule. A failed
+        # rewrite fails the run, as a failed install does: the manager is up, but the unit on disk or the
+        # loaded definition is not this release's, and that is the silent state this step exists to end.
         if "$_svc" status 2>/dev/null | grep -qx running; then
-            echo "  romp-manager already running — leaving it up (a webview deploy needs no restart)"
+            _svc_rc=0
+            "$_svc" rewrite || _svc_rc=$?
+            if [[ "$_svc_rc" -ne 0 ]]; then
+                echo "install.sh: romp-service rewrite FAILED (the line above says why): romp-manager is still running on the definition it started under, but the login service on disk may not be this release's." >&2
+                echo "  Retry by hand:  $_svc rewrite" >&2
+                exit 1
+            fi
         else
             echo "  Installing the romp login service (romp-manager)..."
             _svc_rc=0
@@ -401,15 +417,23 @@ echo "  Override:  export ROMPHOME=\"/path/you/prefer\""
 # persists (bounded poll on the mint event's artifact; ROMP_INSTALL_TOKEN_TRIES
 # is the test seam) — and when it isn't there yet, say how to get the link
 # instead of printing one that would bounce to the login page.
+# Under ROMP_NO_SERVICE the token is not read at all (2026-09-18, the box admin's hazard review of the
+# pull-in, 2026-09-16): this install started nothing, so a token file here is another manager's (a
+# previous install's, a hand-run romp up's), and printing its URL put a credential into the terminal's
+# scrollback, and into the log of every scripted install, for a dashboard this run is not serving. That
+# road prints the bare URL and says where the token comes from.
 _state_dir="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"
 _kport="${ROMP_KERNEL_PORT:-29855}"
-_tok="$(cat "$_state_dir/serve-token" 2>/dev/null || true)"
-if [[ -z "$_tok" && -z "${ROMP_NO_SERVICE:-}" ]]; then
-    for _ in $(seq 1 "${ROMP_INSTALL_TOKEN_TRIES:-40}"); do
-        sleep 0.25
-        _tok="$(cat "$_state_dir/serve-token" 2>/dev/null || true)"
-        [[ -n "$_tok" ]] && break
-    done
+_tok=""
+if [[ -z "${ROMP_NO_SERVICE:-}" ]]; then
+    _tok="$(cat "$_state_dir/serve-token" 2>/dev/null || true)"
+    if [[ -z "$_tok" ]]; then
+        for _ in $(seq 1 "${ROMP_INSTALL_TOKEN_TRIES:-40}"); do
+            sleep 0.25
+            _tok="$(cat "$_state_dir/serve-token" 2>/dev/null || true)"
+            [[ -n "$_tok" ]] && break
+        done
+    fi
 fi
 # What is NOT working, said once, right before the link — the only place the user reliably
 # looks. Each line names the capability in the user's terms, what it costs them, and the exact
@@ -447,7 +471,13 @@ if [[ -n "$ROMP_EXT_FAILED$ROMP_CLAUDE_MISSING" ]]; then
 fi
 
 echo
-if [[ -n "$_tok" ]]; then
+if [[ -n "${ROMP_NO_SERVICE:-}" ]]; then
+    # No token on this road (the comment above the token read): the bare URL, and where the token comes from.
+    echo "  Auto-start was skipped (ROMP_NO_SERVICE): this install started nothing. Start romp with:  romp up"
+    echo "  Once it runs, the dashboard is at:  http://127.0.0.1:$_kport/"
+    echo "  The first visit asks for the access token; \`romp url\` prints the link with it (the kernel keeps"
+    echo "  the token in $_state_dir/serve-token)."
+elif [[ -n "$_tok" ]]; then
     # Lead with the command, not the URL. `romp` opens the dashboard AND prints the link, so it
     # is the shorter thing to remember and the thing the docs already tell you to type (the user
     # 2026-07-27). The link stays as the fallback, for two cases the command cannot cover: THIS
@@ -464,9 +494,6 @@ if [[ -n "$_tok" ]]; then
     echo "      http://127.0.0.1:$_kport/?token=$_tok"
     echo
     echo "  Print the link again anytime:  romp url"
-elif [[ -n "${ROMP_NO_SERVICE:-}" ]]; then
-    echo "  Auto-start was skipped (ROMP_NO_SERVICE). Start romp with:  romp up"
-    echo "  then open the dashboard link:  romp url"
 else
     echo "  romp is still starting; print the dashboard link in a moment:  romp url"
 fi

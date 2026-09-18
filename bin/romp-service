@@ -11,6 +11,10 @@
 #   romp-service start        start the installed agent again (`romp up` calls this); exit 3 when
 #                             none is installed
 #   romp-service status       installed? running? (a kernel stopped by `romp down` says so)
+#   romp-service rewrite      rewrite the unit (Linux, then `systemctl --user daemon-reload`) or the plist
+#                             (macOS) from this environment WITHOUT restarting the running manager, which
+#                             keeps the definition it started under until its next restart; `install.sh`
+#                             runs this while the manager is up. Exit 3 when none is installed
 # Safe + idle-free: the kernel is hardened (Origin gate + token) and the producer is
 # presence-gated (zero model calls when no browser is connected). Runs as a USER-level
 # agent (no root). PATH + ROMP_DIR are baked into the unit so the service finds
@@ -153,6 +157,11 @@ _service_env_override() {
 # process table. Sixty seconds bounds the loop to once a minute; a manager that ran longer than that
 # before exiting (its own stale-self refresh) is respawned at once as before, since the throttle counts
 # from the job's last START. The status below tells a loaded-but-dying job from a running one.
+# Both writers land the file by RENAME (2026-09-18, the box admin's hazard review of the pull-in, 2026-09-16): the
+# rewrite verb below runs under a RUNNING manager on every install and update, and systemd reads the unit at a
+# daemon-reload, launchd the plist at a bootstrap; a `cat >` onto the path truncates it first, so a reload landing in
+# that window (an administrator's own, another install's) would load an empty definition over the live one. Written
+# beside and renamed, the path holds a whole file at every instant.
 write_plist() {
     mkdir -p "$LAUNCHD_DIR" "$STATE"
     # $() eats the trailing newline; put it back so </dict> keeps its own line. Empty → the
@@ -161,7 +170,7 @@ write_plist() {
     if [[ -n "$_plist_env" ]]; then _plist_env+=$'\n'; fi
     local _plist_envf; _plist_envf="$(_service_env_override plist)"
     if [[ -n "$_plist_envf" ]]; then _plist_envf+=$'\n'; fi
-    cat > "$PLIST" <<EOF
+    cat > "$PLIST.tmp" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -187,6 +196,7 @@ ${_plist_envf}${_plist_env}  </dict>
 </dict>
 </plist>
 EOF
+    mv -f "$PLIST.tmp" "$PLIST"
 }
 
 write_unit() {
@@ -201,7 +211,7 @@ write_unit() {
     # (per-session SDK threads, the judge pools, the pusher, the dashboard senders) rebuilding large record lists, and
     # glibc's per-thread arenas kept ten 100 to 140 MB arenas of freed memory between restarts; two arenas hand freed
     # memory back. The manager inherits it and passes it to every kernel it spawns; service.env may override it.
-    cat > "$UNIT" <<EOF
+    cat > "$UNIT.tmp" <<EOF
 [Unit]
 Description=romp kernel supervisor (romp-manager)
 After=default.target
@@ -219,6 +229,7 @@ ${_unit_env}
 [Install]
 WantedBy=default.target
 EOF
+    mv -f "$UNIT.tmp" "$UNIT"
 }
 
 # Create/refresh the romp-owned node copy that romp-node-launch runs the manager
@@ -642,6 +653,40 @@ case "${1:-status}" in
         echo "  Removed systemd --user service." ;;
       *) echo "romp-service: unsupported OS '$os'" >&2; exit 1 ;;
     esac ;;
+  rewrite)
+    # The unit or the plist from THIS environment, and no restart (2026-09-18, the box admin's hazard review of the
+    # pull-in, 2026-09-16). install.sh skipped its whole service step whenever the manager reported running, to spare
+    # a healthy manager the bootout an `install` does on macOS (its 2026-07-21 guard), so a unit change a release
+    # carried (the MALLOC_ARENA_MAX=2 line the memory fix needs) never reached a box that installed while its manager
+    # ran, and the administrator added a drop-in by hand. The file on disk is inert until the service manager reads
+    # it: on Linux that is the daemon-reload here, after which the RUNNING manager still holds the definition it
+    # started under until its next restart, which the one line says, with the command; on macOS launchd reads the
+    # plist when the agent is next loaded (a `romp-service install`, or the next login), and nothing here loads it.
+    # Only an INSTALLED service is rewritten (exit 3 otherwise, as stop and start): a unit written and never enabled
+    # would read as installed to status while nothing starts it. The reload's failure is said in the install's own
+    # words and is exit 1: the file on disk would read as this release's while the loaded definition is the old one.
+    audit_install rewrite
+    case "$os" in
+      Darwin)
+        [[ -f "$PLIST" ]] || { echo "romp-service: no login agent is installed (romp-service install writes and loads one)" >&2; exit 3; }
+        write_plist
+        ensure_romp_node
+        echo "  Rewrote the login agent ($PLIST); the running romp-manager keeps the definition it started under until launchd next loads the agent:  romp-service install (or the next login)" ;;
+      Linux)
+        [[ -f "$UNIT" ]] || { echo "romp-service: no login service is installed (romp-service install writes and enables one)" >&2; exit 3; }
+        write_unit
+        if [[ -z "$NO_LOAD" ]]; then
+            if ! "$SYSTEMCTL" --user daemon-reload; then
+                echo "romp-service: the unit was written to $UNIT but systemd did NOT reload it (systemctl --user daemon-reload failed): the loaded definition is still the old one, and the manager's next respawn runs under it." >&2
+                echo "  Is the user manager reachable from this shell? XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR. Run systemctl --user daemon-reload by hand, or re-run romp-service rewrite." >&2
+                exit 1
+            fi
+            echo "  Rewrote the login service unit ($UNIT) and reloaded systemd; the running romp-manager keeps its old unit until its next restart:  systemctl --user restart romp-manager"
+        else
+            echo "  Rewrote the login service unit ($UNIT); not reloaded (ROMP_SERVICE_NO_LOAD)"
+        fi ;;
+      *) echo "romp-service: unsupported OS '$os'" >&2; exit 1 ;;
+    esac ;;
   stop)  _service_stop ;;
   start) _service_start ;;
   status)
@@ -659,5 +704,5 @@ case "${1:-status}" in
         if [[ -z "$NO_LOAD" ]] && [[ "$(_linux_active)" == "active" ]]; then echo "running"; else _down_marker_line; fi ;;
       *) echo "romp-service: unsupported OS '$os'" >&2; exit 1 ;;
     esac ;;
-  *) echo "usage: romp-service [install|uninstall|stop|start|status]" >&2; exit 2 ;;
+  *) echo "usage: romp-service [install|uninstall|rewrite|stop|start|status]" >&2; exit 2 ;;
 esac

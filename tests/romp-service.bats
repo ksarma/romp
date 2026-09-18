@@ -960,6 +960,75 @@ EOF
     [[ "$output" == *"does not carry MALLOC_ARENA_MAX=2"* ]]
 }
 
+# ─── rewrite: the unit or the plist from this environment, and no restart ───────────────────
+# The box admin's hazard review of the pull-in (2026-09-16): install.sh runs this while the manager is up, where an
+# `install` would boot the manager out (macOS) and where skipping the step, as install.sh did until 2026-09-18, left
+# the unit on disk at the previous release's. Linux writes and reloads, macOS writes; neither starts, stops, enables
+# or loads anything, and the file lands by rename (no scratch file stays, no truncated unit at a reload).
+
+@test "rewrite (Linux): writes the unit whole and asks systemd to reload, nothing else; the one line names the manager's restart" {
+    unset ROMP_SERVICE_NO_LOAD
+    ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service"
+    printf '[Service]\nExecStart=old\n' > "$unit"                       # the previous release's unit
+    local stub; stub="$(_systemctl_stub active)"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -q '^Environment=MALLOC_ARENA_MAX=2$' "$unit"
+    grep -q "^ExecStart=$ROMP_MANAGER_BIN up$" "$unit"
+    [ ! -e "$unit.tmp" ]
+    grep -qx -- '--user daemon-reload' "$TEST_DIR/systemctl-calls"
+    [ "$(wc -l < "$TEST_DIR/systemctl-calls")" -eq 1 ]                 # the reload was the only call
+    [[ "$output" == *"keeps its old unit until its next restart:  systemctl --user restart romp-manager"* ]]
+    [ "$(printf '%s\n' "$output" | grep -c .)" -eq 1 ]                 # one line
+}
+
+@test "rewrite (Linux): a daemon-reload that fails is loud and exit 1; the unit is on disk and the message says so" {
+    unset ROMP_SERVICE_NO_LOAD
+    ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    local stub="$TEST_DIR/systemctl-stub"
+    printf '#!/bin/sh\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n' > "$stub"
+    chmod +x "$stub"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Failed to connect to bus: No medium found"* ]]     # systemctl's own reason stays visible
+    [[ "$output" == *"systemd did NOT reload it"* ]]
+    [[ "$output" == *"next respawn runs under it"* ]]
+    [[ "$output" != *"Rewrote the login service unit"* ]]
+    grep -q '^Environment=MALLOC_ARENA_MAX=2$' "$ROMP_SYSTEMD_DIR/romp-manager.service"
+}
+
+@test "rewrite with no service installed exits 3 and writes nothing: a unit nothing enabled would read as installed" {
+    unset ROMP_SERVICE_NO_LOAD
+    local stub; stub="$(_systemctl_stub active)"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"no login service is installed"* ]]
+    [ ! -e "$ROMP_SYSTEMD_DIR/romp-manager.service" ]
+    [ ! -e "$TEST_DIR/systemctl-calls" ]
+    ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"no login agent is installed"* ]]
+    [ ! -e "$ROMP_LAUNCHD_DIR/com.romp.manager.plist" ]
+}
+
+@test "rewrite (macOS): writes the plist and calls launchctl not at all; the line says when launchd reads it" {
+    unset ROMP_SERVICE_NO_LOAD
+    ROMP_OS_OVERRIDE=Darwin ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    local plist="$ROMP_LAUNCHD_DIR/com.romp.manager.plist"
+    printf '<plist/>\n' > "$plist"                                     # the previous release's plist
+    local stub="$TEST_DIR/launchctl-stub" calls="$TEST_DIR/launchctl-calls"
+    printf '#!/bin/sh\necho "$1" >> "%s"\nexit 0\n' "$calls" > "$stub"
+    chmod +x "$stub"
+    ROMP_LAUNCHCTL="$stub" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -q "<string>$ROMP_MANAGER_BIN</string>" "$plist"
+    grep -q '<key>KeepAlive</key><true/>' "$plist"
+    [ ! -e "$plist.tmp" ]
+    [ ! -e "$calls" ]                                                    # no bootout, bootstrap, kickstart or print
+    [[ "$output" == *"until launchd next loads the agent:  romp-service install (or the next login)"* ]]
+}
+
 # ─── stop / start: the supervisor halves of `romp down` / `romp up` ──────────────────────────
 # A stop has to go THROUGH the supervisor: the manager exiting on its own is a crash to
 # Restart=always / KeepAlive and it respawns within seconds. ROMP_SYSTEMCTL stubs systemctl the

@@ -990,7 +990,10 @@ once.
 
 For `./install.sh`:
 
-- `ROMP_NO_SERVICE=1` skips the login service.
+- `ROMP_NO_SERVICE=1` skips the login service. The closing lines then give the
+  bare dashboard URL and say that `romp url` prints the token (the kernel keeps
+  it in `~/.local/state/romp/serve-token`); no tokened link is printed, since
+  nothing this install started is serving one.
 - `ROMP_NO_EXT=1` skips the VS Code / Cursor extension.
 - `ROMP_NO_SDK=1` skips the Agent SDK venv. Claude Code sessions need it, so
   run `bin/romp-sdk-setup` before starting one. The script installs one
@@ -1502,7 +1505,13 @@ hand, wait included: `launchctl bootout gui/$(id -u)/com.romp.manager`; then
 `launchctl bootstrap gui/$(id -u)
 ~/Library/LaunchAgents/com.romp.manager.plist`, repeated if it is refused. On
 Linux `romp-service install` rewrites the unit and reloads systemd but leaves a
-running manager as it is, so the restart still follows. The rewrite drops a
+running manager as it is, so the restart still follows. `install.sh` takes the
+same road while the manager runs: `romp-service rewrite`, which rewrites the
+unit (the plist on macOS), reloads systemd on Linux and restarts nothing, and
+its one line names the restart command. (Until 2026-09-18 it skipped the
+service step under a running manager, so a unit change a release carried, the
+`MALLOC_ARENA_MAX=2` line for one, reached such a box only through a drop-in
+added by hand.) The rewrite drops a
 line added to the unit by hand, as the plist rewrite does; a drop-in survives
 it, so a line of your own belongs in `service.env` or a drop-in.
 
@@ -1517,7 +1526,7 @@ window too), and Ctrl+C is not
 available to a manager the service runs. `romp down` instead stops the login
 service itself (`systemctl --user stop romp-manager.service`; on macOS
 `launchctl bootout` of the agent), which nothing respawns, and then probes the
-processes themselves rather than trusting the exit code of `romp-service stop`. A manager that dies as soon as it starts is another matter: launchd's `ThrottleInterval` in the agent is 60 seconds, so such a manager is retried once a minute rather than every ten seconds (a manager that ran longer than that before exiting, its own refresh, is respawned at once), and `romp-service status` reads the job's record rather than its mere presence, so it says `loaded but not running` with the last exit code instead of `running`, which is also what `install.sh` keys its skip-the-reinstall shortcut on. One such death has a reading of its own: when the agent's manager exited with code 1, its refusal to start beside a manager already holding the control port, and something answers on that port (the port the agent's manager would bind: `ROMP_MANAGER_PORT` in `service.env`, else the environment's, else 7432), `romp-service install` names the manager already serving, most likely a hand-run `romp up` outside the service, with the two ways out (leave it, and the agent takes over when that manager stops; or stop it and re-run the install), and exits 3; `install.sh` then finishes its run, link and banner included, and exits non-zero at the end. Any other exit code with a manager answering is reported as two facts, the agent's own death and its log first. Under systemd, `Restart=always` keeps the unit's default start limit (five starts within ten seconds and the unit stops), and `systemctl --user status romp-manager.service` tells the two apart.
+processes themselves rather than trusting the exit code of `romp-service stop`. A manager that dies as soon as it starts is another matter: launchd's `ThrottleInterval` in the agent is 60 seconds, so such a manager is retried once a minute rather than every ten seconds (a manager that ran longer than that before exiting, its own refresh, is respawned at once), and `romp-service status` reads the job's record rather than its mere presence, so it says `loaded but not running` with the last exit code instead of `running`, which is also what `install.sh` keys on: `running` takes the `romp-service rewrite` road (the unit rewritten, the manager left as it is), anything else the install. One such death has a reading of its own: when the agent's manager exited with code 1, its refusal to start beside a manager already holding the control port, and something answers on that port (the port the agent's manager would bind: `ROMP_MANAGER_PORT` in `service.env`, else the environment's, else 7432), `romp-service install` names the manager already serving, most likely a hand-run `romp up` outside the service, with the two ways out (leave it, and the agent takes over when that manager stops; or stop it and re-run the install), and exits 3; `install.sh` then finishes its run, link and banner included, and exits non-zero at the end. Any other exit code with a manager answering is reported as two facts, the agent's own death and its log first. Under systemd, `Restart=always` keeps the unit's default start limit (five starts within ten seconds and the unit stops), and `systemctl --user status romp-manager.service` tells the two apart.
 
 Before stopping, `romp down` gives the turns in flight `--wait` seconds
 (default 5, up to 600) to reach a turn boundary. It asks the kernel to quiesce

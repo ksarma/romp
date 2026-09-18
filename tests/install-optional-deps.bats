@@ -508,7 +508,13 @@ EOF
 # ── the finish line points at the command, not just a URL ────────────────────
 
 @test "install.sh: ends by telling you to type romp, keeping the link as the fallback" {
-    # Force the "romp is running" branch: that block needs a minted token to print.
+    # Force the "romp is running" branch: that block needs a minted token AND the service road. Under ROMP_NO_SERVICE
+    # the install prints no token (2026-09-18: nothing it started is serving), so a stub romp-service reports the manager
+    # running and answers every other verb with nothing; the real one, and the box's own service manager, are never touched.
+    unset ROMP_NO_SERVICE
+    printf '#!/usr/bin/env bash\ncase "$1" in status) echo "installed: stub-unit"; echo running ;; esac\nexit 0\n' > "$STUB/romp-service"
+    chmod +x "$STUB/romp-service"
+    export ROMP_SERVICE_BIN="$STUB/romp-service"
     export ROMP_STATE_DIR="$TEST_DIR/state"
     mkdir -p "$ROMP_STATE_DIR"
     echo "TESTTOKEN123" > "$ROMP_STATE_DIR/serve-token"

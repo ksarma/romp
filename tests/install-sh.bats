@@ -311,22 +311,81 @@ case "$1" in
           [[ -n "${ROMP_SVC_DYING:-}" ]] && echo "loaded but not running (last exit code: 134); launchd keeps respawning it — check /tmp/manager.log" ;;
   install) [[ -n "${ROMP_SVC_FAIL:-}" ]] && { echo "romp-service: bootstrap lost the drain-race" >&2; exit 1; }
            [[ -n "${ROMP_SVC_HELD:-}" ]] && { echo "romp-service: the agent's manager exited at once because a manager is ALREADY serving on :7432 outside the login service" >&2; exit 3; } ;;
+  rewrite) [[ -n "${ROMP_SVC_REWRITE_FAIL:-}" ]] && { echo "romp-service: the unit was written but systemd did NOT reload it" >&2; exit 1; } ;;
 esac
 exit 0
 SH
     chmod +x "$1"
 }
 
-@test "install.sh: skips the service bootout when romp-manager is already running" {
+@test "install.sh: a running romp-manager is never booted out: the unit goes through romp-service rewrite, and install never runs" {
     unset ROMP_NO_SERVICE
     _svc_stub "$TEST_DIR/romp-service"
     export ROMP_SVC_LOG="$TEST_DIR/svc.log" ROMP_SVC_RUNNING=1
     ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"already running"* ]]
-    # it asked status but NEVER ran install — the healthy manager was left up
+    # it asked status, then rewrite (the unit, no restart; the test below drives the real romp-service), and NEVER
+    # install (the bootout): the healthy manager was left up
     grep -qx status "$TEST_DIR/svc.log"
+    grep -qx rewrite "$TEST_DIR/svc.log"
+    [[ "$output" != *"Installing the romp login service"* ]]
     ! grep -qx install "$TEST_DIR/svc.log"
+}
+
+@test "install.sh: a FAILED unit rewrite under a running manager fails the run loudly, and install still never runs" {
+    unset ROMP_NO_SERVICE
+    _svc_stub "$TEST_DIR/romp-service"
+    export ROMP_SVC_LOG="$TEST_DIR/svc.log" ROMP_SVC_RUNNING=1 ROMP_SVC_REWRITE_FAIL=1
+    ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp-service rewrite FAILED"* ]]
+    [[ "$output" == *"still running"* ]]                    # the manager is up; the unit is what did not land
+    [[ "$output" == *"Retry by hand:"* ]]
+    ! grep -qx install "$TEST_DIR/svc.log"
+}
+
+# ── the unit under a running manager (the box admin's hazard review of the pull-in, 2026-09-16) ──
+# Until 2026-09-18 the block above skipped the whole service step when the manager reported running, so a unit
+# change a release carried (the MALLOC_ARENA_MAX=2 line the memory fix needs) never reached a box that installed
+# while its manager ran, and the administrator added a drop-in by hand. Here the REAL bin/romp-service runs, with
+# systemctl stubbed (ROMP_SYSTEMCTL; never the box's own): the unit on disk is this release's afterwards, systemd was
+# asked to reload and nothing else, and the one line names the command that restarts the manager.
+_systemctl_active_stub() {   # a systemctl whose is-active says the manager runs; every call's argv lands in systemctl-calls
+    cat > "$TEST_DIR/systemctl" <<EOF
+#!/bin/sh
+echo "\$*" >> "$TEST_DIR/systemctl-calls"
+case "\$2" in
+  is-active) echo active ;;
+  *) exit 0 ;;
+esac
+EOF
+    chmod +x "$TEST_DIR/systemctl"
+}
+
+@test "install.sh: under a running manager the unit is rewritten and systemd reloaded; the manager is left as it is and the line names its restart" {
+    unset ROMP_NO_SERVICE ROMP_SERVICE_NO_LOAD ROMP_SERVICE_BIN
+    _systemctl_active_stub
+    export ROMP_SYSTEMCTL="$TEST_DIR/systemctl" ROMP_OS_OVERRIDE=Linux
+    export ROMP_SYSTEMD_DIR="$TEST_DIR/systemd" ROMP_MANAGER_BIN="$TEST_DIR/romp-manager"
+    # the previous release's unit: the state of a box that installs while its manager runs
+    mkdir -p "$ROMP_SYSTEMD_DIR"
+    printf '[Service]\nExecStart=%s up\nEnvironment=ROMP_SUPERVISED=1\n' "$ROMP_MANAGER_BIN" > "$ROMP_SYSTEMD_DIR/romp-manager.service"
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    # the release's unit reached the disk, whole (its allocator line is the review's example), and no scratch file stayed
+    grep -q '^Environment=MALLOC_ARENA_MAX=2$' "$ROMP_SYSTEMD_DIR/romp-manager.service"
+    grep -q "^ExecStart=$ROMP_MANAGER_BIN up$" "$ROMP_SYSTEMD_DIR/romp-manager.service"
+    [ ! -e "$ROMP_SYSTEMD_DIR/romp-manager.service.tmp" ]
+    # the one line: the manager keeps its old unit, and the command that restarts it
+    [[ "$output" == *"keeps its old unit until its next restart"* ]]
+    [[ "$output" == *"systemctl --user restart romp-manager"* ]]
+    [[ "$output" != *"already running"* ]]
+    [[ "$output" != *"Installing the romp login service"* ]]
+    # systemd was asked to reload, and for nothing else: no enable, start, stop or restart from here. Last, and
+    # armed: `run` replaces $output, and a bare `!` mid-test asserts nothing in bats
+    grep -qx -- '--user daemon-reload' "$TEST_DIR/systemctl-calls"
+    run grep -E -- 'enable|start|stop|restart' "$TEST_DIR/systemctl-calls"
+    [ "$status" -ne 0 ]
 }
 
 @test "install.sh: a loaded manager that keeps dying is reinstalled, not left up (the status line that is not running)" {
@@ -383,13 +442,35 @@ SH
 # has minted the token, and an honest pointer when it hasn't; it must never print a bare
 # URL that bounces the first-time user to the paste-a-token login page.
 
-@test "install.sh: ends with the tokened dashboard link when the token exists" {
+@test "install.sh: the service road ends with the tokened dashboard link when the token exists" {
+    # The road that found the service serving this dashboard: the token is the kernel's own, and the first click
+    # signs the browser in. A guard beside the ROMP_NO_SERVICE test below, which prints no token.
+    unset ROMP_NO_SERVICE
+    _svc_stub "$TEST_DIR/romp-service"
+    export ROMP_SVC_LOG="$TEST_DIR/svc.log" ROMP_SVC_RUNNING=1
     mkdir -p "$HOME/.local/state/romp"
     printf 'tok123\n' > "$HOME/.local/state/romp/serve-token"
-    run "$ROMP_DIR/install.sh"
+    ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *"http://127.0.0.1:29855/?token=tok123"* ]]
     [[ "$output" == *"romp url"* ]]
+}
+
+@test "install.sh: ROMP_NO_SERVICE prints no tokened link even with a token file on disk: the bare URL, and where the token comes from" {
+    # The box admin's hazard review of the pull-in (2026-09-16): with ROMP_NO_SERVICE the install starts nothing, so
+    # a serve-token here is another manager's (a previous install's, a hand-run romp up's), and the base printed its
+    # URL, a credential into the terminal's scrollback and every scripted install's log for a dashboard this run is
+    # not serving. The token is not read on this road at all.
+    mkdir -p "$HOME/.local/state/romp"
+    printf 'tok123\n' > "$HOME/.local/state/romp/serve-token"
+    run "$ROMP_DIR/install.sh"     # setup sets ROMP_NO_SERVICE=1
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"token="* ]]
+    [[ "$output" != *"tok123"* ]]
+    [[ "$output" == *"http://127.0.0.1:29855/"* ]]
+    [[ "$output" == *"romp up"* ]]
+    [[ "$output" == *"romp url"* ]]
+    [[ "$output" == *"serve-token"* ]]
 }
 
 @test "install.sh: ROMP_NO_SERVICE with no token points at romp up, never a dead link" {
