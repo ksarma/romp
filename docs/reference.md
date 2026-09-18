@@ -3465,7 +3465,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `loaded`). `goalArchive` memoizes a readable archive only: an archive that
   exists and cannot be read or parsed is answered empty, marks the running
   judge stage incomplete, and is not memoized, so the next call reads the file
-  again. `plannerSkip` is the planner's inner change gate (`skipped`,
+  again. On the child road `chain`, `courierSkip`, `plannerSkip`, `backref`,
+  `captions` and `goalArchive` read this process's judge module, which does
+  not judge while the child does, so they read zero here; `shared` still
+  counts the pusher's loads.
+  `plannerSkip` is the planner's inner change gate (`skipped`,
   `planned`, `recorded`, and since T401 (5c) `restored`, `refused`,
   `persisted`: the gate's memo of "the key of the last pass that had
   nothing to do", one row per session, persists across boots in
@@ -3751,7 +3755,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   is one miss, plus the gauge `entries` (sessions held).
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
-  per-session worker they run; the workers' share is `cpu_ms_workers`; the
+  per-session worker they run; the in-process pools' share is
+  `cpu_ms_workers`, which on the child road is near zero, the child's
+  workers riding `cpu_ms_child_workers`; the
   producer thread's own per-pass work is not included and shows under the
   process line's "other"), `wakes` (every wake of the producer: the backends'
   pokes, `POST /tick`, and two kernel-internal sites; one SDK turn fires
@@ -3783,7 +3789,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   background task's deadline made due), plus `stamps`, the number of
   per-session records held. The index tier's signature is the session's
   parse pair, captions file, archive record and unit cache, and no goal
-  store: its idle path reads none.
+  store: its idle path reads none. On the child road the gate runs in the
+  child and this block reads this process's counters, which stay at zero
+  while the child judges (the done line carries no tiers block), so
+  `romp perf` prints no gated runs on the `tiers` line.
   `skipped / (ran + skipped)` is the share of per-session runs the gate saved;
   `romp perf` prints it per tier on the `tiers` line and adds `cpu/pass` to
   the `judge` line, since the judge's CPU share alone cannot tell a cheaper
@@ -5480,7 +5489,11 @@ Bounds and counters, all on `/perf` under `judge`:
   so the exit stays inside the grace whatever the child does. A boot sweep that cannot list the state root leaves the
   sweep unmarked and the first request retries it.
 - On the child road `parses.judge` and the `goals` block read zero: the judges' parses and store writes happen in the
-  child, and their per-pass figures ride its done line as `judge.child.parses` and `judge.child.goalIo`.
+  child, and their per-pass figures ride its done line as `judge.child.parses` and `judge.child.goalIo`. So do
+  `judge.tiers` and the judge-module memos (`memos.chain`, `courierSkip`, `plannerSkip`, `backref`, `captions`,
+  `goalArchive`): the gate and those memos run in the child, the done line carries neither, and `romp perf` prints no
+  gated runs and zero chain memo hits while the child judges. `judge.cpu_ms_workers` is the in-process pools' share,
+  near zero on this road.
 - `cpu_ms_sum` counts the child's tier and worker CPU as it counts the in-process tiers and pools; `cpu_ms_child_workers`
   is the workers' share alone; `child` is the last done line's numbers: `seq`, `pid`, `t`, `chars` (the line's length),
   `status` (`ok` or `failed`), `failures` (a count), `recovered`, `wallMs`, `tierStarts`, `tierCpuMs`, `workerCpuMs`,

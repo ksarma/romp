@@ -967,7 +967,10 @@ class _PerfStats:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
                                    _run_tier, plus every per-session worker the tiers run in
-                                   judge.py's thread pools; the split rides as cpu_ms_workers; the
+                                   judge.py's thread pools; the in-process pools' share rides as
+                                   cpu_ms_workers, which on the child road (judge.child present) is
+                                   near zero, the child's workers riding cpu_ms_child_workers while
+                                   cpu_ms_sum counts the child's reported tier and worker CPU; the
                                    producer thread's own per-pass work, the episode tick, the goals
                                    snapshot and the compaction, is not in it and lands under "other"),
                                    wakes (every _producer_wake.set() call: the backends' pokes, POST
@@ -1259,8 +1262,10 @@ class _PerfStats:
         sent nothing and changed nothing (no wake set, no client payload, no goal-store save or write over
         it), so its wall and CPU also go to the idle sums (2026-09-09: the loop re-enters after a fixed 0.5 s
         backstop, and the idle share is what a cadence change would be judged on). A conservative undercount:
-        a wake another thread sets during the cycle, or the periodic repost of an unchanged frame past the
-        dedup window, marks that cycle busy though the cycle itself changed nothing."""
+        a wake another thread sets during the cycle, the periodic repost of an unchanged frame past the
+        dedup window, or a connect push's sends on a handler thread (pusher.sends counts every client payload
+        from every thread, and the idle test reads it through marks()), marks that cycle busy though the cycle
+        itself changed nothing."""
         ms = dt * 1000.0
         gc_now = self._gc_mark()                          # the collector's tallies at the close: the split's gc delta (2026-09-16)
         with self.lock:
@@ -16089,7 +16094,10 @@ def _auto_nudge_pass(now, live_map, run_dead_wait):
     #                                                       OUTSIDE the parses, so the parts partition the job. The tally replaced a
     #                                                       before-and-after read of the flat jobs.autoNudge.parse row (2026-09-18 review):
     #                                                       stage() moves that row for the jobs owner alone, so the act-now pass on the WS
-    #                                                       handler thread read a zero delta and its looks carried every parse twice
+    #                                                       handler thread read a zero delta and its looks carried every parse twice.
+    #                                                       The tally is this thread's own, so the looks figure assumes nothing about
+    #                                                       the walk being single-flight on the jobs thread: two walks on two threads
+    #                                                       (the jobs pass and the act-now pass) each subtract their own parses
     for _i, s in enumerate(alive):
         if _yielding and getattr(_NUDGE_HORIZON, "cold", 0) >= 1 and getattr(_NUDGE_HORIZON, "cold_last", False):
             _NUDGE_WALK_STATS["deferredSessions"] += len(alive) - _i

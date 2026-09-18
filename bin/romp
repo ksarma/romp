@@ -940,13 +940,17 @@ jw, jev, jbs = dl("judge", "wakes"), dl("judge", "wakes_event"), dl("judge", "wa
 # per-pass work is under "other"); it is the number a cheaper pass shows, where the judge share alone
 # cannot tell a cheaper pass from a faster cadence. "sets absorbed" is wakes - wakes_event: one SDK turn
 # fires several sets and a pass consumes them all at once, so wakes/s overstates the poke rate; a set
-# late in the window whose wake lands in the next reads as one short here, clamped at zero.
+# late in the window whose wake lands in the next reads as one short here, clamped at zero. The chain memo's hits and
+# misses read this process's judge module: zero on the child road, where the memo lives in the child (docs/reference.md,
+# the child-road notes under the judges' child).
 print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms   cpu/pass %s ms   chain memo %d hits / %d misses   "
       "wakes %d (event %d, backstop %d, %d sets absorbed)"
       % (jp, jp / dt, g(b, "judge", "ms_last"), ("%.0f" % (dl("judge", "ms_sum") / jp)) if jp else "-",
          ("%.0f" % (dl("judge", "cpu_ms_sum") / jp)) if jp else "-",
          dl("memos", "chain", "hit"), dl("memos", "chain", "miss"), jw, jev, jbs, max(0, jw - jev)))
-# the evidence gate, per gated tier: per-session runs the tier made against the ones it declined
+# the evidence gate, per gated tier: per-session runs the tier made against the ones it declined. On the child
+# road (judge.child present) the gate runs in the child and this process's counters stay at zero, so the line
+# prints "no gated runs in the window" while the child judges (the done line carries no tiers block)
 # (skipped / (ran + skipped) is the acceptance number for the gate), then the runs that ended without a
 # stamp when there were any (incomplete: a deferral or a failed call; due_clock: a background deadline
 # made the run due; bypassed: no signature could be computed, or the parse ran under another cut)
