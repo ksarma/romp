@@ -3,7 +3,7 @@ title: Relay redials wait for the local socket
 status: candidate
 where: kernel/kernel.py (the pane shim netState publishes window.__rompLocalUp); ui/webview/federation.ts connect (the deferral and its dial-deferred row), start and watchLocalLink/localUp (the romp:wsup listener), poll (the /tunnels gate)
 added: 2026-09-18
-pr:
+pr: 765
 tier: fix
 offered:
 closed:
