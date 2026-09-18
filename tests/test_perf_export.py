@@ -537,12 +537,13 @@ class FoldInvariant(unittest.TestCase):
     def test_the_denylist_walk_refuses_a_bound_off_a_power_of_two_and_a_number_the_size_of_a_stamp_and_passes_every_fold(self):
         """The two findings added with the third review round's rules (2026-09-18), so the upload's re-check matches the
         fold's full fixed point: a memory-fraction bound (BOUND_KEYS) the fold would have rounded up to a power of two, a
-        value finding at its own path; and a FLOAT leaf at or above STAMP_FLOOR anywhere outside a bound, dict or list,
-        which is round 3's property (no absolute clock stamp survives the fold under any key) turned into a check over a
-        file. An integer that large is exempt whatever its size: a time.time() value is a float, and the kernel's
-        cumulative byte and count totals are integers that pass 1.5e9 within hours on a busy kernel (the ws tables'
-        `bytes`, `parses.bytes`), so a fresh export from a long-lived kernel must pass its own belt (a rule over every
-        number refused it, 2026-09-18). The fixed point holds: a fold of every fixture at that round's head, the
+        value finding at its own path; and a FLOAT leaf at or above STAMP_FLOOR anywhere outside a bound or a duration key
+        (test_a_float_under_a_duration_key_is_never_judged_against_the_stamp_floor), dict or list, which is round 3's
+        property (no absolute clock stamp survives the fold under any key) turned into a check over a file. An integer that
+        large is exempt whatever its size: a time.time() value is a float, and the kernel's cumulative byte and count totals
+        are integers that pass 1.5e9 within hours on a busy kernel (the ws tables' `bytes`, `parses.bytes`), so a fresh
+        export from a long-lived kernel must pass its own belt (a rule over every number refused it, 2026-09-18). The fixed
+        point holds: a fold of every fixture at that round's head, the
         epoch-shifted leak snapshot and the ten real-sized bounds among them (budgetBytes floors at 4 GiB, past the
         floor), raises no finding."""
         for snap in (leak_snapshot(), _epoch(leak_snapshot()), bounds_snapshot(), bounds_snapshot(8 * 1024 ** 3)):
@@ -621,6 +622,66 @@ class FoldInvariant(unittest.TestCase):
         doc["perf"]["startedAt"] = 1.7e9
         doc["perf"]["heap"]["hydrated"]["t"] = 1
         self.assertEqual(_check(doc), "the public form still fails the denylist (a number the size of a clock stamp, the value at perf/startedAt); nothing written")
+
+    def test_a_float_under_a_duration_key_is_never_judged_against_the_stamp_floor(self):
+        """The kernel's millisecond totals are FLOATS and cumulative: pusher.cycle_cpu_ms_sum read 1,779,484.0 after one
+        hour on a busy kernel, about 35 days to the floor, and the other ms sums climb behind it, so a rule over every
+        float refused a fresh export from a long-lived kernel by its own belt (2026-09-18). A float at or above STAMP_FLOOR
+        under a DURATION key (duration_key: a name whose tokens, split on underscores and camelCase boundaries, carry `ms`
+        in any case) is a total and never a finding; under every other key outside BOUND_KEYS it stays the stamp finding
+        at its path, the type and the key deciding together. A list element has no key of its own and is judged against
+        the floor whatever key the list sits under. Fails before: cycle_cpu_ms_sum 2.0e9 and wallMs 1.6e9 were refused as
+        stamps, and check_document named perf/pusher/cycle_cpu_ms_sum."""
+        # the tokenizer: underscores and camelCase boundaries, an uppercase run kept whole before a capitalized word; the
+        # boundary and the token are the receiver's, read by name from here
+        self.assertEqual(pp.KEY_TOKEN_BOUNDARY.pattern, r"_+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+        self.assertEqual(pp.DURATION_TOKEN, "ms")
+        self.assertEqual(pp.KEY_TOKEN_BOUNDARY.split("__msgs__"), ["", "msgs", ""])
+        self.assertEqual(pp.key_tokens("cycle_cpu_ms_sum"), ["cycle", "cpu", "ms", "sum"])
+        self.assertEqual(pp.key_tokens("tierCpuMs"), ["tier", "Cpu", "Ms"])
+        self.assertEqual(pp.key_tokens("HTTPMs"), ["HTTP", "Ms"])
+        self.assertEqual(pp.key_tokens("p95Ms"), ["p95", "Ms"])
+        self.assertEqual(pp.key_tokens("__msgs__"), ["msgs"])
+        self.assertEqual(pp.key_tokens("sendMax"), ["send", "Max"])
+        self.assertEqual(pp.key_tokens("ms2"), ["ms2"])         # a digit joins its letters: the gc row's gen-2 time is one token
+        self.assertEqual(pp.key_tokens(""), [])
+        for name, ok in (("cycle_cpu_ms_sum", True), ("ms_sum", True), ("ms_max", True), ("wallMs", True), ("sendMs", True),
+                         ("restoreMs", True), ("held_ms", True), ("tierCpuMs", True), ("ms", True), ("MS", True), ("Ms", True),
+                         ("cpuMS", True), ("ms_bytes", True), ("stages_ms", True),
+                         ("sendMax", False), ("startedAt", False), ("bytes", False), ("sigMsgs", False), ("promptMsgId", False),
+                         ("msgs", False), ("items", False), ("ms2", False), ("terms", False), ("t", False), ("", False)):
+            self.assertIs(pp.duration_key(name), ok, name)
+        self.assertFalse(pp.duration_key(None))     # a list element's key
+        self.assertFalse(pp.duration_key(3))
+        # a float past the floor under a duration key passes, in the fold's own places and under a new one, in `usage` too;
+        # the fixed point over every fixture holds (the case above)
+        doc = pe.export_document(leak_snapshot(), usage=True)
+        doc["perf"]["pusher"]["cycle_cpu_ms_sum"] = 2.0e9
+        doc["perf"]["judge"]["child"]["wallMs"] = 1.6e9
+        doc["perf"]["judge"]["ms_sum"] = 1.5e9
+        doc["perf"]["jobs"]["pass_ms_max"] = 1.7e9
+        doc["perf"]["heap"]["tierCpuMs"] = 2.5e9
+        doc["perf"]["pusher"]["held_ms"] = 1_600_000_000.5
+        doc["usage"]["restoreMs"] = 1.6e9
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "a millisecond total is a duration, not a stamp")
+        self.assertIsNone(_check(doc))
+        # the same float under a key that is not a duration by name is the stamp finding at its path, the number in no field
+        for name in ("startedAt", "sendMax", "bytes", "sigMsgs"):
+            doc = pe.export_document(leak_snapshot())
+            doc["perf"]["pusher"][name] = 1.6e9
+            self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",))],
+                             [("a number the size of a clock stamp", False, "perf/pusher/" + name, 3)], name)
+            self.assertEqual(_check(doc), "the public form still fails the denylist (a number the size of a clock stamp, "
+                                          "the value at perf/pusher/%s); nothing written" % name)
+        # a list under a duration key: the element is judged, and the path carries the index
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["pusher"]["cycle_ms_ring"] = [1.0, 1.6e9]
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",))],
+                         [("a number the size of a clock stamp", "perf/pusher/cycle_ms_ring/1")])
+        # a duration key exempts the floor alone: an uptime or a bound is judged by its own coarsening first, as before
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["uptime_s"] = 1.6e9
+        self.assertEqual([p.kind for p in pp.denylist_problems(doc, under=("perf",))], ["an uptime not rounded to whole minutes"])
 
     def test_the_walk_holds_the_http_block_to_the_registers_image_and_the_stack_sample_to_its_grammars(self):
         # the walk's http check is membership in what the kernel's fold can return (http_key_ok), not a character grammar:

@@ -494,9 +494,11 @@ class Cli(unittest.TestCase):
     def test_an_edited_file_with_a_number_the_size_of_a_clock_stamp_is_refused_naming_the_value_path_and_never_the_number(self):
         """The export writes no absolute clock stamp: every one the snapshot carries is denied by key, and round 3's property
         test pins that none survives the fold under any key. So a FLOAT leaf at or above perf_public.STAMP_FLOOR (1.5e9,
-        an epoch second from 2017 on) anywhere outside a coarsened bound was typed in after the export, whatever key it
-        sits under (a time.time() value is a float, and JSON keeps the distinction: a number written with a point or an
-        exponent loads as one); the denylist walk refuses it, naming the value's path and not the number. An integer that
+        an epoch second from 2017 on) anywhere outside a coarsened bound or a duration key (test_an_export_whose_millisecond_
+        totals_passed_the_stamp_floor_is_sent_since_a_float_under_a_duration_key_is_a_total) was typed in after the export,
+        whatever other key it sits under (a time.time() value is a float, and JSON keeps the distinction: a
+        number written with a point or an exponent loads as one); the denylist walk refuses it, naming the value's path and
+        not the number. An integer that
         large is a count or a byte total and passes whatever its size (the next case). A fresh export passes."""
         base = ["--yes", "--receiver", self.fake.url]
         edited = os.path.join(self.xdg, "edited.json")
@@ -559,6 +561,40 @@ class Cli(unittest.TestCase):
         r = self._refused(_run([edited] + base, self.state), 1,
                           "refused: the public form still fails the denylist (a number the size of a clock stamp, the value at perf/pusher/clients/byKind/chrome/bytes); nothing sent")
         self.assertNotIn("2000000000", r.stdout + r.stderr)
+        self.assertEqual(len(self.fake.requests), 1, "nothing more was sent")
+
+    def test_an_export_whose_millisecond_totals_passed_the_stamp_floor_is_sent_since_a_float_under_a_duration_key_is_a_total(self):
+        """The kernel's millisecond totals are FLOATS and cumulative (pusher.cycle_cpu_ms_sum read 1,779,484.0 after one
+        hour on a busy kernel, about 35 days to 1.5e9; the wire tables' sendMs behind it), so an export from a long-lived
+        kernel carries floats the size of a clock stamp under duration keys. The re-check exempts a float under a
+        duration key (perf_public.duration_key: a name whose tokens carry `ms`) and the file is sent whole, the sums in
+        the body; the same value under a key whose name carries no `ms` token (sendMax) is the stamp finding, so the key
+        decides with the type. Fails before: the export was refused by its own belt, naming perf/pusher/cycle_cpu_ms_sum,
+        and nothing was sent."""
+        base = ["--yes", "--receiver", self.fake.url]
+        doc = json.loads(self.data)
+        self.assertNotIn("cycle_cpu_ms_sum", doc["perf"]["pusher"], "the planted snapshot carries no cpu sum; the case plants one")
+        doc["perf"]["pusher"]["cycle_cpu_ms_sum"] = 2.0e9
+        doc["perf"]["pusher"]["clients"] = {
+            "byKind": {"chrome": {"frames": 400_000, "bytes": 2_000_000_000, "sendMs": 1.6e9, "sendMax": 250.5, "sends": 400_000}}}
+        edited = os.path.join(self.xdg, "edited.json")
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        with open(edited, "rb") as fh:
+            data = fh.read()
+        self.assertIn(b"2000000000.0", data, "the sum is written as a float, with a point")
+        self.assertIn(b"1600000000.0", data)
+        r = _run([edited] + base, self.state)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (edited, len(data), self.fake.url) + SUCCESS % (RECEIPT, 180))
+        self.assertEqual(len(self.fake.requests), 1, "the export with millisecond totals past the floor was sent")
+        self.assertEqual(self.fake.requests[0][2], data, "the body is the file's bytes, sums included")
+        doc["perf"]["pusher"]["clients"]["byKind"]["chrome"]["sendMax"] = 1.6e9     # no `ms` token in the name: a stamp
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        r = self._refused(_run([edited] + base, self.state), 1,
+                          "refused: the public form still fails the denylist (a number the size of a clock stamp, the value at perf/pusher/clients/byKind/chrome/sendMax); nothing sent")
+        self.assertNotIn("1600000000", r.stdout + r.stderr)
         self.assertEqual(len(self.fake.requests), 1, "nothing more was sent")
 
     def test_the_line_before_the_prompt_names_the_url_dialled_with_a_path_and_port_in_the_address_included(self):
