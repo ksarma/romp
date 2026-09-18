@@ -14,15 +14,20 @@ construction, so a block added to the kernel later costs nothing here (2026-09-1
    summed, dicts merged, lists joined), a value folded to `other` is the word. Two blocks join fixed
    identifiers with characters outside that grammar and are judged by their own grammars instead: `http`,
    whose keys are `METHOD /path` over the kernel's checked-in route register (HTTP_ROUTES, a copy of the
-   kernel's _PERF_HTTP_ROUTES that tests/test_perf_stats.py holds equal to it; a key outside the register
-   folds to `other`), and the JOINED_KEY_BLOCKS, the byte tables whose keys are `kind<-caller` and
-   `stage:kind<-caller` (a stage mark, a reader kind and a function name, never text).
+   kernel's _PERF_HTTP_ROUTES that tests/test_perf_export.py, RouteRegisterCopy, holds equal to it; a key
+   outside the register folds to `other`), and the JOINED_KEY_BLOCKS, the byte tables whose keys are
+   `kind<-caller` and `stage:kind<-caller` (a stage mark, a reader kind and a function name, never text).
 2. The DENYLIST, dropped before the shape rule can turn them into `other` rows: the read table by path
    (`checkpoints.readByPath`, absolute transcript paths), the judges' child's first failure (an exception
-   message), the thread stacks, the pid and clock stamps, and every key that names an identity or a place
-   (a sid in any spelling, a session or unit name, a scope, a label, a path, a working directory, a host, a
-   user, a command line). DENY_PATHS are anchored at the document's root; DENY_KEYS are dropped wherever they
-   appear as a dict key.
+   message), the thread stacks, a process id under any spelling (PID_KEY), the stamps that fix a process in
+   time (`now`, `since`, `started`, `generatedAt`; not `uptime_s`, the span the lifetime totals cover, which a
+   reader needs and which names no one), a sid in any spelling, and every key that names an identity or a
+   place (a session or unit name, a scope, a label, a path, a working directory, a host, a user, a command
+   line) where its value can carry text. The same key over a plain number is a COUNTER and stays: the chat
+   build's per-label miss counts (`builds.chat.bg_miss.names`, `.host`, `.cwd`) and the sessions listing's
+   miss reasons (`memos.sessionsListing.missBy.names`) are integers under identity-shaped keys. DENY_PATHS are
+   anchored at the document's root; DENY_KEYS, PID_KEY and IDENTITY_KEYS apply wherever a dict key appears
+   (`denied` is the one test).
 
 The walk (paste_problems) is the invariant test's: every key against its block's grammar, every key and string
 against a uuid, a 32-hex token, an absolute path and any planted text. The export runs it over its own output
@@ -30,10 +35,17 @@ as a self-check and refuses to write on a problem. The identifier scan (machine_
 last backstop: strings only this machine knows (its hostname, user and home directory; the session ids and
 working directories the state directory's sdk registry holds) are searched for in every key and string value of
 the finished document, case-insensitively, and a hit refuses the write naming the key path and the kind of
-string, never the value. Session NAMES are not probes on purpose: a session named after one of romp's own
-identifiers (`chat`, `feed`) would refuse every export for the lifetime of that session, and the names never
-reach either document as keys or values (the kernel keys its tables by sid or rank and the denylist drops every
-name field), so the probe would only ever produce that false refusal."""
+string, never the value. A hostname or a login is a WORD and is matched as a run of whole tokens (a key or
+value split on everything outside letters and digits): romp's own vocabulary contains common ones as
+substrings (a user named mark and `intrMarks`, a machine named work or arch and `cpu_ms_workers`, `archive`),
+and a substring match would refuse every export on such a machine for good. An id or a directory is matched
+anywhere: hex and slashes spell no word, and a sid prefix glued to letters is still the sid. Session NAMES are
+not probes on purpose: a session named after one of romp's own identifiers (`chat`, `feed`) would refuse every
+export for the lifetime of that session, and the names never reach either document as keys or values (the
+kernel keys its tables by sid or rank and the denylist drops every name field), so the probe would only ever
+produce that false refusal. A hostname or login that IS one of romp's identifiers (a user named root and the
+`POST /walk-root` route) still refuses; that is rare, and the refusal names the kind of string and the key
+path."""
 import glob
 import json
 import math
@@ -47,7 +59,7 @@ OTHER = "other"
 IDENT = re.compile(r"^[A-Za-z0-9_.:-]{1,32}$")
 
 # ── the http block: METHOD /path over the kernel's own route register ────────────────────────────────────
-# A checked-in COPY of kernel/kernel.py's _PERF_HTTP_ROUTES and _PERF_HTTP_FAMILIES (tests/test_perf_stats.py,
+# A checked-in COPY of kernel/kernel.py's _PERF_HTTP_ROUTES and _PERF_HTTP_FAMILIES (tests/test_perf_export.py,
 # RouteRegisterCopy, holds the two equal, so a route added there without a line here fails that test). Copied
 # rather than imported: loading the kernel module from a terminal tool runs its import-time state binding
 # against the live state directory, which the cli/ readers never do.
@@ -144,22 +156,37 @@ JOINED_KEY_BLOCKS = JOINED | frozenset(("judge", "child") + b for b in JOINED if
 
 # ── the denylist ─────────────────────────────────────────────────────────────────────────────────────────
 # Anchored at the root: the read table by path, the child's first failure (an exception message; the count
-# beside it stays), the /perf clock stamps (uptime_s stays) and its pid.
+# beside it stays), the /perf clock stamps (uptime_s, a duration, stays) and the child's report stamp.
 DENY_PATHS = frozenset({("checkpoints", "readByPath"), ("judge", "child", "failures", "first"),
-                        ("now",), ("since",), ("process", "pid"), ("judge", "child", "t")})
-# Dropped wherever they appear as a dict key: by-identity tables, thread stacks and the perf log switch, pids,
-# session ids in every spelling this repository uses, names and labels, places, hosts and users, command lines,
-# and the stamps that fix a process in time (an event's `t` is the measurement and stays).
+                        ("now",), ("since",), ("judge", "child", "t")})
+# Dropped wherever they appear as a dict key, whatever the value: by-identity tables, thread stacks and the perf
+# log switch, session ids in every spelling this repository uses, and the stamps that fix a process in time
+# (an event's `t` is the measurement and stays).
 DENY_KEYS = frozenset({
     "bySid", "byPath", "readByPath", "stacks", "log",
-    "pid", "pids", "ppid", "cliPid",
     "sid", "sids", "sid8", "fsid", "lastSid", "sessionId",
+    "kernelSha", "bootId", "started", "generatedAt",
+})
+# A process id under any spelling the ledgers write (pid, ppid, pids, cliPid, hostPid, managerPid, hub_pid,
+# boundary_pids) and the next one: `pid`, `ppid` or `pids` in any case as the whole key or after `_`, or `Pid`/`Pids`
+# after a letter or digit. `rapid` and `cupid` are words, not pids (the camel-case form is case-sensitive for that).
+PID_KEY = re.compile(r"(?:^|_)(?i:p?pids?)$|[A-Za-z0-9]Pids?$")
+# Dropped where the value can carry text (a string, a list, a dict): a key naming an identity or a place. Over a
+# number, a bool or null the same key is a counter or a flag and stays (see the module docstring).
+IDENTITY_KEYS = frozenset({
     "name", "names", "cutSessions", "label", "scope", "unit",
     "path", "paths", "cwd", "home", "dir",
     "host", "hosts", "hostname", "user", "username", "login",
     "cmd", "command", "argv",
-    "kernelSha", "bootId", "started", "generatedAt",
 })
+
+
+def denied(key, value):
+    """Is the dict entry `key: value` dropped by the denylist, wherever it sits: an always-denied key, a pid under any
+    spelling, or an identity key whose value can carry text."""
+    if key in DENY_KEYS or PID_KEY.search(key):
+        return True
+    return key in IDENTITY_KEYS and not (value is None or isinstance(value, (bool, int, float)))
 
 
 def _finite(x):
@@ -202,7 +229,7 @@ def fold(node, where=()):
         for k, v in node.items():
             k = k if isinstance(k, str) else str(k)
             here = where + (k,)
-            if k in DENY_KEYS or here in DENY_PATHS:
+            if denied(k, v) or here in DENY_PATHS:
                 continue
             nk = _public_key(k, where)
             fv = fold(v, here)
@@ -284,6 +311,8 @@ def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=()):
 
 # ── the identifier scan ──────────────────────────────────────────────────────────────────────────────────
 PROBE_MIN = 4   # a shorter machine string matches romp's own vocabulary too often to be a probe
+WORD_KINDS = frozenset({"hostname", "username"})   # probes that are words: matched as runs of whole tokens
+TOKEN = re.compile(r"[a-z0-9]+")
 
 
 def machine_probes(state_dir=None, env=None):
@@ -328,17 +357,29 @@ def machine_probes(state_dir=None, env=None):
     return out
 
 
+def probe_in(kind, probe, s):
+    """Does the lower-cased `s` carry `probe`: a word probe (WORD_KINDS: a hostname, a login) as a contiguous run of
+    whole tokens, split on everything outside letters and digits (`mark` is not in `intrMarks`, `tester` is in
+    `tester-app` and `app_Tester`, `testhost.example` is in `chat.testhost.example` and not in `testhost` beside
+    `example`); any other probe (an id, a directory) as a substring."""
+    low = s.lower()
+    if kind not in WORD_KINDS:
+        return probe in low
+    run, tokens = TOKEN.findall(probe), TOKEN.findall(low)
+    n = len(run)
+    return n > 0 and any(tokens[i:i + n] == run for i in range(len(tokens) - n + 1))
+
+
 def identifier_hits(doc, probes, skip=()):
-    """[(kind, where)] for every key or string value of `doc` that contains a probe, case-insensitively: `where`
-    is "a key under <path of the dict>" or "the value at <path of the value>", so the string itself is never in
-    the report (a key IS the string, so its own path is not named). `skip` names top-level keys whose string
-    value is not searched."""
+    """[(kind, where)] for every key or string value of `doc` that carries a probe (probe_in), case-insensitively:
+    `where` is "a key under <path of the dict>" or "the value at <path of the value>", so the string itself is
+    never in the report (a key IS the string, so its own path is not named). `skip` names top-level keys whose
+    string value is not searched."""
     hits = []
 
     def scan(s, where, key):
-        low = s.lower()
         for kind, probe in probes:
-            if probe in low:
+            if probe_in(kind, probe, s):
                 path = "/".join(str(p) for p in where) or "the root"
                 hits.append((kind, ("a key under %s" if key else "the value at %s") % path))
                 return

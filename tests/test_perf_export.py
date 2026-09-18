@@ -62,17 +62,18 @@ def leak_snapshot():
     must fold or drop is present at once; a few numbers ride beside them so the diagnosis they leave is checked."""
     return {
         "now": 1000.5, "since": 900.0, "uptime_s": 100.5, "log": True, "kernel_sha": SHA,
-        "process": {"rss_kb": 409600, "threads": 40, "cpu_s": 60.0, "pid": 4242, "source": "proc", "cwd": HOME},
+        "process": {"rss_kb": 409600, "threads": 40, "cpu_s": 60.0, "pid": 4242, "ppid": 4241, "managerPid": 4240, "source": "proc", "cwd": HOME},
         "pusher": {"cycles": 100, "cycle_ms_p50": 180.0, "idle_cycles": 40,
                    "connectPush": {"count": 4, "byApp": {"chat": {"count": 1}, APP: {"count": 2}, HOME: {"count": 1}}},
                    "clients": {"byApp": {"chat": {"frames": 3}, APP: {"frames": 1}}, "byKind": {"chrome": {"frames": 4}}}},
         "stages_ms": {"jobs": 5000.0, "push.chat": 15000.0, HOME + "/notes": 2.0, "push.chat.sig": float("nan")},
         "builds": {"chat": {"cached": 80, "built": 20, "ms": 800.0,
+                            "bg_miss": {"transcript": 5, "names": 2, "host": 1, "cwd": 3, "cold": 1},
                             "bySession": [{"sid": SID, "n": 3, "max": 12.0, "first": 5.0, "last": 4.0},
                                           {"sid": SID2, "n": 1, "max": 3.0, "first": 3.0, "last": 3.0}]},
                    "feed": {"cached": 90, "built": 10, "ms": 5000.0}},
         "sends": {"full": {"chat": {"count": 10, "bytes": 1000000}}},
-        "memos": {"chain": {"hit": 400, "miss": 40}},
+        "memos": {"chain": {"hit": 400, "miss": 40}, "sessionsListing": {"built": 3, "missBy": {"names": 4, "rows": 1, "first": 1}}},
         "judge": {"passes": 30, "ms_sum": 30000.0,
                   "child": {"op": "done", "seq": 7, "pid": 4343, "t": 999.0, "wallMs": 12.5,
                             "failures": {"count": 1, "first": FIRST}, "recovered": False, "line": "done seq 7 " + SID,
@@ -142,7 +143,7 @@ class FoldInvariant(unittest.TestCase):
         for key in ("stacks", "log", "now", "since", "kernel_sha"):
             self.assertNotIn(key, self.perf, key)
         self.assertEqual(self.perf["process"], {"rss_kb": 409600, "threads": 40, "cpu_s": 60.0, "source": "proc"},
-                         "the pid and the working directory go; the gauges stay")
+                         "the pid under every spelling and the working directory go; the gauges stay")
         self.assertEqual(self.perf["uptime_s"], 100.5)
 
     def test_the_child_keeps_its_counts_and_blocks_and_loses_the_text(self):
@@ -213,6 +214,32 @@ class FoldInvariant(unittest.TestCase):
         self.assertEqual(pp.fold({"checkpoints": {"readByPath": {}, "restored": 1}}), {"checkpoints": {"restored": 1}})
         self.assertEqual(pp.fold({"x": {"readByPath": {"/a/b": 1}}}), {"x": {}}, "readByPath is dropped wherever it appears")
 
+    def test_a_pid_under_any_spelling_goes_and_a_word_ending_in_pid_does_not(self):
+        # the ledgers spell a process id pid, ppid, pids, cliPid, hostPid (a session host's attach row), managerPid
+        # (the kernel's audit rows), hub_pid and boundary_pids; a rule over the spelling catches the next one too
+        pids = {"pid": 1, "ppid": 2, "pids": "7,8", "cliPid": 3, "hostPid": 4, "managerPid": 5, "hub_pid": 6,
+                "boundary_pids": [7], "leasePid": 8, "PID": 9}
+        words = {"rapid": 10, "cupid": 11, "pidgin": 12, "spider": 13}
+        self.assertEqual(pp.fold(dict(pids, **words)), words)
+        self.assertEqual(pp.fold({"events": [{"kind": "host.attached", "hostPid": 20, "cliPid": 21, "boot": True}]}),
+                         {"events": [{"kind": "host.attached", "boot": True}]})
+        for k in pids:
+            self.assertTrue(pp.denied(k, 1), k)
+        for k in words:
+            self.assertFalse(pp.denied(k, 1), k)
+
+    def test_an_identity_key_over_a_count_is_a_counter_and_stays(self):
+        # builds.chat.bg_miss has one integer per chat-signature label, three of them named names, host and cwd; the
+        # listing's missBy has a `names` reason: a key that names an identity drops only a value that can carry text
+        self.assertEqual(self.perf["builds"]["chat"]["bg_miss"], {"transcript": 5, "names": 2, "host": 1, "cwd": 3, "cold": 1})
+        self.assertEqual(self.perf["memos"]["sessionsListing"], {"built": 3, "missBy": {"names": 4, "rows": 1, "first": 1}})
+        self.assertEqual(pp.fold({"name": "web", "names": ["web"], "host": {"web": 1}, "cwd": "/x/y", "user": True, "label": 2.5, "unit": None}),
+                         {"user": True, "label": 2.5, "unit": None}, "a string, a list or a dict under an identity key goes; a scalar that is no text stays")
+        self.assertTrue(pp.denied("host", "TESTHOST"))
+        self.assertFalse(pp.denied("host", 3))
+        self.assertTrue(pp.denied("sid", 3), "a session id is never a count")
+        self.assertTrue(pp.denied("started", 1000), "a stamp is a number and still goes")
+
     def test_the_ident_grammar_is_the_browsers(self):
         src = open(os.path.join(ROOT, "ui", "webview", "perf-telemetry.ts"), encoding="utf-8").read()
         m = re.search(r"function ident\(s: unknown\): string \{[^}]*?/(\^[^/]+\$)/\.test", src, re.S)
@@ -223,9 +250,11 @@ class FoldInvariant(unittest.TestCase):
         self.assertIn(("checkpoints", "readByPath"), pp.DENY_PATHS)
         self.assertIn(("judge", "child", "failures", "first"), pp.DENY_PATHS)
         for key in ("bySid", "byPath", "readByPath", "stacks", "pid", "sid", "name", "cutSessions", "scope", "label", "path", "cwd", "host", "hostname", "user"):
-            self.assertIn(key, pp.DENY_KEYS, key)
-        self.assertNotIn("first", pp.DENY_KEYS, "the chat rows' `first` timing is not an exception message")
-        self.assertNotIn("t", pp.DENY_KEYS, "an event's stamp is the measurement")
+            self.assertTrue(pp.denied(key, "text"), key)
+        for key in ("first", "t"):
+            self.assertFalse(pp.denied(key, "text"), key)
+        self.assertNotIn("first", pp.DENY_KEYS | pp.IDENTITY_KEYS, "the chat rows' `first` timing is not an exception message")
+        self.assertNotIn("t", pp.DENY_KEYS | pp.IDENTITY_KEYS, "an event's stamp is the measurement")
 
 
 class Usage(unittest.TestCase):
@@ -369,6 +398,24 @@ class Cli(unittest.TestCase):
                          [("hostname", "a key under a")])
         self.assertEqual(pp.identifier_hits({"a": {"b": "x " + SID2[:8]}}, probes), [("session id", "the value at a/b")])
         self.assertEqual(pp.identifier_hits({"TESTHOST": 1}, probes), [("hostname", "a key under the root")])
+
+    def test_a_name_probe_matches_whole_tokens_and_an_id_probe_matches_anywhere(self):
+        # a hostname or a login is a word, and romp's own vocabulary contains common ones as substrings: a user named
+        # mark, a machine named work or arch, must not refuse every export over intrMarks, cpu_ms_workers and archive
+        names = [("username", "mark"), ("hostname", "work"), ("hostname", "arch"), ("hostname", "anchor"), ("username", "tester")]
+        self.assertEqual(pp.identifier_hits({"memos": {"intrMarks": 1, "cpu_ms_workers": 2, "summaryAnchor": 4},
+                                             "checkpoints": {"fallbacks": {"archive": 3}}, "goals": {"archive": 1}}, names), [])
+        self.assertEqual(pp.identifier_hits({"a": {"summary-anchor": 1}}, names), [("hostname", "a key under a")], "a whole token, however joined")
+        self.assertEqual(pp.identifier_hits({"a": {"b": "tester-app"}}, names), [("username", "the value at a/b")])
+        self.assertEqual(pp.identifier_hits({"a": {"b": "app_Tester"}}, names), [("username", "the value at a/b")])
+        self.assertEqual(pp.identifier_hits({"a": {"b": "testers"}}, names), [])
+        two = [("hostname", "testhost.example")]
+        self.assertEqual(pp.identifier_hits({"chat.testhost.example": 1}, two), [("hostname", "a key under the root")], "a dotted hostname is a run of tokens")
+        self.assertEqual(pp.identifier_hits({"testhost": 1, "example": 1}, two), [], "the run must be contiguous")
+        # an id or a directory is not a word: glued to letters it is still the id
+        ids = [("session id", SID2[:8]), ("session directory", HOME + "/code/notes-api")]
+        self.assertEqual(pp.identifier_hits({"a": "sid%sx" % SID2[:8]}, ids), [("session id", "the value at a")])
+        self.assertEqual(pp.identifier_hits({"a": "in %s/code/notes-api/x" % HOME}, ids), [("session directory", "the value at a")])
 
 
 class ServedKernel(unittest.TestCase):

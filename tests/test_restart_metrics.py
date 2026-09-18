@@ -6,6 +6,7 @@ synthetic cgroup files and ps lines, and the JSON document's shape. Nothing here
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -410,10 +411,38 @@ class PublicForm(unittest.TestCase):
         self.assertEqual(sorted(doc["sources"]["turns"]), ["present", "rows"], "the file NAME is a path key and goes")
         recent = doc["events"]["recent"]
         self.assertTrue(recent and all("sid" not in e and "name" not in e and "pids" not in e for e in recent), recent)
+        # the host.attached rows carry hostPid and cliPid, the stale-heartbeat row a leasePid: a pid under any spelling
+        # goes wherever it sits (a substring test over the JSON, so a nested one is caught too)
+        for spelled in ("hostPid", "cliPid", "leasePid", '"pid"', '"ppid"', "managerPid"):
+            self.assertNotIn(spelled, text, spelled)
+        attached = [e for e in recent if e.get("kind") == "host.attached"]
+        self.assertEqual(len(attached), 3, "the rows stay, their pids go")
+        self.assertEqual(attached[0], {"t": attached[0]["t"], "kind": "host.attached", "boot": True, "replayFrom": 3})
         self.assertEqual(doc["events"]["byKind"]["reconcile.duplicate-cli"], 1)
         self.assertEqual(doc["notes"], ["other", "other"], "prose is not an identifier")
         problems = pp.paste_problems(doc, planted=(SID, SID2, "TESTHOST", "this machine"))   # the walk's probes are substrings
         self.assertEqual(problems, [], "%d leak(s):\n  %s" % (len(problems), "\n  ".join(problems)))
+
+    def test_week_buckets_keep_distinct_keys(self):
+        # the raw key is "week of YYYY-MM-DD", which the ident grammar folds to `other`, so every week would collapse
+        # into one unreadable bucket; the public form spells it week-of-YYYY-MM-DD before the fold
+        doc = self._public("--window", "week")
+        keys = [b["key"] for b in doc["buckets"]]
+        self.assertTrue(keys and all(re.fullmatch(r"week-of-\d{4}-\d{2}-\d{2}", k) for k in keys), keys)
+        self.assertEqual(len(set(keys)), len(keys))
+        self.assertEqual(doc["buckets"][0]["restarts"], 3)
+        self.assertEqual(doc["window"]["kind"], "week")
+
+    def test_the_generation_second_goes_with_generated_at(self):
+        # live.t is generatedAt under another key, to the second; the kernel's uptime (a duration the counters are
+        # read against) stays, its start stamp and pid go
+        out = rm.public_form({"schema": 1, "generatedAt": 1757500000, "label": "TESTHOST",
+                              "live": {"t": 1757500000, "platform": "Linux", "sessionsCounted": 2,
+                                       "kernel": {"port": 29855, "pid": 4242, "started": 1757400000.0, "uptimeS": 100000.0,
+                                                  "kernelSha": "0123456789abcdef0123456789abcdef01234567", "bootId": "b1"}}})
+        self.assertEqual(out, {"schema": 1, "public": True,
+                               "live": {"platform": "Linux", "sessionsCounted": 2, "kernel": {"port": 29855, "uptimeS": 100000.0}}})
+        self.assertEqual(rm.public_form({"live": {"skipped": True}})["live"], {"skipped": True})
 
     def test_the_raw_document_still_carries_the_names_so_the_flag_is_what_removes_them(self):
         out = io.StringIO()
