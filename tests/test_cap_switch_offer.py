@@ -71,13 +71,18 @@ class CapSwitchOffer(unittest.TestCase):
 
     def test_no_path_flips_billing_without_the_explicit_pick_both_directions(self):
         # CENSUS PIN: the ONLY set_auth call sites in the kernel are the setAuth route's helper and
-        # the parked-op replay of that same user pick — no auto path, either direction. A new caller
-        # lands here first.
+        # the parked-op replay of that same user pick: no auto path, either direction. A new caller
+        # lands here first. POST /billing (`romp billing`, 2026-09-18) is the user's explicit pick from
+        # the shell and takes the helper too, its --now road with the FIFO gate off (park=False), so the
+        # census holds at two; the helper has answered a verdict by name since then (the route reads
+        # "parked" apart from "ok"), and the replay reads the backend's refusal off the same call.
         src = Path(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read_text()
         sites = [l.strip() for l in src.splitlines() if re.search(r"\bbe\.set_auth\(", l)]
         self.assertEqual(len(sites), 2, "exactly the helper + the parked replay: %r" % sites)
-        self.assertTrue(any("return be.set_auth(sid, value)" in l for l in sites))
+        self.assertTrue(any('return "ok" if be.set_auth(sid, value) else "refused"' in l for l in sites))
         self.assertTrue(any("be.set_auth(sid, op[1])" in l for l in sites))
+        self.assertIn("_set_auth_or_park_verdict(be, sid, pick, park=False)", src,
+                      "the verb's --now pick passes the same door with the gate off, never a raw call of its own")
         self.assertIn('elif t == "setAuth" and lg.parse_pick(msg.get("value"))[0]:', src,
                       "the route is a user gesture, and the ONLY door (T346: 'login' | 'key' | 'login:<id>')")
         self.assertNotIn("set_auth", src[src.index("def _cap_switch_offer"):
