@@ -3005,9 +3005,22 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `jobs.<job>` per tick job (`jobs.interruptBlock`, `jobs.autoNudge`,
   `jobs.convergeCheckpoints` and the rest, T398), `push`, and inside it
   `push.chat`, `push.feed`, `push.timeline`, `push.send`, `push.warm`,
-  `push.feedFirst`; a fresh snapshot lists every one at zero. The `push.*`
-  stages count every push, including the one a connecting page gets, so they
-  can add up to more than `push`.
+  `push.feedFirst`; a fresh snapshot lists every one at zero. Two of those
+  are split further: inside `push.chat`, `push.chat.sig` (each tab's build
+  signature, every tab every cycle, the post-build check included),
+  `push.chat.build` (the session build alone, a rebuild only) and
+  `push.chat.send` (the events diff and the per-client chat sends); inside
+  `push.send`, `push.send.feedParts` (the feed's per-card pass and its
+  signature, on a wire miss), `push.send.barsSplit` (the bars' split,
+  signature and size estimate, or the unkeyable fallback's whole dump) and
+  `push.send.compare` (the per-client compare and send, whole or delta). A
+  seam is recorded when its work ran, so a served tab lists no build seam
+  and an unchanged build no `feedParts` or `barsSplit`; the cycle's split
+  (`pusher.firstCycle`, `pusher.stageRing`) carries a seam's own bytes, its
+  parent's glue under `push.chat.other` or `push.send.other`, and the parent
+  and `push` sum their direct children once. The `push.*` stages count every
+  push, including the one a connecting page gets, so they can add up to more
+  than `push`.
 - `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
   `feed` also carries `dirty`, the rebuilds a kernel-side mutation forced past
   the view signature (a card reply, a clear, a follow-up: the mutation is
@@ -3408,7 +3421,15 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   each), `bars_sig_fallback` (bars builds that could not be keyed and took the
   whole dump for their signature), and `default_str` (values no wire encoder
   could serialize as JSON and shipped as `str()`, one per encode; the kernel's
-  stderr names each such type once).
+  stderr names each such type once). Three more read the per-entry work
+  itself: `entries_walked` (every entry the keyed split visited; a rebuild's
+  new collection walks them all, so per timeline build it equals the entry
+  count), `entries_encoded` (the walked entries it serialized rather than
+  served from its per-entry memo, so walked minus encoded is what the memo
+  saved) and `feed_slot_split` (feed frames sent through the view-delta slot
+  path, the one path that re-encodes every card per build: a `?delta=1` feed
+  client that did not announce the feed delta capability; nonzero means one
+  is connected).
   `intrMarks` is the interrupt-marks
   memo behind the interrupt tick, the nudge tick and the feed's badge, one
   entry per (session, parse family) keyed on the parse object's identity and
