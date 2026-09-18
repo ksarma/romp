@@ -1,11 +1,13 @@
 ---
 title: Perf round 4 B: `_run_judging` finds each usage row's gloss by bisect on the sorted artifact-mark times and starts its horizon walk at bisect_left(t0 - 1) on the judge-usage rows when the reader's order fact holds; the reader verifies numeric `t` within 2 s of the running maximum and run end at most `t + 1` per appended row, hands the flag out with the snapshot, and says once on stderr when it clears
-status: candidate
+status: resolved-upstream
 where: fork branch `perf4-judging-bisect` (PR pending): `kernel/kernel.py` (`_JudgeUsageSnapshot`, `_judge_usage_row_in_order`, `_judge_usage_rows_locked`, `_run_judging`); tests `tests/test_kernel_judging_bisect.py` (equivalence against a private copy of the pre-bisect function, the reader's flag, the horizon edges, growth between calls, the access-count proof that the walk starts at the horizon)
 added: 2026-09-07
 pr:
 tier: fix
 offered:
-closed:
+closed: 2026-09-18
 ---
 Upstream's `_run_judging` re-filters every same-(sid, judge) artifact mark per usage row and walks every retained row of the 31-day cache to keep the 48 h it plots; on the timeline profile the function was 15% of a bars build. Both lists are sorted by t, so both answers are prefix boundaries: bisect_right on the mark times for the gloss (ties included as the <= comparison included them), bisect_left at t0 - 3 on the row times (1 s for the stamp-after-recv bound, 2 s for the disorder the reader tolerates), sound because every row before a probed index has t at most 2 s above that row's t, and every row ends at or before t + 1. The reader checks the three facts the bisect needs once per appended row (a NaN t or run end by name) and returns the flag on the snapshot under the same lock as the rows; a file that breaks any of them walks every row as before and the reader writes one line saying which row and which fact, and a rotation or path change re-derives it. A NaN run end borrows no gloss, as the scan answered. Output identical to the scans in the same order, no new persistent state, no memo. Measured on a 43,231-row log (4,413 rows inside 48 h, 32 alive sessions, 2,207 marks): `_run_judging` 48.7 to 12.2 ms median with an identical output digest; `build_timeline_bars` in tools/perf-bench.py 778 to 713 ms median.
+
+2026-09-18: resolved upstream. https://github.com/romp-on/romp/pull/1798 (merge 72cb6c8c3, 2026-09-16) carries the gloss bisect and a horizon cursor memo; the fork retired its snapshot class and order flag at the 2026-09-17 fold (fork PR #756) in favour of it. The fork PR was #352. Residue worth a micro fix entry of its own: the NaN guard on the gloss lookup (a NaN run end passes the horizon filter and bisect_right answers the newest mark).

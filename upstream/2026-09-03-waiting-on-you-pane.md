@@ -4,7 +4,7 @@ status: waiting
 where: fork branch `waitingpane` (stacked on the todoswitch / todofix PRs #183 / #184)
 added: 2026-09-03
 pr:
-tier:
+tier: feature
 offered:
 closed:
 ---

@@ -3,7 +3,7 @@ title: Comments panel: a drag-selection inside a change mark ends in the Comment
 status: candidate
 where: ui/webview/file-comments.ts (dragClick, endInside; the fcchange and fcopen handlers), ui/webview/actions.ts (the stand-down comment), plans/file-review.md (Slice 2, decision 44, Tests), docs/guide.md; tests ui/webview/file-comments-markclick.test.ts, file-comments-markclick-controls.test.ts, file-comments-markclick-browser.test.ts, file-comments-markclick-controls-browser.test.ts, actions.test.ts, tools/file-review-plan-markclick.test.mjs
 added: 2026-09-09
-pr:
+pr: 533
 tier: fix
 offered:
 closed:

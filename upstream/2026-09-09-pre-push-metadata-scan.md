@@ -3,7 +3,7 @@ title: The pre-push hook read a commit's tree and added lines but none of its me
 status: candidate
 where: branch `prepush-metadata` (split out of the focus follow-on's review rounds, 2026-09-09): `.githooks/pre-push` (`chosen_emails`, `stamped_addresses`, `tag_field`, `tag_message`, the address, message and tag checks in `scan_identifiers`, the refusal footer's remedies), `tests/pre-push-identity.bats`, `tests/pre-push-message.bats`
 added: 2026-09-09
-pr:
+pr: 412
 tier: fix
 offered:
 closed:

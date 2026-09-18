@@ -3,7 +3,7 @@ title: Phone beacon extension: opt-in shared fields in the browser timing rows, 
 status: candidate
 where: ui/webview/perf-telemetry.ts (readSwitches, navInfo, foldResources, pageMarks, envInfo, the gap loop, the hide flush, the slowframe budget), ui/webview/settings.ts and gear.js (perfShare, perfMute under Debug > Diagnostics), kernel/kernel.py (the shim's __rompPerfMarks and diagMuted, the shell's diagMuted and open flush, CLIENT_DIAG_KEYS and _client_diag_admit/_client_diag_line in the clientDiag handler), bin/romp (`romp perf client` skips and counts the capped rows), docs/reference.md, docs/read-side.md; tests in `tests/test_client_diag_allowlist.py`, `tests/test_perf_beacon_shim.py`, `tests/test_client_diag_rotation.py`, `tests/test_pane_shim_return.py`, `tests/test_kernel_settings_sections.py`, `tests/test_kernel_mobile.py`, `tests/test_kernel_webpush.py`, `tests/romp-perf-client.bats`, `ui/webview/perf-telemetry.test.ts`, `ui/webview/pane-shim-stale.test.ts`, `ui/webview/perf-beacon-settings.test.ts`, `ui/webview/settings.test.ts`, `ui/webview/gear-tabs.test.ts`, `ui/webview/file-view-perf.test.ts`, `ui/webview/file-view-seam.test.ts`
 added: 2026-09-18
-pr:
+pr: 762
 tier: feature
 offered:
 closed:

@@ -4,7 +4,7 @@ status: candidate
 where: fork PR #275 (branch `ft-ready`, merged 2026-09-07, merge `c94e97a9`): kernel/kernel.py, kernel/judge.py, kernel/event_model.py, kernel/loadsource.py, tests/romp_load.py, tests/test_free_threaded_caches.py, tests/conftest.py, tests/__init__.py, .github/workflows/ci.yml, docs/install.md
 added: 2026-09-07
 pr: 275
-tier:
+tier: fix
 offered:
 closed:
 ---
