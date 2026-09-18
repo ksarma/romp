@@ -606,6 +606,46 @@ _CHAT_SIG_LABELS = ("transcript", "states", "store", "hold", "archive", "episode
                     "taskout", "pathlink", "postal")
 _CHAT_SIG_DEPS = ("taskout", "pathlink", "postal")
 
+# ── stages_cpu_ms: a stage's CPU beside its wall (stage 1 of the chat-signature design, 2026-09-18) ────────────────
+# stage() records wall time, so a seam over a stat storm holds the GIL waits and the syscall waits of every other thread
+# with it, and the pusher's stage wall exceeded its own thread CPU by 157 ms per cycle on the box 1 readings with no way
+# to say which stage carried the wait. getrusage(RUSAGE_THREAD) splits the calling thread's CPU into user and system;
+# the chat seams and the push and jobs containers read it at their open and close and hand stage() the delta. The cost
+# is bounded: TWO getrusage calls per mark (one syscall each, about a microsecond), so per tab per cycle the chat loop
+# pays six beside its wall-clock reads (the signature seam's pair, the deps sub-seam's pair inside it, the send
+# seam's pair; a rebuild adds the build seam's pair and the post-build signature's), about 230 clock reads per cycle at
+# 38 tabs. RUSAGE_THREAD is Linux; where the platform lacks it (macOS) _thread_cpu answers None, every stage records
+# its wall alone, and the snapshot serves stages_cpu_ms EMPTY rather than zeros that would read as "no CPU".
+try:
+    import resource
+    _RUSAGE_THREAD = getattr(resource, "RUSAGE_THREAD", None)
+except ImportError:                          # no resource module at all: the CPU columns are absent, nothing else changes
+    resource = None
+    _RUSAGE_THREAD = None
+
+
+def _thread_cpu():
+    """(user, sys) CPU seconds of the CALLING thread so far, from getrusage(RUSAGE_THREAD); None where the platform has no
+    per-thread rusage, or the read fails. One syscall."""
+    if _RUSAGE_THREAD is None:
+        return None
+    try:
+        ru = resource.getrusage(_RUSAGE_THREAD)
+    except (OSError, ValueError, AttributeError):
+        return None
+    return (ru.ru_utime, ru.ru_stime)
+
+
+def _cpu_delta(c0):
+    """The (user, sys) seconds since `c0`, a _thread_cpu reading taken at a stage's open; None when either reading is
+    unavailable, which stage() records as no CPU figure for the mark."""
+    if c0 is None:
+        return None
+    c1 = _thread_cpu()
+    if c1 is None:
+        return None
+    return (c1[0] - c0[0], c1[1] - c0[1])
+
 
 _STAGE_RING_LEN = [None]          # resolved once (the first cycle), like the other memory-fraction bounds' module constants
 
@@ -801,6 +841,20 @@ class _PerfStats:
                                    session looked at); any other key names a stage that ran outside
                                    both loops. The keys are the kernel's own stage literals, never a
                                    client's text
+      stages_cpu_ms                the calling thread's CPU over a stage, beside its wall (2026-09-18):
+                                   {stage: {user, sys}} in milliseconds from getrusage(RUSAGE_THREAD)
+                                   read at the stage's open and close, for the containers push, jobs
+                                   and jobsPass and the chat loop's seams push.chat, push.chat.sig,
+                                   push.chat.build and push.chat.send (CPU_STAGES; each listed at zero
+                                   from the start). Wall minus user minus sys over a window is the
+                                   stage's wait (GIL and syscalls); the split between user and sys is
+                                   tick-sampled by the kernel and scaled to the exact total, so read it
+                                   over a window, never off one cycle. EMPTY where the platform has no
+                                   per-thread rusage (macOS): an empty block means no clock, not no CPU.
+                                   A row takes the CPU of a mark whose wall went to the flat stages_ms
+                                   row of its name (stage()'s routing): a connect push's push.* stage,
+                                   the pusher's jobs.<job> and a foreign writer's stage record no CPU
+                                   row, so a row's wall minus user minus sys is that row's own wait
       builds                       chat / feed / timeline / feedJson -> {cached, built, ms}: served
                                    from the build cache vs rebuilt, and the rebuild time. feedJson is
                                    GET /feed.json's own reads (_pure_feed), kept apart from `feed`,
@@ -1086,6 +1140,10 @@ class _PerfStats:
     # counts the chat's bytes once, not again through push.chat.build; a dotted stage under a plain job (jobs.autoNudge.parse)
     # counts directly, as it did before the seams
     CONTAINERS = {"push": "push.", "push.chat": "push.chat.", "push.send": "push.send.", "jobs": "jobs.", "jobsPass": "jobs."}
+    # the stages whose callers hand stage() a thread-CPU delta beside the wall (stages_cpu_ms, 2026-09-18): the two threads'
+    # containers and the chat loop's seams; a fresh snapshot lists each at zero, and a caller may add a CPU figure for any
+    # other stage name, which then appears too
+    CPU_STAGES = ("push", "jobs", "jobsPass", "push.chat", "push.chat.sig", "push.chat.build", "push.chat.send")
     BUILDS = ("chat", "feed", "timeline", "feedJson", "thread")
     # builds.chat's bg_miss labels: _chat_build_sig's components, a tab with no cached build, and a tab whose
     # signature could not be taken
@@ -1132,6 +1190,7 @@ class _PerfStats:
             # alone and never appear here), so the table lists what connect pushes ran rather than zeros for stages they cannot
             # reach. Keyed by the kernel's own stage literals, never a client's text
             self.connect_stages_ms = {}
+            self.stages_cpu = {k: {"user": 0.0, "sys": 0.0} for k in self.CPU_STAGES}   # stages_cpu_ms: thread CPU per stage, ms
             # T397: the stage split PER CYCLE. `cycle_stages` fills as the cycle's stages close (wall ms, the reader's bytes
             # and the hydrated bytes since the previous stage boundary); cycle() keeps the boot's FIRST cycle's split for
             # the process (firstCycleS alone could not name the stage a 59 s boot spent its time in, 2026-09-12) and
@@ -1446,7 +1505,7 @@ class _PerfStats:
         its writer (2026-09-18)."""
         return getattr(_STAGE_TL, "name", None)
 
-    def stage(self, name, dt):
+    def stage(self, name, dt, cpu=None):
         """A stage closed on the calling thread, `dt` its wall seconds: added to the flat row of its name (stages_ms) and to
         the calling owner's open split. Two families are credited by their WRITER instead (2026-09-18). A dotted `jobs.`
         name (a tick job from _job_stage, or a job's part from _sub_stage) by the writer's owner: the jobs thread's to the
@@ -1461,14 +1520,24 @@ class _PerfStats:
         what _push was called for, not whose cycle it ran in). A connect push runs the same stage calls as the cycle, and
         until then its walls were added to the flat push.* rows, whose one consumer divides them by the pusher's cycle
         time. The split rows already keep the owners apart and are unchanged; every other stage (`jobs`, `jobsPass`,
-        `prelude`) is a flat row for every writer, as before."""
+        `prelude`) is a flat row for every writer, as before.
+
+        `cpu`, when the caller read the thread's rusage at the open and the close (_thread_cpu / _cpu_delta), is the
+        (user, sys) CPU seconds over the stage, folded into stages_cpu_ms under the stage name (the cumulative totals
+        only; the cycle split's rows stay {ms, bytes, hydrated}). The CPU follows the wall's route and is kept for the
+        FLAT row alone: a mark whose wall went to cycleJobsMs, connectPush.stagesMs or stagesForeign records no CPU row,
+        so every stages_cpu_ms row is the same writer's CPU as the stages_ms row of its name and wall minus user minus
+        sys reads as that row's own wait (a connect push's or a foreign writer's CPU has no consumer and is not kept;
+        the pusher's cycle jobs hand stage() no CPU). None leaves the CPU row alone."""
         marks = self._byte_marks()
         ms = dt * 1000.0
         with self.lock:
             kind = self._mine()
+            flat = False                                    # whether the wall went to the flat row: the CPU follows it (below)
             if name.startswith("jobs."):
                 if kind == "jobs":
                     self.stages[name] = self.stages.get(name, 0.0) + ms
+                    flat = True
                 elif kind == "pusher":
                     job = name[5:]
                     self.cycle_jobs_ms[job] = self.cycle_jobs_ms.get(job, 0.0) + ms
@@ -1480,11 +1549,19 @@ class _PerfStats:
                     self.connect_stages_ms[name] = self.connect_stages_ms.get(name, 0.0) + ms
                 elif kind == "pusher":                      # the cycle's owner: its push.* under the "push" mark, its `push` outside it
                     self.stages[name] = self.stages.get(name, 0.0) + ms
+                    flat = True
                 else:                                       # neither a connect push nor the cycle's owner (a "push" mark alone is no
                     #                                         owner): counted apart, never merged
                     self.stages_foreign[name] = self.stages_foreign.get(name, 0.0) + ms
             else:
                 self.stages[name] = self.stages.get(name, 0.0) + ms
+                flat = True
+            if flat and cpu is not None:                    # stages_cpu_ms: the CPU beside the wall, for the flat row alone; a
+                c = self.stages_cpu.get(name)               #  mark routed elsewhere records no CPU row (the docstring says why)
+                if c is None:
+                    c = self.stages_cpu[name] = {"user": 0.0, "sys": 0.0}
+                c["user"] += cpu[0] * 1000.0
+                c["sys"] += cpu[1] * 1000.0
             if not kind:
                 return                                      # another thread's push: the totals alone
             st = self._cycle_state[kind]
@@ -1825,6 +1902,9 @@ class _PerfStats:
             jobs["stageRing"] = pr if ring_all else pr[-self.STAGE_RING_SERVED:]
             jobs["stageRingLen"] = len(pr)
             stages = dict(self.stages)
+            # the per-stage thread CPU (2026-09-18), served only where the platform has a per-thread rusage: an empty block
+            # says "no clock", zeros would say "no CPU"
+            stages_cpu = {k: dict(v) for k, v in self.stages_cpu.items()} if _RUSAGE_THREAD is not None else {}
             builds = {k: dict(v) for k, v in self.builds.items()}
             builds["chat"]["bg_miss"] = dict(self.builds["chat"]["bg_miss"])   # the nested map: a copy too
             builds["chat"]["bySession"] = [                    # the per-session timer, the largest max first, each row by its RANK
@@ -1947,6 +2027,7 @@ class _PerfStats:
                 "gc": gc_block,                                       # gc: the collector's collections and pauses (2026-09-16)
                 "pusher": pusher, "jobs": jobs, "stages_ms": stages,
                 "stagesForeign": foreign,                            # a `jobs.` stage written by a thread owning neither loop, or a push stage by a thread neither owning the pusher's cycle nor under a connect push's mark (2026-09-18)
+                "stages_cpu_ms": stages_cpu,                          # the stages' thread CPU beside the wall (2026-09-18)
                 "builds": builds, "sends": sends, "goals": goals, "memos": memos, "judge": judge, "skillLoadIndex": skill_idx, "http": http,
                 "fileSlice": file_slice,                   # T351: the preview popover's slice cache (hit / miss / bytes / warm)
                 "glossary": glossary_stats,                # T351 stage 2: files parsed, frames / terms / bytes BUILT per cycle, entries cut, files refused
@@ -59764,6 +59845,7 @@ def _push(targets, connect=False, live_map=None):
         chat_sessions = []
         _prov_rows = []                                  # the Outline's provisional rows for the tabs the gate skips this push (plans/outline-pane-provisional-row.md)
         _t_stage = time.monotonic()                      # /perf stage clock: chat, then feed, then timeline
+        _c_stage = _thread_cpu()                         # ...and the chat container's thread CPU (stages_cpu_ms, 2026-09-18)
         if want_chat or want_fleet:   # the fleet needs every session's ledger slice (built below, attached to feed)
             # TABS-FIRST (the user 2026-06-26): ship name+color per tab so the client can paint the WHOLE strip
             # as placeholders up front (no tab popping in one-by-one as each build_session lands). The full
@@ -59834,13 +59916,14 @@ def _push(targets, connect=False, live_map=None):
                         _prov_rows.append(_provisional_row(s["sid"], s.get("name", ""), _light))
                     continue
                 _t_seam = time.monotonic()               # push.chat.sig: the signature every tab pays every cycle (2026-09-18)
+                _c_seam = _thread_cpu()                  # ...and its thread CPU (stages_cpu_ms)
                 try:
                     sig = _chat_build_sig(s, _tm, now, live_map=live_map)
                     _chat_sig_ok(s["sid"])               # a signature that was taken ends its fault episode
                 except Exception as e:
                     _chat_sig_fault(s, e)                # once per fault episode: stderr and a bell row
                     sig = None                           # an input that cannot be keyed: build, never cache
-                _PERF_STATS.stage("push.chat.sig", time.monotonic() - _t_seam)
+                _PERF_STATS.stage("push.chat.sig", time.monotonic() - _t_seam, cpu=_cpu_delta(_c_seam))
                 hit = _built_chat.get(s["sid"])
                 _chat_sig_note_pre(s["sid"], sig, hit, is_active or s["sid"] in _all_active, _all_chat, _plain_outline)   # memos.chatSig
                 _claimed = False
@@ -59871,6 +59954,7 @@ def _push(targets, connect=False, live_map=None):
                 else:
                     _VIEW_STATS["chatBuildActive" if is_active else "chatBuildBg"] += 1
                     _t0 = time.monotonic()
+                    _c0 = _thread_cpu()                  # the build seam's thread CPU (stages_cpu_ms)
                     try:
                         m = build_session(s["sid"], now, live_map)
                     except Exception as e:
@@ -59880,7 +59964,7 @@ def _push(targets, connect=False, live_map=None):
                         # every cycle would freeze the board for as long as its input stands (2026-09-06).
                         # Said ONCE per fault episode, on stderr and as a dashboard bell row, so the pane
                         # that stopped updating is not a silent degrade (review find, 2026-09-08).
-                        _PERF_STATS.stage("push.chat.build", time.monotonic() - _t0)   # a failed build's time is build time too
+                        _PERF_STATS.stage("push.chat.build", time.monotonic() - _t0, cpu=_cpu_delta(_c0))   # a failed build's time is build time too
                         _chat_build_fault(s, e)
                         _chat_dep_scope.deps = None      # the failed build's record is nobody's
                         if _claimed:
@@ -59895,7 +59979,7 @@ def _push(targets, connect=False, live_map=None):
                     # it back; the post-send cache store below keeps whatever materialized.
                     ms = None
                     _dt = time.monotonic() - _t0
-                    _PERF_STATS.stage("push.chat.build", _dt)   # push.chat.build: build_session alone (2026-09-18)
+                    _PERF_STATS.stage("push.chat.build", _dt, cpu=_cpu_delta(_c0))   # push.chat.build: build_session alone (2026-09-18)
                     # The build's dependency record (_chat_build_deps) and the POST-build signature: the cache
                     # entry is stored only when the static components held across the build (an input that
                     # moved mid-build would otherwise be served stale); the dependency tail is skipped here
@@ -59904,11 +59988,12 @@ def _push(targets, connect=False, live_map=None):
                     _chat_dep_scope.deps = None          # consumed: a reader outside a build must not append to it
                     if sig is not None:
                         _t_seam = time.monotonic()       # the post-build signature is signature time too
+                        _c_seam = _thread_cpu()
                         try:
                             post = _chat_build_sig(s, _tm, now, live_map=live_map, deps=False)
                         except Exception:
                             post = None
-                        _PERF_STATS.stage("push.chat.sig", time.monotonic() - _t_seam)
+                        _PERF_STATS.stage("push.chat.sig", time.monotonic() - _t_seam, cpu=_cpu_delta(_c_seam))
                         _chat_sig_bump(post=1)
                     # WHY a tab rebuilt (2026-09-09): the labelled _chat_build_sig components that moved
                     # against the cached signature, so /perf can say which input drives the rebuilds; the
@@ -59951,6 +60036,7 @@ def _push(targets, connect=False, live_map=None):
                 # transcript resident in the browser (instant scrollback) while the per-change wire payload
                 # drops from the whole events array to just what changed.
                 _t_seam = time.monotonic()               # push.chat.send: the diff and the per-client sends (2026-09-18)
+                _c_seam = _thread_cpu()
                 change_from = _chat_diff(_prev_chat_events.get(m["id"]), m.get("events") or [])
                 led_changed = m.get("ledger") != _prev_chat_ledger.get(m["id"])
                 # The baseline is SHARED by every client, so only a push that reaches them all may advance it.
@@ -59969,7 +60055,7 @@ def _push(targets, connect=False, live_map=None):
                     # serialization ONCE and every later client (and the cache below) reuses it. A tab the
                     # client holds as a skeleton gets only its status (2026-09-07)
                     ms = _send_chat_or_status(c, m, ms, change_from, led_changed)
-                _PERF_STATS.stage("push.chat.send", time.monotonic() - _t_seam)
+                _PERF_STATS.stage("push.chat.send", time.monotonic() - _t_seam, cpu=_cpu_delta(_c_seam))
                 # cache AFTER the sends, so a serialization a full send just paid for is kept — the next
                 # connect-push for this unchanged tab reuses it instead of dumping again
                 if sig is not None:
@@ -60055,7 +60141,7 @@ def _push(targets, connect=False, live_map=None):
             _forget_chat_positions({s["sid"] for s in chat_list})   # the per-session wire memos of tabs that left
             _live_scope.chat_floor0 = None            # the decision is the chat loop's alone
             _chat_push_scopes_close()                    # after the threads' signatures, which read the shared components too
-        _PERF_STATS.stage("push.chat", time.monotonic() - _t_stage)
+        _PERF_STATS.stage("push.chat", time.monotonic() - _t_stage, cpu=_cpu_delta(_c_stage))
         _t_stage = time.monotonic()
         fsig = _fleet_view_sig(now, live_map) if (want_feed or want_tl) else None
         feed_src = _cached_feed(now, live_map, fsig, connect) if want_feed else None
@@ -63848,6 +63934,8 @@ def _pusher_cycle_jobs(now, live_map, any_client):
     cycle (the user asked why the reminder walk had to finish before the UI showed at all), and their writers already end in
     _mark_views_dirty, which wakes this loop, so nothing they decide waits for anything here."""
     _t_jobs = time.monotonic()            # /perf: this function minus the _push_all below is the `jobs` stage
+    _c_jobs = _thread_cpu()               # ...and the thread's CPU over it, the push's share taken out below (stages_cpu_ms)
+    _cpu_push = None
     if _PERF_STATS._mine() != "pusher":
         _PERF_STATS.cycle_begin()         # a caller that did not open the cycle (a test driving the jobs alone) opens it here; a thread
         #                                   owning the OTHER loop's cycle flips to this one (2026-09-18 review: the guard read "owns
@@ -63870,6 +63958,7 @@ def _pusher_cycle_jobs(now, live_map, any_client):
         sys.stderr.write("pending-ops: %s\n" % traceback.format_exc())   # never behind a judge pass (2026-09-03)
     if any_client:
         _t_push = time.monotonic()
+        _c_push = _thread_cpu()
         try:
             _push_all(live_map=live_map)
         except Exception:                 # _push guards its build and its sends; anything escaping it rode
@@ -63878,7 +63967,8 @@ def _pusher_cycle_jobs(now, live_map, any_client):
             sys.stderr.write("push: %s\n" % traceback.format_exc())
         finally:
             _t_push = time.monotonic() - _t_push
-            _PERF_STATS.stage("push", _t_push)
+            _cpu_push = _cpu_delta(_c_push)
+            _PERF_STATS.stage("push", _t_push, cpu=_cpu_push)
     try:                                  # the turn-finished push (bell popover): AFTER the feed build above,
         _job_stage('turnNotify', lambda: _turn_notify_tick(now, live_map))      # so a bell event the same settle produced files its buzz first
     except Exception:
@@ -63901,7 +63991,10 @@ def _pusher_cycle_jobs(now, live_map, any_client):
         _job_stage('apiHealth', lambda: _api_health_push(_api_health_frame(now, live_map)))   # decisions, every cycle (a connecting shell gets a
     except Exception:                     # current frame), sent only when it changed
         sys.stderr.write("api-health-frame: %s\n" % traceback.format_exc())
-    _PERF_STATS.stage("jobs", (time.monotonic() - _t_jobs) - _t_push)
+    _cpu_jobs = _cpu_delta(_c_jobs)
+    if _cpu_jobs is not None and _cpu_push is not None:   # the jobs container is this function minus the push: its CPU too
+        _cpu_jobs = (_cpu_jobs[0] - _cpu_push[0], _cpu_jobs[1] - _cpu_push[1])
+    _PERF_STATS.stage("jobs", (time.monotonic() - _t_jobs) - _t_push, cpu=_cpu_jobs)
 
 
 
@@ -63915,6 +64008,7 @@ def _jobs_pass(now, live_map):
     _mark_views_dirty (a dirty mark plus the pusher's wake), so a card move a job decides rides the pusher's next cycle exactly
     as it did when the job ran on that thread. The stage container is `jobsPass`; each job is still its `jobs.<name>` stage."""
     _t_pass = time.monotonic()
+    _c_pass = _thread_cpu()               # the pass container's thread CPU (stages_cpu_ms, 2026-09-18)
     if _PERF_STATS._mine() != "jobs":
         _PERF_STATS.cycle_begin("jobs")   # a caller that did not open the pass (a test driving the jobs alone) opens it here; a thread
         #                                   owning the pusher's cycle flips to the jobs owner (2026-09-18 review, as in _pusher_cycle_jobs),
@@ -64003,7 +64097,7 @@ def _jobs_pass(now, live_map):
     except Exception:
         sys.stderr.write("clear-working-notes: %s\n" % traceback.format_exc())
     _files_stat_pass_close(_own_stat)
-    _PERF_STATS.stage("jobsPass", time.monotonic() - _t_pass)
+    _PERF_STATS.stage("jobsPass", time.monotonic() - _t_pass, cpu=_cpu_delta(_c_pass))
 
 
 JOBS_PASS_S = 0.5                                  # the jobs thread's pace between passes: the pusher's backstop, so a job that read
