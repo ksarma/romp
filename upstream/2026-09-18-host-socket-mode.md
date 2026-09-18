@@ -1,0 +1,11 @@
+---
+title: The session host publishes its control socket owner-only
+status: candidate
+where: kernel/session_host.py _serve_socket (run() called start_unix_server on hosts/<sid8>.sock and chmod 0600 on the next line; now the temp name hosts/<sid8>.tmp beside it, chmod 0600, os.rename onto the published path); tests/test_session_host.py SocketMode (four in-process cases through run() under a 000 umask: the temp is 0600 as os.rename moves it, no chmod ever touches the published path, a stale published path and a stale temp are replaced, the temp name is never longer than the published name) and HostProcess.test_the_socket_is_served_where_the_published_path_is_exactly_the_budget (the real host with hosts/<sid8>.sock at 107 bytes) and HostProcess.test_the_served_socket_is_owner_only_and_the_kernel_side_attaches_through_it (the real host, HostTransport.connect through the published name); docs/reference.md, the host paragraph
+added: 2026-09-18
+pr:
+tier: fix
+offered:
+closed:
+---
+asyncio.start_unix_server binds and listens at the umask mode, and the chmod to 0600 landed one line later, so hosts/<sid8>.sock stood at the umask mode for the gap: the last member of the create-then-tighten class PR 789 closed for the kernel credential files, found in its round 1 (fresh-5) and split out as its own fix. Behind the owner-only state root and a masking umask (002 or 022 excludes group and other write, which an AF_UNIX connect needs), so a window, not a live hole. The fix binds the temp name hosts/<sid8>.tmp beside the published one, one byte shorter (the published path is the socket path budget: a deep test root puts it at sun_path's 107 exactly, and a temp inside hosts/<sid>/ or in a 0700 directory beside the socket, the two shapes tried first, failed the bind there; during its brief life the temp is protected by the owner-only state root and the masking umask), tightens it by path (fchmod is a no-op on a bound AF_UNIX socket on Linux), and renames it onto the published path, which is therefore born 0600; the kernel connects to the same documented path and no process-wide umask moves. Upstream main binds the same way (kernel/session_host.py, start_unix_server then chmod).

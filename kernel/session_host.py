@@ -504,6 +504,16 @@ class PipeCliTransport:
         return self.proc.returncode if self.proc else None
 
 
+def sock_names(sid: str) -> tuple[str, str]:
+    """The control socket's two file names under `hosts/`: the published `<sid8>.sock` and the temp `<sid8>.tmp`
+    it is bound at first (2026-09-18, the review of the owner-only bind). The temp is one byte SHORTER than the
+    published name, on purpose: the socket path budget is sun_path (107 usable bytes on Linux, 103 on macOS), the
+    published path is that budget, and a deep test root (the sweep's xdist nesting) puts `hosts/<sid8>.sock` at
+    107 exactly, so a temp name longer than the published one fails the bind there (a directory beside the socket
+    did, the first shape of this fix). tests/test_session_host.py pins the bound."""
+    return sid[:8] + ".sock", sid[:8] + ".tmp"
+
+
 def sdk_importable() -> bool:
     import importlib.util
     return importlib.util.find_spec("claude_agent_sdk") is not None
@@ -529,7 +539,7 @@ class SessionHost:
         self.name = str(self.spec.get("name") or self.sid[:8])
         self.state_dir = Path(self.spec["state_dir"])
         self.dir = self.spec_path.parent
-        self.sock_path = self.state_dir / "hosts" / (self.sid[:8] + ".sock")
+        self.sock_path, self.sock_tmp = (self.state_dir / "hosts" / n for n in sock_names(self.sid))
         self.log_path = self.dir / "host.log"
         self.journal = Journal(self.dir)
         self.parked = Parked(float(self.spec.get("hook_self_answer_s") or HOOK_SELF_ANSWER_S))
@@ -952,6 +962,51 @@ class SessionHost:
                     self._send(self.attached, {"t": "fault", "kind": "write-failed", "text": type(e).__name__})
 
     # ── life ──
+    async def _serve_socket(self) -> None:
+        """Serve `hosts/<sid8>.sock` owner-only from the moment the path exists. asyncio.start_unix_server binds
+        and listens at the umask's mode, and until 2026-09-18 the chmod to 0600 came one line after the bind, so
+        the published path stood at the umask's mode for the gap (PR 789's round 1, finding fresh-5: the last
+        member of the create-then-tighten class that PR closed for the kernel's credential files; behind the
+        owner-only state root and a masking umask, so a window, not a live hole). The bind takes the temp name
+        `hosts/<sid8>.tmp` beside the published one (sock_names); the temp is tightened by PATH (fchmod on the
+        listening descriptor is a no-op for a bound AF_UNIX socket on Linux, verified 2026-09-18: the descriptor
+        is the socket, not the file); os.rename then moves it onto the published path, which is therefore born
+        0600. A connect through the new name reaches the same listening socket (AF_UNIX resolves a path to its
+        inode), so the kernel keeps connecting to the one documented path (docs/reference.md) and no process-wide
+        umask moves. During its brief life at the umask's mode the temp is protected by the state root's
+        owner-only mode (nothing outside the uid can traverse `hosts/`) and by the umask itself (002 or 022
+        already excludes the group and other write an AF_UNIX connect needs); the published path never exists
+        at a loose mode. The temp is in the SAME directory and one byte shorter than the published name because
+        the published path is the socket path budget (sun_path, 107 usable bytes on Linux): a deep test root sits
+        at 107 exactly, and both longer shapes tried first (a temp inside `hosts/<sid>/`, then a 0700 directory
+        beside the socket) failed the bind there (the review of this fix, 2026-09-18). A stale published path and
+        a stale temp a dead host left are unlinked before the bind (the rename would replace the former anyway);
+        a bind that fails is loud: a `socket-bind-failed` row here, then main()'s host-crashed. Cleanup of the
+        published path is unchanged: asyncio's Server.close never unlinks a path on 3.12, and 3.13's cleanup
+        compares the bound path's inode and finds the temp gone, so run()'s own unlink stays the one."""
+        self.sock_path.parent.mkdir(parents=True, exist_ok=True)
+        for stale in (self.sock_path, self.sock_tmp):
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+        server = None
+        try:
+            server = await asyncio.start_unix_server(self._on_client, path=str(self.sock_tmp))
+            os.chmod(self.sock_tmp, 0o600)
+            os.rename(self.sock_tmp, self.sock_path)
+        except OSError as e:
+            if server is not None:
+                server.close()
+            try:
+                self.sock_tmp.unlink()
+            except OSError:
+                pass
+            self.log("socket-bind-failed", error=type(e).__name__, text=str(e)[:200])
+            raise
+        self._server = server
+        self.log("socket-ready", sock=str(self.sock_path.name))
+
     async def run(self) -> int:
         self._stop = asyncio.Event()
         self._journal_q = asyncio.Queue()
@@ -969,14 +1024,7 @@ class SessionHost:
             self.log("cli-spawn-failed", error=type(e).__name__)
             self.exit_info = {"t": "exit", "code": None, "signal": None, "cause": "spawn-failed", "error": type(e).__name__}
             return 1
-        self.sock_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            self.sock_path.unlink()
-        except OSError:
-            pass
-        self._server = await asyncio.start_unix_server(self._on_client, path=str(self.sock_path))
-        os.chmod(self.sock_path, 0o600)
-        self.log("socket-ready", sock=str(self.sock_path.name))
+        await self._serve_socket()
         tasks = [asyncio.ensure_future(self._journal_writer()), asyncio.ensure_future(self._read_cli()),
                  asyncio.ensure_future(self._beat()), asyncio.ensure_future(self._self_answer_loop()),
                  asyncio.ensure_future(self._grace_loop()), asyncio.ensure_future(self._stdin_pump())]

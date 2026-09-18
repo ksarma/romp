@@ -2017,8 +2017,10 @@ the SDK's byte for byte. It reads the CLI's stdout without pause and appends
 every message to an append-only journal (`hosts/<sid>/journal-<n>.jsonl`, one
 JSON object per line, offsets that are the record's ordinal since the CLI
 started, 64 MB segments rotated at turn boundaries, acknowledged segments
-deleted), serves one Unix socket (`hosts/<sid8>.sock`, mode 0600), and holds
-the session's lease as the holder. The kernel keeps the SDK client, its hooks
+deleted), serves one Unix socket (`hosts/<sid8>.sock`, mode 0600 from the
+moment the path exists: the host binds the temp name `hosts/<sid8>.tmp`,
+tightens it, and renames it into place), and holds the session's lease as
+the holder. The kernel keeps the SDK client, its hooks
 and its permission callback and speaks to the host over the socket. On a
 restart the drain detaches from every host instead of ending its CLI: the
 host keeps the CLI and its turn, journals what it says, parks any permission
