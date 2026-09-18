@@ -252,7 +252,11 @@ class Collector(unittest.TestCase):
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["wire"]),
                          {"feed_cards_hit", "feed_cards_miss", "split_hit", "split_miss", "feed_body", "bars_body",
-                          "feed_sig_fallback", "feed_first", "bars_sig_fallback", "default_str"},
+                          "feed_sig_fallback", "feed_first", "bars_sig_fallback", "default_str",
+                          "entries_walked", "entries_encoded", "feed_slot_split"},   # the per-entry work itself (stage 1 of the
+                         #                                                                incremental-push design, 2026-09-18): the
+                         #                                                                entries the split walked and encoded, and
+                         #                                                                the feed sends through the view-delta slot path
                          "the pusher's wire caches: the feed's per-card memo, the collection-split memo the bars and "
                          "the slot path share (_delta_split_memo), the whole frames actually made, the cards-first "
                          "connect frame (feed_first) and its one unkeyable path (feed_sig_fallback), the unkeyable bars "

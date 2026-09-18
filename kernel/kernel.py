@@ -653,7 +653,12 @@ class _PerfStats:
                                    bars_sig_fallback (bars builds that could not be keyed and took
                                    the whole dump for their signature), default_str (values no
                                    wire encoder could serialize as JSON and shipped as str(), one
-                                   per encode; _wire_default says each type once on stderr);
+                                   per encode; _wire_default says each type once on stderr),
+                                   entries_walked / entries_encoded (the entries _delta_split
+                                   visited and the ones it json-encoded rather than served from
+                                   its per-entry memo, 2026-09-18) and feed_slot_split (feed sends
+                                   through the view-delta slot path: a ?delta=1 feed client without
+                                   FEED_DELTA_CAP, whose split re-encodes every card per build);
                                    intrMarks (the _interrupt_marks memo) -> hit / miss / evict and
                                    the gauge entries; sessions_scope (the cycle's discover memo) ->
                                    hit / miss / wide_hit / wide_miss; the per-lane reader memos:
@@ -52766,9 +52771,16 @@ def _dedup_sig(msg, s):
 # (_wire_default, one per encode). Bumped through _wire_bump, under a lock: the pusher and a handler-thread connect
 # push both split, and whichever sender thread first materializes a _LazyWire bumps its counter, so a bare `+= 1`
 # here would be a read-modify-write across threads (the tests assert exact counts). /perf reports them under
-# memos.wire.
+# memos.wire. Three read the per-entry work itself (stage 1 of the incremental-push design, 2026-09-18):
+# entries_walked (entries a _delta_split visited: every entry of every collection it split, a rebuild's new
+# collection object walks them all), entries_encoded (those it json-encoded: the walked entries the per-entry
+# memo did not hold as the same object, so walked minus encoded is what the memo saved) and feed_slot_split
+# (feed sends through the view-delta SLOT path, _send_slot_delta with no parts handed down: a ?delta=1 feed
+# client without FEED_DELTA_CAP, whose _delta_parts("feed") encodes every card again per build; nonzero means
+# one is connected, zero once stage 3 retires that path).
 _wire_stats = {"feed_cards_hit": 0, "feed_cards_miss": 0, "split_hit": 0, "split_miss": 0, "feed_body": 0,
-               "bars_body": 0, "feed_sig_fallback": 0, "feed_first": 0, "bars_sig_fallback": 0, "default_str": 0}
+               "bars_body": 0, "feed_sig_fallback": 0, "feed_first": 0, "bars_sig_fallback": 0, "default_str": 0,
+               "entries_walked": 0, "entries_encoded": 0, "feed_slot_split": 0}
 _WIRE_STATS_LOCK = threading.Lock()
 _wire_default_said = set()   # type names _wire_default has written to stderr: a type is said once, not per value
 
@@ -53435,7 +53447,9 @@ def _delta_split(kind, value, memo_key=None):
     key = _delta_keyer(kind)                            # …and the kind parsed once, not per item
     prev = _delta_entry_memo.get(memo_key) if memo_key is not None else None
     cur = {} if memo_key is not None else None
+    encoded = 0                                        # entries this split json-encoded (memos.wire entries_encoded)
     def put(kk, v, pre=""):
+        nonlocal encoded
         if kk is None or kk in ents:
             n = len(order)
             while True:                            # positional, with its lane prefix so the shim files it by lane —
@@ -53444,10 +53458,13 @@ def _delta_split(kind, value, memo_key=None):
                     break
                 n += 1
         hit = prev.get(id(v)) if prev else None
-        pair = hit if (hit is not None and hit[0] is v) else (v, enc(v))   # a hit hands back the LAST split's own pair: no new
-        if cur is not None:                                                 #  tuple; a miss mints ONE, shared by the memo and the
-            cur[id(v)] = pair                                               #  entries (2026-09-16: two fresh (object, json) tuples
-        ents[kk] = pair; order.append(kk)                                   #  per bar per build, both tracked for life, see the docstring)
+        if hit is not None and hit[0] is v:                                 # a hit hands back the LAST split's own pair: no new
+            pair = hit                                                      #  tuple; a miss mints ONE, shared by the memo and the
+        else:                                                               #  entries (2026-09-16: two fresh (object, json) tuples
+            pair = (v, enc(v)); encoded += 1                                #  per bar per build, both tracked for life, see the docstring)
+        if cur is not None:
+            cur[id(v)] = pair
+        ents[kk] = pair; order.append(kk)
     if kind == "dict" and isinstance(value, dict):
         for kk, v in value.items():
             put(str(kk), v)
@@ -53472,6 +53489,8 @@ def _delta_split(kind, value, memo_key=None):
             kind, type(value).__name__, "dict" if kind == "dict" or kind.startswith("dictlist:") else "list"))
     if cur is not None:
         _delta_entry_memo[memo_key] = cur
+    _wire_bump("entries_walked", len(order))           # every entry visited (one `put` each), and how many of them
+    _wire_bump("entries_encoded", encoded)             #  were encoded rather than served from the per-entry memo
     return ents, order
 
 
@@ -53609,6 +53628,8 @@ def _send_slot_delta(c, key, ftype, payload, pre, sig, parts=None):
         c.get("dstate", {}).pop(ftype, None)
         c.get("sent", {}).pop(key, None)
     if parts is None:
+        if ftype == "feed":                            # the feed through the view-delta slot path: a ?delta=1 feed client
+            _wire_bump("feed_slot_split")              #  without FEED_DELTA_CAP (memos.wire feed_slot_split, see _wire_stats)
         parts = _delta_parts(ftype, payload)
     states = c.setdefault("dstate", {})
     if parts is None:                                  # cannot be keyed: whole, and the client holds nothing
