@@ -593,7 +593,9 @@ def duration_key(key):
 
 def denylist_problems(doc, under=(), skip=()):
     """Every entry of `doc` the fold would not have written as it stands, one Problem each; empty when the document is a
-    fold's own output, the walk's FIXED POINT, pinned over every fixture and a served export. THE RULE it enforces is the
+    fold's own output (the walk's FIXED POINT, pinned over every fixture and a served export), except for the float case
+    _merge names: two measurement floats summed under a merged `other` key can land inside a stamp window and are refused
+    here. THE RULE it enforces is the
     fold's (the export's third review round, 2026-09-18): the public form is PASTE-SAFE, not unlinkable, so what the fold
     drops, folds or coarsens is refused here and what it keeps (durations, counts, per-process measurements) passes. Six
     findings: a key the denylist drops (denied, wherever a dict key appears, and DENY_PATHS anchored at `under`, the key

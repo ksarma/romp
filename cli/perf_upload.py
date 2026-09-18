@@ -246,7 +246,8 @@ def read_export(path, state):
         if reason:
             raise Refusal("refused: " + reason, 1)
         for k in doc:
-            # the belt: a fold is a fixed point of its own output (pinned over every fixture and a served export), so a
+            # the belt: a fold is a fixed point of its own output (pinned over every fixture and a served export; fold is
+            # idempotent even on the summed-floats case pp._merge names, which the denylist walk above refuses first), so a
             # block that differs from its fold was changed after the export in a way the checks above do not name; the
             # block's name is safe to print because they passed over it
             if k not in pe.ENVELOPE_KEYS and pp.fold(doc[k]) != doc[k]:

@@ -281,7 +281,8 @@ def check_document(doc: dict, state: Path, under=("perf",), tail="nothing writte
     windows is a measurement the export keeps, the allocator's figures on a long-lived kernel among them, and a float
     under a duration key, a name carrying the token `ms`, its own or any key above it, is a millisecond total, all of
     which a long-lived kernel's figures reach, so all pass; none of the six a fold's own
-    output carries, so for
+    output carries (pinned over every fixture and a served export; the one stated exception is the summed-floats case
+    pp._merge names, two measurement floats under a merged `other` key landing inside a stamp window), so for
     this verb it is a
     belt; for `romp perf upload`, over a file as it stands, it is what refuses a `t` the user put back, an uptime
     typed to the second, a bound typed to the byte, a stamp under a new key or a token the fold would have folded, and
