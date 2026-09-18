@@ -241,6 +241,35 @@ class OneEncodePerBuild(unittest.TestCase):
         self.assertEqual([f["type"] for f in tl["frames"]], ["data", "bars", "bars"],
                          "a rebuild with unchanged lanes: no lanes frame, and the whole bars frame again")
 
+    def test_the_send_stage_is_split_into_its_seams(self):
+        """Stage 1 of the incremental-push design (2026-09-18): push.send is a container of three seams in stages_ms
+        and in the cycle's split: feedParts (the feed's per-entry pass and its signature), barsSplit (the bars'
+        split, signature and estimate, or the unkeyable fallback's whole dump) and compare (the per-client
+        _send_feed and _send_slot calls). A wire hit runs no pass and no split, so a repeat cycle over the same
+        builds records the compare alone."""
+        _World(self, feed=_feed(), timeline=_timeline())
+        cap, dfeed, tl = _client("feed", caps=(km.FEED_DELTA_CAP,)), _client("feed"), _client("timeline")
+        ps = km._PERF_STATS
+        seams = ("push.send.feedParts", "push.send.barsSplit", "push.send.compare")
+        before = ps.snapshot()["stages_ms"]
+        for k in seams:
+            self.assertIn(k, before, "%s is listed at zero from the start" % k)
+        ps.cycle_begin()
+        t0 = time.monotonic(); km._push([cap, dfeed, tl]); ps.cycle(time.monotonic() - t0)
+        row = ps.snapshot()["pusher"]["stageRing"][-1]["stages"]
+        self.assertEqual(sorted(k for k in row if k.startswith("push.send")),
+                         ["push.send", "push.send.barsSplit", "push.send.compare", "push.send.feedParts"])
+        after = ps.snapshot()["stages_ms"]
+        for k in seams:
+            self.assertGreater(after[k], before[k], "%s moved" % k)
+        self.assertGreaterEqual(after["push.send"] - before["push.send"] + 1e-6, sum(after[k] - before[k] for k in seams),
+                                "the seams sit inside the container's wall time")
+        ps.cycle_begin()
+        t0 = time.monotonic(); km._push([cap, dfeed, tl]); ps.cycle(time.monotonic() - t0)
+        row2 = ps.snapshot()["pusher"]["stageRing"][-1]["stages"]
+        self.assertEqual(sorted(k for k in row2 if k.startswith("push.send")), ["push.send", "push.send.compare"],
+                         "a wire hit: no per-entry pass, no split; the compare still ran")
+
     def test_perf_reports_the_wire_counters(self):
         snap = km._PERF_STATS.snapshot()
         self.assertEqual(snap["memos"]["wire"], dict(km._wire_stats))

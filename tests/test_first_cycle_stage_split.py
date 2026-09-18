@@ -94,6 +94,42 @@ class StageSplitUnit(unittest.TestCase):
         self.assertEqual(st["jobs.other"]["bytes"], 1050, "the jobs' glue before and after the push, a sub-stage of jobs")
         self.assertEqual(st["jobs"]["bytes"], 1050, "the container carries its sub-stages' bytes")
 
+    def test_a_seams_bytes_roll_into_its_container_and_once_into_the_push(self):
+        """Stage 1 of the incremental-push design (2026-09-18): push.chat and push.send are containers of their own
+        seams (push.chat.sig / build / send, push.send.feedParts / barsSplit / compare). A seam's bytes count in
+        it, the container's glue lands in `<container>.other`, the container carries the sum, and `push` sums its
+        DIRECT children only, so a nested container's bytes are counted once, not again through its seams."""
+        km = self.km
+        ps = km._PerfStats()
+        for k in ("push.chat.sig", "push.chat.build", "push.chat.send", "push.send.feedParts", "push.send.barsSplit", "push.send.compare"):
+            self.assertIn(k, km._PerfStats.STAGES, "%s is listed at zero from the start" % k)
+        self.assertEqual(km._PerfStats.CONTAINERS.get("push.chat"), "push.chat.")
+        self.assertEqual(km._PerfStats.CONTAINERS.get("push.send"), "push.send.")
+        ps.cycle_begin(); ps.stage_boundary()
+        ps.stage("push.chat.sig", 0.001)                     # the tab's signature: no read
+        em._count_read("/lab/a.jsonl", 250)                  # the transcript read inside build_session
+        ps.stage("push.chat.build", 0.002)
+        ps.stage("push.chat.send", 0.001)
+        em._count_read("/lab/b.jsonl", 30)                   # the comments and glossary frames after the loop: the chat's glue
+        ps.stage("push.chat", 0.005)
+        em._count_read("/lab/c.jsonl", 100)                  # the feed build
+        ps.stage("push.feed", 0.001)
+        ps.stage("push.send.compare", 0.001)
+        ps.stage("push.send", 0.001)
+        ps.stage("push", 0.009)
+        ps.stage("jobs", 0.001); ps.cycle(0.010)
+        st = ps.snapshot()["pusher"]["firstCycle"]["stages"]
+        self.assertEqual(st["push.chat.build"]["bytes"], 250, "the seam carries the read inside it")
+        self.assertEqual(st["push.chat.other"]["bytes"], 30, "the container's glue, as jobs.other and push.other")
+        self.assertEqual(st["push.chat"]["bytes"], 280, "the container carries its seams and its glue")
+        self.assertEqual(st["push.feed"]["bytes"], 100)
+        self.assertEqual(st["push.send"]["bytes"], 0)
+        self.assertNotIn("push.send.other", st, "no glue, no row")
+        self.assertEqual(st["push"]["bytes"], 380, "direct children only: the chat's 280 once, not again through its seams")
+        self.assertEqual(sorted(k for k in st if k.startswith("push.chat")),
+                         ["push.chat", "push.chat.build", "push.chat.other", "push.chat.send", "push.chat.sig"])
+        self.assertEqual(st["push"]["ms"], 9.0); self.assertEqual(st["push.chat"]["ms"], 5.0, "the ms are the callers' own, never summed")
+
     def test_the_split_is_the_pusher_threads_alone(self):
         """Round one, medium: a dashboard's connect push runs _push on the HTTP handler thread through the same stage calls; its
         whole build landed in the pusher cycle's split (a 5 ms cycle reporting a 20 s push.chat), in firstCycle and in the

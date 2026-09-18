@@ -309,7 +309,9 @@ class ByteIdenticalFrames(unittest.TestCase):
         t1, t2 = self._timeline(2, 1), self._timeline(3, 2)
         return [(a, f1, t1), (a, f1, t1), (b, f1, t1), (b, f1, t1), (c, f1, t1), (c, f2, t2)]
 
-    def _run(self, diff):
+    def _run(self, diff, perf=None):
+        """Six cycles; returns (the raw wire strings per client, whether the diff met one object on both sides per
+        cycle, and with `perf` a _PerfStats each cycle's stage split, the cycle opened and closed on this thread)."""
         sid = self.SID
         td = tempfile.TemporaryDirectory(); self.addCleanup(td.cleanup)
         path = os.path.join(td.name, sid + ".jsonl")
@@ -358,22 +360,28 @@ class ByteIdenticalFrames(unittest.TestCase):
                 mock.patch.object(km, "_fleet_view_sig", lambda now, live_map: ("sig",)), \
                 mock.patch.object(km, "_DELTA_MAX_FRACTION", 10.0), \
                 mock.patch.object(sys, "stderr", err):
-            builds = []
+            builds, rows = [], []
             for frame, feed, timeline in self._script():
                 if not builds or builds[-1] is not frame:      # a new frame is a rebuild: the transcript's stat moves,
                     builds.append(frame)                        # so the tab's signature misses and build_session runs;
                     os.utime(path, (self.NOW, self.NOW + len(builds)))   # a repeat is the served tab (the cache hit)
                 world.update(frame=frame, feed=feed, timeline=timeline)
                 km._built_timeline[:] = [None, timeline, time.time(), time.time()]
+                if perf is not None:
+                    perf.cycle_begin()
+                t0 = time.monotonic()
                 km._push(clients, live_map=live)
+                if perf is not None:
+                    perf.cycle(time.monotonic() - t0)
+                    rows.append(perf.snapshot()["pusher"]["stageRing"][-1]["stages"])
         for line in err.getvalue().splitlines():
             self.assertNotIn("push build:", line, "a cycle raised: %s" % err.getvalue())
             self.assertNotIn("push send", line, "a send raised: %s" % err.getvalue())
-        return wire, same_object_calls
+        return wire, same_object_calls, rows
 
     def test_the_frames_every_client_receives_are_byte_identical_with_and_without_the_exact_return(self):
-        before, calls_before = self._run(self._chat_diff_reference)
-        after, calls_after = self._run(km._chat_diff)
+        before, calls_before, _ = self._run(self._chat_diff_reference)
+        after, calls_after, _ = self._run(km._chat_diff)
         self.assertEqual(after, before, "the same wire strings, per client, across the six cycles")
         self.assertEqual(calls_after, calls_before, "the diff met the same arguments in the same order")
         self.assertEqual(calls_after, [False, True, False, True, False, True],
@@ -393,4 +401,30 @@ class ByteIdenticalFrames(unittest.TestCase):
         first = [f for f in feed_frames if f["type"] == "feed"][0]
         self.assertEqual([a["column"] for a in first["asks"]], ["working"] * 4, "no card moved column")
         self.assertEqual([a["itemId"] for a in first["asks"]], ["%s:g%d" % (self.SID, i) for i in range(4)], "nor order")
+
+    def test_the_chat_stage_is_split_into_its_seams(self):
+        """Stage 1 of the incremental-push design (2026-09-18): push.chat is a container of three seams in stages_ms
+        and in the cycle's split: sig (the tab's signature, every tab every cycle, the post-build one included),
+        build (build_session, a rebuild only) and send (the diff and the per-client sends). A served tab records
+        sig and send and no build."""
+        ps = km._PERF_STATS
+        seams = ("push.chat.sig", "push.chat.build", "push.chat.send")
+        before = ps.snapshot()["stages_ms"]
+        for k in seams:
+            self.assertIn(k, before, "%s is listed at zero from the start" % k)
+        _wire, calls, rows = self._run(km._chat_diff, perf=ps)
+        self.assertEqual(calls, [False, True, False, True, False, True], "premise: rebuilt, served, rebuilt, served, rebuilt, served")
+        for i, row in enumerate(rows):
+            chat = sorted(k for k in row if k.startswith("push.chat"))
+            if calls[i]:
+                self.assertNotIn("push.chat.build", chat, "cycle %d served the tab: no build seam (%r)" % (i, chat))
+                self.assertIn("push.chat.sig", chat); self.assertIn("push.chat.send", chat)
+            else:
+                self.assertEqual([k for k in chat if k in seams], sorted(seams), "cycle %d rebuilt: every seam (%r)" % (i, chat))
+            self.assertIn("push.chat", chat, "the container closes every cycle")
+        after = ps.snapshot()["stages_ms"]
+        for k in seams:
+            self.assertGreater(after[k], before[k], "%s moved" % k)
+        self.assertGreaterEqual(after["push.chat"] - before["push.chat"] + 1e-6, sum(after[k] - before[k] for k in seams),
+                                "the seams sit inside the container's wall time")
 

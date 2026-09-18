@@ -554,9 +554,19 @@ class _PerfStats:
                                    loop and the chat sends), push.feed (the view signature,
                                    _cached_feed and the ledgers attach), push.timeline (the skeleton
                                    and _cached_timeline), push.send (the feed/bars serialization and
-                                   sends). The push.* stages are measured inside _push for EVERY
-                                   caller, connect pushes on handler threads included, so their sum
-                                   can exceed `push`
+                                   sends). Inside push.chat, its seams (2026-09-18): push.chat.sig
+                                   (each tab's _chat_build_sig, every tab every cycle, the post-build
+                                   one included), push.chat.build (build_session, a rebuild only) and
+                                   push.chat.send (the events diff and the per-client chat sends);
+                                   inside push.send: push.send.feedParts (the feed's per-entry pass
+                                   and its signature, a wire miss only), push.send.barsSplit (the
+                                   bars' split, signature and estimate, or the unkeyable fallback's
+                                   whole dump) and push.send.compare (the per-client _send_feed and
+                                   _send_slot calls, whole or delta). A seam is recorded when its
+                                   work ran, so a served tab lists no build seam and a wire hit no
+                                   feedParts or barsSplit. The push.* stages are measured inside
+                                   _push for EVERY caller, connect pushes on handler threads
+                                   included, so their sum can exceed `push`
       builds                       chat / feed / timeline / feedJson -> {cached, built, ms}: served
                                    from the build cache vs rebuilt, and the rebuild time. feedJson is
                                    GET /feed.json's own reads (_pure_feed), kept apart from `feed`,
@@ -780,13 +790,21 @@ class _PerfStats:
             "autoNudge", "interruptBlock", "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "persistCheckpoints", "convergeCheckpoints", "bootRowBackstop",
             "kernelSample", "autoPauseOnLimit", "usagePoll", "autoPauseOnSpend", "spendGuard", "autoResumeRetry", "apiHealth",
             "autoResumeSession", "autoRetry", "idleQueueDrive", "clearDoneNotes")   # the tick jobs, each a `jobs.<job>` stage (T398)
-    STAGES = ("prelude", "jobs", "push", "push.chat", "push.feed", "push.timeline", "push.send", "push.warm", "push.feedFirst",
+    STAGES = ("prelude", "jobs", "push",
+              "push.chat", "push.chat.sig", "push.chat.build", "push.chat.send",         # the chat stage and its seams (2026-09-18)
+              "push.feed", "push.timeline",
+              "push.send", "push.send.feedParts", "push.send.barsSplit", "push.send.compare",   # the send stage and its seams
+              "push.warm", "push.feedFirst",
               "jobsPass", "jobs.prelude") \
         + tuple("jobs." + j for j in JOBS)   # every stage a fresh snapshot lists at zero: the cycle's prelude, the containers, the sub-stages
     #                                          (`jobsPass` and `jobs.prelude` are the jobs thread's: its pass and its own opening)
     OWNERS = ("pusher", "jobs")              # the two threads whose per-cycle splits the stats keep (the jobs thread since the split
     #                                          of the housekeeping off the pusher, 2026-09-13; see _jobs_loop)
-    CONTAINERS = {"push": "push.", "jobs": "jobs.", "jobsPass": "jobs."}   # a container stage -> the prefix of its sub-stages
+    # a container stage -> the prefix of its sub-stages. push.chat and push.send are containers of their own seams (stage 1 of
+    # the incremental-push design, 2026-09-18): a seam's bytes count in the seam, the container's glue in `<container>.other`,
+    # and a container sums its DIRECT children only (`stage` below), so `push` counts the chat's bytes once, not again
+    # through push.chat.build
+    CONTAINERS = {"push": "push.", "push.chat": "push.chat.", "push.send": "push.send.", "jobs": "jobs.", "jobsPass": "jobs."}
     BUILDS = ("chat", "feed", "timeline", "feedJson", "thread")
     # builds.chat's bg_miss labels: _chat_build_sig's components, a tab with no cached build, and a tab whose
     # signature could not be taken
@@ -1076,8 +1094,9 @@ class _PerfStats:
                     g = stages.setdefault(pfx + "other", {"ms": 0.0, "bytes": 0, "hydrated": 0})
                     g["bytes"] += max(0, marks[0] - prev[0]); g["hydrated"] += max(0, marks[1] - prev[1])
                 st["mark"] = marks
-                cs["bytes"] = sum(v["bytes"] for k, v in stages.items() if k.startswith(pfx))
-                cs["hydrated"] = sum(v["hydrated"] for k, v in stages.items() if k.startswith(pfx))
+                kids = [v for k, v in stages.items() if k.startswith(pfx) and "." not in k[len(pfx):]]   # direct children: a
+                cs["bytes"] = sum(v["bytes"] for v in kids)                                                #  nested container's
+                cs["hydrated"] = sum(v["hydrated"] for v in kids)                                          #  seams count through it
             else:
                 prev = st["mark"]
                 if prev is not None:
@@ -58594,12 +58613,14 @@ def _push(targets, connect=False, live_map=None):
                     if want_fleet:                       # the Outline's row for the skipped tab, from the store alone (the attach merges it in build order)
                         _prov_rows.append(_provisional_row(s["sid"], s.get("name", ""), _light))
                     continue
+                _t_seam = time.monotonic()               # push.chat.sig: the signature every tab pays every cycle (2026-09-18)
                 try:
                     sig = _chat_build_sig(s, _tm, now, live_map=live_map)
                     _chat_sig_ok(s["sid"])               # a signature that was taken ends its fault episode
                 except Exception as e:
                     _chat_sig_fault(s, e)                # once per fault episode: stderr and a bell row
                     sig = None                           # an input that cannot be keyed: build, never cache
+                _PERF_STATS.stage("push.chat.sig", time.monotonic() - _t_seam)
                 hit = _built_chat.get(s["sid"])
                 _claimed = False
                 if not (hit is not None and sig is not None and hit[0] == sig):
@@ -58637,6 +58658,7 @@ def _push(targets, connect=False, live_map=None):
                         # every cycle would freeze the board for as long as its input stands (2026-09-06).
                         # Said ONCE per fault episode, on stderr and as a dashboard bell row, so the pane
                         # that stopped updating is not a silent degrade (review find, 2026-09-08).
+                        _PERF_STATS.stage("push.chat.build", time.monotonic() - _t0)   # a failed build's time is build time too
                         _chat_build_fault(s, e)
                         _chat_dep_scope.deps = None      # the failed build's record is nobody's
                         if _claimed:
@@ -58651,6 +58673,7 @@ def _push(targets, connect=False, live_map=None):
                     # it back; the post-send cache store below keeps whatever materialized.
                     ms = None
                     _dt = time.monotonic() - _t0
+                    _PERF_STATS.stage("push.chat.build", _dt)   # push.chat.build: build_session alone (2026-09-18)
                     # The build's dependency record (_chat_build_deps) and the POST-build signature: the cache
                     # entry is stored only when the static components held across the build (an input that
                     # moved mid-build would otherwise be served stale); the dependency tail is skipped here
@@ -58658,10 +58681,12 @@ def _push(targets, connect=False, live_map=None):
                     _rec = _chat_build_deps(s["sid"], m) if (sig is not None and m) else None
                     _chat_dep_scope.deps = None          # consumed: a reader outside a build must not append to it
                     if sig is not None:
+                        _t_seam = time.monotonic()       # the post-build signature is signature time too
                         try:
                             post = _chat_build_sig(s, _tm, now, live_map=live_map, deps=False)
                         except Exception:
                             post = None
+                        _PERF_STATS.stage("push.chat.sig", time.monotonic() - _t_seam)
                     # WHY a tab rebuilt (2026-09-09): the labelled _chat_build_sig components that moved
                     # against the cached signature, so /perf can say which input drives the rebuilds; the
                     # watched tab's rebuilds are counted under active_built and not attributed
@@ -58702,6 +58727,7 @@ def _push(targets, connect=False, live_map=None):
                 # only the changed suffix (chatTail) if it's caught up, else the full session. Keeps the whole
                 # transcript resident in the browser (instant scrollback) while the per-change wire payload
                 # drops from the whole events array to just what changed.
+                _t_seam = time.monotonic()               # push.chat.send: the diff and the per-client sends (2026-09-18)
                 change_from = _chat_diff(_prev_chat_events.get(m["id"]), m.get("events") or [])
                 led_changed = m.get("ledger") != _prev_chat_ledger.get(m["id"])
                 # The baseline is SHARED by every client, so only a push that reaches them all may advance it.
@@ -58720,6 +58746,7 @@ def _push(targets, connect=False, live_map=None):
                     # serialization ONCE and every later client (and the cache below) reuses it. A tab the
                     # client holds as a skeleton gets only its status (2026-09-07)
                     ms = _send_chat_or_status(c, m, ms, change_from, led_changed)
+                _PERF_STATS.stage("push.chat.send", time.monotonic() - _t_seam)
                 # cache AFTER the sends, so a serialization a full send just paid for is kept — the next
                 # connect-push for this unchanged tab reuses it instead of dumping again
                 if sig is not None:
@@ -58984,18 +59011,22 @@ def _push(targets, connect=False, live_map=None):
                     if w is not None and w[0] is feed_src and w[1] == feed.get("ledgers"):
                         feed, feed_body, feed_sig, feed_parts = w[2], w[3], w[4], w[5]
                     else:
+                        _t_seam = time.monotonic()           # push.send.feedParts: the per-entry pass and its signature (2026-09-18)
                         feed_parts = _feed_parts(feed)       # the one per-entry encode (cards memoized on the build's asks)
                         feed_sig = _feed_sig(feed_parts)     # …which is also the dedup signature
+                        _PERF_STATS.stage("push.send.feedParts", time.monotonic() - _t_seam)
                         feed_body = _LazyWire(lambda f=feed: _feed_body(f), _feed_est(feed_parts), "feed_body")
                         _feed_wire = (feed_src, feed.get("ledgers"), feed, feed_body, feed_sig, feed_parts)
                     feed_ms = _feed_ms_lazy(feed_body, feed.get("now"))   # this build's clock in front, if a whole frame goes
                 # Two delta protocols meet here. A page whose bundle announced FEED_DELTA_CAP takes the feed's own
                 # itemId deltas (_send_feed; feed-delta.ts applies them); every other client takes the view-delta
                 # slot path (_send_slot: keyed deltas for a ?delta=1 client, the whole frame for anyone else).
+                _t_seam = time.monotonic()                   # push.send.compare: this client's compare and send (2026-09-18)
                 if FEED_DELTA_CAP in (c.get("caps") or ()):
                     _send_feed(c, feed, feed_ms, feed_sig, feed_parts)
                 else:
                     _send_slot(c, "feed", feed, feed_ms, feed_sig)
+                _PERF_STATS.stage("push.send.compare", time.monotonic() - _t_seam)
             elif c["app"] == "timeline" and timeline is not None:
                 if bars_down:
                     continue
@@ -59006,6 +59037,7 @@ def _push(targets, connect=False, live_map=None):
                     else:
                         bars = {"type": "bars", "turns": timeline["turns"], "judging": timeline["judging"],
                                 "messages": timeline["messages"], "now": timeline["now"], "warming": tl_warming}
+                        _t_seam = time.monotonic()           # push.send.barsSplit: the split, its signature and estimate, or the fallback's dump (2026-09-18)
                         bars_parts = _delta_parts("bars", bars)   # the one per-entry encode, handed down to the delta path
                         if bars_parts is not None:
                             bars_sig = _parts_sig(bars_parts)
@@ -59015,8 +59047,11 @@ def _push(targets, connect=False, live_map=None):
                             s = json.dumps(bars, default=_wire_default_in("_push bars"))
                             bars_ms, bars_sig = _LazyWire(None, len(s), text=s), _dedup_sig(bars, s)
                             _wire_bump("bars_sig_fallback")
+                        _PERF_STATS.stage("push.send.barsSplit", time.monotonic() - _t_seam)
                         _bars_wire = (timeline, tl_warming, bars, bars_ms, bars_sig, bars_parts)
+                _t_seam = time.monotonic()
                 _send_slot(c, "bars", bars, bars_ms, bars_sig, bars_parts)
+                _PERF_STATS.stage("push.send.compare", time.monotonic() - _t_seam)
         except Exception:
             is_feed = c["app"] in ("feed", "fleet", "waiting")
             if (feed_ms if is_feed else bars_ms) is None:    # the FILL raised (nothing assigned): stand the slot down this cycle
