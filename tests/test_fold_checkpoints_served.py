@@ -293,17 +293,14 @@ class ExitThenBoot(unittest.TestCase):
         try:
             self._drive(p2)
             perf = self._get(p2, "/perf")["checkpoints"]
-            by = perf["readByPath"]
-            report = {"agent": 0, "states": 0, "leaf": 0, "postal": 0, "checkpoint": 0, "other": 0}
-            for path, n in by.items():
-                cls_ = ("checkpoint" if "/checkpoints/" in path else "agent" if "/subagents/" in path else "states" if "/states/" in path
-                        else "postal" if path.endswith("messages.jsonl") else "leaf" if path.endswith(".jsonl") and "/projects/" in path else "other")
-                report[cls_] += n
+            by = perf["readByKind"]                          # per holder kind since 2026-09-18: the served table names no file
+            report = {k: v["bytes"] for k, v in by.items()}
             self.assertEqual(perf["fallbacks"], {}, "every checkpoint verified: %s" % perf)
             self.assertGreaterEqual(perf["restored"], len(ALL), "one restore per states log at least: %s" % perf)
-            got = by.get(os.path.realpath(self.agent_file), by.get(self.agent_file))
+            self.assertEqual(by["agent"]["files"], 1, "the one agent transcript in this fixture: %s" % by)
+            got = by["agent"]["bytes"]
             self.assertEqual(got, 128, "the agent file was read as a TAIL: its 64 guard bytes checked and captured again, nothing of its "
-                                       "content, since nothing was appended (its size %d; bytes by class in this boot: %s)" % (agent_size, report))
+                                       "content, since nothing was appended (its size %d; bytes by kind in this boot: %s)" % (agent_size, report))
             self.assertGreaterEqual(perf["restoredFolds"].get("agentGist", 0), 1, "the gist fold resumed from its recorded state: %s" % perf["restoredFolds"])
             self.assertGreaterEqual(perf["restoredFolds"].get("statesOverlay", 0), len(ALL),   # the fold the feed runs per session
                                     "the statesOverlay fold resumed for every session's states log: %s" % perf["restoredFolds"])

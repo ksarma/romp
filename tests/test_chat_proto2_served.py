@@ -187,8 +187,8 @@ class Proto2Wire(A.RestartOverACheckpointedSession):
             self.assertFalse({"build_session", "_atom_md"} & readers, "the first open hydrated for the chat: %s" % asm["hydratedBy"])
             self.assertLessEqual(readers, {"_unit_text", "_atom_text", "_seg_anchors", "_atom_user_text", "_human_prompt_record", "_has_asst_work", "_seg_launches"},
                                  "only the judges' readers: %s" % asm["hydratedBy"])
-            by = perf["checkpoints"]["readByPath"]
-            leaf_read0 = by.get(os.path.realpath(self.leaf), by.get(self.leaf, 0))
+            by = perf["checkpoints"]["readByKind"]
+            leaf_read0 = by["leaf"]["bytes"]                   # the one transcript here: the kind's bytes are its read (2026-09-18)
             self.assertLess(leaf_read0 - asm["hydratedBytes"], size / 4, "the leaf cost its tail and guards beyond the judges' hydration: %d read, %d hydrated, %d whole"
                             % (leaf_read0, asm["hydratedBytes"], size))
             self.assertLess(dt2, 10.0, "the first frame of a restored kernel: %.2fs" % dt2)
@@ -287,8 +287,8 @@ class Proto2Wire(A.RestartOverACheckpointedSession):
             self.assertEqual(f4b.get("proto"), 2)
             self.assertFalse(f4b.get("headKnown"), "…and the head is unknown again to the proto-2 client")
             perf = self._get(p2, "/perf")
-            by = perf["checkpoints"]["readByPath"]
-            leaf_read = by.get(os.path.realpath(self.leaf), by.get(self.leaf, 0))
+            by = perf["checkpoints"]["readByKind"]
+            leaf_read = by["leaf"]["bytes"]
             hyd = perf["asmCheckpoint"]["hydratedBytes"]
             self.assertLess(leaf_read - hyd, size / 4 + 4096,
                             "the leaf: its tail, guards and the pages' bodies, never whole: read %d, hydrated %d, size %d; %s"

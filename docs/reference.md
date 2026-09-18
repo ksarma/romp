@@ -2844,8 +2844,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   (what reading the checkpoint documents themselves cost since boot),
   `fallbacks` per reason (`version`, `path`, `shrunk`, `guard`, `rewrite`,
   `corrupt`), `dirty` (files whose folds moved since their last write),
-  `readBytes` and `readByPath` (what the JSONL reader pulled off disk since
-  boot, in total and per file), `docConsults` (fold documents loaded through the one
+  `readBytes` and `readByKind` (what the JSONL reader pulled off disk since
+  boot, in total and per holder kind: `leaf`, `agent`, `states`, `postal`,
+  `checkpoint`, `other`, each with `files`, `bytes` and `max`, the largest
+  single file's read; no file is named, since a path carries the home
+  directory and the session id), `docConsults` (fold documents loaded through the one
   validated read that the two boot restore paths, a write's carry and a
   retirement's consult share; at boot the restore paths dominate it, one per
   checkpointed file), `docMemo` (the documents that read keeps for the write

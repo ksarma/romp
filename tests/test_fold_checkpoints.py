@@ -1571,7 +1571,7 @@ class KernelFolds(Base):
         snap = km._PERF_STATS.snapshot()
         self.assertIn("converge", em._CKPT_STATS, "the production default carries the converge counters (the fixture injects nothing)")
         self.assertEqual(sorted(snap["checkpoints"]), ["coldFolds", "coldWrites", "converge", "dirty", "docConsults", "docMemo", "documentBytes", "droppedRestores", "fallbacks", "oversizeFolds",
-                                                        "readByPath", "readBytes", "refolds", "restored", "restoredFolds", "rewoundMemo", "skippedFolds", "swept", "writes"])
+                                                        "readByKind", "readBytes", "refolds", "restored", "restoredFolds", "rewoundMemo", "skippedFolds", "swept", "writes"])
         src = open(os.path.join(BIN, "romp-kernel")).read()
         self.assertIn("em.checkpoint_write_dirty(budget_s=EXIT_CKPT_WRITE_BUDGET_S)", src,
                       "exit writes the dirty checkpoints in _drain_and_exit, bounded (2026-09-11: unbounded, it met the manager's SIGKILL)")
@@ -1586,6 +1586,38 @@ class ReviewProbes(Base):
     _step = staticmethod(GenericFold._step)
     _noop_init = staticmethod(GenericFold._noop_init)
     fold = GenericFold.fold
+
+    def test_the_served_read_table_names_holder_kinds_never_paths(self):
+        """checkpoints.readByPath keyed the reader's byte table by ABSOLUTE PATH on GET /perf: the machine's home directory,
+        the project's directory and the session's id in every key (2026-09-18, a paste-safety review of the snapshot).
+        The served table is readByKind: files, bytes and the largest file's read per holder kind (leaf, agent, states,
+        postal, checkpoint, other), judged from a path's own last segments, so a boot still reads as tails against whole
+        files. The per-path report stays in-process (read_bytes_report) for the benches and this module."""
+        td = tempfile.TemporaryDirectory(); self.addCleanup(td.cleanup)
+        home = os.path.join(td.name, "home", "tester")                 # an absolute home path under a temp dir
+        sid = "22222222-3333-4444-5555-666666666666"
+        proj = os.path.join(home, ".claude", "projects", "-home-tester-code-notes-api")
+        ck = str(jd.STATE / "checkpoints")
+        reads = {os.path.join(proj, sid + ".jsonl"): 4096, os.path.join(proj, sid, "subagents", "agent-a1.jsonl"): 512,
+                 str(jd.STATE / "states" / (sid + ".jsonl")): 256, str(jd.STATE.parent / "timeline" / "messages.jsonl"): 128,
+                 os.path.join(ck, "a" * 40 + ".json"): 64, os.path.join(home, "states", "notes", "scratch.jsonl"): 32}
+        before = em.checkpoint_stats().get("readByKind") or {}
+        for path, n in reads.items():
+            em._count_read(path, n)
+        self.addCleanup(lambda: [em._READ_BYTES.pop(p, None) for p in reads])
+        snap = km._PERF_STATS.snapshot()["checkpoints"]
+        self.assertNotIn("readByPath", snap, "the per-path table left the served snapshot")
+        for key in snap["readByKind"]:
+            self.assertNotIn(os.sep, key); self.assertNotIn(home, key); self.assertNotIn(sid, key)
+        self.assertEqual(list(snap["readByKind"]), list(em._READ_KINDS), "every kind listed, in one order")
+        delta = {k: snap["readByKind"][k]["bytes"] - before.get(k, {}).get("bytes", 0) for k in em._READ_KINDS}
+        self.assertEqual(delta, {"leaf": 4096, "agent": 512, "states": 256, "postal": 128, "checkpoint": 64, "other": 32},
+                         "a `states` segment inside a home path classifies nothing: the file's own parent decides")
+        self.assertGreaterEqual(snap["readByKind"]["leaf"]["max"], 4096, "the largest single read per kind")
+        self.assertEqual(snap["readByKind"]["agent"]["files"] - before.get("agent", {}).get("files", 0), 1)
+        self.assertEqual(em._read_kind(os.path.join(ck, "asm", "x.meta"), ck), "checkpoint", "anything under the checkpoint directory")
+        self.assertEqual(em._read_kind("/x/projects/slug/" + sid + "/subagents/agent-1.jsonl"), "agent", "the parent wins over the grandparent")
+        self.assertEqual(em._read_kind("/x/projects/slug/notes.txt"), "other", "a leaf is a .jsonl under projects/<slug>/")
 
     def setUp(self):
         super().setUp()
