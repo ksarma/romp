@@ -3819,7 +3819,7 @@ once more for a uuid, a 32-hex or 40-hex token, an absolute path or free text
 carrying whitespace), and checked against the denylist (a key the export
 drops, a string value the fold would have folded to `other`, a key the
 grammar's anchored match admits but the fold would have replaced (one ending
-in a newline), an uptime not rounded to whole minutes, a bound not rounded to
+in a newline among them), an uptime not rounded to whole minutes, a bound not rounded to
 a power of two, or, under any other key, a float inside a clock stamp's epoch
 window, 1.5e9 to 2.0e9 for seconds or 1.5e12 to 2.0e12 for milliseconds, a
 number
@@ -3884,7 +3884,7 @@ string value the export would have folded to `other`, a key it would have
 replaced, one ending in a newline among them, an uptime typed to the second,
 a bound typed to the byte, a float inside a clock stamp's epoch window, 1.5e9
 to 2.0e9 seconds or 1.5e12 to 2.0e12 milliseconds, with no duration key on
-its path), and, as the belt under those, every top-level block outside the
+its path), and, whatever those find, every top-level block outside the
 envelope (`schema`, `exported_at`, `kernel_commit`) must equal its own fold,
 or the verb refuses naming the block; the measurements the export keeps
 pass (an integer is a byte total or a count; a float outside both windows is a
@@ -3905,9 +3905,16 @@ The verb sends one `POST <receiver>/v1/upload`: the file's bytes as the body
 under six headers, three set by the verb (`Content-Type: application/json`,
 `Content-Length` and `User-Agent: romp-perf-upload/1`) and three by Python's
 HTTP client (`Host`, which names the receiver, `Accept-Encoding: identity` and
-`Connection: close`); no other header and no cookie. It waits 30 s at most,
-follows no redirect (a 3xx is refused by its code and its `Location` is not
-read) and reads no proxy variable. Nothing about the machine travels: no
+`Connection: close`); no other header and no cookie. It gives the whole
+exchange 30 s, the connect, the send, the status line, the headers and the
+body together, as one deadline rather than a timeout per read: the connect
+and the TLS handshake are bounded by the connection's own timeout, cut to the
+time left, and once the connection is up a timer shuts its socket down when
+the budget runs out, so a receiver that answers in pieces cannot hold an
+unattended `--yes` run open; whatever phase the deadline cuts, the refusal is
+the fixed line naming `TimeoutError`. It follows no redirect (a 3xx is
+refused by its code and its `Location` is not read) and reads no proxy
+variable. Nothing about the machine travels: no
 hostname, account or filename, and no second file; the receiver names the
 stored object itself. The one answer accepted is `201` with
 a JSON body of exactly `{"receipt": <uuid4>, "retention_days": <integer>,
