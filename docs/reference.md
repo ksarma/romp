@@ -3023,7 +3023,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
 - `parses`: the cold event-model parses through the one parse store the
   kernel and the judges share: `total` (every miss, whoever asked), `kernel`
   (the display's asks among them, with `bytes`, the parsed files' sizes, and
-  `bySid`, per session by the first eight characters of its id), `judge` (the
+  `perSession`, the sessions parsed as a count and the largest per-session
+  count, `sessions` and `max`; no session id is served), `judge` (the
   rest), `hits` (the display's asks served from the store) and `sharedHits`
   (every hit). The acceptance number of the lazy-transcript work: a boot with
   no client connected reads `kernel` zero, and a connecting chat client adds

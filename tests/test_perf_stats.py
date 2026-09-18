@@ -524,21 +524,45 @@ class Collector(unittest.TestCase):
         snap = self.st.snapshot()
         chat = snap["builds"]["chat"]
         self.assertEqual((chat["built"], chat["cached"]), (5, 2), "the aggregate counts every build as before")
-        rows = {r["sid"]: r for r in chat["bySession"]}
-        self.assertEqual([r["sid"] for r in chat["bySession"]], [B, A, C], "sorted by max, the largest first")
-        self.assertEqual(rows[A], {"sid": A, "first": 100.0, "last": 50.0, "max": 100.0, "n": 2, "cached": 1, "bytes": 1200})
-        self.assertEqual(rows[B], {"sid": B, "first": 20.0, "last": 300.0, "max": 300.0, "n": 2, "cached": 0, "bytes": 60})
-        self.assertEqual(rows[C], {"sid": C, "first": None, "last": None, "max": 0.0, "n": 0, "cached": 1, "bytes": None})
+        rows = chat["bySession"]                                              # served by RANK in max order, never by sid (2026-09-18)
+        self.assertEqual([r["rank"] for r in rows], [1, 2, 3], "sorted by max, the largest first, ranked in that order")
+        self.assertEqual(rows[0], {"rank": 1, "first": 20.0, "last": 300.0, "max": 300.0, "n": 2, "cached": 0, "bytes": 60})     # B
+        self.assertEqual(rows[1], {"rank": 2, "first": 100.0, "last": 50.0, "max": 100.0, "n": 2, "cached": 1, "bytes": 1200})   # A
+        self.assertEqual(rows[2], {"rank": 3, "first": None, "last": None, "max": 0.0, "n": 0, "cached": 1, "bytes": None})     # C
+        self.assertEqual(self.st.chat_by_session[A], {"first": 100.0, "last": 50.0, "max": 100.0, "n": 2, "cached": 1, "bytes": 1200},
+                         "the collector keeps the rows by sid; the snapshot does not")
         self.st.build_chat(False, 0.400, sid=A)
-        rows = {r["sid"]: r for r in self.st.snapshot()["builds"]["chat"]["bySession"]}
-        self.assertEqual((rows[A]["first"], rows[A]["last"], rows[A]["max"]), (100.0, 400.0, 400.0), "first is set once; last and max move")
+        rows = self.st.snapshot()["builds"]["chat"]["bySession"]
+        self.assertEqual((rows[0]["first"], rows[0]["last"], rows[0]["max"]), (100.0, 400.0, 400.0),
+                         "first is set once; last and max move, and A's row now ranks first")
         self.st.chat_row_drop(B)                                              # B's death was certified (_record_death calls this)
-        self.assertEqual(sorted(r["sid"] for r in self.st.snapshot()["builds"]["chat"]["bySession"]), sorted([A, C]))
+        self.assertEqual(sorted(self.st.chat_by_session), sorted([A, C]))
+        self.assertEqual([r["rank"] for r in self.st.snapshot()["builds"]["chat"]["bySession"]], [1, 2], "ranks close up")
         self.st.chat_row_drop("no-such-sid")                                  # a death of a session never built: nothing to drop
         self.assertEqual(len(self.st.snapshot()["builds"]["chat"]["bySession"]), 2)
         # the certified death drives the drop through the real _record_death and the real death sweep's tick over three ticks
         # (tests/test_sdk_registry_blind.py, ChatBuildRowsLeaveWithTheCertifiedDeath); the call sites are executed, not read: PushStages below
         # drives the real _push and the real _push_session_now and reads the rows from the snapshot
+
+    def test_per_session_rows_are_served_by_rank_and_parsed_sessions_as_a_count(self):
+        """builds.chat.bySession named its session in every row and parses.bySid keyed the cold-parse table by the first
+        eight characters of the sid (2026-09-18, a paste-safety review of the snapshot). The rows are served by rank in the
+        block's own order (the largest max first) and the parse table as the number of sessions parsed with the largest
+        per-session count; the collector keeps both by sid for its own bookkeeping (a row leaves with its session's death)."""
+        A, B = "aaaaaaaa-2222-4333-8444-0000000000a1", "bbbbbbbb-2222-4333-8444-0000000000b2"
+        self.st.build_chat(False, 0.100, sid=A, nbytes=10); self.st.build_chat(False, 0.300, sid=B, nbytes=20)
+        self.st.parse(A, 100); self.st.parse(A, 100); self.st.parse(B, 50)
+        snap = self.st.snapshot()
+        text = json.dumps(snap["builds"]["chat"]) + json.dumps(snap["parses"])
+        for probe in (A, B, A[:8], B[:8]):
+            self.assertNotIn(probe, text, "a session id in the served block: %s" % text)
+        self.assertEqual(snap["builds"]["chat"]["bySession"],
+                         [{"rank": 1, "first": 300.0, "last": 300.0, "max": 300.0, "n": 1, "cached": 0, "bytes": 20},
+                          {"rank": 2, "first": 100.0, "last": 100.0, "max": 100.0, "n": 1, "cached": 0, "bytes": 10}])
+        self.assertEqual(snap["parses"]["perSession"], {"sessions": 2, "max": 2})
+        self.assertNotIn("bySid", snap["parses"])
+        self.assertEqual(sorted(self.st.chat_by_session), [A, B], "the collector's own rows stay by sid")
+        self.assertEqual(self.st.parses["bySid"], {A[:8]: 2, B[:8]: 1})
 
     def test_stages_builds_judge(self):
         self.st.stage("push.chat", 0.5); self.st.stage("push.chat", 0.25); self.st.stage("jobs", 0.1)
@@ -1380,13 +1404,16 @@ class PushStages(unittest.TestCase):
         # the leaf's byte size, the cached site hands the sid; a second push over the same transcript raises `cached` and leaves n
         km._PERF_STATS.chat_by_session.pop(SID, None)
         km._push([self.chat, self.tl])
-        rows = {r["sid"]: r for r in km._PERF_STATS.snapshot()["builds"]["chat"]["bySession"]}
+        rows = km._PERF_STATS.chat_by_session                  # the collector's rows by sid: the served list ranks them (2026-09-18)
         self.assertIn(SID, rows, "the built site hands the sid: %s" % sorted(rows))
-        row = rows[SID]
+        row = dict(rows[SID])
         self.assertEqual((row["n"], row["cached"], row["bytes"]), (1, 0, os.path.getsize(self.transcript)), row)
         self.assertGreaterEqual(row["first"], 5.0, "the build's sleep is the first build's ms"); self.assertEqual((row["last"], row["max"]), (row["first"], row["first"]))
+        served = km._PERF_STATS.snapshot()["builds"]["chat"]["bySession"]
+        self.assertIn(row, [{k: v for k, v in r.items() if k != "rank"} for r in served], "the same row rides the served list, by rank")
+        self.assertFalse([r for r in served if "sid" in r], "no row names its session")
         km._push([self.chat, self.tl])
-        row2 = {r["sid"]: r for r in km._PERF_STATS.snapshot()["builds"]["chat"]["bySession"]}[SID]
+        row2 = km._PERF_STATS.chat_by_session[SID]
         self.assertEqual((row2["n"], row2["cached"], row2["first"]), (1, 1, row["first"]), "the cached site hands the sid; n and first stand")
 
     def test_the_targeted_push_records_its_build_in_the_row_and_the_aggregate(self):
@@ -1404,8 +1431,9 @@ class PushStages(unittest.TestCase):
                 km._clients[:] = saved[0]
         self.assertEqual(self.builds, 1, "the targeted push built the session")
         snap = km._PERF_STATS.snapshot()["builds"]["chat"]
-        row = {r["sid"]: r for r in snap["bySession"]}.get(SID)
+        row = km._PERF_STATS.chat_by_session.get(SID)          # the collector's row by sid; the served list ranks it (2026-09-18)
         self.assertIsNotNone(row, "the targeted push feeds the per-session row")
+        self.assertIn(dict(row), [{k: v for k, v in r.items() if k != "rank"} for r in snap["bySession"]], "and the served list carries it")
         self.assertEqual((row["n"], row["cached"], row["bytes"]), (1, 0, os.path.getsize(self.transcript)), row)
         self.assertGreaterEqual(row["first"], 5.0)
         self.assertEqual(snap["built"] - saved[1]["built"], 1, "and the aggregate")

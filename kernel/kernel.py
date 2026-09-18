@@ -889,7 +889,7 @@ class _PerfStats:
             self.chat_by_session = {}                 # sid -> {first, last, max, n, cached, bytes}: the per-session chat build
             #                                           timer (2026-09-14); a row leaves with its session's certified death
             #                                           (chat_row_drop), reset with the process, sids only, time.monotonic
-            #                                           deltas as the call sites take them
+            #                                           deltas as the call sites take them; served by rank, never by sid
             self.sends = {k: {} for k in self.SEND_KINDS}
             self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0, "cpu_ms_sum": 0.0,
                           "wakes": 0, "wakes_event": 0, "wakes_backstop": 0,
@@ -900,8 +900,9 @@ class _PerfStats:
             #                                 consecutive lost spawns, orphans of a dead kernel swept at boot, its workers' CPU (also
             #                                 folded into cpu_ms_sum, as the in-process workers' is) and its last done line
             # cold event-model parses this kernel ran (T323 stage 1): the kernel's own _parse misses, per session
-            # (sid8) and in total, plus the bytes of the files parsed; the judges' misses ride the snapshot from
-            # jd.parse_misses(). The acceptance number of the lazy-transcript work: a boot with no client parses zero.
+            # (sid8, kept here; served as a count of sessions and the largest per-session count) and in total, plus the
+            # bytes of the files parsed; the judges' misses ride the snapshot from jd.parse_misses(). The acceptance
+            # number of the lazy-transcript work: a boot with no client parses zero.
             self.parses = {"kernel": 0, "hits": 0, "bytes": 0, "bySid": {}}   # kernel-asked cold parses; total/judge from jd
             self.http = {}
             # the file preview popover's slice cache (T351): hits and misses of GET /file?slice=1, the bytes it served,
@@ -1485,11 +1486,13 @@ class _PerfStats:
             stages = dict(self.stages)
             builds = {k: dict(v) for k, v in self.builds.items()}
             builds["chat"]["bg_miss"] = dict(self.builds["chat"]["bg_miss"])   # the nested map: a copy too
-            builds["chat"]["bySession"] = sorted(              # the per-session timer, sids only, the largest max first
-                ({"sid": sid, **row} for sid, row in self.chat_by_session.items()),
-                key=lambda r: -(r["max"] or 0.0))
+            builds["chat"]["bySession"] = [                    # the per-session timer, the largest max first, each row by its RANK
+                {"rank": i, **row} for i, row in enumerate(   #  in that order and never by its sid (2026-09-18: the snapshot is
+                    sorted(self.chat_by_session.values(), key=lambda r: -(r["max"] or 0.0)), 1)]   #  meant to be pasteable)
+            by_sid = self.parses["bySid"]
             parses = {"kernel": self.parses["kernel"], "hits": self.parses["hits"], "bytes": self.parses["bytes"],
-                      "bySid": dict(self.parses["bySid"])}
+                      "perSession": {"sessions": len(by_sid), "max": max(by_sid.values(), default=0)}}   # the sids folded to a
+            #                                                                                              count and the largest per-sid count
             sends = {k: {sl: {"count": e[0], "bytes": e[1]} for sl, e in d.items()}
                      for k, d in self.sends.items()}
             judge = dict(self.judge)

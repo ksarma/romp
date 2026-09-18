@@ -642,7 +642,8 @@ class PerfCountsColdParses(unittest.TestCase):
         snap = km._PERF_STATS.snapshot()
         self.assertEqual((snap["parses"]["kernel"], snap["parses"]["bytes"]), (3, 1249), "the kernel's own asks (stage 2 splits the counters)")
         self.assertIsInstance(snap["parses"]["total"], int)
-        self.assertEqual(snap["parses"]["bySid"], {SID_OLD[:8]: 2, SID_NEW[:8]: 1})
+        self.assertEqual(snap["parses"]["perSession"], {"sessions": 2, "max": 2}, "two sessions parsed, the busier one twice; no id served")
+        self.assertNotIn("bySid", snap["parses"])
         self.assertIsInstance(snap["parses"]["judge"], int)
 
     def test_kernel_parse_counts_a_miss_not_a_hit(self):
