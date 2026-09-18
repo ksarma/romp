@@ -497,6 +497,42 @@ def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=(), stacks_key=S
     return problems
 
 
+def denylist_problems(doc, under=()):
+    """Every dict entry of `doc` the fold would not have written as it stands, one Problem each (empty when the
+    document is a fold's own output): a key the denylist drops (denied, wherever a dict key appears, and DENY_PATHS
+    anchored at `under`, the key path the snapshot's blocks sit below, as paste_problems takes it), reported as a key
+    finding at the dict holding it; and an uptime (UPTIME_KEYS) whose value is not what public_uptime would have
+    written, reported as a value finding at its own path (the number itself is not carried in the kind, and a caller
+    prints the kind and the path alone). The walk (paste_problems) is a shape rule and passes both: `t` fits the
+    identifier grammar and an uptime to the second is a number, so a document that a fold produced passes here by
+    construction, and one a user edited after the export (a `t` put back on a split row, an uptime typed to the
+    second) is refused with the same wording the export's own check uses (`romp perf upload`, 2026-09-18)."""
+    problems = []
+    n = len(under)
+
+    def walk(node, where):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                key = k if isinstance(k, str) else str(k)
+                here = where + (key,)
+                anchored = here[n:] if here[:n] == tuple(under) else None
+                if denied(key, v) or (anchored is not None and anchored in DENY_PATHS):
+                    problems.append(Problem("a key the denylist drops", True, "/".join(str(x) for x in where), key, len(where)))
+                    continue
+                if key in UPTIME_KEYS:
+                    rounded = public_uptime(v)
+                    if not (rounded is v or rounded == v):
+                        problems.append(Problem("an uptime not rounded to whole minutes", False,
+                                                "/".join(str(x) for x in here), str(v), len(here)))
+                walk(v, here)
+        elif isinstance(node, (list, tuple)):
+            for i, v in enumerate(node):
+                walk(v, where + (i,))
+
+    walk(doc, ())
+    return problems
+
+
 # ── the identifier scan ──────────────────────────────────────────────────────────────────────────────────
 PROBE_MIN = 4   # a shorter machine string matches romp's own vocabulary too often to be a probe
 WORD_KINDS = frozenset({"hostname", "username"})   # probes that are words: matched as runs of whole tokens

@@ -23,10 +23,13 @@ machine's MemTotal, one of them half of it); durations stay, and per-process and
 by design (the boot's stage split under pusher.firstCycle and jobs.firstPass, whole; the lifetime maxima; every
 counter), because they are the data a reader wants, so two exports from one kernel life, or from one machine,
 remain linkable through them. No hostname, path, pid, session id, username or clock stamp is written; the finished document
-is searched for the strings only this machine knows (perf_public.identifier_hits) and walked once more
-(perf_public.paste_problems); either finding refuses the write, and the SHALLOWEST finding across both is the one
-named (check_document), so a walk problem beneath a machine-named key is reported as the machine string, not as
-a path spelling the key, and a machine string beneath a key the walk refuses (a 32-hex token) is reported as
+is searched for the strings only this machine knows (perf_public.identifier_hits), walked once more
+(perf_public.paste_problems) and walked for the denylist (perf_public.denylist_problems: a key the fold drops, an
+uptime not on whole minutes; a fold's own output carries neither, so here it is a belt, and for `romp perf upload`,
+which runs the same check over a file the user may have edited, it is the check that a `t` put back or an uptime
+typed to the second does not travel); any finding refuses the write, and the SHALLOWEST finding across the three is
+the one named (check_document), so a walk problem beneath a machine-named key is reported as the machine string, not
+as a path spelling the key, and a machine string beneath a key the walk refuses (a 32-hex token) is reported as
 that key's rule and its dict, not as a path spelling the token. The refusal is built from the finding's fields
 (the kind of string or rule, and the key path: a value's own path, or the path of the dict holding a key), never
 from a line that carries the flagged text, so a key or value containing " at " cannot put a fragment of itself
@@ -263,16 +266,19 @@ def export_document(snap: dict, usage=False, now=None) -> dict:
 def check_document(doc: dict, state: Path, under=("perf",), tail="nothing written"):
     """None when the finished document may be written; else the one-line reason, built from the finding's fields:
     the kind of string or rule and the key path (a value's own path; for a key, the path of the dict holding it),
-    never the key or the value itself. Both mechanisms run, the identifier scan and the walk, and the SHALLOWEST
-    finding is the one named: the fewest path components, a key finding counting the depth of the dict holding it
-    and a value finding its own, the scan's wording when the depths tie.
+    never the key or the value itself. All three mechanisms run, the identifier scan, the walk and the denylist
+    walk (pp.denylist_problems: a key the fold drops or an uptime not on whole minutes, which a fold's own output
+    never carries, so for this verb it is a belt; for `romp perf upload`, over a file as it stands, it is what
+    refuses a `t` the user put back or an uptime typed to the second), and the SHALLOWEST finding is the one named:
+    the fewest path components, a key finding counting the depth of the dict holding it and a value finding its
+    own, the scan's wording when the depths tie, then the walk's.
 
     The rule this keeps: the refusal never prints a path component that the walk would refuse to write, nor one
-    that spells a string this machine knows. Every component of a printed path is a key of a dict above the
-    finding, and a key either mechanism flags is a finding of its own at a strictly shallower depth, so the
-    shallowest finding cannot sit beneath one. Naming the scan's finding first whatever its depth (round 1) printed
-    a 32-hex token, the class of key the walk refuses, when a hostname sat beneath it; naming the walk's first (the
-    version before) printed a key spelling the hostname when free text sat beneath that.
+    that spells a string this machine knows, nor one the denylist drops. Every component of a printed path is a key
+    of a dict above the finding, and a key any mechanism flags is a finding of its own at a strictly shallower
+    depth, so the shallowest finding cannot sit beneath one. Naming the scan's finding first whatever its depth
+    (round 1) printed a 32-hex token, the class of key the walk refuses, when a hostname sat beneath it; naming the
+    walk's first (the version before) printed a key spelling the hostname when free text sat beneath that.
 
     `under` is the key path the document's blocks sit below (the export's `perf`; the root for the restart
     document, whose blocks are its top-level keys) and `tail` what the refusal says was not done (this verb's write;
@@ -284,6 +290,8 @@ def check_document(doc: dict, state: Path, under=("perf",), tail="nothing writte
                 for h in pp.identifier_hits(doc, pp.machine_probes(state), skip=("schema",))]
     findings += [(p.depth, 1, "the public form still fails the walk (%s, %s)" % (p.kind, pp.place(p)))
                  for p in pp.paste_problems(doc, skip=("schema",), under=under)]
+    findings += [(p.depth, 2, "the public form still fails the denylist (%s, %s)" % (p.kind, pp.place(p)))
+                 for p in pp.denylist_problems(doc, under=under)]
     if not findings:
         return None
     return "%s; %s" % (min(findings, key=lambda f: f[:2])[2], tail)    # min is stable: walk order among equals

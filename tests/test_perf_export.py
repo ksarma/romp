@@ -469,6 +469,58 @@ class FoldInvariant(unittest.TestCase):
                           ("outside the identifier grammar", True, "", 0), ("outside the identifier grammar", True, "GET /perf", 1)],
                          "a key that contains the separator is one component, so the depth rides in its own field")
 
+
+    def test_the_denylist_walk_is_the_third_source_and_a_fold_passes_it_by_construction(self):
+        """`t` fits the identifier grammar and an uptime to the second is a number, so the walk passes both; the denylist
+        walk (pp.denylist_problems) refuses what the fold would have dropped or rounded, which is what lets `romp perf
+        upload`, running check_document over a file the user may have edited, refuse a `t` put back or an uptime typed
+        to the second. Over a fold's own output it finds nothing, so the export's own write is unchanged (2026-09-18)."""
+        doc = pe.export_document(leak_snapshot(), usage=True)
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",)), [], "a fold's output is the walk's fixed point")
+        self.assertIsNone(_check(doc))
+        # a split row's stamp put back: a key finding at the dict holding it (the walk is silent)
+        doc["perf"]["pusher"]["firstCycle"]["t"] = 900.5
+        self.assertEqual(pp.paste_problems(doc, skip=("schema",), under=("perf",)), [])
+        self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",))],
+                         [("a key the denylist drops", True, "perf/pusher/firstCycle", 3)])
+        self.assertEqual(_check(doc), "the public form still fails the denylist (a key the denylist drops, a key under perf/pusher/firstCycle); nothing written")
+        # an uptime off the grain: a value finding at its own path, the number in no printed field; on the grain it
+        # passes, a float on the grain too (the fold's int compares equal), and what is not a number is left alone
+        for raw, refused in ((3725, True), (59.9, True), (3720, False), (3720.0, False), (0, False), (None, False), (True, False)):
+            doc = pe.export_document(leak_snapshot())
+            doc["perf"]["uptime_s"] = raw
+            problems = pp.denylist_problems(doc, under=("perf",))
+            if refused:
+                self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in problems],
+                                 [("an uptime not rounded to whole minutes", False, "perf/uptime_s", 2)], repr(raw))
+                self.assertEqual(_check(doc), "the public form still fails the denylist (an uptime not rounded to whole minutes, "
+                                              "the value at perf/uptime_s); nothing written", repr(raw))
+            else:
+                self.assertEqual(problems, [], repr(raw))
+        # the rest of the denylist through the same walk: DENY_PATHS anchored at the snapshot's root (`perf`), a pid under
+        # any spelling, an identity key over text (over a number it is a counter and stays), a denied key inside `usage`
+        doc = pe.export_document(leak_snapshot(), usage=True)
+        doc["perf"]["now"] = 1000.5
+        doc["perf"]["process"]["cliPid"] = 4242
+        doc["perf"]["heap"]["name"] = "x"
+        doc["perf"]["heap"]["names"] = 3
+        doc["usage"]["sid"] = 1
+        self.assertEqual(sorted((p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",))),
+                         sorted([("a key the denylist drops", "perf"), ("a key the denylist drops", "perf/process"),
+                                 ("a key the denylist drops", "perf/heap"), ("a key the denylist drops", "usage")]))
+        # the depth rule holds with the third source: a machine string beneath a denied key names the denied key's dict,
+        # so the printed path never carries a key the denylist drops; a shallower scan finding wins over a deeper denied key
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["heap"]["t"] = {"TESTHOST": {"a b": 1}}
+        self.assertEqual(_check(doc), "the public form still fails the denylist (a key the denylist drops, a key under perf/heap); nothing written")
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["heap"]["TESTHOST"] = {"t": 1}
+        self.assertEqual(_check(doc), "a string this machine knows (hostname) survives as a key under perf/heap; nothing written")
+        # on a tie: the scan's wording, then the walk's, then the denylist's
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["heap"]["a b"] = 1
+        doc["perf"]["heap"]["t"] = 1
+        self.assertEqual(_check(doc), "the public form still fails the walk (outside the identifier grammar, a key under perf/heap); nothing written")
     def test_the_walk_holds_the_http_block_to_the_registers_image_and_the_stack_sample_to_its_grammars(self):
         # the walk's http check is membership in what the kernel's fold can return (http_key_ok), not a character grammar:
         # a path-shaped key the register never makes is named. The stack sample rides in a served snapshot under its

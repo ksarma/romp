@@ -3811,11 +3811,14 @@ directory, the session ids and working directories in the state directory's
 registry; a hostname or user is matched as whole words, so a user named
 `mark` is not found in the counter `intrMarks`), then walked once more for a
 uuid, a 32-hex or 40-hex token, an absolute path or free text (a string
-carrying whitespace); either finding refuses the write and names the kind of
+carrying whitespace), and checked against the denylist (a key the export
+drops, or an uptime not rounded to whole minutes: a check the export's own
+output passes by construction, and which `romp perf upload` runs again over a
+file you may have edited); any finding refuses the write and names the kind of
 finding and the key path (a value's own path, or the path of the dict holding
-a key), never the key or the value; when both find something, the finding
-with the shortest path is named, so the path printed never carries a key
-either would refuse.
+a key), never the key or the value; when more than one check finds something,
+the finding with the shortest path is named, so the path printed never carries
+a key any check would refuse.
 The file lands as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json` under the
 state directory, readable by the owner alone, or at `--out` (a write that
 fails partway removes the file rather than leave a truncated one); the path
@@ -3850,9 +3853,11 @@ appended to; a refused address is not echoed. The receiver is unauthenticated,
 so no credential exists for it: the verb reads no token and sends none. The
 file must be a regular file of at most 1 MiB that parses as strict JSON (no
 `NaN` or `Infinity`, no key repeated within an object) with the
-`romp-perf-export/1` schema line. It must also pass the export's own scan and
-walk again, as it stands, since you may have edited it; a finding is reported
-by kind and key path, never by value. The verb then prints the path, the byte
+`romp-perf-export/1` schema line. It must also pass the export's own scan,
+walk and denylist check again, as it stands, since you may have edited it (a
+`t` put back on a split row or an uptime typed to the second is refused: the
+export would have dropped or rounded it); a finding is reported by kind and
+key path, never by value. The verb then prints the path, the byte
 size and the URL it will dial (the address as configured with `/v1/upload`
 appended, so whatever the setting carries is seen before the yes) and asks for
 a yes. Off a terminal it refuses unless `--yes` is passed. That flag is the form an agent

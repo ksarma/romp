@@ -139,6 +139,23 @@ def _export(xdg, state):
     return out
 
 
+def _keys_named(doc, name):
+    """The key paths (`a/b/0`) of every dict holding a key named `name`, at any depth of `doc`; empty when none does."""
+    out = []
+
+    def walk(node, where):
+        if isinstance(node, dict):
+            if name in node:
+                out.append("/".join(str(p) for p in where))
+            for k, v in node.items():
+                walk(v, where + (k,))
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                walk(v, where + (i,))
+    walk(doc, ())
+    return out
+
+
 def _free_port():
     """A loopback port nothing listens on (bound and released; the kernel does not hand it out again at once)."""
     s = socket.socket()
@@ -407,6 +424,46 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.returncode, 0, "the file as the export wrote it passes the same check")
         self.assertEqual(len(self.fake.requests), 1)
 
+    def test_an_edited_file_carrying_a_split_row_stamp_is_refused_by_the_denylist_naming_the_row_and_never_the_key(self):
+        """`t` is denied at any depth (perf_public.DENY_KEYS, 2026-09-18): the export drops it from every split row, so a
+        file that carries one was edited after the export. The walk alone passes it (`t` fits the identifier grammar);
+        the denylist walk refuses it, and the refusal names the dict holding the key, never the key or its value."""
+        base = ["--yes", "--receiver", self.fake.url]
+        doc = json.loads(self.data)
+        self.assertEqual(_keys_named(doc, "t"), [], "the export wrote no key named t at any depth")
+        doc["perf"]["pusher"]["firstCycle"] = {"s": 0.5, "t": 900.5}          # a split row with its wall-clock stamp put back
+        edited = os.path.join(self.xdg, "edited.json")
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        r = self._refused(_run([edited] + base, self.state), 1,
+                          "refused: the public form still fails the denylist (a key the denylist drops, a key under perf/pusher/firstCycle); nothing sent")
+        self.assertNotIn("900", r.stdout + r.stderr)
+        self.assertEqual(r.stdout, "", "refused before the summary line")
+        self.assertEqual(self.fake.requests, [], "nothing was sent")
+
+    def test_an_edited_file_with_the_uptime_to_the_second_is_refused_naming_the_value_path_and_never_the_number(self):
+        """The export rounds `uptime_s` down to whole minutes (perf_public.public_uptime, 2026-09-18); a file carrying
+        one to the second was edited after the export. A number passes the walk; the denylist walk refuses it, naming
+        the value's path and not the number."""
+        base = ["--yes", "--receiver", self.fake.url]
+        doc = json.loads(self.data)
+        self.assertEqual(doc["perf"]["uptime_s"], 60, "the planted snapshot's 100.5 s left the export as one whole minute")
+        doc["perf"]["uptime_s"] = 3725
+        edited = os.path.join(self.xdg, "edited.json")
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        r = self._refused(_run([edited] + base, self.state), 1,
+                          "refused: the public form still fails the denylist (an uptime not rounded to whole minutes, the value at perf/uptime_s); nothing sent")
+        self.assertNotIn("3725", r.stdout + r.stderr)
+        self.assertEqual(r.stdout, "", "refused before the summary line")
+        self.assertEqual(self.fake.requests, [], "nothing was sent")
+        doc["perf"]["uptime_s"] = 3720                                            # on the grain: what the export would have written
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        r = _run([edited] + base, self.state)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.fake.requests), 1, "a whole-minute uptime passes the same check")
+
     def test_the_line_before_the_prompt_names_the_url_dialled_with_a_path_and_port_in_the_address_included(self):
         base = self.fake.url + "/u/" + SID                # an address whose path carries an identifier: it is dialled, so it is shown
         r = _run([self.file, "--yes", "--receiver", base + "/"], self.state)
@@ -443,7 +500,7 @@ class Cli(unittest.TestCase):
         self.assertNotIn("Recursion", r.stderr)
         self.assertEqual(self.fake.requests, [])
         with open(deep, "w") as fh:
-            fh.write('{"schema": "romp-perf-export/1", "perf": {"uptime_s": 1, "x": ' + '{"a": ' * 900 + "1" + "}" * 900 + "}}")
+            fh.write('{"schema": "romp-perf-export/1", "perf": {"uptime_s": 60, "x": ' + '{"a": ' * 900 + "1" + "}" * 900 + "}}")
         r = _run([deep] + base, self.state)
         self.assertEqual(r.returncode, 0, r.stderr + " (the receiver's depth rule is the receiver's; the verb parses, walks and sends)")
         self.assertEqual(len(self.fake.requests), 1)
