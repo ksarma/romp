@@ -109,7 +109,7 @@ def http_public_key(key):
     then the register; anything else is `other`. A kernel from before the served-leak fixes counted the raw paths,
     so a saved snapshot of its /perf carries them; a current kernel's keys pass through unchanged."""
     if not isinstance(key, str) or key == OTHER:
-        return OTHER if key != OTHER else OTHER
+        return OTHER
     method, sep, path = key.partition(" ")
     if not sep or not path.startswith("/"):
         return OTHER
