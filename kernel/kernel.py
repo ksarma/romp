@@ -1476,7 +1476,7 @@ class _PerfStats:
                           ("backref", jd.backref_memo_stats), ("captions", jd.captions_memo_stats),
                           ("goalArchive", jd.goal_archive_memo_stats), ("plannerSkip", jd.planner_skip_stats),
                           ("liftGate", _lift_gate_report), ("bgTops", _bg_tops_report),
-                          ("wire", lambda: dict(_wire_stats)),
+                          ("wire", _wire_stats_report),
                           ("intrMarks", _intr_marks_memo_report), ("deadWait", lambda: dict(_DEAD_WAIT_STATS)),
                           ("tickSeen", _tick_seen_report),
                           ("sessions_scope", _sessions_scope_report), ("caps", _caps_memo_report),
@@ -52784,11 +52784,12 @@ def _dedup_sig(msg, s):
 # here would be a read-modify-write across threads (the tests assert exact counts). /perf reports them under
 # memos.wire. Three read the per-entry work itself (stage 1 of the incremental-push design, 2026-09-18):
 # entries_walked (entries a _delta_split visited: every entry of every collection it split, a rebuild's new
-# collection object walks them all), entries_encoded (those it json-encoded: the walked entries the per-entry
-# memo did not hold as the same object, so walked minus encoded is what the memo saved) and feed_slot_split
-# (feed sends through the view-delta SLOT path, _send_slot_delta with no parts handed down: a ?delta=1 feed
-# client without FEED_DELTA_CAP, whose _delta_parts("feed") encodes every card again per build; nonzero means
-# one is connected, zero once stage 3 retires that path).
+# collection object walks them all, an unchanged collection object is served from _delta_split_memo and walks
+# none), entries_encoded (those it json-encoded: the walked entries the per-entry memo did not hold as the same
+# object, so walked minus encoded is what the memo saved) and feed_slot_split (feed sends through the view-delta
+# SLOT path, _send_slot_delta with no parts handed down, counted per send whether a frame crossed or the dedup
+# held it: a ?delta=1 feed client without FEED_DELTA_CAP, whose _delta_parts("feed") encodes every card again
+# per build; nonzero means one is connected, zero once stage 3 retires that path).
 _wire_stats = {"feed_cards_hit": 0, "feed_cards_miss": 0, "split_hit": 0, "split_miss": 0, "feed_body": 0,
                "bars_body": 0, "feed_sig_fallback": 0, "feed_first": 0, "bars_sig_fallback": 0, "default_str": 0,
                "entries_walked": 0, "entries_encoded": 0, "feed_slot_split": 0}
@@ -52799,6 +52800,13 @@ _wire_default_said = set()   # type names _wire_default has written to stderr: a
 def _wire_bump(key, n=1):
     with _WIRE_STATS_LOCK:
         _wire_stats[key] = _wire_stats.get(key, 0) + n
+
+
+def _wire_stats_report():
+    """memos.wire for /perf: the counters copied under their lock, so a pair a split adds in one acquisition
+    (entries_walked and entries_encoded) is read whole, never with one half advanced."""
+    with _WIRE_STATS_LOCK:
+        return dict(_wire_stats)
 
 
 def _wire_default(o, enc="wire"):
@@ -53459,6 +53467,7 @@ def _delta_split(kind, value, memo_key=None):
     prev = _delta_entry_memo.get(memo_key) if memo_key is not None else None
     cur = {} if memo_key is not None else None
     encoded = 0                                        # entries this split json-encoded (memos.wire entries_encoded)
+
     def put(kk, v, pre=""):
         nonlocal encoded
         if kk is None or kk in ents:
@@ -53476,32 +53485,37 @@ def _delta_split(kind, value, memo_key=None):
         if cur is not None:
             cur[id(v)] = pair
         ents[kk] = pair; order.append(kk)
-    if kind == "dict" and isinstance(value, dict):
-        for kk, v in value.items():
-            put(str(kk), v)
-    elif kind.startswith(("byid", "bykeys:")) and isinstance(value, list):
-        for it in value:
-            put(key(it), it)
-    elif kind.startswith("dictlist:") and isinstance(value, dict):
-        for dk, lst in value.items():
-            if _DELTA_SEP in str(dk):
-                raise ValueError("lane key carries the separator")
-            pre = str(dk) + _DELTA_SEP
-            if not isinstance(lst, list) or not lst:
-                put(pre, lst)                      # an empty or non-list lane: one entry under its bare prefix
-                continue
-            for it in lst:
-                put(key(it, pre), it, pre)
-    else:
-        # a value the kind cannot key (None where a list belongs, a list where a dict does): NOT zero entries —
-        # that split carried the value nowhere, and the client kept its assembled [] / {} while the kernel held
-        # something else, with no resync ever asked (review find, 2026-09-04). Unkeyable → the whole frame goes.
-        raise ValueError("%s collection is a %s, not a %s" % (
-            kind, type(value).__name__, "dict" if kind == "dict" or kind.startswith("dictlist:") else "list"))
-    if cur is not None:
-        _delta_entry_memo[memo_key] = cur
-    _wire_bump("entries_walked", len(order))           # every entry visited (one `put` each), and how many of them
-    _wire_bump("entries_encoded", encoded)             #  were encoded rather than served from the per-entry memo
+    try:
+        if kind == "dict" and isinstance(value, dict):
+            for kk, v in value.items():
+                put(str(kk), v)
+        elif kind.startswith(("byid", "bykeys:")) and isinstance(value, list):
+            for it in value:
+                put(key(it), it)
+        elif kind.startswith("dictlist:") and isinstance(value, dict):
+            for dk, lst in value.items():
+                if _DELTA_SEP in str(dk):
+                    raise ValueError("lane key carries the separator")
+                pre = str(dk) + _DELTA_SEP
+                if not isinstance(lst, list) or not lst:
+                    put(pre, lst)                  # an empty or non-list lane: one entry under its bare prefix
+                    continue
+                for it in lst:
+                    put(key(it, pre), it, pre)
+        else:
+            # a value the kind cannot key (None where a list belongs, a list where a dict does): NOT zero entries.
+            # That split carried the value nowhere, and the client kept its assembled [] / {} while the kernel held
+            # something else, with no resync ever asked (review find, 2026-09-04). Unkeyable: the whole frame goes.
+            raise ValueError("%s collection is a %s, not a %s" % (
+                kind, type(value).__name__, "dict" if kind == "dict" or kind.startswith("dictlist:") else "list"))
+        if cur is not None:
+            _delta_entry_memo[memo_key] = cur
+    finally:
+        with _WIRE_STATS_LOCK:                         # the pair under ONE acquisition: walked minus encoded is what the memo
+            _wire_stats["entries_walked"] += len(order)   #  saved, and a /perf copy (taken under this lock, _wire_stats_report)
+            _wire_stats["entries_encoded"] += encoded     #  must never read walked ahead of encoded; in a finally, so a split
+            #                                              that raised mid-walk still counts every entry it visited (one `put`
+            #                                              each) and every one it encoded
     return ents, order
 
 

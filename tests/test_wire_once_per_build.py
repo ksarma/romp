@@ -307,6 +307,65 @@ class OneEncodePerBuild(unittest.TestCase):
             self.assertIsInstance(km._wire_stats[k], int)
             self.assertGreaterEqual(km._wire_stats[k], s0[k], "%s is monotonic" % k)
 
+    def test_a_split_that_raises_mid_walk_still_counts_what_it_visited(self):
+        """The counters are the design's evidence, so they count every entry a split visited, a split that raised
+        included: the bumps sit in a finally. A dictlist payload whose second lane key carries the separator
+        raises after the first lane's three bars were walked and encoded (2026-09-18 review, nit 3)."""
+        lanes = {SID: [{"id": "b%d" % i} for i in range(3)], "x" + km._DELTA_SEP + "y": [{"id": "b9"}]}
+        s0 = dict(km._wire_stats)
+        with self.assertRaises(ValueError):
+            km._delta_split("dictlist:id", lanes)
+        d = _delta(km._wire_stats, s0)
+        self.assertEqual((d.get("entries_walked", 0), d.get("entries_encoded", 0)), (3, 3),
+                         "the first lane's bars, walked and encoded before the raise: %r" % d)
+
+    def test_the_walked_and_encoded_pair_moves_together_and_the_snapshot_reads_under_the_lock(self):
+        """walked minus encoded is what the memo saved, so the two must never be read half advanced: one lock
+        acquisition adds both, and the /perf snapshot copies memos.wire under the same lock (2026-09-18 review,
+        low 2: two bumps under two acquisitions and a lockless dict() copy let a snapshot between them read walked
+        ahead by the split's whole encoded count)."""
+        real = km._WIRE_STATS_LOCK
+        seen = []                                              # (walked, encoded) at every release during the split
+
+        class Spy:
+            def __enter__(self):
+                real.acquire(); return self
+
+            def __exit__(self, *exc):
+                seen.append((km._wire_stats["entries_walked"], km._wire_stats["entries_encoded"])); real.release()
+                return False
+        w0, e0 = km._wire_stats["entries_walked"], km._wire_stats["entries_encoded"]
+        lanes = {SID: [{"id": "b%d" % i} for i in range(4)]}   # a first split: every bar encoded
+        with mock.patch.object(km, "_WIRE_STATS_LOCK", Spy()):
+            km._delta_split("dictlist:id", lanes)
+            self.assertTrue(seen, "the counters moved under the lock")
+            for w, e in seen:
+                self.assertEqual(w - w0, e - e0, "at no release is walked ahead of encoded: %r" % (seen,))
+            self.assertEqual(seen[-1], (w0 + 4, e0 + 4))
+            n = len(seen)
+            snap = km._PERF_STATS.snapshot()
+            self.assertEqual(len(seen), n + 1, "the snapshot's copy of memos.wire is taken under the lock")
+        self.assertEqual(snap["memos"]["wire"]["entries_walked"], w0 + 4)
+
+    def test_a_timeline_client_alone_records_the_bars_split_and_its_compare(self):
+        """The bars path has its own compare seam around _send_slot (2026-09-18 review, medium 6): a timeline client
+        with no feed client records barsSplit and compare on a rebuild, no feedParts, and the compare alone on a
+        wire hit."""
+        _World(self, feed=_feed(), timeline=_timeline())
+        tl = _client("timeline")
+        ps = km._PERF_STATS
+        ps.cycle_begin()
+        t0 = time.monotonic(); km._push([tl]); ps.cycle(time.monotonic() - t0)
+        row = ps.snapshot()["pusher"]["stageRing"][-1]["stages"]
+        self.assertEqual(sorted(k for k in row if k.startswith("push.send")),
+                         ["push.send", "push.send.barsSplit", "push.send.compare"], "no feed client: no feedParts")
+        self.assertEqual([f["type"] for f in tl["frames"]], ["data", "bars"])
+        ps.cycle_begin()
+        t0 = time.monotonic(); km._push([tl]); ps.cycle(time.monotonic() - t0)
+        row2 = ps.snapshot()["pusher"]["stageRing"][-1]["stages"]
+        self.assertEqual(sorted(k for k in row2 if k.startswith("push.send")), ["push.send", "push.send.compare"],
+                         "a wire hit: no split; the timeline client's compare still ran")
+
     def test_perf_reports_the_wire_counters(self):
         snap = km._PERF_STATS.snapshot()
         self.assertEqual(snap["memos"]["wire"], dict(km._wire_stats))
