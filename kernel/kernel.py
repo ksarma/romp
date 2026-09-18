@@ -52897,9 +52897,12 @@ def _note_chat_withheld_at_close(client, now=None):
     case, told apart from the routine pre-ready race (a pusher cycle between the accept and the bundle's ready, whose handshake
     then arrives and whose frames follow), which used to file the same row (the tidy after PR 1642, low 1). The permanent case is
     any chat socket whose wire was never declared while frames were withheld: one that sent nothing for its whole life (a page
-    whose ready never came and that asked for nothing), and one of CURRENT vintage (a namespaced-iid relay, an ext pipe) that
-    sent frames and never a ready, which the vintage rule leaves withheld; a chat socket of older vintage is taken at its first
-    frame instead (_implicit_handshake, 2026-09-18) and files no row here. Returns whether a row was filed."""
+    whose ready never came and that asked for nothing), and one the vintage rule declines (a namespaced-iid relay, an ext pipe)
+    that sent frames and never a ready, which the rule leaves withheld; a chat socket the rule takes is taken at its first frame
+    instead (_implicit_handshake, 2026-09-18) and files no row here: an older hub's relay, an upstream pane shim's redial between
+    8610b8954 and 42ab10dd1 at the row it flushes, and an upstream pane shim of cd1625792 or later at the frame its open flushes
+    ahead of the ready it re-posts (no upstream shim announces caps, so the readyGate decline reaches none of them). Returns
+    whether a row was filed."""
     if client.get("handshake") is not False or not client.get("withheld"):
         return False
     try:
@@ -52926,9 +52929,11 @@ def _implicit_handshake(client, msg):
     then ask this kernel for things: a hub page older than the federation's remote ready (b84f716a8 for a proto-2 page,
     f7a80efee for every page) relaying to a newer kernel, whose federation sent the page's ready to the local socket alone;
     and an upstream pane shim between 8610b8954 and 42ab10dd1 redialing after this kernel restarted: its dial carries
-    reconnect=1 (8610b8954's term) with no proto term (42ab10dd1's) and no caps term, and its open re-posts no ready (the
-    bundle posts ready once; no upstream shim of any vintage re-posts a bare ready). The LINE tells the two shims apart,
-    not their age: a fork pane shim carrying a3a9e7385's re-send (2026-09-03) announces the readyGate hold and then
+    reconnect=1 (8610b8954's term) with no proto term (42ab10dd1's) and no caps term, and its open re-posts no ready: no
+    upstream build in that range does. The onopen at 8610b8954, be11455cd and 7390404be flushes its queue and posts nothing
+    (`readyQueued` there gates the dial term, it is not a re-send), and `ws.send(readyMsg)` first appears at cd1625792,
+    after the range. The LINE tells the two shims apart, not their age: a fork pane shim carrying a3a9e7385's re-send
+    (2026-09-03) announces the readyGate hold and then
     re-posts a bare ready in its redial's onopen right after its queue flush, so it declares proto 1 itself one frame
     later; it is declined below for that readyGate and served at that ready (review round 3). fd95b435a, the fork merge
     in the bug report, is an instance of the fork case, and by wall clock it is NEWER than 7390404be (2026-09-11 against
@@ -52976,16 +52981,26 @@ def _implicit_handshake(client, msg):
     kernel log (review round 2, 2026-09-18). Returns whether the mark lifted here.
     With federation.ts posting its ready before its flush (the same change), a current page's frame ahead of its ready can
     no longer pin its socket under any kernel, and a current relay that opens before its page's proto is known sends no
-    ready at the open, is declined here by its namespaced iid, and is served when its ready comes, as before. Two
-    intermediate vintages are still taken and repair themselves at their ready (review round 2): a hub whose federation is
+    ready at the open, is declined here by its namespaced iid, and is served when its ready comes, as before. Three
+    vintages are still taken and repair themselves at their ready, two intermediate (review round 2) and upstream's
+    current pane shim (the closing check, 2026-09-18): a hub whose federation is
     between b84f716a8 (2026-09-11, the ready posted on the relay, behind its flush) and 8fe70da07 (2026-09-15, the
     namespaced iid) dials app and wid alone and flushes a frame parked while the relay was down or connecting (a setting,
     its active tab, an ask) before its ready, so that frame is taken here and a pusher cycle before the ready serves one
     index session frame; and a VS Code extension host built between a6c57f42a (2026-09-11, the uuid wire) and f19808d19
     (2026-09-15, the client=ext term) dials with no term to stand it down, so an intent it replays on a reconnect is taken
-    and the pipe is served the index wire until its webview's ready. The kernel cannot tell either dial from the older
-    producers this exists for (app and wid alone, no header, no namespaced iid); both windows end at the ready, which
-    re-declares the wire, resets the base and pops the mark, and the implicitHandshake row is the record of the window."""
+    and the pipe is served the index wire until its webview's ready. An upstream pane shim of cd1625792 (2026-09-11) or
+    later is taken the same way and repairs the same way: from that commit its open re-posts the bundle's ready when no
+    caps frame ever answered it, and that re-post comes after the queue flush, so a frame the flush carries is taken here
+    and the re-posted ready (`{type:"ready",proto:2}` for a chat page) re-declares the wire one frame later. Such a dial
+    carries no reconnect term (the term needs `readyAcked`, the re-post needs `!readyAcked`), so it is not the silent
+    shape and no build at or after 42ab10dd1 can make that shape. The kernel cannot tell any of the three dials from the
+    older producers this exists for (app and wid alone, no header, no namespaced iid, no caps); each window ends at the
+    ready, which re-declares the wire, resets the base and pops the mark, and the implicitHandshake row is the record of
+    the window. No upstream shim announces caps at any vintage (`&caps=` appears nowhere in upstream/main's kernel.py
+    history), so the readyGate decline is the fork's alone: the fork's current shim carries the same re-post and is
+    declined for its `caps=readyGate` term, and an upstream shim of the same vintage is taken and repairs at its
+    re-posted ready."""
     if not isinstance(msg, dict) or msg.get("type") == "ready":
         return False
     if client.get("app") != "chat":

@@ -455,8 +455,9 @@ class RealArm(Harness):
     #             announced, served at that ready. The fork LINE, not an older vintage: fd95b435a (2026-09-11) is newer than 7390404be (2026-09-10) by wall clock
     SILENT_REDIAL = ("/ws?app=chat&delta=1&iid=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee&wid=w1&active=%s&reconnect=1" % SID)   # the upstream shim's redial between 8610b8954 and
     #             42ab10dd1, term for term (git show 8610b8954:kernel/kernel.py and git show 7390404be:kernel/kernel.py, the dial lines): app, delta, the bare uuid iid, wid,
-    #             active, reconnect=1 (8610b8954's term); NO caps term (upstream has no readyGate), no proto term (42ab10dd1 adds it), and no ready re-posted at its open (the
-    #             bundle posts ready once; no upstream shim of any vintage re-posts one): the shim the gate held silent
+    #             active, reconnect=1 (8610b8954's term); NO caps term (upstream has no readyGate), no proto term (42ab10dd1 adds it), and its open re-posts no ready: no
+    #             upstream build in that range does. The onopen at 8610b8954, be11455cd and 7390404be flushes its queue and posts nothing (`readyQueued` there gates the
+    #             dial term, it is not a re-send), and `ws.send(readyMsg)` first appears at cd1625792, after the range. The shim the gate held silent
     READY2 = {"type": "ready", "proto": 2}
     INTENT = {"type": "sendMessage", "id": SID, "text": "a message typed while the pipe was down"}
 

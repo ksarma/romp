@@ -216,10 +216,12 @@ class WindowSpans(Harness):
 
     def test_an_older_vintage_sockets_first_frame_stands_as_a_proto1_handshake_and_a_silent_socket_stays_withheld(self):
         """2026-09-18: an older hub's relay socket (no proto term, no ready ever: its page sent the ready to its local socket alone) and
-        an upstream shim's redial between 8610b8954 and 42ab10dd1 (reconnect=1 with no proto term and no caps term, no ready re-posted
-        at its open: no upstream shim of any vintage re-posts one) got no chat frame for the socket's life from the round-eleven gate
-        above; the first client frame from such a socket now stands as a proto-1 handshake
-        (_implicit_handshake) and the socket is served the index wire from there. A fork shim carrying a3a9e7385's re-send is told
+        an upstream shim's redial between 8610b8954 and 42ab10dd1 (reconnect=1 with no proto term and no caps term) got no chat frame
+        for the socket's life from the round-eleven gate above; the first client frame from such a socket now stands as a proto-1
+        handshake (_implicit_handshake) and the socket is served the index wire from there. That redial announces no caps, and its
+        open re-posts no ready: no upstream build in that range does. The onopen at 8610b8954, be11455cd and 7390404be flushes its
+        queue and posts nothing (`readyQueued` there gates the dial term, it is not a re-send), and `ws.send(readyMsg)` first appears
+        at cd1625792, after the range. A fork shim carrying a3a9e7385's re-send is told
         from the upstream shim by its LINE, not its age (fd95b435a, the fork case in the bug report, is newer than 7390404be): it
         announces readyGate and re-posts a bare ready behind its flush, so it is declined for that readyGate and declares proto 1
         itself one frame later. The rule reads the client's VINTAGE, never the

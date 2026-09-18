@@ -85,8 +85,11 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   before b84f716a8 sent its page's `ready` to its local socket alone); an
   upstream pane shim between 8610b8954 and 42ab10dd1 is the other: its redial
   carries `reconnect=1` (8610b8954's term) with no `proto` term (42ab10dd1's)
-  and no `caps` term, and it re-posts no `ready` (no upstream shim of any
-  vintage does). The line tells the shims apart, not their age: a fork shim
+  and no `caps` term, and its open re-posts no `ready`: no upstream build in
+  that range does. The onopen at 8610b8954, be11455cd and 7390404be flushes
+  its queue and posts nothing (`readyQueued` there gates the dial term, it is
+  not a re-send), and `ws.send(readyMsg)` first appears at cd1625792, after
+  the range. The line tells the shims apart, not their age: a fork shim
   carrying a3a9e7385's re-send announces `readyGate` and then re-posts a bare
   `ready` in its redial's open right after its flush, so it declares proto 1
   itself one frame later and is declined for that `readyGate`. fd95b435a, the
@@ -100,24 +103,38 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   the `ready`'s connect push answers is dropped there rather than flushed (on a
   dial with no `skeleton` term every held ask, since the push serves every
   session whole; on a skeleton dial the active tab's alone, since the push
-  serves that tab and a held ask for any other tab is its only load). Two
-  intermediate vintages are still taken and repair at their `ready`: a hub
-  between b84f716a8 (2026-09-11, the `ready` posted on the relay, behind its
-  flush) and 8fe70da07 (2026-09-15, the namespaced instance id) dials with no
-  `iid` and flushes a parked frame before its `ready`, and a VS Code extension
-  host built between a6c57f42a (2026-09-11) and f19808d19 (2026-09-15, the
-  `client=ext` term) dials with no term to stand it down and replays intents
-  before its webview's `ready` on a reconnect; each is served the index wire
-  from that frame until its `ready` re-declares the wire and resets the base,
-  and its `implicitHandshake` row is the record of the window. Before the
-  implicit handshake, an older dashboard attached to a newer kernel listed the
-  remote's tabs with nothing behind them (2026-09-18). A socket that never
-  declares its wire, whether it sends nothing at all or is of current vintage
-  and sends frames but no `ready`, gets no chat frame, and its close files a
-  `chatWithheld` row in `client-diag.jsonl` with the count of frames withheld; a
-  socket taken at its first frame files an `implicitHandshake` row naming that
-  frame as a word from the kernel's own list of accepted ops (`WS_OPS`, else
-  `other`; never the client's text) and the count withheld before it.
+  serves that tab and a held ask for any other tab is its only load). Three
+  vintages are still taken and repair at their `ready`, two intermediate and
+  upstream's current pane shim: a hub between b84f716a8 (2026-09-11, the
+  `ready` posted on the relay, behind its flush) and 8fe70da07 (2026-09-15,
+  the namespaced instance id) dials with no `iid` and flushes a parked frame
+  before its `ready`, and a VS Code extension host built between a6c57f42a
+  (2026-09-11) and f19808d19 (2026-09-15, the `client=ext` term) dials with no
+  term to stand it down and replays intents before its webview's `ready` on a
+  reconnect; each is served the index wire from that frame until its `ready`
+  re-declares the wire and resets the base, and its `implicitHandshake` row is
+  the record of the window. An upstream pane shim of cd1625792 (2026-09-11) or
+  later is taken the same way and repairs the same way: from that commit its
+  open re-posts the bundle's `ready` when no caps frame ever answered it, and
+  that re-post comes after the queue flush, so a frame the flush carries is
+  taken here and the re-posted `ready` (`{type:"ready",proto:2}` for a chat
+  page) re-declares the wire one frame later. Such a dial carries no reconnect
+  term (the term needs `readyAcked`, the re-post needs `!readyAcked`), so it is
+  not the silent shape and no build at or after 42ab10dd1 can make that shape.
+  No upstream shim announces caps at any vintage (`&caps=` appears nowhere in
+  upstream/main's kernel.py history), so the `readyGate` decline is the fork's
+  alone: the fork's current shim carries the same re-post and is declined for
+  its `caps=readyGate` term, and an upstream shim of the same vintage is taken
+  and repairs at its re-posted `ready`. Before the implicit handshake, an older
+  dashboard attached to a newer kernel listed the remote's tabs with nothing
+  behind them (2026-09-18). A socket that never declares its wire, whether it
+  sends nothing at all or is one the rule declines (a namespaced-iid relay, an
+  ext pipe) and sends frames but no `ready`, gets no chat frame, and its close
+  files a `chatWithheld` row in `client-diag.jsonl` with the count of frames
+  withheld; a socket taken at its first frame files an `implicitHandshake` row
+  naming that frame as a word from the kernel's own list of accepted ops
+  (`WS_OPS`, else `other`; never the client's text) and the count withheld
+  before it.
   Keepalives and the restart notice reach every socket, held or not: the shim
   consumes both itself. On `ready`, a feed
   socket receives the cached `{type:"feed"}` frame at once, with no build, and the
