@@ -3593,8 +3593,16 @@ document stands on its own, each with the reasoning it was given.
     unset and assignable in zsh and is out of the set) and whose text is an absolute path outside every project
     in play is allowed, since such an expansion cannot carry a `../` back in, the project the target's own
     literal prefix sits in being asked first (a numeric name landing in a second tracked project is refused as
-    its literal spelling is, from any cwd, and the refusal names that project, not the cwd's) and a `..` that
-    folds every expansion away still resolving the literal directory part (a link after the fold is judged
+    its literal spelling is, from any cwd, and the refusal names that project, not the cwd's; when the expansion
+    names a folder in the first segment under that root, `<root>/x-$$/y.md`, the literal prefix is the root itself
+    and the target is refused from any cwd even where its literal spelling would pass into an untracked folder, a
+    deliberate false refusal ruled correct in round 2's addendum, 2026-09-18: the folder's name does not exist at
+    check time and is not derivable from the text, so the hook cannot tell which folder the write lands in, a
+    person recovers in one step by spelling the folder, and the opposite error overwrites tracked content
+    silently; the refusal says so, naming the unknown folder rather than the project and asking for the folder
+    spelled out, and only the first segment behaves so, since `<root>/sub/x-$$/y.md` resolves its literal prefix
+    to `<root>/sub` and an untracked `sub` falls through to the cwd rule, both sides pinned by execution) and a
+    `..` that folds every expansion away still resolving the literal directory part (a link after the fold is judged
     under its real path), both of which round 2 found by overwriting a tracked file, while a variable of unknown
     content, a substitution (a `$(date)` in a log's name among them, a cost stated to the user rather than
     solved) and a relative or bare expansion stay refused; the hook reads no variable named in the command to

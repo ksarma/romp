@@ -276,6 +276,10 @@ test('a command the lexer cannot see through and that names no target is allowed
 // dropped while its literal spelling was refused), a `..` that folds every expansion away still resolves
 // the literal directory part (a link after the fold carried a write into the project), and the numeric set
 // is per shell (`$BASHPID` is assignable in zsh, RANDOM and SECONDS under dash).
+// Round 2's addendum (2026-09-18) ruled one residual of the first of those a correct refusal and kept it: a
+// numeric folder name in the first segment under a tracked root (`<root>/x-$$/y.md`) is refused from any cwd,
+// since the folder's name is not known at check time, with a refusal that says so and asks for the folder
+// spelled out; pinned beside the same shape one level deeper under an untracked folder, which is allowed.
 
 const NOT_LITERAL = /is not a literal path/;
 
@@ -479,6 +483,87 @@ test('the numeric narrowing: a target whose only expansions are $$, $RANDOM or $
     const shell = spawnSync('bash', ['-c', `mkdir -p ${out}/run-$$ && echo poison > ${out}/run-$$/../linkdocs/report.md`], { encoding: 'utf8', env: { PATH: process.env.PATH } });
     assert.equal(shell.status, 0, shell.stderr);
     assert.equal(fs.readFileSync(report, 'utf8'), 'poison\n', 'the tracked file was overwritten through the link after the fold');
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
+});
+
+test('review round 2 addendum: a numeric folder name in the first segment under a tracked root is refused from any cwd, naming the unknown folder; one level deeper under an untracked folder it is allowed', () => {
+  // The round-2 own-project branch resolves the literal directory part of `<root>/x-$$/y.md` to the root
+  // itself, and the landing gate on a root holds for every project that tracks anything, so the target is
+  // refused from any cwd while its literal spelling `<root>/x-4242/y.md` passes when that folder is untracked.
+  // Ruled CORRECT and kept (the round-2 addendum, 2026-09-18): the hook cannot compute the literal spelling,
+  // since the folder's name does not exist at check time and is not derivable from the text; a write guard
+  // that does not know refuses, the person recovers in one step by spelling the folder, and the opposite error
+  // overwrites tracked content silently. Pinned in both directions so the next reader cannot close it by
+  // widening the allowance: the first-segment target refuses from the project's own cwd, from a cwd in another
+  // tracked project and from a cwd in none, and the same shape one level deeper (`<root>/build/x-$$/y.md`,
+  // `build` untracked) resolves its literal part to `<root>/build`, fails the landing gate and falls through
+  // to the cwd rule: allowed from a neutral cwd and from another project's, refused with the generic text from
+  // its own project's cwd (round 1's prefix-inside-the-project ruling). The first-segment refusal says why:
+  // the folder's name is not known, not that the target sits in a tracked project, and it asks for the folder
+  // spelled out. Only a folder segment takes that text: an expansion in the file's own name (`<root>/x-$$.md`,
+  // the folder known) and a fold that leaves no expansion (`<root>/run-$$/../y.md`) keep the generic refusal.
+  const out = outsideDir();
+  try {
+    const second = path.join(out, 'second');
+    for (const d of ['.trackchanges', 'docs', 'build', 'x-4242', path.join('build', 'x-4242')]) fs.mkdirSync(path.join(second, d), { recursive: true });
+    fs.writeFileSync(path.join(second, '.trackchanges', 'config.json'), JSON.stringify({ v: 2, tracked: ['docs/report.md'] }));
+    fs.writeFileSync(path.join(second, 'docs', 'report.md'), 'tracked prose\n');
+    const src = path.join(proj, 'base', 'report.md');
+    const UNKNOWN = /cannot tell which folder/;
+    // [command, the folder segment the refusal must name, the target's text as the shell sees it]
+    const first = [
+      [`echo x > ${second}/x-$$/y.md`, 'x-$$', `${second}/x-$$/y.md`],
+      [`cp ${src} "${second}/run-\${RANDOM}/copy.md"`, 'run-${RANDOM}', `${second}/run-\${RANDOM}/copy.md`],
+      [`tee ${second}/t-$SECONDS/log.md < ${src}`, 't-$SECONDS', `${second}/t-$SECONDS/log.md`],
+    ];
+    const cwds = [[second, 'from the project\'s own cwd'], [proj, 'from a cwd in another tracked project'], [out, 'from a cwd in no project']];
+    for (const [cwd, where] of cwds) {
+      for (const [cmd, seg, target] of first) {
+        const reason = evaluate(payload(cmd, cwd));
+        assert.ok(reason, `${where}, the first-segment folder is refused: ${cmd}`);
+        assert.match(reason, UNKNOWN, `${where}, the refusal says the folder is not known: ${reason.split('\n')[0]}`);
+        assert.ok(reason.includes(seg), `${where}, and names the unknown folder ${seg}: ${reason.split('\n')[0]}`);
+        assert.ok(reason.includes('Spell the folder out'), `${where}, and asks for the folder spelled out`);
+        assert.ok(!NOT_LITERAL.test(reason), `${where}, not the generic not-a-literal-path text: ${reason.split('\n')[0]}`);
+        assert.ok(!reason.split(target).join('').includes(second), `${where}, the project is not named apart from the target itself: ${reason.split('\n')[0]}`);
+        assert.ok(!reason.includes(proj), `${where}, nor the cwd's project`);
+        assert.ok(reason.includes('for me to accept or reject') && reason.includes('track-edit'), `${where}, the person's voice and the remedy`);
+        assert.ok(!ROMP_NOUNS.test(reason.split(second).join('<project>')) && !/\u2014/.test(reason), `${where}, no romp noun and no em dash`);
+      }
+      assert.equal(evaluate(payload(`echo x > ${second}/x-4242/y.md`, cwd)), null, `${where}, the spelling the refusal asks for passes: the folder is untracked`);
+      assert.equal(evaluate(payload(`cp ${src} ${second}/x-4242/copy.md`, cwd)), null);
+    }
+    // one level deeper: the literal part is `<root>/build`, untracked, so the target falls through to the cwd rule
+    for (const [cwd, where] of cwds.slice(1)) {
+      assert.equal(evaluate(payload(`echo x > ${second}/build/x-$$/y.md`, cwd)), null, `${where}, a numeric folder one level deeper under an untracked folder is allowed`);
+      assert.equal(evaluate(payload(`cp ${src} "${second}/build/run-\${RANDOM}/copy.md"`, cwd)), null, `${where}, as a copy`);
+      assert.equal(evaluate(payload(`echo x > ${second}/build/x-4242/y.md`, cwd)), null, `${where}, as its literal spelling is`);
+    }
+    const deeperOwn = evaluate(payload(`echo x > ${second}/build/x-$$/y.md`, second));
+    assert.ok(deeperOwn && NOT_LITERAL.test(deeperOwn) && !UNKNOWN.test(deeperOwn), 'from its own project\'s cwd the deeper target is refused by the cwd rule, with the generic text');
+    assert.ok(deeperOwn.includes(`Track-changes is ON in ${second},`), 'naming the project');
+    // the folder known, the file's name not: the generic text, which says the target is not a literal path
+    for (const [cmd, why] of [[`echo x > ${second}/x-$$.md`, 'an expansion in the file\'s own name'], [`echo x > ${second}/run-$$/../y.md`, 'a fold that leaves no expansion']]) {
+      const reason = evaluate(payload(cmd, out));
+      assert.ok(reason && NOT_LITERAL.test(reason) && !UNKNOWN.test(reason), `${why} keeps the generic refusal: ${reason && reason.split('\n')[0]}`);
+      assert.ok(reason.includes(`Track-changes is ON in ${second},`), `${why}: naming the project`);
+    }
+    // and through the process, both ways, from a cwd in no project
+    const run = (command, cwd) => spawnSync(process.execPath, [HOOK], { input: payload(command, cwd), encoding: 'utf8', env: hookEnv({ ROMP_SID }) });
+    const refused = run(`echo x > ${second}/x-$$/y.md`, out);
+    assert.equal(refused.status, 2, 'the first-segment folder, as a process');
+    assert.match(refused.stderr, UNKNOWN);
+    assert.ok(refused.stderr.includes('x-$$') && !NOT_LITERAL.test(refused.stderr));
+    assert.equal(run(`echo x > ${second}/build/x-$$/y.md`, out).status, 0, 'one level deeper, as a process');
+    assert.equal(run(`echo x > ${second}/x-4242/y.md`, out).status, 0, 'the literal spelling, as a process');
+    // what the refused command does in real bash: the folder takes the shell's pid for its name, a name the
+    // hook could not have read, and the write lands in an untracked folder; the refusal is the deliberate one
+    const shell = spawnSync('bash', ['-c', `mkdir -p ${second}/x-$$ && echo x > ${second}/x-$$/y.md`], { encoding: 'utf8', env: { PATH: process.env.PATH } });
+    assert.equal(shell.status, 0, shell.stderr);
+    const made = fs.readdirSync(second).filter((n) => /^x-\d+$/.test(n) && n !== 'x-4242');
+    assert.equal(made.length, 1, 'one folder named by the pid');
+    assert.equal(fs.readFileSync(path.join(second, made[0], 'y.md'), 'utf8'), 'x\n');
+    assert.equal(fs.readFileSync(path.join(second, 'docs', 'report.md'), 'utf8'), 'tracked prose\n', 'the tracked file is untouched');
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 

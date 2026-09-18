@@ -42,7 +42,11 @@
 // outside every project in play is dropped, since such an expansion cannot carry a path separator
 // back into the project (`/tmp/build-$$.log`), and the project the target's own literal prefix sits
 // in is asked first, so a numeric name landing in a second tracked project is refused as its literal
-// spelling is. Round 2 of the review (2026-09-18) corrected the round-1 premise, which called the
+// spelling is (one deliberate exception, ruled in round 2's addendum: a numeric folder name in the first
+// segment under a tracked root, `<root>/x-$$/y.md`, is refused from any cwd even where its literal spelling
+// would pass into an untracked folder, since the folder's name is not known when the hook runs, and the
+// refusal says so and asks for the folder spelled out; unknownFolderOf). Round 2 of the review (2026-09-18)
+// corrected the round-1 premise, which called the
 // set "numeric by construction": a whitelist justified by a shell's read-only parameters holds only
 // in the shells it was checked in, and `$BASHPID`, which round 1 listed, is unset and freely
 // assignable in zsh, the shell the Bash tool runs here, so it is no longer among them (a refuter
@@ -1431,6 +1435,34 @@ function numericOutside(text, root) {
   return [norm, real].every((p) => [root, realRoot].every((r) => diverges(p, r)));
 }
 
+// The folder segment of a numeric-only target whose name the hook cannot read, when the target's literal
+// directory part is `hit.root` itself and the first surviving expansion sits in a directory segment
+// (`<root>/x-$$/y.md` gives `x-$$`); null otherwise. Review round 2's addendum (2026-09-18): the own-project
+// step of inPlayFor resolves that literal part to the root, and landingInPlay on a root holds for every
+// project that tracks anything, so such a target is refused from any cwd while its literal spelling
+// (`<root>/x-4242/y.md`) passes when that folder is untracked. The refusal is deliberate and was ruled
+// correct: the folder's name does not exist at check time and is not derivable from the text, so the hook
+// cannot tell which folder of the project the write lands in; a write guard that does not know refuses, the
+// person recovers in one step by spelling the folder, and the opposite error overwrites tracked content
+// silently. Widening the allowance is the wrong fix (it reopens the class the round closed); what the case
+// is owed is a refusal that says so, which evaluate gives a hit carrying `unknownFolder`: text that names
+// the folder and asks for it spelled out, in place of the generic text, whose reason (the target is not a
+// literal path inside a tracked project) is not this case's. Only the first segment behaves so:
+// `<root>/sub/x-$$/y.md` resolves its literal part to `<root>/sub`, and when `sub` is untracked the landing
+// gate is false and the target falls through to the cwd rule below. Two neighbours keep the generic text,
+// since the folder IS known for them: an expansion in the file's own name (`<root>/x-$$.md`) and a fold that
+// leaves no expansion (`<root>/run-$$/../y.md`, judged by where its literal tail lands). The root test is
+// landingInPlay's own (an empty relative path from the hit's root to its directory), so the two agree on what
+// the root itself is. Pinned in both directions in tools/romp-track-bash-guard.test.mjs (the addendum test).
+function unknownFolderOf(hit, norm, cut) {
+  if (norm.indexOf('$') < 0) return null;                          // a fold left no expansion
+  const rest = norm.slice(cut + 1);                                 // from the segment holding the first expansion
+  const slash = rest.indexOf('/');
+  if (slash <= 0) return null;                                      // the expansion names the file, not a folder
+  const rel = relPathFor(hit.root, hit.dir).replace(/^\.?\//, '').replace(/\/+$/, '');
+  return rel === '' ? rest.slice(0, slash) : null;                  // the literal part is the root itself
+}
+
 // The tracked project in play for a write target the hook could not read, as { root, dir, fromEnv }, or
 // null. A copy into a literal folder lands there whatever the name (`at`), so that folder decides and
 // the cwd does not: its project must track something refusable and the folder must be one such a
@@ -1447,7 +1479,9 @@ function numericOutside(text, root) {
 // directories are asked, since from a cwd in no project there are none and the write would pass; it is
 // gated with landingInPlay, since bare tracksRefusable would refuse a numeric temp write into an untracked
 // subfolder of any tracked project on the machine, a round-1-class false refusal; and it returns the
-// target's OWN project's hit, so the refusal names the tree the write would land in, not the cwd's. A
+// target's OWN project's hit, so the refusal names the tree the write would land in, not the cwd's; when
+// that literal part is the root itself and the expansion names a folder, the hit carries `unknownFolder`
+// (unknownFolderOf, above: round 2's addendum) and the refusal says the folder's name is what is not known. A
 // relative one, a fully opaque one (`"$(mktemp)"`, `"$F"`) and one with a variable of unknown content
 // beside the numbers stay refused: nothing about them bounds where the write lands, and a `../` inside a
 // variable reached a tracked file when a refuter tried the general literal-prefix rule (review round 1,
@@ -1460,8 +1494,13 @@ function inPlayFor(u, cwd, memo) {
   }
   const numeric = u.numeric != null && path.isAbsolute(u.numeric);
   if (numeric) {
-    const own = trackingRootAt(literalDirOf(path.normalize(u.numeric)).dir, memo);
-    if (own && landingInPlay(own, memo)) return own;
+    const norm = path.normalize(u.numeric);
+    const { cut, dir } = literalDirOf(norm);
+    const own = trackingRootAt(dir, memo);
+    if (own && landingInPlay(own, memo)) {
+      const folder = unknownFolderOf(own, norm, cut);
+      return folder == null ? own : { ...own, unknownFolder: folder };
+    }
   }
   const hits = [];
   for (const d of [u.dir, cwd]) {
@@ -1506,6 +1545,18 @@ export function evaluate(raw) {
     let hit = null;
     try { hit = inPlayFor(u, cwd, memo); } catch { hit = null; }
     if (!hit) continue;
+    if (hit.unknownFolder) {
+      // Review round 2's addendum (2026-09-18; unknownFolderOf): the reason is not that the target sits in a
+      // tracked project but that the folder's NAME is not known when the hook runs, so the text says that,
+      // names the folder and asks for it spelled out. The project root is not repeated (the target, which is
+      // absolute, already carries it), so an environment root's value stays out of the message as everywhere.
+      return `This command is blocked here: its ${u.how} names ${u.raw}, and ${hit.unknownFolder}, the folder it writes `
+        + `into, is a name the shell fills in with a number when the command runs. I cannot tell which folder the write lands in, `
+        + `and that project tracks files whose changes are recorded for me to accept or reject. Spell the folder out with the `
+        + `name the shell would give it: an untracked folder then takes the write as usual, and a tracked file takes its `
+        + `change through track-edit instead:\n`
+        + `  node ~/.claude/hooks/track-edit.mjs --file "<the file>" --old "<exact unique text>" --new "<replacement>"`;
+    }
     const where = hit.fromEnv ? 'the project TRACKCHANGES_ROOT names' : hit.root;
     return `Track-changes is ON in ${where}, so this command is blocked here: its ${u.how} names ${u.raw}, `
       + `which is not a literal path. The shell fills that in when the command runs, so I cannot tell which `

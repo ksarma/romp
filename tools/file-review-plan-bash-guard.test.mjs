@@ -100,8 +100,17 @@ test('decision 47 states what passes, and the hook agrees: reads, opaque command
   assert.ok(hook.includes("const NUMERIC_EXPANSIONS = new Set(['RANDOM', 'SECONDS']);") && hook.includes('const POSIX_SH_NUMERIC = new Set();') && hook.includes("const KEEPS_NUMERIC_SPECIALS = new Set(['bash', 'zsh']);"), 'the per-shell sets');
   assert.ok(!/NUMERIC_EXPANSIONS = new Set\(\[[^\]]*BASHPID/.test(hook), 'BASHPID is in no numeric set');
   assert.ok(hook.includes('recurse(sh.script.text, name)') && hook.includes('recurse(body, name)') && hook.includes('lex(command, numericSetFor(shell))'), 'a script handed to a shell is lexed with that shell\'s set');
-  assert.ok(d47.includes('the project the target\'s own literal prefix sits in being asked first') && hook.includes('const own = trackingRootAt(literalDirOf(path.normalize(u.numeric)).dir, memo);') && hook.includes('if (own && landingInPlay(own, memo)) return own;'));
+  assert.ok(d47.includes('the project the target\'s own literal prefix sits in being asked first') && hook.includes('const { cut, dir } = literalDirOf(norm);') && hook.includes('const own = trackingRootAt(dir, memo);') && hook.includes('if (own && landingInPlay(own, memo)) {'));   // the own step keeps the cut since round 2's addendum (unknownFolderOf reads it)
   assert.ok(d47.includes('a `..` that folds every expansion away still resolving the literal directory part') && hook.includes("const cut = dollar < 0 ? norm.lastIndexOf('/') : norm.lastIndexOf('/', dollar);"));
+  // review round 2's addendum (2026-09-18): the numeric folder in the first segment under a tracked root is the
+  // second deliberate false refusal the decision states, with the ruling's reason, and the hook routes that case
+  // to a refusal that names the unknown folder rather than the project and asks for it spelled out
+  assert.ok(d47.includes('when the expansion names a folder in the first segment under that root, `<root>/x-$$/y.md`, the literal prefix is the root itself'));
+  assert.ok(d47.includes('a deliberate false refusal ruled correct in round 2\'s addendum, 2026-09-18: the folder\'s name does not exist at check time and is not derivable from the text'));
+  assert.ok(d47.includes('naming the unknown folder rather than the project and asking for the folder spelled out'));
+  assert.ok(d47.includes('`<root>/sub/x-$$/y.md` resolves its literal prefix to `<root>/sub` and an untracked `sub` falls through to the cwd rule'), 'the class is the first segment only');
+  assert.ok(hook.includes('function unknownFolderOf(hit, norm, cut)') && hook.includes('return folder == null ? own : { ...own, unknownFolder: folder };') && hook.includes('if (hit.unknownFolder) {'), 'the hook routes the case');
+  assert.ok(hook.includes('I cannot tell which folder the write lands in') && hook.includes('Spell the folder out'), 'to a refusal that names the folder and asks for it spelled out');
   assert.ok(hook.includes('function numericOutside(text, root)') && hook.includes('function literalDirOf(norm)'));
   assert.ok(d47.includes('a `$(date)` in a log\'s name among them, a cost stated to the user rather than solved'), 'the residual false refusal is stated, not claimed solved');
   assert.ok(d47.includes('the hook reads no variable named in the command to resolve the word'));
