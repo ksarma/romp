@@ -2639,8 +2639,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   from the start, at zero. The app is the client's own text, so a name is a
   key only when it fits the identifier grammar (letters, digits, underscore,
   dot, dash, at most 32 characters) and while the table holds fewer than 16
-  distinct names; everything else counts under `other`, and a client that
-  declared no app under `none`.
+  distinct names; everything else counts under `other`. A client that
+  declared no app counts under `none` while the table has room for that
+  word, else under `other` like any name the cap refuses.
   `cycle_ms_sum`, `cycle_ms_max` (since start), `cycle_ms_last`,
   `cycle_cpu_ms_sum` (the pusher thread's own CPU time), `cycle_ms_p50`,
   `cycle_ms_p90`, `cycle_ms_ring_max`, `ring_n` from the last 256 cycles,
@@ -3454,7 +3455,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   through the view-delta slot path, counted per send whether a frame crossed
   or the dedup held it; that is the one path that re-encodes every card per
   build: a `?delta=1` feed client that did not announce the feed delta
-  capability; nonzero means one is connected).
+  capability. The counter is cumulative since kernel start, like the rest of
+  the block: nonzero means such a client has connected since start, and a
+  value that rises between two snapshots means one is connected now).
   `intrMarks` is the interrupt-marks
   memo behind the interrupt tick, the nudge tick and the feed's badge, one
   entry per (session, parse family) keyed on the parse object's identity and

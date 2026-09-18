@@ -806,8 +806,9 @@ class _PerfStats:
     # below the table itself). test_perf_stats pins it at 1.5x the literal count.
     HTTP_PATHS = 256
     SLOTS = 32
-    APPS = 16                                 # distinct client app names connectPush.byApp keys; the rest, and any name outside
-    #                                           _PERF_IDENT, count under "other" (2026-09-18: the name is the client's own text)
+    APPS = 16                                 # distinct client app names pusher.clients.byApp keys (client_send); the rest, and any
+    #                                           name outside _PERF_IDENT, count under "other" (2026-09-18: the name is the client's
+    #                                           own text). connectPush.byApp takes the same rule when the served-/perf leak branch lands.
     JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "turnNotify", "liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
             "unreadableStores",   # the fork's unreadable-store warn (PR 322), a housekeeping stage on the jobs thread since the 2026-09-15 pull-in
             "autoNudge", "interruptBlock", "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "persistCheckpoints", "convergeCheckpoints", "bootRowBackstop",
@@ -976,12 +977,13 @@ class _PerfStats:
         and the write's wall seconds, from the frame's encode to sendall's return, under the app the client declared and
         the kind its User-Agent header classed to (WS_UA_KINDS; anything else counts under "other"). A write the socket
         refused is not counted: the client is dropped. The app is the client's own text (chat, feed, timeline, ...): a
-        name outside _PERF_IDENT's grammar, or past the APPS distinct names, counts under "other", and a client that
-        declared none under "none" (the snapshot is meant to be pasteable, and a key is a leak vector; the same rule the
+        name outside _PERF_IDENT's grammar, or past the APPS distinct names, counts under "other"; a client that
+        declared none counts under "none" while the table has room for that word, else under "other" like any name the
+        cap refuses (the snapshot is meant to be pasteable, and a key is a leak vector; the same rule the
         perf-served-leaks branch gives connectPush.byApp)."""
         ms = dt * 1000.0
         app = str(app) if app else "none"
-        if not _PERF_IDENT.match(app):
+        if not _PERF_IDENT.fullmatch(app):   # fullmatch, not match: the pattern's $ also matches before a trailing newline, and match let a name ending in one through as a key
             app = "other"
         if kind not in WS_UA_KINDS:
             kind = "other"
@@ -52883,7 +52885,9 @@ def _dedup_sig(msg, s):
 # object, so walked minus encoded is what the memo saved) and feed_slot_split (feed sends through the view-delta
 # SLOT path, _send_slot_delta with no parts handed down, counted per send whether a frame crossed or the dedup
 # held it: a ?delta=1 feed client without FEED_DELTA_CAP, whose _delta_parts("feed") encodes every card again
-# per build; nonzero means one is connected, zero once stage 3 retires that path).
+# per build. Cumulative since kernel start like every counter here: nonzero means such a client has connected
+# since start, a value rising between two snapshots means one is connected now, and it stays at zero from the
+# first restart after stage 3 retires that path).
 _wire_stats = {"feed_cards_hit": 0, "feed_cards_miss": 0, "split_hit": 0, "split_miss": 0, "feed_body": 0,
                "bars_body": 0, "feed_sig_fallback": 0, "feed_first": 0, "bars_sig_fallback": 0, "default_str": 0,
                "entries_walked": 0, "entries_encoded": 0, "feed_slot_split": 0}

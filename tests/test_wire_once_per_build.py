@@ -900,6 +900,7 @@ class PerClientWireCounters(unittest.TestCase):
         peer = socket.create_connection(srv.getsockname())
         kern, _ = srv.accept()
         srv.close()
+        peer.settimeout(5.0)   # a frame that never arrives fails the read; it must never park the module and its xdist worker
         self.closeables += [peer, kern]
         return kern, peer
 
@@ -975,6 +976,31 @@ class PerClientWireCounters(unittest.TestCase):
         c = self._clients_block()
         self.assertEqual(c["byApp"], {"chat": {"frames": 1, "bytes": 404}}, "the ping counted nothing; the text frame its wire bytes")
         self.assertEqual((c["byKind"]["safari-ios"]["frames"], c["byKind"]["safari-ios"]["bytes"]), (1, 404))
+
+    def test_a_write_the_socket_refused_is_not_counted(self):
+        """The documented rule (docs/reference.md, pusher.clients): a write the socket refused is not counted, frames,
+        sends and the write time alike; the client is dropped. One frame lands and is counted; the kernel-side socket is
+        then closed under the client and a second frame enqueued, so the sender thread's write raises and the thread
+        exits. The probe settles on that exit (a join), not on the alive flag: the same thread flips the flag a moment
+        before it returns, so a wait on the flag races the read of the counters."""
+        before = set(threading.enumerate())
+        chat, rf = self._client("chat", self.IPHONE)
+        senders = [t for t in threading.enumerate() if t not in before and t.name == "ws-send"]
+        self.assertEqual(len(senders), 1, "the client's own sender thread, started by _new_ws_client")
+        sender = senders[0]
+        chat["send"](json.dumps({"type": "session", "n": 1}))
+        self.assertEqual(len(self._read_texts(rf, 1)), 1)
+        self.assertTrue(self._settle(lambda: self._clients_block()["byApp"].get("chat", {}).get("frames") == 1))
+        landed = self._clients_block()
+        chat["sock"].close()                                     # the kernel's side of the pair: the next write is refused
+        chat["send"](json.dumps({"type": "session", "n": 2}))    # enqueued, never blocks; the sender thread finds the dead socket
+        sender.join(5.0)
+        self.assertFalse(sender.is_alive(), "the refused write ends the sender thread")
+        self.assertFalse(chat["alive"], "and marks the client for reaping")
+        after = self._clients_block()
+        self.assertEqual(after["byApp"], landed["byApp"], "frames and bytes: the refused frame counted nothing")
+        self.assertEqual(after["byKind"]["safari-ios"], landed["byKind"]["safari-ios"], "sends, sendMs and sendMax too")
+        self.assertEqual((after["byApp"]["chat"]["frames"], after["byKind"]["safari-ios"]["sends"]), (1, 1))
 
     def test_ws_send_answers_the_wire_bytes_it_wrote(self):
         kern, peer = self._pair()

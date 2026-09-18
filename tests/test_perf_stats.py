@@ -11,6 +11,7 @@ increments on the hot paths and no formatting until a read.
 
 Drives the REAL Handler over HTTP and the REAL _push with stubbed builders (the test_color_route.py
 and test_tab_meta_push.py patterns). Synthetic fixtures only: placeholder UUIDs, invented names."""
+import base64
 import concurrent.futures
 import inspect
 import io
@@ -23,6 +24,7 @@ import threading
 import time
 import unittest
 import shutil
+import socket
 import urllib.request
 from unittest import mock
 from contextlib import redirect_stderr
@@ -74,6 +76,41 @@ def _burn_cpu(seconds):
     t = time.thread_time()
     while time.thread_time() - t < seconds:
         pass
+
+
+def _ws_dial(port, path, ua=None, timeout=3.0):
+    """One raw WebSocket upgrade against the loopback server, the socket kept open: (status, socket). `ua` is a
+    User-Agent line to carry, none by default (the shape of a relay's splice or a pipe). The key is minted at run
+    time, as tests/test_ws_open_row.py mints its own."""
+    key = base64.b64encode(os.urandom(16)).decode()
+    lines = ["GET %s HTTP/1.1" % path, "Host: 127.0.0.1:%d" % port, "Upgrade: websocket", "Connection: Upgrade",
+             "Sec-WebSocket-Key: %s" % key, "Sec-WebSocket-Version: 13"]
+    if ua is not None:
+        lines.append("User-Agent: %s" % ua)
+    s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    s.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = s.recv(4096)
+        if not chunk:
+            break
+        buf += chunk
+    first = buf.split(b"\r\n", 1)[0].decode("latin-1")
+    parts = first.split(" ", 2)
+    return (int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else -1), s
+
+
+def _registered_clients(wids, want, deadline_s=5.0):
+    """{wid: client} for the registered ws clients carrying these dashboard ids, read under the kernel's lock once
+    their count reaches `want` or the deadline passes (the handshake registers after its 101 leaves, and the handler's
+    finally retires at the socket's close, both on the handler thread)."""
+    end = time.monotonic() + deadline_s
+    while True:
+        with km._clients_lock:
+            got = {c.get("wid"): c for c in km._clients if c.get("wid") in wids}
+        if len(got) == want or time.monotonic() >= end:
+            return got
+        time.sleep(0.02)
 
 
 class _HttpWatch:
@@ -573,18 +610,22 @@ class Collector(unittest.TestCase):
 
     def test_client_app_keys_are_identifiers_capped_and_the_kind_is_one_of_the_list(self):
         """The app is the client's own text off its socket URL and the kind whatever the caller hands over, and a served
-        key is a leak vector: an app outside _PERF_IDENT's grammar (a path, a space, 33 characters) counts under other,
-        no app under none, the table stops at APPS distinct names, and a kind outside WS_UA_KINDS counts under other."""
+        key is a leak vector: an app outside _PERF_IDENT's grammar (a path, a space, 33 characters, a trailing newline,
+        which the pattern's $ alone lets through) counts under other, no app under none while the table has room and
+        under other past the cap, the table stops at APPS distinct names, and a kind outside WS_UA_KINDS counts under
+        other."""
         self.st.client_send("/some/dir/x", "chrome", 1, 0.0)
         self.st.client_send("has space", "chrome", 1, 0.0)
         self.st.client_send("a" * 33, "chrome", 1, 0.0)
+        self.st.client_send("chat\n", "chrome", 1, 0.0)   # $ matches before a trailing newline: the check is a fullmatch
         self.st.client_send(None, "chrome", 1, 0.0)
         self.st.client_send("", "chrome", 1, 0.0)
         self.st.client_send("chat", "Mozilla/5.0 (X11) Gecko", 1, 0.0)
         c = self.st.snapshot()["pusher"]["clients"]
-        self.assertEqual(c["byApp"], {"other": {"frames": 3, "bytes": 3}, "none": {"frames": 2, "bytes": 2}, "chat": {"frames": 1, "bytes": 1}})
+        self.assertEqual(c["byApp"], {"other": {"frames": 4, "bytes": 4}, "none": {"frames": 2, "bytes": 2}, "chat": {"frames": 1, "bytes": 1}})
+        self.assertNotIn("chat\n", c["byApp"], "a name ending in a newline is not a key")
         self.assertEqual(c["byKind"]["other"]["frames"], 1, "a kind outside the list counts under other, never as itself")
-        self.assertEqual(c["byKind"]["chrome"]["frames"], 5)
+        self.assertEqual(c["byKind"]["chrome"]["frames"], 6)
         self.assertEqual(km._PerfStats.APPS, 16)
         self.assertEqual(km._PERF_IDENT.pattern, r"^[A-Za-z0-9_.-]{1,32}$")
         st = km._PerfStats()
@@ -593,7 +634,11 @@ class Collector(unittest.TestCase):
         by_app = st.snapshot()["pusher"]["clients"]["byApp"]
         self.assertEqual(len(by_app), km._PerfStats.APPS + 1)
         self.assertEqual(by_app["other"]["frames"], 40 - km._PerfStats.APPS)
-        self.assertTrue(all(km._PERF_IDENT.match(a) for a in by_app), sorted(by_app))
+        self.assertTrue(all(km._PERF_IDENT.fullmatch(a) for a in by_app), sorted(by_app))
+        st.client_send(None, "chrome", 1, 0.0)                  # an app-less client past the cap: other, no none row seated
+        by_app = st.snapshot()["pusher"]["clients"]["byApp"]
+        self.assertNotIn("none", by_app)
+        self.assertEqual(by_app["other"]["frames"], 41 - km._PerfStats.APPS, "none is a name like any other to the cap")
 
     def test_http_keys_are_capped_and_ws_adds_no_time(self):
         cap = km._PerfStats.HTTP_PATHS
@@ -1792,14 +1837,40 @@ class UserAgentKind(unittest.TestCase):
         self.assertEqual(bare["uaKind"], "none", "no header given: none, the same word a relay's splice or a pipe reads")
 
     def test_the_handshake_hands_the_header_to_the_client(self):
-        src = inspect.getsource(km)
-        self.assertIn('_new_ws_client(app, wid, self.connection, lock=lock, ua=self.headers.get("User-Agent"))', src,
-                      "the ws handler classes the dial's User-Agent through _new_ws_client")
-        i = src.index("def _ws_sender(")
-        sender = src[i:src.index("\ndef ", i + 1)]
-        self.assertIn("n = _ws_send(sock, lock, s)", sender)
-        self.assertIn('_PERF_STATS.client_send(client.get("app"), client.get("uaKind"), n,', sender,
-                      "the sender thread counts the frame it wrote under the client's app and kind")
+        """Executed, not read as source: two real upgrades through the Handler on a loopback server, one carrying an
+        iPhone's User-Agent line and one bare. The client each handshake registers reads safari-ios, and none, and no
+        value of either record carries the header's text (a served key is a leak vector, and the record is what /perf
+        and the client-diag rows read from). The sender thread's count of what it wrote is executed in
+        tests/test_wire_once_per_build.py (PerClientWireCounters)."""
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        port = srv.server_address[1]
+        tag = os.urandom(4).hex()
+        w_ios, w_bare = "ua-ios-" + tag, "ua-bare-" + tag
+        socks = []
+        try:
+            for wid, ua in ((w_ios, self.IPHONE), (w_bare, None)):
+                status, s = _ws_dial(port, "/ws?app=chat&wid=%s&token=%s" % (wid, km.TOKEN), ua=ua)
+                socks.append(s)
+                self.assertEqual(status, 101, "the upgrade is accepted: " + wid)
+            clients = _registered_clients({w_ios, w_bare}, want=2)   # registered after the 101 leaves, on the handler thread
+            self.assertEqual(set(clients), {w_ios, w_bare}, "both handshakes registered their client")
+            self.assertEqual(clients[w_ios]["uaKind"], "safari-ios", "the dial's User-Agent classed at the handshake")
+            self.assertEqual(clients[w_bare]["uaKind"], "none", "no header: the word a relay's splice or a pipe reads")
+            for wid, client in clients.items():
+                strs = [v for v in client.values() if isinstance(v, str)]
+                for needle in (self.IPHONE, "Mozilla", "AppleWebKit", "Safari/", "Version/", "iPhone"):
+                    self.assertFalse(any(needle in v for v in strs), "the header's text in the %s record: %r" % (wid, strs))
+        finally:
+            for s in socks:
+                try:
+                    s.close()
+                except OSError:
+                    pass
+            gone = _registered_clients({w_ios, w_bare}, want=0)   # the handler's finally retires each client at its socket's close
+            srv.shutdown()
+            srv.server_close()
+        self.assertEqual(gone, {}, "both clients retired from _clients once their sockets closed")
 
 
 if __name__ == "__main__":
