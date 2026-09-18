@@ -15,7 +15,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { paintHeld, paintReleased, publishPaneHidden, type PaneHiddenHost } from "./paint-gate";
+import { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, type PaneHiddenHost } from "./paint-gate";
 import { sameKeySeq } from "./feed-card-gate";
 
 const requireCjs = createRequire(__filename);
@@ -141,15 +141,16 @@ const SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "
 const body = (name: string) => new RegExp("^function " + name + "\\([\\s\\S]*?\\n\\}", "m").exec(SRC)![0];
 
 test("render() is gated first, on the shared pure decision, and nothing else in feed.ts is", () => {
-  assert.match(SRC, /import \{ paintHeld, paintReleased, publishPaneHidden \} from "\.\/paint-gate";/);
-  assert.match(SRC, /function render\(\) \{\n  const list = document\.getElementById\("feed-list"\)!;\n  if \(!feedWatching\) \{ feedWatching = true; watchFeedVisibility\(list\); \}\n  if \(paintHeld\(document\.hidden, feedIntersecting, list\.childElementCount > 0\)\) \{ paintDirty = true; return; \}\n  pruneTip\(\);/,
-    "the gate precedes every paint-side step (pruneTip, applyFollowMove, the footer, the columns)");
+  assert.match(SRC, /import \{ paintHeld, paintReleased, publishPaneHidden \} from "\.\/paint-gate";\nimport \{ firstPaintHeld \} from "\.\/paint-gate";/, "the merged import is upstream's line (federation-hidden-hold.test.ts pins it); the first-paint hold's import is the fork's own line");
+  assert.match(SRC, /function render\(\) \{\n  const list = document\.getElementById\("feed-list"\)!;\n  if \(!feedWatching\) \{ feedWatching = true; watchFeedVisibility\(list\); \}\n  if \(paintHeld\(document\.hidden, feedIntersecting, list\.childElementCount > 0\) \|\| firstPaintHeld\(list\.childElementCount > 0, parentMobile\(\), feedShellOn, viewportProbeHidden\(\), feedIntersecting\)\) \{ paintDirty = true; return; \}\n  pruneTip\(\);/,
+    "the gate precedes every paint-side step (pruneTip, applyFollowMove, the footer, the columns); the phone's first-paint hold rides the same line (stage 0, 2026-09-18)");
   // two gates, both PAINTS: render(), and the 15 s age pass (feed-age.ts liveRefresher) that rewrites the stamped
   // labels on the cards render() did not repaint — it reads the same decision, so the feed has one meaning of
   // "hidden"; no state path is withheld
   assert.equal(SRC.split("paintHeld(").length - 1, 2, "two gates: render() and the age pass; no other path is withheld");
   assert.match(SRC, /const live = liveRefresher\(\{ hidden: \(\) => paintHeld\(document\.hidden, feedIntersecting, true\), pass: livePass \}\);/);
   assert.match(SRC, /let feedIntersecting: boolean \| null = null;/, "the observer's word, null until it speaks: the gate reads null as on screen (no observer → the tab alone gates), and nothing is published for it");
+  assert.equal(SRC.split("firstPaintHeld(").length - 1, 1, "one first-paint site: render()");
 });
 
 test("the flip is skipped exactly once after a release, and the painted key sequences are still the next baseline", () => {
@@ -210,7 +211,7 @@ test("a bell jump settles the owed paint on the shell's word before it looks for
 // lands on (feed.ts passes two arguments, so the page's window is the host). What the harness above cannot show:
 // the word feed.ts publishes, on feed.ts's own events, and nothing before the observer has spoken.
 type Cb = (entries: { isIntersecting: boolean }[]) => void;
-function feedWiring() {
+function feedWiring(win: { parentProbe?: () => boolean; innerWidth?: number; innerHeight?: number } = {}) {
   const start = "let feedIntersecting: boolean | null = null;", end = "  pruneTip();";
   const a = SRC.indexOf(start), b = SRC.indexOf(end, a);
   assert.ok(a > 0 && b > a, "the wiring's anchors moved; re-anchor");
@@ -226,13 +227,17 @@ function feedWiring() {
   };
   class FakeObserver { constructor(cb: Cb) { observerCb = cb; } observe(_target: unknown) {} }
   const prelude = `
-    const paintHeld = P.paintHeld, paintReleased = P.paintReleased;
+    const paintHeld = P.paintHeld, paintReleased = P.paintReleased, firstPaintHeld = P.firstPaintHeld;
     const publishPaneHidden = (docHidden, intersecting) => P.publishPaneHidden(docHidden, intersecting, S.host);
     const live = { catchUp() { S.catchUps++; } };
     const paint = () => { S.paints++; S.painted = S.model; };
   `;
-  const api = new Function("P", "S", "document", "IntersectionObserver", prelude + js + "\nreturn { render, releasePaint };")(
-    { paintHeld, paintReleased, publishPaneHidden }, st, fakeDocument, FakeObserver) as { render(): void; releasePaint(): void };
+  // the page's window stand-in: a phone shell publishes its layout probe on the parent (parentMobile reads it), a standalone
+  // page is its own parent; the viewport is the shim's zero-viewport probe (a frame hidden since load reads 0)
+  const fakeWindow: any = { innerWidth: win.innerWidth ?? 800, innerHeight: win.innerHeight ?? 600 };
+  fakeWindow.parent = win.parentProbe ? { __rompMobileOn: win.parentProbe } : fakeWindow;
+  const api = new Function("P", "S", "document", "IntersectionObserver", "window", prelude + js + "\nreturn { render, releasePaint };")(
+    { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld }, st, fakeDocument, FakeObserver, fakeWindow) as { render(): void; releasePaint(): void };
   return {
     st,
     /** the payload path's one gated render() */
@@ -241,6 +246,8 @@ function feedWiring() {
     observer(intersecting: boolean) { assert.ok(observerCb, "render() installed the observer"); observerCb!([{ isIntersecting: intersecting }]); },
     /** the tab's visibilitychange: feed.ts's two listeners run, the visible arm's release and the hidden arm's publish */
     tab(state: "hidden" | "visible") { st.hidden = state === "hidden"; for (const fn of listeners) fn(); },
+    /** the iframe's viewport as the shim's probe reads it: 0 while display:none, its size once shown (every browser lays a shown frame out before the observer's callback runs) */
+    viewport(w: number, h: number) { fakeWindow.innerWidth = w; fakeWindow.innerHeight = h; },
   };
 }
 
@@ -269,4 +276,97 @@ test("run: feed.ts's own wiring publishes the pane's word on its events, nothing
   f.tab("hidden"); assert.equal(f.st.host.__rompPaneHidden, true, "the tab hidden with the pane on screen");
   f.tab("visible"); assert.equal(f.st.host.__rompPaneHidden, false, "the return publishes on visibilitychange");
   assert.equal(typeof f.st.host.__rompPaneHidden, "boolean", "a boolean, the type the shim tests for");
+});
+
+// ── the FIRST paint on the phone (stage 0 of the reconnect design, 2026-09-18) ──
+// The feed pane loads at boot behind the chat tab on the phone (exempt from the lazy panes: its socket feeds the shell's
+// bell), and its first frame painted the whole board into a display:none iframe. Now the first paint is held too while the
+// pane is off screen on the phone (paint-gate.ts firstPaintHeld); the frame is applied (mirrorBadges rings the bell from it,
+// before render() as ever), and the shell's panes word on the pane's show releases the paint. The harness models
+// applyFeedPayload's order (mirrorBadges, then the gated render) and the panes handler's release; the pins below hold
+// feed.ts to it; the wiring run at the end lifts feed.ts's own lines with a phone stand-in for window.parent.
+function phoneFeed(opts: { phone?: boolean | undefined; probeHidden?: boolean } = {}) {
+  const st = { hidden: false, intersecting: null as boolean | null, shellOn: undefined as boolean | undefined,
+               phone: "phone" in opts ? opts.phone : true, probeHidden: opts.probeHidden ?? true,
+               painted: 0, paints: 0, paintDirty: false, notified: [] as string[], model: [] as Ask[] };
+  function mirrorBadges(asks: Ask[]) { for (const a of asks) if (a.column === "needsInput") st.notified.push(a.itemId); }   // one bell entry per card in trouble
+  function render() {
+    if (paintHeld(st.hidden, st.intersecting, st.painted > 0) || firstPaintHeld(st.painted > 0, st.phone, st.shellOn, st.probeHidden, st.intersecting)) { st.paintDirty = true; return; }
+    st.paints++; st.painted = st.model.length;
+  }
+  function releasePaint() {
+    if (!paintReleased(st.paintDirty, st.hidden, st.intersecting)) return;
+    st.paintDirty = false; render();
+  }
+  function applyFeedPayload(m: Payload) { st.model = m.asks; mirrorBadges(m.asks); render(); }
+  /** the shell's panes word, as feed.ts's handler takes it */
+  function panesWord(on: Record<string, boolean>) {
+    st.shellOn = on.feed === true;
+    if (st.shellOn && st.paintDirty && st.phone === true) { st.intersecting = true; releasePaint(); }
+  }
+  return { st, applyFeedPayload, releasePaint, panesWord };
+}
+
+test("T4: an off-screen feed on the phone applies its first frame without painting the board; mirrorBadges rings from it before any paint; the first show paints it", () => {
+  const f = phoneFeed();   // hidden since load: the probe reads 0, the observer has not spoken, no word from the shell yet
+  f.applyFeedPayload({ asks: [{ itemId: "g1", column: "needsInput" }, { itemId: "g2", column: "asks" }] });
+  assert.equal(f.st.paints, 0, "the first frame is applied, not painted: nobody can see the pane");
+  assert.equal(f.st.paintDirty, true, "a paint is owed");
+  assert.deepEqual(f.st.notified, ["g1"], "the bell rang from the frame, before any paint");
+  assert.equal(f.st.model.length, 2, "the model is the frame's");
+  f.panesWord({ chat: true, feed: false });   // the shell's word on the pane's load: the chat tab is showing
+  assert.equal(f.st.paints, 0, "the word says off screen: still held");
+  f.applyFeedPayload({ asks: [{ itemId: "g1", column: "needsInput" }, { itemId: "g2", column: "asks" }, { itemId: "g3", column: "needsInput" }] });
+  assert.equal(f.st.paints, 0, "a second frame while off screen: applied, not painted");
+  assert.deepEqual(f.st.notified, ["g1", "g1", "g3"], "…and rings for it (the seen-set dedups in the real mirror)");
+  f.panesWord({ chat: false, feed: true });   // the tap on the Feed tab: the shell re-tells in the same task
+  assert.equal(f.st.paints, 1, "the first show paints, once, synchronously on the shell's word");
+  assert.equal(f.st.painted, 3, "the board is the newest frame's");
+  assert.equal(f.st.paintDirty, false);
+  f.releasePaint();   // the observer's callback follows the show: nothing more owed
+  assert.equal(f.st.paints, 1);
+});
+
+test("T4, the boundaries: the shown tab paints at once; off the phone the first content paints through as before", () => {
+  const shown = phoneFeed({ probeHidden: false });   // the phone left on the Feed tab: the iframe has a viewport and no word says otherwise
+  shown.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks" }] });
+  assert.equal(shown.st.paints, 1, "the shown tab's first frame paints");
+  const desktop = phoneFeed({ phone: false, probeHidden: true });   // the desktop grid: the shell's probe says false
+  desktop.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks" }] });
+  assert.equal(desktop.st.paints, 1, "the desktop paints its first content whatever the probe says (the rail's hidden pane keeps paintHeld's rule)");
+  const alone = phoneFeed({ phone: undefined, probeHidden: true });   // a standalone page, the VS Code webview: no shell probe
+  alone.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks" }] });
+  assert.equal(alone.st.paints, 1, "no shell: unchanged");
+  const wordFirst = phoneFeed({ probeHidden: false });   // the shell's word arrived before the first frame (the load tell) and says off screen: the word wins over a viewport
+  wordFirst.panesWord({ chat: true, feed: false });
+  wordFirst.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks" }] });
+  assert.equal(wordFirst.st.paints, 0, "the shell's word is the newer measure: held");
+});
+
+test("feed.ts wires the first-paint hold: the shell's word and the two probes beside the observer's word, and the panes handler releases on the phone's show", () => {
+  assert.match(SRC, /let feedShellOn: boolean \| undefined;\nfunction parentMobile\(\): boolean \| undefined \{\n\s*try \{ const p = window\.parent as unknown as \{ __rompMobileOn\?: unknown \}; return \(window\.parent !== window && typeof p\.__rompMobileOn === "function"\) \? !!\(p\.__rompMobileOn as \(\) => unknown\)\(\) : undefined; \} catch \{ return undefined; \}\n\}\nfunction viewportProbeHidden\(\): boolean \{\n\s*try \{ return window\.parent !== window && \(window\.innerWidth === 0 \|\| window\.innerHeight === 0\); \} catch \{ return false; \}\n\}/,
+    "the shell's layout probe and the shim's zero-viewport probe, read live as the kernel's pane shim reads them");
+  assert.match(SRC, /if \(m\.romp === "panes"\) \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(m\.on && typeof m\.on === "object"\) \{\n\s*feedShellOn = m\.on\.feed === true;\n\s*if \(feedShellOn && paintDirty && parentMobile\(\) === true\) \{ feedIntersecting = true; releasePaint\(\); \}\n\s*\}\n\s*return;\n\s*\}/,
+    "the panes word: this pane's on-screen word, and on the phone's show the release of the owed paint (the word stands in for the observer's, the revealCard precedent)");
+  assert.ok(SRC.indexOf('if (m.romp === "panes") {') < SRC.indexOf('if (m.romp === "revealCard") {'), "…ahead of the bell jump, which the shell posts after the show's word");
+  const apply = body("applyFeedPayload");
+  assert.ok(apply.indexOf("mirrorBadges(") < apply.indexOf("\n  render();\n"), "the bell mirror runs before the gated render: it rings from a frame whose paint is held");
+});
+
+test("run: feed.ts's own gate over a phone stand-in holds the first frame of a pane hidden since load and paints it when the observer sees the iframe", () => {
+  // the wiring slice, with window.parent the shell's probe (phone) and a zero viewport (hidden since load)
+  const f = feedWiring({ parentProbe: () => true, innerWidth: 0, innerHeight: 0 });
+  f.frame(3);
+  assert.equal(f.st.paints, 0, "the first frame of an off-screen pane on the phone is applied, not painted");
+  f.observer(false);   // the observer's first word: off screen (the iframe is display:none)
+  assert.equal(f.st.paints, 0);
+  f.viewport(390, 700); f.observer(true);    // the tap: the iframe shows (its viewport is its size again) and the observer re-measures
+  assert.equal(f.st.paints, 1, "the first show paints, on the observer's own event");
+  assert.equal(f.st.painted, 3);
+  const d = feedWiring({ parentProbe: () => false, innerWidth: 0, innerHeight: 0 });   // the desktop: the same zero viewport, no hold
+  d.frame(2);
+  assert.equal(d.st.paints, 1, "the desktop's first content paints through as before");
+  const s = feedWiring({ parentProbe: () => true, innerWidth: 390, innerHeight: 700 });   // the phone left on the Feed tab
+  s.frame(2);
+  assert.equal(s.st.paints, 1, "the shown tab paints its first frame at once");
 });

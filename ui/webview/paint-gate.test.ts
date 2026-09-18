@@ -3,7 +3,7 @@
 // ordering run executably; feed-hidden-paint.test.ts and outline-visibility.test.ts pin the wiring.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { paintHeld, paintReleased, publishPaneHidden, type PaneHiddenHost } from "./paint-gate";
+import { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, type PaneHiddenHost } from "./paint-gate";
 
 test("the first content always paints through, whatever the visibility (the pane loader retires on it)", () => {
   assert.equal(paintHeld(true, true, false), false, "hidden tab, empty list");
@@ -84,4 +84,20 @@ test("the observer's word is null until it speaks: the paint gate reads null as 
   assert.equal(publishPaneHidden(false, false, w), true, "the observer's first word publishes");
   assert.equal(publishPaneHidden(false, true, w), false);
   assert.equal(publishPaneHidden(true, true, w), true, "and the tab's arms publish once it has spoken");
+});
+
+test("the FIRST paint on the phone (stage 0, 2026-09-18): held while the pane is off screen, by the shell's word first, else the probe or the observer; never with content, never off the phone", () => {
+  // off the phone nothing changes: the first content paints through as paintHeld lets it
+  assert.equal(firstPaintHeld(false, undefined, false, true, false), false, "no shell probe (standalone, VS Code): the first paint goes through");
+  assert.equal(firstPaintHeld(false, false, false, true, false), false, "the desktop grid: goes through");
+  // on the phone, the shell's word when one has arrived
+  assert.equal(firstPaintHeld(false, true, false, false, null), true, "the shell says the pane is off screen: held, whatever the probe and the observer say");
+  assert.equal(firstPaintHeld(false, true, true, true, false), false, "the shell says on screen: paints, whatever the probe and the observer say (the word is the newer measure)");
+  // no word yet: the shim's zero-viewport probe (a frame hidden since load) or the observer's word
+  assert.equal(firstPaintHeld(false, true, undefined, true, null), true, "hidden since load, observer silent: held by the probe");
+  assert.equal(firstPaintHeld(false, true, undefined, false, false), true, "a viewport, the observer says off screen: held");
+  assert.equal(firstPaintHeld(false, true, undefined, false, null), false, "a viewport and no word from anyone: the pane is the shown tab, paint");
+  assert.equal(firstPaintHeld(false, true, undefined, false, true), false, "the observer says on screen: paint");
+  // with content the rule is paintHeld's alone
+  assert.equal(firstPaintHeld(true, true, false, true, false), false, "a painted board is the standing gate's business");
 });
