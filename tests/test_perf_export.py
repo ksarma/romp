@@ -99,8 +99,8 @@ def _at(doc, path):
     return doc
 
 
-def _numbers(doc, floor=None):
-    """[(path, value)] for every numeric leaf of `doc` (a bool is not a number), at or above `floor` when one is given."""
+def _numbers(doc):
+    """[(path, value)] for every numeric leaf of `doc` (a bool is not a number)."""
     out = []
 
     def walk(node, where):
@@ -111,13 +111,25 @@ def _numbers(doc, floor=None):
             for i, v in enumerate(node):
                 walk(v, where + (i,))
         elif isinstance(node, (int, float)) and not isinstance(node, bool):
-            if floor is None or node >= floor:
-                out.append(("/".join(str(p) for p in where), node))
+            out.append(("/".join(str(p) for p in where), node))
     walk(doc, ())
     return out
 
 
-EPOCH_FLOOR = 1.5e9     # an epoch second from 2017 on; no count, byte total or duration of the fixtures reaches it
+# A clock stamp is a number inside a PLAUSIBLE EPOCH WINDOW: the seconds from 2017 to 2033, or the same span in
+# milliseconds. The stamp property is worded over these windows and not as "anything at or above 1.5e9" (round 5 of
+# the export's review, 2026-09-18): the served kernel's glibc allocator figures, perf/process/malloc/arena and
+# uordblks, were 2931437568 and 2731423520 on CI's runner and under 1.5e9 on the box that wrote the test, so a floor
+# alone made the property depend on the host's memory. A large number outside the windows is a byte total or a count,
+# a measurement the export keeps on purpose. No count, byte total or duration of the fixtures falls inside a window,
+# and no power of two does either (2^30 and 2^31, 2^40 and 2^41 bracket them), so the served test's allowance for a
+# coarsened bound inside a window states the rule and is not what passes it.
+EPOCH_WINDOWS = ((1.5e9, 2.0e9), (1.5e12, 2.0e12))
+
+
+def _stamps(doc):
+    """The numeric leaves of `doc` that read as an absolute clock stamp: inside one of the EPOCH_WINDOWS."""
+    return [(p, v) for p, v in _numbers(doc) if any(lo <= v <= hi for lo, hi in EPOCH_WINDOWS)]
 
 
 def leak_snapshot():
@@ -602,8 +614,8 @@ class FoldInvariant(unittest.TestCase):
                           "range": {}, "live": {"kernel": {"uptimeS": 60}}})
 
     def test_no_absolute_clock_stamp_survives_the_export(self):
-        # the PROPERTY, not key names (round 3): with every stamp of the leak snapshot moved into the epoch range (the
-        # fixture's own are small numbers), no numeric leaf at or above EPOCH_FLOOR survives anywhere in the export
+        # the PROPERTY, not key names (round 3): with every stamp of the leak snapshot moved into the seconds epoch window
+        # (the fixture's own are small numbers), no numeric leaf inside an epoch window survives anywhere in the export
         def epoch(node, key=None):
             if isinstance(node, dict):
                 return {k: epoch(v, k) for k, v in node.items()}
@@ -613,9 +625,9 @@ class FoldInvariant(unittest.TestCase):
                 return node + 1.7e9
             return node
         snap = epoch(leak_snapshot())
-        self.assertGreaterEqual(len(_numbers(snap, EPOCH_FLOOR)), 8, "the snapshot carries stamps: now, since, five split rows, the child's")
+        self.assertGreaterEqual(len(_stamps(snap)), 8, "the snapshot carries stamps: now, since, five split rows, the child's")
         doc = pe.export_document(snap, usage=True)
-        survivors = _numbers(doc, EPOCH_FLOOR)
+        survivors = _stamps(doc)
         self.assertEqual(survivors, [], "an absolute stamp survives:\n  %s" % "\n  ".join("%s = %r" % s for s in survivors))
         self.assertEqual(doc["perf"]["pusher"]["firstCycle"]["s"], 0.5, "the measurements beside the stamps stay")
 
@@ -1084,8 +1096,15 @@ class ServedKernel(unittest.TestCase):
         return _run(["--public"] + list(args), state=self.state,
                     env_extra={"ROMP_KERNEL_PORT": str(self.port), "ROMP_SERVE_TOKEN": token or km.TOKEN})
 
+    # glibc's allocator figures as CI's Python 3.13 runner served them on 2026-09-18 (round 5 of the export's review): the
+    # process block's perf/process/malloc/arena and uordblks passed 2.9e9 and 2.7e9 there while this module's kernel kept
+    # them under 1.5e9 on the box that wrote the test, so the stamp property below is run over a served snapshot that
+    # carries these figures, whatever the host's own allocator holds; the export keeps them, a measurement is not a stamp
+    CI_MALLOC = {"arena": 2931437568, "hblkhd": 268435456, "uordblks": 2731423520, "fordblks": 200014048}
+
     def test_the_export_of_a_served_snapshot_is_paste_safe_and_keeps_the_diagnosis(self):
-        r = self._export("--usage")
+        with mock.patch.object(km, "_malloc_stats", return_value=dict(self.CI_MALLOC)):
+            r = self._export("--usage")
         self.assertEqual(r.returncode, 0, r.stderr)
         m = re.match(r"^(\S+) \((\d+) bytes\)\n$", r.stdout)
         self.assertIsNotNone(m, r.stdout)
@@ -1100,13 +1119,19 @@ class ServedKernel(unittest.TestCase):
         self.assertNotIn("stacks", perf)
         self.assertEqual(_keys_named(perf, "t"), [], "no split row's or child report's stamp survives")
         self.assertEqual(perf["uptime_s"] % 60, 0, perf["uptime_s"])
-        big = [(p, v) for p, v in _numbers(doc, EPOCH_FLOOR) if not (isinstance(v, int) and v & (v - 1) == 0)]
-        self.assertEqual(big, [], "no absolute clock stamp survives the served export; the one large number allowed is a "
-                                  "coarsened bound, a power of two (this machine's byte bounds pass 1.5e9)")
+        # the stamp property over the served document: no numeric leaf inside an epoch window (EPOCH_WINDOWS) survives, the
+        # one number allowed there a coarsened bound, a power of two; a number outside the windows, however large, is a
+        # measurement (the planted allocator figures, this machine's byte bounds) and the export keeps it on purpose
+        big = [(p, v) for p, v in _stamps(doc) if not (isinstance(v, int) and v & (v - 1) == 0)]
+        self.assertEqual(big, [], "an absolute clock stamp survives the served export: a number inside an epoch window that is not a "
+                                  "coarsened bound, a power of two (a large number OUTSIDE the windows, an allocator or byte figure, "
+                                  "is a measurement the export keeps on purpose and is not listed here):\n  %s"
+                                  % "\n  ".join("%s = %r" % s for s in big))
         for path in BOUND_PATHS:     # the register of memory-fraction bounds is the kernel's: each is served, and coarsened
             v = _at(perf, path)
             self.assertIsInstance(v, int, "/".join(path))
             self.assertTrue(v > 0 and v & (v - 1) == 0, "%s = %r is not a power of two" % ("/".join(path), v))
+        self.assertEqual(perf["process"]["malloc"], self.CI_MALLOC, "the allocator figures are measurements the export keeps whole")
         self.assertNotIn("pid", perf["process"])
         self.assertNotIn("readByPath", perf["checkpoints"])
         self.assertIn("leaf", perf["checkpoints"]["readByKind"])

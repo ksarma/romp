@@ -50,11 +50,16 @@ def _keys_named(doc, name):
     return out
 
 
-EPOCH_FLOOR = 1.5e9     # an epoch second from 2017 on: every stamp the fixture writes (2026) is above it, no count or duration is
+# A clock stamp is a number inside a PLAUSIBLE EPOCH WINDOW: the seconds from 2017 to 2033, or the same span in
+# milliseconds; every stamp the fixture writes (2026) sits in the first, and no count or duration of the fixture reaches
+# either. The same windows as tests/test_perf_export.py, worded there over a floor of 1.5e9 until the served kernel's
+# glibc allocator figures passed it on CI's runner (round 5 of the export's review, 2026-09-18): a large number outside
+# the windows is a measurement the public form keeps on purpose, not a stamp.
+EPOCH_WINDOWS = ((1.5e9, 2.0e9), (1.5e12, 2.0e12))
 
 
-def _numbers(doc, floor=None):
-    """[(path, value)] for every numeric leaf of `doc` (a bool is not a number), at or above `floor` when one is given."""
+def _numbers(doc):
+    """[(path, value)] for every numeric leaf of `doc` (a bool is not a number)."""
     out = []
 
     def walk(node, where):
@@ -65,10 +70,14 @@ def _numbers(doc, floor=None):
             for i, v in enumerate(node):
                 walk(v, where + (i,))
         elif isinstance(node, (int, float)) and not isinstance(node, bool):
-            if floor is None or node >= floor:
-                out.append(("/".join(str(p) for p in where), node))
+            out.append(("/".join(str(p) for p in where), node))
     walk(doc, ())
     return out
+
+
+def _stamps(doc):
+    """The numeric leaves of `doc` that read as an absolute clock stamp: inside one of the EPOCH_WINDOWS."""
+    return [(p, v) for p, v in _numbers(doc) if any(lo <= v <= hi for lo, hi in EPOCH_WINDOWS)]
 D0 = rm.day_start("2026-09-10", TZ)          # the anchor day, midnight UTC
 
 
@@ -538,24 +547,27 @@ class PublicForm(unittest.TestCase):
         `t` alone left the same stamps under other names: a quiet window's restartT was the released restart's t
         verbatim, its since the parked stamp (since plus waitedS is the row's t), a restart's auditT, a boot's firstServe
         and reconcileDone (firstServe minus outageS is the denied cut's t), the range's since and until. Pinned as the
-        PROPERTY, not as key names: a walk over the printed document finds no numeric leaf at or above EPOCH_FLOOR
-        outside buckets[].start and buckets[].end, the day or week bounds in the chosen zone, coarse and documented
-        (they do reveal the zone's UTC offset). Durations stay. Fails before: fifteen leaves survived."""
+        PROPERTY, not as key names: a walk over the printed document finds no numeric leaf inside an epoch window
+        (EPOCH_WINDOWS) outside buckets[].start and buckets[].end, the day or week bounds in the chosen zone, coarse and
+        documented (they do reveal the zone's UTC offset). Durations stay, and so does a large number outside the
+        windows, a measurement. Fails before: fifteen leaves survived."""
         doc = self._public("--since", "2026-09-10", "--until", "2026-09-13")
         bounds = sorted("buckets/%d/%s" % (i, k) for i in range(len(doc["buckets"])) for k in ("start", "end"))
         self.assertTrue(bounds, "the fixture fills buckets")
-        survivors = _numbers(doc, EPOCH_FLOOR)
+        survivors = _stamps(doc)
         self.assertEqual(sorted(p for p, _ in survivors), bounds,
-                         "an absolute stamp survives outside the bucket bounds:\n  %s" % "\n  ".join("%s = %r" % s for s in survivors))
+                         "an absolute stamp survives outside the bucket bounds (a large number outside the epoch windows is a "
+                         "measurement the public form keeps on purpose and is not listed here):\n  %s"
+                         % "\n  ".join("%s = %r" % s for s in survivors))
         for i, b in enumerate(doc["buckets"]):
             self.assertEqual((b["end"] - b["start"]) % 86400, 0, "a bound pair spans whole days")
-        # the raw document's stamps (every epoch-range number off the bucket bounds) equal no number the public form keeps
+        # the raw document's stamps (every number inside an epoch window off the bucket bounds) equal no number the public form keeps
         out = io.StringIO()
         with redirect_stdout(out):
             rm.main(["--json", "--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state),
                      "--since", "2026-09-10", "--until", "2026-09-13"])
         raw = json.loads(out.getvalue())
-        raw_stamps = {v for p, v in _numbers(raw, EPOCH_FLOOR) if p not in bounds}
+        raw_stamps = {v for p, v in _stamps(raw) if p not in bounds}
         self.assertGreaterEqual(len(raw_stamps), 15, "the raw document carries the stamps the public form must not")
         kept = {v for p, v in _numbers(doc) if p not in bounds}
         self.assertEqual(raw_stamps & kept, set(), "a raw stamp survives under some key")
