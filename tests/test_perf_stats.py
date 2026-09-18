@@ -220,6 +220,19 @@ class _HttpWatch:
         return True
 
 
+def _leaves(node, path=""):
+    """(path, leaf) for every non-container value under `node`, the path as a/b/c: the paste-safe test's walk over the
+    populated chat-signature blocks, so a failure names the leaf."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield from _leaves(v, "%s/%s" % (path, k) if path else str(k))
+    elif isinstance(node, (list, tuple)):
+        for i, v in enumerate(node):
+            yield from _leaves(v, "%s/%d" % (path, i))
+    else:
+        yield path, node
+
+
 class Collector(unittest.TestCase):
     """_PerfStats on its own: every writer lands where the docstring says, and the read-time work
     (percentiles, the goals and judge reads, the process reads) produces the documented shape."""
@@ -589,6 +602,62 @@ class Collector(unittest.TestCase):
         after = km._chat_sig_stats_report()
         self.assertEqual((after["pre"] - blk["pre"] + 1000, after["nosig"] - blk["nosig"]), (2, 1), "the bump adds under the lock")
         km._chat_sig_bump(pre=-2, nosig=-1)             # this module's table is shared by every test: put it back
+
+    def test_the_populated_chat_signature_blocks_pass_the_exports_paste_safe_walk_whole(self):
+        """The three blocks stage 1 of the chat-signature design adds, POPULATED (every chatSig counter moved, every CPU stage
+        handed a user and sys figure, the two sub-seams timed), walk through cli/perf_public.py the way `romp perf export
+        --public` and the served-snapshot test run it: no problem under the served snapshot's key grammar (the kernel's
+        _PERF_IDENT) with synthetic strings planted, none under the export's own; the fold is the identity over the blocks
+        (no key denied, none folded to `other`, nothing coarsened, so the export carries every number); the identifier
+        scan finds nothing against synthetic probes; and every leaf is a number, an int in the counter table and a float
+        in the CPU rows, never a bool, a string or null. The CPU row's `user` is on the export's IDENTITY_KEYS and is kept
+        because its value is a number (the same rule that keeps builds.chat.bg_miss.names); this pins that a leaf there
+        stays a number, since a string under that key would be dropped and the row read as sys alone."""
+        ps = self.st
+        b0 = km._chat_sig_stats_report()
+        bump = {k: i + 1 for i, k in enumerate(sorted(b0))}          # every counter moved, each by a different amount
+        km._chat_sig_bump(**bump)
+        try:
+            with mock.patch.object(km, "_RUSAGE_THREAD", 11):         # the block is served whatever the platform's clock
+                ps.cycle_begin()
+                for i, name in enumerate(km._PerfStats.CPU_STAGES):
+                    ps.stage(name, 0.010 * (i + 1), cpu=(0.001 * (i + 1), 0.0005 * (i + 1)))
+                ps.cycle(0.100)
+                snap = ps.snapshot()
+        finally:
+            km._chat_sig_bump(**{k: -v for k, v in bump.items()})    # the table is shared by every test: put it back
+        blk = snap["memos"]["chatSig"]
+        self.assertEqual(blk, {k: b0[k] + bump[k] for k in b0}, "premise: every counter moved")
+        cpu = snap["stages_cpu_ms"]
+        self.assertEqual(set(cpu), set(km._PerfStats.CPU_STAGES))
+        for name, row in cpu.items():
+            self.assertGreater(row["user"], 0.0, name); self.assertGreater(row["sys"], 0.0, name)
+        subs = {k: snap["stages_ms"][k] for k in ("push.chat.sig.static", "push.chat.sig.deps")}
+        self.assertTrue(all(v > 0.0 for v in subs.values()), subs)
+        doc = {"memos": {"chatSig": blk}, "stages_cpu_ms": cpu, "stages_ms": subs}
+        home = os.path.join(tempfile.gettempdir(), "home", "tester")   # an absolute home path, synthetic (the class below builds its own the same way)
+        planted = [SID, SID[:8], "TESTHOST", home, "tester"]
+        problems = pp.paste_problems(doc, planted=planted, ident=km._PERF_IDENT)
+        self.assertEqual(problems, [], "%d problem(s):\n  %s" % (len(problems), "\n  ".join(map(str, problems))))
+        self.assertEqual(pp.paste_problems(doc, planted=planted), [], "and under the export's own grammar")
+        self.assertEqual(pp.fold(doc), doc, "the export keeps the blocks whole: no key denied, none folded, nothing coarsened")
+        self.assertEqual(pp.identifier_hits(doc, [("session id", SID.lower()), ("session id", SID[:8].lower()),
+                                                  ("hostname", "testhost"), ("username", "tester"),
+                                                  ("home directory", home.lower())]), [])
+        for path, leaf in _leaves(doc):
+            self.assertIsInstance(leaf, (int, float), "%s = %r" % (path, leaf))
+            self.assertNotIsInstance(leaf, bool, path)
+        for k, v in blk.items():
+            self.assertIs(type(v), int, "chatSig.%s is a count" % k)
+        for name, row in cpu.items():
+            self.assertEqual(set(row), {"user", "sys"}, name)
+            for c, v in row.items():
+                self.assertIs(type(v), float, "stages_cpu_ms.%s.%s is milliseconds" % (name, c))
+        # the identity-key rule the CPU row leans on: `user` over a number is a counter and stays; over text it would go
+        self.assertFalse(pp.denied("user", cpu["push"]["user"]))
+        self.assertTrue(pp.denied("user", "tester"))
+        self.assertNotIn("user", pp.fold({"stages_cpu_ms": {"push": {"user": "tester", "sys": 1.0}}})["stages_cpu_ms"]["push"],
+                         "a string under the key would be dropped, and the row would read as sys alone")
 
     def test_every_cpu_stage_is_named_in_the_collectors_stages_cpu_ms_row(self):
         # the same rule for the CPU block: the docstring's stages_cpu_ms row (from its key to the next row's key) names
