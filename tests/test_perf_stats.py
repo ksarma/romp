@@ -534,10 +534,11 @@ class Collector(unittest.TestCase):
         """Stage 1 of the chat-signature design (2026-09-18): memos.chatSig is the pass's own table, one integer per
         key, pasteable (identifier keys, numbers), served as a copy: the signature counts (pre, post, nosig, waited),
         the compare (compares, compareIdentity), the reads inside a signature (stats, namesReads, switchReads,
-        regReads) and the warm-tab census (warmEligible, warmBlockedByOutline, heldBody)."""
+        regReads) and the warm-tab census (warmEligible, warmBlockedByOutline, heldBody); thread, the comment-thread
+        signatures, since the 2026-09-18 review (the read counts fold from those signatures too)."""
         snap = self.st.snapshot()
         blk = snap["memos"]["chatSig"]
-        self.assertEqual(set(blk), {"pre", "post", "nosig", "waited", "compares", "compareIdentity",
+        self.assertEqual(set(blk), {"pre", "post", "thread", "nosig", "waited", "compares", "compareIdentity",
                                     "stats", "namesReads", "switchReads", "regReads",
                                     "warmEligible", "warmBlockedByOutline", "heldBody"})
         for k, v in blk.items():
@@ -2232,7 +2233,8 @@ class GoalIoCounters(unittest.TestCase):
         doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
         self.assertIn("- `stages_cpu_ms`:", doc)
         for k in ("`chatSig`", "`push.chat.sig.static`", "`push.chat.sig.deps`", "`compareIdentity`", "`regReads`",
-                  "`warmEligible`", "`warmBlockedByOutline`", "`heldBody`"):
+                  "`warmEligible`", "`warmBlockedByOutline`", "`heldBody`",
+                  "`thread`"):                          # the comment-thread signatures, the third taker (2026-09-18 review)
             self.assertIn(k, doc, k)
 
     def test_the_reference_doc_names_the_shared_memos_by_their_camelcase_keys(self):

@@ -1022,7 +1022,11 @@ class _PerfStats:
                                    chat-signature design, 2026-09-18) -> pre / post (pre-build
                                    signatures the push loop took, one per tab past the cold gate, and
                                    post-build ones: over a window pre = builds.chat cached + built less
-                                   the targeted push's builds, post = built less nosig), nosig
+                                   the targeted push's builds, post = built less nosig), thread (the
+                                   comment-thread signatures _thread_events takes, one per non-promoted
+                                   thread per push and per HTTP comments frame, a raising one included:
+                                   the third caller, so a per-signature figure for the read counts
+                                   divides by pre + post + thread), nosig
                                    (signatures that raised or found no transcript path: built, never
                                    cached), waited (tabs served after another thread's build of the
                                    same tab), compares / compareIdentity (cache checks that met a
@@ -20810,6 +20814,7 @@ def _thread_events(tsid, cut_uuid, now, live_map):
     sess = _sdk_sess(tsid, now)
     tm = live_map.get(tsid)
     key = None
+    _chat_sig_bump(thread=1)                        # memos.chatSig.thread: the signature below, a raising one included
     try:
         sig = _chat_build_sig(sess, tm, now, live_map=live_map, deps=False)
         _chat_sig_ok(tsid)                          # a signature that was taken ends its fault episode
@@ -37843,6 +37848,12 @@ def _chat_postal_relevant(ev):
 #                        included) and post-build ones (a rebuild that had a pre-build signature): over a window
 #                        pre = builds.chat cached + built less the targeted push's builds (it takes no signature),
 #                        post = built less nosig
+#   thread               the comment-thread signatures _thread_events takes (one per non-promoted thread of every
+#                        session with a comments store, per push and per HTTP comments frame, a raising one
+#                        included): the third caller of _chat_build_sig, and the reads below count inside its
+#                        signatures too, so a per-signature figure divides by pre + post + thread, never by
+#                        pre + post alone (a board with open threads read thirty-one stats per signature for
+#                        thirty before this row, 2026-09-18 review)
 #   nosig                pre-build signatures that raised or found no transcript path: the tab built, never cached
 #   waited               tabs served after waiting for another thread's build of the same tab (the single flight)
 #   compares             cache checks that met a cached entry and a signature (the `hit[0] == sig` compare)
@@ -37851,7 +37862,8 @@ def _chat_postal_relevant(ev):
 #   stats                os.stat calls inside a signature at the sites this file owns: the transcript, the states
 #                        files, _chat_ident, _chat_stat_key, _chat_postal_key and _repo_index_key. The store
 #                        identity (judge.py), the registry, the task store, the todo and pin fingerprints and the
-#                        cwd memos stat through their own helpers and are NOT in this count
+#                        cwd memos stat through their own helpers and are NOT in this count. Per signature:
+#                        stats / (pre + post + thread), and the same denominator for the three read counts
 #   namesReads           raw names-registry file reads inside a signature (_sdk_transcript_path, _names_parts
 #                        with no snapshot)
 #   switchReads          reads of the user-todos switch file inside a signature (_user_todos_on)
@@ -37865,7 +37877,7 @@ def _chat_postal_relevant(ev):
 # Every push counts, connect pushes on handler threads included, so a per-cycle figure is a delta over pusher.cycles.
 _CHAT_SIG_TL = threading.local()
 _CHAT_SIG_STATS_LOCK = threading.Lock()
-_CHAT_SIG_STATS = {"pre": 0, "post": 0, "nosig": 0, "waited": 0, "compares": 0, "compareIdentity": 0,
+_CHAT_SIG_STATS = {"pre": 0, "post": 0, "thread": 0, "nosig": 0, "waited": 0, "compares": 0, "compareIdentity": 0,
                    "stats": 0, "namesReads": 0, "switchReads": 0, "regReads": 0,
                    "warmEligible": 0, "warmBlockedByOutline": 0, "heldBody": 0}
 
