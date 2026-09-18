@@ -252,6 +252,182 @@ test("a CONNECTING socket is still killed on foreground after a `resume` — the
   });
 });
 
+// ── the relay dial waits for the pane's LOCAL socket (2026-09-18) ────────────────────────────────
+// The relay is the same kernel's /remote/<host>/ws on location.host, so it cannot open while the pane's local
+// socket is down; the shim publishes that socket's state as window.__rompLocalUp (kernel.py netState) and fires
+// romp:wsup when it reopens. On the user's phone every return from the background had every manager dial the
+// relay into a dead path, the tick cut the hung handshake at 15 s and dialed again: 55 `watchdog-close
+// connecting` rows in 23 minutes. Now the kill stays and the DIAL waits: one dial-deferred row per conn per
+// down spell, the redial on romp:wsup (localUp) with the 4 s poll as the backstop, and no /tunnels GET meanwhile.
+const DEFERRED = { host: "TESTHOST", ev: "dial-deferred", why: "local-down" };
+
+test("local socket down: the foreground pass still abandons a quiet relay socket, but the dial is deferred with one row per spell", async () => {
+  await withManager((fm, _e, diag) => {
+    const g: any = globalThis;
+    fm.openRemote("TESTHOST", true);
+    const ws = FakeWS.made[0];
+    ws.open();
+    g.window.__rompLocalUp = false;                      // the shim put its socket down (netState("down"))
+    clock += 45_000;
+    fm.watchdog(clock, true);
+    assert.equal(ws.closed, 1, "the quiet socket is put down exactly as before");
+    const kills = diag.filter((d) => d.data && d.data.ev === "watchdog-close");
+    assert.equal(kills.length, 1);
+    assert.equal(kills[0].data.why, "quiet");
+    const conn = fm.conns.get("TESTHOST");
+    assert.equal(conn.ws, null, "the corpse is disowned and nulled");
+    assert.equal(FakeWS.made.length, 1, "…and NO fresh socket is dialed while the local socket is down");
+    let rows = diag.filter((d) => d.what === "hostconn" && d.data && d.data.ev === "dial-deferred");
+    assert.equal(rows.length, 1, "the deferral is said once");
+    assert.deepEqual(rows[0].data, DEFERRED, "fixed identifiers only: the row carries no free text");
+    assert.equal(conn.deferred, true);
+    clock += 5_000;
+    fm.watchdog(clock);                                  // a plain tick: a null socket is nobody's to verdict
+    fm.watchdog(clock, true);                            // a second foreground pass (the phone's next return in the same outage)
+    fm.connect(conn);                                    // a lost retry timer firing, or the poll's dial
+    assert.equal(FakeWS.made.length, 1, "still no dial");
+    rows = diag.filter((d) => d.data && d.data.ev === "dial-deferred");
+    assert.equal(rows.length, 1, "a second deferral in the same spell files no second row");
+    assert.equal(kills.length, 1, "and nothing else was killed");
+    conn.closed = true;
+  });
+});
+
+test("local socket down: a CONNECTING relay socket is still killed on foreground, and its redial waits", async () => {
+  await withManager((fm, _e, diag) => {
+    const g: any = globalThis;
+    fm.openRemote("TESTHOST", true);
+    const ws = FakeWS.made[0];                           // never opens: the handshake into the dead path
+    g.window.__rompLocalUp = false;
+    clock += 1000;
+    fm.watchdog(clock, true);
+    assert.equal(ws.closed, 1, "the foreground kill of a CONNECTING socket is unchanged");
+    assert.equal(diag.filter((d) => d.data && d.data.ev === "watchdog-close" && d.data.why === "connecting").length, 1);
+    assert.equal(FakeWS.made.length, 1, "no second handshake into the same dead path");
+    assert.equal(diag.filter((d) => d.data && d.data.ev === "dial-deferred").length, 1);
+    fm.conns.get("TESTHOST").closed = true;
+  });
+});
+
+test("the local socket's return (romp:wsup → localUp) dials every live conn whose socket is null or CLOSED, once, and runs one poll", async () => {
+  const g: any = globalThis;
+  const hadFetch = "fetch" in g, prevFetch = g.fetch;
+  let fetches = 0;
+  g.fetch = async () => { fetches++; return { ok: true, json: async () => ({ tunnels: [
+    { host: "TESTHOST", hasToken: true, localPort: 5, status: "up" },
+    { host: "HOSTB", hasToken: true, localPort: 6, status: "up" },
+    { host: "HOSTC", hasToken: true, localPort: 7, status: "up" },
+  ] }) }; };
+  try {
+    await withManager(async (fm, _e, diag) => {
+      fm.openRemote("TESTHOST", true);                   // will be the deferred one (ws null)
+      fm.openRemote("HOSTB", true);                      // will be CLOSED under us (readyState 3, no timer)
+      fm.openRemote("HOSTC", true);                      // stays CONNECTING: not touched
+      assert.equal(FakeWS.made.length, 3);
+      FakeWS.made[0].open();
+      g.window.__rompLocalUp = false;
+      clock += 45_000;
+      fm.watchdog(clock, true);                          // TESTHOST abandoned, dial deferred; HOSTB/HOSTC CONNECTING → killed too, deferred
+      assert.equal(FakeWS.made.length, 3, "nothing dialed while down");
+      assert.equal(diag.filter((d) => d.data && d.data.ev === "dial-deferred").length, 3, "one row per conn");
+      const b = fm.conns.get("HOSTB");
+      b.ws = FakeWS.made[1]; b.ws.readyState = 3;        // a CLOSED socket whose retry timer was lost (the throttled-tab case)
+      const c = fm.conns.get("HOSTC");
+      c.ws = FakeWS.made[2]; c.ws.readyState = 0;        // a handshake in flight again (the kill above had set the fake CLOSED)
+      // the shim's onopen flips the flag BEFORE it dispatches romp:wsup
+      g.window.__rompLocalUp = true;
+      const listeners: Record<string, Array<() => void>> = {};
+      fm.watchLocalLink({ addEventListener(t: string, fn: () => void) { (listeners[t] ||= []).push(fn); } });
+      assert.equal((listeners["romp:wsup"] || []).length, 1, "one romp:wsup listener");
+      for (const fn of listeners["romp:wsup"]) fn();
+      assert.equal(FakeWS.made.length, 5, "TESTHOST (null) and HOSTB (CLOSED) dialed; HOSTC (CONNECTING) left alone");
+      assert.equal(fm.conns.get("TESTHOST").ws, FakeWS.made[3]);
+      assert.equal(fm.conns.get("TESTHOST").deferred, false, "the dial that ran clears the spell");
+      assert.equal(b.ws, FakeWS.made[4]);
+      assert.equal(c.ws, FakeWS.made[2]);
+      assert.equal(fetches, 1, "one /tunnels read rides the return");
+      await new Promise((r) => setTimeout(r, 0));        // let that poll finish while the fakes stand
+      assert.equal(FakeWS.made.length, 5, "the poll found every host dialed or dialing: no second dial");
+      for (const fn of listeners["romp:wsup"]) fn();     // a second wsup with everything up
+      assert.equal(FakeWS.made.length, 5, "nothing to dial");
+      assert.equal(fetches, 2);
+      await new Promise((r) => setTimeout(r, 0));
+      for (const x of fm.conns.values()) x.closed = true;
+    });
+  } finally {
+    if (hadFetch) g.fetch = prevFetch; else delete g.fetch;
+  }
+});
+
+test("localUp dials nothing for a detached conn or a host /tunnels says is down", async () => {
+  const g: any = globalThis;
+  const hadFetch = "fetch" in g, prevFetch = g.fetch;
+  g.fetch = async () => ({ ok: true, json: async () => ({ tunnels: [] }) });
+  try {
+    await withManager(async (fm) => {
+      fm.openRemote("TESTHOST", false);                  // not up: never dialed
+      const c = fm.conns.get("TESTHOST");
+      g.window.__rompLocalUp = true;
+      fm.localUp();
+      assert.equal(FakeWS.made.length, 0, "a down tunnel is not dialed by the return either");
+      c.live = true; c.closed = true;
+      fm.localUp();
+      assert.equal(FakeWS.made.length, 0, "nor a detached conn");
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  } finally {
+    if (hadFetch) g.fetch = prevFetch; else delete g.fetch;
+  }
+});
+
+test("local socket up, or no flag at all (a page without the shim, VS Code): the foreground pass dials in the same pass, as before", async () => {
+  await withManager((fm, _e, diag) => {
+    const g: any = globalThis;
+    assert.ok(!("__rompLocalUp" in g.window), "the harness window carries no flag: today's every other test runs this path");
+    fm.openRemote("TESTHOST", true);
+    FakeWS.made[0].open();
+    clock += 45_000;
+    fm.watchdog(clock, true);
+    assert.equal(FakeWS.made.length, 2, "undefined: abandon and dial in one pass");
+    FakeWS.made[1].open();
+    g.window.__rompLocalUp = true;
+    clock += 45_000;
+    fm.watchdog(clock, true);
+    assert.equal(FakeWS.made.length, 3, "true: the same");
+    assert.equal(diag.filter((d) => d.data && d.data.ev === "dial-deferred").length, 0, "no deferral row on either path");
+    assert.ok(!fm.conns.get("TESTHOST").deferred, "no spell open (this case passes before the change too: it pins the path that must not move)");
+    fm.conns.get("TESTHOST").closed = true;
+  });
+});
+
+test("poll(): no /tunnels GET while the local socket is down; the first poll after the flip reads it (the backstop for a missed romp:wsup)", async () => {
+  const g: any = globalThis;
+  const hadFetch = "fetch" in g, prevFetch = g.fetch;
+  let fetches = 0;
+  g.fetch = async () => { fetches++; return { ok: true, json: async () => ({ tunnels: [{ host: "TESTHOST", hasToken: true, localPort: 5, status: "up" }] }) }; };
+  try {
+    await withManager(async (fm, _e, diag) => {
+      g.window.__rompLocalUp = false;
+      await fm.poll();
+      assert.equal(fetches, 0, "no GET into the origin the socket cannot reach");
+      assert.equal(fm.hostsRead, false, "a list that was not read is not a list in hand");
+      assert.equal(fm.pollFailing, false, "…and not a failure either: nothing was tried");
+      assert.equal(diag.length, 0, "no row: the poll is simply held");
+      g.window.__rompLocalUp = true;
+      await fm.poll();
+      assert.equal(fetches, 1, "the next 4 s poll reads the flag the shim flipped at its onopen");
+      assert.equal(fm.hostsRead, true);
+      assert.equal(FakeWS.made.length, 1, "and dials the host it lists");
+      delete g.window.__rompLocalUp;
+      await fm.poll();
+      assert.equal(fetches, 2, "no flag: polls as before");
+      fm.conns.get("TESTHOST").closed = true;
+    });
+  } finally {
+    if (hadFetch) g.fetch = prevFetch; else delete g.fetch;
+  }
+});
+
 test("the document wiring: `resume` then `visibilitychange`→visible keeps an open socket; `visibilitychange` alone abandons a quiet one; hidden fires nothing", async () => {
   await withManager((fm) => {
     // a fake document that records the listeners and lets the test fire them in the browser's order
@@ -373,6 +549,8 @@ test("source pin: start() installs the lifecycle listeners through watchLifecycl
   assert.ok(start.length > 0, "start() precedes watchLifecycle()");
   assert.match(start, /try \{\s*this\.watchLifecycle\(document\);\s*\} catch/, "installed once, inside the no-document guard");
   assert.ok(!/document\.addEventListener/.test(start), "no second, un-testable listener install in start()");
+  assert.match(start, /this\.watchLocalLink\(w\);/, "the romp:wsup listener is installed the same way (2026-09-18), so the fake-window test above covers the real wiring");
+  assert.ok(!/addEventListener\("romp:wsup"/.test(start), "…and not a second time inline");
 });
 
 // ── the pending-host signal: what the panes and the shell read while a host is still coming ────
