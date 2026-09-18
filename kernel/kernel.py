@@ -41053,13 +41053,19 @@ def _set_env_or_park(be, sid, value):
         be.set_env(sid, value)
 
 
-def _set_auth_or_park_verdict(be, sid, value):
+def _set_auth_or_park_verdict(be, sid, value, park=True):
     """_set_auth_or_park's verdict by name: "parked" (the FIFO holds the pick and applies it when the session is
     quiet), "ok" (applied now), "refused" (a value that is no pick, or the backend's no). POST /billing answers
-    each differently (a parked pick applies at the session's next quiet moment); the WS arm needs the boolean."""
+    each differently (a parked pick applies at the session's next quiet moment); the WS arm needs the boolean.
+    `park` False leaves the FIFO gate out: POST /billing's `now` road (its comment says why a --now pick is never
+    parked) still hands its pick to the backend THROUGH this helper, so the user's explicit pick has one door into
+    be.set_auth, the WS arm's, the verb's and the parked replay's alike, and the census tests/test_cap_switch_offer.py
+    keeps of the kernel's set_auth call sites stays at the helper and the replay (round 2 addendum of the billing
+    verb's review, 2026-09-18: the road's own raw call was a third site, and the pin that keeps every automatic path
+    off billing in either direction went red)."""
     if not lg.parse_pick(value)[0]:          # "login" | "key" | "login:<id>" (a stored login, T346)
         return "refused"
-    if _gate_or_park(sid, ("auth", value)):
+    if park and _gate_or_park(sid, ("auth", value)):
         return "parked"
     return "ok" if be.set_auth(sid, value) else "refused"
 
@@ -41128,7 +41134,8 @@ def _billing_request(b):
     WS arm asks with the whole value, which a "login:<id>" answers "" to, so a stored login's own reason was lost
     there). Two roads of its own:
       * `now` cuts the turn in flight so the reconnect follows at once (the user 2026-09-18). It bypasses the FIFO
-        park the dashboard's op takes mid-turn: set_auth records the pick and asks its reconnect under the one arm
+        park the dashboard's op takes mid-turn (_set_auth_or_park_verdict with `park` False, so the pick still passes
+        the one helper every explicit pick takes): set_auth records the pick and asks its reconnect under the one arm
         rule (deferred to the settle while a turn is open), and the interrupt after it ends that turn, so its settle
         arms the reconnect; parked instead, the pick would apply only when the pusher's sweep found the session
         quiet, and the interrupt would cut a turn with nothing pending. No new arm path. A compaction is refused, not
@@ -41223,7 +41230,8 @@ def _billing_request(b):
         if why:
             return {"ok": False, "error": why, "_status": 409}
         superseded = _drop_parked_auth(sid, "the --now pick")
-        if not be.set_auth(sid, pick):
+        # the one door every explicit pick takes, with the FIFO gate off (the helper's docstring, 2026-09-18)
+        if _set_auth_or_park_verdict(be, sid, pick, park=False) == "refused":
             return _billing_refusal(be, who, pick)
     else:
         verdict = _set_auth_or_park_verdict(be, sid, pick)

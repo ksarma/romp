@@ -66,6 +66,11 @@ if HERE not in sys.path:
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment (named runner variables, never the whole environment)
 import lab_dist   # noqa: E402
 from romp_load import load_source   # noqa: E402
+# Hermetic state BEFORE the load (tests/test_state_isolation_order.py's pin counts every load_source as state-touching,
+# and only pytest runs conftest's floor); the lab class builds the kernel's own roots under its temp lab, so this floor
+# protects a bare unittest or script run alone
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 _cred = load_source("romp_credentials_billing_lab", os.path.join(ROOT, "kernel", "credentials.py"))
 FAKE = os.path.join(HERE, "fixtures", "fake_claude.py")
 ROMP = os.path.join(BIN, "romp")
