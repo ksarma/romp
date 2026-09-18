@@ -90,12 +90,24 @@ test('decision 47 states what passes, and the hook agrees: reads, opaque command
   assert.ok(d47.includes('holds an entry the literal rule could refuse') && hook.includes('function tracksRefusable(root, memo)'));
   assert.ok(d47.includes('the directory judged under its real path and its name') && hook.includes('for (const d of real && real !== dir ? [real, dir] : [dir]) {'));
   assert.ok(d47.includes('the landing folder counting only when a tracked file could land there') && hook.includes('function landingInPlay(hit, memo)'));
-  assert.ok(d47.includes('a target whose only expansions are numbers by construction (`$$`, `$RANDOM`, `$BASHPID`, `$SECONDS`, their brace forms) and whose text is an absolute path outside every project in play is allowed'));
-  assert.ok(hook.includes("const NUMERIC_EXPANSIONS = new Set(['RANDOM', 'BASHPID', 'SECONDS']);") && hook.includes('function numericOutside(text, root)'));
+  // review round 2 (2026-09-18): the landing cap is recorded as the deliberate false refusal it is, the numeric
+  // set is per shell with BASHPID out of it, the target's own prefix is asked and a fold still resolves, and the
+  // environment clause says which value can reach a refusal
+  assert.ok(d47.includes('or when it holds more than 2000 entries, past which the hook does not scan it and takes it as in play (`LANDING_SCAN_CAP`, a deliberate false refusal'));
+  assert.ok(hook.includes('const LANDING_SCAN_CAP = 2000;') && hook.includes('if (names.length > LANDING_SCAN_CAP) return true;'), 'the cap the decision names');
+  assert.ok(d47.includes('a target whose only expansions the shell running it will not let it assign (`$$` and `${$}` in every shell; `$RANDOM` and `$SECONDS`, their brace forms too, read-only integers in bash and in zsh'));
+  assert.ok(d47.includes('not inside a script the command hands to `sh` or `dash`, where they are ordinary variables; `$BASHPID`, which round 1 listed as numeric by construction, is unset and assignable in zsh and is out of the set) and whose text is an absolute path outside every project in play is allowed'));
+  assert.ok(hook.includes("const NUMERIC_EXPANSIONS = new Set(['RANDOM', 'SECONDS']);") && hook.includes('const POSIX_SH_NUMERIC = new Set();') && hook.includes("const KEEPS_NUMERIC_SPECIALS = new Set(['bash', 'zsh']);"), 'the per-shell sets');
+  assert.ok(!/NUMERIC_EXPANSIONS = new Set\(\[[^\]]*BASHPID/.test(hook), 'BASHPID is in no numeric set');
+  assert.ok(hook.includes('recurse(sh.script.text, name)') && hook.includes('recurse(body, name)') && hook.includes('lex(command, numericSetFor(shell))'), 'a script handed to a shell is lexed with that shell\'s set');
+  assert.ok(d47.includes('the project the target\'s own literal prefix sits in being asked first') && hook.includes('const own = trackingRootAt(literalDirOf(path.normalize(u.numeric)).dir, memo);') && hook.includes('if (own && landingInPlay(own, memo)) return own;'));
+  assert.ok(d47.includes('a `..` that folds every expansion away still resolving the literal directory part') && hook.includes("const cut = dollar < 0 ? norm.lastIndexOf('/') : norm.lastIndexOf('/', dollar);"));
+  assert.ok(hook.includes('function numericOutside(text, root)') && hook.includes('function literalDirOf(norm)'));
   assert.ok(d47.includes('a `$(date)` in a log\'s name among them, a cost stated to the user rather than solved'), 'the residual false refusal is stated, not claimed solved');
   assert.ok(d47.includes('the hook reads no variable named in the command to resolve the word'));
   assert.ok(d47.includes('TRACKCHANGES_ROOT, which stands in for the root search only for a directory under it') && hook.includes('const fromEnv = !!env && !outside(d, env);'));
-  assert.ok(d47.includes('no value read there reaches a refusal') && hook.includes("hit.fromEnv ? 'the project TRACKCHANGES_ROOT names' : hit.root"));
+  assert.ok(d47.includes('of those only HOME\'s value can appear in a refusal, and only as a path the hook resolved through it') && d47.includes('TRACKCHANGES_ROOT is named by the variable, never by its value, and ROMP_SID is never printed') && hook.includes("hit.fromEnv ? 'the project TRACKCHANGES_ROOT names' : hit.root"));
+  assert.ok(!d47.includes('no value read there reaches a refusal'), 'the round-1 clause, false for a `$HOME` target, is gone');
   assert.ok(d47.includes('a python or node one-liner whose write path is computed') && d47.includes('the interpreter scan reads a literal path only'), 'the interpreter residual is named');
   assert.ok(hook.includes('function installDirOnly(t)'), 'install -d writes no file');
   // a glob is no longer unresolvable: it is expanded as the shell expands it (the review's second round), as are a

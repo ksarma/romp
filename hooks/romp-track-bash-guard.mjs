@@ -35,17 +35,32 @@
 // not cover, or a note the link closure reaches from one), the directory judged under its real path
 // and its name, and for a copy's landing folder only when a tracked file could land there
 // (inPlayFor and its helpers, below). One narrowing, from the round-1 review: a target whose only
-// expansions are numeric by construction (`$$`, `$RANDOM`, `$BASHPID`, `$SECONDS`, their brace
-// forms) and whose text is an absolute path outside every project in play is dropped, since such an
-// expansion cannot carry a path separator back into the project (`/tmp/build-$$.log`). A variable
+// expansions the shell that runs it cannot be made to assign (`$$` and `${$}` in every shell;
+// `$RANDOM` and `$SECONDS`, their brace forms too, which bash and zsh keep as read-only integers,
+// and which count only outside a script the command hands to `sh`, `dash` or another shell not
+// verified to keep them so, where they are ordinary variables) and whose text is an absolute path
+// outside every project in play is dropped, since such an expansion cannot carry a path separator
+// back into the project (`/tmp/build-$$.log`), and the project the target's own literal prefix sits
+// in is asked first, so a numeric name landing in a second tracked project is refused as its literal
+// spelling is. Round 2 of the review (2026-09-18) corrected the round-1 premise, which called the
+// set "numeric by construction": a whitelist justified by a shell's read-only parameters holds only
+// in the shells it was checked in, and `$BASHPID`, which round 1 listed, is unset and freely
+// assignable in zsh, the shell the Bash tool runs here, so it is no longer among them (a refuter
+// overwrote a tracked file through it); under dash, which is `/bin/sh` on this system, RANDOM and
+// SECONDS are assignable too, hence the restriction inside a script handed to `sh`. A variable
 // of unknown content, a substitution and a relative or bare expansion stay refused whatever their
 // literal text, because a `../` inside the value reaches back in (verified by the review by
 // overwriting a tracked file); a `$(date)` in a log's name is refused too, and that class is
 // stated, not solved. Of the session's environment the hook reads HOME (for `~` and a leading
 // `$HOME`, as the shell would), TRACKCHANGES_ROOT (the root override the CLIs honour, for a directory
 // under it) and ROMP_SID; it never reads a variable named in the command (that would read names
-// shaped like secrets and guess at the cwd), and no value read from the environment reaches a
-// message. The refusal says the target is not literal and asks for the path spelled out, which then
+// shaped like secrets and guess at the cwd). Of those three, only HOME's value can appear in a
+// refusal, and only as a path the hook resolved through it (the target a `~/` or a leading `$HOME`
+// names, or the project root a bare `cd` lands in); TRACKCHANGES_ROOT is named by the variable,
+// never by its value, and ROMP_SID is never printed (review round 2, 2026-09-18, correcting a
+// round-1 clause that claimed no environment value reaches a message: a `"$HOME/x.md"` target is
+// expanded and refused by its resolved path, which is HOME's value). The refusal says the target is
+// not literal and asks for the path spelled out, which then
 // takes today's verdict (a file outside the project runs as usual, a tracked one goes through
 // track-edit). With no such project in play the word is dropped, as before. Like the vendored guard
 // it lets a non-text file through (an image or a PDF cannot take a tracked edit, so the raw write is
@@ -106,9 +121,10 @@ const RESERVED = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', 
 
 // `at` is the literal folder a copy lands in when the landing NAME is not literal (`cp "$SRC" docs/`,
 // `cp -t docs "$SRC"`): the refusal of such a word is judged by that folder's project, not the cwd's.
-// `numeric` marks a non-literal word whose every expansion is one of NUMERIC_EXPANSIONS (review round 1,
-// 2026-09-18): such a word's text is a path with digits to be filled in and can carry no `../` and no
-// glob, so inPlayFor may read its literal segments to see that it lands outside every project in play.
+// `numeric` marks a non-literal word whose every expansion is `$$`, `${$}` or one of the numeric set the
+// lexer was handed for the shell running the word (review round 1, 2026-09-18; per shell since round 2):
+// such a word's text is a path with digits to be filled in and can carry no `../` and no glob, so inPlayFor
+// may read its literal segments to see that it lands outside every project in play.
 function word(text, literal, raw, extra) {
   return {
     text, literal, raw, glob: !!(extra && extra.glob), marks: extra && extra.marks != null ? extra.marks : null,
@@ -116,30 +132,47 @@ function word(text, literal, raw, extra) {
   };
 }
 
-// Shell values that are numbers by construction: the shell's pid, a random number, the subshell's pid,
-// the seconds since the shell started. A target built from one of these and literal text (`/tmp/build-$$.log`,
-// `"/tmp/out-${RANDOM}.log"`) is the commonest non-literal write the round-1 review (2026-09-18) found
-// refused inside a tracked project, and the one narrowing that is safe: the expansion cannot hold a path
-// separator, so it cannot reach back into the project the way a variable of unknown content can (a
-// refuter's `"$NAME"` holding `../docs/report.md` overwrote a tracked file under the general literal-prefix
-// rule that review rejected). A user variable, a `$(...)`, a backtick, a `~user`, a glob and a brace list past
-// the cap stay refused, by the review's ruling.
-const NUMERIC_EXPANSIONS = new Set(['RANDOM', 'BASHPID', 'SECONDS']);
-// What the `$` at `pos` of `src` begins: { kind, len } with kind 'numeric' (`$$`, `${$}`, `$RANDOM`,
-// `${RANDOM}`, ...), 'home' (`$HOME`, `${HOME}`: the caller decides whether it stands at the start of a
-// word followed by a slash or the word's end, the one place it is expanded like `~`), or 'other' (the
-// caller reads on as before: a `$(`, a `${...}` of unknown content, a variable).
-function expansionAt(src, pos) {
+// Shell parameters the shell running the command will not let the command assign a path to, so a target
+// built from one of them and literal text (`/tmp/build-$$.log`, `"/tmp/out-${RANDOM}.log"`), the commonest
+// non-literal write the round-1 review (2026-09-18) found refused inside a tracked project, is the one
+// narrowing that is safe: the expansion cannot hold a path separator, so it cannot reach back into the
+// project the way a variable of unknown content can (a refuter's `"$NAME"` holding `../docs/report.md`
+// overwrote a tracked file under the general literal-prefix rule that review rejected). The set is PER SHELL
+// (review round 2, 2026-09-18, by execution in each shell): `$$` and `${$}` are unassignable everywhere and
+// are read by expansionAt itself; RANDOM and SECONDS are read-only integers in bash and in zsh (the shell the
+// Bash tool runs here; `RANDOM=../x` is an error in both), so they count at the top level, but under dash,
+// which is `/bin/sh` on this system, they are ordinary variables, and a refuter overwrote a tracked file with
+// `sh -c 'RANDOM=../<project>/docs/report.md; cp base/report.md "<outside>/$RANDOM"'` while the hook read the
+// word as numeric, so inside a script the command hands to a shell other than bash or zsh the set is empty
+// (POSIX_SH_NUMERIC). Round 1 also listed BASHPID: bash keeps it, but zsh leaves it unset and freely
+// assignable, and the hook never learns which shell the top-level command runs under, so it is dropped
+// outright (the only cost is a bash user writing `$BASHPID` into a path inside a tracked project, and
+// refusing that is the correct verdict). A user variable, a `$(...)`, a backtick, a `~user`, a glob and a
+// brace list past the cap stay refused, by the review's ruling.
+const NUMERIC_EXPANSIONS = new Set(['RANDOM', 'SECONDS']);
+const POSIX_SH_NUMERIC = new Set();
+// The shells verified (round 2, by execution) to keep RANDOM and SECONDS read-only; a script handed to any
+// other shell name in SHELLS (`sh`, `dash`, `ksh`) is lexed with POSIX_SH_NUMERIC. `sh` is dash on this
+// system and bash in POSIX mode on others: the empty set is right for the first and merely stricter for the
+// second, and a whitelist has to name the shell it was checked in.
+const KEEPS_NUMERIC_SPECIALS = new Set(['bash', 'zsh']);
+const numericSetFor = (shell) => (shell == null || KEEPS_NUMERIC_SPECIALS.has(shell) ? NUMERIC_EXPANSIONS : POSIX_SH_NUMERIC);
+// What the `$` at `pos` of `src` begins: { kind, len } with kind 'numeric' (`$$`, `${$}`, and `$RANDOM`,
+// `${RANDOM}`, ... when `numeric`, the set for the shell running the word, holds the name), 'home' (`$HOME`,
+// `${HOME}`: the caller decides whether it stands at the start of a word followed by a slash or the word's
+// end, the one place it is expanded like `~`), or 'other' (the caller reads on as before: a `$(`, a
+// `${...}` of unknown content, a variable).
+function expansionAt(src, pos, numeric = NUMERIC_EXPANSIONS) {
   if (src[pos + 1] === '$') return { kind: 'numeric', len: 2 };
   if (src[pos + 1] === '{') {
     const close = src.indexOf('}', pos + 2);
     const inner = close < 0 ? '' : src.slice(pos + 2, close);
-    if (inner === '$' || NUMERIC_EXPANSIONS.has(inner)) return { kind: 'numeric', len: close + 1 - pos };
+    if (inner === '$' || numeric.has(inner)) return { kind: 'numeric', len: close + 1 - pos };
     if (inner === 'HOME') return { kind: 'home', len: close + 1 - pos };
     return { kind: 'other', len: 1 };
   }
   const m = src.slice(pos + 1).match(/^[A-Za-z_][A-Za-z0-9_]*/);
-  if (m && NUMERIC_EXPANSIONS.has(m[0])) return { kind: 'numeric', len: 1 + m[0].length };
+  if (m && numeric.has(m[0])) return { kind: 'numeric', len: 1 + m[0].length };
   if (m && m[0] === 'HOME') return { kind: 'home', len: 1 + m[0].length };
   return { kind: 'other', len: 1 };
 }
@@ -226,7 +259,10 @@ function braceExpand(text, marks) {
 
 const newSegment = () => ({ words: [], redirects: [], heredocs: [], subs: [], op: '' });
 
-export function lex(command) {
+// `numeric` is the set of parameter names read as numbers beside `$$`/`${$}`: NUMERIC_EXPANSIONS for the
+// Bash tool's own command, POSIX_SH_NUMERIC for a script the command hands to `sh` (numericSetFor; review
+// round 2, 2026-09-18).
+export function lex(command, numeric = NUMERIC_EXPANSIONS) {
   const src = String(command);
   const segments = [];
   let seg = newSegment();
@@ -234,7 +270,7 @@ export function lex(command) {
   let raw = '';
   let marks = '';
   let sawExpansion = false;   // the word carries an expansion the hook cannot resolve
-  let numericOnly = true;     // every expansion so far is one of NUMERIC_EXPANSIONS (meaningful with sawExpansion)
+  let numericOnly = true;     // every expansion so far is `$$`, `${$}` or one of `numeric` (meaningful with sawExpansion)
   let inWord = false;
   let opaque = false;
   let inTest = false;   // inside [[ ... ]], where > and < compare strings
@@ -378,8 +414,9 @@ export function lex(command) {
         if (d === '$' && src[i + 1] === '(') { opaqueExpansion(); raw += '$('; i += 2; const inner = skipNested('(', ')'); raw += inner + ')'; seg.subs.push(inner); continue; }
         if (d === '$') {
           // the quoted spelling of the two expansions the hook reads (review round 1, 2026-09-18): a leading
-          // "$HOME/..." is the home directory, as `~/` is; "$$", "$RANDOM", "${RANDOM}" and their kin are numeric
-          const e = expansionAt(src, i);
+          // "$HOME/..." is the home directory, as `~/` is; "$$", "${$}" and, in a shell that keeps them read-only,
+          // "$RANDOM", "${SECONDS}" and their kin are numeric (per shell since round 2)
+          const e = expansionAt(src, i, numeric);
           if (e.kind === 'home' && buf === '' && !sawExpansion && (src[i + e.len] === '/' || src[i + e.len] === '"')) {
             quoted(os.homedir()); raw += src.slice(i, i + e.len); i += e.len; continue;
           }
@@ -402,8 +439,9 @@ export function lex(command) {
     }
     if (c === '$') {
       // a leading $HOME or ${HOME} followed by a slash or the word's end is the home directory, as `~/` is
-      // (review round 1, 2026-09-18); $$, $RANDOM, $BASHPID, $SECONDS and their brace forms are numeric
-      const e = expansionAt(src, i);
+      // (review round 1, 2026-09-18); $$, ${$} and, in a shell that keeps them read-only, $RANDOM, $SECONDS and
+      // their brace forms are numeric (per shell since round 2; $BASHPID no longer is, zsh lets a command assign it)
+      const e = expansionAt(src, i, numeric);
       if (e.kind === 'home' && buf === '' && !sawExpansion && homeBoundary(src[i + e.len])) {
         inWord = true; quoted(os.homedir()); raw += src.slice(i, i + e.len); i += e.len; continue;
       }
@@ -925,9 +963,12 @@ function shellScript(args) {
 // hook could not read, each { raw, how, dir, at, numeric } (the word as typed, the construct, the
 // directory current at the write or null when unknown, the folder a copy lands in when that much is
 // literal, and the word's text when its only expansions are numeric, else null), for evaluate to
-// refuse while a tracked project is in play (the header; 2026-09-18).
-export function extractWriteTargets(command, cwd) {
-  const { segments, opaque } = lex(command);
+// refuse while a tracked project is in play (the header; 2026-09-18). `shell` is the name of the shell
+// whose script `command` is when the call is a recursion into `sh -c '...'`, `bash <<EOF` or a `$(...)`
+// inside one (null for the Bash tool's own command): it picks the numeric set the lexer reads with, since
+// RANDOM and SECONDS are ordinary variables under dash (review round 2, 2026-09-18).
+export function extractWriteTargets(command, cwd, shell = null) {
+  const { segments, opaque } = lex(command, numericSetFor(shell));
   const targets = [];
   const unresolved = [];
   let dir = cwd || null;
@@ -956,8 +997,10 @@ export function extractWriteTargets(command, cwd) {
     if (p) targets.push({ path: p, how });
   };
   let sawOpaqueCommand = false;
-  const recurse = (text) => {
-    const sub = extractWriteTargets(text, unknownDir ? null : dir);
+  // A script run by `sh` (a `$(...)`, a heredoc-fed shell, a `-c` operand) is read with that shell's numeric
+  // set; a `$(...)` in this command runs in this command's shell, so it inherits `shell`.
+  const recurse = (text, sh = shell) => {
+    const sub = extractWriteTargets(text, unknownDir ? null : dir, sh);
     targets.push(...sub.targets);
     unresolved.push(...sub.unresolved);
     if (sub.opaque) sawOpaqueCommand = true;
@@ -1100,12 +1143,14 @@ export function extractWriteTargets(command, cwd) {
       case 'eval': case 'xargs': sawOpaqueCommand = true; break;
       default:
         if (SHELLS.has(name)) {
+          // the script is read under the shell named, whose numeric set may be narrower than this command's
+          // (`sh -c '... $RANDOM ...'`: dash lets the script assign RANDOM; review round 2, 2026-09-18)
           const sh = shellScript(args);
           if ('script' in sh) {
-            if (sh.script && sh.script.literal) recurse(sh.script.text);
+            if (sh.script && sh.script.literal) recurse(sh.script.text, name);
             else if (sh.script) sawOpaqueCommand = true;
           } else if (sh.stdin) {
-            for (const body of stdinBodies(idx)) recurse(body);   // bash <<'EOF' ... EOF: the body is the script
+            for (const body of stdinBodies(idx)) recurse(body, name);   // bash <<'EOF' ... EOF: the body is the script
           }
         }
     }
@@ -1306,7 +1351,12 @@ function trackingRootAt(dir, memo) {
 // 2026-09-18: the branch refused every copy into any folder of a project that tracks anything, from
 // every cwd; the refuters' narrowing by tracked entries alone let `cp "$SRC" outbox/` pass where
 // outbox/report.md linked to the tracked file, and the copy then overwrote it, so the folder's own
-// entries are asked too).
+// entries are asked too). The cap is a deliberate false refusal, stated in decision 47 and escalated
+// with the PR rather than hidden (review round 2, 2026-09-18): a copy whose landing name the hook
+// cannot read is refused in any folder over 2000 entries, even when nothing tracked could land there.
+// Both sides of the boundary are pinned by execution (tools/romp-track-bash-guard.test.mjs, the caps
+// test), so the number can be chosen rather than inherited; the round measured the scan it avoids at
+// about 30 microseconds per entry, against the installer's 10 s hook timeout.
 const LANDING_SCAN_CAP = 2000;
 function landingInPlay(hit, memo) {
   const { root, dir } = hit;
@@ -1337,12 +1387,31 @@ function landingInPlay(hit, memo) {
 // /tmp/build-4242), so that one is not taken as diverging; a segment whose literal pieces cannot fit
 // (`other-$$` against build-4242) diverges, as a literal segment that differs does. Judged under the
 // lexical text and under the text with its literal directory part resolved (`/tmp/link/x-$$.md` where
-// link leads into the project), and against the root's real path as well as its name.
+// link leads into the project), and against the root's real path as well as its name. "For certain"
+// is bounded by what exists when the hook runs: a link the same command creates under or after the
+// numeric segment is not resolved, for a literal path just the same (a PreToolUse hook cannot resolve a
+// link the command has not yet made), a hook-wide limit stated with the PR, not a property of this rule.
 const NUMERIC_TOKEN = /\$\$|\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$/g;
 const couldSpell = (seg, name) => {
   const re = seg.split(NUMERIC_TOKEN).map(escapeRe).join('\\d+');   // every token a run of digits
   return new RegExp(`^${re}$`).test(name);
 };
+// The literal directory part of a numeric-only target's NORMALIZED text, as { cut, dir }: the directory
+// holding the first surviving expansion, or, when a literal `..` folded every expansion away
+// (`<out>/run-$$/../link/report.md` normalizes to `<out>/link/report.md`), the directory holding the
+// file. Review round 2 (2026-09-18): the cut was `lastIndexOf('/', indexOf('$'))` on the normalized text,
+// so with no `$` left the search position clamped to 0, the directory part collapsed to `/`, the resolve
+// step below never ran, and a numeric target whose literal tail climbed back into a tracked project
+// through a symlink was allowed while the identical path spelled out was refused (two refuters
+// overwrote a tracked file with `mkdir -p <out>/run-$$ && echo x > <out>/run-$$/../link/report.md`). A
+// fully literal normalized text is still a numeric-class word, not a refusal: a fold to a plain path
+// outside every project (`<out>/run-$$/../plain.log`) stays allowed, which the round pinned beside the
+// two link cases so the fix cannot drift into refusing every fold.
+function literalDirOf(norm) {
+  const dollar = norm.indexOf('$');
+  const cut = dollar < 0 ? norm.lastIndexOf('/') : norm.lastIndexOf('/', dollar);
+  return { cut, dir: cut <= 0 ? '/' : norm.slice(0, cut) };
+}
 function numericOutside(text, root) {
   const norm = path.normalize(text);
   const diverges = (p, r) => {
@@ -1355,8 +1424,7 @@ function numericOutside(text, root) {
     }
     return false;   // every root segment matched: the root itself, or under it
   };
-  const cut = norm.lastIndexOf('/', norm.indexOf('$'));
-  const dirPart = cut <= 0 ? '/' : norm.slice(0, cut);
+  const { cut, dir: dirPart } = literalDirOf(norm);
   const realDir = realPathOf(dirPart);
   const real = realDir == null ? norm : path.join(realDir, norm.slice(cut + 1));
   const realRoot = realPathOf(root) || root;
@@ -1368,17 +1436,32 @@ function numericOutside(text, root) {
 // the cwd does not: its project must track something refusable and the folder must be one such a
 // landing could reach (landingInPlay). Any other such target could land anywhere, so the directory
 // current at the write and the session's cwd both count, the first under a project that tracks
-// something refusable; except that a target whose only expansions are numeric (NUMERIC_EXPANSIONS)
-// and whose text is absolute is dropped when it lands outside every project those two directories
-// derive (numericOutside). A relative one, a fully opaque one (`"$(mktemp)"`, `"$F"`) and one with a
-// variable of unknown content beside the numbers stay refused: nothing about them bounds where the
-// write lands, and a `../` inside a variable reached a tracked file when a refuter tried the general
-// literal-prefix rule (review round 1, 2026-09-18). Of the session's environment this reads only
-// TRACKCHANGES_ROOT (trackingRootAt); no variable named in the command is ever read.
+// something refusable; except that a target whose only expansions are numeric (the shell's set,
+// numericSetFor) and whose text is absolute is judged by where it lands: first by the project its own
+// literal directory part sits in, which counts when a tracked file could land there (landingInPlay, the
+// same gate as a copy's landing folder), and then it is dropped when it lands outside every project the
+// two directories derive (numericOutside). The first step is round 2's (2026-09-18): the narrowing
+// measured the target against the roots the cwd and a `cd` derive only, so a numeric write into a SECOND
+// tracked project was dropped while its literal spelling was refused (two refuters overwrote a tracked
+// note that way, from a cwd in another project and from a cwd in none). It runs before the two
+// directories are asked, since from a cwd in no project there are none and the write would pass; it is
+// gated with landingInPlay, since bare tracksRefusable would refuse a numeric temp write into an untracked
+// subfolder of any tracked project on the machine, a round-1-class false refusal; and it returns the
+// target's OWN project's hit, so the refusal names the tree the write would land in, not the cwd's. A
+// relative one, a fully opaque one (`"$(mktemp)"`, `"$F"`) and one with a variable of unknown content
+// beside the numbers stay refused: nothing about them bounds where the write lands, and a `../` inside a
+// variable reached a tracked file when a refuter tried the general literal-prefix rule (review round 1,
+// 2026-09-18). Of the session's environment this reads only TRACKCHANGES_ROOT (trackingRootAt); no
+// variable named in the command is ever read.
 function inPlayFor(u, cwd, memo) {
   if (u.at) {
     const hit = trackingRootAt(u.at, memo);
     return hit && landingInPlay(hit, memo) ? hit : null;
+  }
+  const numeric = u.numeric != null && path.isAbsolute(u.numeric);
+  if (numeric) {
+    const own = trackingRootAt(literalDirOf(path.normalize(u.numeric)).dir, memo);
+    if (own && landingInPlay(own, memo)) return own;
   }
   const hits = [];
   for (const d of [u.dir, cwd]) {
@@ -1386,7 +1469,7 @@ function inPlayFor(u, cwd, memo) {
     if (hit && !hits.some((h) => h.root === hit.root)) hits.push(hit);
   }
   if (!hits.length) return null;
-  if (u.numeric != null && path.isAbsolute(u.numeric) && hits.every((h) => numericOutside(u.numeric, h.root))) return null;
+  if (numeric && hits.every((h) => numericOutside(u.numeric, h.root))) return null;
   return hits[0];
 }
 

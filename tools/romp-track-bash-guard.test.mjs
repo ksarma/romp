@@ -264,12 +264,18 @@ test('a command the lexer cannot see through and that names no target is allowed
 // target it could not read. Since 2026-09-18 such a target is refused while a project that tracks anything
 // is in play (the session's cwd, the directory a cd moved to, or the folder a copy lands in); of the
 // session's environment the hook reads HOME, TRACKCHANGES_ROOT and ROMP_SID, never a variable the command
-// names, and no value read there reaches a message. With no such project in play the word is dropped as
-// before, and a literal target keeps its verdict. Review round 1 (2026-09-18) bounded the rule in four
-// places, each pinned below: a target whose only expansions are numbers by construction and whose text is
-// an absolute path outside the project is allowed; a copy's landing folder counts only when a tracked file
-// could land there; a project counts only when its list holds an entry the literal rule could refuse; a
-// directory is judged under its real path and its name.
+// names; of those only HOME's value can appear in a refusal, as a path resolved through it (review round 2,
+// 2026-09-18). With no such project in play the word is dropped as before, and a literal target keeps its
+// verdict. Review round 1 (2026-09-18) bounded the rule in four places, each pinned below: a target whose
+// only expansions the running shell keeps unassignable and whose text is an absolute path outside the
+// project is allowed; a copy's landing folder counts only when a tracked file could land there; a project
+// counts only when its list holds an entry the literal rule could refuse; a directory is judged under its
+// real path and its name. Review round 2 (2026-09-18) found two ways around the numeric narrowing by
+// execution and one unsound member of its set, each pinned below in both directions: the project the
+// target's own literal prefix sits in is asked (a numeric name landing in a second tracked project was
+// dropped while its literal spelling was refused), a `..` that folds every expansion away still resolves
+// the literal directory part (a link after the fold carried a write into the project), and the numeric set
+// is per shell (`$BASHPID` is assignable in zsh, RANDOM and SECONDS under dash).
 
 const NOT_LITERAL = /is not a literal path/;
 
@@ -352,6 +358,7 @@ test('what stays refused by the review\'s ruling: a substitution or a variable i
       `echo x > ${out}/x-$$*.log`,                            // a glob beside the number: `*` could spell a project's name
       `echo x > ${out}/x-$RANDOMX.log`,                       // not $RANDOM: a variable of that name
       `echo x > ${out}/x-$RANDOM_1.log`,
+      `echo x >> "${out}/x-\${BASHPID}.log"`,                  // round 2: zsh, the tool's shell here, lets a command assign BASHPID (the per-shell test below)
       'echo x > build-$$.log',                                // a relative prefix
       'echo x > ../scratch-$$.log',
       'echo x > "$$.log"',                                    // no literal prefix at all
@@ -373,17 +380,19 @@ test('what stays refused by the review\'s ruling: a substitution or a variable i
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 
-test('the numeric narrowing: a target whose only expansions are $$, $RANDOM, $BASHPID or $SECONDS (their brace forms too) and whose text is an absolute path outside every project in play is allowed', () => {
+test('the numeric narrowing: a target whose only expansions are $$, $RANDOM or $SECONDS (their brace forms too) and whose text is an absolute path outside every project in play is allowed', () => {
   // Review round 1 (2026-09-18): every such write was refused whenever the cwd sat in a tracked project,
-  // breaking temp logs and captures box-wide once any project turned tracking on. These expansions are
-  // numbers by construction, so the word's literal segments bound where the write lands.
+  // breaking temp logs and captures box-wide once any project turned tracking on. The shell running the
+  // command will not let it assign a path to these ($$ anywhere; RANDOM and SECONDS in bash and zsh, the
+  // shells the Bash tool runs; the per-shell test below has dash), so the word's literal segments bound
+  // where the write lands. Round 2 (2026-09-18) dropped $BASHPID from the set, since zsh leaves it assignable.
   const out = outsideDir();
   try {
     const shapes = [
       `echo x > "${out}/build-$$.log"`,
       `npm test > "${out}/test-output-$$.log" 2>&1`,
       `cmd > ${out}/out-$RANDOM.log`,
-      `echo x >> "${out}/x-\${BASHPID}.log"`,
+      `echo x >> "${out}/x-\${SECONDS}.log"`,
       `echo x > ${out}/t-$SECONDS.log`,
       `echo x > "${out}/run-$$/\${RANDOM}.log"`,
       `echo x > ${out}/x-\${$}.log`,
@@ -392,6 +401,7 @@ test('the numeric narrowing: a target whose only expansions are $$, $RANDOM, $BA
       `mv base/report.md "${out}/moved-$$.md"`,
       `sort -o ${out}/sorted-$$.txt base/report.md`,
       `echo x > ${out}/run-$$/../other-$$.log`,               // a traversal that stays outside
+      `echo x > ${out}/run-$$/../plain.log`,                   // round 2: a traversal that folds every expansion away, to a plain path outside
       `cd "$D" && echo x > ${out}/x-$$.log`,                   // the cwd unknown: the payload cwd is in play, and the target is outside it
       `cd notes && echo x > ${out}/x-$$.log`,                  // from inside the tracked folder
     ];
@@ -409,16 +419,144 @@ test('the numeric narrowing: a target whose only expansions are $$, $RANDOM, $BA
     assert.ok(evaluate(payload(`echo x > ${out}/build-$RANDOM/x.md`, digits)));
     assert.equal(evaluate(payload(`echo x > ${out}/other-$$/x.md`, digits)), null, 'a literal segment that differs diverges');
     assert.equal(evaluate(payload(`echo x > ${out}/build-4242x-$$.log`, digits)), null, 'a sibling name, not the root');
+    // Review round 2 (2026-09-18): the project the target's OWN literal prefix sits in is asked, so a numeric
+    // name landing in a second tracked project is refused as its literal spelling is, from a cwd in another
+    // project and from a cwd in none; the refusal names the second project, the tree the write lands in. Two
+    // refuters overwrote a note tracked by folder that way (a one-shot shell's $SECONDS is 0). Both directions:
+    // a numeric temp write into a folder of a third project where nothing tracked could land stays allowed,
+    // as its literal spelling is (bare tracksRefusable on the prefix would refuse it, a round-1-class regression).
+    const second = path.join(out, 'second');
+    fs.mkdirSync(path.join(second, '.trackchanges'), { recursive: true });
+    fs.mkdirSync(path.join(second, 'notes'));
+    fs.writeFileSync(path.join(second, '.trackchanges', 'config.json'), JSON.stringify({ v: 2, tracked: ['notes/'] }));
+    fs.writeFileSync(path.join(second, 'notes', 'log-0.md'), 'a note tracked by its folder\n');
+    const third = path.join(out, 'third');
+    fs.mkdirSync(path.join(third, '.trackchanges'), { recursive: true });
+    fs.mkdirSync(path.join(third, 'build'));
+    fs.writeFileSync(path.join(third, '.trackchanges', 'config.json'), JSON.stringify({ v: 2, tracked: ['docs/report.md'] }));
+    for (const cwd of [proj, out]) {
+      const where = cwd === proj ? 'from a cwd in another tracked project' : 'from a cwd in no project';
+      for (const cmd of [`echo x > ${second}/notes/log-$SECONDS.md`, `echo x > ${second}/notes/log-$$.md`, `cp base/report.md ${second}/notes/copy-\${RANDOM}.md`]) {
+        const reason = evaluate(payload(cmd, cwd));
+        assert.ok(reason && NOT_LITERAL.test(reason), `${where}, refused as not literal: ${cmd}`);
+        assert.ok(reason.includes(`Track-changes is ON in ${second},`), `${where}, the refusal names the project the write lands in: ${reason.split('\n')[0]}`);
+        assert.ok(!reason.includes(proj), `${where}, not the cwd's project`);
+      }
+      assert.match(evaluate(payload(`echo x > ${second}/notes/log-0.md`, cwd)), /^Track-changes is ON for /, `${where}, the literal spelling is refused beside it`);
+      assert.match(evaluate(payload(`echo x > ${second}/notes/log-4242.md`, cwd)), /^Track-changes is ON for /, `${where}, a literal name the folder entry covers`);
+      assert.equal(evaluate(payload(`echo x > ${third}/build/log-$$.log`, cwd)), null, `${where}, an untracked folder of a third project: nothing tracked could land there`);
+      assert.equal(evaluate(payload(`echo x > ${third}/build/log-1.log`, cwd)), null, `${where}, as its literal spelling is`);
+    }
     // a symlinked directory in the literal part is judged under its real path too
     fs.symlinkSync(path.join(proj, 'docs'), path.join(out, 'linkdocs'));
     assert.ok(evaluate(payload(`echo x > ${out}/linkdocs/x-$$.md`)), 'the link leads into the project');
     assert.ok(evaluate(payload(`cp base/report.md ${out}/linkdocs/copy-$$.md`)));
+    // Review round 2 (2026-09-18): the literal directory part is resolved when a `..` folds every expansion
+    // away too. Before, the cut was searched from the position of a `$` the normalized text no longer held,
+    // the directory part collapsed to `/`, and a link AFTER the fold carried the write into the project (two
+    // refuters overwrote the tracked file with the first shape below, in real bash). Three cases, as ruled:
+    // the link after the fold (new), the link before the fold (kept, above), and the fold to a plain path
+    // outside every project (in the allowed corpus above), so the fix cannot drift into refusing every fold.
+    assert.ok(evaluate(payload(`mkdir -p ${out}/run-$$ && echo x > ${out}/run-$$/../linkdocs/report.md`)), 'the link after the fold: the tail climbs into the project');
+    assert.ok(evaluate(payload(`echo x > ${out}/linkdocs/t-$$/../report.md`)), 'the fold inside the linked directory');
+    assert.ok(evaluate(payload(`cp base/report.md ${out}/run-$$/../linkdocs/report.md`)));
+    assert.ok(evaluate(payload(`echo x > ${out}/run-$$/../linkdocs/report.md`, out)), 'and from a cwd in no project, through the target\'s own prefix');
+    assert.equal(evaluate(payload(`echo x > ${out}/run-$$/../plain.log`)), null, 'the fold to a plain path outside stays allowed');
+    assert.equal(evaluate(payload(`echo x > ${out}/run-$$/../plain.log`, out)), null);
     // and through the process, both ways
     const run = (command) => spawnSync(process.execPath, [HOOK], { input: payload(command), encoding: 'utf8', env: hookEnv({ ROMP_SID }) });
     assert.equal(run(`echo x > "${out}/build-$$.log"`).status, 0);
+    assert.equal(run(`echo x > ${out}/run-$$/../plain.log`).status, 0);
     const refused = run(`echo x > "${out}/x-$(date +%s).log"`);
     assert.equal(refused.status, 2);
     assert.match(refused.stderr, NOT_LITERAL);
+    const folded = run(`mkdir -p ${out}/run-$$ && echo x > ${out}/run-$$/../linkdocs/report.md`);
+    assert.equal(folded.status, 2, 'the link after the fold, as a process');
+    const crossed = run(`echo x > ${second}/notes/log-$$.md`);
+    assert.equal(crossed.status, 2, 'the second project, as a process');
+    assert.ok(crossed.stderr.includes(second) && !crossed.stderr.includes(proj), 'naming the project the write lands in');
+    // the real shell shows what the refused fold would do: the write lands on the tracked file through the link
+    const shell = spawnSync('bash', ['-c', `mkdir -p ${out}/run-$$ && echo poison > ${out}/run-$$/../linkdocs/report.md`], { encoding: 'utf8', env: { PATH: process.env.PATH } });
+    assert.equal(shell.status, 0, shell.stderr);
+    assert.equal(fs.readFileSync(report, 'utf8'), 'poison\n', 'the tracked file was overwritten through the link after the fold');
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
+});
+
+test('the numeric set is per shell: $$ and ${$} count everywhere, $RANDOM and $SECONDS only where the running shell keeps them read-only, and $BASHPID nowhere', () => {
+  // Review round 2 (2026-09-18) checked round 1's set against the shells the commands run in, by execution:
+  // zsh, the Bash tool's own shell here, leaves BASHPID unset and freely assignable; dash, which is /bin/sh on
+  // this system and which the hook recurses into for a literal `sh -c` script, lets a script assign RANDOM and
+  // SECONDS too. Two refuters overwrote a tracked file through each gap while the hook read the word as
+  // numeric. bash and zsh keep RANDOM and SECONDS as read-only integers, so those stay in the set at the top
+  // level (dropping them would bring back the round-1 false refusals they were added for) and leave it inside
+  // a script the command hands to sh or dash; BASHPID is out everywhere, since the hook never learns which
+  // shell the top-level command runs under. Both directions, so the rule cannot be met by refusing everything.
+  const out = outsideDir();
+  const back = `../${path.basename(proj)}/docs/report.md`;   // the traversal a refuter assigned: out/../<project>/docs/report.md
+  const original = fs.readFileSync(report, 'utf8');
+  try {
+    const refused = [
+      `export BASHPID=${back}; cp base/report.md "${out}/$BASHPID"`,   // the zsh overwrite
+      `BASHPID=${back}; echo x > "${out}/$BASHPID"`,
+      `echo x >> "${out}/x-\${BASHPID}.log"`,                           // with no assignment in sight: the hook cannot tell
+      `echo x > ${out}/x-$BASHPID.log`,
+      `sh -c 'RANDOM=${back}; cp base/report.md "${out}/$RANDOM"'`,    // the dash overwrites
+      `sh -c 'SECONDS=${back}; echo x > "${out}/$SECONDS"'`,
+      `sh -c 'echo x > ${out}/x-$SECONDS.log'`,                         // inside sh with no assignment in sight
+      `dash -c 'echo x > ${out}/x-\${RANDOM}.log'`,
+      `sh -ec 'echo x > ${out}/x-$RANDOM.log'`,
+      `sh <<'EOF'\necho x > ${out}/x-$RANDOM.log\nEOF`,                // a heredoc-fed sh
+      `bash -c 'sh -c "echo x > ${out}/x-\\$RANDOM.log"'`,             // sh inside bash: the inner shell's set
+      `sh -c 'echo "$(echo x > ${out}/x-$RANDOM.log)"'`,               // a substitution inside sh runs in sh
+    ];
+    assert.deepEqual(verdicts(refused), allOf(refused, REFUSED));
+    const allowed = [
+      `sh -c 'echo x > ${out}/x-$$.log'`,                              // the pid: unassignable in every shell
+      `sh -c 'echo x > ${out}/x-\${$}.log'`,
+      `dash -c 'cp base/report.md ${out}/copy-$$.md'`,
+      `bash -c 'echo x > ${out}/x-$RANDOM.log'`,                       // bash and zsh keep RANDOM and SECONDS
+      `zsh -c 'echo x > ${out}/x-$SECONDS.log'`,
+      `bash <<'EOF'\necho x > ${out}/x-$RANDOM.log\nEOF`,
+      `sh -c 'bash -c "echo x > ${out}/x-\\$RANDOM.log"'`,             // bash inside sh: the inner shell's set
+      `cmd > ${out}/out-$RANDOM.log`,                                   // the top level: the tool's shell is bash or zsh
+      `echo x > ${out}/t-$SECONDS.log`,
+      `echo "$(echo x > ${out}/x-$RANDOM.log)"`,                        // a substitution at the top level runs in the tool's shell
+    ];
+    assert.deepEqual(verdicts(allowed), allOf(allowed, 'allowed'));
+    // the grammar: the word is numeric under the tool's shell and under bash, not under sh, and BASHPID never is
+    assert.equal(extractWriteTargets(`echo x > ${out}/x-$RANDOM.log`, proj).unresolved[0].numeric, `${out}/x-$RANDOM.log`);
+    assert.equal(extractWriteTargets(`sh -c 'echo x > ${out}/x-$RANDOM.log'`, proj).unresolved[0].numeric, null);
+    assert.equal(extractWriteTargets(`sh -c 'echo x > ${out}/x-$$.log'`, proj).unresolved[0].numeric, `${out}/x-$$.log`);
+    assert.equal(extractWriteTargets(`echo x > ${out}/x-$BASHPID.log`, proj).unresolved[0].numeric, null);
+    assert.deepEqual(lex(`echo x > ${out}/x-$RANDOM.log`).segments[0].redirects.map((r) => r.target.numeric), [true], 'lex reads the tool shell\'s set by default');
+    assert.deepEqual(lex(`echo x > ${out}/x-$RANDOM.log`, new Set()).segments[0].redirects.map((r) => r.target.numeric), [false], 'and the set it is handed');
+    // the real shells show why the set is per shell (each demonstration only where that shell is installed):
+    // the assigned traversal carries the write onto the tracked file under zsh (BASHPID) and dash (RANDOM,
+    // SECONDS), while bash keeps RANDOM an integer and zsh refuses the assignment outright
+    const has = (sh) => spawnSync(sh, ['-c', 'true'], { encoding: 'utf8' }).status === 0;
+    const run = (sh, script) => spawnSync(sh, ['-c', script], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH, OUT: out, BACK: back } });
+    const restore = () => fs.writeFileSync(report, original);
+    if (has('zsh')) {
+      const z = run('zsh', 'export BASHPID="$BACK"; cp base/report.md "$OUT/$BASHPID"');
+      assert.equal(z.status, 0, z.stderr);
+      assert.equal(fs.readFileSync(report, 'utf8'), 'an older copy\n', 'zsh: the tracked file was overwritten through $BASHPID');
+      restore();
+      const zr = run('zsh', 'RANDOM="$BACK"; echo x > "$OUT/$RANDOM"');
+      assert.notEqual(zr.status, 0, 'zsh refuses the assignment to RANDOM');
+      assert.equal(fs.readFileSync(report, 'utf8'), original);
+    }
+    if (has('dash')) {
+      for (const name of ['RANDOM', 'SECONDS']) {
+        const d = run('dash', `${name}="$BACK"; cp base/report.md "$OUT/$${name}"`);
+        assert.equal(d.status, 0, d.stderr);
+        assert.equal(fs.readFileSync(report, 'utf8'), 'an older copy\n', `dash: the tracked file was overwritten through $${name}`);
+        restore();
+      }
+    }
+    const b = run('bash', 'RANDOM="$BACK"; echo x > "$OUT/$RANDOM"');
+    assert.equal(b.status, 0, b.stderr);
+    assert.equal(fs.readFileSync(report, 'utf8'), original, 'bash keeps RANDOM an integer: the write lands outside');
+    assert.ok(fs.readdirSync(out).some((n) => /^\d+$/.test(n)), 'under a name of digits');
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 
@@ -636,6 +774,24 @@ test('the caps decide which mechanism refuses, and each boundary is pinned by ex
     assert.deepEqual(all.targets, []);
     assert.deepEqual(all.unresolved.map((u) => [u.raw, u.at]), [['big/*.md', path.join(proj, 'docs')]], 'past GLOB_MATCH_CAP: the landing name cannot be read');
     assert.ok(evaluate(payload('cp big/*.md docs/')), 'and docs/ holds a tracked file');
+    // LANDING_SCAN_CAP, both sides (review round 2, 2026-09-18: the cap was a verdict-changing branch with no
+    // test, so it could be set to 1 or dropped with the suite green). Nothing tracked can land in big/, so at
+    // the cap the folder is scanned and the copy is allowed; one entry past it the folder is taken as in play
+    // unscanned and the copy is refused, a deliberate false refusal stated in decision 47 and escalated with
+    // the PR. A one-sided assertion would not hold the number: the allow side is what a cap of 1 breaks.
+    const bigCopies = ['cp "$SRC" big/', 'cp -t big "$SRC"', 'install -m 644 "$SRC" big/', `cp "$SRC" ${big}/`];
+    for (const cmd of bigCopies) assert.ok(evaluate(payload(cmd)), `past LANDING_SCAN_CAP (2001 entries) the folder counts unscanned: ${cmd}`);
+    assert.ok(evaluate(payload(`cp "$SRC" ${big}/`, out)), 'from a cwd outside the project too: the landing folder decides');
+    fs.rmSync(path.join(big, 'm2000.md'));
+    assert.equal(fs.readdirSync(big).length, 2000, 'exactly at the cap');
+    for (const cmd of bigCopies) assert.equal(evaluate(payload(cmd)), null, `at LANDING_SCAN_CAP (2000 entries) the folder is scanned and nothing tracked could land there: ${cmd}`);
+    assert.equal(evaluate(payload(`cp "$SRC" ${big}/`, out)), null);
+    fs.symlinkSync(report, path.join(big, 'm2000.md'));
+    assert.ok(evaluate(payload('cp "$SRC" big/')), 'past the cap again, and a scan would have found the link onto the tracked file anyway');
+    fs.rmSync(path.join(big, 'm1999.md'));
+    assert.ok(evaluate(payload('cp "$SRC" big/')), 'at the cap the scan finds the link onto the tracked file: refused for the right reason');
+    fs.rmSync(path.join(big, 'm2000.md'));
+    fs.writeFileSync(path.join(big, 'm1999.md'), 'x');
     // the read cap: a directory of exactly GLOB_READ_CAP entries is read, one more is not
     const huge = path.join(out, 'huge');
     fs.mkdirSync(huge);

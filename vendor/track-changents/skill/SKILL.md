@@ -64,10 +64,11 @@ is refused as well: a variable such as `"$DST"`, a `$(...)`, a glob or brace lis
 the guard cannot expand. The guard cannot tell which file such a word names and
 does not read your variables to find out (it reads `HOME` alone, so a leading
 `$HOME/` is read as `~/` is), so the refusal holds whatever the word would expand to.
-One exception: a target whose only expansions are `$$`, `$RANDOM`, `$BASHPID` or
-`$SECONDS`, at an absolute path outside the project, is allowed. Spell the path out;
-a tracked file then takes its change through `track-edit`, and a file outside the
-project takes an ordinary write.
+One exception: a target whose only expansions are `$$`, `$RANDOM` or `$SECONDS`
+(the last two not inside a script handed to `sh`, where they are ordinary variables;
+`$BASHPID` never), at an absolute path outside the project, is allowed. Spell the
+path out; a tracked file then takes its change through `track-edit`, and a file
+outside the project takes an ordinary write.
 
 For ANY change to the file, use the CLI, NOT the Edit/Write/MultiEdit tools:
 

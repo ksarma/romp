@@ -243,7 +243,10 @@ test('P9 the skill says a shell write whose target is not a literal path is refu
   // "variables", not "environment", and names the one exception, a numeric-only target outside the project
   assert.ok(section.includes('does not read your variables to find out'));
   assert.ok(section.includes('`$HOME/` is read as `~/` is'));
-  assert.ok(section.includes('whose only expansions are `$$`, `$RANDOM`, `$BASHPID`') && section.includes('at an absolute path outside the project, is allowed'));
+  // round 2 of that review (2026-09-18): the set is per shell, and `$BASHPID` (assignable in zsh) is out of it
+  assert.ok(section.includes('whose only expansions are `$$`, `$RANDOM` or `$SECONDS`') && section.includes('at an absolute path outside the project, is allowed'));
+  assert.ok(section.includes('not inside a script handed to `sh`, where they are ordinary variables; `$BASHPID` never'), 'the per-shell rule and the dropped name');
+  assert.ok(!section.includes('`$RANDOM`, `$BASHPID`'), 'BASHPID is no longer listed as allowed');
   assert.ok(section.includes('Spell the path out'), 'what to do');
 });
 
