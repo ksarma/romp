@@ -1162,8 +1162,10 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 .snap-item > .snap-row { flex: 1 1 auto; width: auto; }
 /* THE ROW'S RENAME (the user 2026-09-18): the tab menu's Rename, opened from a row of this view, edits the name on the
    row: the strip's input (.tab-rename, its metrics) stands where the row's button was, at the row's text start, beside
-   the Hide or Show button; a remote row's host prefix stays put before it, as on the tab. */
-.snap-item > .tab-rename { flex: 0 1 auto; margin: 4px 0 0 8px; }
+   the Hide or Show button; a remote row's host prefix stays put before it, as on the tab. The auto right margin takes
+   the free space the field leaves, so the Hide or Show button keeps the row's right edge while the name is edited
+   (round 1 of the review, 2026-09-18: the field's natural width had put the button 6px after it, a misplacement). */
+.snap-item > .tab-rename { flex: 0 1 auto; margin: 4px auto 0 8px; }
 .snap-item > .host-prefix { margin: 5px 0 0 8px; }
 .snap-item > .host-prefix + .tab-rename { margin-left: 0; }
 .snap-act { flex: 0 0 auto; margin-top: 3px; padding: var(--btn-pad-sm); border: 1px solid var(--box-border); border-radius: var(--radius-pill);

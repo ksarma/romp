@@ -14361,7 +14361,11 @@ function snapshotHost(): HTMLElement | null {
   // speaks for is the section the pane shows, the string a tab's dataset.copy carries for its copy in that section (T264b),
   // so the Hide tab row and the Tags flyout's Move to and Show when folded rows resolve the copy the user is looking at. The
   // event stops here as it stops at a tab: #content's own contextmenu (showSelectionMenu) would otherwise dismiss the menu
-  // just opened and put the selection menu up over a selection left in the hidden transcript. The place: the pointer's, or
+  // just opened and put the selection menu up over a selection in the pane's OWN heading (the h2.snap-head is ordinary
+  // selectable text inside #content: a drag or a double-click there selects it, and a right-click on a row would then
+  // reach that listener with the selection standing); not the transcript, whose selection stringifies empty once the pane
+  // hides it, and not a row, since no selection anchors inside a button in any engine (round 1 of the review, 2026-09-18:
+  // the comment had named the transcript). The place: the pointer's, or
   // the row's corner for the keyboard's event, which carries none (tab-snapshot-view.ts menuAnchor); showTabMenu reads the
   // event's clientX and clientY alone, so the anchored stand-in serves it as the pointer's event does.
   host.addEventListener("contextmenu", (e) => {

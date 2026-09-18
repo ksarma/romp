@@ -330,17 +330,22 @@ function withStore<T>(fn: (store: Map<string, string>) => T): T {
 }
 
 const T0 = 1781100000;
-// the notes-api world: infra holds web, api and tests; qa holds api and tests, so api and tests are under TWO tags (T264b: a copy in
-// each section), which is what makes the copy the view passes matter: with no copy named the menu has no Hide tab row for them
+// a FOURTH member, remote (round 1 of the review, 2026-09-18): a federated session's id and name both carry the "host:" prefix
+// federation prepends (host-prefix.ts hostPrefix reads the sid's prefix and strips it from the name), so its row's Rename seats
+// the strip's fixed prefix span before the input and posts the bare name; a synthetic host and uuid, never real data
+const REMOTE = "TESTHOST:11111111-2222-3333-4444-000000000099";
+const REMOTE_NAME = "TESTHOST:remote";
+// the notes-api world: infra holds web, api, tests and the remote; qa holds api and tests, so api and tests are under TWO tags (T264b:
+// a copy in each section), which is what makes the copy the view passes matter: with no copy named the menu has no Hide tab row for them
 const VIEWS = { active: "all", tags: [
-  { id: "g1", name: "infra", color: "#4EC9B0", members: ["web", "api", "tests"] },
+  { id: "g1", name: "infra", color: "#4EC9B0", members: ["web", "api", "tests", REMOTE] },
   { id: "g2", name: "qa", color: "#DD42FF", members: ["api", "tests"] },
 ], seq: 3 };
 const V = VIEWS;
 const INFRA: SectionRef = { name: "infra", localId: "g1" };
 /** the same world with api under infra ALONE: hidden there, it has no tab anywhere (the one-surface case) */
 const V1 = { ...VIEWS, tags: [VIEWS.tags[0], { ...VIEWS.tags[1], members: ["tests"] }] };
-const IDS = ["web", "api", "tests"];
+const IDS = ["web", "api", "tests", REMOTE];
 type World = { H: Hooks; api: Api; host: FakeEl; bar: FakeEl };
 /** the page: #content and #tabs under the body, the strip's plan from the store (api hidden in infra unless told otherwise), the view of infra up */
 function world(opts: { hide?: boolean; sub?: string[]; skeleton?: string[]; placeholder?: string[]; view?: string | null; single?: boolean } = {}): World {
@@ -364,6 +369,7 @@ function world(opts: { hide?: boolean; sub?: string[]; skeleton?: string[]; plac
     ["web", { name: "web", color: { bg: "#3a7bd5", fg: "#ffffff" }, status: { state: "working", sinceEpoch: (T0 - 30) * 1000 }, events: [], cwd: "/srv/notes-api/web" }],
     ["api", { name: "api", color: { bg: "#d53a3a", fg: "#ffffff" }, status: { state: "idle", sinceEpoch: (T0 - 600) * 1000 }, events: [], userTodos: [] }],
     ["tests", { name: "tests", color: null, status: { state: "ready" }, events: [] }],
+    [REMOTE, { name: REMOTE_NAME, color: { bg: "#3a86ff", fg: "#ffffff" }, status: { state: "ready" }, events: [] }],
   ]);
   for (const id of opts.sub ?? []) sessions.get(id).sub = { parent: "web", agent: "a1" };   // a subagent viewer: read-only, no menu on its tab
   for (const id of opts.placeholder ?? []) sessions.delete(id);   // the kernel still building it: no frame, no skeleton
@@ -371,6 +377,7 @@ function world(opts: { hide?: boolean; sub?: string[]; skeleton?: string[]; plac
     ["web", { summary: "Building the notes-api web pages", needsInput: false, tree: [{ text: "Add the notes list page", current: true }] }],
     ["api", { summary: "Designing the notes schema", needsInput: true, tree: [] }],
     ["tests", { summary: "Running the suite", needsInput: false, tree: [] }],
+    [REMOTE, { summary: "Indexing the notes on the other machine", needsInput: false, tree: [] }],
   ]);
   const H: Hooks & { mods: Record<string, unknown>; body: FakeEl; focus: () => FakeEl | null } = {
     content, bar, win: new FakeWin(), sessions, ledgers, tabMeta: new Map(IDS.map((id) => [id, { name: id, color: null }])), closingTabs: new Map(),
@@ -635,6 +642,30 @@ test("executed: Rename from the hidden row's menu edits the name ON THE ROW: the
   assert.equal(FOCUS, BODY, "a blur that moved the focus elsewhere moves nothing back");
 }));
 
+test("executed: a REMOTE row's Rename (round 1 of the review, 2026-09-18): the host prefix stands as the strip's fixed span between the row's button and the input, the field is seeded with the bare name, and the post carries the bare name, never the prefix", () => withStore(() => {
+  // the remote is a shown member of infra: its row is in the shown list, no fold to open
+  const { H, api, host, bar } = world();
+  const item = itemOf(host, REMOTE), btn = rowOf(host, REMOTE);
+  assert.ok(item && btn && !item.closest(".snap-hidden-list"), "the remote's row is a shown row of the infra view");
+  assert.ok(bar.querySelector(`.tab[data-id="${REMOTE}"]`), "…and it has a tab on the strip too (the row's menu edits the row all the same)");
+  rightClick(host, btn);
+  const rename = api.get().ctxMenuEl!.children.find((c) => c.label() === "Rename")!;
+  assert.ok(rename, "the remote row's menu has Rename");
+  rename.click();
+  // the order the sheet's two host-prefix rules dress (.snap-item > .host-prefix, .snap-item > .host-prefix + .tab-rename): the prefix
+  // is a child of the item, before the input; a reseat that dropped it, or put it inside the button, would fail here
+  assert.deepEqual(item.children.map((c) => c.className.split(" ")[0]), ["snap-row", "host-prefix", "tab-rename", "snap-act"], "the row's button, the fixed prefix, the input, the Hide button");
+  const fixed = item.children[1], input = item.querySelector(":scope > .tab-rename")!;
+  assert.deepEqual([fixed.textContent, input.value, btn.style.display, FOCUS === input, api.get().renameActive], ["TESTHOST:", "remote", "none", true, true],
+                   "the prefix as the far side prepended it, the BARE name in the field, the button hidden, the focus taken, the hold on");
+  assert.equal(bar.querySelector(".tab-rename"), null, "no editor on the strip's tab: the row's menu edits the row");
+  input.value = "remote2";
+  input.fire("keydown", { key: "Enter", preventDefault() {}, stopPropagation() {} });
+  assert.deepEqual(H.posts, [{ type: "renameSession", id: REMOTE, name: "remote2" }], "the prefixed id (federation routes on it) and the bare name (the far kernel knows no prefix)");
+  assert.deepEqual([item.children.map((c) => c.className.split(" ")[0]), btn.style.display, FOCUS === btn, api.get().renameActive], [["snap-row", "snap-act"], "", true, false],
+                   "the prefix span leaves with the input; the row back, focused, the hold released");
+}));
+
 test("executed: THE SEAT FOLLOWS THE MENU (review round 1). With the view up on infra and web's row shown, a Rename from web's TAB menu edits the tab, not the row; api hidden in infra with the fold CLOSED and a tab under qa: a Rename from that tab edits the tab (the row is not rendered), and a row seat asked for anyway falls to the tab; api under infra alone, hidden, fold closed: no editor and no hold; a seat whose focus the engine refuses is undone and takes no hold", () => withStore(() => {
   // 1. the tab's menu while the view shows the session's row: the TAB's editor (a row-first rule moved it into the pane)
   const w = world({ hide: false });
@@ -772,12 +803,24 @@ test("source: the strip's two wirings and the view's one call the same builder; 
 test("the sheet: the row's editor rule, tokens and metrics only; the docs: the guide's overview and hidden paragraphs and the reference say the row's right-click opens the tab's menu, no em dash", () => {
   const block = CSS.slice(CSS.indexOf("/* THE ROW'S RENAME"), CSS.indexOf(".snap-act {"));
   assert.ok(block.length > 100, "the rule sits with the item's rules");
-  assert.match(block, /\.snap-item > \.tab-rename \{ flex: 0 1 auto; margin: 4px 0 0 8px; \}/);
+  // the auto right margin (round 1 of the review, 2026-09-18): the free space the field leaves goes between the field and the Hide or
+  // Show button, which keeps the row's right edge; tests/test_tab_snapshot_menu_served.py measures it on the served page
+  assert.match(block, /\.snap-item > \.tab-rename \{ flex: 0 1 auto; margin: 4px auto 0 8px; \}/);
   assert.match(block, /\.snap-item > \.host-prefix \{ margin: 5px 0 0 8px; \}/);
   assert.doesNotMatch(block, /#[0-9a-fA-F]{3,8}\b|rgba?\(/, "no colour of its own: the strip's input carries the dress");
+  // THE PARAGRAPHS THEMSELVES (round 1 of the review, 2026-09-18): the two guide paragraphs the change edited, sliced out of the guide
+  // between markers that must both stand (tab-hide.test.ts's idiom), so the em-dash and vocabulary check below reads the guide's
+  // text and not a literal of this file's, which could never fail
+  const guidePara = (from: string, to: string) => { const a = GUIDE.indexOf(from), b = GUIDE.indexOf(to, a + 1); assert.ok(a >= 0 && b > a, `the guide's markers moved: ${from} .. ${to}`); return GUIDE.slice(a, b); };
+  const overview = guidePara("**A section at a glance.**", "**Hiding a session inside its group.**");
+  const hidden = guidePara("**Hiding a session inside its group.**", "### The feed");
+  assert.ok(overview.length > 500 && hidden.length > 500, "the two paragraphs, whole");
   const flat = (s: string) => s.replace(/\s+/g, " ");
-  assert.match(flat(GUIDE), /see the next paragraph\)\. Right-click a row, or press the menu key while the row has the focus, to open the menu a right-click on the session's tab opens, with the same rows\. \*\*Rename\*\* from that menu edits the name on the row while this view shows it\. The rows update as/, "the overview paragraph");
-  assert.match(flat(GUIDE), /A hidden session has no tab to right-click, so this view's \*\*Show\*\* button puts it back\. A right-click on its row here opens the tab's menu, where \*\*Hide tab\*\* reads \*\*Show tab\*\*\./, "the hidden paragraph: two sentences, the menu item named as an item (the review)");
+  assert.match(flat(overview), /see the next paragraph\)\. Right-click a row, or press the menu key while the row has the focus, to open the menu a right-click on the session's tab opens, with the same rows\. \*\*Rename\*\* from that menu edits the name on the row while this view shows it\. The rows update as/, "the overview paragraph");
+  assert.match(flat(hidden), /A hidden session has no tab to right-click, so this view's \*\*Show\*\* button puts it back\. A right-click on its row here opens the tab's menu, where \*\*Hide tab\*\* reads \*\*Show tab\*\*\./, "the hidden paragraph: two sentences, the menu item named as an item (the review)");
   assert.match(flat(REF), /the way back is the view's \*\*Show\*\*, or the same menu from a right-click on its row there, and the group's count opens the view while the group is open\)/, "the reference");
-  for (const s of [block, "Right-click a row, or press the menu key while the row has the focus, to open the menu a right-click on the session's tab opens"]) assert.ok(!s.includes("\u2014") && !/fleet/i.test(s));
+  for (const [name, s] of [["the sheet's block", block], ["the guide's overview paragraph", overview], ["the guide's hidden paragraph", hidden]] as const) {
+    assert.ok(!s.includes("\u2014"), `no em dash in ${name}`);
+    assert.ok(!/fleet/i.test(s), `the user's vocabulary in ${name}`);
+  }
 });
