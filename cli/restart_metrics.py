@@ -42,7 +42,8 @@ and event; and the same stamps under other names, a restart's auditT, a boot's f
 quiet window's since and restartT, the range's since and until; only the bucket bounds start and end stay, day
 or week boundaries in the chosen zone, which reveal the zone's UTC offset) and the document's free-text fields
 (an event row's `text`, the prose of a session problem; a cut row's `drainError` and `reasonError`, exception
-messages: a one-token message would otherwise pass the grammar verbatim) are dropped; durations (outageS,
+messages: a one-token message would otherwise pass the grammar verbatim) and the opaque conversation ids a host
+fault row relays (requestId, callbackId, toolUseId) are dropped; durations (outageS,
 settleS, waitedS) and every count and distribution stay, so two documents from one machine remain linkable
 through them by design; the kernel's uptime (live.kernel.uptimeS) is rounded down to whole minutes; every
 other key and string is folded to a code identifier or `other` (a week bucket's key is respelled

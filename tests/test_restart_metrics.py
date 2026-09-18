@@ -446,12 +446,31 @@ def _plant_free_text(state: Path):
         (state / name).write_text("\n".join(out) + "\n")
 
 
+# The three opaque ids of the user's conversation objects a host fault row relays: kernel/session_host.py's
+# hook-self-answered line carries them, sdk_backend forwards the line through problem_row into session-events.jsonl,
+# and events.recent is those rows raw. Each fits the ident grammar, the tool use's id at its 32-character limit,
+# so only the denylist keeps them out (the fourth review round, 2026-09-18).
+HOST_FAULT_IDS = {"requestId": "req_7_c0ffee", "callbackId": "hook_3", "toolUseId": "toolu_01Ab3dEf5gHi7jKl9mNo1pQr3s"}
+
+
+def _plant_host_fault_row(state: Path, t):
+    """One host.hook-self-answered row in the relay's shape (append_session_event: t, pid, kind, sid, name, the prose
+    under text, then the host line's own fields), appended to the fixture so no count the other cases assert moves."""
+    row = {"t": t, "pid": 102, "kind": "host.hook-self-answered", "sid": SID, "name": "web",
+           "text": "the host answered a PreToolUse hook for web itself after 4.5 s with no kernel attached",
+           "event": "PreToolUse", "parkedS": 4.5}
+    row.update(HOST_FAULT_IDS)
+    with open(state / "session-events.jsonl", "a") as f:
+        f.write(json.dumps(row) + "\n")
+
+
 class PublicForm(unittest.TestCase):
     """`--json --public` (2026-09-18): the document's paste-safe form through cli/perf_public.py, the shape `romp perf
     export --public` writes. The fixture's session names (web, api) ride the cut rows' cutSessions lists and the
     buckets' cutSessions counts, the sids and pids ride the events, the label is free text, and a cut row's
-    drainError and reasonError and an event row's text are planted as one-token messages (_plant_free_text); none
-    may survive, while the counts they stood beside do. Before the flag, argparse refused `--public`. Since 2026-09-18
+    drainError and reasonError and an event row's text are planted as one-token messages (_plant_free_text), and one
+    case appends a host fault row carrying the three opaque conversation ids (_plant_host_fault_row); none may
+    survive, while the counts they stood beside do. Before the flag, argparse refused `--public`. Since 2026-09-18
     every ABSOLUTE clock stamp goes too, whatever its key (`t`, the second of each restart, boot, quiet window,
     kernel-series point and event, and the same stamps under other names: auditT, firstServe, reconcileDone, a quiet
     window's since and restartT, the range's since and until), the live block's port goes, and the kernel's uptime is
@@ -586,6 +605,37 @@ class PublicForm(unittest.TestCase):
         self.assertEqual((doc["restarts"][1]["drainError"], doc["restarts"][1]["reasonError"]), ("TESTHOST", "boom42"))
         self.assertEqual([e["text"] for e in doc["events"]["recent"] if e.get("kind") == "drain.unjoined"], ["TESTHOST"])
         self.assertNotIn("public", doc)
+
+    def test_the_opaque_ids_a_host_fault_row_relays_go_and_its_event_and_wait_stay(self):
+        """A session host's hook-self-answered line carries requestId, callbackId and toolUseId, opaque ids of the
+        user's conversation objects (a hook request, a hook callback, a tool use); the kernel relays the line into
+        session-events.jsonl through problem_row, and events.recent is those rows raw. Each id is one token of at
+        most 32 characters, so the grammar keeps it and only the denylist removes it (the fourth review round,
+        2026-09-18: a pre-existing pass-through this verb owns). Fails before: the three keys and their values were
+        printed verbatim in the public form. The row itself stays, with its hook event and its wait."""
+        for key, value in HOST_FAULT_IDS.items():
+            self.assertTrue(pp.IDENT.fullmatch(value), "%s fits the grammar, so only the denylist can keep it out" % key)
+        self.assertEqual(len(HOST_FAULT_IDS["toolUseId"]), 32, "a tool use's id sits at the grammar's length limit")
+        _plant_host_fault_row(self.state, D0 + 7200 + 120)
+        doc = self._public()
+        text = json.dumps(doc)
+        for key, value in HOST_FAULT_IDS.items():
+            self.assertNotIn('"%s"' % key, text, key)
+            self.assertNotIn(value, text, key)
+        rows = [e for e in doc["events"]["recent"] if e.get("kind") == "host.hook-self-answered"]
+        self.assertEqual(rows, [{"kind": "host.hook-self-answered", "event": "PreToolUse", "parkedS": 4.5}],
+                         "the row stays with its hook event and its wait; the ids, the prose, the pid and the stamp go")
+        self.assertEqual(doc["events"]["byKind"]["host.hook-self-answered"], 1)
+        for key, value in HOST_FAULT_IDS.items():
+            self.assertTrue(pp.denied(key, value), key)
+            self.assertIn(key, pp.DENY_KEYS, key)
+        # the raw document carries all three, so the flag is what removes them
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rm.main(["--json", "--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state)])
+        raw = [e for e in json.loads(out.getvalue())["events"]["recent"] if e.get("kind") == "host.hook-self-answered"]
+        self.assertEqual([(e["requestId"], e["callbackId"], e["toolUseId"]) for e in raw],
+                         [(HOST_FAULT_IDS["requestId"], HOST_FAULT_IDS["callbackId"], HOST_FAULT_IDS["toolUseId"])])
 
     def test_public_without_json_is_refused(self):
         err = io.StringIO()

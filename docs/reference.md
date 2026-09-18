@@ -5219,11 +5219,17 @@ kernel-series point and event; and the same stamps under other names, a
 restart's `auditT`, a boot's `firstServe` and `reconcileDone`, a quiet
 window's `since` and `restartT`, the range's `since` and `until`) and the
 free-text fields (an event row's `text`, a cut row's `drainError` and
-`reasonError`: a one-token message would pass the grammar verbatim) are
-dropped. The bucket bounds (`buckets[].start` and `end`) are the one absolute
-stamp kept: day or week boundaries in the chosen zone, coarse, the window a
-bucket's counts cover; they do reveal the zone's UTC offset, though the folded
-`window.tz` names no zone (a zone name with a slash folds to `other`). Durations (`outageS`, `settleS`, `waitedS`) and every
+`reasonError`: a one-token message would pass the grammar verbatim) and the
+opaque conversation ids a host fault row relays (`requestId`, `callbackId`,
+`toolUseId`, each one token the grammar would keep) are dropped. The bucket
+bounds (`buckets[].start` and `end`) are the one absolute stamp kept: day or
+week boundaries in the chosen zone, coarse, the window a bucket's counts
+cover; they do reveal the zone's UTC offset. The folded `window.tz` can name
+the zone as well: a name spelled as one identifier (`UTC`, `Japan`, `EST5EDT`)
+fits the grammar and is kept as typed; only a slashed name (`Europe/London`)
+folds to `other`. The disclosure is small: a zone is coarse (a region shared
+by millions), the value is the `--tz` the user typed, and the bucket bounds
+reveal its offset anyway. Durations (`outageS`, `settleS`, `waitedS`) and every
 count and distribution stay, so two documents from one machine remain
 linkable through them by design. The kernel's uptime
 (`live.kernel.uptimeS`) is rounded down to whole minutes, every other key and string

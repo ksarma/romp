@@ -27,8 +27,13 @@ costs nothing here:
    (`checkpoints.readByPath`, absolute transcript paths), the judges' child's first failure (an exception
    message), the thread stacks, a process id under any spelling (PID_KEY), every ABSOLUTE CLOCK STAMP under any
    spelling the two documents use (`now`, `since`, `until`, `started`, `generatedAt`, `t` at any depth, and the
-   restart document's `auditT`, `firstServe`, `reconcileDone`, `restartT` and `prevCutT`; a duration beside one
-   stays: `outageS`, `settleS`, `waitedS`, `uptime_s`). GET /perf writes `t` on every split row (the boot's first
+   restart document's `auditT`, `firstServe`, `reconcileDone` and `restartT`; a duration beside one stays:
+   `outageS`, `settleS`, `waitedS`, `uptime_s`; `prevCutT`, the restart ledger's own join key, is on the list
+   defensively: parse_restarts reads it to pair a boot with its cut and never serializes it, so the entry removes
+   nothing from today's document and guards a future writer only), and the OPAQUE IDS OF CONVERSATION OBJECTS a
+   host fault row relays into the restart document's `events.recent` (`requestId`, `callbackId`, `toolUseId`: a
+   hook request's, a hook callback's and a tool use's id from the user's conversation, one token each, which the
+   grammar would keep verbatim). GET /perf writes `t` on every split row (the boot's first
    cycle under `pusher.firstCycle`, the first pass under `jobs.firstPass`, each `stageRing` row) as the wall
    clock at the cycle's CLOSE, so the first cycle's is the kernel's start plus that cycle's length (under a
    second on a quick boot, up to the ten seconds the kernel flags as slow), constant for the life of the process,
@@ -213,19 +218,26 @@ DENY_PATHS = frozenset({("checkpoints", "readByPath"), ("judge", "child", "failu
 # the second of each restart, boot, quiet window, kernel-series point and event, and the same stamps ride its rows
 # under other names: auditT (the audit row a cut consumed), firstServe and reconcileDone (the boot's marks;
 # firstServe minus the kept outageS is the denied cut's t), a quiet window's since (parked; since plus waitedS is
-# its t) and restartT (the released restart's t verbatim), prevCutT (the ledger's own join key), and the range's
-# since and until (user-typed day bounds the buckets already carry as start and end, the one stamp kept). `port`
-# is live.kernel.port: no reader needs it, and a kernel on a non-default ROMP_KERNEL_PORT made it a per-install
+# its t) and restartT (the released restart's t verbatim), and the range's since and until (user-typed day bounds
+# the buckets already carry as start and end, the one stamp kept). prevCutT is DEFENSIVE, not a field of the
+# document: the restart ledger's join key, which parse_restarts reads to pair a boot with its cut and never
+# serializes, so the entry removes nothing today and guards a writer that starts carrying it. `port` is
+# live.kernel.port: no reader needs it, and a kernel on a non-default ROMP_KERNEL_PORT made it a per-install
 # constant. Then the restart document's free-text fields: a session-events row's `text` (problem_row's prose)
 # and a cut row's `drainError` and `reasonError` (exception messages). None of the three is ever a counter, and a
 # message that happens to be one token of at most 32 characters would pass the grammar verbatim (the export's
-# review, 2026-09-18).
+# review, 2026-09-18). Then the opaque ids of the user's conversation objects a host fault row relays: the
+# session host's hook-self-answered line carries requestId (the hook request's), callbackId (the hook callback's)
+# and toolUseId (the tool use's), sdk_backend forwards them through problem_row into the session-events row, and
+# events.recent is those rows raw; each is one token the grammar keeps verbatim, and no GET /perf key spells any
+# of the three (the fourth review round, 2026-09-18).
 DENY_KEYS = frozenset({
     "bySid", "byPath", "readByPath", "stacks", "log",
     "sid", "sids", "sid8", "fsid", "lastSid", "sessionId",
     "kernelSha", "bootId", "started", "generatedAt", "t", "since", "until",
     "auditT", "firstServe", "reconcileDone", "restartT", "prevCutT", "port",
     "text", "drainError", "reasonError",
+    "requestId", "callbackId", "toolUseId",
 })
 # A process id under any spelling the ledgers write (pid, ppid, pids, cliPid, hostPid, managerPid, hub_pid,
 # boundary_pids) and the next one: `pid`, `ppid` or `pids` in any case as the whole key or after `_`, or `Pid`/`Pids`
