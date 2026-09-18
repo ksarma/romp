@@ -2912,8 +2912,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `kernel/kernel.py`), never the thread's name itself: the name up to the
   naming convention's colon when that part is a registered prefix (`sdk` and
   `sdk-intr` for a session's threads, `codex` for a Codex session's worker,
-  `end-host` for a session's end hook, `port-up` for a dial's port watch,
-  `peer` for a postal peer loop, `romp-refused-mark` for the refused-echo
+  `end-host` for a session's end hook, `sdk-slot` for a session waiting for
+  a relaunch slot after a change of the machine's default billing, `port-up`
+  for a dial's port watch, `peer` for a postal peer loop, `romp-refused-mark` for the refused-echo
   mark a cut-off boot re-delivery writes aside); a registered constant name
   (`pusher`, `jobs` (the housekeeping loop split off the pusher), `producer`,
   `index`, `triage`, `serve-pass`, `parse-warm`, `boot-warm`, `sdk-boot`,

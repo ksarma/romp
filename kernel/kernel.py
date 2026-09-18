@@ -2055,6 +2055,7 @@ _THREAD_KIND_PREFIXES = frozenset((  # the kinds spelled "<kind>:<payload>" (_TH
     "sdk", "sdk-intr",               # a host) never reaches the sample; peer is the postal service's, a separate process the census
     "codex", "end-host",             # walks all the same
     "port-up", "romp-refused-mark", "peer",
+    "sdk-slot",                      # the relaunch slot's waiter (sdk_backend.py _take_relaunch_slot, 2026-09-18): one per session waiting for a boot slot
 ))
 _THREAD_KIND_FIXED = frozenset(("main", "handler", "thread", "pool"))   # the words _thread_kind's fixed rules make: MainThread,
 #                                                                        the HTTP server's request threads, Python's default names
