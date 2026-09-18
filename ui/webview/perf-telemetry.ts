@@ -518,8 +518,7 @@ export class PerfTelemetry implements RompPerf {
     const now = this.d.now();
     if (!this.d.visible()) {
       this.cancelFree();
-      this.bucket.vis.hiddenN++;
-      if (this.hiddenAt < 0) this.hiddenAt = now;
+      if (this.hiddenAt < 0) { this.bucket.vis.hiddenN++; this.hiddenAt = now; }   // the count and the clock move together: a hide the clock already holds (a page that began hidden) is no transition
       this.gapStop();
       this.tick();
     } else {

@@ -1369,3 +1369,20 @@ test("installPerfTelemetry reads the page: the gear's store, the timeline entrie
     delete g.document;
   }
 });
+
+test("vis: a page that began hidden counts no transition on a hidden event the clock already holds; the return counts once and adds the whole stretch", () => {
+  const doc = new EventTarget();
+  let vis = false;
+  const h = beaconHarness({ share: true, mute: false }, { raf: null, documentEvents: doc, visible: () => vis });
+  const p = createPerfTelemetry("chat", h.deps);   // constructed hidden: the clock starts now
+  h.clock.t += 5000; h.clock.wall += 5000;
+  doc.dispatchEvent(new Event("visibilitychange"));   // hidden again, nothing pending: no flush, and no second transition (the count moves with the clock)
+  assert.equal(minuteRows(h.posted).length, 0);
+  h.clock.t += 5000; h.clock.wall += 5000;
+  vis = true;
+  doc.dispatchEvent(new Event("visibilitychange"));
+  h.frame(p, { type: "session" }, 5);
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.deepEqual(minuteRows(h.posted)[0].data.vis, { hiddenN: 0, visibleN: 1, hiddenMs: 10_000 }, "one return, the 10 s hidden since construction");
+});

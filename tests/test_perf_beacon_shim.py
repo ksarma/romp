@@ -2,7 +2,8 @@
 """The beacon extension's hooks in the pane shim and the shell script (2026-09-18): the marks object the page's collector
 reads (window.__rompPerfMarks: the first socket open, the bundle's ready and the first delivered frame, each stamped once;
 a running count of received characters; the dist token), and the kill switch the gear's perfMute holds, read from the
-store at each row by the shim's send() and by the shell's shellDiag ahead of any send or queue. Source pins over the
+store at each row by the shim's send() and by the shell's shellDiag ahead of any send or queue, and again by the shim's
+onopen flush for the rows that waited in its queue. Source pins over the
 rendered shim (km._shim) and the shell script, the way tests/test_kernel_disconnect_banner.py pins the breadcrumb lines;
 ui/webview/pane-shim-stale.test.ts runs the shim and exercises both. Nothing here starts a kernel."""
 import os
@@ -52,6 +53,14 @@ class PerfBeaconShimTest(unittest.TestCase):
         # the pinned lines around it are as the other tests know them
         self.assertIn('if(m&&m.type==="ready"){bundleReady=true;readyProto=(m.proto===2?2:1);readyMsg=s;}', js)
         self.assertIn('send({type:"clientDiag",surface:"pane-shim",what:what,', js)
+        # the queue's flush at the open re-reads the switch for the clientDiag rows it holds: a mute flipped on while the
+        # socket was down would otherwise release the rows queued before it (review find, 2026-09-18)
+        self.assertIn('function queuedDiagRow(s){try{var o=JSON.parse(s);return !!(o&&o.type==="clientDiag");}catch(e){return false;}}', js)
+        flush = 'var mu=diagMuted();for(var i=0;i<queue.length;i++){if(mu&&queuedDiagRow(queue[i]))continue;ws.send(queue[i]);}'
+        self.assertIn(flush, js)
+        self.assertLess(js.index("ws.onopen=function(){"), js.index(flush), "inside onopen")
+        self.assertLess(js.index(flush), js.index("if(bundleReady&&!readyAcked&&!readyQueued&&readyMsg)ws.send(readyMsg);"), "ahead of the ready's send, which is never a diag row")
+        self.assertNotIn("for(var i=0;i<queue.length;i++)ws.send(queue[i]);", js, "no ungated flush remains")
 
     def test_the_shell_poster_reads_the_same_switch_ahead_of_its_send_and_its_queue(self):
         js = km._LANDING_MOBILE_JS
@@ -64,11 +73,9 @@ class PerfBeaconShimTest(unittest.TestCase):
         self.assertEqual(html.count(READER), 1, "the shell page carries the reader once (the panes carry their own in the shim)")
 
     def test_the_kernel_never_reads_the_share_switch(self):
-        src = open(os.path.join(BIN, "romp-kernel"), encoding="utf-8").read() if os.path.exists(os.path.join(BIN, "romp-kernel")) else ""
         kernel = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py"), encoding="utf-8").read()
         self.assertNotIn("perfShare", kernel, "the share switch is the collector's to read, per page (perf-telemetry.ts)")
         self.assertEqual(kernel.count(READER), 2, "the pane shim's and the shell's readers, byte for byte the same")
-        del src
 
 
 if __name__ == "__main__":

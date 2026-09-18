@@ -393,7 +393,7 @@ var GEAR_HTML =
   '</span></label>' +
   '<label class=rs-row><input type=checkbox id=rs-perfmute>' +
   '<span><b>Stop all timing rows from this browser</b>' +
-  '<span class=rs-sub>Sends no timing or connection rows from this browser at all, the standard ones included. Off by default.</span>' +
+  "<span class=rs-sub>Sends no timing rows from this browser, and on the kernel's pages no connection rows either, the standard ones included; VS Code panes keep sending theirs. Off by default.</span>" +
   '</span></label>' +
   "<div class=rs-sep style='padding-top:8px'>" +
   '<button id=ra-open class=ra-openbtn>Token usage analytics</button>' +

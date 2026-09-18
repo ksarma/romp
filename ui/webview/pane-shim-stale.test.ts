@@ -778,3 +778,26 @@ test("the kill switch: with perfMute true in the store no clientDiag row is sent
   k.ws.open(); k.win.__rompLocalSend({ type: "clientDiag", surface: "pane-shim", what: "probe", data: { i: 4 } });
   assert.equal(k.diags("probe").length, 1, "only the literal true mutes");
 });
+
+test("the kill switch at the open: clientDiag rows queued while the socket was down are re-checked at the flush, so a mute flipped on in between holds them; other queued messages ride the open", () => {
+  const store = new Map([["romp:settings", JSON.stringify({ perfMute: false })]]);
+  const h = new Harness(shimJs("feed", "feedDelta"), { store });
+  h.win.__rompLocalSend({ type: "clientDiag", surface: "pane-shim", what: "probe", data: { i: 1 } });   // unmuted, socket down: queued
+  h.win.__rompLocalSend({ type: "activeTab", id: "TESTSID" });
+  h.win.acquireVsCodeApi().postMessage({ type: "clientDiag", surface: "perf", what: "minute", data: { app: "feed" } });   // a bundle's row, queued the same way
+  store.set("romp:settings", JSON.stringify({ perfMute: true }));   // the gear flips it before the socket opens
+  h.ws.open();
+  assert.deepEqual(h.sent.map((m) => m.type), ["activeTab"], "the queued diag rows stayed behind; the other message rode the open");
+  // the flush parses each queued message: a prompt whose text mentions the row type is not a row
+  h.ws.close(); h.runTimers();
+  h.win.__rompLocalSend({ type: "prompt", text: '{"type":"clientDiag"} is what the shim posts' });
+  h.ws.open();
+  assert.equal(h.sent.filter((m) => m.type === "prompt").length, 1, "the prompt went up");
+  assert.equal(h.sent.filter((m) => m.type === "clientDiag").length, 0, "nothing muted left the page, the close's own row included");
+  // flipped back off: a row queued while the socket is down rides the next open (the flush holds diag rows only while muted)
+  h.ws.close(); h.runTimers();
+  store.set("romp:settings", JSON.stringify({ perfMute: false }));
+  h.win.__rompLocalSend({ type: "clientDiag", surface: "pane-shim", what: "probe", data: { i: 2 } });
+  h.ws.open();
+  assert.deepEqual(h.diags("probe").map((m) => m.data.i), [2]);
+});

@@ -2709,9 +2709,13 @@ def _client_diag_append(fp, line):
 # `romp perf client` and the phone work read back. Since 2026-09-18 (the beacon extension; the user, who wanted the
 # phone's rows opt-in and the store bounded) the handler admits the TOP-LEVEL keys each surface is known to post and
 # nothing else: an unknown key is dropped and said once on stderr per surface and key (a poster that grows a key
-# without this table shows up there, never as a silent hole in the file); every string value is cut at
-# CLIENT_DIAG_STR_MAX characters, at any depth; a row whose JSON runs past CLIENT_DIAG_ROW_MAX bytes keeps its
-# surface and what and carries {"capped": true, "bytes": N} as its data (said once per surface and what). Today's
+# without this table shows up there, never as a silent hole in the file; the latch holds CLIENT_DIAG_SAID_MAX pairs,
+# then says so once and falls silent, so a poster with an unbounded key vocabulary cannot grow it); every string
+# value is cut at CLIENT_DIAG_STR_MAX characters, at any depth; a row whose JSON runs past CLIENT_DIAG_ROW_MAX bytes
+# keeps its surface and what and carries {"capped": true, "bytes": N} as its data (said once per surface and what),
+# except a perf minute row, which sheds its per-minute figures first (CLIENT_DIAG_MINUTE_SHED, _client_diag_line):
+# the collector sends nav, res, marks and env exactly once per page, and a whole-row marker lost them for the page's
+# life on a chat pane whose first shared minute saw about 40 frame types (review find, 2026-09-18). Today's
 # minute rows run to 2.5 KB and the first shared row adds up to about 2 KB of resource, environment and navigation
 # figures, so the bound is 8 KiB, not the 4 KiB first proposed. The table lists the keys as the posters build them:
 # perf-telemetry.ts (minute, slowframe), the pane shim (staleDiag, the return rows, wsclose, wsconnfail, page-load),
@@ -2722,6 +2726,10 @@ def _client_diag_append(fp, line):
 CLIENT_DIAG_STR_MAX = 64
 CLIENT_DIAG_ROW_MAX = 8 * 1024
 CLIENT_DIAG_DEPTH_MAX = 8      # nesting past this reads null: the rows are flat or two deep
+CLIENT_DIAG_SAID_MAX = 512     # (surface, key) pairs the stderr latch holds; at the bound one more line says so and nothing else is said
+# a perf minute row over CLIENT_DIAG_ROW_MAX sheds these, in this order, until its line fits; the row's other keys (the
+# small per-minute figures and the once-per-page nav, res, marks and env) stay, and `capped` names what was shed
+CLIENT_DIAG_MINUTE_SHED = ("frames", "loaf", "free", "slow")
 CLIENT_DIAG_KEYS = {
     "perf": frozenset(("app", "since", "span_ms", "frames", "free", "loaf", "slow", "dom", "visible", "hidden_pane", "ua", "heap_mb",   # minute
                        "type", "ms",                                                # slowframe (app, dom, loaf as above)
@@ -2750,13 +2758,23 @@ CLIENT_DIAG_KEYS = {
     "kernel": frozenset(("app", "kind", "reconnect", "iid", "cid", "host", "sid", "type", "span", "events", "bytes", "head", "missing",
                          "refused", "reason", "sent", "frames", "ageS")),
 }
-_client_diag_said = set()      # (surface, key) pairs already said on stderr; one line each per kernel
+_client_diag_said = set()      # (surface, key) pairs already said on stderr; one line each per kernel, CLIENT_DIAG_SAID_MAX of them
+_CLIENT_DIAG_SAID_FULL = (None, None)   # the latch's own entry once it is full: the one line past the bound
 
 
 def _client_diag_say(surface, key, text):
-    if (surface, key) in _client_diag_said:
+    """One stderr line per (surface, key) per kernel. The surface is the row's, cut at CLIENT_DIAG_STR_MAX by the
+    caller, so the latch holds bounded strings; at CLIENT_DIAG_SAID_MAX pairs one line says the latch is full and
+    nothing more is said (600 distinct foreign keys from one poster used to mean 600 lines and 600 entries)."""
+    said = _client_diag_said
+    if (surface, key) in said:
         return
-    _client_diag_said.add((surface, key))
+    if len(said) >= CLIENT_DIAG_SAID_MAX:
+        if _CLIENT_DIAG_SAID_FULL not in said:
+            said.add(_CLIENT_DIAG_SAID_FULL)
+            print("[client-diag] %d distinct surface and key pairs said this kernel; nothing more is said" % CLIENT_DIAG_SAID_MAX, file=sys.stderr)
+        return
+    said.add((surface, key))
     print("[client-diag] %s: surface %r, %s" % (text, surface, key), file=sys.stderr)
 
 
@@ -2796,13 +2814,31 @@ def _client_diag_admit(surface, data):
 
 
 def _client_diag_line(rec):
-    """The row's line for the file; past CLIENT_DIAG_ROW_MAX bytes of JSON its data is replaced by the cap marker."""
+    """The row's line for the file. Past CLIENT_DIAG_ROW_MAX bytes of JSON its data is replaced by the cap marker
+    {"capped": true, "bytes": N}, except in a perf minute row: that sheds its per-minute figures (CLIENT_DIAG_MINUTE_SHED,
+    in that order) until the line fits and carries what it shed under `capped` ({"bytes": N, "dropped": [...]}, N the
+    line's bytes before the shed), so the once-per-page fields the collector sends exactly once (nav, res, marks, env)
+    reach the file however many frame types the minute saw; a minute row that does not fit even then takes the marker.
+    Deterministic on the kernel's side alone: the collector never learns which rows were capped."""
     line = json.dumps(rec)
-    if len(line) > CLIENT_DIAG_ROW_MAX:    # ASCII-escaped JSON: one byte per character
-        _client_diag_say(rec.get("surface"), "what %r" % rec.get("what"), "a row over %d bytes is stored capped" % CLIENT_DIAG_ROW_MAX)
-        rec = dict(rec, data={"capped": True, "bytes": len(line)})
-        line = json.dumps(rec)
-    return line + "\n"
+    if len(line) <= CLIENT_DIAG_ROW_MAX:    # ASCII-escaped JSON: one byte per character
+        return line + "\n"
+    n = len(line)
+    data = rec.get("data")
+    if rec.get("surface") == "perf" and rec.get("what") == "minute" and isinstance(data, dict):
+        kept, shed = dict(data), []
+        for k in CLIENT_DIAG_MINUTE_SHED:
+            if k not in kept:
+                continue
+            del kept[k]
+            shed.append(k)
+            trimmed = json.dumps(dict(rec, data=dict(kept, capped={"bytes": n, "dropped": shed})))
+            if len(trimmed) <= CLIENT_DIAG_ROW_MAX:
+                _client_diag_say(rec.get("surface"), "what %r, shed" % rec.get("what"),
+                                 "a minute row over %d bytes is stored without some of its per-minute figures (its capped key names them)" % CLIENT_DIAG_ROW_MAX)
+                return trimmed + "\n"
+    _client_diag_say(rec.get("surface"), "what %r" % rec.get("what"), "a row over %d bytes is stored capped" % CLIENT_DIAG_ROW_MAX)
+    return json.dumps(dict(rec, data={"capped": True, "bytes": n})) + "\n"
 
 
 def _dist_ver():
@@ -63693,6 +63729,7 @@ var APP="%s";var LABEL="%s";var LOADEDV=%d;var CAPS="%s";var NOSTALE=%s;var last
 // through send), read at each row so a flip in the gear applies to the next row without a reload.
 var PM=window.__rompPerfMarks={wsBytes:0,dv:LOADEDV};function pnow(){try{return Math.round(performance.now());}catch(e){return -1;}}
 function diagMuted(){try{var st=JSON.parse(localStorage.getItem('romp:settings')||'null');return !!(st&&st.perfMute===true);}catch(e){return false;}}
+function queuedDiagRow(s){try{var o=JSON.parse(s);return !!(o&&o.type==="clientDiag");}catch(e){return false;}}   // a queued message (a JSON string) that is a clientDiag row: onopen's flush re-reads the switch for these, since a mute flipped on while the socket was down would otherwise release the rows queued before it (review find, 2026-09-18); parsed only while muted, at an open
 // the reload core's 'fresh' hold (invisible restarts, 2026-09-14): the chat pane alone, the pane the ruling names, armed at the drop and
 // kept through the redial; a Files or Settings page gets no resync frame, so a hold armed there would never end (the round-two review).
 // Stamped once per hold: a flapping socket or a kernel in a crash loop re-arms without moving the stamp, so the core's bound is
@@ -63883,7 +63920,7 @@ ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponen
 // socket dropped (the pane's romp loader) needs the socket's RETURN as its event to come back down. The
 // first connect deliberately doesn't fire it — nothing is waiting on it, and the loader must stay up until
 // real content lands.
-ws.onopen=function(){lastRecv=Date.now();openT=lastRecv;openSock=this;netState("up");if(PM.wsOpen===undefined)PM.wsOpen=pnow();resumeProvisional=0;var wasReconn=everConnected;everConnected=true;for(var i=0;i<queue.length;i++)ws.send(queue[i]);if(bundleReady&&!readyAcked&&!readyQueued&&readyMsg)ws.send(readyMsg);readyQueued=false;queue=[];queuedDiag=0;
+ws.onopen=function(){lastRecv=Date.now();openT=lastRecv;openSock=this;netState("up");if(PM.wsOpen===undefined)PM.wsOpen=pnow();resumeProvisional=0;var wasReconn=everConnected;everConnected=true;var mu=diagMuted();for(var i=0;i<queue.length;i++){if(mu&&queuedDiagRow(queue[i]))continue;ws.send(queue[i]);}if(bundleReady&&!readyAcked&&!readyQueued&&readyMsg)ws.send(readyMsg);readyQueued=false;queue=[];queuedDiag=0;
 try{if(window.__rompReload)window.__rompReload.ended();}catch(e){}   // T265: the flush is the ending event for the "sends" hold — a reload owed while a prompt sat in the queue goes now
 if(failedConnects){send({type:"clientDiag",surface:"pane-shim",what:"wsconnfail",data:{app:APP,attempts:failedConnects,firstFailMs:Date.now()-firstFailT}});failedConnects=0;firstFailT=0;}   // the redials that never opened since the last open, as ONE row: how many, and how long ago the first failed
 if(wasReconn){var ann=restartAnnounced&&Date.now()-restartAnnounced<30000;restartAnnounced=0;   // one-shot: spent here
@@ -74434,8 +74471,12 @@ class Handler(BaseHTTPRequestHandler):
             # actually observed (click fired? fetch outcome? rects?) so the next report carries
             # recorded evidence. First user: the strip's network button (the user 2026-07-14).
             try:
+                # the surface cut ONCE, for the row, the allowlist lookup and the stderr latch alike (review find, 2026-09-18:
+                # the lookup and the latch read the uncut string, so a long or non-string surface was printed whole via %r
+                # and every distinct value grew the latch)
+                surface = str(msg.get("surface") or "")[:CLIENT_DIAG_STR_MAX]
                 rec = {"t": int(time.time()), "wid": str(client.get("wid") or ""),
-                       "surface": str(msg.get("surface") or "")[:CLIENT_DIAG_STR_MAX], "what": str(msg.get("what") or "")[:CLIENT_DIAG_STR_MAX],
+                       "surface": surface, "what": str(msg.get("what") or "")[:CLIENT_DIAG_STR_MAX],
                        # whether the socket that CARRIED the row declared the redial (?reconnect=1): the socket's
                        # dial record, `redial`, set at accept beside the consumable `reconnect` and never popped,
                        # so every row a socket carries reads the same value on every pane. (The strip's
@@ -74448,7 +74489,7 @@ class Handler(BaseHTTPRequestHandler):
                        "reconnect": bool(client.get("redial")),
                        # the surface's admitted keys alone, strings cut, the row bounded (CLIENT_DIAG_KEYS; 2026-09-18): the
                        # file used to take whatever a page posted, of any shape and size
-                       "data": _client_diag_admit(str(msg.get("surface") or ""), msg.get("data"))}
+                       "data": _client_diag_admit(surface, msg.get("data"))}
                 # past the size cap the file becomes .1 and a new one starts; the check, rename and write are one
                 # locked step, since every pane's socket posts from its own handler thread
                 _client_diag_append(jd.STATE / "client-diag.jsonl", _client_diag_line(rec))
