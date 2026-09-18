@@ -652,7 +652,9 @@ class PublicForm(unittest.TestCase):
     def test_a_32_hex_token_on_an_event_row_refuses_the_print_the_way_the_export_refuses_the_write(self):
         """events.recent is the one place raw ledger rows pass through, and a 32-hex token fits the identifier grammar,
         so the fold keeps it as a key and as a value; the identifier scan does not know it. `romp perf export` refuses
-        such a document through check_document, which runs the paste walk beside the scan; this verb ran the scan alone
+        such a document through check_document, whose three sources are the identifier scan, the paste walk and the
+        denylist walk (which refuses what the fold would have dropped, folded or coarsened as "the public form still
+        fails the denylist"); this verb ran the scan alone
         and PRINTED the token (the export PR's closing check, 2026-09-18). Both verbs now run
         check_document: the print is refused, exit 1, nothing on stdout, and the refusal names the kind and the key
         path of the shallowest finding (a value's own path; a key's the dict holding it) and never the token. Fails
