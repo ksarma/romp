@@ -224,6 +224,9 @@ class Collector(unittest.TestCase):
         # would be one a connect push can never move); the block's counters start at zero beside it
         self.assertEqual(p["connectPush"]["stagesMs"], {})
         self.assertEqual((p["connectPush"]["count"], p["connectPush"]["ms_sum"]), (0, 0.0))
+        for k in ("push.chat.sig.static", "push.chat.sig.deps"):   # the signature seam's sub-seams (the chat-signature design, stage 1)
+            self.assertIn(k, km._PerfStats.STAGES, "%s is listed at zero from the start" % k)
+        self.assertEqual(km._PerfStats.CONTAINERS.get("push.chat.sig"), "push.chat.sig.", "the signature seam contains its two sub-seams")
         self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline", "feedJson", "thread"})   # thread: the comment popover's build (2026-09-08)
         self.assertEqual(set(snap["builds"]["timeline"]), {"cached", "built", "ms"})
         self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss", "moved",
@@ -383,6 +386,32 @@ class Collector(unittest.TestCase):
         self.assertGreaterEqual(snap["uptime_s"], 0)
         json.dumps(snap)                                     # the whole thing serializes as-is
 
+    def test_the_signature_sub_seams_roll_into_the_seam_and_once_into_the_chat_and_the_push(self):
+        """The nested-sum rule (fork PR 759) applied one level down: push.chat.sig is a container of push.chat.sig.static
+        and push.chat.sig.deps, so the bytes read inside a signature land on the sub-seam row that closes first, the seam
+        carries their sum, no glue row appears when the seam closes with nothing read since the sub-seams, and push.chat
+        and push count the seam's bytes once, through the seam's row (a row under a nested container counts through it)."""
+        ps = self.st
+        ps.cycle_begin(); ps.stage_boundary()
+        km.em._count_read("/lab/a.jsonl", 200)                # the signature's names read
+        ps.stage("push.chat.sig.static", 0.003)
+        ps.stage("push.chat.sig.deps", 0.001)
+        ps.stage("push.chat.sig", 0.004)
+        ps.stage("push.chat.send", 0.001)
+        ps.stage("push.chat", 0.006)
+        ps.stage("push", 0.007); ps.stage("jobs", 0.001); ps.cycle(0.008)
+        st = ps.snapshot()["pusher"]["firstCycle"]["stages"]
+        self.assertEqual(st["push.chat.sig.static"]["bytes"], 200, "the first sub-seam closed carries the signature's read")
+        self.assertEqual(st["push.chat.sig.deps"]["bytes"], 0)
+        self.assertEqual(st["push.chat.sig"]["bytes"], 200, "the seam carries its sub-seams' sum")
+        self.assertNotIn("push.chat.sig.other", st, "nothing read between the sub-seams and the seam: no glue row")
+        self.assertEqual(st["push.chat"]["bytes"], 200, "the chat counts the seam once, not again through its sub-seams")
+        self.assertEqual(st["push"]["bytes"], 200)
+        self.assertEqual((st["push.chat.sig.static"]["ms"], st["push.chat.sig.deps"]["ms"], st["push.chat.sig"]["ms"]), (3.0, 1.0, 4.0),
+                         "the ms are the callers' own, never summed")
+        self.assertTrue(km._PerfStats._through_nested("push.chat.", "push.chat.sig.static", st))
+        self.assertTrue(km._PerfStats._through_nested("push.", "push.chat.sig.deps", st))
+
     def test_the_cpu_stages_accumulate_user_and_sys_beside_the_wall(self):
         """Stage 1 of the chat-signature design (2026-09-18): stage(name, dt, cpu=(user_s, sys_s)) folds the caller's thread-CPU
         delta into stages_cpu_ms[name] = {user, sys} in ms, cumulative like stages_ms; the containers and the chat seams are
@@ -393,7 +422,8 @@ class Collector(unittest.TestCase):
             self.skipTest("no per-thread rusage on this platform: the block is served empty (pinned in the next test)")
         snap = self.st.snapshot()
         self.assertEqual(set(snap["stages_cpu_ms"]), set(km._PerfStats.CPU_STAGES))
-        self.assertEqual(km._PerfStats.CPU_STAGES, ("push", "jobs", "jobsPass", "push.chat", "push.chat.sig", "push.chat.build", "push.chat.send"))
+        self.assertEqual(km._PerfStats.CPU_STAGES, ("push", "jobs", "jobsPass", "push.chat", "push.chat.sig", "push.chat.sig.static",
+                                                    "push.chat.sig.deps", "push.chat.build", "push.chat.send"))
         for k, v in snap["stages_cpu_ms"].items():
             self.assertEqual(v, {"user": 0.0, "sys": 0.0}, k)
         self.st.cycle_begin()
