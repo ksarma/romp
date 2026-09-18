@@ -803,5 +803,62 @@ out({first:first,afterRedial:afterRedial,delivered:delivered.map(function(m){ret
         self.assertEqual(r["delivered"], ["wsup"])
 
 
+class LocalUpFlag(unittest.TestCase):
+    """The shim publishes its socket's state as window.__rompLocalUp beside the wsState post to the shell (2026-09-18):
+    federation.ts, in the same document, gates its relay dial on it. The relay is this same kernel's /remote/<host>/ws on
+    this origin, so a relay dial while the local socket is down hangs until the relay watchdog's 15 s cut and is dialed
+    again (55 such rows in 23 minutes on the user's phone). Undefined until the socket first opens or closes, so a page
+    without the shim and a fresh page dial as before; true while it is OPEN; false after onclose, an opened socket's or a
+    refused dial's, and after abandon(). The flag moves with the wsState post, never apart from it."""
+
+    RUN_REDIAL = r"""function runRedial(){var t=timers.filter(function(x){return x.live&&x.fn.name==="connect";});t.forEach(function(x){x.live=false;x.fn();});return t.length;}
+"""
+
+    def test_undefined_before_any_event_true_at_open_false_at_close_and_at_abandon(self):
+        r = _run(self.RUN_REDIAL + r"""
+var before=("__rompLocalUp" in window);
+open();var atOpen=window.__rompLocalUp;
+recv({type:"ka"});sock().readyState=3;sock().onclose({code:1006,reason:"",wasClean:false});var atClose=window.__rompLocalUp;
+var ran=runRedial();var atRedial=window.__rompLocalUp;   // the onclose timer's connect(): a CONNECTING socket is not up
+open();var atReopen=window.__rompLocalUp;
+abandon();var atAbandon=window.__rompLocalUp;
+out({before:before,atOpen:atOpen,atClose:atClose,ran:ran,atRedial:atRedial,atReopen:atReopen,atAbandon:atAbandon,nulled:ws===null,
+posts:parentPosts.filter(function(p){return p.romp==="wsState";}).map(function(p){return p.state;})});""")
+        self.assertFalse(r["before"], "no flag before the first socket event: a page whose socket has not spoken dials its relay as today")
+        self.assertIs(r["atOpen"], True)
+        self.assertIs(r["atClose"], False, "onclose puts it down with the wsState post")
+        self.assertEqual(r["ran"], 1)
+        self.assertIs(r["atRedial"], False, "a redial in flight is not up until it opens")
+        self.assertIs(r["atReopen"], True)
+        self.assertIs(r["atAbandon"], False, "abandon() puts it down too: the disowned socket's onclose never runs")
+        self.assertTrue(r["nulled"])
+        self.assertEqual(r["posts"], ["up", "down", "up", "down"], "the flag and the shell's wsState post move together")
+
+    def test_a_refused_first_dial_reads_down_and_the_first_open_reads_up_without_a_wsup(self):
+        r = _run(self.RUN_REDIAL + r"""
+sock().readyState=3;sock().onclose({code:1006,reason:"",wasClean:false});var atRefusal=window.__rompLocalUp;
+runRedial();open();var atOpen=window.__rompLocalUp;
+out({atRefusal:atRefusal,atOpen:atOpen,wsup:count(winEvents,"romp:wsup")});""")
+        self.assertIs(r["atRefusal"], False, "a dial the kernel refused: the socket is down, opened before or not")
+        self.assertIs(r["atOpen"], True)
+        self.assertEqual(r["wsup"], 0, "a FIRST open dispatches no romp:wsup (the loader waits for content): the relay's road back here is federation's 4 s poll, which reads the flag")
+
+    def test_the_foreground_fast_path_abandon_puts_it_down_and_the_redials_open_puts_it_up_with_the_wsup(self):
+        # the order is asserted where federation relies on it: the harness window's dispatchEvent is wrapped before the
+        # redial's open() to record the flag as each romp:wsup finds it, so a shim that flipped it after the dispatch
+        # reads false HERE (reading the flag and the count after onopen returned proves nothing about the order)
+        r = _run(r"""
+open();recv({type:"ka"});hide();NOW+=46000;show();var atReturn=window.__rompLocalUp;var dialed=sockets.length;
+var flagAtWsup=[];var dispatch=window.dispatchEvent;
+window.dispatchEvent=function(e){if(e.type==="romp:wsup")flagAtWsup.push(window.__rompLocalUp);return dispatch(e);};
+NOW+=300;open();var atReopen=window.__rompLocalUp;
+out({atReturn:atReturn,dialed:dialed,atReopen:atReopen,wsup:count(winEvents,"romp:wsup"),flagAtWsup:flagAtWsup});""")
+        self.assertIs(r["atReturn"], False, "the return's abandon: down, with a fresh dial CONNECTING")
+        self.assertEqual(r["dialed"], 2)
+        self.assertIs(r["atReopen"], True)
+        self.assertEqual(r["wsup"], 1, "the reconnect open dispatches one romp:wsup")
+        self.assertEqual(r["flagAtWsup"], [True], "…AFTER the flag flipped: the listener federation installs (localUp) reads true inside the dispatch")
+
+
 if __name__ == "__main__":
     unittest.main()

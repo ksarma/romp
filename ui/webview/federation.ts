@@ -890,6 +890,7 @@ interface Conn {
   everOpened?: boolean; // a socket for this conn has reached `open` at least once (the shim's everConnected)
   readyAcked?: boolean; // the remote answered this page's `ready` with a `caps` frame at least once (the shim's readyAcked): the redial gate's latch that the remote served this page whole and holds its sessions
   dialedReconnect?: boolean; // the CURRENT socket was dialed with reconnect=1, so its open must post NO `ready`: the redial's dial term IS the handshake, and a `ready` would make the remote's ready reset pop `reconnect` and serve the whole board (the shim posts no ready on a redial for the same reason)
+  deferred?: boolean; // a dial connect() put off because the pane's LOCAL socket is down (window.__rompLocalUp false): set with the one dial-deferred row per down spell, cleared by the dial that finally runs
   // KERNEL_SETTING messages (newest per type) and the pane's own BOOKKEEPING (newest per key, see
   // BOOKKEEPING) that arrived while this host's socket was down — flushed on the socket's open event
   // (sendRemote/flushPending). Bounded by construction: one entry per setting type, per bookkeeping
@@ -1039,6 +1040,10 @@ export class FederationManager {
     const reorder = () => { this.emitMergedOrder(); this.emitMergedFeed(); this.emitMergedTimeline(false); };
     w.addEventListener("storage", (e: StorageEvent) => { if (!e.key || e.key === VIEW_ORDER_KEY) reorder(); });
     w.addEventListener(VIEW_ORDER_EVENT, reorder);
+    // the pane's LOCAL socket reopening (the shim's romp:wsup): every relay dial connect() put off while that socket
+    // was down runs now (localUp); installed through a parameterised method, like the lifecycle listeners below, so
+    // the tests fire it on a fake window
+    this.watchLocalLink(w);
     // The kernel-served timeline page boots from an inline script that cannot import this module, so the
     // one implementation of the write is published here for it (its VS Code twin imports it directly).
     w.__rompWriteOrder = (order: unknown) =>
@@ -1063,6 +1068,24 @@ export class FederationManager {
     doc.addEventListener("freeze", () => { this.frozeAt = Date.now(); });
     doc.addEventListener("resume", () => this.resumed(Date.now()));
     doc.addEventListener("visibilitychange", () => { if (doc.visibilityState === "visible") this.watchdog(Date.now(), true); });
+  }
+
+  /** The window listener for the shim's `romp:wsup` (public and parameterised like watchLifecycle, so the tests
+   *  install it on a fake window and fire it): the pane's LOCAL socket reopened, so the relay path is back (localUp). */
+  watchLocalLink(win: { addEventListener(type: string, listener: () => void): void }): void {
+    win.addEventListener("romp:wsup", () => this.localUp());
+  }
+
+  /** The pane's LOCAL socket is open again (the shim's romp:wsup, kernel.py ws.onopen, which flips
+   *  window.__rompLocalUp to true first). The relay is this same kernel's /remote/<host>/ws on location.host, so the
+   *  local socket's return is the proof that path is up: every live host whose relay socket is null (a redial
+   *  connect() put off, see there) or CLOSED is dialed now, and one poll reads /tunnels again. connect() itself
+   *  returns for a detached or down host and for a socket already CONNECTING or OPEN, so nothing is dialed twice. */
+  localUp(): void {
+    for (const c of this.conns.values()) {
+      if (!c.closed && c.live && (!c.ws || c.ws.readyState === 3)) this.connect(c);
+    }
+    void this.poll();
   }
 
   /** The Page Lifecycle `resume` event (the user 2026-09-07, whose dashboard froze every time they came
@@ -1597,6 +1620,11 @@ export class FederationManager {
   }
 
   private async poll(): Promise<void> {
+    // no /tunnels while the pane's LOCAL socket is down (window.__rompLocalUp false, the shim's netState): the GET
+    // goes to the same origin that socket cannot reach, and a failed read would only flip pollFailing. The flag is
+    // read every 4 s, so the first poll after the shim's reopen is the backstop for a romp:wsup this manager
+    // missed (localUp); undefined (a page without the shim, or no local open yet) polls as before.
+    if ((window as any).__rompLocalUp === false) return;
     let tunnels: any[] = [];
     try {
       const r = await fetch("/tunnels", { cache: "no-store" });
@@ -1763,6 +1791,22 @@ export class FederationManager {
   private connect(conn: Conn): void {
     if (conn.closed || !conn.live) return;
     if (conn.ws && (conn.ws.readyState === 0 || conn.ws.readyState === 1)) return; // already connecting/open
+    // The relay is this kernel's own /remote/<host>/ws on location.host, so it cannot open while the pane's LOCAL
+    // socket is down: a dial now hangs until the watchdog's 15 s cut, is dialed again and hangs again (55
+    // `watchdog-close connecting` rows in 23 minutes on the user's phone, 2026-09-18). The shim publishes its
+    // socket's state as window.__rompLocalUp (kernel.py netState): false means down, and the dial waits for the
+    // shim's romp:wsup (localUp) or the next poll, which reads the same flag; undefined (a page without the shim,
+    // VS Code, or no local open yet) and true dial as before. The foreground kill and the watchdog's abandon are
+    // unchanged: they still put the dead socket down, and the redial they call is what waits. One dial-deferred
+    // row per conn per down spell.
+    if ((window as any).__rompLocalUp === false) {
+      if (!conn.deferred) {
+        conn.deferred = true;
+        this.diag("hostconn", { host: conn.host, ev: "dial-deferred", why: "local-down" });
+      }
+      return;
+    }
+    conn.deferred = false;
     let ws: WebSocket;
     conn.connT = Date.now();
     conn.lastRecv = 0;

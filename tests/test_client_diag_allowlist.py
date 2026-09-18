@@ -465,6 +465,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             ],
             "federation": [   # federation.ts diag(): hostconn's events, then the others
                 ("hostconn", {"host": host, "ev": "watchdog-close", "why": "quiet", "quietMs": 31000, "foreground": True}),
+                ("hostconn", {"host": host, "ev": "dial-deferred", "why": "local-down"}),   # a relay dial put off while the pane's local socket is down (2026-09-18)
                 ("hostconn", {"host": host, "ev": "hold", "msgType": "prompt", "rs": 0}),
                 ("hostconn", {"host": host, "ev": "flush-halt", "flushed": 2, "held": 1}),
                 ("hostconn", {"host": host, "ev": "tunnels-poll-failing", "why": "http", "unread": 3}),

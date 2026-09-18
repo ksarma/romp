@@ -64063,7 +64063,10 @@ var PROVISIONAL_MS=15000,resumeProvisional=0;   // a resumed keep is PROVISIONAL
 var connT=0;   // when the current socket's connect() attempt started — the progress watchdog's reference point
 // Tell the shell this pane's WS state so it can show ONE "disconnected" banner (the user 2026-06-27): a real
 // network drop used to blind-reload into a dead page, leaving the pane silently frozen with no explanation.
-function netState(s){try{if(window.parent!==window)window.parent.postMessage({romp:"wsState",app:APP,state:s},"*");}catch(e){}}
+// ...and publishes the same state as window.__rompLocalUp for this page's OTHER dialers (2026-09-18): federation.ts
+// dials the remote relay on this same origin, which cannot open while this socket is down, so it waits for the flag
+// (false) and redials on romp:wsup; undefined until the first open or close, so a page without the shim dials as before.
+function netState(s){try{window.__rompLocalUp=(s==="up");if(window.parent!==window)window.parent.postMessage({romp:"wsState",app:APP,state:s},"*");}catch(e){}}
 // A FILE dragged onto a pane that takes no drops must not navigate the pane to the file — the browser's default for an
 // unhandled drop (the user 2026-09-12: an image dropped beside the chat's box replaced the page with the image). Every
 // pane but the chat refuses it here: a not-allowed cursor over the pane, the drop swallowed. The chat's own document takes
