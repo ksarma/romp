@@ -569,10 +569,12 @@ def key_tokens(key):
 
 
 def duration_key(key):
-    """True when `key` is a string one of whose pieces, split on KEY_TOKEN_BOUNDARY, is DURATION_TOKEN lower-cased: a
-    millisecond measure. denylist_problems reads it over a leaf's own key and every key above it on its path, and never
-    judges a float with one there against STAMP_WINDOWS. None or a non-string key (a list element's) is never one."""
-    return isinstance(key, str) and any(t.lower() == DURATION_TOKEN for t in KEY_TOKEN_BOUNDARY.split(key))
+    """True when `key` is a string one of whose tokens (key_tokens: the one split, so the eight tokenizer pins in
+    tests/test_perf_export.py certify the split this rule runs) is DURATION_TOKEN lower-cased: a millisecond measure.
+    denylist_problems reads it over a leaf's own key and every key above it on its path, and never judges a float with
+    one there against STAMP_WINDOWS. None or a non-string key (a list element's) is never one; the isinstance guard runs
+    before the call, since key_tokens takes a string."""
+    return isinstance(key, str) and any(t.lower() == DURATION_TOKEN for t in key_tokens(key))
 
 
 def denylist_problems(doc, under=(), skip=()):
