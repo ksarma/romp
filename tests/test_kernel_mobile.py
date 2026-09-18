@@ -797,5 +797,99 @@ class MobileBellExecutes(unittest.TestCase):
         self.assertNotIn("bar.querySelectorAll('button'),", js)
 
 
+# A node stand-in for the phone with the shell socket in view: the fit harness's window plus a mutable copy of the
+# gear's store, a location to dial, and a WebSocket class that records what the shell sends. The driver flips the
+# store between rows and reads the rows that reached the socket; diagQ is a local of the script's IIFE, so the queue
+# is observed only through what the socket's open flush sends.
+_SHELL_DIAG_HARNESS = r"""
+let STORE = null;                                                                        // 'romp:settings' as the gear wrote it, or nothing
+global.localStorage = { getItem: (k) => (k === 'romp:settings' ? STORE : null), setItem() {} };
+global.location = { protocol: 'https:', host: 'TESTHOST' };
+const WSS = [], SENT = [];
+global.WebSocket = class { constructor(u) { this.url = u; this.readyState = 0; WSS.push(this); } send(s) { SENT.push(JSON.parse(s)); } close() {} };
+"""
+_SHELL_DIAG_DRIVER = r"""
+const out = {};
+const diag = (what, data) => window.__rompShellDiag(what, data);
+const since = (n) => SENT.slice(n).filter((m) => m.type === 'clientDiag').map((m) => m.what);   // the clientDiag whats the socket saw after row n
+out.dial = { sockets: WSS.length, url: WSS[0].url, readyState: WSS[0].readyState, sentBeforeOpen: SENT.length, poster: typeof window.__rompShellDiag };
+// a. the socket is still down: a muted row is never queued, an unmuted one waits in the queue; muted again at the
+// open, the flush re-reads the switch and holds the waiting row (the leg the old flush fails: it sent probe-b)
+STORE = '{"perfMute":true}';  diag('probe-a', {});
+STORE = '{"perfMute":false}'; diag('probe-b', {});
+STORE = '{"perfMute":true}';
+WSS[0].readyState = 1; WSS[0].onopen();
+out.a = { types: SENT.map((m) => m.type), whats: since(0) };
+let n = SENT.length;
+// b. still muted with the socket open: dropped at the row
+diag('probe-c', {});
+out.b = since(n); n = SENT.length;
+// c. unmuted: the row goes out whole
+STORE = '{"perfMute":false}'; diag('probe-d', { x: 1 });
+out.c = { whats: since(n), rows: SENT.slice(n) }; n = SENT.length;
+// d. the literal true alone mutes: a string, a missing store and unparsable JSON each read as off
+STORE = '{"perfMute":"yes"}'; diag('probe-e', {});
+STORE = null;                 diag('probe-f', {});
+STORE = 'not json';           diag('probe-g', {});
+out.d = since(n); n = SENT.length;
+// e. on, then off again, the socket open throughout: the switch is read at each row, never cached
+STORE = '{"perfMute":true}';  diag('probe-h', {});
+STORE = '{"perfMute":false}'; diag('probe-i', {});
+out.e = since(n);
+console.log(JSON.stringify(out));
+"""
+
+
+class MobileShellDiagExecutes(unittest.TestCase):
+    """The beacon extension's kill switch in the shell (2026-09-18): the gear's perfMute, off by default and on for the
+    literal true alone (a string value, a missing store and unparsable JSON all read as off), stops the shell's own
+    clientDiag rows the way it stops the panes'. A review found the shell's switch pinned by source text only
+    (tests/test_perf_beacon_shim.py) although this file already runs the whole shell script under node, and found
+    that the shell socket's open flush did not re-read the switch: a mute flipped on while the socket was down
+    released the rows queued before it, where the pane shim's flush re-read it and held them. This harness runs the
+    script against the fit harness's window plus a mutable store, a location and a fake WebSocket class, flips the
+    store between rows and reads what reached the socket: diagQ is a local of the script's IIFE, so the queue is
+    observed only through what the open flush sends. Leg a is the one the old flush fails."""
+
+    @classmethod
+    def setUpClass(cls):
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(_FIT_HARNESS + _SHELL_DIAG_HARNESS + _mobile_js() + _SHELL_DIAG_DRIVER)
+            path = f.name
+        try:
+            r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
+        finally:
+            os.unlink(path)
+        # The template as the page serves it (_mobile_js above).
+        assert r.returncode == 0, "the mobile script threw: " + r.stderr[:800]
+        cls.out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_the_shell_dials_one_socket_with_the_dashboards_wid_and_publishes_the_poster(self):
+        d = self.out["dial"]
+        self.assertEqual(d["sockets"], 1)
+        self.assertTrue(d["url"].startswith("wss://TESTHOST/ws?app=shell&wid="), d["url"])
+        self.assertEqual((d["readyState"], d["sentBeforeOpen"]), (0, 0), "nothing reaches a socket that has not opened")
+        self.assertEqual(d["poster"], "function", "window.__rompShellDiag, the door the bell and tap-landing scripts post through")
+
+    def test_a_mute_flipped_on_while_the_socket_was_down_holds_the_rows_queued_before_it(self):
+        # probe-a was muted at its row and never queued; probe-b was queued unmuted; the open's flush re-read the switch
+        # and held it, so the socket saw the ready alone
+        self.assertEqual(self.out["a"], {"types": ["ready"], "whats": []})
+
+    def test_a_muted_row_on_an_open_socket_is_dropped(self):
+        self.assertEqual(self.out["b"], [])
+
+    def test_an_unmuted_row_is_sent_whole(self):
+        c = self.out["c"]
+        self.assertEqual(c["whats"], ["probe-d"])
+        self.assertEqual(c["rows"], [{"type": "clientDiag", "surface": "shell", "what": "probe-d", "data": {"x": 1}}])
+
+    def test_the_literal_true_alone_mutes(self):
+        self.assertEqual(self.out["d"], ["probe-e", "probe-f", "probe-g"])
+
+    def test_the_switch_is_read_at_each_row(self):
+        self.assertEqual(self.out["e"], ["probe-i"])
+
+
 if __name__ == "__main__":
     unittest.main()

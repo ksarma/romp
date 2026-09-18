@@ -2996,6 +2996,163 @@ def _client_diag_append(fp, line):
             f.write(line)
 
 
+# The clientDiag handler stored a row's `data` verbatim: whatever a page posted, of any shape and size, into the file
+# `romp perf client` and the phone work read back. Since 2026-09-18 (the beacon extension; the user, who wanted the
+# phone's rows opt-in and the store bounded) the handler admits the TOP-LEVEL keys each surface is known to post and
+# nothing else: an unknown key is dropped and said once on stderr per surface and key (a poster that grows a key
+# without this table shows up there, never as a silent hole in the file); of one row's foreign keys at most
+# CLIENT_DIAG_ROW_SAY_MAX are named and one more line counts the rest, and the latch holds CLIENT_DIAG_SAID_MAX pairs in
+# all, then says so once and falls silent, so neither one wide row nor a poster with an unbounded key vocabulary can
+# grow it or silence the other surfaces (review finds, 2026-09-18). Every string value is cut at CLIENT_DIAG_STR_MAX
+# characters, at any depth. A row whose JSON runs past CLIENT_DIAG_ROW_MAX bytes keeps its surface, what and app and
+# carries {"capped": true, "bytes": N} as its data (said once per surface and what), except a perf minute row, which
+# sheds its per-minute figures first (CLIENT_DIAG_MINUTE_SHED, _client_diag_line): the collector sends nav, res, marks
+# and env exactly once per page, and a whole-row marker lost them for the page's life (review find, 2026-09-18). The
+# bound is derived from the collector's own caps (perf-telemetry.ts), so no row it can build is shed or capped:
+# MAX_FRAME_TYPES named wire types plus their fold and as many `fed:` keys are 66 frame entries, the wire keys at most
+# 38 characters (the `delta:` prefix and a 32-character identifier) and the `fed:` keys at most 42 (`fed:delta:` and the
+# identifier, since federation.ts times a frame as `fed:` plus its classified type), each with a 14-bucket histogram,
+# 16.5 KB at six-digit counts; MAX_TOP long-frame keys at the string cut, the free sample, the slow counts and the
+# envelope add about 1.4 KB (17.9 KB share off); the shared fields (MAX_RES named resources and the fold, nav, marks,
+# env, vis, wsBytes, rafGap) add about 3.4 KB (21.3 KB share on). 24 KiB holds both with margin (today's minute rows run
+# to 2.5 KB); above it the shed and the marker are the backstops for a row no collector builds. The table lists the
+# keys as the posters build them: perf-telemetry.ts (minute, slowframe), the pane shim (staleDiag, the return rows,
+# wsclose, wsconnfail, page-load), the reload core's held row, the shell scripts, federation.ts, render.ts and
+# scroll-write.ts, strip.ts, feed.ts, fleet.ts, waiting.ts. The kernel's own rows (surface kernel: _note_ws_open and
+# its siblings) are written directly and never pass here, and the handler refuses a page's row under that surface
+# (said once per what), so a forged wsopen cannot land beside the kernel's; the entry names the kernel's own keys. A
+# surface not in the table keeps no key at all, and a data that is not an object is stored as null.
+CLIENT_DIAG_STR_MAX = 64
+CLIENT_DIAG_ROW_MAX = 24 * 1024   # above the collector's worst case with share on (21.3 KB; the derivation above)
+CLIENT_DIAG_DEPTH_MAX = 8      # nesting past this reads null: the rows are flat or two deep
+CLIENT_DIAG_SAID_MAX = 512     # (surface, key) pairs the stderr latch holds; at the bound one more line says so and nothing else is said
+CLIENT_DIAG_ROW_SAY_MAX = 8    # foreign keys of ONE row said by name; the rest are one counting line, so a row spends at most this many latch entries and one
+# a perf minute row over CLIENT_DIAG_ROW_MAX sheds these, in this order, until its line fits; the row's other keys (the
+# small per-minute figures and the once-per-page nav, res, marks and env) stay, and `capped` names what was shed
+CLIENT_DIAG_MINUTE_SHED = ("frames", "loaf", "free", "slow")
+CLIENT_DIAG_KEYS = {
+    "perf": frozenset(("app", "since", "span_ms", "frames", "free", "loaf", "slow", "dom", "visible", "hidden_pane", "ua", "heap_mb",   # minute
+                       "type", "ms",                                                # slowframe (app, dom, loaf as above)
+                       "nav", "res", "marks", "env", "vis", "wsBytes", "rafGap")),  # the shared fields, on when the gear says so
+    "pane-shim": frozenset(("app", "why", "ready", "quietMs", "hidden",                                         # staleDiag rows
+                            "decision", "resumed", "hiddenMs", "frozenMs", "quietAtResumeMs", "resent",         # return
+                            "ms", "bytesSince", "redialed",                                                     # return-fresh
+                            "code", "reason", "wasClean", "sinceOpenMs", "everConnected", "bundleReady",        # wsclose
+                            "attempts", "firstFailMs",                                                          # wsconnfail
+                            "wasDiscarded", "nav")),                                                            # page-load
+    "reload-core": frozenset(("reason", "detail", "hold", "ageMs")),
+    "shell": frozenset(("sidAttached", "host", "why", "tabs", "status", "via", "boot", "hasSid", "hasCard", "hasPid", "controlled", "dup",
+                        "sub", "rows", "err", "getNotifications", "displayed", "vanished", "superseded", "sid8", "ageS", "shape", "kind", "sw")),
+    "federation": frozenset(("host", "ev", "why", "quietMs", "foreground", "msgType", "rs", "flushed", "held", "unread", "endedUnread",
+                             "code", "clean", "detached", "pendingDropped", "buildId", "counts", "gt", "superseded")),
+    "chat": frozenset(("sid", "error", "held", "got", "distVer", "path", "mdLen", "queuedLeft", "ids", "n", "active", "ts", "len", "route",
+                       "id", "load", "first", "recovered", "hadRestore", "perMinute",
+                       "writer", "before", "after", "delta", "stick", "gesture", "sh", "ch",
+                       "anchor", "proto", "events", "regions", "headKnown", "headFrom", "older", "noframe", "trail",
+                       "dh", "last", "cls", "fromTail", "atBottom", "where", "removed", "added", "reAdded", "shBefore", "shAfter", "st",
+                       "top", "bot", "dTop", "dBot", "lo", "hi", "edge", "why", "notice", "nav", "kind", "keep", "reland")),
+    "strip": frozenset(("ok", "tunnels", "err", "open", "base")),
+    "feed": frozenset(("id", "from", "to", "ev", "buildId", "predicted", "appeared", "gone", "total")),
+    "outline": frozenset(("buildId", "slot", "rev")),
+    "waiting": frozenset(("buildId",)),
+    "kernel": frozenset(("app", "kind", "reconnect", "iid", "cid", "host", "sid", "type", "span", "events", "bytes", "head", "missing",
+                         "refused", "reason", "sent", "frames", "ageS")),
+}
+_client_diag_said = set()      # (surface, key) pairs already said on stderr; one line each per kernel, CLIENT_DIAG_SAID_MAX of them
+_CLIENT_DIAG_SAID_FULL = (None, None)   # the latch's own entry once it is full: the one line past the bound
+
+
+def _client_diag_say(surface, key, text):
+    """One stderr line per (surface, key) per kernel. The surface is the row's, cut at CLIENT_DIAG_STR_MAX by the
+    caller, so the latch holds bounded strings; at CLIENT_DIAG_SAID_MAX pairs one line says the latch is full and
+    nothing more is said (600 distinct foreign keys from one poster used to mean 600 lines and 600 entries)."""
+    said = _client_diag_said
+    if (surface, key) in said:
+        return
+    if len(said) >= CLIENT_DIAG_SAID_MAX:
+        if _CLIENT_DIAG_SAID_FULL not in said:
+            said.add(_CLIENT_DIAG_SAID_FULL)
+            print("[client-diag] %d distinct surface and key pairs said this kernel; nothing more is said" % CLIENT_DIAG_SAID_MAX, file=sys.stderr)
+        return
+    said.add((surface, key))
+    print("[client-diag] %s: surface %r, %s" % (text, surface, key), file=sys.stderr)
+
+
+def _client_diag_scrub(v, depth=0):
+    """A value as the file keeps it: strings cut at CLIENT_DIAG_STR_MAX, numbers, booleans and null as they are,
+    objects and lists walked to CLIENT_DIAG_DEPTH_MAX (deeper reads null), anything else null."""
+    if isinstance(v, str):
+        return v[:CLIENT_DIAG_STR_MAX]
+    if v is None or isinstance(v, (bool, int, float)):
+        return v
+    if depth >= CLIENT_DIAG_DEPTH_MAX:
+        return None
+    if isinstance(v, dict):
+        return {k: _client_diag_scrub(x, depth + 1) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_client_diag_scrub(x, depth + 1) for x in v]
+    return None
+
+
+def _client_diag_admit(surface, data):
+    """The row's data with the surface's admitted top-level keys alone (CLIENT_DIAG_KEYS), each value scrubbed;
+    null for a data that is not an object. Every foreign key is dropped; of one row's, at most CLIENT_DIAG_ROW_SAY_MAX
+    are said by name (once each on stderr) and one more line counts the rest, so a single row carrying hundreds of
+    foreign keys spends a handful of the kernel-wide latch's entries, not all of them, and the other surfaces are
+    still said afterwards (review find, 2026-09-18: one 600-key row used to silence the latch for the kernel's life)."""
+    if not isinstance(data, dict):
+        if data is not None:
+            _client_diag_say(surface, "data", "a row's data is not an object and is stored as null")
+        return None
+    allowed = CLIENT_DIAG_KEYS.get(surface)
+    out, dropped = {}, []
+    for k, v in data.items():
+        if allowed is not None and k in allowed:
+            out[k] = _client_diag_scrub(v)
+        else:
+            dropped.append(k)
+    if dropped:
+        why = ("dropping a key the surface's allowlist does not admit" if allowed is not None
+               else "dropping a key of a surface no allowlist names")
+        for k in dropped[:CLIENT_DIAG_ROW_SAY_MAX]:
+            _client_diag_say(surface, "key %r" % str(k)[:CLIENT_DIAG_STR_MAX], why)
+        if len(dropped) > CLIENT_DIAG_ROW_SAY_MAX:
+            _client_diag_say(surface, "keys past the per-row bound",
+                             "and %d more keys dropped from one row, unnamed" % (len(dropped) - CLIENT_DIAG_ROW_SAY_MAX))
+    return out
+
+
+def _client_diag_line(rec):
+    """The row's line for the file. Past CLIENT_DIAG_ROW_MAX bytes of JSON its data is replaced by the cap marker
+    {"capped": true, "bytes": N} plus the row's `app` where it has one, except in a perf minute row: that sheds its per-minute figures (CLIENT_DIAG_MINUTE_SHED,
+    in that order) until the line fits and carries what it shed under `capped` ({"bytes": N, "dropped": [...]}, N the
+    line's bytes before the shed), so the once-per-page fields the collector sends exactly once (nav, res, marks, env)
+    reach the file however many frame types the minute saw; a minute row that does not fit even then takes the marker.
+    Deterministic on the kernel's side alone: the collector never learns which rows were capped."""
+    line = json.dumps(rec)
+    if len(line) <= CLIENT_DIAG_ROW_MAX:    # ASCII-escaped JSON: one byte per character
+        return line + "\n"
+    n = len(line)
+    data = rec.get("data")
+    if rec.get("surface") == "perf" and rec.get("what") == "minute" and isinstance(data, dict):
+        kept, shed = dict(data), []
+        for k in CLIENT_DIAG_MINUTE_SHED:
+            if k not in kept:
+                continue
+            del kept[k]
+            shed.append(k)
+            trimmed = json.dumps(dict(rec, data=dict(kept, capped={"bytes": n, "dropped": shed})))
+            if len(trimmed) <= CLIENT_DIAG_ROW_MAX:
+                _client_diag_say(rec.get("surface"), "what %r, shed" % rec.get("what"),
+                                 "a minute row over %d bytes is stored without some of its per-minute figures (its capped key names them)" % CLIENT_DIAG_ROW_MAX)
+                return trimmed + "\n"
+    _client_diag_say(rec.get("surface"), "what %r" % rec.get("what"), "a row over %d bytes is stored capped" % CLIENT_DIAG_ROW_MAX)
+    marker = {"capped": True, "bytes": n}
+    if isinstance(data, dict) and isinstance(data.get("app"), str):
+        marker["app"] = data["app"]    # the pane (already cut): the marker still groups under its pane for the file's readers (review find, 2026-09-18)
+    return json.dumps(dict(rec, data=marker)) + "\n"
+
+
 def _dist_ver():
     """A cache-bust token = the newest mtime across the built bundles (dist/*.js + *.css). Appended as
     `?v=<token>` to every <script>/<link> URL so a rebuilt bundle gets a NEW url → the browser is
@@ -63888,6 +64045,15 @@ var SKEL=new URLSearchParams(location.search).get("skeleton")==="1";
 // sessionStorage, and with it wid; it must not copy this).
 var IID="";try{IID=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():"";}catch(e){}if(!IID)IID=String(Math.random()).slice(2)+"-"+Date.now();
 var APP="%s";var LABEL="%s";var LOADEDV=%d;var CAPS="%s";var NOSTALE=%s;var lastRecv=0;var STALE_MS=30000;   // watchdog: no frame (incl. keepalive) for this long → the socket is dead → reconnect
+// The beacon extension's hooks (the user 2026-09-18, who wanted the phone's load and return timing shared only by choice): the marks the
+// page's collector (perf-telemetry.ts) reads at its flush, whole ms from the time origin, each stamped once: the first socket open, the
+// bundle's ready, the first frame delivered to the bundle; a running count of the text-frame characters received on every socket of this
+// page (the collector diffs it per minute); and the dist token this page was served with. The kill switch (the gear's perfMute): send()
+// drops every clientDiag row while the store holds the literal true, the collector's own rows included on a kernel page (they route
+// through send), read at each row so a flip in the gear applies to the next row without a reload.
+var PM=window.__rompPerfMarks={wsBytes:0,dv:LOADEDV};function pnow(){try{return Math.round(performance.now());}catch(e){return -1;}}
+function diagMuted(){try{var st=JSON.parse(localStorage.getItem('romp:settings')||'null');return !!(st&&st.perfMute===true);}catch(e){return false;}}
+function queuedDiagRow(s){try{var o=JSON.parse(s);return !!(o&&o.type==="clientDiag");}catch(e){return false;}}   // a queued message (a JSON string) that is a clientDiag row: onopen's flush re-reads the switch for these, since a mute flipped on while the socket was down would otherwise release the rows queued before it (review find, 2026-09-18); parsed only while muted, at an open
 // the reload core's 'fresh' hold (invisible restarts, 2026-09-14): the chat pane alone, the pane the ruling names, armed at the drop and
 // kept through the redial; a Files or Settings page gets no resync frame, so a hold armed there would never end (the round-two review).
 // Stamped once per hold: a flapping socket or a kernel in a crash loop re-arms without moving the stamp, so the core's bound is
@@ -64078,7 +64244,7 @@ ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponen
 // socket dropped (the pane's romp loader) needs the socket's RETURN as its event to come back down. The
 // first connect deliberately doesn't fire it — nothing is waiting on it, and the loader must stay up until
 // real content lands.
-ws.onopen=function(){lastRecv=Date.now();openT=lastRecv;openSock=this;netState("up");resumeProvisional=0;var wasReconn=everConnected;everConnected=true;for(var i=0;i<queue.length;i++)ws.send(queue[i]);if(bundleReady&&!readyAcked&&!readyQueued&&readyMsg)ws.send(readyMsg);readyQueued=false;queue=[];queuedDiag=0;
+ws.onopen=function(){lastRecv=Date.now();openT=lastRecv;openSock=this;netState("up");if(PM.wsOpen===undefined)PM.wsOpen=pnow();resumeProvisional=0;var wasReconn=everConnected;everConnected=true;var mu=diagMuted();for(var i=0;i<queue.length;i++){if(mu&&queuedDiagRow(queue[i]))continue;ws.send(queue[i]);}if(bundleReady&&!readyAcked&&!readyQueued&&readyMsg)ws.send(readyMsg);readyQueued=false;queue=[];queuedDiag=0;
 try{if(window.__rompReload)window.__rompReload.ended();}catch(e){}   // T265: the flush is the ending event for the "sends" hold — a reload owed while a prompt sat in the queue goes now
 if(failedConnects){send({type:"clientDiag",surface:"pane-shim",what:"wsconnfail",data:{app:APP,attempts:failedConnects,firstFailMs:Date.now()-firstFailT}});failedConnects=0;firstFailT=0;}   // the redials that never opened since the last open, as ONE row: how many, and how long ago the first failed
 if(wasReconn){var ann=restartAnnounced&&Date.now()-restartAnnounced<30000;restartAnnounced=0;   // one-shot: spent here
@@ -64086,7 +64252,7 @@ if(window.__rompReload&&!window.__rompReload.inShell())window.__rompReload.check
 if(!ann)armStale(pendingWhy||"reconnect");   // T217: an ANNOUNCED restart's reconnect skips the arm — the resync lands in a beat and the flash was pure noise; a restart that never comes back stays loud through the disconnected state itself, and a SECOND reconnect arms as always
 pendingWhy="";freshPending=true;armFresh();try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}
 enqueue({type:"wsup"});}};   // the flip as a FRAME too: frames of the dead socket may still be draining from the FIFO, and a bundle that scopes "loaded on this socket" must see the flip between them and the new socket's frames, not at onopen (review find 2026-09-07)
-ws.onmessage=function(ev){lastRecv=Date.now();resumeProvisional=0;if(returnAt)returnBytes+=(ev.data&&ev.data.length)||0;var msg;try{msg=JSON.parse(ev.data);}catch(e){return;}
+ws.onmessage=function(ev){lastRecv=Date.now();resumeProvisional=0;PM.wsBytes+=(ev.data&&ev.data.length)||0;if(returnAt)returnBytes+=(ev.data&&ev.data.length)||0;var msg;try{msg=JSON.parse(ev.data);}catch(e){return;}
 if(msg&&msg.type==="caps")readyAcked=true;   // the kernel's answer to a ready it processed: _send_caps, which the ready arm alone sends, after its own pushes. From here a redial may declare itself (the dial term in connect); the frame goes on to the bundle below like any other
 if(msg&&msg.type==="reloadRequired"){try{if(window.__rompReload)window.__rompReload.require(msg.why);}catch(e){}return;}   // the safety valve (2026-09-16): a kernel that must force a reload for correctness; the core honours it through its holds; nothing sends it today
 if(msg&&msg.type==="unknownOp"){try{if(window.__rompReload)window.__rompReload.behind();}catch(e){}}   // this page asked for something the kernel does not know (a page from before the kernel's build): the standing offer's wording gains the reason; the frame goes on to the bundle, whose degrade path answers it (render.ts onUnknownOp)
@@ -64142,6 +64308,7 @@ if(restartAnnounced&&Date.now()-restartAnnounced<30000)d=Math.min(d,250);   // a
 setTimeout(connect,d);};   // the blind 1.5 s stays for unannounced drops outside any return window
 ws.onerror=function(){try{ws.close();}catch(e){}};}
 function send(m){var s=JSON.stringify(m);if(m&&m.type==="ready"){bundleReady=true;readyProto=(m.proto===2?2:1);readyMsg=s;}   // the bundle's listener is installed: from here a redial may declare itself (the dial term in connect)
+if(m&&m.type==="ready"&&PM.bundleReady===undefined)PM.bundleReady=pnow();if(m&&m.type==="clientDiag"&&diagMuted())return;   // the beacon extension: the bundle's ready stamp; the kill switch drops every clientDiag row (the shim's, the reload core's and the collector's alike) before it is sent or queued
 if(ws&&ws.readyState===1){ws.send(s);return;}
 if(m&&m.type==="ready")readyQueued=true;   // ...and this one waits for the open: the redial that carries it dials as a fresh page (onopen clears the bit after the flush)
 if(m&&m.type==="clientDiag"){if(queuedDiag>=DIAG_QUEUE_MAX)return;queuedDiag++;}   // breadcrumbs waiting for a reconnect are capped; everything else queues as before
@@ -64173,7 +64340,7 @@ if(returnRow&&!returnAt)returnRow=null;   // the held keep row is spent once its
 while(FIFO.length){var m=FIFO.shift();try{deliver(m);}catch(e){if(!err)err=e;}   // one bad frame never eats the rest of the burst; its error still surfaces
 if(FIFO.length&&Date.now()-t0>=FLUSH_MS){flushArmed=true;ch.port2.postMessage(0);break;}}   // budget spent → the rest rides the next task
 if(err)throw err;}
-function deliver(m){if(window.__rompFed){window.__rompFed.inbound("",m);}else{window.dispatchEvent(new MessageEvent("message",{data:m}));}}
+function deliver(m){if(PM.firstFrame===undefined)PM.firstFrame=pnow();if(window.__rompFed){window.__rompFed.inbound("",m);}else{window.dispatchEvent(new MessageEvent("message",{data:m}));}}
 // The delta reassembler. DELTA_KINDS mirrors the kernel's _DELTA_SLOTS: which top-level collections of each
 // slot are keyed, and how — "dict" (an object keyed by its own keys), "byid" (a list keyed by item id),
 // "bykeys:a,b" (a list keyed by a composite of item fields), "dictlist:id" (an object of lists, each item keyed by its
@@ -67581,7 +67748,9 @@ _LANDING_MOBILE_JS = """
 // socket carries the shell's wid, so its rows and this dashboard's pane rows match on it — and so a reveal
 // the kernel aims at a dashboard's shell by wid (_reveal_chat_for's second line) has a target at last.
 var diagQ=[],DIAGQ_MAX=20,shellSock=null;
+function diagMuted(){try{var st=JSON.parse(localStorage.getItem('romp:settings')||'null');return !!(st&&st.perfMute===true);}catch(e){return false;}}   // the beacon extension's kill switch (the gear's perfMute, 2026-09-18): the shell's own rows stop with the panes'
 function shellDiag(what,data){var m={type:'clientDiag',surface:'shell',what:what,data:data};
+if(diagMuted())return;
 if(shellSock&&shellSock.readyState===1){try{shellSock.send(JSON.stringify(m));}catch(e){}}
 else if(diagQ.length<DIAGQ_MAX)diagQ.push(m);}
 window.__rompShellDiag=shellDiag;
@@ -67719,7 +67888,7 @@ var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent
 // ready → the kernel sends the current needs-you count, so a relaunched installed app trues up
 // its icon badge immediately instead of waiting for the next change (plans/ios-app.md proposal 3)
 ws.onopen=function(){try{ws.send(JSON.stringify({type:'ready'}));}catch(e){}
-shellSock=ws;var q=diagQ;diagQ=[];q.forEach(function(m){try{ws.send(JSON.stringify(m));}catch(e){}});   // the rows that waited for this socket
+shellSock=ws;var q=diagQ;diagQ=[];if(!diagMuted())q.forEach(function(m){try{ws.send(JSON.stringify(m));}catch(e){}});   // the rows that waited for this socket; the queue holds clientDiag rows alone, so one re-read of the kill switch at the open holds them all when a mute was flipped on while the socket was down, as the pane shim's flush does (review find, 2026-09-18)
 if(shellOpened&&window.__rompReload)window.__rompReload.checkBoot();shellOpened=true;};
 ws.onmessage=function(ev){var m;try{m=JSON.parse(ev.data);}catch(e){return;}
 if(m&&m.type==='ka'){if(m.dv&&window.__rompReload)window.__rompReload.noteDv(m.dv);}   // build drift on the shell's own keepalive (T265; an OFFER since 2026-09-16)
@@ -74626,22 +74795,35 @@ class Handler(BaseHTTPRequestHandler):
             # actually observed (click fired? fetch outcome? rects?) so the next report carries
             # recorded evidence. First user: the strip's network button (the user 2026-07-14).
             try:
-                rec = {"t": int(time.time()), "wid": str(client.get("wid") or ""),
-                       "surface": str(msg.get("surface") or ""), "what": str(msg.get("what") or ""),
-                       # whether the socket that CARRIED the row declared the redial (?reconnect=1): the socket's
-                       # dial record, `redial`, set at accept beside the consumable `reconnect` and never popped,
-                       # so every row a socket carries reads the same value on every pane. (The strip's
-                       # _resolve_reconnect consumes `reconnect` on a chat socket and nothing consumes it on the
-                       # other panes, so a stamp of that flag meant the opposite thing by app; review round 1.)
-                       # The shim queues a `wsclose` row while its socket is down and flushes it onto the redial,
-                       # so with the row's own `bundleReady` (the shim's state at the close) the log tells a
-                       # declared redial from one the shim's dial term gated off (review find, 2026-09-10:
-                       # everConnected alone could not).
-                       "reconnect": bool(client.get("redial")),
-                       "data": msg.get("data")}
-                # past the size cap the file becomes .1 and a new one starts; the check, rename and write are one
-                # locked step, since every pane's socket posts from its own handler thread
-                _client_diag_append(jd.STATE / "client-diag.jsonl", json.dumps(rec) + "\n")
+                # the surface cut ONCE, for the row, the allowlist lookup and the stderr latch alike (review find, 2026-09-18:
+                # the lookup and the latch read the uncut string, so a long or non-string surface was printed whole via %r
+                # and every distinct value grew the latch)
+                surface = str(msg.get("surface") or "")[:CLIENT_DIAG_STR_MAX]
+                if surface == "kernel":
+                    # the kernel's own surface (_note_ws_open and its siblings write those rows directly, never through here):
+                    # a page's row under it would land indistinguishable from the kernel's (a forged wsopen counts as a dial),
+                    # so it is refused, not admitted, and said once per what (review find, 2026-09-18)
+                    _client_diag_say(surface, "what %r" % str(msg.get("what") or "")[:CLIENT_DIAG_STR_MAX],
+                                     "refusing a page's row under the kernel's own surface")
+                else:
+                    rec = {"t": int(time.time()), "wid": str(client.get("wid") or ""),
+                           "surface": surface, "what": str(msg.get("what") or "")[:CLIENT_DIAG_STR_MAX],
+                           # whether the socket that CARRIED the row declared the redial (?reconnect=1): the socket's
+                           # dial record, `redial`, set at accept beside the consumable `reconnect` and never popped,
+                           # so every row a socket carries reads the same value on every pane. (The strip's
+                           # _resolve_reconnect consumes `reconnect` on a chat socket and nothing consumes it on the
+                           # other panes, so a stamp of that flag meant the opposite thing by app; review round 1.)
+                           # The shim queues a `wsclose` row while its socket is down and flushes it onto the redial,
+                           # so with the row's own `bundleReady` (the shim's state at the close) the log tells a
+                           # declared redial from one the shim's dial term gated off (review find, 2026-09-10:
+                           # everConnected alone could not).
+                           "reconnect": bool(client.get("redial")),
+                           # the surface's admitted keys alone, strings cut, the row bounded (CLIENT_DIAG_KEYS; 2026-09-18): the
+                           # file used to take whatever a page posted, of any shape and size
+                           "data": _client_diag_admit(surface, msg.get("data"))}
+                    # past the size cap the file becomes .1 and a new one starts; the check, rename and write are one
+                    # locked step, since every pane's socket posts from its own handler thread
+                    _client_diag_append(jd.STATE / "client-diag.jsonl", _client_diag_line(rec))
             except OSError:
                 pass
         elif msg and msg.get("type") == "orderAudit":

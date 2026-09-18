@@ -130,7 +130,11 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   reason, socket age, and `bundleReady`: whether the bundle had said ready when
   the socket closed) in `client-diag.jsonl` (rotated to `.1` at 8 MB), and the
   kernel stamps every client-diag row with `reconnect`: whether the socket that
-  carried the row declared the redial term. The queued `wsclose` row rides the
+  carried the row declared the redial term. Every client-diag row from a
+  browser stops while that browser's gear switch "Stop all timing rows from
+  this browser" (`perfMute` under `romp:settings`) is on, the rows the shim
+  queued for a redial included, so a browser that leaves no breadcrumbs may
+  have the switch on, not a broken sink. The queued `wsclose` row rides the
   redial, so the pair names the redial's kind: both true is a declared redial of
   a page that was live; both false is a socket that died before the bundle said
   ready and redialed as a fresh page; `reconnect` false with `bundleReady` true

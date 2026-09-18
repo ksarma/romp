@@ -22,7 +22,9 @@
 // what "minute") on the channel the panes already use for breadcrumbs, so the kernel appends it to
 // client-diag.jsonl beside the shim's wsclose rows. A frame whose whole synchronous handling ran 100 ms or
 // more also sends a "slowframe" row at once, carrying the long-frame attribution when the browser reports
-// one for that frame; at most SLOW_ROWS_PER_MINUTE of those a minute, the rest counted in the minute row.
+// one for that frame; at most SLOW_ROWS_PER_MINUTE of those per timer minute, the rest counted in the minute
+// row. That budget is re-armed by the minute timer and by pagehide only: the hide flush below starts a new
+// minute row without re-arming it, so a page that hides and returns inside a minute posts one cap's worth.
 //
 // Rows carry numbers and code identifiers only: frame type strings, script file basenames, function names
 // with their character position, and invoker names reduced to a tag and event (element ids and any URL
@@ -39,11 +41,31 @@
 // (`bars`, `feed`). A federated remote socket hands frames straight to federation's inbound, where a
 // raw delta can still appear; those count as `delta:<slot>`. The shim's JSON.parse and delta reassembly
 // run before any bracket here and are visible only through the long-frame attribution (`page:` keys).
+//
+// The beacon extension (the user 2026-09-18, who wanted the phone's page-load and return timing shared only by
+// choice). Two per-browser switches in the gear's store (`romp:settings`, read raw here as the shim and the shell
+// scripts read it, so no pane bundle grows by the settings module): SHARE_SETTING adds the fields below to the
+// minute row; MUTE_SETTING stops every row this module posts (the shim drops its own rows on the same switch). Both
+// are off by default, so a browser with neither posts exactly the row it posted before. The switches are read at
+// every flush and on the storage event a save in another document fires, so a change lands within a minute and
+// without a reload. Shared fields, numbers and fixed-vocabulary identifiers only: once per page (the first shared
+// row) `nav` (the navigation entry's type and three timestamps), `res` (resource timing folded per same-origin
+// bundle basename, query stripped, at most MAX_RES then `other`), `marks` (ms from the time origin to the socket
+// open, the bundle's ready and the first delivered frame, stamped by the shim on window.__rompPerfMarks, and the
+// paint entries); `env` once and again when the pane's own width/height aspect flips (standalone, iOS major version,
+// touch, viewport, pixel ratio, the entry types the browser supports from a fixed list, requestIdleCallback, the dist
+// token); every row `vis` (visibility transitions and hidden time inside the minute), `wsBytes` (text-frame characters
+// the shim received in the minute, from its counter) and `rafGap` (animation-frame gaps over RAF_GAP_MS while visible,
+// from a loop that runs only while the switch is on and the document visible). A Performance API the browser lacks
+// reads as null, never a guess. The pending minute also flushes on visibilitychange to hidden: iOS fires that on an
+// app switch and then freezes the page, and pagehide, a navigation event, never comes. That flush leaves a held
+// slowframe row for its long-frame report (the timer tick and pagehide stay its backstops) and does not re-arm the
+// slowframe budget.
 
 export const SLOW_FRAME_MS = 100;      // a frame whose whole handling is at or over this sends a slowframe row
 export const LONG_FRAME_MS = 50;       // the browser's own long-frame threshold; entries under it are ignored
 export const DROPPED_FRAME_MS = 16.7;  // one frame at 60 Hz: handlers over this drop at least one paint
-export const SLOW_ROWS_PER_MINUTE = 5; // slowframe rows sent per pane per minute; the rest are counted in the minute row
+export const SLOW_ROWS_PER_MINUTE = 5; // slowframe rows sent per pane per timer minute (PerfTelemetry.slowBudget); the rest are counted in the minute row
 export const FREE_RING = 64;           // main-thread-free samples kept for the minute's percentiles
 export const MAX_FRAME_TYPES = 32;     // distinct wire frame types per minute, the rest fold into "other"; the federation layer's fed:<type> keys have the same cap of their own (fed:other)
 export const MAX_TOP = 5;              // attributed keys reported per minute
@@ -52,6 +74,17 @@ export const FLUSH_MS = 60_000;
 /** Upper edges (exclusive) of the histogram's buckets 0..12; bucket 13 is everything at or over 4096 ms. */
 export const HIST_EDGES: readonly number[] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
 export const HIST_BUCKETS = HIST_EDGES.length + 1;
+// the beacon extension (2026-09-18)
+export const SETTINGS_KEY = "romp:settings";   // the gear's store (settings.ts KEY)
+export const SHARE_SETTING = "perfShare";      // the store's key for the opt-in: `true` alone turns it on
+export const MUTE_SETTING = "perfMute";        // the store's key for the kill switch: `true` alone turns it on
+export const RAF_GAP_MS = 50;                  // an animation-frame gap over this counts (one long frame at 60 Hz is three missed paints)
+export const MAX_RES = 24;                     // named resource entries per page; the rest fold into "other"
+/** The entry types `env.entryTypes` may name, in this order: what the browser supports of the observers this module
+ *  and the phone work could use. Anything else the browser lists is left out. */
+export const ENV_ENTRY_TYPES: readonly string[] = ["longtask", "long-animation-frame", "event", "largest-contentful-paint", "layout-shift", "paint", "resource", "navigation"];
+/** The navigation types `nav.type` may carry; another value reads "other". */
+export const NAV_TYPES: readonly string[] = ["navigate", "reload", "back_forward", "prerender"];
 
 export type PerfPost = (m: Record<string, unknown>) => void;
 export type UaClass = "chrome-desktop" | "safari-ios" | "other";
@@ -77,8 +110,31 @@ export interface PerfDeps {
   hiddenPane(): boolean;             // the pane shim's test: the zero-viewport probe (a framed pane the shell has display:none'd) OR the pane's published word (window.__rompPaneHidden, paint-gate.ts; Chromium keeps a hidden iframe's size)
   ua: UaClass;
   pageUrl: string;                   // location.href without query or fragment: an inline script's sourceURL
-  windowEvents: EventTarget | null;  // pagehide flushes the minute; resize cancels a free sample when the viewport goes to zero
-  documentEvents: EventTarget | null; // visibilitychange cancels a free-thread sample the hide would inflate
+  windowEvents: EventTarget | null;  // pagehide flushes the minute; resize cancels a free sample when the viewport goes to zero; storage re-reads the switches
+  documentEvents: EventTarget | null; // visibilitychange cancels a free-thread sample the hide would inflate, counts the transition, and flushes on hidden
+  // the beacon extension (2026-09-18)
+  switches(): BeaconSwitches;        // the gear's two per-browser switches, read from the store (readSwitches)
+  entries(type: string): any[] | null;   // performance.getEntriesByType(type); null where the API is absent
+  marks(): Record<string, unknown> | null;   // window.__rompPerfMarks: the shim's stamps (wsOpen, bundleReady, firstFrame), its wsBytes counter and the dist token dv; null without a shim
+  env(): EnvInfo | null;             // the page's environment, read live (envInfo over the window); null where nothing can be read
+}
+
+export interface BeaconSwitches { share: boolean; mute: boolean }
+export interface NavInfo { type: string; responseEnd: number; domContentLoaded: number; loadEventEnd: number }
+export interface ResStat { transferSize: number; encodedBodySize: number; duration: number }
+/** What envInfo reads of the page. */
+export interface EnvSource {
+  standalone: unknown;               // navigator.standalone (iOS: the page runs as an installed app)
+  ua: string;
+  maxTouchPoints: number;
+  vw: number; vh: number;            // innerWidth, innerHeight
+  dpr: number;                       // devicePixelRatio
+  entryTypes: readonly string[];     // PerformanceObserver.supportedEntryTypes
+  ric: boolean;                      // typeof requestIdleCallback === "function"
+}
+export interface EnvInfo {
+  standalone: boolean; iosMajor: number; touch: boolean; vw: number; vh: number; dpr: number;
+  entryTypes: string[]; ric: boolean; dv?: number;
 }
 
 /** The object every pane, federation and the kernel page's timeline boot reach through window.__rompPerf. */
@@ -200,6 +256,114 @@ export function uaClass(ua: string, maxTouchPoints = 0): UaClass {
   return "other";
 }
 
+// ── the beacon extension's pure pieces ──
+
+/** The gear's two switches as the store holds them: the literal `true` alone turns one on (the store's off-default
+ *  idiom, settings.ts loadSettings). A store that cannot be read, or holds anything else, reads both off. */
+export function readSwitches(storage: { getItem(k: string): string | null } | null | undefined): BeaconSwitches {
+  try {
+    const raw = storage ? storage.getItem(SETTINGS_KEY) : null;
+    const s = raw ? JSON.parse(raw) : null;
+    return { share: !!(s && s[SHARE_SETTING] === true), mute: !!(s && s[MUTE_SETTING] === true) };
+  } catch (e) {
+    return { share: false, mute: false };
+  }
+}
+
+/** A whole millisecond from a timing figure; -1 where the browser gave none (a load event that has not fired
+ *  reads 0 from the browser, which is a figure). */
+function wholeMs(v: unknown): number { return typeof v === "number" && isFinite(v) ? Math.round(v) : -1; }
+
+/** The page's navigation entry as the row carries it; null where the browser recorded none. */
+export function navInfo(entries: readonly any[] | null): NavInfo | null {
+  const e = entries && entries[0];
+  if (!e || typeof e !== "object") return null;
+  return { type: NAV_TYPES.indexOf(e.type) >= 0 ? e.type : "other",
+           responseEnd: wholeMs(e.responseEnd), domContentLoaded: wholeMs(e.domContentLoadedEventEnd), loadEventEnd: wholeMs(e.loadEventEnd) };
+}
+
+const RES_BASENAME = /^[A-Za-z0-9_-]+\.(js|css|woff2?|ttf|otf|svg|png|ico|webmanifest|json)$/;
+/** The root files a page fetches by name: the service worker, the app manifest, the browser's own icon request. */
+export const RES_ROOT_FILES: readonly string[] = ["sw.js", "manifest.webmanifest", "favicon.ico"];
+
+/** The key a resource entry folds under: the basename of a same-origin asset under /dist/ or /media/ whose
+ *  basename is a plain asset name, or one of RES_ROOT_FILES at the root, query and fragment stripped. Everything
+ *  else is "other": a cross-origin fetch (a figure host's image is named by the document that embeds it), a
+ *  route with a path (a file read carries the path), any other root name, a data: or blob: URL. */
+export function resourceKey(name: unknown, origin: string): string {
+  const url = stripQuery(String(name ?? ""));
+  if (!origin || url.slice(0, origin.length + 1) !== origin + "/") return "other";
+  const segs = url.slice(origin.length + 1).split("/");
+  const base = segs[segs.length - 1];
+  if (segs.length === 1) return RES_ROOT_FILES.indexOf(base) >= 0 ? base : "other";
+  if (segs.length === 2 && (segs[0] === "dist" || segs[0] === "media") && RES_BASENAME.test(base)) return base;
+  return "other";
+}
+
+/** The page's resource entries folded per resourceKey, sizes and durations summed, the MAX_RES largest by encoded
+ *  body first and the rest into "other"; null where the browser recorded none. */
+export function foldResources(entries: readonly any[] | null, origin: string): Record<string, ResStat> | null {
+  if (!entries) return null;
+  const by = new Map<string, ResStat>();
+  const add = (k: string, e: any) => {
+    const cur = by.get(k) || { transferSize: 0, encodedBodySize: 0, duration: 0 };
+    cur.transferSize += Math.max(0, wholeMs(e.transferSize));
+    cur.encodedBodySize += Math.max(0, wholeMs(e.encodedBodySize));
+    cur.duration += Math.max(0, wholeMs(e.duration));
+    by.set(k, cur);
+  };
+  for (const e of entries) if (e && typeof e === "object") add(resourceKey(e.name, origin), e);
+  const other = by.get("other");
+  by.delete("other");
+  const named = [...by.entries()].sort((a, b) => b[1].encodedBodySize - a[1].encodedBodySize);
+  const out: Record<string, ResStat> = {};
+  let rest: ResStat | null = other || null;
+  named.forEach(([k, v], i) => {
+    if (i < MAX_RES) { out[k] = v; return; }
+    rest = rest || { transferSize: 0, encodedBodySize: 0, duration: 0 };
+    rest.transferSize += v.transferSize; rest.encodedBodySize += v.encodedBodySize; rest.duration += v.duration;
+  });
+  if (rest) out.other = rest;
+  return out;
+}
+
+/** The page's marks, whole ms from the time origin: the shim's stamps where they are numbers, and the paint
+ *  entries' first-paint (fp) and first-contentful-paint (fcp). Only what is known is present. */
+export function pageMarks(marks: Record<string, unknown> | null, paints: readonly any[] | null): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const k of ["wsOpen", "bundleReady", "firstFrame"]) {
+    const v = marks ? marks[k] : undefined;
+    if (typeof v === "number" && isFinite(v) && v >= 0) out[k] = Math.round(v);
+  }
+  if (paints) {
+    for (const e of paints) {
+      if (!e || typeof e.startTime !== "number") continue;
+      if (e.name === "first-paint") out.fp = Math.round(e.startTime);
+      else if (e.name === "first-contentful-paint") out.fcp = Math.round(e.startTime);
+    }
+  }
+  return out;
+}
+
+/** The iOS major version an iPhone, iPad or iPod user agent states (`OS 17_4`); 0 elsewhere, an iPad with the
+ *  desktop Macintosh user agent included (its `touch` tells it apart). */
+export function iosMajor(ua: string): number {
+  if (!/iPhone|iPad|iPod/.test(ua)) return 0;
+  const m = /OS (\d+)_/.exec(ua);
+  return m ? Number(m[1]) : 0;
+}
+
+export function envInfo(s: EnvSource): EnvInfo {
+  return { standalone: s.standalone === true, iosMajor: iosMajor(s.ua), touch: s.maxTouchPoints > 0,
+           vw: Math.max(0, wholeMs(s.vw)), vh: Math.max(0, wholeMs(s.vh)), dpr: round1(typeof s.dpr === "number" && isFinite(s.dpr) ? s.dpr : 0),
+           entryTypes: ENV_ENTRY_TYPES.filter((t) => s.entryTypes.indexOf(t) >= 0), ric: !!s.ric };
+}
+
+/** The viewport class whose change re-sends `env`: the pane's own width/height aspect, landscape (wider than tall) or
+ *  portrait. The figures are the pane iframe's innerWidth and innerHeight, not the device's, so a divider drag, a window
+ *  resize or a device rotation can flip it. */
+export function orientation(vw: number, vh: number): string { return vw > vh ? "landscape" : "portrait"; }
+
 /** The scripts of one long-frame entry as `{k, ms, inv}` rows, summed per key, largest first. */
 export function attributeScripts(scripts: any[], pageUrl = ""): { k: string; ms: number; inv: string }[] {
   const by = new Map<string, { k: string; ms: number; inv: string }>();
@@ -225,11 +389,15 @@ interface Bucket {
   frames: Map<string, TypeStat>;
   free: Ring;
   loaf: { n: number; blocking_ms: number; worst_ms: number; top: Map<string, TopStat> };
-  slowSent: number;                    // slowframe rows sent or held this minute
+  slowSent: number;                    // slowframe rows sent or held in this bucket (the row's slow.sent); the cap's counter is the collector's slowBudget
   slowSuppressed: number;              // slow frames past the cap: counted, not sent
   slowSuppressedWorst: number;
   wireTypes: number;                   // distinct keys in `frames` that are wire types, and fed:<type> keys, for the two caps
   fedTypes: number;
+  // the beacon extension: kept every minute, reported only when the share switch is on
+  vis: { hiddenN: number; visibleN: number; hiddenMs: number };   // visibility transitions in the minute, and the time hidden inside it
+  rafGap: { n: number; worst: number };   // animation-frame gaps over RAF_GAP_MS while visible
+  bytes0: number;                      // the shim's wsBytes counter when the minute began
 }
 interface PendingSlow { type: string; ms: number; dom: number | null; t0: number; t1: number }
 interface Open { t0: number; child: number }   // a bracket in progress: its start, and the time its inner brackets took
@@ -242,11 +410,20 @@ export class PerfTelemetry implements RompPerf {
   private freeFrom = 0;
   private rafId = 0;
   private pendingSlow: PendingSlow[] = [];
+  private slowBudget = 0;              // slowframe rows sent or held since the timer's last tick: the cap slow() checks. Each bucket books the same rows for its row's `slow`, but a hide flush starts a new bucket inside the timer's minute and must not re-arm the cap (2026-09-18)
   readonly observerKind: ObserverKind = "none";
+  // the beacon extension
+  private sw: BeaconSwitches = { share: false, mute: false };
+  private hiddenAt = -1;               // d.now() when the document went hidden; -1 while visible
+  private pageSent = false;            // nav, res and marks have gone out (once per page life)
+  private envSent = false;
+  private envOrient = "";              // the pane's aspect (orientation()) the last env went out with; a change re-sends it
+  private gap = { running: false, id: 0, last: -1 };   // the animation-frame gap loop: on only while share is on and the document visible
 
   constructor(readonly app: string, private readonly d: PerfDeps) {
     this.bucket = this.newBucket();
     this.observerKind = this.startObserver();
+    this.hiddenAt = this.safe(() => d.visible(), true) ? -1 : d.now();
     if (d.setInterval) {
       try {
         const h: any = d.setInterval(() => { try { this.tick(); } catch (e) { /* never into the pane */ } }, FLUSH_MS);
@@ -256,10 +433,17 @@ export class PerfTelemetry implements RompPerf {
     try {
       d.windowEvents?.addEventListener("pagehide", () => { try { this.tick(); } catch (e) { /* never into the pane */ } });
       // the shell hides a pane by display:none, which has no event of its own; the iframe's viewport going to
-      // zero fires resize, and a sample armed before the hide would otherwise measure the hidden interval
-      d.windowEvents?.addEventListener("resize", () => { try { if (d.hiddenPane()) this.cancelFree(); } catch (e) { /* ditto */ } });
-      d.documentEvents?.addEventListener("visibilitychange", () => { try { if (!d.visible()) this.cancelFree(); } catch (e) { /* ditto */ } });
+      // zero fires resize, and a sample armed before the hide would otherwise measure the hidden interval. The
+      // gap loop drops its baseline on every resize: a pane shown again after display:none gets its callbacks back
+      // with the whole hidden stretch as the gap, and the resize runs before the frame's callbacks do.
+      d.windowEvents?.addEventListener("resize", () => { try { this.gap.last = -1; if (d.hiddenPane()) this.cancelFree(); } catch (e) { /* ditto */ } });
+      d.documentEvents?.addEventListener("visibilitychange", () => { try { this.onVisibility(); } catch (e) { /* ditto */ } });
+      // a save in the gear (another document of this browser) fires storage here; the gear's own document fires
+      // romp:settings (settings.ts saveSettings, gear.js save)
+      d.windowEvents?.addEventListener("storage", (e: any) => { try { if (!e || !e.key || e.key === SETTINGS_KEY) this.refreshSwitches(); } catch (err) { /* ditto */ } });
+      d.windowEvents?.addEventListener("romp:settings", () => { try { this.refreshSwitches(); } catch (e) { /* ditto */ } });
     } catch (e) { /* no event hooks */ }
+    this.refreshSwitches();
   }
 
   setPost(post: PerfPost | null): void { this.d.post = post; }
@@ -291,12 +475,33 @@ export class PerfTelemetry implements RompPerf {
     return (e: MessageEvent) => this.frame(e ? e.data : null, () => handler(e));
   }
 
-  /** The minute timer's callback, also run on pagehide: send the minute if anything happened, start the next. */
+  /** The minute timer's callback, also run on pagehide: send any slowframe row still waiting for a long-frame report
+   *  (none is coming for a frame this old), re-arm the slowframe budget, and flush the minute. The budget is the
+   *  timer's minute, not the minute row's: the hide flush (onVisibility) starts a new row without re-arming it, so a
+   *  page that hides and returns inside a minute posts one cap's worth of rows, not one per return. The switches are
+   *  re-read first, so a save lands within a minute. */
   tick(): void {
-    // slowframe rows still waiting for a long-frame report: no report is coming for a frame this old
+    this.refreshSwitches();
     for (const p of this.pendingSlow.splice(0)) this.sendSlow(p, null);
-    if (this.bucket.active) this.send("minute", this.minuteData(this.bucket));
-    this.bucket = this.newBucket();
+    this.slowBudget = 0;
+    this.flush();
+  }
+
+  /** Send the minute if anything happened and start the next. tick() and the hide flush share it; the caller has
+   *  re-read the switches. A held slowframe row is left alone: it waits for its long-frame report, and the later
+   *  report, tick() and pagehide are its backstops. */
+  private flush(): void {
+    const b = this.bucket;
+    this.settleHidden(b);
+    // a muted minute builds no row at all: extend() would otherwise spend the once-per-page fields on a row that never leaves
+    let sent = false;
+    if (b.active && !this.sw.mute) {
+      const data = this.minuteData(b);
+      if (this.sw.share) this.extend(data, b);
+      this.send("minute", data);
+      sent = true;
+    }
+    this.bucket = this.newBucket(sent ? null : b);
   }
 
   /** The minute in progress, in the row's shape, plus the collector's own state and a derived p90 per type
@@ -311,7 +516,119 @@ export class PerfTelemetry implements RompPerf {
     return Object.assign(data, {
       active: this.bucket.active, observer: this.observerKind,
       pending_slow: this.pendingSlow.length, free_pending: this.freePending,
+      share: this.sw.share, mute: this.sw.mute, gap_running: this.gap.running,
     });
+  }
+
+  // ── the beacon extension ──
+
+  /** Re-read the gear's two switches; the gap loop follows the share switch. */
+  private refreshSwitches(): void {
+    this.sw = this.safe(() => this.d.switches(), { share: false, mute: false });
+    if (this.sw.share && !this.sw.mute) this.gapStart(); else this.gapStop();
+  }
+
+  /** The document's visibility flipped: count the transition, keep the hidden clock, and on hidden cancel the
+   *  free sample, stop the gap loop and FLUSH the minute (iOS fires this on an app switch and then freezes the
+   *  page; pagehide never comes, and the minute was lost with it). The flush is flush(), not tick(): it leaves a
+   *  held slowframe row for its long-frame report and does not re-arm the slowframe budget, which is the timer's. */
+  private onVisibility(): void {
+    const now = this.d.now();
+    if (!this.d.visible()) {
+      this.cancelFree();
+      if (this.hiddenAt < 0) { this.bucket.vis.hiddenN++; this.hiddenAt = now; }   // the count and the clock move together: a hide the clock already holds (a page that began hidden) is no transition
+      this.gapStop();
+      this.refreshSwitches();
+      this.flush();
+    } else {
+      this.bucket.vis.visibleN++;
+      if (this.hiddenAt >= 0) { this.bucket.vis.hiddenMs += now - this.hiddenAt; this.hiddenAt = -1; }
+      this.gapStart();
+    }
+  }
+
+  /** At a flush, the hidden stretch so far is the minute's; the clock restarts for the next. */
+  private settleHidden(b: Bucket): void {
+    if (this.hiddenAt < 0) return;
+    const now = this.d.now();
+    b.vis.hiddenMs += Math.max(0, now - this.hiddenAt);
+    this.hiddenAt = now;
+  }
+
+  /** The animation-frame gap loop: one callback per frame, the gap since the last one counted when it is over
+   *  RAF_GAP_MS. Runs only while share is on and the document visible (requestAnimationFrame does not run hidden,
+   *  and a stretch with no callbacks is not a gap); a pane with no viewport gets no callbacks either, and the
+   *  resize its return fires drops the baseline first. A gap marks the minute active: a visible pane that receives
+   *  no frames but stutters under the user's scroll is what the loop is for. */
+  private gapStart(): void {
+    const d = this.d;
+    const g = this.gap;
+    if (g.running || !d.raf || !this.sw.share || this.sw.mute) return;
+    if (!this.safe(() => d.visible(), true)) return;
+    g.running = true;
+    g.last = -1;
+    const step = () => {
+      try {
+        if (!g.running) return;
+        const now = d.now();
+        if (g.last >= 0 && !d.hiddenPane()) {
+          const gap = now - g.last;
+          if (gap > RAF_GAP_MS) {
+            const r = this.bucket.rafGap;
+            r.n++;
+            if (gap > r.worst) r.worst = gap;
+            this.bucket.active = true;
+          }
+        }
+        g.last = now;
+        g.id = d.raf!(step);
+      } catch (e) { g.running = false; g.id = 0; }
+    };
+    g.id = d.raf(step);
+  }
+
+  private gapStop(): void {
+    const g = this.gap;
+    if (g.running && g.id && this.d.caf) { try { this.d.caf(g.id); } catch (e) { /* nothing to cancel */ } }
+    g.running = false;
+    g.id = 0;
+    g.last = -1;
+  }
+
+  /** The origin of the page, for the same-origin test the resource fold makes. */
+  private origin(): string {
+    const m = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]+/.exec(this.d.pageUrl || "");
+    return m ? m[0] : "";
+  }
+
+  /** The shared fields, added to a minute row when the share switch is on. */
+  private extend(data: Record<string, unknown>, b: Bucket): void {
+    const marks = this.safe(() => this.d.marks(), null);
+    if (!this.pageSent) {
+      this.pageSent = true;
+      data.nav = navInfo(this.safe(() => this.d.entries("navigation"), null));
+      data.res = foldResources(this.safe(() => this.d.entries("resource"), null), this.origin());
+      data.marks = pageMarks(marks, this.safe(() => this.d.entries("paint"), null));
+    }
+    const env = this.safe(() => this.d.env(), null);
+    const orient = env ? orientation(env.vw, env.vh) : "";
+    if (!this.envSent || (env && orient !== this.envOrient)) {
+      if (env && marks && typeof marks.dv === "number" && isFinite(marks.dv)) env.dv = Math.round(marks.dv);
+      data.env = env;
+      this.envSent = true;
+      this.envOrient = orient;
+    }
+    data.vis = { hiddenN: b.vis.hiddenN, visibleN: b.vis.visibleN, hiddenMs: Math.round(b.vis.hiddenMs) };
+    const bytes = marks ? marks.wsBytes : undefined;
+    data.wsBytes = typeof bytes === "number" && isFinite(bytes) ? Math.max(0, Math.round(bytes - b.bytes0)) : null;
+    data.rafGap = { n: b.rafGap.n, worst: Math.round(b.rafGap.worst) };
+  }
+
+  /** The shim's received-characters counter now; 0 without one. */
+  private bytesNow(): number {
+    const m = this.safe(() => this.d.marks(), null);
+    const v = m ? m.wsBytes : undefined;
+    return typeof v === "number" && isFinite(v) ? v : 0;
   }
 
   // ── recording ──
@@ -379,13 +696,16 @@ export class PerfTelemetry implements RompPerf {
 
   private slow(type: string, ms: number, t0: number, t1: number): void {
     const b = this.bucket;
-    if (b.slowSent >= SLOW_ROWS_PER_MINUTE) {
+    if (this.slowBudget >= SLOW_ROWS_PER_MINUTE) {
       // a pane that is slow on every frame would post one row per frame; past the cap the frames are counted
-      // in the minute row with the worst of them, and the rows already sent are the minute's first
+      // in the minute row with the worst of them, and the rows already sent are the minute's first. The cap is
+      // the budget's, per timer minute; the bucket's own counts book what its row reports and are additive
+      // across rows (a hide flush inside the minute splits them over two rows, never counts one twice)
       b.slowSuppressed++;
       if (ms > b.slowSuppressedWorst) b.slowSuppressedWorst = ms;
       return;
     }
+    this.slowBudget++;
     b.slowSent++;
     const row: PendingSlow = { type, ms, dom: this.safeDom(), t0, t1 };
     if (this.observerKind !== "loaf") { this.sendSlow(row, null); return; }
@@ -460,10 +780,15 @@ export class PerfTelemetry implements RompPerf {
 
   // ── rows ──
 
-  private newBucket(): Bucket {
+  /** A fresh minute. `carry` is the bucket a flush did not send (idle, or muted): its visibility counts and its byte
+   *  baseline pass on, so `vis` and `wsBytes` read "since this pane's previous row" (a hide that found nothing to send
+   *  still counts in the row that follows); the per-minute figures (`since`, `span_ms`, the frames) start over. */
+  private newBucket(carry: Bucket | null = null): Bucket {
     return { since: this.d.wallNow(), active: false, frames: new Map(), free: new Ring(FREE_RING),
              loaf: { n: 0, blocking_ms: 0, worst_ms: 0, top: new Map() },
-             slowSent: 0, slowSuppressed: 0, slowSuppressedWorst: 0, wireTypes: 0, fedTypes: 0 };
+             slowSent: 0, slowSuppressed: 0, slowSuppressedWorst: 0, wireTypes: 0, fedTypes: 0,
+             vis: carry ? carry.vis : { hiddenN: 0, visibleN: 0, hiddenMs: 0 }, rafGap: { n: 0, worst: 0 },
+             bytes0: carry ? carry.bytes0 : this.bytesNow() };
   }
 
   private minuteData(b: Bucket): Record<string, unknown> {
@@ -500,7 +825,7 @@ export class PerfTelemetry implements RompPerf {
 
   private send(what: string, data: Record<string, unknown>): void {
     const post = this.d.post;
-    if (!post) return;
+    if (!post || this.sw.mute) return;   // the kill switch: measuring goes on (snapshot() still answers), nothing leaves the page
     try { post({ type: "clientDiag", surface: "perf", what, data }); } catch (e) { /* the transport's problem, not the pane's */ }
   }
 
@@ -538,6 +863,15 @@ function browserDeps(post: PerfPost | null): PerfDeps | null {
     pageUrl,
     windowEvents: typeof w.addEventListener === "function" ? w : null,
     documentEvents: doc && typeof doc.addEventListener === "function" ? doc : null,
+    // the beacon extension: the store (window.localStorage can throw in a sandboxed frame: both switches off then),
+    // the timeline entries, the shim's marks object and the environment, each read at the moment of the flush
+    switches: () => { let st: any = null; try { st = w.localStorage || null; } catch (e) { st = null; } return readSwitches(st); },
+    entries: (type) => typeof perf.getEntriesByType === "function" ? perf.getEntriesByType(type) : null,
+    marks: () => { const m = w.__rompPerfMarks; return m && typeof m === "object" ? m : null; },
+    env: () => envInfo({ standalone: nav.standalone, ua: String(nav.userAgent || ""), maxTouchPoints: Number(nav.maxTouchPoints) || 0,
+                         vw: Number(w.innerWidth) || 0, vh: Number(w.innerHeight) || 0, dpr: Number(w.devicePixelRatio) || 0,
+                         entryTypes: (PO && Array.isArray(PO.supportedEntryTypes)) ? PO.supportedEntryTypes : [],
+                         ric: typeof w.requestIdleCallback === "function" }),
   };
 }
 

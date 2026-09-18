@@ -493,12 +493,16 @@ out({pre:pre,ret:rows(sock(),"return").length,kinds:rows(sock()).map(function(m)
         self.assertEqual(r["kinds"], [], "…and a plain load files no page-load row either")
 
     def test_the_kernel_writes_the_rows_to_client_diag(self):
-        # the receiving half: the existing clientDiag branch records `data` as-is, so the shape above is what lands
+        # the receiving half: the clientDiag branch records `data` through the surface's allowlist (CLIENT_DIAG_KEYS,
+        # 2026-09-18), and every key the rows above carry is admitted (tests/test_client_diag_allowlist.py), so the
+        # shape above is what lands
         src = open(os.path.join(BIN, "romp-kernel"), encoding="utf-8").read()
         self.assertIn('elif msg and msg.get("type") == "clientDiag":', src)
-        self.assertIn('"data": msg.get("data")}', src)
-        # #1009 routes the append through _client_diag_append (rotation at the cap); the pin follows the call
-        self.assertIn('_client_diag_append(jd.STATE / "client-diag.jsonl", json.dumps(rec) + "\\n")', src)
+        self.assertIn('surface = str(msg.get("surface") or "")[:CLIENT_DIAG_STR_MAX]', src)   # cut once, for the row, the lookup and the stderr latch (2026-09-18)
+        self.assertIn('"data": _client_diag_admit(surface, msg.get("data"))}', src)
+        # #1009 routes the append through _client_diag_append (rotation at the cap); the pin follows the call, whose line
+        # _client_diag_line renders (the row cap, 2026-09-18)
+        self.assertIn('_client_diag_append(jd.STATE / "client-diag.jsonl", _client_diag_line(rec))', src)
 
 
 class TimeSlicedFlush(unittest.TestCase):

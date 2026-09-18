@@ -59,7 +59,7 @@ class SettingsSectionsTest(unittest.TestCase):
             "sessions": ["rs-defaultdir", "rs-backend"],
             "automation": ["rs-autonudge", "rs-suggestcompact"],
             "tasks": ["rs-tasktrack", "rs-judgemodel", "rs-judgefast", "rs-judgeeffort", "rs-distillmodel", "rs-distillfast", "rs-distilleffort", "rs-indexmodel", "rs-indexfast", "rs-indexeffort", "rs-judgeconc"],
-            "debug": ["rs-judges-index", "rs-judges-triage", "ra-open", "rs-log-open", "rsver"],
+            "debug": ["rs-judges-index", "rs-judges-triage", "rs-perfshare", "rs-perfmute", "ra-open", "rs-log-open", "rsver"],   # rs-perfshare, rs-perfmute: the beacon extension's switches under Diagnostics (2026-09-18)
         }
         panes = {k: _pane(h, k) for k in self.PANES}
         for pane, ids in where.items():
