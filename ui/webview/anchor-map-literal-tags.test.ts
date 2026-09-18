@@ -11,8 +11,11 @@
 // unwraps a textarea around it (md-sanitize.ts). The rendering follows mdBlock's recipe at THIS revision, read from the
 // source (viewerHtml): through the rule when mdBlock calls it, and marked.parse alone as mdBlock parsed before, so the same
 // test shows the defect over the base tree (the mismatch refusals, the later blocks gone) and the fix over this one. The
-// browser leg, anchor-map-literal-tags-browser.test.ts, drives the real pane in Chromium. Synthetic text only: an invented
-// note in the notes-api demo domain, an invented file name.
+// switch (mdBlockRunsRule) reads the call as a STATEMENT LINE at the function's own indent, not as a substring: a call
+// commented out reads as no call, so the file renders marked.parse alone and its verdicts go red with the viewer's, rather
+// than green over its own re-render of the source (the review of 2026-09-18; the last test pins the switch). The browser
+// leg, anchor-map-literal-tags-browser.test.ts, drives the real pane in Chromium. Synthetic text only: an invented note in
+// the notes-api demo domain, an invented file name.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -27,8 +30,13 @@ applyMdConfig();
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const VIEW = fs.readFileSync(path.join(UI, "file-view.ts"), "utf8");
 const MD_BLOCK = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
-/** Whether mdBlock runs the rule on its tokens at this revision (the header): the recipe the rendering below follows. */
-const VIEWER_RUNS_RULE = MD_BLOCK.includes("literalizeUnclosedTags(tokens);");
+/** The call as mdBlock's own statement: a whole line at the function's indent, nothing before it on the line and at most a
+ *  trailing `//` comment after it. A `// literalizeUnclosedTags(tokens);` has the comment marker before it and does not match;
+ *  a substring test would (the header). */
+const RULE_CALL_LINE = /^ {2}literalizeUnclosedTags\(tokens\);(?: +\/\/[^\n]*)?$/m;
+/** Whether the mdBlock body `src` runs the rule on its tokens: the recipe the rendering below follows. */
+const mdBlockRunsRule = (src: string): boolean => RULE_CALL_LINE.test(src);
+const VIEWER_RUNS_RULE = mdBlockRunsRule(MD_BLOCK);
 /** marked's HTML for `text` as mdBlock renders it at this revision: its lexer, the rule and its parser when mdBlock runs the rule,
  *  marked.parse alone when it does not (the base tree), so this file's assertions read the defect there and the fix here. */
 function viewerHtml(text: string): string {
@@ -356,4 +364,21 @@ test("a comment (`<!-- x -->`), a stray `</div>` and a declaration are untouched
   assert.equal(viewerHtml(src), marked.parse(src), "the viewer's HTML is marked.parse's");
   const box = buildRendered(src);
   mapsEach(box, src, ["Note", "here.", "A stray", "closer.", "declaration.", "Closing words."], "untouched shapes");
+});
+
+// ── the switch itself ──────────────────────────────────────────────────────────────────────────────────────────────────────
+test("the switch reads mdBlock's call as a statement line: at this revision mdBlock runs the rule, and the same body with the call commented out (`// literalizeUnclosedTags(tokens);`) or with the line deleted reads as no call, so the rendering above would follow marked.parse alone and the verdicts go red with the viewer's (before: a substring test that the commented line satisfied, so every test here stayed green over the file's own re-render while the viewer no longer converted anything)", () => {
+  assert.equal(VIEWER_RUNS_RULE, true, "mdBlock calls the rule at this revision (false over the base tree, where mdBlock parsed with marked.parse alone)");
+  assert.equal((MD_BLOCK.match(/literalizeUnclosedTags\(/g) || []).length, 1, "one call in mdBlock, so the variants below take it out whole");
+  const commented = MD_BLOCK.replace(RULE_CALL_LINE, "  // literalizeUnclosedTags(tokens);");
+  const deleted = MD_BLOCK.replace(/^ {2}literalizeUnclosedTags\(tokens\);\n/m, "");
+  assert.notEqual(commented, MD_BLOCK, "the commented variant differs from the source");
+  assert.notEqual(deleted, MD_BLOCK, "the deleted variant differs from the source");
+  assert.ok(commented.includes("literalizeUnclosedTags(tokens);"), "the commented variant still holds the substring the old switch read");
+  assert.equal(mdBlockRunsRule(commented), false, "a commented-out call is no call");
+  assert.equal(mdBlockRunsRule(deleted), false, "a deleted call is no call");
+  const trailing = MD_BLOCK.replace(RULE_CALL_LINE, "  literalizeUnclosedTags(tokens); // the rule");
+  assert.equal(mdBlockRunsRule(trailing), true, "a statement with a trailing comment is a call");
+  assert.equal(mdBlockRunsRule("  literalizeUnclosedTags(tokens);"), true, "the bare statement line");
+  assert.equal(mdBlockRunsRule("    literalizeUnclosedTags(tokens);"), false, "a call nested deeper than the function's own level is not mdBlock's own step");
 });

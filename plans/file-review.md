@@ -3188,7 +3188,26 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   against the tree, and `tools/file-review-plan-about.test.mjs`'s DECISIONS_END;
   `tools/file-review-plan-inlinetag-rawblock.test.mjs` runs marked over a document with an unclosed `<kbd>`,
   `<pre>`, `<code>` or `<script>` and holds decision 52's scope sentence to the lexer (every later block unescaped
-  until an end tag of any of the four names or the document's end, `inLink` the same).
+  until an end tag of any of the four names or the document's end, `inLink` the same); its lexer legs skip where
+  marked is not installed, which is every run of CI's shell job, so
+  `ui/webview/file-review-plan-inlinetag-rawblock.test.ts` (the second round) holds the same scope through both
+  callers' lexes (mdBlock's marked.lexer over a copy of the defaults, `placeTokens`' `Lexer.lex`) under the one
+  configuration, built and run by the extension job's `npm test`, and the tools module holds that twin and its
+  runner to the tree. The first round's other three modules (2026-09-18), found unrecorded in the second round and
+  named here since:
+  `ui/webview/md-literal-tags-tag-syntax.test.ts` (the self-closing flag read as the HTML tokenizer reads a tag,
+  the `image` alias left HTML, the stacks per name against the one list as an oracle and their linear time);
+  `tests/test_guide_files_own_html_foreign_tag.py` (the guide's qualification for a child tag left open inside an
+  inline `svg` or `math`, each clause held to the code); `tools/markdown-viewer-plan-decision52-pointers.test.mjs`
+  (the four in-place pointers at decision 52 in the Slice 5 section of plans/markdown-viewer.md).
+  `tools/guide-own-html-block-tag.test.mjs` (the second round: where the guide says the rule stops, a tag first on
+  its line that markdown reads as an HTML block, each clause held to the installed marked's block html rule, to the
+  rule's walk, which reads inline runs alone, and to the map's refusal of an html block).
+  `tools/file-review-plan-inlinetag-records.test.mjs` holds decision 52's account of the first round to the code
+  (the stacks per name, `IMG_ALIAS`, `isSelfClosingTag`, the `open` array) and this bullet's inventory to the tree
+  both ways: every module it names is in the tree, and every test module under `tools/`, `ui/webview/` or `tests/`
+  that cites decision 52 or 53 is named here or in one of the two records, so a later round's module cannot land
+  unrecorded.
 
 ## Docs
 
@@ -3877,19 +3896,37 @@ document stands on its own, each with the reasoning it was given.
     `<table>`, and the map's `text` case places the characters at the raw's position, with no new branch on either
     side (the installed marked 12's `Renderer.text` writes a text token's text as is, and its `Tokens.Text` has no
     `escaped` field, so the text is escaped up front: `<`, `>`, `"` and `'` always, `&` unless it begins a character
-    reference). Matching is by element name, ASCII case-insensitive, innermost first: one list of open start tags
-    over the block's inline tokens flattened in document order (a tag inside emphasis, a link's label or a highlight
-    counts), an end tag closing the latest open tag of its name, so `<b>x<b>y</b>` keeps the inner pair as HTML and
-    makes the first `<b>` text, `<B>x</b>` is closed and `<b>x *y</b>*` is closed through the emphasis. The block is
+    reference). Matching is by element name, ASCII case-insensitive, innermost first: a stack per name of the open
+    start tags over the block's inline tokens flattened in document order (a tag inside emphasis, a link's label or a
+    highlight counts), an end tag popping the latest open tag of its name and no other, so `<b>x<b>y</b>` keeps the
+    inner pair as HTML and makes the first `<b>` text, `<B>x</b>` is closed and `<b>x *y</b>*` is closed through the
+    emphasis. The stacks date from the review's first round (2026-09-18): the first build kept one list of every
+    open start tag and scanned it from its end on each end tag, quadratic when thousands of stray end tags followed
+    thousands of open start tags of another name, seconds on the main thread twice per open (the viewer's parse and
+    the map's lex); the stacks are linear in the run's tags and convert the same tokens, held against that list as
+    an oracle over a fixed sample and a seeded random one. The block is
     the token that owns the inline run, each on its own: a paragraph, a heading, a tight list item's text, a
     footnote definition, a table cell; a list, a quote and a callout are walked into for the blocks they hold.
     Everything else is left as lexed: a start tag closed within its block (`<b>x</b>`, `<span class="a">y</span>`,
-    `<kbd>Ctrl</kbd>`), a void element, the self-closing syntax `<x/>`, an end tag (a stray one keeps `blockEnds`'
-    reading), a comment, a processing instruction, a declaration and a CDATA section; block-level `html` tokens are
-    not read (the tag scan, `topTags`, models what the parser makes of an html block). The void list is HTML's
-    fourteen, `VOID_ELEMENTS` in the module: `area`, `base`, `br`, `col`, `embed`, `hr`, `img`, `input`, `link`,
-    `meta`, `param`, `source`, `track`, `wbr`; anchor-map.ts's `VOID_TAGS`, which its tag scans read, is that same
-    set, so the rule and the scans share one list.
+    `<kbd>Ctrl</kbd>`), a void element, the `image` start tag (below), the self-closing syntax `<x/>`, an end tag (a
+    stray one keeps `blockEnds`' reading), a comment, a processing instruction, a declaration and a CDATA section;
+    block-level `html` tokens are not read (the tag scan, `topTags`, models what the parser makes of an html block).
+    The void list is HTML's fourteen, `VOID_ELEMENTS` in the module: `area`, `base`, `br`, `col`, `embed`, `hr`,
+    `img`, `input`, `link`, `meta`, `param`, `source`, `track`, `wbr`; anchor-map.ts's `VOID_TAGS`, which its tag
+    scans read, is that same set, so the rule and the scans share one list. One start tag outside that list is left
+    HTML too (the review's first round, 2026-09-18): `image`, the obsolete alias the HTML parser's in-body insertion
+    mode rewrites to `img` as it inserts it, so `<image src="a.png">` in prose opens nothing and the browser draws
+    the picture, as it did before the rule; `IMG_ALIAS` in the module, a constant of its own and not a fifteenth
+    void element, because inside an inline `<svg>` an `<image>` is an element with an end tag of its own and the
+    map's tag scans, which read `VOID_TAGS`, read it so. The other start tags the parser inserts and pops at once
+    beyond the void set (`keygen`, `basefont`, `bgsound`) fall to the rule and render as text: the sanitizer drops
+    those elements with nothing shown, and this record prefers the characters shown. The self-closing flag is read
+    as the HTML tokenizer reads a tag (`isSelfClosingTag`, the same round), attribute by attribute: a quoted value
+    runs to its closing quote, an unquoted value to the next blank or `>`, and the flag is a `/` right before the
+    `>` outside them all. So `<a href=http://a.test/>` is an open start tag, the `/` the unquoted value's own last
+    character, and with no end tag in its block it is text; the first build's suffix test on the raw (`/>` at its
+    end) read that tag as self-closing and left it HTML, and the browser opened the `a` and wrapped every later
+    block in it, the shape the rule exists to stop.
     One rule in one code path is the design point that keeps the risk low: one module,
     `ui/webview/md-literal-tags.ts`, exports `literalizeUnclosedTags(tokens)`, and two callers run it on their own
     token trees of the same source under the one configuration (md-config.ts), so both convert the same tokens and
@@ -3903,8 +3940,10 @@ document stands on its own, each with the reasoning it was given.
     rule on the line after `Lexer.lex`, before anything reads the tree, so the text walk, `tagOf`, `topTags`,
     `blockEnds` and the pairing never meet the converted token as html; the `open` array `blockEnds` collected (the
     formatting tags a paragraph left open, whose wrapper element the pairing did not model, recorded under Slice 5
-    of plans/markdown-viewer.md with the `Block.leaves` fix shape and routed to Slice 8, which did not build it) is
-    therefore always empty, and that shape is moot.
+    of plans/markdown-viewer.md with the `Block.leaves` fix shape and routed to Slice 8, which did not build it) can
+    therefore hold nothing but an unclosed `image` start tag, the one start tag the rule leaves HTML that the scan's
+    void set lacks, and that tag opens no element (the parser rewrites it to the void `img`), so that shape is moot;
+    the map passes the scan a fresh array and reads it nowhere.
     Deliberately left, recorded here: `<hr>` inline is void, stays HTML and still splits its paragraph in the
     parser; a start tag whose end tag stands in a LATER block renders as text now, and the later block's end tag is
     a stray, where the parser used to wrap the blocks between in its element; a block-level element closed within
@@ -3955,7 +3994,26 @@ document stands on its own, each with the reasoning it was given.
     to the module, both callers, the guide and the tree; `tools/file-review-plan-inlinetag-rawblock.test.mjs` runs
     marked over a document with an unclosed `<kbd>`, `<pre>`, `<code>` or `<script>` and holds the scope sentence
     above to the lexer: every later block unescaped, an end tag of any of the four names clearing it, `inLink` the
-    same.
+    same, where marked is installed (CI's shell job installs nothing, so those legs skipped there);
+    `ui/webview/file-review-plan-inlinetag-rawblock.test.ts` (the second round) runs the same documents through both
+    callers' lexes under the one configuration inside the extension job's `npm test`, so the scope sentence has an
+    arbiter in CI, and the tools module holds that twin and its runner to the tree. The first round added three
+    modules more, named here since the second round found them recorded nowhere:
+    `ui/webview/md-literal-tags-tag-syntax.test.ts` (the self-closing flag read as the tokenizer reads it, with the
+    FAILS-BEFORE case on `<a href=http://a.test/>`; the `image` alias left HTML, a FAILS-BEFORE case too; the stacks
+    per name held against the one list as an oracle, and their linear time under forty thousand stray end tags);
+    `tests/test_guide_files_own_html_foreign_tag.py` (the guide's qualification for a child tag left open inside an
+    inline `svg` or `math`, each clause held to this record, the module's by-name match, the sanitizer's profile and
+    the DOM tests); `tools/markdown-viewer-plan-decision52-pointers.test.mjs` (the Slice 5 build note's four in-place
+    pointers at this decision, held to the sentence above and to the browser suite's shapes).
+    `tools/guide-own-html-block-tag.test.mjs` (the second round) holds the guide's account of where the rule stops, a
+    tag first on its line that markdown lexes as a block `html` token, to the installed marked, to the rule's walk
+    and to the map's refusal of an html block. `tools/file-review-plan-inlinetag-records.test.mjs` (the second
+    round) holds this record's account of the first round to the code: the stacks per name, `IMG_ALIAS` outside the
+    void set, `isSelfClosingTag` and the two tags named above run through the installed marked and the rule, the
+    `open` array's one remaining occupant; and holds the Tests bullet's inventory both ways, every test module under
+    `tools/`, `ui/webview/` or `tests/` that cites decision 52 or 53 named in the bullet or in one of the two
+    records, so a later round's module cannot land unrecorded again.
 53. **A selection across several cells of one table anchors to its span** (2026-09-18). Slice 8 of
     plans/markdown-viewer.md (item 3, the brief's open question 3) refused a Rendered selection whose source span
     covered two or more cells of one table with the sentence "This selection spans more than one cell of a table;

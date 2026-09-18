@@ -9,7 +9,11 @@
 // is theirs too; the literal-tags rule runs after the lex and changes no lexer state, so this is marked's behaviour
 // before and after decision 52. This module holds the record's sentence to the plan and to the installed marked
 // (vscode-extension/node_modules, the copy the viewer bundles), by lexing synthetic documents and reading the later
-// blocks' text tokens. Synthetic text only. Run: node --test tools/file-review-plan-inlinetag-rawblock.test.mjs
+// blocks' text tokens. The lexer legs skip where marked is not installed, and CI's shell job, the one runner of
+// tools/*.test.mjs, installs nothing, so they skipped in every CI run (review find, 2026-09-18): the module of the same stem
+// under ui/webview (file-review-plan-inlinetag-rawblock.test.ts) holds the same scope through both callers' lexes under the
+// extension job's `npm test`, which installs, and the last test here holds that module and its runner to the tree, so the
+// record's sentence has an arbiter in CI. Synthetic text only. Run: node --test tools/file-review-plan-inlinetag-rawblock.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -77,4 +81,32 @@ test('an unclosed <a leaves no bare URL autolinked in any later block until an <
     ['text,html,text', 'text', 'text,html,text', 'text,link,text'],
     'no link in the later block until the </a>; a link after it',
   );
+});
+
+// ── the arbiter in CI ───────────────────────────────────────────────
+
+// The three legs above assert only where marked is installed. CI's shell job runs tools/*.test.mjs from a bare checkout, so
+// they skip there, and the extension job, which runs npm ci, invokes no tools module but pdf-smoke; so the webview module of
+// this stem carries the scope into that job's `npm test`. This test runs everywhere and holds the chain: the module is in the
+// tree with both lexes and every case above, the test build takes every .test.ts under ui/webview, `npm test` builds and runs
+// that bundle, and the extension job runs `npm test` after `npm ci`.
+const TWIN = path.join(REPO, 'ui', 'webview', 'file-review-plan-inlinetag-rawblock.test.ts');
+
+test('the webview module of this stem holds the scope to the installed marked where CI installs it: both callers\' lexes, every case above, and the extension job\'s npm test as its runner', () => {
+  assert.ok(fs.existsSync(TWIN), 'ui/webview/file-review-plan-inlinetag-rawblock.test.ts is in the tree');
+  const twin = fs.readFileSync(TWIN, 'utf8');
+  assert.ok(twin.includes('from "marked"') && twin.includes('applyMdConfig();'), 'it lexes with the installed marked under the one configuration');
+  assert.ok(twin.includes('marked.lexer(src, opts)') && twin.includes('{ ...marked.defaults }'), "mdBlock's lex: marked.lexer over a copy of the defaults");
+  assert.ok(twin.includes('Lexer.lex(src)'), "placeTokens' lex: the static Lexer.lex");
+  assert.ok(twin.includes('literalizeUnclosedTags(tokens)'), 'the rule runs after each lex');
+  for (const s of ['["kbd", "pre", "code", "script"]', 'Stray </code>', 'Stray </b>', '<a href="x">', 'Stray </a>', 'https://example.test/b']) {
+    assert.ok(twin.includes(s), `the module holds the ${s} case`);
+  }
+  assert.ok(!twin.includes('skip:'), 'no leg of it skips');
+  const esbuild = fs.readFileSync(path.join(REPO, 'vscode-extension', 'esbuild.js'), 'utf8');
+  assert.ok(esbuild.includes('["src", "../ui", "../ui/webview"]') && esbuild.includes('f.endsWith(".test.ts")'), 'the test build takes every .test.ts under ui/webview');
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO, 'vscode-extension', 'package.json'), 'utf8'));
+  assert.ok(/esbuild\.js --tests/.test(pkg.scripts.test) && /out-tests\/\*\*\/\*\.test\.js/.test(pkg.scripts.test), 'npm test builds and runs the bundle: ' + pkg.scripts.test);
+  const ci = fs.readFileSync(path.join(REPO, '.github', 'workflows', 'ci.yml'), 'utf8');
+  assert.ok(/working-directory: vscode-extension\n[\s\S]*?run: npm ci\n[\s\S]*?run: npm test\n/.test(ci), 'the extension job runs npm ci, then npm test');
 });

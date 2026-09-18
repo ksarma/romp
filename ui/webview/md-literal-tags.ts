@@ -48,8 +48,8 @@ export const VOID_ELEMENTS: ReadonlySet<string> = new Set(["AREA", "BASE", "BR",
  *  leaves it HTML as it leaves `<img>`. Kept out of VOID_ELEMENTS, HTML's own void set, which the map's tag scans read: inside
  *  an inline `<svg>` an `<image>` is an element with an end tag of its own, and the scans read it so. The other start tags the
  *  parser inserts and pops at once beyond the void set (`keygen`, `basefont`, `bgsound`) are left to the rule: the sanitizer
- *  drops those elements and shows nothing, and the record prefers the characters shown (decision 52, the placeholders of the
- *  `<cell>` kind); `image` alone had visible content, the picture. */
+ *  drops those elements and shows nothing, and the record prefers the characters shown (decision 52, on the placeholder tags the
+ *  sanitizer dropped with nothing shown); `image` alone had visible content, the picture. */
 const IMG_ALIAS = "IMAGE";
 
 /** An inline `html` token's tag: `/` for an end tag, then the name (marked's inline tag rule: a letter, then letters, digits, `_`,

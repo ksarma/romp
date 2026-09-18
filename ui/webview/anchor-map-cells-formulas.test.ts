@@ -12,14 +12,20 @@
 // whose characters are covered formulas alone, two formula-only cells with no positioned text, is the formula's, as a
 // paragraph's formula-only selection is (orFormula), with the Raw view offered on the formula the drag began on; a picture
 // alone in a cell is no formula, so a drag released on the pad past one anchors the positioned cells alone and one that runs
-// through such a cell carries it inside the quote. Driven over the DOM stand-in anchor-map-cells.test.ts drives, marked's
-// output under the one configuration parsed as a browser parses a fragment, KaTeX's fill stood in for (the browser leg's
-// fourth and fifth tests drag over the real fill). Every anchoring case here refuses with the one-cell sentence over the tree
-// before decision 53. Synthetic values only: invented notes, no real session text.
+// through such a cell carries it inside the quote. Driven over the DOM stand-in anchor-map-cells.test.ts drives: marked's
+// output as the viewer's mdBlock renders it (file-view.ts: marked's lexer, the literal-tags rule of md-literal-tags.ts, decision
+// 52, then marked's parser, over a copy of the singleton's defaults; viewerHtml, below), under the one configuration, parsed
+// as a browser parses a fragment, KaTeX's fill stood in for (the browser leg's fourth and fifth tests drag over the real fill).
+// The recipe matters here: a cell holding an inline start tag with no end tag in it renders the tag's characters as text in
+// the viewer, and the map, which runs the same rule on its own lex, places them; marked.parse alone opens an element the map
+// does not predict, so a stand-in built over it refused where the viewer maps (the last test draws the contrast). Every
+// anchoring case here refuses with the one-cell sentence over the tree before decision 53, and the last test's inline-tag cases
+// with the mismatch sentence over the tree before decision 52. Synthetic values only: invented notes, no real session text.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { marked } from "marked";
 import { applyMdConfig } from "./md-config";
+import { literalizeUnclosedTags } from "./md-literal-tags";   // the viewer's parse runs it between marked's lexer and parser (file-view.ts mdBlock), as the map does after its own lex
 import { mapRenderedSelection, mapRawSelection, paintChangesRendered, unpaintChanges, type SelLike, type MapResult, type ChangePaint } from "./anchor-map";
 import { hideEdges } from "../test-dom-shim";
 
@@ -132,11 +138,20 @@ function standInFill(root: FakeElement): void {
     } else standInFill(el);
   }
 }
-/** `.fileview-md > marked output`, filled as the viewer's body is. */
+/** marked's HTML as the viewer's mdBlock renders it (file-view.ts): its lexer, the literal-tags rule (md-literal-tags.ts: an inline start
+ *  tag with no end tag in its block is literal text, decision 52, the same rule the map applies after its own lex), its parser, over a
+ *  copy of the singleton's defaults as marked.parse copies them. */
+function viewerHtml(text: string): string {
+  const opts = { ...marked.defaults };
+  const tokens = marked.lexer(text, opts);
+  literalizeUnclosedTags(tokens);
+  return marked.parser(tokens, opts);
+}
+/** `.fileview-md > the viewer's marked output`, filled as the viewer's body is. */
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   standInFill(box);
   return box;
 }
@@ -458,4 +473,87 @@ test("a cell holding a picture alone lies inside the anchor when the span runs t
   const EL = "| EL1 | EL2 |\n|-----|-----|\n| el-a |  |\n\nAfter the empty-last table.\n";
   const be = buildRendered(EL);
   anchors(M(be, EL, point(be, "el-a"), point(be, "After the empty-last table.", true)), EL, "el-a |  |\n\nAfter the empty-last table.", "el-a into the prose after: the empty trailing cell's pipes inside the quote");
+});
+
+// ── decision 52 meets the cells: a cell holding an inline start tag with no end tag in it renders the tag's characters as text ──
+
+/** marked's HTML parsed alone into the stand-in, with no literal-tags rule: the tree this file's stand-in modelled before it
+ *  followed the viewer's recipe, and the tree the viewer rendered before decision 52. An unclosed inline tag in a cell opens an
+ *  element there, as a browser does, so the tag's characters are in no text node and the map, which runs the rule on its own
+ *  lex, predicts text the cell does not show. The contrast the test below draws; every other case builds through buildRendered. */
+function buildParsedAlone(text: string): FakeElement {
+  const doc = new FakeDocument();
+  const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
+  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  standInFill(box);
+  return box;
+}
+const MISMATCH = "This selection touches a block whose rendered text does not match the file; comment on it from the Raw view.";
+
+test("a cell holding an inline start tag with no end tag in it shows the tag's characters as text (decision 52) and a selection across cells over them anchors like any other (decision 53): `<i>open` to the end of `z1` anchors `<i>open | z1`, equal to the Raw path, and the tag, its word and the cell's whole text each map to their own offsets; a deletion point at the tag's `<`, inside it and right after it places in the tag's cell around those characters; over marked.parse's HTML alone, the tree the viewer rendered before decision 52 and this file's stand-in modelled before it followed the viewer's recipe, the cell holds an open element and no tag text, and the same drag and the cell's word refuse with the mismatch sentence; the tag beside a formula: `<i>open` to the end of the `$x$` glyphs widens to `<i>open $x$`, to the end of the `$y$` glyphs `<i>open $x$ | $y$`, into the body `<i>open $x$ | $y$ |\\n|---|---|\\n| a1 | b1`, and to the cell pad past the glyphs the formula is covered; a formula-only cell into the tag cell anchors `$x$ | <i>open`, from the cell pad before the glyphs too, the prose before the table through both cells, the header cell into the tag cell, and the tag cell into the prose after `<i>open |\\n\\nAfter.`; the controls: a tag CLOSED in its cell stays an element and a drag across it quotes the markup `x</b> | z1`; a tag inside a code span is no tag, the code element stands and the drag quotes the closing backtick; a tag with `>` inside a quoted attribute value, two unclosed tags in one cell and an upper-case tag each show whole and anchor with the next cell; and a tag whose end tag stands in the NEXT cell is text in its own cell, the stray end tag dropped from the next, and the drag across them anchors `<i>open | close`", () => {
+  const A = "| a | b |\n|---|---|\n| <i>open | z1 |\n";
+  const ba = buildRendered(A);
+  const ta = allOf(ba, "TD");
+  assert.deepEqual(ta.map(shape), [["#text(<i>open)"], ["#text(z1)"]], "the tag's characters are the cell's text, no element opened (the viewer's recipe)");
+  anchors(M(ba, A, point(ba, "<i>open"), point(ba, "z1", true)), A, "<i>open | z1", "`<i>open` to the end of `z1` (before decision 52: the mismatch sentence)");
+  mapsWhole(ba, A, "<i>open");
+  mapsWhole(ba, A, "<i>");
+  mapsWhole(ba, A, "open");
+  mapsWhole(ba, A, "z1");
+  const res = paintChangesRendered(El(ba), A, [del("at-lt", at(A, "<i>open")), del("in-tag", at(A, "<i>open") + 1), del("after-gt", at(A, "<i>open") + 3), del("in-z1", at(A, "z1") + 1)], () => ({}));
+  assert.deepEqual(res, { painted: ["at-lt", "in-tag", "after-gt", "in-z1"], unpainted: [] }, "every point places");
+  assert.deepEqual(whereIs(ba, "at-lt"), { table: 0, row: 0, col: 0, before: "", after: "<i>open" }, "at the tag's `<`: before the tag's characters, in its cell");
+  assert.deepEqual(whereIs(ba, "in-tag"), { table: 0, row: 0, col: 0, before: "<", after: "i>open" }, "inside the tag: between its characters");
+  assert.deepEqual(whereIs(ba, "after-gt"), { table: 0, row: 0, col: 0, before: "<i>", after: "open" }, "right after the tag: before the cell's word");
+  assert.deepEqual(whereIs(ba, "in-z1"), { table: 0, row: 0, col: 1, before: "z", after: "1" }, "inside the next cell: the control");
+  unpaintChanges(El(ba));
+  const oa = buildParsedAlone(A);
+  const ota = allOf(oa, "TD");
+  assert.deepEqual([ota.map(shape), ota.map((t) => t.textContent)], [[["I."], ["#text(z1)"]], ["open", "z1"]], "marked.parse alone: an open element, the tag's characters in no text node");
+  assert.equal(bad(M(oa, A, point(oa, "open"), point(oa, "z1", true)), "`open` to `z1` over the parsed-alone tree").reason, MISMATCH, "the stand-in over marked.parse alone refuses where the viewer maps");
+  assert.equal(bad(mapText(oa, A, "open"), "`open` alone over the parsed-alone tree").reason, MISMATCH);
+  const B = "| <i>open $x$ | $y$ |\n|---|---|\n| a1 | b1 |\n";
+  const bb = buildRendered(B);
+  const hb = allOf(bb, "TH");
+  assert.deepEqual(hb.map(shape), [["#text(<i>open )", "SPAN.katex"], ["SPAN.katex"]], "the tag's characters beside the formula's glyphs");
+  anchors(M(bb, B, point(bb, "<i>open"), endOf(glyphsOf(hb[0], "x"))), B, "<i>open $x$", "`<i>open` to the end of the `$x$` glyphs: the formula covered, widened");
+  anchors(M(bb, B, point(bb, "<i>open"), { node: hb[0], offset: hb[0].childNodes.length }), B, "<i>open $x$", "`<i>open` to the cell pad past the glyphs: the same");
+  anchors(M(bb, B, point(bb, "<i>open"), endOf(glyphsOf(hb[1], "y"))), B, "<i>open $x$ | $y$", "`<i>open` to the end of the `$y$` glyphs: both formulas inside the quote");
+  anchors(M(bb, B, point(bb, "<i>open"), point(bb, "b1", true)), B, "<i>open $x$ | $y$ |\n|---|---|\n| a1 | b1", "`<i>open` into the body: the whole table");
+  const C = "Intro.\n\n| A | B |\n|---|---|\n| $x$ | <i>open |\n\nAfter.\n";
+  const bc = buildRendered(C);
+  const tc = allOf(bc, "TD");
+  assert.deepEqual(tc.map(shape), [["SPAN.katex"], ["#text(<i>open)"]]);
+  anchors(M(bc, C, startOf(glyphsOf(tc[0], "x")), point(bc, "<i>open", true)), C, "$x$ | <i>open", "the `$x$` glyphs into the tag cell: the formula-only cell begins the anchor");
+  anchors(M(bc, C, { node: tc[0], offset: 0 }, point(bc, "<i>open", true)), C, "$x$ | <i>open", "the cell pad before the glyphs into the tag cell");
+  anchors(M(bc, C, point(bc, "Intro"), point(bc, "<i>open", true)), C, "Intro.\n\n| A | B |\n|---|---|\n| $x$ | <i>open", "the prose before the table into the tag cell");
+  anchors(M(bc, C, point(bc, "B"), point(bc, "<i>open", true)), C, "B |\n|---|---|\n| $x$ | <i>open", "the header cell into the tag cell");
+  anchors(M(bc, C, point(bc, "<i>open"), point(bc, "After.", true)), C, "<i>open |\n\nAfter.", "the tag cell into the prose after");
+  const D = "| <b>x</b> | z1 |\n|---|---|\n| a1 | b1 |\n";
+  const bd = buildRendered(D);
+  assert.deepEqual(allOf(bd, "TH").map(shape), [["B."], ["#text(z1)"]], "a tag closed in its cell stays an element");
+  anchors(M(bd, D, point(bd, "x"), point(bd, "z1", true)), D, "x</b> | z1", "the bold word into the next cell: the end tag inside the quote, as before");
+  const E = "| `<i>` code | z1 |\n|---|---|\n| a1 | b1 |\n";
+  const be = buildRendered(E);
+  assert.deepEqual(allOf(be, "TH").map(shape), [["CODE.", "#text( code)"], ["#text(z1)"]], "a tag inside backticks is a code span");
+  anchors(M(be, E, point(be, "<i>"), point(be, "z1", true)), E, "<i>` code | z1", "the code span's text into the next cell: the closing backtick inside the quote");
+  anchors(M(be, E, point(be, "code"), point(be, "z1", true)), E, "code | z1", "the word after the code span into the next cell");
+  const F = "| <span title=\"a>b\">open | z1 |\n|---|---|\n| a1 | b1 |\n";
+  const bf = buildRendered(F);
+  assert.deepEqual(allOf(bf, "TH")[0].textContent, "<span title=\"a>b\">open", "a `>` inside a quoted attribute value: the tag shows whole, the quotes decoded back");
+  anchors(M(bf, F, point(bf, "<span title=\"a>b\">open"), point(bf, "z1", true)), F, "<span title=\"a>b\">open | z1", "the attribute-bearing tag into the next cell");
+  const I = "| <i>a <b>b | z1 |\n|---|---|\n| a1 | b1 |\n";
+  const bi = buildRendered(I);
+  assert.deepEqual(allOf(bi, "TH")[0].childNodes.map((c) => (c as FakeText).data), ["<i>a <b>b"], "two unclosed tags in one cell: one text node");
+  anchors(M(bi, I, point(bi, "<i>a <b>b"), point(bi, "z1", true)), I, "<i>a <b>b | z1", "both tags into the next cell");
+  const J = "| A | B |\n|---|---|\n| <I>open | z1 |\n";
+  const bj = buildRendered(J);
+  assert.deepEqual(allOf(bj, "TD").map(shape), [["#text(<I>open)"], ["#text(z1)"]], "an upper-case tag: text, its case kept");
+  anchors(M(bj, J, point(bj, "<I>open"), point(bj, "z1", true)), J, "<I>open | z1", "the upper-case tag into the next cell");
+  const G = "| <i>open | close</i> |\n|---|---|\n| a1 | b1 |\n";
+  const bg = buildRendered(G);
+  const hg = allOf(bg, "TH");
+  assert.deepEqual([hg.map(shape), hg.map((t) => t.textContent)], [[["#text(<i>open)"], ["#text(close)"]], ["<i>open", "close"]], "the end tag in the NEXT cell closes nothing: the start tag is text in its cell, the stray end tag dropped");
+  anchors(M(bg, G, point(bg, "<i>open"), point(bg, "close", true)), G, "<i>open | close", "the tag cell into the cell holding the stray end tag");
+  mapsWhole(bg, G, "close");
 });
