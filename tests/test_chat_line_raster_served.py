@@ -22,6 +22,7 @@ non-message chrome. See [[queued-lows-by-worker]].
 One hermetic kernel, one seeded session whose tail is a fixed four-paragraph markdown message (synthetic invented prose;
 placeholder uuid, hostname TESTHOST, no real data). Synthetic only."""
 import json
+import lab_dist
 import os
 import re
 import shutil
@@ -33,8 +34,6 @@ import time
 import unittest
 import urllib.request
 from pathlib import Path
-
-from tests.dist_copy import copy_dist
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -161,10 +160,7 @@ class ChatLineRaster(unittest.TestCase):
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
             raise unittest.SkipTest("no playwright browser")
         cls.lab = tempfile.mkdtemp(prefix="chat-raster-")
-        b = subprocess.run(["node", "esbuild.js"], cwd=EXT, capture_output=True, text=True)
-        if b.returncode != 0:
-            raise unittest.SkipTest("esbuild failed: " + (b.stderr or b.stdout)[-200:])
-        copy_dist(os.path.join(EXT, "dist"), os.path.join(cls.lab, "dist"))
+        lab_dist.copy_dist(os.path.join(cls.lab, "dist"))   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         sub = os.path.join(cls.lab, "solo")
         state = os.path.join(sub, "xdg", "romp")
         claude = os.path.join(sub, "claude")
