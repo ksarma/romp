@@ -25,6 +25,8 @@
 //     on a shown row, never on body; the Hidden fold's open state is the section's own.
 // A second test launches Chromium as a trackpad-plus-touchscreen laptop (pointer: fine, hover: hover, any-pointer:
 // coarse) and reads the pane's Hide at opacity 1 from the real sheet (round 3: the primary-device feature missed it).
+// The last test composes this probe with the menu probe further down (probeSource({ menu: true })): render.ts's pane and its
+// showTabMenu in ONE page, so a real right-click on a hidden session's row opens the real tab menu (the user 2026-09-18).
 // A slice that stops compiling against the stand-in fails loudly here (a ReferenceError in the page), which is
 // the point: render.ts's code runs, not a copy. Skips, never fails, where playwright or Chromium is missing (CI
 // installs none). The notes-api demo world, synthetic ids.
@@ -62,18 +64,27 @@ const SESS: Record<string, unknown> = {
   old1: { name: "old1", status: { state: "ready" } },
 };
 
-/** The probe: render.ts's own header, header acts and pane, over the stand-in page, as one browser bundle. */
-function probeSource(): string {
+/** The probe: render.ts's own header, header acts and pane, over the stand-in page, as one browser bundle. With `menu` (the last
+ *  test), the pane's showTabMenu stub gives way to render.ts's own showTabMenu and flyout helpers (menuSlices, the menu probe's
+ *  slices) over the menu's stand-ins (MENU_STAND_INS, the menu probe's declarations less the page's maps and helpers, which this
+ *  page declares once for both) and render.ts's own onTabMenuClosed (this page has the strip and the focusActiveTab the shipped
+ *  callback reads, which the menu probe's page lacks), so a row's right-click opens the real menu in one page. ctxMenuEl is then
+ *  the menu's `let` in place of the pane's null, and the pane's Escape yields to the open card through it, as on the real page. */
+function probeSource(opts: { menu?: boolean } = {}): string {
+  const menu = !!opts.menu;
   const HEAD = slice("function makeGroupHead(", "function sectionHeadOf(");
   const SNAP = slice("let snapView: string | null = null;", "function showActive(");
   const ACTS = slice('"toggle-group": (el) => {', "    close: (el) => {");
   const RELEASE = slice("function releaseTabStrip(): void {", "// A SECTION HEADER for the tab strip");
   const WRITE = slice("function tabGroups() {", "let draggedGroup: string | null = null;");
   const UNFOLD = slice("function unfoldSectionOf(id: string): void {", '// "Enter to start typing"');
+  const ONCLOSE = menu ? slice("function onTabMenuClosed() {", "// the selection menu's close forgets") : "";   // the shipped close callback: the forgets, then the refocus arm (focusActiveTab, this page's)
+  const { MENU, FLYOUT } = menu ? menuSlices() : { MENU: "", FLYOUT: "" };
   return `
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, setHidden, prunePinned, headWords, homeSectionOf, neighborOfFolded, reachableFrom, sectionRef, TABGROUPS_KEY, TABGROUPS_EVENT } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, standInPip } from "./tab-snapshot";
-import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick } from "./tab-snapshot-view";
+import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick, menuAnchor } from "./tab-snapshot-view";   // menuAnchor: the row's context menu's seat (the user 2026-09-18), read by the host's listener the pane slice carries
+import { renderKind } from "./skeleton-tabs";   // the strip's gate the row's menu shares (rowHasTabMenu, in the pane slice)
 import { sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick, SHOW_GROUP_CLICK } from "./tab-state";
 import { tagChip } from "./tag-menu";   // the header wears the tag as its chip (upstream T251), the real builder, not a stub
 import { statusChip } from "./status-chip";   // the overview row's needs-you chip is the shared status chip since upstream T322b, the real builder
@@ -82,6 +93,7 @@ import { viewTagUnion } from "./session-views";
 import { hostNameNodes } from "./host-prefix";
 import { ageColorReadable } from "./age-color";
 import { delegate } from "./actions";
+${menu ? MENU_IMPORTS : ""}
 // THE STAND-IN PAGE: the maps and helpers the slices read, declared as render.ts declares them
 const sessions = new Map<string, any>();
 const ledgers = new Map<string, any>();
@@ -93,10 +105,16 @@ let collapsedTabIds = new Set<string>();
 let lastStripItems: any[] = [];
 let tabPointerHeld = false;
 let renderPendingWhilePressed = false;
+let renameActive = false, renderPendingAfterRename = false;   // the strip's rename hold, honoured by the view's rebuild since the row's menu (the user 2026-09-18)
 let draggedGroup: string | null = null;
 let sessionViews: any = null;
+const skeletonTabs = { ids: new Set<string>() };   // no skeleton in these worlds: rowHasTabMenu reads it
+let rowRenameEnd: any = null;   // the open row editor's end (startTabRename's row path, executed in tab-snapshot-menu.test.ts): hideSnapshot runs it
+function cssEscape(s: string): string { return CSS.escape(s); }   // rowSeatFor's selector (render.ts has its own)
+${menu ? "" : 'let tabMenuSeat: "tab" | "row" = "tab";   // the menu\'s seat, which the view\'s listener names (the menu stand-ins declare it in menu mode)'}
+${menu ? MENU_STAND_INS + ONCLOSE + FLYOUT + MENU : "function showTabMenu() {}   // the row's menu is not exercised in this probe (tab-snapshot-menu.test.ts executes it over the real builder; the last test swaps the real one in)"}
 const settings: any = { stripGroupRows: false, tabWidgets: tabWidgetPrefs(undefined) };   // render.ts's settings object (settings.ts) at the fork's default: makeGroupHead's trail branch reads stripGroupRows (the user 2026-09-08: the strip flows inline unless the per-row setting is on) and its stand-in pip reads tabWidgets, here the store's default as settings.ts normalises it on load (upstream T379)
-const ctxMenuEl: any = null, metaMenuEl: any = null, citePreviewEl: any = null, openCommentKey: any = null;
+const ${menu ? "" : "ctxMenuEl: any = null, "}metaMenuEl: any = null, citePreviewEl: any = null, openCommentKey: any = null;${menu ? "   // ctxMenuEl: the menu's own let, in the stand-ins above" : ""}
 function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
 function effViews() { return sessionViews; }
 function knownTabIds(): Set<string> { return new Set<string>([...order, ...tabMeta.keys()]); }
@@ -208,19 +226,54 @@ window.addEventListener(TABGROUPS_EVENT, () => renderTabs());
       foldShown: !!fold && fold.style.display !== "none",
       foldOpen: !!fold && fold.classList.contains("open"),
       foldNeeds: fold ? q(fold, ".snap-hidden-needs")!.textContent : "",
+      held: tabPointerHeld,
       stored: JSON.parse(localStorage.getItem(TABGROUPS_KEY) || "null"),
       active: !a || a === document.body ? "body" : (a.className.split(" ")[0] || a.tagName) + (a.dataset.id ? "#" + a.dataset.id : "") + (a.dataset.group ? "@" + a.dataset.group : ""),
     };
   },
 };
+${menu ? MENU_PROBE_API : ""}
 `;
 }
+/** the menu's imports the pane's probe lacks (the menu probe's, less the names the pane imports already) */
+const MENU_IMPORTS = `
+import { isPinned, setPinned, isHidden } from "./tab-groups";   // the Hide tab row and the flyout's Show when folded row read and write the store
+import { pressHold } from "./actions";
+import { keyHint } from "./keybindings";   // the Notify row's key hint
+import { tabHotkey, miniChord } from "./tab-widgets";   // the Hot key row (T379)
+import { menuCard, addMenuItem, addMenuSep, showMenuCard, closeContextMenu, contextMenuOpen } from "./ctx-menu";   // the one menu builder; contextMenuOpen for the shipped onTabMenuClosed
+import { RENAME_SUBLINE } from "./clear-confirm";   // the Rename row's sub-line
+`;
+/** the composed probe's readers (the last test): the open card as the slices hold it (ctxMenuEl, the menu's own let here), its rows'
+ *  labels as tab-snapshot-menu.test.ts reads them (the label, else a marker for a divider or the swatches), the Hide tab row's words, the
+ *  seat (ctxMenuAt), the strip's hold, the focus, and the last contextmenu event the window saw at capture, before the host's listener:
+ *  where the engine put it, what it hit, who had the focus (the opener the builder hands the focus back to), and whether it reached the
+ *  window's bubble (a handled one never does: the host's listener stops it) */
+const MENU_PROBE_API = `
+let lastCtx: any = null, ctxSeq = 0;
+const activeName = () => { const a = document.activeElement as HTMLElement | null; return !a || a === document.body ? "body" : (a.className.split(" ")[0] || a.tagName) + (a.dataset.id ? "#" + a.dataset.id : ""); };
+window.addEventListener("contextmenu", (e) => { const t = e.target as HTMLElement; lastCtx = { seq: ++ctxSeq, x: e.clientX, y: e.clientY, target: (t.className || t.tagName || "").split(" ")[0], active: activeName(), reachedWindow: false }; }, true);
+window.addEventListener("contextmenu", () => { if (lastCtx) lastCtx.reachedWindow = true; });
+const labelsOf = (card: HTMLElement) => Array.from(card.children).map((c) => c.querySelector(".ctx-item-label")?.textContent ?? (c.classList.contains("ctx-sep") ? "<divider>" : c.classList.contains("ctx-colors") ? "<" + c.children.length + " colour swatches>" : "<" + c.className + ">"));
+Object.assign((window as any).__probe, {
+  menu() {
+    const open = !!ctxMenuEl && ctxMenuEl.isConnected;
+    const hide = open ? ctxMenuEl!.querySelector(".ctx-item-hide") : null;
+    const r = open ? ctxMenuEl!.getBoundingClientRect() : null;
+    return { open, cards: document.querySelectorAll("body > .ctx-menu").length, at: ctxMenuAt, corner: r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom } : null,
+      labels: open ? labelsOf(ctxMenuEl!) : [], hideLabel: hide?.querySelector(".ctx-item-label")?.textContent ?? null, hideSub: hide?.querySelector(".ctx-item-sub")?.textContent ?? null,
+      held: tabPointerHeld, active: activeName(), lastCtx };
+  },
+  /** the strip's own call, as a tab's contextmenu handler makes it: the labels of the card showTabMenu builds at (x, y) for the copy, and its seat; then closed */
+  tabMenuLabels(x: number, y: number, id: string, copy: string) { showTabMenu({ clientX: x, clientY: y } as MouseEvent, id, copy); const out = { labels: ctxMenuEl ? labelsOf(ctxMenuEl) : [], at: ctxMenuAt }; dismissTabMenu(); return out; },
+});
+`;
 
-/** The probe, bundled as the webview build bundles the page (in memory), served to the page as /probe.js. */
-function bundle(): string {
+/** The probe, bundled as the webview build bundles the page (in memory), served to the page as /probe.js; `menu` composes the real showTabMenu in. */
+function bundle(menu = false): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
-    stdin: { contents: probeSource(), resolveDir: UI, loader: "ts", sourcefile: "tab-hide-probe.ts" },
+    stdin: { contents: probeSource({ menu }), resolveDir: UI, loader: "ts", sourcefile: "tab-hide-probe.ts" },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
     nodePaths: [path.join(EXT, "node_modules")], logLevel: "silent",
   });
@@ -234,7 +287,7 @@ const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><link rel=styleshee
 type Head = { name?: string; folded?: string; act?: string; title: string; snapShown: boolean; count: string | null; countTag: string | null; countAct: string | null; countTitle: string | null;
   pip: string | null; pipAct: string | null; pipTitle: string | null; flagAct: string | null; flagTitle: string | null; label: string | null };
 type State = { tabs: string[]; heads: Head[]; snapView: string | null; paneShown: boolean; transcriptShown: boolean; shownRows: string[]; hiddenRows: string[];
-  foldShown: boolean; foldOpen: boolean; foldNeeds: string; stored: any; active: string };
+  foldShown: boolean; foldOpen: boolean; foldNeeds: string; held: boolean; stored: any; active: string };
 
 test("in Chromium, over render.ts's own header, header acts and pane: hide, show, the non-folding door, the flag, the double-click, the feed's verdict, focus and the fold", async (t) => {
   let pw: any = null;
@@ -987,7 +1040,9 @@ test("in Chromium and Firefox, the Tags flyout nested in the menu over the real 
 //   - at thirty tags (round 8) the flyout's own scroll, through the builder's own dismissal listener (ctx-menu.ts), leaves the menu standing: a real
 //     wheel, the click's scroll into view; a scroll in a box outside the menu still dismisses; and the click that opens the flyout
 //     leaves it at its top with the session's own row and its x in view, the New tag input focused without a scroll (round 9).
-function menuProbeSource(): string {
+/** render.ts's showTabMenu, and the flyout helpers it calls (placeFlyBeside, wireFlyout, HOVER_INTENT_MS), verbatim: the menu
+ *  probe's slices, and the composed probe's (probeSource({ menu: true })) */
+function menuSlices(): { MENU: string; FLYOUT: string } {
   const a = RENDER.indexOf("function showTabMenu(e: MouseEvent, id: string, copy?: string) {");
   const end = RENDER.indexOf("seatMenu(e.clientX, e.clientY);", a);
   const b = RENDER.indexOf("\n}\n", end) + 3;
@@ -1004,6 +1059,36 @@ function menuProbeSource(): string {
   const fb = RENDER.indexOf("\n}\n", RENDER.indexOf("const HOVER_INTENT_MS = 120;\nfunction wireFlyout(", fa)) + 3;
   assert.ok(fa > 0 && fb > fa, "placeFlyBeside, wireFlyout and its HOVER_INTENT_MS moved; re-anchor this probe");
   const FLYOUT = RENDER.slice(fa, fb);
+  return { MENU, FLYOUT };
+}
+/** THE MENU'S STAND-INS, shared by the menu probe and the composed probe (probeSource({ menu: true })): what showTabMenu reads beyond
+ *  the page's own maps and helpers (sessions, tabMeta, settings, el, effViews, phoneLayout, knownTabIds, reachableHosts, tabGroups,
+ *  writeTabGroupsPruned, renderTabs and onTabMenuClosed), which each probe's page declares for itself. The flags and the dialogs the
+ *  menu opens are recorders (H) or inert; ctxMenuEl and its siblings are the page's slots as render.ts declares them. */
+const MENU_STAND_INS = `
+const paletteColors: string[] = [];
+const H: any = { views: null, hides: [] as any[], edits: [] as any[], dismissed: 0, renders: 0, flags: [] as any[] };
+let ctxMenuEl: HTMLElement | null = null, ctxMenuAt: any = null, tagsFlyNewInput: HTMLInputElement | null = null, pendingSessionViews: any = null;
+let tabMenuViewsHook: () => void = () => {};
+let tabMenuSeat: "tab" | "row" = "tab";   // where the open menu was opened from (the user 2026-09-18): showTabMenu says "tab" at every open, the view's listener "row"
+function ctxIcon(kind: string, off: boolean): HTMLElement { const sp = el("span", "ctx-icon" + (off ? " off" : "")); sp.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 14"></svg>'; sp.dataset.kind = kind; return sp; }
+function dismissTabMenu() { closeContextMenu(); }   // as render.ts's: the builder's teardown runs onTabMenuClosed
+let emojiPrompt: any = null;   // the picker's listeners read it (never open here)
+function closeEmojiPrompt() {}
+function setSessionFlag(id: string, k: string, v: boolean) { H.flags.push([id, k, v]); }
+function setSessionColor() {} function startTabRename() {} function showMovePrompt() {} function showEmojiPrompt() {}
+function billingSubText() { return ""; }
+const vscodeApi: any = null;
+function postTagEdit(nv: any, op: any) { H.edits.push(op); H.views = nv; }
+function syncNewTagInput() {}
+function createInFlight() { return false; }
+const viewsWrites: any[] = [];
+function viewTags(v: any) { return (v && v.tags) || []; }
+function browseRouteNow() { return "pane"; } function openBrowse() {}
+function inRompShell() { return false; }   // the probe page is top-level, no shell around it (upstream T415: showTabMenu asks before it offers the Settings row)
+`;
+function menuProbeSource(): string {
+  const { MENU, FLYOUT } = menuSlices();
   return `
 import { readTabGroups, writeTabGroups, prunePinned, sectionRef, isPinned, setPinned, isHidden, setHidden, TABGROUPS_KEY } from "./tab-groups";
 import { viewTagUnion } from "./session-views";
@@ -1013,42 +1098,26 @@ import { tabHotkey, miniChord } from "./tab-widgets";   // the Hot key row (T379
 import { tagChip } from "./tag-menu";   // the flyout's rows wear the tag chip (T321), the real builder, as the header probe above has it
 import { menuCard, addMenuItem, addMenuSep, showMenuCard, closeContextMenu } from "./ctx-menu";   // the one menu builder (upstream's v0.16.0 tidy): the card, the standard rows, the placement and the dismissal listeners
 import { RENAME_SUBLINE } from "./clear-confirm";   // the Rename row's sub-line, as render.ts imports it
-// THE STAND-IN PAGE: what showTabMenu reads, declared as render.ts declares it
+// THE STAND-IN PAGE: what showTabMenu reads, declared as render.ts declares it: the page's maps and helpers here, the menu's own
+// stand-ins in MENU_STAND_INS (shared with the composed probe)
 const sessions = new Map<string, any>([["api", { name: "api", status: { state: "working" } }], ["web", { name: "web", status: { state: "ready" } }]]);
 const tabMeta = new Map<string, any>();
-const paletteColors: string[] = [];
 const settings: any = { tabsLocked: false };   // the flyout's Move to rows read the tab lock (settings.ts); unlocked here, as a fresh store is
-const H: any = { views: null, hides: [] as any[], edits: [] as any[], dismissed: 0, renders: 0, flags: [] as any[] };
-let ctxMenuEl: HTMLElement | null = null, ctxMenuAt: any = null, tagsFlyNewInput: HTMLInputElement | null = null, pendingSessionViews: any = null;
-let tabMenuViewsHook: () => void = () => {};
 function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
-function ctxIcon(kind: string, off: boolean): HTMLElement { const sp = el("span", "ctx-icon" + (off ? " off" : "")); sp.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 14"></svg>'; sp.dataset.kind = kind; return sp; }
-function dismissTabMenu() { closeContextMenu(); }   // as render.ts's: the builder's teardown runs onTabMenuClosed
+${MENU_STAND_INS}
 // render.ts's onTabMenuClosed: its three forgets, plus the count (every close ends here). The stand-in OMITS the shipped callback's refocus
 // arm (focusActiveTab with preventScroll when the card holds the focus or it fell to the body, under document.hasFocus()): this page has no
 // strip and declares no focusActiveTab, so the literal arm would throw at every close (the fold review's round 2, regression-1). The arm is
-// executed in ui/webview/ctx-menu.test.ts and pinned by ui/webview/tab-hide.test.ts (the menu door test's onTabMenuClosed source pin)
+// executed in ui/webview/ctx-menu.test.ts and pinned by ui/webview/tab-hide.test.ts (the menu door test's onTabMenuClosed source pin), and
+// the composed probe (the last test), whose page has the strip, runs the shipped callback verbatim
 function onTabMenuClosed() { H.dismissed++; ctxMenuEl = null; tagsFlyNewInput = null; tabMenuViewsHook = () => {}; }
-let emojiPrompt: any = null;   // the picker's listeners read it (never open here)
-function closeEmojiPrompt() {}
-function setSessionFlag(id: string, k: string, v: boolean) { H.flags.push([id, k, v]); }
-function setSessionColor() {} function startTabRename() {} function showMovePrompt() {} function showEmojiPrompt() {}
-function billingSubText() { return ""; }
-const vscodeApi: any = null;
 function renderTabs() { H.renders++; }
-function postTagEdit(nv: any, op: any) { H.edits.push(op); H.views = nv; }
-function syncNewTagInput() {}
-function createInFlight() { return false; }
-const viewsWrites: any[] = [];
-function viewTags(v: any) { return (v && v.tags) || []; }
 function effViews() { return H.views; }
 function phoneLayout() { return false; }
 function knownTabIds() { return new Set<string>(["api", "web", "tests", "old1", "old2"]); }
 function reachableHosts() { return new Set<string>(); }
 function tabGroups() { return readTabGroups(viewTagUnion(effViews())); }
 function writeTabGroupsPruned(st: any) { const out = prunePinned(st, viewTagUnion(effViews()), knownTabIds(), reachableHosts()); H.hides.push(out.hidden); writeTabGroups(out); }
-function browseRouteNow() { return "pane"; } function openBrowse() {}
-function inRompShell() { return false; }   // the probe page is top-level, no shell around it (upstream T415: showTabMenu asks before it offers the Settings row)
 ${FLYOUT}
 ${MENU}
 // a scrolling box OUTSIDE the menu (round 8): the page's body never scrolls (styles.css), so the control that a scroll elsewhere still
@@ -1270,6 +1339,170 @@ test("in Chromium and Firefox, render.ts's own showTabMenu with real pointer inp
       await page.waitForFunction(() => !(window as any).__menu.state().menu, null, { timeout: 3000 }).catch(() => { /* judged below */ });
       s = await state();
       assert.deepEqual([s.menu, s.dismissed], [false, d7 + 1], where("a scroll outside the menu dismisses it, as before"));
+      assert.deepEqual(errors, [], where("no page errors"));
+      await page.close();
+    } finally { await browser.close(); }
+  }
+});
+
+// THE ROW'S MENU IN ONE PAGE (the user 2026-09-18, who wanted a hidden session, which has no tab on the strip, to reach its settings
+// from the one place it has a row): render.ts's OWN pane (the first probe's slices) and its OWN showTabMenu (the menu probe's), bundled
+// into one page over the pane's stand-in (probeSource({ menu: true })), in headless Chromium and Firefox with real input. The node-level
+// test (tab-snapshot-menu.test.ts) executes the same code over a fake DOM and fires the contextmenu event itself; this leg is what only
+// an engine can show: that the engine's right-click on a row's button, its keyboard menu key on the focused row and its clicks on the
+// card reach render.ts's listeners and land where the code says. Read here:
+//   - the notes-api world with api under infra AND qa (the copy matters: with no copy the menu has no Hide tab row for a session under
+//     two tags), api hidden in infra through the store, the view of infra through the header's count (the door), the Hidden fold opened;
+//   - a real right-click at the centre of api's row button opens the tab menu's card: its Hide tab row reads Show tab with "back on the
+//     strip in infra"; its rows equal, label for label, the strip's own call (showTabMenu for api and infra at the point the engine
+//     carried, so both seat alike), and the failure names the first label that differs; the event stopped at the host (the window's
+//     bubble never saw it); the right press latched the strip's hold and the release let it go (tabPointerHeld false after the gesture);
+//   - Escape closes the card and leaves the pane up with its fold open (the pane's own Escape yields to an open layer); the focus is
+//     back on the row's button, the opener the builder read at open (both engines focus a button on the right press);
+//   - the keyboard: Shift+F10 on the focused row opens the card at the row (its top-left inside the row's horizontal extent, at or below
+//     the row's top), never at the pane's corner. Chromium dispatches the keyboard's contextmenu at the row's centre; headless Firefox
+//     dispatches none, so there the event is sent by hand at (0, 0), the place-less form menuAnchor exists for, over the real layout (the
+//     comment at R5 has the observations);
+//   - a real click on the Show tab row's label writes the store (api shown in infra again) and dismisses the card, and the pane's next
+//     paint (the store event's renderTabs) moves api's row out of the fold and puts api's tab back under infra.
+type CardRead = { open: boolean; cards: number; at: { x: number; y: number } | null; corner: { left: number; top: number; right: number; bottom: number } | null; labels: string[];
+  hideLabel: string | null; hideSub: string | null; held: boolean; active: string; lastCtx: { seq: number; x: number; y: number; target: string; active: string; reachedWindow: boolean } | null };
+test("in Chromium and Firefox, render.ts's own pane and its own showTabMenu in one page with real input: a right-click on a hidden session's row under the view's Hidden fold opens the tab menu (Show tab, back on the strip in infra), label for label the strip's own call for that copy, the event stopped at the host and the strip's hold released; Escape closes the card, keeps the pane and returns the focus to the row; Shift+F10 on the focused row seats the card at the row, not the pane's corner (headless Firefox dispatches no keyboard contextmenu: the place-less event is sent by hand there); a real click on Show tab writes the store, dismisses the card and puts the row and the tab back", async (t) => {
+  let pw: any = null;
+  try { pw = requireCjs("playwright"); } catch { pw = null; }
+  if (!pw) { t.skip("playwright is not installed under vscode-extension (CI installs no browsers)"); return; }
+  const js = bundle(true);
+  // api under infra and qa (tab-snapshot-menu.test.ts's world): the copy the view passes is what gives the menu its Hide tab row
+  const V_MENU = { active: "all", tags: [
+    { id: "g1", name: "infra", color: "#4EC9B0", members: ["web", "api", "tests"] },
+    { id: "g2", name: "qa", color: "#DD42FF", members: ["api", "tests"] },
+  ], seq: 3 };
+  const hiddenRow = '#tab-snapshot .snap-hidden-list .snap-item[data-id="api"] .snap-row';
+  const shownRow = '#tab-snapshot > .snap-list > .snap-item[data-id="api"] .snap-row';
+  const CARD = "body > .ctx-menu";   // the tab menu's card, on the body (a flyout is a nested card, never here)
+  for (const engine of ["chromium", "firefox"] as const) {
+    let browser: any;
+    try { browser = await pw[engine].launch(); }
+    catch (e) { t.skip(`no playwright ${engine} on this box (CI installs none): ` + String((e as Error).message).split("\n")[0]); return; }
+    try {
+      // a tall pane: api's row sits about 435px down (the strip, the heading, two shown rows and the fold's head above it) and the card is
+      // about 350px tall, so at 700px seatMenu's clamp would pull the card up off the row and the seat could not be read as the row's
+      const VIEW = { width: 1000, height: 1000 };
+      const page = await browser.newPage({ viewport: VIEW });
+      const errors: string[] = [];
+      page.on("pageerror", (e: Error) => { errors.push(e.message); });
+      await page.route("http://romp.test/**", (route: any) => {
+        const u = new URL(route.request().url());
+        if (u.pathname === "/page") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: PAGE });
+        if (u.pathname === "/probe.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: js });
+        if (u.pathname === "/styles.css") return route.fulfill({ status: 200, contentType: "text/css; charset=utf-8", body: CSS });
+        return route.fulfill({ status: 404, body: "" });
+      });
+      await page.goto("http://romp.test/page");
+      const where = (what: string) => `${engine}: ${what}`;
+      const state = (): Promise<State> => page.evaluate(() => (window as any).__probe.state());
+      const card = (): Promise<CardRead> => page.evaluate(() => (window as any).__probe.menu());
+      /** the seat is unclamped: the card fits below and right of the point (seatMenu clamps to the pane less 4px), so the seat IS the point */
+      const fits = (m: CardRead, x: number, y: number, what: string) => {
+        const w = m.corner!.right - m.corner!.left, h = m.corner!.bottom - m.corner!.top;
+        assert.ok(x + w + 4 <= VIEW.width && y + h + 4 <= VIEW.height, where(`${what}: the card (${Math.round(w)}x${Math.round(h)}px) fits below and right of (${x}, ${y}) in the ${VIEW.width}x${VIEW.height} pane, so the seat can be read as the point's (grow the pane if the layout grew)`));
+      };
+      const cardUp = (what: string) => page.waitForSelector(CARD, { state: "attached", timeout: 5000 }).catch(() => assert.fail(where(what + ": no card came")));
+      const cardGone = (what: string) => page.waitForSelector(CARD, { state: "detached", timeout: 5000 }).catch(() => assert.fail(where(what + ": the card stayed up")));
+      const headCount = async (name: string) => { const s = await state(); const h = s.heads.find((x) => x.name === name); assert.ok(h, where("a header for " + name)); return h!.count; };
+      await page.evaluate(([v, sess]: [unknown, unknown]) => (window as any).__probe.setup(v, ["web", "api", "tests"], sess, "web"), [V_MENU, SESS] as [unknown, unknown]);
+      assert.deepEqual(errors, [], where("the slices ran against the stand-in (a ReferenceError here means render.ts grew a dependency the composed probe lacks)"));
+      // R1: THE WORLD. api hidden in infra through the store (another pane's Hide: setHidden + writeTabGroups); the view of infra through
+      // the header's count, the door that leaves the fold alone; the Hidden fold opened by its head, api's row on screen
+      await page.evaluate(() => (window as any).__probe.otherPane("infra", "api", true));
+      let s = await state();
+      assert.deepEqual([s.stored.hidden, s.tabs.filter((x) => x === "api").length, await headCount("infra")], [[{ sid: "api", name: "infra", id: "g1" }], 1, "2+1"], where("api's infra copy off the strip, its qa copy on it: " + JSON.stringify(s.tabs)));
+      await page.click('#tabs .tab-group-head[data-group="infra"] .tab-group-door');
+      s = await state();
+      assert.deepEqual([s.paneShown, s.snapView, s.shownRows, s.hiddenRows, s.foldShown, s.foldOpen], [true, "infra", ["web", "tests"], ["api"], true, false], where("the view of infra: api under its Hidden fold, closed"));
+      await page.click("#tab-snapshot .snap-hidden-head");
+      await page.waitForSelector(hiddenRow, { state: "visible", timeout: 5000 }).catch(() => assert.fail(where("the fold's head never showed api's row")));
+      assert.equal((await state()).foldOpen, true, where("the fold open: api's row on screen"));
+      // R2: THE RIGHT-CLICK, at the centre of api's row button, the engine's own gesture
+      const box = (await page.locator(hiddenRow).boundingBox())!;
+      assert.ok(box && box.width > 100 && box.height > 10, where("the row's button has a box: " + JSON.stringify(box)));
+      const cx = Math.round(box.x + box.width / 2), cy = Math.round(box.y + box.height / 2);
+      await page.mouse.click(cx, cy, { button: "right" });
+      await cardUp("the right-click on api's row");
+      let m = await card();
+      assert.deepEqual([m.open, m.cards, m.hideLabel, m.hideSub], [true, 1, "Show tab", "back on the strip in infra"], where("the tab menu's card, speaking for the hidden copy in infra: " + JSON.stringify(m.labels)));
+      assert.ok(m.lastCtx && Math.abs(m.lastCtx.x - cx) <= 1 && Math.abs(m.lastCtx.y - cy) <= 1, where(`the engine's contextmenu carried the pointer's place: ${JSON.stringify(m.lastCtx)} for (${cx}, ${cy})`));
+      fits(m, cx, cy, "the right-click");
+      assert.ok(m.at && Math.abs(m.at.x - cx) <= 1 && Math.abs(m.at.y - cy) <= 1, where(`seated at the pointer: ${JSON.stringify(m.at)} for (${cx}, ${cy})`));
+      assert.equal(m.lastCtx!.reachedWindow, false, where("the event stopped at the host, as at a tab (the window's bubble listener never saw it; #content's selection menu listens there on the real page)"));
+      assert.equal(m.held, false, where("the right press latched the strip's hold (the host's pointerdown) and the release let it go (the window's pointerup): a rebuild is not parked behind a menu"));
+      const fromRow = m.labels, pt = { x: m.lastCtx!.x, y: m.lastCtx!.y };
+      assert.ok(fromRow.length > 8 && fromRow.includes("Show tab") && fromRow.includes("Rename"), where("a full menu: " + fromRow.join(" | ")));
+      assert.equal(m.active, "ctx-menu", where("the card holds the focus while it is up (the builder's menu.focus())"));
+      // both engines focus a button on the right press (observed 2026-09-18), so the contextmenu found the focus on the row, and that is the
+      // opener the builder reads at open and hands the focus back to at the close
+      assert.equal(m.lastCtx!.active, "snap-row#api", where("the engine focused the row's button on the right press: the builder's opener is the row"));
+      // R3: ESCAPE closes the card; the pane stays up with its fold open: installSnapshotEscape yields to an open layer, read through
+      // ctxMenuEl, the menu's own let in this page as on the real one
+      await page.keyboard.press("Escape");
+      await cardGone("Escape");
+      m = await card(); s = await state();
+      assert.deepEqual([m.open, m.cards, s.paneShown, s.snapView, s.foldOpen, s.hiddenRows], [false, 0, true, "infra", true, ["api"]], where("the card gone; the view of infra still up, its fold open (one Escape, one layer)"));
+      assert.equal(s.active, "snap-row#api", where("after Escape the focus is back on the row's button (the builder's return to its opener), not on the body or the strip"));
+      // R4: THE STRIP'S OWN CALL at the same point (a tab's handler passes the tab's dataset.copy, the section the copy sits in): the same
+      // labels in the same order, and the same seat; a difference names the first label that differs
+      const fromTab = await page.evaluate(([x, y]: [number, number]) => (window as any).__probe.tabMenuLabels(x, y, "api", "infra"), [pt.x, pt.y] as [number, number]) as { labels: string[]; at: { x: number; y: number } };
+      await cardGone("the strip's call, closed by the probe");
+      {
+        const a = fromRow, b = fromTab.labels;
+        const i = a.findIndex((l, k) => l !== b[k]);
+        const at = i >= 0 ? i : Math.min(a.length, b.length);
+        const differs = i >= 0 || a.length !== b.length;
+        assert.deepEqual(a, b, where(differs ? `row ${at + 1} of the row's menu is ${a[at] ?? "<no row>"} where the strip's call's is ${b[at] ?? "<no row>"}` : "the rows agree"));
+      }
+      assert.deepEqual(m.at ?? fromTab.at, fromTab.at, where("the same seat from the same point"));
+      // R5: THE KEYBOARD. api's row button focused; Shift+F10. Chromium dispatches the keyboard's contextmenu on the focused row with the
+      // row's CENTRE as its place (observed 2026-09-18: (473, 585) for a row box x 22..925, y 569..601, button -1), so menuAnchor passes
+      // the event through and the card seats there. Headless Firefox dispatches NO contextmenu for Shift+F10 or the ContextMenu key (the
+      // key-to-menu conversion lives in its native widget layer, which headless lacks; probed 2026-09-18 on a bare button too), so there
+      // the keyboard's event is sent by hand the way an engine that carries no place sends it, clientX and clientY 0 on the focused row,
+      // and travels the engine's dispatch to the host's listener over the real layout (menuAnchor reads the row's rect) to the real seat:
+      // the (0, 0) branch, on real geometry. Either way the card's top-left lies inside the row's horizontal extent and at or below the
+      // row's top, never at the pane's corner. Which path runs is read off the event recorder (a new event after the key, or none), no
+      // timer; Chromium must take the real one, so the engine's own keyboard path is proven in at least one engine
+      await page.focus(hiddenRow);
+      assert.equal((await state()).active, "snap-row#api", where("api's row button has the focus"));
+      const seqBefore = (await card()).lastCtx!.seq;
+      await page.keyboard.press("Shift+F10");
+      const keyed = (await card()).lastCtx!.seq !== seqBefore;
+      if (engine === "chromium") assert.ok(keyed, where("Chromium dispatches a contextmenu for Shift+F10 on the focused row"));
+      if (!keyed) {
+        assert.equal(engine, "firefox", where("only headless Firefox is known to dispatch no keyboard contextmenu"));
+        await page.evaluate((sel: string) => { document.querySelector(sel)!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 0, clientY: 0 })); }, hiddenRow);
+      }
+      await cardUp(keyed ? "Shift+F10 on the focused row" : "the keyboard's contextmenu at (0, 0) on the focused row");
+      m = await card();
+      const rowBox = (await page.locator(hiddenRow).boundingBox())!;
+      const rowRight = rowBox.x + rowBox.width, rowBottom = rowBox.y + rowBox.height;
+      assert.deepEqual([m.open, m.cards, m.hideLabel, m.lastCtx!.reachedWindow], [true, 1, "Show tab", false], where("the keyboard opens the same menu, and the event stopped at the host"));
+      t.diagnostic(where(`${keyed ? "Shift+F10" : "the keyboard's contextmenu, sent by hand"}: the event at (${m.lastCtx!.x}, ${m.lastCtx!.y}) on ${m.lastCtx!.target}; the row's box x ${Math.round(rowBox.x)}..${Math.round(rowRight)}, y ${Math.round(rowBox.y)}..${Math.round(rowBottom)}; the card seated at ${JSON.stringify(m.at)}`));
+      // the anchor the seat must equal: the engine's place inside the row (the real key), or the row's bottom-left (no place, menuAnchor)
+      if (keyed) assert.ok(m.lastCtx!.x > rowBox.x && m.lastCtx!.x < rowRight && m.lastCtx!.y > rowBox.y && m.lastCtx!.y < rowBottom, where(`the engine put the keyboard's contextmenu inside the row's box (Chromium: its centre): ${JSON.stringify(m.lastCtx)} in ${JSON.stringify(rowBox)}`));
+      const anchor = keyed ? { x: m.lastCtx!.x, y: m.lastCtx!.y } : { x: rowBox.x, y: rowBottom };
+      fits(m, anchor.x, anchor.y, "the keyboard's menu");
+      assert.ok(Math.abs(m.at!.x - anchor.x) <= 1 && Math.abs(m.at!.y - anchor.y) <= 1, where(keyed ? `seated where the engine put the event: ${JSON.stringify(m.at)} for ${JSON.stringify(anchor)}` : `an event with no place seats the card at the row's bottom-left corner (menuAnchor): ${JSON.stringify(m.at)} for ${JSON.stringify(anchor)}`));
+      const c = m.corner!;
+      assert.ok(rowBox.y > 8 && rowBox.x >= 8, where("the row is not at the pane's corner: " + JSON.stringify(rowBox)));
+      assert.ok(c.left >= rowBox.x - 1 && c.left <= rowRight && c.top >= rowBox.y - 1, where(`the card's corner ${JSON.stringify(c)} is at the row (x ${Math.round(rowBox.x)}..${Math.round(rowRight)}, top ${Math.round(rowBox.y)}), not the pane's corner`));
+      // R6: SHOW TAB, a real click on the row's label: the store written for infra (the pane's own writeTabGroupsPruned), the card dismissed,
+      // and the store event's renderTabs repaints the strip and the view: api's row among the shown rows, api's tab back under infra
+      await page.click(`${CARD} .ctx-item-hide .ctx-item-label`);
+      await cardGone("the Show tab click");
+      await page.waitForSelector(shownRow, { state: "attached", timeout: 5000 }).catch(() => assert.fail(where("api's row never left the fold after Show tab")));
+      s = await state(); m = await card();
+      assert.deepEqual([s.stored.hidden, s.shownRows, s.hiddenRows, s.foldShown, s.paneShown, s.snapView, m.cards], [[], ["web", "api", "tests"], [], false, true, "infra", 0], where("Show tab wrote the show for infra; the view repainted with api among the shown rows and no fold"));
+      assert.deepEqual([s.tabs.filter((x) => x === "api").length, await headCount("infra")], [2, "3"], where("api's tab is back under infra (and still under qa): " + JSON.stringify(s.tabs)));
+      assert.equal(s.active, "snap-row#api", where("after Show tab the focus is on api's row button in its new list: the builder handed it back to its opener, and the view's repaint kept it on the same session's row"));
       assert.deepEqual(errors, [], where("no page errors"));
       await page.close();
     } finally { await browser.close(); }

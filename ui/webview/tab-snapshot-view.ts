@@ -98,3 +98,15 @@ export function reconcileRows<R extends { id: string }, N>(
   });
   return { kept, made, moved, removed };
 }
+
+/** WHERE A ROW'S CONTEXT MENU OPENS. A pointer's contextmenu (a right-click, a long-press) carries the pointer's place,
+ *  and the menu opens there, as the tab's does. The keyboard's (the menu key, or Shift+F10, on a focused row) carries no
+ *  place in every engine: some dispatch it with clientX and clientY at 0, and a menu seated there sits in the pane's
+ *  corner, away from the row the user is on. So an event at (0, 0) is anchored at the row's bottom-left corner, where a
+ *  menu under the row reads as the row's; `rect` is read only then. The event itself comes back when it carries a place,
+ *  so the pointer's own event reaches the builder unchanged. */
+export function menuAnchor<E extends { clientX: number; clientY: number }>(e: E, rect: () => { left: number; bottom: number }): E | { clientX: number; clientY: number } {
+  if (e.clientX || e.clientY) return e;
+  const r = rect();
+  return { clientX: r.left, clientY: r.bottom };
+}
