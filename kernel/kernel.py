@@ -18000,8 +18000,11 @@ _NUDGE_FILE_KEYED_ROADS = {       # the functions each marked verdict's road rea
     "progressing": ("_last_state",),
     "closer-unsettled": ("_closer_settled",),
     "planner-queue": ("_nudge_placement_gate",),
-    "walk-completed": ("_debt_asks", "_asker_row_alive", "_nudge_asks_by_target"),   # the other skippable exit (r is False with the walk
-    #                                    completed) rides the debt leg: its readers are traced too (round three, low 2)
+    "walk-completed": ("_debt_asks", "_asker_row_alive", "_nudge_asks_by_target",   # the other skippable exit (r is False with the walk
+                       #                completed) rides the debt leg: its readers are traced too (round three, low 2)
+                       "_open_user_todos"),   # the goal loop's stand-down reader: STATE/user-todos.json, NOT a keyed file, so the exit it
+    #                                    gates notes None under todoStandDown; named here so the census pairs the read with the note
+    #                                    instead of staying blind to it (jobs stage 1, round 2)
     "wake-only": ("_goal_awaiting_stamp_full", "_peer_answered", "_nudge_all_delegated", "_all_outstanding_delegated",
                   "_wait_for_graph"),   # the wake-only goal loop's own readers (jobs stage 1): the stamp it walks and the peer-answer
     #                                    supersede (the store, the postal log), the delegated check (the store) and the peer-wait graph
@@ -18332,6 +18335,16 @@ def _auto_nudge_session(s, now, live_map, nudged, waitfor, alive_ids=None, wake_
                 nudged[gid] = dict(_prec, rearmEvT=_cur_ts, rearmSettleT=_cur_st)
                 _put_nudged(gid, nudged[gid])
         if _todo_standdown:
+            _nudge_clock(None, "todoStandDown")      # the open todo is STATE/user-todos.json, a file outside the memo's ten, and
+            #                                          its clearing through the dashboard's dismiss route writes that store and its
+            #                                          lifecycle log alone, so nothing moves the key: the look must stay unbounded or
+            #                                          the plain top's status nudge is held until the next box-wide keyed event (any
+            #                                          postal, cleared or ledger row on the box) or the wake's dead-man instant,
+            #                                          about six hours on a stamped session (review round 1 of jobs stage 1, HIGH:
+            #                                          retiring the stampedWait and allDelegated notes exposed this exit for a
+            #                                          session with such a top beside a plain one; a session with the plain top alone
+            #                                          had the same hold before the stage). An exit that reads a file outside the
+            #                                          keyed set cannot be memoised: nothing can tell the memo that file moved
             continue                                 # the status nudge (and its failed-stamp surface, which
             #                                          would file a SECOND needs-you story beside the floored
             #                                          card) stands down while an open todo explains the idle;

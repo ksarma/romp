@@ -515,6 +515,12 @@ class NudgeWalkParseGate(unittest.TestCase):
         SB_PURE = {"echo_text_key", "strip_echo_markers", "_strip_marker_tail"}   # pure functions of their text argument (an atom's
         #                                             user text folded to the echo key the interrupt marks compare against)
         REFILLED = {"_downtime": "kernel-downtime.jsonl"}
+        NOTED_READERS = {                            # a road function that reads a file OUTSIDE the ten, allowed only because the one exit it
+            #                                         gates notes None under the named leg (the exit census below pins the note sits at
+            #                                         that exit); the trace stops here, and the leg's literal must appear in the walk
+            "_open_user_todos": ("todoStandDown", "the user-todos store (STATE/user-todos.json) behind the goal loop's stand-down: "
+                                                  "the dashboard's dismiss route moves no keyed file, so the look stays unbounded (jobs stage 1, round 2)"),
+        }
         LEAF_READERS = {"_fold_records": "the event model's fold cursor over the NAMED file (the state log here), keyed by that file's "
                                          "stat; its internals are the record cache and the checkpoint tables, which mirror the file",
                         "_postal_wait_maps": "the postal log's wait maps, cached on that file's (mtime_ns, size) and rebuilt from it alone "
@@ -570,6 +576,11 @@ class NudgeWalkParseGate(unittest.TestCase):
                 fn_name = todo.pop()
                 if fn_name in seen: continue
                 seen.add(fn_name)
+                if fn_name in NOTED_READERS:
+                    leg = NOTED_READERS[fn_name][0]      # an unkeyed reader the road names on purpose: not traced into, but the exit it
+                    self.assertIn('_nudge_clock(None, "%s")' % leg, inspect.getsource(km._auto_nudge_session),   # gates must note its leg
+                                  "%s: %s reads outside the ten files and its exit must note %s" % (verdict, fn_name, leg))
+                    continue
                 fn = getattr(km, fn_name, None)
                 if not isinstance(fn, types.FunctionType):
                     problems.append((verdict, fn_name, "not a module-level function")); continue

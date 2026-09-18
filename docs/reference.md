@@ -3339,7 +3339,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   peers, a holder absent from the live map; `allDelegated` and
   `stampedWait` were retired on 2026-09-18, since the delegated check is
   pure over the store and every ending of a stamped wait is a keyed file
-  or an instant the wake notes), and
+  or an instant the wake notes), `todoStandDown` (the status nudge stood
+  down behind an open user todo: the todo store is a file outside the ten,
+  and its clearing through the dashboard's dismiss route moves none of
+  them, so the look stays unbounded; with the two retired notes gone a
+  session holding a stamped or delegated top beside a plain working top
+  had recorded a skippable row here, and the plain top's status nudge was
+  held after the dismissal until the next box-wide keyed event or the
+  wake's dead-man instant, about six hours on a stamped session), and
   `unmarked:<verdict>` when no named leg noted the look (the None-site
   census in the gate's test pins that every site names its leg with a
   literal); the legs partition the NOTES,

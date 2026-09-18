@@ -180,9 +180,13 @@ class _Base(unittest.TestCase):
         (jd.STATE / "auto-nudge.json").write_text(json.dumps({"enabled": enabled, "nudged": {}}))
         km._autonudge_cache.clear()
 
-    def _seed(self, kind="job", age=7 * H, stamped=True, delegated=False, peers=None, sid=None):
+    PLAIN_TOP_TEXT = "ship the notes-api tests"      # the second top's text (`plain`): what its status nudge quotes
+
+    def _seed(self, kind="job", age=7 * H, stamped=True, delegated=False, peers=None, sid=None, plain=False):
         """A working top; with `stamped`, carrying a kind=`kind` awaiting stamp `age` old (naming `peers` when given); with
-        `delegated`, its only open leaf is a courier handoff (the all-delegated shape). `sid` seeds another session's store."""
+        `delegated`, its only open leaf is a courier handoff (the all-delegated shape). `sid` seeds another session's store.
+        With `plain`, a second top (g2, PLAIN_TOP_TEXT) stands beside the first: plain, working, unstamped, the top the status
+        nudge is for (the todo stand-down tests, jobs stage 1 round 2)."""
         sid = sid or SID
         gid = sid + ":g1"
         at = NOW - age
@@ -203,9 +207,19 @@ class _Base(unittest.TestCase):
                           "nodeComplete": False, "blocked": False, "cleared": False, "trail": [],
                           "t": 100, "mt": 100, "log": [],
                           "handoff": {"to": "web", "msgId": "11111111-2222-3333-4444-000000000001"}}
+        status = {gid: "working"}
+        if plain:
+            g2 = sid + ":g2"
+            nodes[g2] = {"id": g2, "text": self.PLAIN_TOP_TEXT, "parentId": None, "nodeComplete": False, "blocked": False,
+                         "cleared": False, "trail": [], "t": 200, "mt": 200, "log": []}
+            status[g2] = "working"
         (jd.GOALDIR / (sid + ".json")).write_text(json.dumps({
-            "rompUuid": sid, "seq": 1, "placements": {}, "status": {gid: "working"}, "nodes": nodes}))
+            "rompUuid": sid, "seq": 1, "placements": {}, "status": status, "nodes": nodes}))
         km._SESSION_STAMP_CACHE.clear()
+
+    def _todos_on(self):
+        """The user-todos feature switch, on (its own file, never the store): _open_user_todos reads [] with it off."""
+        (jd.STATE / km.USER_TODOS_SWITCH_FILE).write_text(json.dumps({"enabled": True}))
 
     def _reparse(self):
         """The transcript re-parsed: the same content as a new turns object under a new parse-cache key,
@@ -475,6 +489,20 @@ class WakeGoalUnkeyedExitsNoteTheirLegs(_Base):
         km._auto_nudge_tick(NOW, {SID: {"state": ""}, PEER: {"state": ""}})
         self.assertEqual(self._lifts(), [], "every ending is an observable event: no wake, no lift")
         self.assertEqual(self._by(), {"peerAlive": 1}, "the peers' liveness is in memory, not a keyed file")
+
+    def test_the_status_nudge_stood_down_behind_an_open_user_todo_notes_todoStandDown_with_nudges_on(self):
+        """Round 1 of jobs stage 1, HIGH (fresh-1): the goal loop's stand-down exit reads STATE/user-todos.json, a file outside
+        the memo's ten, and noted nothing; until the stage the stampedWait and allDelegated notes covered it for a session with
+        such a top beside a plain one. The exit notes todoStandDown, so the look records an unbounded row and the pass after the
+        todo's dismissal fires the held status nudge (the end-to-end pair in WakeOnlyLooksSkipOnTheKey). Gear ON: the stand-down
+        sits below `if wake_only: continue`, so the wake-only road never reaches it."""
+        self._toggle(True)
+        self._todos_on()
+        self._seed(stamped=False)                                # a plain working top, the status nudge's own
+        km._add_user_todo(SID, "which index shape do you want")
+        self._tick()
+        self.assertEqual(self.fb.sent, [], "the open todo explains the idle: the status nudge stands down")
+        self.assertEqual(self._by(), {"todoStandDown": 1}, "the todo store is not a keyed file: the exit notes its leg")
 
     def test_a_dormant_holder_notes_dormantOwner(self):
         # unreachable from the pass today (the alive set is a subset of the live map), pinned at the function so a
@@ -754,6 +782,58 @@ class WakeOnlyLooksSkipOnTheKey(_Base):
         p2 = self._pass(NOW + 5)
         self.assertEqual((p2["parses"], p2["skippedParses"]), (0, 2), "a boot over a persisted wake-mode memo skips the unchanged sessions")
         self.assertEqual(sorted(km._NUDGE_WALK_FIRST["skipped"]), sorted([SID[:8], SID2[:8]]), "and the boot row says which")
+
+    # ── the user-todo stand-down under the memo (review round 1 of jobs stage 1, HIGH) ──
+
+    def _status_nudge_fires_on_the_pass_after_the_todo_is_dismissed(self):
+        """Gear ON, the user-todos switch on, one open todo on the session: the passes before the dismissal parse every time
+        (the row is unbounded under todoStandDown) and send nothing; the dashboard's dismiss route (_resolve_user_todo, which
+        writes the todo store and its lifecycle log and moves none of the ten keyed files) is followed by ONE status nudge for
+        the plain top on the very next pass. At the round-1 head the same world recorded a bounded row after the first pass and
+        skipped past the dismissal: the nudge was held until the next box-wide keyed event (a postal, cleared or ledger row
+        anywhere on the box) or, on a stamped session, the wake's dead-man instant, about six hours."""
+        self._toggle(True)
+        self._todos_on()
+        self.alive = [SID]
+        tid = km._add_user_todo(SID, "which index shape do you want")
+        by0 = dict(km._NUDGE_WALK_STATS["unboundedBy"])
+        p1 = self._pass()
+        self.assertEqual((p1["parses"], self.fb.sent), (1, []), "the first pass evaluates and stands the status nudge down")
+        self.assertIsNone(self._row(SID)[-2], "the row is unbounded: the todo store is outside the key")
+        self.assertEqual(km._NUDGE_WALK_STATS["unboundedBy"].get("todoStandDown", 0) - by0.get("todoStandDown", 0), 1)
+        p2 = self._pass(NOW + 5)
+        self.assertEqual((p2["parses"], p2["skippedParses"], self.fb.sent), (1, 0, []), "still open: the look evaluates again, no skip")
+        self.assertTrue(km._resolve_user_todo(SID, tid, "dismissed"), "the dashboard's dismiss route")
+        p3 = self._pass(NOW + 10)
+        self.assertEqual((p3["parses"], p3["skippedParses"]), (1, 0), "the pass right after the dismissal evaluates")
+        self.assertEqual(len(self.fb.sent), 1, "and fires the held status nudge, once")
+        sid, body = self.fb.sent[0]
+        self.assertEqual(sid, SID)
+        self.assertIn(self.PLAIN_TOP_TEXT, body, "for the plain top")
+        self.assertNotIn(km.AWAITING_BACKSTOP_TEXT, body, "a status nudge, not a wake")
+        self.assertEqual(self._lifts(), [])
+        p4 = self._pass(NOW + 15)
+        self.assertEqual(len(self.fb.sent), 1, "once per genuine stall: the next pass re-fires nothing")
+
+    def test_a_stamped_top_beside_a_plain_top_fires_the_plain_tops_status_nudge_on_the_pass_after_the_todo_is_dismissed(self):
+        self._seed(kind="job", age=5 * H, plain=True)              # the stamped top's dead-man is an hour away
+        self._status_nudge_fires_on_the_pass_after_the_todo_is_dismissed()
+        self.assertIsNotNone(self._node().get("awaitingWhy"), "the stamped top's wait stands: not due")
+
+    def test_a_delegated_top_beside_a_plain_top_fires_the_plain_tops_status_nudge_on_the_pass_after_the_todo_is_dismissed(self):
+        self._seed(stamped=False, delegated=True, plain=True)
+        self._status_nudge_fires_on_the_pass_after_the_todo_is_dismissed()
+        self.assertEqual(km._auto_nudge_data()["walkGates"][self.gid]["gate"], "all-delegated", "the delegated top's gate is journaled")
+
+    def test_a_plain_top_alone_fires_its_status_nudge_on_the_pass_after_the_todo_is_dismissed(self):
+        """The pre-existing case the note also closes: with the plain top alone the base recorded a bounded row on the first pass
+        (no stamped or delegated top ever noted stampedWait or allDelegated for it), skipped from the second, and never fired
+        after the dismissal until a keyed file moved. The same note fixes it."""
+        self._seed(stamped=False)
+        p = jd.GOALDIR / (SID + ".json"); store = json.loads(p.read_text())
+        store["nodes"][self.gid]["text"] = self.PLAIN_TOP_TEXT      # the one top is the plain one the nudge quotes
+        p.write_text(json.dumps(store)); km._SESSION_STAMP_CACHE.clear()
+        self._status_nudge_fires_on_the_pass_after_the_todo_is_dismissed()
 
     # ── the wake's ledger writes under the memo (review finds on jobs stage 1) ──
 
