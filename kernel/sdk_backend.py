@@ -12036,6 +12036,12 @@ class SdkBackend:
             # directly, unscoped.
             os.environ["ROMP_CLI_REAL"] = self.claude_bin
         self._cli_scope_wrapper_logged = False    # the missing-wrapper fallback is reported once per backend
+        # (installed, tested) SDK version pairs whose host.sdk-untested row this backend has filed (fresh-2, round 2
+        # of the review, 2026-09-18): the venv's version is a machine condition, the same for every host on this box,
+        # so it is reported once per kernel life like the wrapper fallback above, not once per launch (each launch was
+        # appending a byte-identical error-centre entry and bumping the feed's cache key, the repetition the ring's
+        # dedupe exists to prevent). A venv repinned to ANOTHER untested version mid-life is a new pair, reported anew.
+        self._sdk_untested_reported: set = set()
         # CLI launches since boot that the wrapper reported running WITHOUT a scope (its stderr notice,
         # see _on_cli_stderr), and when the last one was. The boot verdict above is taken once; these say
         # whether it stopped holding afterwards. Read by api_health_snapshot (cliScope.fallbacks).
@@ -12433,7 +12439,8 @@ class SdkBackend:
             while not sock.exists():                          # loop-ok: a bounded wait on the socket appearing
                 if proc.poll() is not None:
                     # the host's last word when it left one (an SDK pin mismatch names both versions and the repin
-                    # command there; a spawn failure its exception type), so the card says why, not just where to look
+                    # command there; a spawn failure its exception type, with the version sentence only when the
+                    # failure is drift-shaped, and only from THIS run's rows), so the card says why, not just where to look
                     reason = ht.host_exit_reason(self.state_dir, sess.sid)
                     said = "exited before serving its socket (code %s); see hosts/%s/host.log%s" % (
                         proc.returncode, sess.sid, (": " + reason) if reason else "")
@@ -12713,8 +12720,19 @@ class SdkBackend:
                 prose = "the host had to SIGKILL %s's CLI: it did not exit within the grace after stdin closed" % sess.name
             elif kind == "host.sdk-untested":
                 # a host running on an SDK other than the one its private imports were verified against (the imports
-                # still resolved, so the session runs); visible here so the machine is repinned before a release moves one
-                prose = ("the host for %s runs claude-agent-sdk %s, %s than the %s it is written against; run %s to install the tested version"
+                # still resolved, so the session runs); visible here so the machine is repinned before a release moves one.
+                # Once per kernel life per version pair (_sdk_untested_reported; fresh-2, round 2 of the review,
+                # 2026-09-18): the venv is the machine's, so the first host to say so speaks for every host; a later
+                # launch under the same pair gets one plain kernel-log line, so which sessions ran on it stays readable
+                # there, and no problem row.
+                pair = (str(row.get("installed")), str(row.get("tested")))
+                if pair in self._sdk_untested_reported:
+                    self._log("host (%s): runs claude-agent-sdk %s, not the %s it is written against (reported once above, this kernel life)"
+                              % (sess.name, pair[0], pair[1]), problem=False)
+                    continue
+                self._sdk_untested_reported.add(pair)
+                prose = ("the host for %s runs claude-agent-sdk %s, %s than the %s it is written against; run %s to install the tested version "
+                         "(the venv is this machine's, so every host runs it; reported once per kernel life)"
                          % (sess.name, row.get("installed"), row.get("relation") if row.get("relation") in ("newer", "older") else "other",
                             row.get("tested"), _ht().sh.SDK_REPIN_COMMAND))
             else:

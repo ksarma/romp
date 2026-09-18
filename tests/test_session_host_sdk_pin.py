@@ -20,6 +20,12 @@ stale stderr tail (correctness-1, kernel-1), the ImportError verdict and the cau
 public-package names in host_transport.py (fresh-2), the ledger row for a refused launch (fresh-3), the drifted
 signature's composed reason and its no-SDK control (regression-1), the `_process` guard at both versions (tests-2),
 and the machine venv read from its own record (tests-3).
+
+Round 2 (2026-09-18) added: the version sentence is attached only to a drift-shaped spawn failure, never to a missing
+binary or a refused connection under an untested version, read through the chain the row carries (fresh-1); the
+reason composer reads this run's rows only, so a host that died writing nothing inherits no previous host's last word
+(correctness-1, kernel-1); and the untested-version problem row is filed once per kernel life per version pair, not
+once per launch (fresh-2).
 """
 import asyncio
 import importlib.abc
@@ -275,6 +281,45 @@ class VersionCheck(unittest.TestCase):
                 sh.sdk_internals()
         self.assertIn(OTHER, str(cm.exception))
 
+    def test_error_chain_is_the_chained_type_names_only_never_a_message(self):
+        # fresh-1 (round 2 of the review, 2026-09-18): the cli-spawn-failed row carries the types BEHIND the failure,
+        # so a drift the SDK's connect() wrapped as a connection error is still read as drift, and a missing binary
+        # it wrapped the same way is not. Type names only: a message could carry a line of the CLI's output.
+        self.assertEqual(sh.error_chain(None), "")
+        self.assertEqual(sh.error_chain(FileNotFoundError("/no/such/cli")), "", "a bare exception: no chain")
+        try:
+            try:
+                raise TypeError("__init__() got an unexpected keyword argument 'prompt'")
+            except TypeError as inner:
+                raise ConnectionError("Failed to start Claude Code: %s" % inner) from inner
+        except ConnectionError as e:
+            chain = sh.error_chain(e)
+        self.assertEqual(chain, "TypeError", "an explicit `from`: the cause's type")
+        self.assertNotIn("prompt", chain)
+        try:
+            try:
+                raise KeyError("k")
+            except KeyError:
+                raise AttributeError("no _process")
+        except AttributeError as e:
+            self.assertEqual(sh.error_chain(e), "KeyError", "an implicit chain: the context's type")
+        try:
+            try:
+                raise KeyError("k")
+            except KeyError:
+                raise AttributeError("no _process") from None
+        except AttributeError as e:
+            self.assertEqual(sh.error_chain(e), "", "`from None` suppresses the context, as the traceback module prints it")
+        e = ValueError("v")
+        for depth in range(10):
+            nxt = ValueError("v%d" % depth)
+            nxt.__cause__ = e
+            e = nxt
+        self.assertEqual(len(sh.error_chain(e).split(",")), sh.ERROR_CHAIN_CAP, "bounded")
+        a, b = OSError("a"), OSError("b")
+        a.__cause__, b.__cause__ = b, a
+        self.assertEqual(sh.error_chain(a), "OSError", "a cycle ends the walk")
+
 
 def _fake_site(root, version: str, with_name: bool, body: str = None) -> Path:
     """A site directory holding a fake claude_agent_sdk at `version` (a dist-info importlib.metadata reads) whose
@@ -401,6 +446,47 @@ class HostProcess(unittest.TestCase):
         for needle in (OTHER, sh.SDK_TESTED_VERSION, "newer", sh.SDK_REPIN_COMMAND, "web"):
             self.assertIn(needle, prose)
 
+    # fresh-2 (round 2 of the review, 2026-09-18): the venv's version is a machine condition, the same for every host
+    # on the box, and the row was filed per launch through a path that passes no ring key, so every relaunch appended a
+    # byte-identical error-centre entry and bumped problem_seq, the feed's cache key. Reported once per kernel life per
+    # version pair, like the missing-wrapper fallback; a repeat is one plain kernel-log line naming the session.
+    def test_an_untested_sdk_is_filed_once_per_kernel_life_not_once_per_launch(self):
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True); logs = []
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=logs.append)
+        sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID})
+        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+
+        def launch(pid, installed=OTHER, relation="newer"):
+            # a new host each time: its own identity (hostLogPos is keyed by it, so its log is read from zero) and a
+            # fresh host.log holding the run's two rows, as a relaunch of the session writes
+            (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "host-started"}) + "\n"
+                                         + json.dumps({"t": 2, "kind": "sdk-version-untested", "installed": installed,
+                                                       "tested": sh.SDK_TESTED_VERSION, "relation": relation}) + "\n")
+            sess = types.SimpleNamespace(sid=SID, name="web", _host=types.SimpleNamespace(hello={"host": {"pid": pid, "start": "s%d" % pid}}))
+            be._file_host_log_rows(sess)
+
+        def events():
+            p = Path(d) / sb.SESSION_EVENTS_FILE
+            return [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+        base = be.problem_seq()                                # the constructor's own boot probes may have filed
+        launch(101)
+        self.assertEqual([r["kind"] for r in events()], ["host.sdk-untested"])
+        self.assertEqual(be.problem_seq(), base + 1)
+        launch(102)
+        self.assertEqual([r["kind"] for r in events()], ["host.sdk-untested"], "the second launch under the same condition files no second row")
+        self.assertEqual(len([p for p in be.problems() if OTHER in p["text"]]), 1, "one error-centre entry")
+        self.assertEqual(be.problem_seq(), base + 1, "the feed's cache key did not move")
+        self.assertTrue(any("web" in l and OTHER in l and sb.PROBLEM_ROW_MARK not in l and "once" in l for l in logs),
+                        "the repeat is one plain kernel-log line naming the session: %r" % logs)
+        # another version is another condition: reported anew, and a relation that does not parse says "other than"
+        launch(103, installed="not-a-version", relation="different")
+        rows = events()
+        self.assertEqual([r["kind"] for r in rows], ["host.sdk-untested"] * 2)
+        self.assertEqual(be.problem_seq(), base + 2)
+        self.assertIn("other than", rows[1]["text"])
+        self.assertNotIn("different than", rows[1]["text"])
+        self.assertNotIn("None", rows[1]["text"])
+
     # regression-1 (round 1 of the review, 2026-09-18): the loud failure covered only a MISSING module or name. A
     # private class that is present but whose signature drifted died as a bare exception type name in the
     # cli-spawn-failed row, and the version context the host had just written (the sdk-version-untested row) was
@@ -460,6 +546,92 @@ class HostProcess(unittest.TestCase):
         reason = ht.host_exit_reason(d, SID)
         self.assertIn("not-a-version", reason)
         self.assertNotIn("newer", reason)
+
+    # fresh-1 (round 2 of the review, 2026-09-18): round 1's composition attached the version sentence and the repin
+    # remedy to EVERY spawn failure after an untested row, with no gate on the failure being version-related, so on a
+    # box running an untested SDK (the normal state here) a missing binary was reported as a version problem with a
+    # remedy that cannot fix it. The gate is the row's own type or one in the chain it carries (SDK_DRIFT_ERRORS).
+    def test_host_exit_reason_keeps_the_bare_type_name_for_a_failure_that_is_not_drift_shaped(self):
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+
+        def reason(error, causes=None):
+            row = {"t": 3, "kind": "cli-spawn-failed", "error": error}
+            if causes:
+                row["causes"] = causes
+            rows = [{"t": 1, "kind": "host-started"},
+                    {"t": 2, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"},
+                    row]
+            (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
+            return ht.host_exit_reason(d, SID)
+        # not a version fact: the bare type name, no version, no remedy
+        for error, causes in (("FileNotFoundError", None), ("PermissionError", None), ("CLINotFoundError", "FileNotFoundError"),
+                              ("CLIConnectionError", "FileNotFoundError"), ("CLIConnectionError", None), ("OSError", None)):
+            got = reason(error, causes)
+            self.assertEqual(got, error, (error, causes, got))
+            for needle in (OTHER, sh.SDK_TESTED_VERSION, sh.SDK_REPIN_COMMAND, "newer"):
+                self.assertNotIn(needle, got)
+        # drift-shaped: the type name first, then both versions and the remedy; a drift the SDK wrapped is read through its chain
+        for error, causes in (("TypeError", None), ("AttributeError", None), ("ModuleNotFoundError", None), ("ImportError", None),
+                              ("CLIConnectionError", "TypeError"), ("CLIConnectionError", "RuntimeError,AttributeError")):
+            got = reason(error, causes)
+            self.assertTrue(got.startswith(error + ":"), (error, causes, got))
+            for needle in (OTHER, sh.SDK_TESTED_VERSION, sh.SDK_REPIN_COMMAND, "newer"):
+                self.assertIn(needle, got)
+
+    _MISSING_BINARY = ("class %s:\n    def __init__(self, **kw):\n        pass\n\n    async def connect(self):\n"
+                       "        raise FileNotFoundError(2, 'No such file or directory', '/no/such/claude')\n" % NAME)
+    _WRAPPED_DRIFT = ("class CLIConnectionError(Exception):\n    pass\n\n\nclass %s:\n    def __init__(self, **kw):\n        pass\n\n"
+                      "    async def connect(self):\n        try:\n            raise TypeError('_build_command() takes 1 positional argument')\n"
+                      "        except TypeError as e:\n            raise CLIConnectionError('Failed to start Claude Code: %%s' %% e) from e\n" % NAME)
+
+    def test_a_missing_binary_on_an_untested_sdk_keeps_the_bare_type_name_through_the_real_host(self):
+        code, _ = self._run_host(_fake_site(self.state, OTHER, with_name=True, body=self._MISSING_BINARY))
+        self.assertEqual(code, 1)
+        rows = self._hostlog()
+        self.assertIn("sdk-version-untested", [r["kind"] for r in rows], "the untested row IS there; the gate is the failure's shape")
+        failed = [r for r in rows if r["kind"] == "cli-spawn-failed"]
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0]["error"], "FileNotFoundError")
+        self.assertNotIn("causes", failed[0], "a bare exception carries no chain")
+        self.assertEqual(ht.host_exit_reason(self.state, SID), "FileNotFoundError", "no version sentence, no repin")
+
+    def test_a_drift_the_sdk_wrapped_as_a_connection_error_is_read_through_the_chain_the_row_carries(self):
+        code, _ = self._run_host(_fake_site(self.state, OTHER, with_name=True, body=self._WRAPPED_DRIFT))
+        self.assertEqual(code, 1)
+        failed = [r for r in self._hostlog() if r["kind"] == "cli-spawn-failed"]
+        self.assertEqual((failed[0]["error"], failed[0]["causes"]), ("CLIConnectionError", "TypeError"))
+        self.assertNotIn("_build_command", json.dumps(failed), "type names only, never the message")
+        reason = ht.host_exit_reason(self.state, SID)
+        self.assertTrue(reason.startswith("CLIConnectionError:"), reason)
+        for needle in (OTHER, sh.SDK_TESTED_VERSION, sh.SDK_REPIN_COMMAND, "newer"):
+            self.assertIn(needle, reason)
+
+    # correctness-1 and kernel-1 (round 2 of the review, 2026-09-18): the outer scan for the failing row read the whole
+    # host.log while the inner scan for the untested row stopped at this run's host-started, so a launch whose host
+    # died writing nothing after its marker inherited a PREVIOUS host's reason and remedy. Both scans stop at the marker.
+    def test_host_exit_reason_reads_this_runs_rows_only_never_a_previous_hosts_last_word(self):
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        first = [{"t": 1, "kind": "host-started"},
+                 {"t": 2, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"},
+                 {"t": 3, "kind": "cli-spawn-failed", "error": "TypeError"}]
+        (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in first))
+        self.assertIn(OTHER, ht.host_exit_reason(d, SID), "the first run's reason, read alone")
+        with open(hd / "host.log", "a") as f:                  # the second run: its marker and nothing after it
+            f.write(json.dumps({"t": 4, "kind": "host-started", "hostPid": 4242}) + "\n")
+        self.assertEqual(ht.host_exit_reason(d, SID), "", "nothing from the first run: the launch error falls back to the log's path")
+        with open(hd / "host.log", "a") as f:                  # a marker followed by rows that are not failures
+            f.write(json.dumps({"t": 5, "kind": "host-started"}) + "\n" + json.dumps({"t": 6, "kind": "attached"}) + "\n")
+        self.assertEqual(ht.host_exit_reason(d, SID), "")
+        # the same for a crash row: a previous host's whole-text verdict is not this launch's either
+        crash = [{"t": 1, "kind": "host-started"}, {"t": 2, "kind": "host-crashed", "error": sh.sdk_mismatch_text(OTHER, LEAF + "." + NAME)},
+                 {"t": 3, "kind": "host-started"}]
+        (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in crash))
+        self.assertEqual(ht.host_exit_reason(d, SID), "")
+        # a log with no marker at all is read whole, as the inner scan always read it
+        (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "host-crashed", "error": "OSError: AF_UNIX path too long"}) + "\n")
+        self.assertEqual(ht.host_exit_reason(d, SID), "OSError: AF_UNIX path too long")
 
     # tests-2 (round 1 of the review, 2026-09-18): the guard for the SECOND private name the host reads (a transport
     # that connects without a `_process`) had no test, and at the tested version it claimed a version mismatch about

@@ -119,14 +119,27 @@ def host_exit_reason(state_dir, sid: str) -> str:
     environment value to host.log (its module docstring); that is the guarantee, not "prose".
 
     A cli-spawn-failed row is a bare exception type name. When the SAME run wrote an sdk-version-untested row
-    before it (the SDK imports at a version other than the pin, and its internals resolved), the type name is
-    kept as the first token and the sentence names both versions and the repin command (regression-1, round 1):
-    until then a private class that was present with a drifted signature died as "TypeError" and the version
-    context the host had just written was shown to no one. The untested row is the gate: the host writes it only
-    when the SDK is importable and the version differs, so a machine with no SDK at all (the pipe transport's
-    spawn failing the same arm) keeps its bare type name. Composed here, which reads the whole log in one pass,
-    rather than written into the row's error field, which is a type name everywhere else and is splatted into
-    the host.spawn-failed problem row."""
+    before it (the SDK imports at a version other than the pin, and its internals resolved) AND the failure is
+    drift-shaped, the type name is kept as the first token and the sentence names both versions and the repin
+    command (regression-1, round 1): until then a private class that was present with a drifted signature died
+    as "TypeError" and the version context the host had just written was shown to no one. Drift-shaped means the
+    row's own type, or a type in the chain it carries (`causes`, the host's error_chain), is one of
+    session_host.SDK_DRIFT_ERRORS: a moved name, a missing attribute, a changed signature. A missing or unreadable
+    binary, a missing working directory or a refused connection keeps its bare type name even under an untested
+    version (fresh-1, round 2 of the review, 2026-09-18): until round 2 every spawn failure after an untested row
+    was reported as a version problem with a remedy that could not fix it, and a box on an untested version is
+    the normal state on this machine. The untested row is the other gate: the host writes it only when the SDK is
+    importable and the version differs, so a machine with no SDK at all (the pipe transport's spawn failing the
+    same arm) keeps its bare type name. Composed here, which reads the whole log in one pass, rather than written
+    into the row's error field, which is a type name everywhere else and is splatted into the host.spawn-failed
+    problem row.
+
+    The family rule (correctness-1 and fresh-1, round 2): a diagnosis may only be attributed to something that
+    could have caused THIS failure, never a cause from another run or another kind. So both scans are bounded to
+    the current run, the rows after the last host-started marker: the outer scan for the failing row (until round
+    2 it read the whole file, so a launch whose host died writing no failing row inherited a previous host's reason
+    and remedy from the same host.log) and the inner scan for the untested row. A log with no host-started row at
+    all is read whole, as the inner scan always did (a host that wrote no marker wrote no row either)."""
     try:
         lines = (host_dir(state_dir, sid) / "host.log").read_text().splitlines()
     except OSError:
@@ -139,11 +152,16 @@ def host_exit_reason(state_dir, sid: str) -> str:
             continue
     for i in range(len(rows) - 1, -1, -1):
         row = rows[i]
+        if row.get("kind") == "host-started":      # this run's rows only: a previous run's last word is not this launch's
+            break
         if row.get("kind") not in ("host-crashed", "cli-spawn-failed") or not row.get("error"):
             continue
         error = str(row["error"])
         if row.get("kind") != "cli-spawn-failed":
             return error
+        types_seen = [error] + [c for c in str(row.get("causes") or "").split(",") if c]
+        if not any(t in sh.SDK_DRIFT_ERRORS for t in types_seen):
+            return error                            # not a version fact: no version sentence, no repin
         for prior in reversed(rows[:i]):       # this run's rows only: back to its host-started
             if prior.get("kind") == "host-started":
                 break

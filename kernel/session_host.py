@@ -73,6 +73,34 @@ SDK_PACKAGE = "claude_agent_sdk"              # the import name; a ModuleNotFoun
 SDK_REPIN_COMMAND = "bin/romp-sdk-setup"      # what installs the tested version
 # (module, name) for every private SDK name this module reaches at import; the check resolves each one
 SDK_INTERNALS = (("claude_agent_sdk._internal.transport.subprocess_cli", "SubprocessCLITransport"),)
+# The exception types a spawn failure on an UNTESTED version may be read through as SDK drift (fresh-1, round 2 of
+# the review, 2026-09-18): a private name that moved (ImportError, ModuleNotFoundError), one that is there without an
+# attribute the host reads (AttributeError), or one whose signature changed (TypeError; the shape round 1's composed
+# reason was added for). host_transport.host_exit_reason attaches the version sentence and the repin remedy to a
+# cli-spawn-failed row only when the row's own type, or one in the chain it carries (`causes`, error_chain below), is
+# one of these. A missing or unreadable binary (FileNotFoundError, PermissionError, the SDK's CLINotFoundError), a
+# missing working directory, a refused connection: none of these is a version fact, and a repin cannot fix them.
+SDK_DRIFT_ERRORS = ("TypeError", "AttributeError", "ImportError", "ModuleNotFoundError")
+ERROR_CHAIN_CAP = 5                           # chained type names a row carries at most (a chain is short; a cycle is not)
+
+
+def error_chain(e: "BaseException | None") -> str:
+    """The type names behind `e`, comma-joined: its `__cause__` (an explicit `raise ... from`) or, when the context is
+    not suppressed, its `__context__`, followed the way the traceback module prints a chain, at most ERROR_CHAIN_CAP
+    deep. Type names only, never a message (a message could carry a line of the CLI's output or a path). "" for a
+    bare exception. The SDK's connect() wraps every failure inside it as CLIConnectionError from the original (its
+    subprocess_cli, verified at 0.2.156), so a drifted call inside connect reaches the host as a connection error
+    whose cause is the TypeError; the cli-spawn-failed row carries this chain so the reason composer can see the
+    drift through the wrap, and see a FileNotFoundError behind a CLINotFoundError for what it is."""
+    names, seen = [], {id(e)}
+    while e is not None and len(names) < ERROR_CHAIN_CAP:
+        nxt = e.__cause__ if e.__cause__ is not None else (None if e.__suppress_context__ else e.__context__)
+        if nxt is None or id(nxt) in seen:
+            break
+        seen.add(id(nxt))
+        names.append(type(nxt).__name__)
+        e = nxt
+    return ",".join(names)
 
 
 class SdkInternalsMismatch(RuntimeError):
@@ -1104,7 +1132,11 @@ class SessionHost:
         except SdkInternalsMismatch:
             raise           # its text is the host's own and names the remedy: main's host-crashed record carries it whole
         except Exception as e:
-            self.log("cli-spawn-failed", error=type(e).__name__)
+            # the type name, plus the chained type names behind it when there are any (error_chain; fresh-1, round 2 of
+            # the review, 2026-09-18): the kernel's reason composer reads the chain to tell a drifted SDK call the SDK
+            # wrapped as a connection error from a missing binary it wrapped the same way. Never a message.
+            chain = error_chain(e)
+            self.log("cli-spawn-failed", error=type(e).__name__, **({"causes": chain} if chain else {}))
             self.exit_info = {"t": "exit", "code": None, "signal": None, "cause": "spawn-failed", "error": type(e).__name__}
             return 1
         self.sock_path.parent.mkdir(parents=True, exist_ok=True)
