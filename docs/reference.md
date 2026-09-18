@@ -3522,26 +3522,26 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `evict`: entries dropped for sessions that left the alive set; and the
   gauge `entries`). The interrupt tick drops from `intrMarks`
   and `statesOverlay` the entries of sessions outside its alive set each
-  cycle; the `statesOverlay` cache is also cleared whole above 256 entries, a
-  drop `evict` does not count and `entries` shows. `thread_reg` is the SDK
+  cycle; past 256 entries the `statesOverlay` cache also sheds the cursors
+  whose reader entry is gone or replaced (they could only refold or restore);
+  a drop `evict` does not count and `entries` shows. `thread_reg` is the SDK
   registry reader's memo, keyed like `caps`, with the same `hit`, `miss`,
   `fail` and `entries` (its `fail` counts a read that did not succeed, as the
   caps memo's does, and also a body that is not JSON or not a JSON object,
   answered as a failed read and not memoized; its stderr line names the
   stat's error when the stat failed too); its `evict` counts the 512-entry
   bound and the pop of an absent file's entry.
-  `lanes` is the
-  timeline's per-lane segment memo: a live lane's bars, segment ends, last
-  activity, compaction markers and judging marks, held while its parsed
-  transcript and goal store are the previous build's objects and its captions
-  file, archive file, branch clip and the host's recorded suspensions stand.
-  One outcome per live lane per bars build: `hit`, `miss`, `live_tail` (a
-  live tail was merged, so the lane was derived and not held),
-  `complain_skip` (the parse or a stage failed) and `unshared_skip` (a private
-  store with content); `evict` and the gauge `entries`; `segs_hit` and
-  `segs_miss` count the segments served and derived. `dead_serve`,
-  `dead_miss` and `dead_failed_serve` are the dead-lane memo's outcomes on the
-  same block, so one block carries every lane.
+  `lanes` is the timeline's
+  per-lane segment memo: a live lane's bars, segment ends, last activity,
+  compaction markers and judging marks, held while its parsed transcript and
+  goal store are the previous build's objects and its captions file, archive
+  file, branch clip and the host's recorded suspensions stand. One outcome per
+  live lane per bars build: `hit`, `miss`, `live_tail` (a live tail was merged,
+  so the lane was derived and not held), `complain_skip` (the parse or a stage
+  failed) and `unshared_skip` (a private store with content); `evict` and the
+  gauge `entries`; `segs_hit` and `segs_miss` count the segments served and
+  derived. `dead_serve`, `dead_miss` and `dead_failed_serve` are the dead-lane
+  memo's outcomes on the same block, so one block carries every lane.
   `judgingBand` is the timeline's judging band memo: a completed judge run's
   entry is held under its usage row while the row and the gloss it borrowed
   stand, so an unchanged entry is the same object build after build and the
