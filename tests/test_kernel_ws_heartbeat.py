@@ -171,10 +171,10 @@ class ShellLivenessMatchesTheShim(unittest.TestCase):
     def _shell_bounds(self):
         mob = km._LANDING_MOBILE_JS
         import re
-        line = re.search(r"var SH_STALE_MS=(\d+),SH_PROVISIONAL_MS=(\d+),SH_CONNECT_MS=(\d+),SH_REDIAL_MS=(\d+),SH_TICK_MS=(\d+),", mob)
-        self.assertIsNotNone(line, "the shell declares its own copy of the liveness constants")
+        line = re.search(r"var SH_STALE_MS=(\d+),SH_PROVISIONAL_MS=(\d+),SH_CONNECT_MS=(\d+),SH_REDIAL_MS=(\d+),SH_TICK_MS=(\d+),SH_BLIND_MS=(\d+),", mob)
+        self.assertIsNotNone(line, "the shell declares its own copy of the liveness constants, and names its blind redial")
         return {"stale": int(line.group(1)), "prov": int(line.group(2)), "connect_cut": int(line.group(3)),
-                "closed_redial": int(line.group(4)), "tick": int(line.group(5))}
+                "closed_redial": int(line.group(4)), "tick": int(line.group(5)), "blind": int(line.group(6))}
 
     def test_the_two_copies_agree_on_the_constants(self):
         shim, shell = self._shim_bounds(), self._shell_bounds()
@@ -184,6 +184,21 @@ class ShellLivenessMatchesTheShim(unittest.TestCase):
         self.assertEqual(shim["closed_redial"], shell["closed_redial"], "the CLOSED redial bound")
         self.assertEqual(shim["tick"], shell["tick"], "the 5 s watchdog tick")
         self.assertEqual(shell["connect_cut"], 15000, "the connect cut is a named constant at today's 15 s (SH_CONNECT_MS)")
+
+    def test_the_panes_link_backstop_covers_the_shells_whole_alive_cycle(self):
+        # review round 1 (kernel-2, 2026-09-18): the pane's link backstop (kernel.py _shim) calls the shell's redial loop
+        # dead once the shell's connT is stale past a bound, so the bound must cover the loop's whole ALIVE cycle on a
+        # hung path, from the shell's own constants: the CONNECTING cut, the watchdog tick that performs it (up to one
+        # tick late) and the blind redial that follows, rounded up to the next tick as a margin for late timers. The
+        # 20 s bound this replaces omitted the redial and named an alive loop dead in its last two seconds.
+        import re
+        shim, shell = km._shim("chat"), self._shell_bounds()
+        bound = int(re.search(r"L\.connT&&Date\.now\(\)-L\.connT>(\d+)\)", shim).group(1))
+        self.assertIn("else shd=SH_BLIND_MS;", km._LANDING_MOBILE_JS, "the blind redial reads its named constant, so the derivation below reads the value the shell runs")
+        cycle = shell["connect_cut"] + shell["tick"] + shell["blind"]
+        self.assertGreater(bound, cycle, "the bound exceeds the alive cycle's worst case (cut + one tick + the blind redial = %d ms)" % cycle)
+        self.assertEqual(bound, shell["connect_cut"] + 2 * shell["tick"], "...rounded up to the next tick: the cut plus two ticks")
+        self.assertEqual(bound, 25000)
 
     def test_the_two_copies_agree_on_the_tick_semantics(self):
         # both watchdogs carry the same three arms with the same bounds: an OPEN socket quiet past a bound is put down

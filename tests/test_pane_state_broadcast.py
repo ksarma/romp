@@ -322,6 +322,78 @@ console.log(JSON.stringify(out));
 """
 
 
+# ── the link reaches every shim-bearing iframe (D3, review round 1, 2026-09-18) ──────────────────────────
+# The boot and toggle apply (broadcast) tell the six pane frames the panes word, whose link field is the shell socket's
+# state. The re-tell the shell socket makes on its open, close and abandon (__rompPanesTell, also the mobile script's
+# tab switch) is the one that carries a CHANGED link, so it reaches every iframe in the document: the pane frames as
+# the panes word, the others (the settings frame, a split chat column) as a link word of their own, {romp:'link',link},
+# since a panes word would replace a chat column's pane set wholesale (render.ts). Before this the shell's link-up
+# reached the six pane frames alone and a split column or the settings frame ended its await on the shim's 5 s poll.
+# The two later-loading frames get load hooks: the settings frame (in the markup at boot, loaded when the gear opens)
+# and a split column (made by _LANDING_SPLIT_JS, which dispatches romp-chat-cols with the frame at creation).
+_LINK_SEED = r"""
+STORE['romp:settings'] = JSON.stringify({ showFilesControl: true });
+const EXTRA = {};
+const recorder = (id) => ({ id, contentWindow: { postMessage: (m) => { (POSTED[id] = POSTED[id] || []).push(JSON.parse(JSON.stringify(m))); } },
+  addEventListener: (ev, f) => { if (ev === 'load') (LOADS[id] = LOADS[id] || []).push(f); } });
+['f-settings', 'f-chat-2'].forEach((id) => { EXTRA[id] = recorder(id); });
+KEYS.forEach((k) => { frames['f-' + k].id = 'f-' + k; });   // the served iframes carry their ids
+document.querySelectorAll = (sel) => (sel === 'iframe' ? KEYS.map((k) => frames['f-' + k]).concat(Object.values(EXTRA)) : []);
+document.getElementById = (id) => frames[id] || EXTRA[id] || null;
+const WINL = {};
+global.addEventListener = (ev, f) => { if (ev === 'storage') STORAGE.push(f); (WINL[ev] = WINL[ev] || []).push(f); };
+let LINK = false; window.__rompLink = () => ({ up: LINK, connT: 0 });   // the shell socket's publication (_LANDING_MOBILE_JS)
+"""
+_LINK_DRIVER = r"""
+const out = {};
+const posted = (id) => (POSTED[id] || []).slice();
+const counts = () => Object.fromEntries(KEYS.map((k) => [k, (POSTED[k] || []).length]));
+out.boot = { settings: posted('f-settings'), chat2: posted('f-chat-2'), chatLink: (POSTED.chat || []).slice(-1)[0].link, counts: counts() };
+LINK = true; window.__rompPanesTell();   // the shell socket opens: its re-tell carries the link to EVERY iframe
+out.up = { settings: posted('f-settings'), chat2: posted('f-chat-2'), chat: (POSTED.chat || []).slice(-1)[0], counts: counts() };
+LINK = false; window.__rompPanesTell();  // and closes
+out.down = { settings: posted('f-settings').slice(-1)[0], chat2: posted('f-chat-2').slice(-1)[0], chatLink: (POSTED.chat || []).slice(-1)[0].link };
+(LOADS['f-settings'] || []).forEach((f) => f());   // the gear opens: the settings frame loads
+out.settingsLoad = posted('f-settings').slice(-1)[0];
+LINK = true;
+const f3 = recorder('f-chat-3');
+(WINL['romp-chat-cols'] || []).forEach((f) => f({ detail: { frame: f3, col: 3, open: true } }));   // the split script makes a column after boot
+(LOADS['f-chat-3'] || []).forEach((f) => f());   // it loads
+out.col3 = posted('f-chat-3');
+(WINL['romp-chat-cols'] || []).forEach((f) => f({ detail: { col: 3, open: false } }));   // a close carries no frame: nothing to wire, nothing thrown
+out.hooks = { settings: (LOADS['f-settings'] || []).length, col3: (LOADS['f-chat-3'] || []).length };
+console.log(JSON.stringify(out));
+"""
+
+
+class LinkReachesEveryIframe(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.keys = [k for k, _ in km._PANE_ORDER]
+        cls.out = _run(_COLLAPSE_HARNESS.replace("__KEYS__", json.dumps(cls.keys)).replace("__SEED__", _LINK_SEED) + km._LANDING_COLLAPSE_JS + _LINK_DRIVER)
+
+    def test_the_boot_apply_tells_the_pane_frames_alone(self):
+        b = self.out["boot"]
+        self.assertEqual(b["counts"], {k: 1 for k in self.keys}, "one panes word per pane frame at boot, as before")
+        self.assertEqual(b["chatLink"], "down", "no shell socket open yet: the word reads the link down")
+        self.assertEqual([b["settings"], b["chat2"]], [[], []], "the settings frame and the split column hear nothing at the boot apply (nothing changed for them)")
+
+    def test_the_shell_sockets_re_tell_reaches_every_iframe_once_each(self):
+        u = self.out["up"]
+        self.assertEqual(u["chat"]["link"], "up", "a pane frame hears the panes word with the link up")
+        self.assertEqual(u["chat"]["romp"], "panes")
+        self.assertEqual(u["counts"], {k: 2 for k in self.keys}, "one word per pane frame per re-tell: the panes word, not a second link word")
+        self.assertEqual(u["settings"], [{"romp": "link", "link": "up"}], "the settings frame hears a link word of its own, once")
+        self.assertEqual(u["chat2"], [{"romp": "link", "link": "up"}], "a split chat column too (no pane set on it: its routing set stays its own)")
+        d = self.out["down"]
+        self.assertEqual([d["settings"], d["chat2"], d["chatLink"]], [{"romp": "link", "link": "down"}, {"romp": "link", "link": "down"}, "down"], "the close's re-tell reads down everywhere")
+
+    def test_the_settings_frame_and_a_column_made_later_hear_the_link_when_they_load(self):
+        self.assertEqual(self.out["settingsLoad"], {"romp": "link", "link": "down"}, "the settings frame's load hook tells it the link as it stands")
+        self.assertEqual(self.out["col3"], [{"romp": "link", "link": "up"}], "a column the split script made after boot is wired by romp-chat-cols and hears the link at its load")
+        self.assertEqual(self.out["hooks"], {"settings": 1, "col3": 1}, "one load hook each; a column close (no frame) wires nothing")
+
+
 class OptionalPanes(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -597,7 +669,7 @@ class MobileScript(unittest.TestCase):
         # the mobile script parses BEFORE the collapse script (its boot show() finds no teller yet; the boot
         # apply that follows tells the panes), and the relay's tab switch happens at message time, after both
         html = km._landing()
-        self.assertLess(html.index("window.__rompMobileTab=show;"), html.index("window.__rompPanesTell=broadcast;"))
+        self.assertLess(html.index("window.__rompMobileTab=show;"), html.index("window.__rompPanesTell=broadcastAll;"))   # broadcastAll since review round 1 of D3 (2026-09-18): the re-tell reaches every iframe
 
 
 # ── the settings listener's arms ──────────────────────────────────────────────────────────────────

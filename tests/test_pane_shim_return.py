@@ -870,10 +870,13 @@ class ShellLedReturn(unittest.TestCase):
     """D3 (2026-09-18): the shell leads the visible pane's redial. A pane that sits in a shell publishing a link
     (window.parent.__rompLink) puts its socket down on a stale return and dials only when the link is up: at once if it
     already is, else on the shell's link-up word (a panes word with link:'up'), recording linkUpMs on its return-fresh;
-    a loud link-backstop dials anyway when the shell's own connT is 20 s stale. A standalone page (no __rompLink) runs
-    the upstream path unchanged. Independent of PR 3 (hidden panes park): here every pane awaits the link.
+    a loud link-backstop dials anyway when the shell's own connT is 25 s stale (its whole alive cycle on a hung path,
+    tests/test_kernel_ws_heartbeat.py pins the derivation). A standalone page (no __rompLink) runs the upstream path
+    unchanged. Independent of PR 3 (hidden panes park): here every pane awaits the link.
 
-    parentLinkVal is the shell's {up,connT}; fireWin("message",{romp:'panes',link:...}) hands the pane the shell's word."""
+    parentLinkVal is the shell's {up,connT}; fireWin("message",{romp:'panes',link:...}) hands the pane the shell's word
+    as a pane frame hears it, fireWin("message",{romp:'link',link:...}) as the settings frame or a split chat column
+    hears it (review round 1, 2026-09-18: a link word of its own, since a panes word would replace those frames' set)."""
 
     def test_await_with_the_link_down_puts_the_socket_down_and_dials_nothing_across_two_ticks(self):
         r = _run(r"""
@@ -908,6 +911,24 @@ rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
         self.assertEqual(len(r["rf"]), 1)
         self.assertEqual(r["rf"][0]["linkUpMs"], 4000, "linkUpMs is foreground->link-up: the path's own recovery")
         self.assertTrue(r["rf"][0]["redialed"])
+
+    def test_the_shells_link_word_ends_the_await_at_the_words_time_not_the_backstop_ticks(self):
+        # review round 1 (correctness-1): the settings frame and a split chat column are shim-bearing iframes the panes
+        # word never reached, so they ended a shell-led await only on the 5 s backstop poll and their linkUpMs absorbed
+        # it. The shell now tells them a link word of their own ({romp:'link',link}); the shim ends its await on it.
+        r = _run(r"""
+open();recv({type:"ka"});hide();NOW+=46000;
+parentLinkVal={up:false,connT:NOW};show();
+var dialedAtReturn=sockets.length;
+NOW+=300;parentLinkVal={up:true,connT:NOW};fireWin("message",{romp:"link",link:"up"});   // the word a split column or the settings frame hears: no pane set on it
+var dialedAfterWord=sockets.length,awaitingAfterWord=awaitLink;
+NOW+=200;open();NOW+=50;recv({type:"feed",asks:[]});
+out({dialedAtReturn:dialedAtReturn,dialedAfterWord:dialedAfterWord,awaitingAfterWord:awaitingAfterWord,
+rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
+        self.assertEqual(r["dialedAtReturn"], 1, "no dial while awaiting")
+        self.assertEqual(r["dialedAfterWord"], 2, "the link word dials at once, as the panes word does")
+        self.assertIs(r["awaitingAfterWord"], False)
+        self.assertEqual(r["rf"][0]["linkUpMs"], 300, "linkUpMs is the word's time, not the 5 s backstop tick's")
 
     def test_the_link_up_at_the_decision_dials_at_once_with_awaitLink_false(self):
         r = _run(r"""
@@ -953,31 +974,71 @@ out({up:up,down:down});""")
         self.assertTrue(r["down"]["nulled"], "...and puts the socket down so the tick is inert")
 
     def test_a_restarting_frame_keeps_its_250ms_redial_with_the_link_down(self):
+        # review round 1 (tests-1): the close must land INSIDE a return window, or the D3 onclose line is never reached
+        # (inWin false: the 250 came from the upstream clause and the test passed with the guard's restart exception
+        # removed). So: a stale return with the link up (dials at once), one in-window close with the link up (the
+        # upstream cadence, redialed and open), then the announced restart, the link going down with it, and the close.
         r = _run(r"""
-function armed(){return liveTimers().filter(function(t){return t.fn==="connect";}).map(function(t){return t.ms;});}
-parentLinkVal={up:false,connT:NOW};
-open();recv({type:"ka"});recv({type:"restarting",boot:"1"});
-NOW+=100;sock().readyState=3;sock().onclose({code:1006});
-out({delays:armed(),awaiting:awaitLink});""")
-        self.assertIn(250, r["delays"], "an announced restart keeps its tight 250 ms redial even with the link down")
+function connectTimers(){return timers.filter(function(t){return t.live&&t.fn.name==="connect";});}
+function fireConnects(){connectTimers().forEach(function(t){t.live=false;t.fn();});}
+parentLinkVal={up:true,connT:NOW};
+open();recv({type:"ka"});hide();NOW+=46000;show();open();           // a stale return with the link up: dials at once, opens
+NOW+=100;sock().readyState=3;sock().onclose({code:1006});fireConnects();open();   // one in-window close with the link up: the upstream 0/250 redial, open again
+recv({type:"restarting",boot:"1"});                                 // the kernel announces its death
+parentLinkVal={up:false,connT:NOW};                                 // and the shell's link goes down with it
+NOW+=100;sock().readyState=3;sock().onclose({code:1006});          // the in-window close with the link down and a restart announced
+out({delays:connectTimers().map(function(t){return t.ms;}),awaiting:awaitLink,wsNull:ws===null});""")
+        self.assertEqual(r["delays"], [250], "an announced restart keeps its tight 250 ms redial even with the link down, inside the window")
         self.assertIs(r["awaiting"], False, "...and does not re-await: the announce is the kernel's own word")
+        self.assertFalse(r["wsNull"], "...and the socket is not put down (the re-await path is the one that nulls it)")
 
-    def test_the_link_backstop_dials_when_the_shells_connT_is_20001ms_stale(self):
+    def test_the_link_backstop_brackets_the_shells_whole_alive_cycle_no_dial_at_24999ms_a_dial_at_25001ms(self):
+        # review round 1 (kernel-2, tests-6): the bound is the shell's whole alive cycle on a hung path, from its named
+        # constants (the 15 s cut, the tick that performs it, the 2 s blind redial: 22 s, rounded up to the next tick,
+        # 25 s; tests/test_kernel_ws_heartbeat.py pins the sum). The 20 s bound omitted the redial, so a pane tick landing
+        # in the loop's last two seconds called an alive loop dead. Two-sided: nothing at the cycle's worst case (22 s)
+        # nor at 24,999 ms; a dial and a link-backstop row at 25,001 ms.
         r = _run(r"""
 open();recv({type:"ka"});hide();NOW+=46000;
 parentLinkVal={up:false,connT:NOW};show();                         // connT fresh at the return: the shell's loop is alive
 var awaiting=awaitLink,dialedAtReturn=sockets.length;
 tick();var afterFirstTick=sockets.length;                          // link down and young: no dial
-NOW+=20001;tick();                                                 // the shell's connT unrenewed for >20 s: its loop is dead
-var dialedAfterBackstop=sockets.length;
+NOW+=22000;tick();var at22000=sockets.length;                      // the alive cycle's worst case: still the shell's loop
+NOW+=2999;tick();var at24999=sockets.length;
+NOW+=2;tick();var at25001=sockets.length;                          // the shell's connT unrenewed past the whole cycle: its loop is dead
 open();                                                             // the fresh socket opens: the queued link-backstop row flushes onto it
-out({awaiting:awaiting,dialedAtReturn:dialedAtReturn,afterFirstTick:afterFirstTick,dialedAfterBackstop:dialedAfterBackstop,
+out({awaiting:awaiting,dialedAtReturn:dialedAtReturn,afterFirstTick:afterFirstTick,at22000:at22000,at24999:at24999,at25001:at25001,
 backstop:rows(sock(),"link-backstop").length});""")
         self.assertIs(r["awaiting"], True)
         self.assertEqual(r["dialedAtReturn"], 1, "no dial at the return while the link is down")
         self.assertEqual(r["afterFirstTick"], 1, "no dial while the link is down and its loop young")
-        self.assertEqual(r["dialedAfterBackstop"], 2, "the backstop dials anyway once the shell's connT is 20 s stale")
+        self.assertEqual(r["at22000"], 1, "no dial at 22 s stale: the shell's loop can still be alive there (cut + tick + blind redial)")
+        self.assertEqual(r["at24999"], 1, "no dial one ms under the bound")
+        self.assertEqual(r["at25001"], 2, "the backstop dials anyway once the shell's connT is stale past the whole cycle")
         self.assertEqual(r["backstop"], 1, "...and files a loud link-backstop diag row")
+
+    def test_a_refused_backstop_dial_re_awaits_and_the_backstop_redials_each_tick_inside_the_window_then_the_blind_cadence(self):
+        # review round 1 (tests-6): the cadence after a backstop dial the path refuses, stated as intended. The shell's
+        # loop is dead, so the link-up word will never come: the refusal re-awaits (the D3 onclose line, inside the
+        # window) and the backstop's next 5 s tick dials again with another loud row, until the return window ends (30 s
+        # from the foreground); a refusal outside the window arms the upstream blind 1.5 s redial and awaits nothing.
+        # A bounded 5 s cadence with a row per dial is the fault's own signal, not a storm.
+        r = _run(r"""
+function refuseIfDialed(){var s=sock();if(s.readyState===0){s.readyState=3;s.onclose({code:1006});}}
+open();recv({type:"ka"});hide();NOW+=46000;
+parentLinkVal={up:false,connT:NOW-10001};show();                   // the shell's connT already 10 s stale at the return
+var log=[];
+for(var t=5000;t<=30000;t+=5000){NOW+=5000;tick();var d=sockets.length;refuseIfDialed();
+log.push({t:t,dialed:d,awaiting:awaitLink,blind:redials().map(function(x){return x.ms;})});}
+timers.filter(function(x){return x.live&&x.fn.name==="connect";}).forEach(function(x){x.live=false;x.fn();});open();   // the blind redial opens: the queued rows flush onto it
+out({log:log,backstops:rows(sock(),"link-backstop").length});""")
+        by_t = {e["t"]: e for e in r["log"]}
+        self.assertEqual([by_t[5000]["dialed"], by_t[10000]["dialed"]], [1, 1], "connT 15 s and 20 s stale: inside the bound, no dial")
+        self.assertEqual(by_t[15000], {"t": 15000, "dialed": 2, "awaiting": True, "blind": []}, "25,001 ms stale: the backstop dials; the refusal re-awaits (in the window), no blind timer")
+        self.assertEqual(by_t[20000], {"t": 20000, "dialed": 3, "awaiting": True, "blind": []}, "the next tick dials again, and re-awaits again")
+        self.assertEqual(by_t[25000], {"t": 25000, "dialed": 4, "awaiting": True, "blind": []})
+        self.assertEqual(by_t[30000], {"t": 30000, "dialed": 5, "awaiting": False, "blind": [1500]}, "at the window's end the refusal arms the upstream blind 1.5 s redial and awaits nothing")
+        self.assertEqual(r["backstops"], 4, "one loud link-backstop row per backstop dial")
 
 
 if __name__ == "__main__":

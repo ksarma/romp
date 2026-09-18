@@ -901,14 +901,15 @@ class MobileShellDiagExecutes(unittest.TestCase):
 # reset by an open, a return-probe row filed per return, and window.__rompLink for the panes to follow.
 _SHELL_PROBE_HARNESS = r"""
 var SHNOW=1000000;Date.now=function(){return SHNOW;};
-var SHTIMERS=[];global.setTimeout=function(fn,ms){SHTIMERS.push({fn:fn,ms:ms,live:true});return SHTIMERS.length;};
+var SHTIMERS=[];global.setTimeout=function(fn,ms){SHTIMERS.push({fn:fn,ms:ms,live:true,at:SHNOW+ms});return SHTIMERS.length;};   // at: when the timer is due on the fake clock (shRunRefused walks them in order)
 global.clearTimeout=function(id){if(id&&SHTIMERS[id-1])SHTIMERS[id-1].live=false;};
 var SHINTERVALS=[];global.setInterval=function(fn,ms){SHINTERVALS.push({fn:fn,ms:ms});return SHINTERVALS.length;};
 global.location={protocol:'https:',host:'TESTHOST',search:''};
 global.sessionStorage={getItem:function(k){return k==='romp:wid'?'W1':'';}};
 var SHSOCKS=[];global.WebSocket=function(u){this.url=u;this.readyState=0;this.sent=[];SHSOCKS.push(this);};
 global.WebSocket.prototype.send=function(s){this.sent.push(s);};global.WebSocket.prototype.close=function(){this.readyState=3;};
-var TELLS=0;window.__rompPanesTell=function(){TELLS++;};   // count the shell's re-tells of the panes word (D3: open/close/abandon)
+var TELLS=0,TELLLINKS=[];window.__rompPanesTell=function(){TELLS++;TELLLINKS.push(window.__rompLink().up);};   // count the shell's re-tells of the panes word (D3: open/close/abandon) and record the link each tell reads (review round 1: the publication order, the link reads up before the open's word)
+var LOST=0;window.__rompApiSocketLost=function(){LOST++;};   // the API health detail's hook: a press pending on the socket cannot be answered (review round 1: an abandon tells it too)
 function shSock(){return SHSOCKS[SHSOCKS.length-1];}
 function shOpen(){var s=shSock();s.readyState=1;s.onopen();return s;}
 function shRecv(m){shSock().onmessage({data:JSON.stringify(m)});}
@@ -919,6 +920,14 @@ function shShow(){document.visibilityState='visible';shFireDoc('visibilitychange
 function shProbeRows(){var all=[];SHSOCKS.forEach(function(s){s.sent.forEach(function(x){var m=JSON.parse(x);if(m.type==='clientDiag'&&m.surface==='shell'&&m.what==='return-probe')all.push(m.data);});});return all;}
 function shDialTimers(){return SHTIMERS.filter(function(t){return t.live&&t.fn.name==='shellWS';});}
 function shFireDials(){shDialTimers().forEach(function(t){t.live=false;t.fn();});}
+// walk the fake clock timer by timer until `until`, refusing every dial the moment it is made (a fast-refusing path);
+// returns the most live shellWS timers seen at any moment (one chain reads 1; a doubled chain 2)
+function shRunRefused(until){var maxLive=0;function peek(){var n=shDialTimers().length;if(n>maxLive)maxLive=n;}
+peek();for(var guard=0;guard<1000;guard++){var live=shDialTimers();if(!live.length)break;
+var next=live[0];live.forEach(function(t){if(t.at<next.at)next=t;});if(next.at>until)break;
+SHNOW=Math.max(SHNOW,next.at);next.live=false;next.fn();var s=shSock();if(s.readyState===0){s.readyState=3;s.onclose({code:1006});}peek();}
+return maxLive;}
+function shRefuseNow(){var s=shSock();if(s.readyState===0){s.readyState=3;s.onclose({code:1006});}}
 function shOut(o){process.stdout.write(JSON.stringify(o));}
 """
 
@@ -941,7 +950,13 @@ class ShellLinkProbe(unittest.TestCase):
     """D3 (2026-09-18): the shell socket is the page's one link probe. It gets the shim's liveness rules with the
     shell's OWN copy of the constants (romp-manager's ruling; tests/test_kernel_ws_heartbeat.py pins the two copies to
     agree), files ONE return-probe row per return, and publishes window.__rompLink for the panes to follow. Run under
-    node against a fake WebSocket and controllable timers, the way MobileShellDiagExecutes runs the shell script."""
+    node against a fake WebSocket and controllable timers, the way MobileShellDiagExecutes runs the shell script.
+
+    Review round 1 (2026-09-18) added the executed cases the refuters found missing: the one-live-attempt guard, the
+    standing socket that files no probe, the watchdog's OPEN-quiet arm with the freeze and resume stamps, the two 250 ms
+    cadences, the publication order, the probe row's integers; and the three shell fixes of that round: one pending
+    redial timer (a dial clears it), the CLOSED arm that can fire (onclose keeps shWs), and the abandon that tells the
+    API health detail."""
 
     def test_the_shell_dials_one_socket_with_the_dashboards_wid_and_publishes_the_link(self):
         r = _run_probe(r"""
@@ -986,6 +1001,54 @@ shOut({dialed:dialed,beforeCut:beforeCut,cutRs:cutRs,armedAfterCut:armedAfterCut
         self.assertEqual(r["armedAfterCut"], 2, "its onclose arms a redial, no new socket yet")
         self.assertEqual(r["afterRedial"], 3, "the redial dials the next single attempt")
 
+    def test_one_live_attempt_a_late_timer_calling_in_on_a_connecting_or_open_socket_dials_nothing(self):
+        # review round 1 (tests-2): the guard at the top of shellWS, exercised directly. A refused attempt arms the
+        # ladder timer; a return then dials at once and clears it (one chain), but a browser that had already queued
+        # the timer's callback can still call in late: with an attempt CONNECTING, and again with it OPEN, the guard
+        # dials nothing. Without the guard the same calls dial a second and a third concurrent socket.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // the fast path dials socket 2
+shRefuseNow();                                          // refused: the ladder timer arms (1 s)
+var late=shDialTimers()[0];                             // the callback a browser could still deliver late
+shHide();SHNOW+=100;shShow();                           // a second return: the fast path dials socket 3 (CONNECTING) and clears the timer
+var afterReturn=SHSOCKS.length,timerLive=late.live;
+late.fn();var afterLateCall=SHSOCKS.length;             // the late call finds one attempt CONNECTING: nothing
+shOpen();late.fn();shTick();var afterOpen=SHSOCKS.length;   // and OPEN: nothing (the tick's arms leave a fresh OPEN socket alone too)
+shOut({afterReturn:afterReturn,timerLive:timerLive,afterLateCall:afterLateCall,afterOpen:afterOpen});""")
+        self.assertEqual(r["afterReturn"], 3, "the second return dialed one fresh attempt")
+        self.assertIs(r["timerLive"], False, "the return's dial cleared the pending ladder timer (one chain)")
+        self.assertEqual(r["afterLateCall"], 3, "a late call into shellWS with an attempt CONNECTING dials nothing: one live attempt")
+        self.assertEqual(r["afterOpen"], 3, "...and with it OPEN, nothing")
+
+    def test_a_standing_socket_at_the_return_is_kept_and_files_no_return_probe(self):
+        # review round 1 (tests-3): the body's claim that `keep` never posts. The socket is OPEN and fresh at the
+        # return, so the fast path keeps it: no dial, no row. Reading the rows at the return alone would be vacuous (a
+        # probe files on the NEXT open), so a wrongly dialed socket is given the open that would file its row.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHNOW+=100;shShow();                           // a short background with the socket standing
+var socks=SHSOCKS.length,rs=SHSOCKS[0].readyState;
+if(SHSOCKS.length>1)shOpen();                           // a socket the return should not have dialed gets its open
+shOut({socks:socks,rs:rs,rows:shProbeRows()});""")
+        self.assertEqual(r["socks"], 1, "the standing socket is kept: no dial at the return")
+        self.assertEqual(r["rs"], 1)
+        self.assertEqual(r["rows"], [], "and no return-probe row: a keep never posts")
+
+    def test_the_return_probe_row_carries_the_ladders_integers_with_the_clock_advanced(self):
+        # review round 1 (tests-7): the row's integers, asserted with the fake clock moving (with it still, firstFailMs
+        # and ms both read 0 and a kernel that hard-coded them would pass). Four refusals 500 ms apart, then the open.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // hidden 100 ms, quiet 100 ms; the fast path dials at once
+function refuse(){SHNOW+=500;shRefuseNow();shFireDials();}
+refuse();refuse();refuse();refuse();                    // four refusals: the ladder, each 500 ms after its dial
+SHNOW+=500;shOpen();                                    // the fifth attempt opens 2500 ms after the foreground
+shOut({probe:shProbeRows()});""")
+        self.assertEqual(len(r["probe"]), 1)
+        self.assertEqual(r["probe"][0], {"decision": "redial-closed", "hiddenMs": 100, "quietMs": 100, "attempts": 4, "firstFailMs": 2000, "ms": 2500},
+                         "hiddenMs and quietMs from the return, attempts the refusals, firstFailMs from the first refusal, ms foreground to open")
+
     def test_a_refused_attempt_backs_off_on_the_1_2_4_4s_ladder_reset_by_an_open(self):
         r = _run_probe(r"""
 shOpen();shRecv({type:'ka'});
@@ -1011,13 +1074,130 @@ shSock().readyState=3;var closed=window.__rompLink().up;
 shOut({open1:open1,stale1:stale1,fresh:fresh,closed:closed});""")
         self.assertEqual([r["open1"], r["stale1"], r["fresh"], r["closed"]], [True, False, True, False])
 
-    def test_the_open_and_close_re_tell_the_panes_word(self):
+    def test_the_open_and_close_re_tell_the_panes_word_and_the_word_reads_the_link_as_it_stands(self):
+        # review round 1 (tests-5): the publication order. The open stamps shLastRecv BEFORE it re-tells, so the word
+        # the panes hear at the open reads the link up (a tell ahead of the stamp would read a stale clock: down); the
+        # close's tell reads down. The stale-return shape, the phone's case: hide, the socket dies, a long gap, the
+        # return abandons (a tell reading down) and the fresh open tells up.
         r = _run_probe(r"""
-var t0=TELLS;shOpen();var onOpen=TELLS-t0;
-var t1=TELLS;SHSOCKS[0].readyState=3;SHSOCKS[0].onclose({code:1006});var onClose=TELLS-t1;
-shOut({onOpen:onOpen,onClose:onClose});""")
-        self.assertGreaterEqual(r["onOpen"], 1, "the socket open re-tells the panes word (link up)")
-        self.assertGreaterEqual(r["onClose"], 1, "the socket close re-tells it (link down)")
+var n0=TELLLINKS.length;shOpen();var atOpen=TELLLINKS.slice(n0);
+var n1=TELLLINKS.length;SHSOCKS[0].readyState=3;SHSOCKS[0].onclose({code:1006});var atClose=TELLLINKS.slice(n1);
+shFireDials();shOpen();shRecv({type:'ka'});             // the blind redial opens
+shHide();shSock().readyState=3;SHNOW+=100000;           // dead while hidden, a long gap
+var n2=TELLLINKS.length;shShow();var atReturn=TELLLINKS.slice(n2);   // the abandon's tell
+var n3=TELLLINKS.length;shOpen();var atFreshOpen=TELLLINKS.slice(n3);
+shOut({atOpen:atOpen,atClose:atClose,atReturn:atReturn,atFreshOpen:atFreshOpen});""")
+        self.assertEqual(r["atOpen"], [True], "the socket open re-tells the panes word once, and the word reads the link UP (the stamp lands before the tell)")
+        self.assertEqual(r["atClose"], [False], "the socket close re-tells it once, reading down")
+        self.assertEqual(r["atReturn"], [False], "the return's abandon re-tells it, reading down")
+        self.assertEqual(r["atFreshOpen"], [True], "the fresh open after a stale return tells up")
+
+    # ---- review round 1 (tests-4): the watchdog's OPEN-quiet arm, the freeze and resume stamps, the two 250 ms cadences,
+    # all executed (the source-text pin in tests/test_kernel_ws_heartbeat.py is the parity check alone)
+    def test_the_watchdogs_open_quiet_arm_abandons_and_redials_a_socket_quiet_past_stale_ms(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});var t0=TELLS,l0=LOST;
+SHNOW+=29000;shTick();var before=SHSOCKS.length;        // quiet 29 s: inside the bound, kept
+SHNOW+=2000;shTick();                                   // quiet 31 s: past SH_STALE_MS
+shOut({before:before,socks:SHSOCKS.length,rs0:SHSOCKS[0].readyState,tells:TELLS-t0,lost:LOST-l0});""")
+        self.assertEqual(r["before"], 1, "quiet inside the bound: kept")
+        self.assertEqual(r["socks"], 2, "quiet past SH_STALE_MS: the arm abandons the socket and redials at once")
+        self.assertEqual(r["rs0"], 3, "the quiet socket was closed by the abandon")
+        self.assertGreaterEqual(r["tells"], 1, "the abandon re-told the panes (link down)")
+        self.assertEqual(r["lost"], 1, "and told the API health detail once (a press pending on it cannot be answered)")
+
+    def test_a_resume_stamps_a_fresh_open_socket_and_the_kept_socket_runs_at_the_provisional_bound(self):
+        # the freeze/resume window sits strictly inside the stale bound (10 s frozen, 26 s since the last frame at the
+        # deciding tick), so the redial can come from the resume stamp's PROVISIONAL bound alone: 14 s after the stamp
+        # nothing, 16 s after it the abandon. Without the stamp the socket reads 26 s quiet under the 30 s bound: kept.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shFireDoc('freeze');SHNOW+=10000;shFireDoc('resume');   // a Chromium thaw: the OPEN socket is stamped, provisionally
+SHNOW+=14000;shTick();var at14=SHSOCKS.length;
+SHNOW+=2000;shTick();var at16=SHSOCKS.length;
+shOut({at14:at14,at16:at16});""")
+        self.assertEqual(r["at14"], 1, "14 s after the resume stamp: inside SH_PROVISIONAL_MS, kept")
+        self.assertEqual(r["at16"], 2, "16 s after it: the provisional keep no frame confirmed is abandoned and redialed")
+
+    def test_a_socket_already_stale_at_the_freeze_is_not_re_stamped_by_the_resume(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+SHNOW+=35000;shFireDoc('freeze');                       // 35 s quiet when the tab froze: already past SH_STALE_MS
+SHNOW+=5000;shFireDoc('resume');shTick();               // the thaw must not make it fresh
+shOut({socks:SHSOCKS.length});""")
+        self.assertEqual(r["socks"], 2, "a socket 30 s overdue when the tab froze is not stamped: the tick abandons and redials it")
+
+    def test_an_announced_restart_keeps_the_250ms_redial(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});shRecv({type:'restarting',boot:'1'});
+SHNOW+=100;shSock().readyState=3;shSock().onclose({code:1006});
+var t=SHTIMERS[SHTIMERS.length-1];
+shOut({fn:t.fn.name,ms:t.ms,live:t.live});""")
+        self.assertEqual([r["fn"], r["ms"], r["live"]], ["shellWS", 250, True], "the kernel's own word: a tight redial")
+
+    def test_a_hung_attempt_cut_inside_the_return_window_redials_at_250ms(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // the fast path dials; the path hangs
+SHNOW+=16000;shTick();var cut=SHSOCKS[1].readyState;    // past the 15 s cut: the tick closes it
+SHSOCKS[1].onclose({code:1006});var t=SHTIMERS[SHTIMERS.length-1];   // the browser's onclose, 16 s into the return window
+shOut({cut:cut,fn:t.fn.name,ms:t.ms});""")
+        self.assertEqual(r["cut"], 3)
+        self.assertEqual([r["fn"], r["ms"]], ["shellWS", 250], "a hung attempt the cut paced, inside the window: the prompt 250 ms redial")
+
+    # ---- review round 1: the three shell fixes of that round
+    def test_a_return_during_an_outage_makes_one_redial_chain_the_dial_clears_the_pending_blind_timer(self):
+        # fresh-1: the pre-return close's blind 2 s timer is still pending when the page returns (a page whose timers
+        # keep running while hidden: this harness, a desktop tab, Android Chrome before its throttle). The return's
+        # direct dial must cancel it, or two chains run the ladder side by side for the whole outage (before the fix:
+        # two live timers after the return and eighteen dials in 30 s of refusals; after: one and about ten).
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();var held=SHSOCKS[0];held.readyState=3;held.onclose({code:1006});   // the held socket's close reaches the page while hidden: the blind redial arms
+var timersBeforeReturn=shDialTimers().length;
+SHNOW+=100;shShow();shRefuseNow();                      // the return dials at once; the path refuses it
+var liveAfterReturn=shDialTimers().length;
+var maxLive=shRunRefused(SHNOW+30000);                  // 30 s of refusals on the fake clock
+shOut({timersBeforeReturn:timersBeforeReturn,liveAfterReturn:liveAfterReturn,maxLive:maxLive,dials:SHSOCKS.length-1});""")
+        self.assertEqual(r["timersBeforeReturn"], 1, "the close while hidden armed the blind redial")
+        self.assertEqual(r["liveAfterReturn"], 1, "the return's dial cleared it: the refusal's ladder timer is the ONE pending timer")
+        self.assertEqual(r["maxLive"], 1, "at no moment in 30 s of refusals is more than one redial timer live: one chain")
+        self.assertLessEqual(r["dials"], 10, "about ten dials from the return in 30 s on the ladder (a doubled chain made eighteen)")
+        self.assertGreaterEqual(r["dials"], 8)
+
+    def test_the_watchdogs_closed_arm_recovers_a_lost_redial_timer(self):
+        # correctness-2: a CLOSED socket whose redial timer the browser lost. onclose keeps shWs (it nulled it before,
+        # so the tick returned on !shWs and this arm could never fire).
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+SHNOW+=100;shSock().readyState=3;shSock().onclose({code:1006});   // an ordinary drop: the blind redial arms
+var armed=shDialTimers().length,linkAfterClose=window.__rompLink().up;
+SHNOW+=8001;shTick();                                   // the timer never fired; SH_REDIAL_MS (8 s) past the dial, the CLOSED arm dials
+var dialed=SHSOCKS.length,liveAfter=shDialTimers().length;
+shOut({armed:armed,linkAfterClose:linkAfterClose,dialed:dialed,liveAfter:liveAfter});""")
+        self.assertEqual(r["armed"], 1)
+        self.assertIs(r["linkAfterClose"], False, "a CLOSED shWs publishes the link down")
+        self.assertEqual(r["dialed"], 2, "the CLOSED arm dials once the redial bound has passed")
+        self.assertEqual(r["liveAfter"], 0, "and its dial cleared the lost timer, so no second chain follows")
+
+    def test_an_abandon_tells_the_api_health_detail_once_as_a_browser_reported_close_does(self):
+        # regression-1 / kernel-1: shAbandon detaches onclose, so the detail's hook (window.__rompApiSocketLost) was
+        # never called on the return's abandon or the watchdog's; a pause press pending on that socket stayed
+        # acknowledged through the redial. Now each abandon of the socket the detail rides tells it, once.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});var l0=LOST;
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // the return's abandon of a socket the browser never reported closed
+var onReturnAbandon=LOST-l0;
+shOpen();shRecv({type:'ka'});var l1=LOST;
+SHNOW+=31000;shTick();                                  // the watchdog's OPEN-quiet abandon
+var onWatchdogAbandon=LOST-l1;
+shOpen();shRecv({type:'ka'});var l2=LOST;
+SHNOW+=100;shSock().readyState=3;shSock().onclose({code:1006});   // a browser-reported close, for comparison
+var onBrowserClose=LOST-l2;
+shOut({onReturnAbandon:onReturnAbandon,onWatchdogAbandon:onWatchdogAbandon,onBrowserClose:onBrowserClose});""")
+        self.assertEqual(r["onReturnAbandon"], 1, "the return's abandon tells the detail once")
+        self.assertEqual(r["onWatchdogAbandon"], 1, "the watchdog's abandon tells it once")
+        self.assertEqual(r["onBrowserClose"], 1, "as a browser-reported close always did")
 
 
 if __name__ == "__main__":

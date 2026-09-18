@@ -400,7 +400,7 @@ test("a redial armed as FOREGROUND that then stays silent raises when the watchd
   h.settles(1);
 });
 
-// D3 (2026-09-18): the shell leads a framed pane's return redial when, and only when, the shell publishes its link —
+// D3 (2026-09-18): the shell leads a framed pane's return redial when, and only when, the shell publishes its link:
 // window.parent.__rompLink is a function (the ruling of 2026-09-18: not the phone media query, not a foreign parent alone).
 // Every case above runs with a fake shell that publishes none, so they drive today's path; these two pin the gate from
 // both sides. The full D3 behaviour (the backstop's 20 s bound, the in-window close cadence by link state, the restarting

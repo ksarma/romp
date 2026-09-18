@@ -64436,18 +64436,26 @@ if(ws.readyState===0&&Date.now()-connT>15000){try{ws.close();}catch(e){}return;}
 if(ws.readyState===3&&Date.now()-connT>8000){connect();}},5000);
 // [fork] D3 (2026-09-18): the shell leads this pane's return redial. The shell socket is the page's one link probe;
 // on a stale return into a down link the fast path below puts this socket down (the tick above goes inert on !ws) and
-// waits, and the shell's link-up word is the redial's event. The shell re-tells the panes word (link:'up'|'down',
-// _LANDING_COLLAPSE_JS panesMsg) on its socket's open/close/abandon, so a routine panes word carries the current link
-// too. Only ends an await with no socket; stamps linkUpMs (foreground->link-up) onto the pending return-fresh.
-try{window.addEventListener("message",function(e){var m=e&&e.data;if(!m||m.romp!=="panes")return;
+// waits, and the shell's link-up word is the redial's event. The shell re-tells the link on its socket's open, close
+// and abandon (_LANDING_COLLAPSE_JS broadcast): the six pane frames hear it as the link field of the panes word
+// (link:'up'|'down', panesMsg), every other shim-bearing iframe (the settings frame, a split chat column) as a link
+// word of its own ({romp:'link',link}), since a panes word would replace those frames' pane set (review round 1,
+// 2026-09-18: before this the word reached the six pane frames alone, and the others ended their await on the 5 s
+// backstop poll below). Only ends an await with no socket; stamps linkUpMs (foreground->link-up) onto the pending
+// return-fresh.
+try{window.addEventListener("message",function(e){var m=e&&e.data;if(!m||(m.romp!=="panes"&&m.romp!=="link"))return;
 if(m.link==="up"&&awaitLink&&!ws){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;connect();}});}catch(e){}
 // the link backstop: re-read the shell's link every 5 s while awaiting with no socket. An `up` we missed the word for
-// dials; a link whose own connect attempt (connT) has not renewed for 20 s (the shell's 15 s CONNECTING cut plus one
-// 5 s tick) means the shell's redial loop is dead, so dial anyway and say why loudly (a link-backstop diag row). 20 s
-// is derived from existing bounds, not a new constant; it approximates the one event nobody can hear (that loop dying).
+// dials; a link whose own connect attempt (connT) has not renewed for 25 s means the shell's redial loop is dead, so
+// dial anyway and say why loudly (a link-backstop diag row). 25 s is the shell's whole alive cycle on a hung path,
+// from its named constants (_LANDING_MOBILE_JS): the 15 s CONNECTING cut (SH_CONNECT_MS), the watchdog tick that
+// performs it (up to one SH_TICK_MS late) and the 2 s blind redial that follows (SH_BLIND_MS), 22 s, rounded up to
+// the next tick as a margin for late timers; tests/test_kernel_ws_heartbeat.py pins the sum against those constants
+// (review round 1, 2026-09-18: the 20 s bound omitted the redial, so a pane tick landing in the loop's last two
+// seconds called an alive loop dead). It approximates the one event nobody can hear (that loop dying).
 setInterval(function(){if(!awaitLink||ws)return;var L=parentLink();if(L===undefined)return;
 if(L.up){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;connect();return;}
-if(L.connT&&Date.now()-L.connT>20000){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;staleDiag("link-backstop","");connect();}},5000);
+if(L.connT&&Date.now()-L.connT>25000){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;staleDiag("link-backstop","");connect();}},5000);
 // visibility fast-path (the user 2026-07-05): a BACKGROUNDED tab has its timers throttled, so the 5s watchdog
 // above can lag and the browser may have quietly dropped the socket while it slept. The instant the tab is
 // foregrounded, if the socket isn't open or has gone quiet past the watchdog window, treat the view as stale:
@@ -67927,18 +67935,21 @@ var shellOpened=false;   // T265: this socket's REOPEN is the kernel-restart sig
 // keeps its OWN copy of these rules rather than sharing the shim's (the shim is upstream text the fold touches weekly);
 // tests/test_kernel_ws_heartbeat.py pins the two copies to agree on the constants and the tick. The connect cut is a
 // named constant at today's 15 s (SH_CONNECT_MS, no behaviour change); the 5 s cut experiment is a later harness leg.
-var shWs=null,shLastRecv=0,shConnT=0,shResumeProvisional=0,shHiddenAt=0,shForegroundedAt=0,shFrozeAt=0,shResumedAt=0,shFailed=0,shFirstFailT=0,shRestartAnnounced=0,shReturnProbe=null,shRung=0;
-var SH_STALE_MS=30000,SH_PROVISIONAL_MS=15000,SH_CONNECT_MS=15000,SH_REDIAL_MS=8000,SH_TICK_MS=5000,SH_LADDER=[1000,2000,4000,4000];
+var shWs=null,shLastRecv=0,shConnT=0,shResumeProvisional=0,shHiddenAt=0,shForegroundedAt=0,shFrozeAt=0,shResumedAt=0,shFailed=0,shFirstFailT=0,shRestartAnnounced=0,shReturnProbe=null,shRung=0,shTimer=0;   // shTimer: the ONE pending redial timer (review round 1, 2026-09-18: a dial clears it, so a return while the pre-return close's blind timer is pending makes one chain, not two on the ladder side by side)
+var SH_STALE_MS=30000,SH_PROVISIONAL_MS=15000,SH_CONNECT_MS=15000,SH_REDIAL_MS=8000,SH_TICK_MS=5000,SH_BLIND_MS=2000,SH_LADDER=[1000,2000,4000,4000];   // SH_BLIND_MS: the redial after an ordinary drop outside any window (today's shell), named so the pane's link backstop is derived from it (kernel.py _shim)
 // the shell publishes the page's link: a synchronous read for the same-origin pane iframes (their parentLink), and the
 // panes word (link:'up'|'down', _LANDING_COLLAPSE_JS panesMsg) re-told on this socket's open, close and abandon. up only
 // for a socket that is OPEN and heard a frame within SH_STALE_MS (the shim's rule); connT for the pane's 20 s backstop.
 window.__rompLink=function(){return {up:!!(shWs&&shWs.readyState===1&&Date.now()-shLastRecv<=SH_STALE_MS),connT:shConnT};};
 function shTell(){try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}
-function shAbandon(){var d=shWs;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}shWs=null;if(shellSock===d)shellSock=null;shTell();}   // detach + null so the abandoned socket's onclose is nobody's event (as the shim's abandon)
+function shAbandon(){var d=shWs;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}shWs=null;   // detach + null so the abandoned socket's onclose is nobody's event (as the shim's abandon)...
+if(shellSock===d){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}shellSock=null;}   // ...so the API health detail is told HERE, in ws.onclose's order (the hook, then the null): a pause press this socket carried cannot be answered now (review round 1, 2026-09-18: unsaid, the redial's ready re-sent the last frame with the same seq and the press stayed acknowledged, the case onclose's own comment guards against)
+shTell();}   // link down: re-tell the panes
 // the shim's freeze / resume stamps: a thawed Chromium tab must not redial a shell socket the browser still holds OPEN
 document.addEventListener('freeze',function(){shFrozeAt=Date.now();});
 document.addEventListener('resume',function(){shResumedAt=Date.now();if(shWs&&shWs.readyState===1&&!(shFrozeAt&&shFrozeAt-shLastRecv>SH_STALE_MS)){shLastRecv=Date.now();shResumeProvisional=shLastRecv;}});
 function shellWS(){try{if(shWs&&(shWs.readyState===0||shWs.readyState===1))return;   // [fork] D3: one live attempt at a time (a lost timer + the tick can both call in)
+clearTimeout(shTimer);shTimer=0;   // [fork] D3: a dial cancels the pending redial timer, so the return's direct dial and the pre-return close's blind timer make ONE chain (review round 1, 2026-09-18: two chains ran the ladder side by side for the whole outage, 18 dials in 30 s instead of 10)
 shConnT=Date.now();var proto=location.protocol==='https:'?'wss://':'ws://';
 // this dashboard's id rides the connect, as it does on every pane's socket (wid(): the sessionStorage key the HEAD
 // script mints before any pane connects): an op the shell sends that the kernel answers with a reveal (the API
@@ -67978,18 +67989,19 @@ else if(m&&m.type==='warn'&&typeof m.text==='string'&&m.text&&window.__rompNotif
 else if(m&&m.type==='updateAvail'&&window.__rompUpdateOffer)window.__rompUpdateOffer(m.cur||'',m.tag||'',m.drift||'',m.boot||'',m.state||'',m.manager);};
 // the API health detail's pause acknowledgment rides this socket: a press it carried cannot be answered now (the
 // redial's ready re-sends the last frame verbatim), so the detail is told before the redial (_LANDING_APIH_JS)
-ws.onclose=function(){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}if(shellSock===ws)shellSock=null;if(shWs===ws)shWs=null;shTell();   // [fork] D3: link down - re-tell the panes
+ws.onclose=function(){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}if(shellSock===ws)shellSock=null;shTell();   // [fork] D3: link down - re-tell the panes. shWs keeps the CLOSED socket (review round 1, 2026-09-18): the watchdog's CLOSED arm below reads it to recover a lost redial timer; shellWS's guard skips a socket that is neither CONNECTING nor OPEN and __rompLink requires readyState 1, so a CLOSED shWs is harmless
 if(!shOpened){if(!shFailed)shFirstFailT=Date.now();shFailed++;}   // [fork] D3: a handshake that never opened - the return probe's attempt count
 var shInWin=shForegroundedAt&&Date.now()-shForegroundedAt<SH_STALE_MS,shd;   // [fork] D3: the redial cadence (ruling 4, 2026-09-18)
 if(shRestartAnnounced&&Date.now()-shRestartAnnounced<30000)shd=250;   // an announced restart keeps its tight redial (the kernel's own word)
 else if(!shOpened&&Date.now()-shConnT<SH_CONNECT_MS){shd=SH_LADDER[shRung<SH_LADDER.length?shRung:SH_LADDER.length-1];shRung++;}   // a REFUSED attempt (an onclose within the connect cut): back off on the bounded ladder 1/2/4/4 s, reset by an open, so a fast-refusing path is not a dial storm (the harness baseline: 236 dials/pane in 30 s at 250 ms)
 else if(shInWin)shd=250;   // a HUNG attempt the 15 s cut paced, inside a return window: prompt
-else shd=2000;   // the blind cadence for an ordinary drop outside any window (today's shell)
-setTimeout(shellWS,shd);};}catch(e){}}
+else shd=SH_BLIND_MS;   // the blind cadence for an ordinary drop outside any window (today's shell)
+shTimer=setTimeout(shellWS,shd);};}catch(e){}}   // the one pending redial timer (a dial clears it, shellWS)
 // [fork] D3: the shell's progress watchdog - the shim's three arms with the shell's own copy of the bounds. An OPEN
 // socket quiet past the bound (PROVISIONAL_MS while a resumed keep awaits a confirming frame, STALE_MS otherwise) is
 // abandoned and redialed; a CONNECTING one past the 15 s cut is closed (its onclose then redials); a CLOSED one past
-// the redial bound dials. Inert when there is no socket, so an awaiting page runs nothing here.
+// the redial bound dials (a redial timer the browser lost; onclose keeps shWs so this arm can see it). Inert when
+// there is no socket (after an abandon), so an awaiting page runs nothing here.
 setInterval(function(){if(!shWs)return;
 if(shWs.readyState===1){var b=shResumeProvisional?SH_PROVISIONAL_MS:SH_STALE_MS;if(shLastRecv&&Date.now()-shLastRecv>b){shAbandon();shellWS();}return;}
 if(shWs.readyState===0&&Date.now()-shConnT>SH_CONNECT_MS){try{shWs.close();}catch(e){}return;}
@@ -68500,8 +68512,19 @@ _LANDING_COLLAPSE_JS = """
   function panesMsg(){var mob=!!(window.__rompMobileOn&&window.__rompMobileOn()),tab=mob?document.body.getAttribute('data-tab'):null;
     var on={};KEYS.forEach(function(k){on[k]=mob?(k===tab):!!po[k];});return {romp:'panes',on:on,avail:{files:filesCtl()},link:(window.__rompLink&&window.__rompLink().up)?'up':'down'};}   // [fork] D3 (2026-09-18): the page's link is the shell socket's state (_LANDING_MOBILE_JS window.__rompLink), re-told on its open/close/abandon; consumers (render.ts, waiting.ts) replace on and avail wholesale and ignore keys they do not read
   function tell(f,m){try{f&&f.contentWindow&&f.contentWindow.postMessage(m,'*');}catch(e){}}
+  // [fork] D3 (2026-09-18): the page's link reaches EVERY shim-bearing iframe, not the six pane frames alone. The pane
+  // frames hear it as the panes word's link field; the others (the settings frame, a split chat column: every iframe
+  // in this document runs the shim) hear a link word of their own, {romp:'link',link}, because a panes word would
+  // replace a chat column's pane set wholesale (render.ts). The shim's await ends on either word (kernel.py _shim).
+  // Review round 1: before this a split column or the settings frame ended its await on the shim's 5 s backstop poll.
+  // broadcast (the boot and toggle apply) stays the pane frames' word; the re-tell the shell and the mobile script call
+  // (__rompPanesTell) is the one that carries a CHANGED link, so it is the one that reaches every iframe.
   function broadcast(){var m=panesMsg();KEYS.forEach(function(k){tell(document.getElementById('f-'+k),m);});}
-  window.__rompPanesTell=broadcast;   // the mobile script re-tells on a tab switch / layout flip
+  function linkMsg(){return {romp:'link',link:panesMsg().link};}
+  function tellLink(){var m=linkMsg(),pane={};KEYS.forEach(function(k){pane['f-'+k]=true;});
+    Array.prototype.forEach.call(document.querySelectorAll('iframe'),function(f){if(!pane[f.id])tell(f,m);});}
+  function broadcastAll(){broadcast();tellLink();}
+  window.__rompPanesTell=broadcastAll;   // the mobile script re-tells on a tab switch / layout flip; the shell socket on its open, close and abandon (_LANDING_MOBILE_JS shTell)
   // The OPTIONAL panes (the user 2026-09-10): the gear's Panes section (romp:settings.panes, per browser,
   // settings.ts paneSet: only an explicit false hides) says whether Sessions (timeline), the Outline (fleet)
   // and the Feed are in this dashboard AT ALL, a different thing from the rail toggle, which hides a loaded
@@ -68568,6 +68591,8 @@ _LANDING_COLLAPSE_JS = """
   reconcile();   // the optional panes this browser shows, before the first apply (the body class ships with the defaults)
   apply();
   ALL.forEach(function(k){var f=document.getElementById('f-'+k);if(f)f.addEventListener('load',function(){tell(f,panesMsg());});});   // wired after the boot apply: both orders (iframe first / shell first) are covered; every iframe, since a pane enabled later loads later
+  var fst=document.getElementById('f-settings');if(fst)fst.addEventListener('load',function(){tell(fst,linkMsg());});   // [fork] D3 (review round 1): the settings frame loads when the gear opens, long after the boot apply; it hears the link then
+  window.addEventListener('romp-chat-cols',function(e){var f=e&&e.detail&&e.detail.frame;if(f&&f.addEventListener)f.addEventListener('load',function(){tell(f,linkMsg());});});   // [fork] D3 (review round 1): a split chat column is made later (_LANDING_SPLIT_JS make / makeBelow dispatch this at creation; this script runs first, so a column restored at boot is caught too); it hears the link when it loads
   window.addEventListener('romp:keys',apply);   // a rebind (or palette-main's boot nudge) refreshes the titles
   window.addEventListener('storage',function(e){if(!e||!e.key||e.key===SK)reconcile(true);apply();});     // …including one made in another tab; a gear save (romp:settings, or a cleared store) re-reads the optional panes first, and a pane it turned on comes on screen
 })();
