@@ -3423,13 +3423,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   could serialize as JSON and shipped as `str()`, one per encode; the kernel's
   stderr names each such type once). Three more read the per-entry work
   itself: `entries_walked` (every entry the keyed split visited; a rebuild's
-  new collection walks them all, so per timeline build it equals the entry
-  count), `entries_encoded` (the walked entries it serialized rather than
-  served from its per-entry memo, so walked minus encoded is what the memo
-  saved) and `feed_slot_split` (feed frames sent through the view-delta slot
-  path, the one path that re-encodes every card per build: a `?delta=1` feed
-  client that did not announce the feed delta capability; nonzero means one
-  is connected).
+  new collection object walks them all, an unchanged collection object is
+  served from the split memo and walks none), `entries_encoded` (the walked
+  entries it serialized rather than served from its per-entry memo, so walked
+  minus encoded is what the memo saved) and `feed_slot_split` (feed sends
+  through the view-delta slot path, counted per send whether a frame crossed
+  or the dedup held it; that is the one path that re-encodes every card per
+  build: a `?delta=1` feed client that did not announce the feed delta
+  capability; nonzero means one is connected).
   `intrMarks` is the interrupt-marks
   memo behind the interrupt tick, the nudge tick and the feed's badge, one
   entry per (session, parse family) keyed on the parse object's identity and
