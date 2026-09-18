@@ -33,6 +33,10 @@ Sources, and what each stamp is (every stamp is an EVENT's time, never the clock
 Output: --json, the whole document (schema 1), or the one-screen text summary per window. Windows are
 days or weeks (--window), the week anchored on --anchor (default: the day of the first restart in range),
 in the machine's local time unless --tz names a zone. Missing sources are said, never silently zero.
+`--json --public` writes the document's PUBLIC form (cli/perf_public.py, the shape `romp perf export --public`
+writes): the session names the cut rows and the buckets carry (cutSessions), the sids, pids, scope units,
+labels and the kernel's sha are dropped, every other key and string is folded to a code identifier or `other`,
+and the finished document is searched for the strings only this machine knows before it is printed.
 """
 import argparse
 import glob
@@ -46,6 +50,9 @@ import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))   # cli/, whether run through the bin/ symlink or loaded by path
+import perf_public  # noqa: E402  the public shape (`--public`), shared with `romp perf export`
 
 SCHEMA = 1
 SCOPE_RE = re.compile(r"romp-session-([0-9a-fA-F]{1,8})-(\d+)-\d+\.scope\Z")
@@ -836,9 +843,20 @@ def summary(doc: dict) -> str:
     return "\n".join(lines)
 
 
+def public_form(doc: dict) -> dict:
+    """The document's paste-safe form: perf_public.fold over the whole document (the denylist drops cutSessions,
+    sid, name, pid, scope, label and the rest; every other key and string folds to an identifier or `other`),
+    marked `public: true` so a reader knows the names were never there."""
+    out = perf_public.fold(doc)
+    out["public"] = True
+    return out
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="romp restart-metrics", description=__doc__.split("\n\n")[0])
     ap.add_argument("--json", action="store_true", help="print the whole document as JSON")
+    ap.add_argument("--public", action="store_true",
+                    help="with --json: the paste-safe form (cli/perf_public.py): no session name, id, pid, scope or label")
     ap.add_argument("--window", choices=("day", "week"), default="day")
     ap.add_argument("--anchor", help="YYYY-MM-DD the weeks start from (default: the first restart's day)")
     ap.add_argument("--since", help="YYYY-MM-DD, inclusive")
@@ -849,6 +867,9 @@ def main(argv=None) -> int:
     ap.add_argument("--label", default=DEFAULT_LABEL,
                     help="what the document calls this machine (default: '%s'; never the hostname unless you say so)" % DEFAULT_LABEL)
     a = ap.parse_args(argv)
+    if a.public and not a.json:
+        sys.stderr.write("romp restart-metrics: --public applies to the JSON document; pass --json --public\n")
+        return 2
     state = Path(a.state) if a.state else state_dir()
     try:
         since = day_start(a.since, a.tz) if a.since else None
@@ -860,6 +881,14 @@ def main(argv=None) -> int:
         return 2
     doc = collect(state, kind=a.window, anchor=a.anchor, tz=a.tz, since=since, until=until, live=not a.no_live,
                   label=a.label)
+    if a.public:
+        doc = public_form(doc)
+        hits = perf_public.identifier_hits(doc, perf_public.machine_probes(state))
+        if hits:
+            kind, where = hits[0]
+            sys.stderr.write("romp restart-metrics: refused: a string this machine knows (%s) survives as %s; nothing printed\n"
+                             % (kind, where))
+            return 1
     if a.json:
         sys.stdout.write(json.dumps(doc, indent=1, sort_keys=True) + "\n")
     else:
