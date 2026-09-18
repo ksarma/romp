@@ -201,8 +201,8 @@ CHILD = ("import runpy, socket, sys; socket.gethostname = lambda: %r; sys.argv =
 def _run(args, env_extra=None, state=None):
     """bin/romp-perf-export as a child, hermetic: the suite's interpreter, a private state root, a synthetic
     HOME, USER and hostname (CHILD), no live kernel port and no token unless the caller says so."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k != "CLAUDE_CODE_SESSION_ID"}
-    state = state or tempfile.mkdtemp()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in ("CLAUDE_CODE_SESSION_ID", "XDG_CONFIG_HOME")}
+    state = state or tempfile.mkdtemp()      # no XDG_CONFIG_HOME: the child resolves the private list under its synthetic HOME, never this machine's
     env.update({"XDG_STATE_HOME": os.path.dirname(state) if os.path.basename(state) == "romp" else state,
                 "HOME": HOME, "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1"})
     env.update(env_extra or {})
@@ -1381,6 +1381,69 @@ class Cli(unittest.TestCase):
                          [("hostname", "a key under a")])
         self.assertEqual(_hits({"a": {"b": "x " + SID2[:8]}}, probes), [("session id", "the value at a/b")])
         self.assertEqual(_hits({"TESTHOST": 1}, probes), [("hostname", "a key under the root")])
+
+    def test_the_private_strings_list_feeds_the_probes_when_present_and_is_a_no_op_absent(self):
+        """The machine-local list the repository's pre-push hook reads (~/.config/romp/private-strings.txt: one string per
+        line, `#` comments, blanks) is the maintainer's own list of what must never be published, a coined project nickname
+        among them, which fits the identifier grammar and is neither the hostname nor the login, so no other probe knew it
+        and a document carrying one passed all three checks (the upload's second review round, 2026-09-18). Each entry is a
+        probe of kind `private string`, lower-cased, PROBE_MIN applied, matched as a run of whole tokens like the hostname
+        and the login; the path is resolved the way the hook resolves it (ROMP_PRIVATE_STRINGS, else XDG_CONFIG_HOME, else
+        HOME/.config); no file is no probe, so a clone that never set one up is unchanged. This widens the shared check:
+        the export, restart-metrics --json --public and the upload all run it. Fails before: no such kind existed."""
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, True)
+        env = {"HOME": home, "USER": "tester"}
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"):
+            self.assertEqual([p for p in pp.machine_probes(None, env=env) if p[0] == "private string"], [], "no file, no probe")
+            self.assertEqual(pp.private_strings(env), [])
+            self.assertEqual(pp.private_strings({}), [], "no HOME and no variable: no path at all, no traceback")
+            os.makedirs(os.path.join(home, ".config", "romp"))
+            with open(os.path.join(home, ".config", "romp", "private-strings.txt"), "w", encoding="utf-8") as fh:
+                fh.write("# the list the pre-push hook reads\n\n   ZZCOINEDZZ   \nabc\nsecond-coined # trailing comment\n")
+            probes = pp.machine_probes(None, env=env)
+            self.assertEqual([s for kind, s in probes if kind == "private string"], ["zzcoinedzz", "second-coined"],
+                             "comments and blanks dropped, the three-character line under PROBE_MIN dropped, lower-cased, in file order")
+            self.assertEqual(pp.private_strings(env), ["ZZCOINEDZZ", "abc", "second-coined"], "the raw entries, as the hook reads them")
+            self.assertIn("private string", pp.WORD_KINDS)
+            self.assertEqual(_hits({"a": {"b": "zzcoinedzz-app"}}, probes), [("private string", "the value at a/b")])
+            self.assertEqual(_hits({"a": {"b": "app_ZZcoinedZZ"}}, probes), [("private string", "the value at a/b")], "case-insensitive")
+            self.assertEqual(_hits({"a": {"zzcoinedzzs": 1}}, probes), [], "a word probe: whole tokens, not a substring")
+            self.assertEqual(_hits({"second": 1, "coined": 1}, probes), [], "the run must be contiguous")
+            self.assertEqual(_hits({"a": {"second.coined": 1}}, probes), [("private string", "a key under a")])
+            # the path, the way the hook resolves it: the variable first, then XDG_CONFIG_HOME, then HOME/.config
+            xdg = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, xdg, True)
+            os.makedirs(os.path.join(xdg, "romp"))
+            with open(os.path.join(xdg, "romp", "private-strings.txt"), "w", encoding="utf-8") as fh:
+                fh.write("xdgcoined\n")
+            explicit = os.path.join(xdg, "explicit.txt")
+            with open(explicit, "w", encoding="utf-8") as fh:
+                fh.write("explicitcoined\n")
+            self.assertEqual(pp.private_strings_path(env), os.path.join(home, ".config", "romp", "private-strings.txt"))
+            self.assertEqual(pp.private_strings_path(dict(env, XDG_CONFIG_HOME=xdg)), os.path.join(xdg, "romp", "private-strings.txt"))
+            self.assertEqual(pp.private_strings_path(dict(env, XDG_CONFIG_HOME=xdg, ROMP_PRIVATE_STRINGS=explicit)), explicit)
+            self.assertEqual([s for k, s in pp.machine_probes(None, env=dict(env, XDG_CONFIG_HOME=xdg)) if k == "private string"], ["xdgcoined"])
+            self.assertEqual([s for k, s in pp.machine_probes(None, env=dict(env, ROMP_PRIVATE_STRINGS=explicit)) if k == "private string"], ["explicitcoined"])
+            # the bound: a large file costs PRIVATE_STRINGS_MAX and its tail is dropped, never a traceback; bytes that are not UTF-8 neither
+            with open(explicit, "wb") as fh:
+                fh.write(b"first\n" + b"\xff\xfe\n" + b"x" * pp.PRIVATE_STRINGS_MAX + b"\nlast\n")
+            got = pp.private_strings(dict(env, ROMP_PRIVATE_STRINGS=explicit))
+            self.assertEqual(got[0], "first")
+            self.assertNotIn("last", got)
+            self.assertEqual(pp.PRIVATE_STRINGS_MAX, 64 * 1024)
+        # through the export's own check, as a value and as a key, the kind and the path named and never the string
+        probes = [("private string", "zzcoinedzz")] + SYNTHETIC_PROBES
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["heap"]["note"] = "zzcoinedzz"
+        with mock.patch.object(pe.pp, "machine_probes", return_value=probes):
+            self.assertEqual(pe.check_document(doc, pe.Path(tempfile.mkdtemp())),
+                             "a string this machine knows (private string) survives as the value at perf/heap/note; nothing written")
+            doc = pe.export_document(leak_snapshot())
+            doc["perf"]["heap"]["zzcoinedzz"] = 1
+            self.assertEqual(pe.check_document(doc, pe.Path(tempfile.mkdtemp())),
+                             "a string this machine knows (private string) survives as a key under perf/heap; nothing written")
+            self.assertIsNone(pe.check_document(pe.export_document(leak_snapshot()), pe.Path(tempfile.mkdtemp())))
 
     def test_a_name_probe_matches_whole_tokens_and_an_id_probe_matches_anywhere(self):
         # a hostname or a login is a word, and romp's own vocabulary contains common ones as substrings: a user named

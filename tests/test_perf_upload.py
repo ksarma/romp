@@ -97,8 +97,9 @@ def _env(state, home=HOME, extra=None):
     """A child's environment: the suite's minus every ROMP_* variable and the session id, a private state root, a
     synthetic HOME (so ~/.config/romp/perf-receiver resolves nowhere unless a case writes one under a temp HOME),
     USER and LOGNAME `tester`, no live kernel port."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k != "CLAUDE_CODE_SESSION_ID"}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in ("CLAUDE_CODE_SESSION_ID", "XDG_CONFIG_HOME")}
     env.update({"XDG_STATE_HOME": os.path.dirname(state), "HOME": home, "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1"})
+    # no XDG_CONFIG_HOME: the child resolves the private-strings list and the setting file under HOME, never this machine's
     env.update(extra or {})
     return env
 
@@ -495,6 +496,35 @@ class Cli(unittest.TestCase):
         r = _run([self.file] + base, self.state)
         self.assertEqual(r.returncode, 0, "the file as the export wrote it passes the same check")
         self.assertEqual(len(self.fake.requests), 1)
+
+    def test_a_string_on_the_machine_local_private_list_is_refused_by_the_scan_and_never_sent(self):
+        """The shared probe set covers the hostname, the login, the home path and the registry's ids, and not a coined
+        project nickname, which fits the identifier grammar: a file carrying one passed all three checks and was POSTed
+        (7 of 9 such tokens on the box that found it). The machine-local list the repository's pre-push hook reads
+        (~/.config/romp/private-strings.txt) is exactly the list of those strings, so it feeds the scan (perf_public
+        machine_probes, kind `private string`), resolved under the child's HOME; the refusal names the kind and the
+        path and never the string. This widens the shared check, not only the upload. Fails before: exit 0, one request."""
+        base = ["--yes", "--receiver", self.fake.url]
+        token = "zzcoinedzz"
+        self.assertTrue(pp.IDENT.fullmatch(token), "the token fits the grammar: only the list knows it")
+        os.makedirs(os.path.join(self.home, ".config", "romp"))
+        with open(os.path.join(self.home, ".config", "romp", "private-strings.txt"), "w", encoding="utf-8") as fh:
+            fh.write("# strings that must never be published\n%s\n" % token)
+        doc = json.loads(self.data)
+        doc["perf"]["leak"] = token
+        edited = os.path.join(self.xdg, "edited.json")
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        r = self._refused(_run([edited] + base, self.state, home=self.home), 1,
+                          "refused: a string this machine knows (private string) survives as the value at perf/leak; nothing sent")
+        self.assertNotIn(token, r.stdout + r.stderr)
+        self.assertEqual(r.stdout, "", "refused before the summary line")
+        self.assertEqual(self.fake.requests, [], "nothing was sent")
+        r = _run([edited] + base, self.state)             # the synthetic HOME has no list: the token is a grammar-fitting word and passes
+        self.assertEqual(r.returncode, 0, r.stderr + " (without the list, no probe knows the token)")
+        r = _run([self.file] + base, self.state, home=self.home)
+        self.assertEqual(r.returncode, 0, r.stderr + " (a fresh export passes with the list loaded)")
+        self.assertEqual(len(self.fake.requests), 2)
 
     def test_an_edited_file_carrying_a_split_row_stamp_is_refused_by_the_denylist_naming_the_row_and_never_the_key(self):
         """`t` is denied at any depth (perf_public.DENY_KEYS, 2026-09-18): the export drops it from every split row, so a

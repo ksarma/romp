@@ -78,19 +78,27 @@ reports each finding as a Problem (the kind of finding, whether a key or a value
 string), formatted by the caller: the export runs it over its own output as a self-check and refuses to write
 on a problem naming the kind and the path alone, while the invariant tests print the whole line (str(problem))
 so a failure says what leaked. The identifier scan (machine_probes, identifier_hits) is the last backstop: strings only this machine knows (its hostname, user and home directory; the session ids and
-working directories the state directory's sdk registry holds) are searched for in every key and string value of
+working directories the state directory's sdk registry holds; and the strings listed in the machine-local file
+~/.config/romp/private-strings.txt, the same list the repository's pre-push hook reads, one string per line with
+`#` comments, resolved the way the hook resolves it: ROMP_PRIVATE_STRINGS, else $XDG_CONFIG_HOME, else $HOME/.config,
+and absent on a clone that never set one up, which adds nothing) are searched for in every key and string value of
 the finished document, case-insensitively, and a hit refuses the write naming the key path and the kind of
-string, never the value. A hostname or a login is a WORD and is matched as a run of whole tokens (a key or
-value split on everything outside letters and digits): romp's own vocabulary contains common ones as
+string, never the value. A hostname, a login or a listed string is a WORD and is matched as a run of whole tokens
+(a key or value split on everything outside letters and digits): romp's own vocabulary contains common ones as
 substrings (a user named mark and `intrMarks`, a machine named work or arch and `cpu_ms_workers`, `archive`),
 and a substring match would refuse every export on such a machine for good. An id or a directory is matched
 anywhere: hex and slashes spell no word, and a sid prefix glued to letters is still the sid. Session NAMES are
 not probes on purpose: a session named after one of romp's own identifiers (`chat`, `feed`) would refuse every
 export for the lifetime of that session, and the names never reach either document as keys or values (the
 kernel keys its tables by sid or rank and the denylist drops every name field), so the probe would only ever
-produce that false refusal. A hostname or login that IS one of romp's identifiers (a user named root and the
-`POST /walk-root` route) still refuses; that is rare, and the refusal names the kind of string and the key
-path."""
+produce that false refusal. The private list is different in kind: it is the maintainer's explicit choice of
+what must never be published (a coined project nickname among them, which fits the identifier grammar and is
+neither the hostname nor the login, so no other probe knows it; the upload verb, 2026-09-18, is the first road
+where a document leaves the machine without a human reading it, which is what made the gap consequential), so a
+listed word that is also romp vocabulary refuses every export on that machine, naming the kind (`private
+string`) and the path, and the remedy is editing the list. A hostname or login that IS one of romp's identifiers
+(a user named root and the `POST /walk-root` route) still refuses; that is rare, and the refusal names the kind
+of string and the key path."""
 import collections
 import glob
 import json
@@ -655,16 +663,58 @@ def denylist_problems(doc, under=(), skip=()):
 
 # ── the identifier scan ──────────────────────────────────────────────────────────────────────────────────
 PROBE_MIN = 4   # a shorter machine string matches romp's own vocabulary too often to be a probe
-WORD_KINDS = frozenset({"hostname", "username"})   # probes that are words: matched as runs of whole tokens
+WORD_KINDS = frozenset({"hostname", "username", "private string"})   # probes that are words: matched as runs of whole tokens
 TOKEN = re.compile(r"[a-z0-9]+")
+# The machine-local list of strings that must never be published: the file the repository's pre-push hook reads
+# (.githooks/pre-push, scan_identifiers), one string per line, a `#` starting a comment, surrounding whitespace
+# dropped, blanks skipped, resolved as the hook resolves it (private_strings_path). Absent on a clone that never set
+# one up, and then it adds nothing. Read with a bound: a list is a few lines, and a file put there by mistake costs
+# PRIVATE_STRINGS_MAX and no more (its tail is dropped, which can only lose probes, never add a wrong one).
+PRIVATE_STRINGS_VAR = "ROMP_PRIVATE_STRINGS"
+PRIVATE_STRINGS_FILE = os.path.join("romp", "private-strings.txt")
+PRIVATE_STRINGS_MAX = 64 * 1024
+
+
+def private_strings_path(env):
+    """The private list's path, the way .githooks/pre-push resolves it: ROMP_PRIVATE_STRINGS when set, else
+    $XDG_CONFIG_HOME/romp/private-strings.txt when that variable is set, else $HOME/.config/romp/private-strings.txt;
+    None when HOME is unset and neither variable names one."""
+    explicit = env.get(PRIVATE_STRINGS_VAR)
+    if explicit:
+        return explicit
+    config = env.get("XDG_CONFIG_HOME") or (os.path.join(env["HOME"], ".config") if env.get("HOME") else None)
+    return os.path.join(config, PRIVATE_STRINGS_FILE) if config else None
+
+
+def private_strings(env):
+    """[str]: the private list's entries, a `#` comment and surrounding whitespace stripped from each line and blanks
+    dropped, from at most PRIVATE_STRINGS_MAX bytes of the file read as UTF-8 (a byte that is not is replaced, never a
+    traceback); [] when there is no file to read (absent, unreadable, or no path at all)."""
+    path = private_strings_path(env)
+    if not path:
+        return []
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read(PRIVATE_STRINGS_MAX)
+    except OSError:
+        return []
+    out = []
+    for line in raw.decode("utf-8", "replace").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line:
+            out.append(line)
+    return out
 
 
 def machine_probes(state_dir=None, env=None):
     """[(kind, string)]: what only this machine knows. The hostname and its first label, the login name and
-    the home directory (with its last component, which is usually the login name), and, when `state_dir` holds
-    an sdk registry, every session id (whole and its first eight characters, the spelling the scope units and
-    the ledgers use), every conversation id and every working directory. Lower-cased; strings shorter than
-    PROBE_MIN are left out (see the module docstring for why session names are not probes)."""
+    the home directory (with its last component, which is usually the login name), every string on the
+    machine-local private list (private_strings, kind `private string`, a word probe like the hostname and the
+    login: the maintainer's own list of what must never be published, absent on a clone that never set one up),
+    and, when `state_dir` holds an sdk registry, every session id (whole and its first eight characters, the
+    spelling the scope units and the ledgers use), every conversation id and every working directory. Lower-cased;
+    strings shorter than PROBE_MIN are left out (see the module docstring for why session names are not probes, and
+    why a listed word that is also romp vocabulary refuses on purpose)."""
     env = os.environ if env is None else env
     out = []
 
@@ -683,6 +733,8 @@ def machine_probes(state_dir=None, env=None):
     home = env.get("HOME") or ""
     add("home directory", home)
     add("username", os.path.basename(home.rstrip("/")))
+    for s in private_strings(env):
+        add("private string", s)
     if state_dir:
         for p in sorted(glob.glob(os.path.join(str(state_dir), "sdk", "*.json"))):
             try:
@@ -702,8 +754,8 @@ def machine_probes(state_dir=None, env=None):
 
 
 def probe_in(kind, probe, s):
-    """Does the lower-cased `s` carry `probe`: a word probe (WORD_KINDS: a hostname, a login) as a contiguous run of
-    whole tokens, split on everything outside letters and digits (`mark` is not in `intrMarks`, `tester` is in
+    """Does the lower-cased `s` carry `probe`: a word probe (WORD_KINDS: a hostname, a login, a listed private string) as
+    a contiguous run of whole tokens, split on everything outside letters and digits (`mark` is not in `intrMarks`, `tester` is in
     `tester-app` and `app_Tester`, `testhost.example` is in `chat.testhost.example` and not in `testhost` beside
     `example`); any other probe (an id, a directory) as a substring."""
     low = s.lower()
