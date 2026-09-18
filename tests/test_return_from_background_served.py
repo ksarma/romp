@@ -14,8 +14,8 @@ one pane `wsopen` at the return; the shell leading the visible pane's redial: ze
 `return-probe`), so a count pinned here would pin today's storm.
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
-ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), with ROMP_WS_KEEPALIVE=2 so WS_DEAD_S is 6 s and
-a socket the emulated suspend leaves quiet is dropped by the kernel the way the phone's are; a private dist
+ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), with ROMP_WS_KEEPALIVE=2 (WS_DEAD_S 6 s, a floor for a socket the
+driver's close at the suspend misses; the records show none does, see the limits below); a private dist
 (lab_dist.copy_dist); three synthetic sessions (`web`, `api`, `tests` of the notes-api demo, placeholder uuids, host
 TESTHOST). The driver (tests/return_from_background_browser.mjs) opens the served shell, waits for every pane socket's
 `wsState up` word, emulates the suspend (visibilityState hidden in every document, the held sockets closed with 1001),
@@ -32,7 +32,7 @@ the driver's own log, into `<lab>/return-harness-<shell>-<regime>-<s>s.json` and
 the shell's `return-probe` rows (none today), federation `hostconn` rows by ev and why (none without an attached host),
 the kernel's `wsopen` rows per app at boot and in the return window (the storm as the kernel saw it), the beacon's `perf`
 rows with `vis`, `wsBytes`, `free`, `rafGap`, `marks` when present (perfShare is on in the lab's romp:settings), the
-sockets dialed per return by verdict, and the order in which the seven documents' visibilitychange handlers ran.
+sockets dialed per return by verdict, and the order in which the eight documents' visibilitychange handlers ran (the shell, the settings frame at about:blank and the six panes).
 
 Emulation limits, stated so the baseline is read right: scripts keep running while the documents read hidden (a
 suspended phone's do not), so the hidden dwell is short and the closes land as the FIN a thawed tab receives; the
@@ -43,6 +43,11 @@ again at boot in any frame the init script missed: an iframe navigating from its
 page keeps its Window (Firefox and WebKit every time, Chromium sometimes), and playwright's init script never reached the
 three eagerly created frames (chat, waiting, files) in Firefox, so without the late pass their shims read the browser's
 real visibilityState and filed `keep` with `hiddenMs -1`; the artifact's `lateInstall` names the frames the pass caught.
+The kernel's dead-socket drop plays no part here: the driver's close at the suspend reaches the kernel at once (the
+kernel-side leg of every held socket closed 13 to 25 ms after the suspend, code 1006), so the kernel sees an immediate
+drop where the phone's kernel keeps pushing into a dead socket until WS_DEAD_S; ROMP_WS_KEEPALIVE=2 stays only as the
+floor for a socket the close misses. The refused-regime dial counts are point samples of a 250 ms cadence and vary by a
+few percent between runs; the hung-regime counts are exact.
 The measurements are the emulated baseline for this box, not the phone's.
 
 TODO (federation half, not built here): two hermetic kernels, a hub plus a checked-in TESTHOST (the pattern of
@@ -278,8 +283,9 @@ class ReturnFromBackground(unittest.TestCase):
         cls.state, claude = _seed(cls.lab)
         cls.diag = os.path.join(cls.state, "client-diag.jsonl")
         cls.port, cls.token = _free_port(), "testtok-return"
-        # ROMP_WS_KEEPALIVE=2: WS_DEAD_S is 6 s, so a socket left quiet by the emulated suspend is dropped by the kernel
-        # inside the outage, the way the phone's are inside its 30 s
+        # ROMP_WS_KEEPALIVE=2: WS_DEAD_S 6 s, a floor for a socket the driver's close at the suspend misses. The records show
+        # none does (every kernel-side leg closed 13 to 25 ms after the suspend, code 1006), so the kernel sees an immediate
+        # drop here where the phone's kernel keeps pushing into a dead socket until WS_DEAD_S (review round 1).
         seams = {"ROMP_WS_KEEPALIVE": "2", "ROMP_HOST_NAME": HOST}   # a dict, not keyword arguments after the serve secret's positional slot: the secret scanner reads the first seam's name as a key assignment there
         cls.env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, **seams)
         cls.klog = os.path.join(cls.lab, "kernel.log")
