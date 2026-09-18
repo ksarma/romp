@@ -1,11 +1,11 @@
 ---
 title: api_retry detail reads the wire's attempt and error string
-status: approved
+status: offered
 where: kernel/sdk_backend.py: the api_retry branch of _on_message; tests/test_sdk_backend.py ApiRetryState
 added: 2026-09-16
 pr:
 tier: fix
-offered:
+offered: their PR #1852
 closed:
 ---
 
