@@ -9,10 +9,12 @@ three; the address must be https with a host and no userinfo, query or fragment 
 localhost alone), and a refused address is never echoed; the file must exist, be at most 1 MiB, parse as strict
 JSON (no NaN or Infinity, no repeated key at any depth, nesting within the checks' reach, about a thousand levels, past
 which the verb refuses in one line) to an object with the schema
-line and pass the export's own scan, walk and denylist walk as it stands (what the export dropped or coarsened is refused:
-a key it drops, an uptime off whole minutes, a bound off a power of two, a float inside a clock stamp's epoch window, seconds
-or milliseconds, under any key but a duration key; an integer, a float outside both windows and a float under a duration key
-are measurements and pass, so an export from a long-lived kernel is sent whole), an
+line and pass the export's own scan, walk and denylist walk as it stands (what the export dropped, folded or coarsened is
+refused: a key it drops, a string value or a key the fold would have written as `other`, a key ending in a newline among
+them, an uptime off whole minutes, a bound off a power of two, a float inside a clock stamp's epoch window, seconds or
+milliseconds, under any key but a duration key; an integer, a float outside both windows and a float under a duration key
+are measurements and pass, so an export from a long-lived kernel is sent whole; and, as a belt under the three, every
+top-level block outside the envelope must equal its own fold, FoldBelt), an
 edited file refused by kind and key path and never by value; the line before the prompt names the URL the verb will dial, a path in the address included; the send needs a yes on a terminal or --yes, off a terminal
 without the flag it refuses before dialling, and no environment variable stands in for the flag (an AST census
 of the module's environment reads, plus an executed check with tempting names set); the one answer accepted is

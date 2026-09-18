@@ -28,9 +28,10 @@ Any of these refuses with exit 1. The rule the re-check holds the file to is the
 2026-09-18): the public form is PASTE-SAFE, not unlinkable. It removes identifiers, paths, free text, machine
 strings and every absolute clock stamp and coarsens the uptime and the memory-fraction bounds; durations, counts and
 per-process measurements stay, so two exports from one kernel remain linkable through them by design. The re-check
-refuses what the export would have dropped or coarsened (a `t` put back on a split row, an uptime typed to the
-second, a bound typed to the byte, a float inside a clock stamp's epoch window, 1.5e9 to 2.0e9 seconds or 1.5e12 to
-2.0e12 milliseconds, under any key but a duration key) and passes what it keeps (an integer is a byte total or a count,
+refuses what the export would have dropped, folded or coarsened (a `t` put back on a split row, a string value the
+export would have folded to `other`, a key it would have replaced, one ending in a newline among them, an uptime typed
+to the second, a bound typed to the byte, a float inside a clock stamp's epoch window, 1.5e9 to 2.0e9 seconds or 1.5e12
+to 2.0e12 milliseconds, under any key but a duration key) and passes what it keeps (an integer is a byte total or a count,
 which a long-lived kernel's totals carry into the window within hours; a float outside both windows is a measurement,
 the allocator's arena on a long-lived kernel among them; a float inside a window under a duration key, a name carrying
 the token `ms` such as `cycle_cpu_ms_sum` or `wallMs`, is a millisecond total, which the kernel's sums carry through
