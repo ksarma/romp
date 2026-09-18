@@ -17161,7 +17161,8 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, live_map, wake_on
         # until 2026-09-11 a box with no tmux even took every file-derived session here, alive included),
         # so the death is corroborated with the liveness owner first; unconfirmable stands down — the stamp
         # stays and the next walk re-asks.
-        if _dead_wait_corroborated(sid) is not True:
+        _nudge_clock(None, "dormantOwner")           # the corroboration reads the registry row, the gone record and the names entry,
+        if _dead_wait_corroborated(sid) is not True:   #  none of them a keyed file: the next look must evaluate (jobs stage 1)
             return False
         return _dead_wait_block(sid, gid, at, why, nudged, now)
     rec = nudged.get(gid) or {}
@@ -17211,7 +17212,8 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, live_map, wake_on
         _peers = (_pn or {}).get("awaitingPeers") or ()
         if _peers and all(":" not in str(p) for p in _peers) \
                 and all(live_map.get(str(p)) is not None for p in _peers):
-            return False                             # every ending is an observable event — no clock
+            _nudge_clock(None, "peerAlive")          # the peers' liveness is the live map, in memory, not a keyed file: a peer's
+            return False                             #  death re-enters the dead-man below, so the next look must evaluate (jobs stage 1)
     since = max(at, rec.get("answeredAt") or 0, rec.get("at") or 0)
     if now - since < AWAITING_DEADMAN_SECS:
         _nudge_clock(since + AWAITING_DEADMAN_SECS)  # the dead-man's instant (T401 (2))
@@ -17228,7 +17230,9 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, live_map, wake_on
                 or _fresh.get("status", {}).get(gid, "working") != "working"):
             return False
     except Exception:
-        pass
+        _nudge_clock(None, "freshFault")             # the writer's re-read raised (jd.load_goals raises on a read fault): it heals
+        #                                              with no file write, so the look is unbounded; without the note a due wake-only
+        #                                              lift recorded flip -1.0 and was skipped while the files stood (jobs stage 1)
     if wake_only:
         # AUTO-NUDGE OFF: no injection (docstring). File the orphan branch's lift on the FRESH store
         # (a judge pass holding the tick's snapshot across its model call would otherwise be
@@ -17244,8 +17248,10 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, live_map, wake_on
         # (anchor, wake) re-asserted the wait across the whole dead-man window. Journaled as read, never
         # floored to the second (review find, 2026-09-08): a horizon compares against raw evidence times,
         # and int(now) disowned an assert triggered in the wake's own second, which stood and was re-lifted
-        if _sn is None or not jd.record_verdict(_fresh, _sn, "romp", "awaiting", at, lift=True,
-                                                end_ev=now):
+        if _sn is None:
+            return False                             # the fresh store no longer carries this stamp: the store moved, a keyed file
+        if not jd.record_verdict(_fresh, _sn, "romp", "awaiting", at, lift=True, end_ev=now):
+            _nudge_clock(None, "refusedWrite")       # the lift's row was refused with no file written: the next look retries (jobs stage 1)
             return False
         jd.rollup_status(_fresh, False)
         jd.save_goals(sid, _fresh)
@@ -17264,6 +17270,7 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, live_map, wake_on
     except OSError:
         landed = False                               # said once per fault episode by the writer
     if not landed:
+        _nudge_clock(None, "refusedWrite")           # a refused ledger write moves no file: the next look retries the wake (jobs stage 1)
         return False
     nudged[gid] = wake                               # mirror in-memory for the rest of this tick
     Sessions.backend_for(sid).send(sid, _followup_body(gid, None, AWAITING_BACKSTOP_TEXT,
@@ -17954,9 +17961,11 @@ _NUDGE_FILE_KEYED_ROADS = {       # the functions each marked verdict's road rea
 #   log, the store with its override journal and archive, the episode log, the clears log, the postal log, the kernel's
 #   downtime log, the nudge ledger, ten in all), marked so that a
 #   look ending in one may record a skippable memo. Every OTHER exit of the look, marked or not, records an unbounded memo
-#   (None) by default: the SDK overlay, the backend's queue, an armed rollback, a store fault, an asker beyond the keyed rows (alive or not), a peer's
-#   bounce (T401 (2) round three: the class, not the instances; an unmarked road can never silence a session). The full goal
-#   walk's own completion is marked at its return, after every declining leg has noted its clock or None.
+#   (None) by default: the SDK overlay, the backend's queue, an armed rollback, a store fault, an asker beyond the keyed rows (alive or not), a
+#   dormant holder's uncorroborated death (T401 (2) round three: the class, not the instances; an unmarked road can never silence a
+#   session). The full goal walk's own completion is marked at its return, after every declining leg has noted its clock or None; a
+#   stamped or all-delegated top notes nothing of its own since jobs stage 1 (a peer's reply, bounce or recall is a postal-log row and
+#   a return lands in the store, keyed files both), and _wake_goal's exits that read no file note None under their own legs.
 
 
 def _nudge_look_gated(fn):
@@ -18194,8 +18203,11 @@ def _auto_nudge_session(s, now, live_map, nudged, waitfor, alive_ids=None, wake_
         if not _own_wait:
             if _nudge_all_delegated(sid, store, nodes, gid):
                 _put_walk_gate(gid, "all-delegated", now)   # a wake record here is walk-unreachable → the sweep owns it
-                _nudge_clock(None, "allDelegated")                   # released by the peers' returns, not this session's files (T401 (2))
-                continue                             # all open work handed to peers → nothing for THIS session
+                continue                             # all open work handed to peers → nothing for THIS session. No clock note: the
+                #                                      check is pure over the store's nodes, and a peer's return lands in this store
+                #                                      (the courier's handoff node) and in the postal log, keyed files both, so the
+                #                                      key releases the memo (jobs stage 1; the None note here made every delegated
+                #                                      top unbounded, 191 looks per 120 s on one box)
             if sid in waitfor and nd.get("t", 0) <= waitfor[sid]["since"]:
                 _put_walk_gate(gid, "awaiting-peer", now)   # same: journaled so the sweep can evaluate its outcome
                 _nudge_clock(None, "awaitingPeer")                   # released by the peer's reply on the bus, not this session's files
@@ -18209,8 +18221,13 @@ def _auto_nudge_session(s, now, live_map, nudged, waitfor, alive_ids=None, wake_
             # exemption from the ladder (the user 2026-08-11): past the backstop the goal takes a WAKE —
             # same records, same response gates, same escalation, its own copy (see _wake_goal).
             fired = _wake_goal(sid, gid, _stamp, nudged, turns, store, now, lt, live_map, wake_only) or fired
-            _nudge_clock(None, "stampedWait")                       # a stamped wait ends on postal events too (a peer's bounced or recalled
-            continue                                 #  send), none of them this session's files: the next look evaluates (T401 (2))
+            continue                                 # no clock note here (jobs stage 1): every ending of a stamped wait is a keyed
+            #                                          file (the next audited turn, a done or block, a lift, a peer's reply, bounce or
+            #                                          recall all land in the store or the postal log) or the dead-man instant
+            #                                          _wake_goal notes; the exits of _wake_goal that read no file note None under
+            #                                          their own legs (dormantOwner, peerAlive, freshFault, refusedWrite, the deferral
+            #                                          and queued-send legs). The None note that stood here made every stamped top
+            #                                          unbounded whatever the files did (T401 (2), retired)
         if wake_only:
             continue                                 # auto-nudge OFF: the dead-man was the whole errand
         # PARK GATE (the user 2026-08-30, the parked-tick round): a goal whose record holds the full

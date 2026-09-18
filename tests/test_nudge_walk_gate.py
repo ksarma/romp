@@ -38,6 +38,7 @@ import tempfile
 import unittest
 from romp_load import load_source
 from pathlib import Path
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -51,6 +52,7 @@ km = load_source("romp_kernel_nwg", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
 
 SID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"     # private to this module (the fixture rule)
+PEER = "77777777-8888-9999-aaaa-cccccccccccc"    # a local peer the stamped wait can name (WakeGoalUnkeyedExitsNoteTheirLegs)
 NOW = 1_787_900_000
 H = 3600
 COUNTED = ("plan_units", "segs", "load_goals", "load_goals_shared")
@@ -178,20 +180,31 @@ class _Base(unittest.TestCase):
         (jd.STATE / "auto-nudge.json").write_text(json.dumps({"enabled": enabled, "nudged": {}}))
         km._autonudge_cache.clear()
 
-    def _seed(self, kind="job", age=7 * H, stamped=True):
-        """A working top; with `stamped`, carrying a kind=`kind` awaiting stamp `age` old."""
+    def _seed(self, kind="job", age=7 * H, stamped=True, delegated=False, peers=None, sid=None):
+        """A working top; with `stamped`, carrying a kind=`kind` awaiting stamp `age` old (naming `peers` when given); with
+        `delegated`, its only open leaf is a courier handoff (the all-delegated shape). `sid` seeds another session's store."""
+        sid = sid or SID
+        gid = sid + ":g1"
         at = NOW - age
         why = "the index rebuild is still running; picking the result up when it lands"
-        top = {"id": self.gid, "text": "rebuild the notes-api index", "parentId": None,
+        top = {"id": gid, "text": "rebuild the notes-api index", "parentId": None,
                "nodeComplete": False, "blocked": False, "cleared": False, "trail": [], "t": 100, "mt": 100,
                "log": []}
         if stamped:
             top.update({"awaitingWhy": why, "awaitingAt": at, "awaitingKind": kind})
+            if peers:
+                top["awaitingPeers"] = list(peers)
             top["log"].append({"ev_t": at, "src": "closer", "kind": "awaiting", "why": why,
-                               "awaitKind": kind, "at": at})
-        (jd.GOALDIR / (SID + ".json")).write_text(json.dumps({
-            "rompUuid": SID, "seq": 1, "placements": {}, "status": {self.gid: "working"},
-            "nodes": {self.gid: top}}))
+                               "awaitKind": kind, "at": at, **({"awaitPeers": list(peers)} if peers else {})})
+        nodes = {gid: top}
+        if delegated:
+            kid = gid + "c"
+            nodes[kid] = {"id": kid, "text": "web session: wire the watcher", "parentId": gid,
+                          "nodeComplete": False, "blocked": False, "cleared": False, "trail": [],
+                          "t": 100, "mt": 100, "log": [],
+                          "handoff": {"to": "web", "msgId": "11111111-2222-3333-4444-000000000001"}}
+        (jd.GOALDIR / (sid + ".json")).write_text(json.dumps({
+            "rompUuid": sid, "seq": 1, "placements": {}, "status": {gid: "working"}, "nodes": nodes}))
         km._SESSION_STAMP_CACHE.clear()
 
     def _reparse(self):
@@ -380,6 +393,105 @@ class TheWalkGateMemoOnlyServesTheSharedView(_Base):
         self.assertNotIn(SID, km._nudge_deleg_memo, "in either memo")
         # the walk's own counters (the fork's memos.nudge_walk row, its evict count among them) retired with the
         # 2026-09-15 pull-in for upstream's memos.nudgeWalk (the parse gate's counters, tests/test_nudge_walk_parse_gate.py)
+
+
+class WakeGoalUnkeyedExitsNoteTheirLegs(_Base):
+    """Jobs stage 1 (2026-09-18): the walk noted None under `stampedWait` after every stamped top and under `allDelegated`
+    after every delegated top, so those looks could never record a skippable memo whatever the files did (191 unbounded
+    looks per 120 s on one box). Both notes are retired: every ending of a stamped wait is a keyed file (the store, the
+    postal log, the ledger) or the dead-man instant _wake_goal notes, and the delegated check is pure over the store, whose
+    handoff nodes and the postal log both move when a peer returns. The exits of _wake_goal that read no file name their
+    own legs instead, so no ladder input goes stale under a memo: `freshFault` (the writer's re-read raised), `refusedWrite`
+    (the lift's row, or the wake's ledger record, refused), `peerAlive` (the awaited peers' liveness is the live map),
+    `dormantOwner` (the holder's death corroboration reads the registry row). Each test reads memos.nudgeWalk.unboundedBy
+    over one tick; the fixtures are the module's, with the toggle off unless the leg is a nudges-on one."""
+
+    def setUp(self):
+        super().setUp()
+        self._stats_saved = {k: (dict(v) if isinstance(v, dict) else v) for k, v in km._NUDGE_WALK_STATS.items()}
+        for k, v in list(km._NUDGE_WALK_STATS.items()):
+            km._NUDGE_WALK_STATS[k] = {} if isinstance(v, dict) else 0
+        self._seen_saved = dict(km._TICK_SEEN)
+        km._TICK_SEEN.clear()
+        self.addCleanup(self._restore_walk)
+
+    def _restore_walk(self):
+        km._NUDGE_WALK_STATS.update(self._stats_saved)
+        km._TICK_SEEN.clear(); km._TICK_SEEN.update(self._seen_saved)
+
+    def _by(self):
+        return dict(km._NUDGE_WALK_STATS.get("unboundedBy") or {})
+
+    def test_a_patient_stamped_top_notes_no_unbounded_release(self):
+        self._toggle(False)
+        self._seed(kind="job", age=5 * H)                        # not due: the dead-man's instant is the look's clock note
+        self._tick()
+        self.assertEqual(self._by(), {}, "the stamped top noted its dead-man instant and nothing else: no stampedWait")
+        self.assertEqual(self._lifts(), []); self.assertEqual(self.fb.sent, [])
+
+    def test_an_all_delegated_top_notes_no_unbounded_release(self):
+        self._toggle(False)
+        self._seed(stamped=False, delegated=True)
+        self._tick()
+        self.assertEqual(self._by(), {}, "the delegated check is pure over the store, a keyed file: no allDelegated")
+        self.assertEqual(km._auto_nudge_data()["walkGates"][self.gid]["gate"], "all-delegated", "the gate is journaled as before")
+
+    def test_a_fresh_read_fault_on_the_due_lift_notes_freshFault_and_the_healed_pass_lifts(self):
+        self._toggle(False)
+        self._seed(kind="job", age=7 * H)                        # due
+        real = jd.load_goals; calls = [0]
+        def failing_once(sid):
+            calls[0] += 1
+            if calls[0] == 1:
+                raise OSError(5, "Input/output error")
+            return real(sid)
+        jd.load_goals = failing_once
+        self._tick()
+        self.assertEqual(self._lifts(), [], "the re-read raised: nothing filed off stale evidence")
+        self.assertEqual(self._by(), {"freshFault": 1}, "the fault heals with no file write, so the look says it is unbounded")
+        self._tick(NOW + 5)
+        self.assertEqual(len(self._lifts()), 1, "the healed pass files the lift")
+        self.assertEqual(self.fb.sent, [])
+
+    def test_a_refused_lift_row_notes_refusedWrite(self):
+        self._toggle(False)
+        self._seed(kind="job", age=7 * H)
+        with mock.patch.object(jd, "record_verdict", return_value=False):
+            self._tick()
+        self.assertEqual(self._lifts(), [])
+        self.assertEqual(self._by(), {"refusedWrite": 1}, "a refused row writes no file: the next look must retry")
+
+    def test_a_refused_wake_record_notes_refusedWrite_with_nudges_on(self):
+        self._toggle(True)
+        self._seed(kind="job", age=7 * H)
+        with mock.patch.object(km, "_put_nudged", side_effect=OSError(28, "No space left on device")):
+            self._tick()
+        self.assertEqual(self.fb.sent, [], "nothing sent whose record did not land")
+        self.assertEqual(self._by(), {"refusedWrite": 1})
+
+    def test_a_wait_on_live_local_peers_notes_peerAlive(self):
+        self._toggle(False)
+        self._seed(kind="peer", age=7 * H, peers=[PEER])
+        km._auto_nudge_tick(NOW, {SID: {"state": ""}, PEER: {"state": ""}})
+        self.assertEqual(self._lifts(), [], "every ending is an observable event: no wake, no lift")
+        self.assertEqual(self._by(), {"peerAlive": 1}, "the peers' liveness is in memory, not a keyed file")
+
+    def test_a_dormant_holder_notes_dormantOwner(self):
+        # unreachable from the pass today (the alive set is a subset of the live map), pinned at the function so a
+        # caller that hands _wake_goal a holder absent from the map can never latch a skippable memo on the registry's word
+        self._toggle(False)
+        self._seed(kind="job", age=7 * H)
+        store = jd.load_goals(SID)
+        stamp = km._goal_awaiting_stamp_full(store["nodes"], self.gid)
+        km._NUDGE_HORIZON.notes = []
+        try:
+            with mock.patch.object(km, "_dead_wait_corroborated", return_value=None):
+                fired = km._wake_goal(SID, self.gid, stamp, {}, self.turns, store, NOW, self.turns[-1], {}, True)
+            self.assertFalse(fired)
+            self.assertEqual(km._NUDGE_HORIZON.notes, [None])
+        finally:
+            km._NUDGE_HORIZON.notes = None
+        self.assertEqual(self._by(), {"dormantOwner": 1})
 
 
 class FileWakeAnswerLoadsItsOwnCopy(_Base):
