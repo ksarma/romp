@@ -1,7 +1,7 @@
 ---
 title: POST /new echoes a refused effort level as refused, never as applied
 status: candidate
-where: kernel/kernel.py _apply_new_session_prefs: the effort leg unpacks the setter's took and echoes effort only when it took, else a refused entry with the setter's words and one stderr line; tests/test_new_route_prefs.py
+where: kernel/kernel.py _apply_new_session_prefs: the effort leg unpacks the setter's took and echoes effort only when it took, else a refused entry with the setter's words and one stderr line; bin/romp, romp new's echo reader: a refused echo prints one stderr line naming the asked level and the kernel's reason and keeps --effort out of the unacknowledged-ask warning; tests/test_new_route_prefs.py; tests/romp.bats
 added: 2026-09-18
 pr:
 tier: fix
