@@ -150,6 +150,76 @@ class SpawnSecrets(unittest.TestCase):
         self.assertTrue(handed["secrets"]["CLAUDE_CODE_OAUTH_TOKEN"] == self.tok)
         self.assertEqual(opts.env.get("CLAUDE_CODE_OAUTH_TOKEN"), self.tok, "the options object is untouched (spawn_spec copied)")
 
+    def test_every_credential_shaped_name_leaves_the_spec_env_not_only_the_three(self):
+        """The box admin's hazard review of the pull-in (2026-09-16): the first cut moved AUTH_ENV_NAMES alone, so a
+        credential-shaped variable of any OTHER name in the overlay was written to spawn.json. Every name
+        env_credential_names would flag over the overlay itself leaves it now (spawn_env_secret_names): the two
+        suffixes and 1Password's names. Synthetic names, values built at run time (never a real key's shape)."""
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+        key = "synthetic-notes-key-" + uuid.uuid4().hex
+        op = "synthetic-op-session-" + uuid.uuid4().hex
+        spec = {"sid": SID, "env": {"ROMP_SID": SID, "NOTES_ENDPOINT": "http://notes.test", "NOTES_API_TOKEN": val,
+                                    "NOTES_API_KEY": key, "OP_SESSION_notes": op, "EMPTY_TOKEN": ""}}
+        secrets = sb.split_spawn_secrets(spec)
+        self.assertEqual(spec["env"], {"ROMP_SID": SID, "NOTES_ENDPOINT": "http://notes.test", "EMPTY_TOKEN": ""},
+                         "a plain name stays; an empty credential-shaped value holds no secret and stays the unset it means")
+        self.assertEqual(sorted(secrets), ["NOTES_API_KEY", "NOTES_API_TOKEN", "OP_SESSION_notes"])
+        self.assertTrue(secrets["NOTES_API_TOKEN"] == val and secrets["NOTES_API_KEY"] == key and secrets["OP_SESSION_notes"] == op,
+                        "the returned values are the overlay's")
+        text = json.dumps(spec)
+        for v in (val, key, op):
+            self.assertNotIn(v, text, "no moved value survives in the spec")
+        self.assertEqual(sb.spawn_env_secret_names({"ROMP_SID": SID, "NOTES_ENDPOINT": "x"}), [], "nothing credential-shaped: nothing to move")
+        self.assertEqual(sb.spawn_env_secret_names({"ANTHROPIC_API_KEY": ""}), ["ANTHROPIC_API_KEY"], "the three leave whatever their value")
+        self.assertEqual(sb.spawn_env_secret_names(None), [], "no overlay: nothing to move")
+
+    def test_spawn_host_hands_every_moved_name_to_the_host_through_its_environment(self):
+        """The road a moved name takes is the login token's (_spawn_host): the host's process environment, laid over
+        the kernel's own, so the overlay's value outranks an inherited one exactly as options.env does for a kernel
+        child, and never the command line."""
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+        with mock.patch.dict(os.environ, {"NOTES_API_TOKEN": "inherited-" + uuid.uuid4().hex}):
+            argv, kw = self._spawn(False, {"NOTES_API_TOKEN": val})
+        self.assertTrue(kw["env"]["NOTES_API_TOKEN"] == val, "the overlay's value rides the host's environment, over the kernel's")
+        self.assertFalse(any(val in a for a in argv), "the value never rides the command line")
+
+    def test_the_host_launch_writes_spawn_json_without_any_credential_shaped_name_and_hands_them_to_the_host(self):
+        """The real _host_transport_for, spawn road, over a stub kernel, with an overlay carrying a credential-shaped
+        name beyond the three (the box admin's hazard review of the pull-in, 2026-09-16): the file keeps the plain
+        name, the value is in no file under hosts/, _spawn_host receives exactly the moved variable for the host's
+        environment, and the log names what moved without its value."""
+        ht = sb._ht()
+        handed, logged = {}, []
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+
+        def spawn_host(sess, spec_path, secret_env=None):
+            handed["secrets"] = dict(secret_env or {})
+            ht.host_sock(self.state, SID).touch()                    # the launcher "served" its socket
+            return types.SimpleNamespace(pid=4242, poll=lambda: None, returncode=None)
+        me = types.SimpleNamespace(state_dir=self.state, code_version="abc12345", cli_scope=False,
+                                   _host_recently_ended={}, _lock=__import__("threading").Lock(), _host_spawning=set(),
+                                   _holder_ident=sb.SdkBackend._holder_ident, _spawn_host=spawn_host,
+                                   _new_host_transport=lambda sess, sock, offset: ("transport", str(sock), offset),
+                                   _log=lambda m, *a, **k: logged.append(str(m)))
+        sess = types.SimpleNamespace(sid=SID, name="web", _options_login="", _host=None, _host_is_attach=False)
+        opts = types.SimpleNamespace(cli_path="/x/romp-cli-scope", cwd=self.state,
+                                     env={"ROMP_SID": SID, "NOTES_ENDPOINT": "http://notes.test", "NOTES_API_TOKEN": val},
+                                     permission_mode="default")
+        t = asyncio.run(sb.SdkBackend._host_transport_for(me, sess, opts, ()))
+        self.assertEqual(t[0], "transport", "the spawn road handed back the new transport")
+        written = json.loads((Path(self.state) / "hosts" / SID / "spawn.json").read_text())
+        self.assertEqual(written["env"], {"ROMP_SID": SID, "NOTES_ENDPOINT": "http://notes.test"},
+                         "the plain name stays in the file; the credential-shaped one is gone")
+        under_hosts = [q for q in (Path(self.state) / "hosts").rglob("*") if q.is_file()]
+        self.assertTrue(under_hosts, "the write left files to check")
+        for q in under_hosts:
+            self.assertNotIn(val, q.read_bytes().decode("utf-8", "replace"), "the value is in no file under hosts/")
+        self.assertEqual(handed["secrets"], {"NOTES_API_TOKEN": val}, "the host's environment gets exactly the moved variable")
+        self.assertEqual(opts.env["NOTES_API_TOKEN"], val, "the options object is untouched (spawn_spec copied)")
+        said = [m for m in logged if "NOTES_API_TOKEN" in m]
+        self.assertTrue(said, "the log names the moved variable")
+        self.assertNotIn(val, "".join(logged), "and never its value")
+
 
 class JournalRules(unittest.TestCase):
     def test_offsets_are_ordinals_and_reads_start_anywhere(self):
@@ -948,14 +1018,14 @@ class HostProcess(unittest.TestCase):
         self.assertEqual(again["data"]["request_id"], req["data"]["request_id"], "re-sent from the table although its journal write failed")
         k2.close()
 
-    def _env_probe_cli(self):
-        """A CLI stand-in that records whether CLAUDE_CODE_OAUTH_TOKEN is set in ITS environment (presence only,
-        never the value) and then becomes the fake CLI. Returns (cli_path, the record's path)."""
+    def _env_probe_cli(self, name="CLAUDE_CODE_OAUTH_TOKEN"):
+        """A CLI stand-in that records whether `name` (the login token by default) is set in ITS environment
+        (presence only, never the value) and then becomes the fake CLI. Returns (cli_path, the record's path)."""
         seen = os.path.join(self.state, "cli-env-seen")
         probe = os.path.join(self.state, "cli-env-probe.py")
         with open(probe, "w") as f:
             f.write("#!%s\nimport os, sys\n" % sys.executable)
-            f.write("open(%r, 'w').write('present' if os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') else 'absent')\n" % seen)
+            f.write("open(%r, 'w').write('present' if os.environ.get(%r) else 'absent')\n" % (seen, name))
             f.write("os.execv(%r, [%r, %r] + sys.argv[1:])\n" % (sys.executable, sys.executable, FAKE))
         os.chmod(probe, 0o755)
         return probe, seen
@@ -979,6 +1049,20 @@ class HostProcess(unittest.TestCase):
         blob = json.dumps(self._hostlog()) + json.dumps([r for _, r in journal]) + json.dumps(k.frames)
         blob += (Path(self.state) / "hosts" / SID / "spawn.json").read_text() + sb.read_lease(self.state, SID).__repr__()
         self.assertNotIn(tok, blob, "the token's value is in no file the host writes, no frame, no lease")
+        k.close()
+
+    def test_a_moved_name_in_the_hosts_environment_reaches_the_cli_the_same_way(self):
+        """Every credential-shaped name of the overlay takes the login token's road since 2026-09-18 (the box admin's
+        hazard review of the pull-in, 2026-09-16): the host's process environment. A synthetic name rides it, the CLI
+        the host spawns sees it, and the spec the host read and every file under hosts/ omit the value."""
+        probe, seen = self._env_probe_cli("NOTES_API_TOKEN")
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+        host, sock, spec = self._start(host_env={"NOTES_API_TOKEN": val}, cli_path=probe)
+        self.assertNotIn("NOTES_API_TOKEN", json.dumps(spec), "the spec the host read carries no such name")
+        k = self._one_turn(sock)
+        self.assertEqual(open(seen).read(), "present", "the CLI inherited the variable from the host's environment")
+        blob = "".join(q.read_bytes().decode("utf-8", "replace") for q in (Path(self.state) / "hosts").rglob("*") if q.is_file())
+        self.assertNotIn(val, blob + json.dumps(k.frames), "the value is in no file under hosts/ and no frame")
         k.close()
 
     def test_without_a_token_in_the_hosts_environment_the_cli_gets_none(self):

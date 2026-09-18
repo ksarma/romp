@@ -2005,7 +2005,10 @@ crash resume, or the next kernel restart, which cuts a plain child's turn one
 last time); a new session is hosted at once. The host spawns the CLI from a
 spawn specification the kernel writes
 (`hosts/<sid>/spawn.json`, the plain fields of the SDK's options, at mode 0600
-in a 0700 directory, since it carries the environment overlay), through the
+in a 0700 directory, since it carries the environment overlay; every
+credential-shaped name of that overlay, a login token or any name ending
+`_API_KEY` or `_TOKEN` or one of 1Password's, is left out of the file and
+rides the host's process environment instead), through the
 SDK's own subprocess transport, so the command line and the environment are
 the SDK's byte for byte. It reads the CLI's stdout without pause and appends
 every message to an append-only journal (`hosts/<sid>/journal-<n>.jsonl`, one

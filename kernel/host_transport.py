@@ -147,7 +147,10 @@ def spawn_spec(opts, sid: str, name: str, state_dir, version: str, grace_s: floa
 
 def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     """`hosts/<sid>/spawn.json`, the directory at 0700 and the file at 0600: the spec carries the
-    environment overlay."""
+    environment overlay, minus every credential-shaped name of it (the kernel's split_spawn_secrets moves
+    those to the host's process environment before this write; a credential never lives in a file, the
+    fork's rule, and the box admin's hazard review of the pull-in, 2026-09-16, found the first cut moving
+    the three login names alone)."""
     d = host_dir(state_dir, sid)
     d.mkdir(parents=True, exist_ok=True)
     os.chmod(d, 0o700)

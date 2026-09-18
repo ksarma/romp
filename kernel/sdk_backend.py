@@ -5160,6 +5160,25 @@ def env_credential_names(environ) -> list:
                   and (n.endswith("_API_KEY") or n.endswith("_TOKEN") or _cred.is_op_env_name(n)))
 
 
+def spawn_env_secret_names(env) -> list:
+    """The names a host spawn spec's env overlay must not carry into hosts/<sid>/spawn.json, for
+    split_spawn_secrets to move to the host's process environment: the three credential names (AUTH_ENV_NAMES,
+    whatever their value, as the pull-in's writer moved them) and every name env_credential_names flags over
+    the OVERLAY ITSELF, a non-empty value under a name ending _API_KEY or _TOKEN or one of 1Password's own. The
+    pull-in's writer stripped the three names alone, so a credential-shaped variable of any other name a compose
+    put in options.env was written to disk (the box admin's hazard review of the pull-in, 2026-09-16; fixed
+    2026-09-18), against the fork's rule that no credential is ever written to a file, and the rule for the
+    shape already existed for the boot notice (_note_env_credential_names), so the file and that notice now
+    agree on what a credential looks like. Judged over the overlay, never this process's environment: what the
+    file would carry is what is checked. An empty value stays in the overlay: it holds no secret, and there it
+    is the unset it was meant to be. Sorted, names only, fit for a log line. [] for no overlay."""
+    if not isinstance(env, dict):
+        return []
+    names = set(n for n in AUTH_ENV_NAMES if n in env)
+    names.update(env_credential_names(env))
+    return sorted(names)
+
+
 def env_request_error(env, auth: str = "") -> str:
     """Why `env` is NOT a valid per-session env payload — "" when it is (an empty dict is a valid,
     vacuous one). A payload is a dict of NAME → string-value pairs, names in the shell-identifier
@@ -5458,18 +5477,24 @@ def startup_auth_env() -> dict:
 
 
 def split_spawn_secrets(spec: dict) -> dict:
-    """Move every credential-named variable (AUTH_ENV_NAMES) out of a host spawn spec's env overlay and
-    return them. The spec is written to hosts/<sid>/spawn.json, and a key or login token lives in the
-    process environment only, never in a file (the fork's rule, 2026-09-05; the pull-in review's item 1,
-    2026-09-16): the launch hands the returned variables to bin/romp-session-host through its process
-    environment instead (_spawn_host), and the host's CLI inherits them from there, so a stored login's
-    CLAUDE_CODE_OAUTH_TOKEN and the machine's boot-claimed login tokens reach the CLI exactly as they do
-    for a kernel child, with no file holding them. Every other field stays in the spec. The spec's env is
-    spawn_spec's own copy, so the options object the kernel-child road launches from is untouched."""
+    """Move every credential-shaped variable (spawn_env_secret_names: AUTH_ENV_NAMES, and every other name of
+    a credential's shape carrying a value) out of a host spawn spec's env overlay and return them. The spec is
+    written to hosts/<sid>/spawn.json, and a key or login token lives in the process environment only, never
+    in a file (the fork's rule, 2026-09-05; the pull-in review's item 1, 2026-09-16): the launch hands the
+    returned variables to bin/romp-session-host through its process environment instead (_spawn_host), and
+    the host's CLI inherits them from there, so a stored login's CLAUDE_CODE_OAUTH_TOKEN and the machine's
+    boot-claimed login tokens reach the CLI exactly as they do for a kernel child, with no file holding them.
+    The file omits every OTHER credential-shaped name of the overlay as well (the box admin's hazard review of
+    the pull-in, 2026-09-16, fixed 2026-09-18: the first cut moved the three names alone, so any other such
+    variable a compose put in options.env was written to disk): those take the same road, the host's
+    environment, with the overlay's precedence kept (_spawn_host lays them over the kernel's environment, as
+    the SDK lays options.env over it for a kernel child), so the session launches with them and only the file
+    is clean. Every other field stays in the spec. The spec's env is spawn_spec's own copy, so the options
+    object the kernel-child road launches from is untouched."""
     env = spec.get("env")
     if not isinstance(env, dict):
         return {}
-    return {name: env.pop(name) for name in AUTH_ENV_NAMES if name in env}
+    return {name: env.pop(name) for name in spawn_env_secret_names(env)}
 
 
 
@@ -12420,8 +12445,17 @@ class SdkBackend:
             spec["login"] = str(getattr(sess, "_options_login", "") or "")   # the login IDENTIFIER this launch bills, echoed
             #   in every hello as cli.login, so the kernel that first sees the CLI stamps the login the launch used (never a
             #   token or key: those ride the host's process environment, and the hello never carries them)
-            secrets = split_spawn_secrets(spec)    # the credential names leave the overlay BEFORE the file is written: a
-            #   login token rides the host's environment (_spawn_host), never spawn.json (the fork's secrets rule)
+            secrets = split_spawn_secrets(spec)    # every credential-shaped name leaves the overlay BEFORE the file is
+            #   written: a login token, and any other such variable of the overlay, rides the host's environment
+            #   (_spawn_host), never spawn.json (the fork's secrets rule; the box admin's hazard review, 2026-09-16)
+            moved = [n for n in secrets if n not in AUTH_ENV_NAMES]
+            if moved:
+                # names only, never a value. The login names are routine (every login launch moves one) and go unsaid;
+                # a name beyond them means a compose put a credential-shaped variable in options.env, worth one line
+                # where the Log panel shows it. problem=False explicitly: _log classifies by whether an exception is
+                # being handled, and this runs inside a connect's retry paths (_note_env_credential_names does the same).
+                self._log("host (%s): credential-shaped names in the launch's env overlay ride the host's environment, "
+                          "not spawn.json: %s" % (sess.name, ", ".join(moved)), problem=False)
             spec_path = ht.write_spawn_spec(self.state_dir, sess.sid, spec)
             sock = ht.host_sock(self.state_dir, sess.sid)
             try:
