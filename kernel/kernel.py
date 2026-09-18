@@ -771,7 +771,7 @@ class _PerfStats:
                                    and every other push stage by the thread's ownership of the
                                    pusher's cycle: the pusher's push.* under the "push" mark are
                                    the cycle owner's, and the pusher's `push` container closes
-                                   outside the mark and is its by its ownership of the cycle; a
+                                   outside the mark and is its own by its ownership of the cycle; a
                                    "push" mark on a thread owning no cycle is no owner): a connect
                                    push's stages moved to pusher.connectPush.stagesMs, and a push
                                    stage from a thread that neither carries the connect mark nor
@@ -63760,7 +63760,7 @@ def _jobs_pass(now, live_map):
     if _PERF_STATS._mine() != "jobs":
         _PERF_STATS.cycle_begin("jobs")   # a caller that did not open the pass (a test driving the jobs alone) opens it here; a thread
         #                                   owning the pusher's cycle flips to the jobs owner (2026-09-18 review, as in _pusher_cycle_jobs),
-        #                                   so the jobs below are the flat rows' whatever ran before on this thread
+        #                                   so the jobs below are the flat rows', whatever ran before on this thread
     _own_stat = _files_stat_pass_open(live_map)   # the dirty set taken, the prelude's observers read, the pass's shared ten-file
     #                                               snapshot opened when the caller did not (closed below; the cycle's finally too)
     try:                                  # EXACT retraction first: dispatches returned → the stamp is spent,
