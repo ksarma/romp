@@ -3,7 +3,7 @@ title: GET /perf keys carry no session id, term, host op or client text
 status: candidate
 where: kernel/kernel.py (_PerfStats.snapshot for bySession and parses.perSession, _perf_http_key, _PERF_HTTP_ROUTES, _PerfStats.connect_push, _PERF_IDENT); tests/test_perf_stats.py test_per_session_rows_are_served_by_rank_and_parsed_sessions_as_a_count, test_http_key_is_method_plus_normalized_path, test_http_keys_outside_the_route_table_fold_to_other, test_the_http_cap_clears_the_kernels_own_route_table, test_connect_push_keys_only_identifier_app_names_and_caps_them, ServedSnapshotIsPasteSafe
 added: 2026-09-18
-pr:
+pr: 761
 tier: fix
 offered:
 closed:

@@ -3,7 +3,7 @@ title: GET /perf names no file path and quotes no judge text
 status: candidate
 where: kernel/event_model.py (_read_kind, read_bytes_by_kind, checkpoint_stats), kernel/kernel.py (_PerfStats.judge_child_done, _JudgeChild.pass_); tests/test_fold_checkpoints.py test_the_served_read_table_names_holder_kinds_never_paths, tests/test_perf_stats.py test_judge_child_is_served_as_a_size_and_a_status_never_the_line
 added: 2026-09-18
-pr:
+pr: 761
 tier: fix
 offered:
 closed:
