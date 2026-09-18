@@ -24,6 +24,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 import shutil
 import socket
@@ -57,6 +58,7 @@ GOAL_SID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
 TOP_KEYS = {"now", "since", "uptime_s", "log", "process", "pusher", "jobs", "stages_ms", "builds", "sends",   # jobs: the jobs thread's passes
             "stagesForeign",                               # stagesForeign: a `jobs.<job>` stage from a thread owning neither loop, or a push stage from a
             #                                                  thread that neither owns the pusher's cycle nor carries a connect push's mark (2026-09-18)
+            "stages_cpu_ms",                               # stages_cpu_ms: a stage's thread CPU (user, sys) beside its wall (2026-09-18)
             "heap",                                        # heap: where the resident size sits at the read, gauges over every content cache (2026-09-15)
             "gc",                                          # gc: the collector's pauses per generation, from the gc.callbacks hook (2026-09-16)
             "goals", "memos", "judge", "http", "parses",   # parses: cold event-model parses (T323 stage 1)
@@ -406,6 +408,97 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["caches"]), CACHE_NAMES, "one exact-occupancy block per declared cache (M1-lite)")
         self.assertGreaterEqual(snap["uptime_s"], 0)
         json.dumps(snap)                                     # the whole thing serializes as-is
+
+    def test_the_cpu_stages_accumulate_user_and_sys_beside_the_wall(self):
+        """Stage 1 of the chat-signature design (2026-09-18): stage(name, dt, cpu=(user_s, sys_s)) folds the caller's thread-CPU
+        delta into stages_cpu_ms[name] = {user, sys} in ms, cumulative like stages_ms; the containers and the chat seams are
+        listed at zero from the start; a call with no cpu moves the wall alone; a name outside the list gains a row when a
+        caller hands it a figure. The cycle split's rows keep their shape (ms, bytes, hydrated): the CPU columns are the
+        cumulative block only."""
+        if km._RUSAGE_THREAD is None:
+            self.skipTest("no per-thread rusage on this platform: the block is served empty (pinned in the next test)")
+        snap = self.st.snapshot()
+        self.assertEqual(set(snap["stages_cpu_ms"]), set(km._PerfStats.CPU_STAGES))
+        self.assertEqual(km._PerfStats.CPU_STAGES, ("push", "jobs", "jobsPass", "push.chat", "push.chat.sig", "push.chat.build", "push.chat.send"))
+        for k, v in snap["stages_cpu_ms"].items():
+            self.assertEqual(v, {"user": 0.0, "sys": 0.0}, k)
+        self.st.cycle_begin()
+        self.st.stage("push.chat.sig", 0.004, cpu=(0.001, 0.0005)); self.st.stage("push.chat.sig", 0.004, cpu=(0.001, 0.0005))
+        self.st.stage("push.chat.sig", 0.001)                                 # no cpu handed: the wall alone
+        self.st.stage("push.feed", 0.002, cpu=(0.002, 0.0))                   # a stage outside the list: a row appears
+        self.st.stage("push", 0.010, cpu=(0.004, 0.001)); self.st.cycle(0.010)
+        snap = self.st.snapshot()
+        self.assertAlmostEqual(snap["stages_ms"]["push.chat.sig"], 9.0)
+        self.assertEqual(snap["stages_cpu_ms"]["push.chat.sig"], {"user": 2.0, "sys": 1.0})
+        self.assertEqual(snap["stages_cpu_ms"]["push"], {"user": 4.0, "sys": 1.0})
+        self.assertEqual(snap["stages_cpu_ms"]["push.feed"], {"user": 2.0, "sys": 0.0})
+        self.assertEqual(snap["stages_cpu_ms"]["push.chat.build"], {"user": 0.0, "sys": 0.0}, "untouched rows stay at zero")
+        row = snap["pusher"]["stageRing"][-1]["stages"]["push.chat.sig"]
+        self.assertEqual(set(row), {"ms", "bytes", "hydrated"}, "the split's rows carry no CPU column")
+        self.st.reset()
+        self.assertEqual(self.st.snapshot()["stages_cpu_ms"]["push.chat.sig"], {"user": 0.0, "sys": 0.0}, "a reset zeroes the block")
+
+    def test_the_thread_cpu_reader_reads_getrusage_and_is_absent_without_a_per_thread_clock(self):
+        """_thread_cpu is (user, sys) seconds of the calling thread from getrusage(RUSAGE_THREAD), _cpu_delta the difference
+        since an earlier reading; with no RUSAGE_THREAD on the platform both answer None, stage() records the wall alone and
+        the snapshot serves stages_cpu_ms EMPTY (no clock), never zeros (which would read as no CPU)."""
+        calls = []
+
+        def fake(who):
+            calls.append(who)
+            return types.SimpleNamespace(ru_utime=1.0 + 0.25 * len(calls), ru_stime=0.5 + 0.125 * len(calls), ru_maxrss=0)
+        with mock.patch.object(km, "_RUSAGE_THREAD", 7), mock.patch.object(km.resource, "getrusage", fake):
+            c0 = km._thread_cpu()
+            self.assertEqual(c0, (1.25, 0.625))
+            self.assertEqual(km._cpu_delta(c0), (0.25, 0.125), "one more read: its delta")
+            self.assertEqual(calls, [7, 7], "RUSAGE_THREAD is what the reader asks for, twice for a delta")
+            self.assertEqual(set(self.st.snapshot()["stages_cpu_ms"]), set(km._PerfStats.CPU_STAGES))
+        with mock.patch.object(km, "_RUSAGE_THREAD", None):
+            self.assertIsNone(km._thread_cpu())
+            self.assertIsNone(km._cpu_delta(None))
+            self.assertIsNone(km._cpu_delta((0.0, 0.0)))
+            self.st.cycle_begin()                                     # this thread is the pusher: a push stage is routed by its writer
+            self.st.stage("push.chat.sig", 0.002, cpu=km._cpu_delta(None))
+            snap = self.st.snapshot()
+            self.assertEqual(snap["stages_cpu_ms"], {}, "no per-thread clock: the block is empty")
+            self.assertAlmostEqual(snap["stages_ms"]["push.chat.sig"], 2.0, "the wall is recorded as before")
+        self.assertIn("stages_cpu_ms", TOP_KEYS)
+
+    def test_the_cpu_follows_the_wall_and_a_mark_routed_off_the_flat_row_records_no_cpu_row(self):
+        """stage() credits a push stage by its writer's purpose and a `jobs.<job>` stage by its writer's owner (the
+        stage-attribution fix, 2026-09-18); the CPU handed with a mark follows the wall: folded into stages_cpu_ms when the
+        wall went to the flat row, dropped when the wall went to pusher.connectPush.stagesMs, pusher.cycleJobsMs or
+        stagesForeign. So a stages_cpu_ms row is the same writer's CPU as the stages_ms row of its name and their
+        difference is that row's wait; a connect push's or a foreign writer's CPU has no row and is not kept."""
+        if km._RUSAGE_THREAD is None:
+            self.skipTest("no per-thread rusage on this platform: the block is served empty")
+        st = self.st
+        st.cycle_begin()                                                        # this thread is the pusher
+        km._stage_marked("push")(lambda: st.stage("push.chat.sig", 0.004, cpu=(0.002, 0.001)))()   # the pusher's own: flat
+        st.stage("jobs.persistCheckpoints", 0.003, cpu=(0.003, 0.0))          # the pusher's cycle job: cycleJobsMs, no CPU row
+        done = {}
+
+        @km._stage_marked("connect")                                            # a reload's full push on its handler thread
+        def connect_push():
+            st.stage("push.chat.sig", 0.020, cpu=(0.010, 0.005))               # connectPush.stagesMs, no CPU row
+            done["connect"] = True
+
+        def foreign_thread():                                                   # no cycle, no mark: neither purpose
+            st.stage("push.chat.sig", 0.001, cpu=(0.001, 0.0))                 # stagesForeign, no CPU row
+            done["foreign"] = True
+        for target in (connect_push, foreign_thread):
+            th = threading.Thread(target=target); th.start(); th.join(5)
+        self.assertEqual(done, {"connect": True, "foreign": True}, "both threads wrote")
+        st.stage("push", 0.006, cpu=(0.004, 0.001)); st.cycle(0.008)          # the container, the pusher's by its cycle
+        snap = st.snapshot()
+        self.assertAlmostEqual(snap["stages_ms"]["push.chat.sig"], 4.0, msg="the flat wall is the pusher's alone")
+        self.assertEqual(snap["stages_cpu_ms"]["push.chat.sig"], {"user": 2.0, "sys": 1.0}, "and so is the CPU beside it")
+        self.assertEqual(snap["stages_cpu_ms"]["push"], {"user": 4.0, "sys": 1.0})
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {"push.chat.sig": 20.0}, "the connect push's wall, apart")
+        self.assertEqual(snap["stagesForeign"], {"push.chat.sig": 1.0}, "the foreign wall, apart")
+        self.assertAlmostEqual(snap["pusher"]["cycleJobsMs"]["persistCheckpoints"], 3.0, msg="the cycle job's wall, apart")
+        self.assertEqual(set(snap["stages_cpu_ms"]), set(km._PerfStats.CPU_STAGES),
+                         "no CPU row appeared for the three routed marks, jobs.persistCheckpoints included")
 
     def test_the_chat_signature_counters_are_a_flat_integer_table(self):
         """Stage 1 of the chat-signature design (2026-09-18): memos.chatSig is the pass's own table, one integer per

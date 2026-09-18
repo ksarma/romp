@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import time
+import types
 import unittest
 from romp_load import load_source
 from unittest import mock
@@ -505,15 +506,45 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertEqual((d["pre"], d["post"], d["compares"]), (0, 0, 0), "a signature outside the push loop is not a loop count")
 
     def test_the_frames_are_byte_identical_with_the_signature_counters_disabled(self):
-        """The counters are measurement: with every counting site a no-op the six cycles produce the same wire strings for
-        every client (the stage 1 invariant: no frame or read changes)."""
+        """The counters are measurement: with every counting site a no-op and the thread-CPU clock absent the six cycles
+        produce the same wire strings for every client (the stage 1 invariant: no frame or read changes)."""
         live, calls_live, _ = self._run(km._chat_diff)
         noop = lambda *a, **k: None
         with mock.patch.object(km, "_chat_sig_count", noop), mock.patch.object(km, "_chat_sig_bump", noop), \
-                mock.patch.object(km, "_chat_sig_note_pre", noop):
+                mock.patch.object(km, "_chat_sig_note_pre", noop), mock.patch.object(km, "_thread_cpu", lambda: None):
             off, calls_off, _ = self._run(km._chat_diff)
         self.assertEqual(off, live, "the same wire strings, per client, with the counters off")
         self.assertEqual(calls_off, calls_live)
+
+    def test_the_chat_seams_record_their_thread_cpu_from_a_bounded_number_of_rusage_reads(self):
+        """Stage 1 of the chat-signature design (2026-09-18): the chat loop reads getrusage(RUSAGE_THREAD) at each seam's
+        open and close and stages_cpu_ms carries the delta beside the wall. Under a fake clock that advances one ms of
+        user and half a ms of system time per read: every signature seam moves the sig row by at least one read's worth,
+        the send row moves too, the container's CPU covers its seams, and the reads per cycle stay within the stated
+        bound (two per mark: the container, the signature and its deps sub-seam, the send; a rebuild adds the build seam
+        and the post-build signature; the harness's own snapshot may add one)."""
+        ps = km._PERF_STATS
+        reads = []
+
+        def fake(who):
+            reads.append(who)
+            return types.SimpleNamespace(ru_utime=0.001 * len(reads), ru_stime=0.0005 * len(reads), ru_maxrss=0)
+        before = ps.snapshot()["stages_cpu_ms"]
+        with mock.patch.object(km, "_RUSAGE_THREAD", 11), mock.patch.object(km.resource, "getrusage", fake):
+            _wire, calls, rows = self._run(km._chat_diff, perf=ps)
+            after = ps.snapshot()["stages_cpu_ms"]
+        self.assertEqual(calls, [False, True, False, True, False, True], "premise: rebuilt, served, alternating")
+        self.assertEqual(reads, [11] * len(reads), "every read asked for the thread's rusage")
+        self.assertLessEqual(len(reads), 6 * 16, "at most sixteen reads per cycle: %d over six" % len(reads))
+        d = {k: {c: after[k][c] - before[k][c] for c in ("user", "sys")} for k in after if k in before}
+        self.assertGreaterEqual(d["push.chat.sig"]["user"], 9 * 1.0 - 1e-6, "nine signatures, each at least one read apart")
+        self.assertAlmostEqual(d["push.chat.sig"]["sys"], d["push.chat.sig"]["user"] / 2.0, msg="the fake's ratio survives the fold")
+        self.assertGreater(d["push.chat.send"]["user"], 0.0)
+        self.assertGreater(d["push.chat.build"]["user"], 0.0)
+        self.assertGreaterEqual(d["push.chat"]["user"] + 1e-6, sum(d[k]["user"] for k in ("push.chat.sig", "push.chat.build", "push.chat.send")),
+                                "the container's CPU covers its seams")
+        for row in rows:
+            self.assertEqual(set(row["push.chat.sig"]), {"ms", "bytes", "hydrated"}, "the split's rows carry no CPU column")
 
     def test_the_chat_stage_is_split_into_its_seams(self):
         """Stage 1 of the incremental-push design (2026-09-18): push.chat is a container of three seams in stages_ms
@@ -574,8 +605,8 @@ class ByteIdenticalFrames(unittest.TestCase):
         names = []
         real_stage, real_begin = ps.stage, ps.cycle_begin
 
-        def stage(name, dt):
-            names.append(name); return real_stage(name, dt)
+        def stage(name, dt, cpu=None):
+            names.append(name); return real_stage(name, dt, cpu=cpu)   # cpu: the seams' thread-CPU delta (stages_cpu_ms, 2026-09-18)
 
         def begin(*a, **kw):
             names.append(None); return real_begin(*a, **kw)
