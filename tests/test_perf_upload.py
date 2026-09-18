@@ -449,6 +449,24 @@ class Cli(unittest.TestCase):
         self.assertNotIn("does not exist", r.stderr)
         self.assertEqual(self.fake.requests, [])
 
+    def test_the_guide_says_no_receiver_ships_and_the_code_carries_none(self):
+        """docs/guide.md names the upload as the one user-initiated exception to the local-only promise and says the receiver
+        is one the user configures, none shipping, so nothing can be sent until one is set (fresh-2, 2026-09-18). The
+        sentence is pinned flattened, so a rewrap survives, and cross-checked against the code by execution and by text:
+        with no flag, no variable and an empty HOME the setting resolves to nothing (the verb then refuses naming the three
+        settings, the case above), and no string constant in the module, docstrings included, spells a URL, so no default
+        address can be hiding in the text."""
+        with open(os.path.join(ROOT, "docs", "guide.md"), encoding="utf-8") as fh:
+            guide = " ".join(fh.read().split())
+        self.assertIn("to a receiver you configure yourself (none ships, so nothing can be sent until you set one), "
+                      "and only after you confirm it", guide)
+        with mock.patch.dict(os.environ, {"HOME": self.home}):
+            self.assertEqual(pu.receiver_setting(None, env={}), (None, None), "nothing configured resolves to no receiver")
+        with open(os.path.join(ROOT, "cli", "perf_upload.py"), encoding="utf-8") as fh:
+            tree = ast.parse(fh.read())
+        urls = [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str) and re.search(r"https?://", n.value)]
+        self.assertEqual(urls, [], "no URL in any string constant of the module")
+
     def test_the_three_settings_in_order_flag_variable_file(self):
         dead = "http://127.0.0.1:%d" % _free_port()
         os.makedirs(os.path.join(self.home, ".config", "romp"))
