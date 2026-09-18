@@ -3698,29 +3698,30 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   list and fingerprint: `hit` and `miss` count turns served from the memo
   against turns scanned, so a build of a working session with one moved turn
   is one miss, plus the gauge `entries` (sessions held).
-  `feedComposition` is what the feed frame is made of, in bytes. One feed
-  frame goes whole to every client that rides the feed slot (the feed pane,
-  the Outline, which dials as `fleet` on every layout, and the Waiting-on-you
+  `feedComposition` says what the feed frame is made of, in bytes, and what
+  each pane would receive if it were sent only the fields it reads. One feed
+  frame goes whole to every client that rides the feed slot (the feed pane;
+  the Outline, which dials as `fleet` on every layout; and the Waiting-on-you
   pane, `waiting`), and each reads a part of it. `passes` counts the pusher's
   per-entry encodes of the frame (a build, or a ledgers refill of the same
-  build); `failed` the passes whose accounting raised (the frame is never
-  affected). `lifetime` and `last` carry, summed over every pass and for the
-  latest one, `frame` (the frame's bytes as the pusher's size estimate counts
-  them: the per-card strings minus their tints, the per-ledger strings and the
-  remainder; it sits under the served body by the key names, separators and
-  tints it does not count), its parts `cards`, `ledgers` and `rest`, the
-  counts `cardCount` and `ledgerCount`, `by` (the remainder's bytes per
-  top-level field: `views`, `sessions`, `userTodoRows`, the notice rings and
-  the rest, each with its quoted name and separators), and `apps`: per
-  consuming app, `today` (the whole frame, what it receives) beside
-  `projected` (what it would receive if it were sent only the fields its
+  build); `failed` counts the passes whose accounting raised, which never
+  touches the frame. `lifetime` sums every pass and `last` is the latest one;
+  both carry the same fields. `frame` is the frame's bytes as the pusher's
+  size estimate counts them (the per-card strings minus their tints, the
+  per-ledger strings and the remainder), so it sits under the served body by
+  the key names, separators and tints it does not count. `cards`, `ledgers`
+  and `rest` are its three parts, and `cardCount` and `ledgerCount` their
+  counts. `by` splits `rest` by top-level field (`views`, `sessions`,
+  `userTodoRows`, the notice rings and every other field), each with its
+  quoted name and separators. `apps` has one row per consuming app: `today`,
+  the whole frame it receives, beside `projected`, the bytes of the fields its
   bundle reads, from the checked-in table `FEED_APP_FIELDS` in
-  `kernel/kernel.py`, which a test pins against the bundles' source). `last`
-  also says whether the ledgers were attached (`ledgersAttached`). The one
-  estimated figure is the Outline's card fields (it reads a few fields of
-  each card, not the card): those are sized from their text lengths, escapes
-  uncounted, never re-encoded. `wire` is the served body's length as the
-  kernel holds it now: `exact` 1 once a whole frame has gone out, else the
+  `kernel/kernel.py`, which a test pins against the bundles' source. `last`
+  also says whether the ledgers were attached (`ledgersAttached`). One figure
+  is estimated: the Outline reads a few fields of each card, not the card,
+  and those fields are sized from their text lengths, escapes uncounted, never
+  re-encoded. `wire` is the served body's length as the kernel holds it now,
+  with `exact` 1 once a whole frame has gone out and 0 while it is the
   estimate. Every number comes from the encode the wire needs anyway; the
   accounting adds a few length sums per pass and no second encode.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
