@@ -3713,7 +3713,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   and `rest` are its three parts, and `cardCount` and `ledgerCount` their
   counts. `by` splits `rest` by top-level field (`views`, `sessions`,
   `userTodoRows`, the notice rings and every other field), each with its
-  quoted name and separators. `apps` has one row per consuming app: `today`,
+  quoted name and separators. `apps` has one row per consuming app and one
+  projection row, `phoneFace`: `today`,
   the whole frame it receives, beside `projected`, the bytes of the fields its
   bundle reads, from the checked-in table `FEED_APP_FIELDS` in
   `kernel/kernel.py`, which a test pins against the bundles' source and
@@ -3724,7 +3725,19 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   (`ledgersAttached`). One figure is estimated, not bounded: the Outline reads
   a few fields of each card, not the card, and those fields are sized from
   their text lengths, never re-encoded, so the figure over-counts by naming
-  every field of every card and under-counts JSON escapes. `wire` is the served body's length as the kernel holds it now,
+  every field of every card and under-counts JSON escapes. The `phoneFace`
+  row is a projection of a frame that does not exist yet (the table
+  `FEED_PROJECTIONS`): a phone client's feed slot carrying a face per active
+  card plus one summary row per session with a card. A card is active when
+  its `column` is `working` or `needs_input`, the Working and Blocked
+  columns. The face is five of the card's fields: `itemId` and `sid`, the
+  address a tap fetches the detail by; `text`, the title; `column`, the
+  state; and `t`, the age. A summary row is the session's `sid` and the count
+  of cards it holds. Both are sized the way the Outline's card fields are.
+  The row's `today` is the whole frame, as for every row (a phone's feed page
+  dials as `feed` and its Outline as `fleet`), so the row reads as the saving
+  the face would bring. No bundle reads such a frame, so the test's pin
+  against the bundles skips the row. `wire` is the served body's length as the kernel holds it now,
   with `exact` 1 once a whole frame has gone out and 0 while it is the
   estimate. Every number comes from the encode the wire needs anyway; the
   accounting adds a few length sums per pass and no second encode.

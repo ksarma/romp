@@ -54709,8 +54709,9 @@ _feed_cards_memo = None    # (a build's asks list, {itemId: json}, {app: card-fi
 #                            BUILD (2026-09-06): a ledgers-only refill of _feed_wire (same feed_src, the per-cycle ledgers
 #                            attach changed) re-encodes the ledgers and the remainder, not the cards. Identity-keyed like
 #                            _delta_parts_cache: no consumer mutates a cached build's cards (they copy). The third member
-#                            is the composition probe's per-app card-field estimate (_ask_fields_est), memoized with the
-#                            cards so a refill pays none of it (2026-09-18)
+#                            is the composition probe's per-app card-field estimate (_ask_fields_est) and its projection
+#                            rows' estimates (FEED_PROJECTIONS), memoized with the cards so a refill pays none of it
+#                            (2026-09-18)
 _feed_dupes_said = set()   # itemIds already reported as duplicated within one build: said once per id
 
 
@@ -54735,6 +54736,23 @@ _feed_dupes_said = set()   # itemIds already reported as duplicated within one b
 # that test. Not in it: the volatile fields every frame carries (`type`, `now`, `buildId`, about forty bytes) and the
 # fields federation writes client-side (pendingHosts, pendingDead, nowAt, buildIds, offHosts, hostsUnread), which cost
 # no frame bytes a projection could save.
+#
+# FEED_PROJECTIONS are rows beside the readers' rows for frames that do NOT exist yet, sized so the gap to a goal is
+# measured before the frame is designed. No bundle reads one, so the reader pin skips them. The one row today is
+# `phoneFace`: a phone client's feed slot carrying, for the ACTIVE cards only, a face per card and one summary row per
+# group (the user 2026-09-18, who decided that feed cards on the phone become a face with the detail fetched on tap, and
+# that the phone's feed view defaults to the active cards with its groups collapsed). The face is FEED_PHONE_FACE_FIELDS,
+# five fields every kind of card carries today and feed.ts reads off a card: `text`, the title; `column`, the state
+# (working, needs_input or completed, the column the feed files it under); `t`, the epoch its age is shown from; and
+# `itemId` and `sid`, the address a tap fetches the detail by. A card is active when its `column` is in
+# FEED_PHONE_FACE_ACTIVE, the feed's Working and Blocked columns; the frame's `working`, `awaiting` and `stateUnknown`
+# lists are session NAMES for the pips, not card groups, so they mark no card. A group is a session with a card in the
+# frame (the grouped feed's thread key, by `sid`), and its summary row is the key and the count of the cards it holds,
+# one row per group whether or not the phone would show it open (the default collapses them all). `today` is the whole
+# frame, as for every row: a phone's feed page dials as `feed` and its Outline as `fleet`, the same pane iframes as the
+# desktop, so it receives the whole frame today and the row reads as the saving. The estimate is _ask_fields_est's, with
+# its errors; a detail fetch is outside it (per tap, not per frame), and so is the remainder (the face frame's design
+# decides what of it a phone needs).
 FEED_APP_FIELDS = {
     "feed": ("asks", "judgeLimit", "working", "awaiting", "stateUnknown", "bgServices", "userTodos", "order", "views",
              "sessions", "clearNotices", "sdkNotices", "syncNotices", "dismissedCount", "showDismissed", "canUndoClear",
@@ -54743,6 +54761,8 @@ FEED_APP_FIELDS = {
               "asks.summary", "asks.blockSummary", "ledgers", "views", "sessions", "clearedForeign", "off"),
     "waiting": ("userTodoRows", "userTodosOn", "sessions"),
 }
+FEED_PHONE_FACE_FIELDS = ("itemId", "sid", "text", "column", "t")   # the phone face: the address, the title, the state, the age
+FEED_PHONE_FACE_ACTIVE = ("working", "needs_input")                 # the columns whose cards are active: Working and Blocked
 # The frame's top-level fields outside the volatile three: build_feed's return, the pusher's `ledgers` attach, the views
 # payload's fault marker and the off frame's flag. The table's top-level names are drawn from this list; a test pins the
 # list against a built frame and the off frame (the off frame's empty federation lists, items, hosts, pendingHosts and
@@ -54784,10 +54804,34 @@ def _ask_fields_est(asks, fields):
     return n
 
 
+def _phone_face_est(asks):
+    """An ESTIMATE, in _ask_fields_est's style and with its errors, of the bytes a phone client's feed slot would carry
+    as the `phoneFace` projection (FEED_PROJECTIONS): a face per active card (FEED_PHONE_FACE_FIELDS of every card whose
+    `column` is in FEED_PHONE_FACE_ACTIVE) plus one summary row per group (by `sid`: the key and the count of cards the
+    group holds, every card counted, active or not). Lengths only, no encode; one O(cards) pass, memoized with the
+    cards (_feed_cards_memo)."""
+    active = [a for a in asks if isinstance(a, dict) and a.get("column") in FEED_PHONE_FACE_ACTIVE]
+    groups = {}
+    for a in asks:
+        if isinstance(a, dict):
+            sid = a.get("sid")
+            groups[sid] = groups.get(sid, 0) + 1
+    rows = [{"sid": sid, "count": n} for sid, n in groups.items()]
+    return _ask_fields_est(active, FEED_PHONE_FACE_FIELDS) + _ask_fields_est(rows, ("sid", "count"))
+
+
+# The projection rows beside the readers' rows in `apps` (see the FEED_APP_FIELDS comment): name -> an estimator over
+# the build's cards, run with the card-field pass and memoized with it.
+FEED_PROJECTIONS = {"phoneFace": _phone_face_est}
+
+
 class _FeedComposition:
     """memos.feedComposition: what the feed frame is made of, per _feed_parts pass (a build, or a ledgers refill of the
     same build), as lifetime sums and the last pass, and per consuming app (FEED_APP_FIELDS) the bytes it would receive
-    if it were sent only the fields it reads (`projected`), beside the whole frame it receives today (`today`).
+    if it were sent only the fields it reads (`projected`), beside the whole frame it receives today (`today`). Under
+    the same `apps`, the projection rows (FEED_PROJECTIONS): frames no client receives yet, sized so the gap to a goal
+    is measured before the frame is designed (`phoneFace`, the phone's face frame; its `today` is the whole frame the
+    phone's feed and Outline pages receive now).
 
     Every number but one is read from the sizes _feed_parts makes for the wire anyway: the per-card strings (the cards
     minus their tints, as _feed_est counts them), the per-ledger strings and, since this probe, the remainder's per-field
@@ -54800,9 +54844,10 @@ class _FeedComposition:
 
     Cost per pass, bounded: the two sums _feed_est takes (one int per card and per ledger), one len() per remainder
     field, and for the apps that read card fields an O(cards x fields) pass of len() calls memoized with the cards on
-    the build's asks list (_feed_cards_memo), so a ledgers refill pays none of it; no encode anywhere. About a
-    millisecond per thousand cards. Paste-safe: identifier keys (the frame's own field names, the kernel's app names),
-    numbers only. A pass whose accounting raises is counted under `failed` and said once; the frame is unaffected."""
+    the build's asks list (_feed_cards_memo), plus the projections' O(cards) passes memoized with it, so a ledgers
+    refill pays none of it; no encode anywhere. About a millisecond per thousand cards. Paste-safe: identifier keys
+    (the frame's own field names, the kernel's app names), numbers only. A pass whose accounting raises is counted
+    under `failed` and said once; the frame is unaffected."""
     __slots__ = ("lock", "passes", "failed", "life", "last", "said")
     SUMS = ("frame", "cards", "ledgers", "rest", "cardCount", "ledgerCount")
 
@@ -54813,14 +54858,15 @@ class _FeedComposition:
         self.said = False
         self.life = {k: 0 for k in self.SUMS}
         self.life["by"] = {}
-        self.life["apps"] = {app: {"today": 0, "projected": 0} for app in FEED_APP_FIELDS}
+        self.life["apps"] = {app: {"today": 0, "projected": 0} for app in (*FEED_APP_FIELDS, *FEED_PROJECTIONS)}
         self.last = None
 
     @staticmethod
     def project(cards_bytes, led_bytes, rest_bytes, by, ask_fields):
         """Per app: the whole frame's bytes (`today`) and the bytes of the fields FEED_APP_FIELDS says it reads
         (`projected`): the cards whole or by field (ask_fields: the app's _ask_fields_est), the ledgers, the remainder's
-        fields by name from `by`."""
+        fields by name from `by`. Then per projection (FEED_PROJECTIONS) the whole frame beside its estimate, which
+        rode `ask_fields` under the projection's name."""
         frame = cards_bytes + led_bytes + rest_bytes
         apps = {}
         for app, fields in FEED_APP_FIELDS.items():
@@ -54833,6 +54879,8 @@ class _FeedComposition:
                 elif not f.startswith("asks."):
                     p += by.get(f, 0)
             apps[app] = {"today": frame, "projected": p}
+        for name in FEED_PROJECTIONS:
+            apps[name] = {"today": frame, "projected": ask_fields.get(name, 0)}
         return frame, apps
 
     def record(self, cards_bytes, n_cards, led_bytes, n_led, attached, rest_bytes, by, ask_fields):
@@ -54916,7 +54964,8 @@ def _feed_parts(feed):
     else:
         cards = {a["itemId"]: json.dumps(_strip_trgb(a), default=dflt) for a in asks}
         askf = {app: _ask_fields_est(asks, fs) for app, fs in _FEED_APP_ASK_FIELDS.items()}   # the composition probe's
-        _feed_cards_memo = (asks, cards, askf)                                              #  card-field estimate, once per build
+        askf.update((name, est(asks)) for name, est in FEED_PROJECTIONS.items())             #  card-field and projection
+        _feed_cards_memo = (asks, cards, askf)                                              #  estimates, once per build
         _wire_bump("feed_cards_miss")
         if len(cards) != len(asks):
             seen, dup = set(), set()

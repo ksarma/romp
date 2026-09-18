@@ -20,7 +20,12 @@ local frame by mergeHostFeeds; applyViewerClears rewrites the merged cards and t
 that read those carry it), and the frame-fields list matches a built frame, the off frame and the views fault marker;
 (c) a synthetic build with a known ledger share projects the expected bytes per app, a ledgers refill re-sizes only the
 ledgers, and the lifetime sums accumulate; (d) the remainder's per-field encode is byte for byte the
-whole sort_keys encode, and a build encodes each card, ledger and remainder field once and a refill no card.
+whole sort_keys encode, and a build encodes each card, ledger and remainder field once and a refill no card; (e) the
+`phoneFace` projection row (FEED_PROJECTIONS) beside the readers' rows sizes a frame that does not exist yet, a phone
+client's feed slot carrying a face per active card (the address, the title, the state and the age: fields feed.ts
+reads off a card today) plus one summary row per session with a card: on the 60-card fixture it sits far below the feed
+row, a fixture with every card active projects more than one with none, and the reader pin skips the row, with no bundle
+to pin it against.
 
 Synthetic only: the notes-api demo world, TESTHOST, placeholder ids."""
 import base64
@@ -244,9 +249,14 @@ class ServedBlock(unittest.TestCase):
             self.assertEqual(block["wire"]["exact"], 1, "a whole frame went, so the body is materialized")
             self.assertEqual(block["wire"]["bytes"], n - 9 - len(json.dumps(frame["now"])))
             self.assertGreaterEqual(block["wire"]["bytes"], last["frame"])
-            for app in ("feed", "fleet", "waiting"):
+            for app in ("feed", "fleet", "waiting", "phoneFace"):
                 self.assertEqual(last["apps"][app]["today"], last["frame"], app)
                 self.assertLess(last["apps"][app]["projected"], last["frame"], app)
+            # the projection row rides `apps` beside the readers' rows (fails before: no such row); its `today` is the
+            # fleet row's, the whole frame a phone's Outline receives now (it dials as fleet on every layout, its feed
+            # page as feed), so the row reads as the saving
+            self.assertEqual(last["apps"]["phoneFace"]["today"], last["apps"]["fleet"]["today"])
+            self.assertLess(last["apps"]["phoneFace"]["projected"], last["apps"]["fleet"]["projected"])
             self.assertLess(last["apps"]["waiting"]["projected"], last["rest"], "waiting reads three remainder fields")
             self.assertEqual(last["apps"]["feed"]["projected"], last["frame"] - last["ledgers"] - last["by"]["userTodoRows"]
                              - last["by"]["userTodosOn"],
@@ -299,6 +309,26 @@ class AppTable(unittest.TestCase):
     def test_the_table_names_every_frame_field_each_reader_reads_and_nothing_else(self):
         table = km.FEED_APP_FIELDS                               # fails before: no table
         self.assertEqual(set(table), set(self.READERS), "one row per app that rides the feed slot")
+        # The projection rows are NOT in the readers' table, and the pin below skips them: a projection sizes a frame
+        # no bundle reads yet (phoneFace, the phone's face frame, decided 2026-09-18 and not built), so there is no
+        # reader source to pin it against; the day a bundle reads one, its row moves into the table and the pin reads
+        # it there. What CAN be pinned is the face itself: its five fields are fields every card carries and feed.ts
+        # reads off a card today (it.<field>), so the face is drawn from the frame as it is, not from a wished-for card.
+        self.assertEqual(set(km.FEED_PROJECTIONS), {"phoneFace"}, "one projection row today")
+        self.assertNotIn("phoneFace", table,
+                         "phoneFace is a projection of a frame that does not exist yet: no reader, so no reader pin")
+        self.assertFalse(set(km.FEED_PROJECTIONS) & set(table), "a projection is never also a reader row")
+        for app in km.FEED_PROJECTIONS:
+            self.assertNotIn(app, self.READERS, "%s has no bundle to read against; the reader pin skips it" % app)
+        self.assertEqual(km.FEED_PHONE_FACE_FIELDS, ("itemId", "sid", "text", "column", "t"),
+                         "the face: the address (itemId, sid), the title (text), the state (column) and the age (t)")
+        feed_src = self._src("feed.ts")
+        for f in km.FEED_PHONE_FACE_FIELDS:
+            self.assertTrue(re.search(r"\bit\??\.%s\b" % re.escape(f), feed_src),
+                            "%s: a card field feed.ts reads off a card today" % f)
+        self.assertEqual(set(km.FEED_PHONE_FACE_ACTIVE), {"working", "needs_input"},
+                         "active is the Working and Blocked columns; Completed is not")
+        self.assertIn('column: "working" | "needs_input" | "completed"', feed_src, "the card's column values, as feed.ts types them")
         # federation.js loads on every feed-slot page ahead of the pane's bundle and hands it the merged frame. Most
         # fields it merges through, and the pane's own read counts them; the fields it CONSUMES on the pane's behalf
         # are the local frame's fields mergeHostFeeds reads by name (clearedForeign: applyViewerClears drops the remote
@@ -395,7 +425,9 @@ class SyntheticBuild(unittest.TestCase):
         self.assertEqual(last["frame"], cards + leds + sum(by.values()))
         self.assertEqual((last["cardCount"], last["ledgerCount"], last["ledgersAttached"]), (40, 2, 1))
         apps = last["apps"]
-        self.assertEqual(set(apps), {"feed", "fleet", "waiting"})
+        self.assertEqual(set(apps), {"feed", "fleet", "waiting", "phoneFace"}, "the readers' rows and the projection row")
+        self.assertEqual(apps["phoneFace"], {"today": last["frame"], "projected": km._phone_face_est(feed["asks"])},
+                         "the phone face projection: the whole frame today beside the face estimate over the build's cards")
         self.assertEqual(apps["waiting"], {"today": last["frame"],
                                            "projected": by["userTodoRows"] + by["userTodosOn"] + by["sessions"]},
                          "the Waiting-on-you pane reads its rows, the switch and the session list")
@@ -452,6 +484,8 @@ class SyntheticBuild(unittest.TestCase):
         self.assertEqual(last2["apps"]["fleet"]["projected"] - apps["fleet"]["projected"], leds2 - leds)
         self.assertEqual(last2["apps"]["waiting"]["projected"], apps["waiting"]["projected"])
         self.assertEqual(last2["apps"]["feed"]["projected"], apps["feed"]["projected"])
+        self.assertEqual(last2["apps"]["phoneFace"]["projected"], apps["phoneFace"]["projected"],
+                         "the face reads no ledger; its estimate is memoized with the cards, so a refill pays none of it")
         life, life0 = rep2["lifetime"], rep0["lifetime"]
         self.assertEqual(life["cards"] - life0["cards"], 2 * cards)
         self.assertEqual(life["ledgers"] - life0["ledgers"], leds + leds2)
@@ -481,7 +515,8 @@ class SyntheticBuild(unittest.TestCase):
         self.assertEqual(rep["last"], {})
         self.assertEqual(rep["wire"], {})
         self.assertEqual(rep["lifetime"]["by"], {})
-        self.assertEqual(rep["lifetime"]["apps"], {a: {"today": 0, "projected": 0} for a in km.FEED_APP_FIELDS})
+        self.assertEqual(rep["lifetime"]["apps"],
+                         {a: {"today": 0, "projected": 0} for a in (*km.FEED_APP_FIELDS, *km.FEED_PROJECTIONS)})
         for path, leaf in _leaves(rep):
             self.assertIsInstance(leaf, int, path)
         json.dumps(rep)
@@ -493,6 +528,59 @@ class SyntheticBuild(unittest.TestCase):
             self.assertEqual(fresh.report()["wire"], {"bytes": km._feed_est(parts), "exact": 0})
             lazy.text()
             self.assertEqual(fresh.report()["wire"], {"bytes": len(km._feed_body(feed)), "exact": 1})
+
+    def test_the_phone_face_projection_sits_far_below_the_feed_row_and_counts_the_active_cards(self):
+        """(e): the 60-card, 2-ledger fixture (every card in the Working column, so every card active) against the
+        feed row; the arithmetic done again here; the active set and the group rows on fixtures that move the column."""
+        fields = km.FEED_PHONE_FACE_FIELDS
+        feed = _feed(n=60)
+        self.assertTrue(all(f in a for a in feed["asks"] for f in fields), "every fixture card carries the five face fields")
+        km._feed_parts(feed)
+        last = km._feed_composition_report()["last"]
+        self.assertEqual((last["cardCount"], last["ledgerCount"]), (60, 2))
+        face, full = last["apps"]["phoneFace"]["projected"], last["apps"]["feed"]["projected"]
+        ratio = full / face
+        self.assertGreaterEqual(ratio, 8,
+                                "the face frame sits far below the feed row: %d B against the feed row's %d B (the "
+                                "frame's %d B), a ratio of %.1f; bounded at 8" % (face, full, last["frame"], ratio))
+        self.assertLess(face, last["apps"]["fleet"]["projected"], "and below the Outline's card fields plus ledgers")
+
+        def one(card, fs):
+            n = 2
+            for f in fs:
+                if f not in card:
+                    continue
+                v = card[f]
+                n += len(f) + (8 + len(v) if isinstance(v, str) else 6 + len(repr(v)))
+            return n
+        # the arithmetic, done again here: a face per active card (five fields at their lengths), one summary row per
+        # session with a card (its sid and the count of the cards it holds); the fixture's cards share one sid
+        self.assertEqual(face, sum(one(a, fields) for a in feed["asks"]) + one({"sid": SID, "count": 60}, ("sid", "count")))
+        # a fixture where every card is active projects more than one where none is: the same cards, the column moved
+        # to completed, leave only the one summary row
+        none = [_card(i, column="completed", provisional=(i % 10 == 9)) for i in range(60)]
+        est_none = km._phone_face_est(none)
+        self.assertEqual(est_none, one({"sid": SID, "count": 60}, ("sid", "count")), "no active card: the group row alone")
+        self.assertGreater(km._phone_face_est(feed["asks"]), est_none)
+        self.assertGreater(face, 50 * est_none, "sixty faces against one group row")
+        # active is the Working and Blocked columns, whatever the card's kind; the groups are the sessions with a card
+        mixed = ([_card(i, column="working") for i in range(10)]
+                 + [_card(10 + i, column="needs_input", provisional=True) for i in range(5)]
+                 + [_card(20 + i, column="completed") for i in range(20)]
+                 + [_card(40 + i, sid=SID_B, column="completed" if i % 2 else "working") for i in range(4)])
+        active = [a for a in mixed if a["column"] in ("working", "needs_input")]
+        self.assertEqual(len(active), 17)
+        self.assertEqual(km._phone_face_est(mixed),
+                         sum(one(a, fields) for a in active)
+                         + one({"sid": SID, "count": 35}, ("sid", "count")) + one({"sid": SID_B, "count": 4}, ("sid", "count")),
+                         "seventeen faces and two group rows, every card counted in its group")
+        self.assertEqual(km._phone_face_est([]), 0)
+        self.assertEqual(km._phone_face_est(["not a card", 3]), 0)
+        # the frame's own pips are session names, not card groups: moving a name between them moves no byte of the face
+        moved = dict(feed, working=[], awaiting=["web"], stateUnknown=["api"])
+        km._feed_cards_memo = None
+        km._feed_parts(moved)
+        self.assertEqual(km._feed_composition_report()["last"]["apps"]["phoneFace"]["projected"], face)
 
     def test_an_accounting_fault_is_counted_and_said_once_and_the_frame_is_unaffected(self):
         feed = _feed(n=2)
