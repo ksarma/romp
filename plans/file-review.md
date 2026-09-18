@@ -3957,7 +3957,16 @@ document stands on its own, each with the reasoning it was given.
     letter then loses the text from that `<` to the next `>` in the rendered view, where the browser's parser reads
     a tag, and is refused with the mismatch sentence. After an unclosed `<a` it autolinks no bare URL in that block
     or any later one (`inLink`), until an `</a>`. Both as before: the rule runs after the lex and changes no lexer
-    state, and main's path lexes the same. Two consequences the build found and kept: inside an inline `<svg>` or
+    state, and main's path lexes the same. Left too, found in the review's consolidation pass (2026-09-18): a heading
+    holding such a tag (`## Results <b>`) takes its id from its rendered text, the tag's characters included
+    (`mintHeadingIds` in file-view.ts slugs the sanitized heading's textContent, and a converted token is a text token
+    like any other, so nothing there tells the tag's characters from typed text): `md-results-b`, where GitHub's slug
+    of that heading, which reads the tag as HTML, is `results`, so the note's own `[..](#results)` link and an open at
+    `#results` miss it (the open reports no section of that name; the Outline, which lists the rendered headings
+    themselves, still lands). Before the rule the same heading was slugged `results` and its open `<b>` bolded the
+    rest of the note. A fix would slug the heading's inline tokens with the converted ones skipped, a second slug path
+    for a heading that holds an unclosed tag and is a link's target at once; the user decides whether it is worth one
+    (`ui/webview/md-literal-tags.test.ts` holds the shape and the slug). Two consequences the build found and kept: inside an inline `<svg>` or
     `<math>` the rule applies by name, so a child written without its own end tag (`<svg><title>icon</svg>`,
     `<svg><foreignObject><b>x</svg>`,
     `<math><annotation-xml encoding="text/html"><b>x</math>`) is text too and the root's own end tag closes the root

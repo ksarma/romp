@@ -156,6 +156,18 @@ test('the module header says the lexer state persists past the block as decision
   assert.ok(rules.includes('the DOM showed `ma8 x y8` there before decision 52, the `<b>` breaking out of the math, the recorded class; since it the annotation-xml and the b, with no end tags of their own, are literal text inside the dropped math and the DOM shows `ma8 y8` too'), 'the test\'s title says the same');
 });
 
+test('decision 52 records the heading id a converted tag changes as left, with the mechanism, the user\'s call and the module that holds it; file-view.ts says so at both comments that call the id GitHub\'s slug', () => {
+  assert.ok(d52.includes('Left too, found in the review\'s consolidation pass (2026-09-18): a heading holding such a tag (`## Results <b>`) takes its id from its rendered text, the tag\'s characters included'));
+  assert.ok(d52.includes('`md-results-b`, where GitHub\'s slug of that heading, which reads the tag as HTML, is `results`'));
+  assert.ok(d52.includes('A fix would slug the heading\'s inline tokens with the converted ones skipped'));
+  assert.ok(d52.includes('the user decides whether it is worth one (`ui/webview/md-literal-tags.test.ts` holds the shape and the slug)'));
+  const view = read('ui', 'webview', 'file-view.ts');
+  assert.ok(view.includes('One heading diverges from GitHub\'s slug, recorded as left in decision 52'), 'the mdBlock comment');
+  assert.ok(view.includes('(`## Results <b>` mints md-results-b, GitHub\'s slug being results): decision 52 of plans/file-review.md records that'), 'the minting\'s comment');
+  const pin = read('ui', 'webview', 'md-literal-tags.test.ts');
+  assert.ok(pin.includes('viewerHtml("## Results <b>\\n"), "<h2>Results &lt;b&gt;</h2>\\n"') && pin.includes('assert.equal(headingSlug(shown), "results-b");'), 'the test module holds the shape and the slug');
+});
+
 // ── the inventory, both ways ────────────────────────────────────────
 
 /** The test modules a record names in backticks, as repo-relative paths. */

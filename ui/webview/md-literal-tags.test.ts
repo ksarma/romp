@@ -14,6 +14,7 @@ import * as path from "node:path";
 import { marked, type Token, type Tokens } from "marked";
 import { applyMdConfig } from "./md-config";
 import { literalizeUnclosedTags, escapeInlineText, VOID_ELEMENTS } from "./md-literal-tags";
+import { headingSlug } from "./md-links";
 
 applyMdConfig();
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
@@ -109,6 +110,17 @@ test("the rule in a heading, a tight list item, a loose list item, a table cell,
   const CELL = "Open <b>x here.\n\n| a | b |\n|---|---|\n| c</b> | d |\n";
   assert.ok(converted(CELL, "<b>"), "the paragraph's opener: text, whatever a later cell holds");
   assert.ok(viewerHtml(CELL).includes("<td>c</b></td>"), "the cell's stray closer stays HTML");
+});
+
+test("a heading holding a converted tag renders the tag's characters in its text, so the id the viewer mints from the rendered text (file-view.ts mintHeadingIds: headingSlug over the sanitized heading's textContent) slugs them too: `## Results <b>` renders `<h2>Results &lt;b&gt;</h2>` and slugs `results-b`, where `## Results` slugs `results`, the slug GitHub gives the heading with the tag read as HTML; decision 52 of plans/file-review.md records the divergence as left (the review's consolidation pass), so a change that hides the tag's characters from the slug retires that record and this pin", () => {
+  assert.equal(viewerHtml("## Results <b>\n"), "<h2>Results &lt;b&gt;</h2>\n", "the heading's text carries the tag");
+  const shown = "Results <b>";   // the h2's textContent once the browser decodes the escape
+  assert.equal(headingSlug(shown), "results-b");
+  assert.equal(headingSlug("Results"), "results", "the slug of the heading without the tag, GitHub's for it with the tag");
+  assert.notEqual(headingSlug(shown), headingSlug("Results"), "the recorded divergence");
+  const VIEW = read("file-view.ts");
+  assert.match(VIEW, /function mintHeadingIds\(root: ParentNode\): void \{\n {2}const heads = Array\.from\(root\.querySelectorAll\("h1, h2, h3, h4, h5, h6"\)\) as HTMLElement\[\];\n {2}const slugs = uniqueSlugs\(heads\.map\(\(h\) => headingSlug\(h\.textContent \|\| ""\)\)\);/, "the minting reads the heading's textContent and nothing else, so the record describes this code");
+  assert.ok(VIEW.includes("recorded as left in decision 52") && VIEW.includes("`## Results <b>` mints md-results-b"), "file-view.ts says so where it mints the ids and where it calls the slug GitHub's");
 });
 
 test("a comment, a stray end tag, a declaration, a processing instruction and a CDATA section are untouched, with marked.parse's output byte for byte", () => {

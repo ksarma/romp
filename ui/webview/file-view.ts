@@ -4171,7 +4171,10 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // are never prefixed either, and ahead of the registered passes, since the math fill replaces a formula's
   // placeholder with KaTeX's glyphs and a slug read after it slugged those (`# Ratio $\frac{a}{b}$` minted
   // md-ratio-ba); read before it, the heading's text is the text as written, the TeX included, which is GitHub's
-  // slug and the id the note's own links spell.
+  // slug and the id the note's own links spell. One heading diverges from GitHub's slug, recorded as left in decision 52
+  // of plans/file-review.md: one holding an inline start tag with no end tag in it (`## Results <b>`), which the rule
+  // above renders as literal text, so the slug takes the tag's characters too (md-results-b), where GitHub reads the
+  // tag as HTML (results).
   box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));
   // A pixel-sized <video> keeps the author's shape (keepVideoShape, below): the sheets give it `height: auto` so it
   // shrinks in ratio with the column, and the browser's own `aspect-ratio: auto W / H` would hand that ratio to the poster.
@@ -4318,7 +4321,10 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
  *  md-ratio-ba-and-energy-emc2, so the note's own `[see](#ratio-fracab-and-energy-emc2)` and a `[[#Ratio ...]]`
  *  wikilink rendered dead on the Files pane and the feed the moment Slice 4 brought the fill to their bundles (the
  *  chat page's viewer had it before); read before it, the slug is GitHub's, md-ratio-fracab-and-energy-emc2, as the
- *  Files pane minted it while it had no fill (md-config-fragment-landing-browser.test.ts). */
+ *  Files pane minted it while it had no fill (md-config-fragment-landing-browser.test.ts). A heading holding an inline
+ *  start tag with no end tag in it is slugged with the tag's characters, which the literal-tags rule rendered as text
+ *  (`## Results <b>` mints md-results-b, GitHub's slug being results): decision 52 of plans/file-review.md records that
+ *  divergence as left. */
 function mintHeadingIds(root: ParentNode): void {
   const heads = Array.from(root.querySelectorAll("h1, h2, h3, h4, h5, h6")) as HTMLElement[];
   const slugs = uniqueSlugs(heads.map((h) => headingSlug(h.textContent || "")));
