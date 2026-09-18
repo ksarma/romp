@@ -42,23 +42,50 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # counter, and the name below rebinds so every `ThreadPoolExecutor(...)` in this module builds the
 # timed pool without touching the dozen pool sites. A worker blocked on a model call adds nothing:
 # thread_time is CPU, not wall.
+# The same delta goes to the SINK when one is set: the kernel installs its perf collector's writer at
+# load (set_worker_cpu_sink), so the workers' share stands in the kernel's live counters as each
+# future ends and a live read of those counters agrees with a snapshot (until 2026-09-18 the kernel
+# added this module counter to its snapshot COPY at read time, so two readings of one counter
+# disagreed by the whole total). The module counter stays: the serve child runs this file with no
+# kernel in its process and reads it for the done line's workerCpuMs (_serve_pass), and a standalone
+# romp-judge run has nothing else. This module names no kernel object: it holds a callable.
 _JUDGE_CPU = {"worker_ms": 0.0}
 _JUDGE_CPU_LOCK = threading.Lock()
+_WORKER_CPU_SINK = None        # kernel wiring: fn(cpu_ms) called on the pool worker's thread as each future ends, or None
+
+
+def set_worker_cpu_sink(fn):
+    """Kernel wiring: `fn(cpu_ms)` receives every pool worker's CPU milliseconds as its future ends, on the worker's
+    thread and under no lock of this module, besides the module counter judge_worker_cpu_ms reads. None (the default: the
+    serve child, a standalone run, a test that does not care) keeps the module counter alone. A kernel load re-executes
+    this module and so clears the sink; the kernel arms it again right after it builds its collector. `fn` must not
+    raise: it runs in the future's finally, so a raise there would stand in for the future's own result. Returns the
+    previous sink, so a test can restore it."""
+    global _WORKER_CPU_SINK
+    prev = _WORKER_CPU_SINK
+    _WORKER_CPU_SINK = fn
+    return prev
 
 
 def _judge_cpu_add(cpu_s):
+    ms = cpu_s * 1000.0
     with _JUDGE_CPU_LOCK:
-        _JUDGE_CPU["worker_ms"] += cpu_s * 1000.0
+        _JUDGE_CPU["worker_ms"] += ms
+    sink = _WORKER_CPU_SINK                          # read once; the lock above is released before the call
+    if sink is not None:
+        sink(ms)
 
 
 def judge_worker_cpu_ms():
-    """CPU milliseconds spent so far in this module's pool workers (every future any tier submitted)."""
+    """CPU milliseconds spent so far in this module's pool workers (every future any tier submitted), since this
+    module last executed. The serve child reads it per pass; a kernel reads its own counters (set_worker_cpu_sink)."""
     with _JUDGE_CPU_LOCK:
         return _JUDGE_CPU["worker_ms"]
 
 
 class _TimedPool(ThreadPoolExecutor):
-    """ThreadPoolExecutor whose submitted callables account their CPU to _JUDGE_CPU, and whose workers are
+    """ThreadPoolExecutor whose submitted callables account their CPU to _JUDGE_CPU and to the sink when one is set
+    (_judge_cpu_add), and whose workers are
     PASS THREADS (_pass_frame): a tier fans its per-session stages through these pools, and a worker must
     see the frame the tier thread opened or joined, so every submitted run carries the mark (review find,
     2026-09-08). Thread-locals do not cross into pool workers on their own, which is why the mark rides

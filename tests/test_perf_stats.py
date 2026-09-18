@@ -27,6 +27,7 @@ import time
 import unittest
 import shutil
 import socket
+import subprocess
 import urllib.request
 from unittest import mock
 import contextlib
@@ -2076,20 +2077,114 @@ class GoalIoCounters(unittest.TestCase):
 
 class JudgeCpu(unittest.TestCase):
     """The judge's CPU is attributed from two places: the tier threads (_run_tier) and every future the
-    tiers submit to judge.py's pools (_TimedPool, bound to the module's ThreadPoolExecutor name)."""
+    tiers submit to judge.py's pools (_TimedPool, bound to the module's ThreadPoolExecutor name). The workers'
+    share reaches the kernel's LIVE counters as each future ends, through the sink the kernel installs at load
+    (jd.set_worker_cpu_sink(_PERF_STATS.judge_worker_cpu)), so a live read of the stats dict and a snapshot()
+    read agree and a delta may take either; judge.py's own counter (judge_worker_cpu_ms) stays for the serve
+    child, whose module object no kernel ever loads. Until 2026-09-18 snapshot() added that module counter to
+    its COPY at read time and the live dict never carried it: two readings of one key disagreed by the whole
+    total, and a delta from one of each was wrong (tests/test_judges_process.py paid, f5ba16832)."""
+
+    def _arm(self, stats):
+        """Point judge.py's sink at `stats` for this test, recording every delta it is handed. judge.py is one module
+        object for every kernel a test process loads and the LAST load holds the sink, so a test that asserts on its
+        own kernel's counters arms them itself; the previous sink comes back at cleanup."""
+        jd = km.jd
+        received = []
+
+        def sink(ms):
+            received.append(ms)
+            stats.judge_worker_cpu(ms)
+        prev = jd.set_worker_cpu_sink(sink)
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+        return received
+
+    @staticmethod
+    def _live(stats):
+        with stats.lock:
+            return dict(stats.judge)
 
     def test_pool_workers_account_their_cpu(self):
         jd = km.jd
         self.assertTrue(issubclass(jd.ThreadPoolExecutor, concurrent.futures.ThreadPoolExecutor),
                         "every pool in judge.py is a real executor that also accounts")
+        received = self._arm(km._PERF_STATS)
         before = jd.judge_worker_cpu_ms()
+        live0 = self._live(km._PERF_STATS)
         with jd.ThreadPoolExecutor(max_workers=2) as ex:
             self.assertEqual(ex.submit(lambda a, b=1: a + b, 2, b=3).result(), 5, "args and kwargs pass through")
             ex.submit(_burn_cpu, 0.005).result()
         grew = jd.judge_worker_cpu_ms() - before
         self.assertGreaterEqual(grew, 4.0, "about 5 ms of a worker's CPU landed")
         self.assertLess(grew, 500.0)
-        self.assertEqual(km._PERF_STATS.snapshot()["judge"]["cpu_ms_workers"], jd.judge_worker_cpu_ms())
+        self.assertAlmostEqual(sum(received), grew, places=6, msg="the sink is handed the same deltas the module counter takes")
+        snap = km._PERF_STATS.snapshot()["judge"]
+        self.assertAlmostEqual(snap["cpu_ms_workers"] - live0["cpu_ms_workers"], sum(received), places=6,
+                               msg="the snapshot's cpu_ms_workers is what the sink received, copied from the live dict")
+        self.assertAlmostEqual(snap["cpu_ms_sum"] - live0["cpu_ms_sum"], sum(received), places=6,
+                               msg="and cpu_ms_sum grew by the same: the workers' share is in the sum at write time")
+
+    def test_a_live_read_and_a_snapshot_agree_on_cpu_ms_sum_after_pool_work(self):
+        """(i) One source. A private collector takes the sink; after real pool work its live dict and its snapshot carry
+        the same cpu_ms_sum and cpu_ms_workers, and the snapshot reads NOTHING from judge.py's counter (that counter is
+        stubbed to a billion for one read and the snapshot does not move). Red before 2026-09-18 on the first
+        assertion: the snapshot added judge_worker_cpu_ms() to its copy, the live dict had no workers' share."""
+        jd = km.jd
+        st = km._PerfStats()
+        received = self._arm(st)
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        self.assertGreaterEqual(sum(received), 4.0, "about 5 ms of a worker's CPU went through the sink")
+        live = self._live(st)
+        snap = st.snapshot()["judge"]
+        self.assertEqual(snap["cpu_ms_sum"], live["cpu_ms_sum"], "the snapshot copies the live sum and adds nothing at read time")
+        self.assertEqual(snap["cpu_ms_workers"], live["cpu_ms_workers"], "the workers' share is a live counter, copied")
+        self.assertAlmostEqual(live["cpu_ms_workers"], sum(received), places=6)
+        self.assertAlmostEqual(live["cpu_ms_sum"], sum(received), places=6, msg="no tier ran: the sum is the workers' share alone")
+        with mock.patch.object(jd, "judge_worker_cpu_ms", return_value=1e9):
+            again = st.snapshot()["judge"]
+        self.assertEqual(again["cpu_ms_sum"], live["cpu_ms_sum"], "judge.py's module counter is not an input to the snapshot")
+        self.assertEqual(again["cpu_ms_workers"], live["cpu_ms_workers"])
+
+    def test_with_no_sink_the_module_counter_alone_accumulates_and_the_kernels_dict_stands_still(self):
+        """(iii) The sink is optional: judge.py with none set (the serve child's process, a standalone romp-judge run)
+        keeps its own counter, which _serve_pass reads for workerCpuMs, and writes to no kernel."""
+        jd = km.jd
+        prev = jd.set_worker_cpu_sink(None)
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+        live0 = self._live(km._PERF_STATS)
+        before = jd.judge_worker_cpu_ms()
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        self.assertGreaterEqual(jd.judge_worker_cpu_ms() - before, 4.0, "the module counter took the worker's CPU")
+        live1 = self._live(km._PERF_STATS)
+        self.assertEqual((live1["cpu_ms_workers"], live1["cpu_ms_sum"]), (live0["cpu_ms_workers"], live0["cpu_ms_sum"]),
+                         "no sink, no write to the kernel's counters")
+
+    def test_the_kernel_arms_the_sink_at_load(self):
+        """A kernel load installs its collector's judge_worker_cpu as judge.py's sink, and a judge module no kernel has
+        loaded has none. Observed in a child process: judge.py is one module object per process and every kernel load
+        re-arms it, so only a load this test controls can show the state before and after."""
+        state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, state, True)
+        env = dict(os.environ)
+        env["ROMP_STATE_DIR"] = state
+        env["ROMP_KERNEL_NO_OPEN"] = "1"
+        env.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
+        code = ("import sys; sys.path.insert(0, %r)\n"
+                "from romp_load import load_source\n"
+                "load_source('romp_event_model', %r)\n"
+                "jd = load_source('romp_judge', %r)\n"
+                "assert jd.set_worker_cpu_sink(None) is None, 'no kernel loaded: no sink'\n"
+                "km = load_source('romp_kernel', %r)\n"
+                "sink = jd.set_worker_cpu_sink(None)\n"
+                "assert getattr(sink, '__self__', None) is km._PERF_STATS, sink\n"
+                "assert sink.__name__ == 'judge_worker_cpu', sink\n"
+                "print('armed')\n"
+                % (HERE, os.path.join(BIN, "romp-event-model"), os.path.join(BIN, "romp-judge"), os.path.join(BIN, "romp-kernel")))
+        r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=180)
+        self.assertEqual(r.returncode, 0, "stderr:\n%s" % r.stderr[-3000:])
+        self.assertIn("armed", r.stdout)
 
     def test_run_tier_accounts_the_tier_threads_cpu(self):
         """The shared tier runner (judge.py _run_tier, stage three round two) lands the thread's own CPU in the pass's

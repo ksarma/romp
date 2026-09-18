@@ -995,10 +995,12 @@ class _PerfStats:
                                    cpu_ms_sum counts the child's reported tier and worker CPU; the
                                    producer thread's own per-pass work, the episode tick, the goals
                                    snapshot and the compaction, is not in it and lands under "other";
-                                   a snapshot() read adds judge.py's in-process pool accumulator,
-                                   jd.judge_worker_cpu_ms(), to its copy while a live read of the
-                                   stats dict does not, so a delta comes from one source, never one
-                                   of each),
+                                   the workers' share lands in the live dict as each pool future
+                                   ends, through the sink the kernel installs in judge.py at load
+                                   (jd.set_worker_cpu_sink(_PERF_STATS.judge_worker_cpu)), so a
+                                   live read of the stats dict and a snapshot() read agree and a
+                                   delta may take either; until 2026-09-18 snapshot() added judge.py's
+                                   module counter to its copy at read time and the two disagreed),
                                    wakes (every _producer_wake.set() call: the backends' pokes, POST
                                    /tick, the two kernel-internal sites; one SDK turn fires several,
                                    so wakes/s is an upper bound on the poke-episode rate, not the
@@ -1150,6 +1152,8 @@ class _PerfStats:
             #                                           deltas as the call sites take them; served by rank, never by sid
             self.sends = {k: {} for k in self.SEND_KINDS}
             self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0, "cpu_ms_sum": 0.0,
+                          "cpu_ms_workers": 0.0,          # the in-process pool workers' share of cpu_ms_sum, fed by judge_worker_cpu
+                          #                                 as each future ends (judge.py's sink): a live counter, copied by snapshot()
                           "wakes": 0, "wakes_event": 0, "wakes_backstop": 0,
                           "tierStarts": 0,                # judge tier threads started (T404: the lab's proof that off starts nothing)
                           "passesLost": 0, "childRestarts": 0, "childFallbacks": 0, "orphansSwept": 0,
@@ -1710,6 +1714,16 @@ class _PerfStats:
         with self.lock:
             self.judge["cpu_ms_sum"] += cpu_dt * 1000.0
 
+    def judge_worker_cpu(self, ms):
+        """One pool worker's CPU milliseconds for one future, from judge.py's _TimedPool through the sink this kernel
+        installs at load (jd.set_worker_cpu_sink, right after the collector is built): into cpu_ms_sum and
+        cpu_ms_workers at write time, so the live dict carries the published figure and a snapshot copies it. Called on
+        the worker's thread with no judge.py lock held; this lock is the only one taken here."""
+        with self.lock:
+            j = self.judge
+            j["cpu_ms_sum"] += ms
+            j["cpu_ms_workers"] += ms
+
     def judge_wake(self):
         """One _producer_wake.set() call (the producer's _CountedEvent)."""
         with self.lock:
@@ -1842,12 +1856,8 @@ class _PerfStats:
         jobs["pass_ms_p90"] = self._pct(jring, 0.9)
         jobs["pass_ms_ring_max"] = jring[-1] if jring else 0.0
         judge["ms_mean"] = (judge["ms_sum"] / judge["passes"]) if judge["passes"] else 0.0
-        try:
-            workers = float(jd.judge_worker_cpu_ms())
-        except Exception:
-            workers = 0.0
-        judge["cpu_ms_workers"] = workers
-        judge["cpu_ms_sum"] += workers                     # tier threads + their pool workers
+        # cpu_ms_sum and cpu_ms_workers ride the copy as they stand: the pool workers' share landed in the live dict as
+        # each future ended (judge_worker_cpu, judge.py's sink), so nothing is added here and a live read agrees
         try:
             judge["tiers"] = jd.tier_stats()               # the evidence gate's per-tier counters
         except Exception:
@@ -1954,6 +1964,9 @@ class _PerfStats:
 
 
 _PERF_STATS = _PerfStats()
+jd.set_worker_cpu_sink(_PERF_STATS.judge_worker_cpu)   # the judge pools' CPU lands in this collector as each future ends (the
+#                                                        write-time fold); every kernel load re-executes judge.py, which clears the
+#                                                        sink, so the arming stands here, after the collector, on every load
 
 
 _STAGE_TL = threading.local()     # the calling thread's current stage name (T401): set by _job_stage and the push, read by the
@@ -63775,7 +63788,8 @@ def _producer():
                                                            # accounting, the frame ended in its finally; the gate's three inputs are
                                                            # read HERE; each tier counts under /perf judge.tierStarts as it STARTS
                                                            # (_tier_started), so a read mid-pass sees the running tiers (round three)
-                _PERF_STATS.judge_cpu(res["tierCpuS"])       # the tier threads' own CPU; the pool workers account theirs in judge.py
+                _PERF_STATS.judge_cpu(res["tierCpuS"])       # the tier threads' own CPU; the pool workers' landed as each future ended,
+                                                           # through the sink armed at load (jd.set_worker_cpu_sink, judge_worker_cpu)
             try:                                       # AFTER the join → single writer: archive newly-cleared
                 moved = _compact_goal_stores() if tracking else 0   # cards out of the live goal stores (keeps build_feed flat); off, the stores rest (T404)
                 if moved:                              # the first pass migrates the whole backlog of cleared nodes.

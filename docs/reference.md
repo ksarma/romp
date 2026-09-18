@@ -3810,10 +3810,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `cpu_ms_workers`, which on the child road is near zero, the child's
   workers riding `cpu_ms_child_workers`; the
   producer thread's own per-pass work is not included and shows under the
-  process line's "other"; a `/perf` snapshot adds judge.py's in-process pool
-  accumulator, `judge_worker_cpu_ms()`, to the sum at read time while the
-  kernel's live stats dict does not carry it, so a delta comes from one source,
-  never one of each), `wakes` (every wake of the producer: the backends'
+  process line's "other"; the workers' share reaches the kernel's live
+  counters as each pool future ends, through the sink the kernel installs in
+  judge.py at load (`set_worker_cpu_sink`), so a live read of the stats dict
+  and a `/perf` snapshot agree and a delta may take either; judge.py's own
+  counter, `judge_worker_cpu_ms()`, serves the judge child, which runs with
+  no kernel in its process), `wakes` (every wake of the producer: the backends'
   pokes, `POST /tick`, and two kernel-internal sites; one SDK turn fires
   several, so this is an upper bound on the poke rate), `wakes_event` and
   `wakes_backstop` (how the producer's 3 s wait ended; `wakes - wakes_event`
