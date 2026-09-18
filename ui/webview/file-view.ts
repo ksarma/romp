@@ -19,6 +19,7 @@ import hljs from "highlight.js/lib/core";
 import { marked, type Tokens } from "marked";
 import { sanitizeMd, revealFragmentTarget } from "./md-sanitize";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration (md-config.ts)
+import { literalizeUnclosedTags } from "./md-literal-tags";   // an inline start tag with no end tag in its block renders as literal text, on this parse's tokens (plans/file-review.md, decision 52)
 import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
@@ -4142,11 +4143,22 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // collects the code tokens: the lexer expanded the note's leading tabs to spaces before it cut them, and the fence
   // pass below reads each fence's text back out of the note for its Copy button (fence-source.ts).
   const base = marked.defaults.walkTokens;
-  const dirty = marked.parse(text, { walkTokens: (t) => {
+  // marked.parse's three steps, each called here (its lexer, the per-call walkTokens, its parser, over a copy of the singleton's
+  // defaults as marked.parse copies them), so the token tree is in hand between the lexer and the walk: an inline start tag with
+  // no end tag in its block becomes literal text there (md-literal-tags.ts literalizeUnclosedTags, the rule the anchor map applies
+  // to its own lex of the same text in placeTokens; plans/file-review.md, decision 52), on THIS parse's tokens alone, so the
+  // chat's md(), which parses the same singleton, renders as before. The walk runs unchanged and in the same order. A throw from
+  // the lexer or the parser reaches the caller as marked's own error, without the report-this sentence marked.parse appended to
+  // its message (fellMessage still cuts one).
+  const opts = { ...marked.defaults };
+  const tokens = marked.lexer(text, opts);
+  literalizeUnclosedTags(tokens);
+  marked.walkTokens(tokens, (t) => {
     if (t.type === "code") { const c = t as Tokens.Code; fences.push({ text: c.text, indented: c.codeBlockStyle === "indented" }); }
     if (doc && doc.kind === "file") viewerWalkTokens(t);
     if (base) void base.call(marked, t);
-  } }) as string;
+  });
+  const dirty = marked.parser(tokens, opts);
   // The one sanitizer the chat's md() uses too (md-sanitize.ts): html + svg (a note's own inline SVG), no data-*
   // (a document's `<span data-act="stopRetrying">` would otherwise bubble to render.ts's document-level delegate
   // and interrupt the active session; review find on #958, 2026-09-07), and rules modelled on GitHub's for a

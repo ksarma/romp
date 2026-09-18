@@ -132,8 +132,9 @@ const SHAPES: Shape[] = [
   { name: "an svg title closed by its own end tag", src: "Intro.\n\n<div><svg><title>inner title</title><text>t</text></svg> beside</div>\n\npara.\n" },
   { name: "a textarea in HTML content reads an svg end tag as text", src: "<div><textarea>x</svg> y</textarea> z</div>\n" },
   { name: "a style inside an svg goes with its text", src: "<div><svg><style>.a{}</style><text>t</text></svg> z</div>\n" },
-  // round 5: inline too (red at 701728eae: the title's text ran to the svg's end tag, tags and all, `icon</svg> beside`)
-  { name: "an svg title inline, closed by the svg's end tag", src: "Intro <svg><title>icon</svg> beside end\n", quotes: [{ from: "icon</svg> beside", shown: "icon beside" }] },
+  // round 5: inline too (red at 701728eae: the title's text ran to the svg's end tag, tags and all, `icon</svg> beside`); since decision 52
+  // (md-literal-tags.ts) a `<title>` with no end tag of its own is literal text, svg text in the DOM, on both sides
+  { name: "an svg title start tag inline with no end tag of its own before the svg's end tag: literal text on both sides", src: "Intro <svg><title>icon</svg> beside end\n", quotes: [{ from: "icon</svg> beside", shown: "icon beside" }] },
   // the round 5 finder's shapes, whole text alone
   { name: "a hex numeric reference with no semicolon in an html block", src: "<div>a &#x1F600 b</div>\n" },
   { name: "legacy names with digits, no semicolon", src: "<div>&frac12 x &sup2 y &AElig z</div>\n" },
@@ -164,8 +165,10 @@ const SHAPES: Shape[] = [
     quotes: [{ from: "s1</td><style>td{}</style><td>s2", shown: "s1 s2", cells: ["TD0", "TD1"] }] },
   { name: "a br between two cells of a minified raw table, foster-parented before it", whole: "blanks", src: "<table><tr><td>a1</td><br><td>a2</td></tr></table>\n",
     quotes: [{ from: "a1</td><br><td>a2", shown: "a1 a2", cells: ["TD0", "TD1"] }] },
-  { name: "an HTML element left open inside a foreignObject at the svg's end tag, inline", src: "Intro <svg><foreignObject><b>x</svg> y\n",
-    quotes: [{ from: "Intro", to: " y", shown: "Intro" }] },
+  // since decision 52 (md-literal-tags.ts) the foreignObject and the b, with no end tags of their own in the block, are literal text: svg
+  // text in the DOM, the svg closed by its end tag, ` y` shown on both sides (before: `Intro` alone, the parser's element left open)
+  { name: "a foreignObject and a b with no end tags of their own before the svg's end tag, inline: literal text on both sides", src: "Intro <svg><foreignObject><b>x</svg> y\n",
+    quotes: [{ from: "Intro", to: " y", shown: "Intro <foreignObject><b>x y" }] },
   // round 7 (anchor-map-html-rules.test.ts tests 9 to 13, red over a git archive of 78c0806ce): a raw table written without its end tags,
   // whose implied ends leave the cells adjacent exactly as written end tags do (the blank was put at a part's END tag alone); a dropped
   // element WITH text between two cells, removed whole and leaving the cells adjacent (its text ended the look past it); a raw-text or
@@ -193,10 +196,18 @@ const SHAPES: Shape[] = [
     quotes: [{ from: "Intro", to: " y", shown: "Intro y" }, { from: " y", shown: "y" }] },
   { name: "an li closed by the next li inside a foreignObject", src: "Intro <svg><foreignObject><li>a<li>b</li></foreignObject></svg> y\n", quotes: [{ from: " y", shown: "y" }] },
   { name: "a p closed by a div inside a foreignObject in an html block", src: "Intro.\n\n<div><svg><foreignObject><p>a<div>b</div></foreignObject></svg> y</div>\n\npara\n", quotes: [{ from: " y", shown: "y" }] },
-  { name: "an HTML element left open inside an annotation-xml with the html encoding: the math's end tag is ignored", src: "ma2 <math><annotation-xml encoding=\"text/html\"><b>x</math> y2\n", quotes: [{ from: "ma2", shown: "ma2" }] },
-  { name: "an HTML element left open inside an mtext", src: "ma5 <math><mtext><b>x</math> y5\n", quotes: [{ from: "ma5", shown: "ma5" }] },
-  { name: "an HTML element closed inside an annotation-xml with the html encoding (a control)", src: "ma6 <math><annotation-xml encoding=\"text/html\"><b>x</b></math> y6\n", quotes: [{ from: "y6", shown: "y6" }] },
-  { name: "an HTML element left open inside an svg title keeps the svg's end tag ignored", src: "Intro <svg><title><b>x</svg> y\n", quotes: [{ from: "Intro", shown: "Intro" }] },
+  // since decision 52 (md-literal-tags.ts) an integration point or a b with no end tag of its own is literal text, so the math closes at its
+  // end tag and is dropped whole with the text inside it, and the tail shows on both sides (before: the parser's element left open kept
+  // `</math>` ignored, `ma2` alone)
+  { name: "an annotation-xml with the html encoding and a b, neither with an end tag of its own: literal text inside the dropped math, the tail shown", src: "ma2 <math><annotation-xml encoding=\"text/html\"><b>x</math> y2\n", quotes: [{ from: "ma2", to: "y2", shown: "ma2 y2" }] },
+  { name: "an mtext and a b with no end tags of their own: the same", src: "ma5 <math><mtext><b>x</math> y5\n", quotes: [{ from: "ma5", to: "y5", shown: "ma5 y5" }] },
+  { name: "a title and a b with no end tags of their own inside an svg: literal text, svg text in the DOM, the svg closed", src: "Intro <svg><title><b>x</svg> y\n", quotes: [{ from: "Intro", to: " y", shown: "Intro <title><b>x y" }] },
+  // decision 52's two agreements that were the plan's recorded divergences before it (RECORDED below kept the `/>` forms): a `<textarea>` with
+  // no end tag in its block is literal text and the tokens after it prose on both sides, where the parser used to read the block's rest as
+  // the textarea's text; an `<annotation-xml>` whose encoding value carries a blank and a `<b>` with no end tags are literal text inside the
+  // dropped math on both sides, where the parser used to break out of the math at the `<b>` and show `x`
+  { name: "an inline textarea start tag with no end tag in its block: literal text on both sides", src: "Lead <textarea>open *x* tail\n", quotes: [{ from: "Lead", to: "tail", shown: "Lead <textarea>open x tail" }] },
+  { name: "an annotation-xml whose encoding has a trailing blank and a b, neither closed: literal text inside the dropped math on both sides", src: "ma8 <math><annotation-xml encoding=\"text/html \"><b>x</math> y8\n", quotes: [{ from: "ma8", to: "y8", shown: "ma8 y8" }] },
   { name: "an HTML element closed inside an svg title is the sanitizer's to remove with its text; the svg closes", src: "Intro <svg><title>t<b>x</b>u</title></svg> y\n", quotes: [{ from: " y", shown: "y" }] },
   // round 8 (anchor-map-html-rules.test.ts tests 14 and 15, red over a git archive of 99e7e2d0c): a raw table marked splits into two html
   // blocks at a blank line, one table to the parser, whose second block continues the first's row and cells (the reader's table frames
@@ -209,19 +220,22 @@ const SHAPES: Shape[] = [
   { name: "a malignmark start tag inside an mtext", src: "ma9 <math><mtext><malignmark></mtext></math> y9\n", quotes: [{ from: "ma9", to: "y9", shown: "ma9 y9" }] },
 ];
 
-/** The plan's recorded divergence (plans/markdown-viewer.md, the Slice 5 build note, item 4), pinned on both sides. */
+/** The plan's recorded divergences (plans/markdown-viewer.md, the Slice 5 build note, item 4), pinned on both sides. The first of them, an
+ *  inline `<textarea>` left open, is an agreement since decision 52 (SHAPES above): a start tag with no end tag in its block is literal text
+ *  on both sides. The `/>` forms keep the divergence: the self-closing syntax stays HTML, which the parser opens. */
 const RECORDED: Divergence[] = [
-  { name: "an inline textarea left open is read to its block's end where the parser reads on", src: "Lead <textarea>open *x* tail\n", dom: "Lead open <em>x</em> tail</p>", reader: "Lead open <em>x</em> tail",
-    why: "the parser's textarea runs to the paragraph's end tag, which the DOM then shows as text" },
-  // round 7: the same class for the `/>` forms, which open (both sides read the block's rest as the element's; the parser reads on)
+  // round 7: the `/>` forms, which open (both sides read the block's rest as the element's; the parser reads on)
   { name: "a title written `/>` in a paragraph drops the block's rest, and the parser every later block", src: "Intro.\n\nPara sc1 <title/> after sc2.\n\nPara sc3 more sc4.\n\nend sc5.\n", dom: "Intro. Para sc1", reader: "Intro. Para sc1 Para sc3 more sc4. end sc5.",
     why: "the parser's title runs to the document's end and the sanitizer drops it whole; the reader drops the block's rest alone" },
   { name: "a textarea written `/>` in a paragraph shows the block's rest as marked's HTML, and the parser every later block's too", src: "Para se1 <textarea/> after *em* se2.\n\nPara se3.\n", dom: "Para se1 after <em>em</em> se2.</p> <p>Para se3.</p>", reader: "Para se1 after <em>em</em> se2. Para se3.",
     why: "the parser's textarea runs to the document's end, which the DOM then shows as text; the reader reads the block's rest so" },
-  // round 8: an annotation-xml whose encoding value carries a blank is no integration point (an exact match, as the parser compares it), so
-  // the `<b>` inside it breaks out of the math, the recorded breakout class; the reader closes the math at its end tag and reads on (at
-  // 99e7e2d0c it read the annotation as an integration point and dropped the block's rest, `ma8`)
-  { name: "an annotation-xml whose encoding has a trailing blank inside the quotes: no integration point, the b breaks out", src: "ma8 <math><annotation-xml encoding=\"text/html \"><b>x</math> y8\n", dom: "ma8 x y8", reader: "ma8 y8",
+  // round 8's breakout divergence (an annotation-xml whose encoding value carries a blank, the `<b>` inside it breaking out of the math) is
+  // an agreement since decision 52, in SHAPES above: with no end tags of their own, both tags are literal text inside the dropped math.
+  // The breakout class itself stands, and decision 52 moves one shape into it: an `<annotation-xml>` with no end tag of its own is text
+  // now, so the closed `<b>` after it stands in the math's foreign content with no integration point around it, and the parser breaks
+  // out of the math at the `<b>` and shows its text, where the reader reads the b as the root's content and drops it with the math
+  // (before decision 52 both sides read `ma6 y6`: the annotation-xml was the parser's integration point and the b HTML inside it)
+  { name: "an HTML element closed inside an annotation-xml with the html encoding, the annotation-xml itself not closed: the b breaks out", src: "ma6 <math><annotation-xml encoding=\"text/html\"><b>x</b></math> y6\n", dom: "ma6 x y6", reader: "ma6 y6",
     why: "the parser breaks out of foreign content at the `<b>` and shows its text; the reader drops the math whole and reads on, the recorded class" },
 ];
 
@@ -233,11 +247,14 @@ function bundleProbe(): string {
     'import { marked } from "marked";',
     'import { applyMdConfig } from "./md-config";',
     'import { sanitizeMd } from "./md-sanitize";',
+    'import { literalizeUnclosedTags } from "./md-literal-tags";',
     'import { stripMarkupMapped, renderedQuote, paintRendered } from "./anchor-map";',
     "applyMdConfig();",
+    // mdBlock's parse (file-view.ts): marked's lexer, the literal-tags rule (md-literal-tags.ts, decision 52), marked's parser, then the sanitizer
+    "const viewerHtml = (src: string): string => { const opts = { ...marked.defaults }; const tokens = marked.lexer(src, opts); literalizeUnclosedTags(tokens); return marked.parser(tokens, opts); };",
     "(window as any).__probe = (src: string, quotes: Array<{ from: string; to?: string }>) => {",
     "  const render = () => { const box = document.createElement('div'); box.className = 'fileview-md';",
-    "    box.replaceChildren(...Array.from(sanitizeMd(marked.parse(src) as string).childNodes)); document.body.append(box); return box; };",   // mdBlock, file-view.ts
+    "    box.replaceChildren(...Array.from(sanitizeMd(viewerHtml(src)).childNodes)); document.body.append(box); return box; };",
     "  const box = render(); const dom = box.textContent || ''; box.remove();",
     "  const reader = stripMarkupMapped(src);",
     "  const paints = quotes.map((q) => {",

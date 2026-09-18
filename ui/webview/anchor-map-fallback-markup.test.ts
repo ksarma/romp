@@ -28,6 +28,7 @@ import assert from "node:assert/strict";
 import { inspect } from "node:util";
 import { marked } from "marked";
 import { applyMdConfig, resolveWikilink } from "./md-config";   // the one markdown configuration, applied here as the viewer applies it
+import { literalizeUnclosedTags } from "./md-literal-tags";   // the viewer's parse runs it between marked's lexer and parser (file-view.ts mdBlock), as the reader does after its lex
 import {
   mapRawSelection, paintRendered, paintChangesRendered, unpaintChanges, stripMarkupMapped, renderedQuote,
   type ChangePaint, type SelLike,
@@ -146,12 +147,23 @@ function standInSanitize(root: FakeElement): void {
     standInSanitize(c);
   }
 }
+/** marked's HTML as the viewer's mdBlock renders it (file-view.ts): its lexer, the literal-tags rule (md-literal-tags.ts: an inline start
+ *  tag with no end tag in its block is literal text, decision 52, the same rule the reader applies after its own lex), the file kind's
+ *  wikilink stamp, its parser. The corpus holds such tags (`List<String>`, `set <VAR> to`, a seeded `List<cellNNN>`), which render
+ *  as their characters now where the browser used to open an unknown element and show nothing of them. */
+function viewerHtml(text: string): string {
+  const opts = { ...marked.defaults };
+  const tokens = marked.lexer(text, opts);
+  literalizeUnclosedTags(tokens);
+  marked.walkTokens(tokens, (t) => { resolveWikilink(t); });
+  return marked.parser(tokens, opts);
+}
 /** The viewer's Rendered body: `div.fileview-md > marked output`, the file kind's wikilink stamp applied as file-view-links.ts applies
  *  it (so `[[Note]]` shows `Note`, the surface comments are made on), the sanitizer's drops stood in for. */
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text, { walkTokens: (t) => { resolveWikilink(t); } }) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   standInSanitize(box);
   return box;
 }
@@ -487,7 +499,7 @@ test("Rendered fallback, a table hole: cells with no whitespace between them in 
   // a DOM with the newlines between tags gone (a minifying step): the cells' text nodes are adjacent
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, (marked.parse(CELLS) as string).replace(/>\n</g, "><"))) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(CELLS).replace(/>\n</g, "><"))) box.appendChild(n);
   const marks = paintRendered(El(box), CELLS, rangeOf(CELLS, "cell one | cell two"), "fc-hl") as unknown as FakeElement[] | null;
   assert.ok(marks && marks.length, "painted over adjacent cells");
   assert.deepEqual(textMarks(marks!).map((m) => m.textContent), ["cell one", "cell two"]);

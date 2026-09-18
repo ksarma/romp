@@ -41,7 +41,7 @@ test("the file viewer's mdBlock adopts the same sanitizer's output, and spells n
   assert.doesNotMatch(VIEW, /from "dompurify"|DOMPurify\.sanitize\(/, "the viewer holds no sanitizer of its own");
   const mdBlock = VIEW.match(/function mdBlock\([^\n]*\{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(mdBlock, "mdBlock not found");
-  assert.match(mdBlock, /marked\.parse\(/);
+  assert.match(mdBlock, /const tokens = marked\.lexer\(text, opts\);\n\s*literalizeUnclosedTags\(tokens\);\n[\s\S]*?const dirty = marked\.parser\(tokens, opts\);/, "marked's lexer and parser, the literal-tags rule between them (md-literal-tags.ts): the parse's own steps, no other renderer");
   // the sanitized <body>'s children are adopted as they are (no re-parse of a serialized string)
   assert.match(mdBlock, /box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty, mintHeadingIds\)\.childNodes\)\);/);   // the second argument is the viewer's own pass (the heading ids), run inside the call
   assert.doesNotMatch(mdBlock, /box\.innerHTML = /, "nothing reaches the viewer's innerHTML unsanitized");

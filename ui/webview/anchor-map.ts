@@ -18,7 +18,8 @@
 //     selection spanning two cells of a table is refused with the reason named and the Raw view offered
 //     on the exact span, and a table or a code block whose raw the reading cannot lay out keeps a hole
 //     with the Raw offer (the fallback the plan keeps). HTML, entity-bearing prose, and escaped link
-//     labels refuse by design (the plan's list).
+//     labels refuse by design (the plan's list); an inline start tag with no end tag in its block is literal
+//     text on both sides (md-literal-tags.ts, run on this lex as on the viewer's parse), so it maps.
 //   - makeAnchor / locateComment delegate to the vendored track-changents engine, so the browser's anchor
 //     is byte-identical to the one `track-comment` would build.
 //   - paintRaw / paintRendered wrap exactly the text nodes of a source range in mark elements; in the Rendered view an
@@ -47,6 +48,7 @@ import { marked, Lexer, Parser, type Token, type Tokens } from "marked";
 import { applyMdConfig, type FrontMatterToken, type FootnoteRefToken, type FootnoteDefToken, type CalloutToken, type MarkToken, type WikilinkToken, calloutTitle } from "./md-config";
 import { viewerWalkTokens } from "./file-view-links";   // the file kind's token walk, run over the tokens inside an inline RCDATA element before they are rendered (lenientInline)
 import { findExact } from "./comments";
+import { literalizeUnclosedTags, VOID_ELEMENTS } from "./md-literal-tags";   // an inline start tag with no end tag in its block is a text token, on this lex as on the viewer's parse (plans/file-review.md, decision 52)
 // The vendored engine is CommonJS with no declaration file (gaps-3 map, TS7016 under this tsconfig). The
 // import is bundled by esbuild as-is; the two functions used here are typed locally below. If a shared
 // declaration lands later, this directive becomes a no-op.
@@ -993,7 +995,7 @@ function walkInline(tokens: Token[], view: View, em: Emitter): void {
         }
         break;
       }
-      case "image": case "br": case "html": break;   // no rendered text
+      case "image": case "br": case "html": break;   // no rendered text (a start tag with no end tag in its block is a text token by now, md-literal-tags.ts: the text case above places its characters)
       default: throw new Refusal(NOT_HANDLED);
     }
     p += raw.length;
@@ -1490,7 +1492,8 @@ type TopTag = { tag: string; open: boolean; depth: number; empty?: boolean; stra
   after?: string };
 /** A child of an open tag's element in the raw (TopTag.kids): an element by its name, a text run as `#text` with its text. */
 type Kid = { name: string; text?: string };
-const VOID_TAGS = new Set(["AREA", "BASE", "BR", "COL", "EMBED", "HR", "IMG", "INPUT", "LINK", "META", "PARAM", "SOURCE", "TRACK", "WBR"]);
+/** HTML's void elements: the one list (md-literal-tags.ts VOID_ELEMENTS), the inline rule's and the tag scans' alike. */
+const VOID_TAGS = VOID_ELEMENTS;
 /** The elements whose start tag closes an open `<p>` (the HTML parser's rule for a `p` in button scope, "in body": the block-level
  *  start tags, the headings, `pre` and `listing`, `form`, the list parts `li`, `dd` and `dt`, `center` and `dir`, `xmp` and
  *  `plaintext`, `hr` and `table`). A `<button>` start tag closes an open button and no `<p>` (the Slice 5 review, round 4: the
@@ -2015,7 +2018,10 @@ type Placed = { t: Token; startN: number; endN: number; textEndN: number; broken
 function placeTokens(N: string): { placed: Placed[]; lexError: string | null } {
   let tokens: Token[] = [];
   let lexError: string | null = null;
-  try { tokens = Lexer.lex(N); } catch (e) { lexError = String((e as Error).message || e); }
+  // the one rule the viewer's parse applies to its tokens too (file-view.ts mdBlock; md-literal-tags.ts): an inline start tag with no
+  // end tag in its block is a text token before anything here reads the tree, so the text walk, tagOf, topTags, blockEnds and the
+  // pairing never meet it as html, and the paragraph's predicted text holds the tag's characters as the rendered element does
+  try { tokens = Lexer.lex(N); literalizeUnclosedTags(tokens); } catch (e) { lexError = String((e as Error).message || e); }
   const placed: Placed[] = [];
   let pos = 0;
   let broken: string | null = lexError;
@@ -2098,9 +2104,10 @@ function walkedBlocks(table: SourceTable): Walked[] {
     }
     const isHtml = t.type === "html";
     const ends: EndTag[] = [];
-    // the `open` array (the formatting tags a paragraph leaves open, `<b>` with no closer) is discarded: the parser reconstructs
-    // such an element as a top-level wrapper around every later block, a shape the pairing does not model (pre-existing on main;
-    // the fix shape, Block.leaves, is recorded in the plan's Slice 5 note and routed to Slice 8's pairing work)
+    // the `open` array (the start tags the block's inline html leaves open) is discarded: since decision 52 (md-literal-tags.ts,
+    // run on this lex in placeTokens) an inline start tag with no end tag in its block is a text token, so the scan meets none
+    // and the parser opens no element around the later blocks (before, `<b>` with no closer became a top-level wrapper around
+    // every later block, a shape the pairing did not model; the fix shape then recorded, Block.leaves, is moot)
     if (!isHtml) blockEnds([t], t.type === "text", [], ends);   // a top-level `text` token renders as a paragraph (tagOf)
     const scan = isHtml ? topTags(t.raw) : null;
     const tags = scan ? scan.tags : null;
@@ -3474,8 +3481,9 @@ export type Mapped = { text: string; map: number[] };
 // kind's token walk, fileKindWalk); a named reference outside NAMED_ENTITIES is the browser's own reading where a DOM is to
 // hand (domRefText) and, where none is, the legacy rule's, an HTML5-only name such as `&check;` keeping its source form there;
 // a `<pre>` inside an html block keeps the newline after its start tag, which the parser drops; a `<template>`'s content, a
-// fragment the DOM never shows, is dropped like a removed element's; an RCDATA element left open across blocks (`<textarea>`,
-// and `<plaintext>`, which the parser never closes) is read to its block's end where the parser reads on to a later end tag or
+// fragment the DOM never shows, is dropped like a removed element's; an RCDATA element left open across blocks (a `<textarea/>`
+// or a `<plaintext/>` written with the self-closing syntax, which the parser opens; a start tag with no end tag in its block is
+// literal text since decision 52, md-literal-tags.ts) is read to its block's end where the parser reads on to a later end tag or
 // the document's end, and so is a `<foreignObject>` (or another integration point of a foreign root, an svg's `<title>`, MathML's
 // `<mtext>`) whose `</svg>` or `</math>` the parser ignored because an HTML element stood open inside it (ForeignRoot.open): the
 // rest of the block is dropped with it here, where the parser drops every later block too; a raw-text element or a dropped element
@@ -3680,8 +3688,10 @@ function lenientInline(tokens: Token[], view: View, em: TextEmitter, drop: strin
         // everything up to its end tag as text, marked's HTML for the tokens between included (`*c*` shows as `<em>c</em>`,
         // `<b>b</b>` as written), rendered as the viewer rendered THIS document (fileKindWalk: a wikilink an anchor), character
         // references decoded, and the sanitizer's unwrap leaves that text (the Slice 5 review, round 4: the tokens were read as
-        // markup, the needle `a b c` for a DOM showing `a <b>b</b> <em>c</em>`). With no end tag in the block the parser reads on
-        // to one in a later block or to the document's end, which the reader does not mirror: the block's rest is the text (recorded)
+        // markup, the needle `a b c` for a DOM showing `a <b>b</b> <em>c</em>`). A start tag written `<textarea>` with no end tag
+        // in the block is a text token by now (md-literal-tags.ts) and never reaches here; one written `<textarea/>` opens (leafTag)
+        // and the parser reads on to an end tag in a later block or to the document's end, which the reader does not mirror: the
+        // block's rest is the text (recorded)
         let j = i + 1;
         for (; j < tokens.length; j++) { const tj = tokens[j].type === "html" ? inlineTag(tokens[j].raw) : null; if (tj && tj.end && tj.name === tag.name) break; }
         const inner = tokens.slice(i + 1, j);

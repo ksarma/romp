@@ -302,10 +302,11 @@ test("pins: the viewer's Raw rows, marked configuration, and lexer identity", ()
   // marked's own, so the shapes replicated here are unchanged; only a link token's href is rewritten before the render, and only
   // for the file kind (the 2026-09-07 fold: a URL document takes marked's defaults). The walkTokens itself runs for every kind
   // since the Slice 3 review, collecting the code tokens for the fence pass's Copy (fence-source.ts); it reads them, never
-  // rewrites them, so the lexer's shapes stand
-  assert.match(VIEW, /const dirty = marked\.parse\(text, \{ walkTokens: \(t\) => \{\n\s*if \(t\.type === "code"\) \{ const c = t as Tokens\.Code; fences\.push\(\{ text: c\.text, indented: c\.codeBlockStyle === "indented" \}\); \}\n\s*if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n\s*if \(base\) void base\.call\(marked, t\);\n\s*\} \}\) as string;/);
-  const MAP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map.ts"), "utf8");
-  assert.match(MAP, /Lexer\.lex\(N\)/, "the walk lexes with the viewer's configured singleton (no private options)");
+  // rewrites them, so the lexer's shapes stand. Since decision 52 the parse is marked.parse's three steps called apart (its lexer,
+  // the walk, its parser, over a copy of the defaults as marked.parse copies them), with the literal-tags rule between the lexer and
+  // the walk (md-literal-tags.ts): the one rewrite of the tokens, and the same one this map applies after its own lex (placeTokens)
+  assert.match(VIEW, /const opts = \{ \.\.\.marked\.defaults \};\n\s*const tokens = marked\.lexer\(text, opts\);\n\s*literalizeUnclosedTags\(tokens\);\n\s*marked\.walkTokens\(tokens, \(t\) => \{\n\s*if \(t\.type === "code"\) \{ const c = t as Tokens\.Code; fences\.push\(\{ text: c\.text, indented: c\.codeBlockStyle === "indented" \}\); \}\n\s*if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n\s*if \(base\) void base\.call\(marked, t\);\n\s*\}\);\n\s*const dirty = marked\.parser\(tokens, opts\);/);  const MAP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map.ts"), "utf8");
+  assert.match(MAP, /try \{ tokens = Lexer\.lex\(N\); literalizeUnclosedTags\(tokens\); \}/, "the walk lexes with the viewer's configured singleton (no private options) and runs the literal-tags rule right after its lex, as the viewer's parse does (md-literal-tags.ts)");
   assert.doesNotMatch(MAP, /marked\.(setOptions|use)\(/, "anchor-map holds no options of its own: it applies the one configuration (applyMdConfig) and lexes under it");
   assert.match(MAP, /^applyMdConfig\(\);/m, "…at load, so the static lexer sees every extension the renderer has, whichever module loaded first");
   assert.match(MAP, /from "\.\.\/\.\.\/vendor\/track-changents\/engine\.js"/, "the engine comes from the vendored copy (contract C4)");

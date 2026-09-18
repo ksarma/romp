@@ -74,16 +74,16 @@ test("where no DOM is to hand (here: `document` is undefined) an HTML5 name that
   assert.equal(shown("<div>a &ltimes b &notit c</div>\n"), "a <imes b " + NOT + "it c", "no semicolon: the legacy rule is the parser's whole rule (a control)");
 });
 
-test("inside an inline `<svg>` or `<math>` the raw-text rule is off, as in the html-block scanners (FOREIGN): `<svg><title>icon</svg> beside end` reads `icon beside end` in a paragraph, a list item, a quote, a heading and a cell, the parser closing the title at `</svg>`; a `<textarea>` in an svg the same; the root's end tag closes a `<foreignObject>` opened inside it; a stray `</svg>` closes nothing (before: the inline read had no foreign stack, so the title's text ran to the block's end, `icon</svg> beside end`, and a quote across the icon in a block the fallback serves painted nothing where 50b19bfdb painted it)", () => {
+test("inside an inline `<svg>` or `<math>` the raw-text rule is off, as in the html-block scanners (FOREIGN): an svg's `<title>` closed by its own end tag is an ordinary element of the drawing whose text stays, and a `<title>`, `<textarea>` or `<foreignObject>` start tag with no end tag of its own before `</svg>` is literal text since decision 52 (md-literal-tags.ts: the tag's characters are svg text in the DOM, in the textContent the reader matches and drawn nowhere), so `<svg><title>icon</svg> beside end` reads `<title>icon beside end` in a paragraph, a list item, a quote, a heading and a cell; a stray `</svg>` closes nothing (before decision 52 the title read as the parser's element, `icon beside end`; before round 5 the inline read had no foreign stack, so the title's text ran to the block's end, `icon</svg> beside end`, and a quote across the icon in a block the fallback serves painted nothing where 50b19bfdb painted it)", () => {
   for (const [what, src] of [["a paragraph", "Intro <svg><title>icon</svg> beside end\n"], ["a list item", "- Intro <svg><title>icon</svg> beside end\n"], ["a quote", "> Intro <svg><title>icon</svg> beside end\n"], ["a heading", "# Intro <svg><title>icon</svg> beside end\n"]]) {
-    assert.equal(shown(src), "Intro icon beside end", what);
+    assert.equal(shown(src), "Intro <title>icon beside end", what);
   }
   const CELL = "| h |\n|---|\n| Intro <svg><title>icon</svg> beside end |\n";
-  assert.equal(quote(CELL, "Intro <svg><title>icon</svg> beside end"), "Intro icon beside end", "a cell");
+  assert.equal(quote(CELL, "Intro <svg><title>icon</svg> beside end"), "Intro <title>icon beside end", "a cell");
   assert.equal(quote("Intro <svg><title>icon</svg> beside end\n", "icon</svg> beside"), "icon beside", "a quote across the svg's end");
-  assert.equal(shown("Intro <svg><textarea>x</svg> beside end\n"), "Intro x beside end", "a textarea inside an svg is an ordinary element too");
-  assert.equal(shown("Intro *em <svg><title>icon</svg> beside* end\n"), "Intro em icon beside end", "the stack is shared down into an emphasis");
-  assert.equal(shown("Intro <svg><foreignObject>fo</svg> beside\n"), "Intro beside", "`</svg>` closes the foreignObject the sanitizer drops, so the text after the svg shows");
+  assert.equal(shown("Intro <svg><textarea>x</svg> beside end\n"), "Intro <textarea>x beside end", "a textarea start tag with no end tag: literal text, inside an svg as anywhere");
+  assert.equal(shown("Intro *em <svg><title>icon</svg> beside* end\n"), "Intro em <title>icon beside end", "the stack is shared down into an emphasis");
+  assert.equal(shown("Intro <svg><foreignObject>fo</svg> beside\n"), "Intro <foreignObject>fo beside", "a foreignObject start tag with no end tag of its own: literal text, so `fo` shows where the parser's element took it (before decision 52: `Intro beside`)");
   assert.equal(shown("a </svg> b\n"), "a b", "a stray `</svg>` (a control)");
   // the closed form read right before and reads right still; MathML goes with its text (a control)
   assert.equal(shown("Intro <svg><title>icon</title><text>t</text></svg> beside end\n"), "Intro icont beside end");
@@ -102,7 +102,7 @@ test("a body `<title>` shows nothing, so it reads as nothing: as a block, inside
   assert.equal(quote(PARA, "tail t4h."), "tail t4h.");
   assert.equal(quote("| <title>cell t4i</title> x | y |\n|---|---|\n| a | b |\n", "<title>cell t4i</title> x"), "x", "in a cell");
   assert.equal(shown("Lead <title>t &amp; *u*</title> tail\n"), "Lead tail", "the round-4 test's shape, re-aimed");
-  assert.equal(shown("Lead <title>open tail\n"), "Lead", "no end tag in the block: the rest is the title's (the parser reads on; recorded)");
+  assert.equal(shown("Lead <title>open tail\n"), "Lead <title>open tail", "no end tag in the block: the start tag is literal text since decision 52 (md-literal-tags.ts; before, the rest of the block was read as the title's and dropped)");
   assert.equal(shown("<title>lead t4a</title>\n\nafter\n"), "after", "the document-leading title, which the parser puts in the head");
   // an svg's title stays, inline and in a block (a control)
   assert.equal(shown("Intro <svg><title>svg t</title></svg> end\n"), "Intro svg t end");
@@ -155,24 +155,25 @@ test("the blank between two adjacent table parts stands past whatever leaves the
   assert.equal(quote("<table><tr><td>u1</td><style>td{}<td>u2</td></tr></table>\n", "u1</td><style>td{}<td>u2"), "u1", "a style never closed: its text is the block's rest to the parser, no blank and no cell");
 });
 
-test("an HTML element left open inside a `<foreignObject>` when `</svg>` comes: the parser ignores that end tag (its walk up from the open element stops at the foreignObject, a special element), so the rest of the block stays inside the dropped foreignObject and shows nothing, in a paragraph and in an html block, and a `</foreignObject>` met the same way is ignored too; the element's own end tag lets the root close, a void element opens nothing, and the closed forms round 5 pinned still show the text after the svg (the review's round 6, the round-5 recheck's residual: the root's end tag cut the drop stack whatever stood open, so `Intro <svg><foreignObject><b>x</svg> y` read `Intro y` against a DOM showing `Intro`, and a quote across the passage painted nothing)", () => {
+test("an HTML element left open inside a `<foreignObject>` when `</svg>` comes, INLINE: since decision 52 (md-literal-tags.ts) a start tag with no end tag of its own in the block is literal text, so no element is open when `</svg>` comes, the svg closes, and the tags' characters are svg text in the DOM (in the textContent the reader matches, drawn nowhere) with the text after the svg shown; a `</foreignObject>` closes the foreignObject the sanitizer drops with its content, whatever stands inside it as text; in an HTML BLOCK the parser's reading stands (the block's rest is the foreignObject's, which ignores `</svg>` while an element is open inside it); the closed forms round 5 pinned still show the text after the svg (the review's round 6, the round-5 recheck's residual, for the html block: the root's end tag cut the drop stack whatever stood open, so the block's tail read as shown against a DOM showing `Intro`, and a quote across the passage painted nothing)", () => {
   const OPEN = "Intro <svg><foreignObject><b>x</svg> y\n";
-  assert.equal(shown(OPEN), "Intro");
-  assert.equal(quote(OPEN, "Intro <svg><foreignObject><b>x</svg> y"), "Intro", "the quote across the passage reads what the DOM shows");
-  assert.equal(quote(OPEN, "y"), "", "the text after the ignored end tag: nothing");
-  assert.equal(shown("Intro <svg><foreignObject><p>x</svg> y\n"), "Intro", "a special element open: ignored the same");
-  assert.equal(shown("Intro <svg><foreignObject><b>x</i></svg> y\n"), "Intro", "an end tag naming no open element closes nothing");
-  assert.equal(shown("Intro <svg><foreignObject><b>x</foreignObject></svg> y\n"), "Intro", "the foreignObject's own end tag is ignored too");
-  assert.equal(shown("Intro <svg><foreignObject><b>x</b><i>z</svg> w\n"), "Intro", "a second element left open after the first closed");
+  assert.equal(shown(OPEN), "Intro <foreignObject><b>x y");
+  assert.equal(quote(OPEN, "Intro <svg><foreignObject><b>x</svg> y"), "Intro <foreignObject><b>x y", "the quote across the passage reads what the DOM's text holds");
+  assert.equal(quote(OPEN, "y"), "y", "the text after the svg: shown");
+  assert.equal(shown("Intro <svg><foreignObject><p>x</svg> y\n"), "Intro <foreignObject><p>x y", "a block-level tag left open: text the same");
+  assert.equal(shown("Intro <svg><foreignObject><b>x</i></svg> y\n"), "Intro <foreignObject><b>x y", "an end tag naming no open element closes nothing");
+  assert.equal(shown("Intro <svg><foreignObject><b>x</foreignObject></svg> y\n"), "Intro y", "the foreignObject closed by its own end tag: HTML, dropped with the `<b>` text inside it");
+  assert.equal(shown("Intro <svg><foreignObject><b>x</b><i>z</svg> w\n"), "Intro <foreignObject>x<i>z w", "the closed `<b>` stays HTML, the `<i>` left open is text");
   assert.equal(shown("Intro.\n\n<div><svg><foreignObject><b>x</svg> y</div>\n\npara\n"), "Intro. para", "an html block: the block's rest is the foreignObject's (the parser swallows the blocks after it too; recorded)");
-  assert.equal(shown("- Intro <svg><foreignObject><b>x</svg> y\n"), "Intro", "a list item");
-  // the closed forms (controls): round 5's pins stand
-  assert.equal(shown("Intro <svg><foreignObject><b>x</b></svg> y\n"), "Intro y", "the element closed: the root closes");
-  assert.equal(shown("Intro <svg><foreignObject>fo</svg> beside\n"), "Intro beside");
-  assert.equal(shown("Intro <svg><foreignObject><br></svg> y\n"), "Intro y", "a void element opens nothing");
-  assert.equal(shown("Intro <svg><foreignObject><b>x</b><i>z</i></svg> w\n"), "Intro w");
-  assert.equal(shown("Intro <svg><foreignObject><b><svg><title>t</title></svg>x</b></svg> y\n"), "Intro y", "a nested svg inside the open element closes on its own end tag, and the outer on its");
-  assert.equal(shown("Intro <svg><g>x</svg> y\n"), "Intro x y", "an svg element open, not an HTML one: the root's end tag pops to it, and the drawing's text is kept (a control)");
+  assert.equal(shown("- Intro <svg><foreignObject><b>x</svg> y\n"), "Intro <foreignObject><b>x y", "a list item");
+  // the closed forms: the closed elements read as round 5 pinned them, and a `<foreignObject>` or `<g>` with no end tag of its own is
+  // text (decision 52), so the text an open foreignObject used to take with it shows
+  assert.equal(shown("Intro <svg><foreignObject><b>x</b></svg> y\n"), "Intro <foreignObject>x y", "the b closed: HTML, its text shown; the foreignObject text");
+  assert.equal(shown("Intro <svg><foreignObject>fo</svg> beside\n"), "Intro <foreignObject>fo beside");
+  assert.equal(shown("Intro <svg><foreignObject><br></svg> y\n"), "Intro <foreignObject> y", "a void element opens nothing and stays HTML");
+  assert.equal(shown("Intro <svg><foreignObject><b>x</b><i>z</i></svg> w\n"), "Intro <foreignObject>xz w");
+  assert.equal(shown("Intro <svg><foreignObject><b><svg><title>t</title></svg>x</b></svg> y\n"), "Intro <foreignObject>tx y", "a nested svg inside the closed b closes on its own end tag, and the outer on its; the title, closed, is the drawing's element");
+  assert.equal(shown("Intro <svg><g>x</svg> y\n"), "Intro <g>x y", "an svg element with no end tag of its own: text too (the drawing's text was kept before as well)");
   assert.equal(shown("<div><svg><foreignObject><b>x</b></svg> z</div>\n"), "z", "an html block, the element closed (a control)");
 });
 
@@ -253,37 +254,39 @@ test("inside a foreign root's integration point the parser's implied end tags ar
     assert.equal(quote(src, "Intro", " y"), "Intro y", what + ": the quote across the passage");
     assert.equal(quote(src, " y"), "y", what + ": the text after the svg");
   }
-  assert.equal(shown("Intro <svg><foreignObject><p>a<p>b</p></svg> y\n"), "Intro y", "`</svg>` alone after the closed ps");
+  assert.equal(shown("Intro <svg><foreignObject><p>a<p>b</p></svg> y\n"), "Intro <foreignObject><p>ab y", "`</svg>` alone after the closed ps: the foreignObject and the first p, with no end tag of their own, are text (decision 52), the second p HTML");
   assert.equal(shown("Intro.\n\n<div><svg><foreignObject><p>a<div>b</div></foreignObject></svg> y</div>\n\npara\n"), "Intro. y para", "an html block");
-  // left open, the end tags stay ignored (controls: round 6's rule stands)
+  // a start tag left open inside the foreignObject is literal text since decision 52 (md-literal-tags.ts), so nothing is open when
+  // `</foreignObject>` comes: the foreignObject closes and the sanitizer drops it with the text inside, and ` y` shows (before
+  // decision 52 the parser's element stayed open, the end tags were ignored and the block's rest was the foreignObject's, `Intro`)
   for (const [what, inner] of [["a p alone", "<p>a"], ["a p inside a button, which a div does not close", "<p>a<button><div>b</div></button>"], ["a p before a table (quirks mode)", "<p>a<table><tr><td>b</td></tr></table>"],
                                ["an li behind a blockquote", "<li>a<blockquote><li>b</li></blockquote>"], ["an option inside an open select", "<select><option>a</option>"], ["a b left open (round 6's pin)", "<b>x"]]) {
-    assert.equal(shown(FO(inner)), "Intro", what);
+    assert.equal(shown(FO(inner)), "Intro y", what);
   }
 });
 
-test("every HTML integration point of a foreign root is read as the `<foreignObject>` is (ForeignRoot.ip, integrationPoint): MathML's `<mi>`, `<mo>`, `<mn>`, `<ms>` and `<mtext>`, an `<annotation-xml>` whose encoding is `text/html` or `application/xhtml+xml` (in any case, quoted or bare), and an svg's `<title>` and `<desc>`, so an HTML element left open inside one keeps the root's end tag ignored and the block's rest dropped; an HTML element inside an svg's `<title>` or `<desc>` is removed WITH its text by the sanitizer's namespace check, so its text is dropped where the title's own text stays (the review's round 7: the foreignObject alone was modelled, so `<math><annotation-xml encoding=\"text/html\"><b>x</math> y2` read `ma2 y2` against a DOM showing `ma2`, and a comment made in Raw on the tail painted nothing)", () => {
+test("every HTML integration point of a foreign root is read as the `<foreignObject>` is (ForeignRoot.ip, integrationPoint): MathML's `<mi>`, `<mo>`, `<mn>`, `<ms>` and `<mtext>`, an `<annotation-xml>` whose encoding is `text/html` or `application/xhtml+xml` (in any case, quoted or bare), and an svg's `<title>` and `<desc>`; since decision 52 (md-literal-tags.ts) a start tag with no end tag of its own in the block is literal text, so an integration point or an HTML element written without its end tag opens nothing, the root's end tag closes the root, and the text after it shows: inside a `<math>`, which the sanitizer drops whole, the tags' characters go with it; inside an `<svg>` they are svg text (in the textContent the reader matches, drawn nowhere); an HTML element CLOSED inside an svg's `<title>` or `<desc>` is removed WITH its text by the sanitizer's namespace check, so its text is dropped where the title's own text stays (the review's round 7, for the parser's elements: the foreignObject alone was modelled, so `<math><annotation-xml encoding=\"text/html\"><b>x</math> y2` read `ma2 y2` against a DOM showing `ma2`, and a comment made in Raw on the tail painted nothing; both sides read `ma2 y2` now)", () => {
   for (const [what, src] of [["an annotation-xml with the html encoding", "Intro before.\n\nma2 <math><annotation-xml encoding=\"text/html\"><b>x</math> y2\n"], ["the xhtml encoding", "Intro before.\n\nma2 <math><annotation-xml encoding=\"application/xhtml+xml\"><b>x</math> y2\n"],
                              ["the encoding in upper case", "Intro before.\n\nma2 <math><annotation-xml encoding=\"TEXT/HTML\"><b>x</math> y2\n"], ["the encoding bare", "Intro before.\n\nma2 <math><annotation-xml encoding=text/html><b>x</math> y2\n"],
                              ["an mtext", "Intro before.\n\nma2 <math><mtext><b>x</math> y2\n"], ["an mi", "Intro before.\n\nma2 <math><mi><b>x</math> y2\n"], ["an mo", "Intro before.\n\nma2 <math><mo><b>x</math> y2\n"]]) {
-    assert.equal(shown(src), "Intro before. ma2", what);
-    assert.equal(quote(src, "ma2", "y2"), "ma2", what + ": the quote across the passage reads what the DOM shows");
-    assert.equal(quote(src, "y2"), "", what + ": the tail is nothing");
+    assert.equal(shown(src), "Intro before. ma2 y2", what);
+    assert.equal(quote(src, "ma2", "y2"), "ma2 y2", what + ": the quote across the passage reads what the DOM shows (the math dropped whole, the tail shown)");
+    assert.equal(quote(src, "y2"), "y2", what + ": the tail shows");
   }
   assert.equal(shown("Intro.\n\n<div>ma4 <math><annotation-xml encoding=\"text/html\"><b>x</math> y4</div>\n\npara\n"), "Intro. ma4 para", "an html block: the block's rest is the annotation's (the parser swallows the later blocks too, which the reader does not mirror; recorded, as test 8's html block)");
   assert.equal(shown("ma5 <math><mtext><p>a<p>b</p></math> y5\n"), "ma5 y5", "the implied ends are read inside a MathML text element too");
-  // an svg's title and desc: the HTML element's text goes with it, the title's own stays
-  assert.equal(shown("Intro <svg><title><b>x</svg> y\n"), "Intro", "a b left open inside an svg title keeps `</svg>` ignored");
-  assert.equal(shown("Intro <svg><desc><b>x</svg> y\n"), "Intro", "the same inside a desc");
-  assert.equal(shown("Intro <svg><title><b>x</b></svg> y\n"), "Intro y", "the b closed: the svg closes, and the b's text is the sanitizer's to drop");
+  // an svg's title and desc: a closed HTML element's text goes with it, the title's own stays; a start tag left open is text
+  assert.equal(shown("Intro <svg><title><b>x</svg> y\n"), "Intro <title><b>x y", "a title and a b with no end tags: both literal text, svg text in the DOM, and the svg closes");
+  assert.equal(shown("Intro <svg><desc><b>x</svg> y\n"), "Intro <desc><b>x y", "the same with a desc");
+  assert.equal(shown("Intro <svg><title><b>x</b></svg> y\n"), "Intro <title>x y", "the title left open is text and the closed b an element of the drawing, whose text stays (no title element for the namespace check to remove it from)");
   assert.equal(shown("Intro <svg><title>t<b>x</b>u</title></svg> y\n"), "Intro tu y", "the title's own text stays around the dropped element");
-  assert.equal(shown("Intro <svg><title>t<p>a</title></svg> y\n"), "Intro t", "a p left open inside the title: `</title>` and `</svg>` ignored");
+  assert.equal(shown("Intro <svg><title>t<p>a</title></svg> y\n"), "Intro t<p>a y", "a p with no end tag inside a closed title: text of the title's");
   // the closed forms read as before (controls)
   assert.equal(shown("ma6 <math><annotation-xml encoding=\"text/html\"><b>x</b></math> y6\n"), "ma6 y6");
   assert.equal(shown("ma3 <math><mtext>x</math> y3\n"), "ma3 y3", "no HTML element open: the root's end tag closes it");
   assert.equal(shown("ma1 <math><mi>x</mi><mo>+</mo></math> y1\n"), "ma1 y1");
-  assert.equal(shown("Intro <svg><title>icon</svg> beside end\n"), "Intro icon beside end", "round 5's pin stands");
-  assert.equal(shown("Intro <svg><foreignObject><b>x</svg> y\n"), "Intro", "round 6's pin stands");
+  assert.equal(shown("Intro <svg><title>icon</svg> beside end\n"), "Intro <title>icon beside end", "round 5's shape under decision 52 (test 6's reading)");
+  assert.equal(shown("Intro <svg><foreignObject><b>x</svg> y\n"), "Intro <foreignObject><b>x y", "round 6's shape under decision 52 (test 8's reading)");
 });
 
 // ── the Slice 5 review, round 8 ──────────────────────────────────────────────────────────────────
@@ -314,10 +317,10 @@ test("`<mglyph>` and `<malignmark>` met inside a MathML text integration point (
     assert.equal(quote(src, "ma9", "y9"), "ma9 y9", what + ": the quote across the passage");
   }
   assert.equal(shown("Intro.\n\n<div>ma9 <math><mi><mglyph/></mi></math> y9</div>\n\npara.\n"), "Intro. ma9 y9 para.", "an html block");
-  assert.equal(shown("ma9 <math><annotation-xml encoding=\"text/html\"><mglyph/></math> y9\n"), "ma9", "inside an HTML integration point an mglyph is an HTML element left open (round 7's rule stands, a control)");
+  assert.equal(shown("ma9 <math><annotation-xml encoding=\"text/html\"><mglyph/></math> y9\n"), "ma9 y9", "an annotation-xml with no end tag of its own is literal text (decision 52), the `<mglyph/>` self-closing syntax HTML, both inside the dropped math (before decision 52: the parser's integration point stood open and the block's rest was the math's, `ma9`)");
   for (const [what, src] of [["a trailing blank", "ma8 <math><annotation-xml encoding=\"text/html \"><b>x</math> y8\n"], ["a leading blank", "ma8 <math><annotation-xml encoding=\" text/html\"><b>x</math> y8\n"],
                              ["blanks around the xhtml encoding, single-quoted", "ma8 <math><annotation-xml encoding=' application/xhtml+xml '><b>x</math> y8\n"]]) {
     assert.equal(shown(src), "ma8 y8", what + ": no integration point, the math closes at its end tag and the reader reads on (the DOM shows `ma8 x y8`, the breakout class, recorded)");
   }
-  for (const src of ["ma8 <math><annotation-xml encoding=\"text/html\"><b>x</math> y8\n", "ma8 <math><annotation-xml encoding=\"TEXT/HTML\"><b>x</math> y8\n", "ma8 <math><annotation-xml encoding=text/html><b>x</math> y8\n"]) assert.equal(shown(src), "ma8", "the exact forms read as before (a control): " + JSON.stringify(src));
+  for (const src of ["ma8 <math><annotation-xml encoding=\"text/html\"><b>x</math> y8\n", "ma8 <math><annotation-xml encoding=\"TEXT/HTML\"><b>x</math> y8\n", "ma8 <math><annotation-xml encoding=text/html><b>x</math> y8\n"]) assert.equal(shown(src), "ma8 y8", "the exact forms: the annotation-xml and the b, with no end tags of their own, are literal text inside the dropped math (decision 52; before: `ma8`, the integration point's element left open): " + JSON.stringify(src));
 });
