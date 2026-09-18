@@ -11941,7 +11941,13 @@ def _rebuild_dist():
     kernel left up: _dist_ver() stats per page render so the fresh ?v= token flows on the next paint,
     and the extension's newer-build prompt keys off the dv keepalive. (ok, err_tail)."""
     try:
-        r = subprocess.run(["node", "esbuild.js"], cwd=str(ROOT / "vscode-extension"),
+        # --production (minified, no sourcemaps) unless ROMP_EXT_DEV_BUILD is set: the same profile and the same
+        # knob as _ensure_bundles and the installer. A bare `node esbuild.js` here served unminified bundles with
+        # sourcemaps after every fast-forward, and _ensure_bundles never re-minified them (it judges staleness by
+        # mtime against dist/render.js, not by profile), so the phone paid about 27 percent more gzipped bytes per
+        # pane for weeks (the user 2026-09-18, who wanted the phone's downloads minified).
+        argv = ["node", "esbuild.js"] + ([] if os.environ.get("ROMP_EXT_DEV_BUILD") else ["--production"])
+        r = subprocess.run(argv, cwd=str(ROOT / "vscode-extension"),
                            capture_output=True, text=True, timeout=180)
         return r.returncode == 0, (r.stderr or r.stdout or "").strip()[-300:]
     except Exception as e:

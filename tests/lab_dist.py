@@ -19,9 +19,9 @@ This module owns the build. The rules:
   without building; anything else builds: a missing or stale marker, an edited or added source, a
   dependency change, a build by another command under a marker whose inputs still match (a `node esbuild.js
   --production` by hand, or the kernel's boot build in `_ensure_bundles`, which minifies unless
-  ROMP_EXT_DEV_BUILD is set, leaves minified bundles; the kernel's in-place `_rebuild_dist` runs the same
-  command line as this harness and leaves dev bundles under new mtimes; the output state is what shows
-  either). The marker is rewritten, atomically (write a sibling, rename), only AFTER the build
+  ROMP_EXT_DEV_BUILD is set, leaves minified bundles; the kernel's in-place `_rebuild_dist` builds
+  --production under the same knob since 2026-09-18, so a converge leaves minified bundles under new mtimes;
+  the output state is what shows either). The marker is rewritten, atomically (write a sibling, rename), only AFTER the build
   exits 0, and the build state is computed BEFORE the build and recorded after it, so the marker never
   claims inputs newer than what the build read: a source edited mid-build is caught by the next call.
 - The trees the build state covers are DERIVED from esbuild.js, not listed here, and read from what the
