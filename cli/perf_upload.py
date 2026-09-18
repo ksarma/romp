@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""romp-perf-upload: send one paste-safe export (`romp perf export --public`) to a receiver. `romp perf upload FILE`.
+
+    romp perf upload FILE [--yes] [--receiver URL]
+
+The export verb writes a file and stops; this verb sends that file, and nothing else, to the receiver the
+operator configured. It is opt-in per invocation and keeps no state: there is no switch to forget and no
+default that sends anything. Stage two of the usage-data plan (2026-09-18).
+
+The receiver's address comes from `--receiver`, else the ROMP_PERF_RECEIVER environment variable, else the
+file ~/.config/romp/perf-receiver (one line, the `romp default-dir` pattern); with none set the verb refuses
+naming the three settings, exit 2, so an installation nobody configured sends nowhere. The address must be an
+https URL with a host and no userinfo, query or fragment (http is allowed for 127.0.0.1 and localhost alone, for
+tests); anything else is refused without echoing the value, exit 2. The receiver is unauthenticated: no
+credential exists for it, and the verb reads no token from anywhere and sends none.
+
+The file must exist, be a regular file of at most 1 MiB, parse as strict JSON (no NaN or Infinity literals)
+with the top-level `schema` line `romp-perf-export/1`, and pass the export's own check again as the file
+stands, since the user may have edited it: the scan for the strings only this machine knows and the
+paste-safety walk of cli/perf_public.py, through perf_export.check_document, so a problem is reported by its
+kind and key path and never by the key or the value. Any of these refuses with exit 1.
+
+Before sending, the verb prints the path, the byte size and the receiver's host, then asks for a yes on a
+terminal (stdin is a tty). Off a terminal it refuses, exit 2, unless `--yes` is passed: that flag is the form
+an agent uses, and its presence in the command is the visible record of the confirmation. No configuration
+file or environment variable stands in for it, so nothing sends from a cron by default.
+
+The send is ONE POST to <receiver>/v1/upload, the file's bytes as the body, `Content-Type: application/json`
+and `Content-Length`, a fixed `User-Agent: romp-perf-upload/1` (no version detail, no hostname), a 30 s
+timeout, stdlib urllib through an opener that refuses redirects (a 3xx is an unexpected answer, never a second
+request), reads no proxy variables, and carries no cookies. The one answer accepted is status 201 with a JSON
+body of exactly the shape {"receipt": <uuid4 string>, "retention_days": <integer>, "av": "ok"|"skipped"}; the
+verb then prints `uploaded: receipt <uuid> (kept <N> days; delete by sending the receipt to the project)`, exit
+0. Any other status, a body that is not JSON, an extra or missing key, a value outside that shape, a connection
+error or a timeout is a refusal with a fixed message carrying only the status code or the error's class name:
+never the body, never the URL beyond the host, never an exception's message, exit 1.
+"""
+import argparse
+import http.client
+import json
+import os
+import re
+import stat
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))   # cli/, whether run through the bin/ symlink or loaded by path
+import perf_export as pe  # noqa: E402
+
+PROG = "romp perf upload"
+SCHEMA = pe.SCHEMA
+RECEIVER_VAR = "ROMP_PERF_RECEIVER"
+RECEIVER_FILE = "~/.config/romp/perf-receiver"
+ROUTE = "/v1/upload"
+MAX_BYTES = 1 << 20                  # the receiver's cap on Content-Length and on the bytes it reads
+TIMEOUT_S = 30
+USER_AGENT = "romp-perf-upload/1"
+ANSWER_MAX = 64 * 1024               # a receipt is under 200 bytes; a longer 201 body is not the shape
+LOOPBACK = frozenset({"127.0.0.1", "localhost"})
+HOST = re.compile(r"^[A-Za-z0-9.-]+$")
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+UUID4 = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
+AV = ("ok", "skipped")
+ANSWER_KEYS = frozenset({"receipt", "retention_days", "av"})
+NOT_THE_SHAPE = "refused: the receiver answered 201 without the receipt shape this verb accepts (receipt, retention_days, av); no receipt"
+
+
+class Refusal(Exception):
+    """One line for stderr and the exit code: 2 before anything is read or sent for a reason the user fixes in
+    the command (no receiver, a bad address, no terminal and no --yes, an answer that was not yes); 1 for a
+    file that fails a check or a send that did not end in a receipt."""
+
+    def __init__(self, message, code):
+        super().__init__(message)
+        self.code = code
+
+
+# ── the receiver ─────────────────────────────────────────────────────────────────────────────────────────
+def receiver_setting(flag, env=None):
+    """(text, source): the address as configured and which setting supplied it, in order --receiver, the
+    environment variable, the file's first non-empty line; (None, None) when none is set. An empty variable
+    is unset. The file is read under HOME, the way `romp default-dir` reads its own."""
+    if flag is not None:
+        return flag, "--receiver"
+    env = os.environ if env is None else env
+    value = env.get(RECEIVER_VAR)
+    if value:
+        return value, RECEIVER_VAR
+    try:
+        text = Path(os.path.expanduser(RECEIVER_FILE)).read_text(encoding="utf-8")
+    except OSError:
+        return None, None
+    for line in text.splitlines():
+        if line.strip():
+            return line.strip(), RECEIVER_FILE
+    return None, None
+
+
+def receiver_url(text):
+    """The address split, or None: it must be https (http for 127.0.0.1 and localhost alone), carry a host of
+    letters, digits, dots and dashes with a numeric port at most, no userinfo, no query, no fragment, and a path
+    without whitespace (the base the route is appended to). None says nothing about which rule failed on
+    purpose: the caller's refusal never echoes the value, which may be anything the user typed."""
+    if not isinstance(text, str) or CONTROL.search(text):   # urlsplit would strip a tab or a newline; refuse instead
+        return None
+    try:
+        u = urllib.parse.urlsplit(text.strip(" "))
+        u.port
+    except ValueError:
+        return None
+    if u.scheme not in ("https", "http") or not u.hostname or not HOST.match(u.hostname):
+        return None
+    if u.username is not None or u.password is not None or u.query or u.fragment:
+        return None
+    if u.scheme == "http" and u.hostname not in LOOPBACK:
+        return None
+    if u.path and (not u.path.startswith("/") or re.search(r"\s", u.path)):
+        return None
+    return u
+
+
+def upload_url(u):
+    """<receiver>/v1/upload: the configured base (a trailing slash dropped) and the route."""
+    return urllib.parse.urlunsplit((u.scheme, u.netloc, u.path.rstrip("/") + ROUTE, "", ""))
+
+
+# ── the file ─────────────────────────────────────────────────────────────────────────────────────────────
+def _no_constant(name):
+    raise ValueError("not strict JSON: " + name)
+
+
+def read_export(path, state):
+    """The file's bytes, once every check passes: it exists and is a regular file, it is at most MAX_BYTES, it
+    parses as strict JSON to an object with the schema line, and it passes perf_export.check_document (the
+    machine-string scan, then the paste-safety walk) as it stands. A Refusal otherwise, naming the file path the
+    user passed and, for a walk or scan finding, the kind and the key path, never the value."""
+    p = Path(path)
+    try:
+        st = p.stat()
+    except FileNotFoundError:
+        raise Refusal("refused: %s does not exist; nothing sent" % path, 1)
+    except OSError as e:
+        raise Refusal("refused: %s cannot be read (%s); nothing sent" % (path, e.__class__.__name__), 1)
+    if not stat.S_ISREG(st.st_mode):
+        raise Refusal("refused: %s is not a regular file; nothing sent" % path, 1)
+    if st.st_size > MAX_BYTES:
+        raise Refusal("refused: %s is %d bytes and the receiver takes at most %d (1 MiB); nothing sent" % (path, st.st_size, MAX_BYTES), 1)
+    try:
+        data = p.read_bytes()
+    except OSError as e:
+        raise Refusal("refused: %s cannot be read (%s); nothing sent" % (path, e.__class__.__name__), 1)
+    if len(data) > MAX_BYTES:    # grew between the stat and the read
+        raise Refusal("refused: %s is %d bytes and the receiver takes at most %d (1 MiB); nothing sent" % (path, len(data), MAX_BYTES), 1)
+    try:
+        doc = json.loads(data.decode("utf-8"), parse_constant=_no_constant)
+    except ValueError:           # UnicodeDecodeError and JSONDecodeError are both ValueErrors
+        raise Refusal("refused: %s is not strict JSON; nothing sent" % path, 1)
+    if not isinstance(doc, dict) or doc.get("schema") != SCHEMA:
+        raise Refusal("refused: %s is not a romp perf export (no top-level schema %s); nothing sent" % (path, SCHEMA), 1)
+    reason = pe.check_document(doc, state, tail="nothing sent")
+    if reason:
+        raise Refusal("refused: " + reason, 1)
+    return data
+
+
+# ── the confirmation ─────────────────────────────────────────────────────────────────────────────────────
+def confirmed(yes, stdin=None, stdout=None):
+    """True when the send may go: --yes was passed, or stdin is a terminal and the line typed at the prompt is
+    y or yes. Off a terminal without --yes, a Refusal (exit 2) that names the flag; a terminal's other answer,
+    a Refusal that says nothing was sent. Nothing but the flag and the typed line decide this."""
+    if yes:
+        return True
+    stdin = sys.stdin if stdin is None else stdin
+    stdout = sys.stdout if stdout is None else stdout
+    if stdin is None or not stdin.isatty():
+        raise Refusal("refused: not on a terminal, so there is no prompt to answer; pass --yes to send without one "
+                      "(the form an agent uses; no setting or variable stands in for it); nothing sent", 2)
+    stdout.write("send it? [y/N] ")
+    stdout.flush()
+    answer = stdin.readline().strip().lower()
+    if answer in ("y", "yes"):
+        return True
+    raise Refusal("nothing sent", 2)
+
+
+# ── the send ─────────────────────────────────────────────────────────────────────────────────────────────
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A 3xx answer is an error to the caller: None here means urllib makes no second request, and the status
+    surfaces as an HTTPError with the 3xx code, refused like any other status."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def post(url, data, timeout=None):
+    """One POST of `data` to `url`: (status, body) for any HTTP answer (the body read only on 201, capped at
+    ANSWER_MAX + 1 so a long one is judged by its length, empty for every other status), or a Refusal naming the
+    error's class alone when no answer came. The opener has no proxy (ProxyHandler({}) reads no *_proxy
+    variable: the address configured is the address dialled), no cookie jar, and refuses redirects; TLS is
+    urllib's default context, which verifies the certificate against the system store."""
+    timeout = TIMEOUT_S if timeout is None else timeout
+    req = urllib.request.Request(url, data=data, method="POST",
+                                 headers={"Content-Type": "application/json", "User-Agent": USER_AGENT})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+    try:
+        with opener.open(req, timeout=timeout) as r:
+            status = r.status
+            body = r.read(ANSWER_MAX + 1) if status == 201 else b""
+            return status, body
+    except urllib.error.HTTPError as e:
+        e.close()
+        return e.code, b""
+    except urllib.error.URLError as e:
+        reason = e.reason
+        name = reason.__class__.__name__ if isinstance(reason, BaseException) else e.__class__.__name__
+        raise Refusal("refused: no answer from the receiver (%s); no receipt" % name, 1)
+    except (OSError, http.client.HTTPException) as e:
+        raise Refusal("refused: no answer from the receiver (%s); no receipt" % e.__class__.__name__, 1)
+
+
+def receipt(status, body):
+    """(receipt, retention_days, av) of the one answer accepted: status 201 and a JSON object with exactly the
+    keys receipt (a uuid4 string), retention_days (a non-negative integer, not a bool) and av (ok or skipped).
+    Anything else is a Refusal whose text carries the status code and nothing of the body."""
+    if status != 201:
+        raise Refusal("refused: the receiver answered HTTP %d where the 201 receipt was expected; no receipt" % status, 1)
+    if len(body) > ANSWER_MAX:
+        raise Refusal(NOT_THE_SHAPE, 1)
+    try:
+        answer = json.loads(body.decode("utf-8"), parse_constant=_no_constant)
+    except ValueError:
+        raise Refusal(NOT_THE_SHAPE, 1)
+    if not isinstance(answer, dict) or set(answer) != ANSWER_KEYS:
+        raise Refusal(NOT_THE_SHAPE, 1)
+    rid, days, av = answer["receipt"], answer["retention_days"], answer["av"]
+    if not (isinstance(rid, str) and UUID4.match(rid)):
+        raise Refusal(NOT_THE_SHAPE, 1)
+    if not isinstance(days, int) or isinstance(days, bool) or days < 0:
+        raise Refusal(NOT_THE_SHAPE, 1)
+    if av not in AV:
+        raise Refusal(NOT_THE_SHAPE, 1)
+    return rid, days, av
+
+
+def main(argv=None, stdin=None) -> int:
+    ap = argparse.ArgumentParser(prog=PROG, description=__doc__.split("\n\n")[0],
+                                 usage="%(prog)s FILE [--yes] [--receiver URL]")
+    ap.add_argument("file", metavar="FILE", help="an export written by `romp perf export --public`")
+    ap.add_argument("--yes", action="store_true",
+                    help="send without the prompt: the form an agent uses; off a terminal the verb refuses without it, "
+                         "and no setting or variable stands in for it")
+    ap.add_argument("--receiver", metavar="URL",
+                    help="the receiver's https address (else %s, else the file %s)" % (RECEIVER_VAR, RECEIVER_FILE))
+    a = ap.parse_args(argv)
+    try:
+        text, source = receiver_setting(a.receiver)
+        if text is None:
+            raise Refusal("refused: no receiver is set; pass --receiver URL, set %s, or write the address to %s; nothing sent"
+                          % (RECEIVER_VAR, RECEIVER_FILE), 2)
+        u = receiver_url(text)
+        if u is None:
+            raise Refusal("refused: the receiver address from %s is not an https URL with a host and no userinfo, query or "
+                          "fragment (http is allowed for 127.0.0.1 and localhost only); nothing sent" % source, 2)
+        data = read_export(a.file, pe.state_dir())
+        print("%s (%d bytes) to %s" % (a.file, len(data), u.hostname))
+        sys.stdout.flush()
+        confirmed(a.yes, stdin=stdin)
+        status, body = post(upload_url(u), data)
+        rid, days, _av = receipt(status, body)
+    except Refusal as e:
+        sys.stderr.write("%s: %s\n" % (PROG, e))
+        return e.code
+    print("uploaded: receipt %s (kept %d days; delete by sending the receipt to the project)" % (rid, days))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -10,18 +10,22 @@
 # processes (a restart inside the window) are not subtracted into negative rates, and a refused
 # token is named as such rather than reported as a dead kernel. Nothing here touches a real kernel:
 # curl is a stub that serves synthetic snapshots in turn and emits the status trailer the real one
-# is asked for (-w). The one verb that does not go through curl is `romp perf export`, which delegates
-# to romp-perf-export (python, urllib): its cases pin ROMP_KERNEL_PORT at 1, a port nothing answers
-# on, so a case that reads the kernel fails loudly there instead of dialling the live port setup()
-# exports for the curl stub's URL assertions. --from reads no kernel: that a --from case passes on
-# the dead port is the proof.
+# is asked for (-w). Two verbs do not go through curl: `romp perf export`, which delegates to
+# romp-perf-export (python, urllib), and `romp perf upload`, which delegates to romp-perf-upload (python,
+# urllib, one POST to the configured receiver). The export cases pin ROMP_KERNEL_PORT at 1, a port
+# nothing answers on, so a case that reads the kernel fails loudly there instead of dialling the live
+# port setup() exports for the curl stub's URL assertions. --from reads no kernel: that a --from case
+# passes on the dead port is the proof. The upload cases point HOME at an empty directory under the
+# test's own tree (the receiver file is read as ~/.config/romp/perf-receiver) and unset
+# ROMP_PERF_RECEIVER, so no setting of the machine running the suite is read, and name a receiver on a
+# loopback port nothing answers on: no request of theirs leaves the machine or reaches anything.
 
 ROMP_SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp"
 
 setup() {
     # bin/romp resolves the state directory as ${ROMP_STATE_DIR:-$XDG_STATE_HOME/romp} and the token as
     # ${ROMP_SERVE_TOKEN:-<state>/serve-token}: a live kernel's exports outrank the redirection below
-    unset ROMP_STATE_DIR ROMP_SERVE_TOKEN
+    unset ROMP_STATE_DIR ROMP_SERVE_TOKEN ROMP_PERF_RECEIVER
     TEST_DIR="$(mktemp -d)"
     export XDG_STATE_HOME="$TEST_DIR/state"
     mkdir -p "$XDG_STATE_HOME/romp"
@@ -476,4 +480,58 @@ PY
     [ "$status" -eq 1 ]                                  # not a port number: refused, never the default port instead
     [[ "$output" == *"ROMP_KERNEL_PORT"* ]]
     [ ! -f "$TEST_DIR/public.json" ]
+}
+
+# `romp perf upload FILE [--yes] [--receiver URL]`: the export's companion. Each case first writes a real export
+# from snapshot A with the export verb, so the file the upload checks is one the export wrote.
+_upload_fixture() {
+    export UP_HOME="$TEST_DIR/home"; mkdir -p "$UP_HOME"
+    export UP_FILE="$TEST_DIR/public.json"
+    ROMP_KERNEL_PORT=1 "$ROMP_SCRIPT" perf export --public --from "$SNAP_A" --out "$UP_FILE" >/dev/null
+    [ -s "$UP_FILE" ]
+}
+
+@test "romp perf upload: dispatches to romp-perf-upload with its flags; a receiver that does not answer is a refusal naming the error class alone" {
+    _upload_fixture
+    HOME="$UP_HOME" run "$ROMP_SCRIPT" perf upload "$UP_FILE" --yes --receiver http://127.0.0.1:1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"$UP_FILE ("*" bytes) to 127.0.0.1"* ]]              # the path, the size and the receiver host, before the send
+    [[ "$output" == *"romp perf upload: refused: no answer from the receiver (ConnectionRefusedError); no receipt"* ]]
+    [[ "$output" != *"Errno"* ]]                                            # the error's class, never its message
+    [[ "$output" != *"/v1/upload"* ]]                                       # never the URL beyond the host
+    run "$ROMP_SCRIPT" perf --nope
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"romp perf upload FILE [--yes] [--receiver URL]"* ]]   # the usage line names the verb
+    run "$ROMP_SCRIPT" help
+    [[ "$output" == *"romp perf upload <file> [--yes|--receiver URL]"* ]]  # so does the help row
+}
+
+@test "romp perf upload: with no receiver configured it refuses naming the three settings, exit 2, before it reads the file" {
+    _upload_fixture
+    HOME="$UP_HOME" run "$ROMP_SCRIPT" perf upload "$TEST_DIR/no-such-file.json" --yes
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"no receiver is set"* ]]
+    [[ "$output" == *"--receiver URL"* ]]
+    [[ "$output" == *"ROMP_PERF_RECEIVER"* ]]
+    [[ "$output" == *"~/.config/romp/perf-receiver"* ]]
+    [[ "$output" != *"does not exist"* ]]                                   # the receiver is resolved first
+    [ "$(printf '%s\n' "$output" | wc -l)" -eq 1 ]
+    # the file is one of the three: written there, the verb proceeds (and stops at the next gate, the terminal)
+    mkdir -p "$UP_HOME/.config/romp"
+    printf 'http://127.0.0.1:1\n' > "$UP_HOME/.config/romp/perf-receiver"
+    HOME="$UP_HOME" run "$ROMP_SCRIPT" perf upload "$UP_FILE"
+    [ "$status" -eq 2 ]
+    [[ "$output" != *"no receiver is set"* ]]
+    [[ "$output" == *"--yes"* ]]
+}
+
+@test "romp perf upload: off a terminal without --yes it refuses, exit 2, and dials nothing" {
+    _upload_fixture
+    HOME="$UP_HOME" run "$ROMP_SCRIPT" perf upload "$UP_FILE" --receiver http://127.0.0.1:1 </dev/null
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"$UP_FILE ("*" bytes) to 127.0.0.1"* ]]
+    [[ "$output" == *"not on a terminal"* ]]
+    [[ "$output" == *"pass --yes"* ]]
+    [[ "$output" == *"nothing sent"* ]]
+    [[ "$output" != *"ConnectionRefusedError"* ]]                           # the dead port was never dialled
 }

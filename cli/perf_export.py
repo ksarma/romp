@@ -275,7 +275,8 @@ def check_document(doc: dict, state: Path, under=("perf",), tail="nothing writte
     version before) printed a key spelling the hostname when free text sat beneath that.
 
     `under` is the key path the document's blocks sit below (the export's `perf`; the root for the restart
-    document, whose blocks are its top-level keys) and `tail` what the refusal says was not done. `romp
+    document, whose blocks are its top-level keys) and `tail` what the refusal says was not done (this verb's write;
+    `romp perf upload`, which runs the same check over a file as it stands, passes "nothing sent"). `romp
     restart-metrics --json --public` runs this same function over its document (`under=()`, "nothing printed"): it
     ran the scan alone and printed a 32-hex token planted in an event row's nested field, the one place raw ledger
     rows pass through, where this verb refused the same document (the export's closing check, 2026-09-18)."""
