@@ -22,6 +22,7 @@ import { StagedStack } from "./staged-messages";
 import { syncSessionsFromTabMeta } from "./tab-meta";
 import { reconcileTabOrder, retainLiveOmitted, localStrip, stripHost } from "./tab-order";
 import { hostOf } from "./host-prefix";
+import { gateOnStrip } from "./skeleton-tabs";   // the idle prefetch's start gate (stage 0, 2026-09-18): applyTabOrder opens it on the local strip; the real rule over a fresh state here
 
 const requireCjs = createRequire(__filename);
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
@@ -347,7 +348,7 @@ function stripWorld(o: { col: string; sets: ColSets | null; wantActive?: string 
   const js = requireCjs("esbuild").transformSync(
     [line("heldHere"), line("tabInView"), fn("stripLists"), fn("ackClosingTabs"), fn("applyTabOrder"), fn("noteColumnEmptiness")].join("\n"), { loader: "ts" }).code;
   const prelude = `
-    const { columnHolds, columnEmptiness, isProvisionalId, isSubId, syncSessionsFromTabMeta, reconcileTabOrder, retainLiveOmitted, hostOf, localStrip, stripHost, HOOKS } = W;
+    const { columnHolds, columnEmptiness, isProvisionalId, isSubId, syncSessionsFromTabMeta, reconcileTabOrder, retainLiveOmitted, hostOf, localStrip, stripHost, gateOnStrip, HOOKS } = W;
     const COL = W.col;
     let colSets = W.sets, tabOrderSeen = false, activeId = null, provisionalId = null, wantActive = W.wantActive, vanishedId = null;
     const failedProvisionals = new Set(); let colEmptyPosted = false; let boardLive = new Set(); const hostsSeen = new Set();
@@ -356,7 +357,8 @@ function stripWorld(o: { col: string; sets: ColSets | null; wantActive?: string 
     const requestFullSession = (id, why) => { HOOKS.asked.push([id, why]); };   // this fork's no-base re-ask for a listed tab the page holds no session entry for (#1017's vocabulary): recorded, so its re-emission gate is run below; the real one's own suppressions (awaitingFull, a closing or provisional tab) are not in these worlds
     const peekId = null; const chatVisible = () => true;
     const tabMeta = new Map(), sessions = new Map(), pendingTabMeta = new Map(), closingTabs = new Map(), kernelListed = new Set(); const order = [];
-    const skeletonTabs = { ids: new Set() };   // upstream skeleton diet (2026-09-15): the lifted re-ask arm skips a listed skeleton; none in these worlds
+    const skeletonTabs = { ids: new Set(), gate: false };   // upstream skeleton diet (2026-09-15): the lifted re-ask arm skips a listed skeleton; none in these worlds. gate: the start gate the local strip may open (stage 0)
+    const schedulePrebuild = () => {};   // the idle chain's arm, inert in these worlds
     const CLOSE_ACK_MS = 15_000; let clock = 1_000_000; const Date = { now: () => clock };
     const vscodeApi = null;
     const dismissSession = (id, why) => { HOOKS.dismissed.push([id, why]); sessions.delete(id); const i = order.indexOf(id); if (i >= 0) order.splice(i, 1); };
@@ -375,7 +377,7 @@ function stripWorld(o: { col: string; sets: ColSets | null; wantActive?: string 
     };
   `;
   const make = new Function("W", "window", prelude + js + epilogue) as (w: unknown, win: unknown) => StripApi;
-  const api = make({ columnHolds, columnEmptiness, isProvisionalId, isSubId, syncSessionsFromTabMeta, reconcileTabOrder, retainLiveOmitted, hostOf, localStrip, stripHost, HOOKS,
+  const api = make({ columnHolds, columnEmptiness, isProvisionalId, isSubId, syncSessionsFromTabMeta, reconcileTabOrder, retainLiveOmitted, hostOf, localStrip, stripHost, gateOnStrip, HOOKS,
                      col: o.col, sets: W.sets, shell: W, wantActive: o.wantActive ?? null }, win);
   return { api, HOOKS, W };
 }

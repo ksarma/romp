@@ -13,7 +13,7 @@ import { distillText, distillInputs, applyDistillLine, distillPending, distillSt
 import { openContextMenu, CtxItem } from "./ctx-menu";   // the one menu builder (the v0.16.0 tidy): the card menu's card, dismissal and keys
 import { delegate } from "./actions";
 import { paintHeld, paintReleased, publishPaneHidden } from "./paint-gate";
-import { firstPaintHeld } from "./paint-gate";   // the phone's first-paint hold (stage 0, 2026-09-18); its own line, so the merged line above stays upstream's text
+import { firstPaintHeld, viewportHiddenSinceLoad } from "./paint-gate";   // the phone's first-paint hold (stage 0, 2026-09-18); its own line, so the merged line above stays upstream's text
 import { linkifyPrRefs, setLinkedText, senderPrRepo, installPrLinkOpener } from "./pr-links";
 import { cardInputsKey, cardNeedsUpdate, sameKeySeq, type GateEnv } from "./feed-card-gate";
 import { spinFor, awaitWord, groupRows, waitsNote, GROUP_TITLE, ROW_KIND_OF_LEGACY, type AwaitRow } from "./spin-caption";
@@ -5611,14 +5611,12 @@ function ensureHostLoad(list: HTMLElement): void {
 // on the same events, and nothing until the observer has spoken.
 let feedIntersecting: boolean | null = null;   // #feed-list on screen by the observer's last word; null until it speaks (the gate reads null as on screen; nothing is published for it)
 // The FIRST paint's hold on the phone (stage 0, 2026-09-18; paint-gate.ts firstPaintHeld): the shell's last panes word for this
-// pane (on.feed; undefined until one arrives), the shell's layout probe and the shim's zero-viewport probe, both read live the
-// way the kernel's pane shim reads them (parentMobile, paneHidden), so a layout flip or a first show is seen at the read.
+// pane (on.feed; undefined until one arrives) and the shell's layout probe, read live the way the kernel's pane shim reads it
+// (parentMobile), so a layout flip or a first show is seen at the read; the zero-viewport probe is paint-gate.ts's
+// viewportHiddenSinceLoad over this window (this file carries no probe of its own: the standing gate never reads one).
 let feedShellOn: boolean | undefined;
 function parentMobile(): boolean | undefined {
   try { const p = window.parent as unknown as { __rompMobileOn?: unknown }; return (window.parent !== window && typeof p.__rompMobileOn === "function") ? !!(p.__rompMobileOn as () => unknown)() : undefined; } catch { return undefined; }
-}
-function viewportProbeHidden(): boolean {
-  try { return window.parent !== window && (window.innerWidth === 0 || window.innerHeight === 0); } catch { return false; }
 }
 let paintDirty = false;        // a render was withheld while the pane could not be seen
 let skipFlipOnce = false;      // the release paint snaps: cards that moved while away have no old spot to glide from
@@ -5647,7 +5645,7 @@ document.addEventListener("visibilitychange", () => { if (document.hidden) publi
 function render() {
   const list = document.getElementById("feed-list")!;
   if (!feedWatching) { feedWatching = true; watchFeedVisibility(list); }
-  if (paintHeld(document.hidden, feedIntersecting, list.childElementCount > 0) || firstPaintHeld(list.childElementCount > 0, parentMobile(), feedShellOn, viewportProbeHidden(), feedIntersecting)) { paintDirty = true; return; }
+  if (paintHeld(document.hidden, feedIntersecting, list.childElementCount > 0) || firstPaintHeld(list.childElementCount > 0, parentMobile(), feedShellOn, viewportHiddenSinceLoad(window), feedIntersecting)) { paintDirty = true; return; }
   pruneTip();   // drop the styled tip only if the render tore its hovered anchor out (tip.ts pruneTip)
   applyFollowMove(asks);   // keep optimistically-moved follow-up cards in Working until the kernel confirms (or reverts)
   inRender = true;   // the body is render time: a post it makes is never the reader's jump (noteOwnJump, T416 round two)

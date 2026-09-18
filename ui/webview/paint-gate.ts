@@ -37,6 +37,14 @@ export function firstPaintHeld(hasContent: boolean, phone: boolean | undefined, 
   return probeHidden || intersecting === false;
 }
 
+// The shim's zero-viewport probe, read off a window: a framed pane whose viewport is 0 by 0 has been hidden since load (every
+// browser lays a shown frame out, so a shown pane never reads 0). The first-paint hold's fallback above, before the shell's
+// word or the observer has spoken, and nothing else's: a pane hidden AFTER a first show keeps its size in Chromium, which is
+// why the standing gate reads the observer's word and never this (feed-age.test.ts pins feed.ts to carry no probe of its own).
+export function viewportHiddenSinceLoad(w: { parent: unknown; innerWidth: number; innerHeight: number }): boolean {
+  try { return w.parent !== w && (w.innerWidth === 0 || w.innerHeight === 0); } catch { return false; }
+}
+
 // The release events' shared decision: a paint is owed (dirty) AND both measures now say the pane can be
 // seen. visibilitychange→visible on a pane that is still display:none waits for the observer; an observer
 // callback inside a hidden tab (a resize while away) waits for the tab. The caller paints SYNCHRONOUSLY on

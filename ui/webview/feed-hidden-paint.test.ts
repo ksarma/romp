@@ -15,8 +15,9 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, type PaneHiddenHost } from "./paint-gate";
+import { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, viewportHiddenSinceLoad, type PaneHiddenHost } from "./paint-gate";
 import { sameKeySeq } from "./feed-card-gate";
+import { hideEdges } from "../test-dom-shim";   // the fake-DOM rule (ui/test-dom-shim.test.ts): a window stand-in with a parent edge enumerates its primitives alone
 
 const requireCjs = createRequire(__filename);
 
@@ -141,8 +142,8 @@ const SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "
 const body = (name: string) => new RegExp("^function " + name + "\\([\\s\\S]*?\\n\\}", "m").exec(SRC)![0];
 
 test("render() is gated first, on the shared pure decision, and nothing else in feed.ts is", () => {
-  assert.match(SRC, /import \{ paintHeld, paintReleased, publishPaneHidden \} from "\.\/paint-gate";\nimport \{ firstPaintHeld \} from "\.\/paint-gate";/, "the merged import is upstream's line (federation-hidden-hold.test.ts pins it); the first-paint hold's import is the fork's own line");
-  assert.match(SRC, /function render\(\) \{\n  const list = document\.getElementById\("feed-list"\)!;\n  if \(!feedWatching\) \{ feedWatching = true; watchFeedVisibility\(list\); \}\n  if \(paintHeld\(document\.hidden, feedIntersecting, list\.childElementCount > 0\) \|\| firstPaintHeld\(list\.childElementCount > 0, parentMobile\(\), feedShellOn, viewportProbeHidden\(\), feedIntersecting\)\) \{ paintDirty = true; return; \}\n  pruneTip\(\);/,
+  assert.match(SRC, /import \{ paintHeld, paintReleased, publishPaneHidden \} from "\.\/paint-gate";\nimport \{ firstPaintHeld, viewportHiddenSinceLoad \} from "\.\/paint-gate";/, "the merged import is upstream's line (federation-hidden-hold.test.ts pins it); the first-paint hold's import is the fork's own line");
+  assert.match(SRC, /function render\(\) \{\n  const list = document\.getElementById\("feed-list"\)!;\n  if \(!feedWatching\) \{ feedWatching = true; watchFeedVisibility\(list\); \}\n  if \(paintHeld\(document\.hidden, feedIntersecting, list\.childElementCount > 0\) \|\| firstPaintHeld\(list\.childElementCount > 0, parentMobile\(\), feedShellOn, viewportHiddenSinceLoad\(window\), feedIntersecting\)\) \{ paintDirty = true; return; \}\n  pruneTip\(\);/,
     "the gate precedes every paint-side step (pruneTip, applyFollowMove, the footer, the columns); the phone's first-paint hold rides the same line (stage 0, 2026-09-18)");
   // two gates, both PAINTS: render(), and the 15 s age pass (feed-age.ts liveRefresher) that rewrites the stamped
   // labels on the cards render() did not repaint — it reads the same decision, so the feed has one meaning of
@@ -227,7 +228,7 @@ function feedWiring(win: { parentProbe?: () => boolean; innerWidth?: number; inn
   };
   class FakeObserver { constructor(cb: Cb) { observerCb = cb; } observe(_target: unknown) {} }
   const prelude = `
-    const paintHeld = P.paintHeld, paintReleased = P.paintReleased, firstPaintHeld = P.firstPaintHeld;
+    const paintHeld = P.paintHeld, paintReleased = P.paintReleased, firstPaintHeld = P.firstPaintHeld, viewportHiddenSinceLoad = P.viewportHiddenSinceLoad;
     const publishPaneHidden = (docHidden, intersecting) => P.publishPaneHidden(docHidden, intersecting, S.host);
     const live = { catchUp() { S.catchUps++; } };
     const paint = () => { S.paints++; S.painted = S.model; };
@@ -236,8 +237,9 @@ function feedWiring(win: { parentProbe?: () => boolean; innerWidth?: number; inn
   // page is its own parent; the viewport is the shim's zero-viewport probe (a frame hidden since load reads 0)
   const fakeWindow: any = { innerWidth: win.innerWidth ?? 800, innerHeight: win.innerHeight ?? 600 };
   fakeWindow.parent = win.parentProbe ? { __rompMobileOn: win.parentProbe } : fakeWindow;
+  hideEdges(fakeWindow);
   const api = new Function("P", "S", "document", "IntersectionObserver", "window", prelude + js + "\nreturn { render, releasePaint };")(
-    { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld }, st, fakeDocument, FakeObserver, fakeWindow) as { render(): void; releasePaint(): void };
+    { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, viewportHiddenSinceLoad }, st, fakeDocument, FakeObserver, fakeWindow) as { render(): void; releasePaint(): void };
   return {
     st,
     /** the payload path's one gated render() */
@@ -344,8 +346,9 @@ test("T4, the boundaries: the shown tab paints at once; off the phone the first 
 });
 
 test("feed.ts wires the first-paint hold: the shell's word and the two probes beside the observer's word, and the panes handler releases on the phone's show", () => {
-  assert.match(SRC, /let feedShellOn: boolean \| undefined;\nfunction parentMobile\(\): boolean \| undefined \{\n\s*try \{ const p = window\.parent as unknown as \{ __rompMobileOn\?: unknown \}; return \(window\.parent !== window && typeof p\.__rompMobileOn === "function"\) \? !!\(p\.__rompMobileOn as \(\) => unknown\)\(\) : undefined; \} catch \{ return undefined; \}\n\}\nfunction viewportProbeHidden\(\): boolean \{\n\s*try \{ return window\.parent !== window && \(window\.innerWidth === 0 \|\| window\.innerHeight === 0\); \} catch \{ return false; \}\n\}/,
-    "the shell's layout probe and the shim's zero-viewport probe, read live as the kernel's pane shim reads them");
+  assert.match(SRC, /let feedShellOn: boolean \| undefined;\nfunction parentMobile\(\): boolean \| undefined \{\n\s*try \{ const p = window\.parent as unknown as \{ __rompMobileOn\?: unknown \}; return \(window\.parent !== window && typeof p\.__rompMobileOn === "function"\) \? !!\(p\.__rompMobileOn as \(\) => unknown\)\(\) : undefined; \} catch \{ return undefined; \}\n\}/,
+    "the shell's layout probe, read live as the kernel's pane shim reads it; the zero-viewport probe is paint-gate.ts's viewportHiddenSinceLoad over the page's window (feed-age.test.ts pins that feed.ts itself carries no probe)");
+  assert.doesNotMatch(SRC, /window\.innerWidth === 0/, "no probe text in feed.ts: the standing gate never reads one (feed-age.test.ts), and the first-paint hold reads it through paint-gate.ts");
   assert.match(SRC, /if \(m\.romp === "panes"\) \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(m\.on && typeof m\.on === "object"\) \{\n\s*feedShellOn = m\.on\.feed === true;\n\s*if \(feedShellOn && paintDirty && parentMobile\(\) === true\) \{ feedIntersecting = true; releasePaint\(\); \}\n\s*\}\n\s*return;\n\s*\}/,
     "the panes word: this pane's on-screen word, and on the phone's show the release of the owed paint (the word stands in for the observer's, the revealCard precedent)");
   assert.ok(SRC.indexOf('if (m.romp === "panes") {') < SRC.indexOf('if (m.romp === "revealCard") {'), "…ahead of the bell jump, which the shell posts after the show's word");

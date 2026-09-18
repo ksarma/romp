@@ -3,7 +3,8 @@
 // ordering run executably; feed-hidden-paint.test.ts and outline-visibility.test.ts pin the wiring.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, type PaneHiddenHost } from "./paint-gate";
+import { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, viewportHiddenSinceLoad, type PaneHiddenHost } from "./paint-gate";
+import { hideEdges } from "../test-dom-shim";   // the fake-DOM rule (ui/test-dom-shim.test.ts): a window stand-in with a parent edge enumerates its primitives alone
 
 test("the first content always paints through, whatever the visibility (the pane loader retires on it)", () => {
   assert.equal(paintHeld(true, true, false), false, "hidden tab, empty list");
@@ -100,4 +101,13 @@ test("the FIRST paint on the phone (stage 0, 2026-09-18): held while the pane is
   assert.equal(firstPaintHeld(false, true, undefined, false, true), false, "the observer says on screen: paint");
   // with content the rule is paintHeld's alone
   assert.equal(firstPaintHeld(true, true, false, true, false), false, "a painted board is the standing gate's business");
+});
+
+test("the zero-viewport probe off a window: a framed pane at 0 by 0 has been hidden since load; a shown frame or a top-level page never reads hidden", () => {
+  const framed = (w: number, h: number) => { const win: any = { innerWidth: w, innerHeight: h }; win.parent = {}; return hideEdges(win); };
+  const top = (w: number, h: number) => { const win: any = { innerWidth: w, innerHeight: h }; win.parent = win; return hideEdges(win); };
+  assert.equal(viewportHiddenSinceLoad(framed(0, 0)), true, "a framed pane never shown");
+  assert.equal(viewportHiddenSinceLoad(framed(390, 0)), true, "either dimension");
+  assert.equal(viewportHiddenSinceLoad(framed(390, 700)), false, "a shown frame has its size");
+  assert.equal(viewportHiddenSinceLoad(top(0, 0)), false, "a top-level page is its own parent: the probe never applies");
 });
