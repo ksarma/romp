@@ -19,9 +19,15 @@ import time
 from pathlib import Path
 
 try:  # the SDK's abstract base when present; a plain object otherwise (the six methods are the contract)
-    from claude_agent_sdk._internal.transport import Transport as _Base    # type: ignore
-    from claude_agent_sdk._errors import CLIConnectionError, ProcessError   # type: ignore
-except Exception:  # pragma: no cover - the SDK-less test venv
+    # From the PUBLIC package (fresh-2, round 1 of the review, 2026-09-18): all three are public exports at the pinned
+    # version (session_host.py, SDK_TESTED_VERSION), and until round 1 they were read from the private modules
+    # _internal.transport and _errors inside a bare except Exception, the same silent stand-in for a moved private
+    # name that the pin exists to make loud. Not added to SDK_INTERNALS on purpose: that check runs in the HOST
+    # process at spawn time, after this module has already bound these names in the kernel process, so listing
+    # them there would protect nothing here and only make hosts refuse sessions more broadly. The fallback below
+    # is for a machine with no SDK at all (the hermetic tests, CI), hence ImportError, not Exception.
+    from claude_agent_sdk import Transport as _Base, CLIConnectionError, ProcessError    # type: ignore
+except ImportError:  # pragma: no cover - the SDK-less test venv
     class _Base:  # type: ignore
         pass
 
@@ -102,19 +108,53 @@ def host_exit_reason(state_dir, sid: str) -> str:
     `cli-spawn-failed` row, for the kernel's launch error; "" when no row says (an unreadable log, a host that
     died without one). Added 2026-09-18 so an SDK pin mismatch (session_host.py, SdkInternalsMismatch) reaches
     the card with both versions and the repin command instead of "see host.log" (the box admin's hazard review
-    of the pull-in, 2026-09-16). Safe to carry: the host writes no spec field and no environment value to
-    host.log (its module docstring), so the row's text is the host's own."""
+    of the pull-in, 2026-09-16).
+
+    What the text is (correctness-2 and kernel-3, round 1 of the review, 2026-09-18): a host-composed row (the SDK
+    mismatch) is carried whole, and its text is the host's own prose (two version strings, a module path, the
+    remedy). The generic host-crashed row is not prose the host authored: it is the last line of a Python
+    traceback, capped at 200 characters by main(), so it can read "OSError: AF_UNIX path too long" and, in
+    principle, whatever an exception message carries. It is carried anyway, because that line is what diagnoses
+    a real failure (the path-too-long case was hit on 2026-09-18). The host writes no spec field and no
+    environment value to host.log (its module docstring); that is the guarantee, not "prose".
+
+    A cli-spawn-failed row is a bare exception type name. When the SAME run wrote an sdk-version-untested row
+    before it (the SDK imports at a version other than the pin, and its internals resolved), the type name is
+    kept as the first token and the sentence names both versions and the repin command (regression-1, round 1):
+    until then a private class that was present with a drifted signature died as "TypeError" and the version
+    context the host had just written was shown to no one. The untested row is the gate: the host writes it only
+    when the SDK is importable and the version differs, so a machine with no SDK at all (the pipe transport's
+    spawn failing the same arm) keeps its bare type name. Composed here, which reads the whole log in one pass,
+    rather than written into the row's error field, which is a type name everywhere else and is splatted into
+    the host.spawn-failed problem row."""
     try:
         lines = (host_dir(state_dir, sid) / "host.log").read_text().splitlines()
     except OSError:
         return ""
-    for ln in reversed(lines):
+    rows = []
+    for ln in lines:
         try:
-            row = json.loads(ln)
+            rows.append(json.loads(ln))
         except ValueError:
             continue
-        if row.get("kind") in ("host-crashed", "cli-spawn-failed") and row.get("error"):
-            return str(row["error"])
+    for i in range(len(rows) - 1, -1, -1):
+        row = rows[i]
+        if row.get("kind") not in ("host-crashed", "cli-spawn-failed") or not row.get("error"):
+            continue
+        error = str(row["error"])
+        if row.get("kind") != "cli-spawn-failed":
+            return error
+        for prior in reversed(rows[:i]):       # this run's rows only: back to its host-started
+            if prior.get("kind") == "host-started":
+                break
+            if prior.get("kind") == "sdk-version-untested":
+                relation = prior.get("relation")
+                return ("%s: the host runs %s %s, %s the %s it is written against, and the CLI spawn failed there; "
+                        "run %s to install the tested version"
+                        % (error, sh.SDK_DIST, prior.get("installed"),
+                           ("%s than" % relation) if relation in ("newer", "older") else "other than",
+                           prior.get("tested"), sh.SDK_REPIN_COMMAND))
+        return error
     return ""
 
 

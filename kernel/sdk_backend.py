@@ -12435,8 +12435,18 @@ class SdkBackend:
                     # the host's last word when it left one (an SDK pin mismatch names both versions and the repin
                     # command there; a spawn failure its exception type), so the card says why, not just where to look
                     reason = ht.host_exit_reason(self.state_dir, sess.sid)
-                    raise CLIConnectionErrorLike("the session host exited before serving its socket (code %s); see hosts/%s/host.log%s"
-                                                 % (proc.returncode, sess.sid, (": " + reason) if reason else ""))
+                    said = "exited before serving its socket (code %s); see hosts/%s/host.log%s" % (
+                        proc.returncode, sess.sid, (": " + reason) if reason else "")
+                    # One ledger row per refused launch, under its own kind (fresh-3, round 1 of the review,
+                    # 2026-09-18): a host that never serves its socket sends no hello and no exit frame, the two
+                    # events that file host.log rows, so a refused launch left no session-events row at all and the
+                    # error centre, the ledger and the restart counts stayed at zero while the benign case (an
+                    # untested version whose internals resolve) got host.sdk-untested. Gated on the event, not on the
+                    # reason text (a host that died without a row gets a row too), and never host.spawn-failed, so the
+                    # one event is not counted twice; a retry that is refused again is its own launch and its own row.
+                    problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.exited-before-socket",
+                                sid=sess.sid, name=sess.name, log=self._log, code=proc.returncode)
+                    raise CLIConnectionErrorLike("the session host " + said)
                 if time.time() > deadline:
                     # a host that never served is ended, or a resend would start a second host and two CLIs
                     try:
@@ -18806,7 +18816,12 @@ class SdkBackend:
         dep = isinstance(exc, ImportError)
         # A provider failure happened before a new CLI existed. The previous
         # connection's stderr must not replace it or turn it into a quota hold.
-        tail = "" if dep or isinstance(exc, _cred.CredentialError) else sess.stderr_tail()
+        # A host launch or attach refusal (CLIConnectionErrorLike) too (correctness-1 and kernel-1, round 1 of
+        # the review, 2026-09-18): no CLI of THIS launch ever started, so the tail belongs to the previous one,
+        # and launch_failure_text prefers a tail over the exception's text. With the tail in, a session whose
+        # CLI had ever written a stderr line got that stale line as its card and the host's reason (an SDK
+        # pin mismatch naming both versions and the repin command) reached no card.
+        tail = "" if dep or isinstance(exc, (_cred.CredentialError, CLIConnectionErrorLike)) else sess.stderr_tail()
         text = (sdk_unavailable_text(self.state_dir, verdict=self.unavailable_verdict(),
                                      started_missing=self._sdk_missing)
                 if dep else launch_failure_text(exc, tail))

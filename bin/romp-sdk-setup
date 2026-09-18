@@ -20,11 +20,33 @@
 set -euo pipefail
 STATE="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"
 VENV="$STATE/sdkvenv"
-ROMP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# Resolve the repo root through any symlink (matches bin/romp-serve and the other bin/ consumers; regression-2,
+# round 1 of the review, 2026-09-18: a bare dirname "$0" resolved the LINK's directory, so a symlinked invocation
+# looked for kernel/session_host.py beside the link and died at the sed below).
+src="${BASH_SOURCE[0]}"
+while [[ -L "$src" ]]; do
+    tgt="$(readlink "$src")"
+    case "$tgt" in
+        /*) src="$tgt" ;;
+        *)  src="$(cd "$(dirname "$src")" && pwd)/$tgt" ;;
+    esac
+done
+ROMP_DIR="$(cd "$(dirname "$src")/.." && pwd)"
 SDK_PIN_SOURCE="$ROMP_DIR/kernel/session_host.py"
-SDK_VERSION="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' "$SDK_PIN_SOURCE" | head -1)"
+# The pin read is gated on a readable file and never lets the assignment end the shell (kernel-2, round 1 of the
+# review, 2026-09-18): under set -euo pipefail a sed over a missing or unreadable file ended the script here with
+# a bare "sed: can't read ..." at exit 2, and the guidance below, which names the line and where it belongs, was
+# never reached. sed's own reason still prints (no 2>/dev/null) above the guidance when it fails another way.
+SDK_VERSION=""
+if [[ -r "$SDK_PIN_SOURCE" ]]; then
+    SDK_VERSION="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' "$SDK_PIN_SOURCE" | head -1 || true)"
+fi
 if [[ ! "$SDK_VERSION" =~ ^[0-9]+\.[0-9]+ ]]; then
-    echo "romp-sdk-setup: no SDK_TESTED_VERSION line in $SDK_PIN_SOURCE (read: '${SDK_VERSION}'). The SDK is installed at the version the session host is written against, declared on that line; nothing is installed without it." >&2
+    if [[ ! -r "$SDK_PIN_SOURCE" ]]; then
+        echo "romp-sdk-setup: no readable kernel/session_host.py at $SDK_PIN_SOURCE (a partial checkout, or a copy of this script outside one?). The SDK is installed at the version the session host is written against, declared as SDK_TESTED_VERSION in that file; nothing is installed without it." >&2
+    else
+        echo "romp-sdk-setup: no SDK_TESTED_VERSION line in $SDK_PIN_SOURCE (read: '${SDK_VERSION}'). The SDK is installed at the version the session host is written against, declared on that line; nothing is installed without it." >&2
+    fi
     exit 1
 fi
 

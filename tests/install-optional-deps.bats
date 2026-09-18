@@ -770,7 +770,7 @@ exit 0
 PIP
   cat > "$3/bin/python" <<'PYS'
 #!/usr/bin/env bash
-echo "venv-python $* venv=${ROMP_SDK_VENV:-}" >> "$CALL_LOG"
+echo "venv-python $* venv=${ROMP_SDK_VENV:-} pin=${ROMP_SDK_PIN:-}" >> "$CALL_LOG"
 cat >/dev/null
 exit 0
 PYS
@@ -808,9 +808,9 @@ EOF
     [ "$(grep -c 'claude-agent-sdk' "$CALL_LOG")" -eq 1 ]
     [[ "$output" == *"claude-agent-sdk==$pin"* ]]                       # the install output names the version
     [[ "$output" == *"kernel/session_host.py"* ]]                       # and where it is declared
-    # the venv's verify step is handed the pin, so it can refuse a venv that holds another version
-    grep -q "^venv-python - venv=$TEST_DIR/state/sdkvenv$" "$CALL_LOG"
-    grep -q 'ROMP_SDK_PIN="\$SDK_VERSION"' "$ROMP_DIR/bin/romp-sdk-setup"
+    # the venv's verify step is handed the pin in its environment (the stub logs what it was handed), so it can
+    # refuse a venv that holds another version; the executed refusal is the case two below (tests-1, round 1)
+    grep -q "^venv-python - venv=$TEST_DIR/state/sdkvenv pin=$pin$" "$CALL_LOG"
     run grep -q -- "--upgrade claude-agent-sdk" "$CALL_LOG"            # armed last: `run` replaces $output
     [ "$status" -ne 0 ]
 }
@@ -831,6 +831,112 @@ EOF
     [ ! -e "$CALL_LOG" ]                                               # nothing ran: no venv, no pip (the stubs log every call)
 }
 
+# kernel-2 with regression-2 (round 1 of the review, 2026-09-18): with no kernel/session_host.py to read at all (a
+# partial checkout; the script invoked through a symlink outside a checkout, which resolved its root from the LINK's
+# directory) the sed inside the assignment ended the script under set -euo pipefail with a bare "sed: can't read"
+# and exit 2, so the guidance naming SDK_TESTED_VERSION and where the line belongs was never reached. The pin read
+# is gated on the file being readable and read without letting the assignment kill the shell, so both the missing
+# line and the missing file get the one guard's message; and the script resolves its own path through symlinks the
+# way bin/romp-serve does.
+@test "romp-sdk-setup: with no kernel/session_host.py to read (a partial checkout) it stops with the guidance, not a bare sed error" {
+    _logging_venv_python "$STUB/python3.12"
+    mkdir -p "$TEST_DIR/tree/bin"
+    cp "$ROMP_DIR/bin/romp-sdk-setup" "$TEST_DIR/tree/bin/"
+
+    PATH="$(bare_path)" ROMP_PYTHON="$STUB/python3.12" run "$TEST_DIR/tree/bin/romp-sdk-setup"
+
+    [ "$status" -eq 1 ]                                                # the guard's exit, not sed's 2
+    [[ "$output" == *"SDK_TESTED_VERSION"* ]]
+    [[ "$output" == *"kernel/session_host.py"* ]]
+    [[ "$output" == *"$TEST_DIR/tree/kernel/session_host.py"* ]]      # the path it looked at
+    [[ "$output" != *"sed: "* ]]                                       # no bare tool error in place of the guidance
+    [ ! -e "$CALL_LOG" ]                                               # nothing ran: no venv, no pip
+}
+
+@test "romp-sdk-setup: invoked through a symlink outside the checkout it still reads the pin (the script's own path is resolved, as romp-serve resolves its own)" {
+    _logging_venv_python "$STUB/python3.12"
+    pin="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' "$ROMP_DIR/kernel/session_host.py" | head -1)"
+    mkdir -p "$TEST_DIR/linkbin"
+    ln -s "$ROMP_DIR/bin/romp-sdk-setup" "$TEST_DIR/linkbin/romp-sdk-setup"
+
+    PATH="$(bare_path)" ROMP_PYTHON="$STUB/python3.12" run "$TEST_DIR/linkbin/romp-sdk-setup"
+
+    [ "$status" -eq 0 ]
+    grep -q "^pip install -q claude-agent-sdk==$pin$" "$CALL_LOG"      # the pin was found through the link
+    [[ "$output" == *"romp-sdk-setup: done"* ]]
+}
+
+# tests-1 (round 1 of the review, 2026-09-18): the verify step's comparison of what the venv holds against the pin was
+# pinned only by a grep of the script's own source, so the comparison and its exit could be deleted with the suite
+# green. These two cases EXECUTE it: the venv's stub python hands the verify heredoc to a real interpreter with a fake
+# claude_agent_sdk site (dist-info and all) on its path, at another version and at the pin.
+_fake_sdk_site() {   # $1 dir, $2 the version its dist-info declares
+    mkdir -p "$1/claude_agent_sdk" "$1/claude_agent_sdk-$2.dist-info"
+    printf '__version__ = "%s"\n' "$2" > "$1/claude_agent_sdk/__init__.py"
+    printf 'Metadata-Version: 2.1\nName: claude-agent-sdk\nVersion: %s\n' "$2" > "$1/claude_agent_sdk-$2.dist-info/METADATA"
+}
+
+# Like _logging_venv_python, but the venv's python logs its call and then runs the REAL python3 on the bare path
+# with the fake site FAKE_SDK_SITE names on PYTHONPATH, so the verify heredoc actually executes.
+_verifying_venv_python() {   # $1 path
+    mkdir -p "$(dirname "$1")"
+    cat > "$1" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "-m" ] && [ "${2:-}" = "venv" ]; then
+  mkdir -p "$3/bin" "$3/lib/python3.12/site-packages"
+  cat > "$3/bin/pip" <<'PIP'
+#!/usr/bin/env bash
+echo "pip $*" >> "$CALL_LOG"
+exit 0
+PIP
+  cat > "$3/bin/python" <<'PYS'
+#!/usr/bin/env bash
+echo "venv-python $* venv=${ROMP_SDK_VENV:-} pin=${ROMP_SDK_PIN:-}" >> "$CALL_LOG"
+PYTHONPATH="${FAKE_SDK_SITE:?}" exec python3 "$@"
+PYS
+  chmod +x "$3/bin/pip" "$3/bin/python"
+  printf 'version = 3.12.0\nexecutable = %s\n' "$0" > "$3/pyvenv.cfg"
+  exit 0
+fi
+case "$*" in
+  *"version_info >= (3, 10)"*) exit 0 ;;
+  *'print("%d.%d%s"'*)         echo "3.12"; exit 0 ;;
+  *'print("%d.%d"'*)           echo "3.12"; exit 0 ;;
+  *"import ensurepip"*)        exit 0 ;;
+esac
+exit 0
+EOF
+    chmod +x "$1"
+}
+
+@test "romp-sdk-setup: a venv that holds another version after the install is refused by the verify step, and not reported ready or done" {
+    _fake_sdk_site "$TEST_DIR/site" "0.0.1"
+    _verifying_venv_python "$STUB/python3.12"
+    pin="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' "$ROMP_DIR/kernel/session_host.py" | head -1)"
+
+    PATH="$(bare_path)" ROMP_PYTHON="$STUB/python3.12" FAKE_SDK_SITE="$TEST_DIR/site" run "$ROMP_DIR/bin/romp-sdk-setup"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the venv holds claude-agent-sdk 0.0.1 after an install of ==$pin"* ]]   # what it found, what it asked for
+    [[ "$output" == *"written against $pin"* ]]
+    [[ "$output" != *" ready ("* ]]                                    # not reported ready...
+    [[ "$output" != *"romp-sdk-setup: done"* ]]                        # ...and the run did not finish as an install
+    grep -q "^venv-python - venv=$TEST_DIR/state/sdkvenv pin=$pin$" "$CALL_LOG"
+}
+
+@test "romp-sdk-setup: a venv that holds the pinned version passes the executed verify step and is reported ready" {
+    pin="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' "$ROMP_DIR/kernel/session_host.py" | head -1)"
+    _fake_sdk_site "$TEST_DIR/site" "$pin"
+    _verifying_venv_python "$STUB/python3.12"
+
+    PATH="$(bare_path)" ROMP_PYTHON="$STUB/python3.12" FAKE_SDK_SITE="$TEST_DIR/site" run "$ROMP_DIR/bin/romp-sdk-setup"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"claude-agent-sdk $pin ready ("* ]]
+    [[ "$output" == *"romp-sdk-setup: done"* ]]
+    [[ "$output" != *"the venv holds"* ]]
+}
+
 @test "romp-sdk-setup: installs cryptography beside the SDK (same pip, same venv) and verifies it too" {
     _logging_venv_python "$STUB/python3.12"
 
@@ -845,7 +951,7 @@ EOF
     [ -n "$sdk_line" ] && [ -n "$cr_line" ] && [ "$sdk_line" -lt "$cr_line" ]
     # the verify step runs in the venv's python (argv unchanged: `-`, the heredoc) and is handed the venv in its
     # environment, so its message can name that venv's pip
-    grep -q "^venv-python - venv=$TEST_DIR/state/sdkvenv$" "$CALL_LOG"
+    grep -q "^venv-python - venv=$TEST_DIR/state/sdkvenv pin=" "$CALL_LOG"
     grep -q "import cryptography" "$ROMP_DIR/bin/romp-sdk-setup"      # and it imports the package, not just the SDK
     [[ "$output" != *"stay off"* ]]                                   # nothing to warn about on the happy path
 }

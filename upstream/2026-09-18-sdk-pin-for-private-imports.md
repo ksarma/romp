@@ -1,7 +1,7 @@
 ---
 title: The SDK the host imports private internals from is pinned, and a mismatch fails loudly
 status: candidate
-where: bin/romp-sdk-setup, kernel/session_host.py
+where: bin/README.md, bin/romp-sdk-setup, docs/architecture.md, docs/reference.md, kernel/host_transport.py (host_exit_reason; the public-package import of Transport, CLIConnectionError and ProcessError), kernel/sdk_backend.py (the launch-error carry and the host.exited-before-socket row in _host_transport_for, the tail exclusion in _record_launch_error, the host.sdk-untested row in _file_host_log_rows), kernel/session_host.py (SDK_TESTED_VERSION, sdk_internals, sdk_mismatch_text, sdk_broken_install_text, SdkInternalsMismatch, the _process guard in _spawn, main), tests/install-optional-deps.bats, tests/test_session_host_sdk_pin.py
 added: 2026-09-18
 pr:
 tier: fix

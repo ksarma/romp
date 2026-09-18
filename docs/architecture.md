@@ -68,8 +68,9 @@ dependency, `claude-agent-sdk`, and for `cryptography`, which
 need; if those say the package is missing, `bin/romp-sdk-setup` installs it,
 at the one version the session host's private SDK imports are written against
 (`SDK_TESTED_VERSION` in `kernel/session_host.py`; the script reads that line,
-and a host started on another version fails loudly rather than on a moved
-internal).
+and a host started on a version that has moved one of those internals fails
+loudly, naming both versions, rather than on the moved internal; one whose
+internals still resolve runs the session and files a problem row saying so).
 The VS Code / Cursor extension, built and
 installed. A `pre-push` hook in the clone's own git directory, which does
 nothing unless you give it a list of strings to watch for. The one-line

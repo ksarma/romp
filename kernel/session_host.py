@@ -69,15 +69,21 @@ END_SENTINEL = object()          # on the stdin pump: close the CLI's stdin afte
 # then move the number. Format: the bare version string, double-quoted, on this one line.
 SDK_TESTED_VERSION = "0.2.156"
 SDK_DIST = "claude-agent-sdk"                 # the distribution name importlib.metadata and pip know
+SDK_PACKAGE = "claude_agent_sdk"              # the import name; a ModuleNotFoundError naming a module under it is the SDK's own
 SDK_REPIN_COMMAND = "bin/romp-sdk-setup"      # what installs the tested version
 # (module, name) for every private SDK name this module reaches at import; the check resolves each one
 SDK_INTERNALS = (("claude_agent_sdk._internal.transport.subprocess_cli", "SubprocessCLITransport"),)
 
 
 class SdkInternalsMismatch(RuntimeError):
-    """The installed SDK is not the tested version and a private name the host drives is gone. Raised out of
-    the spawn and carried whole into the host-crashed record and the kernel's launch error: the text is the
-    host's own (two version strings, a module path, the remedy), never a spec field or an environment value."""
+    """A private name the host drives is gone: on another version than the tested one a mismatch (sdk_mismatch_text),
+    on the tested version itself a broken install (sdk_broken_install_text; tests-2, round 1 of the review,
+    2026-09-18). Raised out of the spawn and carried whole into the host-crashed record and the kernel's launch
+    error: the text is the host's own (two version strings, a module path, the remedy, and the bounded type and
+    message of the import error behind it), never a spec field or an environment value."""
+
+
+SDK_CAUSE_CAP = 200                          # the cause text appended to a mismatch, capped as main() caps the generic crash line
 
 
 def installed_sdk_version() -> "str | None":
@@ -89,10 +95,28 @@ def installed_sdk_version() -> "str | None":
         return None
 
 
-def sdk_mismatch_text(installed, missing: str) -> str:
-    return ("%s %s is installed, but the session host is written against %s and this version has no %s; "
+def sdk_mismatch_text(installed, missing: str, cause: "BaseException | None" = None) -> str:
+    """The loud verdict for another version whose private name `missing` is gone. `cause` is the import error behind
+    it, appended as its bounded type and message (fresh-1, round 1 of the review, 2026-09-18): before that the verdict
+    replaced the error, so the fact that named the real trouble (which module was missing) reached no log, no stderr
+    and no card."""
+    text = ("%s %s is installed, but the session host is written against %s and this version has no %s; "
             "run %s to install the tested version"
             % (SDK_DIST, installed or "(version unknown: no package metadata)", SDK_TESTED_VERSION, missing, SDK_REPIN_COMMAND))
+    if cause is not None:
+        text += " (%s)" % ("%s: %s" % (type(cause).__name__, cause))[:SDK_CAUSE_CAP]
+    return text
+
+
+def sdk_broken_install_text(installed, missing: str) -> str:
+    """The verdict for the TESTED version missing a private name the host reads: the install is broken, not the
+    version (tests-2, round 1 of the review, 2026-09-18: the `_process` guard used to claim a mismatch about a
+    matching version and offer a repin that pip reports as already satisfied, a remedy that changes nothing). The
+    remedy here is a rebuild of the venv: remove it, then run the setup script, which builds it afresh."""
+    return ("%s %s is installed, the version the session host is written against, but %s is missing: the install is "
+            "broken (a partial or edited SDK venv), not the version; remove the SDK venv under the state directory "
+            "and run %s to rebuild it"
+            % (SDK_DIST, installed or "(version unknown: no package metadata)", missing, SDK_REPIN_COMMAND))
 
 
 def _version_relation(installed, tested) -> str:
@@ -124,7 +148,14 @@ def sdk_internals(installed=None, log=None) -> dict:
     raises SdkInternalsMismatch naming the installed version, the tested one and the repin command (never a
     degraded transport: the pipe transport is for machines with no SDK at all, and a host that ran on it here
     would hide the very breakage this exists to show). A version whose internals still resolve proceeds with one
-    log row saying it is newer or older than the tested one, so a working-by-luck machine is visible."""
+    log row saying it is newer or older than the tested one, so a working-by-luck machine is visible.
+
+    "Gone" is an AttributeError (the module is there, the name is not) or a ModuleNotFoundError naming the SDK's
+    own module path. Any other ImportError from inside the private module is re-raised whole onto the generic
+    cli-spawn-failed road (fresh-1, round 1 of the review, 2026-09-18): until then every ImportError became a
+    confident "this version has no <name>", so a broken dependency chain (the leaf's own `import anyio` failing)
+    was reported as drift and its real cause dropped. The verdict that does fire carries the cause's bounded
+    type and message (sdk_mismatch_text), so the fact that names the trouble travels either way."""
     if installed is None:
         installed = installed_sdk_version()
     if installed == SDK_TESTED_VERSION:
@@ -133,8 +164,12 @@ def sdk_internals(installed=None, log=None) -> dict:
     for mod, name in SDK_INTERNALS:
         try:
             found[name] = getattr(importlib.import_module(mod), name)
-        except (ImportError, AttributeError) as e:
-            raise SdkInternalsMismatch(sdk_mismatch_text(installed, mod + "." + name)) from e
+        except AttributeError as e:
+            raise SdkInternalsMismatch(sdk_mismatch_text(installed, mod + "." + name, cause=e)) from e
+        except ModuleNotFoundError as e:
+            if not str(getattr(e, "name", "") or "").startswith(SDK_PACKAGE):
+                raise                       # a missing third-party module, not a moved internal: the real error, whole
+            raise SdkInternalsMismatch(sdk_mismatch_text(installed, mod + "." + name, cause=e)) from e
     if log is not None:
         log("sdk-version-untested", installed=installed or "unknown", tested=SDK_TESTED_VERSION,
             relation=_version_relation(installed, SDK_TESTED_VERSION))
@@ -708,7 +743,13 @@ class SessionHost:
                     await self.transport.close()
                 except Exception:
                     pass
-                raise SdkInternalsMismatch(sdk_mismatch_text(installed_sdk_version(), SDK_INTERNALS[0][0] + ".SubprocessCLITransport._process"))
+                # split as sdk_internals splits (tests-2, round 1 of the review, 2026-09-18): at the tested version the
+                # install is broken and the remedy is a rebuild; at another version the name moved and the remedy is the
+                # repin. Before the split the tested version was told it mismatched itself and offered a no-op repin.
+                installed = installed_sdk_version()
+                missing = SDK_INTERNALS[0][0] + ".SubprocessCLITransport._process"
+                raise SdkInternalsMismatch(sdk_broken_install_text(installed, missing) if installed == SDK_TESTED_VERSION
+                                           else sdk_mismatch_text(installed, missing))
             self.cli_pid = proc.pid
             self.log("cli-spawned", transport="sdk", cliPid=self.cli_pid)
         else:
