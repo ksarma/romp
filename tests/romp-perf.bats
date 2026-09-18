@@ -10,7 +10,11 @@
 # processes (a restart inside the window) are not subtracted into negative rates, and a refused
 # token is named as such rather than reported as a dead kernel. Nothing here touches a real kernel:
 # curl is a stub that serves synthetic snapshots in turn and emits the status trailer the real one
-# is asked for (-w).
+# is asked for (-w). The one verb that does not go through curl is `romp perf export`, which delegates
+# to romp-perf-export (python, urllib): its cases pin ROMP_KERNEL_PORT at 1, a port nothing answers
+# on, so a case that reads the kernel fails loudly there instead of dialling the live port setup()
+# exports for the curl stub's URL assertions. --from reads no kernel: that a --from case passes on
+# the dead port is the proof.
 
 ROMP_SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp"
 
@@ -421,4 +425,55 @@ assert lines[i + 1:i + 6] == ["    _pusher (kernel.py:100)", "    _job_stage (ke
     run "$ROMP_SCRIPT" help
     [ "$status" -eq 0 ]
     [[ "$output" == *"romp perf"* ]]
+    # the restart-metrics row names the flag this branch adds, the way docs/reference.md's row and the verb's
+    # own --help do (2026-09-18: the rendered row spelled [--json|--window day|week] and never said --public,
+    # so a user reading `romp help` had no way to learn the paste-safe form existed)
+    [[ "$output" == *"romp restart-metrics [--json [--public]|--window day|week]"* ]]
+    [[ "$output" == *"--public with --json: the paste-safe form"* ]]
+}
+
+@test "romp perf export: dispatches to romp-perf-export with its flags, which writes the public form of a saved snapshot" {
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" perf export --public --from "$SNAP_A" --out "$TEST_DIR/public.json"
+    [ "$status" -eq 0 ]                                  # on a dead port: --from reached no kernel
+    [[ "$output" == "$TEST_DIR/public.json ("*" bytes)" ]]
+    python3 - "$TEST_DIR/public.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["schema"] == "romp-perf-export/1", d.get("schema")
+assert "pid" not in d["perf"]["process"] and "now" not in d["perf"] and "log" not in d["perf"], sorted(d["perf"])
+assert d["perf"]["pusher"]["cycles"] == 100 and d["perf"]["http"]["GET /sessions"]["count"] == 5
+assert "GET /tick" not in d["perf"]["http"] and d["perf"]["http"]["other"]["count"] == 50, sorted(d["perf"]["http"])   # /tick is a POST route: a GET of it is outside the register
+assert "usage" not in d
+PY
+}
+
+@test "romp perf export: without --public the verb refuses with one line, exit 2, and writes nothing" {
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" perf export --from "$SNAP_A" --out "$TEST_DIR/public.json"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--public"* ]]
+    [[ "$output" == *"no raw mode"* ]]
+    [ "$(printf '%s\n' "$output" | wc -l)" -eq 1 ]
+    [ ! -f "$TEST_DIR/public.json" ]
+}
+
+@test "romp perf export: --usage adds the usage block, and the usage line names the verb" {
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" perf export --public --usage --from "$SNAP_A" --out "$TEST_DIR/public.json"
+    [ "$status" -eq 0 ]
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["usage"]["kernelUptime"] == "lt1h", d["usage"]' "$TEST_DIR/public.json"
+    run "$ROMP_SCRIPT" perf --nope
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"romp perf export --public"* ]]
+    run "$ROMP_SCRIPT" help
+    [[ "$output" == *"romp perf export --public"* ]]
+}
+
+@test "romp perf export: without --from it dials ROMP_KERNEL_PORT, and a dead kernel fails LOUDLY with nothing written" {
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" perf export --public --out "$TEST_DIR/public.json"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel not reachable on :1"* ]]
+    [ ! -f "$TEST_DIR/public.json" ]
+    ROMP_KERNEL_PORT=" 1" run "$ROMP_SCRIPT" perf export --public --out "$TEST_DIR/public.json"
+    [ "$status" -eq 1 ]                                  # not a port number: refused, never the default port instead
+    [[ "$output" == *"ROMP_KERNEL_PORT"* ]]
+    [ ! -f "$TEST_DIR/public.json" ]
 }

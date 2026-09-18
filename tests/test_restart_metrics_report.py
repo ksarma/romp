@@ -76,6 +76,35 @@ class Frames(unittest.TestCase):
         self.assertFalse(rep.anonymize_default(rep.STATE_ROOT / "romp-research" / "restart-metrics"), "the user's own state root shows names")
         self.assertTrue(rep.anonymize_default(Path("/nonexistent/place")))
 
+    def test_a_public_document_keeps_its_windows_and_skips_the_kernel_series_with_a_note(self):
+        """Round 3 of the export's review (2026-09-18): the public form (`romp restart-metrics --json --public`) carries
+        no absolute clock stamp, kernelSeries[].t among them, and frames() died on it with KeyError 't' where the
+        public form of the round before (t still kept) rendered. The report's input is the raw --json document; a
+        public one handed to it keeps its window rows and its live block, gets no kernel-memory series (the public
+        form has no time axis, by design: it is a paste artefact), and the omission is a one-line note the summary
+        prints, never a traceback."""
+        raw = _doc()
+        pub = rm.public_form(raw)
+        self.assertTrue(pub["kernelSeries"] and all("t" not in k for k in pub["kernelSeries"]), "the public rows carry no t")
+        fr = rep.frames([("public", pub), ("raw", raw)])
+        self.assertEqual([r["label"] for r in fr["windows"]], ["public", "raw"], "both documents' window rows")
+        self.assertEqual((fr["windows"][0]["restarts"], fr["windows"][0]["cutTurns"], fr["windows"][0]["outageP50"]), (3, 3, 2.5))
+        self.assertEqual(len(fr["live"]), 2)
+        self.assertEqual([s["label"] for s in fr["kernel"]], ["raw"], "the raw document's series alone")
+        self.assertEqual(len(fr["notes"]), 1, fr["notes"])
+        self.assertIn("public", fr["notes"][0])
+        self.assertIn("kernel", fr["notes"][0])
+        self.assertNotIn("\u2014", fr["notes"][0])
+        # a raw document whose series rows lack t (a hand-edited file) is skipped the same way, named by its label
+        broken = _doc()
+        for k in broken["kernelSeries"]:
+            del k["t"]
+        fr2 = rep.frames([("edited", broken)])
+        self.assertEqual(fr2["kernel"], [])
+        self.assertEqual(len(fr2["notes"]), 1)
+        self.assertIn("edited", fr2["notes"][0])
+        self.assertEqual(rep.frames([("raw", raw)])["notes"], [], "a raw document records no note")
+
     def test_load_docs_labels(self):
         d = Path(tempfile.mkdtemp())
         (d / "base.json").write_text(json.dumps(_doc()))
@@ -105,6 +134,26 @@ class Render(unittest.TestCase):
         made2 = rep.render([("baseline", _doc())], out / "named", anonymize=False)
         self.assertIn("web", (out / "named" / "figures.json").read_text())
         self.assertIsNotNone(made2["session_resources"])
+
+    def test_a_public_document_renders_seven_figures_and_the_summary_carries_the_note(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "pub.json").write_text(json.dumps(rm.public_form(_doc())))
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = rep.main(["--doc", "public=%s" % (d / "pub.json"), "--out", str(d / "out")])
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("kernel_memory        (no data)", out)
+        self.assertIn("note: public:", out)
+        self.assertIn("note: public:", (d / "out" / "summary.txt").read_text())
+        figs = json.loads((d / "out" / "figures.json").read_text())
+        self.assertEqual(figs["kernel"], [])
+        self.assertEqual(len(figs["notes"]), 1)
+        drawn = {k for k, v in figs["figures"].items() if v}
+        self.assertEqual(drawn, {"cut_turns", "restart_timing", "quiet_window", "boot_events", "redo_cost", "turn_latency",
+                                 "session_resources"}, "seven of the eight figures draw over a public document")
 
     def test_main_prints_the_paths(self):
         d = Path(tempfile.mkdtemp())

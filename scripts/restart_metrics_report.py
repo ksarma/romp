@@ -26,6 +26,12 @@ Run (cleanplots and matplotlib are not romp dependencies; uv fetches them):
         --doc baseline=path/to/baseline.json --doc after=path/to/after.json [--out DIR]
 Data shaping (frames) is pure and importable without matplotlib; the drawing needs cleanplots and says so
 when it is missing rather than falling back to another look.
+
+The input is the RAW document. `romp restart-metrics --json --public` writes a paste artefact that carries no
+absolute clock stamp (the kernel-series rows lose their `t`), so it has no time axis: handed one, frames() leaves
+that document's kernel-memory series out and records a one-line note, which summary.txt and the run's output
+print, and the other seven figures draw (round 3 of the export's review, 2026-09-18: before it, a public document
+was a KeyError).
 """
 import argparse
 import json
@@ -77,8 +83,11 @@ def _st(b, *keys):
 
 def frames(docs, anonymize=True) -> dict:
     """Everything the figures draw, as plain lists keyed by figure: one row per (label, window). With
-    `anonymize` the live sessions are named "session 1..N" by memory rank (the kernel row keeps its name)."""
+    `anonymize` the live sessions are named "session 1..N" by memory rank (the kernel row keeps its name).
+    `notes` names what a document could not supply: a kernel-memory series whose rows carry no stamp (the public
+    form, or a hand-edited file) is left out rather than drawn on a made-up axis or died on."""
     rows = []
+    notes = []
     for label, doc in docs:
         for b in doc.get("buckets") or []:
             lat, sl, out, set_, qw = (_st(b, "latency", "feedToResultS"), _st(b, "stateLogLatencyS"),
@@ -124,11 +133,18 @@ def frames(docs, anonymize=True) -> dict:
         ks = [k for k in (doc.get("kernelSeries") or []) if isinstance(k.get("rssMb"), (int, float))]
         if not ks:
             continue
-        t0 = min(k["t"] for k in ks)
+        stamped = [k for k in ks if isinstance(k.get("t"), (int, float)) and not isinstance(k.get("t"), bool)]
+        if not stamped:      # the public form carries no absolute clock stamp, so it has no time axis: said, not drawn
+            notes.append("%s: the kernel-memory series is left out, its rows carry no time stamp (%s)"
+                         % (label, "a public document; the report's input is the raw --json document"
+                            if doc.get("public") else "a document whose kernelSeries rows have no t"))
+            continue
+        t0 = min(k["t"] for k in stamped)
         series.append({"label": label, "t0": t0,
-                       "points": [{"days": round((k["t"] - t0) / 86400.0, 4), "rssMb": k["rssMb"], "kind": k["kind"],
-                                   "cpuS": k.get("cpuS")} for k in ks]})
-    return {"windows": rows, "live": live, "labels": [l for l, _ in docs], "kernel": series, "anonymized": bool(anonymize)}
+                       "points": [{"days": round((k["t"] - t0) / 86400.0, 4), "rssMb": k["rssMb"], "kind": k.get("kind"),
+                                   "cpuS": k.get("cpuS")} for k in stamped]})
+    return {"windows": rows, "live": live, "labels": [l for l, _ in docs], "kernel": series, "anonymized": bool(anonymize),
+            "notes": notes}
 
 
 def _ylabels(rows):
@@ -327,7 +343,8 @@ def fig_session_resources(cp, fr, out):
     pal = _palette(cp, fr["labels"])
     kernel_color = list(cp.colors)[-1]          # the kernel's own bar in a colour no document uses, so the eye finds it
     for ax, l in zip(axs, live):
-        names = [s["name"] for s in l["sessions"]] + (["kernel (pid %s)" % l["kernelPid"]] if l["kernelRssMb"] else [])
+        kernel_name = "kernel" if l["kernelPid"] is None else "kernel (pid %s)" % l["kernelPid"]   # a public document has no pid
+        names = [s["name"] for s in l["sessions"]] + ([kernel_name] if l["kernelRssMb"] else [])
         vals = [s["memMb"] for s in l["sessions"]] + ([l["kernelRssMb"]] if l["kernelRssMb"] else [])
         colors = [pal[l["label"]]] * len(l["sessions"]) + ([kernel_color] if l["kernelRssMb"] else [])
         ys = list(range(len(names)))[::-1]
@@ -376,14 +393,15 @@ def render(docs, out: Path, anonymize=None) -> dict:
     for fn in FIGURES:
         made[fn.__name__.replace("fig_", "")] = fn(cp, fr, out)
     (out / "figures.json").write_text(json.dumps({"figures": made, "windows": fr["windows"], "live": fr["live"],
-                                                  "kernel": fr["kernel"]},
+                                                  "kernel": fr["kernel"], "notes": fr["notes"]},
                                                  indent=1, sort_keys=True, default=str))
+    notes = "".join("note: %s\n" % n for n in fr["notes"])
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "cli"))
         import restart_metrics as rm
-        (out / "summary.txt").write_text("\n\n".join("== %s ==\n%s" % (l, rm.summary(d)) for l, d in docs) + "\n")
+        (out / "summary.txt").write_text("\n\n".join("== %s ==\n%s" % (l, rm.summary(d)) for l, d in docs) + "\n" + notes)
     except Exception as e:
-        (out / "summary.txt").write_text("summary unavailable: %s\n" % e)
+        (out / "summary.txt").write_text("summary unavailable: %s\n" % e + notes)
     return made
 
 
@@ -400,6 +418,8 @@ def main(argv=None) -> int:
     sys.stdout.write("session names: %s\n" % ("hidden (session 1..N by memory rank; --named shows them)" if anon else "shown"))
     for k, v in made.items():
         sys.stdout.write("%-20s %s\n" % (k, v or "(no data)"))
+    for n in frames(docs, anonymize=anon)["notes"]:      # the shaping is pure and cheap; the note a figure left out is said here too
+        sys.stdout.write("note: %s\n" % n)
     return 0
 
 
