@@ -140,10 +140,12 @@ the clone updates it:
   tracked file silently, and it does nothing in a Claude Code session Romp did not start. Romp's
   own `romp-track-bash-guard.mjs`, registered on `Bash`, does the same for a write made through a
   shell command (a `cp` or `tee` onto the file, a `>` redirection, `sed -i`). In a project that
-  tracks files it also refuses a shell write whose target it cannot read (a variable, a glob) and
-  asks for the path spelled out. If you had installed track-changents yourself, the installer
-  re-points those links at the bundled copy,
-  which carries fixes the checkout lacks, and says so.
+  tracks files it also refuses a shell write whose target it cannot read (a variable, a
+  substitution, a glob or brace list it cannot expand) and asks for the path spelled out; a copy
+  whose name it cannot read into a folder where a tracked file could land is refused wherever the
+  command is run from. A temp file named only by a process id or a random number, outside the
+  project, still runs. If you had installed track-changents yourself, the installer re-points
+  those links at the bundled copy, which carries fixes the checkout lacks, and says so.
 
 ### Manual and custom installs
 

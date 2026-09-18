@@ -262,14 +262,35 @@ test('a command the lexer cannot see through and that names no target is allowed
 // A research session reported (2026-09-17, through the box admin) that `cp "$SRC" "$DST"` overwrote a
 // tracked file with no change recorded, while the same cp spelled out was refused: the hook dropped every
 // target it could not read. Since 2026-09-18 such a target is refused while a project that tracks anything
-// is in play (the session's cwd, the directory a cd moved to, or the folder a copy lands in); the hook never
-// reads the session's environment to resolve the word. With no such project in play the word is dropped as
-// before, and a literal target keeps its verdict.
+// is in play (the session's cwd, the directory a cd moved to, or the folder a copy lands in); of the
+// session's environment the hook reads HOME, TRACKCHANGES_ROOT and ROMP_SID, never a variable the command
+// names, and no value read there reaches a message. With no such project in play the word is dropped as
+// before, and a literal target keeps its verdict. Review round 1 (2026-09-18) bounded the rule in four
+// places, each pinned below: a target whose only expansions are numbers by construction and whose text is
+// an absolute path outside the project is allowed; a copy's landing folder counts only when a tracked file
+// could land there; a project counts only when its list holds an entry the literal rule could refuse; a
+// directory is judged under its real path and its name.
 
 const NOT_LITERAL = /is not a literal path/;
 
+// Every shape and its verdict in one map, compared once, so a regression in any shape is reported beside
+// the others instead of stopping the loop at the first (review round 1, 2026-09-18). A refusal's four
+// properties are folded into its value; a deliberate allowance reads 'allowed'.
+const REFUSED = 'refused';
+const verdictOf = (cmd, cwd = proj) => {
+  const reason = evaluate(payload(cmd, cwd));
+  if (reason == null) return 'allowed';
+  const faults = [];
+  if (!NOT_LITERAL.test(reason)) faults.push('not as a non-literal target');
+  if (!reason.includes(proj)) faults.push('without naming the project in play');
+  if (!reason.includes('track-edit')) faults.push('without the remedy');
+  return faults.length ? `refused, but ${faults.join(', ')}` : REFUSED;
+};
+const verdicts = (cmds, cwd = proj) => Object.fromEntries(cmds.map((c) => [c, verdictOf(c, cwd)]));
+const allOf = (cmds, v) => Object.fromEntries(cmds.map((c) => [c, v]));
+
 test('a write whose target the shell fills in is refused in a tracked project: a variable, a substitution, a backtick, a ~user, a glob or brace list the hook cannot expand', () => {
-  for (const cmd of [
+  const shapes = [
     'cp "$SRC" "$DST"',                                 // the reported shape
     'cp base/report.md "$DST"',                         // a literal source too
     'cp base/report.md docs/$NAME.md',
@@ -294,23 +315,340 @@ test('a write whose target the shell fills in is refused in a tracked project: a
     'echo x > notes/new*.md',
     'cd "$D" && cp base/report.md report*.md',          // a glob the hook cannot expand: the cwd unknown
     'tee notes/n{1..1000}.md',                          // a brace list past the cap
-    'cp "$SRC" docs/',                                  // a literal folder, a name the shell fills in
+    'cp "$SRC" docs/',                                  // a literal folder that holds a tracked file, a name the shell fills in
     'cp -t notes "$SRC"',
     'for f in a b; do cp "$f" docs/; done',
     'cp "$SRC" "$DST"; echo done',                      // in a list
     'echo "$(cp a "$B")"',                              // inside a substitution
-  ]) {
-    const reason = evaluate(payload(cmd));
-    assert.ok(reason, `refused: ${cmd}`);
-    assert.match(reason, NOT_LITERAL, cmd);
-    assert.ok(reason.includes(proj), `names the project in play: ${cmd}`);
-    assert.ok(reason.includes('track-edit'), `names the remedy: ${cmd}`);
-  }
+  ];
+  assert.deepEqual(verdicts(shapes), allOf(shapes, REFUSED));
   assert.ok(evaluate(payload('cp "$SRC" "$DST"')).includes('its cp names "$DST"'), 'the word as typed, quotes included');
   assert.ok(evaluate(payload('echo x > "$OUT"')).includes('its > redirection names "$OUT"'));
   assert.ok(evaluate(payload('cp "$SRC" docs/')).includes('its cp names "$SRC"'), 'a copy into a folder names the source whose name it takes');
   const { unresolved } = extractWriteTargets('cp "$SRC" "$DST"', proj);
-  assert.deepEqual(unresolved.map((u) => [u.raw, u.how, u.dir]), [['"$DST"', 'cp', proj]], 'the grammar reports the word it could not read');
+  assert.deepEqual(unresolved.map((u) => [u.raw, u.how, u.dir, u.at, u.numeric]), [['"$DST"', 'cp', proj, null, null]], 'the grammar reports the word it could not read');
+});
+
+// A second scratch directory beside the project, outside every project: the target of the writes the round
+// found refused although they land nowhere near a tracked file. Under os.tmpdir(), as the project is.
+const outsideDir = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-outside-')));
+
+test('what stays refused by the review\'s ruling: a substitution or a variable in the name whatever the literal prefix, a relative or bare expansion, a prefix inside the project, a number beside a variable or a glob', () => {
+  // The round-1 review (2026-09-18) weighed narrowing the refusal by the word's literal prefix and took only
+  // the numeric subset (the test below): a refuter showed by execution that a variable can carry `../` back
+  // into the project, so an outside prefix bounds nothing when a variable or a substitution follows it. The
+  // `$(date)` timestamped log stays refused with the rest, a cost stated to the user, not a class solved here.
+  const out = outsideDir();
+  try {
+    const shapes = [
+      `echo x > "${out}/x-$(date +%s).log"`,                  // a command substitution: the timestamped log
+      `echo x > ${out}/x-\`date +%s\`.log`,
+      `echo x > ${out}/"$NAME".log`,                          // a variable of unknown content beside an outside prefix
+      `echo x > ${out}/"$NAME"`,                              // the refuters' traversal: NAME holding ../<project>/docs/report.md
+      `cp base/report.md "${out}/$NAME"`,
+      `cp base/report.md "${out}/\${NAME}.md"`,
+      `echo x > "${out}/x-$$-$USER.log"`,                     // a number beside a variable of unknown content
+      `echo x > "${out}/x-$$$(date +%s).log"`,
+      `echo x > ${out}/x-$$*.log`,                            // a glob beside the number: `*` could spell a project's name
+      `echo x > ${out}/x-$RANDOMX.log`,                       // not $RANDOM: a variable of that name
+      `echo x > ${out}/x-$RANDOM_1.log`,
+      'echo x > build-$$.log',                                // a relative prefix
+      'echo x > ../scratch-$$.log',
+      'echo x > "$$.log"',                                    // no literal prefix at all
+      'echo x > $RANDOM',
+      'cp base/report.md "$(mktemp)"',
+      `echo x > ${proj}/docs/x-$$.md`,                        // a prefix inside the project
+      `tee ${proj}/notes/n-$RANDOM.md < base/report.md`,
+      `echo x > ${out}/run-$$/../../${path.basename(proj)}/docs/x-$$.md`,   // a literal traversal after the number, folded before the comparison
+      'echo x > ~someone/x-$$.log',                           // a ~user with the number: the home is not read
+    ];
+    assert.deepEqual(verdicts(shapes), allOf(shapes, REFUSED));
+    // the real shell shows why the variable case must stay refused: the value carries the write back onto the
+    // tracked file, and nothing in the word's literal text says so
+    const shell = spawnSync('bash', ['-c', 'echo poison > "$OUT"/"$NAME"'], {
+      encoding: 'utf8', env: { PATH: process.env.PATH, OUT: out, NAME: `../${path.basename(proj)}/docs/report.md` },
+    });
+    assert.equal(shell.status, 0, shell.stderr);
+    assert.equal(fs.readFileSync(report, 'utf8'), 'poison\n', 'the tracked file was overwritten through the outside prefix');
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
+});
+
+test('the numeric narrowing: a target whose only expansions are $$, $RANDOM, $BASHPID or $SECONDS (their brace forms too) and whose text is an absolute path outside every project in play is allowed', () => {
+  // Review round 1 (2026-09-18): every such write was refused whenever the cwd sat in a tracked project,
+  // breaking temp logs and captures box-wide once any project turned tracking on. These expansions are
+  // numbers by construction, so the word's literal segments bound where the write lands.
+  const out = outsideDir();
+  try {
+    const shapes = [
+      `echo x > "${out}/build-$$.log"`,
+      `npm test > "${out}/test-output-$$.log" 2>&1`,
+      `cmd > ${out}/out-$RANDOM.log`,
+      `echo x >> "${out}/x-\${BASHPID}.log"`,
+      `echo x > ${out}/t-$SECONDS.log`,
+      `echo x > "${out}/run-$$/\${RANDOM}.log"`,
+      `echo x > ${out}/x-\${$}.log`,
+      `tee -a ${out}/log.$$ < base/report.md`,
+      `cp base/report.md ${out}/copy-$$.md`,
+      `mv base/report.md "${out}/moved-$$.md"`,
+      `sort -o ${out}/sorted-$$.txt base/report.md`,
+      `echo x > ${out}/run-$$/../other-$$.log`,               // a traversal that stays outside
+      `cd "$D" && echo x > ${out}/x-$$.log`,                   // the cwd unknown: the payload cwd is in play, and the target is outside it
+      `cd notes && echo x > ${out}/x-$$.log`,                  // from inside the tracked folder
+    ];
+    assert.deepEqual(verdicts(shapes), allOf(shapes, 'allowed'));
+    // the grammar carries the text for the narrowing, and only for a numeric-only word
+    const { unresolved } = extractWriteTargets(`echo x > "${out}/build-$$.log"`, proj);
+    assert.deepEqual(unresolved.map((u) => [u.raw, u.numeric]), [[`"${out}/build-$$.log"`, `${out}/build-$$.log`]]);
+    assert.equal(extractWriteTargets('echo x > "$OUT"', proj).unresolved[0].numeric, null);
+    assert.equal(extractWriteTargets(`echo x > "${out}/x-$$-$USER.log"`, proj).unresolved[0].numeric, null);
+    // the number could spell the project's own directory: a project at <out>/build-4242 refuses <out>/build-$$/x.md
+    const digits = path.join(out, 'build-4242');
+    fs.mkdirSync(path.join(digits, '.trackchanges'), { recursive: true });
+    fs.writeFileSync(path.join(digits, '.trackchanges', 'config.json'), JSON.stringify({ v: 2, tracked: ['x.md'] }));
+    assert.ok(evaluate(payload(`echo x > ${out}/build-$$/x.md`, digits)), 'the segment with the number could be the root\'s');
+    assert.ok(evaluate(payload(`echo x > ${out}/build-$RANDOM/x.md`, digits)));
+    assert.equal(evaluate(payload(`echo x > ${out}/other-$$/x.md`, digits)), null, 'a literal segment that differs diverges');
+    assert.equal(evaluate(payload(`echo x > ${out}/build-4242x-$$.log`, digits)), null, 'a sibling name, not the root');
+    // a symlinked directory in the literal part is judged under its real path too
+    fs.symlinkSync(path.join(proj, 'docs'), path.join(out, 'linkdocs'));
+    assert.ok(evaluate(payload(`echo x > ${out}/linkdocs/x-$$.md`)), 'the link leads into the project');
+    assert.ok(evaluate(payload(`cp base/report.md ${out}/linkdocs/copy-$$.md`)));
+    // and through the process, both ways
+    const run = (command) => spawnSync(process.execPath, [HOOK], { input: payload(command), encoding: 'utf8', env: hookEnv({ ROMP_SID }) });
+    assert.equal(run(`echo x > "${out}/build-$$.log"`).status, 0);
+    const refused = run(`echo x > "${out}/x-$(date +%s).log"`);
+    assert.equal(refused.status, 2);
+    assert.match(refused.stderr, NOT_LITERAL);
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
+});
+
+test('a leading $HOME or ${HOME} followed by a slash or the word end is the home directory, as ~/ is: expanded, and judged by the path it names', () => {
+  // Review round 1 (2026-09-18): `~/.cache/x.log` was expanded and allowed while `"$HOME/.cache/x.log"` was
+  // refused as not literal, though both come from the same os.homedir() read. Both quoted and unquoted
+  // spellings, since the quoted one is read by a separate branch of the lexer and is the common case.
+  const home = process.env.HOME;
+  process.env.HOME = proj;
+  try {
+    for (const spelling of ['$HOME/docs/report.md', '"$HOME/docs/report.md"', '${HOME}/docs/report.md', '"${HOME}/docs/report.md"', "$HOME/'docs/report.md'"]) {
+      assert.deepEqual(targets(`cp base/report.md ${spelling}`, '/'), [report], spelling);
+      assert.match(evaluate(payload(`cp base/report.md ${spelling}`, '/')), /^Track-changes is ON for /, `refused with the file named: ${spelling}`);
+    }
+    assert.equal(evaluate(payload('cp base/report.md "$HOME/docs/other.md"', '/')), null, 'the untracked file passes');
+    assert.deepEqual(targets('cp base/report.md "$HOME"', '/'), [path.join(proj, 'report.md')], 'the word end: the home directory itself, a destination folder');
+    assert.deepEqual(targets('cp base/report.md $HOME', '/'), [path.join(proj, 'report.md')]);
+    // the boundary: another variable, a suffix, a default, a variable after it, text before it, a quote after it
+    const others = ['echo x > $HOMEDIR/x.log', 'echo x > "$HOME.bak/x.log"', 'echo x > "${HOME:-/tmp}/x.log"', 'echo x > "$HOME/$NAME.md"', 'echo x > x$HOME/y', 'echo x > $HOME"/x"'];
+    for (const cmd of others) assert.deepEqual(targets(cmd), [], `not read: ${cmd}`);
+    assert.deepEqual(verdicts(others), allOf(others, REFUSED));
+  } finally { process.env.HOME = home; }
+  // the refused write the round found: a log under the home, from a cwd inside the tracked project
+  const out = outsideDir();
+  process.env.HOME = out;
+  try {
+    assert.equal(evaluate(payload('echo x >> "$HOME/.cache/x.log"')), null);
+    assert.equal(evaluate(payload('echo x >> ${HOME}/.cache/x.log')), null);
+    assert.equal(evaluate(payload('echo x >> ~/.cache/x.log')), null, 'as the tilde spelling always was');
+  } finally { process.env.HOME = home; fs.rmSync(out, { recursive: true, force: true }); }
+});
+
+test('TRACKCHANGES_ROOT stands in for the root search only for a directory under it, and its value never reaches the refusal', () => {
+  // Review round 1 (2026-09-18): the override answered for every directory on the machine, so with the
+  // variable set every non-literal write anywhere was refused, and the value was echoed in the refusal.
+  // Outside the env root the marker search runs (a second tracked project is refused under its own name,
+  // the chosen asymmetry with the literal rule, which sends every file to the env root); the message names
+  // the variable, never its value.
+  const plain = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-plain-')));
+  const second = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-second-')));
+  const saved = process.env.TRACKCHANGES_ROOT;
+  try {
+    fs.mkdirSync(path.join(plain, '.git'));
+    fs.mkdirSync(path.join(second, '.trackchanges'));
+    fs.writeFileSync(path.join(second, '.trackchanges', 'config.json'), JSON.stringify({ v: 2, tracked: ['a.md'] }));
+    process.env.TRACKCHANGES_ROOT = proj;
+    const inside = evaluate(payload('echo x >> "$LOG"'));
+    assert.ok(inside && NOT_LITERAL.test(inside), 'under the env root: refused');
+    assert.ok(!inside.includes(proj), `the value is not echoed: ${inside}`);
+    assert.ok(inside.includes('Track-changes is ON in the project TRACKCHANGES_ROOT names'), 'the variable is named');
+    assert.ok(evaluate(payload('echo x >> "$LOG"', path.join(proj, 'docs'))), 'a directory below the env root');
+    assert.equal(evaluate(payload('echo x >> "$LOG"', plain)), null, 'outside the env root, with no tracking there: allowed');
+    assert.equal(evaluate(payload('cp "$A" "$B"', plain)), null);
+    assert.equal(evaluate(payload(`cp "$SRC" ${plain}/`, proj)), null, 'a copy landing outside the env root');
+    const fallback = evaluate(payload('echo x >> "$LOG"', second));
+    assert.ok(fallback && fallback.includes(second) && !fallback.includes(proj), 'outside the env root the marker search runs: the second project, under its own name');
+    // as a process, with the variable set in its environment (the suite otherwise deletes it)
+    const env = hookEnv({ ROMP_SID });
+    env.TRACKCHANGES_ROOT = proj;
+    const run = (command, cwd) => spawnSync(process.execPath, [HOOK], { input: payload(command, cwd), encoding: 'utf8', env });
+    assert.equal(run('echo x >> "$LOG"', plain).status, 0, 'outside the env root: allowed');
+    const refused = run('echo x >> "$LOG"', proj);
+    assert.equal(refused.status, 2);
+    assert.ok(!refused.stderr.includes(proj) && refused.stderr.includes('TRACKCHANGES_ROOT'), refused.stderr);
+  } finally {
+    if (saved === undefined) delete process.env.TRACKCHANGES_ROOT; else process.env.TRACKCHANGES_ROOT = saved;
+    fs.rmSync(plain, { recursive: true, force: true });
+    fs.rmSync(second, { recursive: true, force: true });
+  }
+});
+
+test('with the command\'s variables set in the hook\'s environment the refusal still names the word, never a value, and refuses on the tracked project alone', () => {
+  // Review round 1 (2026-09-18): the property that the hook resolves no word from its environment was pinned
+  // by prose only; a mutant that read a variable when set shipped green. A key-shaped decoy sits in the same
+  // environment (assembled here, so the repo's scanner reads no token in the source).
+  const decoy = ['sk', 'ant', 'api03', 'x'.repeat(24)].join('-');
+  const src = path.join(proj, 'base', 'report.md');
+  const run = (command, extra) => spawnSync(process.execPath, [HOOK], { input: payload(command), encoding: 'utf8', env: hookEnv({ ROMP_SID, ...extra }) });
+  const tracked = run('cp "$SRC" "$DST"', { SRC: src, DST: report, ROMP_PROBE_TOKEN: decoy });
+  assert.equal(tracked.status, 2, tracked.stderr);
+  assert.match(tracked.stderr, /names "\$DST"/, 'the word as written');
+  for (const value of [report, src, decoy]) assert.ok(!tracked.stderr.includes(value), `no expanded value: ${value}`);
+  const untracked = run('cp "$SRC" "$DST"', { SRC: src, DST: other, ROMP_PROBE_TOKEN: decoy });
+  assert.equal(untracked.status, 2, 'an environment-resolving mutant would exit 0 here, since the value names an untracked file');
+  assert.ok(untracked.stderr.length > 0 && !untracked.stderr.includes(other));
+  // and in process
+  const saved = process.env.DST;
+  process.env.DST = report;
+  try {
+    const reason = evaluate(payload('cp base/report.md "$DST"'));
+    assert.ok(reason && NOT_LITERAL.test(reason) && !reason.includes(report));
+  } finally { if (saved === undefined) delete process.env.DST; else process.env.DST = saved; }
+});
+
+test('a copy whose landing name the hook cannot read is refused only where a tracked file could land: nothing tracked under the folder allows, an entry there that links to a tracked file refuses', () => {
+  // Review round 1 (2026-09-18): the branch refused every such copy into any folder of a project that tracks
+  // anything, from every cwd on the machine. The refuters' narrowing by tracked entries alone reopened a
+  // symlink overwrite the literal rule refuses, so the folder's existing entries are asked too.
+  fs.mkdirSync(path.join(proj, 'scratch'));
+  fs.writeFileSync(path.join(proj, 'scratch', 'plain.md'), 'untracked\n');
+  const out = outsideDir();
+  try {
+    for (const cwd of [proj, out]) {
+      assert.equal(evaluate(payload(`cp "$SRC" ${proj}/scratch/`, cwd)), null, `nothing tracked under scratch/, from ${cwd === proj ? 'inside' : 'outside'}`);
+      assert.equal(evaluate(payload(`cp -t ${proj}/scratch "$SRC"`, cwd)), null);
+      assert.equal(evaluate(payload(`install -m 644 "$SRC" ${proj}/scratch/`, cwd)), null);
+      assert.equal(evaluate(payload(`mv "$SRC" ${proj}/base/`, cwd)), null, 'base/ holds an untracked file only');
+    }
+    assert.equal(evaluate(payload('cp "$SRC" scratch/')), null, 'relative to the project');
+    // where a tracked file could land, from any cwd: a tracked entry in or below the folder, the folder inside a
+    // tracked folder, the root above every entry
+    const inPlay = [`cp "$SRC" ${proj}/docs/`, `cp -t ${proj}/notes "$SRC"`, `cp "$SRC" ${proj}/notes/sub/`, `cp "$SRC" ${proj}/`, `cp -r "$SRC" ${proj}/`];
+    assert.deepEqual(verdicts(inPlay, out), allOf(inPlay, REFUSED));
+    // a note under the folder reached through a link from the tracked file, nested where a readdir does not see it
+    fs.mkdirSync(path.join(proj, 'scratch', 'deep'));
+    fs.writeFileSync(path.join(proj, 'scratch', 'deep', 'linked.md'), 'reached\n');
+    fs.writeFileSync(report, 'The api session cut tail latency by 40%.\n\n[[linked]]\n');
+    assert.ok(evaluate(payload(`cp "$SRC" ${proj}/scratch/`, out)), 'a closure note below the folder: a directory copy could land on it');
+    fs.rmSync(path.join(proj, 'scratch', 'deep'), { recursive: true });
+    assert.equal(evaluate(payload(`cp "$SRC" ${proj}/scratch/`, out)), null, 'gone again');
+    // an existing entry of the folder that links to the tracked file: the copy could take its name
+    fs.symlinkSync(report, path.join(proj, 'scratch', 'report.md'));
+    assert.ok(evaluate(payload(`cp "$SRC" ${proj}/scratch/`, out)), 'a link onto the tracked file sits in the folder');
+    assert.ok(evaluate(payload('cp -t scratch "$SRC"')));
+    assert.ok(evaluate(payload('cp base/report.md scratch/report.md')), 'as the literal name is refused');
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
+});
+
+test('a project is in play only when its list holds an entry the literal rule could refuse: figures only or every entry vetoed track nothing refusable; a figure whose whole-line link reaches a note does', () => {
+  // Review round 1 (2026-09-18): the raw length of the tracked list decided, so a project of tracked figures
+  // refused every non-literal write with a message no literal write there could meet.
+  const config = (obj) => fs.writeFileSync(path.join(proj, '.trackchanges', 'config.json'), JSON.stringify(obj));
+  const shapes = ['cp "$SRC" "$DST"', 'echo x > "$OUT"', 'cp "$SRC" figs/', "sed -i 's/a/b/' \"$F\""];
+  config({ v: 2, tracked: ['figs/plot.png'] });
+  assert.deepEqual(verdicts(shapes), allOf(shapes, 'allowed'), 'figures only');
+  assert.equal(evaluate(payload('cp new.png figs/plot.png')), null, 'the literal write to the figure passes, as before');
+  config({ v: 2, tracked: ['docs/'], untracked: ['docs/'] });
+  assert.deepEqual(verdicts(shapes), allOf(shapes, 'allowed'), 'every entry vetoed');
+  assert.equal(evaluate(payload('cp base/report.md docs/report.md')), null, 'no literal write is refused there either');
+  config({ v: 2, tracked: ['docs/report.md', 'figs/plot.png'], untracked: ['docs/report.md'] });
+  assert.deepEqual(verdicts(shapes), allOf(shapes, 'allowed'), 'a vetoed file and a figure');
+  // a tracked figure whose bytes carry a whole-line link to a note: the closure reaches the note, the literal rule
+  // refuses it, so the project is in play
+  fs.writeFileSync(path.join(proj, 'figs', 'plot.png'), '[[docs/report]]\n');
+  config({ v: 2, tracked: ['figs/plot.png'] });
+  assert.ok(evaluate(payload('cp base/report.md docs/report.md')), 'the literal rule refuses the linked note');
+  const anywhere = shapes.filter((c) => c !== 'cp "$SRC" figs/');
+  assert.deepEqual(verdicts(anywhere), allOf(anywhere, REFUSED), 'a target that could land anywhere');
+  assert.equal(evaluate(payload('cp "$SRC" figs/')), null, 'but the figure folder holds nothing the linked note could be reached under: a copy there is allowed');
+  assert.ok(evaluate(payload('cp "$SRC" docs/')), 'and the note\'s folder refuses it');
+  // an entry naming a file that does not exist yet keeps the literal rule live, so it counts
+  config({ v: 2, tracked: ['docs/absent.md'] });
+  assert.ok(evaluate(payload('cp base/report.md docs/absent.md')));
+  assert.ok(evaluate(payload('cp "$SRC" "$DST"')));
+});
+
+test('install -d makes directories and writes no file: -d, --directory and a d inside an option cluster; -D copies, and cp -d or ln -d mean something else', () => {
+  // Review round 1 (2026-09-18): `install -d "$A" "$B"` was refused as a copy whose destination the hook could
+  // not read, and the literal `install -d docs/new notes/new2` as a write under the tracked folder.
+  const dirOnly = ['install -d "$A" "$B"', 'install --directory "$A" "$B"', 'install -dm755 "$A" "$B"', 'install -pd "$A" "$B"', 'install -d -m 755 "$A" "$B"', 'install -d -- "$A" "$B"', 'install -d "$DESTDIR/usr/bin" "$DESTDIR/usr/lib"'];
+  assert.deepEqual(verdicts(dirOnly), allOf(dirOnly, 'allowed'));
+  for (const cmd of dirOnly) assert.deepEqual(extractWriteTargets(cmd, proj).unresolved, [], cmd);
+  assert.deepEqual(targets('install -d docs/new notes/new2'), [], 'the literal spelling names no file either');
+  assert.equal(evaluate(payload('install -d docs/new notes/new2')), null);
+  assert.ok(evaluate(payload('install -D base/report.md "$B"')), '-D copies a file: refused as not literal');
+  assert.deepEqual(targets('install -D base/report.md notes/new/report.md'), [path.join(proj, 'notes', 'new', 'report.md')]);
+  assert.deepEqual(targets('install -m755d base/report.md docs/report.md'), [report], 'after m the rest of the word is the mode, not a d');
+  assert.deepEqual(targets('cp -d base/report.md docs/report.md'), [report], 'cp -d is --no-dereference');
+  assert.deepEqual(targets('ln -d base docs/link'), [path.join(proj, 'docs', 'link')], 'ln -d still makes a link');
+});
+
+test('an interpreter one-liner whose write path is computed is allowed by design: the scan reads a literal path only', () => {
+  // Review round 1 (2026-09-18) named this residual and rejected closing it here: the regex that would catch a
+  // computed open() path cannot see os.path.join or an f-string and also matches reads, so it would refuse
+  // ordinary scripting and still miss the common forms. The vendored skill tells the session not to write a
+  // tracked file this way; the hook does not pretend to see it.
+  const computed = [
+    `python3 -c "import os; open(os.environ['OUT'], 'w').write('x')"`,
+    `python3 -c "import sys; open(sys.argv[1], 'w').write('x')" docs/report.md`,
+    `python3 -c "p = 'docs/report.md'; open(p, 'w')"`,
+    `node -e "require('fs').writeFileSync(process.env.OUT, 'x')"`,
+    `node -e "require('fs').writeFileSync(process.argv[1], 'x')" docs/report.md`,
+  ];
+  assert.deepEqual(verdicts(computed), allOf(computed, 'allowed'));
+  for (const cmd of computed) assert.deepEqual(extractWriteTargets(cmd, proj).unresolved, [], `no unresolved target either: ${cmd}`);
+  assert.deepEqual(scriptWriteTargets('python', "open(os.environ['OUT'], 'w')"), []);
+  assert.deepEqual(scriptWriteTargets('node', "fs.writeFileSync(process.env.OUT, 'x')"), []);
+  assert.ok(evaluate(payload(`python3 -c "open('docs/report.md', 'w')"`)), 'the literal spelling is refused');
+});
+
+test('the caps decide which mechanism refuses, and each boundary is pinned by execution: BRACE_CAP, GLOB_MATCH_CAP, GLOB_READ_CAP', () => {
+  // Review round 1 (2026-09-18): the three caps could be retuned widely with the suite green. At the cap a
+  // brace list or a glob names each file and the verdict is theirs; past it the word is one the hook cannot
+  // read and the verdict is the tracked project's.
+  const out = outsideDir();
+  try {
+    const at = extractWriteTargets(`tee ${out}/n{1..512}.md`, proj);
+    assert.equal(at.targets.length, 512, 'at BRACE_CAP: every alternative');
+    assert.deepEqual(at.unresolved, []);
+    assert.equal(evaluate(payload(`tee ${out}/n{1..512}.md`)), null, 'each names an untracked file outside the project');
+    const past = extractWriteTargets(`tee ${out}/n{1..513}.md`, proj);
+    assert.deepEqual(past.targets, []);
+    assert.deepEqual(past.unresolved.map((u) => u.raw), [`${out}/n{1..513}.md`], 'past it: one word the hook cannot read');
+    assert.ok(evaluate(payload(`tee ${out}/n{1..513}.md`)), 'refused in the tracked project, though every alternative would land outside');
+    // a glob whose matches are all untracked: at the match cap each landing name is judged and allowed; past it the
+    // source is a word the hook cannot read, the landing name with it, and docs/ could hold a tracked file
+    const big = path.join(proj, 'big');
+    fs.mkdirSync(big);
+    for (let k = 0; k < 2001; k++) fs.writeFileSync(path.join(big, `m${k}.md`), 'x');
+    const some = extractWriteTargets('cp big/m1*.md docs/', proj);   // m1, m10-m19, m100-m199, m1000-m1999
+    assert.equal(some.targets.length, 1111);
+    assert.deepEqual(some.unresolved, []);
+    assert.equal(evaluate(payload('cp big/m1*.md docs/')), null, 'every landing name untracked');
+    const all = extractWriteTargets('cp big/*.md docs/', proj);
+    assert.deepEqual(all.targets, []);
+    assert.deepEqual(all.unresolved.map((u) => [u.raw, u.at]), [['big/*.md', path.join(proj, 'docs')]], 'past GLOB_MATCH_CAP: the landing name cannot be read');
+    assert.ok(evaluate(payload('cp big/*.md docs/')), 'and docs/ holds a tracked file');
+    // the read cap: a directory of exactly GLOB_READ_CAP entries is read, one more is not
+    const huge = path.join(out, 'huge');
+    fs.mkdirSync(huge);
+    for (let k = 0; k < 50000; k++) fs.writeFileSync(path.join(huge, `e${k}`), '');
+    const read = extractWriteTargets(`cp ${huge}/e4999? docs/`, proj);
+    assert.equal(read.targets.length, 10, 'at GLOB_READ_CAP the listing is read: e49990 to e49999');
+    assert.equal(evaluate(payload(`cp ${huge}/e4999? docs/`)), null);
+    fs.writeFileSync(path.join(huge, 'e50000'), '');
+    const unread = extractWriteTargets(`cp ${huge}/e4999? docs/`, proj);
+    assert.deepEqual(unread.targets, []);
+    assert.equal(unread.unresolved.length, 1, 'past it the glob is a word the hook cannot read');
+    assert.ok(evaluate(payload(`cp ${huge}/e4999? docs/`)));
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 
 test('the same commands pass with no tracked project in play: no .trackchanges/config.json, an empty tracked list, a copy into a folder outside the project', () => {

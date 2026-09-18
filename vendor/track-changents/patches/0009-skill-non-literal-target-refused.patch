@@ -6,25 +6,31 @@
 # decision 47) refuses a shell command that would write a tracked file. Until 2026-09-18 it judged only a
 # target it could read: a `cp "$SRC" "$DST"` passed and overwrote a tracked file with no change recorded, while
 # the same cp spelled out was refused (a research session's report through the box admin, 2026-09-17). The hook
-# now refuses such a target while a project that tracks anything is in play, and reads no environment to
-# resolve it. The "When tracking is ON" section gains one paragraph that tells the agent so and what to do
-# (spell the path out; a tracked file's change goes through track-edit), so the refusal it meets is no
-# surprise. Other hosts have no Bash-side guard, so this stays romp's. Prose only; pinned by the host's
+# now refuses such a target while a project that tracks anything is in play, and reads none of the agent's
+# variables to resolve it (HOME alone, for `~` and a leading `$HOME`, as the shell does). The "When tracking is
+# ON" section gains one paragraph that tells the agent so and what to do (spell the path out; a tracked file's
+# change goes through track-edit), so the refusal it meets is no surprise, and names the one exception the
+# round-1 review of that change (2026-09-18) allowed: a target whose only expansions are `$$`, `$RANDOM`,
+# `$BASHPID` or `$SECONDS` at an absolute path outside the project, which cannot reach back into it. Other
+# hosts have no Bash-side guard, so this stays romp's. Prose only; pinned by the host's
 # tools/vendor-patches.test.mjs (P9) and the drift test.
 diff --git a/skill/SKILL.md b/skill/SKILL.md
-index f7d8bc982..96ae42107 100644
+index f7d8bc9..bb3d838 100644
 --- a/skill/SKILL.md
 +++ b/skill/SKILL.md
-@@ -59,6 +59,13 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
+@@ -59,6 +59,16 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
  the write: its status is 0 when tracking is ON, so `track-config ... && cp ...` runs
  the copy on exactly the file it must not touch.
  
 +In a project that tracks files, a shell write whose target is not a literal path
 +is refused as well: a variable such as `"$DST"`, a `$(...)`, a glob or brace list
 +the guard cannot expand. The guard cannot tell which file such a word names and
-+does not read your environment to find out, so the refusal holds whatever the word
-+would expand to. Spell the path out; a tracked file then takes its change through
-+`track-edit`, and a file outside the project takes an ordinary write.
++does not read your variables to find out (it reads `HOME` alone, so a leading
++`$HOME/` is read as `~/` is), so the refusal holds whatever the word would expand to.
++One exception: a target whose only expansions are `$$`, `$RANDOM`, `$BASHPID` or
++`$SECONDS`, at an absolute path outside the project, is allowed. Spell the path out;
++a tracked file then takes its change through `track-edit`, and a file outside the
++project takes an ordinary write.
 +
  For ANY change to the file, use the CLI, NOT the Edit/Write/MultiEdit tools:
  

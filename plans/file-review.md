@@ -3568,14 +3568,30 @@ document stands on its own, each with the reasoning it was given.
     path the kernel opens, so a symlink to a tracked file carries no write past it. The refusal is exit 2 with one
     line naming the file and the track-edit command, in the person's voice. What it lets through: a read (cat,
     grep, diff, git, sed without -i) names no target; a command behind eval, xargs or a shell -c it cannot read
-    is unresolvable and passes, since a silent block of ordinary work would cost more than a missed write; a
-    write whose target the hook cannot read (a variable, a `$(...)` or a backtick, a `~user`, a brace list past
-    the cap, or a glob that matches nothing or names more than the hook will list) is refused while a project
-    that tracks anything is in play, that is when the session's cwd, the directory a `cd` moved to, or the
-    folder a copy lands in sits under a config whose tracked list is not empty, and passes with no such project
-    in play (2026-09-18, after a research session's report through the box admin, 2026-09-17: a `cp` built from
-    shell variables landed raw on a tracked file beside a refused literal one; the hook reads no environment to
-    resolve the word, which would read names shaped like secrets and guess at the cwd); a glob is otherwise
+    is unresolvable and passes, since a silent block of ordinary work would cost more than a missed write, and
+    so does a python or node one-liner whose write path is computed (a name, an f-string, `sys.argv`,
+    `os.environ`), since the interpreter scan reads a literal path only (the round-1 review of 2026-09-18
+    rejected a scan of computed paths by execution: it would refuse ordinary scripting and still miss the
+    common forms); a write whose target the hook cannot read (a variable, a `$(...)` or a backtick, a `~user`, a
+    brace list past the cap, or a glob that matches nothing or names more than the hook will list) is refused
+    while a project that tracks anything is in play, that is when the session's cwd, the directory a `cd`
+    moved to, or the folder a copy lands in sits under a config whose tracked list holds an entry the literal
+    rule could refuse (a text name the veto list does not cover, or a note the link closure reaches from one),
+    the directory judged under its real path and its name, and the landing folder counting only when a tracked
+    file could land there (a refusable entry at or below it, an existing entry there that is guarded or links to
+    a tracked file, or a note the closure reaches below it), and passes with no such project in play
+    (2026-09-18, after a research session's report through the box admin, 2026-09-17: a `cp` built from shell
+    variables landed raw on a tracked file beside a refused literal one; the round-1 review the same day bounded
+    the rule so that a temp log or a copy into an untracked folder is not refused across the box once one
+    project tracks a file); one narrowing from that review: a target whose only expansions are numbers by
+    construction (`$$`, `$RANDOM`, `$BASHPID`, `$SECONDS`, their brace forms) and whose text is an absolute path
+    outside every project in play is allowed, since such an expansion cannot carry a `../` back in, while a
+    variable of unknown content, a substitution (a `$(date)` in a log's name among them, a cost stated to the
+    user rather than solved) and a relative or bare expansion stay refused; the hook reads no variable named in
+    the command to resolve the word, which would read names shaped like secrets and guess at the cwd (of the
+    environment it reads HOME, for `~` and a leading `$HOME` as the shell does, TRACKCHANGES_ROOT, which stands
+    in for the root search only for a directory under it, and ROMP_SID, and no value read there reaches a
+    refusal); a glob is otherwise
     expanded against the filesystem as the shell expands it (a redirection onto several matches or brace
     alternatives names each, as zsh's multios writes them; bash writes none), a brace list is expanded before
     the operands are read, a here-string is scanned like a heredoc and a process substitution's command is read

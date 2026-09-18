@@ -21,6 +21,11 @@ ROOT = os.path.dirname(HERE)
 SENTENCE = ("A session that tries to write a tracked file any other way, with its editing tools or a shell command "
             "such as `cp`, `tee`, `sed -i` or a `>` redirection, is refused and pointed at its track-edit command, "
             "so its edits still come to you as changes.")
+# The sentence after it, since the round-1 review of the non-literal-target rule (2026-09-18): a shell write whose
+# target the hook cannot read is refused in a tracking project too, and the guide says so where the rule above is
+# stated, in the same voice (the behavior, not the mechanism).
+SENTENCE_2 = ("In a project that tracks files, a shell write whose target is not spelled out (a variable or a "
+              "substitution standing for the path) is refused too, and the session is asked for the literal path.")
 
 
 def _read(*parts):
@@ -47,6 +52,12 @@ class TrackChangesParagraphNamesTheRefusal(unittest.TestCase):
         # after the sentence on figures (a tracked folder may hold them), which is the other thing the guards let by
         self.assertIn("so a tracked folder may hold figures. " + SENTENCE, self.files)
 
+    def test_the_non_literal_sentence_follows_it_and_the_hook_refuses_that_way(self):
+        # the second sentence sits right after the first, so a reader of the rule finds the refusal it describes
+        self.assertIn(SENTENCE + " " + SENTENCE_2, self.files)
+        self.assertIn("which is not a literal path", self.hook)
+        self.assertIn("Spell the path out", self.hook)
+
     def test_each_shell_form_named_is_one_the_hook_reads(self):
         for verb in ("cp", "tee"):
             self.assertIn("case '%s'" % verb, self.hook, "the hook reads %s" % verb)
@@ -60,9 +71,10 @@ class TrackChangesParagraphNamesTheRefusal(unittest.TestCase):
 
     def test_the_sentence_speaks_to_the_person_and_names_no_hook(self):
         # the guide describes the behavior, not the mechanism: no hook, guard, matcher or PreToolUse
-        for word in ("hook", "PreToolUse", "matcher", "ROMP_SID", "guard"):
-            self.assertNotIn(word, SENTENCE)
-        self.assertNotIn("\u2014", SENTENCE)
+        for sentence in (SENTENCE, SENTENCE_2):
+            for word in ("hook", "PreToolUse", "matcher", "ROMP_SID", "guard"):
+                self.assertNotIn(word, sentence)
+            self.assertNotIn("\u2014", sentence)
 
 
 if __name__ == "__main__":

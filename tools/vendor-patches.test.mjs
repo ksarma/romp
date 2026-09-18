@@ -239,7 +239,11 @@ test('P9 the skill says a shell write whose target is not a literal path is refu
   assert.ok(section.includes('a shell write whose target is not a literal path'));
   for (const form of ['`"$DST"`', '`$(...)`', 'glob or brace list']) assert.ok(section.includes(form), `the rule names ${form}`);
   assert.ok(section.includes('so the refusal holds whatever the word would expand to'), 'the guard does not resolve the word');
-  assert.ok(section.includes('does not read your environment to find out'));
+  // the round-1 review (2026-09-18): the guard reads HOME (for `~` and a leading `$HOME`), so the skill says
+  // "variables", not "environment", and names the one exception, a numeric-only target outside the project
+  assert.ok(section.includes('does not read your variables to find out'));
+  assert.ok(section.includes('`$HOME/` is read as `~/` is'));
+  assert.ok(section.includes('whose only expansions are `$$`, `$RANDOM`, `$BASHPID`') && section.includes('at an absolute path outside the project, is allowed'));
   assert.ok(section.includes('Spell the path out'), 'what to do');
 });
 

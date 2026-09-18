@@ -83,9 +83,21 @@ test('decision 47 states what passes, and the hook agrees: reads, opaque command
   // since 2026-09-18 a write target the hook cannot read (a variable, a substitution, a glob or brace list it cannot
   // expand) is refused while a project that tracks anything is in play, and the decision says so
   assert.ok(d47.includes('a write whose target the hook cannot read') && d47.includes('is refused while a project that tracks anything is in play'));
-  assert.ok(d47.includes('the hook reads no environment to resolve the word'));
-  assert.ok(hook.includes('function trackingRootAt(dir)') && hook.includes('function inPlayFor(u, cwd)') && hook.includes('const cannotRead = (w, how) => {'));
+  assert.ok(hook.includes('function trackingRootAt(dir, memo)') && hook.includes('function inPlayFor(u, cwd, memo)') && hook.includes('const cannotRead = (w, how) => {'));
   assert.ok(hook.includes('which is not a literal path'), 'the refusal says the target is not literal');
+  // the round-1 review (2026-09-18) bounded the rule in four places and named two residuals, and the decision
+  // records each against the hook's own function
+  assert.ok(d47.includes('holds an entry the literal rule could refuse') && hook.includes('function tracksRefusable(root, memo)'));
+  assert.ok(d47.includes('the directory judged under its real path and its name') && hook.includes('for (const d of real && real !== dir ? [real, dir] : [dir]) {'));
+  assert.ok(d47.includes('the landing folder counting only when a tracked file could land there') && hook.includes('function landingInPlay(hit, memo)'));
+  assert.ok(d47.includes('a target whose only expansions are numbers by construction (`$$`, `$RANDOM`, `$BASHPID`, `$SECONDS`, their brace forms) and whose text is an absolute path outside every project in play is allowed'));
+  assert.ok(hook.includes("const NUMERIC_EXPANSIONS = new Set(['RANDOM', 'BASHPID', 'SECONDS']);") && hook.includes('function numericOutside(text, root)'));
+  assert.ok(d47.includes('a `$(date)` in a log\'s name among them, a cost stated to the user rather than solved'), 'the residual false refusal is stated, not claimed solved');
+  assert.ok(d47.includes('the hook reads no variable named in the command to resolve the word'));
+  assert.ok(d47.includes('TRACKCHANGES_ROOT, which stands in for the root search only for a directory under it') && hook.includes('const fromEnv = !!env && !outside(d, env);'));
+  assert.ok(d47.includes('no value read there reaches a refusal') && hook.includes("hit.fromEnv ? 'the project TRACKCHANGES_ROOT names' : hit.root"));
+  assert.ok(d47.includes('a python or node one-liner whose write path is computed') && d47.includes('the interpreter scan reads a literal path only'), 'the interpreter residual is named');
+  assert.ok(hook.includes('function installDirOnly(t)'), 'install -d writes no file');
   // a glob is no longer unresolvable: it is expanded as the shell expands it (the review's second round), as are a
   // brace list, a here-string and a process substitution, and the decision says so of each
   assert.ok(!d47.includes('a path built from a variable or a glob'), 'a glob is not listed among the unresolvable');

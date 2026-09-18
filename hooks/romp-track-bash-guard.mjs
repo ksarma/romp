@@ -19,22 +19,39 @@
 // name and under the name the kernel would open (symlinks resolved), so a link to a tracked file
 // does not carry a write past it. A read-only command (cat, grep, diff, git) names no write target
 // and passes. A command the extraction cannot see through (eval, xargs, a script held in a
-// variable) passes too: never a silent block of ordinary work. A write whose TARGET it cannot read
-// is refused, though, while a tracked project is in play (2026-09-18; a research session reported
-// through the box admin, 2026-09-17, that a `cp` whose operands were shell variables overwrote a
-// tracked file with no change recorded, while the same cp spelled out was refused: the hook
-// dropped every target it could not read). Such a target is one built from a variable, a `$(...)`
-// or a backtick, a `~user`, a brace list past the cap, or a glob the hook cannot expand (no match,
-// the cwd unknown, past the caps); in play means the session's cwd, the directory a `cd` moved to,
-// or the folder a copy lands in sits under a `.trackchanges/config.json` whose tracked list is not
-// empty. The hook never reads the session's environment to resolve the word (that would read names
-// shaped like secrets and guess at the cwd): the refusal says the target is not literal and asks
-// for the path spelled out, which then takes today's verdict (a file outside the project runs as
-// usual, a tracked one goes through track-edit). With no such project in play the word is dropped,
-// as before. Like the vendored guard it lets a non-text file through (an image or a PDF cannot
-// take a tracked edit, so the raw write is the only way to regenerate a figure), and it exits 0 at
-// once, before stdin is read, when ROMP_SID is absent from its environment (decision 24:
-// registered machine-wide, inert in every session romp did not launch).
+// variable) passes too: never a silent block of ordinary work. So does a python or node one-liner
+// whose write path is computed (a name, an f-string, `sys.argv`, `os.environ`, `process.env`): the
+// interpreter scan reads a literal path only, and a scan that flagged a computed one would refuse
+// ordinary scripting and still miss the common forms (review round 1, 2026-09-18, by execution); the
+// vendored skill tells the session not to write a tracked file that way. A write whose TARGET it
+// cannot read is refused, though, while a tracked project is in play (2026-09-18; a research
+// session reported through the box admin, 2026-09-17, that a `cp` whose operands were shell
+// variables overwrote a tracked file with no change recorded, while the same cp spelled out was
+// refused: the hook dropped every target it could not read). Such a target is one built from a
+// variable, a `$(...)` or a backtick, a `~user`, a brace list past the cap, or a glob the hook
+// cannot expand (no match, the cwd unknown, past the caps); in play means the session's cwd, the
+// directory a `cd` moved to, or the folder a copy lands in sits under a `.trackchanges/config.json`
+// whose tracked list holds an entry the literal rule could refuse (a text name the veto list does
+// not cover, or a note the link closure reaches from one), the directory judged under its real path
+// and its name, and for a copy's landing folder only when a tracked file could land there
+// (inPlayFor and its helpers, below). One narrowing, from the round-1 review: a target whose only
+// expansions are numeric by construction (`$$`, `$RANDOM`, `$BASHPID`, `$SECONDS`, their brace
+// forms) and whose text is an absolute path outside every project in play is dropped, since such an
+// expansion cannot carry a path separator back into the project (`/tmp/build-$$.log`). A variable
+// of unknown content, a substitution and a relative or bare expansion stay refused whatever their
+// literal text, because a `../` inside the value reaches back in (verified by the review by
+// overwriting a tracked file); a `$(date)` in a log's name is refused too, and that class is
+// stated, not solved. Of the session's environment the hook reads HOME (for `~` and a leading
+// `$HOME`, as the shell would), TRACKCHANGES_ROOT (the root override the CLIs honour, for a directory
+// under it) and ROMP_SID; it never reads a variable named in the command (that would read names
+// shaped like secrets and guess at the cwd), and no value read from the environment reaches a
+// message. The refusal says the target is not literal and asks for the path spelled out, which then
+// takes today's verdict (a file outside the project runs as usual, a tracked one goes through
+// track-edit). With no such project in play the word is dropped, as before. Like the vendored guard
+// it lets a non-text file through (an image or a PDF cannot take a tracked edit, so the raw write is
+// the only way to regenerate a figure), and it exits 0 at once, before stdin is read, when ROMP_SID
+// is absent from its environment (decision 24: registered machine-wide, inert in every session romp
+// did not launch).
 //
 // Cost: a couple of small reads of config.json per target and, when the project's tracked list is
 // non-empty and a target is not on it by name, ONE walk of the project's markdown tree per call
@@ -89,9 +106,50 @@ const RESERVED = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', 
 
 // `at` is the literal folder a copy lands in when the landing NAME is not literal (`cp "$SRC" docs/`,
 // `cp -t docs "$SRC"`): the refusal of such a word is judged by that folder's project, not the cwd's.
+// `numeric` marks a non-literal word whose every expansion is one of NUMERIC_EXPANSIONS (review round 1,
+// 2026-09-18): such a word's text is a path with digits to be filled in and can carry no `../` and no
+// glob, so inPlayFor may read its literal segments to see that it lands outside every project in play.
 function word(text, literal, raw, extra) {
-  return { text, literal, raw, glob: !!(extra && extra.glob), marks: extra && extra.marks != null ? extra.marks : null, at: extra && extra.at != null ? extra.at : null };
+  return {
+    text, literal, raw, glob: !!(extra && extra.glob), marks: extra && extra.marks != null ? extra.marks : null,
+    at: extra && extra.at != null ? extra.at : null, numeric: !!(extra && extra.numeric),
+  };
 }
+
+// Shell values that are numbers by construction: the shell's pid, a random number, the subshell's pid,
+// the seconds since the shell started. A target built from one of these and literal text (`/tmp/build-$$.log`,
+// `"/tmp/out-${RANDOM}.log"`) is the commonest non-literal write the round-1 review (2026-09-18) found
+// refused inside a tracked project, and the one narrowing that is safe: the expansion cannot hold a path
+// separator, so it cannot reach back into the project the way a variable of unknown content can (a
+// refuter's `"$NAME"` holding `../docs/report.md` overwrote a tracked file under the general literal-prefix
+// rule that review rejected). A user variable, a `$(...)`, a backtick, a `~user`, a glob and a brace list past
+// the cap stay refused, by the review's ruling.
+const NUMERIC_EXPANSIONS = new Set(['RANDOM', 'BASHPID', 'SECONDS']);
+// What the `$` at `pos` of `src` begins: { kind, len } with kind 'numeric' (`$$`, `${$}`, `$RANDOM`,
+// `${RANDOM}`, ...), 'home' (`$HOME`, `${HOME}`: the caller decides whether it stands at the start of a
+// word followed by a slash or the word's end, the one place it is expanded like `~`), or 'other' (the
+// caller reads on as before: a `$(`, a `${...}` of unknown content, a variable).
+function expansionAt(src, pos) {
+  if (src[pos + 1] === '$') return { kind: 'numeric', len: 2 };
+  if (src[pos + 1] === '{') {
+    const close = src.indexOf('}', pos + 2);
+    const inner = close < 0 ? '' : src.slice(pos + 2, close);
+    if (inner === '$' || NUMERIC_EXPANSIONS.has(inner)) return { kind: 'numeric', len: close + 1 - pos };
+    if (inner === 'HOME') return { kind: 'home', len: close + 1 - pos };
+    return { kind: 'other', len: 1 };
+  }
+  const m = src.slice(pos + 1).match(/^[A-Za-z_][A-Za-z0-9_]*/);
+  if (m && NUMERIC_EXPANSIONS.has(m[0])) return { kind: 'numeric', len: 1 + m[0].length };
+  if (m && m[0] === 'HOME') return { kind: 'home', len: 1 + m[0].length };
+  return { kind: 'other', len: 1 };
+}
+// Whether the character after a leading `$HOME` starts its path or ends the word: a slash, an operator,
+// whitespace or the end. `$HOMEDIR`, `$HOME.bak` and `${HOME:-/tmp}` never reach here (the name or the brace
+// body differs), and `$HOME"x"` stays an expansion the hook does not read (review round 1, 2026-09-18: the
+// same directory spelled `~/` was expanded and allowed while `"$HOME/"` was refused, though both come from
+// the same os.homedir() read; the carve-out is at the word's start, with a slash or the end after it, so
+// nothing else about a word changes).
+const homeBoundary = (ch) => ch === undefined || ch === '/' || /[\s;&|()<>]/.test(ch);
 
 // Whether `text` has an unquoted glob character, per `marks`.
 function hasGlobChar(text, marks) {
@@ -176,6 +234,7 @@ export function lex(command) {
   let raw = '';
   let marks = '';
   let sawExpansion = false;   // the word carries an expansion the hook cannot resolve
+  let numericOnly = true;     // every expansion so far is one of NUMERIC_EXPANSIONS (meaningful with sawExpansion)
   let inWord = false;
   let opaque = false;
   let inTest = false;   // inside [[ ... ]], where > and < compare strings
@@ -186,8 +245,12 @@ export function lex(command) {
 
   const mk = (t, m) => {
     const g = !sawExpansion && hasGlobChar(t, m);
-    return word(t, !sawExpansion && !g, raw, { glob: g, marks: m });
+    // numeric: every expansion is a number by construction AND no unquoted glob character sits beside it (a
+    // `*` in a segment could match a project's name, so such a word gets no narrowing; review round 1)
+    return word(t, !sawExpansion && !g, raw, { glob: g, marks: m, numeric: sawExpansion && numericOnly && !hasGlobChar(t, m) });
   };
+  // An expansion the hook cannot read at all: the word is not literal and gets no numeric narrowing.
+  const opaqueExpansion = () => { sawExpansion = true; numericOnly = false; };
   const endWord = () => {
     if (!inWord) return;
     if (expect) {
@@ -209,7 +272,7 @@ export function lex(command) {
       if (!alts) seg.words.push(word(buf, false, raw));
       else for (const [t, m] of alts) seg.words.push(mk(t, m));
     }
-    buf = ''; raw = ''; marks = ''; sawExpansion = false; inWord = false;
+    buf = ''; raw = ''; marks = ''; sawExpansion = false; numericOnly = true; inWord = false;
   };
   // A word of the test's own grammar (`>` or `&&` inside [[ ... ]]): ends any word under way, stands alone.
   const bareWord = (t) => { endWord(); inWord = true; buf = t; raw = t; marks = 'u'.repeat(t.length); endWord(); };
@@ -312,8 +375,18 @@ export function lex(command) {
           if (src[i + 1] !== '\n') quoted(src[i + 1]);
           raw += src.slice(i, i + 2); i += 2; continue;
         }
-        if (d === '$' && src[i + 1] === '(') { sawExpansion = true; raw += '$('; i += 2; const inner = skipNested('(', ')'); raw += inner + ')'; seg.subs.push(inner); continue; }
-        if (d === '$' || d === '`') sawExpansion = true;
+        if (d === '$' && src[i + 1] === '(') { opaqueExpansion(); raw += '$('; i += 2; const inner = skipNested('(', ')'); raw += inner + ')'; seg.subs.push(inner); continue; }
+        if (d === '$') {
+          // the quoted spelling of the two expansions the hook reads (review round 1, 2026-09-18): a leading
+          // "$HOME/..." is the home directory, as `~/` is; "$$", "$RANDOM", "${RANDOM}" and their kin are numeric
+          const e = expansionAt(src, i);
+          if (e.kind === 'home' && buf === '' && !sawExpansion && (src[i + e.len] === '/' || src[i + e.len] === '"')) {
+            quoted(os.homedir()); raw += src.slice(i, i + e.len); i += e.len; continue;
+          }
+          if (e.kind === 'numeric') { sawExpansion = true; quoted(src.slice(i, i + e.len)); raw += src.slice(i, i + e.len); i += e.len; continue; }
+          opaqueExpansion();
+        }
+        if (d === '`') opaqueExpansion();
         quoted(d); raw += d; i++;
       }
       if (!closed) opaque = true;
@@ -321,14 +394,22 @@ export function lex(command) {
     }
     if (c === '`') {
       const e = src.indexOf('`', i + 1);
-      inWord = true; sawExpansion = true;
+      inWord = true; opaqueExpansion();
       if (e < 0) { opaque = true; raw += src.slice(i); i = src.length; break; }
       seg.subs.push(src.slice(i + 1, e));
       raw += src.slice(i, e + 1); i = e + 1;
       continue;
     }
     if (c === '$') {
-      inWord = true; sawExpansion = true;
+      // a leading $HOME or ${HOME} followed by a slash or the word's end is the home directory, as `~/` is
+      // (review round 1, 2026-09-18); $$, $RANDOM, $BASHPID, $SECONDS and their brace forms are numeric
+      const e = expansionAt(src, i);
+      if (e.kind === 'home' && buf === '' && !sawExpansion && homeBoundary(src[i + e.len])) {
+        inWord = true; quoted(os.homedir()); raw += src.slice(i, i + e.len); i += e.len; continue;
+      }
+      inWord = true;
+      if (e.kind === 'numeric') { sawExpansion = true; quoted(src.slice(i, i + e.len)); raw += src.slice(i, i + e.len); i += e.len; continue; }
+      opaqueExpansion();
       if (src[i + 1] === '(') { raw += '$('; i += 2; const inner = skipNested('(', ')'); raw += inner + ')'; seg.subs.push(inner); continue; }
       if (src[i + 1] === '{') { raw += '${'; i += 2; const inner = skipNested('{', '}'); raw += inner + '}'; quoted('${' + inner + '}'); continue; }
       quoted(c); raw += c; i++;
@@ -337,7 +418,7 @@ export function lex(command) {
     if (c === '~' && !inWord) {
       const rest = src.slice(i + 1);
       if (rest === '' || /^[\s/;&|)]/.test(rest)) { inWord = true; quoted(os.homedir()); raw += '~'; i++; continue; }
-      inWord = true; sawExpansion = true; quoted(c); raw += c; i++;   // ~user: not resolved here
+      inWord = true; opaqueExpansion(); quoted(c); raw += c; i++;   // ~user: not resolved here
       continue;
     }
     // operators
@@ -354,7 +435,7 @@ export function lex(command) {
         i += 2;
         const inner = skipNested('(', ')');
         seg.subs.push(inner);
-        inWord = true; sawExpansion = true;
+        inWord = true; opaqueExpansion();
         const t = c + '(' + inner + ')';
         quoted(t); raw += t;
         endWord();
@@ -594,6 +675,22 @@ function landing(src, dst, cwd) {
   return out;
 }
 
+// install's -d / --directory: every operand is a directory to create and no file is written. The
+// flag is read inside a short-option cluster too (`-dm755`, `-pd`), stopping at a letter that takes the
+// rest of the word as its value (m, o, g, S, Z, t), and case-sensitive: `-D` copies a file. install only:
+// `cp -d` is --no-dereference and `ln -d` still makes a link (review round 1, 2026-09-18: `install -d "$A"
+// "$B"` was refused as a copy whose destination the hook could not read, and the literal `install -d docs/new
+// notes/new2` as a write under a tracked folder, though the command makes directories and writes no file).
+function installDirOnly(t) {
+  if (t === '--directory') return true;
+  if (!/^-[^-]/.test(t)) return false;
+  for (const ch of t.slice(1)) {
+    if (ch === 'd') return true;
+    if ('mogSZt'.includes(ch)) return false;
+  }
+  return false;
+}
+
 // cp / mv / install / ln: the last operand is the destination, unless -t DIR names the directory;
 // a destination that is an existing directory receives each source under its own name. A glob
 // operand is expanded first, as the shell expands it before the command sees its operands. A
@@ -609,6 +706,7 @@ function copyTargets(args, cwd, verb) {
     if (a.text === '-t' || a.text === '--target-directory') { targetDir = args[k + 1]; k++; continue; }
     if (a.text.startsWith('--target-directory=')) { targetDir = word(a.text.slice(19), a.literal, a.raw, { glob: a.glob, marks: a.marks && a.marks.slice(19) }); continue; }
     if (a.text === '-T' || a.text === '--no-target-directory') { noTargetDir = true; continue; }
+    if (verb === 'install' && a.literal && installDirOnly(a.text)) return [];   // directories made, no file written
     if (a.text === '-S' || a.text === '--suffix' || a.text === '-m' || a.text === '--mode' || a.text === '-o' || a.text === '--owner'
       || a.text === '-g' || a.text === '--group' || a.text === '-Z' || a.text === '--context') { k++; continue; }
     if (a.text.startsWith('-') && a.text.length > 1) continue;
@@ -824,9 +922,10 @@ function shellScript(args) {
 // unresolvable). A glob is expanded against the filesystem, as the shell would expand it before
 // the command runs, so `sed -i ... docs/*.md` names each file. `how` names the writing construct
 // for the refusal. Returns { targets, opaque, unresolved }: `unresolved` lists the write targets the
-// hook could not read, each { raw, how, dir, at } (the word as typed, the construct, the directory
-// current at the write or null when unknown, and the folder a copy lands in when that much is
-// literal), for evaluate to refuse while a tracked project is in play (the header; 2026-09-18).
+// hook could not read, each { raw, how, dir, at, numeric } (the word as typed, the construct, the
+// directory current at the write or null when unknown, the folder a copy lands in when that much is
+// literal, and the word's text when its only expansions are numeric, else null), for evaluate to
+// refuse while a tracked project is in play (the header; 2026-09-18).
 export function extractWriteTargets(command, cwd) {
   const { segments, opaque } = lex(command);
   const targets = [];
@@ -838,7 +937,7 @@ export function extractWriteTargets(command, cwd) {
   const cannotRead = (w, how) => {
     if (/^[<>]\(/.test(w.text)) return;
     const here = unknownDir ? null : dir;
-    unresolved.push({ raw: w.raw, how, dir: here, at: w.at ? resolveAgainst(w.at, here) : null });
+    unresolved.push({ raw: w.raw, how, dir: here, at: w.at ? resolveAgainst(w.at, here) : null, numeric: w.numeric ? w.text : null });
   };
   const add = (w, how) => {
     if (!w) return;   // a word that is only an expansion (`"$(mktemp)"`) has no text after quote removal, and is still a target
@@ -1124,24 +1223,171 @@ export function isGuardedPath(file, closures) {
   } catch { return false; } finally { activeMemo = prev; }
 }
 
-// The root of the project that tracks anything at `dir` (a directory), or null: store-io's root
-// markers and a non-empty tracked list in its .trackchanges/config.json (an empty list tracks
-// nothing, as trackedIn reads it); TRACKCHANGES_ROOT stands in for the search, as in rootOf.
-function trackingRootAt(dir) {
-  if (!dir) return null;
-  const root = process.env.TRACKCHANGES_ROOT || findVaultRoot(path.join(dir, 'x'));   // findVaultRoot starts at the parent of the path given
-  return root && readTrackedPaths(root).length ? root : null;
+// ── a target the hook could not read: which project is in play ─────
+//
+// The pieces below decide whether a non-literal write target is refused (the header). They run
+// outside isGuardedPath's memo, so `memo` ({ closures, roots }) is the per-call store evaluate
+// hands them: the link closure per root shared with the literal verdicts, and the answer per
+// directory, so a command with several such targets reads each config once.
+
+// Whether `p` lies outside `root` (both absolute): not the root itself and not under it.
+function outside(p, root) {
+  const rel = path.relative(root, p);
+  return rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel);
 }
 
-// The tracked project in play for a write target the hook could not read, or null. A copy into a
-// literal folder lands there whatever the name (`at`), so that folder's project decides and the cwd
-// does not; any other such target could land anywhere, so the directory current at the write and
-// the session's cwd both count, the first under a project that tracks anything. Nothing here reads
-// the session's environment (the header).
-function inPlayFor(u, cwd) {
-  const dirs = u.at ? [u.at] : [u.dir, cwd];
-  for (const d of dirs) { const root = trackingRootAt(d); if (root) return root; }
-  return null;
+// A tracked entry the literal rule could refuse: a text name that the veto list does not cover. A
+// non-text entry (a tracked figure) passes by name, and a vetoed one never counts, so a project
+// whose list holds only those is not in play (review round 1, 2026-09-18: a figures-only and a
+// veto-all project refused every non-literal write with a message whose premise no literal write
+// there could meet). The list is read once per root, not once per entry.
+const refusableEntry = (off) => (raw) => {
+  if (typeof raw !== 'string' || !raw) return false;
+  const e = raw.replace(/^\.?\//, '');
+  return !isNonTextPath(e) && !engine.isTracked(off, e);
+};
+const closureFor = (root, memo) => {
+  let closure = memo.closures.get(root);
+  if (!closure) { closure = trackedClosure(root); memo.closures.set(root, closure); }
+  return closure;
+};
+// Whether `root` tracks something the literal rule could refuse: a refusable entry on its list, or,
+// when every listed entry is a figure or vetoed, a note the link closure reaches from one (a tracked
+// image can carry a whole-line link to a tracked note; the closure excludes vetoed notes itself).
+function tracksRefusable(root, memo) {
+  if (memo.refusable.has(root)) return memo.refusable.get(root);
+  let ok = false;
+  const list = readTrackedPaths(root);
+  if (list.length) {
+    const live = refusableEntry(readUntrackedPaths(root));
+    ok = list.some(live);
+    if (!ok) for (const rel of closureFor(root, memo)) if (live(rel)) { ok = true; break; }
+  }
+  memo.refusable.set(root, ok);
+  return ok;
+}
+
+// The project that tracks something refusable at `dir` (a directory), as { root, dir, fromEnv }, or
+// null. `dir` is judged under its real path first (every symlink resolved, as realPathOf resolves
+// a target's) and then under its lexical name, the first project found winning, the way the
+// literal rule judges a target under both names (review round 1, 2026-09-18: the lexical search
+// alone let `cp "$SRC" link/` pass where link led into a tracked project's folder, while the same
+// copy spelled out was refused; the real path alone would have flipped two correct refusals, a
+// folder under a tracked `docs/` that links out and a cwd that is such a link, to allow). `fromEnv`
+// says the root is TRACKCHANGES_ROOT's, which stands in for the marker search only for a directory
+// under it (before round 1 it answered for every directory on the machine, so with it set every
+// non-literal write anywhere was refused, and its value was echoed in the refusal); outside it the
+// marker search runs. That is a chosen asymmetry with the literal rule, whose rootOf sends every
+// file to the env root as the vendored guard does: a second tracked project's non-literal writes are
+// refused under the fallback while its literal ones are judged against the env root. The loud
+// answer was preferred to returning null, which would let those writes pass unjudged. The caller
+// never prints an env root: a value read from the environment stays out of every message.
+function trackingRootAt(dir, memo) {
+  if (!dir) return null;
+  if (memo.roots.has(dir)) return memo.roots.get(dir);
+  let hit = null;
+  const real = realPathOf(dir);
+  const env = process.env.TRACKCHANGES_ROOT ? path.resolve(process.env.TRACKCHANGES_ROOT) : null;
+  for (const d of real && real !== dir ? [real, dir] : [dir]) {
+    const fromEnv = !!env && !outside(d, env);
+    const root = fromEnv ? env : findVaultRoot(path.join(d, 'x'));   // findVaultRoot starts at the parent of the path given
+    if (root && tracksRefusable(root, memo)) { hit = { root, dir: d, fromEnv }; break; }
+  }
+  memo.roots.set(dir, hit);
+  return hit;
+}
+
+// Whether a copy whose landing NAME the hook cannot read could land on a tracked file when it lands in
+// `hit.dir`, a folder of `hit.root`: a refusable tracked entry at or below the folder (a file under it,
+// or a folder entry that holds it or sits in it), an existing entry of the folder that is already
+// guarded (isGuardedPath: a tracked file by name, or a link onto one, whose name the copy could take),
+// or a note under the folder that the link closure reaches. The readdir is bounded: past
+// LANDING_SCAN_CAP entries the folder is taken as in play rather than scanned (review round 1,
+// 2026-09-18: the branch refused every copy into any folder of a project that tracks anything, from
+// every cwd; the refuters' narrowing by tracked entries alone let `cp "$SRC" outbox/` pass where
+// outbox/report.md linked to the tracked file, and the copy then overwrote it, so the folder's own
+// entries are asked too).
+const LANDING_SCAN_CAP = 2000;
+function landingInPlay(hit, memo) {
+  const { root, dir } = hit;
+  const rel = relPathFor(root, dir).replace(/^\.?\//, '').replace(/\/+$/, '');
+  const folder = rel === '' ? '' : rel + '/';
+  const live = refusableEntry(readUntrackedPaths(root));
+  for (const raw of readTrackedPaths(root)) {
+    if (!live(raw)) continue;
+    const e = raw.replace(/^\.?\//, '');
+    if (e.startsWith(folder)) return true;                        // an entry at or below the landing folder
+    if (e.endsWith('/') && folder.startsWith(e)) return true;     // the landing folder sits in a tracked folder
+  }
+  let names = null;
+  try { names = fs.readdirSync(dir); } catch { names = null; }   // absent or unreadable: nothing there to take the name of
+  if (names) {
+    if (names.length > LANDING_SCAN_CAP) return true;
+    for (const n of names) if (isGuardedPath(path.join(dir, n), memo.closures)) return true;
+  }
+  for (const r of closureFor(root, memo)) if (r.startsWith(folder) && live(r)) return true;
+  return false;
+}
+
+// Whether a numeric-only target (`u.numeric`: absolute text with `$$`, `$RANDOM` and their kin still in
+// it) lands outside `root` for certain. The text is normalized first, so a literal `..` after an
+// expansion (`/tmp/run-$$/../../proj/docs/x.md`) is folded before the comparison; then each segment of
+// the root is compared with the target's: a target segment holding an expansion could spell the root's
+// own when its literal pieces fit around a run of digits (`/tmp/build-$$/x.md` against a project at
+// /tmp/build-4242), so that one is not taken as diverging; a segment whose literal pieces cannot fit
+// (`other-$$` against build-4242) diverges, as a literal segment that differs does. Judged under the
+// lexical text and under the text with its literal directory part resolved (`/tmp/link/x-$$.md` where
+// link leads into the project), and against the root's real path as well as its name.
+const NUMERIC_TOKEN = /\$\$|\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$/g;
+const couldSpell = (seg, name) => {
+  const re = seg.split(NUMERIC_TOKEN).map(escapeRe).join('\\d+');   // every token a run of digits
+  return new RegExp(`^${re}$`).test(name);
+};
+function numericOutside(text, root) {
+  const norm = path.normalize(text);
+  const diverges = (p, r) => {
+    const rs = r.split('/').filter(Boolean);
+    const ts = p.split('/').filter(Boolean);
+    for (let i = 0; i < rs.length; i++) {
+      if (i >= ts.length) return true;                                  // the target sits above the root
+      if (ts[i].includes('$')) { if (couldSpell(ts[i], rs[i])) return false; return true; }
+      if (ts[i] !== rs[i]) return true;
+    }
+    return false;   // every root segment matched: the root itself, or under it
+  };
+  const cut = norm.lastIndexOf('/', norm.indexOf('$'));
+  const dirPart = cut <= 0 ? '/' : norm.slice(0, cut);
+  const realDir = realPathOf(dirPart);
+  const real = realDir == null ? norm : path.join(realDir, norm.slice(cut + 1));
+  const realRoot = realPathOf(root) || root;
+  return [norm, real].every((p) => [root, realRoot].every((r) => diverges(p, r)));
+}
+
+// The tracked project in play for a write target the hook could not read, as { root, dir, fromEnv }, or
+// null. A copy into a literal folder lands there whatever the name (`at`), so that folder decides and
+// the cwd does not: its project must track something refusable and the folder must be one such a
+// landing could reach (landingInPlay). Any other such target could land anywhere, so the directory
+// current at the write and the session's cwd both count, the first under a project that tracks
+// something refusable; except that a target whose only expansions are numeric (NUMERIC_EXPANSIONS)
+// and whose text is absolute is dropped when it lands outside every project those two directories
+// derive (numericOutside). A relative one, a fully opaque one (`"$(mktemp)"`, `"$F"`) and one with a
+// variable of unknown content beside the numbers stay refused: nothing about them bounds where the
+// write lands, and a `../` inside a variable reached a tracked file when a refuter tried the general
+// literal-prefix rule (review round 1, 2026-09-18). Of the session's environment this reads only
+// TRACKCHANGES_ROOT (trackingRootAt); no variable named in the command is ever read.
+function inPlayFor(u, cwd, memo) {
+  if (u.at) {
+    const hit = trackingRootAt(u.at, memo);
+    return hit && landingInPlay(hit, memo) ? hit : null;
+  }
+  const hits = [];
+  for (const d of [u.dir, cwd]) {
+    const hit = trackingRootAt(d, memo);
+    if (hit && !hits.some((h) => h.root === hit.root)) hits.push(hit);
+  }
+  if (!hits.length) return null;
+  if (u.numeric != null && path.isAbsolute(u.numeric) && hits.every((h) => numericOutside(u.numeric, h.root))) return null;
+  return hits[0];
 }
 
 // Returns a block reason string when the command must be denied, or null to allow.
@@ -1168,12 +1414,17 @@ export function evaluate(raw) {
   }
   // A target the hook could not read, while a tracked project is in play (the header): refused, since
   // the same path spelled out would be judged and this one cannot be (2026-09-18). After the literal
-  // targets, so a command that also writes a tracked file by name gets the more useful answer.
+  // targets, so a command that also writes a tracked file by name gets the more useful answer. A root
+  // that came from TRACKCHANGES_ROOT is named by the variable, never by its value: an environment value
+  // in a message is the road that put keys into transcripts this month, and a refusal is read and pasted
+  // (review round 1, 2026-09-18).
+  const memo = { closures, roots: new Map(), refusable: new Map() };
   for (const u of unresolved) {
-    let root = null;
-    try { root = inPlayFor(u, cwd); } catch { root = null; }
-    if (!root) continue;
-    return `Track-changes is ON in ${root}, so this command is blocked here: its ${u.how} names ${u.raw}, `
+    let hit = null;
+    try { hit = inPlayFor(u, cwd, memo); } catch { hit = null; }
+    if (!hit) continue;
+    const where = hit.fromEnv ? 'the project TRACKCHANGES_ROOT names' : hit.root;
+    return `Track-changes is ON in ${where}, so this command is blocked here: its ${u.how} names ${u.raw}, `
       + `which is not a literal path. The shell fills that in when the command runs, so I cannot tell which `
       + `file it would write, and a tracked file written that way would carry no change for me to accept or `
       + `reject. Spell the path out: outside that project the command then runs as usual, and a tracked file `

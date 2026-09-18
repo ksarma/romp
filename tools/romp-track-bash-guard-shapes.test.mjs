@@ -507,6 +507,9 @@ test('a brace list is expanded before the operands are read: mv x{.new,}, cp {a,
     ['tee notes/n{01..03}.md', ['01', '02', '03'].map((k) => path.join(proj, 'notes', `n${k}.md`))],
     ['tee notes/{a..c}.md', ['a', 'b', 'c'].map((k) => path.join(proj, 'notes', `${k}.md`))],
     [`tee ${proj}/notes/{x,y}.md`, ['x', 'y'].map((k) => path.join(proj, 'notes', `${k}.md`))],
+    // a redirection onto several alternatives: bash calls it ambiguous and writes nothing, zsh (multios, on by
+    // default) writes each, so each is named (2026-09-18); the tracked alternative is refused
+    ['echo x > docs/{report,other}.md', [path.join(proj, 'docs', 'other.md'), report].sort()],
   ]) {
     assert.deepEqual(targets(cmd), expected, cmd);
     assert.ok(evaluate(payload(cmd)), `refused: ${cmd}`);
@@ -516,14 +519,13 @@ test('a brace list is expanded before the operands are read: mv x{.new,}, cp {a,
   assert.ok(segments[0].words.every((w) => w.literal));
 });
 
-test('what a brace list does not write: three operands and no directory, an ambiguous redirect, {x}, a quoted brace, a list past the cap', () => {
+test('what a brace list does not write: three operands and no directory, {x}, a quoted brace, a list past the cap', () => {
+  // a redirection onto several alternatives writes each (zsh's multios): that case sits in the expansion test
+  // above, beside the other lists the shell writes (review round 1, 2026-09-18: the title here had said the
+  // opposite of the assertion it held)
   assert.deepEqual(targets('cp base/report.md docs/report.{md,bak}'), [], 'cp stops: the last operand is not a directory');
   assert.equal(evaluate(payload('cp base/report.md docs/report.{md,bak}')), null);
   assert.deepEqual(targets('mkdir -p docs/{a,b}; cp base/report.md docs/{a,b}/report.md'), []);
-  // a redirection onto several alternatives: bash calls it ambiguous and writes nothing, zsh (multios, on by
-  // default) writes each, so each is named (2026-09-18, with the non-literal-target fix)
-  assert.deepEqual(targets('echo x > docs/{report,other}.md'), [path.join(proj, 'docs', 'other.md'), report].sort(), 'each alternative');
-  assert.ok(evaluate(payload('echo x > docs/{report,other}.md')), 'the tracked alternative is refused');
   assert.deepEqual(targets('echo x > docs/{report}.md'), [path.join(proj, 'docs', '{report}.md')], 'no comma: text');
   assert.deepEqual(targets("echo x > 'docs/{report,other}.md'"), [path.join(proj, 'docs', '{report,other}.md')], 'quoted: text');
   assert.deepEqual(targets('echo x > docs/\\{report,other\\}.md'), [path.join(proj, 'docs', '{report,other}.md')], 'escaped: text');
@@ -626,6 +628,8 @@ test('a glob operand is expanded against the filesystem as the shell expands it:
   assert.deepEqual(targets('cat x | tee docs/rep*.md'), [report]);
   assert.deepEqual(targets("perl -pi -e 's/a/b/' docs/*"), [path.join(proj, 'docs', 'other.md'), report].sort());
   assert.deepEqual(targets('echo x > docs/rep*.md'), [report], 'one match for a redirection: the shell writes it');
+  assert.deepEqual(targets('echo x > docs/*.md'), [path.join(proj, 'docs', 'other.md'), report].sort(), 'two matches for a redirection: zsh writes each (multios), bash writes none and says so (2026-09-18)');
+  assert.ok(evaluate(payload('echo x > docs/*.md')), 'the tracked match is refused');
   assert.deepEqual(targets('cp base/report.md docs/rep*.md'), [report], 'one match for the destination');
   assert.deepEqual(targets('tee */report.md'), [path.join(proj, 'base', 'report.md'), report].sort(), 'a glob directory and a literal tail that must exist');
   assert.deepEqual(targets('cd doc* && echo x > report.md'), [report], 'a cd through a glob with one match moves there');
@@ -641,7 +645,8 @@ test('what a glob does not write: several destination matches, no match, a quote
   assert.deepEqual(targets('cp base/report.md report.md docs/report.md'), [], 'the same without a glob: three operands and no directory');
   assert.deepEqual(targets('cp base/*.rst notes/'), [], 'no match: zsh runs nothing, bash names a file the session did not mean');
   assert.equal(evaluate(payload('cp base/*.rst notes/')), null);
-  assert.deepEqual(targets('echo x > docs/*.md'), [path.join(proj, 'docs', 'other.md'), report].sort(), 'two matches for a redirection: zsh writes each (multios), bash writes none and says so (2026-09-18)');
+  // a redirection onto two matches writes each (zsh's multios): pinned in the expansion test above, where the
+  // title fits it (review round 1, 2026-09-18)
   assert.deepEqual(targets("cp base/report.md 'notes/*.md'"), [path.join(proj, 'notes', '*.md')], 'a quoted glob is a name');
   assert.ok(evaluate(payload("cp base/report.md 'notes/*.md'")), 'and under the tracked folder that name is tracked');
   assert.deepEqual(targets('cp base/report.md notes/\\*.md'), [path.join(proj, 'notes', '*.md')], 'escaped: a name');
@@ -693,6 +698,47 @@ test('a symlink to a tracked file is the tracked file: a write through it, insid
     fs.symlinkSync(path.join(elsewhere, 'ext.md'), report);
     assert.ok(evaluate(payload('echo x > docs/report.md')));
   } finally { fs.rmSync(elsewhere, { recursive: true, force: true }); }
+});
+
+test('a directory reached through a symlink is judged under its real path and its name: a link into the tracked folder refuses a non-literal copy or cd there, a folder under it that links out stays refused, a link out from an untracked spot is allowed', () => {
+  // Review round 1 (2026-09-18): the project in play for a non-literal target was searched from the lexical
+  // directory alone, so `cp "$SRC" link/` with link leading into the tracked folder passed while the same copy
+  // spelled out was refused (isGuardedPath judges the real path too). The real path alone would have flipped
+  // two refusals the literal rule gives to allow: a folder under the tracked notes/ that links out, whose
+  // lexical name the literal rule refuses, and a cwd that is such a link. So both names are judged, the real
+  // one first; and a link out of the project from a spot no tracked entry covers is allowed, as the literal
+  // copy through it is.
+  const plain = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-shapes-plain-')));
+  const out = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-shapes-out-')));
+  try {
+    fs.mkdirSync(path.join(plain, '.git'));
+    fs.writeFileSync(path.join(plain, 'src.md'), 'a source\n');
+    fs.symlinkSync(path.join(proj, 'notes'), path.join(plain, 'linknotes'));   // into the tracked folder
+    fs.symlinkSync(out, path.join(proj, 'notes', 'ext'));                       // out of the project, from under the tracked folder
+    fs.symlinkSync(out, path.join(proj, 'linkout'));                            // out of the project, from an untracked spot
+    // into the project: the landing folder, a cd, the cwd itself, each spelled through the link
+    for (const cmd of ['cp "$SRC" linknotes/', 'cp -t linknotes "$SRC"', 'cd linknotes && cp a "$DST"', 'cd linknotes && echo x > "$F"']) {
+      assert.ok(evaluate(payload(cmd, plain)), `refused: ${cmd}`);
+    }
+    assert.ok(evaluate(payload('cp a "$DST"', path.join(plain, 'linknotes'))), 'a cwd spelled through the link');
+    assert.ok(evaluate(payload('cp src.md linknotes/new.md', plain)), 'as the literal write through the link is');
+    assert.deepEqual(targets('cp "$SRC" linknotes/', plain), [], 'no literal target: the refusal is the non-literal rule\'s');
+    // out of the project from under the tracked folder: the name given is under notes/, which the literal rule refuses
+    assert.ok(evaluate(payload('cp "$SRC" notes/ext/')), 'a folder under the tracked notes/ that links out');
+    assert.ok(evaluate(payload('cp base/report.md notes/ext/x.md')), 'as the literal name is: judged under the name given first');
+    assert.ok(evaluate(payload('cp a "$DST"', path.join(proj, 'notes', 'ext'))), 'a cwd that is such a link');
+    // out of the project from an untracked spot: nothing tracked can land there, and the literal copy passes too
+    assert.equal(evaluate(payload('cp "$SRC" linkout/')), null, 'a link out from a folder no tracked entry covers');
+    assert.equal(evaluate(payload('cp -t linkout "$SRC"')), null);
+    assert.equal(evaluate(payload('cp base/report.md linkout/x.md')), null, 'as the literal copy is');
+    assert.ok(evaluate(payload('cp a "$DST"', path.join(proj, 'linkout'))), 'but a target that could land anywhere, from a cwd whose name is inside the project, is refused');
+    // a link to the project root was never affected: the marker is found through the link itself
+    fs.symlinkSync(proj, path.join(plain, 'linkproj'));
+    assert.ok(evaluate(payload('cp "$SRC" linkproj/notes/', plain)));
+  } finally {
+    fs.rmSync(plain, { recursive: true, force: true });
+    fs.rmSync(out, { recursive: true, force: true });
+  }
 });
 
 // ── the steps the verdict copies from store-io ─────────────────────
