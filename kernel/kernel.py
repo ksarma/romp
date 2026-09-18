@@ -914,7 +914,8 @@ class _PerfStats:
                                    ledgersAttached, `by` as published: the flag and count rows
                                    (FEED_BY_ROWS), the off frame's empty lists and `other`, the sum
                                    of the text-bearing fields; `apps` per consuming app and per
-                                   projection -> today / projected) and wire (bytes / exact: the
+                                   projection -> today / projected, an app that reads a folded
+                                   field credited with all of `other`) and wire (bytes / exact: the
                                    served body once a whole frame went)
       judge                        passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
                                    a pass is a join over the tier threads, so this is mostly model
@@ -54785,9 +54786,21 @@ _FEED_BY_NAMES = frozenset(FEED_FRAME_FIELDS) | frozenset(_FEED_FRAME_LISTS)
 # path. The export's identifier scan cannot see a length, and rest == sum(by) exactly, so dropping or coarsening one
 # row alone re-derives the same number from the remainder. The published table therefore keeps the rows whose value
 # can only be a flag or a count (FEED_BY_ROWS: a fixed spelling or a digit width) and folds every other field's bytes
-# into ONE row, `other`, at REPORT time (_FeedComposition.public_by). The stored tables stay whole: record() and
-# project() read them, so the per-app projections keep their exact per-field sums (a build-time fold under-counted
-# the feed row by forty percent). A pinned list, never a byte floor: a floor would make which rows appear a signal.
+# into ONE row, `other`, at REPORT time (_FeedComposition.public_by). The stored tables stay whole: the fold is what
+# the block publishes, not what it measured, and record() keeps the per-field figures so a test can hold the fold to
+# regrouping bytes and dropping none. The per-app projections read the stored table but count the folded set as ONE
+# atom (_FeedComposition.project): an app that reads any folded field is credited with the whole of `other`, and
+# only the FEED_BY_ROWS fields it reads are added by name. The reason is the same invariant one level up: a projected
+# figure that was an exact per-field partial sum, published beside frame, ledgers and the flag rows, re-derived a
+# folded row (frame - ledgers - feed.projected - userTodosOn was the userTodoRows row, and waiting.projected minus
+# that minus userTodosOn the sessions row, on every board). Now every published number is a sum of published rows
+# (the feed row is the cards plus `other` plus the flag rows it reads, the Outline's its card-field estimate plus the
+# ledgers plus `other` plus `off`, the Waiting-on-you row `other` plus userTodosOn), so no difference of published
+# numbers separates one folded field from another: a one-character step in any folded field moves the same published
+# leaves by the same amounts, whichever field took it. The over-count against the fields an app reads is bounded by
+# `other` (the remainder minus the flag rows, about 16 KB against an 8.8 MB frame): the rows measure the saving of a
+# per-pane frame, and that saving is in the cards and the ledgers, not the remainder. A pinned list, never a byte
+# floor: a floor would make which rows appear a signal.
 # FEED_BY_FOLDED is classified by what a field CAN carry, never by a fixture's value: selfHost (the machine's short
 # hostname); working, awaiting, stateUnknown (session names); order (session ids, whose count is the divisor that
 # turns an aggregate back into per-object lengths on a small board); sessions (names and repository strings);
@@ -54802,7 +54815,13 @@ _FEED_BY_NAMES = frozenset(FEED_FRAME_FIELDS) | frozenset(_FEED_FRAME_LISTS)
 # here or the test fails. On a board with no session, no open todo, no tag and no notice `other` is a constant plus
 # the hostname's length (and the digit width of views.seq): that board's whole-frame length has always been on /perf
 # (push.send bytes, builds.feed.memo bytes) and is the served body's own length, so the fold restores the exposure
-# of the base and does not remove the whole-frame total, which is the block's purpose.
+# of the base and does not remove the whole-frame total, which is the block's purpose. The card figures are outside
+# the fold and are the base's: `cards` is the whole per-card strings, and the card-field estimates (the Outline's
+# row minus the ledgers, `other` and `off`; the phoneFace row) are sums of a few fields' lengths over the cards, so
+# on a board with ONE active card the phoneFace row is a constant plus that card's title length, and the Outline's
+# estimate that card's title, name, summary and background lengths: sub-sums of the `cards` figure, which the block
+# publishes whole. Whether those two rows stand as they are is the user's call; the reference and the ledger state
+# the same residual.
 FEED_BY_FOLDED = frozenset({"selfHost", "working", "awaiting", "stateUnknown", "order", "sessions", "userTodoRows",
                             "userTodos", "views", "viewsFault", "judgeLimit", "bgServices", "clearedForeign",
                             "clearNotices", "sdkNotices", "syncNotices"})
@@ -54894,8 +54913,12 @@ class _FeedComposition:
     table is published FOLDED (public_by, applied in report() to the last and the lifetime tables alike): the flag
     and count rows (FEED_BY_ROWS), the off frame's empty federation lists, and `other`, the sum of every text-bearing
     field (FEED_BY_FOLDED), so no published row is the length of one string. The remainder still equals the sum of
-    the published table exactly: the fold regroups bytes and drops none. tests/test_feed_composition.py walks the
-    populated block through cli/perf_public's check, the one `romp perf export --public` runs over its output. A
+    the published table exactly: the fold regroups bytes and drops none. The per-app projections count the folded
+    fields as one (project()): an app that reads any of them is credited with all of `other`, so every published
+    number is a sum of published rows and no difference of published numbers is one folded field's bytes (the
+    FEED_BY_FOLDED comment says what a per-field partial sum gave away, and names the card figures that stay as
+    the base published them). tests/test_feed_composition.py walks the populated block through cli/perf_public's
+    check, the one `romp perf export --public` runs over its output. A
     pass whose accounting raises, the card-field and projection estimates included, is counted under `failed` and
     said once; the frame is unaffected, and a fault in the estimates is memoized with the cards so a refill of the
     same build counts it again without repeating them."""
@@ -54913,21 +54936,41 @@ class _FeedComposition:
         self.last = None
 
     @staticmethod
+    def folded_sum(by):
+        """The bytes public_by publishes as `other`: every FEED_BY_FOLDED row of the stored table plus any `other` the
+        key bucketing in _feed_parts already produced. project() credits an app that reads a folded field with this
+        whole sum, so the two agree by construction."""
+        return sum(v for k, v in by.items() if k in FEED_BY_FOLDED or k == "other")
+
+    @staticmethod
     def project(cards_bytes, led_bytes, rest_bytes, by, ask_fields):
         """Per app: the whole frame's bytes (`today`) and the bytes of the fields FEED_APP_FIELDS says it reads
-        (`projected`): the cards whole or by field (ask_fields: the app's _ask_fields_est), the ledgers, the remainder's
-        fields by name from `by`. Then per projection (FEED_PROJECTIONS) the whole frame beside its estimate, which
-        rode `ask_fields` under the projection's name."""
+        (`projected`): the cards whole or by field (ask_fields: the app's _ask_fields_est), the ledgers, the FEED_BY_ROWS
+        fields it reads by name from `by`, and the folded fields (FEED_BY_FOLDED) as ONE atom: an app that reads any
+        of them is credited once with the whole folded sum (folded_sum: the `other` row public_by publishes), never
+        with a per-field partial sum. A partial sum published beside the frame, the ledgers and the flag rows
+        re-derived a folded field's bytes (the FEED_BY_FOLDED comment); with the atom every projected figure is a sum
+        of published rows, and the over-count against the fields the app reads is bounded by `other`. Then per
+        projection (FEED_PROJECTIONS) the whole frame beside its estimate, which rode `ask_fields` under the
+        projection's name."""
         frame = cards_bytes + led_bytes + rest_bytes
+        folded = _FeedComposition.folded_sum(by)
         apps = {}
         for app, fields in FEED_APP_FIELDS.items():
             p = ask_fields.get(app, 0)
+            charged = False
             for f in fields:
                 if f == "asks":
                     p += cards_bytes
                 elif f == "ledgers":
                     p += led_bytes
-                elif not f.startswith("asks."):
+                elif f.startswith("asks."):
+                    continue
+                elif f in FEED_BY_FOLDED:
+                    if not charged:                         # the folded set once, whole, whichever of its fields
+                        p += folded                         # the app reads
+                        charged = True
+                else:
                     p += by.get(f, 0)
             apps[app] = {"today": frame, "projected": p}
         for name in FEED_PROJECTIONS:
@@ -54955,13 +54998,13 @@ class _FeedComposition:
     @staticmethod
     def public_by(by):
         """The `by` table as the block publishes it (the FEED_BY_FOLDED comment): every row named there summed into
-        `other`, with any `other` the key bucketing in _feed_parts already produced, and every other row as it is.
-        Report time only: the stored tables stay whole for record() and project(). The sum is unchanged, so rest ==
-        sum(public_by(by)) holds exactly as it did over the whole table. `other` is present on every non-empty table,
-        so the published table's shape does not say which text fields the frame carried."""
+        `other` (folded_sum, with any `other` the key bucketing in _feed_parts already produced), and every other row
+        as it is. Report time only: the stored tables stay whole for record() and project(). The sum is unchanged, so
+        rest == sum(public_by(by)) holds exactly as it did over the whole table. `other` is present on every non-empty
+        table, so the published table's shape does not say which text fields the frame carried."""
         out = {k: v for k, v in by.items() if k not in FEED_BY_FOLDED}
         if by:
-            out["other"] = out.get("other", 0) + sum(v for k, v in by.items() if k in FEED_BY_FOLDED)
+            out["other"] = _FeedComposition.folded_sum(by)
         return out
 
     def fail(self, exc):

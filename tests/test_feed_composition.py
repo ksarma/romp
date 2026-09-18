@@ -30,9 +30,12 @@ to pin it against; (f) the populated block, from cards in every column and two l
 `by` table is PUBLISHED folded (the review of 2026-09-18): the flag and count rows (FEED_BY_ROWS), the off frame's
 empty federation lists and `other`, the sum of every text-bearing field (FEED_BY_FOLDED, a pinned list classified by
 what a field can carry, never a byte floor), folded at report time on the last and the lifetime tables alike, so no
-published row is the length of one string, while the remainder still equals the sum of the published table and the
-per-app projections keep their build-time per-field sums; a key outside the checked-in names is counted under `other`
-at build time; (h) the card-field and projection estimates run inside their own guard: a raise is counted, said once,
+published row is the length of one string, while the remainder still equals the sum of the published table; the
+per-app projections read the stored table but count the folded set as ONE atom (an app that reads any folded field is
+credited with all of `other`), so every published number is a sum of published rows and no difference of published
+numbers is one folded field's bytes: a one-character step in any folded field moves the same leaves by the same
+amounts; a key outside the checked-in names is counted under `other` at build time; the reference and the ledger
+state the same shape and the same residuals; (h) the card-field and projection estimates run inside their own guard: a raise is counted, said once,
 memoized with the cards so a refill neither re-raises nor repeats it, and the frame goes out unchanged at every call
 site; (i) the block's shape is pinned from the kernel's constants, the estimates run once per build and not on a
 refill, and the remainder's fields go through one encoder per pass.
@@ -156,8 +159,9 @@ PUBLIC_NAMES = frozenset(getattr(km, "FEED_BY_ROWS", ())) | OFF_LISTS | {"other"
 
 def _published(by):
     """The test's own per-field table regrouped the way the block publishes it: every FEED_BY_FOLDED row summed into
-    `other`, the rest as they are, `other` present on any non-empty table. The expected values of every projection pin
-    come from the unfolded `by`, never from here or from the published table."""
+    `other`, the rest as they are, `other` present on any non-empty table. A projection pin's expected value is the
+    test's own sum: the cards or the ledgers, the FEED_BY_ROWS rows the app reads from the unfolded `by`, and this
+    table's `other` once for an app that reads any folded field."""
     out = {k: v for k, v in by.items() if k not in km.FEED_BY_FOLDED}
     if by:
         out["other"] = out.get("other", 0) + sum(v for k, v in by.items() if k in km.FEED_BY_FOLDED)
@@ -442,18 +446,29 @@ class ServedBlock(unittest.TestCase):
             # whole frame, pinned by the loop above with every row's (a phone's Outline dials as fleet, its feed page as
             # feed, so the row reads as the saving), and its estimate sits below the Outline's card fields plus ledgers
             self.assertLess(last["apps"]["phoneFace"]["projected"], last["apps"]["fleet"]["projected"])
-            self.assertLess(last["apps"]["waiting"]["projected"], last["rest"], "waiting reads three remainder fields")
-            # the feed pane reads everything but the ledgers and the Waiting-on-you pane's two fields; one of those rows
-            # is folded and the other rides `other`'s side of the table, so their bytes are computed here from the frame
-            # the client received (its quoted name, the separators, its sort_keys value: the frame's own encode)
+            self.assertLess(last["apps"]["waiting"]["projected"], last["rest"],
+                            "the Waiting-on-you row is `other` plus the switch, under the remainder by the count and flag rows")
+            # every projected figure is a sum of the published rows (fails before: the feed row was the frame minus the
+            # ledgers minus the two fields the pane never reads, one of them folded, so the difference published that
+            # field's bytes): the feed row is the cards, `other` and the flag rows the pane reads, which is the frame
+            # minus the ledgers and the switch; the Waiting-on-you row is `other` and the switch; the Outline's is its
+            # card-field estimate (over the cards the client received), the ledgers and `other`
+            pub = last["by"]
+            flags = sum(pub[f] for f in ("dismissedCount", "showDismissed", "canUndoClear", "off") if f in pub)
+            self.assertEqual(last["apps"]["feed"]["projected"], last["cards"] + pub["other"] + flags)
+            self.assertEqual(last["apps"]["feed"]["projected"], last["frame"] - last["ledgers"] - pub["userTodosOn"])
+            self.assertEqual(last["apps"]["waiting"]["projected"], pub["other"] + pub["userTodosOn"])
+            est = km._ask_fields_est(frame["asks"], km._FEED_APP_ASK_FIELDS["fleet"])
+            self.assertEqual(last["apps"]["fleet"]["projected"], est + last["ledgers"] + pub["other"] + pub.get("off", 0))
             two = sum(len(json.dumps(k)) + 4 + len(json.dumps(frame[k], sort_keys=True))
-                      for k in ("userTodoRows", "userTodosOn"))
-            self.assertEqual(last["apps"]["feed"]["projected"], last["frame"] - last["ledgers"] - two,
-                             "the feed pane reads everything but the ledgers and the Waiting-on-you pane's two fields")
-            # the projections read the build-time table, never the published one: the feed row exceeds the cards plus
-            # every published row but `other`, so a fold moved before project() cannot pass here
-            self.assertGreater(last["apps"]["feed"]["projected"],
-                               last["cards"] + sum(v for k, v in last["by"].items() if k != "other"))
+                      for k in ("userTodoRows", "sessions"))
+            self.assertNotEqual(last["apps"]["waiting"]["projected"] - pub["userTodosOn"], two,
+                                "the Waiting-on-you row minus the switch is not the two folded fields the pane reads")
+            # the fold is at report time: the accumulator's stored table has a row per remainder field of the frame the
+            # client received, and the served table is that table folded
+            stored = km._FEED_COMP.last["by"]
+            self.assertEqual(set(stored), set(frame) - VOLATILE - {"asks", "ledgers"})
+            self.assertEqual(km._FeedComposition.public_by(stored), pub)
             for k in block["lifetime"]:
                 if k not in ("by", "apps"):
                     self.assertGreaterEqual(block["lifetime"][k], last[k], k)
@@ -692,22 +707,38 @@ class SyntheticBuild(unittest.TestCase):
         self.assertEqual(set(apps), {"feed", "fleet", "waiting", "phoneFace"}, "the readers' rows and the projection row")
         self.assertEqual(apps["phoneFace"], {"today": last["frame"], "projected": km._phone_face_est(feed["asks"])},
                          "the phone face projection: the whole frame today beside the face estimate over the build's cards")
-        self.assertEqual(apps["waiting"], {"today": last["frame"],
-                                           "projected": by["userTodoRows"] + by["userTodosOn"] + by["sessions"]},
-                         "the Waiting-on-you pane reads its rows, the switch and the session list")
+        other = _published(by)["other"]                          # the folded fields' sum, the one row the block publishes
+        flags = {f: by[f] for f in km.FEED_BY_ROWS if f in by}   # the flag and count rows the fixture carries
+        self.assertEqual(set(flags), {"userTodosOn", "dismissedCount", "showDismissed", "canUndoClear"})
+        self.assertEqual(apps["waiting"], {"today": last["frame"], "projected": other + flags["userTodosOn"]},
+                         "the Waiting-on-you pane reads its rows, the switch and the session list: the two folded "
+                         "fields count as the whole of `other`, the switch by name")
         self.assertEqual(apps["feed"]["projected"],
-                         last["frame"] - leds - by["userTodoRows"] - by["userTodosOn"],
-                         "the feed pane reads the cards and the remainder minus the two fields it never touches, no "
-                         "ledgers; clearedForeign stays in, federation drops remote cards from it for the pane")
+                         cards + other + flags["dismissedCount"] + flags["showDismissed"] + flags["canUndoClear"],
+                         "the feed pane reads the cards, every flag row but the switch and every folded field but two, "
+                         "credited as the whole of `other`; no ledgers; clearedForeign stays in, federation drops "
+                         "remote cards from it for the pane")
+        self.assertEqual(apps["feed"]["projected"], last["frame"] - leds - flags["userTodosOn"],
+                         "which is the frame minus the ledgers and the switch: nothing a reader of the block did not have")
         fields = km._FEED_APP_ASK_FIELDS["fleet"]
         est = km._ask_fields_est(feed["asks"], fields)
-        self.assertEqual(apps["fleet"]["projected"], leds + by["views"] + by["sessions"] + by["clearedForeign"] + est,
-                         "the Outline reads the ledgers, the views, the session list, the viewer's foreign clears "
-                         "(federation strikes remote ledger tops from them) and a few fields of each card")
-        # every expected value above is the test's own per-field sum, never a published row: the projections read the
-        # build-time table, so the feed row exceeds the cards plus every published row but `other` (a fold moved before
-        # project() collapsed the feed row by forty percent in the review's measurement, and fails here)
-        self.assertGreater(apps["feed"]["projected"], cards + sum(v for k, v in last["by"].items() if k != "other"))
+        self.assertEqual(apps["fleet"]["projected"], leds + other + est,
+                         "the Outline reads the ledgers, a few fields of each card and three folded fields (the views, "
+                         "the session list, the viewer's foreign clears), credited as the whole of `other`; no `off` here")
+        # every projected figure is a sum of published rows (fails before: the projections were exact per-field sums
+        # over the stored table, so frame - ledgers - feed.projected - userTodosOn was the userTodoRows row, and
+        # waiting.projected minus that minus userTodosOn the sessions row, on every board)
+        pub = last["by"]
+        self.assertEqual(last["frame"] - leds - apps["feed"]["projected"] - pub["userTodosOn"], 0)
+        self.assertNotEqual(apps["waiting"]["projected"] - pub["userTodosOn"], by["sessions"] + by["userTodoRows"])
+        self.assertEqual(apps["waiting"]["projected"] - pub["userTodosOn"], pub["other"])
+        self.assertGreater(apps["waiting"]["projected"], by["userTodoRows"] + by["userTodosOn"] + by["sessions"],
+                           "the row over-counts the pane's three fields by the rest of `other`, and says so")
+        # the fold is at report time: the stored table is whole, a row per remainder field, and only the report folds
+        # it (with the projections counting the folded set as one, a fold moved before record() would publish the
+        # same numbers, so the stored table is pinned directly)
+        self.assertEqual(km._FEED_COMP.last["by"], by, "the stored table: a row per remainder field")
+        self.assertLessEqual(set(by) & km.FEED_BY_FOLDED, set(km._FEED_COMP.life["by"]), "and the lifetime table too")
         _assert_shape(self, rep, True, km._feed_wire is not None)
         # the card-field estimate: the docstring's arithmetic, done again here over one goal card and one provisional
         # card, and bounded by the texts it counts and the cards it stands in for
@@ -1077,8 +1108,12 @@ class PublishedTable(unittest.TestCase):
     name; userTodoRows: a todo's text, which can name a path), a number the export's identifier scan cannot see. The
     remainder equals the sum of the table exactly, so dropping or coarsening one row alone re-derives it; the fix folds
     a PINNED list of fields (FEED_BY_FOLDED, classified by what a field can carry) into one row, `other`, at report
-    time, on the last and the lifetime tables alike, so the published table's shape is the same whatever the board and
-    no published number depends on one string's length. The projections keep reading the build-time table."""
+    time, on the last and the lifetime tables alike, so the published table's shape is the same whatever the board.
+    The projections read the stored table and count the folded set as ONE atom (an app that reads any folded field is
+    credited with all of `other`): with per-field partial sums published beside the frame, the ledgers and the flag
+    rows, the userTodoRows and sessions rows were re-derivable by subtraction on every board. So every published
+    number is a sum of published rows, and a one-character step in any folded field moves the same published leaves
+    by the same amounts, whichever field took it: the perturbation below checks every integer leaf of the report."""
 
     def setUp(self):
         km._feed_cards_memo = None
@@ -1088,11 +1123,31 @@ class PublishedTable(unittest.TestCase):
         rep = _report(_fresh_pass(frame))
         return rep["last"], rep["lifetime"]
 
+    @staticmethod
+    def _signature(rep_a, rep_b):
+        """Every integer leaf of the published block that moved between two reports, with its delta: what a reader of
+        the block sees of a step. Both reports have the same leaves."""
+        fa = {p: v for p, v in _leaves({"last": rep_a["last"], "lifetime": rep_a["lifetime"]}) if isinstance(v, int)}
+        fb = {p: v for p, v in _leaves({"last": rep_b["last"], "lifetime": rep_b["lifetime"]}) if isinstance(v, int)}
+        assert set(fa) == set(fb), sorted(set(fa) ^ set(fb))
+        return {p: fb[p] - fa[p] for p in fa if fb[p] != fa[p]}
+
+    # the leaves a one-byte step in any folded field moves, each by one: the whole-frame figures, `other`, every app's
+    # `today`, and the `projected` of every app that reads a folded field (the phoneFace row reads only cards)
+    STEP_LEAVES = frozenset(".%s.%s" % (t, leaf) for t in ("last", "lifetime")
+                            for leaf in ("frame", "rest", "by.other", "apps.feed.today", "apps.fleet.today",
+                                         "apps.waiting.today", "apps.phoneFace.today", "apps.feed.projected",
+                                         "apps.fleet.projected", "apps.waiting.projected"))
+
     def _one_char_step(self, field, base, variant, what):
         """`variant` is `base` with one string of `field` one character longer: the field's own bytes move by one and
         no other field's; the published tables (last and lifetime) name no such field, have the same key set, agree on
-        every row but `other`, and `other` moves by exactly one; both remainders equal their table's sum; and after both
-        passes on ONE accumulator the lifetime `other` is the two passes' folded sums."""
+        every row but `other`, and `other` moves by exactly one; both remainders equal their table's sum; after both
+        passes on ONE accumulator the lifetime `other` is the two passes' folded sums; and over EVERY integer leaf of
+        the block the step moves exactly STEP_LEAVES, each by one, so no leaf and no difference of leaves says which
+        field took the step (fails before: the step moved apps.waiting.projected for a todo's text or a session's
+        name and not for the hostname, and apps.feed.projected for the hostname and not for a todo's text). Returns
+        the signature, for the caller to hold equal across fields."""
         _, _, by_a = _expected(base)
         _, _, by_b = _expected(variant)
         self.assertIn(field, km.FEED_BY_FOLDED, what)
@@ -1100,8 +1155,11 @@ class PublishedTable(unittest.TestCase):
         for k in set(by_a) | set(by_b):
             if k != field:
                 self.assertEqual(by_a.get(k), by_b.get(k), "%s: %s is unchanged" % (what, k))
-        la, lla = self._tables(base)
-        lb, llb = self._tables(variant)
+        ra, rb = _report(_fresh_pass(base)), _report(_fresh_pass(variant))
+        la, lla, lb, llb = ra["last"], ra["lifetime"], rb["last"], rb["lifetime"]
+        sig = self._signature(ra, rb)
+        self.assertEqual(set(sig), self.STEP_LEAVES, "%s: the leaves the step moves" % what)
+        self.assertEqual(set(sig.values()), {1}, "%s: each by the one byte" % what)
         for name, ta, tb in (("last", la["by"], lb["by"]), ("lifetime", lla["by"], llb["by"])):
             self.assertNotIn(field, ta, "%s: %s is not a published row (%s)" % (what, field, name))
             self.assertNotIn(field, tb, "%s: %s is not a published row (%s)" % (what, field, name))
@@ -1120,21 +1178,23 @@ class PublishedTable(unittest.TestCase):
         self.assertEqual(rep["lifetime"]["by"]["other"], la["by"]["other"] + lb["by"]["other"], what)
         self.assertEqual(sum(rep["lifetime"]["by"].values()), rep["lifetime"]["rest"], what)
         self.assertEqual(rep["lifetime"]["rest"], la["rest"] + lb["rest"], what)
+        return sig
 
     def test_a_one_character_step_in_any_text_bearing_field_moves_only_the_other_row(self):
         """One step per folded field (fails before: HEAD published each as its own row, which moved with the string):
         the hostname, each pips list's one name, a session id in the order, a session's name and its repository string,
         a todo's text, its path and its row's name, the todo map's key, a tag name, the latch's login row (a name and a
         host), a service chip's session name and its description, a foreign clear's id, one notice in each ring, and
-        the views fault text on the faulted frame."""
+        the views fault text on the faulted frame. Every step has the same signature over every integer leaf of the
+        block, so a reader cannot tell a hostname step from a todo-text step or a session-name step."""
         base = _populated()
-        steps = []
+        steps, sigs = [], []
 
         def step(field, what, mutate):
             variant = copy.deepcopy(base)
             mutate(variant)
             steps.append(field)
-            self._one_char_step(field, base, variant, what)
+            sigs.append(self._one_char_step(field, base, variant, what))
         step("selfHost", "the machine's hostname", lambda f: f.update(selfHost="TESTHOSTX"))
         step("working", "a working session's name", lambda f: f.update(working=["webx"]))
         step("awaiting", "an awaiting session's name", lambda f: f.update(awaiting=["apix"]))
@@ -1161,8 +1221,70 @@ class PublishedTable(unittest.TestCase):
         longer = copy.deepcopy(faulted)
         longer["viewsFault"] += "x"
         steps.append("viewsFault")
-        self._one_char_step("viewsFault", faulted, longer, "the views fault text")
+        sigs.append(self._one_char_step("viewsFault", faulted, longer, "the views fault text"))
         self.assertEqual(set(steps), set(km.FEED_BY_FOLDED), "one step at least per folded field")
+        self.assertEqual(len({json.dumps(s, sort_keys=True) for s in sigs}), 1,
+                         "every folded-field step moves the same leaves by the same amounts: indistinguishable")
+
+    def test_no_published_number_or_difference_isolates_a_folded_field_on_a_one_session_board(self):
+        """The board where a single leaf isolated one string (the review's re-derivation): one working session with no
+        repository string, no card, no open todo, no tag, no notice and no service chip. Then the sessions field is a
+        constant plus the session name's length, and a Waiting-on-you row that summed its three fields by name
+        (userTodoRows, the switch, sessions) published that length: waiting.projected minus the switch minus (frame -
+        ledgers - feed.projected - the switch) was the sessions row exactly, and the sessions row moved for the
+        session's name and for nothing else (fails before). Now four one-character steps (the hostname, the session's
+        name in the session list, its name in the working pips, a session id in the order) have one signature over
+        every integer leaf; each projected row is a sum of published rows; and the candidate the re-derivation used
+        for the hostname row (the feed row's remainder share minus twice the sessions estimate, plus a constant read
+        from the source) moves the wrong way under a hostname step, so no constant makes it the hostname row for two
+        hostnames of different length."""
+        def board(host="TESTHOST", name="web", pip="web", order=(SID,)):
+            return _feed(n=0, asks=[], ledgers=[], order=list(order), working=[pip], awaiting=[], bgServices={},
+                         sessions=[{"sid": SID, "name": name, "color": None, "githubRepo": None}], userTodos={},
+                         userTodoRows=[], views={"seq": 3, "tags": {}}, dismissedCount=0, canUndoClear=False,
+                         syncNotices=[], selfHost=host)
+        base = board()
+        _, _, by = _expected(base)
+        self.assertEqual(by["sessions"] - len("web"), len(json.dumps("sessions")) + 4 + len(json.dumps(
+            [{"sid": SID, "name": "", "color": None, "githubRepo": None}], sort_keys=True)),
+            "on this board the sessions field is a constant plus the session name's length")
+        rep = _report(_fresh_pass(base))
+        last = rep["last"]
+        pub = last["by"]
+        self.assertEqual((last["cards"], last["ledgers"]), (0, 0))
+        self.assertEqual(set(pub), {"userTodosOn", "dismissedCount", "showDismissed", "canUndoClear", "other"})
+        flags = pub["dismissedCount"] + pub["showDismissed"] + pub["canUndoClear"]
+        self.assertEqual(last["apps"]["waiting"]["projected"], pub["other"] + pub["userTodosOn"])
+        self.assertEqual(last["apps"]["feed"]["projected"], pub["other"] + flags)
+        self.assertEqual(last["apps"]["fleet"]["projected"], pub["other"], "no card, no ledger, no `off`: `other` alone")
+        self.assertEqual(last["apps"]["phoneFace"]["projected"], 0)
+        # the re-derivation's two steps, on the published numbers: neither is a folded row any more
+        d1 = last["frame"] - last["ledgers"] - last["apps"]["feed"]["projected"] - pub["userTodosOn"]
+        self.assertEqual(d1, 0, "not the userTodoRows row (%d)" % by["userTodoRows"])
+        self.assertNotEqual(last["apps"]["waiting"]["projected"] - pub["userTodosOn"] - d1, by["sessions"],
+                            "not the sessions row")
+        steps = {"the hostname": board(host="TESTHOSTX"), "the session's name": board(name="webx"),
+                 "the working pip": board(pip="webx"), "a session id in the order": board(order=(SID + "0",))}
+        sigs = {}
+        for what, variant in steps.items():
+            _, _, by_v = _expected(variant)
+            self.assertEqual(sum(by_v.values()) - sum(by.values()), 1, what)
+            sigs[what] = self._signature(rep, _report(_fresh_pass(variant)))
+            self.assertEqual(set(sigs[what]), self.STEP_LEAVES, what)
+            self.assertEqual(set(sigs[what].values()), {1}, what)
+        self.assertEqual(len({json.dumps(s, sort_keys=True) for s in sigs.values()}), 1, sigs)
+        # the hostname candidate: F = the feed row minus the cards and the flag rows (the pane's remainder share), S =
+        # the sessions estimate above; F - 2S + K for a constant K. Under a one-character hostname step F and S each
+        # move by one, so the candidate moves by minus one while the hostname row moves by plus one
+        def candidate(r):
+            l = r["last"]
+            f = l["apps"]["feed"]["projected"] - l["cards"] - sum(l["by"][k] for k in l["by"] if k not in ("other", "userTodosOn"))
+            s = l["apps"]["waiting"]["projected"] - l["by"]["userTodosOn"] - (l["frame"] - l["ledgers"] - l["apps"]["feed"]["projected"] - l["by"]["userTodosOn"])
+            return f - 2 * s
+        longer = _report(_fresh_pass(steps["the hostname"]))
+        _, _, by_l = _expected(steps["the hostname"])
+        self.assertEqual(by_l["selfHost"] - by["selfHost"], 1)
+        self.assertEqual(candidate(longer) - candidate(rep), -1, "the candidate moves against the hostname row")
 
     def test_the_exported_table_carries_the_published_rows_and_no_row_recovers_the_hostname(self):
         """The export path (cli/perf_public.py fold, the form `romp perf export --public` writes): two boards identical
@@ -1261,6 +1383,12 @@ class PublishedTable(unittest.TestCase):
         self.assertEqual(sum(last["by"].values()), last["rest"])
         self.assertEqual(last["rest"], len(parts[3]))
         self.assertEqual(sum(life["by"].values()), life["rest"])
+        # the projections credit an app that reads a folded field with the PUBLISHED `other`, the rogue keys' bytes
+        # included (fails before: the folded fields alone, so feed.projected minus the cards and the flag rows was
+        # `other` minus the rogue bytes, and the difference published them)
+        flags = sum(v for k, v in last["by"].items() if k in km.FEED_BY_ROWS and k != "userTodosOn")
+        self.assertEqual(last["apps"]["feed"]["projected"], last["cards"] + last["by"]["other"] + flags)
+        self.assertEqual(last["apps"]["waiting"]["projected"], last["by"]["other"] + last["by"]["userTodosOn"])
         doc = {"memos": {"feedComposition": rep}}
         self.assertEqual(pp.fold(doc), doc, "the export keeps the block whole: no denied key stood as a row")
         _paste_safe(self, rep)
@@ -1271,6 +1399,58 @@ class PublishedTable(unittest.TestCase):
         rep2 = _report(_fresh_pass(fewer))
         self.assertEqual(last["by"]["other"] - rep2["last"]["by"]["other"], by["web"])
         self.assertEqual(set(rep2["last"]["by"]), set(last["by"]))
+
+    def test_the_fold_is_at_report_time_and_the_stored_tables_keep_a_row_per_field(self):
+        """The ruling's second point, pinned directly: the accumulator's last and lifetime tables hold a row per remainder
+        field (selfHost, sessions and the rest among them) after a pass, and report() publishes each table folded by
+        public_by; folded_sum over the stored table is the published `other`, and a fold moved before record() (the
+        stored table already folded) fails here whatever it publishes."""
+        frame = _populated()
+        _, _, by = _expected(frame)
+        comp = _fresh_pass(frame)
+        _fresh_pass(frame, comp)
+        self.assertEqual(comp.last["by"], by, "the stored last table is the per-field table")
+        self.assertEqual(comp.life["by"], {k: 2 * v for k, v in by.items()}, "and so is the lifetime table, summed")
+        self.assertEqual(set(comp.last["by"]) & km.FEED_BY_FOLDED, km.FEED_BY_FOLDED - {"viewsFault"},
+                         "every folded field the fixture carries has its row in the store (the fault marker rides in "
+                         "place of the views blob, so a frame carries one of the two)")
+        rep = _report(comp)
+        self.assertEqual(rep["last"]["by"], _published(by))
+        self.assertEqual(rep["lifetime"]["by"], _published({k: 2 * v for k, v in by.items()}))
+        self.assertEqual(km._FeedComposition.folded_sum(by), _published(by)["other"])
+        self.assertEqual(km._FeedComposition.folded_sum({}), 0)
+        self.assertEqual(km._FeedComposition.folded_sum({"off": 3, "selfHost": 9, "other": 2}), 11)
+        self.assertEqual(km._FeedComposition.public_by({"off": 3, "selfHost": 9, "other": 2}), {"off": 3, "other": 11})
+
+    def test_the_reference_and_the_ledger_state_the_published_shape_and_the_residuals(self):
+        """docs/reference.md's memos.feedComposition entry and the ledger entry describe the block the kernel publishes:
+        the published rows and the folded list by name (each set equal to the kernel's constant, so a reclassified
+        field changes both or fails here), the off frame's four lists, the report-time fold, the remainder invariant,
+        the projections' one-atom rule, and the two residuals (the hostname on an empty board; the card figures)."""
+        ref = open(os.path.join(ROOT, "docs", "reference.md"), encoding="utf-8").read()
+        para = ref[ref.index("  `feedComposition` says what the feed frame is made of"):]
+        para = para[:para.index("\n- `judge`:")]
+        ledger = open(os.path.join(ROOT, "upstream", "2026-09-18-feed-composition-perf.md"), encoding="utf-8").read()
+        names = set(re.findall(r"`([A-Za-z]+)`", para))
+        self.assertLessEqual(km.FEED_BY_ROWS | km.FEED_BY_FOLDED | OFF_LISTS | {"other"}, names)
+        rows = re.search(r"count fields \((.*?): the checked-in list `FEED_BY_ROWS`", para, re.S).group(1)
+        self.assertEqual(set(re.findall(r"`(\w+)`", rows)), km.FEED_BY_ROWS, "the reference's FEED_BY_ROWS list")
+        folded = re.search(r"can carry a string \((.*?): the checked-in list\s+`FEED_BY_FOLDED`", para, re.S).group(1)
+        self.assertEqual(set(re.findall(r"`(\w+)`", folded)), km.FEED_BY_FOLDED, "the reference's FEED_BY_FOLDED list")
+        for text, phrase in (("the reference", para), ("the ledger", ledger)):
+            flat = " ".join(phrase.split())
+            for needle in ("the folded fields as one", "credited with all of `other`", "report",
+                           "no difference of published numbers", "hostname", "`phoneFace`", "title"):
+                self.assertIn(needle, flat, "%s: %r" % (text, needle))
+            self.assertNotIn("tells the reader nothing", flat, "%s: a claim the block does not make" % text)
+            self.assertNotIn("forty percent under", flat, "%s: the retired figure" % text)
+            self.assertNotIn("\u2014", phrase, text)
+            self.assertNotIn("\u2013", phrase, text)
+        for name in sorted(km.FEED_BY_ROWS | km.FEED_BY_FOLDED):
+            self.assertIn(name, ledger, "the ledger names %s" % name)
+        self.assertIn("`rest` is the exact sum of the published rows", " ".join(para.split()))
+        self.assertIn("rows drawn from a fixed list", " ".join(para.split()))
+        self.assertIn("`other` is present on every non-empty published table", " ".join(para.split()))
 
     def test_the_perf_stats_docstring_row_names_every_key_of_the_last_pass(self):
         """The _PerfStats docstring's feedComposition row (the served snapshot's own reference) names every key of `last`
