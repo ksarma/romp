@@ -2035,16 +2035,19 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
 
     IDENT = re.compile(r"^[A-Za-z0-9_.-]+$")
     HTTP_KEY = re.compile(r"^(?:GET|HEAD|POST|OPTIONS) /[A-Za-z0-9_./*-]*$|^other$")
-    JOINED_KEY = re.compile(r"^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?(?:<-[A-Za-z0-9_.?-]+)?$")
+    NAME = r"(?:[A-Za-z0-9_.?-]+|<[a-z]+>)"           # a fixed name, a stage mark, a reason code, or a code object's name as the
+    #                                                   interpreter spells it (<lambda>, <genexpr>): a caller read through a lambda
+    JOINED_KEY = re.compile(r"^%s(?::%s)?(?:<-%s)?$" % (NAME, NAME, NAME))
     # the blocks whose keys join identifiers, and what the joined parts are (every part a fixed name, a stage mark, a
     # function name or a reason code; never a path, an id or text): the reader's whole reads as kind<-caller and
     # stage:kind<-caller, the assembly checkpoints' hydrations as caller and stage:caller, its parse counters as
     # phase:reason (g:boundary, full:noDocument, restore:chainRefused), its removals as fallback:reason, and the lazy
-    # index's materializations as stage:caller; the judge child's copies of the first two tables under judge.child
+    # index's materializations as caller and stage:caller; the judge child's copies of the first two tables under
+    # judge.child. A caller is a function's code-object name, which for a read made through a lambda is `<lambda>`.
     JOINED = {("recordCache", "wholeReads"), ("recordCache", "wholeReadsByStage"),
               ("asmCheckpoint", "hydratedBy"), ("asmCheckpoint", "hydratedByStage"),
               ("asmCheckpoint", "parse"), ("asmCheckpoint", "removed"),
-              ("asmIndex", "materializedByStage")}
+              ("asmIndex", "materializedBy"), ("asmIndex", "materializedByStage")}
     JOINED_KEY_BLOCKS = JOINED | {("judge", "child") + b for b in JOINED if b[0] in ("recordCache", "asmCheckpoint")}
     UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
     HEX32 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}(?![0-9a-fA-F])")
