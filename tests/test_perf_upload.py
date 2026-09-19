@@ -1701,10 +1701,16 @@ class DepthBound(unittest.TestCase):
 
     def test_a_recursion_error_out_of_the_writer_is_the_same_one_line_belt(self):
         """The writer (pe.document_text, json's encoder) recurses one frame per level like the walks and the fold, and it ran
-        after the belt's try, so with the depth bound lifted a list chain near the walks' reach overflowed in the encoder and
-        the RecursionError escaped read_export as a traceback (the fourth review round's verifier, 2026-09-19); the bound keeps
-        every file far from it, and the belt's own comment promises one line whatever the stack looks like, so the writer runs
-        inside the belt. Pinned by making the writer raise. Fails before: RecursionError out of read_export."""
+        after the belt's try, so a RecursionError out of it would have escaped read_export as a traceback; the belt's own
+        comment promises one line whatever the stack looks like, so the writer runs inside the belt (the fourth review round,
+        2026-09-19). What this case shows is that the belt catches a raise from the writer, demonstrated by a PLANTED raise: no
+        document reaches that line by nesting. Measured at the closing check (2026-09-19) with MAX_DEPTH lifted, over dict and
+        list chains under perf (one and two keys or elements per level) at every depth from 400 to 1,100 on 3.10 and 3.11 and
+        to the parser's reach on 3.12 and 3.13, every RecursionError was raised inside the belt by the checks (or by the fold
+        over list nesting on 3.10 and 3.11, whose reach there is 497), none by the writer and none escaped; the writer's own
+        reach (992 to 994 on 3.10 to 3.12, 9,997 on 3.13, past 28,000 on 3.14 and 3.14t) is at or past the checks' (989 to
+        992) on every build, so the fourth round's account of the writer overflowing first with the bound lifted did not
+        reproduce. Fails before: RecursionError out of read_export, the writer outside the try."""
         xdg, state = _state_root()
         self.addCleanup(shutil.rmtree, xdg, True)
         file = _export(xdg, state)

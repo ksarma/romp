@@ -401,8 +401,10 @@ def read_export(path, state):
         # the belt behind the depth bound: the walks, the fold and the writer recurse one frame per level, and MAX_DEPTH
         # keeps every file this verb reads far inside any build's stack, so nothing reaches this line by nesting alone; it
         # stands so that whatever the interpreter's stack looks like, the verb answers with one line and never a traceback.
-        # The writer is inside it on purpose: json's encoder recurses one frame per level too, and with the bound lifted
-        # it was the first to overflow past a belt that ended at the fold (the fourth review round, 2026-09-19)
+        # The writer is inside it on purpose: json's encoder recurses one frame per level too, and a raise out of it past a
+        # belt that ended at the fold would have been a traceback (the fourth review round, 2026-09-19). Measured at the
+        # closing check with the bound lifted, the checks overflow before the writer on every build (the table at MAX_DEPTH),
+        # so only a planted raise reaches this line from the writer; the belt holds it all the same
         raise Refusal("refused: %s could not be checked (RecursionError); nothing sent" % path, 1)
     return text.encode("utf-8")
 
