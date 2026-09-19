@@ -53,16 +53,23 @@ def _code_only(ts):
 
 
 # The guide's statement of the rule and of where it stops (the HTML-block passage the second round added, held clause by
-# clause by tools/guide-own-html-block-tag.test.mjs), through its closing sentence: the qualification follows it directly.
+# clause by tools/guide-own-html-block-tag.test.mjs and, through the viewer's own lexer, by
+# ui/webview/guide-own-html-block-tag.test.ts), then the sentence on the tags that take the rest of the file when they stay
+# HTML (the whole review's first round): the qualification follows that sentence directly.
 RULE = ("A tag opened in a line of prose and not closed in the same paragraph, heading, list item or table cell (a "
         "placeholder typed mid-sentence as `<table>`, say) is shown as the characters typed, not read as HTML, and can be "
-        "commented on like any passage; a tag closed in the same block, and a tag that never takes an end tag such as `<br>` "
-        "or `<img>`, is HTML as before. A tag the viewer reads as an HTML block rather than as prose is HTML as before too: a "
+        "commented on like any passage; a tag closed in the same block, a tag that never takes an end tag such as `<br>` or "
+        "`<img>`, and a tag written with a slash before its `>` (`<x/>`) are HTML as before. A tag the viewer reads as an "
+        "HTML block rather than as prose is HTML as before too: a "
         "tag first on its line, after a list marker or a `>` included, whose name is on CommonMark's HTML-block list "
         "(`<table>`, `<div>`, `<p>` and `<pre>` are on it; `<span>`, `<b>` and an invented name are not), or a tag alone on a "
         "line where a paragraph would begin. The same placeholder typed first on its line is therefore read as HTML: the "
         "browser shows no `<table>`, and a comment on the passage goes through the Raw view. A chat message is not read this "
         "way.")
+LOSS = ("A `<title>`, `<script>`, `<style>` or `<iframe>` that stays HTML takes everything after it out of the Rendered view, "
+        "up to an end tag of its name, or the end of the file when there is none: a browser reads `<title/>` as `<title>`, so "
+        "the tag written with the slash mid-sentence does this, and so does the tag first on its line; a `<textarea>` in "
+        "either place shows that stretch as unformatted characters instead.")
 QUALIFICATION = ("Inside an inline `svg` or `math`, a child tag left open (`<svg><title>icon</svg>`, say) disappears from the "
                  "Rendered view: the same rule makes it text, but the text lands inside the drawing, which the browser draws "
                  "without it, or inside the `math`, which the viewer drops whole, so a comment on it goes through the Raw "
@@ -77,10 +84,11 @@ class TheGuideSaysSo(unittest.TestCase):
         self.paragraph = _paragraph(_read("docs", "guide.md"), "**A file's own HTML.**")
 
     def test_the_qualification_stands_right_after_the_rule_it_qualifies(self):
-        self.assertIn(RULE + " " + QUALIFICATION + " " + CLOSED, self.paragraph)
+        self.assertIn(RULE + " " + LOSS + " " + QUALIFICATION + " " + CLOSED, self.paragraph)
 
     def test_the_rule_is_stated_once(self):
         self.assertEqual(self.paragraph.count("is shown as the characters typed"), 1)
+        self.assertEqual(self.paragraph.count(LOSS), 1)
         self.assertEqual(self.paragraph.count(QUALIFICATION), 1)
 
     def test_the_closed_clause_refers_back_to_the_tooltip_sentence(self):
@@ -111,6 +119,20 @@ class TheCodeDoesIt(unittest.TestCase):
         # a drawing's or a formula's children are non-void, so an unclosed one is converted
         void = re.search(r"VOID_ELEMENTS: ReadonlySet<string> = new Set\(\[(.*?)\]\)", code).group(1)
         for name in ("TITLE", "DESC", "FOREIGNOBJECT", "ANNOTATION-XML", "MTEXT", "SVG", "MATH"):
+            self.assertNotIn('"%s"' % name, void)
+
+    def test_the_loss_sentence_names_tags_the_rule_leaves_html_in_both_placements(self):
+        # "that stays HTML ... written with the slash ... or first on its line": the rule converts no self-closing tag (the
+        # flag read by isSelfClosingTag) and reads no block html token (its walk names the blocks whose inline run it reads and
+        # no html case), and none of the five names is void, so the bare spelling mid-sentence is converted and these are not.
+        # What the browser then does with them is held by ui/webview/guide-own-html-block-tag.test.ts at the lexer and by the
+        # slice's browser legs; this pin is the code's two exclusions.
+        code = _code_only(_read("ui", "webview", "md-literal-tags.ts"))
+        self.assertIn("!isSelfClosingTag(t.raw)", code)
+        walk = code[code.index("export function literalizeUnclosedTags("):code.index("function literalizeRun(")]
+        self.assertNotIn('"html"', walk)
+        void = re.search(r"VOID_ELEMENTS: ReadonlySet<string> = new Set\(\[(.*?)\]\)", code).group(1)
+        for name in ("TITLE", "SCRIPT", "STYLE", "IFRAME", "TEXTAREA"):
             self.assertNotIn('"%s"' % name, void)
 
     def test_the_viewer_drops_a_math_whole(self):

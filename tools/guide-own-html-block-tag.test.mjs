@@ -7,10 +7,15 @@
 // `pre` and the rest; `span`, `b` and an invented name are not), and any tag alone on a line where a paragraph would begin
 // likewise; a block html token owns no inline run, so literalizeUnclosedTags leaves it as lexed, the raw tag reaches the
 // browser, and the anchor map refuses the block as an HTML block, so a comment on it goes through the Raw view. The slice's
-// review found the guide overstating the rule for that placement (round 2); the guide now says where the rule stops, and
-// this module holds each clause of the account to the installed marked (vscode-extension/node_modules, the copy the viewer
-// bundles), by lexing synthetic documents, and to the two code paths the account rests on. The sentences are pinned
-// flattened, so a rewrap survives. Synthetic text only. Run: node --test tools/guide-own-html-block-tag.test.mjs
+// review found the guide overstating the rule for that placement (round 2); the guide now says where the rule stops, and,
+// since the whole review's first round, which tags take the rest of the file with them when they stay HTML: `<title>`,
+// `<script>`, `<style>` and `<iframe>` written with the slash (the rule leaves the self-closing syntax HTML) or first on the
+// line, while `<textarea>` so placed shows the rest as characters. This module holds each clause of the account to the
+// installed marked (vscode-extension/node_modules, the copy the viewer bundles), by lexing synthetic documents, and to the two
+// code paths the account rests on. The lexer legs skip where marked is not installed, which is every CI run of tools/*.test.mjs
+// (the shell job runs no npm ci); ui/webview/guide-own-html-block-tag.test.ts runs the same legs through the viewer's own
+// configuration under the extension job's npm test, so CI holds them there. The sentences are pinned flattened, so a rewrap
+// survives. Synthetic text only. Run: node --test tools/guide-own-html-block-tag.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -30,10 +35,11 @@ const codeOnly = (ts) => ts.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter(
 
 // ── the guide's account, sentence by sentence ────────────────────────
 
-const RULE = 'A tag opened in a line of prose and not closed in the same paragraph, heading, list item or table cell (a placeholder typed mid-sentence as `<table>`, say) is shown as the characters typed, not read as HTML, and can be commented on like any passage; a tag closed in the same block, and a tag that never takes an end tag such as `<br>` or `<img>`, is HTML as before.';
+const RULE = 'A tag opened in a line of prose and not closed in the same paragraph, heading, list item or table cell (a placeholder typed mid-sentence as `<table>`, say) is shown as the characters typed, not read as HTML, and can be commented on like any passage; a tag closed in the same block, a tag that never takes an end tag such as `<br>` or `<img>`, and a tag written with a slash before its `>` (`<x/>`) are HTML as before.';
 const BLOCK = 'A tag the viewer reads as an HTML block rather than as prose is HTML as before too: a tag first on its line, after a list marker or a `>` included, whose name is on CommonMark\'s HTML-block list (`<table>`, `<div>`, `<p>` and `<pre>` are on it; `<span>`, `<b>` and an invented name are not), or a tag alone on a line where a paragraph would begin.';
 const PLACEHOLDER = 'The same placeholder typed first on its line is therefore read as HTML: the browser shows no `<table>`, and a comment on the passage goes through the Raw view.';
 const CHAT = 'A chat message is not read this way.';
+const LOSS = 'A `<title>`, `<script>`, `<style>` or `<iframe>` that stays HTML takes everything after it out of the Rendered view, up to an end tag of its name, or the end of the file when there is none: a browser reads `<title/>` as `<title>`, so the tag written with the slash mid-sentence does this, and so does the tag first on its line; a `<textarea>` in either place shows that stretch as unformatted characters instead.';
 
 function ownHtmlParagraph() {
   const guide = read('docs', 'guide.md');
@@ -43,12 +49,13 @@ function ownHtmlParagraph() {
   return flat(end < 0 ? guide.slice(at) : guide.slice(at, end));
 }
 
-test('the guide states the rule for a tag in prose, then where it stops (an HTML block), then what the placeholder does first on its line, in that order and once', () => {
+test('the guide states the rule for a tag in prose, then where it stops (an HTML block), then what the placeholder does first on its line, then which tags take the rest of the file when they stay HTML, in that order and once', () => {
   const para = ownHtmlParagraph();
-  assert.ok(para.includes(RULE + ' ' + BLOCK + ' ' + PLACEHOLDER + ' ' + CHAT), 'the four sentences stand together in order');
+  assert.ok(para.includes(RULE + ' ' + BLOCK + ' ' + PLACEHOLDER + ' ' + CHAT + ' ' + LOSS), 'the five sentences stand together in order');
   assert.equal(para.split('is shown as the characters typed').length - 1, 1, 'the rule is stated once');
   assert.equal(para.split('as an HTML block').length - 1, 1, 'the block limit is stated once');
-  assert.ok(para.includes(PLACEHOLDER + ' ' + CHAT + ' Inside an inline `svg` or `math`'), 'the svg and math qualification follows the placeholder sentence');
+  assert.equal(para.split('takes everything after it out of the Rendered view').length - 1, 1, 'the loss is stated once');
+  assert.ok(para.includes(CHAT + ' ' + LOSS + ' Inside an inline `svg` or `math`'), 'the svg and math qualification follows the loss sentence');
   assert.ok(!para.includes('—'), 'no em dash');
 });
 
@@ -112,6 +119,25 @@ test('a tag that opens a heading or a table cell is not first on its line: an in
   const table = await lex('| a | b |\n|---|---|\n| <table>x | y |\n');
   assert.equal(table[0].type, 'table');
   assert.deepEqual(table[0].rows[0][0].tokens.filter((t) => t.type === 'html').map((t) => t.raw), ['<table>']);
+});
+
+test('the names the guide says take the rest of the file when they stay HTML: first on its line each is a block html token (`<title>` and `<iframe>` to the next blank line; `<script>`, `<style>` and `<textarea>` to the document\'s end); written with the slash mid-sentence each is an inline html token, which the rule leaves HTML (isSelfClosingTag, whose flag reading md-literal-tags-tag-syntax.test.ts pins by execution; ui/webview/guide-own-html-block-tag.test.ts runs the rule over these five)', { skip: SKIP }, async () => {
+  const doc = (name) => `Intro T0.\n\n<${name}> note T1\n\n## After heading\n\nPara after.\n`;
+  for (const name of ['title', 'iframe']) {
+    const tokens = await lex(doc(name));
+    assert.deepEqual(types(tokens).filter((t) => t !== 'space'), ['paragraph', 'html', 'heading', 'paragraph'], `<${name}> first on its line is a block that ends at the blank line`);
+    assert.equal(tokens.find((t) => t.type === 'html').raw, `<${name}> note T1\n\n`);
+  }
+  for (const name of ['script', 'style', 'textarea']) {
+    const tokens = await lex(doc(name));
+    assert.deepEqual(types(tokens).filter((t) => t !== 'space'), ['paragraph', 'html'], `<${name}> first on its line is a block that runs to the document's end`);
+    assert.equal(tokens.find((t) => t.type === 'html').raw, `<${name}> note T1\n\n## After heading\n\nPara after.\n`);
+  }
+  for (const name of ['title', 'script', 'style', 'iframe', 'textarea']) {
+    const tokens = await lex(`Intro <${name}/> tail T1.\n`);
+    assert.deepEqual(types(tokens), ['paragraph'], `<${name}/> mid-sentence is prose`);
+    assert.deepEqual(inlineHtml(tokens[0]), [`<${name}/>`], `with the slashed tag an inline html token`);
+  }
 });
 
 // ── the two code paths the account rests on ──────────────────────────

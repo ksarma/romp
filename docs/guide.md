@@ -629,14 +629,19 @@ the prefix.
 A tag opened in a line of prose and not closed in the same paragraph, heading, list item or
 table cell (a placeholder typed mid-sentence as `<table>`, say) is shown as the characters
 typed, not read as HTML, and can be commented on like any passage; a tag closed in the same
-block, and a tag that never takes an end tag such as `<br>` or `<img>`, is HTML as before. A
-tag the viewer reads as an HTML block rather than as prose is HTML as before too: a tag first
-on its line, after a list marker or a `>` included, whose name is on CommonMark's HTML-block
-list (`<table>`, `<div>`, `<p>` and `<pre>` are on it; `<span>`, `<b>` and an invented name are
-not), or a tag alone on a line where a paragraph would begin. The same placeholder typed first
-on its line is therefore read as HTML: the browser shows no `<table>`, and a comment on the
-passage goes through the Raw view. A chat message is not read this way. Inside an inline `svg`
-or `math`, a child tag left open
+block, a tag that never takes an end tag such as `<br>` or `<img>`, and a tag written with a
+slash before its `>` (`<x/>`) are HTML as before. A tag the viewer reads as an HTML block
+rather than as prose is HTML as before too: a tag first on its line, after a list marker or a
+`>` included, whose name is on CommonMark's HTML-block list (`<table>`, `<div>`, `<p>` and
+`<pre>` are on it; `<span>`, `<b>` and an invented name are not), or a tag alone on a line where
+a paragraph would begin. The same placeholder typed first on its line is therefore read as
+HTML: the browser shows no `<table>`, and a comment on the passage goes through the Raw view.
+A chat message is not read this way. A `<title>`, `<script>`, `<style>` or `<iframe>` that
+stays HTML takes everything after it out of the Rendered view, up to an end tag of its name,
+or the end of the file when there is none: a browser reads `<title/>` as `<title>`, so the tag
+written with the slash mid-sentence does this, and so does the tag first on its line; a
+`<textarea>` in either place shows that stretch as unformatted characters instead. Inside an
+inline `svg` or `math`, a child tag left open
 (`<svg><title>icon</svg>`, say) disappears from the Rendered view: the same rule makes it text,
 but the text lands inside the drawing, which the browser draws without it, or inside the
 `math`, which the viewer drops whole, so a comment on it goes through the Raw view, which shows
