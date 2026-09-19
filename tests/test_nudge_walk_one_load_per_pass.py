@@ -615,9 +615,12 @@ def _loader_births(path, judge):
     pin's table takes. The consumer clause, kept: a constant that merely CONTAINS the needle is a birth where it reaches one of
     _DYNAMIC_LOOKUPS (getattr, exec, eval, compile, __import__, import_module, attrgetter, vars, __getattribute__) or a dict read
     named in _DICT_READS (get, pop, setdefault, __getitem__), the callee matched by its last name and its arguments and keyword
-    values walked, or the slice of a Subscript (`vars(jd)["load_goals_shared"]`, `jd.__dict__["load_goals_shared"]`); it holds
-    the dotted strings handed to exec, eval and compile (`"jd.load_goals_shared"`) and the concatenations that keep the needle in
-    one piece (`"load_goals_" + "shared"`), which spell no door whole, and it names in the message the door a constant went
+    values walked, or a Subscript's slice (`vars(jd)["load_goals_shared"]`, `jd.__dict__["load_goals_shared"]`), walked as the
+    arguments are, so a key written as an f-string, a conditional, a walrus or a concatenation reaches its constant (review round
+    4, extra6-2: the Call clause walked into its arguments while the slice was tested as a direct Constant, and a real load through
+    `vars(jd)[f"load_goals_shared"]` in a replaced helper passed every witness); it holds the dotted strings handed to exec, eval
+    and compile (`"jd.load_goals_shared"`) and the concatenations that keep the needle in one piece (`"load_goals_" + "shared"`,
+    `vars(jd)["load_goals_" + "shared"]`), which spell no door whole, and it names in the message the door a constant went
     through. Each constant is reported once, by the clause that reaches it first (the walk is breadth-first, so a Call or a
     Subscript is visited before its constant). The first cut read a dynamic lookup's arguments alone, and a verifier of the
     consolidation pass planted both subscript forms and `jd.__dict__.get(...)` as a real load inside a replaced helper's body with
@@ -690,8 +693,9 @@ def _loader_births(path, judge):
             defs[n.name] = defs.get(n.name, 0) + 1
             if n.decorator_list:
                 born.append((n.lineno, "a loader defined behind a decorator: %s" % n.name))
-        # the consumer clause: a constant that merely CONTAINS the name, where it reaches a subscript key, a listed lookup or a dict read
-        if isinstance(n, ast.Subscript) and isinstance(n.slice, ast.Constant):
+        # the consumer clause: a constant that merely CONTAINS the name, where it reaches a subscript key, a listed lookup or a dict read;
+        # the slice is walked as the arguments are (review round 4, extra6-2: tested as a direct Constant, an f-string key passed)
+        if isinstance(n, ast.Subscript):
             string_births(n.slice, "as a subscript key")
         if isinstance(n, ast.Call):
             last = n.func.id if isinstance(n.func, ast.Name) else n.func.attr if isinstance(n.func, ast.Attribute) else ""
@@ -1582,9 +1586,10 @@ class TheCountersOneSite(unittest.TestCase):
 # type-parameter nodes that 3.14 and 3.12 add, so the grammar table's newest classes are read by the census and not only listed);
 # the round-4 fixes moved F07d from the assembled class to the string class and F45 from none to string (the pin refuses a constant
 # spelling a door whole wherever it appears, so the name bound to a variable is read where it is bound and a dict key spelled whole
-# is read under its Dict) and added six rows (F07f, F07g, F64 to F67: the f-string handed to getattr with and without a piece
+# is read under its Dict) and added ten rows (F07f, F07g, F64 to F67: the f-string handed to getattr with and without a piece
 # interpolated, and the four doors the round found on no list, methodcaller, itemgetter over vars(jd), a partial of getattr and a
-# match-mapping key). The bodies' `romp_judge` is the stub's name when loaded. For a form of the string or
+# match-mapping key; F30e to F30h: the subscript keys the slice walk reaches, an f-string, a conditional, a walrus and a
+# concatenation that keeps the needle in one piece). The bodies' `romp_judge` is the stub's name when loaded. For a form of the string or
 # the assembled class the enumeration also runs the kernel-wide pin, _loader_births, over the form's file and expects a birth from
 # the first and none from the second, so each class is held on the side it falls.
 _STUB_JUDGE, _STUB_KERNEL = "romp_judge_c7pin_stub", "romp_kernel_c7pin_stub"
@@ -1750,6 +1755,17 @@ _LOADER_FORMS = [
      "def f(sid):\n    return jd.__getattribute__('load_goals_shared')(sid)\n", 'f', None, [], 0, 'string'),
     ('F30d', "jd.__dict__.get('<loader>')",
      "def f(sid):\n    return jd.__dict__.get('load_goals_shared')(sid)\n", 'f', None, [], 0, 'string'),
+    # Subscript keys the slice walk reaches (review round 4, extra6-2: the slice was tested as a direct Constant). The first three are
+    # whole spellings the value rule reaches as well; the fourth keeps the needle in one piece and spells no door whole, so the slice
+    # walk alone holds it.
+    ('F30e', 'f-string as a subscript key (one Constant, the whole name)',
+     "def f(sid):\n    return vars(jd)[f'load_goals_shared'](sid)\n", 'f', None, [], 0, 'string'),
+    ('F30f', 'conditional expression as a subscript key',
+     "def f(sid):\n    return vars(jd)['load_goals_shared' if X else 'load_goals'](sid)\n", 'f', None, [], 0, 'string'),
+    ('F30g', 'walrus as a subscript key',
+     "def f(sid):\n    return vars(jd)[(k := 'load_goals_shared')](sid)\n", 'f', None, [], 0, 'string'),
+    ('F30h', 'concatenation as a subscript key that keeps the needle in one piece (the slice walk alone catches it)',
+     "def f(sid):\n    return vars(jd)['load_goals_' + 'shared'](sid)\n", 'f', None, [], 0, 'string'),
     ('F31', 'keyword argument NAMED like the loader (no loader referenced)',
      'def g(**k):\n    return k\ndef f(sid):\n    return g(load_goals_shared=sid)\n', 'f', None, [], 0, 'none'),
     ('F32', 'a PARAMETER named like the loader, called (not the loader)',
@@ -1918,12 +1934,13 @@ class TheCensusOverEveryForm(unittest.TestCase):
 
     def test_every_loader_form_is_a_site_where_the_table_says_or_a_stated_limit(self):
         here = sys.version.split()[0]
-        self.assertEqual(len(_LOADER_FORMS), 108, "the table carries the lens's 95 loader forms, a consolidation-pass verifier's four, the "
+        self.assertEqual(len(_LOADER_FORMS), 112, "the table carries the lens's 95 loader forms, a consolidation-pass verifier's four, the "
                                                   "round-3 fixes' three (a t-string interpolation, a type-parameter bound and a type-parameter "
-                                                  "default) and the round-4 fixes' six (methodcaller, itemgetter over vars(jd), a partial of "
-                                                  "getattr, a match-mapping key, and an f-string handed to getattr with and without a piece "
-                                                  "interpolated)")
-        self.assertEqual(len({row[0] for row in _LOADER_FORMS}), 108, "with distinct ids")
+                                                  "default) and the round-4 fixes' ten (methodcaller, itemgetter over vars(jd), a partial of "
+                                                  "getattr, a match-mapping key, an f-string handed to getattr with and without a piece "
+                                                  "interpolated, and four subscript keys: an f-string, a conditional, a walrus and a "
+                                                  "concatenation that keeps the needle in one piece)")
+        self.assertEqual(len({row[0] for row in _LOADER_FORMS}), 112, "with distinct ids")
         counted, limits, gated = 0, {}, []
         for fid, form, body, dotted, needs, sites, jds, limit in _LOADER_FORMS:
             self.assertEqual(limit is None, bool(sites), "%s (%s): a form the census counts names no limit and a form it misses names one" % (fid, form))
@@ -1957,12 +1974,12 @@ class TheCensusOverEveryForm(unittest.TestCase):
                 counted += 1
             else:
                 limits[limit] = limits.get(limit, 0) + 1
-        self.assertEqual(counted + sum(limits.values()) + len(gated), 108, "every row was counted, a limit, or gated: %d, %r, %r" % (counted, limits, gated))
-        self.assertEqual(limits, {"string": 18, "assembled": 3, "outside": 9, "wrapper": 2, "none": 5},
+        self.assertEqual(counted + sum(limits.values()) + len(gated), 112, "every row was counted, a limit, or gated: %d, %r, %r" % (counted, limits, gated))
+        self.assertEqual(limits, {"string": 22, "assembled": 3, "outside": 9, "wrapper": 2, "none": 5},
                          "the missed forms by limit: the lens's classification with its string class split by what the kernel-wide pin refuses "
                          "(the round-4 fixes moved F07d and F45 into the string class, a constant spelling a door whole being refused wherever "
-                         "it appears, and added five string rows for the doors the round found on no list and one assembled row for the "
-                         "f-string that splits the needle)")
+                         "it appears, and added nine string rows, five for the doors the round found on no list and four for the subscript "
+                         "keys the slice walk reaches, and one assembled row for the f-string that splits the needle)")
 
     def test_every_bump_form_reads_as_the_table_says(self):
         self.assertEqual(len(_BUMP_FORMS), 20, "the table carries the lens's 20 bump forms")
