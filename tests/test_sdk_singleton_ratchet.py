@@ -173,6 +173,11 @@ alphabetically, and each case's `before` is what the previous case left):
   Z, the first-window flag's pin (a pair): One.a's lazy first build passes unnamed, and the follower's class Moved
     moves jd.STATE for its one test without building, so its window sees the object its module's start read found
     over a root that is not jd.STATE; the flag says this is not the worker's first window, and nothing is said.
+  U, a setUpClass that completes a leak (builds over a sandbox, restores jd.STATE, removes the sandbox): two error
+    lines for one leak, the inherited gone report on One.a and One's class boundary at One.b's teardown naming the
+    change from None with the gone clause and the sandbox remedy; the module end is quiet on the named object.
+  V, the same leak completed by setUpModule: a's inherited report, the class end quiet (its start read saw the
+    object) and the module end named at b's teardown with the gone clause and the sandbox remedy.
   M, class teardowns that install a value: One.a builds first; Two's tearDownClass builds over a kept sandbox (the
     class boundary names the change from the run root's backend to the sandbox's, sandbox remedy); Three's
     tearDownClass resets the slot to None (object remedy, no sandbox sentence); Four does nothing under the None and
@@ -247,8 +252,9 @@ fixture READS and the branch each read feeds, with the case that reds under each
     (L.b shows none); compared to its last read only (K.One passes silently); judged without the restore exemption
     (K.Two errors); the named skip dropped (a second report at the class or module end of A, B, C, D, E, K and L;
     where the scope's last case fails on its own the boundary failure folds into that item's one teardown report, so
-    those runs pin it by reading the boundary text, not the count); the same-object gone transition deleted (D and
-    L); the put-back-of-a-gone-object branch deleted (P's boundary text disappears); the final start-to-end judgment
+    those runs pin it by reading the boundary text, not the count); the quiet rule reading the inherited report's
+    list too, the one-list behaviour (U's class boundary and V's module boundary disappear); the same-object gone
+    transition deleted (D and L); the put-back-of-a-gone-object branch deleted (P's boundary text disappears); the final start-to-end judgment
     deleted (M's three boundary verdicts disappear); the object it accused not named (D.Two.a gets an inherited
     report); the start read replaced by a null record (K.Two and others); the yield to the tests' windows removed
     (N: boundary text on every accused class, Two.b errors), without its first-window condition (Six's boundary
@@ -817,6 +823,46 @@ SCRATCH_Z2 = textwrap.dedent("""\
 
         def test_a_does_nothing_under_a_singleton_over_the_run_root(self):
             assert km._sdk_backend is not None and km._sdk_backend.state_dir != jd.STATE
+""")
+
+SCRATCH_U = SCRATCH_HEAD + textwrap.dedent("""\
+
+    class One(unittest.TestCase):
+        root = None
+
+        @classmethod
+        def setUpClass(cls):
+            saved = jd.STATE
+            One.root = sandbox()
+            build_over(One.root)
+            jd.STATE = saved
+            shutil.rmtree(One.root)                   # the leak completed by the setup: built, jd.STATE restored, the root removed
+
+        def test_a_meets_the_gone_object_first(self):
+            assert km._sdk_backend is not None and not km._sdk_backend.state_dir.exists()
+
+        def test_b_does_nothing(self):
+            pass
+""")
+
+SCRATCH_V = SCRATCH_HEAD + textwrap.dedent("""\
+
+    _root = None
+
+    def setUpModule():
+        global _root
+        saved = jd.STATE
+        _root = sandbox()
+        build_over(_root)
+        jd.STATE = saved
+        shutil.rmtree(_root)                          # the same leak, completed by the module's setup after its start read
+
+    class One(unittest.TestCase):
+        def test_a_meets_the_gone_object_first(self):
+            assert km._sdk_backend is not None and not km._sdk_backend.state_dir.exists()
+
+        def test_b_does_nothing(self):
+            pass
 """)
 
 SCRATCH_M = SCRATCH_HEAD + textwrap.dedent("""\
@@ -1831,6 +1877,49 @@ class ALaterModulesClassMovesJdStateUnderAnUnnamedFirstBuild(_NestedRun, unittes
                               ("test_scratch2.py", "::Moved"), ("test_scratch2.py", "")):
             self.assertIsNone(boundary(self.out, scope, module=module), self.out)
         self.assertEqual(boundary_scopes(self.out), set(), self.out)
+
+
+class ClassSetupCompletesALeak(_NestedRun, unittest.TestCase):
+    """U: setUpClass builds over a sandbox, restores jd.STATE and removes the sandbox before any test. Two error lines
+    for one leak: the inherited gone report on One.a (its cause clause already names a class or module setup) and One's
+    class boundary at One.b's teardown, naming the change from None with the gone clause and the sandbox remedy. At
+    the round-3 head the report's naming silenced the boundary (one list held both kinds of naming), so the leak was
+    never attributed to the scope; the boundary's quiet rule now reads the verdict list alone."""
+    SCRATCH = SCRATCH_U
+    ERRORS = 2
+
+    def test_the_first_test_reports_the_gone_object_as_inherited(self):
+        text = self.assertInherited("One", "test_a_meets_the_gone_object_first")
+        self.assertTrue(text.startswith("SdkBackend over "), text)
+        self.assertIn("a class or module setup or teardown", text)
+
+    def test_the_class_boundary_names_the_setups_leak_with_the_gone_clause_and_the_sandbox_remedy(self):
+        text = self.assertBoundaryFailed("::One", "One.test_b_does_nothing")
+        self.assertTrue(text.startswith("changed after its teardown: before None (not built), after SdkBackend over "), text)
+        self.assertTrue(text.endswith(", " + GONE), text)
+        self.assertIsNone(boundary(self.out, ""), "the module end is quiet on the object the class end named: %s" % self.out)
+        self.assertEqual(boundary_scopes(self.out), {"test_scratch.py::One"}, self.out)
+        self.assertNotIn("sub-exceptions", self.out, "the two lines land on two items, no fold: %s" % self.out)
+
+
+class ModuleSetupCompletesALeak(_NestedRun, unittest.TestCase):
+    """V: the same leak completed by setUpModule, which runs after the module boundary's start read and before the
+    class's: One.a carries the inherited gone report, One's class end is quiet (its start read saw the object) and the
+    module end names the change from None at One.b's teardown with the gone clause and the sandbox remedy."""
+    SCRATCH = SCRATCH_V
+    ERRORS = 2
+
+    def test_the_first_test_reports_the_gone_object_as_inherited(self):
+        text = self.assertInherited("One", "test_a_meets_the_gone_object_first")
+        self.assertIn("a class or module setup or teardown", text)
+
+    def test_the_module_boundary_names_the_setups_leak_and_the_class_end_is_quiet(self):
+        text = self.assertBoundaryFailed("", "One.test_b_does_nothing")
+        self.assertTrue(text.startswith("changed after its teardown: before None (not built), after SdkBackend over "), text)
+        self.assertTrue(text.endswith(", " + GONE), text)
+        self.assertIsNone(boundary(self.out, "::One"), "the class end is quiet, its start read saw the object: %s" % self.out)
+        self.assertEqual(boundary_scopes(self.out), {"test_scratch.py"}, self.out)
+        self.assertNotIn("sub-exceptions", self.out, self.out)
 
 
 class ClassTeardownInstallsAValue(_NestedRun, unittest.TestCase):
