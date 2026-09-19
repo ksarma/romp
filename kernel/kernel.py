@@ -65654,9 +65654,10 @@ JOBS_PASS_S = 0.5                                  # the jobs thread's pace betw
 
 def _jobs_cycle():
     """ONE pass of the jobs thread: the pass's liveness snapshot and scopes opened exactly as _pusher_cycle opens the pusher's
-    (thread-confined, so the two loops never share a snapshot), _jobs_pass inside them, the scopes closed in the finally, the
-    pass counted under /perf `jobs`, and the boot's first pass sampled and reported to the boot row like the pusher's first
-    cycle."""
+    (thread-confined, so the two loops never share a snapshot, and the subagents-tree scope of 2026-09-19 makes the pass the
+    event a tree is validated once per, as the cycle is on the pusher), _jobs_pass inside them, the scopes closed in the
+    finally, the pass counted under /perf `jobs`, and the boot's first pass sampled and reported to the boot row like the
+    pusher's first cycle."""
     _t = time.monotonic()
     first = not _BOOT_HEALTH_DONE[0] and _BOOT_FIRST["jobs"] is None
     if first:
@@ -65668,6 +65669,8 @@ def _jobs_cycle():
     _live_scope.snapshot = live_map
     try:
         _live_scope.paths = {}
+        _subagent_scope_open()                  # the pass's subagents-tree scope (_subagent_scope): the nudge look's reads of a
+        #                                         tree validate it once per pass, and the interrupt tick's forget moves the gen
         _live_scope.sessions = {}
         _live_scope.auth = {}
         _live_scope.msgsum = [_MSGSUM_UNSET]
@@ -65679,6 +65682,7 @@ def _jobs_cycle():
         _live_scope.snapshot = None
         _live_scope.names = None
         _live_scope.paths = None
+        _subagent_scope_close()
         _live_scope.sessions = None
         _live_scope.auth = None
         _live_scope.msgsum = None
