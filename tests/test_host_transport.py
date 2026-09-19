@@ -202,6 +202,93 @@ class SpawnSpec(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(os.lstat(Path(loose) / "hosts").st_mode), 0o755)
         self.assertFalse((Path(loose) / "hosts" / SID).exists(), "the spawn stopped at the directory")
 
+    def test_a_symlink_at_the_session_directory_fails_the_spawn_and_the_directory_is_born_0700_by_its_mkdir(self):
+        """The sibling one line below hosts/ (the socket-mode fix's round 2, 2026-09-19): round 1 put lstat, the
+        foreign-owner refusal and the chmod read-back on hosts/ and left hosts/<sid>/ on a bare mkdir and a chmod never
+        read back, so a symlink planted there was followed and the spec written through it. Now the same helper
+        (sh.owner_only_dir) makes both. The kernel's road: a symlink at hosts/<sid>/ fails write_spawn_spec with OSError
+        naming the host directory, nothing is written through the link and the target's mode is untouched; a loose
+        hosts/<sid>/ of ours is tightened and read back, and a tighten that does not take fails the spawn with no spec
+        written. And the creation mode is the mkdir's own, read at the FIRST lstat after it (0700 under a 000 umask, no
+        chmod made), since every earlier assertion read the final mode, which the chmod a line later supplied whatever
+        the mkdir did; on a second fresh root with os.chmod a no-op the directory is still 0700 and the spec lands."""
+        self.addCleanup(os.umask, os.umask(0o000))
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1}
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        sh.hosts_dir(root)
+        target = Path(root) / "elsewhere"
+        target.mkdir(mode=0o755)
+        sdir = Path(root) / "hosts" / SID
+        sdir.symlink_to(target)
+        with self.assertRaises(OSError) as cm:
+            ht.write_spawn_spec(root, SID, spec)
+        self.assertTrue(str(cm.exception).startswith("host directory "), str(cm.exception))
+        self.assertIn("not a directory", str(cm.exception))
+        self.assertEqual(sorted(p.name for p in target.iterdir()), [], "no spec written through the link")
+        self.assertEqual(stat.S_IMODE(os.stat(target).st_mode), 0o755, "the target's mode untouched")
+        self.assertTrue(sdir.is_symlink(), "the link is left, not replaced")
+        fresh = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, fresh, True)
+        sdir = Path(fresh) / "hosts" / SID
+        chmods, reads = [], []
+        real_chmod, real_lstat = os.chmod, os.lstat
+
+        def chmod(p, mode, *a, **k):
+            chmods.append((Path(p), mode))
+            return real_chmod(p, mode, *a, **k)
+
+        def lstat(p, *a, **k):
+            st = real_lstat(p, *a, **k)
+            if Path(p) == sdir:
+                reads.append(stat.S_IMODE(st.st_mode))
+            return st
+        with mock.patch.object(os, "chmod", chmod), mock.patch.object(os, "lstat", lstat):
+            p = ht.write_spawn_spec(fresh, SID, spec)
+        self.assertEqual(reads, [0o700], "hosts/<sid>/ is 0700 at the first read after its mkdir: the mkdir's own mode")
+        self.assertEqual([c for c in chmods if c[0] == sdir], [], "no chmod on a directory born owner-only")
+        self.assertEqual(stat.S_IMODE(os.stat(p).st_mode), 0o600)
+        noop = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, noop, True)
+        with mock.patch.object(os, "chmod", lambda *a, **k: None):
+            p = ht.write_spawn_spec(noop, SID, spec)
+        self.assertEqual(stat.S_IMODE(os.lstat(p.parent).st_mode), 0o700, "0700 with no chmod to lean on, on either directory")
+        self.assertEqual(stat.S_IMODE(os.lstat(p.parent.parent).st_mode), 0o700)
+        self.assertTrue(p.exists())
+        loose = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, loose, True)
+        sh.hosts_dir(loose)
+        (Path(loose) / "hosts" / SID).mkdir(mode=0o755)
+        with mock.patch.object(os, "chmod", lambda *a, **k: None):
+            with self.assertRaises(OSError) as cm:
+                ht.write_spawn_spec(loose, SID, spec)
+        self.assertIn("stays group/world-accessible", str(cm.exception))
+        self.assertTrue(str(cm.exception).startswith("host directory "), str(cm.exception))
+        self.assertFalse((Path(loose) / "hosts" / SID / "spawn.json").exists(), "the spawn stopped at the directory")
+        p = ht.write_spawn_spec(loose, SID, spec)
+        self.assertEqual(stat.S_IMODE(os.lstat(p.parent).st_mode), 0o700, "a loose one of ours is tightened, read back, and the spec lands")
+
+    def test_the_reference_states_the_sockets_contract_and_the_directory_refusal(self):
+        """The docs paragraph that states the user-facing contract of the socket-mode fix, pinned sentence by sentence
+        (the fix's round 2, 2026-09-19: the existing flattened-paragraph pin above stops short of these sentences, and a
+        set-aside called a docs paragraph untestable when the same test file pins prose from the same paragraph by exact
+        substring). The paragraph is sliced from its socket anchor to the next blank line, so a re-wrap leaves the pin
+        standing and a deleted sentence fails it. A doc pin guards the doc against drifting from a contract the code
+        still keeps; the code itself is pinned by tests/test_session_host.py and the SpawnSpec cases above."""
+        flat = lambda s: " ".join(s.split())
+        doc = open(os.path.join(ROOT, "docs", "reference.md")).read()
+        i = doc.index("serves one Unix socket (`hosts/<sid8>.sock`")
+        para = flat(doc[i:doc.index("\n\n", i)])
+        self.assertIn("mode 0600 from the moment the path exists", para)
+        self.assertIn("a published path longer than the socket path budget, 107 bytes on Linux, is refused before anything is bound and the host exits", para)
+        self.assertIn("`hosts/` itself is made 0700 when the kernel writes a host's spawn specification and when a host binds its socket", para)
+        self.assertIn("each `hosts/<sid>/` when the specification is written and when the host opens its journal", para,
+                      "the sibling directory is named with its two creators")
+        self.assertIn("one that is a symlink, that belongs to another user, or that stays loose after the tightening is refused on every one of them: "
+                      "the spawn fails with a launch error naming the directory", para,
+                      "the refusal is stated where the tightening is: a symlinked hosts/ worked before and hard-fails every spawn now")
+        self.assertIn("point the state root there, `ROMP_STATE_DIR` or `XDG_STATE_HOME`", para, "and the operator's remedy beside it")
+
     @unittest.skipUnless(SDK, "the SDK is not importable here")
     def test_the_spec_fields_track_what_the_sdk_transport_reads(self):
         import claude_agent_sdk._internal.transport.subprocess_cli as scli

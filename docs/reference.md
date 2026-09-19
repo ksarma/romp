@@ -2023,7 +2023,14 @@ pid and random digits, tightens that, and renames it into place; a published
 path longer than the socket path budget, 107 bytes on Linux, is refused
 before anything is bound and the host exits; `hosts/` itself is made 0700
 when the kernel writes a host's spawn specification and when a host binds its
-socket, and a loose one is tightened on those same two roads), and holds the
+socket, and each `hosts/<sid>/` when the specification is written and when
+the host opens its journal; a loose one is tightened on those same roads, and
+one that is a symlink, that belongs to another user, or that stays loose
+after the tightening is refused on every one of them: the spawn fails with a
+launch error naming the directory. A `hosts/` symlinked onto another volume
+worked before this check and now stops every session on the machine until
+the link is replaced by a directory; to keep the state elsewhere, point the
+state root there, `ROMP_STATE_DIR` or `XDG_STATE_HOME`), and holds the
 session's lease as the holder. The kernel keeps the SDK client, its hooks and
 its permission callback and speaks to the host over the socket. On a
 restart the drain detaches from every host instead of ending its CLI: the

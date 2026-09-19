@@ -232,6 +232,10 @@ def _ensure_judge_scratch(path=None):
     call rather than run it from somewhere else: a cwd another account owns is a cwd they can plant a
     .claude/ in, and a quiet fallback would hide exactly the breakage we need to see (CLAUDE.md,
     authoritative sources — fail loudly, don't degrade silently)."""
+    # A SECOND COPY of these checks is kernel/session_host.py's owner_only_dir (the session host's hosts/ and
+    # hosts/<sid>/, 2026-09-19); it does not import this module, which makes the state root at import. A
+    # hardening here belongs there too: tests/test_judge_scratch_private.py OwnerOnlyParity runs both over
+    # one table of setups and goes red when their outcomes part.
     d = path or JUDGE_SCRATCH
     os.makedirs(d, mode=0o700, exist_ok=True)
     st = os.lstat(d)                            # lstat, not stat: a symlink planted in our place would
