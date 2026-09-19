@@ -533,15 +533,30 @@ def restore_env(name, prior):
 #     if it has one, so the test runs and its own transition is still judged (the first form failed the
 #     setup, and one test per worker lost its run whenever a leak escaped every window). The same report,
 #     at the worker's FIRST test window only, covers a real backend over a directory that stands but is not
-#     jd.STATE: pytest collects every module before the first test runs, so at that window only import-time
-#     code has run, and a singleton over another root there is import-time code's build over a root that is
-#     not the run's, or its move of jd.STATE after the build, left in place (the wording names both). Later
-#     windows do not apply that test: a legitimate first build followed by a STATE move the judge fixture
-#     names leaves the same picture, and a test window or a boundary made it, where it was judged.
-# Every object a verdict names (own, boundary, inherited) goes on a module-level list of STRONG
-# references (_SDK_NAMED; identity membership, strong so an id is never reused by a later object), which
-# is what makes "once" and the boundary's quiet-on-a-named-object rule work; under xdist that is once per
-# worker process.
+#     jd.STATE, and only when that backend IS the object the module's own start read found (_SDK_MODULE_START,
+#     compared by identity, never by state_dir or class): at that window only import-time code and any fixture
+#     of a scope wider than the function has run (pytest collects every module before the first test runs; a
+#     session- or package-scoped fixture sets up before the module boundary's start read, and setUpModule,
+#     setUpClass and a module- or class-scoped fixture after it, the order a scratch run showed), so a
+#     singleton over another root that the start read saw is import-time code's or such a fixture's build over
+#     a root that is not the run's, or its move of jd.STATE after the build, left in place (the wording names
+#     both causes and both shapes), while one the start read did NOT see was installed by the module's or a
+#     class's own setup and is left unnamed here, so the boundary that brackets the install judges it, names
+#     the scope and prints the sandbox remedy. Before the identity term the report fired on that object too,
+#     blamed import-time code, gave no remedy, and its naming silenced the boundary that would have been right.
+#     A missing module start read refuses the report. Later windows do not apply that test: a legitimate first
+#     build followed by a STATE move the judge fixture names leaves the same picture, and a test window or a
+#     boundary made it, where it was judged.
+# Two module-level lists of STRONG references (identity membership; strong so an id is never reused by a
+# later object) keep the two kinds of naming apart. Every object a VERDICT names (a test's own, a boundary's)
+# goes on _SDK_NAMED, the list the boundary's quiet-on-a-named-object rule consults. Every object the
+# INHERITED report named goes on _SDK_REPORTED, and the report is silent on an object in either list, which
+# is what makes "once" work (under xdist, once per worker process). The boundary never consults
+# _SDK_REPORTED: an inherited report says what a test did NOT do, not what its scope did, so a class or
+# module setup that completes a leak (builds, restores jd.STATE and removes the root before any test) yields
+# two error lines for one leak, the inherited gone report on the scope's first test and the boundary
+# verdict, naming the scope with the sandbox remedy, on its last. With one list the report's naming silenced
+# the boundary and the leak was never attributed to the scope.
 #
 # WHAT ONE READ RECORDS (_sdk_read): the value in the shared kernel's slot (vars(km)["_sdk_backend"]),
 # the marker (the function object kernel.py defines as _sdk_locked; a re-execution replaces it; None when
@@ -656,8 +671,12 @@ _SdkWindow = collections.namedtuple("_SdkWindow", "seq before after ref")
 _SDK_LAST = _SdkRead(None, None, None, None, None)     # the last read anywhere in this worker (the boundary's L)
 _SDK_READS = 0                                         # reads so far in this worker; a scope keeps the count at its start read
 _SDK_WINDOWS = []                                      # the test windows that changed the slot since the module started
-_SDK_FIRST_WINDOW = True                               # no test window has run yet in this worker: only import-time code has
-_SDK_NAMED = []                                        # strong references to every object a verdict named
+_SDK_FIRST_WINDOW = True                               # no test window has run yet in this worker: only import-time code and any
+                                                       # fixture of a scope wider than the function has
+_SDK_MODULE_START = None                               # the current module boundary's start read (_SdkRead); the first-window
+                                                       # kept-root report is taken only for the object it found
+_SDK_NAMED = []                                        # strong references to every object a verdict named (a test's own, a boundary's)
+_SDK_REPORTED = []                                     # strong references to every object the inherited report named
 _SDK_REAL = ("romp_sdk_backend", "SdkBackend")
 _SDK_GONE = ", whose state_dir is no longer a directory"
 _SDK_REMEDY_A = ("A test that reaches km._sdk() under a sandboxed jd.STATE builds the kernel's backend singleton over the "
@@ -700,12 +719,23 @@ def _sdk_is_real(be):
 
 
 def _sdk_named(be):
+    """Whether a verdict (a test's own, a boundary's) has named the object: the boundary's quiet rule reads this alone."""
     return any(x is be for x in _SDK_NAMED)
 
 
 def _sdk_name(be):
     if be is not None and be is not False and not _sdk_named(be):
         _SDK_NAMED.append(be)
+
+
+def _sdk_reported(be):
+    """Whether the inherited report has named the object; with _sdk_named, that report's once-per-worker rule."""
+    return any(x is be for x in _SDK_REPORTED)
+
+
+def _sdk_report(be):
+    if be is not None and be is not False and not _sdk_reported(be):
+        _SDK_REPORTED.append(be)
 
 
 def _sdk_singleton_text(be):
@@ -726,10 +756,13 @@ _SDK_INHERITED_TAIL = ("This test did not make it: %s, outside every window the 
 
 def _sdk_inherited(before, first):
     """The once-per-worker report on a singleton state no window made, or None: a real backend over a directory that is
-    gone, at any test; or, at the worker's FIRST test window (`first`), a real backend over a directory other than
-    jd.STATE, which only import-time code could have made (every module is collected before the first test runs)."""
+    gone, at any test; or, with `first` (the worker's FIRST test window, AND the object is the one the module's own
+    start read found), a real backend over a directory other than jd.STATE, which only import-time code or a fixture
+    of a scope wider than the function could have made: at that window nothing else has run, and an object the start
+    read did not see was installed by the module's or a class's own setup, which that scope's boundary judges. Silent
+    on an object either list has named (_sdk_named, _sdk_reported)."""
     be = before.be
-    if not _sdk_is_real(be) or _sdk_named(be):
+    if not _sdk_is_real(be) or _sdk_named(be) or _sdk_reported(be):
         return None
     if before.isdir is False:
         return ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that no longer exists: %s. %s"
@@ -739,8 +772,9 @@ def _sdk_inherited(before, first):
         return ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that is not jd.STATE, before "
                 "any test in this worker has run: %s, jd.STATE %s. %s"
                 % (_sdk_singleton_text(be), before.jd_state,
-                   _SDK_INHERITED_TAIL % "import-time code did, building the singleton over a root that is not the run's, or "
-                   "moving jd.STATE after the build and leaving it there"))
+                   _SDK_INHERITED_TAIL % "import-time code did, or a session- or package-scoped fixture did (one that set up "
+                   "before this module's own reads), building the singleton over a root that is not the run's, or moving "
+                   "jd.STATE after the build and leaving it there"))
     return None
 
 
@@ -829,10 +863,13 @@ def _sdk_judge_scope(start, last, end, windows):
 def _sdk_singleton_restored(request):
     global _SDK_FIRST_WINDOW
     before = _sdk_read()
-    inherited = _sdk_inherited(before, _SDK_FIRST_WINDOW)
+    # The kept-root report at the first window is taken only for the object the module's own start read found (identity):
+    # a value installed after that read is the module's or a class's own setup, judged at that scope's boundary.
+    first = _SDK_FIRST_WINDOW and _SDK_MODULE_START is not None and before.be is _SDK_MODULE_START.be
+    inherited = _sdk_inherited(before, first)
     _SDK_FIRST_WINDOW = False
     if inherited is not None:
-        _sdk_name(before.be)               # named now, so the tests after this one that inherit the object are quiet
+        _sdk_report(before.be)             # reported now, so the tests after this one that inherit the object are quiet
     yield
     after = _sdk_read()
     verdict = _sdk_judge(before, after, before.jd_state)     # the root the test inherited: the one value it could not have made
@@ -872,7 +909,9 @@ def _sdk_singleton_class_boundary(request):
 
 @pytest.fixture(autouse=True, scope="module")
 def _sdk_singleton_module_boundary(request):
+    global _SDK_MODULE_START
     start = _sdk_read()
+    _SDK_MODULE_START = start              # the first-window report's reference object (_sdk_singleton_restored)
     reads_at_start = _SDK_READS
     yield
     try:
