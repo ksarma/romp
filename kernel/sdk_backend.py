@@ -12358,7 +12358,22 @@ class SdkSession:
         started or has since spoken for is the stream's, so a later report that lists it with a terminal status does not
         retire it (its end frame is the designed signal, and the payload lists in-flight work); "trust presence always"
         is a rule about the rows awaiting a verdict, not every row (the adoption lens's fourth item, noted and not a
-        defect). A report that confirms, retires, holds and adopts nothing this kernel tracks returns before the line:
+        defect). THE ADOPTION'S ONE PRECONDITION IS THAT THE LIVE SET LACKS THE ID, so a report whose registry snapshot
+        predates an end frame this kernel already processed would re-mint the ended task as a live row, held on every
+        later omission for any type but a shell and re-seeded across a restart through the mirror, until the CLI's stream
+        or a later terminal listing ends it (round 5 of the reviewer's review, 2026-09-19, its extra7-1, taken in round 6
+        as a disclosure: pre-existing, reproduced at the delta base with no _reported_tasks at all; the re-arm is the exit
+        this PR adds, not the cause). The road is THEORETICAL at the bundled CLI 2.1.266, by enumeration and not by sample:
+        every task_notification frame that build emits comes from one function (byte 180047668 of the installed binary,
+        behind a once-per-task-id claim), and its 35 call sites were enumerated by matching `_i(` over the binary (86
+        matches: 17 definitions and 34 calls of other functions given that two-letter name in nested scopes, none passing
+        a status) and reading each: 25 pass a literal stopped, completed or failed and 10 compute one onto that set; 33
+        write a terminal status into the CLI's task registry, or remove the entry, in the same synchronous step as the
+        emit, and the two others run on process-exit paths (the exit handoff and the print wind-down) after which no
+        turn-end report follows; the report is built from that registry at the Stop hook's entry, so the one road left is
+        an ordering race inside the CLI (a snapshot taken before the transition, delivered after the frame), which the
+        round 5 refuter could not trigger by direct testing. A report that confirms, retires, holds and adopts nothing
+        this kernel tracks returns before the line:
         NO line and NO poke (a report about nothing counted here is not an event; round 5, extra8-3 pins the quiet).
         The line's clauses say "counted live for the surviving CLI" (round 5; its kernel-3): they name rows the reg
         seeded AND rows a report adopted, so "the reg named" was false for an adopted row the reg never held; the seed's

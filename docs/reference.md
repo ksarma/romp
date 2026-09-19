@@ -693,7 +693,14 @@ background tasks, Task agents, Workflow runs and hook-only subagents alike. The
 bundled CLI also pushes a snapshot of its background tasks
 (`background_tasks_changed`) behind a repeated initialize; it arrives after
 the handshake, covers running non-foreground tasks only, and is not applied
-(settled by execution against 2.1.266, 2026-09-19). A
+(settled by execution against 2.1.266, 2026-09-19). A report whose snapshot of
+the CLI's task registry predates an end frame the kernel already processed
+would count the ended task as running again, held until the CLI's stream or a
+later report ends it. Every `task_notification` call site in the bundled CLI
+2.1.266 was enumerated (one emitter, 35 call sites): each carries a terminal
+status, 33 behind a write of that status into the task registry or a removal
+of the entry and two on process-exit paths after which no report follows, so
+that road is theoretical at this CLI version. A
 follower whose CLI bills a credential in the CLI's own environment that romp's
 per-session settings layer cannot suppress (Claude Code's settings carry no
 apiKeyHelper) is left where it is, said in one line at each write of the

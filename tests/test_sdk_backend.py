@@ -11367,6 +11367,15 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertIn("The bundled CLI also pushes a snapshot of its background tasks (`background_tasks_changed`) behind a repeated "
                       "initialize; it arrives after the handshake, covers running non-foreground tasks only, and is not applied "
                       "(settled by execution against 2.1.266, 2026-09-19).", doc)
+        # round 6 of the reviewer's review (2026-09-19; round 5's extra7-1, taken as a disclosure carrying its derivation): the
+        # re-mint road a report whose snapshot predates a processed end frame would open, and why it is theoretical at the
+        # bundled CLI, by enumeration of every task_notification call site. Red on 0f11cca0e (the sentences are new there)
+        self.assertIn("A report whose snapshot of the CLI's task registry predates an end frame the kernel already processed would "
+                      "count the ended task as running again, held until the CLI's stream or a later report ends it. Every "
+                      "`task_notification` call site in the bundled CLI 2.1.266 was enumerated (one emitter, 35 call sites): each "
+                      "carries a terminal status, 33 behind a write of that status into the task registry or a removal of the entry "
+                      "and two on process-exit paths after which no report follows, so that road is theoretical at this CLI "
+                      "version.", doc)
         self.assertNotIn("drops what nothing spoke for", doc)
         # the round 4 addendum (2026-09-19; the adoption lens): what a task counted from the report alone lacks, disclosed
         self.assertIn("A task counted from the report alone starts, for the elapsed time shown, at the report's moment (the report "
@@ -14430,6 +14439,33 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         s._on_task_event("task_progress", {"task_id": "ag-9", "task_type": "local_agent", "tool_use_id": "tu-9"})
         s._on_task_event("task_progress", {"task_id": "ag-9", "task_type": "local_agent"})
         self.assertEqual(s._bg_tasks["ag-9"]["toolUseId"], "tu-9")
+
+    def test_a_row_that_has_its_id_keeps_it_against_a_frame_carrying_another_and_a_repeat_id_frame_pokes_nothing(self):
+        # round 6 of the reviewer's review (2026-09-19; round 5's tests-2, taken with the refuter's strengthening): the
+        # clause "a row that has its id keeps it" was pinned above by a frame replaying the SAME id alone, which cannot
+        # tell a keep from a relearn, and the clause guards the poke too, so the finer mutation (learn every frame's id)
+        # survived an id-only pin. Two discriminating frames after the learn: one carrying a DIFFERENT id, which leaves
+        # the row and the reg mirror reading the first id, and one repeating the learned id, which changes nothing and
+        # pokes nothing; the learn itself pokes exactly once. A characterisation pin of the clause the round 4 addendum
+        # added: green on 0f11cca0e by design, red under the mutation (the `not entry.get("toolUseId")` guard dropped)
+        self._helper()
+        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        self._connect()
+        asyncio.run(s._stop_hook({"background_tasks": [
+            {"id": "ag-9", "type": "subagent", "status": "running", "description": "Running a reviewer agent"}]}, None, None))
+        self.assertEqual(s._bg_tasks["ag-9"]["toolUseId"], "", "adopted: no id yet")
+        with mock.patch.object(self.be, "_poke", wraps=self.be._poke) as poke:
+            s._on_task_event("task_progress", {"task_id": "ag-9", "task_type": "local_agent", "tool_use_id": "tu-9"})
+            self.assertEqual(poke.call_count, 1, "the learn is a change: one poke, the mirror rewritten")
+            s._on_task_event("task_progress", {"task_id": "ag-9", "task_type": "local_agent", "tool_use_id": "tu-9"})
+            self.assertEqual(poke.call_count, 1, "a frame repeating the learned id changes nothing and pokes nothing")
+            s._on_task_event("task_progress", {"task_id": "ag-9", "task_type": "local_agent", "tool_use_id": "tu-10"})
+            self.assertEqual(poke.call_count, 1, "a frame carrying another id is no relearn: no change, no poke")
+        self.assertEqual(s._bg_tasks["ag-9"]["toolUseId"], "tu-9", "the row keeps the first id it learned")
+        self.assertEqual([t["toolUseId"] for t in s._live_bg_tasks()], ["tu-9"])
+        reg = sb.read_reg(self.be.state_dir, self.SID) or {}
+        self.assertEqual([(t["taskId"], t["toolUseId"]) for t in reg.get("bgTasks") or []], [("ag-9", "tu-9")],
+                         "the mirror keeps the first id too: nothing was rewritten after the learn")
 
     def test_a_confirmed_row_moves_to_the_reported_set_so_a_later_omission_retires_it(self):
         # the mutation pass over round 4 (2026-09-19; m14): a CONFIRMED row's move into _reported_tasks was pinned for
