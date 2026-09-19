@@ -205,6 +205,7 @@ scope installed it, and that class's own boundary judged it against its start, w
 scope found passes, so the module end is looking at its own start value); the windows list not cleared at the module
 end (the read-count filter never selects a stale entry; the clearing bounds memory); and no others.
 """
+import inspect
 import os
 import re
 import subprocess
@@ -816,7 +817,15 @@ def summary_mismatch(out, errors):
     allowed. The first form asked for "N passed, M errors in" and "N passed in" exactly, so one unrelated warning in
     the child (an unpinned pytest's deprecation, a conftest filterwarnings entry pytest drops with a config warning)
     turned "6 passed, 3 errors in" into "6 passed, 1 warning, 3 errors in" and redded every run with a message that
-    named no warning (round 1, 2026-09-19)."""
+    named no warning (round 1, 2026-09-19).
+
+    THE COUNT'S LIMIT: pytest counts one error per item whose setup or teardown failed, and a boundary verdict lands
+    on the teardown of the scope's last test. So a boundary failure on an item whose own teardown also fails folds
+    into that item's one teardown report, an exception group, so pytest's error count cannot see that case and the
+    boundary text is the signal: a run whose count matches can still hide a boundary verdict on a scope whose last
+    test failed on its own, and every run therefore reads boundary() for the ends it expects quiet or accused, and
+    ERRORS below is the count of items, never of verdicts. B and C are the shape (the one or last case fails on its
+    own, and the class and module ends are read as text); J, R1 and R2 read the exception group by name."""
     m = SUMMARY_LINE.search(out)
     if m is None:
         return "no pytest summary line (\"N passed, M errors in Ns\") in the nested run's output; %d errors expected" % errors
@@ -827,7 +836,10 @@ def summary_mismatch(out, errors):
         ok = re.search(r"\d+ passed,(?:[^,\n]+,)* %d errors?[ ,]" % errors, line)
     if ok:
         return None
-    found = re.search(r"\d+ errors?\b", line)
+    found = re.search(r"(\d+) errors?\b", line)
+    if found is not None and int(found.group(1)) == errors:
+        return "the nested run's summary line counts %d error%s but does not read 'N passed, other counts, %d error%s in': %r" % (
+            errors, "" if errors == 1 else "s", errors, "" if errors == 1 else "s", line)
     return "the nested run's summary line counts %s, not %d error%s: %r" % (
         found.group(0) if found else "no errors", errors, "" if errors == 1 else "s", line)
 
@@ -865,7 +877,9 @@ class _NestedRun:
     """The shared half of a scratch run's tests; a mixin, so the runner collects only the runs below."""
     SCRATCH = ""
     FOLLOWER = None        # a second module's text, collected after the first, for the runs that need a module pair
-    ERRORS = 0
+    ERRORS = 0             # pytest's error count for the run: one per item whose teardown failed, whatever folded into that
+                           # item's report; a boundary verdict on a last test that fails on its own is not a second count
+                           # (summary_mismatch, THE COUNT'S LIMIT), so the runs read the boundary text beside the count
     JUDGE_RED = False      # whether the judge fixture (_shared_state_restored) is expected to fail in the run too
 
     @classmethod
@@ -1027,8 +1041,8 @@ class FirstBuildOverAKeptSandbox(_NestedRun, unittest.TestCase):
         self.assertNotIn(GONE, text)
 
     def test_the_class_and_module_ends_are_quiet_on_the_named_object(self):
-        self.assertIsNone(boundary(self.out, "::Cases"), self.out)     # the one case is the last: see B's note on the count
-        self.assertIsNone(boundary(self.out, ""), self.out)
+        self.assertIsNone(boundary(self.out, "::Cases"), self.out)     # the one case is the last: the count cannot see a
+        self.assertIsNone(boundary(self.out, ""), self.out)            # boundary verdict here (summary_mismatch's limit)
 
 
 SCRATCH_C_WARNED = SCRATCH_C.replace(
@@ -1081,6 +1095,11 @@ class NestedSummaryMatcher(unittest.TestCase):
         self.assertIsNotNone(summary_mismatch("=== 6 passed, 13 errors in 0.19s ===\n", 3), "13 errors do not stand for 3")
         self.assertIsNotNone(summary_mismatch("=== 6 passed, 3 errors in 0.19s ===\n", 1))
 
+    def test_a_count_that_agrees_on_a_line_of_another_shape_is_named_as_the_shape(self):
+        problem = summary_mismatch("=== 3 errors in 0.19s ===\n", 3)      # no passed segment: pytest prints no "0 passed"
+        self.assertIsNotNone(problem)
+        self.assertIn("counts 3 errors but does not read 'N passed, other counts, 3 errors in'", problem)
+
     def test_a_segment_never_crosses_a_line(self):
         out = "=== 6 passed, 3 errors in 0.19s ===\nanother line, with a comma, 2 errors named here\n"
         self.assertIsNotNone(summary_mismatch(out, 2), "the count is read on the summary line alone")
@@ -1111,6 +1130,27 @@ def conftest_comment_text():
             if s.startswith("#"):
                 lines.append(s[1:].strip())
     return re.sub(r"\s+", " ", " ".join(lines))
+
+
+LIMIT_COUNT = ("a boundary failure on an item whose own teardown also fails folds into that item's one teardown report, an "
+               "exception group, so pytest's error count cannot see that case and the boundary text is the signal")
+
+
+class TheCountLimitIsStatedBesideTheCount(unittest.TestCase):
+    """The limit of pytest's error count is stated where a reader of the count meets it: in summary_mismatch's docstring,
+    the matcher every run's count goes through, and beside ERRORS in the runs' shared half, which points at it."""
+
+    def test_the_matchers_docstring_states_the_limit(self):
+        self.assertIn(LIMIT_COUNT, re.sub(r"\s+", " ", summary_mismatch.__doc__))
+
+    def test_the_error_count_attribute_points_at_the_limit(self):
+        src = inspect.getsource(_NestedRun)
+        m = re.search(r"^    ERRORS = 0 +#(.*(?:\n {27}#.*)*)", src, re.M)
+        self.assertIsNotNone(m, "ERRORS carries a comment: %s" % src)
+        note = re.sub(r"\s+", " ", m.group(1))
+        self.assertIn("summary_mismatch", note)
+        self.assertIn("THE COUNT'S LIMIT", note)
+        self.assertIn("boundary", note)
 
 
 class TheStatedLimitIsWorded(unittest.TestCase):
