@@ -304,7 +304,8 @@ SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 # miss plus compare_miss: _pass's second-bump bound (review round 4). Two of them, corrupt and unreadable_journal, are hand-off
 # keys that are NOT call keys, so a bump of either beside a goal_io loads bump with no call through the door balanced the shared
 # reconciliation (no call key moved) and the writer one (one hand-off per loads) and red nothing in _pass; the bound is where it
-# reds. The roster and the order are pinned against the door's own source in TheCountersOneSite.
+# reds on a pass with no fill, and the cases' writerLoads elements where one such pair rides beside each fill (the bound admits
+# second == fills). The roster and the order are pinned against the door's own source in TheCountersOneSite.
 SHARED_SECOND_KEYS = ("unreadable_journal", "corrupt", "dup", "refuse")
 KERNEL_FILE = os.path.basename(os.path.realpath(km.__file__))   # the kernel's real file: it is loaded from bin/romp-kernel, a symlink
 # The callables the fixture replaces, other than the two recorded doors: the kernel names (the look's gates and the pass's
@@ -746,8 +747,13 @@ class _WalkHarness(unittest.TestCase):
         unreadable_journal + corrupt + dup + refuse <= miss + compare_miss. The bound is what refuses the forged pair: corrupt and
         unreadable_journal are hand-off keys and not call keys, so a bump of either beside a goal_io loads bump with no call
         through the door moved no call key (the shared reconciliation balanced) and matched its loads bump with a hand-off (the
-        writer reconciliation balanced), and before the bound red nothing here. `calls` carries the shared records (sid, function,
-        file, line) for a case's own assertions."""
+        writer reconciliation balanced), and before the bound red nothing here. The bound refuses the pair on a pass with no fill,
+        and on a pass with fills refuses only what exceeds them: a pair that rides beside each genuine fill (one corrupt bump and one
+        loads bump per miss the walk's read made) leaves second equal to fills, balances the writer reconciliation with its hand-off,
+        and passes the bound; the cases' writerLoads elements are what red it there, 2 against 0 on the first pass (the pre-emption
+        verifier's state, review round 4), and two pairs per fill red the bound again, 4 against 2. So the two layers cover different
+        passes: the bound holds the passes with no fill on its own, and the tuples' writerLoads elements the passes with fills.
+        `calls` carries the shared records (sid, function, file, line) for a case's own assertions."""
         before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
         gate0 = dict(km._NUDGE_GATE_STATS)
         s0, g0 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
@@ -818,7 +824,8 @@ class _WalkHarness(unittest.TestCase):
                              "against %d fill(s) (miss %d, compare_miss %d); recorded shared calls: %s. A second bump past the fills is a "
                              "counter moved with no call through the door; corrupt and unreadable_journal are hand-off keys and not call keys, "
                              "so such a move beside a goal_io loads bump balances the shared and the writer reconciliations and is caught here "
-                             "alone" % (now, second, sum(second.values()), fills, d["shared"].get("miss", 0),
+                             "alone on a pass with no fill (on a pass with fills, one such pair per fill passes this bound and the case's "
+                             "writerLoads element catches it)" % (now, second, sum(second.values()), fills, d["shared"].get("miss", 0),
                                         d["shared"].get("compare_miss", 0), "; ".join(records) or "none"))
         d["calls"] = list(self.calls)
         writer = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.writer]
@@ -942,11 +949,15 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "the first pass journaled each verdict as a walk gate (_put_walk_gate, a write-on-change into the ledger, the "
                          "tenth keyed file), so the second pass re-evaluates every session once")
         p3 = self._pass(NOW + 10)
-        self.assertEqual((p3["skippedParses"], p3["walk"], p3["gate"], p3["loads"]), (2, {SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, 0),
+        self.assertEqual((p3["skippedParses"], p3["walk"], p3["gate"], p3["loads"], p3["writerLoads"], p3["shared"]),
+                         (2, {SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, 0, 0, {}),
                          "skipped, and still no load through either: the second pass's look ran over the standing row and re-recorded its row "
                          "under the ledger's moved key, and its verdict, unchanged, wrote nothing into the ledger (_put_walk_gate is "
                          "write-on-change), so every key stands and this pass skips; a re-record dropped over a standing row, or made under "
-                         "the standing row's key, or an unchanged gate re-written, runs the looks here")
+                         "the standing row's key, or an unchanged gate re-written, runs the looks here. Neither the writer door's counter nor "
+                         "the store's call counters move either: the two elements were added in review round 4 so this skip pass has the two "
+                         "layers the first case's skip pass has, _pass's second-bump bound first and this line behind it (a forged pair in the "
+                         "kernel's skip branch reds the bound here, and with the bound gone this line)")
         # no owned record, so the sweep's bound in _pass holds the sweep to zero on every pass: nothing to assert about it here
 
 
