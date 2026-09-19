@@ -252,10 +252,13 @@ try {
   // tab the board is NOT painted (zero [data-key] cards, the pane's own loader still up), and the Feed tab's first show paints it
   // (cards > 0, the loader retired); on the desktop, and on a phone opened on the Feed tab, the first frame paints on its own.
   const feedFrame = () => page.frames().find((f) => { try { return new URL(f.url()).pathname === "/feed"; } catch (e) { return false; } });
-  // cards: the [data-key] elements render() stamped; modelCards: the asks the last full feed frame handed to the pane carried
-  // (the install's wrap of __rompFed.inbound, above), so "held" is read as a model with cards and a DOM with none, never as a
-  // DOM that is empty because nothing has arrived
-  const feedRead = () => { const f = feedFrame(); return f ? f.evaluate(() => ({ cards: document.querySelectorAll("#feed-list [data-key]").length, firstFrame: (window.__rompPerfMarks || {}).firstFrame, spinGone: !!(document.getElementById("pane-spin") && document.getElementById("pane-spin").classList.contains("gone")),
+  // listChildren: #feed-list's children, the pane loader's own measure (a paint appends #feed-cols, or .feed-empty over an empty
+  // model, and the loader retires on the first child), so "held" is read where the loader reads it (review round 2 closeout, D6: the
+  // card count read 0 under a disabled hold too, the boot's empty-board paint having no cards); cards: the [data-key] elements
+  // render() stamped, a shape check beside it; modelCards: the asks the last full feed frame handed to the pane carried (the
+  // install's wrap of __rompFed.inbound, above), so "held" is a model with cards over a list with no child, never a list that is
+  // empty because nothing has arrived
+  const feedRead = () => { const f = feedFrame(); return f ? f.evaluate(() => ({ cards: document.querySelectorAll("#feed-list [data-key]").length, listChildren: (function () { const l = document.getElementById("feed-list"); return l ? l.childElementCount : -1; })(), firstFrame: (window.__rompPerfMarks || {}).firstFrame, spinGone: !!(document.getElementById("pane-spin") && document.getElementById("pane-spin").classList.contains("gone")),
     modelCards: (window.__labFeed || {}).asks === undefined ? -1 : window.__labFeed.asks, feedFrames: { fulls: (window.__labFeed || {}).fulls, deltas: (window.__labFeed || {}).deltas } })).catch(() => null) : Promise.resolve(null); };
   {
     const feedDeadline = now() + 15000;
@@ -302,7 +305,12 @@ try {
       // (body.pane-failed, #pane-load painted with the message, the loader itself down) and load it on the re-tap.
       const abortPath = "/" + cfg.abortPane;
       const isAbortUrl = (u) => u.pathname === abortPath;
-      const aborter = (route) => route.abort();
+      // abortMode error-body (HIGH 2, review round 2 closeout): the fetch answers a 502 with a body, a proxy's page while the kernel
+      // restarts: same-origin at the pane's url, committed, and load fires in every engine; the shell must not take it for the pane's
+      // own document (the pane shim's window marker tells them apart), so the failed state, the re-park and the re-tap are the same
+      const aborter = cfg.abortMode === "error-body"
+        ? (route) => route.fulfill({ status: 502, contentType: "text/html", body: "<!DOCTYPE html><html><body><h1>502 Bad Gateway</h1></body></html>" })
+        : (route) => route.abort();
       await page.route(isAbortUrl, aborter);
       await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");
       const failDeadline = now() + 45000;
@@ -318,7 +326,7 @@ try {
         if (failedSeen) break;
         await sleep(200);
       }
-      out.abort = { ms: failedSeen ? now() - out.t.tap : -1, ...(failedSeen || {}) };
+      out.abort = { ms: failedSeen ? now() - out.t.tap : -1, mode: cfg.abortMode || "abort", ...(failedSeen || {}) };
       await page.unroute(isAbortUrl, aborter);
       out.t.retap = now();
       await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");   // the re-tap: the shell promotes the re-parked pane again, as a first tap would
