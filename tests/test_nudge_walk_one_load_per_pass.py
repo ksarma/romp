@@ -339,44 +339,104 @@ pin: the sentence's count set to a stale figure reds the Docs case naming both f
 
 Review round 4 (2026-09-19; seventeen findings, none refuted, three mediums, and the reviewer's synthesis: three contracts stated
 as lists, each falsified by the first construct nobody listed, fixed as one inversion keyed on the closed set rather than a longer
-list). Each state below was landed on kernel/kernel.py, kernel/judge.py or this module and reverted, the module run single-process
-on 3.12 through the clean runner unless another interpreter is named; a figure names the case count it reads against, since the
-round's fixes add two cases, the walker pin and the fill-road case, and until the bypass sentence's count is re-taken at the
-round's final head the Docs count pin reads red at every head of the fixes, so every figure below counts that standing red among
-the failed. The bound's third clause (tests-2, regression-2, extra4-1), at the head that added it, 22 cases: the roster pin reads,
-for every second-key bump in the door's body, the innermost statement list holding it, asserts that list holds exactly one
-second-key bump over the full subtrees of its statements and ends in a Return or a Raise, and derives the fill road's entry keys as
-the call keys whose list falls through, asserting them equal to SHARED_FILL_KEYS, which _pass sums; a refuse bump beside the dup
-bump reds the at-most-one clause (2 failed, 20 passed of 22), the refuse block's return replaced by a pass reds the ends-in-Return
-clause (2 failed, 20 passed), and an absent bump below the miss bump reds the derived fill keys, absent among them, with the shared
-reconciliation of the five cases that call the door (7 failed, 15 passed); the refuters' baseline for a second bump beside an
-existing one and for a new fill key was 20 passed of 20 at the head the round-4 ruling read. By execution, a store whose bytes do
-not parse, read once through the door for the never-walked sid, bumps miss once, corrupt once and hands off once
-(TheDoorBumpsAtMostOneSecondKeyPerCall), and a dup bump spelled through __setitem__ beside the corrupt bump reds that case alone,
-the AST clause reading neither spelling (2 failed, 20 passed). The dup and refuse layer (extra5-1), at the head that added it, 22
-cases: a dup bump and a refuse bump planted after the walk's read and conditioned on its miss, so each rides beside a genuine
-fill, each red _pass's zero line at the first pass of the three cases whose first pass fills, {'dup': 2} against {} with the bound
-green at two fills (4 failed, 18 passed of 22 each; at the head before the line, 1 failed, 21 passed, the standing red alone); the
-same plants unconditioned were caught before by the bound at the run pass alone, two second bumps against zero fills (2 failed, 20
-passed), and red the zero line first now (4 failed, 18 passed). The identity lines (correctness-3), at the head that added them:
-the gate decorator's wraps dropped reds the walk census's identity line naming the wrapper gated (2 failed, 20 passed; at the head
-before, the site count's 0 against 1, a true red with a false cause, 2 failed, 20 passed), and a decorator without wraps on the
-gate factory reds the gate scan's identity line naming its wrapper, alone with nothing planted (2 failed, 20 passed) and beside the
-harness ceilings and the per-spelling dict with a shared load planted in the gate's body (8 failed, 14 passed; at the head before,
-the ceilings alone, the scan green reading the wrapper, 6 failed, 16 passed). The population (tests-3), at the head that pinned it:
-one writer-door call site re-doored to the shared door reds the per-spelling dict, 26 and 8 against 27 and 7 with the sum unchanged
-at 58, and one removed reds it 26 against 27 (2 failed, 20 passed each; the set assertion green under both at the head before, 1
-failed, 21 passed). The messages (tests-4, regression-5, extra7-2): the pair beside a fill, a corrupt bump and a goal_io loads bump
-after the walk's read, reds the first pass's writerLoads line 2 against 0 and the two unwalked-sid sweep cases' hand-off lines 2
-against 0 and 3 against 1, each naming the pair and printing writerLoads, the call counters and the second bumps (4 failed, 18
-passed; the same three lines at the head before, each naming another cause); a row's limit set outside _LIMITS reds naming the
-classes by their count, five (2 failed, 20 passed); TypeIgnore deleted from the ast module at import reds the interpreter check
-naming the removal as the third cause (2 failed, 20 passed). The staleness (correctness-2, regression-4): the round-3 paragraph's
-figures are labelled with the count they read against and its clean line with its head by role, and the clean module at the head of
-the round-4 fixes is pinned by the Docs case beside the bypass count, the line's figures summed against the loader's count; that
-clean figure set one below reds the Docs case at the clean line naming both figures (1 failed, 21 passed, the case red at the other
-line when the figure is right). The clean module at this head, the head of the round-4 fixes: 22 passed single-process on 3.10, 3.11,
-3.12, 3.13 and 3.14t, and with two workers on 3.12.
+list). Two fixers landed the round's fixes, three verifiers read them and left nine findings, all low, and a consolidator closed the
+nine; every state below was re-taken by the consolidator at this head, the head of the round-4 fixes, over its 22 cases (the round's
+fixes add two, the walker pin and the fill-road case), each landed on kernel/kernel.py, kernel/judge.py or this module and reverted
+with the file checked clean, the module run single-process on 3.12 through the clean runner, so a figure here reads against 22 and
+names no other head; a figure from an earlier head names that head by role. The loader-naming string constant (correctness-1, tests-1,
+extra6-1): the kernel-wide pin refuses a constant whose whole text is one of the four door spellings wherever it appears and whatever
+receives it, and a constant that merely contains the name where it reaches a listed lookup, a dict read or a subscript key; by
+whole-text equality the kernel and the judge carry zero such constants (the substring rule with docstrings excluded would cost the
+judge three error strings and the kernel none), so the rule has no exception and needs no exemption row. Seven whole-spelling
+constants at unlisted receivers as real loads in a replaced helper, handed to itemgetter, to getattr_static, to a partial of getattr,
+to methodcaller and to an aliased getattr, as a match-mapping key and as a comparison operand in a generator over vars(jd), and three at
+kernel module level, bound to a name, handed to a partial of getattr and as a dict key, each red the pin naming the constant, its
+receiver and the def (1 failed, 21 passed each; the fixer's baseline at the head the round-4 ruling read, 20 passed of 20); the clean
+kernel and judge stay green with the judge's three containing strings unreported. F07d moved from the assembled class to the string
+class (the name bound to a variable is spelled whole in the constant the pin reads) and F45 from none to string (a dict key spelled
+whole is refused wherever it appears); with the value clause disabled the enumeration reds at F07d, the first of the rows that clause
+alone holds, F07d, F45 and F64 to F67 (1 failed, 21 passed; F07g stays a birth there, getattr being a listed lookup the consumer clause
+walks into). Ten rows are new: the f-string, the conditional, the walrus and the needle-keeping concatenation as a subscript key
+(extra6-2: the slice is walked as the Call clause walks its arguments; the three whole spellings as real loads in the replaced helper
+each red the pin as a subscript key, 1 failed, 21 passed each, and with the clause reverted to a direct Constant the enumeration reds
+at F30h alone, the other three staying caught by the value rule, 1 failed, 21 passed), methodcaller, itemgetter over vars(jd), a
+partial of getattr and a match-mapping key (the doors the round found on no list), an f-string of the whole name handed to getattr
+(one constant, refused) and an f-string assembling the name from pieces (assembled, outside, the JoinedStr limit the ruling names).
+The walker contract (regression-3, extra7-1): the module's own AST is read for every reference to the four traversal names (the
+standard walk, the child iterator and the two visitor classes), the names assembled at run time so the case's text holds none; every
+reference sits inside _walk but for two exemptions named with their reasons, _loader_births' child listing for its parent map and the
+refusal case's control comparison; a NodeVisitor subclass, a from-import of the walk under an alias, a module alias walking, a getattr
+with the name in a string and a child-iterator recursion each planted at module level red the pin naming the line, the name, the form
+and the enclosing def (1 failed, 21 passed each; the fixer's baseline at the head the round-4 ruling read, 20 passed of 20), the
+_loader_births row removed reds it naming that real site (1 failed, 21 passed), and a bogus row reds it as an exemption with no
+reference (1 failed, 21 passed). The bound's third clause (tests-2, regression-2, extra4-1): the roster pin reads, for every
+second-key bump in the door's body, the innermost statement list holding it, asserts that list carries exactly one second-key bump
+over the full subtrees of its statements and ends in a Return or a Raise, and derives the fill road's entry keys as the call keys
+whose list falls through, asserting them equal to SHARED_FILL_KEYS, which _pass sums; a refuse bump beside the dup bump reds the
+at-most-one clause, 2 against 1 (1 failed, 21 passed), the refuse block's return replaced by a pass reds the ends-in-Return clause
+naming the Pass (1 failed, 21 passed), an absent bump below the miss bump reds the derived fill keys, absent among them, with the
+shared reconciliation of the five cases that call the door (6 failed, 16 passed), a return added after the compare_miss bump reds the
+derived keys the other way, miss alone (1 failed, 21 passed), and every handler body collected a second time reds the count of lists
+against bumps, 7 against 5 (1 failed, 21 passed); the refuters' baseline for a second bump beside an existing one and for a new fill
+key was 20 passed of 20 at the head the round-4 ruling read. By execution, a store whose bytes do not parse, read once through the
+door for the never-walked sid, bumps miss once, corrupt once and hands off once (TheDoorBumpsAtMostOneSecondKeyPerCall), and a dup
+bump spelled through __setitem__ beside the corrupt bump reds that case alone, the AST clause reading neither spelling (1 failed, 21
+passed). The dup and refuse layer (extra5-1): a dup bump and a refuse bump planted after the walk's read and conditioned on its miss,
+so each rides beside a genuine fill, each red _pass's zero line at the first pass of the three cases whose first pass fills, {'dup':
+2} against {} with the bound green at two fills (3 failed, 19 passed each; every case green at the head the round-4 ruling read). The
+identity lines (correctness-3): the gate decorator's wraps dropped reds the walk census's identity line naming the wrapper gated
+(1 failed, 21 passed; the site count's 0 against 1 at the head the round-4 ruling read, a true red with a false cause), and a
+decorator without wraps on the gate factory reds the gate scan's identity line naming its wrapper, alone with nothing planted
+(1 failed, 21 passed) and beside the harness ceilings and the per-spelling dict with a shared load planted in the gate's body
+(7 failed, 15 passed; the ceilings alone at the head the round-4 ruling read, the scan green reading the wrapper). The population
+(tests-3): one writer-door call site re-doored to the shared door reds the per-spelling dict, 26 and 8 against 27 and 7 with the sum
+unchanged at 58, and one removed reds it 26 against 27 (1 failed, 21 passed each; the set assertion green under both at the head the
+round-4 ruling read). The messages (tests-4, regression-5, extra7-2): the pair beside a fill, a corrupt bump and a goal_io loads bump
+after the walk's read, reds the first pass's writerLoads line 2 against 0 and the two unwalked-sid sweep cases' hand-off lines
+2 against 0 and 3 against 1, each naming the pair and printing writerLoads, the call counters and the second bumps (3 failed, 19
+passed; the same three lines at the head the round-4 ruling read, each naming another cause); a row's limit set outside _LIMITS reds
+naming the classes by their count, five (1 failed, 21 passed); TypeIgnore deleted from the ast module at import reds the interpreter
+check naming the removal as the third cause (1 failed, 21 passed). The staleness (correctness-2, regression-4): the round-3
+paragraph's figures are labelled with the count they read against and its clean line with its head by role, and the clean module at
+this head is pinned by the Docs case beside the bypass count, the line's figures summed against the loader's count; the clean figure
+set one below reds the Docs case at the clean line, 21 against 22 (1 failed, 21 passed), the bypass count set one behind reds it at
+the bypass line (1 failed, 21 passed), and the round-3 clean line set to 18 leaves the module green (22 passed), the historical lines
+being labelled and not pinned, the ruling's alternative.
+
+The verifiers of the round-4 fixes (nine findings, all low), each closed and re-taken at this head, the head of the round-4 fixes,
+over its 22 cases; a state's earlier figure reads at the head the verifiers read, where the Docs count pin was red at every case
+count, so "green" there means every case but that pin. The residue of the string pin (the inversion verifier's first): the prose
+named the residue as a name assembled from pieces that split the needle while four working doors that split no needle escaped every
+witness, a bytes literal decoded at getattr, an upper-cased constant lowered there, a padded constant stripped and bound first, and a
+bytes literal decoded as a subscript key (each green at the head the verifiers read); both clauses of the pin read a constant's text
+through _door_text now (bytes decoded, stripped, lowered), so each reds the pin naming the constant and its receiver (1 failed, 21
+passed each), while a needle-keeping concatenation handed to a partial of getattr and a reversed literal at getattr stay green
+(22 passed each), the assembled residue the limit sentences state by the pin's boundary; seven rows hold it, and with the bytes
+decode, the strip and the lower disabled in turn the enumeration reds at F70, F69 and F68 (1 failed, 21 passed each), and with the
+consumer clause's gate dropped it reds at F72 beside the birth pin on the judge's three containing strings (2 failed, 20 passed). The
+walker finder's roads (the inversion verifier's second): the attribute and getattr forms were keyed on the names the ast module was
+imported under, and a walk through importlib.import_module, __import__, sys.modules or a name rebound to the module passed the pin
+(each green at the head the verifiers read); keyed on the four names alone, each road reds the pin naming its spelling, a getattr on
+sys.modules["ast"] too (1 failed, 21 passed each), a walk read from vars(ast) by string stays green as the stated limit (22 passed),
+the finder narrowed back to the bare module base reds the case's module-alias sample (1 failed, 21 passed), and a finder reading a
+call's subscript key as a reference reds the case's limit sample (1 failed, 21 passed). The finally clause (the third-clause
+verifier's): a second-key bump under a finally beside the corrupt handler left the AST clauses green with the execution case alone
+red, and beside the unreadable_journal handler, a road no case drives, every case green (at the head the verifiers read); the pin
+refuses a bump under any finalbody and a second-key list ending in a raise under a try statement, a sibling hole the consolidator
+found, so the first reds the pin beside the execution case (2 failed, 20 passed), the second reds the pin alone (1 failed, 21
+passed), and a corrupt list ending in a raise that an outer handler catches to bump dup reds the pin beside the execution case
+(2 failed, 20 passed; the execution case alone at the head the verifiers read). The prose (the prose verifier's six): this paragraph
+carried one fixer's states and no figure for the round's three mediums, the bypass sentence counted 20 cases against 22 with the
+Docs count pin red at every head of the fixes, the breakdown message counted five doors on no list where four were, seven figures
+carried no head label, the provenance paragraph stopped at round 3, and a clause of _loader_sites' docstring had no verb; each is
+closed in the module, this paragraph re-taking every state at one head. The bypass plants and the alias control, re-taken at this
+head over its 22 cases (the bypass sentence in the first paragraph names the same head and count), each landed on the kernel alone
+with the kernel, the judge and this module hashed before and after: the kernel opening and parsing the store file itself, and the
+kernel calling jd._read_store_json, each per session in the pass loop, 22 passed each and no file changed across a run; a second
+judge module loaded under another name reds the birth pin alone, naming `_PJ.load_goals_shared` (1 failed, 21 passed); the alias
+control, the shared door bound at kernel import and called per session, reds the shared reconciliation on every harness case,
+2 against 0, 7 against 5 twice, 6 against 4 and 3 against 1, and the birth pin (6 failed, 16 passed). The clean module at this head,
+the head of the round-4 fixes: 22 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with two workers on 3.12.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
