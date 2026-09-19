@@ -160,7 +160,11 @@ keepalives and op replies).
 `tests/ui-bench.test.mjs` (`node --test tests/ui-bench.test.mjs`) covers the
 tool, including the recording client against a local WebSocket server and the
 Handler subprocess's isolation, and replays synthetic feed and timeline streams
-in a real browser, the timeline once more with the page hidden. The browser tests
+in a real browser, the timeline once more with the page hidden, and that hidden
+replay again with the page's clock standing still across each delivery (every
+bundle reading 0.0 ms: the report's bundle column is asserted as measured, not
+as having taken time, since a hidden page's delivery draws nothing and can read
+0.0 at the clock's 0.1 ms steps). The browser tests
 skip, saying why, when no Chromium (either
 playwright's own, `cd vscode-extension && npx playwright install chromium`,
 which CI installs so the required check never rides the runner image's
