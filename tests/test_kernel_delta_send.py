@@ -598,7 +598,8 @@ class ByteIdenticalFrames(unittest.TestCase):
         # compares counts every cache READ that met an entry with a signature in hand: the pre-flight read of each of the
         # three served cycles (1, 3, 5), and for each of the two warm rebuilds (cycles 2 and 4) its pre-flight read AND its
         # re-read under the claim, both meeting the stale entry; the cold first cycle meets nothing. 3 + 2 * 2 = 7. The final
-        # compare re-evaluates the last read's operands and is not a read, so it counts nothing (counting it would read 10 here).
+        # compare re-evaluates the last read's operands and is not a read, so it counts nothing (counting it would read 12 here: these
+        # seven plus the five final compares of cycles 1 to 5, each of which met an entry; the cold cycle 0's met none).
         self.assertEqual(d["compares"], 3 + 2 * 2, "three served pre-flight reads plus two per warm rebuild (pre-flight and the claim re-read)")
         self.assertGreater(d["compares"], cached, "compares can exceed the served count (a rebuild counts two)")
         # compareIdenticalComponents is the count the reads' operands give, pinned from them (2026-09-18 review, medium 7): the

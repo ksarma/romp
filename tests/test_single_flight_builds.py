@@ -302,6 +302,40 @@ class ChatTabSingleFlight(unittest.TestCase):
         self.assertEqual({f["id"] for f in b["_frames"] if f["type"] == "session"}, {S1, S2}, "the connect client still got both tabs")
         self.assertEqual(km._CHAT_INFLIGHT, {}, "no claim left behind")
 
+    def test_a_stale_entry_makes_every_pre_flight_read_count_and_a_served_waiter_count_two(self):
+        """The compares gloss by execution (2026-09-19 review, kernel-1: the descriptions said a waiter counts three, which no
+        served waiter does). The same race over a WARM cache holding a stale tuple for both tabs: every pre-flight read
+        meets the stale entry (four: two threads, two tabs), each built tab's claim re-read meets it too (two), and each
+        served visit that waited meets the fresh entry at its post-wait re-read (one per wait), so compares = 6 + waited,
+        8 when both served visits waited. A served waiter counts two here (its pre-flight read and its post-wait re-read)
+        where the cold race's counts one; a visit served from the fresh entry at its pre-flight read (the other thread
+        stored first) counts one and waits none, which the identity absorbs. Three is a visit whose wait ended with no
+        usable entry and then claimed: a rebuild, not a waiter."""
+        n = len(km._CHAT_SIG_LABELS)
+        for sid in (S1, S2):
+            km._built_chat[sid] = ((("stale", 0),) + (None,) * (n - 1), {"type": "session", "id": sid, "events": []}, None, None)
+        a, b = self._client(active=S1), self._client(active=S1)
+        km._clients[:] = [a, b]
+        cs0, b0 = km._chat_sig_stats_report(), km._PERF_STATS.snapshot()["builds"]["chat"]
+        _race_fns = [lambda: km._push([a, b]), lambda: km._push([b], connect=True)]
+        go = threading.Event()
+        def run(i):
+            go.wait(); _race_fns[i]()
+        ths = [threading.Thread(target=run, args=(i,)) for i in range(2)]
+        for t in ths: t.start()
+        go.set()
+        for t in ths: t.join(30)
+        cs1, b1 = km._chat_sig_stats_report(), km._PERF_STATS.snapshot()["builds"]["chat"]
+        d = {k: cs1[k] - cs0[k] for k in cs1}
+        self.assertEqual(sorted(self.builds), [S1, S2], "each tab built once: the stale entries served nothing, the fresh ones served the other thread")
+        served = b1["cached"] - b0["cached"]
+        self.assertEqual(served, 2, "two of the four tab visits were served from the other thread's build")
+        self.assertGreaterEqual(d["waited"], 1, "the later visit waited")
+        self.assertEqual(d["compares"], 4 + 2 + d["waited"],
+                         "four pre-flight reads met the stale entry, two claim re-reads met it, and one post-wait re-read per wait met the fresh one: %r" % (d,))
+        self.assertEqual(d["pre"], 4)
+        self.assertEqual(km._CHAT_INFLIGHT, {}, "no claim left behind")
+
     def test_a_failing_build_releases_its_waiters(self):
         a = self._client(active=S1)
         km._clients[:] = [a]
