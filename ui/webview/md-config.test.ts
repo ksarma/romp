@@ -521,7 +521,7 @@ test("source: who applies the one configuration, and what it holds", () => {
   assert.equal(mdExtensions.length, 2);
   assert.match(config, /registerMdPostPass\(renderMathPlaceholders\);/, "the fill travels with the grammar");
   for (const f of ["render.ts", "file-view.ts", "anchor-map.ts"]) assert.match(UI(f), /^applyMdConfig\(\);/m, f + " applies it at load");
-  assert.match(UI("chat-md.ts"), /new Marked\(\{ gfm: true, breaks: true \}, \.\.\.mdExtensions\)/, "the user-text instance is built from the same list");
+  assert.match(UI("chat-md.ts"), /new Marked\(\{ gfm: true, breaks: true \}, \.\.\.mdExtensions, pathAwareEmphasis\)/, "the user-text instance is built from the same list (plus the chat's path-aware emphasis, which the singleton does not take: md-emphasis-paths.test.ts)");
   assert.match(UI("file-view-links.ts"), /export function viewerWalkTokens\(token: \{ type: string; href\?: string \| null \}\): void \{\n\s*if \(token\.type === "link" && typeof token\.href === "string"\) token\.href = viewerLinkTarget\(token\.href\);\n\s*resolveWikilink\(token\);/,
     "the file kind's walkTokens stamps a wikilink resolved, beside the link-target rewrite");
   assert.doesNotMatch(config, /from "\.\/render"|from "\.\/file-view"|from "\.\/chat-md"/, "the configuration imports no bundle-specific module");

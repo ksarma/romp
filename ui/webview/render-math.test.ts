@@ -157,7 +157,7 @@ test("render.ts wires the math extensions into marked, through the one shared gr
     assert.match(src, /^applyMdConfig\(\);/m, f + " applies it at load");
     assert.doesNotMatch(src, /marked\.(setOptions|use)\(/, f + " configures nothing of its own");
   }
-  assert.match(UI("chat-md.ts"), /import \{ mdExtensions \} from "\.\/md-config";/, "the user-text instance takes the same list");
+  assert.match(UI("chat-md.ts"), /import \{ mdExtensions, pathAwareEmphasis \} from "\.\/md-config";/, "the user-text instance takes the same list (and the chat's path-aware emphasis, md-emphasis-paths.test.ts)");
   assert.doesNotMatch(UI("chat-md.ts"), /chatMdExtensions|from "\.\/math"/, "chat-md.ts no longer owns a grammar of its own");
 });
 

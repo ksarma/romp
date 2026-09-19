@@ -84,7 +84,7 @@ test("the singleton stays breaks:false — assistant rendering is unchanged", ()
   assert.match(RENDER, /^applyMdConfig\(\);/m, "render.ts applies the one configuration");
   assert.doesNotMatch(RENDER, /marked\.(setOptions|use)\(/, "…and configures nothing of its own");
   const GRAMMAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "chat-md.ts"), "utf8");
-  assert.match(GRAMMAR, /export const userMarked = new Marked\(\{ gfm: true, breaks: true \}, \.\.\.mdExtensions\);/, "the user instance takes the same grammar the singleton does, with hard breaks");
+  assert.match(GRAMMAR, /export const userMarked = new Marked\(\{ gfm: true, breaks: true \}, \.\.\.mdExtensions, pathAwareEmphasis\);/, "the user instance takes the same grammar the singleton does, with hard breaks and the chat's path-aware emphasis (md-emphasis-paths.test.ts)");
 });
 
 test("userMd() renders through the breaks:true instance and the SAME sanitizer as md()", () => {

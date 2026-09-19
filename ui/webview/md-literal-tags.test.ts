@@ -141,7 +141,7 @@ test("the converted text is escaped as marked's inline text tokenizer escapes te
   assert.equal(JSON.stringify(tokens), once, "a second pass changes nothing");
 });
 
-test("source: one rule, two callers. file-view.ts viewerHtml, mdBlock's parse, runs the lexer, the rule, the caller's walk and the parser at the function's own level, over a copy of the singleton's defaults as marked.parse copies them, and mdBlock hands it the walkTokens it ran inside marked.parse, unchanged and in the same order; anchor-map.ts placeTokens runs the rule on the lex line, right after Lexer.lex; md-config.ts registers nothing for it and the chat's md() (render.ts) still parses with marked.parse; the module imports marked's types alone", () => {
+test("source: one rule, two callers. file-view.ts viewerHtml, mdBlock's parse, runs the lexer, the rule, the caller's walk and the parser at the function's own level, over a copy of the singleton's defaults as marked.parse copies them, and mdBlock hands it the walkTokens it ran inside marked.parse, unchanged and in the same order; anchor-map.ts placeTokens runs the rule on the lex line, right after Lexer.lex; md-config.ts registers nothing for it and the chat's md() (render.ts) still parses with the chat instance's plain parse (chat-md.ts chatMdHtml); the module imports marked's types alone", () => {
   const VIEW = read("file-view.ts"), MAP = read("anchor-map.ts"), CONFIG = read("md-config.ts"), RENDER = read("render.ts"), MOD = read("md-literal-tags.ts"), CHAT = read("chat-md.ts");
   assert.match(VIEW, /^import \{ literalizeUnclosedTags \} from "\.\/md-literal-tags";/m, "the viewer imports the rule");
   const recipe = VIEW.split("export function viewerHtml(text: string, walk?: (token: Token) => void): string {")[1].split("\n}\n")[0];
@@ -158,6 +158,7 @@ test("source: one rule, two callers. file-view.ts viewerHtml, mdBlock's parse, r
   assert.equal((MAP.match(/literalizeUnclosedTags\(/g) || []).length, 1, "one call in the map");
   assert.ok(!CONFIG.includes("md-literal-tags") && !CONFIG.includes("literalize"), "md-config.ts registers nothing for the rule: the singleton's grammar is the chat's too");
   assert.ok(!RENDER.includes("md-literal-tags") && !CHAT.includes("md-literal-tags"), "the chat's modules never import the rule");
-  assert.match(RENDER, /\nfunction md\(src: string, repo: string \| null = prRepoFor\(\)\): string \{\n(?:[^\n]*\n){0,12}?[^\n]*const dirty = marked\.parse\(src\) as string;\n/, "md() still parses with marked.parse");
+  assert.match(RENDER, /\nfunction md\(src: string, repo: string \| null = prRepoFor\(\)\): string \{\n(?:[^\n]*\n){0,12}?[^\n]*const dirty = chatMdHtml\(src\);[^\n]*\n/, "md() still parses with a plain parse, the chat instance's (chat-md.ts chatMdHtml, since the path-aware emphasis of 2026-09-19), never the viewer's recipe");
+  assert.match(CHAT, /^export function chatMdHtml\(src: string\): string \{\n {2}return chatMarked\.parse\(src\) as string;\n\}/m, "chatMdHtml is marked's parse on the chat instance and nothing else");
   assert.deepEqual(MOD.match(/^import .*$/gm), ['import type { Token, Tokens } from "marked";'], "the module imports marked's types alone: no marked.use, no renderer hook, nothing on the singleton");
 });

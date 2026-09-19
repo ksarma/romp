@@ -117,7 +117,7 @@ import { initStrip, fmtReset } from "./strip";
 import { durLabel } from "./duration";
 import { apiErrorReason } from "./api-error-reason";
 import { pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, billingHeld, billingHeldRow, billingHeldSub, reloadingTitle, switchingTitle, RUNNING_TAG, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line, the badge tips, the tab tooltip's held rows, the held Billing readings and the menus' marks (pick-held.ts)
-import { userMdHtml } from "./chat-md";
+import { chatMdHtml, userMdHtml } from "./chat-md";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, shared with the viewer and the anchor map (md-config.ts)
 import { setTip, pruneTip } from "./tip";
 import { MetaKind, MetaHooks, metaButton as buildMetaButton, syncMetaControls as syncMetaControlsWith, ctxBar as buildCtxBar, setCtxBar as setCtxBarWith,
@@ -150,9 +150,11 @@ for (const [name, lang] of Object.entries({
 }
 
 // The grammar (GFM without hard breaks, the ~~-only `del` tokenizer, the KaTeX math extensions and the Obsidian
-// constructs) is defined ONCE in md-config.ts and shared with `userMarked`, the breaks:true instance that renders
-// the user's own words (userMd below), with the viewer (file-view.ts) and with the anchor map (anchor-map.ts).
-// Everything assistant-authored stays on this singleton, breaks:false.
+// constructs) is defined ONCE in md-config.ts and shared with the chat's two instances in chat-md.ts (`chatMarked`,
+// breaks:false, for everything assistant-authored, md() below; `userMarked`, breaks:true, for the user's own words,
+// userMd below), with the viewer (file-view.ts) and with the anchor map (anchor-map.ts). The chat's instances add
+// pathAwareEmphasis, so an emphasis pair never cuts a file path the walk below would link; the singleton, applied here
+// for the hover preview and the viewer this bundle carries, does not (md-config.ts says why).
 applyMdConfig();
 
 // One answered (or pending) question on an AskUserQuestion turn: the prompt + its options, plus the
@@ -1471,7 +1473,7 @@ function md(src: string, repo: string | null = prRepoFor()): string {
   // (which can postMessage the host to open files / drive sessions). DOMPurify
   // strips event-handler attributes and dangerous URL schemes (md-sanitize.ts).
   try {
-    const dirty = marked.parse(src) as string;
+    const dirty = chatMdHtml(src);   // the chat's instance (chat-md.ts): the singleton's grammar plus pathAwareEmphasis, so a path's underscores never cut the token linkifyFileUris looks for
     // sanitizeMd hands back the sanitized <body> instead of its innerHTML: the same nodes, ours to
     // walk once before the serialization DOMPurify would otherwise have done itself. PR references
     // in the prose (`#123`, `PR #123`, `owner/repo#123`) become links to the session's repository
