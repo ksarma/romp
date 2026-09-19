@@ -19,6 +19,8 @@ directory: the state root is the suite's floor, the machine strings the scan lea
 are set for the child, and socket.gethostname is pinned to TESTHOST.example in it; an in-process run of the verb or
 of its check replaces machine_probes with SYNTHETIC_PROBES, so no real hostname, login or home is read by any test),
 every id is a placeholder."""
+import contextlib
+import io
 import json
 import os
 import re
@@ -786,6 +788,16 @@ class FoldInvariant(unittest.TestCase):
         doc = pe.export_document(leak_snapshot())
         doc["perf"]["uptime_s"] = 1.6e9
         self.assertEqual([p.kind for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))], ["an uptime not rounded to whole minutes"])
+        # THE EXEMPTION IS BY NAME AT ANY DEPTH, on purpose (the upload's third review round, 2026-09-18): a float two levels
+        # under an invented ancestor carrying the token (ms_x) is NOT a finding, and the same float under a plain ancestor (x)
+        # at the same depth IS one. The belt catches a stamp typed under a new key by accident and is not an adversarial
+        # control (an editor can spell a stamp as an integer or a quoted string under any key); a narrowing to the leaf's key
+        # or its parent would not close that road and would refuse the kernel's own stages_ms leaves, so it is not taken, and
+        # this pin documents the accepted case rather than leaving it to be rediscovered
+        for ancestor, findings in (("ms_x", []), ("x", [("a number the size of a clock stamp", "perf/x/a/b")])):
+            doc = pe.export_document(leak_snapshot())
+            doc["perf"][ancestor] = {"a": {"b": 1.7e9}}
+            self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))], findings, ancestor)
 
     def test_the_denylist_walk_refuses_what_the_fold_would_have_folded_a_string_outside_the_grammar_and_a_key_its_anchored_match_admits(self):
         """The two findings that make the re-check hold a file to the fold's own rule and not to the walk's (the upload's
@@ -798,8 +810,9 @@ class FoldInvariant(unittest.TestCase):
         dict or a list, under a bound key too (a string is judged by the grammar alone); check_document names them with the
         denylist wording and the token reaches no output. The schema line is not judged with the same skip the scan and the
         walk take (without it the envelope's slash would be the finding on every export). The fixed point still holds over
-        every fixture and both usage settings, and every top-level block outside the envelope equals its own fold, which is
-        the belt `romp perf upload` adds under the checks. Fails before: the walk reported [] for all of them."""
+        every fixture and both usage settings, and every top-level block outside the envelope equals its own fold, which with
+        the upload's top-level allowlist is the belt `romp perf upload` adds under the checks. Fails before: the walk reported
+        [] for all of them."""
         token = "zz-planted-token-past-thirty-two-chars-zz"     # 41 characters, no whitespace, no hex run: silent to the walk
         self.assertIsNone(pp.IDENT.fullmatch(token))
         self.assertEqual(pp.fold(token), "other")
@@ -1420,10 +1433,19 @@ class Cli(unittest.TestCase):
         line, `#` comments, blanks) is the maintainer's own list of what must never be published, a coined project nickname
         among them, which fits the identifier grammar and is neither the hostname nor the login, so no other probe knew it
         and a document carrying one passed all three checks (the upload's second review round, 2026-09-18). Each entry is a
-        probe of kind `private string`, lower-cased, PROBE_MIN applied, matched as a run of whole tokens like the hostname
-        and the login; the path is resolved the way the hook resolves it (ROMP_PRIVATE_STRINGS, else XDG_CONFIG_HOME, else
-        HOME/.config); no file is no probe, so a clone that never set one up is unchanged. This widens the shared check:
-        the export, restart-metrics --json --public and the upload all run it. Fails before: no such kind existed."""
+        probe of kind `private string` (PRIVATE_KIND), lower-cased, PROBE_MIN NOT applied (the list is the maintainer's
+        explicit choice, not the heuristic the floor exists for: the floor dropped a three-character entry silently and a
+        document carrying it was sent, the third review round), matched as a SUBSTRING or a run of whole tokens, the union
+        (the same round: the hook matches a plain substring, so a listed token glued to letters must be a hit here too, and
+        the token run keeps a dotted entry found under another join, which the hook's substring grep misses); the path is
+        resolved the way the hook resolves it (ROMP_PRIVATE_STRINGS, else XDG_CONFIG_HOME, else HOME/.config); no file is
+        no probe, so a clone that never set one up is unchanged. The bound: PRIVATE_STRINGS_MAX + 1 bytes are read and a
+        file over the bound is cut back to its last complete line, so no fragment of an entry becomes a probe (a 12-byte
+        fragment did, falsely refused an unrelated document, and the entry it was cut from travelled), with one loud stderr
+        line saying the entries past the bound are not checked; and a listed entry that did not become a probe is said on
+        stderr the same way, so the list is never silently not in force. This widens the shared check: the export,
+        restart-metrics --json --public and the upload all run it. Fails before: no such kind existed; then abc was dropped,
+        the glued forms passed and the fragment was a probe."""
         home = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, home, True)
         env = {"HOME": home, "USER": "tester"}
@@ -1434,16 +1456,40 @@ class Cli(unittest.TestCase):
             os.makedirs(os.path.join(home, ".config", "romp"))
             with open(os.path.join(home, ".config", "romp", "private-strings.txt"), "w", encoding="utf-8") as fh:
                 fh.write("# the list the pre-push hook reads\n\n   ZZCOINEDZZ   \nabc\nsecond-coined # trailing comment\n")
-            probes = pp.machine_probes(None, env=env)
-            self.assertEqual([s for kind, s in probes if kind == "private string"], ["zzcoinedzz", "second-coined"],
-                             "comments and blanks dropped, the three-character line under PROBE_MIN dropped, lower-cased, in file order")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                probes = pp.machine_probes(None, env=env)
+            self.assertEqual([s for kind, s in probes if kind == "private string"], ["zzcoinedzz", "abc", "second-coined"],
+                             "comments and blanks dropped, lower-cased, in file order; the three-character line KEPT, PROBE_MIN not applied to the list")
+            self.assertEqual(err.getvalue(), "", "every entry became a probe: nothing to say")
             self.assertEqual(pp.private_strings(env), ["ZZCOINEDZZ", "abc", "second-coined"], "the raw entries, as the hook reads them")
-            self.assertIn("private string", pp.WORD_KINDS)
+            self.assertEqual(pp.PRIVATE_KIND, "private string")
+            self.assertNotIn(pp.PRIVATE_KIND, pp.WORD_KINDS, "not a word probe alone: the union")
+            self.assertEqual(pp.WORD_KINDS, frozenset({"hostname", "username"}))
             self.assertEqual(_hits({"a": {"b": "zzcoinedzz-app"}}, probes), [("private string", "the value at a/b")])
             self.assertEqual(_hits({"a": {"b": "app_ZZcoinedZZ"}}, probes), [("private string", "the value at a/b")], "case-insensitive")
-            self.assertEqual(_hits({"a": {"zzcoinedzzs": 1}}, probes), [], "a word probe: whole tokens, not a substring")
+            self.assertEqual(_hits({"a": {"zzcoinedzzs": 1}}, probes), [("private string", "a key under a")],
+                             "a substring, as the hook's grep would find it (a whole-token match alone passed this)")
+            self.assertEqual(_hits({"a": {"zzcoinedzzChat": 1}}, probes), [("private string", "a key under a")], "the token glued to letters, as a key")
+            self.assertEqual(_hits({"a": {"b": "chatZzcoinedzz"}}, probes), [("private string", "the value at a/b")], "and as a value")
+            self.assertEqual(_hits({"a": {"b": "abc"}}, probes), [("private string", "the value at a/b")], "the three-character entry is a probe")
+            self.assertEqual(_hits({"a": {"b": "xabcx"}}, probes), [("private string", "the value at a/b")])
             self.assertEqual(_hits({"second": 1, "coined": 1}, probes), [], "the run must be contiguous")
             self.assertEqual(_hits({"a": {"second.coined": 1}}, probes), [("private string", "a key under a")])
+            self.assertEqual(_hits({"a": {"second_coined": 1}}, probes), [("private string", "a key under a")],
+                             "the token run: a dotted entry under another join, which the hook's substring grep misses and the union keeps")
+            self.assertEqual(_hits({"a": {"b": "SECOND-COINED"}}, probes), [("private string", "the value at a/b")])
+            self.assertEqual(_hits({"a": {"b": "secondcoined"}}, probes), [], "neither a substring nor the token run")
+            # the loud line: an entry that did not become a probe (the reader returns no blank, so a blank stands in for a filter
+            # a later change adds) is counted and said once on stderr; nothing is said when every entry became one
+            err = io.StringIO()
+            with mock.patch.object(pp, "private_strings", return_value=["zzcoinedzz", "   "]), contextlib.redirect_stderr(err):
+                self.assertEqual([s for k, s in pp.machine_probes(None, env=env) if k == "private string"], ["zzcoinedzz"])
+            self.assertEqual(err.getvalue(), "romp: 1 of 2 private-strings entries did not become probes and are not checked; the list is not fully in force\n")
+            err = io.StringIO()
+            with mock.patch.object(pp, "private_strings", return_value=["zzcoinedzz", "abc", "ABC"]), contextlib.redirect_stderr(err):
+                self.assertEqual([s for k, s in pp.machine_probes(None, env=env) if k == "private string"], ["zzcoinedzz", "abc"])
+            self.assertEqual(err.getvalue(), "", "a repeated entry became the one probe it spells: nothing dropped, nothing said")
             # the path, the way the hook resolves it: the variable first, then XDG_CONFIG_HOME, then HOME/.config
             xdg = tempfile.mkdtemp()
             self.addCleanup(shutil.rmtree, xdg, True)
@@ -1461,10 +1507,41 @@ class Cli(unittest.TestCase):
             # the bound: a large file costs PRIVATE_STRINGS_MAX and its tail is dropped, never a traceback; bytes that are not UTF-8 neither
             with open(explicit, "wb") as fh:
                 fh.write(b"first\n" + b"\xff\xfe\n" + b"x" * pp.PRIVATE_STRINGS_MAX + b"\nlast\n")
-            got = pp.private_strings(dict(env, ROMP_PRIVATE_STRINGS=explicit))
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                got = pp.private_strings(dict(env, ROMP_PRIVATE_STRINGS=explicit))
             self.assertEqual(got[0], "first")
             self.assertNotIn("last", got)
             self.assertEqual(pp.PRIVATE_STRINGS_MAX, 64 * 1024)
+            self.assertEqual(err.getvalue(), "romp: the private-strings list is over 65536 bytes; entries past the bound are not checked\n")
+            # the cut falls back to the last complete line: a list built so the bound lands mid-line, the fragment is not an entry,
+            # the last complete entry before the bound is, the entry past it is not, and the loud line is said once; a file exactly
+            # at the bound is read whole and nothing is said (fails before: a 12-byte fragment of an entry was a probe of its own)
+            whole = (pp.PRIVATE_STRINGS_MAX - 1) // 12                                          # 12-byte lines, as many as fit whole
+            head = b"".join(b"entry%06d\n" % i for i in range(whole))
+            straddle = b"straddle-entry-cut-by-the-bound\n"
+            self.assertLess(len(head), pp.PRIVATE_STRINGS_MAX)
+            self.assertGreater(len(head) + len(straddle), pp.PRIVATE_STRINGS_MAX, "the bound falls inside the straddling line")
+            fragment = straddle[:pp.PRIVATE_STRINGS_MAX - len(head)].decode()                  # what a cut at the bound would leave of it
+            self.assertEqual(fragment, "stra")
+            with open(explicit, "wb") as fh:
+                fh.write(head + straddle + b"pastbound\n")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                got = pp.private_strings(dict(env, ROMP_PRIVATE_STRINGS=explicit))
+            self.assertEqual(got[-1], "entry%06d" % (whole - 1), "the last complete entry inside the bound is the last entry")
+            self.assertEqual(len(got), whole)
+            self.assertNotIn(fragment, got, "the fragment the bound cut is not an entry")
+            self.assertNotIn(straddle.strip().decode(), got, "the entry the bound cut is not checked (said on stderr), not a fragment of it")
+            self.assertNotIn("pastbound", got)
+            self.assertEqual(err.getvalue(), "romp: the private-strings list is over 65536 bytes; entries past the bound are not checked\n")
+            with open(explicit, "wb") as fh:
+                fh.write(b"a" * (pp.PRIVATE_STRINGS_MAX - 1) + b"\n")                          # exactly the bound: read whole, nothing said
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                got = pp.private_strings(dict(env, ROMP_PRIVATE_STRINGS=explicit))
+            self.assertEqual(got, ["a" * (pp.PRIVATE_STRINGS_MAX - 1)])
+            self.assertEqual(err.getvalue(), "")
         # through the export's own check, as a value and as a key, the kind and the path named and never the string
         probes = [("private string", "zzcoinedzz")] + SYNTHETIC_PROBES
         doc = pe.export_document(leak_snapshot())
@@ -1477,6 +1554,52 @@ class Cli(unittest.TestCase):
             self.assertEqual(pe.check_document(doc, pe.Path(tempfile.mkdtemp())),
                              "a string this machine knows (private string) survives as a key under perf/heap; nothing written")
             self.assertIsNone(pe.check_document(pe.export_document(leak_snapshot()), pe.Path(tempfile.mkdtemp())))
+
+    def test_a_short_listed_entry_is_checked_and_the_export_child_refuses_a_document_carrying_it(self):
+        """The three-character entry the PROBE_MIN floor dropped is a probe (correctness-2, the third review round, 2026-09-18):
+        the export child, with ROMP_PRIVATE_STRINGS naming a list that carries `abc`, refuses a snapshot whose app table
+        carries the same string as a key, naming the kind and the path and never the string, and writes nothing; the same
+        snapshot without the list exports. Fails before: the entry was dropped silently, exit 0, the file written."""
+        listed = os.path.join(self.xdg, "private-strings.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("zzcoinedzz\nabc\n")
+        snap = leak_snapshot()
+        snap["pusher"]["connectPush"]["byApp"]["abc"] = {"count": 1}
+        with open(self.src, "w") as fh:
+            json.dump(snap, fh)
+        r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "romp perf export: refused: a string this machine knows (private string) survives as a key under "
+                                   "perf/pusher/connectPush/byApp; nothing written\n")
+        self.assertNotIn("abc", r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")))
+        r = _run(["--public", "--from", self.src], state=self.state)
+        self.assertEqual(r.returncode, 0, r.stderr + " (without the list, abc is a grammar-fitting word)")
+
+    def test_a_fifo_at_the_private_strings_path_is_no_list_and_the_export_returns_at_once(self):
+        """The private list must be a REGULAR file (pp.open_regular: opened O_NONBLOCK, fstat'ed, S_ISREG required); anything
+        else is no list, []. A fifo at the path hung `romp perf export --public` and `romp restart-metrics --json --public`
+        indefinitely: a plain open of a fifo blocks until a writer arrives, before any read the bound could cover (the
+        upload's second review round, 2026-09-18). THE CHILD IS RUN UNDER A TIMEOUT AND HARD-KILLED WHEN IT EXPIRES, AND IT
+        RUNS BEFORE THE UNIT CALL: the defect is a hang, so a plain wait, or the unit call first, would take the runner with
+        it; subprocess.run kills the child on TimeoutExpired and the case fails instead. Do not simplify this back into
+        _run's sixty-second wait or move the unit call above the child."""
+        fifo = os.path.join(self.xdg, "private-strings.fifo")
+        os.mkfifo(fifo)
+        out = os.path.join(self.xdg, "public.json")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in ("CLAUDE_CODE_SESSION_ID", "XDG_CONFIG_HOME")}
+        env.update({"XDG_STATE_HOME": self.xdg, "HOME": HOME, "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1",
+                    "ROMP_PRIVATE_STRINGS": fifo})
+        try:
+            r = subprocess.run([sys.executable, "-c", CHILD, EXPORT, "--public", "--from", self.src, "--out", out],
+                               capture_output=True, text=True, timeout=8, env=env)
+        except subprocess.TimeoutExpired:
+            self.fail("the export child hung on the fifo at the private-strings path (killed after 8 s)")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(os.path.exists(out), "the export was written: a fifo adds no probe and blocks nothing")
+        self.assertEqual(r.stderr, "", "and nothing is said about it")
+        self.assertEqual(pp.private_strings({"ROMP_PRIVATE_STRINGS": fifo}), [], "the unit, after the child proved the open returns: a fifo is no list")
+        self.assertIsNone(pp.open_regular(fifo))
 
     def test_a_name_probe_matches_whole_tokens_and_an_id_probe_matches_anywhere(self):
         # a hostname or a login is a word, and romp's own vocabulary contains common ones as substrings: a user named

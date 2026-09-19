@@ -97,11 +97,17 @@ working directories the state directory's sdk registry holds; and the strings li
 `#` comments, resolved the way the hook resolves it: ROMP_PRIVATE_STRINGS, else $XDG_CONFIG_HOME, else $HOME/.config,
 and absent on a clone that never set one up, which adds nothing) are searched for in every key and string value of
 the finished document, case-insensitively, and a hit refuses the write naming the key path and the kind of
-string, never the value. A hostname, a login or a listed string is a WORD and is matched as a run of whole tokens
+string, never the value. A hostname or a login is a WORD and is matched as a run of whole tokens
 (a key or value split on everything outside letters and digits): romp's own vocabulary contains common ones as
 substrings (a user named mark and `intrMarks`, a machine named work or arch and `cpu_ms_workers`, `archive`),
 and a substring match would refuse every export on such a machine for good. An id or a directory is matched
-anywhere: hex and slashes spell no word, and a sid prefix glued to letters is still the sid. Session NAMES are
+anywhere: hex and slashes spell no word, and a sid prefix glued to letters is still the sid. A listed string is
+matched BOTH ways, as a substring or as a run of whole tokens (the union, the upload's third review round,
+2026-09-18): the pre-push hook matches each entry as a plain substring, so a listed token glued to letters
+(`zzcoinedzzChat`) must be a hit here too, and a dotted entry (`second.coined`) is still found under another join
+(`second-coined`), which the hook's substring grep misses; the list is a few entries the maintainer chose, its
+shortest included (PROBE_MIN does not apply to the kind), and a false refusal it causes has a stated remedy,
+editing the list. Session NAMES are
 not probes on purpose: a session named after one of romp's own identifiers (`chat`, `feed`) would refuse every
 export for the lifetime of that session, and the names never reach either document as keys or values (the
 kernel keys its tables by sid or rank and the denylist drops every name field), so the probe would only ever
@@ -127,6 +133,8 @@ import math
 import os
 import re
 import socket
+import stat
+import sys
 
 OTHER = "other"
 
@@ -565,7 +573,11 @@ def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=(), stacks_key=S
 # no duration key anywhere on its path is the finding. A memory-fraction bound (BOUND_KEYS) is judged by the power-of-two
 # rule alone and never as a stamp (one finding per leaf, the coarsening's; no power of two lies in either window besides,
 # and recordCache.budgetBytes floors at 4 GiB on every machine). The fixed point holds over every fixture and a served
-# export (ServedKernel).
+# export (ServedKernel). The duration-key exemption is read BY NAME over every ancestor at any depth, so any key carrying
+# the token ms exempts every float beneath it, however deep; it is an accident belt for a stamp typed under a new key, not
+# an adversarial control, and an editor who wants a stamp through can spell it as an integer or a quoted string under any
+# key (the upload's third review round, 2026-09-18: a narrowing to the leaf's key or its parent would not close that road,
+# would refuse the kernel's own stages_ms leaves, and is not taken).
 STAMP_WINDOWS = ((1.5e9, 2.0e9), (1.5e12, 2.0e12))   # (floor, ceiling) pairs, both ends in: epoch seconds, epoch milliseconds
 
 # A DURATION KEY: a name that, split into tokens on underscores and camelCase boundaries, carries the token `ms` in any case.
@@ -700,17 +712,49 @@ def denylist_problems(doc, under=(), skip=()):
 
 
 # ── the identifier scan ──────────────────────────────────────────────────────────────────────────────────
-PROBE_MIN = 4   # a shorter machine string matches romp's own vocabulary too often to be a probe
-WORD_KINDS = frozenset({"hostname", "username", "private string"})   # probes that are words: matched as runs of whole tokens
+PROBE_MIN = 4   # a shorter machine string matches romp's own vocabulary too often to be a probe; not applied to a listed private string (machine_probes)
+WORD_KINDS = frozenset({"hostname", "username"})   # probes that are words: matched as runs of whole tokens alone (probe_in)
+PRIVATE_KIND = "private string"                    # a listed string: matched as a substring OR a run of whole tokens (probe_in)
 TOKEN = re.compile(r"[a-z0-9]+")
 # The machine-local list of strings that must never be published: the file the repository's pre-push hook reads
 # (.githooks/pre-push, scan_identifiers), one string per line, a `#` starting a comment, surrounding whitespace
 # dropped, blanks skipped, resolved as the hook resolves it (private_strings_path). Absent on a clone that never set
 # one up, and then it adds nothing. Read with a bound: a list is a few lines, and a file put there by mistake costs
-# PRIVATE_STRINGS_MAX and no more (its tail is dropped, which can only lose probes, never add a wrong one).
+# PRIVATE_STRINGS_MAX and no more. Past the bound the file is cut back to its last complete line and every entry from
+# there on is not checked, said once on stderr (LIST_OVER_BOUND): a cut mid-line made a fragment of an entry a probe of
+# its own, which falsely refused an unrelated document while the entry it was cut from travelled (the upload's second
+# review round, 2026-09-18), so the tail is dropped whole, and dropping it silently would let a listed string go
+# unchecked with nothing said. The hook and this re-check read the SAME list and match it DIFFERENTLY, knowingly: the
+# hook matches each entry as a case-insensitive plain substring (grep -i -F) over the lines a push adds, its messages,
+# the tip trees and the stamped address domains; the re-check matches a substring OR a whole-token run over every key
+# and string value of the finished document (probe_in). The re-check was weaker than the hook in a different way in
+# each of three findings of one round (a word match that missed a glued entry, the PROBE_MIN floor that dropped a short
+# one, a tail cut that made a fragment one); one matcher both call is the honest fix and is not done in this PR.
 PRIVATE_STRINGS_VAR = "ROMP_PRIVATE_STRINGS"
 PRIVATE_STRINGS_FILE = os.path.join("romp", "private-strings.txt")
 PRIVATE_STRINGS_MAX = 64 * 1024
+LIST_OVER_BOUND = "romp: the private-strings list is over %d bytes; entries past the bound are not checked" % PRIVATE_STRINGS_MAX
+LIST_NOT_IN_FORCE = "romp: %d of %d private-strings entries did not become probes and are not checked; the list is not fully in force"
+
+
+def open_regular(path):
+    """`path` open for reading bytes when it is a REGULAR file, else None; an OSError (absent, unreadable) propagates.
+    Opened O_NONBLOCK and fstat'ed before any read: a plain open of a fifo blocks until a writer arrives, before any
+    read a bound could cover, and a fifo at the private-strings path hung `romp perf export --public` and `romp
+    restart-metrics --json --public`, one at the receiver setting hung `romp perf upload`, all indefinitely (the
+    upload's second review round, 2026-09-18). Anything but a regular file (a fifo, a device node, a directory) is
+    closed and None, so the caller takes its absent or refused road; the flag stays on the descriptor, which a regular
+    file's reads never notice."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        regular = stat.S_ISREG(os.fstat(fd).st_mode)
+    except OSError:
+        os.close(fd)
+        raise
+    if not regular:
+        os.close(fd)
+        return None
+    return os.fdopen(fd, "rb")
 
 
 def private_strings_path(env):
@@ -726,16 +770,26 @@ def private_strings_path(env):
 
 def private_strings(env):
     """[str]: the private list's entries, a `#` comment and surrounding whitespace stripped from each line and blanks
-    dropped, from at most PRIVATE_STRINGS_MAX bytes of the file read as UTF-8 (a byte that is not is replaced, never a
-    traceback); [] when there is no file to read (absent, unreadable, or no path at all)."""
+    dropped, read as UTF-8 (a byte that is not is replaced, never a traceback) from a REGULAR file (open_regular) of at
+    most PRIVATE_STRINGS_MAX bytes: PRIVATE_STRINGS_MAX + 1 are read, and a file over the bound is cut back to the last
+    complete line inside it, so no fragment of an entry becomes a probe, with LIST_OVER_BOUND said once on stderr, since
+    the entries from the cut on are not checked; a file exactly at the bound is read whole and nothing is said. [] when
+    there is no file to read: absent, unreadable, no path at all, or not a regular file (a fifo, a device node)."""
     path = private_strings_path(env)
     if not path:
         return []
     try:
-        with open(path, "rb") as fh:
-            raw = fh.read(PRIVATE_STRINGS_MAX)
+        fh = open_regular(path)
+        if fh is None:
+            return []
+        with fh:
+            raw = fh.read(PRIVATE_STRINGS_MAX + 1)
     except OSError:
         return []
+    if len(raw) > PRIVATE_STRINGS_MAX:
+        raw = raw[:PRIVATE_STRINGS_MAX]
+        raw = raw[:raw.rfind(b"\n") + 1]        # back to the last complete line; empty when the bound cut the first one
+        sys.stderr.write(LIST_OVER_BOUND + "\n")
     out = []
     for line in raw.decode("utf-8", "replace").splitlines():
         line = line.split("#", 1)[0].strip()
@@ -747,18 +801,23 @@ def private_strings(env):
 def machine_probes(state_dir=None, env=None):
     """[(kind, string)]: what only this machine knows. The hostname and its first label, the login name and
     the home directory (with its last component, which is usually the login name), every string on the
-    machine-local private list (private_strings, kind `private string`, a word probe like the hostname and the
-    login: the maintainer's own list of what must never be published, absent on a clone that never set one up),
-    and, when `state_dir` holds an sdk registry, every session id (whole and its first eight characters, the
-    spelling the scope units and the ledgers use), every conversation id and every working directory. Lower-cased;
-    strings shorter than PROBE_MIN are left out (see the module docstring for why session names are not probes, and
-    why a listed word that is also romp vocabulary refuses on purpose)."""
+    machine-local private list (private_strings, kind PRIVATE_KIND, `private string`: the maintainer's own list of
+    what must never be published, absent on a clone that never set one up, matched as a substring or a token run,
+    probe_in), and, when `state_dir` holds an sdk registry, every session id (whole and its first eight characters,
+    the spelling the scope units and the ledgers use), every conversation id and every working directory.
+    Lower-cased; strings shorter than PROBE_MIN are left out, EXCEPT a listed private string: the list is the
+    maintainer's explicit choice and not the heuristic the floor exists for, and the floor dropped a three-character
+    entry silently while a document carrying it was sent (the upload's second review round, 2026-09-18); an empty
+    entry is never a probe (an empty substring is in every string). When a listed entry did not become a probe (the
+    reader returns no blank today, so only a filter a later change adds could drop one), LIST_NOT_IN_FORCE says how
+    many of how many on stderr: a list silently not in force is the wrong signal. See the module docstring for why
+    session names are not probes, and why a listed string that is also romp vocabulary refuses on purpose."""
     env = os.environ if env is None else env
     out = []
 
     def add(kind, s):
         s = str(s or "").strip().lower()
-        if len(s) >= PROBE_MIN and (kind, s) not in out:
+        if s and (kind == PRIVATE_KIND or len(s) >= PROBE_MIN) and (kind, s) not in out:
             out.append((kind, s))
     try:
         host = socket.gethostname()
@@ -771,8 +830,12 @@ def machine_probes(state_dir=None, env=None):
     home = env.get("HOME") or ""
     add("home directory", home)
     add("username", os.path.basename(home.rstrip("/")))
-    for s in private_strings(env):
-        add("private string", s)
+    listed = private_strings(env)
+    for s in listed:
+        add(PRIVATE_KIND, s)
+    dropped = sum(1 for s in listed if (PRIVATE_KIND, str(s).strip().lower()) not in out)
+    if dropped:
+        sys.stderr.write(LIST_NOT_IN_FORCE % (dropped, len(listed)) + "\n")
     if state_dir:
         for p in sorted(glob.glob(os.path.join(str(state_dir), "sdk", "*.json"))):
             try:
@@ -792,13 +855,18 @@ def machine_probes(state_dir=None, env=None):
 
 
 def probe_in(kind, probe, s):
-    """Does the lower-cased `s` carry `probe`: a word probe (WORD_KINDS: a hostname, a login, a listed private string) as
-    a contiguous run of whole tokens, split on everything outside letters and digits (`mark` is not in `intrMarks`, `tester` is in
+    """Does the lower-cased `s` carry `probe`: a word probe (WORD_KINDS: a hostname, a login) as a contiguous run of
+    whole tokens, split on everything outside letters and digits (`mark` is not in `intrMarks`, `tester` is in
     `tester-app` and `app_Tester`, `testhost.example` is in `chat.testhost.example` and not in `testhost` beside
-    `example`); any other probe (an id, a directory) as a substring."""
+    `example`); a listed private string (PRIVATE_KIND) as a substring OR as a token run, the union: the substring is
+    what the pre-push hook matches (`zzcoinedzz` is in `zzcoinedzzChat` and in `zzcoinedzzs`), and the token run keeps
+    a dotted entry found under another join (`second.coined` is in `second-coined` and `second_coined`, which the
+    hook's substring grep misses); any other probe (an id, a directory) as a substring."""
     low = s.lower()
-    if kind not in WORD_KINDS:
+    if kind not in WORD_KINDS and kind != PRIVATE_KIND:
         return probe in low
+    if kind == PRIVATE_KIND and probe in low:
+        return True
     run, tokens = TOKEN.findall(probe), TOKEN.findall(low)
     n = len(run)
     return n > 0 and any(tokens[i:i + n] == run for i in range(len(tokens) - n + 1))
