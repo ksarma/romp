@@ -476,8 +476,8 @@ def _merge(a, b):
 
 
 def _public_key(key, where):
-    """The key as the public form spells it: the http block through the register (families collapsed), the joined
-    tables through their grammar, everything else through the ident grammar; `other` when it fails."""
+    """The key as the public form spells it: the http block through the register (the families' variable segment
+    collapsed), the joined tables through their grammar, everything else through the ident grammar; `other` when it fails."""
     if where == ("http",):
         return http_public_key(key)
     if where in JOINED_KEY_BLOCKS:
