@@ -930,3 +930,34 @@ test("the table's refusals, derived from VIEW_DELTA_KINDS: eight, each its own r
     }));
   } finally { restore(); }
 });
+
+// ── the two rows against the drive that counted them (review round 7, 2026-09-19) ────────────────────────────────────
+// The caps-ignored corner (tests/test_federated_capability_corners_served.py) was driven with seven notices, so each of
+// the hub's three relay sockets received seven feed patches, and again with a private remote that sent three patches for
+// a slot named `lanes` beside each: 21 unknown-slot patches per socket. The counts: 0 rows for the 21 feed patches each
+// socket applied, ONE `delta-unknown-slot` row per page's conn for its 21 lanes patches, one console line, and one ask
+// per patch. This is that shape on one conn in the rig. The latch is the same one the refused-base row uses (sayDeltaOnce
+// over Conn.saidDelta): this row's key is [ev, UNKNOWN_SLOT_KEY + build], one per build per conn, whatever the remote
+// names. The ask is NOT latched and stays per patch on purpose (the reason at the filing site in federation.ts): the
+// kernel answers a needSlot only for a slot in its own _DELTA_SLOTS (tests/test_view_deltas.py HandlerWiring pins an
+// unknown slot ignored), so an ask for a name it does not patch costs the ask and nothing comes back, and an ask for a
+// slot it does patch (a kernel newer than this bundle, patching a frame type this bundle renders whole) is answered by
+// the whole frame, which needs no table and is that pane's repair. Red with the latch removed (21 rows) and with the ask
+// removed (0 asks), both restored byte-identical.
+test("twenty-one patches for one slot this bundle does not decode, on one conn: one row, one console line, one latch key, and one ask per patch, each naming the slot", async () => {
+  await withManager("timeline", ({ fm, emitted, sent }) => countingConsoleErrors((errors) => {
+    seedLocalTimeline(fm);
+    const ws = attached(fm);
+    const conn = fm.conns.get(HOST);
+    const rows = () => sent.filter((x) => x && x.type === "clientDiag" && x.what === "hostconn" && x.data && x.data.ev === "delta-unknown-slot").map((x) => x.data);
+    for (let i = 0; i < 21; i++) ws.frame({ type: "delta", slot: "lanes", base: i, rev: i + 1, coll: {}, rest: { now: 505 + i } });
+    assert.deepEqual(rows(), [{ host: HOST, ev: "delta-unknown-slot", why: "lanes" }], "one row for 21 patches: the key is the event's, [ev, UNKNOWN_SLOT_KEY + build], one per build on this conn");
+    assert.equal(errors.length, 1, "one console line: " + errors.join(" | "));
+    assert.equal(conn.saidDelta.size, 1, "one latch key");
+    assert.equal(ws.sent.length, 21, "one ask per patch: the resync, which only a kernel that patches the slot answers (with the whole frame)");
+    assert.ok(ws.sent.every((m: any) => m.type === "needSlot" && m.slot === "lanes"), "each ask names the slot: " + JSON.stringify(ws.sent.slice(0, 3)));
+    assert.deepEqual(localAsks(sent), [], "nothing asked of the local kernel");
+    assert.equal(emitted.filter((m) => m && m.type === "delta").length, 0, "no raw patch reached the pane");
+    fm.conns.get(HOST).closed = true;
+  }));
+});

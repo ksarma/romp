@@ -1241,15 +1241,30 @@ export class FederationManager {
         // A patch for a slot this receiver has no table for (a kernel newer than this bundle, serving a slot it does
         // not know) is the one frame neither path decodes: the receiver asks that kernel for the whole slot and yields
         // nothing, and the drop is said here first, the way every other drop on this layer is (a hostconn row under the
-        // keys the family already has, and the console), never silently. Said once per EVENT (sayDeltaOnce), the rule
-        // the refused-base row shares (mintReceiver), and the event here is this bundle's, not the slot name's: every
-        // slot this bundle does not decode, the slotless patch included, is one key per build the /tunnels row names
-        // (UNKNOWN_SLOT_KEY), so the remote's slot names never widen the latch; the first name seen rides in the row,
-        // cut (UNKNOWN_SLOT_CUT) so the kernel's cut of `why` keeps the build tag. A row per patch would be the flood
-        // this layer exists to end (the phone's 86 rows), and a row per name would be the peer's to flood (review round
-        // 4); the ask stays per patch and per name since it is the resync itself and the kernel coalesces asks
-        // (2026-09-19). A known slot's patch that cannot apply is the receiver's own resync (needSlot on this conn) and
-        // needs no row: the full frame it earns is the repair.
+        // keys the family already has, and the console), never silently.
+        // The row and the console line are LATCHED, on the same latch as the refused-base row (sayDeltaOnce over
+        // Conn.saidDelta; the sibling files in mintReceiver): at most one per conn per build of the remote. The key is
+        // [ev, UNKNOWN_SLOT_KEY + " @<sha>"] and not the row, because the why carries a slot name the PEER chose: one
+        // marker stands for every slot this bundle does not decode, the slotless patch included; the first name seen
+        // rides in the row, cut to UNKNOWN_SLOT_CUT so the kernel's cut of `why` keeps the build tag; a remote that names
+        // a new slot in every patch spends one row (test 18 of federation-remote-view-delta.test.ts: 200 names). The
+        // sibling's key is its row, [ev, slot + reason + build], at most eight per build, the table's refusals. A row per
+        // patch would be the flood this layer exists to end (the phone's 86 rows), and a row per name would be the
+        // peer's to flood (review round 4). Measured (review round 7, 2026-09-19, the caps-ignored corner of
+        // tests/test_federated_capability_corners_served.py with seven notices, then with a private remote sending three
+        // `lanes` patches beside each feed patch): 21 feed patches per socket, 0 rows; 21 lanes patches per socket, one
+        // row per page's conn and one console line.
+        // The ASK is not latched: needSlot goes to that kernel per patch (view-deltas.ts recover), on purpose. The kernel
+        // answers a needSlot only for a slot in its own _DELTA_SLOTS (kernel.py, the ws dispatch's needSlot arm;
+        // tests/test_view_deltas.py HandlerWiring pins an unknown slot ignored) and any other op with a small unknownOp
+        // frame, which no pane on this side reads. A slot patch only ever comes from a kernel that patches that slot, so
+        // on the wire the ask is answered by the WHOLE frame, which needs no table (receive() passes a whole frame of a
+        // type it has no table for through unchanged, and the dispatch below hands it to the pane that renders that
+        // type): when a kernel newer than this bundle patches a frame type this bundle renders whole, that whole frame is
+        // the pane's only repair, and without the ask the pane freezes at its first frame. The kernel coalesces (the
+        // client's resync is a set; one whole frame per push), so the cost is one small ask per patch, bounded by the
+        // remote's change rate, and nothing in client-diag. A known slot's patch that cannot apply is the receiver's own
+        // resync (needSlot on this conn) and needs no row: the full frame it earns is the repair.
         if (msg && msg.type === "delta" && !(typeof msg.slot === "string" && Object.prototype.hasOwnProperty.call(VIEW_DELTA_KINDS, msg.slot))) {
           const slot = typeof msg.slot === "string" ? msg.slot : "";
           const why = slot.slice(0, UNKNOWN_SLOT_CUT) + this.peerTag(c);
