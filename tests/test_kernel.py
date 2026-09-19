@@ -111,7 +111,8 @@ class ViewBuilder(unittest.TestCase):
                       # that root. Left in place it outlived the sandbox: the chat-signature stat exactness test in
                       # tests/test_kernel_delta_send.py, running later in the alphabetical order, had its signature
                       # consult a backend whose registry root was gone (fork_children answers {} on the OSError and
-                      # scans no reg) and read 0 registry stats against 39 (2026-09-19). Put back in tearDown, so the
+                      # scans no reg) and read 0 registry stats against the derived 39 at the round-2 head (2026-09-19).
+                      # Put back in tearDown, so the
                       # next builder starts where this test found it.
                       km._sdk_backend)
         # the captioner's MESSAGE caption (jd.gist_llm) — stub it so NO test fires a real LLM subprocess.
