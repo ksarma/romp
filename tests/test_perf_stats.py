@@ -1554,8 +1554,8 @@ def _scratch_repo(test):
     tests/test_entrypoints_executable.py, whose env() says why: a hook's GIT_INDEX_FILE would otherwise send the scratch
     repo's operations into this checkout's index); every git call over the scratch repo passes that environment too,
     the listing in _scan through its env keyword. The first version scrubbed for the init alone, and a listing over
-    the scratch repo under a hook's GIT_DIR and GIT_INDEX_FILE was this checkout's index (3109 paths at 0ec2eb9ff),
-    each skipped at the open, so the pins stayed green over a listing that was not the scratch repo's."""
+    the scratch repo under a hook's GIT_DIR and GIT_INDEX_FILE was this checkout's index, every path skipped at the
+    open, so the pins stayed green over a listing that was not the scratch repo's."""
     d = Path(tempfile.mkdtemp())
     test.addCleanup(shutil.rmtree, d, ignore_errors=True)
     env = _git_env_scrubbed()
@@ -1600,17 +1600,20 @@ class RoutingStatements(unittest.TestCase):
     hold no NUL and the whole of it decodes as UTF-8; it is read in CHUNK-byte pieces through an incremental decoder,
     and only a file that names a block is read whole, so the scan holds at most one piece, raw and decoded, for a file
     that names none, whatever its size, and about twice the text of each file that does (the PLACES files); no size
-    limit is needed and none is applied. The eight-directory walk this replaced (kernel, bin, cli, docs, upstream, tests,
-    scripts, ui/webview) omitted every other directory and the root files, 373 tracked files at 639043a31 (tools/ 143,
-    vscode-extension/ 70, ui/ outside ui/webview 40, plans/ 35, vendor/ 28, assets/ 18, the 14 root files, .github/ 8,
-    hooks/ 8, claude/ 4, overrides/ 2, postal/ 2, .githooks/ 1), and inside its eight roots it read only a suffix
-    allowlist and pruned assets and dot directories, 68 more (37 under docs/assets, 26 .json, 3 .bash, 1 .csv, 1 .svg);
-    none of the 441 named a block, so the pin was complete by luck and would not have caught a statement added there.
-    Of the 441, 41 (18 under assets/ and vscode-extension/media, 23 under docs/assets) are binaries the scan drops on
-    their first bytes too, so the text the walk missed and the scan now reads is 400 files (355 outside its roots, 45
-    inside). Measured at 639043a31 in a clean worktree: git lists 3109 paths, 14 are symlinks, 41 hold a NUL in their
-    first 8 KiB, none fails to decode, 3054 read as text, 71.8 MB (decimal) of them. The count moves with every file
-    added, so it is only ever quoted with its head; no directory list is kept. An untracked file git does not ignore is
+    limit is needed and none is applied. The eight-directory walk this replaced omitted every other directory and the
+    root files (when this was written: tools/, vscode-extension/, ui/ outside ui/webview, plans/, vendor/, assets/, the
+    root files, .github/, hooks/, claude/, overrides/, postal/, .githooks/), and inside its eight roots it read only a
+    suffix allowlist and pruned named directories (docs/assets, and the .json, .bash, .csv and .svg files among the
+    omitted); none of them named a block when this was written, so the pin was complete by luck and would not have
+    caught a statement added there. No count of any of this is quoted here: the counts move with every commit, and a
+    count needs a head a clone may not hold. The census for the tree you have is a command: `git ls-files -z --cached
+    --others --exclude-standard` at the repo root, split on NUL; drop the symlinks; drop a file whose first PROBE bytes
+    hold a NUL; drop a file that does not decode as UTF-8; count the rest and sum their bytes. The old walk's gap is
+    that listing bucketed against the walk's definition: its roots (kernel, bin, cli, docs, upstream, tests, scripts,
+    ui/webview), its suffix allowlist (.py .md .bats .ts .js .mjs .sh .css .html .txt .toml .yml .yaml, and no suffix)
+    and its pruned names (node_modules, dist, out-tests, __pycache__, assets, and any directory whose name starts with
+    a dot): a listed file outside every root, or inside one with another suffix or under a pruned name, is a file the
+    walk never read. No directory list is kept. An untracked file git does not ignore is
     read too: a scratch note, a saved diff, an editor backup, a .orig or .rej a merge left, a caption under docs/assets
     (none of those is ignored here), so a machine holding one reds this pin before CI does; the webview test build's
     output, vscode-extension/out-tests, is ignored by vscode-extension/.gitignore and never read, and ui/out-tests does
@@ -1625,11 +1628,13 @@ class RoutingStatements(unittest.TestCase):
     size of PLACES, a set of files. The block-name regex is a one-directional proxy: it finds the files that NAME a
     routed block, and a file can state the routing without naming one (this branch's own ledger entry does), so such
     prose is outside the sweep whatever the file set. `git ls-files -z --cached --others --exclude-standard | xargs -0 grep -I -l -E
-    '<the BLOCKS pattern>'` at the repo root approximates it (at 639043a31 it lists the same files plus the bin/romp-kernel
-    symlink the scan skips) and is not the scan's rule (GNU grep 3.11; another grep's -I may differ): grep -I drops a
-    file when it meets a NUL byte in what it has read before the first match, so a NUL after the scan's 8 KiB probe
-    hides a file the scan reads, and grep -I has no UTF-8 requirement, so it lists a file the scan skips on a decode
-    error; at 639043a31 no listed file is in either class. No count of statements is held anywhere: a statement has no
+    '<the BLOCKS pattern>'` at the repo root approximates it (run it beside the test and compare: over this tree it has
+    listed the same files plus the bin/romp-kernel symlink the scan skips) and is not the scan's rule (checked on GNU
+    grep 3.11, `grep --version`; another grep's -I may differ): grep -I drops a file when it meets a NUL byte in what
+    it has read before the first match, so a NUL after the scan's 8 KiB probe hides a file the scan reads, and grep -I
+    has no UTF-8 requirement, so it lists a file the scan skips on a decode error; the edges test constructs one of
+    each in a scratch repo, and whether the live tree holds one is what running both shows. No count of statements is
+    held anywhere: a statement has no
     unit a regex fixes (a line matching BLOCKS, an occurrence of it and a sentence give three different numbers over the
     same files), and the sweep needs the files to read, not a tally."""
 
@@ -1893,7 +1898,8 @@ class RoutingStatements(unittest.TestCase):
         """A plant with a pid that is never this process (1), the shape a run killed inside the plant window leaves, is
         removed by the healer setUpClass runs, and the tree scans green after it. The healer's placement is pinned on
         setUpClass's source: inside the plant test it would heal only from the second run, since the wording pin sorts
-        first and reads the leftover (round 1's refuters measured '1 failed, 3 passed' there, '4 passed' here)."""
+        first and reads the leftover (round 1's refuters ran both placements: it reds the wording pin there and nothing
+        here)."""
         self._live_tree()
         with self._tree_lock(exclusive=True) as root:
             stale = root / "plans" / "routing-sweep-plant-1-stale0000.md"
@@ -1958,7 +1964,7 @@ class RoutingStatements(unittest.TestCase):
         real name, and a failure of EITHER pin names it in a %r, surrogate and all, in a message that encodes as strict
         UTF-8, which is what xdist's transport does to a report: the wording pin's first version formatted the path with
         %s, so a bad-named file carrying a retired wording put a lone surrogate into its message, and under -n 4 the
-        failure was never reported (UnicodeEncodeError in the worker, INTERNALERROR ending the session in 2 of 5 runs),
+        failure was never reported (UnicodeEncodeError in the worker, INTERNALERROR ending the session in some runs),
         the shape this test exists to refuse, in the other pin."""
         d, env = _scratch_repo(self)
         name = b"notes-caf\xe9.md"                                                # latin-1 e-acute, not UTF-8
@@ -2207,8 +2213,8 @@ class RoutingStatements(unittest.TestCase):
         """Every git call over a scratch repo runs with the environment _scratch_repo scrubbed for its init (round 2; the
         first version scrubbed the init alone). Two things a caller's environment can hold, set here together: a hook's
         GIT_DIR and GIT_INDEX_FILE for this checkout, which git obeys over `-C` (a scratch listing under them was this
-        checkout's index, 3109 paths at 0ec2eb9ff, each skipped at the open, so the pins stayed green over a listing that
-        was not the scratch repo's), and a global config whose excludes hide the scratch file, which the ambient
+        checkout's index, every path skipped at the open, so the pins stayed green over a listing that was not the
+        scratch repo's), and a global config whose excludes hide the scratch file, which the ambient
         environment honours and the scrubbed one, with no global config, does not."""
         root = self._live_tree()
         git_dir = os.fsdecode(_git_bytes(root, "rev-parse", "--absolute-git-dir").strip())
