@@ -3943,9 +3943,14 @@ the budget runs out, so a receiver that answers in pieces cannot hold an
 unattended `--yes` run open; whatever phase the deadline cuts, the refusal is
 the fixed line naming `TimeoutError`. It follows no redirect (a 3xx is
 refused by its code and its `Location` is not read) and reads no proxy
-variable. Nothing about the machine travels: no
-hostname, account or filename, and no second file; the receiver names the
-stored object itself. The one answer accepted is `201` with
+variable. The request carries nothing that names the machine beyond the
+file: no hostname, account or filename anywhere in it, and no second file;
+the receiver names the stored object itself. What does travel is the file's
+content, and that is paste-safe, not unlinkable: the per-process and
+per-machine measurements the export keeps (the `rss_kb` and `cpu_s` figures,
+the ten memory-fraction bounds coarsened to a power of two, the uptime rounded
+down to the minute and its bucket under `usage`, the kernel commit) go with
+it, so two uploads from one kernel remain linkable by design. The one answer accepted is `201` with
 a JSON body of exactly `{"receipt": <uuid4>, "retention_days": <integer>,
 "av": "ok"|"skipped"}`, printed as `uploaded: receipt <uuid> (kept <N> days;
 delete by sending the receipt to the project)`. Any other status (a redirect

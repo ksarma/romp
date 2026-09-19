@@ -1871,5 +1871,34 @@ class Enumeration(unittest.TestCase):
             self.assertEqual(fh.read(), data, "the verb did not touch the file")
 
 
+class Docs(unittest.TestCase):
+    """The user-facing sentences this verb's docs rest on, pinned flattened so a rewrap survives and cross-checked against
+    the code where a count is involved."""
+
+    @staticmethod
+    def _flat(*parts):
+        with open(os.path.join(ROOT, *parts), encoding="utf-8") as fh:
+            return " ".join(fh.read().split())
+
+    def test_the_reference_says_what_travels_and_makes_no_blanket_promise_about_the_machine(self):
+        """The upload section of docs/reference.md said "Nothing about the machine travels: no hostname, account or filename,
+        and no second file", which was false of the body the same section describes (per-machine measurements the export
+        keeps by design: rss, cpu, the ten memory-fraction bounds coarsened to a power of two, the uptime and its bucket, the
+        kernel commit) and contradicted by its own linkability clause a paragraph earlier (correctness-4 and extra4-3, the
+        third review round): a false privacy promise in the paragraph a user decides on. The sentence now holds the standard
+        the PR states everywhere else, paste-safe, not unlinkable: the negative is scoped to what NAMES the machine, what does
+        travel is said in the same breath, and two uploads from one kernel remain linkable by design. The load-bearing words
+        are pinned, and the blanket promise is pinned absent. Fails before: the old sentence was in the reference."""
+        text = self._flat("docs", "reference.md")     # asserted by boolean, so a failure names the words and never dumps the page
+        self.assertFalse("Nothing about the machine travels" in text, "the blanket promise is still in the reference")
+        for words in ("The request carries nothing that names the machine beyond the file: no hostname, account or filename anywhere in it, "
+                      "and no second file; the receiver names the stored object itself. What does travel is the file's content, and that is "
+                      "paste-safe, not unlinkable:",
+                      "the `rss_kb` and `cpu_s` figures", "the ten memory-fraction bounds coarsened to a power of two",
+                      "the uptime rounded down to the minute and its bucket under `usage`", "the kernel commit",
+                      "so two uploads from one kernel remain linkable by design"):
+            self.assertTrue(words in text, "not in the reference: " + words)
+
+
 if __name__ == "__main__":
     unittest.main()
