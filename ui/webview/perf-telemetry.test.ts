@@ -1389,6 +1389,63 @@ test("wsBytesByHost on the collector: the per-position baselines carry across an
   assert.equal(slowRows(h.posted).length, 0);
 });
 
+// The detach-minute rule through the real composition (the design's node test): a FederationManager's closeRemote into
+// the collector's flush, the collector wired to the manager's two readers as browserDeps wires them on a page
+// (fedBytes from wsBytesByHost(), fedAttached from attachedHostOrdinals()). The test above feeds the collector hand-written
+// maps and federation-ws-bytes-by-host.test.ts pins the manager's getters across a detach; this one runs both real halves
+// together, so a shape the two stubs agree on but the halves do not (a position spelled one way by the getter and another
+// by the collector's filter; a total pruned by closeRemote before the flush reads it) goes red here.
+test("the detach minute through the real composition: a FederationManager's remote conn receives a frame, closeRemote detaches the host, and the collector wired to the manager's own readers files the host's characters on the row closing that minute and no key on the row after", () => {
+  const g: any = globalThis;
+  const saved: Record<string, [boolean, unknown]> = {};
+  for (const k of ["window", "localStorage", "WebSocket", "location"]) saved[k] = [k in g, g[k]];
+  class FakeWS {
+    static made: FakeWS[] = [];
+    readyState = 0;
+    onopen: (() => void) | null = null;
+    onmessage: ((ev: any) => void) | null = null;
+    onclose: ((ev: any) => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor(public url: string) { FakeWS.made.push(this); }
+    send(): void {}
+    close(): void { this.readyState = 3; }
+  }
+  g.window = { dispatchEvent: () => {}, __rompLocalSend: () => {}, sessionStorage: { getItem: () => "" }, parent: { postMessage: () => {} },
+               __rompDialTerms: () => ({ app: "feed", iid: "PAGEIID-0001", active: "", col: "", skeleton: 0, provrows: 0, proto: 2, delta: 1 }) };
+  g.localStorage = { getItem: () => null, setItem: () => {} };
+  g.WebSocket = FakeWS;
+  g.location = { protocol: "http:", host: "hub.local:1", search: "?wid=hublab" };
+  try {
+    const fm: any = new FederationManager();
+    fm.app = "feed";
+    // the browser's wiring (perf-telemetry.ts browserDeps reads the same two getters off window.__rompFed): the manager's
+    // page-lifetime totals and the positions attached at the flush
+    const h = beaconHarness({ share: true, mute: false }, { raf: null, fedBytes: () => fm.wsBytesByHost(), fedAttached: () => fm.attachedHostOrdinals() });
+    const p = createPerfTelemetry("feed", h.deps);
+    fm.openRemote("TESTHOST", true);
+    const ws = FakeWS.made[FakeWS.made.length - 1];
+    ws.readyState = 1; ws.onopen!();
+    const text = JSON.stringify({ type: "feed", now: 500, buildId: 1, asks: [], ledgers: [] });
+    ws.onmessage!({ data: text });   // the remote's frame: its characters onto the host's position in the manager
+    assert.deepEqual(fm.wsBytesByHost(), { h1: text.length }, "the manager counted the frame under h1");
+    assert.deepEqual(fm.attachedHostOrdinals(), ["h1"]);
+    fm.closeRemote("TESTHOST");   // a /tunnels answer omitted the host: detached before the minute's flush
+    assert.equal(fm.conns.has("TESTHOST"), false, "detached");
+    assert.deepEqual(fm.attachedHostOrdinals(), [], "nothing attached at the flush");
+    h.frame(p, { type: "feed" }, 10);
+    h.clock.wall += 60_000;
+    p.tick();
+    assert.deepEqual(minuteRows(h.posted)[0].data.wsBytesByHost, { h1: text.length }, "the row closing the detach's minute carries the host's characters under its position, read through the real getter");
+    h.frame(p, { type: "feed" }, 10);
+    h.clock.wall += 60_000;
+    p.tick();
+    assert.equal("wsBytesByHost" in minuteRows(h.posted)[1].data, false, "the row after: the host is detached and silent, so no key, through the real attachment reader");
+    assertIdentifiersOnly(minuteRows(h.posted)[0].data.wsBytesByHost);
+  } finally {
+    for (const [k, [had, v]] of Object.entries(saved)) { if (had) g[k] = v; else delete g[k]; }
+  }
+});
+
 test("vis: the hide counts and flushes, the return counts and adds the hidden stretch; a minute spent hidden reports its own span hidden", () => {
   const doc = new EventTarget();
   let vis = true;

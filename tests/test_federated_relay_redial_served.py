@@ -77,7 +77,7 @@ const hook = () => {
           const m = JSON.parse(ev.data);
           if (m && m.type !== "ka") {
             const f = { sock: idx, t: String(m.type), slot: m.slot ? String(m.slot) : "" };
-            for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number") f[k] = m[k];
+            for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number" || (typeof m[k] === "string" && (k === "gen" || k === "newGen"))) f[k] = m[k];   // the revs as numbers, the gens as the kernel's strings; no content
             window.__frames.push(f);
           }
         } catch (e) {}
@@ -269,7 +269,7 @@ class FederatedRelayRedial(unittest.TestCase):
         if pair is None:
             self.assertEqual(redial_caps, "feedDelta", "the first full carried no gen (this checkout's kernel): the redial is undeclared, the decoder word alone")
         else:
-            self.assertEqual(redial_caps, "feedDelta,held:feed:%d.%d" % pair, "the first full carried gen: the redial declares the pair the stream left")
+            self.assertEqual(redial_caps, "feedDelta,held:feed:%s.%d" % pair, "the first full carried gen: the redial declares the pair the stream left")
 
     def test_the_frames_after_the_redial_match_the_declaration(self):
         pair = self._first_pair()

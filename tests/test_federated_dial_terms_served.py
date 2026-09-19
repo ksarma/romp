@@ -34,7 +34,7 @@ import unittest
 import urllib.request
 import uuid
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import lab_dist
 
@@ -64,24 +64,32 @@ def _free_port():
 # federation.ts writes a relay dial's caps as its own decoder word (REMOTE_DIAL_CAPS) plus the held members it reads from the
 # CONN's own bases after connect()'s gated reset: held:feed:<gen>.<rev> from the pair beside the raw feed base, held:bars from
 # the receiver's bars base, each omitted when its base is absent or holds no gen. The page's caps string is never a source.
-# A lab derives the expectation from the DRIVE, the frames the host's previous relay socket received as the driver's hook
+# A lab derives the expectation from the DRIVE, the frames the host's EARLIER relay sockets received as the driver's hook
 # records them (type, slot and the stamp fields, never content), by the same rule; on a kernel whose frames carry no gen
 # (every kernel in this repo today) that is "feedDelta" on every dial, a redial included, and the labs record exactly that.
 REMOTE_DIAL_CAPS = "feedDelta"
-STAMP_FIELDS = ("gen", "newGen", "base", "rev", "through")   # what a hook copies off a frame beside its type: numbers, no content
+STAMP_FIELDS = ("gen", "newGen", "base", "rev", "through")   # what a hook copies off a frame beside its type: the gens as the kernel's strings, the revs as numbers, no content
+GEN_FIELDS = ("gen", "newGen")
 
 
 def _stamp_field(f, k):
+    """A stamp field as the client reads it: a gen (view-deltas.ts genOf) is a non-empty string holding neither '.' (the held
+    member's own separator) nor ',' (the caps term's), the kernel's boot token and counter joined by '-'; a rev (base, rev,
+    through) is a non-negative int. Anything else reads as absent, as the client reads it."""
     v = f.get(k)
+    if k in GEN_FIELDS:
+        return v if isinstance(v, str) and v and "." not in v and "," not in v else None
     return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
 
 
 def held_pair(frames, slot):
-    """The (gen, rev) pair the client holds for `slot` ("feed" or "bars") after `frames`, one relay socket's recorded frames in
-    order, by federation.ts's rule: a full carrying gen leaves (gen, 0) and a full carrying none clears the pair; a stamped
-    delta leaves (newGen or gen, through) when composed (through carried), else (gen, rev); a gen-less delta moves nothing.
-    A stamped delta the client would refuse (its gen not the held one, its base above the held rev) is not modelled: a lab's
-    stream is the kernel's own and applies. None when no pair is held."""
+    """The (gen, rev) pair the client holds for `slot` ("feed" or "bars") after `frames`, the recorded frames of a host's relay
+    sockets in arrival order, by federation.ts's rule: a full carrying gen leaves (gen, 0) and a full carrying none clears
+    the pair; a stamped delta carrying through leaves (newGen when carried, else gen; through), which is (newGen, R) for a
+    composed frame and (gen, rev) for the stamping kernel's per-cycle delta (through equal to rev, no newGen), and one
+    carrying no through leaves (gen, rev); a gen-less delta moves nothing. A stamped delta the client would refuse (its gen
+    not the held one, its base above the held rev) is not modelled: a lab's stream is the kernel's own and applies. None
+    when no pair is held."""
     full, delta = ("feed", "feedDelta") if slot == "feed" else ("bars", "delta")
     pair = None
     for f in frames:
@@ -103,18 +111,20 @@ def held_pair(frames, slot):
 
 def expected_relay_caps(prev_frames):
     """The caps term a relay dial carries: REMOTE_DIAL_CAPS, then held:feed:<g>.<r> and held:bars:<g>.<r> for the pairs the
-    host's PREVIOUS relay socket left the conn (held_pair over its recorded frames), each omitted when none is held.
-    `prev_frames` is None for a first dial (no socket before it). A redial whose previous socket recorded no frames is an
-    empty drive and an AssertionError: the expectation never rests on nothing."""
+    host's EARLIER relay sockets left the conn (held_pair over their recorded frames in arrival order: the client keeps a
+    base holding a gen across a redial, so a third dial declares what the whole stream left, not what one socket
+    received), each omitted when none is held. `prev_frames` is None for a first dial (no socket before it). A redial
+    none of whose earlier sockets recorded a frame is an empty drive and an AssertionError: the expectation never rests on
+    nothing."""
     if prev_frames is None:
         return REMOTE_DIAL_CAPS
     if not prev_frames:
-        raise AssertionError("the host's previous relay socket recorded no frames: no drive to derive the redial's caps term from")
+        raise AssertionError("the host's earlier relay sockets recorded no frames: no drive to derive the redial's caps term from")
     words = [REMOTE_DIAL_CAPS]
     for slot in ("feed", "bars"):
         pair = held_pair(prev_frames, slot)
         if pair is not None:
-            words.append("held:%s:%d.%d" % (slot, pair[0], pair[1]))
+            words.append("held:%s:%s.%d" % (slot, pair[0], pair[1]))
     return ",".join(words)
 
 
@@ -132,23 +142,22 @@ def relay_dials(dials):
 
 
 def assert_relay_dials(tc, app, dials, frames, caps=True):
-    """Every relay dial the page made carries `app`, delta=1 and the caps term expected_relay_caps derives from the frames the
-    host's previous relay socket received (`frames`: the hook's records, each naming its socket index under `sock`), or no
-    caps term where the lab strips it (caps False). Returns the dials checked, [(index, host, url)]."""
-    by_sock = {}
-    for f in frames or []:
-        by_sock.setdefault(f.get("sock"), []).append(f)
-    prev = {}
+    """Every relay dial the page made carries `app`, delta=1 and the caps term expected_relay_caps derives from the frames
+    EVERY earlier relay socket of the host received, in arrival order (`frames`: the hook's records, each naming its socket
+    index under `sock`; the recorded order is the page's, and a frame the page discarded after abandoning its socket is not
+    modelled), or no caps term where the lab strips it (caps False). Returns the dials checked, [(index, host, url)]."""
+    earlier = {}   # host -> the socket indices of its earlier relay dials
     checked = relay_dials(dials)
     for i, host, u in checked:
         qs = parse_qs(urlsplit(u).query)
         tc.assertEqual(qs.get("app"), [app], "the pane's app on the relay dial: %r" % (u,))
         tc.assertEqual(qs.get("delta"), ["1"], "the page's delta term rides the relay dial (since 2026-09-15): %r" % (u,))
-        expected = expected_relay_caps(by_sock.get(prev[host], []) if host in prev else None) if caps else None
+        drive = [f for f in frames or [] if f.get("sock") in earlier[host]] if host in earlier else None
+        expected = expected_relay_caps(drive) if caps else None
         tc.assertEqual(qs.get("caps"), ([expected] if expected else None),
                        "the relay dial's caps term: federation's decoder word and the held members its conn's bases give it, "
-                       "derived from the host's previous socket's frames (none on a first dial), or no term where the page strips it: %r" % (u,))
-        prev[host] = i
+                       "derived from the frames the host's earlier sockets received (none on a first dial), or no term where the page strips it: %r" % (u,))
+        earlier.setdefault(host, set()).add(i)
     return checked
 
 
@@ -304,7 +313,7 @@ await page.addInitScript(() => {
           const m = JSON.parse(ev.data);
           if (m && m.type !== "ka") {
             const f = { sock: idx, t: String(m.type), slot: m.slot ? String(m.slot) : "" };
-            for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number") f[k] = m[k];
+            for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number" || (typeof m[k] === "string" && (k === "gen" || k === "newGen"))) f[k] = m[k];   // the revs as numbers, the gens as the kernel's strings; no content
             window.__frames.push(f);
           }
         } catch (e) {}
@@ -335,40 +344,86 @@ await browser.close();
 """
 
 
+# gens in the kernel's form (the boot's 16-hex token, '-', a decimal counter), for the rule's own tests
+GEN_STAMP = "0123456789abcdef"
+GEN, GEN2, GEN3 = GEN_STAMP + "-7", GEN_STAMP + "-9", GEN_STAMP + "-3"
+
+
 class HeldPairRule(unittest.TestCase):
     """The drive-derived expectation's rule, pinned on synthetic frame records (no kernel): the labs above run against kernels
-    whose frames carry no gen, so the stamped arms of held_pair and expected_relay_caps are exercised here alone until a
-    kernel stamps its frames."""
+    whose frames carry no gen, so the stamped arms of held_pair, expected_relay_caps and assert_relay_dials are exercised
+    here alone until a kernel stamps its frames."""
 
     def test_a_full_carrying_gen_leaves_gen_0_and_a_gen_less_full_clears_the_pair(self):
-        self.assertEqual(held_pair([{"t": "feed", "gen": 7}], "feed"), (7, 0))
+        self.assertEqual(held_pair([{"t": "feed", "gen": GEN}], "feed"), (GEN, 0))
         self.assertIsNone(held_pair([{"t": "feed"}], "feed"), "a kernel before the stamp: no pair")
-        self.assertIsNone(held_pair([{"t": "feed", "gen": 7}, {"t": "feed"}], "feed"), "a gen-less full after a stamped one clears the pair (a rollback)")
+        self.assertIsNone(held_pair([{"t": "feed", "gen": GEN}, {"t": "feed"}], "feed"), "a gen-less full after a stamped one clears the pair (a rollback)")
         self.assertIsNone(held_pair([], "feed"))
 
+    def test_the_gens_form_is_the_kernels_string_and_anything_else_reads_as_no_stamp(self):
+        # the client's genOf (view-deltas.ts): a non-empty string holding neither '.' nor ','; a number, an empty string, a bool
+        # or a string carrying either separator is no stamp, so the full leaves no pair (and the hook's record of it is dropped)
+        for bad in (7, 0, "", GEN_STAMP + ".7", GEN_STAMP + ",7", True, None):
+            self.assertIsNone(held_pair([{"t": "feed", "gen": bad}], "feed"), repr(bad))
+            self.assertIsNone(_stamp_field({"gen": bad}, "gen"), repr(bad))
+        self.assertEqual(held_pair([{"t": "feed", "gen": GEN}], "feed"), (GEN, 0))
+        self.assertEqual(_stamp_field({"rev": 3}, "rev"), 3)
+        for bad in ("3", -1, True, None):
+            self.assertIsNone(_stamp_field({"rev": bad}, "rev"), "a rev is a non-negative int: %r" % (bad,))
+
     def test_a_stamped_delta_advances_the_pair_and_a_gen_less_one_moves_nothing(self):
-        frames = [{"t": "feed", "gen": 7}, {"t": "feedDelta", "gen": 7, "base": 0, "rev": 1}]
-        self.assertEqual(held_pair(frames, "feed"), (7, 1), "a per-cycle stamped delta: (gen, rev)")
-        frames.append({"t": "feedDelta", "gen": 7, "newGen": 9, "base": 1, "rev": 4, "through": 4})
-        self.assertEqual(held_pair(frames, "feed"), (9, 4), "a composed frame: (newGen, through)")
+        frames = [{"t": "feed", "gen": GEN}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1}]
+        self.assertEqual(held_pair(frames, "feed"), (GEN, 1), "a per-cycle stamped delta: (gen, rev)")
+        frames.append({"t": "feedDelta", "gen": GEN, "newGen": GEN2, "base": 1, "rev": 4, "through": 4})
+        self.assertEqual(held_pair(frames, "feed"), (GEN2, 4), "a composed frame: (newGen, through)")
         frames.append({"t": "feedDelta", "base": 4, "rev": 5})
-        self.assertEqual(held_pair(frames, "feed"), (9, 4), "a gen-less delta moves nothing")
-        self.assertIsNone(held_pair([{"t": "feedDelta", "gen": 7, "base": 0, "rev": 1}], "feed"), "a delta before any full: nothing held")
+        self.assertEqual(held_pair(frames, "feed"), (GEN2, 4), "a gen-less delta moves nothing")
+        self.assertIsNone(held_pair([{"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1}], "feed"), "a delta before any full: nothing held")
+
+    def test_a_per_cycle_stamped_delta_carrying_through_equal_to_its_rev_leaves_gen_rev(self):
+        # the stamping kernel's per-cycle shape: every delta carries gen, base, rev AND through, through equal to rev and no
+        # newGen; through's presence does not make it a composed frame, and the pair is (gen, rev) as for a through-less one
+        frames = [{"t": "feed", "gen": GEN}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1, "through": 1}]
+        self.assertEqual(held_pair(frames, "feed"), (GEN, 1))
+        frames.append({"t": "feedDelta", "gen": GEN, "base": 1, "rev": 2, "through": 2})
+        self.assertEqual(held_pair(frames, "feed"), (GEN, 2))
+        bars = [{"t": "bars", "gen": GEN3}, {"t": "delta", "slot": "bars", "gen": GEN3, "base": 0, "rev": 1, "through": 1}]
+        self.assertEqual(held_pair(bars, "bars"), (GEN3, 1))
 
     def test_the_bars_slot_reads_bars_fulls_and_bars_patches_alone(self):
-        frames = [{"t": "bars", "gen": 3}, {"t": "delta", "slot": "bars", "gen": 3, "base": 0, "rev": 1},
-                  {"t": "delta", "slot": "lanes", "gen": 3, "base": 1, "rev": 2}, {"t": "feed", "gen": 7}]
-        self.assertEqual(held_pair(frames, "bars"), (3, 1), "another slot's patch and the feed full do not move the bars pair")
-        self.assertEqual(held_pair(frames, "feed"), (7, 0))
+        frames = [{"t": "bars", "gen": GEN3}, {"t": "delta", "slot": "bars", "gen": GEN3, "base": 0, "rev": 1},
+                  {"t": "delta", "slot": "lanes", "gen": GEN3, "base": 1, "rev": 2}, {"t": "feed", "gen": GEN}]
+        self.assertEqual(held_pair(frames, "bars"), (GEN3, 1), "another slot's patch and the feed full do not move the bars pair")
+        self.assertEqual(held_pair(frames, "feed"), (GEN, 0))
 
     def test_expected_relay_caps_is_the_decoder_word_plus_each_held_member_and_fails_on_an_empty_drive(self):
         self.assertEqual(expected_relay_caps(None), "feedDelta", "a first dial: no socket before it")
         self.assertEqual(expected_relay_caps([{"t": "feed"}, {"t": "caps"}]), "feedDelta", "a redial after gen-less frames: undeclared")
-        self.assertEqual(expected_relay_caps([{"t": "feed", "gen": 7}, {"t": "feedDelta", "gen": 7, "base": 0, "rev": 2}]), "feedDelta,held:feed:7.2")
-        self.assertEqual(expected_relay_caps([{"t": "bars", "gen": 3}]), "feedDelta,held:bars:3.0")
-        self.assertEqual(expected_relay_caps([{"t": "feed", "gen": 7}, {"t": "bars", "gen": 3}]), "feedDelta,held:feed:7.0,held:bars:3.0", "both, feed first")
+        self.assertEqual(expected_relay_caps([{"t": "feed", "gen": GEN}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 2}]), "feedDelta,held:feed:%s.2" % GEN)
+        self.assertEqual(expected_relay_caps([{"t": "bars", "gen": GEN3}]), "feedDelta,held:bars:%s.0" % GEN3)
+        self.assertEqual(expected_relay_caps([{"t": "feed", "gen": GEN}, {"t": "bars", "gen": GEN3}]), "feedDelta,held:feed:%s.0,held:bars:%s.0" % (GEN, GEN3), "both, feed first")
         with self.assertRaises(AssertionError):
-            expected_relay_caps([])   # a redial whose previous socket recorded nothing: no drive
+            expected_relay_caps([])   # a redial none of whose earlier sockets recorded a frame: no drive
+
+    def test_assert_relay_dials_derives_a_later_redials_member_from_every_earlier_socket_of_the_host(self):
+        # the client keeps a base holding a gen across a redial, so socket 2's composed frame applies onto what socket 1 left and
+        # the THIRD dial declares (newGen, through), the pair the whole stream left; read from socket 2's frames alone it would
+        # be nothing (a composed frame onto no full), a false red on a correct client
+        relay = "ws://hub.local:1/remote/TESTHOST/ws?app=feed&delta=1&caps="
+        dials = ["ws://hub.local:1/ws?app=feed&delta=1", relay + "feedDelta",
+                 relay + quote("feedDelta,held:feed:%s.1" % GEN, safe=""), relay + quote("feedDelta,held:feed:%s.4" % GEN2, safe="")]
+        frames = [{"sock": 1, "t": "feed", "gen": GEN}, {"sock": 1, "t": "feedDelta", "gen": GEN, "base": 0, "rev": 1, "through": 1},
+                  {"sock": 2, "t": "caps"}, {"sock": 2, "t": "feedDelta", "gen": GEN, "newGen": GEN2, "base": 1, "rev": 4, "through": 4}]
+        self.assertEqual([i for i, _h, _u in assert_relay_dials(self, "feed", dials, frames)], [1, 2, 3])
+        # the middle socket recorded nothing (it dropped before a frame): the pair socket 1 left stands, the base kept across
+        # the redial, so the third dial declares it and the drive is not empty
+        assert_relay_dials(self, "feed", dials[:3] + [dials[2]], [f for f in frames if f["sock"] == 1])
+        # a third dial declaring only what socket 1 left where socket 2 composed onward is the wrong term
+        with self.assertRaises(AssertionError):
+            assert_relay_dials(self, "feed", dials[:3] + [dials[2]], frames)
+        # an empty drive: no frame on ANY earlier socket of the host
+        with self.assertRaises(AssertionError):
+            assert_relay_dials(self, "feed", dials[:3], [])
 
 
 class FederatedDialTerms(unittest.TestCase):

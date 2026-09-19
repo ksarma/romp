@@ -3517,8 +3517,10 @@ CLIENT_DIAG_KEYS = {
                        "nav", "res", "marks", "env", "vis", "wsBytes", "rafGap",     # the shared fields, on when the gear says so
                        "wsBytesByHost")),   # the shared field the user approved on 2026-09-19 (the bytes each attached host sent, one number per host, no
                                             # content): {h1..h4: int, hmore?: int}, the text-frame characters each REMOTE host's sockets delivered in the
-                                            # minute (wsBytes's unit; the two are disjoint), keyed by the host's POSITION on the page, h1 the first remote
-                                            # host the page attached, per page life. The perf minute row carries positions, never names; the file's shell
+                                            # minute (wsBytes's unit; the two are disjoint), keyed by the host's attach ORDINAL on the page: h1 the first
+                                            # remote host the page attached, assigned when the host first attaches, kept for the page's life and never
+                                            # shifting on a detach (a re-attached host keeps its ordinal; hmore sums the ordinals past h4), so h2 names
+                                            # one host across every row of a page life. The perf minute row carries positions, never names; the file's shell
                                             # and federation surfaces and the kernel's own wsopen row carry host names already (the `host` key of the shell
                                             # and federation entries below, an earlier approval, and of the kernel entry below, written by one of the kernel's four
                                             # direct writers, _note_ws_open, as the host a hub's spliced upgrade was relayed to), so a reader holding the perf

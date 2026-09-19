@@ -33,8 +33,9 @@ type Frame = Record<string, any>;
 type Collection = { order: string[]; items: Map<string, any> };
 // A base holds a `gen` beside its rev once a kernel's frames carry one (the resume protocol's generation stamp,
 // 2026-09-19): the full's gen at the full, a composed frame's newGen after it applies, a per-cycle delta's gen after it.
-// A kernel before the stamp seeds none, and held() then reports no pair, so nothing is declared for that base.
-type Base = { rev: number; gen?: number; msg: Frame; maps: Map<string, Collection> };
+// A kernel before the stamp seeds none, and held() then reports no pair, so nothing is declared for that base. The gen
+// is a string in the kernel's form (genOf below), never a number.
+type Base = { rev: number; gen?: string; msg: Frame; maps: Map<string, Collection> };
 export const VIEW_DELTA_KINDS: Record<Slot, Record<string, string>> = {
   feed: { asks: "byid:itemId" },
   bars: { turns: "dictlist:id", judging: "dictlist:k", messages: "byid" },
@@ -43,8 +44,13 @@ const KINDS = VIEW_DELTA_KINDS; // pinned to the kernel-produced fixture and the
 const SEP = "\u001f";
 const object = (v: any): v is Frame => !!v && typeof v === "object" && !Array.isArray(v);
 const slotOf = (s: any): Slot | null => s === "feed" || s === "bars" ? s : null;
-/** A generation stamp as a frame carries it (a non-negative safe integer), or undefined for a frame that carries none. */
-export const genOf = (v: any): number | undefined => Number.isSafeInteger(v) && v >= 0 ? v : undefined;
+/** A generation stamp as a frame carries it, or undefined for a frame that carries none. The kernel mints a gen as its
+ *  boot's random token (16 hex characters) and a decimal counter joined by '-', a string that holds neither '.' (the held
+ *  member's own separator: the kernel parses held:<slot>:<gen>.<rev> at its last '.') nor ',' (the caps term's), so a
+ *  non-empty string free of both is a gen. Anything else (a number, an empty string, a string carrying either separator)
+ *  reads as no stamp: the frame then applies as a gen-less one and the base declares nothing, never a member the kernel
+ *  could not parse. Compared with === and never coerced. */
+export const genOf = (v: any): string | undefined => typeof v === "string" && v !== "" && v.indexOf(".") === -1 && v.indexOf(",") === -1 ? v : undefined;
 class Unkeyable extends Error {}   // a present collection whose container the kind cannot key: the frame seeds nothing
 
 function split(value: any, kind: string): Collection {
@@ -126,7 +132,7 @@ export class ViewDeltas {
    *  nothing is declared for it). The one read beside receive(): federation.ts's connect() keeps a receiver whose bars
    *  base holds a pair across a redial and re-mints one whose base holds none, and its remoteDialUrl writes the member
    *  from the same read, so the declared pair is the applied one and has no home but the base. */
-  held(slot: string): { gen: number; rev: number } | null {
+  held(slot: string): { gen: string; rev: number } | null {
     const known = slotOf(slot);
     const base = known ? this.bases.get(known) : undefined;
     return base && base.gen !== undefined ? { gen: base.gen, rev: base.rev } : null;
@@ -184,12 +190,16 @@ export class ViewDeltas {
     if (base.rev !== msg.base) return this.recover(slot);
     try {
       // A per-cycle patch advances the base by one (rev equal to base plus one, the test every kernel in this repo
-      // passes). A COMPOSED frame (2026-09-19) carries `through`, the rev it composes up to from the declared base, and
-      // its rev is at or above its base: R equal to r included, the caught-up resume of a peer that had applied the
-      // slot's last frame before the close (base r, rev r, through r, a coll that may be empty), which a base-plus-one
-      // test would refuse into a needSlot and a whole slot at rev 0 under a new gen. Every other rev recovers as today.
-      const composed = msg.through !== undefined;
-      const revOk = composed ? Number.isSafeInteger(msg.through) && msg.rev >= msg.base : msg.rev === msg.base + 1;
+      // passes). A frame carrying `through` (2026-09-19) is accepted at any rev at or above its base. Two frames carry
+      // it, and its presence does not tell them apart: a COMPOSED frame, the answer to a declared pair, stamped base r,
+      // rev R, through R and newGen, R equal to r included (the caught-up resume of a peer that had applied the slot's
+      // last frame before the close: base r, rev r, through r, a coll that may be empty), which a base-plus-one test
+      // would refuse into a needSlot and a whole slot at rev 0 under a new gen; and a STAMPED PER-CYCLE patch, which the
+      // kernel that stamps its frames sends with through equal to its rev (every stamped delta carries gen, base, rev and
+      // through), rev equal to base plus one as ever. This test asks only what both satisfy. A frame carrying no through
+      // keeps the base-plus-one test; every other rev recovers as today.
+      const hasThrough = msg.through !== undefined;
+      const revOk = hasThrough ? Number.isSafeInteger(msg.through) && msg.rev >= msg.base : msg.rev === msg.base + 1;
       if (!Number.isSafeInteger(msg.base) || msg.base < 0 || !Number.isSafeInteger(msg.rev) || !revOk || !object(msg.coll)) {
         throw new Error("invalid delta revision or collections");
       }
@@ -226,9 +236,12 @@ export class ViewDeltas {
         maps.set(name, collection);
         next[name] = assemble(collection, kinds[name], base.msg[name]);
       }
-      // the pair the base holds after the frame: a composed frame leaves (newGen, its rev), a per-cycle delta (gen, rev);
-      // a frame carrying no stamp leaves the base's gen as it was (none on a kernel before the stamp)
-      const gen = composed && genOf(msg.newGen) !== undefined ? genOf(msg.newGen) : genOf(msg.gen) !== undefined ? genOf(msg.gen) : base.gen;
+      // the pair the base holds after the frame: (newGen, rev) when the frame carries through and a newGen (a composed
+      // frame, its rev R equal to its through), else (gen, rev) when it carries a gen (a per-cycle stamped patch, through
+      // carried or not: through's presence alone never moves the gen), else the base's gen as it was (none on a kernel
+      // before the stamp)
+      const newGen = hasThrough ? genOf(msg.newGen) : undefined, g = genOf(msg.gen);
+      const gen = newGen !== undefined ? newGen : g !== undefined ? g : base.gen;
       this.bases.set(slot, { rev: msg.rev, gen, msg: next, maps });
       return next;
     } catch {

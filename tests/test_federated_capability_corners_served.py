@@ -194,7 +194,7 @@ const hook = (o) => {
           const m = JSON.parse(ev.data);
           if (m && m.type !== "ka") {
             const f = { sock: idx, t: String(m.type), slot: m.slot ? String(m.slot) : "", len: String(ev.data).length, at: Date.now() };
-            for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number") f[k] = m[k];   // the stamp fields, no content: the drive a redial's held member is derived from
+            for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number" || (typeof m[k] === "string" && (k === "gen" || k === "newGen"))) f[k] = m[k];   // the stamp fields (the revs as numbers, the gens as the kernel's strings), no content: the drive a redial's held member is derived from
             if (m.type === "feed" || m.type === "feedDelta") { f.asks = Array.isArray(m.asks) ? m.asks.length : null; f.buildId = m.buildId; }
             if (m.type === "feed") f.rest = JSON.stringify(Object.fromEntries(Object.entries(m).filter(([k]) => k !== "asks" && k !== "ledgers" && k !== "now" && k !== "buildId"))).length;
             if (m.type === "delta") { f.coll = Object.keys(m.coll || {}); f.restKeys = Object.keys(m.rest || {}); f.restAll = !!m.restAll; const set = ((m.coll || {}).turns || {}).set; f.setKeys = set ? Object.keys(set) : []; }
@@ -984,7 +984,7 @@ await page.addInitScript(() => {
         const j = JSON.parse(ev.data); if (j && j.type === "ka") window.__ka[idx]++; if (j && j.type === "feed") window.__full[idx] = true;
         if (j && j.type !== "ka" && window.__hostOf[idx]) {   // a relay socket's frame: type, slot and stamp fields, no content (the drive expected_relay_caps reads)
           const f = { sock: idx, t: String(j.type), slot: j.slot ? String(j.slot) : "" };
-          for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof j[k] === "number") f[k] = j[k];
+          for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof j[k] === "number" || (typeof j[k] === "string" && (k === "gen" || k === "newGen"))) f[k] = j[k];   // the revs as numbers, the gens as the kernel's strings
           window.__frames.push(f);
         }
       } catch (e) {}

@@ -964,8 +964,9 @@ interface Conn {
   // each feedDelta that applies under the gen gate (a composed frame to (newGen, through), a per-cycle delta to (gen,
   // rev): applyRemoteFeedDelta), absent at a full carrying none and while no full has landed. Set and cleared together
   // with feedRaw, nowhere else: connect() keeps a base holding a pair across a redial and writes the pair on the dial
-  // (remoteDialUrl, held:feed:<gen>.<rev>), so the declared pair is the applied one and has no home but the base's.
-  feedHeld?: { gen: number; rev: number };
+  // (remoteDialUrl, held:feed:<gen>.<rev>), so the declared pair is the applied one and has no home but the base's. The
+  // gen is the kernel's string (view-deltas.ts genOf: the boot's token and a counter joined by '-'), never a number.
+  feedHeld?: { gen: string; rev: number };
 }
 
 /** The TYPES held on a conn's queue, for the hostconn rows (flush-halt's `held`, detach's `pendingDropped`):
@@ -1484,11 +1485,14 @@ export class FederationManager {
    *  goes now.
    *
    *  The gen gate (2026-09-19): a delta carrying `gen` (a kernel that stamps its frames) applies only when its gen is
-   *  the held pair's, its base at or below the held rev and, when it carries `through` (a composed frame), that at or
-   *  above the held rev; else the pair is stale for this stream and the ask carries the held pair (kernel.py reads it
-   *  at the compose), nothing applied. A delta carrying NO gen (a kernel before the stamp) applies on the base's
-   *  presence alone, as before, and moves no pair, so nothing this side keeps depends on the kernel's vintage: keyed
-   *  on gen alone, since a per-cycle stamped delta carries no through. */
+   *  the held pair's, its base at or below the held rev and its `through`, when carried, at or above the held rev; else
+   *  the pair is stale for this stream and the ask carries the held pair (kernel.py reads it at the compose), nothing
+   *  applied. The gate is keyed on gen alone and never on the frame carrying through: the kernel that stamps its frames
+   *  stamps through on EVERY delta (equal to the rev on a per-cycle delta, R on a composed frame), so through's presence
+   *  tells nothing about the frame's shape, and the through test stands for every gen-carrying frame. A delta carrying
+   *  NO gen (a kernel before the stamp) applies on the base's presence alone, as before, and moves no pair (the vintage
+   *  guard, which revision 11 of the reconnect design states as its clause (2)), so nothing this side keeps depends on
+   *  the kernel's vintage. */
   private applyRemoteFeedDelta(host: string, d: any): void {
     const c = this.conns.get(host);
     const raw = c ? c.feedRaw : undefined;
@@ -1517,7 +1521,9 @@ export class FederationManager {
     const next = applyFeedDelta(raw, d);
     c.feedRaw = next;
     if (gen !== undefined) {
-      // the pair after the frame: a composed frame's (newGen, through), a per-cycle delta's (gen, rev)
+      // the pair after the frame: (newGen, through) after a composed frame, (gen, rev) after a per-cycle delta. Every
+      // stamped delta carries through, equal to its rev on a per-cycle delta, so through is the rev either way and the
+      // newGen alone tells the composed frame; a per-cycle delta carrying through and no newGen leaves (gen, rev).
       const newGen = genOf(d.newGen);
       c.feedHeld = d.through !== undefined ? { gen: newGen !== undefined ? newGen : gen, rev: d.through } : { gen, rev: d.rev };
     }
