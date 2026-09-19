@@ -14,8 +14,8 @@
 // svg's foreignObject, or dropped a title, would go red here (the foreignObject and svg title shapes) while the text test,
 // reading the reader alone, stayed green: that gap is what this leg closes. The plan's one recorded divergence is pinned both
 // ways (RECORDED: the DOM's text and the reader's, so a change on either side is seen; since the closing check of PR 804, decision
-// 52, an entry may also pin the DOM's top-level tags and the map's verdict per passage, `shape` and `verdicts`, for a shape whose
-// text agrees and whose map does not). The shapes of the findings round 5's
+// 52, an entry may also pin the DOM's top-level tags and the map's verdict per passage, `shape` and `verdicts`, whether or not the
+// text agrees). The shapes of the findings round 5's
 // review seeded against the reader are here as plain shapes and were red over a git archive of 701728eae, the tree that
 // round reviewed: a named reference the browser decodes and the reader's HTML 4.01 table did not (`&check;`, `&ltimes;`,
 // `&notni;`, and `&toString;` read with `in`), a quote from a cell across a table's end into trailing text (three shapes:
@@ -63,7 +63,7 @@ type Shape = { name: string; src: string; quotes?: Quote[]; whole?: "blanks" | "
  *  entry may also pin the DOM's top-level tags (`shape`: an element's tag, its element children in brackets, the top-level elements
  *  joined by blanks) and each LATER passage's verdict from the map over a real Selection (`verdicts`, joined by blanks: `maps` at its
  *  own source offsets, `mismatch` refused with the mismatch sentence, `unmatched` refused with the could-not-be-matched sentence,
- *  `absent` not in the rendered text), for a shape whose text agrees and whose map does not. */
+ *  `absent` not in the rendered text), whether or not the text agrees. */
 type Divergence = { name: string; src: string; dom: string; reader: string; why: string; shape?: string; verdicts?: string };
 
 const SHAPES: Shape[] = [
@@ -224,7 +224,8 @@ const SHAPES: Shape[] = [
     quotes: [{ from: "b1<td>b2", shown: "b1 b2", cells: ["TD0", "TD1"] }, { from: "a1<td>a2", shown: "a1 a2", cells: ["TD0", "TD1"] }] },
   { name: "an mglyph self-closed inside an mi: foreign content, so the math closes and the text after it shows", src: "ma9 <math><mi><mglyph/></mi></math> y9\n", quotes: [{ from: "ma9", to: "y9", shown: "ma9 y9" }] },
   { name: "a malignmark start tag inside an mtext", src: "ma9 <math><mtext><malignmark></mtext></math> y9\n", quotes: [{ from: "ma9", to: "y9", shown: "ma9 y9" }] },
-  // decision 52's open-array sentence, executed here (the closing check of PR 804, 2026-09-19): an `image` start tag with no end tag is
+  // decision 52's open-array sentence, executed, not pinned (the closing check of PR 804, 2026-09-19; the SHAPES loop asserts the text and
+  // the paints, not the tags or the verdicts): an `image` start tag with no end tag is
   // the alias the rule leaves HTML (IMG_ALIAS), and inside an inline svg it is the svg's own element, closed by `</svg>` (the top-level
   // tags `P[svg[image]] H2 P P`), so the text agrees and every block maps, the tag's paragraph included; the same tags and the map's
   // verdict `maps` for each passage over the base tree c25a2b319
@@ -279,12 +280,17 @@ const RECORDED: Divergence[] = [
   // tree the element sat inside the integration point, a scope boundary, and every later block mapped; the same split after an
   // `<mtext>`; and an out-of-class element there (`<kbd>`) stays in the drawing and the sanitizer removes it with its text, which the
   // reader keeps, a text divergence. Those are the entries after the two text representatives, each with the DOM's top-level tags and
-  // the map's verdicts over LATER, since this suite compares text and text alone would not see a split. Before decision 52 every member
+  // the map's verdicts over LATER, since this suite compares text and text alone would not see a split. The `<title>` half of the svg split
+  // is prose here, executed and not pinned (`noteWith("<svg><title><div>x</div></svg>")` over 58bb100fc's code: `P[svg] DIV P H2 P P`, mismatch
+  // unmatched unmatched unmatched): tools/markdown-viewer-plan-decision52-pointers.test.mjs refuses a `<textarea>`, `<plaintext>`, `<title>` or
+  // `<noscript>` written without the self-closing syntax in a RECORDED src, since such a tag left open is literal text since decision 52 and
+  // cannot itself be a recorded divergence, and the svg-title shape's divergence is the div's breakout, which the guard cannot tell from a
+  // title left open, so the split is pinned through `<foreignObject>` and `<desc>`. Before decision 52 every member
   // agreed: the integration point was the parser's element and the closed element HTML inside it, `ma5 y5` and `ma7 y7` on both sides
   // with two paint marks over the PR's base tree (c25a2b319). A paragraph holding an inline `<math>` with text inside it is refused with
   // the mismatch sentence on both trees whatever follows the integration point (`<math><mi>x</mi></math>` too; `<math></math>` maps),
   // so an entry's verdicts differ from the base tree's in the later blocks, and in the tag's paragraph only where the math held no text
-  // (`<br>`, `<img>`, `<hr>`). anchor-map-html-rules.test.ts pins the reader's side of the first representative.
+  // (`<br>`, `<img>`, `<hr>` and `<b/>`). anchor-map-html-rules.test.ts pins the reader's side of the first representative.
   { name: "an mtext and a first p left open inside an inline math, then `<p>b</p>` closed: the closed p breaks out of the math", src: "ma5 <math><mtext><p>a<p>b</p></math> y5\n", dom: "ma5 b y5", reader: "ma5 y5",
     why: "the mtext and the first p, with no end tags of their own, are literal text inside the math; the closed `<p>b</p>` stands in the math's foreign content with no integration point around it, so the parser breaks out at it and shows `b`, where the reader drops the math whole (before decision 52: `ma5 y5` on both sides)" },
   { name: "an mtext left open inside an inline math, then a closed b: the b breaks out of the math", src: "ma7 <math><mtext><b>x</b></math> y7\n", dom: "ma7 x y7", reader: "ma7 y7",

@@ -4052,8 +4052,8 @@ document stands on its own, each with the reasoning it was given.
     shown) and `<font>x</font>` goes with the math. What the class changes for the map, executed in Chromium at this
     head and at the base tree c25a2b319 over a note of the tag's paragraph, a heading and two paragraphs (a paragraph
     holding an inline `<math>` with text inside it was refused with the mismatch sentence on both trees in every shape
-    run, `Lead <math><mi>x</mi></math> tail t1.` among them, and one holding `<math></math>` mapped, so the verdicts
-    that follow are the later blocks'): the void members break out with no closing, `<br>` and `<img>` inside
+    run, `Lead <math><mi>x</mi></math> tail t1.` among them, and one holding `<math></math>` mapped): the void
+    members break out with no closing, `<br>` and `<img>` inside
     `<math><mtext>` landing in the paragraph as a line break and a picture (the top-level elements `P[BR] H2 P P` and
     `P[IMG] H2 P P` against the base tree's `P H2 P P`, the text the same on both sides), the tag's paragraph refused
     with the mismatch sentence where the base tree mapped it and every later block mapping; `<hr>` closes the
@@ -4072,7 +4072,13 @@ document stands on its own, each with the reasoning it was given.
     <svg><title><b>x</b></svg> y1` reads `sv1 <title>x y1` on both sides, the `b` broken out into the paragraph
     (`P[svg,B]`) and every block mapping; the map is what differs for a block-level member, and the browser suite
     compares text, so the splits are RECORDED there by the DOM's top-level tags and each passage's verdict, not by
-    text alone. Not in the class: a closed element whose start tag is not on that list (`<kbd>`, `<a>`) stays in the
+    text alone. The `<title>` half of the svg split stands as prose, executed and not pinned:
+    `tools/markdown-viewer-plan-decision52-pointers.test.mjs` refuses a `<textarea>`, `<plaintext>`, `<title>` or
+    `<noscript>` written without the self-closing syntax in a RECORDED source, since such a tag left open is literal
+    text under this decision and cannot itself be a recorded divergence, and the svg-title shape's divergence is the
+    div's breakout, which the guard cannot tell from a title left open, so the split is pinned through
+    `<foreignObject>` and `<desc>`. Not in the class: a closed element whose start tag is not on that list (`<kbd>`,
+    `<a>`) stays in the
     foreign content and goes with the dropped math on both sides (`ma7 y7`); inside an inline `<svg>` it stays in the
     drawing, where the sanitizer keeps an svg name (`<a>`, its text shown and every block mapping) and removes any
     other with its text, which the reader keeps as the drawing's, so `Lead <svg><foreignObject><kbd>x</kbd></svg> tail

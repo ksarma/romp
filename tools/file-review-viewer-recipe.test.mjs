@@ -16,14 +16,18 @@
 // `marked.parse(` in a ui/webview test module that holds a node stand-in (and `marked.parser(` or `Parser.parse(` in any); it does
 // not see a stand-in filled through a destructured alias (`const { parse } = marked`), a bare `marked(text)`, an `innerHTML`
 // assignment from a bundled `sanitizeMd(marked.parse(s) as string).innerHTML` probe in a browser module's page, or `parseInline`;
-// the first, second and last no module uses at this head, and the third is in nine browser modules: five whose pages fill no
-// `.fileview-md` box with it (md-sanitize-chat-links-browser.test.ts, md-sanitize-chat-schemeless-browser.test.ts,
-// md-sanitize-chat-modified-click-browser.test.ts, md-sanitize-chat-fragment-browser.test.ts and
-// md-config-math-inks-browser.test.ts) and four whose pages fill a `.fileview-md` div, the viewer's box, that way
-// (md-config-mark-classes-browser.test.ts, md-config-feed-callout-tints-browser.test.ts,
+// the first, second and last no module uses at this head, and the third is in the browser modules
+// `grep -l 'sanitizeMd(marked\.parse' ui/webview/*.test.ts` lists, split by whether the page declares a `<div class="fileview-md">`
+// (`grep -l 'class="fileview-md"'` over those); the fourth test below recomputes both sets and holds the two lists and the three
+// counts here to them. The probe is in 10 browser modules: 6 whose pages declare no such div and fill a chat body, a bubble or a
+// plain `#out` div with it (md-sanitize-chat-links-browser.test.ts, md-sanitize-chat-schemeless-browser.test.ts,
+// md-sanitize-chat-modified-click-browser.test.ts, md-sanitize-chat-fragment-browser.test.ts,
+// md-config-math-inks-browser.test.ts and md-sanitize-postpass-browser.test.ts) and 4 whose pages declare one, the viewer's box,
+// and fill it that way (md-config-mark-classes-browser.test.ts, md-config-feed-callout-tints-browser.test.ts,
 // md-config-callout-title-ink-browser.test.ts and md-config-chat-styles-browser.test.ts), over fixtures with no unclosed inline
 // tag (marked.parse and viewerHtml render each of their six fixtures the same, executed in Chromium at the closing check of the
-// slice's PR review, 2026-09-19). Within that reach: none calls
+// slice's PR review, 2026-09-19). The fifth test holds the upstream ledger entry's list of converted stand-ins to the callers of
+// viewerHtml less the modules its where line names elsewhere, so that count is recomputed too. Within that reach: none calls
 // marked's parser itself (`marked.parser(`, the tail of any copy of the steps); no module holding a node stand-in (a
 // `parseHTML(` shim, or an `innerHTML` setter over it) has a `marked.parse(` line but an assert's, the output compared and not
 // filled, or one of two named lines: the contrast anchor-map-cells-formulas.test.ts draws with the tree the viewer built before
@@ -112,6 +116,34 @@ test('the stand-ins that stamp wikilinks hand the recipe the file kind\'s stamp 
     assert.ok(src.includes('viewerHtml(text, (t) => { resolveWikilink(t); })'), `${f}: the stamp rides as the per-call walk`);
     assert.ok(!src.includes('marked.walkTokens('), `${f}: no walk of its own over the tokens`);
   }
+});
+
+test('the header\'s bundled-probe lists are the greps\': the modules holding sanitizeMd(marked.parse, split by a class="fileview-md" div in the page, names and counts alike', () => {
+  const header = read('tools', 'file-review-viewer-recipe.test.mjs').split('\nimport ')[0].replace(/\n\/\/ ?/g, ' ');
+  const m = header.match(/The probe is in (\d+) browser modules: (\d+) whose pages declare no such div[^()]*\(([^()]*)\) and (\d+) whose pages declare one[^()]*\(([^()]*)\)/);
+  assert.ok(m, 'the header states the split with its counts and its two lists');
+  const names = (s) => (s.match(/[\w-]+\.test\.ts/g) || []).sort();
+  const probes = testModules().filter((f) => /sanitizeMd\(marked\.parse/.test(read(...WEB, f)));   // grep -l 'sanitizeMd(marked\.parse' ui/webview/*.test.ts
+  const boxed = probes.filter((f) => read(...WEB, f).includes('class="fileview-md"'));             // grep -l 'class="fileview-md"' over those
+  const unboxed = probes.filter((f) => !boxed.includes(f));
+  assert.deepEqual(names(m[3]), unboxed, 'the modules whose pages declare no fileview-md div, as the header names them');
+  assert.deepEqual(names(m[5]), boxed, 'the modules whose pages declare one, as the header names them');
+  assert.deepEqual([Number(m[1]), Number(m[2]), Number(m[4])], [probes.length, unboxed.length, boxed.length], 'the three counts are the sets\' sizes');
+});
+
+test('the ledger entry\'s list of converted stand-ins is the callers of viewerHtml less the modules its where line names elsewhere, its count the list\'s length, and md-sanitize-guide.test.ts, named outside the list, calls viewerHtml nowhere', () => {
+  const where = read('upstream', '2026-09-18-markdown-viewer-literal-inline-tags.md').split('\n').find((l) => l.startsWith('where: '));
+  const m = where.match(/the (\d+) ui\/webview test modules whose stand-ins were converted to it\b/);
+  assert.ok(m, 'the where line states the converted count');
+  const namely = where.indexOf('namely ', m.index);
+  const end = where.indexOf(';', namely);
+  assert.ok(namely > m.index && end > namely, 'the clause lists its modules after "namely" and ends the list at a semicolon');
+  const listed = where.slice(namely + 'namely '.length, end).split(',').map((s) => s.trim()).sort();
+  const callers = testModules().filter((f) => /\bviewerHtml\((?!text: string, walk)/.test(read(...WEB, f)));
+  const elsewhere = new Set((where.slice(0, m.index) + where.slice(end)).match(/[\w-]+\.test\.ts/g) || []);
+  assert.deepEqual(listed, callers.filter((f) => !elsewhere.has(f)), 'the list is the callers of viewerHtml less the modules named elsewhere in the line');
+  assert.equal(Number(m[1]), listed.length, 'the count is the list\'s length');
+  assert.ok(elsewhere.has('md-sanitize-guide.test.ts') && !callers.includes('md-sanitize-guide.test.ts'), 'md-sanitize-guide.test.ts is named outside the list and calls viewerHtml nowhere');
 });
 
 test('this module carries no em dash', () => {

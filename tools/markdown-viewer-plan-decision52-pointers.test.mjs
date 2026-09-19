@@ -84,8 +84,14 @@ test('the browser suite holds the open textarea and the ma8 shape as agreements,
     'the ma8 shape is a SHAPES entry showing `ma8 y8`');
   const recorded = block('RECORDED');
   assert.ok(!recorded.includes('ma8'), 'RECORDED holds no ma8 entry');
-  const srcs = [...recorded.matchAll(/src: "((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
-  assert.ok(srcs.length > 0, 'RECORDED has entries');
+  // a src written as a direct literal, or handed to a helper (`src: noteWith("...")`), in double or single quotes: the closing check of
+  // PR 804 (2026-09-19) found a `src: noteWith("<svg><title>...")` entry slipped past a direct-literal collector, and widened it rather
+  // than use the gap; every entry's src must be collected, so a spelling this regex cannot read goes red here instead of past the guard
+  const SRC = /src: (?:[A-Za-z_$][\w$]*\()?(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/g;
+  const srcs = [...recorded.matchAll(SRC)].map((m) => m[1] ?? m[2]);
+  const entries = (recorded.match(/^\s*\{ name: /gm) || []).length;
+  assert.ok(entries > 0, 'RECORDED has entries');
+  assert.equal(srcs.length, entries, 'every RECORDED entry\'s src is a quoted literal or a helper call over one, so the guard reads each');
   for (const src of srcs) {
     for (const tag of src.matchAll(/<(textarea|plaintext|title|noscript)(\/?)>/g)) {
       assert.equal(tag[2], '/', `a RECORDED src opens <${tag[1]}> without the self-closing syntax: ${src}`);
