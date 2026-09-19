@@ -3,8 +3,8 @@ title: A per-session billing pick no longer seeds new sessions or preselects the
 status: candidate
 where: kernel/sdk_backend.py (spawn, the seed; _note_seed_skipped; the set_auth and set_auth_default comments); kernel/kernel.py (_auth_avail, _auth_avail_status); docs/reference.md; tests/test_session_auth.py, tests/test_login_records.py, tests/test_sdk_backend.py
 added: 2026-09-19
-pr:
-tier: feature
+pr: 819
+tier: fix
 offered:
 closed:
 ---
