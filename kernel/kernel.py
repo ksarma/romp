@@ -38163,9 +38163,13 @@ def _chat_sig_scope():
     """The thread-local scope of one _chat_build_sig call: the per-signature counts zeroed at entry and THEN `active`
     set (so no stat between the two lands on the count), counted by the stat wrappers, _entry_stat and the read sites
     while `active`, folded into memos.chatSig at exit, a raise included (a signature that raised still paid its
-    reads). The sub-seam durations (deps_dt, deps_cpu, deps_ran; push.chat.sig.deps) are zeroed here too and left for
-    the caller's seam close, so a signature taken outside a seam (a comment thread's) can never hand a stale value to
-    the next seam on the thread."""
+    reads). The sub-seam fields (deps_dt, deps_cpu, deps_ran; push.chat.sig.deps) are zeroed here per signature and
+    left for the caller's seam close, so a seam close reads the signature that just ran and nothing earlier;
+    _chat_sig_seam_close clears them again after reading. No test pins this zeroing on its own (the suite pins the
+    pair: with both clears removed, tests in tests/test_kernel_delta_send.py red; with either alone, none), and every
+    signature that runs the tail today (deps None or a record: the chat tab loop's pre-build signature) is followed at
+    once by its seam close, so the zeroing is defence against a caller that does not exist yet (the round-2 review,
+    2026-09-19, tests-2)."""
     tl = _CHAT_SIG_TL
     tl.stats = tl.namesReads = tl.switchReads = 0
     tl.deps_dt = 0.0
