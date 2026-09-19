@@ -36,12 +36,17 @@ and Sessions.backend_for run as stubs, so a loader inside their real bodies is o
 source census in TheCountersOneSite instead, one level deep (the helper's own source). The window: each pass, the
 `_auto_nudge_tick` call (the records are cleared before it and read after it), so a load elsewhere in the process (a
 builder, a handler, the perf snapshot the test reads after its last pass) is outside the window and is not this test's
-claim. By the store's own counters, a witness keyed on the store rather than on a list of doors: every call that reaches
-the shared cache's branch moves exactly one of hit, miss, compare_miss, absent and fallback in `jd.shared_store_stats()`,
-so per pass the delta of those five must equal the walk's, the gate's and the sweep's recorded calls together; a load
-through a door the recorders do not wrap, or through a reference to the real door taken before a recorder stood, is
-noticed even though it cannot be named. The two witnesses answer different questions: the recorders say who loaded, the
-delta says that something did. By the served counter: `memos.nudgeWalk.loads`, bumped at the walk's one call site, must
+claim. By the store's own counters, a witness keyed on the store rather than on a list of doors, one per door. The shared
+door: every call that reaches the shared cache's branch moves exactly one of hit, miss, compare_miss, absent and fallback
+in `jd.shared_store_stats()`, so per pass the delta of those five must equal the walk's, the gate's and the sweep's
+recorded calls together. The writer door: every `load_goals` call bumps `loads` in `jd.goal_io_stats()` at the loader's
+first line, and the shared door hands a read to `load_goals` on exactly the absent, fallback, corrupt and
+unreadable_journal counters (SHARED_HANDOFF_KEYS), so per pass the delta of `loads` must equal the recorded writer calls
+plus those hand-offs (review round 2: until then the writer door was a recorder on one name, and a `load_goals` through a
+reference bound before the recorder stood, or written inside the shared door's own body where the fallback skip takes it
+for the hand-off, left every witness green). Through either door, a load the recorders do not wrap, or through a reference
+to the real door taken before a recorder stood, is noticed even though it cannot be named. The two witnesses answer
+different questions: the recorders say who loaded, the delta says that something did. By the served counter: `memos.nudgeWalk.loads`, bumped at the walk's one call site, must
 move by the walk's count per pass. A skipped look repeats its verdict and writes nothing (the wake-only memo of PR 784),
 so it needs no data: the recorder sees no call from either.
 
@@ -139,6 +144,12 @@ SWEEP = ("_awaiting_wake_outcomes",)      # the wake sweep after the per-session
 # (judge.py, the door's body). Not summed: unreadable_journal, corrupt, dup and refuse are second bumps on a fill; evict and
 # poisoned are not calls; entries, bytes and off are gauges.
 SHARED_CALL_KEYS = ("hit", "miss", "compare_miss", "absent", "fallback")
+# The shared door's hand-offs into load_goals: the four counters load_goals_shared bumps right before it returns load_goals(fsid)
+# (judge.py, the door's body: the cache off, no store file, an unreadable journal, bytes that did not parse). Each hand-off is one
+# load_goals call and so one bump of `loads` in jd.goal_io_stats(), the writer door's own counter, which the writer reconciliation
+# in _pass reads. The door's _unread branch bumps unreadable_journal with no hand-off; the door's own comment calls it unreachable
+# while the journal's rows arrive as lines, and reached it would red that reconciliation as a hand-off over the loads.
+SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 KERNEL_FILE = os.path.basename(os.path.realpath(km.__file__))   # the kernel's real file: it is loaded from bin/romp-kernel, a symlink
 # The callables the fixture replaces, other than the two recorded doors: the kernel names (the look's gates and the pass's
 # helpers; _pending_ops and _PREV_ALIVE are data, not callables), the judge names, and Sessions.backend_for (replaced by
@@ -371,10 +382,10 @@ class _WalkHarness(unittest.TestCase):
         carries the shared records (sid, function, file, line) for a case's own assertions."""
         before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
         gate0 = dict(km._NUDGE_GATE_STATS)
-        s0 = jd.shared_store_stats()
+        s0, g0 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
         self.calls.clear(); self.writer.clear(); self.parsed.clear()
         km._auto_nudge_tick(now, {sid: {"state": ""} for sid in SIDS})
-        s1 = jd.shared_store_stats()
+        s1, g1 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
         d = {k: km._NUDGE_WALK_STATS[k] - before[k] for k in self.KEYS}
         d["memo"] = tuple(km._NUDGE_GATE_STATS[k] - gate0[k] for k in ("served", "derived"))
         d["walk"] = {sid: sum(1 for s, c, _f, _ln in self.calls if s == sid and c in WALK) for sid in SIDS}
@@ -401,7 +412,16 @@ class _WalkHarness(unittest.TestCase):
         writer = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.writer]
         self.assertEqual(writer, [], "zero plain load_goals from any caller in the decision path (condition 7, ruling A's wording), by "
                                      "function, file and line: %s" % "; ".join(writer))
+        handoffs = sum(s1[k] - s0[k] for k in SHARED_HANDOFF_KEYS)
+        self.assertEqual(g1 - g0, len(self.writer) + handoffs,
+                         "the writer door's own counter, goal_io loads, moves once per load_goals call (the loader's first line), and the "
+                         "shared door hands a read to load_goals on exactly the absent, fallback, corrupt and unreadable_journal counters, "
+                         "so the delta must equal the recorded writer calls plus those hand-offs; a difference is a writer-door load the "
+                         "recorder did not see, through a reference to the real door taken before it stood or written inside the shared "
+                         "door's own body (the fallback skip takes it for the hand-off): loads %d against writer %d + hand-offs %d"
+                         % (g1 - g0, len(self.writer), handoffs))
         d["writer"] = len(self.writer)
+        d["writerLoads"] = g1 - g0
         d["parsedSids"] = sorted(self.parsed)
         return d
 
