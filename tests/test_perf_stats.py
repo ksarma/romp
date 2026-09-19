@@ -1629,8 +1629,10 @@ class RoutingStatements(unittest.TestCase):
 
     def _scan(self, root):
         """{relative path: text} for every text file under `root` that git tracks or would track and that names a block."""
-        listing = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-                                 capture_output=True, check=True).stdout
+        # A skip only where the precedent skips (no git, no repository); a dubious-ownership 128 fails with git's
+        # safe.directory hint instead of a bare exit code, because a skip there would disarm the sweep while the run
+        # stays green.
+        listing = _git_bytes(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
         found = {}
         # A name git lists is bytes. fsdecode keeps an undecodable byte as a surrogate (surrogateescape on POSIX), so the
         # file is still read under its real name (os.fsencode gives the bytes back at the open) and a pin failure prints
@@ -1799,6 +1801,37 @@ class RoutingStatements(unittest.TestCase):
         with self.assertRaises(AssertionError) as swept:
             self._pin_swept_set(found)
         self.assertIn(repr(rel), str(swept.exception), "the failure names the file, surrogate and all")
+
+    def test_the_scan_skips_for_a_missing_git_or_repository_only(self):
+        """The listing's git call follows tests/test_entrypoints_executable.py's _index: git off PATH and a tree with no
+        repository skip; every other nonzero exit fails with git's own words and the exit code, never a skip, since a
+        skip there would disarm the sweep while the run stays green. The mock replaces the only subprocess call _scan
+        makes, so nothing is read and no lock is needed."""
+        root = Path(HERE).parent
+
+        def completed(stderr):
+            return subprocess.CompletedProcess(args=["git"], returncode=128, stdout=b"", stderr=stderr)
+        with mock.patch.object(subprocess, "run", side_effect=FileNotFoundError("git")):
+            with self.assertRaises(unittest.SkipTest):
+                self._scan(root)
+        with mock.patch.object(subprocess, "run",
+                               return_value=completed(b"fatal: not a git repository (or any of the parent directories): .git")):
+            with self.assertRaises(unittest.SkipTest):
+                self._scan(root)
+        # every other nonzero exit is a failure that carries git's words; a skip there is the hole this test pins, so it
+        # is a failure of the test, never a skip of it (the precedent's index_failure shape)
+        with mock.patch.object(subprocess, "run",
+                               return_value=completed(b"fatal: detected dubious ownership in repository at '/a/checkout'")):
+            try:
+                self._scan(root)
+            except unittest.SkipTest as skip:
+                self.fail("the scan skipped instead of failing: %s" % skip)
+            except AssertionError as failed:
+                message = str(failed)
+            else:
+                self.fail("the scan returned a listing instead of failing")
+        self.assertIn("dubious ownership", message, "the failure carries git's words")
+        self.assertIn("exited 128", message, "and the exit code")
 
     def test_the_lock_is_one_file_for_every_process_of_this_tree(self):
         """A second process over this checkout with its own TMPDIR and no record of this run's system temp dir (the
