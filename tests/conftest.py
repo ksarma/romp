@@ -607,7 +607,11 @@ def restore_env(name, prior):
 # workers, a different test on each, so a name list could never be right. A look-alike over that same
 # root (a test's class named SdkBackend, a SimpleNamespace, a MagicMock) is refused: installed as the
 # worker's first value it would be inherited by every later test, and the class check is what refuses
-# it. (2) None before and False after: the kernel's own unavailable outcome (_sdk_locked's except branch
+# it. A value that is not the kernel's class is rendered without the gone clause: the clause says a
+# state_dir is NO LONGER a directory, true of the kernel's own class alone (its state_dir is the directory
+# it was built over), and false of a MagicMock's attribute or a SimpleNamespace's string, which never was
+# one; so the clause on a changed value is gated on the class check as well as on isdir. (2) None before
+# and False after: the kernel's own unavailable outcome (_sdk_locked's except branch
 # sets False when the backend cannot be built), which the test did not choose. Everything else is a leak:
 # a test that installs a fake or a rebuilt backend and puts back the OBJECT it found is quiet; one that
 # puts back an equal backend (the same state_dir, another object) is not, because the readers hold the
@@ -810,7 +814,7 @@ def _sdk_judge(before, after, ref):
     if _sdk_is_real(be0) and _sdk_is_real(be1) and before.sd == after.sd and after.isdir:
         after_text = "another SdkBackend over the same directory (the readers hold the object, not the path)"
     else:
-        after_text = _sdk_singleton_text(be1) + (_SDK_GONE if after.isdir is False else "")
+        after_text = _sdk_singleton_text(be1) + (_SDK_GONE if after.isdir is False and _sdk_is_real(be1) else "")
     return ("left the kernel's backend singleton (km._sdk_backend) changed after its teardown: before %s, after %s%s"
             % (_sdk_singleton_text(be0), after_text, unreadable), _sdk_remedy(after, ref))
 
