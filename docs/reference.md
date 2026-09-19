@@ -4091,13 +4091,15 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the `judge` line, since the judge's CPU share alone cannot tell a cheaper
   pass from a faster cadence.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
-  OPTIONS, the query string removed and `/dist/*`, `/media/*`, `/glossary/*`
-  (the term is the user's text; its lookups count under one key) and
-  `/remote/*/…` collapsed to one key each, for at most 256 keys. A path
-  outside the kernel's own route table (a scanner's probe, anything typed
-  into a URL) counts under `other`, as do keys past the cap, so the table
-  names only routes the kernel ships. A WebSocket upgrade is counted when it arrives and not
-  timed, since its handler runs for the life of the socket.
+  OPTIONS, the query string removed, `/dist/*`, `/media/*` and `/glossary/*`
+  (the term is the user's text; its lookups count under one key) collapsed to
+  one key each, and `/remote/<host>/...` collapsed by host alone, the host a
+  star and the route kept, one key per remote operation
+  (`GET /remote/*/sessions`, say), for at most 256 keys. A path outside the
+  kernel's own route table (a scanner's probe, anything typed into a URL)
+  counts under `other`, as do keys past the cap, so the table names only
+  routes the kernel ships. A WebSocket upgrade is counted when it arrives and
+  not timed, since its handler runs for the life of the socket.
 
 `POST /perf` with the body `{"log": true}` or `{"log": false}` turns the
 `romp-perf` stderr log on or off in the running kernel (`romp perf log on|off`).
