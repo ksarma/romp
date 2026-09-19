@@ -28124,12 +28124,65 @@ def _notice_memo_bound():
 _NOTICE_MEMO = {}                          # sid -> [stat key, rows, bytes, served-at]; one writer per read under the lock
 # NOTICE_MEMO_BYTES itself is bound beside SPEND_GUARD_TREE_MEMO_BYTES below, after _mem_total_bytes is defined
 _NOTICE_MEMO_STATS = {"hit": 0, "miss": 0, "evicted": 0}
+_NOTICE_ROW_FIELDS_INT = ("rev", "t", "expiresAt")   # the fields every reader coerces with int(): a value int() refuses skips the row
+_NOTICE_BAD_ROW_SAID = {}                 # sid -> {(key, field, type name)} said this episode; a parse meeting no such row ends it
+
+
+def _notice_row_bad_field(o):
+    """(field, type name) for the first of a row's integer fields (_NOTICE_ROW_FIELDS_INT) holding a value int() refuses, else
+    None. A falsy value reads as 0 wherever the fields are read (`int(r.get("rev") or 0)`), so only a truthy one can fail."""
+    for k in _NOTICE_ROW_FIELDS_INT:
+        v = o.get(k)
+        if not v:
+            continue
+        try:
+            int(v)
+        except (TypeError, ValueError):
+            return k, type(v).__name__
+    return None
+
+
+def _notice_parse_rows(sid, raw):
+    """The rows of one session's notice file from its text, for both readers (_notice_rows, _notice_rows_unlocked). A line
+    that is not JSON, not an object, or has no op or key is skipped, as it always was. A row whose rev, t or expiresAt is
+    not an integer is skipped too (2026-09-19) and said ONCE per episode on stderr, naming the session, the key, the field
+    and the value's TYPE, never its text: every consumer coerces those three with int(), so one such row in one session's
+    file raised ValueError out of every feed build, and the whole board went with it (the push cycle and GET /feed.json
+    alike) over a row no other session had anything to do with. The rule: a reader that cannot parse skips the row, names
+    it, and keeps the board. The episode is keyed on the fact said, (key, field, type): a parse of the file that meets no
+    bad row ends it (the sweep archived the row, or the file was rewritten), so the next one is said again; a parse that
+    meets the same row again is quiet, and the memo (_notice_rows) means a parse runs only when the file's stat moved."""
+    rows, bad = [], set()
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            o = json.loads(line)
+        except Exception:
+            continue
+        if not (isinstance(o, dict) and o.get("op") and o.get("key")):
+            continue
+        b = _notice_row_bad_field(o)
+        if b is not None:
+            bad.add((str(o.get("key")), b[0], b[1]))
+            continue
+        rows.append(o)
+    said = _NOTICE_BAD_ROW_SAID.get(sid) or set()
+    for key, field, tname in sorted(bad - said):
+        sys.stderr.write("romp-kernel: notices/%s.jsonl: a row for key %s carries a %s where %s needs an integer; the row "
+                         "is skipped and the session's other notices stand\n" % (sid, key, tname, field))
+    if bad:
+        _NOTICE_BAD_ROW_SAID[sid] = said | bad
+    else:
+        _NOTICE_BAD_ROW_SAID.pop(sid, None)
+    return rows
 
 
 def _notice_rows(sid):
-    """Every row of STATE/notices/<sid>.jsonl in file order (a bad line is skipped), memoized on the file's stat taken BEFORE
-    the read (the chain-memo rule, as _cleared_ids); an absent file is [] and never cached. The memo is bounded in bytes
-    (NOTICE_MEMO_BYTES): over it the largest entries go first, and only the deficit is shed. Callers never mutate the rows."""
+    """Every row of STATE/notices/<sid>.jsonl in file order (a bad line, or a row with a non-integer rev, t or expiresAt, is
+    skipped: _notice_parse_rows), memoized on the file's stat taken BEFORE the read (the chain-memo rule, as _cleared_ids);
+    an absent file is [] and never cached. The memo is bounded in bytes (NOTICE_MEMO_BYTES): over it the largest entries go
+    first, and only the deficit is shed. Callers never mutate the rows."""
     sid = str(sid)
     p = _notice_path(sid)
     st = _stat_key(p)
@@ -28143,20 +28196,11 @@ def _notice_rows(sid):
             _NOTICE_MEMO_STATS["hit"] += 1
             ent[3] = time.time()
             return ent[1]
-    rows, size = [], 0
     try:
         raw = p.read_text()
     except OSError:
         return []
-    for line in raw.splitlines():
-        if not line.strip():
-            continue
-        try:
-            o = json.loads(line)
-        except Exception:
-            continue
-        if isinstance(o, dict) and o.get("op") and o.get("key"):
-            rows.append(o)
+    rows = _notice_parse_rows(sid, raw)
     size = len(raw)
     with _notice_lock:
         _NOTICE_MEMO_STATS["miss"] += 1
@@ -28318,20 +28362,15 @@ def expire_notice(sid, key, now=None):
 
 
 def _notice_rows_unlocked(sid):
-    """The rows for a WRITER holding _notice_lock: a fresh read of the file (the memo is keyed on the stat the next reader takes)."""
+    """The rows for a WRITER holding _notice_lock: a fresh read of the file (the memo is keyed on the stat the next reader takes),
+    through the same parse as the reader's (_notice_parse_rows), so a type-wrong row skips here too and a post's revision
+    count never raises over it."""
     p = _notice_path(sid)
-    rows = []
     try:
-        for line in p.read_text().splitlines():
-            try:
-                o = json.loads(line)
-            except Exception:
-                continue
-            if isinstance(o, dict) and o.get("op") and o.get("key"):
-                rows.append(o)
+        raw = p.read_text()
     except OSError:
-        pass
-    return rows
+        return []
+    return _notice_parse_rows(str(sid), raw)
 
 
 def _notice_append(sid, row):

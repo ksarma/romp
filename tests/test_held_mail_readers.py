@@ -172,5 +172,75 @@ class ClearAllLeavesHolds(unittest.TestCase):
         self.assertEqual(_asks(self._feed(), "quarantine:"), [])
 
 
+class NoticeRowTypeFault(unittest.TestCase):
+    """F2: every consumer of a notice row coerces rev, t and expiresAt with int(), so ONE type-wrong value in ONE row of ONE
+    session's notices/<sid>.jsonl raised ValueError out of every feed build (the manager's reproduction, 2026-09-19: the
+    push cycle and GET /feed.json answering 500 alike, the whole board gone over a row no other session had anything to do
+    with). The rule: skip the row, say once which session, key and field, and the value's type, never its text; keep the
+    board with the good rows' cards on it."""
+
+    def setUp(self):
+        self.r = _Root()
+        self.now = int(time.time())
+        getattr(km, "_NOTICE_BAD_ROW_SAID", {}).clear()
+
+    def tearDown(self):
+        self.r.close()
+
+    def _good(self, key="figure", rev=1):
+        return {"op": "post", "key": key, "rev": rev, "t": self.now - 10, "at": self.now - 10,
+                "title": "The accuracy figure is ready", "body": "", "producer": "figure", "needsYou": True}
+
+    def _build(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            feed = km.build_feed(self.now)
+        return feed, err.getvalue()
+
+    def test_one_type_wrong_row_skips_and_the_good_row_keeps_its_card(self):
+        self.r.write_notice_rows([self._good(), dict(self._good(key="sweep"), rev="abc-not-a-rev")])
+        feed, log = self._build()                    # no exception: the build survives the row
+        self.assertEqual([c["itemId"] for c in _asks(feed, "notice:")], ["notice:%s:figure:1" % SID],
+                         "the good row's card is on the board; the bad row's is not")
+        self.assertEqual(log.count("needs an integer"), 1, log)
+        self.assertIn(SID, log, "the log names the session")
+        self.assertIn("key sweep", log, "and the key")
+        self.assertIn("rev", log, "and the field")
+        self.assertIn("carries a str", log, "and the value's type")
+        self.assertNotIn("abc-not-a-rev", log, "never the value's text")
+
+    def test_a_bad_t_and_a_bad_expiresAt_skip_the_same_way(self):
+        self.r.write_notice_rows([self._good(), dict(self._good(key="noon"), t="noon"),
+                                  dict(self._good(key="later"), expiresAt=[1])])
+        feed, log = self._build()
+        self.assertEqual([c["itemId"] for c in _asks(feed, "notice:")], ["notice:%s:figure:1" % SID])
+        self.assertIn("key noon carries a str where t needs an integer", log)
+        self.assertIn("key later carries a list where expiresAt needs an integer", log)
+
+    def test_the_row_is_said_once_per_episode_not_per_parse(self):
+        self.r.write_notice_rows([self._good(), dict(self._good(key="sweep"), rev="abc-not-a-rev")])
+        _, log1 = self._build()
+        self.assertEqual(log1.count("needs an integer"), 1)
+        self.r.write_notice_rows([self._good(key="other")])       # the file moved: a fresh parse meets the same row
+        feed, log2 = self._build()
+        self.assertEqual(len(_asks(feed, "notice:")), 2, "the appended good row's card joins the board")
+        self.assertEqual(log2, "", "the same fact is not said again")
+        # the episode ends when a parse meets no bad row (the sweep archived it, or the file was rewritten)...
+        km._notice_path(SID).write_text(json.dumps(self._good()) + "\n")
+        self._build()
+        self.assertNotIn(SID, km._NOTICE_BAD_ROW_SAID)
+        # ...so the next such row is a new episode and is said again
+        self.r.write_notice_rows([dict(self._good(key="sweep"), rev="abc-not-a-rev")])
+        _, log3 = self._build()
+        self.assertEqual(log3.count("needs an integer"), 1)
+
+    def test_the_writer_side_reader_skips_the_row_too(self):
+        # post_notice counts a key's revisions over _notice_rows_unlocked; a type-wrong row there raised for the writer
+        self.r.write_notice_rows([self._good(), dict(self._good(key="sweep"), rev="abc-not-a-rev")])
+        with contextlib.redirect_stderr(io.StringIO()):
+            rows = km._notice_rows_unlocked(SID)
+        self.assertEqual([r["key"] for r in rows], ["figure"])
+
+
 if __name__ == "__main__":
     unittest.main()
