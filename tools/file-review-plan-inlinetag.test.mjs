@@ -152,7 +152,10 @@ test('md-literal-tags.ts exports the function and the void list the record names
   for (const f of ['md-config.ts', 'render.ts', 'chat-md.ts']) {
     assert.ok(!read('ui', 'webview', f).includes('md-literal-tags'), `${f} does not import the rule`);
   }
-  assert.match(read('ui', 'webview', 'render.ts'), /const dirty = marked\.parse\(src\) as string;/, 'the chat\'s md() still parses with marked.parse');
+  // md() parses with a plain parse still, the chat instance's since the path-aware emphasis of 2026-09-19 (chat-md.ts chatMdHtml,
+  // marked's parse on chatMarked and nothing else: no lexer step, no rule, never the viewer's recipe)
+  assert.match(read('ui', 'webview', 'render.ts'), /const dirty = chatMdHtml\(src\);/, 'the chat\'s md() still parses with a plain parse, the chat instance\'s');
+  assert.match(read('ui', 'webview', 'chat-md.ts'), /^export function chatMdHtml\(src: string\): string \{\n {2}return chatMarked\.parse\(src\) as string;\n\}/m, 'chatMdHtml is marked\'s parse on the chat instance and nothing else');
 });
 
 test('anchor-map.ts holds no one-cell rule: ONE_CELL, cellsRule, coveredCells and coveredOnly are gone with the sentence, and the anchor is the widened span sliced from the source', () => {
