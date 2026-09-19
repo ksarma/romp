@@ -16,16 +16,20 @@ it whole would cost a whole bars frame per change on every old hub, and the hub'
 are decoded.
 
 Each class is one corner: two hermetic kernels (a hub owning no session, a checked-in TESTHOST owning eight sessions,
-"api", "worker" and EXTRA's six), the hub's Waiting, Outline and feed pages in one Chromium, every socket's dial URL, inbound frame types
-and outbound asks (needSlot, needFullFeed) recorded, then ONE change on the remote after every relay socket holds its
-full frame. The change is a notice card (POST /notice, an asks-only change: the slot path's delta for it is one card
-against the whole frame, under the size guard, so a caps-ignoring kernel emits a real patch; a todo changes the
+"api", "worker" and EXTRA's six), the hub's Waiting, Outline and feed pages (and its timeline, where the change is a
+transcript append) in one Chromium, every socket's dial URL, inbound frame types and outbound asks (needSlot,
+needFullFeed) recorded, then ONE change on the remote after every relay socket holds its full frame. The change is a
+notice card (POST /notice, an asks-only change: the slot path's delta for it is one card against the whole frame,
+under the size guard, so a caps-ignoring kernel emits a real patch; a todo changes the
 frame's remainder and the guard sends a whole frame instead, which is why tests/test_federated_feed_delta_served.py
 never sees a patch) where the remote serves the route, a todo (POST /usertodo) where it serves that alone, else a
 transcript append. The notice is a completed card, not a needs-you one, on purpose: a needs-you card also flips the
 session's needs-input state, which lands in the frame's remainder a cycle later as a whole frame, and that frame would
 catch an old bundle up and hide the freeze this lab is meant to show. The visible observable is the card on the hub's
-feed page ([data-key="a:notice:..."]) or the todo on its Waiting pane (or the feed page's rolled-up todo card).
+feed page ([data-key="a:notice:..."]) or, for a transcript append, the appended pair's bar on the remote lane of the
+hub's TIMELINE page (the Outline lists a session through its goal tree or a provisional card, which a lab session
+with no judge never has, and the Waiting page receives no frame from an old remote at all, so neither page draws
+anything for a closed pair): those corners open the timeline too and read the drawn bars off its SVG.
 
 Two classes run with no knob (this checkout on both sides; the second strips the caps term from the dial in the page,
 which the kernel reads as the empty set an older kernel would hold, so it is the checked-in stand-in for a
@@ -34,10 +38,11 @@ it (CI has no old checkouts, and no browser): ROMP_CORNER_OLD_REMOTE_ROOT (a ker
 and serves /notice: upstream/main), ROMP_CORNER_V1_REMOTE_ROOT (the slot path without /notice or /usertodo, e.g.
 2b9db2bee: the change is a transcript append and the patch to look for is the 60 s clock-only one),
 ROMP_CORNER_V0_REMOTE_ROOT (before the delta protocol, e.g. 8a4d48f10: whole frames), ROMP_CORNER_OLD_HUB_ROOT (a hub
-kernel and PREBUILT vscode-extension/dist from before PR 815: main). ROMP_CORNER_HUB_ROOT overrides the hub for the
-no-knob classes: pointed at a checkout of the PR before the receiver (7a7b31ed2) it is the stand-in's fails-before
-(the card never shows, the Outline files delta-unapplied rows). ROMP_CORNER_REPORT_DIR, when set, gets one JSON per
-class with everything recorded, for a written record.
+kernel and PREBUILT vscode-extension/dist from before PR 815: main). ROMP_CORNER_HUB_ROOT overrides the hub for every
+class that names no hub of its own: pointed at a checkout of the PR before the receiver (7a7b31ed2) it is the
+fails-before lever (the stand-in's card never shows and the Outline files delta-unapplied rows; the pre-T278c
+corner's timeline lane freezes at the seed's six bars while the pre-delta corner's still moves on whole frames).
+ROMP_CORNER_REPORT_DIR, when set, gets one JSON per class with everything recorded, for a written record.
 
 This lab boots subprocess kernels and drives Chromium; it loads no romp code in-process, so it carries no in-process
 state-isolation preamble and is not scanned by tests/test_state_isolation_order.py (as its two siblings). Synthetic
@@ -52,7 +57,6 @@ import tempfile
 import time
 import unittest
 import urllib.request
-import uuid
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -76,6 +80,10 @@ WID = "hublab"
 NOTICE_KEY = "corner"
 NOTICE_TITLE = "the notes-api index rebuild finished on TESTHOST"
 TODO_TEXT = "check the notes-api ranking weights before the index rebuild"
+APPEND_PROMPT = "a later turn: did the notes-api index rebuild finish?"
+APPEND_REPLY = "It finished; the stemmer table is cached now."
+LANE = HOST + ":" + SID_R0        # api's lane id on the hub's timeline (federation prefixes id AND name)
+LANE_LABEL = HOST + ":api"        # its label's text
 TODOS_ON = json.dumps({"enabled": True, "gt": 1})
 BAD_ROWS = (("outline", "delta-unapplied"), ("outline", "feedDelta-unapplied"), ("waiting", "feedDelta-unapplied"),
             ("feed", "feedDelta-unapplied"), ("federation", "feedDelta-nobase"))
@@ -99,12 +107,42 @@ def _serves(root, route):
     return ('"%s"' % route) in src
 
 
+def is_page_federation_row(r):
+    """A hostconn row federation.ts filed about TESTHOST: the pages' own federation rows, the positive control for a
+    negative read over the hub's client-diag (an absent or renamed file must not pass as "no bad row")."""
+    return r.get("surface") == "federation" and r.get("what") == "hostconn" and (r.get("data") or {}).get("host") == HOST
+
+
+def read_hub_diag_rows(lab):
+    """The hub's client-diag rows, read once a page's federation row is in (a bounded retry: the pages post their rows
+    after the driver's last snapshot), else whatever is there. Shared with tests/test_federated_bars_delta_served.py."""
+    path = os.path.join(_state_root(lab, "hub"), "client-diag.jsonl")
+    rows = []
+    for _ in range(20):
+        rows = []
+        try:
+            with open(path) as fh:
+                for ln in fh:
+                    try:
+                        rows.append(json.loads(ln))
+                    except ValueError:
+                        continue
+        except OSError:
+            rows = []
+        if any(is_page_federation_row(r) for r in rows):
+            break
+        time.sleep(0.3)
+    return rows
+
+
 # The Chromium driver: hook every socket the pages dial (window.__dials), the type of every frame a relay socket
 # receives (window.__frames) and every needSlot / needFullFeed / ready the page sends on any socket, with the socket
 # it left on (window.__sends); optionally strip the caps term from the relay dial (cfg.stripCaps); open the hub's
-# Waiting, Outline and feed pages; wait for each relay socket to hold the remote's full frame; make the change; wait
-# for its visible effect; optionally wait for a slot patch (cfg.waitDeltaMs, the 60 s clock-only one on an idle old
-# remote); report. The kernel-side observables (the hub's client-diag, the remote's /perf) are read from Python.
+# pages (cfg.apps: Waiting, Outline, feed, and the timeline where the change is a transcript append, whose visible
+# side is a bar); wait for each relay socket to hold the remote's full frame (and the timeline to draw the seed's
+# bars); make the change; wait for its visible effect; optionally wait for a slot patch (cfg.waitDeltaMs, the 60 s
+# clock-only one on an idle old remote); report. The kernel-side observables (the hub's client-diag, the remote's
+# /perf) are read from Python.
 DRIVER = r"""
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -115,7 +153,8 @@ let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
-const out = { pages: {}, before: {}, changePosted: null, cardSeen: false, cardSeenMs: null, todoSeen: false, todoCardSeen: false, deltaSeenMs: null, died: null };
+const out = { pages: {}, before: {}, changePosted: null, cardSeen: false, cardSeenMs: null, todoSeen: false, todoCardSeen: false, deltaSeenMs: null,
+              barsBefore: null, barSeenMs: null, barsAfter: null, panelBarsAfter: null, pane: null, died: null };
 const hook = (o) => {
   window.__dials = []; window.__frames = []; window.__sends = []; const W = window.WebSocket;
   const strip = (u) => o.stripCaps && u.indexOf("/remote/") !== -1 ? u.replace(/([?&])caps=[^&]*&?/, (m, sep) => sep) .replace(/[?&]$/, "") : u;
@@ -133,7 +172,8 @@ const hook = (o) => {
             const f = { sock: idx, t: String(m.type), slot: m.slot ? String(m.slot) : "", len: String(ev.data).length, at: Date.now() };
             if (m.type === "feed" || m.type === "feedDelta") { f.asks = Array.isArray(m.asks) ? m.asks.length : null; f.buildId = m.buildId; }
             if (m.type === "feed") f.rest = JSON.stringify(Object.fromEntries(Object.entries(m).filter(([k]) => k !== "asks" && k !== "ledgers" && k !== "now" && k !== "buildId"))).length;
-            if (m.type === "delta") { f.coll = Object.keys(m.coll || {}); f.restKeys = Object.keys(m.rest || {}); f.restAll = !!m.restAll; }
+            if (m.type === "delta") { f.coll = Object.keys(m.coll || {}); f.restKeys = Object.keys(m.rest || {}); f.restAll = !!m.restAll; const set = ((m.coll || {}).turns || {}).set; f.setKeys = set ? Object.keys(set) : []; }
+            if (m.type === "bars") f.lanes = Object.keys(m.turns || {}).length;
             window.__frames.push(f);
           }
         } catch (e) {}
@@ -147,8 +187,29 @@ const hook = (o) => {
     return w;
   };
   window.WebSocket.prototype = W.prototype; window.WebSocket.CONNECTING = 0; window.WebSocket.OPEN = 1; window.WebSocket.CLOSING = 2; window.WebSocket.CLOSED = 3;
+  // the timeline page's door (tests/test_federated_bars_delta_served.py has the same two): the page's boot assigns
+  // window.__rompConnectTimeline and calls it with its TimelinePanel, kept as window.__tlPanel; __barCount counts the
+  // drawn bars on one lane from the SVG (the coloured rects in the plot group whose centre sits on the lane label's row)
+  Object.defineProperty(window, "__rompConnectTimeline", { configurable: true, get() { return undefined; },
+    set(fn) { Object.defineProperty(window, "__rompConnectTimeline", { configurable: true, writable: true, value: (p) => { window.__tlPanel = p; return fn(p); } }); } });
+  window.__barCount = (label) => {
+    const lbl = [...document.querySelectorAll("svg text")].find((t) => t.textContent === label);
+    if (!lbl) return -1;
+    const laneY = parseFloat(lbl.getAttribute("y")) - 3.5;
+    return [...document.querySelectorAll('g[data-tl-plot="1"] > rect')].filter((r) => {
+      const f = r.getAttribute("fill");
+      if (!f || f === "transparent" || f === "none" || f.indexOf("url(") === 0) return false;
+      const y = parseFloat(r.getAttribute("y")), h = parseFloat(r.getAttribute("height"));
+      return Math.abs(y + h / 2 - laneY) < 1;
+    }).length;
+  };
+  window.__panelCount = (lane) => {
+    const p = window.__tlPanel; if (!p) return null;
+    const t = p._turnsRaw()[lane]; return Array.isArray(t) ? t.length : (t === undefined ? null : -1);
+  };
 };
 const pages = {};
+const barCount = () => pages.timeline.evaluate((l) => window.__barCount(l), cfg.laneLabel);
 const APPS = cfg.apps;   // the pages this corner opens: an old remote serves the feed payload to no app=waiting client (the pane is the fork's), so those corners open the Outline and the feed alone
 const snap = async (page) => page.evaluate(() => ({ dials: (window.__dials || []).slice(), frames: (window.__frames || []).slice(), sends: (window.__sends || []).slice() }));
 try {
@@ -161,7 +222,14 @@ try {
   }
   for (const app of APPS) {
     await pages[app].waitForFunction(() => (window.__dials || []).some((u) => u.indexOf("/remote/TESTHOST/ws") !== -1), null, { timeout: 30000 });
-    await pages[app].waitForFunction(() => (window.__frames || []).some((f) => f.t === "feed"), null, { timeout: 30000 });
+    if (app === "timeline") {
+      await pages.timeline.waitForFunction(() => (window.__frames || []).some((f) => f.t === "bars"), null, { timeout: 30000 });
+      await pages.timeline.bringToFront();   // the pane defers its draw while its document is hidden (_hiddenForPaint)
+      try { await pages.timeline.waitForFunction(([l, n]) => window.__barCount(l) === n, [cfg.laneLabel, cfg.seedBars], { timeout: 20000 }); } catch (e) {}
+      out.barsBefore = await barCount();   // the door's positive control: the seed's bars drawn on the remote lane
+    } else {
+      await pages[app].waitForFunction(() => (window.__frames || []).some((f) => f.t === "feed"), null, { timeout: 30000 });
+    }
   }
   // the change lands on a QUIET relay: the ready handshake's own frames (the caps ack, the re-based whole frame that
   // follows it on some apps) would otherwise carry the change to a page that decodes no patch and hide the freeze this
@@ -189,14 +257,25 @@ try {
     // the feed page's rolled-up user-todo card for the session (a:usertodo:<sid>), where the vintage mints one
     try { await pages.feed.locator('[data-key="a:usertodo:' + cfg.sid + '"]').first().waitFor({ state: "attached", timeout: pages.waiting ? 3000 : cfg.waitMs }); out.todoCardSeen = true; } catch (e) {}
   } else if (cfg.change === "transcript") {
+    const nFleet = (await snap(pages.fleet)).frames.length;
     fs.appendFileSync(cfg.transcript.path, cfg.transcript.text);
     out.changePosted = { ok: true, appended: cfg.transcript.text.length };
-    try { await pages.fleet.waitForFunction((n) => (window.__frames || []).length > n, (await snap(pages.fleet)).frames.length, { timeout: cfg.waitMs }); } catch (e) {}
+    if (pages.timeline) {   // the visible side: the appended pair's bar on the remote lane of the hub's timeline
+      await pages.timeline.bringToFront();
+      try { await pages.timeline.waitForFunction(([l, n]) => window.__barCount(l) === n, [cfg.laneLabel, cfg.seedBars + 1], { timeout: cfg.waitMs }); out.barSeenMs = Date.now() - t0; } catch (e) {}
+    }
+    try { await pages.fleet.waitForFunction((n) => (window.__frames || []).length > n, nFleet, { timeout: cfg.waitMs }); } catch (e) {}
   }
   if (cfg.waitDeltaMs) {
     try { await pages.fleet.waitForFunction((n) => (window.__frames || []).slice(n).some((f) => f.t === "delta"), out.before.fleet, { timeout: cfg.waitDeltaMs }); out.deltaSeenMs = Date.now() - t0; } catch (e) {}
   }
   await pages.fleet.waitForTimeout(1500);   // let the panes' rows land on the hub
+  if (pages.timeline) {
+    out.barsAfter = await barCount();
+    out.panelBarsAfter = await pages.timeline.evaluate((l) => window.__panelCount(l), cfg.lane);
+    out.pane = await pages.timeline.evaluate((l) => { const p = window.__tlPanel; if (!p) return null;
+      return { now: p.data && p.data.now, winSec: p.winSec(), offSec: p.offSec(), bars: (p._turnsRaw()[l] || []).map((b) => [b.start, b.end]) }; }, cfg.lane);
+  }
   for (const app of APPS) out.pages[app] = await snap(pages[app]);
 } catch (e) {
   out.died = String(e).slice(0, 400);
@@ -243,6 +322,8 @@ class _Corner(unittest.TestCase):
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
             raise unittest.SkipTest("no playwright browser on this box, the served lab needs one (CI installs none)")
         cls._knobs()
+        if cls.hub_root is None:   # the fails-before lever, for every class that names no hub of its own
+            cls.hub_root = _root_knob("ROMP_CORNER_HUB_ROOT")
         for root in (cls.hub_root, cls.remote_root):
             if root and not os.path.isfile(os.path.join(root, "bin", "romp-kernel")):
                 raise unittest.SkipTest("no bin/romp-kernel under %s" % root)
@@ -299,20 +380,15 @@ class _Corner(unittest.TestCase):
     @classmethod
     def _transcript_append(cls):
         """One closed user/assistant pair for `api`, appended to its transcript on the remote (the change a kernel with
-        neither /notice nor /usertodo can take): fresh uuids, the clock now."""
+        neither /notice nor /usertodo can take), as _dial.change_pair mints it: fresh uuids chained to the seed's last
+        row, the user row a minute ago and the reply 30 s later (a bar with a width; the pane culls a zero-width one).
+        Its visible side is the bar on the hub's timeline, which the corners that open that page assert."""
         cwd = os.path.join(cls.lab, "testhost", "proj")
         proj = os.path.join(cls.lab, "testhost", "claude", "projects")
         cands = [p for p in Path(proj).rglob(SID_R0 + ".jsonl")]
         if not cands:
             raise unittest.SkipTest("no transcript for the api session under %s" % proj)
-        u, a = str(uuid.uuid4()), str(uuid.uuid4())
-        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        rows = [{"type": "user", "uuid": u, "parentUuid": None, "sessionId": SID_R0, "cwd": cwd, "timestamp": stamp, "promptSource": "typed",
-                 "message": {"role": "user", "content": "a later turn: did the notes-api index rebuild finish?"}},
-                {"type": "assistant", "uuid": a, "parentUuid": u, "sessionId": SID_R0, "cwd": cwd, "timestamp": stamp,
-                 "message": {"role": "assistant", "model": "claude-opus-5", "stop_reason": "end_turn",
-                             "content": [{"type": "text", "text": "It finished; the stemmer table is cached now."}]}}]
-        return {"path": str(cands[0]), "text": "".join(json.dumps(r) + "\n" for r in rows)}
+        return {"path": str(cands[0]), "text": _dial.change_pair(SID_R0, 1, cwd, APPEND_PROMPT, APPEND_REPLY)}
 
     @classmethod
     def _drive(cls):
@@ -321,7 +397,8 @@ class _Corner(unittest.TestCase):
                 "noticeUrl": "http://127.0.0.1:%d/notice?token=%s" % (cls.rport, cls.rtoken),
                 "todoUrl": "http://127.0.0.1:%d/usertodo?token=%s" % (cls.rport, cls.rtoken),
                 "sid": SID_R0, "noticeKey": NOTICE_KEY, "noticeTitle": NOTICE_TITLE, "todoText": TODO_TEXT,
-                "change": cls.change, "stripCaps": cls.strip_caps, "waitMs": cls.wait_ms, "waitDeltaMs": cls.wait_delta_ms, "apps": list(cls.apps)}
+                "change": cls.change, "stripCaps": cls.strip_caps, "waitMs": cls.wait_ms, "waitDeltaMs": cls.wait_delta_ms, "apps": list(cls.apps),
+                "lane": LANE, "laneLabel": LANE_LABEL, "seedBars": _dial.SEED_PAIRS}
         if cls.change == "transcript":
             conf["transcript"] = cls._transcript_append()
         with open(cfg, "w") as f:
@@ -362,27 +439,11 @@ class _Corner(unittest.TestCase):
 
     @classmethod
     def _read_hub_diag_rows(cls):
-        path = os.path.join(_state_root(cls.lab, "hub"), "client-diag.jsonl")
-        rows = []
-        for _ in range(20):
-            rows = []
-            try:
-                with open(path) as fh:
-                    for ln in fh:
-                        try:
-                            rows.append(json.loads(ln))
-                        except ValueError:
-                            continue
-            except OSError:
-                rows = []
-            if any(cls._is_page_federation_row(r) for r in rows):
-                break
-            time.sleep(0.3)
-        return rows
+        return read_hub_diag_rows(cls.lab)
 
     @staticmethod
     def _is_page_federation_row(r):
-        return r.get("surface") == "federation" and r.get("what") == "hostconn" and (r.get("data") or {}).get("host") == HOST
+        return is_page_federation_row(r)
 
     @classmethod
     def _report(cls):
@@ -485,6 +546,21 @@ class _Corner(unittest.TestCase):
                          ("the notice card TESTHOST filed after the relay sockets held its full frame %s on the hub's feed page within %d ms "
                           "(frames on the feed relay: %r)") % ("shows" if seen else "never shows", self.wait_ms, self._kinds("feed")))
 
+    def _assert_bar_drawn(self):
+        """The visible side of a transcript append: the hub's timeline drew the seed's bars on the remote lane before the
+        change and one more within the wait after it, and the panel's held lane counts the same."""
+        self._assert_change_posted()
+        n = _dial.SEED_PAIRS
+        self.assertEqual(self.result.get("barsBefore"), n,
+                         "the hub's timeline drew the seed's %d bars on the %s lane before the change (-1: no such lane label; 0: no bar "
+                         "drawn on it): %r" % (n, LANE_LABEL, self.result.get("pane")))
+        self.assertIsNotNone(self.result.get("barSeenMs"),
+                             "the appended pair's bar was drawn on the %s lane within %d ms (count after the wait: %r, the panel's: %r; "
+                             "frames on the timeline relay after the change: %r)" % (LANE_LABEL, self.wait_ms, self.result.get("barsAfter"),
+                                                                                       self.result.get("panelBarsAfter"), self._after_change("timeline")))
+        self.assertEqual(self.result.get("barsAfter"), n + 1, "the lane shows %d bars after the change" % (n + 1))
+        self.assertEqual(self.result.get("panelBarsAfter"), n + 1, "and the panel's held lane counts %d" % (n + 1))
+
     def _assert_nothing_dropped(self):
         self._control()
         self.assertEqual(self._bad_rows(), [], "every frame the relay sockets received was applied by federation.ts; the panes never saw one raw")
@@ -525,10 +601,6 @@ class CornerCapsIgnoredStandIn(_Corner):
     move; the remote pays a re-encode per build (feed_slot_split climbs). Red before the receiver (a hub at
     7a7b31ed2, ROMP_CORNER_HUB_ROOT): the card never shows and the Outline files a delta-unapplied row per patch."""
     strip_caps = True
-
-    @classmethod
-    def _knobs(cls):
-        cls.hub_root = _root_knob("ROMP_CORNER_HUB_ROOT")
 
     def test_dials_carry_no_caps(self):
         self._assert_dials(caps=False)
@@ -584,16 +656,19 @@ class CornerNewLocalOldRemote(CornerCapsIgnoredStandIn):
 
 class CornerNewLocalV1Remote(_Corner):
     """New local, an old remote with the slot path and neither /notice nor /usertodo (ROMP_CORNER_V1_REMOTE_ROOT, e.g.
-    2b9db2bee). The change is a transcript append, which lands in the remainder and crosses as a whole frame (the
-    guard); the patch is the 60 s clock-only one an idle slot emits, reassembled without a row. The visible side is not
-    observed here (the driver waits for the frame, not for a row); the frames, the rows and the asks are the corner's
-    claim: nothing dropped, no row, nothing asked of either kernel. That vintage keys the bars frame's judging as a flat
-    list the receiver cannot key, so its BARS would cross whole per change (view-deltas.ts, its header); this lab opens
-    no timeline page."""
+    2b9db2bee). The change is a transcript append. On the FEED it crosses as a slot patch (the pair filed under asks,
+    in the recorded drive) or, when it moves the remainder instead, as a whole frame (the guard) followed by the 60 s
+    clock-only patch an idle slot emits; either patch is reassembled without a row. The Outline and the feed page draw
+    nothing for a closed pair (no card the lab can name, no goal node), so those pages have no visible side to observe.
+    The visible side is the hub's TIMELINE: the remote lane gains a bar. That vintage keys the bars frame's
+    judging as a flat list the receiver cannot key (view-deltas.ts, its header), so the receiver seeds no base for it:
+    each bars patch (the append's, then the idle slot's clock-only one a minute later) is answered by a needSlot on
+    the relay socket, the receiver's own resync, and that kernel re-sends the whole bars frame, which is the repair;
+    the bar shows through it. Nothing is filed for a resync (the whole frame it earns is the repair)."""
     change = "transcript"
-    wait_ms = 15000
+    wait_ms = 20000
     wait_delta_ms = 80000
-    apps = ("fleet", "feed")
+    apps = ("fleet", "feed", "timeline")
 
     @classmethod
     def _knobs(cls):
@@ -604,7 +679,10 @@ class CornerNewLocalV1Remote(_Corner):
     def test_dials(self):
         self._assert_dials(caps=True)
 
-    def test_a_clock_patch_arrived_and_was_reassembled(self):
+    def test_a_feed_patch_arrived_and_was_reassembled(self):
+        # the append's own patch where the vintage files the pair under asks (1087 B, coll asks, in the round-4 drive), else
+        # the idle slot's clock-only one a minute later (110 B in rounds 2 and 3, when the append moved the remainder and
+        # crossed whole); either is a real patch from a real pre-T278c kernel, reassembled with no row and nothing asked
         self._assert_change_posted()
         kinds = self._kinds("fleet")
         after = self._after_change("fleet")
@@ -612,20 +690,39 @@ class CornerNewLocalV1Remote(_Corner):
         self.assertEqual([k for k in kinds if k[0] == "feedDelta"], [], "and no feedDelta: %r" % (kinds,))
         self.assertIsNotNone(self.result.get("deltaSeenMs"))
 
+    def test_the_timeline_shows_the_appended_bar(self):
+        self._assert_bar_drawn()
+
+    def test_the_bars_cross_whole_after_the_receivers_resync(self):
+        # that vintage's whole bars frame seeds no base (its judging is a flat list): every bars patch asks THAT kernel
+        # for the whole slot on the relay socket, exactly once per patch, and the whole frame that answers is what the
+        # lane is drawn from; the local kernel is asked for nothing
+        kinds = self._kinds("timeline")
+        after = self._after_change("timeline")
+        self.assertIn(("bars", ""), kinds, "the timeline relay socket received the remote's whole bars frame: %r" % (kinds,))
+        patches = [i for i, k in enumerate(after) if k == ("delta", "bars")]
+        self.assertTrue(patches, "the append crossed as a bars slot patch on the timeline relay socket: %r" % (after,))
+        self.assertTrue(any(k == ("bars", "") for k in after[patches[0] + 1:]),
+                        "a whole bars frame followed the first patch (the resync's answer): %r" % (after,))
+        asks = self._sends("timeline", "relay", "needSlot")
+        self.assertEqual([a["slot"] for a in asks], ["bars"] * len([k for k in kinds if k == ("delta", "bars")]),
+                         "one needSlot for the bars slot per patch, on the relay socket: asks %r, frames %r" % (asks, kinds))
+        self.assertEqual(self._sends("timeline", "local", "needSlot"), [])
+
     def test_nothing_dropped(self):
         self._assert_nothing_dropped()
-        for app in self.apps:
-            self.assertEqual(self._sends(app, "relay", "needSlot"), [])
+        for app in ("fleet", "feed"):
+            self.assertEqual(self._sends(app, "relay", "needSlot"), [], "the %s page's receiver applied every feed patch" % app)
 
 
 class CornerNewLocalV0Remote(_Corner):
     """New local, a remote from before the delta protocol (ROMP_CORNER_V0_REMOTE_ROOT, e.g. 8a4d48f10): whole frames
-    only, applied by the unchanged feed arm with no row; the change is a todo (that vintage serves /usertodo). The wire
-    pays a whole frame per change and per minute, the pre-delta cost. The visible side is recorded, not asserted, and in
-    the recorded drive nothing visible was seen (todoSeen, todoCardSeen): that vintage serves the feed payload to no
-    Waiting client, and it minted no rolled-up todo card on the feed page within the wait."""
-    change = "todo"
-    apps = ("fleet", "feed")
+    only, feed and bars, applied by the unchanged arms with no row and nothing asked. The wire pays a whole frame per
+    change and per minute, the pre-delta cost. The change is a transcript append (rounds 2 and 3 filed a todo, whose
+    visible side that vintage has none of: it serves the feed payload to no Waiting client and minted no rolled-up
+    todo card on the feed page); its visible side is the bar on the hub's timeline, asserted."""
+    change = "transcript"
+    apps = ("fleet", "feed", "timeline")
 
     @classmethod
     def _knobs(cls):
@@ -638,17 +735,22 @@ class CornerNewLocalV0Remote(_Corner):
 
     def test_whole_frames_only(self):
         self._assert_change_posted()
-        for app in self.apps:
+        for app in ("fleet", "feed"):
             self._after_full(app)
             after = self._after_change(app)
             self.assertIn(("feed", ""), after, "a whole feed frame reached the %s relay socket after the change: %r" % (app, self._kinds(app)))
             self.assertEqual([k for k in self._kinds(app) if k[0] in ("delta", "feedDelta")], [], "never a patch or a feedDelta on the %s relay socket: %r" % (app, self._kinds(app)))
-        # the visible side is recorded (todoSeen, todoCardSeen in the report), not asserted: that vintage serves the feed
-        # payload to no Waiting client, and whether it mints the feed page's rolled-up todo card is its own affair (the
-        # recorded drive saw none); the frames above are the corner's claim
+        kinds = self._kinds("timeline")
+        self.assertIn(("bars", ""), self._after_change("timeline"), "a whole bars frame reached the timeline relay socket after the change: %r" % (kinds,))
+        self.assertEqual([k for k in kinds if k[0] == "delta"], [], "never a patch on the timeline relay socket: %r" % (kinds,))
+
+    def test_the_timeline_shows_the_appended_bar(self):
+        self._assert_bar_drawn()
 
     def test_nothing_dropped(self):
         self._assert_nothing_dropped()
+        for app in self.apps:
+            self.assertEqual(self._sends(app, "relay", "needSlot"), [], "nothing asked of the remote on the %s relay socket: whole frames need no resync" % app)
 
 
 class CornerOldLocal(_Corner):
