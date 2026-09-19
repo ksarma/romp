@@ -19,7 +19,11 @@ stepping over the judge's boundary frames by code identity (never by name), and 
 nothing about the shared cache is stubbed. A call from the look's body or from its gate wrapper (`_nudge_look_gated`'s
 inner function, the same mechanism) is the walk's, a call from `_nudge_placement_gate` is the gate's, a call from
 `_awaiting_wake_outcomes` is the wake sweep's (the store's third reader on the pass, bounded below), and any other caller
-during a pass fails the test, named by function, file and line. The claim has two limits. The door: a third loader that
+during a pass fails the test, named by function, file and line. The writer door has its own assertion on every pass: the
+writer recorder's list must be empty after the tick, each entry named by function, file and line, kept apart from the
+shared door's assertion (one filter over both lists would accept a writer-door load whose caller is the walk); a call
+through `load_goals_or_fault` is named for its kernel caller, never for the judge's `_or_fault`. The claim has two limits.
+The door: a third loader that
 reaches the store through the judge's loaders during the pass is caught and named; a reader below those loaders (the
 judge's own file reader and parser) is outside the recorders and outside the claim. The window: each pass, the
 `_auto_nudge_tick` call (the records are cleared before it and read after it), so a load elsewhere in the process (a
@@ -59,8 +63,17 @@ at the tick's setup, the same way (4 failed, 2 passed); a second read above the 
 the walk's bound (2 per session against 1) and the census (2 sites against 1) (3 failed, 3 passed); a load per walked sid
 at the top of `_awaiting_wake_outcomes` reds the sweep's bound in every case (1 against 0 owned records) (4 failed, 2
 passed); the sweep's read duplicated reds the sweep case on its bound (2 against 1) (2 failed, 4 passed); the sweep's read
-moved to the writer door reds the sweep case (no sweep load where 1 is asserted) (2 failed, 4 passed). The outer spelling
-at the pass-loop site names `_auto_nudge_pass`, never the judge's `_or_fault`. The store's counters: a reference to the
+moved to the writer door reds the sweep case on the writer assertion, named `_awaiting_wake_outcomes` with the kernel's
+real file and the read's line, and on its sweep count (no sweep load where 1 is asserted) (2 failed, 4 passed). The outer
+spelling at the pass-loop site names `_auto_nudge_pass`, never the judge's `_or_fault`. The writer door: `jd.load_goals`
+per session in the pass loop reds every case on the writer assertion, named `_auto_nudge_pass` (4 failed, 2 passed);
+`jd.load_goals_or_fault` at the same site is named for `_auto_nudge_pass` in the kernel's file, not for `_or_fault` in
+the judge's (4 failed, 2 passed); `jd.load_goals(sid)` above the walk's own read is named `_auto_nudge_session`, the
+case one filter over both doors would have taken for the walk's (3 failed, 3 passed); `jd.load_goals_or_fault(key)` in
+`_put_walk_gate`'s write-on-change no-op branch, reached only on the state-gate case's second and third passes, is named
+`_put_walk_gate` there (1 failed, 5 passed). The fallback edge: with the writer recorder's code-identity skip removed,
+the sweep's no-store case reds on the writer assertion naming `load_goals_shared` in the judge's file, the
+misattribution the skip prevents (1 failed, 5 passed). The store's counters: a reference to the
 real door bound at kernel import (`_REAL_LGS = jd.load_goals_shared`) and called per session in the pass loop is
 invisible to the recorders and reds the reconciliation on every pass whose looks run, the counters two calls over the
 recorded ones (4 failed, 2 passed); a phantom walk record appended by the recorder without a call through reds it the
@@ -298,8 +311,9 @@ class _WalkHarness(unittest.TestCase):
         check; `sweep`: the wake sweep's read per owned record, over every sid seen; never a total), the writer loads, and
         the sids parsed. The recorders stand on the judge's two doors, `jd.load_goals_shared` and `jd.load_goals`, and
         attribute through its boundary frames by code identity, so a shared load from any other function during the pass
-        fails here, named by function, file and line, and the sweep is held to its bound per sid; a reader below the doors
-        is outside the claim. The shared cache's call counters are reconciled against the recorded calls (`shared`, the
+        fails here, named by function, file and line, and the sweep is held to its bound per sid; the writer door's list is
+        asserted empty after every pass, separately, each entry named the same way; a reader below the doors is outside
+        the claim. The shared cache's call counters are reconciled against the recorded calls (`shared`, the
         delta over SHARED_CALL_KEYS), so a load through a door the recorders do not wrap is noticed, unnamed. `calls`
         carries the shared records (sid, function, file, line) for a case's own assertions."""
         before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
@@ -331,6 +345,9 @@ class _WalkHarness(unittest.TestCase):
                          "does not wrap (unnamed by construction) or a recorded call that took no read: counters %r against walk %r, "
                          "gate %r, sweep %r" % ((d["shared"],) + tuple({k[-4:]: v for k, v in d[m].items()} for m in ("walk", "gate", "sweep"))))
         d["calls"] = list(self.calls)
+        writer = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.writer]
+        self.assertEqual(writer, [], "zero plain load_goals from any caller in the decision path (condition 7, ruling A's wording), by "
+                                     "function, file and line: %s" % "; ".join(writer))
         d["writer"] = len(self.writer)
         d["parsedSids"] = sorted(self.parsed)
         return d
