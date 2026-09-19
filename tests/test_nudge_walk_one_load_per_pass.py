@@ -530,9 +530,11 @@ class _WalkHarness(unittest.TestCase):
         check; `sweep`: the wake sweep's read per owned record; never a total), the writer loads, and the sids parsed. `walk`
         and `gate` are keyed on SIDS as the floor, so the cases' zero-assertions keep their keys, plus any other sid a
         recorded call of theirs names; `sweep` is keyed on every sid seen, since its constituency includes unwalked sids. So
-        every recorded call sits inside one bound, and a read by the look or by the gate of a session other than the one it
-        is looking at is named by function, file, line and sid by its own assertion (the sweep's read of an unwalked sid is
-        legitimate and is held to its bound per sid instead). With no owned record (`owned_records` empty, as in the first
+        every recorded call sits inside one bound, and a shared load by the look or by the gate for a session that is not one
+        of the pass's two is named by function, file, line and sid by its own assertion; a read by either of the OTHER pass
+        session lands in that session's count and is held by the ceilings, which name the sid and the mechanism (review round
+        3: this prose said the two read only the session they look at, which no assertion checks); the sweep's read of an
+        unwalked sid is legitimate and is held to its bound per sid instead. With no owned record (`owned_records` empty, as in the first
         class) that bound holds the sweep to zero on every pass, which is why those cases assert nothing about it. The
         walk's per-sid ceiling, the gate's per-sid ceiling, the gate's general bound (checks never exceed derives) and its
         fixture equality (checks equal derives, because the harness's parsed_session records every parse) are asserted
@@ -578,8 +580,9 @@ class _WalkHarness(unittest.TestCase):
                                  "under a wedge gate), none for a sid with no owned record; it runs after the per-session loop in the "
                                  "same pass and memos.nudgeWalk.loads does not count it" % sid[-4:])
         foreign = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.calls if c in WALK + GATE and s not in SIDS]
-        self.assertEqual(foreign, [], "the look and the placement gate read only the session they are looking at: a shared load by "
-                                      "either for another session, by function, file, line and sid: %s" % "; ".join(foreign))
+        self.assertEqual(foreign, [], "a shared load by the look or the placement gate for a session that is not one of this pass's two, by "
+                                      "function, file, line and sid (a read of the other pass session lands in its count and is the ceilings' "
+                                      "below): %s" % "; ".join(foreign))
         # the ceilings and the gate's equality, here ahead of the cases' exact per-pass counts: a case pins each pass's dicts and
         # memo exactly, so a ceiling placed after those pins could never be the line that fails (review round 2, regression-1: the
         # three ceilings sat after the first case's five passes and no state reached them red), and the equality placed there
