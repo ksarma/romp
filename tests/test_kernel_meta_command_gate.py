@@ -148,6 +148,22 @@ class MetaCommandGateCost(unittest.TestCase):
         self.assertEqual(self.be.calls, [("effort", "ultra"), ("effort", "ultra")], "the parked pick waits its turn")
         self.assertEqual(km._pending_ops[SID], [("effort", "ultra")])
 
+    def test_the_env_setter_returns_took_and_parked_like_the_effort_setter(self):
+        """tests-4 (review round 3 of the env-pick door, 2026-09-19): _set_env_or_park's (took, parked) return, the
+        shape the /new echo reads since round 2, was pinned by no executed test, so a park answering (False, True) or
+        a verdict branch dropping the pairing shipped green. Each road, by execution: refused (not taken, not queued),
+        taken now, and parked under a busy gate. A plain synthetic pick: the stub backend never consults the door, so
+        no credential-shaped name has any business here."""
+        pick = {"NOTES_ENDPOINT": "http://notes.test"}
+        self.be.env_ok = False
+        self.assertEqual(km._set_env_or_park(self.be, SID, pick), (False, False), "refused: not taken, not queued")
+        self.be.env_ok = True
+        self.assertEqual(km._set_env_or_park(self.be, SID, pick), (True, False), "landed now")
+        self.verdict = True
+        self.assertEqual(km._set_env_or_park(self.be, SID, pick), (True, True), "parked: taken, queued")
+        self.assertEqual(self.be.calls, [("env", pick), ("env", pick)], "the parked pick waits its turn")
+        self.assertEqual(km._pending_ops[SID], [("env", pick)])
+
     def test_a_new_effort_on_an_unowned_session_is_refused_not_sent(self):
         state = {}
         self.assertTrue(km._route_meta_command(km._UNOWNED, SID, "/effort future-level", state=state))

@@ -315,10 +315,10 @@ class NewRouteEnv(unittest.TestCase):
         self.assertEqual(body.get("env"), {}, "the clear ask is echoed like any other env ask")
 
     def test_a_refused_env_is_not_echoed_as_applied_and_the_echo_carries_the_refusal(self):
-        """Review round 2 of the env-pick door (2026-09-19): the prefs pass discarded set_env's verdict, so a
-        redaction the backend could not complete (a flag-settings file it could neither rewrite nor remove, with the
-        registry kept naming the offender) was echoed back as applied and `romp new` printed "env cleared" while the
-        value stayed on disk. The echo carries the refusal in its own slot (envRefused, the generic sentence the
+        """Review round 2 of the env-pick door (2026-09-19): the prefs pass discarded set_env's verdict, so a pick
+        the backend refused (its own door on a replayed pick, a session whose registry it could not read) was echoed
+        back as applied and `romp new` printed it so while nothing had changed. The echo carries the refusal in its
+        own slot (envRefused, the generic sentence the
         parked-op drain uses, naming nothing of the pick), never the `env` key, and stderr says so once with the
         NAMES of the pick only (the value is built at run time and must appear nowhere)."""
         km._live_names = lambda *_: {"opt": SID}

@@ -19483,8 +19483,9 @@ def _apply_new_session_prefs(sid, body):
     so `romp new` printed the level as applied and exited 0 while nothing changed (the catch-up fold's
     review, 2026-09-18). An env pick the backend refuses is echoed as `envRefused` (_env_refusal's
     generic sentence, names nothing of the pick), never as `env`, for the same reason (review round 2 of
-    the env-pick door, 2026-09-19: the verdict was dropped here too, so a redaction the backend could not
-    complete printed as "env cleared"). Two refusal fields, one per leg, and this docstring is the one place
+    the env-pick door, 2026-09-19: the verdict was dropped here too, so a pick the backend refused, a
+    credential-shaped name its own door caught or a session whose registry it could not read, printed as
+    applied). Two refusal fields, one per leg, and this docstring is the one place
     their relationship is stated (the round-2 addendum, 2026-09-19; the leg comments below point here). The
     echo is read per asked key: `romp new` tells a refused ask from a dropped one (an older kernel that never
     answered it) by the presence of that key's own echo, so each leg's refusal sits in its own slot beside the
@@ -19527,8 +19528,8 @@ def _apply_new_session_prefs(sid, body):
             out["env"] = dict(ev)
         else:
             # refused (review round 2 of the env-pick door, 2026-09-19): the verdict used to be dropped here, so a
-            # redaction the backend could not complete was echoed as applied and `romp new` printed "env cleared"
-            # while the value stayed in the registry and the flag-settings file. The echo carries the refusal in
+            # pick the backend refused (its own door, or a session whose registry it could not read) was echoed as
+            # applied and `romp new` printed it so. The echo carries the refusal in
             # its own slot, never the `env` key, and stderr says so once with the NAMES of the pick only (the dict
             # carries values, and a credential-shaped one is what the door refuses). The relationship to the effort
             # leg's `refused` above is the docstring's
@@ -21986,8 +21987,10 @@ def _sdk_problem_count():
 
 
 # How many characters of a problem row's text the feed carries (the error centre cuts again at
-# sdk_backend.ERROR_CENTER_TEXT_CAP): a line meant to be read whole stays under it (review round 1 of the env-pick
-# door, 2026-09-18, which found set_env's refusal row 14 characters past it and clipped mid-word).
+# sdk_backend.ERROR_CENTER_TEXT_CAP); what is cut is the ring text a backend row carries (_sdk_problem_rows reads
+# the ring, never the kernel log line), so a ring text under the error centre's cap is under this one too (review
+# round 1 of the env-pick door, 2026-09-18, which found set_env's refusal row 14 characters past it and clipped
+# mid-word; round 3, 2026-09-19, which found docstrings claiming this cap governed the log line).
 SDK_PROBLEM_TEXT_CAP = 400
 
 
@@ -40037,9 +40040,8 @@ def _set_env_or_park(be, sid, value):
     (took, parked) in _set_effort_or_park's shape (review round 2 of the env-pick door, 2026-09-19):
     `parked` is True when the change queued, `took` is False when the backend refused it, so the /new
     echo can carry the verdict. This used to return nothing and drop it, so a set_env that refused (a
-    pick the door refuses; since that round, a redaction whose flag-settings file could neither be
-    rewritten nor removed) was echoed back as applied and `romp new` printed it so, "env cleared"
-    included, while the registry and the file still held the value."""
+    pick the door refuses, a session whose registry the backend cannot read) was echoed back as applied
+    and `romp new` printed it so while nothing had changed."""
     if _gate_or_park(sid, ("env", value)):
         return (True, True)
     return (bool(be.set_env(sid, value)), False)
@@ -40049,8 +40051,8 @@ def _env_refusal():
     """The sentence a refused per-session env pick is answered with, POST /new's echo and the parked-op
     drain's alike (review round 2 of the env-pick door, 2026-09-19; the drain's since round 1): generic on
     purpose, and NAMES nothing of the pick, because the pick's dict carries values and a credential-shaped one
-    is what the door refuses; the backend's own problem row says why (a refused name, or a flag-settings file
-    that could neither be rewritten nor removed, so the registry keeps naming what it carries)."""
+    is what the door refuses; the backend's own problem row says why (a refused name; a registry it could not
+    read has no row, and `romp sessions` shows whether the session is listed)."""
     return "Couldn't set the per-session env: the session's backend refused it (its log line says why)."
 
 

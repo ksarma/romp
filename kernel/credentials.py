@@ -182,10 +182,12 @@ def credential_env_refusal(names) -> str:
 
     The sentence carries no "env: " head of its own; each door adds that once (review round 1 of the env-pick
     door, 2026-09-18: set_env's log line put its own head in front of the door's, so the row read "pick refused:
-    env: ..."). It is kept short enough that the line set_env logs stays whole under the kernel's problem-text
-    cap (kernel.SDK_PROBLEM_TEXT_CAP, 400 characters; the first wording ran to 414 with one name and was clipped
-    mid-word), and it leads with what matters, so a shorter cut still says the names and that nothing was
-    saved (credential_env_ring_text is the error centre's own short form).
+    env: ..."). Nothing caps it on the surfaces it reaches (the /new reply, `romp new`'s stderr, the kernel log),
+    and naming every offender whole there is deliberate. The problem ring is the capped surface (the feed cuts a
+    row at kernel.SDK_PROBLEM_TEXT_CAP and the error centre at sdk_backend.ERROR_CENTER_TEXT_CAP), and what set_env
+    puts there is credential_env_ring_text, the short form bounded by construction (review round 3 of the env-pick
+    door, 2026-09-19: this docstring had claimed the kernel's cap governed the line set_env logs; the caps govern
+    the ring text only, and the first ring text, the whole line, ran to 414 characters and was clipped mid-word).
 
     Where the value belongs is said by HALF (review round 2 of the env-pick door, 2026-09-19): the first wording
     sent every refused name to the process environment romp's service starts with, and for the 1Password half
@@ -216,24 +218,66 @@ def _env_roads(names) -> str:
             "or load it from a secret manager in the session's shells")
 
 
+# The pieces every bounded problem row is built from (review round 3 of the env-pick door, 2026-09-19; the shared
+# helpers live here because sdk_backend.py and kernel.py both load this module and neither can import the other):
+# a name or a session name is cut to a budget with the feed's own marker, and a list of names is ONE name, the first
+# in sorted order, plus a count of the rest whose text is bounded too, so a row's length is a function of its format
+# and its budgets, whatever a pick or a stored env carries. The round found the sibling rows of the one row round 2
+# had bounded so still unbounded: the env-pick refusal row joined every refused name with no cut and no count, and
+# its two "cap pins" were measurements taken with a three-character session name.
+CUT_MARK = "\u2026"   # the feed's own marker for a cut (kernel._sdk_problem_text), one character
+RING_NAME_BUDGET = len("OP_SERVICE_ACCOUNT_TOKEN")   # every 1Password name romp spells EXACTLY is whole under it; an
+#                                                       OP_SESSION_<account> longer than it is cut like any other name
+COUNT_CAP = 999                                      # a count of more past this renders as "999+": four characters at most
+
+
+def cut_to(text, budget: int) -> str:
+    """`text` whole when it fits `budget` characters, else its head cut to the budget with CUT_MARK as the last
+    character, so the result is never longer than the budget."""
+    text = str(text)
+    return text if len(text) <= budget else text[:budget - len(CUT_MARK)] + CUT_MARK
+
+
+def count_text(n: int) -> str:
+    """A count for a bounded row: its digits up to COUNT_CAP, else COUNT_CAP with a plus, so the text is at most
+    len(str(COUNT_CAP)) + 1 characters whatever `n` is."""
+    return str(n) if n <= COUNT_CAP else "%d+" % COUNT_CAP
+
+
+def first_and_count(names, budget: int) -> str:
+    """The first of `names` in sorted order, cut to `budget`, and a bounded count of the rest ("X and 3 more"), or
+    the one name alone. `names` has at least one entry. Values never reach here."""
+    names = sorted(str(n) for n in names)
+    who = cut_to(names[0], budget)
+    return who if len(names) == 1 else "%s and %s more" % (who, count_text(len(names) - 1))
+
+
+# The refusal's error-centre form: the named variable and the count, is/are, and the road for the half matched.
+CREDENTIAL_RING_FORMAT = "%s %s credential-shaped: the pick was not saved. %s"
+CREDENTIAL_RING_ROADS = {
+    "mixed": "Suffix values go in the process environment; a 1Password name is refused there at boot, a helper's file holds it",
+    "op": "A 1Password name is refused in the process environment at boot too; a helper reads it from its own file",
+    "suffix": "Such a value belongs in the process environment, not in a per-session env",
+}
+
+
 def credential_env_ring_text(names) -> str:
     """credential_env_refusal's short form for the dashboard's error centre, which shows a problem row's first
-    sdk_backend.ERROR_CENTER_TEXT_CAP characters (240; review round 1 of the env-pick door, 2026-09-18): the
-    names, that nothing was saved, and where such a value belongs, front-loaded, so the row an admin reads is
-    whole. The full sentence stays in the kernel log. Scoped by half like the sentence (review round 2,
-    2026-09-19): a 1Password name is not sent to the process environment, which refuses it at boot."""
+    sdk_backend.ERROR_CENTER_TEXT_CAP characters (240; review round 1 of the env-pick door, 2026-09-18): the first
+    name in sorted order, cut to RING_NAME_BUDGET, a bounded count of the rest, that nothing was saved, and where such
+    a value belongs, front-loaded, so the row an admin reads is whole. Bounded by construction (review round 3 of
+    the env-pick door, 2026-09-19: until then every refused name rode whole, so six names, or one long one, pushed
+    the row past the cap and the cut landed inside the name list before the row said the pick was not saved); its
+    length is CREDENTIAL_RING_FORMAT's plus the name budget, the count text and the longest road, and set_env adds a
+    head with the session name cut to its own budget (sdk_backend.REFUSAL_RING_HEAD); tests/test_session_env.py
+    computes the worst case from those pieces. The full sentence, every name whole, stays in the kernel log. Scoped
+    by half like the sentence (review round 2, 2026-09-19): a 1Password name is not sent to the process environment,
+    which refuses it at boot."""
     names = sorted(names)
     op = any(is_op_env_name(str(n).upper()) for n in names)
     suffix = any(not is_op_env_name(str(n).upper()) for n in names)
-    if op and suffix:
-        road = ("A suffix value belongs in the process environment; a 1Password name is refused there at boot and "
-                "read from a helper's file")
-    elif op:
-        road = ("A 1Password name is refused in the process environment at boot too; a helper reads such a value from "
-                "its own file")
-    else:
-        road = "Such a value belongs in the process environment, not in a per-session env"
-    return "%s %s credential-shaped: the pick was not saved. %s" % (", ".join(names), "is" if len(names) == 1 else "are", road)
+    road = CREDENTIAL_RING_ROADS["mixed" if (op and suffix) else "op" if op else "suffix"]
+    return CREDENTIAL_RING_FORMAT % (first_and_count(names, RING_NAME_BUDGET), "is" if len(names) == 1 else "are", road)
 
 
 def retired_in_env_file(path=None) -> list:

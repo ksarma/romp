@@ -3093,14 +3093,14 @@ PY
     [ "$_applied_line" = "romp new: applied model claude-fable-5" ]
 }
 
-@test "new --no-env: a kernel that REFUSES the redaction says so with its reason, never as applied or unacknowledged" {
+@test "new --no-env: a kernel whose backend REFUSES the pick says so with its reason, never as applied or unacknowledged" {
     command -v python3 >/dev/null 2>&1 || skip "python3 not available"
     touch "$MOCK_LOG"
     mkdir -p "$XDG_STATE_HOME/romp"
     printf 'tok-test' > "$XDG_STATE_HOME/romp/serve-token"
     # fake kernel of today's shape (review round 2 of the env-pick door, 2026-09-19): the env setter refused the
-    # redaction (a flag-settings file it could neither rewrite nor remove, the registry kept naming the offender),
-    # so the echo carries `envRefused` (the kernel's generic sentence, naming nothing of the pick) and NO `env` key,
+    # pick (its own door on a replayed pick, or a session whose registry it could not read), so the echo carries
+    # `envRefused` (the kernel's generic sentence, naming nothing of the pick) and NO `env` key,
     # while the model it took is echoed as before. The old reader keyed the dropped-ask WARNING on the env echo's
     # PRESENCE and knew no such slot, so a refusal printed as "applied env cleared" when the kernel dropped the
     # verdict, or as an older kernel that did not acknowledge --env once it stopped echoing `env`.
@@ -3141,7 +3141,7 @@ PY2
     local _refused_line
     _refused_line="$(printf '%s\n' "$output" | grep -F "Couldn't set the per-session env")"
     [ "$_refused_line" = "romp new: Couldn't set the per-session env: the session's backend refused it (its log line says why)." ]
-    # never "applied env cleared": the redaction did not land
+    # never "applied env cleared": the pick did not land
     [[ "$output" != *"env cleared"* ]]
     # the kernel ANSWERED the ask; it did not drop it, so no older-kernel warning about --env
     [[ "$output" != *"did not acknowledge"* ]]

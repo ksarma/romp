@@ -168,7 +168,11 @@ class ReferenceLister(unittest.TestCase):
     here exactly as fenced, over a synthetic state root, and held to credential_env_names file by file and name by
     name. Since review round 2 (2026-09-19) it skips and REPORTS, on stderr, a file it cannot read or that is not a
     settings object, rather than aborting the listing at the first odd file (correctness-3), and the fixture plants
-    every 1Password name from the rule's own list plus a lowercase OP_SESSION_ witness (correctness-4, kernel-5)."""
+    every 1Password name from the rule's own list plus a lowercase OP_SESSION_ witness (correctness-4, kernel-5).
+    Since review round 3 (2026-09-19, extra5-2) its globs take the temp files beside either launch file too
+    (<sid>.json.<pid>.<hex>.tmp: a kernel killed between a writer's temp write and its rename leaves one holding what
+    was being written, env included, and the *.json glob could not see it), so the fixture plants one in each
+    directory and expects its names listed."""
 
     SID_A = "11111111-2222-3333-4444-555555555501"
     SID_B = "11111111-2222-3333-4444-555555555502"
@@ -207,6 +211,12 @@ class ReferenceLister(unittest.TestCase):
         pb = os.path.join(root, "sdk", self.SID_B + ".json")
         Path(pa).write_text(json.dumps({"fastMode": True, "env": env_a}) + "\n")
         Path(pb).write_text(json.dumps({"sid": self.SID_B, "name": "api", "env": env_b}) + "\n")
+        # the temps a kernel killed mid-write leaves (extra5-2, review round 3, 2026-09-19): write_reg's and the
+        # flag-settings writer's, both <sid>.json.<pid>.<hex>.tmp, each holding an env block with a value
+        ta = os.path.join(root, "sdk-flag-settings", self.SID_B + ".json.4242.0badc0de.tmp")
+        tb = os.path.join(root, "sdk", self.SID_A + ".json.4242.0badc0de.tmp")
+        Path(ta).write_text(json.dumps({"env": {"HF_TOKEN": val, "PLAIN": "x"}}) + "\n")
+        Path(tb).write_text(json.dumps({"sid": self.SID_A, "env": {"Notes_Api_Key": val}}) + "\n")
         Path(root, "sdk", "unreadable.json").write_text("{not json")
         Path(root, "sdk", self.SID_A + ".json").write_text(json.dumps({"sid": self.SID_A, "name": "web"}) + "\n")
         # two shapes that parse as JSON but are not a settings object (correctness-3, review round 2, 2026-09-19: the
@@ -224,8 +234,9 @@ class ReferenceLister(unittest.TestCase):
         self.assertEqual(r.returncode, 0, "the snippet runs as copied: %s" % r.stderr)
         got = sorted(r.stdout.splitlines())
         want = sorted(["%s %s" % (pa, n) for n in sb._cred.credential_env_names(env_a)]
-                      + ["%s %s" % (pb, n) for n in sb._cred.credential_env_names(env_b)])
-        self.assertEqual(got, want, "file by file and name by name, the rule's own verdict")
+                      + ["%s %s" % (pb, n) for n in sb._cred.credential_env_names(env_b)]
+                      + ["%s HF_TOKEN" % ta, "%s Notes_Api_Key" % tb])
+        self.assertEqual(got, want, "file by file and name by name, the rule's own verdict, the temps included")
         self.assertIn("%s ROMP_SERVE_TOKEN" % pa, got, "the control token is listed, as the doors refuse it")
         self.assertIn("%s op_account" % pa, got, "the 1Password half folds case here too")
         self.assertIn("%s op_session_testacct" % pa, got, "the OP_SESSION_ prefix clause folds case too")

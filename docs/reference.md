@@ -246,32 +246,31 @@ that needs one reads it from a file of its own, or the session's shells load
 it. A session's credential is Claude Code's own resolution, the `apiKeyHelper`
 in its settings for a key and the login otherwise. An env stored before this
 rule keeps launching as it was and is named once per session in the problem
-ring; re-declare the env without the name (`romp new --env` with the rest of
-the set, or `--no-env`) to redact it: the registry and the session's
-`sdk-flag-settings/<sid>.json` drop it at the write (the file goes when
-nothing else rides it), and the next connect launches without it. The write
-reports what it did: a file it cannot rewrite it removes instead, and the next
-connect writes it whole from the registry; a file it can neither rewrite nor
-remove refuses the re-declaration, `romp new` says so, and the registry keeps
-naming the variable, so the problem row keeps firing until a write lands. Two
-re-declarations racing for one session take turns, and the later one wins the
-registry and the file together, as for any pick. The road wants a session that
-is still listed; revive a closed one from the picker's Recent first. A fork of
-that session (a cut turn, a comment thread) inherits its parent's env less any
-such name, so a fork's env can differ from its parent's by exactly those
-names; the parent keeps it until re-declared. The problem ring shows the most
-recent problems, so the check is the command below, not the error centre. It
-lists, by name only, the stored offenders in the two launch files it reads,
-the per-session flag-settings files and the session registries (a pick parked
-in `pending-ops.json` is not read here; the door judges it at replay), and the
-rule it spells is the doors' own, so it names exactly what they refuse. A file
-it cannot read, or that is not a settings object, is reported on stderr and
+ring, names only: the session launches with the variable, and its value sits
+in the session registry and in the session's `sdk-flag-settings/<sid>.json`.
+Nothing in this change removes a value already stored; that is a separate
+decision. Until it is made, a re-declaration (`romp new --env` with the rest
+of the set, or `--no-env`) does what it did before the door: the registry
+follows it at once, the flag-settings file only at the session's next connect
+that writes it, and a file nothing rewrites stays as it was. A fork of that
+session (a cut turn, a comment thread) inherits its parent's env less any such
+name, so a fork's env can differ from its parent's by exactly those names; the
+parent's registry keeps it. The problem ring shows the most recent problems,
+so the check is the command below, not the error centre. It lists, by name
+only, the stored offenders in the two launch files it reads, the per-session
+flag-settings files and the session registries, and in the temp file a kernel
+killed mid-write can leave beside either (`<sid>.json.<pid>.<hex>.tmp`, which
+holds what was being written; one caught mid-write can be truncated JSON,
+which is reported as unreadable rather than passed over). A pick parked in
+`pending-ops.json` is not read here; the door judges it at replay. The rule it
+spells is the doors' own, so it names exactly what they refuse. A file it
+cannot read, or that is not a settings object, is reported on stderr and
 skipped, never passed over in silence:
 
 ```bash
 python3 -c 'import glob, json, os, sys
 S = os.environ.get("ROMP_STATE_DIR") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "romp")
-for p in sorted(glob.glob(S + "/sdk-flag-settings/*.json") + glob.glob(S + "/sdk/*.json")):
+for p in sorted(glob.glob(S + "/sdk-flag-settings/*.json*") + glob.glob(S + "/sdk/*.json*")):
     try: body = json.load(open(p))
     except (OSError, ValueError) as e: print(p, "skipped: unreadable (%s)" % e.__class__.__name__, file=sys.stderr); continue
     if not isinstance(body, dict) or not isinstance(body.get("env") or {}, dict): print(p, "skipped: not a settings object", file=sys.stderr); continue

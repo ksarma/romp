@@ -12,26 +12,25 @@ The mechanics under test:
   * spawn() persists the dict in the session's reg (`env`) — the same home model/effort live in —
     and refuses a bad payload outright rather than writing a poisoned reg.
   * flag_settings_path folds a non-empty env into the per-sid settings payload beside ultracode /
-    fastMode, and the return-""-when-no-keys contract stands; with no key riding it also REMOVES
-    the file an earlier connect left (review round 1 of the env-pick door, 2026-09-18). It refuses
-    a sid that is not a bare file name and a path that is a symbolic link, and shares one lock
-    with flag_settings_sync_env (review round 2, 2026-09-19).
-  * flag_settings_sync_env brings the file's env block in line with the registry at the WRITE
-    (set_env), on write_reg's temp-and-rename pattern, and when it cannot rewrite the file it
-    removes it, and when it cannot remove it either it refuses, so the registry keeps naming the
-    offender (review round 2, 2026-09-19).
+    fastMode, and the return-""-when-no-keys contract stands (with no key riding nothing is
+    touched, as before the door). It refuses a sid that is not a bare file name and a path that
+    is a symbolic link (review round 2 of the env-pick door, 2026-09-19), and writes on write_reg's
+    temp-and-rename pattern, to a fresh inode and never through the existing one (review round 3,
+    2026-09-19). Every row it logs has a ring text whose length is a function of its format.
   * _options threads the session's env into that file at EVERY connect — the file is rewritten on
     each use, so reconnects re-assert the reg's env by construction (pinned by tampering the file
-    between two _options calls), and reads the env again under the writers' lock at the write, so
-    a redaction landing mid-compose is what launches. Its stored-offender row has a short form for
-    the error centre that is bounded by construction (one variable named, the rest counted, the
-    session name and the named variable cut to a budget each; the round-2 addendum, 2026-09-19),
-    pinned as a property through the real ring for one, two and twenty variables.
+    between two _options calls). Its stored-offender row states a fact and promises no remedy
+    (review round 3: the redaction road left this change), with a short form for the error centre
+    that is bounded by construction (one variable named, the rest counted through a bounded count,
+    the session name and the named variable cut to a budget each), pinned as a property through
+    the real ring for one, two and twenty variables and with the worst case computed from the
+    format, the repeat suffix taken at a four-digit count.
   * set_env mirrors set_effort's shape (persist + reconnect to apply; env is connect-time), minus
     the badge/chip machinery that belongs to the not-yet-built UI slice; an UNCHANGED re-assert
     (the `romp new --env` re-brief on a standing session, or the fresh-spawn echo) skips the
-    reconnect, since the asked-for env is already in force or already queued; a redaction whose file can
-    neither be rewritten nor removed is refused rather than reported done.
+    reconnect, since the asked-for env is already in force or already queued. A refused pick is a
+    problem row whose ring text is bounded by construction, the session name cut to a budget and
+    the refused names one named and the rest counted.
   * fork() inherits the parent's env like model/auth (it is that conversation, continued
     elsewhere), LESS any credential-shaped name (review round 1 of the env-pick door, 2026-09-18).
 
@@ -44,7 +43,6 @@ import json
 import os
 import re
 import tempfile
-import threading
 import unittest
 import uuid
 from pathlib import Path
@@ -73,14 +71,12 @@ def _secret_value(tag):
 
 
 class _OsProxy:
-    """The module's `os` with one or two functions interposed and everything else forwarded: `replace` runs a hook
-    in place of os.replace (a forced failure, or a step that runs another writer first), `unlink` raises for ONE
-    path and forwards for every other (so a writer's finally-unlink of its temp still runs). Rebound as sb.os for a
-    test's duration, since the module's functions read `os` from their globals; restored by addCleanup. Round 2's
-    reviewers forced the writers' interleaves this way, deterministically, rather than by timing."""
+    """The module's `os` with one function interposed and everything else forwarded: `replace` runs a hook in place
+    of os.replace on the flag-settings writer's rename (a forced failure). Rebound as sb.os for a test's duration,
+    since the module's functions read `os` from their globals; restored by addCleanup."""
 
-    def __init__(self, real, replace=None, unlink=None):
-        self._real, self._replace, self._unlink = real, replace, unlink
+    def __init__(self, real, replace=None):
+        self._real, self._replace = real, replace
 
     def __getattr__(self, name):
         return getattr(self._real, name)
@@ -89,11 +85,6 @@ class _OsProxy:
         if self._replace is not None and sb.FLAG_SETTINGS_DIR in str(dst):   # the flag-settings writer's rename only:
             return self._replace(self._real, src, dst)                        #  write_reg's goes through this os too
         return self._real.replace(src, dst)
-
-    def unlink(self, path, *a, **k):
-        if self._unlink is not None and str(path) == self._unlink[0]:
-            raise self._unlink[1]
-        return self._real.unlink(path, *a, **k)
 
 
 def _interpose(test, **kw):
@@ -104,7 +95,7 @@ def _interpose(test, **kw):
 
 
 def _enospc(real, src, dst):
-    """A rename that fails the way a full disk fails it: the shape of the ladder's first rung."""
+    """A rename that fails the way a full disk fails it."""
     raise OSError(errno.ENOSPC, "No space left on device")
 
 
@@ -213,7 +204,7 @@ class FlagSettingsEnv(unittest.TestCase):
         Path(self.d, sb.FLAG_SETTINGS_DIR).write_text("not a directory")
         logged = []
         p = sb.flag_settings_path(self.d, PARENT, env=ENV,
-                                  log=lambda msg, problem=False: logged.append((msg, problem)))
+                                  log=lambda msg, problem=False, **kw: logged.append((msg, problem)))
         self.assertEqual(p, "", "degrade to launch — a session without its env still beats none")
         self.assertEqual(len(logged), 1)
         msg, problem = logged[0]
@@ -233,200 +224,18 @@ class FlagSettingsEnv(unittest.TestCase):
             sb.flag_settings_path(self.d, PARENT, log=lambda *a, **k: logged.append(a)), "")
         self.assertEqual(logged, [], "nothing requested, nothing dropped — nothing to report")
 
-    def test_no_keys_removes_the_file_an_earlier_connect_left(self):
-        """Review round 1 of the env-pick door (2026-09-18), the round's one high finding: with no key riding the
-        writer returned "" and left the previous connect's file, and with it the env block that connect launched
-        with, on disk for good, so a per-session env redacted to the empty set stayed in this file while the
-        registry said it was gone. The stale file goes; the "" contract stands; nothing is said (the common case)."""
-        p = sb.flag_settings_path(self.d, PARENT, env={"FEATURE_FLAG": "1"})
-        self.assertTrue(Path(p).exists())
-        logged = []
-        self.assertEqual(sb.flag_settings_path(self.d, PARENT, log=lambda *a, **k: logged.append(a)), "")
-        self.assertFalse(Path(p).exists(), "the stale per-session file is removed, not left with its env block")
-        self.assertEqual(logged, [], "a removal that worked is not a problem row")
-        self.assertEqual(sb.flag_settings_path(self.d, PARENT), "", "and a second call finds nothing to remove")
-        self.assertFalse(Path(self.d, sb.FLAG_SETTINGS_DIR, "%s.json" % CHILD).exists(),
-                         "a session that never had a file gets none")
-
-    def test_a_stale_file_that_cannot_be_removed_is_a_problem_row(self):
-        # a DIRECTORY where the per-sid file goes: unlink raises an OSError that is not a missing file
-        Path(self.d, sb.FLAG_SETTINGS_DIR, "%s.json" % PARENT).mkdir(parents=True)
-        logged = []
-        self.assertEqual(sb.flag_settings_path(self.d, PARENT, log=lambda msg, problem=False, **kw: logged.append((msg, problem, kw))), "")
-        self.assertEqual(len(logged), 1, "the file may still carry an earlier launch's env: said, as the write branch says its drop")
-        self.assertTrue(logged[0][1])
-        self.assertIn(PARENT, logged[0][0])
-        self.assertIn("could not be removed", logged[0][0])
-        ring = logged[0][2].get("ring_text")
-        self.assertTrue(ring and "could not be removed" in ring and PARENT in ring, logged[0][2])
-        self.assertLessEqual(len(ring), sb.ERROR_CENTER_TEXT_CAP, "the error centre's short form (review round 2, 2026-09-19)")
-        self.assertEqual(sb.flag_settings_path(self.d, PARENT), "", "log=None neither raises nor changes the contract")
 
 
-class FlagSettingsSyncEnv(unittest.TestCase):
-    """flag_settings_sync_env (review round 1 of the env-pick door, 2026-09-18): the per-sid file's env block follows
-    the registry at the WRITE, for the session that never connects again. The other keys stay as the last connect
-    wrote them; with nothing left the file goes; a missing file is nothing to do. Since review round 2 (2026-09-19)
-    it answers whether the file follows the env, writes on write_reg's pattern (a writer-unique temp, renamed into
-    place, unlinked in a finally), climbs the reviewers' ladder when the rewrite fails (remove the file; only if
-    that fails too, refuse), and shares one lock with the connect's writer."""
-
-    def setUp(self):
-        self.d = tempfile.mkdtemp()
-        self.p = Path(self.d, sb.FLAG_SETTINGS_DIR, "%s.json" % PARENT)
-
-    def _read(self):
-        return json.loads(self.p.read_text())
-
-    def _log(self):
-        logged = []
-        return logged, (lambda msg, problem=False, **kw: logged.append((msg, problem, kw)))
-
-    def test_a_missing_file_is_nothing_to_do_and_none_is_created(self):
-        self.assertTrue(sb.flag_settings_sync_env(self.d, PARENT, ENV), "nothing on disk: the file follows the env trivially")
-        self.assertFalse(Path(self.d, sb.FLAG_SETTINGS_DIR).exists(), "no directory, no file: the next connect writes what it needs")
-        Path(self.d, sb.FLAG_SETTINGS_DIR).write_text("not a directory")
-        self.assertTrue(sb.flag_settings_sync_env(self.d, PARENT, {}))    # a plain file where the directory goes is no file either
-
-    def test_the_env_block_is_replaced_and_the_other_keys_stay(self):
-        import stat
-        sb.flag_settings_path(self.d, PARENT, fast=True, no_helper=True, env={"FEATURE_FLAG": "1", "OLD_FLAG": "x"})
-        before = os.stat(self.p)
-        self.assertTrue(sb.flag_settings_sync_env(self.d, PARENT, ENV), "the verdict: the file follows the env")
-        after = os.stat(self.p)
-        self.assertEqual(self._read(), {"fastMode": True, "apiKeyHelper": "", "env": ENV})
-        self.assertEqual(stat.S_IMODE(after.st_mode), 0o600, "0600, the writer's own treatment")
-        self.assertNotEqual(after.st_ino, before.st_ino,
-                            "written to a sibling and renamed into place, so a new inode (review round 2, 2026-09-19: the "
-                            "no-temp-left check alone was satisfied by a writer that made no temp at all)")
-        self.assertEqual(_temps(self.d), [], "no temp left beside the file")
-
-    def test_an_empty_env_drops_the_block_and_an_empty_file_goes(self):
-        sb.flag_settings_path(self.d, PARENT, ultracode=True, env=ENV)
-        self.assertTrue(sb.flag_settings_sync_env(self.d, PARENT, {}))
-        self.assertEqual(self._read(), {"ultracode": True}, "the block goes, the key that still rides stays")
-        sb.flag_settings_path(self.d, PARENT, env=ENV)
-        self.assertTrue(sb.flag_settings_sync_env(self.d, PARENT, None))
-        self.assertFalse(self.p.exists(), "nothing rides: the file goes rather than staying as {}")
-
-    def test_an_unparsable_file_is_replaced_by_what_is_known(self):
-        self.p.parent.mkdir(parents=True)
-        self.p.write_text("{not json")
-        self.assertTrue(sb.flag_settings_sync_env(self.d, PARENT, ENV))
-        self.assertEqual(self._read(), {"env": ENV})
-        self.p.write_text("{not json")
-        self.assertTrue(sb.flag_settings_sync_env(self.d, PARENT, {}))
-        self.assertFalse(self.p.exists())
-
-    def test_a_directory_where_the_file_goes_fails_both_rungs_and_refuses(self):
-        # a directory where the file goes: the rename over it fails, and so does the removal (the last rung)
-        self.p.mkdir(parents=True)
-        logged, log = self._log()
-        self.assertFalse(sb.flag_settings_sync_env(self.d, PARENT, ENV, log=log),
-                         "neither rewritten nor removed: refused, so the registry keeps naming what the file carries")
-        self.assertEqual(len(logged), 1)
-        self.assertTrue(logged[0][1])
-        self.assertIn(PARENT, logged[0][0])
-        self.assertIn("nor removed", logged[0][0])
-        self.assertIn("refused", logged[0][0])
-        self.assertEqual(_temps(self.d), [], "the temp of the failed rewrite is gone (write_reg's finally)")
-        self.assertFalse(sb.flag_settings_sync_env(self.d, PARENT, {}), "the remove road alone fails the same way")
-        self.assertFalse(sb.flag_settings_sync_env(self.d, PARENT, ENV))    # log=None: quiet, no raise
-
-    def test_a_forced_rename_failure_leaves_no_temp_and_the_temp_is_writer_unique(self):
-        """kernel-2, regression-4, regression-5 (review round 2, 2026-09-19): the first cut wrote through a FIXED
-        <sid>.json.tmp shared by every caller for the sid and never removed it on failure, against write_reg's
-        recorded 2026-07-06 lesson in this very module; the reviewers reproduced a stolen temp (a torn live file) and
-        an orphan holding the env block that the reference's lister, which globs *.json, cannot see. Now the temp
-        name carries the pid and a random suffix, and a failed rename leaves none. The rename failing on a writable
-        directory is also the ladder's first rung: the file is removed instead and the verdict is True."""
-        sb.flag_settings_path(self.d, PARENT, fast=True, env={"OLD_FLAG": "x"})
-        seen = []
-
-        def boom(real, src, dst):
-            seen.append(os.path.basename(src))
-            raise OSError(errno.ENOSPC, "No space left on device")
-        _interpose(self, replace=boom)
-        logged, log = self._log()
-        self.assertTrue(sb.flag_settings_sync_env(self.d, PARENT, ENV, log=log),
-                        "the first rung: the file could not be rewritten, so it was removed, and the redaction stands")
-        self.assertFalse(self.p.exists(), "removed rather than left with the old block")
-        self.assertEqual(_temps(self.d), [], "a failed rename leaves no temp behind")
-        self.assertEqual(len(seen), 1)
-        self.assertRegex(seen[0], r"^%s\.json\.%d\.[0-9a-f]{8}\.tmp$" % (re.escape(PARENT), os.getpid()),
-                         "writer-unique: the pid and a random suffix, write_reg's name")
-        rows = [(m, kw) for m, problem, kw in logged if problem]
-        self.assertEqual(len(rows), 1, logged)
-        self.assertIn("removed instead", rows[0][0])
-        self.assertIn(str(self.p), rows[0][0])
-        self.assertLessEqual(len(rows[0][1]["ring_text"]), sb.ERROR_CENTER_TEXT_CAP)
-
-    def test_a_rename_failure_whose_removal_also_fails_refuses_and_keeps_the_file(self):
-        # the second rung by an interposed unlink that raises for the file alone (the temp's finally-unlink still runs)
-        sb.flag_settings_path(self.d, PARENT, env={"OLD_FLAG": "x"})
-        _interpose(self, replace=_enospc, unlink=(str(self.p), PermissionError(errno.EPERM, "Operation not permitted")))
-        logged, log = self._log()
-        self.assertFalse(sb.flag_settings_sync_env(self.d, PARENT, ENV, log=log), "refused: the file still carries what it carried")
-        self.assertEqual(self._read(), {"env": {"OLD_FLAG": "x"}}, "the honest state, kept and said")
-        self.assertEqual(_temps(self.d), [], "and still no temp is left")
-        rows = [(m, kw) for m, problem, kw in logged if problem]
-        self.assertEqual(len(rows), 1, logged)
-        self.assertIn("nor removed", rows[0][0])
-        self.assertIn("refused", rows[0][0])
-        self.assertIn(str(self.p), rows[0][0])
-        self.assertLessEqual(len(rows[0][1]["ring_text"]), sb.ERROR_CENTER_TEXT_CAP)
-
-    def _other_writer_during(self, other):
-        """A sync whose rename first starts `other` (a second writer) on a thread and gives it two seconds: under the
-        writers' lock it cannot finish while this writer holds the lock, so the wait ends with it still running, and
-        it finishes once this writer returns. Records whether it finished DURING the rename."""
-        state = {"during": None}
-        th = threading.Thread(target=other)
-
-        def hook(real, src, dst):
-            if state["during"] is None:               # once: the proxy is module-wide, so the other writer's own rename lands here too
-                th.start()
-                th.join(2.0)
-                state["during"] = not th.is_alive()
-            return real.replace(src, dst)
-        _interpose(self, replace=hook)
-        return state, th
-
-    def test_a_connect_writing_during_a_sync_waits_for_it_and_its_keys_survive(self):
-        """correctness-1 / extra6-1 (review round 2, 2026-09-19): the sync was an unlocked read-modify-write of a file
-        the connect also writes whole, so a connect landing between the sync's read and its rename had its keys
-        (apiKeyHelper, fastMode, ultracode) dropped by the rename; the reviewers hit it in about a third of natural
-        collisions and forced it exactly this way. One lock around both writers: the connect waits, then writes."""
-        sb.flag_settings_path(self.d, PARENT, env={"OLD_FLAG": "x"})
-        state, th = self._other_writer_during(
-            lambda: sb.flag_settings_path(self.d, PARENT, ultracode=True, fast=True, no_helper=True, env=ENV))
-        self.assertTrue(sb.flag_settings_sync_env(self.d, PARENT, {"FEATURE_FLAG": "0"}))
-        th.join(30)
-        self.assertFalse(th.is_alive(), "the connect's write finishes once the sync releases the lock")
-        self.assertIs(state["during"], False, "the connect's write waited for the sync rather than landing under its rename")
-        self.assertEqual(self._read(), {"ultracode": True, "fastMode": True, "apiKeyHelper": "", "env": ENV},
-                         "the connect's whole file stands: the sync dropped none of its keys")
-        self.assertEqual(_temps(self.d), [])
-
-    def test_two_syncs_for_one_sid_take_turns_and_the_file_parses(self):
-        # regression-5 / extra6-2: two picks for one sid write in turn; neither shares a temp nor tears the file
-        sb.flag_settings_path(self.d, PARENT, fast=True, env={"OLD_FLAG": "x"})
-        state, th = self._other_writer_during(lambda: sb.flag_settings_sync_env(self.d, PARENT, {"SECOND": "2"}))
-        self.assertTrue(sb.flag_settings_sync_env(self.d, PARENT, ENV))
-        th.join(30)
-        self.assertFalse(th.is_alive())
-        self.assertIs(state["during"], False, "the second pick waited for the first's lock")
-        self.assertEqual(self._read(), {"fastMode": True, "env": {"SECOND": "2"}},
-                         "the later writer's block, whole (last-writer-wins between two picks is the stated residual)")
-        self.assertEqual(_temps(self.d), [])
-
-
-class FlagSettingsSidAndLink(unittest.TestCase):
-    """Two refusals ahead of every branch of both writers (review round 2 of the env-pick door, 2026-09-19): a sid
-    that is not a bare file name (rules-2 / kernel-4: round 1's unlink made a crafted sid's path traversal destructive
-    where the function had only written) and a path that is a symbolic link (extra5-2: the write road put the env
-    block into the link's target and the unlink road removed the link and left the block there). Each refusal is a
-    problem row naming its reason, and nothing outside the directory is touched."""
+class FlagSettingsWriter(unittest.TestCase):
+    """The one writer of the per-sid flag-settings file (flag_settings_path) since review round 3 of the env-pick
+    door (2026-09-19) sent the env pick's own edit of the file away with the redaction road. Two refusals stand
+    ahead of its write (review round 2): a sid that is not a bare file name (rules-2 / kernel-4: the path is built
+    from the sid, and a crafted one would carry the env block outside the state root) and a path that is a symbolic
+    link (extra5-2: the write road put the env block into the link's target). The write itself is write_reg's
+    temp-and-rename (round 3, correctness-4 and kernel-3: an in-place O_TRUNC write refreshed a hard link's other
+    name with every connect's env and followed a symlink planted between the check and the open), and every row the
+    writer logs has a ring text whose length is a function of its format (round 3, correctness-3 and kernel-2: the
+    link row ran to 383 to 453 characters over a real state root, past both caps, and the sid rows were unbounded)."""
 
     def setUp(self):
         self.root = tempfile.mkdtemp()
@@ -446,25 +255,26 @@ class FlagSettingsSidAndLink(unittest.TestCase):
                          "the sid would resolve to the victim outside the directory")
         logged, log = self._log()
         self.assertEqual(sb.flag_settings_path(self.d, sid, env=ENV, log=log), "", "the write road")
-        self.assertEqual(sb.flag_settings_path(self.d, sid, log=log), "", "the unlink road")
-        self.assertFalse(sb.flag_settings_sync_env(self.d, sid, ENV, log=log), "the rewrite road")
-        self.assertFalse(sb.flag_settings_sync_env(self.d, sid, {}, log=log), "the remove road")
         self.assertEqual(json.loads(victim.read_text()), {"env": {"KEEP": "me"}}, "the victim's bytes are untouched")
         self.assertEqual(victim.stat().st_mtime_ns, st.st_mtime_ns, "and it was not rewritten in place either")
-        self.assertEqual(len(logged), 4, logged)
-        for m, problem, _kw in logged:
-            self.assertTrue(problem)
-            self.assertIn("not a bare file name", m, "the refusal names the specific reason")
-            self.assertIn(repr(sid), m)
-        self.assertIn("launching WITHOUT env", logged[0][0], "the write road says what the launch goes without")
+        self.assertEqual(len(logged), 1, logged)
+        m, problem, kw = logged[0]
+        self.assertTrue(problem)
+        self.assertIn("not a bare file name", m, "the refusal names the specific reason")
+        self.assertIn(repr(sid), m)
+        self.assertIn("launching WITHOUT env", m, "the write road says what the launch goes without")
+        self.assertEqual(kw["ring_text"], sb.FLAG_SID_RING % (sb.FLAG_SID_REASONS[2], repr(sid), "env"),
+                         "the ring text: the reason, the sid's repr within its budget, the keys")
+        self.assertLessEqual(len(kw["ring_text"]), sb.ERROR_CENTER_TEXT_CAP)
+        self.assertEqual(sb.flag_settings_path(self.d, sid, log=log), "", "with no key riding nothing is written and nothing said")
+        self.assertEqual(len(logged), 1)
         for bad in ("..", ".", "", None, "a\0b", "x/y", 7):
             self.assertEqual(sb.flag_settings_path(self.d, bad, env=ENV), "", repr(bad))
-            self.assertFalse(sb.flag_settings_sync_env(self.d, bad, ENV), repr(bad))
         self.assertEqual(os.listdir(os.path.join(self.d, sb.FLAG_SETTINGS_DIR)), [], "nothing was written under the directory either")
         self.assertEqual(sb._flag_settings_sid_error(PARENT), "", "a kernel-minted uuid passes")
         self.assertTrue(sb.flag_settings_path(self.d, PARENT, env=ENV), "and writes as before")
 
-    def test_a_symbolic_link_is_refused_on_every_road(self):
+    def test_a_symbolic_link_is_refused_and_nothing_is_written_through_it(self):
         import stat
         target = Path(self.root, "outside.json")
         target.write_text(json.dumps({"env": {"OUTSIDE": "kept"}}) + "\n")
@@ -473,49 +283,108 @@ class FlagSettingsSidAndLink(unittest.TestCase):
         os.symlink(str(target), str(p))
         logged, log = self._log()
         self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV, fast=True, log=log), "", "the write road")
-        self.assertEqual(sb.flag_settings_path(self.d, PARENT, log=log), "", "the unlink road")
-        self.assertFalse(sb.flag_settings_sync_env(self.d, PARENT, ENV, log=log), "the rewrite road")
-        self.assertFalse(sb.flag_settings_sync_env(self.d, PARENT, {}, log=log), "the remove road")
         self.assertTrue(os.path.islink(p), "the link is left in place")
         self.assertEqual(json.loads(target.read_text()), {"env": {"OUTSIDE": "kept"}}, "the target's bytes are untouched")
         self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o644, "and its mode (the write road used to chmod through the link)")
-        self.assertEqual(len(logged), 4, logged)
-        for m, problem, _kw in logged:
-            self.assertTrue(problem)
-            self.assertIn(str(p), m, "the row names the path")
-            self.assertIn("symbolic link", m)
-            self.assertIn(str(target), m, "and where the link points")
+        self.assertEqual(len(logged), 1, logged)
+        m, problem, kw = logged[0]
+        self.assertTrue(problem)
+        self.assertIn(str(p), m, "the kernel log line names the path")
+        self.assertIn("symbolic link", m)
+        self.assertIn(str(target), m, "and where the link points")
+        self.assertEqual(kw["ring_text"], sb.FLAG_LINK_RING % PARENT, "the ring text names no path and no target")
+        self.assertNotIn(self.root, kw["ring_text"])
+        self.assertLessEqual(len(kw["ring_text"]), sb.ERROR_CENTER_TEXT_CAP)
         self.assertEqual(_temps(self.d), [])
 
-    def test_the_failure_rows_short_forms_fit_the_error_centre_whatever_the_state_root(self):
-        """extra7-3 (review round 2, 2026-09-19): the sync's failure row ran to 409 characters with a real state
-        path, past the feed's cap, and the error centre's cut landed inside the errno path before the row said
-        what the file may still carry; the PR's own pin measured 381 over tempfile's short root. Each failure row
-        of the two writers has a short form that names no path, measured here over a root longer than any home."""
-        km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
-        long_root = os.path.join(self.root, "a" * 120)
-        d = os.path.join(long_root, sb.FLAG_SETTINGS_DIR)
-        os.makedirs(d)
-        p = Path(d, PARENT + ".json")
-        p.mkdir()                                                    # both rungs fail, and so does the stale removal
+    def test_the_write_goes_to_a_fresh_inode_so_a_hard_link_is_never_refreshed(self):
+        """correctness-4 / extra8-3 (review round 3 of the env-pick door, 2026-09-19): the link guard sees symbolic
+        links only, and the in-place O_CREAT|O_TRUNC write went through the existing inode, so a hard link at the
+        path carried every connect's env block, credential value included, to a file under another name. The choice,
+        stated in the writer: the bytes go to a FRESH inode renamed over the path, never through the existing one (a
+        refusal on the link count was tried by the reviewers and rejected: it stops ordinary connects over a
+        snapshot). The other name keeps the OLD bytes, as a copy would, and is never written again."""
+        p = Path(self.d, sb.FLAG_SETTINGS_DIR, PARENT + ".json")
+        self.assertEqual(sb.flag_settings_path(self.d, PARENT, env={"OLD_FLAG": "x"}), str(p))
+        other = Path(self.root, "other-name.json")
+        os.link(str(p), str(other))
+        self.assertEqual(os.stat(other).st_nlink, 2, "the state under test: one inode, two names")
+        before = os.stat(p).st_ino
+        self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV), str(p))
+        self.assertNotEqual(os.stat(p).st_ino, before, "a fresh inode: the bytes never went through the existing one")
+        self.assertEqual(json.loads(p.read_text())["env"], ENV)
+        self.assertEqual(json.loads(other.read_text()), {"env": {"OLD_FLAG": "x"}},
+                         "the other name keeps the old bytes and is never refreshed")
+        self.assertEqual(os.stat(other).st_nlink, 1)
+        self.assertEqual(_temps(self.d), [])
+
+    def test_a_failed_rename_leaves_no_temp_and_the_old_file_whole(self):
+        """write_reg's pattern (review round 3, 2026-09-19; kernel-4 and extra8-3): a writer-unique temp (pid and a
+        random suffix) renamed into place and unlinked in a finally, so a launch reading at that moment sees the old
+        file or the new one, never a torn one, and a rename that fails the way a full disk fails it leaves no temp.
+        The row it logs names the path on the kernel log line and no path in the ring text."""
+        sb.flag_settings_path(self.d, PARENT, env={"OLD_FLAG": "x"})
+        p = Path(self.d, sb.FLAG_SETTINGS_DIR, PARENT + ".json")
+        seen = []
+
+        def boom(real, src, dst):
+            seen.append(os.path.basename(src))
+            raise OSError(errno.ENOSPC, "No space left on device")
+        _interpose(self, replace=boom)
         logged, log = self._log()
-        self.assertFalse(sb.flag_settings_sync_env(long_root, PARENT, ENV, log=log))
-        self.assertEqual(sb.flag_settings_path(long_root, PARENT, log=log), "")
-        p.rmdir()
-        p.write_text(json.dumps({"env": {"OLD_FLAG": "x"}}) + "\n")
-        _interpose(self, replace=_enospc)                            # the first rung on a writable directory
-        self.assertTrue(sb.flag_settings_sync_env(long_root, PARENT, ENV, log=log))
-        self.assertEqual(len(logged), 3, logged)
+        self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV, fast=True, log=log), "", "degrade to launch")
+        self.assertEqual(json.loads(p.read_text()), {"env": {"OLD_FLAG": "x"}}, "the old file stands whole: never a torn one")
+        self.assertEqual(_temps(self.d), [], "a failed rename leaves no temp behind")
+        self.assertEqual(len(seen), 1)
+        self.assertRegex(seen[0], r"^%s\.json\.%d\.[0-9a-f]{8}\.tmp$" % (re.escape(PARENT), os.getpid()),
+                         "writer-unique: the pid and a random suffix, write_reg's name")
+        self.assertEqual(len(logged), 1, logged)
+        m, problem, kw = logged[0]
+        self.assertTrue(problem)
+        self.assertIn(str(p), m)
+        self.assertIn("unwritable", m)
+        self.assertIn("launching WITHOUT env, fastMode", m)
+        self.assertEqual(kw["ring_text"], sb.FLAG_UNWRITABLE_RING % (PARENT, "OSError", "env, fastMode"))
+        self.assertNotIn(self.root, kw["ring_text"], "no path in the short form: a path's length is the state root's")
+
+    def test_every_writer_rows_worst_case_is_computed_from_its_format_and_fits_the_cap(self):
+        """correctness-3 / kernel-2 (review round 3, 2026-09-19): the class, not the instance. Each row's worst case,
+        the longest fixed text (the longest sid reason), the sid budget spent (a repr past it is cut with the marker),
+        the class budget spent and every flag-settings key riding, is computed HERE from the module's constants and
+        asserted under the error centre's cap and whole through the feed's cut; then the real writer is driven over a
+        root longer than any home, with every key riding, a sid past the budget and a directory where the file goes,
+        to show the constants are what it renders."""
+        km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+        keys = ", ".join(sb.FLAG_SETTINGS_KEYS)
+        self.assertEqual(sorted(sb.FLAG_SETTINGS_KEYS), list(sb.FLAG_SETTINGS_KEYS), "sorted, as the writer joins them")
+        sid_worst = sb.FLAG_SID_RING % (max(sb.FLAG_SID_REASONS, key=len), "x" * sb.RING_SID_BUDGET, keys)
+        link_worst = sb.FLAG_LINK_RING % ("x" * sb.RING_SID_BUDGET)
+        unw_worst = sb.FLAG_UNWRITABLE_RING % ("x" * sb.RING_SID_BUDGET, "x" * sb.RING_CLASS_BUDGET, keys)
+        for name, worst in (("sid", sid_worst), ("link", link_worst), ("unwritable", unw_worst)):
+            self.assertLessEqual(len(worst), sb.ERROR_CENTER_TEXT_CAP, (name, len(worst), worst))
+            self.assertEqual(km._sdk_problem_text(worst), worst, "and whole in the feed")
+        long_root = os.path.join(self.root, "a" * 120)
+        os.makedirs(os.path.join(long_root, sb.FLAG_SETTINGS_DIR))
+        p = Path(long_root, sb.FLAG_SETTINGS_DIR, PARENT + ".json")
+        p.mkdir()                                                    # the rename over a directory fails
+        logged, log = self._log()
+        riding = dict(ultracode=True, fast=True, no_helper=True, env=ENV)
+        self.assertEqual(sb.flag_settings_path(long_root, PARENT, log=log, **riding), "")
+        long_sid = "x" * (sb.RING_SID_BUDGET + 30) + "/y"
+        self.assertEqual(sb.flag_settings_path(long_root, long_sid, log=log, **riding), "")
+        self.assertEqual(len(logged), 2, logged)
+        self.assertIn(str(p), logged[0][0], "the kernel log line names the path")
+        self.assertGreater(len(logged[0][0]), sb.ERROR_CENTER_TEXT_CAP, "the whole line would not fit the error centre over this root")
+        self.assertEqual(logged[0][2]["ring_text"], sb.FLAG_UNWRITABLE_RING % (PARENT, "IsADirectoryError", keys))
+        cut = sb._cred.cut_to(repr(long_sid), sb.RING_SID_BUDGET)
+        self.assertTrue(cut.endswith(sb._cred.CUT_MARK) and len(cut) == sb.RING_SID_BUDGET, cut)
+        self.assertEqual(logged[1][2]["ring_text"], sb.FLAG_SID_RING % (sb.FLAG_SID_REASONS[2], cut, keys))
         for m, problem, kw in logged:
             self.assertTrue(problem)
-            self.assertIn(str(p), m, "the kernel log line names the path")
-            self.assertGreater(len(m), sb.ERROR_CENTER_TEXT_CAP, "the whole line would not fit the error centre over this root")
-            ring = kw.get("ring_text")
-            self.assertTrue(ring and PARENT in ring, kw)
-            self.assertLessEqual(len(ring), sb.ERROR_CENTER_TEXT_CAP, ring)
-            self.assertLessEqual(len(ring), km.SDK_PROBLEM_TEXT_CAP)
-            self.assertEqual(km._sdk_problem_text(ring), ring, "and the feed's cut leaves it whole")
-            self.assertNotIn(long_root, ring, "no path in the short form: a path's length is the state root's")
+            self.assertNotIn(long_root, kw["ring_text"], "no path in the short form")
+            self.assertLessEqual(len(kw["ring_text"]), sb.ERROR_CENTER_TEXT_CAP, kw["ring_text"])
+            self.assertEqual(km._sdk_problem_text(kw["ring_text"]), kw["ring_text"])
+        self.assertEqual(_temps(long_root), [])
 
 
 class SpawnEnv(_Backend):
@@ -602,7 +471,7 @@ class OptionsThreadsEnv(_OptionsBackend):
         sid = self.be.spawn("web", "/tmp", env=ENV)
         Path(self.be.state_dir, sb.FLAG_SETTINGS_DIR).write_text("not a directory")
         logged = []
-        self.be._log = lambda msg, problem=False: logged.append((msg, problem))
+        self.be._log = lambda msg, problem=False, **kw: logged.append((msg, problem))
         kw = self._options_kw(self._sess(sid))
         self.assertNotIn("settings", kw, "degrade to launch, never abort the connect")
         self.assertTrue(any(problem and "env" in msg for msg, problem in logged),
@@ -1055,10 +924,8 @@ class CredentialShapedNamesAtTheDoor(unittest.TestCase):
         the process environment romp's service starts with, and for a 1Password name that is the road the boot check
         refuses (romp-manager exits 1 on it), so an operator following the printed advice for an OP_* name took the
         deployment down. The suffix half keeps that road; the 1Password half hears the boot check's own (a file of
-        the helper's own, or the session's shells); a mixed pick hears both, each scoped. Both forms fit their caps
-        for one name of each half and for a mixed pair, and the boot check is executed here so the two sentences
-        cannot drift apart from what it refuses."""
-        km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+        the helper's own, or the session's shells); a mixed pick hears both, each scoped. The boot check is executed
+        here so the two sentences cannot drift apart from what it refuses."""
         suffix = sb._cred.credential_env_refusal(["NOTES_API_TOKEN"])
         op = sb._cred.credential_env_refusal(["OP_ACCOUNT"])
         mixed = sb._cred.credential_env_refusal(["NOTES_API_TOKEN", "op_session_notes"])
@@ -1074,12 +941,16 @@ class CredentialShapedNamesAtTheDoor(unittest.TestCase):
         short_op = sb._cred.credential_env_ring_text(["OP_ACCOUNT"])
         self.assertIn("refused in the process environment at boot", short_op)
         self.assertNotIn("belongs in the process environment", short_op)
-        for names in (["NOTES_API_TOKEN"], ["OP_ACCOUNT"], ["OP_SERVICE_ACCOUNT_TOKEN"], ["NOTES_API_TOKEN", "op_session_notes"],
-                      ["NOTES_API_TOKEN", "OP_SERVICE_ACCOUNT_TOKEN"]):    # a mixed pair with the longest name of each half
-            line = "env (web): pick refused: " + sb._cred.credential_env_refusal(names)
-            ring = "env (web): pick refused: " + sb._cred.credential_env_ring_text(names)
-            self.assertLessEqual(len(line), km.SDK_PROBLEM_TEXT_CAP, (len(line), names))
-            self.assertLessEqual(len(ring), sb.ERROR_CENTER_TEXT_CAP, (len(ring), names))
+        # the ring text hears the road of the half matched too; its bound is the format's (CredentialShapedNamesEndToEnd
+        # computes the worst case), and the full sentence is capped on no surface it reaches (the /new reply, romp
+        # new's stderr, the kernel log), so every name rides it whole (review round 3, 2026-09-19: the pins here had
+        # measured both against the caps with the three-character session name "web")
+        for names, road in ((["NOTES_API_TOKEN"], "suffix"), (["OP_ACCOUNT"], "op"), (["OP_SERVICE_ACCOUNT_TOKEN"], "op"),
+                            (["NOTES_API_TOKEN", "op_session_notes"], "mixed"), (["NOTES_API_TOKEN", "OP_SERVICE_ACCOUNT_TOKEN"], "mixed")):
+            ring = sb._cred.credential_env_ring_text(names)
+            self.assertTrue(ring.endswith(sb._cred.CREDENTIAL_RING_ROADS[road]), (names, ring))
+            for n in names:
+                self.assertIn(n, sb._cred.credential_env_refusal(names), "every name whole in the sentence")
         absent = os.path.join(tempfile.mkdtemp(), "absent.env")
         with self.assertRaises(RuntimeError, msg="the boot check refuses the road the first wording advised"):
             sb._cred.check_boot_environment(path=absent, environ={"OP_ACCOUNT": "acct"})
@@ -1171,14 +1042,18 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         rows = [(m, kw2) for m, problem, kw2 in self.logged if problem and "NOTES_API_TOKEN" in m]
         self.assertEqual(len(rows), 1, "one problem row names the stored variable: %r" % (self.logged,))
         self.assertNotIn(val, rows[0][0], "the value is never in the line")
-        self.assertIn("romp new --env", rows[0][0], "the line says how to redact")
-        self.assertIn("flag-settings file", rows[0][0],
-                      "and says the redaction reaches the file too (review round 1, 2026-09-18: the first wording "
-                      "promised a redaction that left the value in that file)")
+        self.assertIn("the session launches with it", rows[0][0], "the fact")
+        self.assertIn("flag-settings file", rows[0][0], "and where the value sits")
+        ring = rows[0][1]["ring_text"]
+        self.assertEqual(ring, sb.stored_offender_ring_text("web", ["NOTES_API_TOKEN"]))
+        for promise in ("romp new", "re-declar", "redact", "remove", "clears", "until"):
+            self.assertNotIn(promise, rows[0][0], "no remedy is promised (review round 3, 2026-09-19: the redaction road, a "
+                                                  "re-declaration that removes the value from every file, left this change)")
+            self.assertNotIn(promise, ring)
         self.assertEqual(rows[0][1].get("key"), ("env-stored-credential", sid), "keyed per session: the ring dedupes")
         self.assertFalse(any(val in m for m, _p, _k in self.logged))
-        self.assertTrue(self.be.set_env(sid, dict(ENV)), "the redaction re-declares the env without the name")
-        self.assertEqual(self._reg(sid)["env"], ENV)
+        self.assertTrue(self.be.set_env(sid, dict(ENV)), "a re-declaration without the name is accepted by the door")
+        self.assertEqual(self._reg(sid)["env"], ENV, "and the registry follows it, as before the door; the file is not this change's")
 
     def test_a_stored_lowercase_credential_shaped_name_is_said_too(self):
         """The stored-offender line judges by the writer's rule, which folds case since the spawn-spec fix's
@@ -1197,86 +1072,14 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         self.assertEqual(rows[0][1].get("key"), ("env-stored-credential", sid))
         self.assertFalse(any(val in m for m, _p, _k in self.logged))
 
-    def _stored_offender(self, name="NOTES_API_TOKEN"):
-        """A live session launched with a stored credential-shaped name (a pick accepted before the door refused it):
-        the registry and the flag-settings file both carry the value."""
-        sid = self.be.spawn("web", "/tmp", env=ENV)
-        val = _secret_value("notes-token")
-        self.be._update_reg(sid, env={**ENV, name: val})
-        s = self._live(sid)
-        self.be._options(s, dict)
-        self.assertIn(val, self._flag_file(sid).read_text(), "the launch wrote the value: the state under test")
-        return sid, s, val
-
-    def test_redacting_to_the_empty_env_removes_the_value_from_every_file_under_the_state_root(self):
-        """The round's one HIGH finding (review round 1 of the env-pick door, 2026-09-18): the reference named
-        `romp new --no-env` as a redaction road, and that road cleared the registry and the launch while the
-        per-session flag-settings file kept the value, because the writer returned "" without unlinking when no
-        key rode and nothing removed the file; and the stored-offender line, which reads the registry, fell
-        silent, so the value stayed on disk and the warning went away. Now the write itself brings the file in
-        line (flag_settings_sync_env) and a connect that needs no key removes a stale one (flag_settings_path).
-        Pinned by execution over a walk of the whole state root, at the write and after the connect."""
-        sid, s, val = self._stored_offender()
-        self.assertTrue(self.be.set_env(sid, {}), "the redaction road the reference names")
-        self.assertEqual(self._reg(sid)["env"], {})
-        self.assertEqual(self._files_carrying(val), [], "gone at the write itself, before any connect")
-        self.assertFalse(self._flag_file(sid).exists(), "no key rides this session: the file goes")
-        kw = self.be._options(s, dict)                          # the connect the redaction applies by
-        self.assertNotIn("settings", kw)
-        self.assertEqual(self._files_carrying(val), [], "and no file under the state root carries the value after it")
-        self.assertFalse(self._flag_file(sid).exists())
-        self.assertFalse(any(val in m for m, _p, _k in self.logged), "no log line carries the value")
-
-    def test_re_declaring_the_env_without_the_name_rewrites_the_file_at_the_write(self):
-        # the other redaction road, `romp new --env` with the rest of the set: the file follows the registry at
-        # the write, so a session that never connects again is clean too
-        sid, s, val = self._stored_offender()
-        self.assertTrue(self.be.set_env(sid, dict(ENV)))
-        self.assertEqual(json.loads(self._flag_file(sid).read_text())["env"], ENV, "the file's block follows the registry")
-        self.assertEqual(self._files_carrying(val), [], "the value is in no file under the state root at the write")
-        self.be._options(s, dict)
-        self.assertEqual(self._files_carrying(val), [])
-
-    def test_a_dormant_sessions_redaction_needs_no_connect(self):
-        """A registry with no live process never reconnects: until review round 1 (2026-09-18) its flag-settings file
-        kept the redacted value for good. The write is what redacts it."""
-        sid = self.be.spawn("web", "/tmp", env=ENV)
-        val = _secret_value("notes-token")
-        self.be._update_reg(sid, env={**ENV, "NOTES_API_TOKEN": val})
-        self.be._options(self._sess(sid), dict)                 # launched once; no live object holds it now
-        self.assertNotIn(sid, self.be.sessions)
-        self.assertIn(val, self._flag_file(sid).read_text())
-        self.assertTrue(self.be.set_env(sid, {}))
-        self.assertEqual(self._files_carrying(val), [], "gone at the write, with no connect to come")
-        self.assertFalse(self._flag_file(sid).exists())
-
-    def test_the_write_keeps_the_other_keys_and_a_stale_file_goes_at_the_next_connect(self):
-        # the file also carries the keys the last connect wrote (a fast-mode pick here): the env block goes, the rest
-        # stays for the launch that reads it; and a file an earlier kernel left stale (the registry already
-        # redacted) is removed by an unchanged re-declaration at the write, or by the next connect
-        sid = self.be.spawn("web", "/tmp", env=ENV)
-        val = _secret_value("notes-token")
-        p = self._flag_file(sid)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"fastMode": True, "env": {**ENV, "NOTES_API_TOKEN": val}}) + "\n")
-        self.assertTrue(self.be.set_env(sid, {}))
-        self.assertEqual(json.loads(p.read_text()), {"fastMode": True}, "the block goes, the key that rides stays")
-        p.write_text(json.dumps({"env": {"NOTES_API_TOKEN": val}}) + "\n")   # stale: the registry already says {}
-        self.assertTrue(self.be.set_env(sid, {}), "an unchanged re-declaration")
-        self.assertFalse(p.exists(), "puts the stale file right at the write")
-        p.write_text(json.dumps({"env": {"NOTES_API_TOKEN": val}}) + "\n")
-        kw = self.be._options(self._sess(sid), dict)            # or the next connect does, needing no key
-        self.assertNotIn("settings", kw)
-        self.assertFalse(p.exists(), "a connect that needs no key removes the stale file rather than leaving it")
-        self.assertEqual(self._files_carrying(val), [])
-
     def test_a_fork_copies_no_credential_shaped_name_into_its_own_files(self):
         """Review round 1 of the env-pick door (2026-09-18): the fork copied the parent's stored env verbatim except
         the reserved and login names, so a stored credential-shaped name was written into a fresh registry and,
         at the child's first connect, a fresh flag-settings file, by a user gesture (a cut turn, a comment thread)
         no door sees. The copy drops such a name, on its own names-only line (not the reserved drop's, whose words
         would misdescribe it, and with no key: the fork is one gesture, and stubs of _log take none), and the
-        parent keeps it until its env is re-declared."""
+        parent's registry keeps it (a fact the line states; review round 3, 2026-09-19, sent the remedy away). The
+        line's ring text is bounded by construction (FORK_DROP_RING)."""
         os.environ["CLAUDE_CONFIG_DIR"] = tempfile.mkdtemp()   # transcript_path resolves through this
         try:
             self.be.spawn("parent", self.d, sid=PARENT, env=ENV)
@@ -1295,102 +1098,15 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
             self.assertIn("not copying credential-shaped", rows[0][0])
             self.assertNotIn("reserved", rows[0][0], "not the reserved drop's words")
             self.assertNotIn("key", rows[0][1], "no dedupe key: a fork is one gesture")
+            self.assertNotIn("re-declared", rows[0][0], "no remedy is promised")
+            self.assertEqual(rows[0][1]["ring_text"], sb.FORK_DROP_RING % ("child", "NOTES_API_TOKEN and 1 more"),
+                             "the ring text: the fork's name and the first variable, the rest counted")
+            self.assertLessEqual(len(rows[0][1]["ring_text"]), sb.ERROR_CENTER_TEXT_CAP)
             self.assertFalse(any(val in m for m, _p, _k in self.logged), "no log line carries the value")
             self.assertFalse(any(kw2.get("key") == ("env-stored-credential", CHILD) for _m, _p, kw2 in self.logged),
                              "the child's own connect has no stored offender to report")
         finally:
             os.environ.pop("CLAUDE_CONFIG_DIR", None)
-
-    @unittest.skipIf(os.geteuid() == 0, "root writes and unlinks through a directory's mode bits")
-    def test_a_redaction_whose_file_can_neither_be_rewritten_nor_removed_is_refused_and_the_registry_keeps_the_offender(self):
-        """kernel-1 / rules-1 / extra7-1 / tests-3 (review round 2 of the env-pick door, 2026-09-19), round 1's high
-        re-entered through the fix's own failure path: when the sync's rewrite failed, set_env still cleared the
-        registry and answered True, so the redaction reported success while the value stayed in the flag-settings
-        file and the stored-offender row, which reads the registry, fell silent (both reviewers reproduced it with
-        chmod 0500). The ladder's last rung, through set_env itself: the pick is refused, the registry keeps naming
-        the offender, the row names the file, and the value is still findable on disk, which is the honest state;
-        the next connect still says the stored name, and the same redaction lands once the directory is writable."""
-        sid, s, val = self._stored_offender()
-        d = self._flag_file(sid).parent
-        os.chmod(d, 0o500)
-        self.addCleanup(os.chmod, d, 0o700)
-        # the `romp new --env` road (the rest of the set): the block is rewritten, so the ladder is climbed, and its
-        # last rung refuses; the `--no-env` road empties the file, so it is the remove road, refused the same way
-        self.assertFalse(self.be.set_env(sid, dict(ENV)), "the re-declaration is refused, not reported as done")
-        self.assertFalse(self.be.set_env(sid, {}), "the redaction to the empty set is refused too")
-        self.assertIn("NOTES_API_TOKEN", self._reg(sid)["env"], "the registry keeps naming the offender")
-        self.assertEqual(s.env_vars.get("NOTES_API_TOKEN"), val, "the live session's env is unchanged")
-        self.assertFalse(self.reconnects, "nothing applied, no reconnect")
-        self.assertTrue(self._files_carrying(val), "the value is still on disk: the honest state, said")
-        rows = [(m, kw) for m, problem, kw in self.logged if problem and "could not be rewritten" in m]
-        self.assertEqual(len(rows), 1, self.logged)
-        self.assertIn(str(self._flag_file(sid)), rows[0][0], "the row names the file")
-        self.assertIn("nor removed", rows[0][0])
-        self.assertIn("refused", rows[0][0])
-        self.assertLessEqual(len(rows[0][1]["ring_text"]), sb.ERROR_CENTER_TEXT_CAP)
-        gone = [(m, kw) for m, problem, kw in self.logged if problem and "could not be removed" in m]
-        self.assertEqual(len(gone), 1, self.logged)
-        self.assertIn(str(self._flag_file(sid)), gone[0][0])
-        self.assertLessEqual(len(gone[0][1]["ring_text"]), sb.ERROR_CENTER_TEXT_CAP)
-        self.assertEqual(_temps(self.be.state_dir), [], "no temp is left by the failed rewrite")
-        self.assertFalse(any(val in m for m, _p, _k in self.logged), "no log line carries the value")
-        key = ("env-stored-credential", sid)
-        before = len([1 for _m, _p, kw in self.logged if kw.get("key") == key])
-        self.be._options(s, dict)
-        self.assertEqual(len([1 for _m, _p, kw in self.logged if kw.get("key") == key]), before + 1,
-                         "the next connect still says the stored name, since the registry still holds it")
-        os.chmod(d, 0o700)
-        self.assertTrue(self.be.set_env(sid, {}), "the same redaction lands once the directory is writable")
-        self.assertEqual(self._files_carrying(val), [])
-        self.assertEqual(self._reg(sid)["env"], {})
-
-    def test_a_redaction_whose_file_cannot_be_rewritten_removes_it_and_stands(self):
-        """The ladder's first rung through set_env (review round 2, 2026-09-19): a rewrite that fails on a writable
-        directory (a full disk's shape) removes the file instead, which is safe because the next connect writes it
-        whole from the registry and nothing reads it between connects; the redaction stands and is reported so."""
-        sid, s, val = self._stored_offender()
-        _interpose(self, replace=_enospc)
-        self.assertTrue(self.be.set_env(sid, dict(ENV)), "removed instead, and the redaction stands")
-        self.assertEqual(self._reg(sid)["env"], ENV)
-        self.assertEqual(s.env_vars, ENV)
-        self.assertFalse(self._flag_file(sid).exists(), "the file went rather than keeping the value")
-        self.assertEqual(self._files_carrying(val), [], "the value is in no file under the state root")
-        self.assertEqual(_temps(self.be.state_dir), [], "and no temp is left")
-        rows = [m for m, problem, _kw in self.logged if problem and "removed instead" in m]
-        self.assertEqual(len(rows), 1, self.logged)
-        self.assertIn(str(self._flag_file(sid)), rows[0])
-        kw = self.be._options(s, dict)
-        self.assertEqual(json.loads(Path(kw["settings"]).read_text())["env"], ENV, "the next connect writes it whole from the registry")
-
-    def test_a_connect_composing_across_a_redaction_launches_the_redacted_env(self):
-        """kernel-3 / correctness-1 (review round 2 of the env-pick door, 2026-09-19): the compose read the session's
-        env at its top, and set_env wrote the file, the registry and the session with no lock, so a redaction landing
-        between the compose's read and its write was undone by the write: the pre-redaction env, value included, went
-        back into the file the sync had just cleaned, and set_env answered True (the reviewers reproduced it, and
-        showed a lock around the two writes alone leaves it open, since the stale read is earlier). The exact
-        interleave, by execution through the real _options: its top read sees the offender, the redaction lands, and
-        the write that follows carries the redacted env, because the env is read again under the writers' lock at
-        the write and the launch stamp follows it."""
-        sid, s, val = self._stored_offender()
-        orig = self.be._launch_shape
-        fired = []
-
-        def hooked(sess, **kw):
-            shape = orig(sess, **kw)                      # the compose's top read: the env still carries the offender
-            if not fired:
-                fired.append(dict(shape["env"]))
-                self.assertTrue(self.be.set_env(sid, dict(ENV)), "the redaction lands between the compose's read and its write")
-            return shape
-        self.be._launch_shape = hooked
-        self.addCleanup(delattr, self.be, "_launch_shape")
-        kw = self.be._options(s, dict)
-        self.assertEqual(fired[0].get("NOTES_API_TOKEN"), val, "the compose had read the pre-redaction env")
-        self.assertEqual(json.loads(Path(kw["settings"]).read_text())["env"], ENV,
-                         "the file the CLI reads carries the redacted env, not the compose's stale read")
-        self.assertEqual(self._files_carrying(val), [], "the value is in no file under the state root")
-        self.assertEqual(s._launching["env"], ENV, "the launch stamp follows the write, so the landing records what launched")
-        self.assertEqual(self._reg(sid)["env"], ENV)
-        self.assertFalse(any(val in m for m, _p, _k in self.logged), "no log line carries the value")
 
     def _real_ring(self):
         """The row as the dashboard reads it: the class stubs _log to capture lines, so the stub goes and the kernel
@@ -1400,14 +1116,18 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         self.be._log_cb = self.lines.append
         return load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
 
-    def _repeat_suffix(self):
-        """_log's count suffix as the REAL ring renders it at one repeat, the form a second connect leaves, read from
-        the ring rather than spelled here, so a change to that suffix moves the bound this class pins."""
-        self.be._log("probe", problem=True, key=("probe",))
-        self.be._log("probe", problem=True, key=("probe",))
-        row = [r for r in self.be.problems() if r.get("key") == ("probe",)][0]
-        self.assertTrue(row["text"].startswith("probe (1 repeat"), row["text"])
-        return row["text"][len("probe"):]
+    def _repeat_suffix(self, repeats=1, text="probe"):
+        """_log's count suffix as the REAL ring renders it after `repeats` repeats of a keyed row whose text is `text`,
+        read from the ring rather than spelled here, so a change to that suffix moves the bound this class pins. The
+        suffix grows with the count's digits (review round 3, 2026-09-19, extra7-7: the addendum's pin read it at one
+        repeat and called the two spare characters a third digit's room, while a third digit in the repeat count costs
+        three), so the worst-case pin reads it at a four-digit count."""
+        key = ("probe", repeats, text)
+        for _ in range(repeats + 1):
+            self.be._log(text, problem=True, key=key)
+        row = [r for r in self.be.problems() if r.get("key") == key][0]
+        self.assertTrue(row["text"].startswith(text + " (%d repeat" % repeats), row["text"][:len(text) + 20])
+        return row["text"][len(text):]     # the ring appends the suffix AFTER the whole first text (asserted just above)
 
     def _stored_row_after_a_repeat(self, session_name, names):
         """A session launched twice with `names` stored under credential-shaped spellings: the keyed row after the ring
@@ -1424,13 +1144,12 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         self.assertIn("repeat", rows[0]["text"], "rendered with the ring's count suffix")
         return rows[0], vals
 
-    STORED_ROW_TAIL = ("launched until", "romp new --env", "--no-env", "flag-settings file")
+    STORED_ROW_TAIL = ("launches with it", "value in registry and flag-settings file")   # the fact; no remedy (round 3)
 
     def test_the_stored_offender_row_fits_the_error_centre_for_one_two_and_twenty_variables(self):
         """regression-1 (review round 2 of the env-pick door, 2026-09-19) and its addendum. The reworded row ran to
         333 characters against the 240-character error-centre cap this PR introduced, so the dashboard clipped it
-        mid-parenthesis and lost exactly the clause round 1 ordered added (the redaction reaches the flag-settings
-        file; the --no-env road). Round 2's short form was then pinned at a length two demo names happened to fit,
+        mid-parenthesis and lost its tail. Round 2's short form was then pinned at a length two demo names happened to fit,
         and the reviewer showed that the bound was a measurement, not a property: a third stored name, or a longer
         one, clipped the same clause again. The form is bounded by construction now (stored_offender_ring_text: one
         variable named, the rest counted, the session name and the named variable cut to a budget each), and THIS
@@ -1462,35 +1181,57 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
                 self.assertFalse(any(v in ln for v in vals.values() for ln in self.lines))
 
     def test_the_stored_offender_rows_worst_case_is_computed_from_the_format_and_fits_the_cap(self):
-        """The bound as a property of the format (the round-2 addendum, 2026-09-19): the worst case the construction
-        allows, a session name and a first variable past their budgets and a count of more, is computed HERE from
-        the format's own pieces and asserted under the cap with _log's repeat suffix as the real ring renders it.
-        The measurements round 2 took stand as evidence of what the earlier form did: its fixed text was 143
-        characters plus every name whole, so with the 55-character one-repeat suffix it measured 216 for a
-        3-character session with NOTES_API_TOKEN and 238 for a 16-character session with OP_SERVICE_ACCOUNT_TOKEN,
-        against the cap of 240, and 242 for the same 3-character session with those two names together: the second
-        name already spent the cap. The bounded form's fixed text is 127 characters, its budgets 20 and 24, and
-        with " and 99 more" and the one-repeat suffix its worst case is 238; the two characters left are a third
-        digit in either count, and each further digit costs one character of the tail's last word."""
-        self._real_ring()
-        suffix = self._repeat_suffix()
+        """The bound as a property of the format (the round-2 addendum, recomputed in review round 3, 2026-09-19: tests-3,
+        kernel-7 and extra7-7 found the addendum's pin taking _log's repeat suffix at ONE repeat though it grows with
+        the count's digits, 241 against 240 from 100 repeats on, and its "third digit in the count of more" case
+        rendering a two-digit count). The worst case the construction allows is computed HERE from the format's own
+        pieces: the fixed text, the session budget and the name budget both spent, the count text at its widest
+        (credentials.count_text renders "999+" past COUNT_CAP, so the count is bounded by construction too), and the
+        suffix as the real ring renders it at a FOUR-digit repeat count. The budgets were set so that sum fits: 120
+        + 20 + 24 + 14 + 59 = 237 of 240, and the fixed text is what gave up characters (round 2's read 127). The
+        suffix grows a character per digit, so the row fits through a seven-digit repeat count, and past that the
+        cut lands inside the suffix, since _log appends it after the whole first text (asserted through the real
+        ring at five digits)."""
+        km = self._real_ring()
+        suffix1 = self._repeat_suffix(1)
+        suffix4 = self._repeat_suffix(9999)
+        self.assertEqual(len(suffix4), len(suffix1) + 4, "three more digits and the plural: the suffix's only growth")
         fixed = sb.STORED_OFFENDER_RING % ("", "")
         self.assertEqual(fixed.count("%"), 0, "two slots, the session name and the names, and nothing else")
-        long_session = "s" * (sb.STORED_OFFENDER_SESSION_BUDGET + 20)
+        long_session = "s" * (sb.RING_SESSION_BUDGET + 20)
         long_name = "NOTES_" + "X" * 40 + "_TOKEN"
-        names = [long_name] + ["ZZ_%02d_TOKEN" % i for i in range(19)]                # the long one sorts first
+        count_worst = " and %s more" % sb._cred.count_text(sb._cred.COUNT_CAP + 1)
+        self.assertEqual(count_worst, " and 999+ more", "the count text at its widest")
+        names = [long_name] + ["ZZ_%04d_TOKEN" % i for i in range(sb._cred.COUNT_CAP + 1)]    # the long one sorts first
         worst = sb.stored_offender_ring_text(long_session, names)
-        self.assertEqual(len(worst), len(fixed) + sb.STORED_OFFENDER_SESSION_BUDGET + sb.STORED_OFFENDER_NAME_BUDGET
-                         + len(" and 19 more"), "both budgets spent, plus the count: the format's worst case")
-        self.assertLessEqual(len(worst) + len(suffix), sb.ERROR_CENTER_TEXT_CAP,
-                             "the worst case fits with the ring's suffix: %d + %d against %d"
-                             % (len(worst), len(suffix), sb.ERROR_CENTER_TEXT_CAP))
-        self.assertLessEqual(len(sb.stored_offender_ring_text(long_session, names * 5)) + len(suffix),
-                             sb.ERROR_CENTER_TEXT_CAP, "a third digit in the count of more fits too")
+        self.assertEqual(len(worst), len(fixed) + sb.RING_SESSION_BUDGET + sb.RING_NAME_BUDGET + len(count_worst),
+                         "both budgets spent, plus the widest count: the format's worst case")
+        self.assertIn(count_worst, worst)
+        self.assertLessEqual(len(worst) + len(suffix4), sb.ERROR_CENTER_TEXT_CAP,
+                             "the worst case fits with the ring's suffix at a four-digit count: %d + %d against %d"
+                             % (len(worst), len(suffix4), sb.ERROR_CENTER_TEXT_CAP))
+        self.assertEqual(km._sdk_problem_text(worst + suffix4), worst + suffix4, "and whole in the feed")
+        for more, text in ((19, " and 19 more"), (119, " and 119 more"), (999, " and 999 more"), (1000, " and 999+ more")):
+            row = sb.stored_offender_ring_text(long_session, [long_name] + ["ZZ_%04d_TOKEN" % i for i in range(more)])
+            self.assertIn(text, row, "two digits, three digits, the cap and past it")
+            self.assertLessEqual(len(row) + len(suffix4), sb.ERROR_CENTER_TEXT_CAP, (more, len(row)))
         for clause in self.STORED_ROW_TAIL:
             self.assertIn(clause, worst)
-        self.assertEqual(sb.STORED_OFFENDER_NAME_BUDGET, len("OP_SERVICE_ACCOUNT_TOKEN"),
-                         "the longest 1Password name is whole under the budget")
+        # the suffix grows one character per digit of the repeat count (the plural aside), and the ring appends it
+        # after the whole first text (_repeat_suffix asserts that through the real ring, here at five digits), so the
+        # room left after the worst-case text and the one-repeat suffix is the number of digits the count may grow
+        # by before the cut lands, and then it lands inside the suffix, never in the row's own text
+        suffix5 = self._repeat_suffix(99999, text=worst)
+        self.assertEqual(len(suffix5), len(suffix4) + 1)
+        room = sb.ERROR_CENTER_TEXT_CAP - len(worst) - len(suffix1)
+        self.assertGreaterEqual(room, 4, "at least a four-digit repeat count fits after the worst-case text; the pin above took exactly that")
+        self.assertEqual(room, 7, "the arithmetic the docstring states: 240 - 178 - 55, so a count of up to seven digits fits")
+        self.assertEqual(sb.RING_NAME_BUDGET, len("OP_SERVICE_ACCOUNT_TOKEN"),
+                         "every 1Password name romp spells EXACTLY is whole under the budget; an OP_SESSION_<account> "
+                         "longer than it is cut like any other name (extra7-8, review round 3)")
+        self.assertIn("OP_SESSION_" + "a" * 13, sb.stored_offender_ring_text("web", ["OP_SESSION_" + "a" * 13]), "24 characters: whole")
+        self.assertIn("OP_SESSION_" + "a" * 12 + sb._cred.CUT_MARK, sb.stored_offender_ring_text("web", ["OP_SESSION_" + "a" * 14]),
+                      "25 characters: cut with the marker")
         self.assertEqual(sb.stored_offender_ring_text("web", ["NOTES_API_TOKEN"]),
                          fixed.replace("env ()", "env (web)").replace("credential-shaped  stored", "credential-shaped NOTES_API_TOKEN stored"))
         self.assertIn("credential-shaped NOTES_API_TOKEN and 1 more stored",
@@ -1508,9 +1249,9 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         text = row["text"]
         self.assertLessEqual(len(text), sb.ERROR_CENTER_TEXT_CAP, (len(text), text))
         self.assertEqual(km._sdk_problem_text(text), text)
-        cut_name = long_name[:sb.STORED_OFFENDER_NAME_BUDGET - 1] + sb._CUT_MARK
-        cut_session = long_session[:sb.STORED_OFFENDER_SESSION_BUDGET - 1] + sb._CUT_MARK
-        self.assertEqual(len(cut_name), sb.STORED_OFFENDER_NAME_BUDGET)
+        cut_name = long_name[:sb.RING_NAME_BUDGET - 1] + sb._cred.CUT_MARK
+        cut_session = long_session[:sb.RING_SESSION_BUDGET - 1] + sb._cred.CUT_MARK
+        self.assertEqual(len(cut_name), sb.RING_NAME_BUDGET)
         self.assertIn("env (%s): credential-shaped %s and 1 more stored" % (cut_session, cut_name), text)
         self.assertNotIn(long_name, text, "the whole name is the log line's")
         self.assertNotIn(long_session, text)
@@ -1521,17 +1262,16 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         self.assertEqual(len(line), 2, "the kernel log line carries the whole name at each connect")
         self.assertIn(long_session, line[0])
         self.assertIn("ZZ_TOKEN", line[0])
-        self.assertNotIn(sb._CUT_MARK, line[0], "nothing is cut on the log line")
-        self.assertEqual(sb._cut_to("short", 24), "short", "a name within its budget is whole, unmarked")
+        self.assertNotIn(sb._cred.CUT_MARK, line[0], "nothing is cut on the log line")
+        self.assertEqual(sb._cred.cut_to("short", 24), "short", "a name within its budget is whole, unmarked")
 
-    def test_the_refusal_line_is_headed_once_and_fits_the_caps(self):
-        """Review round 1 of the env-pick door (2026-09-18): the set_env line read "pick refused: env: ..." and ran
-        to 414 characters against the feed's 400 (kernel.SDK_PROBLEM_TEXT_CAP), so the row an admin read was
-        clipped mid-word; the error centre cuts again at 240 (sdk_backend.ERROR_CENTER_TEXT_CAP, the badge
-        mirror's literal). The line carries the door's head once, fits the kernel's cap with a name, and the
-        ring text, the error centre's short form, fits its cap and leads with the names, that nothing was saved
-        and where the value belongs."""
-        km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+    def test_the_refusal_row_is_headed_once_and_its_ring_text_is_the_bounded_form(self):
+        """Review round 1 of the env-pick door (2026-09-18): the set_env line read "pick refused: env: ..." and its
+        ring text, then the whole line, ran to 414 characters and was clipped mid-word. The line carries the door's
+        head once and every name whole (nothing caps the kernel log line; review round 3, 2026-09-19, corrected the
+        docstrings that claimed the feed's cap governed it), and the ring text is the bounded form: set_env's head
+        with the session name cut to its budget, then credentials.credential_env_ring_text. Any other refusal's body
+        quotes the offending name, which nothing bounds, so the ring cuts it to what the cap leaves after the head."""
         sid = self.be.spawn("web", "/tmp", env=ENV)
         val = _secret_value("notes-token")
         self.assertFalse(self.be.set_env(sid, {**PLAIN, "NOTES_API_TOKEN": val}))
@@ -1542,33 +1282,116 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         self.assertNotIn("refused: env:", line, "the door's own head is not repeated")
         self.assertEqual(line.count("env ("), 1)
         self.assertNotIn("env: ", line, "the door's head appears nowhere in the line")
-        self.assertLessEqual(len(line), km.SDK_PROBLEM_TEXT_CAP, "whole in the feed's problem row")
-        self.assertEqual(km._sdk_problem_text(line), line, "the kernel's cut leaves it as it is")
+        self.assertEqual(line, "env (web): pick refused: " + sb._cred.credential_env_refusal(["NOTES_API_TOKEN"]),
+                         "the whole sentence on the kernel log line")
         ring = kw.get("ring_text")
-        self.assertTrue(ring and ring.startswith("env (web): pick refused: NOTES_API_TOKEN is credential-shaped: the pick was not saved"), ring)
+        self.assertEqual(ring, sb.REFUSAL_RING_HEAD % "web" + sb._cred.credential_env_ring_text(["NOTES_API_TOKEN"]))
+        self.assertTrue(ring.startswith("env (web): pick refused: NOTES_API_TOKEN is credential-shaped: the pick was not saved"), ring)
         self.assertIn("process environment", ring)
-        self.assertLessEqual(len(ring), sb.ERROR_CENTER_TEXT_CAP, "whole in the error centre")
         self.assertNotIn(val, line)
         self.assertNotIn(val, ring)
-        # another refusal shape keeps its own words, headed once, and rides the ring as it is
+        # another refusal shape keeps its own words, headed once; short, it rides the ring whole
         self.assertFalse(self.be.set_env(sid, {"9BAD": "1"}))
         bad = [(m, kw) for m, problem, kw in self.logged if problem and "9BAD" in m]
         self.assertEqual(len(bad), 1)
         self.assertTrue(bad[0][0].startswith("env (web): pick refused: bad name"), bad[0][0])
         self.assertEqual(bad[0][1].get("ring_text"), bad[0][0])
+        # a body that quotes a long offending name is cut to what the cap leaves after the head, marked
+        huge = "9" + "B" * 400
+        self.assertFalse(self.be.set_env(sid, {huge: "1"}))
+        hb = [(m, kw) for m, problem, kw in self.logged if problem and huge in m]
+        self.assertEqual(len(hb), 1, "the kernel log line carries the whole name")
+        ring = hb[0][1]["ring_text"]
+        self.assertEqual(len(ring), sb.ERROR_CENTER_TEXT_CAP)
+        self.assertTrue(ring.endswith(sb._cred.CUT_MARK) and ring.startswith("env (web): pick refused: bad name"), ring)
         # the 1Password half hears its own road (review round 2, 2026-09-19): the process environment refuses such a
-        # name at boot, so the advice that took the deployment down is not given; the longest such name fits the caps
+        # name at boot, so the advice that took the deployment down is not given
         self.assertFalse(self.be.set_env(sid, {"OP_SERVICE_ACCOUNT_TOKEN": _secret_value("op")}))
         op_rows = [(m, kw) for m, problem, kw in self.logged if problem and "OP_SERVICE_ACCOUNT_TOKEN" in m]
         self.assertEqual(len(op_rows), 1, self.logged)
         line, kw = op_rows[0]
-        self.assertLessEqual(len(line), km.SDK_PROBLEM_TEXT_CAP, (len(line), line))
         self.assertIn("refuses a 1Password name in its process environment at boot", line)
         self.assertIn("its own file", line)
         self.assertNotIn("Put such a value in the process environment", line)
+        self.assertTrue(kw["ring_text"].endswith(sb._cred.CREDENTIAL_RING_ROADS["op"]), kw["ring_text"])
+
+    def test_the_refusal_rings_worst_case_is_computed_from_the_format_and_fits_the_cap(self):
+        """regression-2, extra6-3, extra7-3 and tests-2 (review round 3 of the env-pick door, 2026-09-19): the refusal
+        row's two cap pins were measurements taken with the session name "web", and the form joined every refused
+        name whole behind the whole session name, so an ordinary session name, six names, or one long name pushed the
+        ring text past the error centre's cap and around eleven names the cut landed inside the name list. The
+        construction: set_env's head cuts the session name (or the sid a nameless registry falls back to) to
+        RING_SESSION_BUDGET; credential_env_ring_text names the first variable cut to RING_NAME_BUDGET, counts the rest
+        through the bounded count text, and appends the road of the half matched. The worst case, both budgets and
+        the widest count spent under the longest road (the mixed pick's), is computed here from those pieces and
+        asserted under the cap; then the real set_env is driven to that worst case, and to one, two and twenty names,
+        a session name past its budget, and the sid fallback, each rendered form under the cap with its tail present.
+        The kernel log line carries every name and the whole session name."""
+        km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+        cap = sb.ERROR_CENTER_TEXT_CAP
+        road = max(sb._cred.CREDENTIAL_RING_ROADS.values(), key=len)
+        self.assertEqual(road, sb._cred.CREDENTIAL_RING_ROADS["mixed"], "the mixed pick hears the longest road")
+        count_worst = sb._cred.count_text(sb._cred.COUNT_CAP + 1)
+        names_worst = "%s and %s more" % ("x" * sb.RING_NAME_BUDGET, count_worst)
+        worst = (sb.REFUSAL_RING_HEAD % ("x" * sb.RING_SESSION_BUDGET)) + sb._cred.CREDENTIAL_RING_FORMAT % (names_worst, "are", road)
+        self.assertLessEqual(len(worst), cap, "the format's worst case fits: %d against %d" % (len(worst), cap))
+        self.assertEqual(km._sdk_problem_text(worst), worst, "and whole in the feed")
+        for other in ("op", "suffix"):
+            self.assertLess(len(sb._cred.CREDENTIAL_RING_ROADS[other]), len(road))
+        # the real row at the worst case: a session name past its budget, a first name past its budget, a thousand
+        # more names of both halves (the mixed road), every value built at run time and in no line
+        long_session = "notes-api-" + "w" * 30                                      # 40 characters, budget 20
+        long_name = "NOTES_" + "X" * 40 + "_TOKEN"                                   # 52 characters, budget 24; sorts first
+        sid = self.be.spawn(long_session, "/tmp", env=ENV)
+        val = _secret_value("notes-token")
+        pick = {long_name: val, "op_session_notes": val, **{"ZZ_%04d_TOKEN" % i: val for i in range(sb._cred.COUNT_CAP)}}
+        self.assertEqual(len(pick), sb._cred.COUNT_CAP + 2)
+        self.assertFalse(self.be.set_env(sid, pick))
+        rows = [(m, kw) for m, problem, kw in self.logged if problem and "pick refused" in m]
+        self.assertEqual(len(rows), 1, len(self.logged))
+        line, kw = rows[0]
         ring = kw["ring_text"]
-        self.assertLessEqual(len(ring), sb.ERROR_CENTER_TEXT_CAP, (len(ring), ring))
-        self.assertIn("its own file", ring)
+        self.assertEqual(len(ring), len(worst), "both budgets and the widest count spent: the format's worst case, through the real row")
+        self.assertTrue(ring.startswith(sb.REFUSAL_RING_HEAD % sb._cred.cut_to(long_session, sb.RING_SESSION_BUDGET)), ring)
+        self.assertIn(sb._cred.cut_to(long_name, sb.RING_NAME_BUDGET) + " and %s more are credential-shaped: the pick was not saved. " % count_worst, ring)
+        self.assertTrue(ring.endswith(road), "the mixed road, whole, at the tail")
+        self.assertIn(long_session, line, "the kernel log line carries the whole session name")
+        for n in (long_name, "op_session_notes", "ZZ_0000_TOKEN", "ZZ_%04d_TOKEN" % (sb._cred.COUNT_CAP - 1)):
+            self.assertIn(n, line, "and every name whole")
+        self.assertNotIn(val, line)
+        self.assertNotIn(val, ring)
+        self.logged.clear()
+        # one, two and twenty names of one half, through the real row: the count, the tail, the cap
+        sid2 = self.be.spawn("web", "/tmp", env=ENV)
+        for count in (1, 2, 20):
+            with self.subTest(names=count):
+                self.logged.clear()
+                self.assertFalse(self.be.set_env(sid2, {"SVC_%02d_API_TOKEN" % i: val for i in range(count)}))
+                rows = [(m, kw) for m, problem, kw in self.logged if problem and "pick refused" in m]
+                self.assertEqual(len(rows), 1)
+                ring = rows[0][1]["ring_text"]
+                self.assertLessEqual(len(ring), cap, (count, len(ring), ring))
+                self.assertEqual(km._sdk_problem_text(ring), ring)
+                self.assertTrue(ring.startswith("env (web): pick refused: SVC_00_API_TOKEN"), ring)
+                if count > 1:
+                    self.assertIn(" and %d more are credential-shaped" % (count - 1), ring)
+                else:
+                    self.assertIn("SVC_00_API_TOKEN is credential-shaped", ring)
+                self.assertIn("the pick was not saved", ring)
+                self.assertTrue(ring.endswith(sb._cred.CREDENTIAL_RING_ROADS["suffix"]), ring)
+                for i in range(count):
+                    self.assertIn("SVC_%02d_API_TOKEN" % i, rows[0][0], "every name on the log line")
+                self.assertNotIn(val, rows[0][0])
+        # the sid fallback of a nameless registry: the head cuts the 36-character sid to the session budget
+        self.logged.clear()
+        self.be._update_reg(sid2, name="")
+        self.assertFalse(self.be.set_env(sid2, {"NOTES_API_TOKEN": val}))
+        rows = [(m, kw) for m, problem, kw in self.logged if problem and "pick refused" in m]
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0][0].startswith("env (%s): pick refused: " % sid2), "the log line carries the whole sid")
+        self.assertTrue(rows[0][1]["ring_text"].startswith(sb.REFUSAL_RING_HEAD % sb._cred.cut_to(sid2, sb.RING_SESSION_BUDGET)),
+                        rows[0][1]["ring_text"])
+        self.assertLessEqual(len(rows[0][1]["ring_text"]), cap)
 
     def test_the_error_centre_cap_is_the_badge_mirrors_literal(self):
         ts = Path(os.path.dirname(HERE), "ui", "webview", "badge-mirror.ts").read_text()
