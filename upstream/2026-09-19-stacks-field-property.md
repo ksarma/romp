@@ -3,7 +3,7 @@ title: The stacks field test pins two entries keyed other, not the sampled frame
 status: candidate
 where: tests/test_perf_stats.py
 added: 2026-09-19
-pr:
+pr: 834
 tier: fix
 offered:
 closed:
