@@ -4779,7 +4779,15 @@ class Disclosed(unittest.TestCase):
     groups is unchanged: the http sentence and the words "the `usage` block, which adds no number a plain export lacks:" sit
     between the bounds sentence and "every leaf under `usage`", outside every clause, and inside the usage clause http and
     perf are written without backticks, so the per-clause reverse direction still holds every backticked name to a live key
-    of its block."""
+    of its block.
+
+    BOTH SNAPSHOT SHAPES (the second closing check, 2026-09-19): the usage group's population is the union of the block the
+    export writes for the current shape (parses.perSession, the served snapshot) and for the older one (parses.bySid, no
+    perSession, what a kernel before 2026-09-18 saved), because the block differs by shape: the current shape carries the
+    `parsed` count and the older one carries, in its place, `parsedUnavailable`, the fixed string `predates-parses.perSession`,
+    the one leaf of the block that is neither a count nor a bucket, present exactly when the count is absent, so an absent count
+    reads as a count the export could not read and never as a kernel that parsed nothing. _check walks both blocks into the
+    name population and holds the conditioning (the count and the leaf never both, never neither) on both documents."""
 
     BLOCKS = ("process", "heap", "gc", "usage")
     MALLOC_LEAVES = frozenset({"arena", "fordblks", "hblkhd", "uordblks"})
@@ -4850,6 +4858,17 @@ class Disclosed(unittest.TestCase):
          "caches.session_stamp.entries, chatBuilt is len(builds.chat.bySession), each read from the plain export; an older "
          "snapshot's per-sid table travels in no export and gives no parsed count",
          ("Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",)),
+        ("or, for a snapshot saved before the kernel counted parsed sessions, `parsedUnavailable` in place of `parsed`, the fixed "
+         "string predates-parses.perSession",
+         "_check: the older shape's block (perSession removed, the per-sid table in its place) carries the leaf with that value "
+         "and no parsed, the current shape's carries parsed and no leaf, and both blocks are walked into the name population; "
+         "test_the_usage_block_is_written_only_with_the_flag...: the leaf is derived from the plain export's perf having no "
+         "perSession and the recomputation equals the block over both shapes; the export child over both shapes in "
+         "tests/test_perf_export.py and the older shape's export read at a recording receiver in tests/test_perf_upload.py",
+         ("Disclosed._check", "Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
+          "test_perf_export:Usage.test_the_parsed_counts_absence_is_stated_in_place_of_the_count_and_only_then",
+          "test_perf_export:Cli.test_a_snapshot_from_before_the_per_session_count_exports_the_absence_leaf_and_a_current_one_the_count",
+          "test_perf_upload:Cli.test_a_plain_export_sends_the_http_table_with_a_count_and_ms_per_route_served_and_no_usage_block_which_is_those_counts_relabelled")),
         ("the `actions` block's one count per action route served, the http row's count under the route's name",
          "_check holds the population (53 names); test_the_usage_block_is_written_only_with_the_flag... the values (the http "
          "rows' counts); test_a_usage_count_is_present_only_for_a_route... one key per route served and none for an unserved one",
@@ -4950,6 +4969,21 @@ class Disclosed(unittest.TestCase):
         para = self._paragraph()
         public = pp.fold(snap)                                   # the projection on the wire (perf_export.export_document)
         usage = pp.fold(pe.usage_block(snap))                    # the fourth group, as the export writes it under --usage
+        # the same block for the OLDER snapshot shape (the second closing check, 2026-09-19): perSession removed and the per-sid
+        # table in its place, what a kernel before 2026-09-18 saved. The block differs by shape in one leaf, so the name
+        # population is the union of the two, and the conditioning is held here on both documents: the current shape's block
+        # has the parsed count and no absence leaf, the older shape's the absence leaf with its fixed value and no count
+        old = copy.deepcopy(snap)
+        self.assertEqual(set(old["parses"]["perSession"]), {"sessions", "max"}, "the served snapshot is the current shape")
+        del old["parses"]["perSession"]
+        old["parses"]["bySid"] = {SID: 1}
+        usage_old = pp.fold(pe.usage_block(old))
+        self.assertIn("parsed", usage["sessions"], sorted(usage["sessions"]))
+        self.assertNotIn("parsedUnavailable", usage["sessions"], "the count present: no absence leaf")
+        self.assertEqual(usage_old["sessions"].get("parsedUnavailable"), "predates-parses.perSession", sorted(usage_old["sessions"]))
+        self.assertNotIn("parsed", usage_old["sessions"], "the absence leaf present: no count")
+        self.assertEqual({k: v for k, v in usage_old.items() if k != "sessions"}, {k: v for k, v in usage.items() if k != "sessions"},
+                         "the shapes differ under sessions alone")
         self.assertIn("pid", snap["process"], "the raw snapshot carries the pid the fold drops")
         # finding 8 of the closing re-run: the count the bounds sentence spells is the fold's own, recomputed from every leaf
         # under a BOUND_KEYS name. Finding 4 of the closing check at the re-run's head (2026-09-19): WHICH leaf is set aside is the
@@ -5032,6 +5066,8 @@ class Disclosed(unittest.TestCase):
         for block in self.BLOCKS:
             self.assertIsInstance(groups[block], dict, block)
             walk(block, groups[block])
+        walk("usage", usage_old)                                 # the older shape's block: its absence leaf joins the population
+        self.assertIn(("usage", "parsedUnavailable"), keys, "the older shape's leaf is in the population the clause is held to")
         self.assertGreaterEqual(len(keys), 40, sorted(keys))       # the three blocks of 2026-09-19 carry far more than the fixture's four
         # the malloc clause's CONDITIONING pin (the closing check at the re-run's head, 2026-09-19): "null with no leaves under it where the
         # C library has no mallinfo2" is held by the document without the condition, the run with the handle patched to None,
@@ -5164,7 +5200,10 @@ class Disclosed(unittest.TestCase):
         shape, the one number the flag added that no leaf of the plain body gave, which this derivation, run over the
         current shape alone, could not see either. Fails on: the block written without the flag; a usage leaf computed from
         a table the fold drops (len(bySid) again) or from a number the plain export does not carry (a future leaf, or a count
-        written as count + 1: the population pins stay green on that, which is why this one exists)."""
+        written as count + 1: the population pins stay green on that, which is why this one exists); the absence leaf dropped,
+        written for the current shape too, or reworded (the second closing check, 2026-09-19: the older shape's block states
+        the absence, parsedUnavailable with the fixed string predates-parses.perSession, which the derivation writes exactly when
+        the plain export's perf has no perSession)."""
         snap = self._planted_snapshot()
         plain = pe.export_document(snap, usage=False, now=self.STAMP)
         self.assertFalse("usage" in plain, "no usage block without the flag; the keys: %s" % sorted(plain))   # by boolean: never dumps the document
@@ -5181,11 +5220,15 @@ class Disclosed(unittest.TestCase):
 
         def derived(perf):
             """The usage block from a plain export's perf alone; parsed only where perSession travels (an older snapshot's
-            per-sid table does not, so no count of it can be derived, and none may be written)."""
+            per-sid table does not, so no count of it can be derived, and none may be written), and where it does not, the
+            absence stated by the fixed string in the count's place (the second closing check, 2026-09-19): a constant, not a
+            number, derived from the plain export having no perSession, which is the fact it states."""
             http = perf["http"]
             sessions = {"chatBuilt": len(perf["builds"]["chat"]["bySession"]), "stamped": perf["caches"]["session_stamp"]["entries"]}
             if "perSession" in perf["parses"]:
                 sessions["parsed"] = perf["parses"]["perSession"]["sessions"]
+            else:
+                sessions["parsedUnavailable"] = "predates-parses.perSession"
             return {
                 "sessions": sessions,
                 "actions": {pe._feature_name(k[len("POST "):]): row["count"] for k, row in http.items()
@@ -5204,8 +5247,8 @@ class Disclosed(unittest.TestCase):
         withu_old = pe.export_document(old, usage=True, now=self.STAMP)
         self.assertFalse("bySid" in plain_old["perf"]["parses"], sorted(plain_old["perf"]["parses"]))
         self.assertFalse("perSession" in plain_old["perf"]["parses"], sorted(plain_old["perf"]["parses"]))
-        self.assertEqual(withu_old["usage"]["sessions"], {"chatBuilt": 2, "stamped": 17},
-                         "no parsed count from a table the plain export drops; the two counts the plain body gives")
+        self.assertEqual(withu_old["usage"]["sessions"], {"chatBuilt": 2, "stamped": 17, "parsedUnavailable": "predates-parses.perSession"},
+                         "no parsed count from a table the plain export drops; the two counts the plain body gives, and the absence stated")
         self.assertEqual(derived(plain_old["perf"]), withu_old["usage"], "the older shape: a leaf the plain export's perf cannot give")
         self.assertEqual({k: v for k, v in withu_old.items() if k != "usage"}, plain_old)
 

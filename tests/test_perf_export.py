@@ -1307,10 +1307,12 @@ class Usage(unittest.TestCase):
 
     def test_session_counts_actions_views_and_the_uptime_bucket(self):
         u = pe.usage_block(leak_snapshot())
-        self.assertEqual(u["sessions"], {"chatBuilt": 2, "stamped": 31},
+        self.assertEqual(u["sessions"], {"chatBuilt": 2, "stamped": 31, "parsedUnavailable": "predates-parses.perSession"},
                          "an old kernel's per-sid table is one the plain export drops, so it gives no parsed count (the closing check at "
-                         "the re-run's head, 2026-09-19: the block adds no number a plain export lacks)")
-        self.assertEqual(pe.usage_block({"parses": {"bySid": {SID: 3}}})["sessions"], {}, "len(bySid) is never written")
+                         "the re-run's head, 2026-09-19: the block adds no number a plain export lacks), and the block says so in place "
+                         "of the count (the second closing check, the same day)")
+        self.assertEqual(pe.usage_block({"parses": {"bySid": {SID: 3}}})["sessions"], {"parsedUnavailable": "predates-parses.perSession"},
+                         "len(bySid) is never written; the absence is")
         self.assertEqual(u["actions"], {"send": 7, "new": 2}, "POST routes the user drives; /tick is the browser's clock")
         self.assertEqual(u["views"], {"feed": 3})
         self.assertEqual(u["kernelUptime"], "lt1h")
@@ -1321,8 +1323,48 @@ class Usage(unittest.TestCase):
         self.assertEqual(u["actions"], {"tunnels.start": 1})
         self.assertEqual(u["views"], {"usage.fleet": 2})
         self.assertEqual(u["kernelUptime"], "1d-7d")
-        self.assertEqual(pe.usage_block({}), {"sessions": {}, "actions": {}, "views": {}})
+        self.assertEqual(pe.usage_block({}), {"sessions": {"parsedUnavailable": "predates-parses.perSession"}, "actions": {}, "views": {}})
         self.assertEqual(pp.paste_problems(pp.fold(pe.usage_block(leak_snapshot()))), [])
+
+    def test_the_parsed_counts_absence_is_stated_in_place_of_the_count_and_only_then(self):
+        """The ruling of the second closing check (2026-09-19): the block dropped its count of an older snapshot's per-sid
+        table (a table the plain export drops, so the count was the one number --usage added), and a --usage export of such a
+        snapshot then had NO parsed count and nothing saying why, an absence a reader could not tell from a kernel that parsed
+        nothing. So `sessions` carries `parsedUnavailable`, the fixed string `predates-parses.perSession`, exactly when `parsed`
+        is absent: the older shape (parses.bySid, no perSession) and a snapshot with no parses block at all carry the leaf and
+        no count; the current shape carries the count and no leaf; a perSession whose sessions is not a number is the absence
+        too (the leaf is present exactly when the count is not, never both, never neither). The value is judged by the
+        machinery the block travels through: it fits the ident grammar, so pp.fold writes it as it is and the block equals its
+        own fold, the belt the upload holds it to, and the three walks pass it; a spelling with a space, the refused input,
+        would fold to `other` and be a denylist finding, which is why the reason is one token. Fails on: the leaf dropped; the
+        leaf written whatever the shape; the reason reworded; a reason outside the grammar."""
+        reason = "predates-parses.perSession"
+        self.assertEqual((pe.PARSED_UNAVAILABLE, pe.PARSED_UNAVAILABLE_REASON), ("parsedUnavailable", reason))
+        old = {"parses": {"kernel": 12, "hits": 30, "bySid": {SID: 3, SID2: 9}}}
+        none = {"http": {"POST /send": {"count": 1}}}
+        bad = {"parses": {"perSession": {"sessions": "9", "max": 2}}}
+        for snap in (old, none, bad):
+            sessions = pe.usage_block(snap)["sessions"]
+            self.assertEqual(sessions.get("parsedUnavailable"), reason, sorted(sessions))
+            self.assertNotIn("parsed", sessions, "never both")
+        new = {"parses": {"kernel": 12, "hits": 30, "perSession": {"sessions": 5, "max": 9}}}
+        sessions = pe.usage_block(new)["sessions"]
+        self.assertEqual(sessions, {"parsed": 5}, "the count present, the absence leaf not")
+        self.assertNotIn("parsedUnavailable", sessions)
+        # the value through the fold and the walks, as the export writes it and the upload re-checks it
+        self.assertTrue(pp.IDENT.fullmatch(reason), "the reason is one token of the ident grammar, so the fold keeps it")
+        block = pe.usage_block(old)
+        self.assertEqual(pp.fold(block), block, "the block is its own fold: the upload's belt passes it")
+        doc = pe.export_document(dict(old, uptime_s=60, process={}, pusher={}, http={}), usage=True)
+        self.assertEqual(doc["usage"]["sessions"]["parsedUnavailable"], reason)
+        self.assertEqual(pp.paste_problems(doc, skip=("schema",), under=("perf",)), [])
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [])
+        self.assertIn('"parsedUnavailable": "predates-parses.perSession"', pe.document_text(doc), "the line a reader of the file sees")
+        # the refused input: a reason spelled as text would not survive the fold, and the walk names it
+        spaced = {"sessions": {"parsedUnavailable": "predates parses.perSession"}}
+        self.assertEqual(pp.fold(spaced)["sessions"]["parsedUnavailable"], "other")
+        self.assertEqual([p.kind for p in pp.paste_problems(spaced)], ["free text"])
+        self.assertEqual([p.kind for p in pp.denylist_problems(spaced)], ["a string the fold would have folded"])
 
     def test_a_non_finite_uptime_fits_no_bucket_and_raises_nothing(self):
         # json.load accepts the NaN and Infinity literals, so a --from file can carry either; the bucket search used
@@ -1402,8 +1444,42 @@ class Cli(unittest.TestCase):
         with open(out, encoding="utf-8") as fh:
             doc = json.load(fh)
         self.assertEqual(doc["usage"]["actions"], {"send": 7, "new": 2})
-        self.assertEqual(doc["usage"]["sessions"], {"chatBuilt": 2, "stamped": 31}, "no parsed count from the fixture's per-sid table")
+        self.assertEqual(doc["usage"]["sessions"], {"chatBuilt": 2, "stamped": 31, "parsedUnavailable": "predates-parses.perSession"},
+                         "no parsed count from the fixture's per-sid table, and the absence stated in its place")
         self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), "--out means no default file")
+
+    def test_a_snapshot_from_before_the_per_session_count_exports_the_absence_leaf_and_a_current_one_the_count(self):
+        """The ruling of the second closing check (2026-09-19) on the export road, as a child over a saved snapshot with
+        --usage. The fixture is the OLDER shape (parses.bySid, no perSession, what a kernel before 2026-09-18 saved): the file
+        carries `sessions.parsedUnavailable`, the fixed string `predates-parses.perSession`, and no `parsed`, beside the two
+        counts the plain body gives, the verb exits 0 with nothing on stderr (its own three checks passed the leaf), and the
+        per-sid table is in neither block. The same snapshot with the kernel's perSession in place of the table, the CURRENT
+        shape: `parsed` is the count and the absence leaf is not written. Red before the leaf existed: the older shape's
+        sessions block was the two counts and nothing said why the third was missing. Fails on: the leaf dropped; the leaf
+        written for the current shape too; the reason reworded."""
+        reason = "predates-parses.perSession"
+        out = os.path.join(self.xdg, "old.json")
+        r = _run(["--public", "--from", self.src, "--usage", "--out", out], state=self.state)
+        self.assertEqual((r.returncode, r.stderr), (0, ""), r.stderr)
+        with open(out, encoding="utf-8") as fh:
+            text = fh.read()
+        doc = json.loads(text)
+        self.assertEqual(doc["usage"]["sessions"], {"chatBuilt": 2, "stamped": 31, "parsedUnavailable": reason})
+        self.assertNotIn("bySid", doc["perf"]["parses"], "the per-sid table travels in no block")
+        self.assertNotIn("perSession", doc["perf"]["parses"], "and the older snapshot has no perSession for a reader to find")
+        self.assertIn('"parsedUnavailable": "predates-parses.perSession"', text, "the line in the file, as a reader sees it")
+        current = leak_snapshot()
+        current["parses"] = {"kernel": 12, "hits": 30, "bytes": 4096, "perSession": {"sessions": 2, "max": 9}}
+        src = os.path.join(self.xdg, "current.json")
+        with open(src, "w") as fh:
+            json.dump(current, fh)
+        out = os.path.join(self.xdg, "current-export.json")
+        r = _run(["--public", "--from", src, "--usage", "--out", out], state=self.state)
+        self.assertEqual((r.returncode, r.stderr), (0, ""), r.stderr)
+        with open(out, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        self.assertEqual(doc["usage"]["sessions"], {"parsed": 2, "chatBuilt": 2, "stamped": 31}, "the count, and no absence leaf")
+        self.assertEqual(doc["perf"]["parses"]["perSession"], {"sessions": 2, "max": 9}, "the leaf the count is a copy of travels")
 
     def test_a_snapshot_with_a_nan_uptime_exports_under_usage_with_no_traceback(self):
         """The export road NULLS a number no double can hold and writes the file, one success line and no traceback: the NaN
@@ -2824,6 +2900,13 @@ class Docs(unittest.TestCase):
                     "and the kernel's uptime bucket, all from leaves the plain export already carries, so the block adds packaging and "
                     "no number.")
         self.assertTrue(sentence in text, "not in the reference: " + sentence)
+        # the second closing check (2026-09-19): the export section says what the block writes in place of a count it cannot
+        # read from an older snapshot, the leaf by name and its fixed value, and when (exactly when the count is absent)
+        absence = ("A snapshot saved by a kernel from before it counted parsed sessions (`parses.perSession`) has no parsed count to "
+                   "copy, and the block says so in place of the count: `sessions.parsedUnavailable`, the fixed string "
+                   "`predates-parses.perSession`, present exactly when the count is absent, so a reader comparing two exports can tell "
+                   "a count the export could not read from a kernel that parsed nothing.")
+        self.assertTrue(absence in text, "not in the reference: " + absence)
         # the export section's denylist paragraph, narrowed by range with the integer rule (the closing check at the re-run's
         # head, HIGH 2): an integer a double can hold passes whatever its size, one it cannot hold is null in the export's output
         integer = ("an integer a double can hold is a byte total or a count, which a long-lived kernel's lifetime totals carry into the "

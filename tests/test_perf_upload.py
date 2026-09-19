@@ -1308,8 +1308,13 @@ class Cli(unittest.TestCase):
         number the flag added that no leaf of the plain body gave (the verification of the closing check at the re-run's head
         drove it; usage_block no longer counts that table). The whole block's derivation, leaf by leaf, over both snapshot
         shapes, is pinned in tests/test_perf_stats.py (Disclosed); this is the wire's side of it, and the reference's wording
-        is pinned in Docs below. Fails with export_document writing usage unconditionally (the plain body carries the block)
-        and with usage_block counting the per-sid table again (a parsed count no plain leaf gives)."""
+        is pinned in Docs below. Since the second closing check (2026-09-19) the absence is STATED on the wire: the older
+        shape's block carries `sessions.parsedUnavailable`, the fixed string `predates-parses.perSession`, in place of the
+        count, so a reader of two uploads can tell a count the export could not read from a kernel that parsed nothing; the
+        upload's three walks and its fold belt pass the leaf (one token of the ident grammar, as `kernelUptime`'s bucket is)
+        and the recording receiver sees it. Fails with export_document writing usage unconditionally (the plain body carries
+        the block), with usage_block counting the per-sid table again (a parsed count no plain leaf gives), with the absence
+        leaf dropped or its reason reworded (the leaf is read at the receiver by name and value)."""
         base = ["--yes", "--receiver", self.fake.url]
         snap = planted_snapshot()
         snap["http"].update({"GET /feed": {"count": 3, "ms": 30.0}, "GET /timeline": {"count": 2, "ms": 1.0},
@@ -1320,13 +1325,14 @@ class Cli(unittest.TestCase):
             served[public] = served.get(public, 0) + row["count"]
         self.assertEqual(set(served), {"GET /perf", "POST /send", "POST /new", "GET /feed", "GET /timeline", "GET /glossary/*",
                                        "GET /remote/*/sessions", "GET /dist/*", "other"}, "the routes the snapshot served, as the kernel keys them")
-        bodies = {}
+        bodies, raw = {}, {}
         for usage in (False, True):
             path = _export(self.xdg, self.state, usage=usage, snap=snap, name="road-%s.json" % ("usage" if usage else "plain"))
             r = _run([path] + base, self.state)
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertEqual(len(self.fake.requests), 1)
-            bodies[usage] = json.loads(self.fake.requests[0][2])
+            raw[usage] = self.fake.requests[0][2]
+            bodies[usage] = json.loads(raw[usage])
             self.fake.requests.clear()
         plain, withu = bodies[False], bodies[True]
         self.assertNotIn("usage", plain, "a plain export sends no usage block")
@@ -1347,11 +1353,16 @@ class Cli(unittest.TestCase):
         self.assertEqual(withu["usage"]["actions"], actions, "an action count is the http row's count under the route's name")
         self.assertEqual(withu["usage"]["views"], views, "a view count is the http row's count under the route's name")
         # the rest of the block, each leaf from a leaf of the plain body: the old-shape snapshot's per-sid table is dropped
-        # from the plain body and gives no parsed count, and the block's leaves are exactly the four the paragraph names
+        # from the plain body and gives no parsed count, the absence is stated in the count's place (the plain body has no
+        # perSession either, which is the fact the leaf states), and the block's leaves are exactly the four the paragraph names
         self.assertFalse("bySid" in plain["perf"]["parses"], "the per-sid table is one the plain export drops: %s" % sorted(plain["perf"]["parses"]))
-        self.assertEqual(withu["usage"]["sessions"], {"chatBuilt": len(plain["perf"]["builds"]["chat"]["bySession"])},
-                         "a count of a list the plain body carries, and no parsed count from the dropped table")
-        self.assertEqual(withu["usage"]["sessions"], {"chatBuilt": 1})
+        self.assertFalse("perSession" in plain["perf"]["parses"], "the older shape carries no perSession for the count to be copied from")
+        self.assertEqual(withu["usage"]["sessions"], {"chatBuilt": len(plain["perf"]["builds"]["chat"]["bySession"]),
+                                                      "parsedUnavailable": "predates-parses.perSession"},
+                         "a count of a list the plain body carries, no parsed count from the dropped table, and the absence stated")
+        self.assertEqual(withu["usage"]["sessions"], {"chatBuilt": 1, "parsedUnavailable": "predates-parses.perSession"})
+        self.assertIn(b'"parsedUnavailable": "predates-parses.perSession"', raw[True], "the line at the receiver, by name and value")
+        self.assertNotIn(b"parsedUnavailable", raw[False], "a plain export carries no usage block and so no absence leaf")
         self.assertEqual(withu["usage"]["kernelUptime"], next(name for bound, name in pu.pe.UPTIME_BUCKETS if plain["perf"]["uptime_s"] < bound))
         self.assertEqual(set(withu["usage"]), {"actions", "views", "sessions", "kernelUptime"}, "every leaf of the block accounted for")
 
@@ -2717,6 +2728,11 @@ class Docs(unittest.TestCase):
                       "and, only when `--usage` was given, the `usage` block, which adds no number a plain export lacks: every leaf under "
                       "`usage` (the uptime's bucket `kernelUptime`, the `sessions` block's `parsed`, `chatBuilt` and `stamped`, each a copy or "
                       "a count of a leaf under perf that travels anyway",
+                      # the second closing check (2026-09-19): the absence of the parsed count is stated in the document, by a leaf the
+                      # paragraph names with its fixed value; the wire's side is the road case above, the derivation is Disclosed's
+                      "or, for a snapshot saved before the kernel counted parsed sessions, `parsedUnavailable` in place of `parsed`, the "
+                      "fixed string predates-parses.perSession, so a count the export could not read is told from a kernel that parsed "
+                      "nothing",
                       "the kernel commit",
                       "so two uploads from one kernel remain linkable by design",
                       # the closing re-run's finding 3, as its verification corrected it: the round's first replacement said an

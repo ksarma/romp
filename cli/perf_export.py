@@ -46,7 +46,11 @@ into the refusal. `--usage` adds a `usage` block, off by default: the session co
 served and one per pane route served, the http table's count for that route under the route's name, whoever made
 the requests, and the kernel's uptime bucket, all from keys the snapshot already carries and folded the same way; the
 `http` table itself, one row per route served with its request count and millisecond total, is in every export, so
-the block adds packaging and no number a plain export lacks (the closing check of 2026-09-19, HIGH 1).
+the block adds packaging and no number a plain export lacks (the closing check of 2026-09-19, HIGH 1). A snapshot saved
+by a kernel before it wrote `parses.perSession` has no parsed count to copy (its per-sid table is one the plain export
+drops), and the block says so in place of the count: `sessions.parsedUnavailable`, the fixed string
+`predates-parses.perSession`, present exactly when the count is absent, so a reader of two exports can tell a count this
+verb could not read from a kernel that parsed nothing (the second closing check, 2026-09-19).
 
 The file lands under the state directory as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json`, mode 0600, or at
 --out (a write that fails partway removes the file rather than leave a truncated one); the path and the byte
@@ -93,6 +97,17 @@ ACTION_SKIP = frozenset({"/tick", "/perf", "/push/ack", "/push/dropped", "/push/
 VIEW_ROUTES = ("/chat", "/feed", "/timeline", "/fleet", "/waiting", "/analytics", "/files", "/file", "/usage",
                "/usage/fleet", "/spend/detail", "/session-events", "/handoff", "/views", "/tunnels")
 UPTIME_BUCKETS = ((3600, "lt1h"), (86400, "1h-24h"), (7 * 86400, "1d-7d"), (float("inf"), "gt7d"))
+# The one leaf of the usage block that is neither a count nor a bucket: written under `sessions` in place of `parsed`, exactly
+# when the count is absent (a snapshot saved by a kernel before it wrote parses.perSession: its per-sid table is one the plain
+# export drops, pp.DENY_KEYS, so no count of it may travel and none can be read from what does), and absent when the count is
+# present. The value is a fixed string within the ident grammar (pp.IDENT: one token, at most 32 characters), so the fold
+# writes it as it is, the block equals its own fold, the belt `romp perf upload` holds it to, and the three walks pass it; it
+# carries no machine fact. The ruling of the second closing check (2026-09-19): a reader that cannot produce a value must say
+# so IN THE DOCUMENT, since a user comparing two uploads cannot otherwise tell a count the tool could not read from a kernel
+# that parsed nothing; the disclosure paragraph in docs/reference.md names the leaf and its value, and tests/test_perf_stats.py
+# (Disclosed) holds both the wording and the conditioning over both snapshot shapes.
+PARSED_UNAVAILABLE = "parsedUnavailable"
+PARSED_UNAVAILABLE_REASON = "predates-parses.perSession"
 
 
 def state_dir() -> Path:
@@ -237,8 +252,10 @@ def usage_block(snap: dict) -> dict:
     parsed (`parses.perSession.sessions`; a snapshot saved by a kernel before it wrote perSession has NO parsed count
     here, since its per-sid table is one the plain export drops, pp.DENY_KEYS, and until the closing check at the re-run's
     head, 2026-09-19, this block wrote that table's size, the one number --usage added that no leaf of the plain body
-    gave), the sessions with a chat build (`builds.chat.bySession`), the sessions stamped
-    (`caches.session_stamp.entries`). Features: each POST route's count as an action (the kernel's own housekeeping posts
+    gave; in the count's place the block writes PARSED_UNAVAILABLE with the fixed string PARSED_UNAVAILABLE_REASON, present
+    exactly when the count is absent, so the absence is stated in the document and never reads as a kernel that parsed
+    nothing, the ruling of the second closing check the same day), the sessions with a chat build
+    (`builds.chat.bySession`), the sessions stamped (`caches.session_stamp.entries`). Features: each POST route's count as an action (the kernel's own housekeeping posts
     left out) and each pane route's GET count as a view. Lifetime: the kernel's own uptime bucket. Per-session lifetimes
     are not in /perf (they are the sessions listing's), so the block has none."""
     out = {"sessions": {}, "actions": {}, "views": {}}
@@ -246,6 +263,8 @@ def usage_block(snap: dict) -> dict:
     per = parses.get("perSession")
     if isinstance(per, dict) and _num(per.get("sessions")) is not None:
         out["sessions"]["parsed"] = per["sessions"]        # never len(parses.bySid): a table the plain export drops (the docstring)
+    else:
+        out["sessions"][PARSED_UNAVAILABLE] = PARSED_UNAVAILABLE_REASON   # the absence stated, in the count's place: not a zero, not a gap
     builds = snap.get("builds") if isinstance(snap.get("builds"), dict) else {}
     chat = builds.get("chat") if isinstance(builds.get("chat"), dict) else {}
     if isinstance(chat.get("bySession"), list):
