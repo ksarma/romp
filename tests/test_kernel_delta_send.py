@@ -2407,5 +2407,373 @@ class StatCountingInstall(unittest.TestCase):
         self.assertGreaterEqual(sum(len(r) for r in routed.values()), 16, "the derivation saw the kernel's scandir sites: %r" % sorted(by_fn))
 
 
+class WrapperDifferential(unittest.TestCase):
+    """The install docstring's list of what still differs from the builtin is DERIVED here, on the interpreter under test,
+    rather than copied from a reading (the closing check on the install docstring, 2026-09-19: the list stood on a run
+    over two adjacent interpreters with no command kept, and two adjacent interpreters cannot establish that the set is
+    version-independent; 3.10 and 3.11 lack __type_params__, so it is not). The differential is the closing check's,
+    ported in-process. Its predicate, in the reviewer's words: an observation is a named, deterministic procedure of one
+    argument, the function object, rendered as text with memory addresses and paths normalized, a raise rendered as its
+    type plus normalized message, timing excluded; both arms run in one process, the same procedure on the counting
+    wrapper at os.stat and on the builtin it holds in __wrapped__; an observation counts as a difference iff the two
+    renderings differ. Every observation of the probe is ported, with these adaptations: the recursion observation sets
+    the limit relative to the current frame depth (the probe's absolute limit under pytest's deeper stack would read the
+    same sentinel on both arms and silently stop differing); the settrace and setprofile observations save and restore
+    the prior hooks; the audit-hook observation is NOT ported (sys.addaudithook is permanent for the process, and it
+    read the same on both arms in every saved run of the probe); the probe's second target pair, os.lstat, is not run
+    (reported separately there, never in its count); and one observation is ADDED from the reviewer's pickle-cross
+    probe, the unnamed second half of the pickling difference: the pickle of the wrapper, unpickled in a subprocess
+    that never loaded the kernel, is that process's builtin os.stat with no marker, where the builtin arm does not
+    pickle at all. Premises first (the object at os.stat carries the kernel's thread-local, its __wrapped__ is a builtin,
+    which an interceptor's is not, posix.stat is the same object, no signature is open); then every differing
+    observation must have a class in CLASS_OF, every class's token from TOKEN_OF_CLASS must appear in the docstring
+    (whitespace-normalized; for the attribute class the token is the attribute's own name), every key of CLASS_OF must
+    be a real observation name, the __type_params__ attribute must differ exactly from 3.12 up, the docstring must name
+    this test and not the two-interpreter reading, and functools.WRAPPER_ASSIGNMENTS is recomputed: the names that read
+    the same on both arms are exactly __module__, __name__, __qualname__ and __doc__, and the docstring carries that
+    number in words. The counts are printed on the [live] line and asserted nowhere: they are recomputed, never copied,
+    and the ported subset's count is the probe's own on the same interpreter, the added observation one more. The
+    population is the reviewer's: a difference outside these observations is not seen here, and a new observation that
+    differs reds until it is mapped and, if its class is new, named."""
+
+    ATTRIBUTES = ("__name__", "__qualname__", "__module__", "__self__", "__text_signature__", "__code__", "__globals__",
+                  "__closure__", "__defaults__", "__kwdefaults__", "__dict__", "__annotations__", "__get__", "__wrapped__",
+                  "_romp_sig_counting", "__type_params__", "__builtins__", "__call__", "__hash__")
+    # the class of a difference -> the token _stat_counting_install's docstring carries for it, verbatim; the attribute
+    # class has no single token, its token is the attribute's own name
+    TOKEN_OF_CLASS = {
+        "type": "a Python function, not builtin_function_or_method",
+        "signature": "read (path, *a, **kw)",
+        "vars and dir": "vars() and dir()",
+        "mutability": "mutable",
+        "size": "sys.getsizeof",
+        "referents": "gc.get_referents",
+        "pickling": "pickling by name resolves to posix.stat",
+        "reduce": "__reduce__",
+        "process boundary": "a process that never loaded this module",
+        "identity": "identity, since `is` against a reference",
+        "mocking": "autospec",
+        "missing argument": "TypeError text on a missing argument",
+        "path given twice": "multiple values for argument",
+        "stack": "one more frame on a traceback",
+        "descriptor": "makes the wrapper a descriptor",
+        "counting": "counts on the thread-local",
+    }
+    # every observation that differs, by class. An observation reading the same on both arms needs no entry; one that
+    # differs with no entry reds the test until it is mapped here and, if its class is new, named in the docstring
+    CLASS_OF = dict(
+        [(n, "type") for n in ("type name", "isinstance types.FunctionType", "isinstance types.BuiltinFunctionType",
+                               "inspect.isbuiltin", "inspect.isfunction", "repr", "str", "pydoc header line",
+                               "inspect.getfile", "inspect.getsourcefile", "dis.dis")]
+        + [(n, "signature") for n in ("inspect.signature follow_wrapped=False", "inspect.getfullargspec",
+                                      "Signature.bind with follow_symlinks")]
+        + [("attribute %s" % a, "attribute") for a in ("__self__", "__text_signature__", "__code__", "__globals__", "__closure__",
+                                                     "__defaults__", "__kwdefaults__", "__dict__", "__annotations__", "__get__",
+                                                     "__wrapped__", "_romp_sig_counting", "__type_params__", "__builtins__")]
+        + [("dir()", "vars and dir"), ("vars()", "vars and dir"),
+           ("set then delete an attribute", "mutability"), ("assign __name__", "mutability"),
+           ("sys.getsizeof", "size"), ("gc.get_referents types", "referents"),
+           ("pickle.dumps", "pickling"), ("pickle round trip is f", "pickling"), ("__reduce__", "reduce"),
+           ("unpickled in a process that never loaded the kernel", "process boundary"),
+           ("is the captured builtin os.stat", "identity"), ("is the current os.stat", "identity"),
+           ("is the current posix.stat", "identity"), ("equals the captured builtin", "identity"),
+           ("mock.create_autospec type", "mocking"),
+           ("call with no arguments", "missing argument"), ("call with only keywords, no path", "missing argument"),
+           ("call with path given twice", "path given twice"),
+           ("traceback frames through the call", "stack"), ("sys.settrace events during one call", "stack"),
+           ("sys.setprofile events during one call", "stack"), ("deepest recursion at which the call still runs", "stack"),
+           ("as a class attribute, what the instance attribute is", "descriptor"),
+           ("as a class attribute, calling it with a path", "descriptor"),
+           ("does a call move the kernel's accumulator", "counting")])
+    ADDED = "unpickled in a process that never loaded the kernel"
+
+    def _observations(self, scratch, tmpfile, tmplink, captured):
+        """The probe's observations as (name, procedure of the function object), the audit-hook one left out and the
+        process-boundary one added; `captured` is the builtin arm, the reference the probe took before its install ran."""
+        import copy, dis, functools, gc, inspect, pickle, pydoc, traceback, typing, weakref
+        obs = []
+
+        def add(name):
+            def deco(fn):
+                obs.append((name, fn))
+                return fn
+            return deco
+        # type and kind
+        add("type name")(lambda f: type(f).__name__)
+        add("isinstance types.FunctionType")(lambda f: isinstance(f, types.FunctionType))
+        add("isinstance types.BuiltinFunctionType")(lambda f: isinstance(f, types.BuiltinFunctionType))
+        add("inspect.isbuiltin")(lambda f: inspect.isbuiltin(f))
+        add("inspect.isfunction")(lambda f: inspect.isfunction(f))
+        add("inspect.isroutine")(lambda f: inspect.isroutine(f))
+        add("inspect.ismethod")(lambda f: inspect.ismethod(f))
+        add("inspect.ismethoddescriptor")(lambda f: inspect.ismethoddescriptor(f))
+        add("inspect.iscoroutinefunction")(lambda f: inspect.iscoroutinefunction(f))
+        add("callable")(lambda f: callable(f))
+        add("repr")(lambda f: repr(f))
+        add("str")(lambda f: str(f))
+        add("pydoc header line")(lambda f: pydoc.render_doc(f).splitlines()[0])
+        add("pydoc body line 2")(lambda f: (pydoc.render_doc(f).splitlines() + [""] * 3)[2])
+        # signature and source introspection
+        add("inspect.signature (default)")(lambda f: str(inspect.signature(f)))
+        add("inspect.signature follow_wrapped=False")(lambda f: str(inspect.signature(f, follow_wrapped=False)))
+        add("inspect.getfullargspec")(lambda f: str(inspect.getfullargspec(f)))
+        add("inspect.getfile")(lambda f: inspect.getfile(f))
+        add("inspect.getsourcefile")(lambda f: str(inspect.getsourcefile(f)))
+        add("inspect.getsourcelines length")(lambda f: len(inspect.getsourcelines(f)[0]))
+
+        @add("dis.dis")
+        def _dis(f):
+            buf = io.StringIO()
+            dis.dis(f, file=buf)
+            return "dis bytes=%d" % len(buf.getvalue())
+        add("inspect.getmodule")(lambda f: getattr(inspect.getmodule(f), "__name__", None))
+        add("inspect.getdoc first line")(lambda f: (inspect.getdoc(f) or "").splitlines()[0])
+        add("inspect.unwrap is the captured builtin")(lambda f: inspect.unwrap(f) is captured)
+        # attributes
+        for a in self.ATTRIBUTES:
+            def read(f, a=a):
+                if not hasattr(f, a):
+                    return "absent"
+                v = getattr(f, a)
+                return "present=%r" % (v,) if a in ("__name__", "__qualname__", "__module__") else "present type=%s" % type(v).__name__
+            add("attribute %s" % a)(read)
+        add("dir()")(lambda f: ",".join(sorted(dir(f))))
+        add("vars()")(lambda f: ",".join(sorted(vars(f))))
+
+        @add("set then delete an attribute")
+        def _setattr(f):
+            f.__probe_tmp__ = 1
+            del f.__probe_tmp__
+            return "attribute set and deleted"
+
+        @add("assign __name__")
+        def _rename(f):
+            old = f.__name__
+            try:
+                f.__name__ = "renamed"
+                return "renamed ok"
+            finally:
+                try:
+                    f.__name__ = old
+                except Exception:
+                    pass
+        add("weakref.ref")(lambda f: type(weakref.ref(f)).__name__)
+        add("sys.getsizeof")(lambda f: sys.getsizeof(f))
+        add("gc.is_tracked")(lambda f: gc.is_tracked(f))
+        add("copy.deepcopy is f")(lambda f: copy.deepcopy(f) is f)
+        add("pickle.dumps")(lambda f: "ok len=%d" % len(pickle.dumps(f)))
+        add("pickle round trip is f")(lambda f: pickle.loads(pickle.dumps(f)) is f)
+        add("__reduce__")(lambda f: str(f.__reduce__()))
+
+        @add(self.ADDED)
+        def _unpickled_elsewhere(f):
+            blob = pickle.dumps(f)                        # the builtin arm raises here: posix.stat names the wrapper, not it
+            code = ("import os, pickle, sys\n"
+                    "f = pickle.loads(sys.stdin.buffer.read())\n"
+                    "print('is that process os.stat:', f is os.stat, '; carries the marker:', hasattr(f, '_romp_sig_counting'),"
+                    " '; a kernel loaded there:', any(m.startswith('romp_kernel') for m in sys.modules))\n")
+            r = subprocess.run([sys.executable, "-c", code], input=blob, capture_output=True, timeout=120)
+            return (r.stdout.decode() + r.stderr.decode()).strip()
+        # identity and registries
+        add("is the captured builtin os.stat")(lambda f: f is captured)
+        add("is the current os.stat")(lambda f: f is os.stat)
+        add("is the current posix.stat")(lambda f: f is posix.stat)
+        add("equals the captured builtin")(lambda f: f == captured)
+        for s in ("supports_dir_fd", "supports_effective_ids", "supports_fd", "supports_follow_symlinks"):
+            add("member of os.%s" % s)(lambda f, s=s: f in getattr(os, s))
+        # mock and typing
+        add("mock.create_autospec type")(lambda f: type(mock.create_autospec(f)).__name__)
+        add("typing.get_type_hints")(lambda f: str(typing.get_type_hints(f)))
+        # calling behaviour (the arms agree here; the denominator's honest half)
+        add("call on a regular file (mode,size)")(lambda f: "%o %d" % (f(tmpfile).st_mode, f(tmpfile).st_size))
+        add("return type")(lambda f: type(f(tmpfile)).__name__)
+        add("call with a pathlib.Path")(lambda f: "%o" % f(pathlib.Path(tmpfile)).st_mode)
+        add("call with a bytes path")(lambda f: "%o" % f(os.fsencode(tmpfile)).st_mode)
+
+        @add("call with an open fd")
+        def _open_fd(f):
+            fd = os.open(tmpfile, os.O_RDONLY)
+            try:
+                return "%o" % f(fd).st_mode
+            finally:
+                os.close(fd)
+        add("call with follow_symlinks=False on a symlink")(lambda f: "islink=%s" % ((f(tmplink, follow_symlinks=False).st_mode & 0o170000) == 0o120000))
+
+        @add("call with dir_fd")
+        def _dir_fd(f):
+            fd = os.open(scratch, os.O_RDONLY)
+            try:
+                return "%o" % f(os.path.basename(tmpfile), dir_fd=fd).st_mode
+            finally:
+                os.close(fd)
+        add("call on a missing path")(lambda f: f(os.path.join(scratch, "nope")))
+        add("call on None")(lambda f: f(None))
+        add("call via functools.partial")(lambda f: "%o" % functools.partial(f, tmpfile)().st_mode)
+        add("call keyword-only path")(lambda f: "%o" % f(path=tmpfile).st_mode)
+        # arity and error text
+        add("call with no arguments")(lambda f: f())
+        add("call with three positional arguments")(lambda f: f(tmpfile, None, True))
+        add("call with an unknown keyword")(lambda f: f(tmpfile, bogus=1))
+        add("call with path given twice")(lambda f: f(tmpfile, path=tmpfile))
+        add("call with only keywords, no path")(lambda f: f(follow_symlinks=True))
+
+        # stack, tracing, recursion
+        @add("traceback frames through the call")
+        def _tb_frames(f):
+            try:
+                f(os.path.join(scratch, "nope"))
+            except FileNotFoundError:
+                return "traceback frames=%d" % len(traceback.extract_tb(sys.exc_info()[2]))
+
+        @add("sys.settrace events during one call")
+        def _trace(f):
+            ev = []
+
+            def tr(frame, event, arg):
+                ev.append(event)
+                return tr
+            prev = sys.gettrace()                          # saved and put back: the probe set None, which would drop a prior hook
+            sys.settrace(tr)
+            try:
+                f(tmpfile)
+            finally:
+                sys.settrace(prev)
+            return "settrace events=%s n=%d" % (sorted(set(ev)), len(ev))
+
+        @add("sys.setprofile events during one call")
+        def _profile(f):
+            ev = []
+
+            def pr(frame, event, arg):
+                ev.append(event)
+            prev = sys.getprofile()
+            sys.setprofile(pr)
+            try:
+                f(tmpfile)
+            finally:
+                sys.setprofile(prev)
+            return "setprofile events=%s" % sorted(set(ev))
+
+        @add("deepest recursion at which the call still runs")
+        def _recursion(f):
+            depth, fr = 0, sys._getframe()
+            while fr is not None:
+                depth, fr = depth + 1, fr.f_back
+            old = sys.getrecursionlimit()
+            sys.setrecursionlimit(depth + 300)             # relative to the frames under this test, not the probe's absolute limit
+
+            def go(n):
+                if n <= 0:
+                    return f(tmpfile)
+                return go(n - 1)
+            try:
+                best, lo, hi = -1, 0, 600
+                while lo <= hi:
+                    mid = (lo + hi) // 2
+                    try:
+                        go(mid)
+                        best, lo = mid, mid + 1
+                    except RecursionError:
+                        hi = mid - 1
+                return "deepest call depth=%d" % best
+            finally:
+                sys.setrecursionlimit(old)
+
+        # descriptor binding
+        @add("as a class attribute, what the instance attribute is")
+        def _class_attribute(f):
+            b = type("C", (), {"m": f})().m
+            return "instance attribute type=%s, is f: %s" % (type(b).__name__, b is f)
+        add("as a class attribute, calling it with a path")(lambda f: type(type("C", (), {"m": f})().m(tmpfile)).__name__)
+        add("as a staticmethod class attribute, calling it with a path")(lambda f: type(type("C", (), {"m": staticmethod(f)})().m(tmpfile)).__name__)
+        add("gc.get_referents types")(lambda f: ",".join(sorted({type(x).__name__ for x in gc.get_referents(f)})))
+        add("Signature.bind with follow_symlinks")(lambda f: str(inspect.signature(f, follow_wrapped=False).bind(tmpfile, follow_symlinks=False)))
+
+        # the counting side effect itself
+        @add("does a call move the kernel's accumulator")
+        def _counts(f):
+            acc = getattr(f, "_romp_sig_counting", None)
+            if acc is None:
+                return "no accumulator"
+            was_active, was_stats = acc.active, acc.stats
+            acc.active = True
+            try:
+                f(tmpfile)
+                moved = acc.stats - was_stats
+            finally:
+                acc.active, acc.stats = was_active, was_stats
+            return "accumulator moved by %d" % moved
+        return obs
+
+    @staticmethod
+    def _render(fn, f, norm):
+        """One arm: the procedure's result as normalized text, a raise as its type and normalized message."""
+        try:
+            v = fn(f)
+            return norm(v if isinstance(v, str) else repr(v))
+        except Exception as e:
+            return norm("<%s: %s>" % (type(e).__name__, e))
+
+    def test_every_difference_the_differential_finds_is_named_in_the_install_docstring(self):
+        import functools, inspect
+        W, tl = os.stat, km._CHAT_SIG_TL
+        self.assertIs(getattr(W, "_romp_sig_counting", None), tl, "premise: the object at os.stat is the kernel's counting wrapper: %r" % (W,))
+        B = getattr(W, "__wrapped__", None)
+        self.assertTrue(inspect.isbuiltin(B), "premise: the wrapper holds the builtin in __wrapped__ (a _StatInterceptor's holds the "
+                                              "kernel's function, so an interceptor left installed fails here): %r" % (B,))
+        self.assertIs(posix.stat, W, "premise: posix.stat is the same wrapper object (no interceptor or displacement on the posix module)")
+        self.assertFalse(tl.active, "premise: no signature is open on this thread")
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, True)
+        tmpfile, tmplink = os.path.join(scratch, "f"), os.path.join(scratch, "l")
+        with open(tmpfile, "w") as fh:
+            fh.write("x")
+        os.symlink(tmpfile, tmplink)
+        code_file = W.__code__.co_filename
+        kernel_paths = sorted({code_file, os.path.realpath(code_file), getattr(km, "__file__", None) or code_file}, key=len, reverse=True)
+        addr = re.compile(r"0x[0-9a-fA-F]{6,}")
+
+        def norm(s):
+            s = addr.sub("0xADDR", str(s))
+            for p in kernel_paths:
+                s = s.replace(p, "KERNEL")
+            s = s.replace(os.path.realpath(scratch), "SCRATCH").replace(scratch, "SCRATCH")
+            return re.sub(r"\s+", " ", s).strip()
+        observations = self._observations(scratch, tmpfile, tmplink, B)
+        names = [n for n, _ in observations]
+        self.assertEqual(len(set(names)), len(names), "premise: observation names are unique")
+        rows = {n: (self._render(fn, B, norm), self._render(fn, W, norm)) for n, fn in observations}
+        differing = [n for n in names if rows[n][0] != rows[n][1]]
+        unclassified = [n for n in differing if n not in self.CLASS_OF]
+        self.assertEqual(unclassified, [], "an observation this test cannot classify: %r; add it to the map and, if the docstring does "
+                                           "not name its class, name it there. Renderings (builtin, wrapper): %r"
+                                           % (unclassified, {n: rows[n] for n in unclassified}))
+        self.assertEqual(sorted(set(self.CLASS_OF) - set(names)), [], "a CLASS_OF key that is no observation name (a typo, or a renamed observation)")
+        self.assertEqual(sorted(set(self.CLASS_OF.values()) - set(self.TOKEN_OF_CLASS) - {"attribute"}), [], "a class with no token")
+        self.assertEqual("attribute __type_params__" in differing, sys.version_info >= (3, 12),
+                         "__type_params__ is a function attribute from 3.12: the docstring's version clause rests on this")
+        doc = " ".join(km._stat_counting_install.__doc__.split())
+        same = sorted(n for n in functools.WRAPPER_ASSIGNMENTS
+                      if self._render(lambda f, n=n: getattr(f, n, "absent"), B, norm) == self._render(lambda f, n=n: getattr(f, n, "absent"), W, norm))
+        self.assertEqual(same, ["__doc__", "__module__", "__name__", "__qualname__"],
+                         "the functools.WRAPPER_ASSIGNMENTS names that read the same on both arms, recomputed (of %r)" % (functools.WRAPPER_ASSIGNMENTS,))
+        tokens = []
+        for n in differing:
+            cls = self.CLASS_OF[n]
+            tok = n[len("attribute "):] if cls == "attribute" else self.TOKEN_OF_CLASS[cls]
+            if tok not in tokens:
+                tokens.append(tok)
+        tokens += ["WrapperDifferential", "those %s read the same" % {4: "four"}[len(same)]]
+        unnamed = [t for t in tokens if t not in doc]
+        if "which agree" in doc:
+            unnamed.append("the reading over two interpreters is still cited: 'which agree'")
+        ported = [n for n in differing if n != self.ADDED]
+        print("[live] differential: python=%s observations=%d differences=%d ported=%d/%d added=%d/1 unnamed=%r"
+              % (sys.version.split()[0], len(rows), len(differing), len(ported), len(names) - 1, len(differing) - len(ported), unnamed))
+        self.assertEqual(unnamed, [], "the install docstring does not name every class of difference the differential found on this "
+                                      "interpreter, or cites the reading it replaced: %r (CLASS_OF says which observation each class covers; "
+                                      "name the class in _stat_counting_install's docstring with the token verbatim)" % (unnamed,))
+
+
 if __name__ == "__main__":
     unittest.main()
