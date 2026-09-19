@@ -7,8 +7,9 @@ host); one that ignores the cap but honours delta=1 sends {type:"delta", slot:"f
 Conn.viewDeltas); one that ignores both sends whole {type:"feed"} frames (applied as before). An OLD hub bundle (main
 before PR 815) dials delta=1 without caps and decodes no patch, so the same remote's rows freeze on its pages after
 the first full frame: the Outline files a delta-unapplied row per dropped patch and posts a needSlot to the LOCAL
-kernel, the feed and Waiting panes drop them silently. PR 815 changes no kernel, so it repairs that corner through the
-hub's bundle alone: the hub box updates and the page reloads, and no remote needs a change for either slot. A remote-side
+kernel, the feed and Waiting panes drop them silently. PR 815's kernel change is two lines in _delta_keyer (round 6: a
+non-str key field makes the slot go whole), which does not touch this corner, so it repairs it through the hub's bundle:
+the hub box updates and the page reloads, and no remote needs a change for either slot. A remote-side
 guard would also cover an old hub during a mixed-build window (the remote kernel reads relay=1 at accept, _dial_kind, and
 picks the feed's protocol by the cap alone, so whole feed frames to a relay socket that announces no cap is a
 one-condition change); it is not taken here: the old hub's timeline decodes no bars patch either, so a guard that covered
@@ -880,8 +881,9 @@ class CornerOldLocal(_Corner):
     encoder error. An unkeyable collection is never frozen at all (such a remote sends whole frames always). Every other
     change confined to the cards (a card appearing, leaving, moving column or changing text) is lost until reload on
     every board, and the busier the board, the less often an old page catches up. That is why the card is a completed
-    one here: on this board a needs-you card's whole frame would hide the freeze. PR 815 changes no kernel, so it
-    repairs this corner through the hub's bundle alone: the hub reloads its page onto the new bundle. A remote-side
+    one here: on this board a needs-you card's whole frame would hide the freeze. PR 815's kernel change, two lines in
+    _delta_keyer (round 6: a non-str key field makes the slot go whole), does not touch this corner, so it repairs it
+    through the hub's bundle: the hub reloads its page onto the new bundle. A remote-side
     guard (whole feed frames to a relay socket that announces no cap; the module docstring says why it is not taken
     here) would also cover the old hub's feed during a mixed-build window, not its timeline. A dashboard served by a
     box that has not taken PR 815 is in this corner; whether it catches up is its board's ratio, and on the measured
