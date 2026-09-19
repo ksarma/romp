@@ -646,6 +646,24 @@ SCRATCH_G = SCRATCH_HEAD + textwrap.dedent("""\
             km._sdk_backend = types.SimpleNamespace(state_dir=jd.STATE)
 """)
 
+SCRATCH_R1 = SCRATCH_HEAD + textwrap.dedent("""\
+
+    class Cases(unittest.TestCase):
+        def test_a_the_first_build_then_the_run_root_removed_fails(self):
+            assert km._sdk_backend is None
+            assert km._sdk().state_dir == jd.STATE
+            shutil.rmtree(jd.STATE)                   # the singleton is over the reference root, which is now gone
+""")
+
+SCRATCH_R2 = SCRATCH_HEAD + textwrap.dedent("""\
+
+    class Cases(unittest.TestCase):
+        def test_a_a_reexecution_the_lazy_build_then_the_run_root_removed_fails(self):
+            load_source("romp_kernel", KERNEL)        # the judge re-binds and creates jd.STATE
+            assert km._sdk().state_dir == jd.STATE
+            shutil.rmtree(jd.STATE)
+""")
+
 
 def nested_run(text, follower=None):
     """pytest in a child over one scratch module written to a fresh directory, under this checkout's conftest
@@ -1159,6 +1177,40 @@ class ValuesOnTheOtherRoads(_NestedRun, unittest.TestCase):
     def test_the_class_and_module_ends_are_quiet_on_the_named_object(self):
         self.assertIsNone(boundary(self.out, "::Cases"), self.out)
         self.assertIsNone(boundary(self.out, ""), self.out)
+
+class FirstBuildThenTheRunRootRemoved(_NestedRun, unittest.TestCase):
+    SCRATCH = SCRATCH_R1
+    ERRORS = 1
+    JUDGE_RED = True
+
+    def test_the_ratchet_names_the_gone_root_with_the_sandbox_remedy_beside_the_judges_verdict(self):
+        text = self.assertRatchetFailed("Cases", "test_a_the_first_build_then_the_run_root_removed_fails")
+        self.assertTrue(text.startswith("changed after its teardown: before None (not built), after SdkBackend over "), text)
+        self.assertTrue(text.endswith(", " + GONE), "the allowance asks for a directory, and this one is gone: %s" % text)
+        self.assertIn(SHARED_STATE, self.out, "the judge fixture names the removed root in the same teardown")
+        self.assertIn("was a directory and is gone", self.out)
+        self.assertRegex(self.out, r"errors while tearing down <TestCaseFunction test_a_\w+> \(2 sub-exceptions\)")
+
+    def test_the_class_and_module_ends_are_quiet_on_the_named_object(self):
+        self.assertIsNone(boundary(self.out, "::Cases"), self.out)
+        self.assertIsNone(boundary(self.out, ""), self.out)
+
+class ReexecutionThenTheRunRootRemoved(_NestedRun, unittest.TestCase):
+    SCRATCH = SCRATCH_R2
+    ERRORS = 1
+    JUDGE_RED = True
+
+    def test_the_reload_road_names_the_gone_root_with_the_sandbox_remedy_beside_the_judges_verdict(self):
+        text = self.assertRatchetFailed("Cases", "test_a_a_reexecution_the_lazy_build_then_the_run_root_removed_fails")
+        self.assertTrue(text.startswith(REEXEC + " over jd.STATE, which is no longer a directory: SdkBackend over "), text)
+        self.assertTrue(text.endswith(", " + GONE), text)
+        self.assertIn(SHARED_STATE, self.out)
+        self.assertIn("is not a directory after the test reloaded the judge", self.out)
+
+    def test_the_class_and_module_ends_are_quiet_on_the_named_object(self):
+        self.assertIsNone(boundary(self.out, "::Cases"), self.out)
+        self.assertIsNone(boundary(self.out, ""), self.out)
+
 
 if __name__ == "__main__":
     unittest.main()
