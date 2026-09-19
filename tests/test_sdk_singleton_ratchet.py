@@ -147,8 +147,10 @@ alphabetically, and each case's `before` is what the previous case left):
     b. None left in place of it fails (object remedy); c. the kernel's own unavailable outcome (km._sdk_import_notice
        made to raise, so _sdk_locked's except branch sets False) passes; d. None left in place of False fails;
     e. the real lazy build over the run root passes; f. False left in place of the backend fails; g. a
-    SimpleNamespace left fails, rendered as types.SimpleNamespace over no state_dir. Every failing case carries
-    the object remedy and no sandbox sentence.
+    SimpleNamespace left fails, rendered as types.SimpleNamespace over no state_dir; h. a MagicMock left fails,
+    rendered unittest.mock.MagicMock over its attribute's repr and WITHOUT the gone clause, which says a state_dir is
+    no longer a directory and is true of the kernel's own class alone. Every failing case carries the object remedy
+    and no sandbox sentence.
   J, the first build over a sandbox with jd.STATE LEFT at the sandbox: the singleton agrees with jd.STATE as left,
     and the ratchet still fails it, on the root the test inherited; the judge fixture names the STATE leak in the
     same teardown (two failures on one item render as an exception group in pytest 9), and the outer test reads
@@ -236,7 +238,8 @@ fixture READS and the branch each read feeds, with the case that reds under each
   the same-marker judgment: the same-object gone transition deleted (A.f passes silently); the repoint comparison
     dropped (X.One.b passes silently); the gone check made
     absolute again (A.h, E.b and D.Two fail as false accusations and every error count rises); identity replaced by
-    equality of state_dir (A.d passes); the rebuild road rendered as before (A.d's text); a None after treated as
+    equality of state_dir (A.d passes); the rebuild road rendered as before (A.d's text); the gone clause's class gate dropped (F.h carries
+    the clause); a None after treated as
     nothing left (A.i and F.d pass); any False after admitted (F.f passes); the None-to-False allowance removed (F.c
     errors).
   the allowance: its gate opened to any before value (A.d passes); the class check dropped (F.a's look-alike passes),
@@ -652,6 +655,10 @@ SCRATCH_F = SCRATCH_HEAD + textwrap.dedent('''\
 
         def test_g_a_simplenamespace_left_fails(self):
             km._sdk_backend = types.SimpleNamespace()
+
+        def test_h_a_magicmock_left_fails(self):
+            from unittest import mock
+            km._sdk_backend = mock.MagicMock()        # an unstopped patch's shape: its state_dir renders to a non-directory string
 ''')
 
 SCRATCH_J = SCRATCH_HEAD + textwrap.dedent('''\
@@ -1739,7 +1746,7 @@ class FirstLoadThenTheLazyBuild(_NestedRun, unittest.TestCase):
 
 class ValuesThatAreNotTheKernelsBuild(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_F
-    ERRORS = 5
+    ERRORS = 6
 
     def test_a_look_alike_over_jd_state_is_refused_by_the_class_check(self):
         text = self.assertObjectRoad("Cases", "test_a_a_look_alike_over_jd_state_as_the_workers_first_value_fails")
@@ -1770,6 +1777,14 @@ class ValuesThatAreNotTheKernelsBuild(_NestedRun, unittest.TestCase):
     def test_a_simplenamespace_left_fails_and_renders_module_qualified(self):
         text = self.assertObjectRoad("Cases", "test_g_a_simplenamespace_left_fails")
         self.assertTrue(text.endswith(", after types.SimpleNamespace over no state_dir"), text)
+
+    def test_a_magicmock_left_fails_without_the_gone_clause(self):
+        # The clause says a state_dir is NO LONGER a directory, true of the kernel's own class alone; a MagicMock's
+        # attribute never was one, and at the round-3 head the clause was appended to it all the same.
+        text = self.assertObjectRoad("Cases", "test_h_a_magicmock_left_fails")
+        self.assertTrue(text.startswith("changed after its teardown: before types.SimpleNamespace over no state_dir, "
+                                        "after unittest.mock.MagicMock over <MagicMock name='mock.state_dir'"), text)
+        self.assertNotIn(GONE, text, "the gone clause is gated on the kernel's class as well as on isdir: %s" % text)
 
     def test_the_class_and_module_ends_are_quiet_on_the_named_object(self):
         self.assertIsNone(boundary(self.out, "::Cases"), self.out)
