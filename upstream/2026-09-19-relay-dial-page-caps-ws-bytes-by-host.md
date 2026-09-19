@@ -3,7 +3,7 @@ title: Federated relay dials carry the page's own caps joined with the decoder w
 status: candidate
 where: ui/webview/federation.ts (REMOTE_DIAL_CAPS header, READY_GATE_CAP, remoteDialCaps, remoteDialUrl, FederationManager.hostOrdinal, wsBytesByOrdinal, ordinalOf, wsBytesByHost, openRemote, ws.onmessage, closeRemote, start()'s __rompFed.wsBytesByHost), kernel/kernel.py (the __rompDialTerms caps wrapper line in _shim, the accept-time caps comment in _ws, FEED_DELTA_CAP's comment, CLIENT_DIAG_KEYS['perf'], the CLIENT_DIAG_ROW_MAX derivation), ui/webview/perf-telemetry.ts (MAX_HOSTS, PerfDeps.fedBytes, bytesByHost, Bucket.fedBytes0, extend, fedBytesNow, newBucket, browserDeps), docs/reference.md, docs/read-side.md, ui/webview/federation-remote-feed-delta.test.ts, ui/webview/federation-ws-bytes-by-host.test.ts, ui/webview/perf-telemetry.test.ts, ui/webview/file-view-perf.test.ts, ui/webview/file-view-seam.test.ts, tests/test_client_diag_allowlist.py, tests/test_federated_dial_terms_served.py, tests/test_federated_capability_corners_served.py, tests/test_pane_shim_return.py
 added: 2026-09-19
-pr:
+pr: 860
 tier: feature
 offered:
 closed:
