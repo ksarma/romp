@@ -72358,11 +72358,23 @@ def _landing():
             # visualViewport.offsetTop). iOS pans the visual viewport down the layout viewport to reveal the focused composer
             # while the layout viewport keeps its height; a body sized to vv.height at layout y 0 then left the bottom
             # offsetTop pixels of the visible band showing bare background under the composer. With the pan as its top edge
-            # the body covers exactly the visible band. The height chain of the rule above; no transform, filter or contain,
-            # so the shell's fixed panels (#mtabs, #rnet-back, #rerr-back, #rbell-pop, #ru-back, #romp-boot) keep the
-            # viewport as their containing block and stay glued to the true bottom. This block only: the desktop body
-            # stays in flow, its viewport never pans.
+            # the body covers exactly the visible band. The height chain of the rule above; no transform, filter or contain
+            # on any html or body rule (tests/test_shell_viewport_fit.py scans the served CSS for them), so the shell's
+            # fixed panels keep the viewport as their containing block and stay glued to the true bottom. This block only:
+            # the desktop body stays in flow, its viewport never pans.
             "body{position:fixed;left:0;right:0;top:var(--app-top,0px);height:var(--app-h,100dvh)}"
+            # [fork] D1 round 2 (2026-09-19): the other fixed box sized by --app-h is the new-session picker's lift
+            # (body.picker-open iframe.lifted, upstream's base rule above the media blocks: position:fixed;top:0). At layout
+            # y 0 it sat a pan above the body under the keyboard, so the band the rule above removes from the composer
+            # survived under the picker; a hand list of fixed panels once kept here had missed it, so the consumers are
+            # DERIVED (test_shell_viewport_fit scans the served CSS for every fixed rule sized by var(--app-h) and holds
+            # each to this origin) and never listed. Inside this block only: on a coarse desktop layout (wider than the
+            # query) the body stays in flow at layout y 0, and a lift moved to the pan there would part from the pane rect
+            # render.ts placeLifted measures for the transcript backing. On this layout the lifted pane is display:contents
+            # (the id rule below outranks the base .pane.lifted block rule), its rect is empty and placeLifted takes its
+            # gone branch, so no backing arithmetic depends on the lift's origin; the served leg reads both boxes under
+            # the pan (tests/test_keyboard_gap_served.py).
+            "body.picker-open iframe.lifted{top:var(--app-top,0px)}"
             # padding-right is a DESKTOP-only strip: one pane fills the screen here, and a 3px sliver of
             # backdrop down the edge would read as a rendering fault rather than as slack. The desktop
             # rule's longhand survives this block unless it is named, so name it.

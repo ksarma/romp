@@ -16,6 +16,7 @@ Verified in real Firefox before/after by forcing --app-h shorter than 100vh (the
 rail measured 870..900 inside a 600px-tall body before, and 570..600 after.
 """
 import os
+import re
 import tempfile
 import unittest
 from romp_load import load_source
@@ -29,6 +30,35 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_vhfit", os.path.join(BIN, "romp-kernel"))
+
+
+def _served_rules(html):
+    """Every style rule the served page carries, as (at_rules, selector, declarations), derived from the page's <style>
+    elements by brace matching: a prelude starting with @ (an @media query, a @keyframes name, a @font-face) opens a
+    nesting level the blocks inside carry as their at_rules tuple; any other prelude is a selector and its block the
+    declarations. Read from the served text, so a rule added anywhere in the page joins a population derived here
+    without anyone listing it (D1 round 2, 2026-09-19: a hand list of fixed panels missed the one keyed to --app-h)."""
+    rules = []
+    for m in re.finditer(r"<style>(.*?)</style>", html, re.S):
+        css, stack, buf, i = m.group(1), [], "", 0
+        while i < len(css):
+            ch = css[i]
+            if ch == "{":
+                prelude, buf = buf.strip(), ""
+                if prelude.startswith("@"):
+                    stack.append(prelude)
+                else:
+                    j = css.index("}", i)
+                    rules.append((tuple(stack), prelude, css[i + 1:j]))
+                    i = j
+            elif ch == "}":
+                stack.pop()
+                buf = ""
+            else:
+                buf += ch
+            i += 1
+        assert not stack, "unbalanced braces in a served <style>: %r" % (stack,)
+    return rules
 
 
 class OneHeightBasis(unittest.TestCase):
@@ -84,6 +114,27 @@ class OneHeightBasis(unittest.TestCase):
         self.assertNotIn("--app-top", html[:mobile_at], "no --app-top consumer before the mobile block (the writer is the script after it)")
         for prop in ("transform", "filter", "contain:", "will-change", "perspective"):
             self.assertNotIn(prop, rule)
+
+    def test_every_fixed_box_sized_by_the_shells_height_sits_at_its_pan(self):
+        # D1 round 2 (2026-09-19): the pan gave the shell a second origin, and the first review found the ONE other fixed box
+        # sized by --app-h, the new-session picker's lift (body.picker-open iframe.lifted, top:0), still at layout y 0 under
+        # the pan, so the band the body rule removes from the composer survived under the picker; the comment over the body
+        # rule had listed six fixed panels by hand and missed it. The consumers are DERIVED here from the served CSS, never
+        # listed: every rule that is position:fixed and sized by var(--app-h) sits at var(--app-top), in the rule itself or
+        # in a later rule of the same selector inside the mobile block (the lift's base rule is upstream's line and stays
+        # byte-identical; the mobile block re-tops it, so a coarse desktop layout keeps the lift at the static body's origin).
+        rules = _served_rules(self.html)
+        self.assertGreater(len(rules), 100, "the parse read the served stylesheets: %d rules" % len(rules))
+        fixed_h = [(i, at, sel, decl) for i, (at, sel, decl) in enumerate(rules) if "position:fixed" in decl and "var(--app-h" in decl]
+        self.assertTrue(fixed_h, "derived population empty: no fixed rule sized by --app-h in the served CSS")
+        # the census as of this change. A new fixed consumer of --app-h joins this list AND takes the pan (the loop below),
+        # or the band opens again under whatever it covers.
+        self.assertEqual(sorted(sel for _, _, sel, _ in fixed_h), ["body", "body.picker-open iframe.lifted"])
+        mobile = ("@media " + km._MOBILE_MQ,)
+        origin = "top:var(--app-top,0px)"
+        for i, at, sel, decl in fixed_h:
+            retopped = [d for j, (a, s_, d) in enumerate(rules) if j > i and a == mobile and s_ == sel and origin in d]
+            self.assertTrue(origin in decl or retopped, "%s (in %r) has no --app-top origin: %s" % (sel, at, decl))
 
     def test_an_unpainted_pane_is_dark_not_white(self):
         # a pane whose document has not painted is a white rectangle in a dark frame (Firefox shows it

@@ -150,7 +150,7 @@ class KeyboardGap(unittest.TestCase):
         where = engine + ": "
         rest, up, down, nopan, settled = r["rest"], r["kbUp"], r["kbDown"], r["kbNoPan"], r["settled"]
         # the emulation held: the shell read the fake visual viewport, in a layout viewport of the descriptor's height
-        for name, g in (("rest", rest), ("kbUp", up), ("kbDown", down), ("kbNoPan", nopan)):
+        for name, g in (("rest", rest), ("kbUp", up), ("pickerUp", r["pickerUp"]), ("kbDown", down), ("kbNoPan", nopan)):
             self.assertTrue(g["vv"]["fake"], where + name + ": the shell's visualViewport is the fake")
             self.assertIsNone(g["labVVError"], where + name)
             self.assertEqual(g["innerHeight"], LAYOUT_H, where + name + ": the layout viewport is the descriptor's")
@@ -183,6 +183,23 @@ class KeyboardGap(unittest.TestCase):
         self.assertEqual(_px(up["mtabsH"]), 0, where + "the bar's strip collapses with the keyboard up: %r" % (up,))
         self.assertAlmostEqual(up["body"]["top"], KB_PAN, delta=0.5, msg=where + "the body starts at the pan: %r" % (up,))
         self.assertAlmostEqual(up["body"]["bottom"], band_bottom, delta=0.5, msg=where + "the body ends at the band's bottom: %r" % (up,))
+        # the new-session picker lifted under the same keyboard and pan (round 2, 2026-09-19): the lift is the other fixed box
+        # sized by --app-h, and at top 0 it sat a pan above the body, so the band survived under the picker. Its box IS the
+        # body's, which is the visible band. The base tree put it at 0..508 against a body at 83..591.
+        pk, rel = r["pickerUp"], r["pickerDown"]
+        self.assertIsNotNone(pk["lifted"], where + "the shell lifted the chat frame on the picker's ask: %r" % (pk,))
+        self.assertEqual((pk["lifted"]["id"], pk["lifted"]["position"]), ("f-chat", "fixed"), where + "%r" % (pk["lifted"],))
+        self.assertEqual(_px(pk["appTop"]), KB_PAN, where + "the pan stands with the picker up: %r" % (pk,))
+        self.assertAlmostEqual(pk["body"]["top"], KB_PAN, delta=0.5, msg=where + "the body stays at the pan under the lift: %r" % (pk,))
+        self.assertAlmostEqual(pk["lifted"]["top"], pk["body"]["top"], delta=0.5, msg=where + "the lift's top is the body's: %r" % (pk["lifted"],))
+        self.assertAlmostEqual(pk["lifted"]["bottom"], pk["body"]["bottom"], delta=0.5, msg=where + "the lift's bottom is the body's: %r" % (pk["lifted"],))
+        self.assertAlmostEqual(pk["lifted"]["bottom"], band_bottom, delta=0.5, msg=where + "the lift ends at the band's bottom: %r" % (pk["lifted"],))
+        # the emulation held under the lift: on this layout the lifted pane is display:contents with an empty box, so render.ts
+        # placeLifted (the transcript backing at the pane's rect) takes its gone branch and nothing measures the lift's origin
+        self.assertEqual((pk["lifted"]["pane"]["display"], pk["lifted"]["pane"]["width"], pk["lifted"]["pane"]["height"]), ("contents", 0, 0),
+                         where + "the lifted pane has no box on the phone layout: %r" % (pk["lifted"]["pane"],))
+        self.assertIsNone(rel["lifted"], where + "the lift is released on the picker's close: %r" % (rel,))
+        self.assertAlmostEqual(rel["body"]["top"], KB_PAN, delta=0.5, msg=where + "%r" % (rel,))
         # the keyboard down: the pan is gone, the strip is back, the composer is where it was
         self.assertEqual(_px(down["appTop"]), 0, where + "no pan with the keyboard down: %r" % (down,))
         self.assertEqual(_px(down["appH"]), LAYOUT_H, where + "%r" % (down,))

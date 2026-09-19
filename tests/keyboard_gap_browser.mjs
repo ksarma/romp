@@ -71,25 +71,42 @@ const geo = () => page.evaluate(() => {
   const c = f && f.contentDocument ? f.contentDocument.getElementById("composer") : null;
   const cr = c ? c.getBoundingClientRect() : null;
   const body = document.body.getBoundingClientRect();
+  // the new-session picker's lift (body.picker-open iframe.lifted): the frame's box, and the box of the .pane the shell
+  // marked with it (the rect render.ts placeLifted measures for the pinned transcript backing)
+  const lf = document.querySelector("body.picker-open iframe.lifted");
+  const lr = lf ? lf.getBoundingClientRect() : null;
+  const lp = lf && lf.parentElement ? lf.parentElement.getBoundingClientRect() : null;
   const round = (x) => Math.round(x * 100) / 100;
   return {
     innerHeight: window.innerHeight, scrollY: window.scrollY,
-    vv: { height: window.visualViewport.height, offsetTop: window.visualViewport.offsetTop, fake: window.visualViewport === window.__labVV },
+    vv: { height: window.visualViewport.height, offsetTop: window.visualViewport.offsetTop, scale: window.visualViewport.scale, fake: window.visualViewport === window.__labVV },
     appH: st.getPropertyValue("--app-h"), appTop: st.getPropertyValue("--app-top"), mtabsH: st.getPropertyValue("--mtabs-h"),
     bar: br ? { top: round(br.top), bottom: round(br.bottom), height: round(br.height), display: getComputedStyle(bar).display } : null,
     frame: fr ? { top: round(fr.top), bottom: round(fr.bottom) } : null,
     composerBottom: cr && fr ? round(fr.top + cr.bottom) : null,
     composerHeight: cr ? round(cr.height) : null,
     body: { top: round(body.top), bottom: round(body.bottom), position: getComputedStyle(document.body).position },
+    lifted: lr ? { id: lf.id, top: round(lr.top), bottom: round(lr.bottom), position: getComputedStyle(lf).position,
+                   pane: lp ? { top: round(lp.top), width: round(lp.width), height: round(lp.height), display: getComputedStyle(lf.parentElement).display } : null } : null,
     labVVError: window.__labVVError || null,
   };
 });
 // the keyboard's moves: set the fake's geometry, then the events a real keyboard slide fires; two frames for fit()'s rAF
-const move = async (height, offsetTop) => {
-  await page.evaluate(([h, ot]) => {
-    const v = window.__labVV; v.height = h; v.offsetTop = ot;
+const move = async (height, offsetTop, scale = 1) => {
+  await page.evaluate(([h, ot, sc]) => {
+    const v = window.__labVV; v.height = h; v.offsetTop = ot; v.scale = sc;
     v.dispatchEvent(new Event("resize")); v.dispatchEvent(new Event("scroll"));
-  }, [height, offsetTop]);
+  }, [height, offsetTop, scale]);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+  await sleep(50);
+  return geo();
+};
+
+// the new-session picker's lift, asked for the way render.ts signalPickerOverlay asks: a {romp:'picker',on} message posted
+// from the chat pane's OWN window, so the shell's handler marks that frame and its pane .lifted and the body picker-open
+const picker = async (on) => {
+  const chat = await (await page.$("#f-chat")).contentFrame();
+  await chat.evaluate((on) => window.parent.postMessage({ romp: "picker", on }, "*"), on);
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
   await sleep(50);
   return geo();
@@ -117,6 +134,8 @@ try {
   await sleep(cfg.settleMs || 500);
   out.rest = await geo();
   out.kbUp = await move(508, 83);        // the keyboard up, with iOS's pan of the visual viewport
+  out.pickerUp = await picker(true);     // the new-session picker lifted under the same keyboard and pan
+  out.pickerDown = await picker(false);
   out.kbDown = await move(844, 0);       // the keyboard down: the pan is gone with it
   out.kbNoPan = await move(508, 0);      // a keyboard that does not pan (Android under resizes-visual)
   out.settled = await move(844, 0);
