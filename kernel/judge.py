@@ -173,12 +173,41 @@ STATE    = Path(os.environ.get("ROMP_STATE_DIR")   # per-kernel state root overr
 # Keep the romp state root private (0700): it holds session names, prompts,
 # captions, goals, and postal message bodies. The traverse bit on the root is
 # enough to block other local users from reading anything beneath it. Runs on
-# import so every romp Python tool that uses STATE secures it; best-effort.
+# import so every romp Python tool that uses STATE secures it; best-effort, and
+# since review round 2 of PR 789 (2026-09-19) the mode is read back afterwards
+# and said once on stderr when it is not 0700 (_state_root_mode_line).
+
+
+def _state_root_mode_line(root):
+    """The one stderr line said at import when the state root is not owner-only, or None when it is.
+
+    The mkdir and the chmod below are best-effort: an OSError is swallowed, since every romp tool runs them at
+    import and a failure there must not stop a CLI. Until review round 2 of PR 789 (2026-09-19) nothing read the
+    mode back, so the premise behind this repo's no-heal rule for credential files (a registry or a parked-ops
+    mirror this uid wrote at a looser mode is not exposed, because the root is 0700) could be false with no
+    signal. This reads it back and names the path and the mode as read, once per process, so a root that a chmod
+    could not tighten is seen rather than assumed. Not a heal: nothing here changes a mode (the round-1 ruling
+    stands, files tighten on their next write). tests/test_judge_scratch_private.py (TheStateRootModeIsChecked)
+    pins both roads, the import road in a child process."""
+    try:
+        mode = stat.S_IMODE(os.stat(root).st_mode)
+    except OSError as e:
+        return ("romp-judge: state root %s could not be checked for its mode (%s): every file under it is only as "
+                "private as its own mode" % (root, e))
+    if mode == 0o700:
+        return None
+    return ("romp-judge: state root %s is mode %04o, not 0700: the chmod at import did not tighten it, so every file "
+            "under it is only as private as its own mode" % (root, mode))
+
+
 try:
     STATE.mkdir(parents=True, exist_ok=True)
     os.chmod(STATE, 0o700)
 except OSError:
     pass
+_STATE_ROOT_MODE_LINE = _state_root_mode_line(STATE)   # the line said at import, or None: read back, not assumed
+if _STATE_ROOT_MODE_LINE:
+    sys.stderr.write(_STATE_ROOT_MODE_LINE + "\n")
 NAMES    = STATE / "names"
 PROJECTS = Path(os.environ.get("CLAUDE_CONFIG_DIR") or str(HOME / ".claude")) / "projects"   # per-kernel Claude root (plans/multi-kernel.md phase 2)
 CAPDIR   = STATE / "captions"            # the new summaries/ — one .jsonl per transcript, keyed by unit id

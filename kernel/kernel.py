@@ -893,9 +893,10 @@ class _PerfStats:
                                    the whole dump for their signature), default_str (values no
                                    wire encoder could serialize as JSON and shipped as str(), one
                                    per encode; _wire_default says each type once on stderr),
-                                   entries_walked / entries_encoded (the entries _delta_split
+                                   entries_walked / entries_encoded (the bars entries _delta_split
                                    visited and the ones it json-encoded rather than served from
-                                   its per-entry memo, 2026-09-18) and feed_slot_split (feed sends
+                                   its per-entry memo, 2026-09-18; the feed's split counts none of
+                                   its entries, which are the cards) and feed_slot_split (feed sends
                                    through the view-delta slot path: a ?delta=1 feed client without
                                    FEED_DELTA_CAP, whose split re-encodes every card per build);
                                    intrMarks (the _interrupt_marks memo) -> hit / miss / evict and
@@ -984,7 +985,20 @@ class _PerfStats:
                                    miss / evict / fault and entries / bytes / bound
                                    (SUMMARY_ANCHOR_MEMO_BYTES); outlineProvisional (the Outline's
                                    provisional-row ledger memo, _prov_ledger_memo_report) -> hit /
-                                   miss / bypass_hold / bypass_empty and the gauge entries
+                                   miss / bypass_hold / bypass_empty and the gauge entries;
+                                   feedComposition (the feed frame's bytes by component,
+                                   _FeedComposition) -> passes / failed, last (frame / cards /
+                                   rest, the frame outside the cards; ledgersAttached; the
+                                   lifetime sums are stored and not published: at two passes on
+                                   one build they were a subtraction away from the folded
+                                   ledgers; `by` as published: the flag and count rows
+                                   (FEED_BY_ROWS), the off frame's empty lists and `other`, the sum
+                                   of the ledgers and the text-bearing fields; the card and ledger
+                                   counts are stored and withheld; `apps` per consuming app and per
+                                   projection -> today / projected, an app that reads a folded
+                                   field credited with all of `other`, and cardFields for an app
+                                   that reads card fields, the Outline: its estimate as a row) and
+                                   wire (bytes / exact: the served body once a whole frame went)
       judge                        passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
@@ -1991,6 +2005,8 @@ class _PerfStats:
                           ("chatMergeSets", _merge_sets_report), ("chatPostal", _chat_postal_report),
                           ("chatLedger", _ledger_memo_report), ("chatFoldTasks", _task_fold_report),
                           ("outlineProvisional", _prov_ledger_memo_report),
+                          ("feedComposition", _feed_composition_report),   # the feed frame's bytes by component and per
+                          #                                                    consuming app (2026-09-18, _FeedComposition)
                           ("notices", _notice_memo_report)):   # the notice files' parsed rows (T370): bytes against their bound
             try:
                 memos[key] = read()
@@ -4632,7 +4648,10 @@ def _model_alias_boot_pass():
         reg = _load(rp)
         if isinstance(reg, dict) and reg.get("model") in _SEED_PINS:
             reg["model"] = _SEED_PINS[reg["model"]]
-            _atomic_write(rp, json.dumps(reg))
+            _atomic_write(rp, json.dumps(reg), mode=0o600)   # the reg's own writer (write_reg) publishes 0600 since 2026-09-18
+            #                                                   (its env block can carry a credential's value); a mode-less
+            #                                                   rewrite here put a 0600 reg back at the umask's mode at the
+            #                                                   boot that migrated it, until the session's next reg write
             n += 1
             moved.append("session %s → %s" % (reg.get("name") or rp.stem, reg["model"]))
     if n:
@@ -6822,10 +6841,40 @@ def _atomic_write(path, text, mode=None):
     a temp the winner had already moved and crashed the push with FileNotFoundError (the user 2026-06-23).
     os.replace overwrites atomically + portably; the temp is removed if the write fails.
 
-    `mode` (e.g. 0o600) is applied to the TEMP before the replace, so the published file is never briefly
-    world-readable — required for any file holding a CREDENTIAL. Without it the temp inherits the umask
-    (usually 0644): remotes.json stores every attached host's serve token, so at 0644 any other local user
-    could read those tokens and drive the REMOTE kernels, defeating the loopback token gate for federation."""
+    `mode` (e.g. 0o600) is set on the temp's DESCRIPTOR (os.fchmod) before the first write, and os.replace
+    carries it onto the published path, so the text never exists at a wider mode and a looser existing file
+    tightens on its next write: required for any file holding a CREDENTIAL. The mode is applied on the
+    descriptor before the write, so it is not subject to the umask. Without a mode the temp inherits the umask
+    (usually 0644). Every mode-bearing caller today passes 0600: the Web Push VAPID private key (push-vapid.json,
+    _vapid_keys; a credential travels this road, which is the strongest reason the mode is set before the
+    write), remotes.json (every attached host's serve token: at 0644 any other local user could read those
+    tokens and drive the REMOTE kernels, defeating the loopback token gate for federation) and its refused-rows
+    sidecar (_registry_set_aside forwards the mode), the push subscriptions (each carries a browser's auth
+    secret), the push ledger, the notified-cards snapshot (notify-prev.json, through _write_state_json), the
+    parked-ops mirror (pending-ops.json, _save_pending_ops) and the alias migration's reg rewrite
+    (_model_alias_boot_pass). The registry's own writer (sdk_backend.write_reg) does not call this helper; it
+    sets 0600 on its own descriptor the same way. Mode-bearing callers, by enclosing function: _vapid_keys,
+    _remotes_save, _registry_set_aside, _save_push_subs, _save_push_ledger, _write_state_json, _save_pending_ops,
+    _model_alias_boot_pass. That line is maintained by hand and pinned by tests/test_kernel_remotes_perms.py
+    (TheModeBearingCallerList), which re-derives it with an ast walk over this file, every `_atomic_write(...)`
+    call carrying a mode (the keyword or a third positional argument) by enclosing function, and fails when the
+    line drifts. A text search is a sample, not the source of truth: the grep this docstring offered until review
+    round 2 (2026-09-19) missed the parked-ops mirror, whose mode= sits on the third line of a wrapped call, and
+    matched two lines with no mode in the call. The list drifted once before (review round 1, 2026-09-18).
+
+    History. Until 2026-09-18 the mode was a chmod AFTER write_text, which left the temp at the umask's mode,
+    with the text in it, between the two calls (PR 776's review round, kernel-1 and extra5-2, deferred to its
+    own fix). PR 789's first cut created the temp exclusively at the mode, which made a leftover temp at the
+    same name a FileExistsError where this road had always overwritten it and put the mode through the umask;
+    review round 1 (2026-09-18) moved the mode onto the descriptor, the shape cli/perf_export.py's write_file
+    and kernel/codex_backend.py's registry lock already use. No boot-time walk re-modes files across the
+    state root (the reviewer's call, round 1): a file this helper has not rewritten since keeps its older
+    mode until its next write, and the owner-only state root is what makes that interim safe: kernel/judge.py
+    chmods it 0700 on import and, since review round 2 (2026-09-19), reads the mode back and says so once on
+    stderr when it is not 0700, so that premise is checked rather than assumed. tests/test_kernel_remotes_perms.py
+    pins the shape: one fchmod on the descriptor while the temp is still empty, no chmod on any path, the
+    requested mode published exactly under a permissive and a restrictive umask, a leftover temp overwritten
+    rather than refused, and a raising fchmod closing the descriptor and leaving no temp."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with _atomic_lock:
@@ -6833,9 +6882,26 @@ def _atomic_write(path, text, mode=None):
         n = _atomic_seq[0]
     tmp = path.with_name("%s.tmp.%d.%d.%d" % (path.name, os.getpid(), threading.get_ident(), n))
     try:
-        tmp.write_text(text)
-        if mode is not None:
-            os.chmod(tmp, mode)                          # before the publish — never a world-readable window
+        if mode is None:
+            tmp.write_text(text)
+        else:
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+            try:
+                os.fchmod(fd, mode)                      # on the descriptor, BEFORE the first write: the exact mode, not
+                #                                          the umask's, and no window with the text at a wider one; also
+                #                                          what re-modes a leftover temp O_TRUNC reopened (round 1, 2026-09-18)
+            except BaseException:
+                # A raising fchmod (EPERM on an inode this uid does not own, ENOTSUP on a filesystem that refuses it after
+                # a successful open) left the descriptor open until review round 2 of PR 789 (2026-09-19): os.fdopen
+                # below was the only close, and _save_pending_ops swallows the error and re-saves on every park or
+                # delivery, so there the leak was unbounded. The two precedents this shape copies (cli/perf_export.py
+                # write_file, the Codex registry lock) close the fd on this road. An except that closes and re-raises,
+                # not a finally: on the success road the file object owns the descriptor and closes it, so a finally
+                # would close it a second time.
+                os.close(fd)
+                raise
+            with os.fdopen(fd, "w") as f:
+                f.write(text)
         os.replace(tmp, path)                            # atomic publish (overwrites; cross-platform)
     except Exception:
         try:
@@ -39329,8 +39395,19 @@ def _save_pending_ops():
     restored as the queue (review find on #904, 2026-09-05)."""
     with _pending_ops_lock:
         try:
+            # 0600, set on the temp's descriptor before the write (_atomic_write's mode road): a parked
+            # ("env", {...}) op carries the pick's VALUES, which can be credentials (the chip renders names only
+            # for that reason), and this mirror keeps them until the op is delivered, across a kernel death. Only
+            # the kernel reads the file. The live mirror sat at the umask's mode (0664) under the 0700 state root
+            # until this change; it re-saves on every park or delivery, so it tightens at the first mutation after
+            # the deploy, and no boot-time re-mode is added (the reviewer's call, round 1, 2026-09-18). Defence in
+            # depth behind the owner-only root, like the reg (write_reg): PR 776's review round (extra5-2) asked
+            # for it and the reviewer deferred it to its own fix (2026-09-18). A failed save is swallowed below and
+            # retried at the next mutation, which is why a descriptor the helper left open on a raising fchmod leaked
+            # here without bound until review round 2 closed that road (2026-09-19).
             _atomic_write(_PENDING_OPS_FILE,
-                          json.dumps({k: [list(o) for o in v] for k, v in _pending_ops.items() if v}))
+                          json.dumps({k: [list(o) for o in v] for k, v in _pending_ops.items() if v}),
+                          mode=0o600)
         except Exception:
             sys.stderr.write("pending-ops save: %s\n" % traceback.format_exc())
 
@@ -54048,15 +54125,24 @@ def _dedup_sig(msg, s):
 # push both split, and whichever sender thread first materializes a _LazyWire bumps its counter, so a bare `+= 1`
 # here would be a read-modify-write across threads (the tests assert exact counts). /perf reports them under
 # memos.wire. Three read the per-entry work itself (stage 1 of the incremental-push design, 2026-09-18):
-# entries_walked (entries a _delta_split visited: every entry of every collection it split, a rebuild's new
-# collection object walks them all, an unchanged collection object is served from _delta_split_memo and walks
-# none), entries_encoded (those it json-encoded: the walked entries the per-entry memo did not hold as the same
-# object, so walked minus encoded is what the memo saved) and feed_slot_split (feed sends through the view-delta
-# SLOT path, _send_slot_delta with no parts handed down, counted per send whether a frame crossed or the dedup
-# held it: a ?delta=1 feed client without FEED_DELTA_CAP, whose _delta_parts("feed") encodes every card again
-# per build. Cumulative since kernel start like every counter here: nonzero means such a client has connected
-# since start, a value rising between two snapshots means one is connected now, and it stays at zero from the
-# first restart after stage 3 retires that path).
+# entries_walked (entries a _delta_split visited for the BARS: every entry of every bars collection it split, a
+# rebuild's new collection object walks them all, an unchanged collection object is served from _delta_split_memo
+# and walks none), entries_encoded (those it json-encoded: the walked entries the per-entry memo did not hold as
+# the same object, so walked minus encoded is what the memo saved) and feed_slot_split (feed sends through the
+# view-delta SLOT path, _send_slot_delta with no parts handed down, counted per send whether a frame crossed or
+# the dedup held it: a ?delta=1 feed client without FEED_DELTA_CAP, whose _delta_parts("feed") encodes every
+# card again per build. Cumulative since kernel start like every counter here: nonzero means such a client has
+# connected since start, a value rising between two snapshots means one is connected now, and it stays at zero
+# from the first restart after stage 3 retires that path). The feed's split through that path is walked and
+# memoized like the bars' but adds NOTHING to entries_walked and entries_encoded (_delta_parts passes count=False;
+# the review's third round, 2026-09-19): its entries are the cards, one each, so the two counters were the card
+# count per build (entries_walked over split_miss, exact with no timeline delta client connected) while such a
+# client was connected, the VS Code extension's pipes and federation's remote sockets among them, and
+# memos.feedComposition publishes sums over the cards that must not stand beside their count (a count beside a
+# sum discloses the single-object case: the FEED_BY_FOLDED comment). feed_slot_split still says the path was
+# taken; the per-card cost of that path is measured nowhere on /perf now, and stage 3 retires the path. A time
+# measurement of the same path would restore that diagnostic without yielding a card count, since a duration does
+# not divide into a cardinality, and that is the form to use if the number is wanted back.
 _wire_stats = {"feed_cards_hit": 0, "feed_cards_miss": 0, "split_hit": 0, "split_miss": 0, "feed_body": 0,
                "bars_body": 0, "feed_sig_fallback": 0, "feed_first": 0, "bars_sig_fallback": 0, "default_str": 0,
                "entries_walked": 0, "entries_encoded": 0, "feed_slot_split": 0}
@@ -54143,6 +54229,13 @@ class _LazyWire:
 
     def materialized(self):
         return self._s is not None
+
+    def held(self):
+        """One read of the slot: (the text, or None while unmaterialized; the estimate). For a caller that reports
+        the length AND whether it is exact from the same state: size() and materialized() each read the slot, so a
+        materialization landing between the two (a whole frame going on the pusher's thread during a GET /perf)
+        paired the estimate with `exact` in memos.feedComposition's wire row (the review's third round)."""
+        return self._s, self._est
 
 
 def _wire_text(pre):
@@ -54714,7 +54807,7 @@ _delta_entry_memo = {}   # (frame type, collection) -> {id(entry): (entry, json)
 #                          object the builder reused (a memoized dead lane's bar dicts) is not encoded again
 
 
-def _delta_split(kind, value, memo_key=None):
+def _delta_split(kind, value, memo_key=None, count=True):
     """Entries of one collection as {key: (object, json)} plus the key order, per the kind table above. A
     list item that cannot be keyed, or a duplicate key, takes a positional key ('#n') — exact, since the
     shim rebuilds in key order, just less delta-friendly. With `memo_key`, an entry that is the SAME OBJECT
@@ -54727,7 +54820,11 @@ def _delta_split(kind, value, memo_key=None):
     (CPython never untracks it, unlike a tuple of scalars), and a split's pairs live until the next build,
     long enough to be promoted to the oldest generation, whose collection walks every tracked object the
     kernel holds (2026-09-16: two fresh pairs per bar per build, ~35k a build at ~1,000 builds an hour, were
-    the largest single stream feeding those collections; with the memo the encode was saved, the tuples were not)."""
+    the largest single stream feeding those collections; with the memo the encode was saved, the tuples were not).
+    `count` False walks, encodes and memoizes exactly the same and adds nothing to memos.wire's entries_walked and
+    entries_encoded: _delta_parts passes it for the feed, whose one collection is the cards, so the counters were
+    the card count per build beside memos.feedComposition's card sums (the _wire_stats comment says why that is
+    a disclosure; the review's third round, 2026-09-19). The bars' splits count as before."""
     ents, order = {}, []
     enc = json.JSONEncoder(default=_wire_default_in("_delta_split")).encode   # one encoder for the thousand entries, not one each
     key = _delta_keyer(kind)                            # …and the kind parsed once, not per item
@@ -54778,11 +54875,12 @@ def _delta_split(kind, value, memo_key=None):
         if cur is not None:
             _delta_entry_memo[memo_key] = cur
     finally:
-        with _WIRE_STATS_LOCK:                         # the pair under ONE acquisition: walked minus encoded is what the memo
-            _wire_stats["entries_walked"] += len(order)   #  saved, and a /perf copy (taken under this lock, _wire_stats_report)
-            _wire_stats["entries_encoded"] += encoded     #  must never read walked ahead of encoded; in a finally, so a split
-            #                                              that raised mid-walk still counts every entry it visited (one `put`
-            #                                              each) and every one it encoded
+        if count:                                      # the bars; the feed's split counts none of its entries (the docstring)
+            with _WIRE_STATS_LOCK:                     # the pair under ONE acquisition: walked minus encoded is what the memo
+                _wire_stats["entries_walked"] += len(order)   #  saved, and a /perf copy (taken under this lock, _wire_stats_report)
+                _wire_stats["entries_encoded"] += encoded     #  must never read walked ahead of encoded; in a finally, so a split
+                #                                              that raised mid-walk still counts every entry it visited (one `put`
+                #                                              each) and every one it encoded
     return ents, order
 
 
@@ -54805,7 +54903,9 @@ def _delta_parts(ftype, payload):
                 continue
             _wire_bump("split_miss")
             try:
-                colls[name] = _delta_split(kind, value, memo_key=(ftype, name))
+                # the feed's entries are the cards: walked and memoized, counted under no served key (the _wire_stats
+                # comment: their count beside memos.feedComposition's card sums disclosed the single-card case)
+                colls[name] = _delta_split(kind, value, memo_key=(ftype, name), count=(ftype != "feed"))
             except ValueError as e:
                 raise ValueError("%s: %s" % (name, e)) from None     # name the collection for the log line
             _delta_split_memo[(ftype, name)] = (value, colls[name])
@@ -55237,11 +55337,502 @@ def _note_unknown_op(msg, client):
 _FEED_KEYED = (("asks", "itemId"), ("ledgers", "sid"))
 
 
-_feed_cards_memo = None    # (a build's asks list, {itemId: json}) — the per-card encode once per BUILD (2026-09-06): a
-#                            ledgers-only refill of _feed_wire (same feed_src, the per-cycle ledgers attach changed)
-#                            re-encodes the ledgers and the remainder, not the cards. Identity-keyed like
-#                            _delta_parts_cache: no consumer mutates a cached build's cards (they copy)
+_feed_cards_memo = None    # (a build's asks list, {itemId: json}, {app: card-field bytes}): the per-card encode once per
+#                            BUILD (2026-09-06): a ledgers-only refill of _feed_wire (same feed_src, the per-cycle ledgers
+#                            attach changed) re-encodes the ledgers and the remainder, not the cards. Identity-keyed like
+#                            _delta_parts_cache: no consumer mutates a cached build's cards (they copy). The third member
+#                            is the composition probe's per-app card-field estimate (_ask_fields_est) and its projection
+#                            rows' estimates (FEED_PROJECTIONS), memoized with the cards so a refill pays none of it, or
+#                            the type name and message of the exception those estimates raised, as a pair, memoized the
+#                            same way so a refill neither re-raises nor repeats them (2026-09-18). The pair, never the
+#                            exception: its traceback would pin the pass's whole frame in this global (the frame dict,
+#                            the per-ledger strings, the remainder string) until the next miss, and clearing the
+#                            traceback does not free a chained exception's (the review's third round)
 _feed_dupes_said = set()   # itemIds already reported as duplicated within one build: said once per id
+
+
+# ── the feed frame's composition (2026-09-18) ──────────────────────────────────────────────────────────────────────
+# One feed frame goes whole to every client that rides the feed slot (_push's send stage: the feed pane, the Outline,
+# which dials as `fleet` on every layout, the phone's included, and the Waiting-on-you pane, `waiting`), and each
+# bundle reads a part of it: feed.ts reads no ledgers, waiting.ts reads three of its fields, fleet.ts the ledgers and a
+# few fields of each card. Nothing said what the frame was made of (about 8.8 MB on a busy board). memos.feedComposition
+# on GET /perf now says, per _feed_parts pass, how the frame's bytes divide by component, and what each app would
+# receive if it were sent only the fields it reads, beside the whole frame it receives today (_FeedComposition).
+#
+# FEED_APP_FIELDS is the checked-in table of what each reader reads from the frame: a top-level field by name, or
+# `asks.<field>` for a card field an app reads without the rest of the card. A pane reads through federation.js, which
+# loads on every feed-slot page ahead of the bundle and hands it the merged frame: most fields it merges through, and
+# the pane's own read counts them, but `clearedForeign` it consumes on the pane's behalf (mergeHostFeeds reads it off
+# the local frame; applyViewerClears drops the remote cards and strikes the remote ledger tops the local ledger
+# cleared), so the feed and fleet rows carry it and the waiting row, which reads neither cards nor ledgers, does not.
+# tests/test_feed_composition.py pins each row against the reader's source (feed.ts applyFeedPayload, fleet.ts's frame
+# handler, waiting.ts applyFrame: every `m.<field>` read of a frame field, and fleet.ts's `a.<field>` / `ask.<field>`
+# card reads) and against federation.ts (the local-frame fields mergeHostFeeds consumes, for every pane that reads a
+# field applyViewerClears rewrites), both ways, so a reader that picks up or drops a field changes this table or fails
+# that test. Not in it: the volatile fields every frame carries (`type`, `now`, `buildId`, about forty bytes) and the
+# fields federation writes client-side (pendingHosts, pendingDead, nowAt, buildIds, offHosts, hostsUnread), which cost
+# no frame bytes a projection could save.
+#
+# FEED_PROJECTIONS are rows beside the readers' rows for frames that do NOT exist yet, sized so the gap to a goal is
+# measured before the frame is designed. No bundle reads one, so the reader pin skips them. The one row today is
+# `phoneFace`: a phone client's feed slot carrying, for the ACTIVE cards only, a face per card and one summary row per
+# group (the user 2026-09-18, who decided that feed cards on the phone become a face with the detail fetched on tap, and
+# that the phone's feed view defaults to the active cards with its groups collapsed). The face is FEED_PHONE_FACE_FIELDS,
+# five fields every kind of card carries today and feed.ts reads off a card: `text`, the title; `column`, the state
+# (working, needs_input or completed, the column the feed files it under); `t`, the epoch its age is shown from; and
+# `itemId` and `sid`, the address a tap fetches the detail by. A card is active when its `column` is in
+# FEED_PHONE_FACE_ACTIVE, the feed's Working and Blocked columns; the frame's `working`, `awaiting` and `stateUnknown`
+# lists are session NAMES for the pips, not card groups, so they mark no card. A group is a session with a card in the
+# frame (the grouped feed's thread key, by `sid`), and its summary row is the key and the count of the cards it holds,
+# one row per group whether or not the phone would show it open (the default collapses them all). `today` is the whole
+# frame, as for every row: a phone's feed page dials as `feed` and its Outline as `fleet`, the same pane iframes as the
+# desktop, so it receives the whole frame today and the row reads as the saving. The estimate is _ask_fields_est's, with
+# its errors; a detail fetch is outside it (per tap, not per frame), and so is the remainder (the face frame's design
+# decides what of it a phone needs).
+FEED_APP_FIELDS = {
+    "feed": ("asks", "judgeLimit", "working", "awaiting", "stateUnknown", "bgServices", "userTodos", "order", "views",
+             "sessions", "clearNotices", "sdkNotices", "syncNotices", "dismissedCount", "showDismissed", "canUndoClear",
+             "clearedForeign", "selfHost", "off"),
+    "fleet": ("asks.itemId", "asks.provisional", "asks.sid", "asks.name", "asks.color", "asks.text", "asks.background",
+              "asks.summary", "asks.blockSummary", "ledgers", "views", "sessions", "clearedForeign", "off"),
+    "waiting": ("userTodoRows", "userTodosOn", "sessions"),
+}
+FEED_PHONE_FACE_FIELDS = ("itemId", "sid", "text", "column", "t")   # the phone face: the address, the title, the state, the age
+FEED_PHONE_FACE_ACTIVE = ("working", "needs_input")                 # the columns whose cards are active: Working and Blocked
+# The frame's top-level fields outside the volatile three: build_feed's return, the pusher's `ledgers` attach, the views
+# payload's fault marker and the off frame's flag. The table's top-level names are drawn from this list; a test pins the
+# list against a built frame and the off frame (the off frame's empty federation lists, items, hosts, pendingHosts and
+# pendingDead, are outside it: a few bytes each, counted under their own names when present).
+FEED_FRAME_FIELDS = ("asks", "ledgers", "userTodos", "userTodoRows", "userTodosOn", "views", "viewsFault", "judgeLimit",
+                     "working", "awaiting", "stateUnknown", "bgServices", "dismissedCount", "showDismissed",
+                     "clearedForeign", "order", "sessions", "clearNotices", "sdkNotices", "syncNotices", "selfHost",
+                     "canUndoClear", "off")
+# The `by` table's keys are drawn from this list and the off frame's lists (_FEED_BY_NAMES): a key outside both is
+# counted under `other`, the way _perf_http_key folds a path outside the route table, so a runtime key never stands
+# as a row of the stored table (the review of 2026-09-18: a name-shaped key rode into the export verbatim).
+_FEED_BY_NAMES = frozenset(FEED_FRAME_FIELDS) | frozenset(_FEED_FRAME_LISTS)
+# What the block PUBLISHES of the `by` table (the same review). The remainder's fields are user text and its lengths,
+# and a row per field was the length of ONE string on a small board: selfHost was 16 plus the machine's name, working
+# 17 plus one session's name, sessions a name and a repository string, userTodoRows a todo's text, which can name a
+# path. The export's identifier scan cannot see a length, and rest == sum(by) exactly, so dropping or coarsening one
+# row alone re-derives the same number from the remainder. The published table therefore keeps the rows whose value
+# can only be a flag or a count (FEED_BY_ROWS: a fixed spelling or a digit width) and folds every other field's bytes
+# into ONE row, `other`, at REPORT time (_FeedComposition.public_by). The stored tables stay whole: the fold is what
+# the block publishes, not what it measured, and record() keeps the per-field figures so a test can hold the fold to
+# regrouping bytes and dropping none. The per-app projections read the stored table but count the folded set as ONE
+# atom (_FeedComposition.project): an app that reads any folded field is credited with the whole of `other`, and
+# only the FEED_BY_ROWS fields it reads are added by name. The reason is the same invariant one level up: a projected
+# figure that was an exact per-field partial sum, published beside frame, ledgers and the flag rows, re-derived a
+# folded row (frame - ledgers - feed.projected - userTodosOn was the userTodoRows row, and waiting.projected minus
+# that minus userTodosOn the sessions row, on every board). Now the feed row is the cards plus `other` plus the flag
+# rows it reads, the Outline's its `cardFields` (its card-field estimate, published as a row of its own beside
+# `projected`) plus `other` plus `off`, the Waiting-on-you row `other` plus userTodosOn, and the invariant holds in
+# the universal form FEED_COMPOSITION_INVARIANT states. The estimate is a row since the review's third round: the
+# round before withheld it on the ground that on a one-card board it is that card's field lengths, which was no
+# ground, since the Outline's row minus `other` and `off` gave the same number on every board, so a row disclosed
+# nothing new and a universal invariant is testable in one assertion. The row passes the fold question the way
+# `cards` does: an aggregate over the cards, whose count is withheld, published nowhere else on /perf (the paragraph
+# below) and not recoverable in general (exact on cards with no tree, from wire.bytes minus frame: the second residual
+# states the measured terms), so whether it stands is the same question FEED_COMPOSITION_RESIDUALS leaves to the user
+# for `cards`. The over-count against the fields an app reads is bounded by
+# `other` (the ledgers and the remainder minus the flag rows): the rows measure the saving of a per-pane frame, and
+# that saving is in the cards. A pinned list, never a byte floor: a floor would make which rows appear a signal.
+# FEED_BY_FOLDED is classified by what a field CAN carry, never by a fixture's value: ledgers (the pusher's
+# per-session attach: a session's name, its status, its goal tree's titles, its working note and its tops; the
+# paragraph below says why it is in the list); selfHost (the machine's short hostname); working, awaiting,
+# stateUnknown (session names); order (session ids, whose count is the divisor that turns an aggregate back into
+# per-object lengths on a small board); sessions (names and repository strings); userTodoRows (a name and every
+# todo's text); userTodos (a sid-keyed map, folded so that no published row holds a string); views (the user's tag
+# names); viewsFault (romp's wording plus the OS error text, which can name a path); judgeLimit (null normally; when
+# the latch is down, rows of name, host, sid and color); bgServices (session names to service descriptions);
+# clearedForeign (ids whose count and digit widths are recoverable); and the three notice rings (prose of up to a
+# few hundred characters each). The off frame's four federation lists (items, hosts, pendingHosts, pendingDead) are
+# outside FEED_FRAME_FIELDS, always empty here, and stay their own rows. A test holds the two sets to a partition of
+# the frame fields outside the cards, and every FEED_BY_ROWS value on a built frame, the off frame and the fixtures
+# to a bool, an int or None, so a field added to the frame is classified here or the test fails.
+# The counts and the ledgers (the review's third round, 2026-09-19). record() stores a card count and a ledger count
+# beside the sums; report() withholds both from the published tables, last and lifetime alike, because a count
+# published beside a sum discloses the single-object case: a sum over one object is that object's measurement, and
+# the count says when, so a sum is an aggregate only while its N is unpublished, here or anywhere else in the
+# export. The card count is published nowhere else on /perf and not recoverable in general, so `cards` stands as an
+# aggregate; it is exact under one condition, on cards with no tree, where wire.bytes minus frame is a constant plus a
+# per-card term, measured on the test fixture's board (one ledger, a one-digit buildId, cards younger than 459 seconds)
+# as 82, 109, 136 and 190 bytes for one, two, three and five cards, 55 plus 27 per card (the second residual
+# states the terms and a test holds the formula on those boards), a residual there, not a defeat of the fold. Until
+# this round it was recoverable from memos.wire: the feed's view-delta split, the path a ?delta=1 client without the feed
+# delta capability takes (the VS Code extension's pipes, federation's remote sockets), counted one entry per card
+# per build under entries_walked and entries_encoded, so entries_walked over split_miss was the card count while
+# such a client and no timeline delta client was connected, and on a one-card board `cards` was that card's whole
+# string beside a count the reader had. That split counts no entries now (_delta_split's count flag, passed by
+# _delta_parts; feed_slot_split still says the path was taken), and a test holds every memos.wire counter equal
+# across boards of one, two and three cards under such a client. The ledger count is
+# the chat tab count (one ledger row per built or provisional tab), and /perf publishes that count whatever this
+# block does: heap.builtChat.tabs, caches.built_chat.entries, memos.chatLedger.entries and the length of
+# builds.chat.bySession are each the tab count on a steady board. So withholding ledgerCount hides nothing, and on
+# a one-session board `ledgers` was that session's whole ledger row (a constant plus its name, its status spelling
+# and its outline text) beside a count of one the reader already had. The ledgers therefore join the fold: `ledgers`
+# is in FEED_BY_FOLDED, its bytes go into `other` at report time, and the published `rest` is the frame outside the
+# cards (the ledgers and the remainder), so that frame == cards + rest and rest == sum(by) over the published rows.
+# That shape is what the remainder invariant, re-checked after the fold, requires: with `ledgers` folded but frame,
+# cards and the remainder published, frame - cards - remainder was the ledgers again, sum(by) - remainder was the
+# ledgers again, and frame - feed.projected - userTodosOn was the ledgers again on every board. So `rest` carries
+# them, `other` carries them, and every app that reads a folded field is credited with the atom, the ledgers
+# included: the feed and Waiting-on-you rows over-count by the ledgers they do not read, and the reference says so.
+# The stored tables keep the ledgers apart (SUMS) and the counts with them, so a test holds a pass to its counts and
+# its ledger bytes. The same re-check ACROSS passes removed the lifetime table from the published block (the same
+# round): the cold kernel's first push counts the cards-first frame without ledgers and then the send stage's refill
+# of the same build with them, so with passes published as 2 the lifetime table and the last table were two exact
+# sums over passes sharing a build, and 2 * last.rest - lifetime.rest was the ledgers again (_FeedComposition.report
+# says the rest). What remains is stated in FEED_COMPOSITION_RESIDUALS below; whether the card figures stand as
+# they are is the user's call.
+FEED_BY_FOLDED = frozenset({"ledgers", "selfHost", "working", "awaiting", "stateUnknown", "order", "sessions",
+                            "userTodoRows", "userTodos", "views", "viewsFault", "judgeLimit", "bgServices",
+                            "clearedForeign", "clearNotices", "sdkNotices", "syncNotices"})
+FEED_BY_ROWS = frozenset({"userTodosOn", "dismissedCount", "showDismissed", "canUndoClear", "off"})
+# The block's residuals, for the user's ruling: what a reader of the published block can still learn about one
+# object. Each is one statement, repeated in these words in docs/reference.md's memos.feedComposition entry and in the
+# ledger entry, and tests/test_feed_composition.py holds the three texts equal, so a residual found or closed later
+# changes all three or fails there.
+# How a recovery is counted, for the next search (the closing check of 2026-09-19, whose search ran over the published
+# block on five families of the test module's synthetic boards, and the re-measurement after it): a withheld value
+# counts as recovered only where a published leaf, or an arithmetic combination of published leaves, equals it on
+# every board of a family across which the value MOVES; a match on boards where the value is constant is a
+# coincidence of two figures (the check's first run reported dozens, one of them a 24-byte row equal to another
+# 24-byte row), and a search that counts them reports leaks that are not there and buries the ones that are. A
+# suspected new recovery is retired by showing the reader already had the figure: on the cold kernel's first push
+# with one whole-frame feed client, one Outline delta client and one chat tab (a two-card fixture), the ledgers attach
+# is 315 bytes (the one ledger row, 300, plus its key and separators), and a reader reaches it down two roads that
+# share no leaf: the full send count times `wire.bytes` plus the clock splice minus sends.full.feed.bytes (3 times
+# 5603 minus 16494), and twice pusher.clients.byApp.fleet.bytes minus pusher.clients.byApp.feed.bytes (2 times 5607
+# minus 10899), the base's own counters, so `wire.bytes` restates a recovery the base allowed and adds none.
+FEED_COMPOSITION_RESIDUALS = (
+    "On a board with no session, no open todo, no tag, no notice, no cleared id, no judge-limit latch, an empty "
+    "stored session order and a clean tags read, `other` is a constant plus the hostname's length and the digit width "
+    "of `views.seq`, which the frame's whole length on `push.send` and the served body has always carried; with a "
+    "session it is the sum of that session's name and id, its ledger row when the ledgers are attached, the pips, the "
+    "tag names and the notices, and no published number or difference of published numbers is one of those alone; two "
+    "blocks served across a change differ by what changed, as the frame's length on `push.send` always did.",
+    "The card figures are aggregates over the cards, whose count is withheld and published nowhere else on /perf (the "
+    "feed's view-delta split, the path a ?delta=1 client without the feed delta capability takes, counted one entry "
+    "per card per build under memos.wire until the review's third round and counts none now): `cards` is the whole "
+    "per-card strings, and the two card-field estimates (the Outline's `cardFields`, which is its row minus `other` "
+    "and `off`; the `phoneFace` row) are sums of a few fields' lengths over the cards, so one export of a board with "
+    "one card discloses that card's total and its tree apart: `cards` is that card's string, `cardFields` its title, "
+    "name, summary, background and blockSummary lengths plus a constant and the digit width of its id, and `cards` "
+    "minus `cardFields` its tree plus a constant fixed by its other keys (the `t`, `live`, `turnId`, `column` and "
+    "`notify` values and the `tree` key: 129 bytes on the test fixture's card, whose tree is 852 of its 1957 bytes), "
+    "and on a board with one active card the `phoneFace` row is a constant plus that card's title length, the "
+    "constant fixed by the column's spelling and the width of `t`. Two exports across a one-character step tell the "
+    "step's kind by which leaves move, four kinds: a title moves `cards`, `cardFields` and the `phoneFace` row; an "
+    "Outline field (a name, a summary, a background, a blockSummary) moves `cards` and `cardFields`; a tree text "
+    "moves `cards` alone; a folded field (a session name, a note, the hostname) moves `other` alone; so a title step "
+    "is told from every other step, and a session's name rides in each of its cards and in the folded fields, so two "
+    "blocks served across a one-character rename move `cards` by that session's card count and `other` by the number "
+    "of folded fields carrying the name. A reader bounds the count from the size of `cards` (a card's fixed keys are "
+    "several hundred bytes) and from the `phoneFace` row's group rows (61 bytes per session holding fewer than ten "
+    "cards, so the number of sessions with a card is exact when no card is active); the count is not recoverable in "
+    "general, and exact under one condition: while `wire.exact` is 1, `wire.bytes` minus `frame` is the frame's "
+    "`asks`, `buildId`, `ledgers` and `type` keys, brackets and separators plus each card's tint and separator and "
+    "each tree node's tint, so on cards with no tree it is a constant plus a per-card term, measured on the test "
+    "fixture's board (one ledger, a one-digit `buildId`, cards younger than 459 seconds) as 82, 109, 136 and 190 "
+    "bytes for one, two, three and five cards, 55 plus 27 per card (a 25-byte tint and a 2-byte separator; two more "
+    "bytes per further ledger, one more per further digit of `buildId`), and a tint is 22 to 25 bytes by the card's "
+    "age (16 bytes of key, brackets and separators plus one byte per digit of the three channels of the colour ramp: "
+    "nine digits through 458 seconds of a card's age, eight from 459 seconds, seven from about 27.1 hours with the "
+    "first channel at one digit, eight again from about 39.7 hours, seven from about 40.8 hours with the third "
+    "channel at two digits, and six from about 91.4 hours with the third channel at one digit), so the count is exact "
+    "from the difference on a board of fewer than eight tree-less cards whatever their ages, and at any count when "
+    "the ages fall in one band.",
+)
+# The block's invariant, universal since the review's third round (the Outline's card-field estimate is published as
+# its row's `cardFields`, so the exception the round before carried is gone). Stated in these words in
+# docs/reference.md's entry and the ledger entry, held equal by the same test as the residuals, and pinned by
+# execution in one assertion: every published integer leaf of the last table is a row named here or one of the sums
+# named here, each sum checked, and every folded field's one-character step has one signature over every integer
+# leaf.
+FEED_COMPOSITION_INVARIANT = (
+    "Every published number is a published row or a sum of published rows: `frame` is `cards` plus `rest`; `rest` "
+    "is the sum of the `by` table; every `today` is `frame`; the feed row is `cards` plus `other` plus the flag rows "
+    "it reads; the Outline's row is its `cardFields`, the card-field estimate published beside it, plus `other` "
+    "plus `off`; the Waiting-on-you row is `other` plus `userTodosOn`; and a one-character step in any folded "
+    "field, the ledgers among them, moves the same published leaves by the same amounts, whichever field took it, "
+    "so no published number or difference of published numbers says which folded field a byte belongs to."
+)
+_FEED_APP_ASK_FIELDS = {app: tuple(f[5:] for f in fields if f.startswith("asks."))
+                        for app, fields in FEED_APP_FIELDS.items() if any(f.startswith("asks.") for f in fields)}
+
+
+def _ask_fields_est(asks, fields):
+    """An ESTIMATE of the bytes `fields` of every card in `asks` take on the wire, from lengths alone: per card its braces,
+    and per field present its quoted name, the separators and its value at the length of its text (a string plus its
+    quotes; a number, a bool or null at the length of its JSON spelling; a nested value, a card's `color` say, at the
+    length of its repr, which for the frame's nested values is the JSON length). No encode: the per-card encode
+    _feed_parts already ran is the whole card, and re-encoding a third of every card per build for one number is the
+    cost this probe refuses. An estimate, not a bound, with an error in each direction: it over-counts by naming every
+    field of every card, where fleet.ts reads a provisional card's sid, name, color and text and a goal card's
+    background, summary and blockSummary (asksById); and it under-counts JSON escapes, one byte per quote, backslash or
+    newline in a text and up to five per non-ASCII character, so a board of quote- and newline-heavy texts can read
+    under the bytes those fields would take."""
+    n = 0
+    for a in asks:
+        if not isinstance(a, dict):
+            continue
+        n += 2
+        for f in fields:
+            if f not in a:
+                continue
+            v = a[f]
+            if isinstance(v, str):
+                n += len(f) + 8 + len(v)
+            elif v is None or isinstance(v, bool):
+                n += len(f) + 6 + (4 if v is None or v else 5)
+            else:
+                n += len(f) + 6 + len(repr(v))
+    return n
+
+
+def _phone_face_est(asks):
+    """An ESTIMATE, in _ask_fields_est's style and with its errors, of the bytes a phone client's feed slot would carry
+    as the `phoneFace` projection (FEED_PROJECTIONS): a face per active card (FEED_PHONE_FACE_FIELDS of every card whose
+    `column` is in FEED_PHONE_FACE_ACTIVE) plus one summary row per group (by `sid`: the key and the count of cards the
+    group holds, every card counted, active or not). Lengths only, no encode; one O(cards) pass, memoized with the
+    cards (_feed_cards_memo). The groups are keyed by str(sid): a built card's sid is a string, and a card whose sid
+    is not hashable (a list, a dict) groups by its spelling instead of raising out of the pusher's pass."""
+    active = [a for a in asks if isinstance(a, dict) and a.get("column") in FEED_PHONE_FACE_ACTIVE]
+    groups = {}
+    for a in asks:
+        if isinstance(a, dict):
+            sid = str(a.get("sid"))
+            groups[sid] = groups.get(sid, 0) + 1
+    rows = [{"sid": sid, "count": n} for sid, n in groups.items()]
+    return _ask_fields_est(active, FEED_PHONE_FACE_FIELDS) + _ask_fields_est(rows, ("sid", "count"))
+
+
+# The projection rows beside the readers' rows in `apps` (see the FEED_APP_FIELDS comment): name -> an estimator over
+# the build's cards, run with the card-field pass and memoized with it.
+FEED_PROJECTIONS = {"phoneFace": _phone_face_est}
+
+
+class _FeedComposition:
+    """memos.feedComposition: what the feed frame is made of, per _feed_parts pass (a build, or a ledgers refill of the
+    same build), as the last pass (lifetime sums over every pass are kept in the store and not published: report() says
+    why), and per consuming app (FEED_APP_FIELDS) the bytes it would receive
+    if it were sent only the fields it reads (`projected`), beside the whole frame it receives today (`today`). Under
+    the same `apps`, the projection rows (FEED_PROJECTIONS): frames no client receives yet, sized so the gap to a goal
+    is measured before the frame is designed (`phoneFace`, the phone's face frame; its `today` is the whole frame the
+    phone's feed and Outline pages receive now).
+
+    Every number but one is read from the STRINGS _feed_parts makes for the wire anyway, by their lengths, which this
+    probe takes (_feed_parts made no sizes before it): the per-card strings (the cards minus their tints, as _feed_est
+    counts them), the per-ledger strings and, since this probe, the remainder's per-field strings (the remainder is
+    encoded per field and joined into the one sort_keys string it always was, byte for byte, so a field's bytes come
+    from the frame's own encode: its quoted name, the separators and its value). `frame` is
+    _feed_est's total, which sits under the served body by the frame's key names, separators and the cards' and nodes'
+    tints; `wire` beside it is the served body's exact length once a whole frame went (_LazyWire.materialized), else
+    that estimate again. The one figure not read from an encode is an app's card FIELDS (fleet.ts reads a few fields of
+    each card): _ask_fields_est estimates those from lengths, and says how; the estimate is published as that app's
+    `cardFields`, a row beside its `projected`.
+
+    Cost per build, on the pusher's thread: the two part sums (one len() per card and per ledger: the walk _feed_est
+    takes for the wire's size estimate, taken a second time here; measured at 1.8 microseconds per pass on the 60-card
+    test fixture and 22.6 at a thousand cards, both boards with two ledgers, best of seven runs of two hundred passes;
+    the second review round's thirty was the thousand-card board's figure), one len() per remainder field, and for the apps that read card
+    fields an O(cards x fields) pass of len() calls, plus the projections' O(cards) passes, both memoized with the
+    cards on the build's asks list (_feed_cards_memo), so a ledgers refill pays none of the card-field and projection
+    estimates (it re-encodes the ledgers and the remainder, as it always did, and re-takes the two sums and the
+    per-field lengths). About two milliseconds per thousand cards per build, about a third of it the projections'
+    pass; a ledgers refill pass measured at about one and four fifths times the base's refill pass in the first
+    review round, most of it the remainder's per-field encode, which costs more than the one whole encode it
+    replaces, per field rather than per byte: about one and a half times the whole-remainder encode at a 16 KB
+    remainder and about three and a third times at a 1.4 KB one, measured before the pass shared one
+    json.JSONEncoder over its fields, which takes about forty percent off that overhead. The lengths are always
+    computed, never only while a reader is present: that would add a real second encode and an undefined event.
+
+    Paste-safe: identifier keys (the frame's own field names, the kernel's app names), numbers only, and the last
+    table is published FOLDED (public_table, in report(); the lifetime table is stored and not published): the sums
+    `frame`, `cards` and `rest` (the frame outside the cards: the ledgers and the remainder); the `by` table as public_by
+    makes it, the flag and count rows (FEED_BY_ROWS), the off frame's empty federation lists and `other`, the sum of
+    the ledgers and every text-bearing field (FEED_BY_FOLDED), so no published row is the length of one string; and
+    the card and ledger counts withheld (the FEED_BY_FOLDED comment says why, and why the ledgers are in the fold).
+    frame == cards + rest, and rest equals the sum of the published table exactly: the fold regroups bytes and drops
+    none. The stored lifetime table keeps the same sums over every pass, counts included, for the tests and for a
+    later decision; it is not published because at two passes it was a subtraction away from the ledgers (report()).
+    The per-app projections count the folded fields as one (project()): an app that reads any of them is
+    credited with all of `other`, and the block's invariant holds in the universal form FEED_COMPOSITION_INVARIANT
+    states: every published number is a published row or a sum of published rows, and no published number or
+    difference of published numbers says which folded field a byte belongs to (the FEED_BY_FOLDED comment says what
+    a per-field partial sum gave away, and FEED_COMPOSITION_RESIDUALS what the card figures still say).
+    tests/test_feed_composition.py walks the
+    populated block through cli/perf_public's check, the one `romp perf export --public` runs over its output. A
+    pass whose accounting raises, the card-field and projection estimates included, is counted under `failed` and
+    said once; the frame is unaffected, and a fault in the estimates is memoized with the cards so a refill of the
+    same build counts it again without repeating them."""
+    __slots__ = ("lock", "passes", "failed", "life", "last", "said")
+    SUMS = ("frame", "cards", "ledgers", "rest", "cardCount", "ledgerCount")   # stored per pass and summed for life
+    PUBLISHED = ("frame", "cards", "rest")     # of the sums, what public_table publishes: `rest` carries the ledgers
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.passes = 0
+        self.failed = 0
+        self.said = False
+        self.life = {k: 0 for k in self.SUMS}
+        self.life["by"] = {}
+        self.life["apps"] = {app: dict({"today": 0, "projected": 0}, **({"cardFields": 0} if app in _FEED_APP_ASK_FIELDS else {}))
+                             for app in (*FEED_APP_FIELDS, *FEED_PROJECTIONS)}
+        self.last = None
+
+    @staticmethod
+    def folded_sum(by, led_bytes=0):
+        """The bytes public_by publishes as `other`: every FEED_BY_FOLDED row of the stored table, any `other` the key
+        bucketing in _feed_parts already produced, and the ledgers (`led_bytes`, the stored `ledgers` sum: in the fold
+        since the review's third round, the FEED_BY_FOLDED comment). project() credits an app that reads a folded
+        field, the ledgers among them, with this whole sum, so the two agree by construction."""
+        return sum(v for k, v in by.items() if k in FEED_BY_FOLDED or k == "other") + led_bytes
+
+    @staticmethod
+    def project(cards_bytes, led_bytes, rest_bytes, by, ask_fields):
+        """Per app: the whole frame's bytes (`today`) and the bytes of the fields FEED_APP_FIELDS says it reads
+        (`projected`): the cards whole or by field (ask_fields: the app's _ask_fields_est, published beside the row as
+        its `cardFields` for every app that reads card fields), the FEED_BY_ROWS fields it
+        reads by name from `by`, and the folded fields (FEED_BY_FOLDED, the ledgers among them) as ONE atom: an app
+        that reads any of them is credited once with the whole folded sum (folded_sum: the `other` row public_by
+        publishes), never with a per-field partial sum. A partial sum published beside the frame and the flag rows
+        re-derived a folded field's bytes, and a feed row credited with the remainder but not the ledgers re-derived
+        the ledgers as frame - feed.projected - userTodosOn (the FEED_BY_FOLDED comment); with the atom, and the
+        estimate published as the row's `cardFields`, every projected figure is a sum of published rows
+        (FEED_COMPOSITION_INVARIANT), and the over-count against the fields the app reads is bounded by `other`.
+        Then per projection (FEED_PROJECTIONS) the whole frame beside its estimate, which rode
+        `ask_fields` under the projection's name."""
+        frame = cards_bytes + led_bytes + rest_bytes
+        folded = _FeedComposition.folded_sum(by, led_bytes)
+        apps = {}
+        for app, fields in FEED_APP_FIELDS.items():
+            p = ask_fields.get(app, 0)
+            charged = False
+            for f in fields:
+                if f == "asks":
+                    p += cards_bytes
+                elif f.startswith("asks."):
+                    continue
+                elif f in FEED_BY_FOLDED:
+                    if not charged:                         # the folded set once, whole, whichever of its fields
+                        p += folded                         # the app reads (the ledgers are one of them)
+                        charged = True
+                else:
+                    p += by.get(f, 0)
+            apps[app] = {"today": frame, "projected": p}
+            if app in _FEED_APP_ASK_FIELDS:                     # the estimate as a row of its own (FEED_COMPOSITION_INVARIANT)
+                apps[app]["cardFields"] = ask_fields.get(app, 0)
+        for name in FEED_PROJECTIONS:
+            apps[name] = {"today": frame, "projected": ask_fields.get(name, 0)}
+        return frame, apps
+
+    def record(self, cards_bytes, n_cards, led_bytes, n_led, attached, rest_bytes, by, ask_fields):
+        frame, apps = self.project(cards_bytes, led_bytes, rest_bytes, by, ask_fields)
+        last = {"frame": frame, "cards": cards_bytes, "ledgers": led_bytes, "rest": rest_bytes, "cardCount": n_cards,
+                "ledgerCount": n_led, "ledgersAttached": 1 if attached else 0, "by": dict(by), "apps": apps}
+        with self.lock:
+            self.passes += 1
+            life = self.life
+            for k in self.SUMS:
+                life[k] += last[k]
+            lb = life["by"]
+            for k, v in by.items():
+                lb[k] = lb.get(k, 0) + v
+            for app, row in apps.items():
+                la = life["apps"][app]
+                la["today"] += row["today"]
+                la["projected"] += row["projected"]
+                if "cardFields" in row:
+                    la["cardFields"] += row["cardFields"]
+            self.last = last
+
+    @staticmethod
+    def public_by(by, led_bytes=0):
+        """The `by` table as the block publishes it (the FEED_BY_FOLDED comment): every row named there summed into
+        `other` (folded_sum, with any `other` the key bucketing in _feed_parts already produced and the ledgers,
+        `led_bytes`), and every other row as it is. Report time only: the stored tables stay whole for record() and
+        project(). The sum is the stored remainder plus the ledgers, the `rest` public_table publishes, so
+        rest == sum(public_by(by, ledgers)) holds exactly. `other` is present on every non-empty table, so the
+        published table's shape says neither which text fields the frame carried nor whether the ledgers were
+        attached (last's ledgersAttached says that, as a flag)."""
+        out = {k: v for k, v in by.items() if k not in FEED_BY_FOLDED}
+        if by or led_bytes:
+            out["other"] = _FeedComposition.folded_sum(by, led_bytes)
+        return out
+
+    @staticmethod
+    def public_table(t):
+        """A stored table as the block publishes it (report() publishes the last pass this way and the lifetime table
+        not at all): of the sums (SUMS), PUBLISHED alone, with
+        `rest` carrying the ledgers (the frame outside the cards), the `by` table folded with them (public_by), and
+        every other key (last's ledgersAttached, apps) copied through. cardCount and ledgerCount are withheld
+        deliberately: a count published beside a sum discloses the single-object case (a sum over one object is that
+        object's measurement, and the count says when), so the sums stay aggregates only while their counts are
+        unpublished. The card count is not recoverable in general and exact under one condition: on cards with no
+        tree, `wire.bytes` minus `frame` is a constant plus a per-card term, measured on the test fixture's board (one
+        ledger, a one-digit buildId, cards younger than 459 seconds) as 82, 109, 136 and 190 bytes for one,
+        two, three and five cards, 55 plus 27 per card (FEED_COMPOSITION_RESIDUALS states the terms; a test holds the
+        formula on those boards), so there the withholding is a residual, not a defeat of the fold. Both counts
+        remain in the stored tables, beside the sums the projections read, so a test holds a pass to them. `ledgers`
+        is withheld too, folded into `rest` and `other`, because its count is the chat tab count and /perf publishes
+        that whatever this block does (the FEED_BY_FOLDED comment names the gauges), so a published ledgers sum was
+        that one row on a one-session board."""
+        out = {"frame": t["frame"], "cards": t["cards"], "rest": t["rest"] + t["ledgers"]}
+        out.update((k, v) for k, v in t.items() if k not in _FeedComposition.SUMS and k not in ("by", "apps"))
+        out["by"] = _FeedComposition.public_by(t["by"], t["ledgers"])
+        out["apps"] = {app: dict(row) for app, row in t["apps"].items()}
+        return out
+
+    def fail(self, kind, msg):
+        """A pass whose accounting raised: counted under `failed` and said once, from the exception's type name and
+        message, never the exception object. _feed_parts memoizes a fault in the estimates' slot as this pair: an
+        exception carries its traceback, and a traceback parked in a module global pins the _feed_parts frame it was
+        raised in (the frame dict, the per-ledger strings, the remainder string, the per-field pairs) until the next
+        cards miss; with_traceback(None) alone does not release a raise from inside an except, whose __context__
+        holds the same frame through its own traceback (the review's third round)."""
+        with self.lock:
+            self.failed += 1
+            first = not self.said
+            self.said = True
+        if first:
+            sys.stderr.write("feed composition: the accounting raised (%s: %s); the frame is unaffected\n" % (kind, msg))
+
+    def report(self):
+        """The block as GET /perf serves it: passes, failed, the last pass folded (public_table; the stored table stays
+        whole) and the wire row. The lifetime table is stored (record()) and NOT published, since the review's third
+        round: lifetime is the sum over passes and passes is published, and a ledgers refill re-counts the same build
+        with the ledgers attached, so at two passes (the cold kernel's first push with a feed pane connected: the
+        cards-first frame without ledgers, _feed_first, then the send stage's refill of that build with them) the two
+        published tables were exact sums over passes sharing a build, and 2 * last.rest - lifetime.rest (equally over
+        `other` and `frame`) was the ledgers' bytes: one ledger row on a one-session board, the figure the fold
+        withholds. No published lifetime sum survives that subtraction while a pass can share its build with the
+        pass before it, and a coarsened sum (a mean times passes) is the sum again; the base's sends.delta.feed.bytes
+        carried the same rows inside the first delta frame, so what this closes is an exact restatement of the
+        ledgers' bytes beside the block's own claim that no difference of published numbers is one of them.
+        tests/test_feed_composition.py drives the cold sequence on the real pusher and holds the row's length to no
+        published leaf, difference, sum or 2a - b."""
+        with self.lock:
+            last = self.public_table(self.last) if self.last is not None else None   # the stored tables stay whole
+            passes, failed = self.passes, self.failed
+        w = _feed_wire                                   # tuple snapshot: rebound whole, never mutated
+        wire = {}
+        if w is not None:
+            body = w[3]
+            s, est = (body, None) if isinstance(body, str) else body.held()   # ONE read of the cell's slot: a size()
+            wire = {"bytes": len(s) if s is not None else est,                # then a materialized() read let a
+                    "exact": 1 if s is not None else 0}                       # materialization between the two pair
+                                                                              # the estimate with `exact` (fresh-4)
+        return {"passes": passes, "failed": failed, "last": last or {}, "wire": wire}
+
+
+_FEED_COMP = _FeedComposition()
+
+
+def _feed_composition_report():
+    """memos.feedComposition for GET /perf: see _FeedComposition."""
+    return _FEED_COMP.report()
 
 
 def _feed_parts(feed):
@@ -55253,9 +55844,13 @@ def _feed_parts(feed):
     Since 2026-09-06 (PLAN-2 P5/P8) this is the ONE serialization a rebuild pays for the feed: the dedup
     signature is a tuple of these strings (_feed_sig) and the whole body is lazy (_feed_body via _LazyWire).
     The cards are memoized on the build's asks list, so a refill for a changed ledgers attach encodes only
-    the ledgers and the remainder. itemIds are unique by construction — goal ids are minted `<uuid>:g<seq>`,
-    every other card kind carries its own `kind:` prefix — and both the delta path and _feed_sig read one
-    card per id; a build that breaks that is said on stderr, once per id, not silently collapsed."""
+    the ledgers and the remainder. The remainder is encoded per field and joined (2026-09-18): the same
+    bytes, and the composition probe (_FeedComposition, memos.feedComposition) reads every part's size
+    from this one pass; the probe's own work, the estimates and the record, runs inside guards, so a
+    raise there is counted and never reaches the frame. itemIds are unique by construction (goal ids
+    are minted `<uuid>:g<seq>`, every other card kind carries its own `kind:` prefix) and both the
+    delta path and _feed_sig read one card per id; a build that breaks that is said on stderr, once
+    per id, not silently collapsed."""
     global _feed_cards_memo
     dflt = _wire_default_in("_feed_parts")
     asks = feed.get("asks")
@@ -55263,11 +55858,16 @@ def _feed_parts(feed):
         asks = []
     m = _feed_cards_memo
     if m is not None and m[0] is asks:
-        cards = m[1]
+        cards, askf = m[1], m[2]
         _wire_bump("feed_cards_hit")
     else:
         cards = {a["itemId"]: json.dumps(_strip_trgb(a), default=dflt) for a in asks}
-        _feed_cards_memo = (asks, cards)
+        try:                                                                                 # the composition probe's
+            askf = {app: _ask_fields_est(asks, fs) for app, fs in _FEED_APP_ASK_FIELDS.items()}   # card-field and
+            askf.update((name, est(asks)) for name, est in FEED_PROJECTIONS.items())          # projection estimates,
+        except Exception as e:                                                               # once per build; a raise
+            askf = (type(e).__name__, str(e))                                                # is memoized in their
+        _feed_cards_memo = (asks, cards, askf)                                               # slot (counted below)
         _wire_bump("feed_cards_miss")
         if len(cards) != len(asks):
             seen, dup = set(), set()
@@ -55282,7 +55882,45 @@ def _feed_parts(feed):
             if isinstance(feed.get("ledgers"), list) else None)
     rest = {k: v for k, v in feed.items()
             if k not in ("type", "asks", "ledgers") and k not in _DEDUP_VOLATILE}
-    return cards, leds, rest, json.dumps(rest, sort_keys=True, default=dflt)
+    # The remainder, encoded per field and joined into the sort_keys string the frame always carried, byte for byte
+    # (tests/test_feed_composition.py pins the identity): the same one encode, in pieces, so the composition probe
+    # reads each field's bytes (its quoted name, the separators, its value) from the frame's own encode. One
+    # json.JSONEncoder per pass, whose encode() is what json.dumps runs with the same arguments (a fresh encoder per
+    # field was about forty percent of the per-field overhead). The table is keyed by the checked-in names
+    # (_FEED_BY_NAMES): a key outside them is counted under `other`, so a runtime key never stands as a row. A key
+    # that is not a str (never the frame's case) takes the whole encode as before, under that one name. The four
+    # bytes charged per field are its `: ` and either its `, ` or its share of the brace pair, so the rows sum to
+    # the string's length for any remainder with a field; an empty remainder's two braces go under `other`, so
+    # rest == sum(by) holds there too (unreachable from the builders, which always emit fields, but the lifetime
+    # sums would otherwise carry a two-byte skew for the life of the process: the review's third round).
+    if all(isinstance(k, str) for k in rest):
+        enc = json.JSONEncoder(sort_keys=True, default=dflt).encode
+        pairs = [(enc(k), enc(rest[k])) for k in sorted(rest)]
+        rest_ms = "{" + ", ".join(kj + ": " + s for kj, s in pairs) + "}"
+        by = {}
+        for k, (kj, s) in zip(sorted(rest), pairs):
+            name = k if k in _FEED_BY_NAMES else "other"
+            by[name] = by.get(name, 0) + len(kj) + 4 + len(s)
+        if not by:
+            by = {"other": len(rest_ms)}                     # the braces of an empty remainder
+    else:
+        rest_ms = json.dumps(rest, sort_keys=True, default=dflt)
+        by = {"other": len(rest_ms)}
+    if isinstance(askf, tuple):
+        # the card-field and projection estimates raised on this build (the memo holds the fault's type name and
+        # message in their slot): counted under `failed` and said once, record() skipped for this pass, and every
+        # refill of the same build counts it again from the memo without running the estimates, so a faulted build
+        # never re-raises and never records under-counted rows. Nothing above this line reads askf: the frame goes
+        # out unchanged at every call site (the pusher's fill, _feed_wire_now, the cards-first path).
+        _FEED_COMP.fail(*askf)
+    else:
+        try:
+            _FEED_COMP.record(sum(map(len, cards.values())), len(cards),
+                              sum(map(len, leds.values())) if leds else 0, len(leds) if leds else 0, leds is not None,
+                              len(rest_ms), by, askf)
+        except Exception as e:
+            _FEED_COMP.fail(type(e).__name__, str(e))
+    return cards, leds, rest, rest_ms
 
 
 def _feed_sig(parts):
