@@ -16,6 +16,7 @@ import collections
 import concurrent.futures
 import copy
 import fcntl
+import gc
 import inspect
 import io
 import json
@@ -1553,6 +1554,27 @@ def _scratch_repo(test):
     return d, env
 
 
+def _traced_delta(fn):
+    """(result, peak): fn()'s result and tracemalloc's peak during it as a DELTA from what was held when it started (the
+    tests/test_reader_stream_peak.py idiom). A tracer already running (PYTHONTRACEMALLOC, -X tracemalloc, an earlier
+    test) is used and left running: start() is a no-op then and would neither reset the peak nor be ours to stop. The
+    delta, not the absolute peak, because reset_peak() sets the peak to what is held NOW, so under a running tracer the
+    absolute figure is everything the process holds and a bound over it reds whatever fn() did."""
+    gc.collect()
+    tracing = tracemalloc.is_tracing()
+    if not tracing:
+        tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        held = tracemalloc.get_traced_memory()[0]
+        out = fn()
+        cur, peak = tracemalloc.get_traced_memory()
+    finally:
+        if not tracing:
+            tracemalloc.stop()
+    return out, peak - held
+
+
 class RoutingStatements(unittest.TestCase):
     """Every place in the tree that names a routed block (stagesForeign, pusher.cycleJobsMs, pusher.connectPush.stagesMs, or
     their attributes) is where a sentence about the routing can live, and two review rounds found such a sentence wrong
@@ -1806,32 +1828,23 @@ class RoutingStatements(unittest.TestCase):
 
     def test_a_binary_file_is_rejected_on_its_first_bytes_not_read_whole(self):
         """A 64 MiB sparse file whose first bytes hold a NUL and a block name after it (a probe-less scan would list it)
-        costs the scan its header and nothing more: the peak allocation during the scan stays under 128 x PROBE, 1 MiB
-        (measured 60756 bytes on 3.12 and 315580 on the free-threaded 3.14t, whose allocator books more per call, against
-        67 million when the blob is read whole). Measured with tracemalloc per call, not ru_maxrss: that is a process
-        high-water mark an earlier test can already have raised past 64 MiB, which would let a scan that reads the blob
-        whole pass."""
+        costs the scan its header and nothing more: the tracemalloc delta during the scan (its peak minus what was held
+        when it started, the tests/test_reader_stream_peak.py idiom, so a tracer already running does not red it) stays
+        under 128 x PROBE. The test measures that delta each run and prints it on failure; no run's value is quoted here.
+        Measured with tracemalloc per call, not ru_maxrss: that is a process high-water mark an earlier test can already
+        have raised past 64 MiB, which would let a scan that reads the blob whole pass."""
         d, env = _scratch_repo(self)
         (d / "control.md").write_text("a control note naming stagesForeign\n")    # so the absence below cannot pass vacuously
         with open(d / "blob.bin", "wb") as fh:
             fh.write(b"\0" * 16 + b"stagesForeign")
             fh.truncate(64 * 2**20)
-        tracing = tracemalloc.is_tracing()                                          # a tracer already running is used as is
-        if not tracing:
-            tracemalloc.start()
-        try:
-            tracemalloc.reset_peak()
-            found = self._scan(d, env=env)
-            peak = tracemalloc.get_traced_memory()[1]
-        finally:
-            if not tracing:
-                tracemalloc.stop()
+        found, delta = _traced_delta(lambda: self._scan(d, env=env))
         listed = os.fsdecode(_git_bytes(d, "ls-files", "-z", "--others", "--exclude-standard", env=env)).split("\0")
         self.assertIn("blob.bin", listed, "git lists the blob, so the scan met it (a machine-wide ignore of .bin would hide it)")
         self.assertIn("control.md", sorted(found))
         self.assertNotIn("blob.bin", sorted(found), "a NUL in the first bytes rejects the file")
         #                            the paths, not the dict: a failure would otherwise print the decoded blob, 64 MiB of it
-        self.assertLess(peak, 128 * self.PROBE, "the scan read the blob past its first bytes: peak %d" % peak)
+        self.assertLess(delta, 128 * self.PROBE, "the scan read the blob past its first bytes: delta %d bytes" % delta)
 
     def test_a_path_whose_name_is_not_utf8_is_read_and_named(self):
         """One listed path whose NAME is not valid UTF-8 (git ls-files -z emits the raw bytes) used to error every test
