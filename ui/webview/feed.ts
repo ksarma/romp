@@ -5634,6 +5634,15 @@ function ensureHostLoad(list: HTMLElement): void {
 // hidden arm of visibilitychange publish document.hidden OR the observer's last word as window.__rompPaneHidden,
 // on the same events, and nothing until the observer has spoken.
 let feedIntersecting: boolean | null = null;   // #feed-list on screen by the observer's last word; null until it speaks (the gate reads null as on screen; nothing is published for it)
+// THE SHOW OVERRIDE (review round 2, 2026-09-19, D4). A bell jump or the shell's show word arrives in the SAME task as the pane's
+// show, before the observer has re-measured (its callback waits for a rendering step), so the paint must proceed on that word.
+// It used to be written INTO feedIntersecting, the observer's own variable, which nothing restored: the observer queues no
+// callback while the computed state equals its recorded state, so a reveal into a pane the shell had off screen left the word
+// at `true` until the next show-and-hide, every push repainted the board into a display:none iframe, and publishPaneHidden
+// told the shim a hidden pane was on screen. The override is its own flag now, read as the PAINT's measure alone (seenNow) and
+// never published (publishPaneHidden keeps the observer's word); the observer's next callback spends it.
+let revealShown = false;
+function seenNow(): boolean | null { return revealShown ? true : feedIntersecting; }
 // The FIRST paint's hold on the phone (stage 0, 2026-09-18; paint-gate.ts firstPaintHeld): the shell's last panes word for this
 // pane (on.feed; undefined until one arrives) and the shell's layout probe, read live the way the kernel's pane shim reads it
 // (parentMobile), so a layout flip or a first show is seen at the read; the zero-viewport probe is paint-gate.ts's
@@ -5643,16 +5652,33 @@ function parentMobile(): boolean | undefined {
   try { const p = window.parent as unknown as { __rompMobileOn?: unknown }; return (window.parent !== window && typeof p.__rompMobileOn === "function") ? !!(p.__rompMobileOn as () => unknown)() : undefined; } catch { return undefined; }
 }
 // a bell jump or a notification tap that reached this pane while its first paint was held (the board applied, unpainted): the
-// card's key, revealed by the paint that lands (releasePaint), never a card-gone fallback for a card the model holds (review
-// round 1, 2026-09-19: the lookup over the empty DOM took the fallback and posted openSession for an existing card)
+// card's key, revealed by the paint that lands (releasePaint), never a card-gone fallback for a card the paint will stamp (review
+// round 1, 2026-09-19: the lookup over the empty DOM took the fallback and posted openSession for an existing card). Its
+// retirement is the pane's NEXT visibility change (review round 2, D5: a park with no bound was consumed by an unrelated
+// Feed-tab tap hours later, a card move on no new information): the show that follows the reveal consumes it in
+// releasePaint's tail; a flip to hidden (the shell's word, or the observer's) drops it; a second reveal replaces it; a re-tell
+// of the same word (the shell's socket events) changes nothing. No timer.
 let pendingRevealKey: string | null = null;
+// the pane loader's hold (review round 2, D3): while the FIRST paint is owed nobody can see the pane, so the pane's own loader
+// (kernel _pane_spin) stands with no timer, told once per hold by `romp:firstpaintheld`, and re-arms its 30 s backstop on
+// `romp:firstpaintreleased`, dispatched once, after the release render has painted (a release that re-held dispatches nothing).
+// Before this the loader's 30 s failsafe faded over the still-empty list of a hidden phone feed, and the tap revealed a blank pane.
+let firstHoldTold = false, firstHoldReleased = false;
+function firstPaintHoldTold(): void {
+  if (firstHoldTold) return;
+  firstHoldTold = true;
+  try { window.dispatchEvent(new Event("romp:firstpaintheld")); } catch { /* no Event constructor */ }
+}
 let paintDirty = false;        // a render was withheld while the pane could not be seen
 let skipFlipOnce = false;      // the release paint snaps: cards that moved while away have no old spot to glide from
 let feedWatching = false;
 function watchFeedVisibility(list: HTMLElement): void {
   if (typeof IntersectionObserver === "undefined") return;   // no observer → the tab's visibility alone gates
   new IntersectionObserver((entries) => {
+    const was = feedIntersecting;
     feedIntersecting = entries.some((e) => e.isIntersecting);
+    revealShown = false;   // the observer's own word: the show override is spent (D4)
+    if (was === true && !feedIntersecting) pendingRevealKey = null;   // a hide after a show: a park made for the shown pane is moot (D5)
     releasePaint();
     live.catchUp();   // the 15 s age pass skipped while off screen (feed-age.ts liveRefresher); one pass, same measure
   }).observe(list);
@@ -5662,10 +5688,11 @@ function watchFeedVisibility(list: HTMLElement): void {
 // so a paint inside the event handler is the earliest fresh frame.
 function releasePaint(): void {
   publishPaneHidden(document.hidden, feedIntersecting);
-  if (!paintReleased(paintDirty, document.hidden, feedIntersecting)) return;
+  if (!paintReleased(paintDirty, document.hidden, seenNow())) return;
   paintDirty = false;
   skipFlipOnce = true;
   render();
+  if (firstHoldTold && !firstHoldReleased && !paintDirty) { firstHoldReleased = true; try { window.dispatchEvent(new Event("romp:firstpaintreleased")); } catch { /* no Event constructor */ } }   // the first paint landed: the pane loader's backstop resumes (D3)
   // a jump that arrived under the phone's first-paint hold lands on the paint it waited for (the revealCard handler parks it)
   if (pendingRevealKey !== null && !paintDirty) { const k = pendingRevealKey; pendingRevealKey = null; const t = cardByKey(k); if (t) jumpToCard(t); }
 }
@@ -5684,11 +5711,17 @@ function jumpToCard(target: HTMLElement): void {
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) releasePaint(); });
 document.addEventListener("visibilitychange", () => { if (document.hidden) publishPaneHidden(true, feedIntersecting); });   // the hidden arm releases nothing, so the release path never publishes it
+// THE SHOW, synchronously (review round 2, 2026-09-19, D3): the shell's show() calls this on the frame's window in the tap's own
+// task (kernel _LANDING_MOBILE_JS: contentWindow.__rompPaneShown, the shell's __rompLink read in the other direction), so the
+// owed first paint lands before the compositor can show the empty pane; the panes word's release below rides a later message
+// task and stays as the belt for a document that loads after the show. The word is the shell's, so it is this pane's on-screen
+// word too. The same body as the panes handler's show arm.
+(window as unknown as { __rompPaneShown?: () => void }).__rompPaneShown = () => { feedShellOn = true; if (paintDirty && parentMobile() === true) { revealShown = true; releasePaint(); } };
 
 function render() {
   const list = document.getElementById("feed-list")!;
   if (!feedWatching) { feedWatching = true; watchFeedVisibility(list); }
-  if (paintHeld(document.hidden, feedIntersecting, list.childElementCount > 0) || firstPaintHeld(list.childElementCount > 0, parentMobile(), feedShellOn, viewportHiddenSinceLoad(window), feedIntersecting)) { paintDirty = true; return; }
+  if (paintHeld(document.hidden, seenNow(), list.childElementCount > 0) || firstPaintHeld(list.childElementCount > 0, parentMobile(), feedShellOn, viewportHiddenSinceLoad(window), seenNow())) { paintDirty = true; if (list.childElementCount === 0) firstPaintHoldTold(); return; }
   pruneTip();   // drop the styled tip only if the render tore its hovered anchor out (tip.ts pruneTip)
   applyFollowMove(asks);   // keep optimistically-moved follow-up cards in Working until the kernel confirms (or reverts)
   inRender = true;   // the body is render time: a post it makes is never the reader's jump (noteOwnJump, T416 round two)
@@ -6581,8 +6614,10 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
     // for a bell jump (revealCard below); the observer's next callback re-measures. Phone only: on the desktop the word is the
     // rail's flag, not a paint event, and the gate's two measures stand alone there.
     if (m.on && typeof m.on === "object") {
+      const was = feedShellOn;
       feedShellOn = m.on.feed === true;
-      if (feedShellOn && paintDirty && parentMobile() === true) { feedIntersecting = true; releasePaint(); }
+      if (was === true && !feedShellOn) pendingRevealKey = null;   // the pane's flip to hidden retires a parked jump (D5); a re-tell of the same word changes nothing
+      if (feedShellOn && paintDirty && parentMobile() === true) { revealShown = true; releasePaint(); }
     }
     return;
   }
@@ -6597,7 +6632,9 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
     // the list (its callback waits for a rendering step): a paint owed from a hidden stretch is settled
     // here on the shell's word, or a card added while away is not there to find (2026-09-07). The
     // observer's next callback re-measures, so a wrong word costs one unseen paint, never a stale pane.
-    if (paintDirty) { feedIntersecting = true; releasePaint(); }
+    // Through the show override, never the observer's variable (D4), and not when the shell's last word says this
+    // pane is OFF screen (the phone's bell row switches no tab): the paint stays owed and the reveal is decided below.
+    if (paintDirty && feedShellOn !== false) { revealShown = true; releasePaint(); }
     const key = "a:" + String(m.itemId || "");
     unfoldThreadsFor(new Set([key]));
     const target = cardByKey(key);   // the structural match (cardByKey): a crafted key never reaches querySelector's parser

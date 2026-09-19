@@ -65329,6 +65329,13 @@ def _pane_spin(cid, ignore_id=""):
             # pane that has content — the kernel's connect-time push landing is. So it waits for
             # romp:wsfresh, the shim's first real frame after the reconnect.
             "window.addEventListener('romp:wsup',function(){hide();});"
+            # [fork] review round 2 (2026-09-19, D3): while a pane's FIRST paint is held off screen (the feed on the phone,
+            # paint-gate.ts firstPaintHeld) nobody can see the sheet, so it stands with no timer (a failsafe firing then
+            # faded it over the still-empty list, and the tap revealed a blank pane); the release render re-arms the 30 s
+            # backstop, and its first child retires the sheet through the observer above. Both events are the bundle's
+            # (feed.ts), dispatched once per hold.
+            "window.addEventListener('romp:firstpaintheld',function(){clearTimeout(fail);});"
+            "window.addEventListener('romp:firstpaintreleased',function(){arm();});"
             "window.addEventListener('romp:wsfresh',function(){badge(false);});})();</script>")
 
 
@@ -68413,6 +68420,7 @@ window.__rompPanePromote=promote;   // the one road a pane's src is set by on th
 function show(p){if(p==='files'&&!filesCtlM())p='chat';   // the Files tab is hidden while its control is off: the chat shows instead
 if(!F[p])return;for(var i=0;i<B.length;i++)if(B[i].getAttribute('data-pane')===p&&B[i].hidden)return;   // a tab the controller hid (its pane is off in the gear's Panes section) is not a place to go
 document.body.setAttribute('data-tab',p);for(var k in F)if(F[k])F[k].classList.toggle('m-on',k===p);   // a pane this shell lacks is skipped, never a TypeError
+try{var pw=F[p]&&F[p].contentWindow;if(mobileOn()&&pw&&pw.__rompPaneShown)pw.__rompPaneShown();}catch(e){}   // [fork] review round 2 (2026-09-19, D3): the shown pane's own synchronous show hook (same origin; the feed's paints its held first board in THIS task, before the compositor can show the empty pane); the re-tell below still carries the word for a document that has none, or loaded after the show
 for(var i=0;i<B.length;i++)B[i].classList.toggle('on',B[i].getAttribute('data-pane')===p);
 try{localStorage.setItem(KT,p);}catch(e){}
 try{if(mobileOn()){promote(p);paintLoading();}}catch(e){}   // [fork] stage 0: a lazy pane loads on its first show, BEFORE the re-tell below (the pane hears the word on its own load; a word posted into a document not yet there is dropped); the loader paints for a tab whose pane is still loading, and clears for one that is not

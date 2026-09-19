@@ -202,6 +202,9 @@ class LandingShell(unittest.TestCase):
         self.assertEqual(html.count("<script>"), 21, "no new script element: the mobile script carries the lazy panes")
         # show(): the promotion sits between the persist and the re-tell (upstream's lines on both sides), so the pane hears the word on its load
         self.assertIn("try{localStorage.setItem(KT,p);}catch(e){}\ntry{if(mobileOn()){promote(p);paintLoading();}}catch(e){}", js)
+        # D3 (review round 2, 2026-09-19): the shown pane's synchronous show hook, inserted right after the m-on toggle (upstream's line) and before the button loop
+        self.assertIn("F[k].classList.toggle('m-on',k===p);   // a pane this shell lacks is skipped, never a TypeError\ntry{var pw=F[p]&&F[p].contentWindow;if(mobileOn()&&pw&&pw.__rompPaneShown)pw.__rompPaneShown();}catch(e){}", js)
+        self.assertLess(js.index("pw.__rompPaneShown();"), js.index("try{localStorage.setItem(KT,p);}catch(e){}"), "…ahead of the persist, the promotion and the re-tell")
         self.assertLess(js.index("try{if(mobileOn()){promote(p);paintLoading();}}catch(e){}"), js.index("try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}\nwindow.__rompMobileTab=show;"))
         # the boot: the parking of data-src runs before the boot show, whose line is upstream's text
         self.assertLess(js.index("lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');"), js.index("var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);"))

@@ -145,8 +145,10 @@ const body = (name: string) => new RegExp("^function " + name + "\\([\\s\\S]*?\\
 
 test("render() is gated first, on the shared pure decision, and nothing else in feed.ts is", () => {
   assert.match(SRC, /import \{ paintHeld, paintReleased, publishPaneHidden \} from "\.\/paint-gate";\nimport \{ firstPaintHeld, viewportHiddenSinceLoad, revealDecision \} from "\.\/paint-gate";/, "the merged import is upstream's line (federation-hidden-hold.test.ts pins it); the first-paint hold's import, with the reveal's decision, is the fork's own line");
-  assert.match(SRC, /function render\(\) \{\n  const list = document\.getElementById\("feed-list"\)!;\n  if \(!feedWatching\) \{ feedWatching = true; watchFeedVisibility\(list\); \}\n  if \(paintHeld\(document\.hidden, feedIntersecting, list\.childElementCount > 0\) \|\| firstPaintHeld\(list\.childElementCount > 0, parentMobile\(\), feedShellOn, viewportHiddenSinceLoad\(window\), feedIntersecting\)\) \{ paintDirty = true; return; \}\n  pruneTip\(\);/,
-    "the gate precedes every paint-side step (pruneTip, applyFollowMove, the footer, the columns); the phone's first-paint hold rides the same line (stage 0, 2026-09-18)");
+  assert.match(SRC, /function render\(\) \{\n  const list = document\.getElementById\("feed-list"\)!;\n  if \(!feedWatching\) \{ feedWatching = true; watchFeedVisibility\(list\); \}\n  if \(paintHeld\(document\.hidden, seenNow\(\), list\.childElementCount > 0\) \|\| firstPaintHeld\(list\.childElementCount > 0, parentMobile\(\), feedShellOn, viewportHiddenSinceLoad\(window\), seenNow\(\)\)\) \{ paintDirty = true; if \(list\.childElementCount === 0\) firstPaintHoldTold\(\); return; \}\n  pruneTip\(\);/,
+    "the gate precedes every paint-side step (pruneTip, applyFollowMove, the footer, the columns); the phone's first-paint hold rides the same line (stage 0, 2026-09-18); the paint's measure is seenNow(), the observer's word or the show override (review round 2, D4), and a held FIRST paint tells the pane loader once (D3)");
+  assert.match(SRC, /^let revealShown = false;\nfunction seenNow\(\): boolean \| null \{ return revealShown \? true : feedIntersecting; \}/m, "the show override is its own flag, read as the paint's measure alone; the observer's variable is the observer's");
+  assert.equal((SRC.match(/feedIntersecting = /g) || []).length, 1, "ONE write to the observer's variable: its own callback (review round 2, D4: a reveal or a show word used to write it and nothing restored it)");
   // two gates, both PAINTS: render(), and the 15 s age pass (feed-age.ts liveRefresher) that rewrites the stamped
   // labels on the cards render() did not repaint — it reads the same decision, so the feed has one meaning of
   // "hidden"; no state path is withheld
@@ -164,8 +166,10 @@ test("the flip is skipped exactly once after a release, and the painted key sequ
   assert.doesNotMatch(SRC, /flipNeeded|columnsOf\(|prevCols/, "no board-level flip baseline beside the per-column gate");
   assert.match(SRC, /askEls\.clear\(\); groupEls\.clear\(\);\n\s*skipFlipOnce = false;/, "the empty-board paint spends the snap too");
   const rel = body("releasePaint");
-  assert.match(rel, /function releasePaint\(\): void \{\n\s*publishPaneHidden\(document\.hidden, feedIntersecting\);\n\s*if \(!paintReleased\(paintDirty, document\.hidden, feedIntersecting\)\) return;\n\s*paintDirty = false;\n\s*skipFlipOnce = true;\n\s*render\(\);/,
-    "the release publishes the pane's word for the kernel's pane shim first (paint-gate.ts publishPaneHidden), then settles the owed paint");
+  assert.match(rel, /function releasePaint\(\): void \{\n\s*publishPaneHidden\(document\.hidden, feedIntersecting\);\n\s*if \(!paintReleased\(paintDirty, document\.hidden, seenNow\(\)\)\) return;\n\s*paintDirty = false;\n\s*skipFlipOnce = true;\n\s*render\(\);/,
+    "the release publishes the pane's word for the kernel's pane shim first (paint-gate.ts publishPaneHidden, the observer's word alone: the override is never published, D4), then settles the owed paint on the paint's measure");
+  assert.match(rel, /render\(\);\n\s*if \(firstHoldTold && !firstHoldReleased && !paintDirty\) \{ firstHoldReleased = true; try \{ window\.dispatchEvent\(new Event\("romp:firstpaintreleased"\)\); \} catch \{[^}]*\} \}/,
+    "the pane loader's backstop resumes once, after the release render painted (a release that re-held dispatches nothing), D3");
   assert.doesNotMatch(rel, /requestAnimationFrame|setTimeout|queueMicrotask/, "the release paints synchronously: the earliest fresh frame after the compositor's cached one");
 });
 
@@ -175,7 +179,8 @@ test("BOTH release events run the same release: visibilitychange→visible and t
     "the hidden arm releases nothing, so it publishes the pane's word itself");
   assert.equal(SRC.split("publishPaneHidden(").length - 1, 2, "two publish sites, both on the gate's events; no timer");
   const watch = body("watchFeedVisibility");
-  assert.match(watch, /new IntersectionObserver\(\(entries\) => \{\n\s*feedIntersecting = entries\.some\(\(e\) => e\.isIntersecting\);\n\s*releasePaint\(\);\n\s*live\.catchUp\(\);[^\n]*\n\s*\}\)\.observe\(list\);/);
+  assert.match(watch, /new IntersectionObserver\(\(entries\) => \{\n\s*const was = feedIntersecting;\n\s*feedIntersecting = entries\.some\(\(e\) => e\.isIntersecting\);\n\s*revealShown = false;[^\n]*\n\s*if \(was === true && !feedIntersecting\) pendingRevealKey = null;[^\n]*\n\s*releasePaint\(\);\n\s*live\.catchUp\(\);[^\n]*\n\s*\}\)\.observe\(list\);/,
+    "the observer's callback: its word, the show override spent (D4), a hide after a show drops a parked jump (D5), then the release and the age pass");
   assert.match(watch, /if \(typeof IntersectionObserver === "undefined"\) return;/);
 });
 
@@ -200,9 +205,10 @@ test("the follow-move backstop yields to a prediction a payload already retired;
   assert.match(body("reconcileFollowMove"), /if \(!a \|\| a\.column === "working" \|\| pendingMoveKind\.get\(id\) === "answer"\) \{\n\s*clearFollowMove\(/);
 });
 
-test("a bell jump settles the owed paint on the shell's word before it looks for the card", () => {
-  // the shell shows the pane and posts revealCard in the same task, before the observer re-measures
-  assert.match(SRC, /if \(m\.romp === "revealCard"\) \{[\s\S]*?if \(paintDirty\) \{ feedIntersecting = true; releasePaint\(\); \}\n\s*const key = "a:" \+ String\(m\.itemId \|\| ""\);/);
+test("a bell jump settles the owed paint on the shell's word before it looks for the card, through the show override, unless the shell's word says the pane is off screen", () => {
+  // the shell shows the pane and posts revealCard in the same task, before the observer re-measures (review round 2, D4: the override
+  // flag, never the observer's variable; and no release attempt for a pane the shell has off screen, the phone's bell row)
+  assert.match(SRC, /if \(m\.romp === "revealCard"\) \{[\s\S]*?if \(paintDirty && feedShellOn !== false\) \{ revealShown = true; releasePaint\(\); \}\n\s*const key = "a:" \+ String\(m\.itemId \|\| ""\);/);
 });
 
 // ── the wiring, run: feed.ts's own visibility lines over the pure module ──
@@ -237,13 +243,17 @@ function feedWiring(win: { parentProbe?: () => boolean; innerWidth?: number; inn
   `;
   // the page's window stand-in: a phone shell publishes its layout probe on the parent (parentMobile reads it), a standalone
   // page is its own parent; the viewport is the shim's zero-viewport probe (a frame hidden since load reads 0)
-  const fakeWindow: any = { innerWidth: win.innerWidth ?? 800, innerHeight: win.innerHeight ?? 600 };
+  const events: string[] = [];
+  const fakeWindow: any = { innerWidth: win.innerWidth ?? 800, innerHeight: win.innerHeight ?? 600, dispatchEvent(e: { type: string }) { events.push(e.type); return true; } };
   fakeWindow.parent = win.parentProbe ? { __rompMobileOn: win.parentProbe } : fakeWindow;
   hideEdges(fakeWindow);
-  const api = new Function("P", "S", "document", "IntersectionObserver", "window", prelude + js + "\nreturn { render, releasePaint };")(
-    { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, viewportHiddenSinceLoad }, st, fakeDocument, FakeObserver, fakeWindow) as { render(): void; releasePaint(): void };
+  class FakeEvent { type: string; constructor(t: string) { this.type = t; } }
+  const api = new Function("P", "S", "document", "IntersectionObserver", "window", "Event", prelude + js + "\nreturn { render, releasePaint };")(
+    { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, viewportHiddenSinceLoad }, st, fakeDocument, FakeObserver, fakeWindow, FakeEvent) as { render(): void; releasePaint(): void };
   return {
-    st,
+    st, events,
+    /** the shell's synchronous show hook, as feed.ts publishes it on the page's window (D3) */
+    shown() { assert.equal(typeof fakeWindow.__rompPaneShown, "function", "feed.ts publishes window.__rompPaneShown"); fakeWindow.__rompPaneShown(); },
     /** the payload path's one gated render() */
     frame(n: number) { st.model = n; api.render(); },
     /** the IntersectionObserver's callback over #feed-list */
@@ -318,25 +328,41 @@ function liftedPlan() {
 const PLAN = liftedPlan();
 
 function phoneFeed(opts: { phone?: boolean | undefined; probeHidden?: boolean } = {}) {
-  const st = { hidden: false, intersecting: null as boolean | null, shellOn: undefined as boolean | undefined,
+  const st = { hidden: false, intersecting: null as boolean | null, shellOn: undefined as boolean | undefined, revealShown: false,   // revealShown: the show override (D4), never the observer's variable
                phone: "phone" in opts ? opts.phone : true, probeHidden: opts.probeHidden ?? true,
                painted: 0, paints: 0, paintDirty: false, notified: [] as string[], model: [] as ModelAsk[],
                onlySid: null as string | null, searchQ: "", metas: [] as { sid: string; name: string }[], lens: { all: true } as PlanState["lens"], views: null as Views,   // the pane's filter state: the footer's session filter, the search box, the tag lens
-               dom: [] as string[], jumped: [] as string[], opened: [] as string[], pendingRevealKey: null as string | null };   // dom: the [data-key] cards render() stamped (the lifted plan's keys); jumped: the cards scrolled to; opened: the openSession fallbacks posted
+               dom: [] as string[], jumped: [] as string[], opened: [] as string[], pendingRevealKey: null as string | null,   // dom: the [data-key] cards render() stamped (the lifted plan's keys); jumped: the cards scrolled to; opened: the openSession fallbacks posted
+               host: {} as PaneHiddenHost, events: [] as string[], firstHoldTold: false, firstHoldReleased: false };   // host: where the pane's hidden word lands; events: the pane loader's hold events (D3)
+  const seenNow = () => (st.revealShown ? true : st.intersecting);   // feed.ts seenNow: the paint's measure
   function mirrorBadges(asks: Ask[]) { for (const a of asks) if (a.column === "needsInput") st.notified.push(a.itemId); }   // one bell entry per card in trouble
   function render() {
-    if (paintHeld(st.hidden, st.intersecting, st.painted > 0) || firstPaintHeld(st.painted > 0, st.phone, st.shellOn, st.probeHidden, st.intersecting)) { st.paintDirty = true; return; }
+    if (paintHeld(st.hidden, seenNow(), st.painted > 0) || firstPaintHeld(st.painted > 0, st.phone, st.shellOn, st.probeHidden, seenNow())) {
+      st.paintDirty = true;
+      if (st.painted === 0 && !st.firstHoldTold) { st.firstHoldTold = true; st.events.push("romp:firstpaintheld"); }   // feed.ts firstPaintHoldTold: once per hold
+      return;
+    }
     st.paints++; st.dom = PLAN.keys(st); st.painted = st.dom.length;   // what renderBody stamps, from the render's own plan (an empty board still paints: `.feed-empty` is the list's child)
     if (st.painted === 0) st.painted = 1;   // the empty board's own child (feed.ts appends `.feed-empty`), so the standing gate reads content after the first paint
   }
   function releasePaint() {
-    if (!paintReleased(st.paintDirty, st.hidden, st.intersecting)) return;
+    publishPaneHidden(st.hidden, st.intersecting, st.host);   // the observer's word alone, never the override
+    if (!paintReleased(st.paintDirty, st.hidden, seenNow())) return;
     st.paintDirty = false; render();
+    if (st.firstHoldTold && !st.firstHoldReleased && !st.paintDirty) { st.firstHoldReleased = true; st.events.push("romp:firstpaintreleased"); }
     if (st.pendingRevealKey !== null && !st.paintDirty) { const k = st.pendingRevealKey; st.pendingRevealKey = null; if (st.dom.includes(k)) st.jumped.push(k); }   // feed.ts releasePaint's tail
+  }
+  /** the IntersectionObserver's callback over #feed-list, as feed.ts's watchFeedVisibility takes it */
+  function observer(intersecting: boolean) {
+    const was = st.intersecting;
+    st.intersecting = intersecting;
+    st.revealShown = false;
+    if (was === true && !intersecting) st.pendingRevealKey = null;
+    releasePaint();
   }
   /** the revealCard handler's wiring over paint-gate.ts's real revealDecision and feed.ts's lifted paintedKeyOf (the pins below hold feed.ts to the same call) */
   function revealCard(itemId: string, sid: string) {
-    if (st.paintDirty) { st.intersecting = true; releasePaint(); }
+    if (st.paintDirty && st.shellOn !== false) { st.revealShown = true; releasePaint(); }
     const key = "a:" + itemId;
     const target = st.dom.includes(key) ? key : null;
     const decision = revealDecision(!!target, st.paintDirty, PLAN.keyOf(st, itemId) === key, !!sid);
@@ -348,12 +374,16 @@ function phoneFeed(opts: { phone?: boolean | undefined; probeHidden?: boolean } 
   function applyFeedPayload(m: { asks: ModelAsk[] }) { st.model = m.asks; mirrorBadges(m.asks); render(); }
   /** the shell's panes word, as feed.ts's handler takes it */
   function panesWord(on: Record<string, boolean>) {
+    const was = st.shellOn;
     st.shellOn = on.feed === true;
-    if (st.shellOn && st.paintDirty && st.phone === true) { st.intersecting = true; releasePaint(); }
+    if (was === true && !st.shellOn) st.pendingRevealKey = null;
+    if (st.shellOn && st.paintDirty && st.phone === true) { st.revealShown = true; releasePaint(); }
   }
+  /** the shell's synchronous show hook (window.__rompPaneShown, D3), run by the shell's show() in the tap's task */
+  function shown() { st.shellOn = true; if (st.paintDirty && st.phone === true) { st.revealShown = true; releasePaint(); } }
   /** the render's plan for the current state (the lifted feed.ts functions): what the paint would stamp */
   function plan() { return PLAN.plan(st); }
-  return { st, applyFeedPayload, releasePaint, panesWord, revealCard, plan };
+  return { st, applyFeedPayload, releasePaint, panesWord, revealCard, observer, shown, plan };
 }
 
 test("T4: an off-screen feed on the phone applies its first frame without painting the board; mirrorBadges rings from it before any paint; the first show paints it", () => {
@@ -403,7 +433,7 @@ test("F2 (review round 1, 2026-09-19): a bell jump into a held, never-painted ph
   assert.deepEqual(f.st.opened, [], "no openSession: the paint will stamp the card (before this fix the empty DOM took the card-gone fallback and focused or revived the session)");
   assert.deepEqual(f.st.jumped, [], "nothing to scroll to yet: the board is unpainted");
   assert.equal(f.st.pendingRevealKey, "a:g1", "the jump waits for the paint");
-  assert.equal(f.st.paints, 0, "the release attempt re-held on the shell's word: the pane stays unpainted off screen");
+  assert.equal(f.st.paints, 0, "no release attempt for a pane the shell's word has off screen (D4): the pane stays unpainted");
   f.panesWord({ chat: false, feed: true });   // the user taps the Feed tab
   assert.equal(f.st.paints, 1, "the show paints");
   assert.ok(f.st.dom.length > 0, "cards painted");
@@ -418,14 +448,14 @@ test("F2 (review round 1, 2026-09-19): a bell jump into a held, never-painted ph
   assert.deepEqual(g.st.opened, ["11111111-2222-3333-4444-000000000107"]);
   assert.equal(g.st.pendingRevealKey, null);
   // the wiring: the handler's branch, the parked key, the release's tail, the shared helpers
-  assert.match(SRC, /if \(m\.romp === "revealCard"\) \{[\s\S]*?if \(paintDirty\) \{ feedIntersecting = true; releasePaint\(\); \}\n\s*const key = "a:" \+ String\(m\.itemId \|\| ""\);\n\s*unfoldThreadsFor\(new Set\(\[key\]\)\);\n\s*const target = cardByKey\(key\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const decision = revealDecision\(!!target, paintDirty, paintedKeyOf\(String\(m\.itemId \|\| ""\)\) === key, !!m\.sid\);\n\s*if \(decision === "jump" && target\) \{\n\s*jumpToCard\(target\);\n\s*\} else if \(decision === "park"\) \{\n\s*pendingRevealKey = key;\n\s*\} else if \(decision === "open"\) \{/,
+  assert.match(SRC, /if \(m\.romp === "revealCard"\) \{[\s\S]*?if \(paintDirty && feedShellOn !== false\) \{ revealShown = true; releasePaint\(\); \}\n\s*const key = "a:" \+ String\(m\.itemId \|\| ""\);\n\s*unfoldThreadsFor\(new Set\(\[key\]\)\);\n\s*const target = cardByKey\(key\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const decision = revealDecision\(!!target, paintDirty, paintedKeyOf\(String\(m\.itemId \|\| ""\)\) === key, !!m\.sid\);\n\s*if \(decision === "jump" && target\) \{\n\s*jumpToCard\(target\);\n\s*\} else if \(decision === "park"\) \{\n\s*pendingRevealKey = key;\n\s*\} else if \(decision === "open"\) \{/,
     "the handler: the release attempt, the structural lookup, then paint-gate.ts's revealDecision over (found, paintDirty, the paint will stamp this key, a session named) and its three arms; the decision itself is executed above and in paint-gate.test.ts");
   assert.match(SRC, /import \{ firstPaintHeld, viewportHiddenSinceLoad, revealDecision \} from "\.\/paint-gate";/);
   assert.match(SRC, /^let pendingRevealKey: string \| null = null;/m);
-  assert.match(body("releasePaint"), /render\(\);\n\s*\/\/[^\n]*\n\s*if \(pendingRevealKey !== null && !paintDirty\) \{ const k = pendingRevealKey; pendingRevealKey = null; const t = cardByKey\(k\); if \(t\) jumpToCard\(t\); \}\n\}/,
-    "the release's tail reveals the parked card on the paint it waited for");
+  assert.match(body("releasePaint"), /render\(\);\n\s*if \(firstHoldTold[^\n]*\n\s*\/\/[^\n]*\n\s*if \(pendingRevealKey !== null && !paintDirty\) \{ const k = pendingRevealKey; pendingRevealKey = null; const t = cardByKey\(k\); if \(t\) jumpToCard\(t\); \}\n\}/,
+    "the release's tail reveals the parked card on the paint it waited for (after the loader's release event, D3)");
   assert.match(body("cardByKey"), /Array\.from\(document\.querySelectorAll\("\[data-key\]"\)\) as HTMLElement\[\]\)\.find\(\(c\) => c\.dataset\.key === key\) \|\| null/, "the structural match, never an interpolated selector (#940)");
-  assert.equal((SRC.match(/pendingRevealKey = /g) || []).length, 2, "parked and consumed: two writes (the declaration initialises it null)");
+  assert.equal((SRC.match(/pendingRevealKey = /g) || []).length, 4, "parked, consumed, and dropped on the pane's flip to hidden by either witness (the shell's word, the observer's): four writes (the declaration initialises it null); review round 2, D5");
 });
 
 test("HIGH-1 (review round 2, 2026-09-19): a reveal the paint will NOT stamp under its key takes the base's open road at the tap, under the hold: a satellite, a session-filtered card, a search miss, a lens-hidden card, a turn-group member", () => {
@@ -492,8 +522,10 @@ test("feed.ts wires the first-paint hold: the shell's word and the two probes be
   assert.match(SRC, /let feedShellOn: boolean \| undefined;\nfunction parentMobile\(\): boolean \| undefined \{\n\s*try \{ const p = window\.parent as unknown as \{ __rompMobileOn\?: unknown \}; return \(window\.parent !== window && typeof p\.__rompMobileOn === "function"\) \? !!\(p\.__rompMobileOn as \(\) => unknown\)\(\) : undefined; \} catch \{ return undefined; \}\n\}/,
     "the shell's layout probe, read live as the kernel's pane shim reads it; the zero-viewport probe is paint-gate.ts's viewportHiddenSinceLoad over the page's window (feed-age.test.ts pins that feed.ts itself carries no probe)");
   assert.doesNotMatch(SRC, /window\.innerWidth === 0/, "no probe text in feed.ts: the standing gate never reads one (feed-age.test.ts), and the first-paint hold reads it through paint-gate.ts");
-  assert.match(SRC, /if \(m\.romp === "panes"\) \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(m\.on && typeof m\.on === "object"\) \{\n\s*feedShellOn = m\.on\.feed === true;\n\s*if \(feedShellOn && paintDirty && parentMobile\(\) === true\) \{ feedIntersecting = true; releasePaint\(\); \}\n\s*\}\n\s*return;\n\s*\}/,
-    "the panes word: this pane's on-screen word, and on the phone's show the release of the owed paint (the word stands in for the observer's, the revealCard precedent)");
+  assert.match(SRC, /if \(m\.romp === "panes"\) \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(m\.on && typeof m\.on === "object"\) \{\n\s*const was = feedShellOn;\n\s*feedShellOn = m\.on\.feed === true;\n\s*if \(was === true && !feedShellOn\) pendingRevealKey = null;[^\n]*\n\s*if \(feedShellOn && paintDirty && parentMobile\(\) === true\) \{ revealShown = true; releasePaint\(\); \}\n\s*\}\n\s*return;\n\s*\}/,
+    "the panes word: this pane's on-screen word; a flip to hidden drops a parked jump (D5); on the phone's show the release of the owed paint through the show override (D4; the word stands in for the observer's, the revealCard precedent)");
+  assert.match(SRC, /^\(window as unknown as \{ __rompPaneShown\?: \(\) => void \}\)\.__rompPaneShown = \(\) => \{ feedShellOn = true; if \(paintDirty && parentMobile\(\) === true\) \{ revealShown = true; releasePaint\(\); \} \};/m,
+    "the shell's synchronous show hook (D3): the same body as the panes handler's show arm, run in the tap's task by kernel _LANDING_MOBILE_JS show()");
   assert.ok(SRC.indexOf('if (m.romp === "panes") {') < SRC.indexOf('if (m.romp === "revealCard") {'), "…ahead of the bell jump (on the desktop the shell posts the jump after the show's word; on the phone a jump into a held board is decided from the model, the F2 case above)");
   const apply = body("applyFeedPayload");
   assert.ok(apply.indexOf("mirrorBadges(") < apply.indexOf("\n  render();\n"), "the bell mirror runs before the gated render: it rings from a frame whose paint is held");
@@ -515,4 +547,132 @@ test("run: feed.ts's own gate over a phone stand-in holds the first frame of a p
   const s = feedWiring({ parentProbe: () => true, innerWidth: 390, innerHeight: 700 });   // the phone left on the Feed tab
   s.frame(2);
   assert.equal(s.st.paints, 1, "the shown tab paints its first frame at once");
+});
+
+// ── review round 2 (2026-09-19): the show paints synchronously and holds the pane loader (D3); no reveal writes the observer's
+// variable (D4); the parked jump retires on the pane's next visibility change (D5) ──
+test("D3: the shell's show hook paints the held first board in the tap's own task, and the pane loader is told once per hold and once at the release", () => {
+  const f = phoneFeed();   // the phone on the Chat tab, the feed hidden since load
+  f.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks" }] });
+  f.panesWord({ chat: true, feed: false });
+  f.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks" }, { itemId: "g2", column: "asks" }] });
+  assert.equal(f.st.paints, 0, "two frames applied, none painted");
+  assert.deepEqual(f.st.events, ["romp:firstpaintheld"], "the pane loader is told ONCE that the first paint is held (its 30 s failsafe stands down: nobody can see the sheet)");
+  f.shown();   // the tap on the Feed tab: the shell's show() calls the hook before its re-tell
+  assert.equal(f.st.paints, 1, "the first paint lands synchronously in the show's task, before any panes word");
+  assert.ok(f.st.dom.length > 0, "cards painted");
+  assert.deepEqual(f.st.events, ["romp:firstpaintheld", "romp:firstpaintreleased"], "…and the loader's backstop resumes, told once");
+  f.panesWord({ chat: false, feed: true });   // the shell's re-tell, a later task
+  f.observer(true);                            // the observer's re-measure, a rendering step later
+  assert.equal(f.st.paints, 1, "the word and the observer that follow the show paint nothing more");
+  assert.deepEqual(f.st.events, ["romp:firstpaintheld", "romp:firstpaintreleased"], "no second event");
+  // a release that RE-HOLDS dispatches nothing: the browser tab's return with the pane still off screen on the shell's word
+  const g = phoneFeed();
+  g.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks" }] });
+  g.panesWord({ chat: true, feed: false });
+  g.st.hidden = true; g.st.hidden = false; g.releasePaint();   // visibilitychange -> visible: paintReleased says yes (the observer is unspoken), render() re-holds on the word
+  assert.equal(g.st.paints, 0, "re-held");
+  assert.deepEqual(g.st.events, ["romp:firstpaintheld"], "a release that painted nothing re-arms no backstop (the sheet would fade over an empty list)");
+  // the desktop and a standalone page: no hold, so no events
+  const d = phoneFeed({ phone: false });
+  d.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks" }] });
+  assert.deepEqual([d.st.paints, d.st.events], [1, []], "off the phone the first content paints through and the loader hears nothing");
+});
+
+test("D4: a reveal into a pane the shell has off screen leaves the observer's word and the published hidden word alone and paints nothing into the hidden iframe; a desktop reveal releases synchronously and the observer spends the override", () => {
+  const f = phoneFeed({ probeHidden: false });   // the phone left on the Feed tab
+  f.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks" }] });
+  assert.equal(f.st.paints, 1, "the shown tab paints its first frame");
+  f.observer(true);
+  assert.equal(f.st.host.__rompPaneHidden, false, "the observer's first word: on screen");
+  f.panesWord({ chat: true, feed: false }); f.observer(false);   // the user taps the Chat tab: the shell's word, then the observer's
+  assert.equal(f.st.host.__rompPaneHidden, true, "hidden after a first show");
+  f.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks" }, { itemId: "g2", column: "asks" }] });
+  assert.equal(f.st.paints, 1, "a frame while hidden is applied, not painted");
+  assert.equal(f.revealCard("g2", "11111111-2222-3333-4444-000000000102"), "park", "the bell row for g2 (the shell switches no tab on the phone)");
+  assert.equal(f.st.intersecting, false, "the observer's variable is untouched (before this fix the arm wrote true into it and nothing restored it)");
+  assert.equal(f.st.host.__rompPaneHidden, true, "the published word still says hidden: the shim is not told a hidden pane is on screen");
+  assert.equal(f.st.revealShown, false, "no override for a pane the shell has off screen");
+  assert.equal(f.st.paints, 1, "nothing painted into the display:none iframe");
+  f.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks" }, { itemId: "g2", column: "asks" }, { itemId: "g3", column: "asks" }] });
+  assert.equal(f.st.paints, 1, "…and the next push repaints nothing either (the defect: every push repainted the board into the hidden pane)");
+  f.panesWord({ chat: false, feed: true });   // the show
+  assert.equal(f.st.paints, 2, "the show paints once");
+  assert.deepEqual(f.st.jumped, ["a:g2"], "…and lands the parked jump");
+  f.observer(true);
+  assert.equal(f.st.revealShown, false, "the observer's callback spends the override");
+  // the desktop: the shell toggles the pane on (its word true) and posts the jump in the same task, before the observer re-measures
+  const d = phoneFeed({ phone: false, probeHidden: false });
+  d.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks" }] });
+  d.observer(true); d.panesWord({ chat: true, feed: true });
+  d.observer(false);   // the rail toggled the pane off (display:none): the observer's word
+  d.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks" }, { itemId: "g2", column: "asks" }] });
+  assert.equal(d.st.paints, 1, "held while off");
+  assert.equal(d.revealCard("g2", "11111111-2222-3333-4444-000000000102"), "jump", "the bell click toggled the pane on (the word stands at true): the reveal releases synchronously and finds the card, the base's behaviour");
+  assert.equal(d.st.paints, 2, "one synchronous paint");
+  assert.equal(d.st.intersecting, false, "…through the override, not the observer's variable");
+  assert.equal(d.st.revealShown, true, "the override stands until the observer speaks");
+  d.observer(true);
+  assert.equal(d.st.revealShown, false, "the observer's next callback clears it");
+  d.observer(false); d.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks" }] });
+  assert.equal(d.st.paints, 2, "a later hide holds again (the override did not outlive the observer's word)");
+});
+
+test("D5: the parked jump retires on the pane's next visibility change: the show consumes it, a flip to hidden drops it, a second reveal replaces it, a re-tell of the same word changes nothing", () => {
+  const SID = "11111111-2222-3333-4444-000000000101";
+  // the shell re-tells the same off-screen word on its socket events: the park stands; the show consumes it
+  const f = phoneFeed();
+  f.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks", sid: SID }] });
+  f.panesWord({ chat: true, feed: false });
+  assert.equal(f.revealCard("g1", SID), "park");
+  for (let i = 0; i < 3; i++) f.panesWord({ chat: true, feed: false });   // the shell's re-tells (a socket open, a close, a link flip)
+  assert.equal(f.st.pendingRevealKey, "a:g1", "a re-tell of the same word is not a visibility change: the park stands");
+  f.panesWord({ chat: false, feed: true });
+  assert.deepEqual([f.st.pendingRevealKey, f.st.jumped], [null, ["a:g1"]], "the show that follows the reveal consumes it");
+  // a park made while the pane is shown but the browser tab is hidden; the shell's word then flips the pane to hidden: dropped
+  const g = phoneFeed({ probeHidden: false });
+  g.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks", sid: SID }] });
+  g.observer(true); g.panesWord({ chat: false, feed: true });
+  g.st.hidden = true;   // the browser tab goes to the background with the Feed tab shown
+  g.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks", sid: SID }, { itemId: "g2", column: "asks", sid: SID }] });
+  assert.equal(g.revealCard("g2", SID), "park", "a reveal while the tab is hidden parks (the release attempt waits for the tab)");
+  g.panesWord({ chat: true, feed: false });   // a relay's tab switch while away: the pane is hidden now
+  assert.equal(g.st.pendingRevealKey, null, "the flip to hidden drops the park: the next show is not this gesture's");
+  g.st.hidden = false; g.releasePaint(); g.panesWord({ chat: false, feed: true }); g.observer(true);
+  assert.deepEqual(g.st.jumped, [], "…so the later show jumps nothing");
+  // the observer's flip to hidden drops it too
+  const h = phoneFeed({ probeHidden: false });
+  h.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks", sid: SID }] });
+  h.observer(true); h.panesWord({ chat: false, feed: true });
+  h.st.hidden = true;
+  h.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks", sid: SID }, { itemId: "g2", column: "asks", sid: SID }] });
+  assert.equal(h.revealCard("g2", SID), "park");
+  h.observer(false);
+  assert.equal(h.st.pendingRevealKey, null, "the observer's hide after a show drops it");
+  // two reveals in a row: the second's key stands alone
+  const k = phoneFeed();
+  k.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks", sid: SID }, { itemId: "g2", column: "asks", sid: SID }] });
+  k.panesWord({ chat: true, feed: false });
+  k.revealCard("g1", SID); k.revealCard("g2", SID);
+  assert.equal(k.st.pendingRevealKey, "a:g2", "a second reveal replaces the first");
+  k.panesWord({ chat: false, feed: true });
+  assert.deepEqual(k.st.jumped, ["a:g2"]);
+});
+
+test("run: feed.ts's own lines take the shell's show hook: the held first frame paints synchronously, the loader's two events fire once each, and the observer's callback afterwards paints nothing more", () => {
+  const f = feedWiring({ parentProbe: () => true, innerWidth: 0, innerHeight: 0 });   // the phone, the feed hidden since load
+  f.frame(3);
+  f.frame(4);
+  assert.equal(f.st.paints, 0, "held");
+  assert.deepEqual(f.events, ["romp:firstpaintheld"], "told once across two held frames");
+  f.viewport(390, 700); f.shown();   // the tap: the shell shows the iframe and calls the hook in the same task
+  assert.equal(f.st.paints, 1, "painted synchronously");
+  assert.equal(f.st.painted, 4);
+  assert.deepEqual(f.events, ["romp:firstpaintheld", "romp:firstpaintreleased"], "the backstop resumes once");
+  f.observer(true);
+  assert.equal(f.st.paints, 1, "the observer's re-measure owes nothing");
+  assert.equal(f.st.host.__rompPaneHidden, false, "…and publishes on screen");
+  f.observer(false); f.frame(5);   // the user taps another tab: the observer says hidden; a frame arrives
+  assert.equal(f.st.paints, 1, "held: the show override did not outlive the observer's word (D4: its callback clears the flag)");
+  assert.equal(f.st.host.__rompPaneHidden, true);
 });

@@ -1172,6 +1172,22 @@ window.__rompMobileTab('feed');
 out.feedTab = { tab: TAB, sets: Object.assign({}, SETS) };
 console.log(JSON.stringify(out));
 """
+# D3 (review round 2, 2026-09-19): show() calls the shown pane's own synchronous show hook (contentWindow.__rompPaneShown) after the
+# m-on toggle and BEFORE the re-tell, on the phone layout alone
+_LAZY_SHOWN_DRIVER = _LAZY_TOOLS + r"""
+frames['f-feed'].contentWindow.__rompPaneShown = () => { LOG.push('shown:feed'); };   // the feed bundle's hook (feed.ts); the other frames define none
+LOG.length = 0;
+window.__rompMobileTab('feed');
+out.feedTap = { tab: TAB, log: LOG.slice(), mOn: frames['f-feed'].classList.contains('m-on') };
+LOG.length = 0;
+window.__rompMobileTab('waiting');   // a pane whose document defines no hook (or has no document yet): nothing called, the tell stands
+out.waitingTap = { log: LOG.slice() };
+LOG.length = 0;
+MATCHES = false;   // the desktop layout: show() (a relay's switch) calls no hook
+window.__rompMobileTab('feed');
+out.desktopShow = { log: LOG.slice() };
+console.log(JSON.stringify(out));
+"""
 _LAZY_DESKTOP_DRIVER = _LAZY_TOOLS + r"""
 out.boot = { tab: TAB, src: src(), lazy: lazy(), sets: Object.assign({}, SETS), loading: loading(), bodyLoading: BODY_CLS.has('pane-loading') };
 window.__rompMobileTab('waiting');
@@ -1378,6 +1394,14 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(o["mirror"], g, "a loaded pane's backstop changes nothing (the mirror: no re-park of a healthy pane)")
         self.assertEqual(o["again"]["sets"], {"feed": 1, "waiting": 3}, "a later show of the loaded pane reassigns nothing")
         self.assertEqual(o["feed"], {"src": "/feed", "div": []}, "the feed's document, committed at boot, is untouched throughout")
+
+    def test_the_show_calls_the_shown_panes_hook_before_the_re_tell_on_the_phone_alone(self):
+        # D3 (review round 2, 2026-09-19): the feed's held first paint lands in the tap's own task (feed.ts window.__rompPaneShown), so the
+        # compositor never shows the empty pane; the re-tell that follows is the belt for a document with no hook yet
+        o = _lazy(self.seed, _LAZY_SHOWN_DRIVER)
+        self.assertEqual(o["feedTap"], {"tab": "feed", "log": ["shown:feed", "tell"], "mOn": True}, "the hook runs after the m-on toggle and before the re-tell")
+        self.assertEqual(o["waitingTap"]["log"], ["src:waiting", "tell"], "a pane without the hook: the promotion and the tell, nothing else")
+        self.assertEqual(o["desktopShow"]["log"], ["tell"], "off the phone layout show() calls no hook (the desktop grid paints its first frame on its own)")
 
     def test_the_desktop_loads_every_pane_at_boot_as_before_with_no_loading_state(self):
         o = _lazy("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true });", _LAZY_DESKTOP_DRIVER, phone=False)

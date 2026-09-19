@@ -336,19 +336,25 @@ test("the chat is never held; the feed pane holds its PAINT like the Outline and
 });
 
 test("source pins: the release events are the observer's callback and visibilitychange, never a resize; the telemetry's hidden_pane is the viewport probe again", () => {
-  for (const [name, src, sites] of [["fleet.ts", FLEET, 2], ["feed.ts", FEED, 4]] as const) {
+  for (const [name, src, sites] of [["fleet.ts", FLEET, 2], ["feed.ts", FEED, 5]] as const) {
     // feed.ts's callback also catches the skipped age pass up (`live.catchUp();`, the offer's line, pinned by feed-hidden-paint.test.ts)
-    // in place of the fork's resize listener; fleet.ts's observer has no such line
-    assert.match(src, /new IntersectionObserver\(\(entries\) => \{\n\s*\w+ = entries\.some\(\(e\) => e\.isIntersecting\);\n\s*releasePaint\(\);\n(?:\s*live\.catchUp\(\);[^\n]*\n)?\s*\}\)\.observe\(list\);/, name + ": the observer over the list releases");
+    // in place of the fork's resize listener; fleet.ts's observer has no such line. Since review round 2 of the lazy panes
+    // (2026-09-19) feed.ts's callback also records the previous word, spends the show override and drops a parked jump on a
+    // hide after a show, between its word and the release (feed-hidden-paint.test.ts pins those lines; the release stays)
+    if (name === "feed.ts") assert.match(src, /new IntersectionObserver\(\(entries\) => \{\n\s*const was = feedIntersecting;\n\s*feedIntersecting = entries\.some\(\(e\) => e\.isIntersecting\);\n(?:\s*(?:revealShown = false|if \(was === true && !feedIntersecting\) pendingRevealKey = null);[^\n]*\n){2}\s*releasePaint\(\);\n\s*live\.catchUp\(\);[^\n]*\n\s*\}\)\.observe\(list\);/, name + ": the observer over the list releases");
+    else assert.match(src, /new IntersectionObserver\(\(entries\) => \{\n\s*\w+ = entries\.some\(\(e\) => e\.isIntersecting\);\n\s*releasePaint\(\);\n\s*\}\)\.observe\(list\);/, name + ": the observer over the list releases");
     assert.match(src, /document\.addEventListener\("visibilitychange", \(\) => \{ if \(!document\.hidden\) releasePaint\(\); \}\);/, name + ": the tab's return releases");
     assert.equal(src.split("releasePaint();").length - 1, sites, name + ": the release call sites");
     assert.ok(!/addEventListener\("resize"[^\n]*releasePaint/.test(src), name + ": a resize releases nothing (a same-size re-show fires none)");
   }
-  // feed.ts's third site: a bell jump settles the owed paint on the shell's word (feed-hidden-paint.test.ts pins the line)
-  assert.match(FEED, /if \(paintDirty\) \{ feedIntersecting = true; releasePaint\(\); \}/);
+  // feed.ts's third site: a bell jump settles the owed paint on the shell's word (feed-hidden-paint.test.ts pins the line): through the
+  // show override, never the observer's variable, and not for a pane the shell's word has off screen (review round 2, D4)
+  assert.match(FEED, /if \(paintDirty && feedShellOn !== false\) \{ revealShown = true; releasePaint\(\); \}/);
   // feed.ts's fourth site (stage 0, 2026-09-18): the shell's panes word on the phone's show settles the FIRST paint the phone hold owes,
   // the same way (feed-hidden-paint.test.ts pins the handler)
-  assert.match(FEED, /if \(feedShellOn && paintDirty && parentMobile\(\) === true\) \{ feedIntersecting = true; releasePaint\(\); \}/);
+  assert.match(FEED, /if \(feedShellOn && paintDirty && parentMobile\(\) === true\) \{ revealShown = true; releasePaint\(\); \}/);
+  // feed.ts's fifth site (review round 2, D3): the shell's synchronous show hook, the same arm run in the tap's own task
+  assert.match(FEED, /__rompPaneShown = \(\) => \{ feedShellOn = true; if \(paintDirty && parentMobile\(\) === true\) \{ revealShown = true; releasePaint\(\); \} \};/);
   // perf-telemetry's hidden_pane row is the shim's union: the zero-viewport probe OR the pane's published word
   // (round 3; steer 2 had left it on the probe alone, which under-reports a pane hidden after a first show in
   // Chromium). perf-telemetry.test.ts executes the read.
