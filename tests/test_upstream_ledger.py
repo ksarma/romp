@@ -26,7 +26,8 @@ tree last:
    synthetic row into an entry that parses and round-trips its cells, sees an existing entry whether
    or not it parses, keeps the entry's header values under `--replace` and takes the row's under
    `--force`, and names every value it kept or changed;
-7. the real tree: `check()` over `upstream/` and UPSTREAM.md returns no problems.
+7. the real tree: `check()` over `upstream/` and UPSTREAM.md returns no problems, and every entry
+   added since upstream began enforcing tiers (2026-09-08) records its tier.
 """
 import contextlib
 import importlib.util
@@ -1068,8 +1069,25 @@ class AddedDate(unittest.TestCase):
         self.assertIn("2 rows whose first commit the pickaxe could not find (added = today; set the date by hand): 0001, 0002", report)
 
 
+TIER_RULE_FROM = "2026-09-08"   # the day upstream began enforcing the tier label (docs/pr-tiers.md); every entry since records the pick
+
+
 class RealTree(unittest.TestCase):
-    """Check 7: the repository's own ledger passes every rule, and its rendering passes the checker."""
+    """Check 7: the repository's own ledger passes every rule, its rendering passes the checker, and every entry
+    added since the tier rule records its tier."""
+
+    def test_every_entry_added_since_the_tier_rule_records_its_tier(self):
+        """`tier:` is optional to the parser (entries predate the rule) but not to an entry added since upstream began
+        enforcing tiers: the line records the pick the PR carries (the repo's instructions), and a blank one leaves an
+        offer's tier to memory. Every such entry in the tree carries one today; a deleted or blanked line fails here by
+        name (the mutation pass of review round 3 of the env-pick door, 2026-09-19: its entry's `tier: fix` line
+        deleted, the parser's required keys being status, where and added only, the suite stayed green)."""
+        entries, _ = L.check(ROOT)
+        since = [e for e in entries if e.get("added") >= TIER_RULE_FROM]
+        self.assertGreater(len(since), 100)
+        self.assertEqual(sorted(e.name for e in since if not e.get("tier")), [], "entries since the rule with no tier")
+        for e in since:
+            self.assertIn(e.get("tier"), L.TIERS, e.name)
 
     def test_check_returns_no_problems(self):
         entries, got = L.check(ROOT)

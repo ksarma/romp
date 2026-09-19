@@ -149,7 +149,7 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     """`hosts/<sid>/spawn.json`, the directory at 0700 and the file at 0600: the spec carries the
     environment overlay, minus the credential-shaped names of it as the kernel's split_spawn_secrets draws
     them (spawn_env_secret_names: the three login names whatever their value, and a non-empty value under a
-    name ending _API_KEY or _TOKEN, in any letter case, or one of 1Password's), moved to the host's process
+    name ending _API_KEY or _TOKEN or one of 1Password's, in any letter case), moved to the host's process
     environment before this write; a name of another shape stays in the file with its value, as it was (a
     non-string value included, which the host's SDK transport cannot spawn from; pre-existing, named in the
     kernel's split_spawn_secrets). The shape is
