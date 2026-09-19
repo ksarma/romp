@@ -60,12 +60,16 @@ PREDATES_FAR = ("the kernel on TESTHOST predates romp billing's routes (GET and 
 def _register(sid, name):
     """A session the kernel knows by id AND by name: the names registry line, and an SDK registry entry that says alive,
     which is what the client doors' by-name lookup admits (a live generation of the name; a bare names line alone is a
-    dormant session, addressed by id and 404 by name, _resolve_sid's rule)."""
+    dormant session, addressed by id and 404 by name, _resolve_sid's rule). Returns the two paths it wrote, for the
+    caller to take back when it is done: the reg lands in the state root of the SHARED judge module (kernel.py loads
+    judge.py under the one name romp_judge, whatever name the kernel itself was loaded under), the SDKDIR every other
+    test module's kernel in the process reads, where a leftover reads as an SDK-owned session (2026-09-19)."""
     km.NAMES.mkdir(parents=True, exist_ok=True)
     (km.NAMES / sid).write_text("%s\t\n" % name)
     sdk = km.jd.STATE / "sdk"
     sdk.mkdir(parents=True, exist_ok=True)
     (sdk / (sid + ".json")).write_text(json.dumps({"sid": sid, "name": name, "alive": True}))
+    return [km.NAMES / sid, sdk / (sid + ".json")]
 
 
 class _FakeBackend:
@@ -158,11 +162,13 @@ class _RouteServer(unittest.TestCase):
         cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
         cls.port = cls.srv.server_address[1]
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
-        _register(SID, "web")
+        cls._registered = _register(SID, "web")
 
     @classmethod
     def tearDownClass(cls):
         cls.srv.shutdown()
+        for path in cls._registered:      # the shared registry is left as it was found (RouteServerLeavesTheSharedRegistryClean)
+            path.unlink(missing_ok=True)
 
     def _post(self, body, token=True):
         """POST /billing with the serve token (True), none (False) or the string given (a wrong one)."""
@@ -2311,6 +2317,31 @@ class VerbWords(unittest.TestCase):
         out = self._romp("web", "default", reply=(200, dict(base, pick="default", default="key", reconnect="now", superseded=2)))
         self.assertEqual(out.stdout.strip(), "romp billing: web follows the machine default again (API key); "
                                              "the session is reconnecting to apply it; 2 earlier queued picks were dropped")
+
+
+class RouteServerLeavesTheSharedRegistryClean(unittest.TestCase):
+    """_register writes the placeholder sid's names line and SDK reg into the state root of the SHARED judge module
+    (kernel.py loads judge.py under the one name romp_judge, so every test module's kernel in a process reads the same
+    SDKDIR, whatever name the kernel itself was loaded under). A reg a _RouteServer class left behind made
+    tests/test_kernel.py's ViewBuilder lane read 'sdk' for a names-only session whenever one of these classes had run on
+    the same xdist worker first (a full-suite sweep, 2026-09-19). The fixture takes back exactly what it wrote."""
+
+    def test_the_fixture_takes_back_what_it_registered(self):
+        class _Probe(_RouteServer):
+            pass
+        reg, line = km.jd.STATE / "sdk" / (SID + ".json"), km.NAMES / SID
+        _Probe.setUpClass()
+        try:
+            self.assertTrue(reg.exists(), "the fixture registers the session while the class runs")
+            self.assertTrue(line.exists())
+        finally:
+            _Probe.tearDownClass()
+        self.assertFalse(reg.exists(), "a reg left in the shared registry reads as an SDK-owned session to every other "
+                                       "module's kernel")
+        self.assertFalse(line.exists())
+        with mock.patch.object(km, "_sdk", lambda: None), mock.patch.object(km, "_codex", lambda: None):
+            self.assertEqual(km._session_backend(SID, {"state": "idle"}), "",
+                             "a names-only session reads '' once the class is done, the label ViewBuilder pins on the lane")
 
 
 if __name__ == "__main__":
