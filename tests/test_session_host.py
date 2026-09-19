@@ -1783,18 +1783,22 @@ class SocketMode(unittest.TestCase):
         transport, no pid), and the four run in that order before the lease write, which precedes the bind; at the bind
         the lease is on disk and a CLI stands behind it (the CLI-before-socket order, kept). Through round 2 the same four
         steps ran with the spawn's lease on disk, inside _serve_socket. Interposed, not read: sh.hosts_dir and
-        _sweep_stale_temps are wrapped, the published path's unlink is caught at os.unlink, and the budget compare is
-        caught by an int subclass standing in for SOCK_PATH_MAX (_Limit). The constructor's own hosts_dir call (kernel-2,
+        _sweep_stale_temps are wrapped, the published path's unlink is caught at Path.unlink and at os.unlink (one snapshot
+        whichever way this Python's pathlib reaches os.unlink: 3.10 bound it in its accessor at import, so a patched
+        os.unlink alone never saw the kernel's Path.unlink there and CI's 3.10 cell was red on this step while 3.11 to
+        3.13 were green; the glob wrapper of the next case documents the same class for os.scandir), and the budget
+        compare is caught by an int subclass standing in for SOCK_PATH_MAX (_Limit). The constructor's own hosts_dir call (kernel-2,
         the same round) is the first snapshot, taken before self.host exists and labelled so. Red under the mutation that
         calls _prepare_socket after _spawn (round 2's order): every prelude snapshot then shows the lease and the CLI."""
         lease_file = self._lease_on_disk()
-        seen = []
+        seen, depth = [], [0]
 
         def snap(step):
             host = getattr(self, "host", None)          # None inside the constructor: the guard runs before the host is bound
             seen.append((step, list(self.lease_calls), dict(self.leases), lease_file().exists(),
                          sb.read_lease(self.root, SID), host.transport if host else None, host.cli_pid if host else None))
         real_hosts_dir, real_sweep, real_unlink, real_start = sh.hosts_dir, sh.SessionHost._sweep_stale_temps, os.unlink, asyncio.start_unix_server
+        real_path_unlink = Path.unlink
 
         def hosts_dir(state_dir):
             snap("hosts-dir" if getattr(self, "host", None) is not None else "hosts-dir-constructor")
@@ -1805,9 +1809,22 @@ class SocketMode(unittest.TestCase):
             return real_sweep(host)
 
         def unlink(path, *a, **k):
-            if Path(path) == self.pub:
+            if depth[0] == 0 and Path(path) == self.pub:      # a direct os.unlink; one inside Path.unlink was snapped there
                 snap("unlink-published")
             return real_unlink(path, *a, **k)
+
+        def path_unlink(p, *a, **k):
+            # pathlib's shape, interposed on the class beside os.unlink so the kernel's `self.sock_path.unlink()` is ONE
+            # snapshot on every interpreter: Python 3.10's pathlib bound `unlink = os.unlink` in its accessor at import,
+            # so a patched os.unlink never sees a Path.unlink there, where 3.11 and later look os.unlink up at call time.
+            # The depth guard is the glob wrapper's: the call-time os.unlink inside this one is not snapped a second time.
+            if Path(p) == self.pub:
+                snap("unlink-published")
+            depth[0] += 1
+            try:
+                return real_path_unlink(p, *a, **k)
+            finally:
+                depth[0] -= 1
 
         async def start(*a, **k):
             snap("bind")
@@ -1815,7 +1832,8 @@ class SocketMode(unittest.TestCase):
         write = self.lease_api["write_lease"]
         self.lease_api["write_lease"] = lambda sd, lease: (write(sd, lease), snap("lease-write"))
         with mock.patch.object(sh, "hosts_dir", hosts_dir), mock.patch.object(sh.SessionHost, "_sweep_stale_temps", sweep), \
-                mock.patch.object(os, "unlink", unlink), mock.patch.object(asyncio, "start_unix_server", start), \
+                mock.patch.object(os, "unlink", unlink), mock.patch.object(Path, "unlink", path_unlink), \
+                mock.patch.object(asyncio, "start_unix_server", start), \
                 mock.patch.object(sh, "SOCK_PATH_MAX", self._Limit(sh.SOCK_PATH_MAX, lambda: snap("budget"))):
             mode, rc = self._run_host()
         self.assertEqual(rc, 0, self.host_log[-3:])
@@ -1842,12 +1860,18 @@ class SocketMode(unittest.TestCase):
         sweep's glob, before the lease. Through round 2 the glob sat inside that interval, which is what made the
         interval proportional to the entries in hosts/. Path.glob is wrapped to materialise its listing inside the
         wrapped call, so the os-level reads it makes (one os.scandir on a Python whose pathlib looks scandir up at call
-        time; none visible where pathlib bound it at import) are attributed to it and counted as one listing. Red under
-        the mutation that puts a second sweep at the top of _serve_socket (a listing in the interval, two listings
-        overall) and under the one that calls _prepare_socket after _spawn (the prelude in the interval)."""
+        time; none visible where pathlib bound it at import) are attributed to it and counted as one listing. Path.unlink
+        is wrapped the same way beside os.unlink, so each unlink the kernel makes through pathlib (the dead published
+        socket's, a stale temp's, the failed bind's temp) is ONE event whichever way this Python's Path.unlink reaches
+        os.unlink: 3.10 bound it at import, and with os.unlink patched alone the dead socket's unlink was invisible there
+        (CI's 3.10 cell red on this case's last assertion, 3.11 to 3.13 green). Red under the mutation that puts a second
+        sweep at the top of _serve_socket (a listing in the interval, two listings overall), under the one that calls
+        _prepare_socket after _spawn (the prelude in the interval) and, on every interpreter, under the one that drops
+        the prelude's dead-socket unlink."""
         events, depth, hosts = [], [0], self.pub.parent
         real = dict(glob=Path.glob, iterdir=Path.iterdir, scandir=os.scandir, listdir=os.listdir, chmod=os.chmod, rename=os.rename,
-                    unlink=os.unlink, hosts_dir=sh.hosts_dir, sweep=sh.SessionHost._sweep_stale_temps, start=asyncio.start_unix_server)
+                    unlink=os.unlink, path_unlink=Path.unlink, hosts_dir=sh.hosts_dir, sweep=sh.SessionHost._sweep_stale_temps,
+                    start=asyncio.start_unix_server)
 
         def glob(path, pattern, *a, **k):
             depth[0] += 1
@@ -1881,8 +1905,20 @@ class SocketMode(unittest.TestCase):
             return real["sweep"](host)
 
         def unlink(path, *a, **k):
-            events.append(("unlink", "unlink", Path(path)))
+            if depth[0] == 0:                         # a direct os.unlink; one inside Path.unlink is that wrapper's event
+                events.append(("unlink", "unlink", Path(path)))
             return real["unlink"](path, *a, **k)
+
+        def path_unlink(p, *a, **k):
+            # pathlib's shape, one event on every interpreter, under the glob wrapper's depth guard and for the reason it
+            # gives for os.scandir: 3.10's pathlib bound os.unlink in its accessor at import, so a patched os.unlink never
+            # sees a Path.unlink there, and 3.11 and later reach os.unlink at call time, which the guard keeps to one event
+            events.append(("unlink", "unlink", Path(p)))
+            depth[0] += 1
+            try:
+                return real["path_unlink"](p, *a, **k)
+            finally:
+                depth[0] -= 1
 
         async def start(*a, **k):
             events.append(("serve", "bind", Path(k.get("path"))))
@@ -1901,6 +1937,7 @@ class SocketMode(unittest.TestCase):
         with mock.patch.object(Path, "glob", glob), mock.patch.object(Path, "iterdir", iterdir), \
                 mock.patch.object(os, "scandir", scandir), mock.patch.object(os, "listdir", listdir), \
                 mock.patch.object(os, "chmod", chmod), mock.patch.object(os, "rename", rename), mock.patch.object(os, "unlink", unlink), \
+                mock.patch.object(Path, "unlink", path_unlink), \
                 mock.patch.object(sh, "hosts_dir", hosts_dir), mock.patch.object(sh.SessionHost, "_sweep_stale_temps", sweep), \
                 mock.patch.object(asyncio, "start_unix_server", start):
             mode, rc = self._run_host()
@@ -2035,7 +2072,7 @@ class SocketBudget(unittest.TestCase):
 
 class StateRootByHostsDir(unittest.TestCase):
     """kernel-7 (round 5 of the review, 2026-09-19): the state root's mode when hosts_dir's parents=True makes it, READ
-    BACK under three umasks and never assumed. pathlib's Path.mkdir applies `mode` to the leaf alone and makes a missing
+    BACK under four umasks (the runner's, 022, 077 and 000) and never assumed. pathlib's Path.mkdir applies `mode` to the leaf alone and makes a missing
     parent with its default 0777, so the root lands at the umask's mode (0755 under 022, 0700 under 077, 0777 under 000)
     while hosts/ below it is 0700 in every case. A characterisation of the mechanism as it stands, filed as a finding
     for the queue and not fixed in this change (hosts_dir's docstring says which roads can reach it: only a caller over
@@ -2043,7 +2080,7 @@ class StateRootByHostsDir(unittest.TestCase):
 
     def _made_under(self, umask, root=None):
         """hosts_dir over a root not yet on disk, under `umask` (restored); the root's and hosts/'s modes as read back.
-        The restore is try/finally around the one call and not addCleanup: the case below sets three umasks in one test
+        The restore is try/finally around the one call and not addCleanup: the case below sets four umasks in one test
         and each must be back before the next is set and before the read-back, where addCleanup runs once, at the test's
         end (the lens's note on round 5, 2026-09-19; the raising road is pinned by the case after it). `root` names a
         root whose parent a case has planted; by default a fresh one under a fresh parent."""
@@ -2080,7 +2117,9 @@ class StateRootByHostsDir(unittest.TestCase):
     def test_the_root_hosts_dir_makes_on_the_way_lands_at_the_umasks_mode_and_hosts_below_it_is_0700(self):
         current = os.umask(0)                           # the runner's own umask, read and put back
         os.umask(current)
-        for umask, expected in ((current, 0o777 & ~current), (0o022, 0o755), (0o077, 0o700)):
+        # the 000 arm (round 5's second addendum, 2026-09-19): hosts_dir's docstring names 0777 under 000 as a mode this
+        # pin reads back, and until this arm the pin ran the other three alone
+        for umask, expected in ((current, 0o777 & ~current), (0o022, 0o755), (0o077, 0o700), (0o000, 0o777)):
             with self.subTest(umask="%03o" % umask):
                 root_mode, hosts_mode = self._made_under(umask)
                 self.assertEqual(root_mode, expected, "the root's mode read back under umask %03o: the umask's, not the code's" % umask)

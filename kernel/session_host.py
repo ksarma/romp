@@ -1470,7 +1470,26 @@ class SessionHost:
             # row names the pid to end, and ending that pid is the recovery: over the kept lease the kernel's connect
             # road waits and spawns nothing while the pid the lease names lives, and spawns once after it is gone
             # (KeptLease, on the real backend). So the one state on this road that needs a human to clear is visible,
-            # with the pid, to the human who clears it.
+            # with the pid, to the human who clears it. NOTHING ELSE CLEARS IT (kernel-5 as filed in round 3 of the
+            # review; its Fix line applied in round 5's second addendum, 2026-09-19): the kept lease clears on the CLI's
+            # exit alone, and the operator's recovery is to end the CLI pid this row names. Derived from the callers of
+            # kernel/sdk_backend.py's remove_lease, the one function in the tree that unlinks a lease file: this arm's
+            # call above, gated on _cli_gone; run()'s exit below, after the CLI is gone; the kernel's orphan road
+            # (_host_orphan_recover), after its wait for the lease's pid and start to be gone; the boot census's orphan
+            # reap and its dead-lease sweep (lease_census), which SPARE this shape while the CLI lives, since a host-held
+            # lease whose holder is gone and whose CLI is alive is "host-gone-finishing", owned and not reaped, at its
+            # two predicates `why == "holder-gone" and holder.kind == "host"`, so a kernel restart is not a backstop; and
+            # _lease_close, the kernel-held lease's closer, which the connect loop's finally skips for a hosted session
+            # and the shutdown drain reaches only for a session it reaps. Two roads a reader might take for backstops
+            # are not: the shutdown drain (drain) reaps only a session whose thread is still alive at its bound and is
+            # not detached (every session with a host or a host intent is latched detached), and this session's thread
+            # ended on its launch error, so the drain reaps nothing for it and closes no lease; kill(sid) with a session
+            # object calls shutdown(), which touches no lease, and with none ends a host through its lease only when
+            # host_lease_state reads "attach", where this lease reads "orphan" (its holder is gone), so it returns having
+            # done nothing. Once the CLI has exited, the next connect's orphan road or the next boot's dead-lease sweep
+            # removes the lease. The residual predates this change: on the base a bind or chmod failure raised out of
+            # run() with the lease as it was and the CLI running, with no removal at all, and the census's sparing
+            # branch is older than this change too (it cites T315, the per-session hosts' arrival).
             try:
                 await self.transport.close()
             except Exception:
