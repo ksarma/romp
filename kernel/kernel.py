@@ -53540,7 +53540,9 @@ def _dedup_sig(msg, s):
 # client was connected, the VS Code extension's pipes and federation's remote sockets among them, and
 # memos.feedComposition publishes sums over the cards that must not stand beside their count (a count beside a
 # sum discloses the single-object case: the FEED_BY_FOLDED comment). feed_slot_split still says the path was
-# taken; the per-card cost of that path is measured nowhere on /perf now, and stage 3 retires the path.
+# taken; the per-card cost of that path is measured nowhere on /perf now, and stage 3 retires the path. A time
+# measurement of the same path would restore that diagnostic without yielding a card count, since a duration does
+# not divide into a cardinality, and that is the form to use if the number is wanted back.
 _wire_stats = {"feed_cards_hit": 0, "feed_cards_miss": 0, "split_hit": 0, "split_miss": 0, "feed_body": 0,
                "bars_body": 0, "feed_sig_fallback": 0, "feed_first": 0, "bars_sig_fallback": 0, "default_str": 0,
                "entries_walked": 0, "entries_encoded": 0, "feed_slot_split": 0}

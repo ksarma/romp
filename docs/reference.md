@@ -3518,7 +3518,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `memos.feedComposition` publishes sums over the cards that must not stand
   beside their count (that entry says why). The bars' entries count as
   before; the per-card cost of the feed's slot path is measured nowhere on
-  `/perf`.
+  `/perf`. A time measurement of the same path would restore that diagnostic
+  without yielding a card count, since a duration does not divide into a
+  cardinality, and that is the form to use if the number is wanted back.
   `intrMarks` is the interrupt-marks
   memo behind the interrupt tick, the nudge tick and the feed's badge, one
   entry per (session, parse family) keyed on the parse object's identity and
