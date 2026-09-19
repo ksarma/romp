@@ -3782,15 +3782,21 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   are added by name. The feed row is `cards` plus `other` plus the flag rows
   but `userTodosOn`, which is `frame` minus `userTodosOn` on a built frame
   and `frame` minus `userTodosOn` minus the four federation lists on the off
-  frame; the Outline's row is its card-field estimate plus `other` plus
-  `off`; the Waiting-on-you row is `other` plus `userTodosOn`. The invariant,
-  in the words of the kernel's `FEED_COMPOSITION_INVARIANT` and of the
-  ledger entry (a test holds the three equal): Every published number is a
-  sum of published rows, except the Outline's row, which adds its card-field
-  estimate, a figure published nowhere else; and a one-character step in any
-  folded field, the ledgers among them, moves the same published leaves by
-  the same amounts, whichever field took it, so no published number or
-  difference of published numbers says which folded field a byte belongs to.
+  frame; the Outline's row is its `cardFields`, the card-field estimate
+  published beside it as a row (an aggregate over the cards, on the footing
+  of `cards`), plus `other` plus `off`; the Waiting-on-you row is `other`
+  plus `userTodosOn`. The invariant, in the words of the kernel's
+  `FEED_COMPOSITION_INVARIANT` and of the ledger entry (a test holds the
+  three equal): Every published number is a published row or a sum of
+  published rows: `frame` is `cards` plus `rest`; `rest` is the sum of the
+  `by` table; every `today` is `frame`; the feed row is `cards` plus `other`
+  plus the flag rows it reads; the Outline's row is its `cardFields`, the
+  card-field estimate published beside it, plus `other` plus `off`; the
+  Waiting-on-you row is `other` plus `userTodosOn`; and a one-character step
+  in any folded field, the ledgers among them, moves the same published
+  leaves by the same amounts, whichever field took it, so no published
+  number or difference of published numbers says which folded field a byte
+  belongs to.
   A per-field sum published
   here re-derived two folded rows by subtraction (the todo rows and the
   session list), and a feed row credited with the remainder but not the
@@ -3799,7 +3805,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   of `other`: the ledgers, which the feed and Waiting-on-you panes do not
   read, and the text-bearing fields the app does not read, about 16 KB of
   remainder against an 8.8 MB frame. One
-  figure is estimated, not bounded: the
+  figure is estimated, not bounded, and published as the Outline row's
+  `cardFields`: the
   Outline reads a few fields of each card, not the card, and those fields
   are sized from their text lengths, never re-encoded, so the figure
   over-counts by naming every field of every card and under-counts JSON

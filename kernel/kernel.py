@@ -919,8 +919,9 @@ class _PerfStats:
                                    of the ledgers and the text-bearing fields; the card and ledger
                                    counts are stored and withheld; `apps` per consuming app and per
                                    projection -> today / projected, an app that reads a folded
-                                   field credited with all of `other`) and wire (bytes / exact: the
-                                   served body once a whole frame went)
+                                   field credited with all of `other`, and cardFields for an app
+                                   that reads card fields, the Outline: its estimate as a row) and
+                                   wire (bytes / exact: the served body once a whole frame went)
       judge                        passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
@@ -54822,10 +54823,15 @@ _FEED_BY_NAMES = frozenset(FEED_FRAME_FIELDS) | frozenset(_FEED_FRAME_LISTS)
 # figure that was an exact per-field partial sum, published beside frame, ledgers and the flag rows, re-derived a
 # folded row (frame - ledgers - feed.projected - userTodosOn was the userTodoRows row, and waiting.projected minus
 # that minus userTodosOn the sessions row, on every board). Now the feed row is the cards plus `other` plus the flag
-# rows it reads, the Outline's its card-field estimate plus `other` plus `off`, the Waiting-on-you row `other` plus
-# userTodosOn, and the invariant holds in the scoped form FEED_COMPOSITION_INVARIANT states (the Outline's estimate
-# is published nowhere as a row: on a one-card board it is that card's field lengths, so it cannot be a row, and
-# the claim is scoped rather than made universal). The over-count against the fields an app reads is bounded by
+# rows it reads, the Outline's its `cardFields` (its card-field estimate, published as a row of its own beside
+# `projected`) plus `other` plus `off`, the Waiting-on-you row `other` plus userTodosOn, and the invariant holds in
+# the universal form FEED_COMPOSITION_INVARIANT states. The estimate is a row since the review's third round: the
+# round before withheld it on the ground that on a one-card board it is that card's field lengths, which was no
+# ground, since the Outline's row minus `other` and `off` gave the same number on every board, so a row disclosed
+# nothing new and a universal invariant is testable in one assertion. The row passes the fold question the way
+# `cards` does: an aggregate over the cards, whose count is withheld and recoverable nowhere on /perf (the
+# paragraph below), so whether it stands is the same question FEED_COMPOSITION_RESIDUALS leaves to the user for
+# `cards`. The over-count against the fields an app reads is bounded by
 # `other` (the ledgers and the remainder minus the flag rows): the rows measure the saving of a per-pane frame, and
 # that saving is in the cards. A pinned list, never a byte floor: a floor would make which rows appear a signal.
 # FEED_BY_FOLDED is classified by what a field CAN carry, never by a fixture's value: ledgers (the pusher's
@@ -54896,17 +54902,19 @@ FEED_COMPOSITION_RESIDUALS = (
     "exact when no card is active) and from `wire.bytes` minus `frame` (the key names, the separators and one tint "
     "per card and per tree node, about twenty bytes each), so a board whose one card has no tree shows as one card.",
 )
-# The block's invariant, in the one form that is true: universal over every published number but the Outline's row,
-# whose card-field estimate is published nowhere else (and cannot be published as a row: on a one-card board it is
-# that card's title, name, summary and background lengths). Stated in these words in docs/reference.md's entry and
-# the ledger entry, held equal by the same test as the residuals, and pinned by execution: the sums, the feed and
-# Waiting-on-you rows and every `today` are sums of published leaves, the Outline's row minus `other` and `off` is
-# no published leaf, and every folded field's one-character step has one signature over every integer leaf.
+# The block's invariant, universal since the review's third round (the Outline's card-field estimate is published as
+# its row's `cardFields`, so the exception the round before carried is gone). Stated in these words in
+# docs/reference.md's entry and the ledger entry, held equal by the same test as the residuals, and pinned by
+# execution in one assertion: every published integer leaf of the last table is a row named here or one of the sums
+# named here, each sum checked, and every folded field's one-character step has one signature over every integer
+# leaf.
 FEED_COMPOSITION_INVARIANT = (
-    "Every published number is a sum of published rows, except the Outline's row, which adds its card-field "
-    "estimate, a figure published nowhere else; and a one-character step in any folded field, the ledgers among "
-    "them, moves the same published leaves by the same amounts, whichever field took it, so no published number or "
-    "difference of published numbers says which folded field a byte belongs to."
+    "Every published number is a published row or a sum of published rows: `frame` is `cards` plus `rest`; `rest` "
+    "is the sum of the `by` table; every `today` is `frame`; the feed row is `cards` plus `other` plus the flag rows "
+    "it reads; the Outline's row is its `cardFields`, the card-field estimate published beside it, plus `other` "
+    "plus `off`; the Waiting-on-you row is `other` plus `userTodosOn`; and a one-character step in any folded "
+    "field, the ledgers among them, moves the same published leaves by the same amounts, whichever field took it, "
+    "so no published number or difference of published numbers says which folded field a byte belongs to."
 )
 _FEED_APP_ASK_FIELDS = {app: tuple(f[5:] for f in fields if f.startswith("asks."))
                         for app, fields in FEED_APP_FIELDS.items() if any(f.startswith("asks.") for f in fields)}
@@ -54980,7 +54988,8 @@ class _FeedComposition:
     _feed_est's total, which sits under the served body by the frame's key names, separators and the cards' and nodes'
     tints; `wire` beside it is the served body's exact length once a whole frame went (_LazyWire.materialized), else
     that estimate again. The one figure not read from an encode is an app's card FIELDS (fleet.ts reads a few fields of
-    each card): _ask_fields_est estimates those from lengths, and says how.
+    each card): _ask_fields_est estimates those from lengths, and says how; the estimate is published as that app's
+    `cardFields`, a row beside its `projected`.
 
     Cost per build, on the pusher's thread: the two part sums (one len() per card and per ledger: the walk _feed_est
     takes for the wire's size estimate, taken a second time here, about thirty microseconds per pass on the test
@@ -55006,8 +55015,8 @@ class _FeedComposition:
     none. The stored lifetime table keeps the same sums over every pass, counts included, for the tests and for a
     later decision; it is not published because at two passes it was a subtraction away from the ledgers (report()).
     The per-app projections count the folded fields as one (project()): an app that reads any of them is
-    credited with all of `other`, and the block's invariant holds in the scoped form FEED_COMPOSITION_INVARIANT
-    states: every published number but the Outline's row is a sum of published rows, and no published number or
+    credited with all of `other`, and the block's invariant holds in the universal form FEED_COMPOSITION_INVARIANT
+    states: every published number is a published row or a sum of published rows, and no published number or
     difference of published numbers says which folded field a byte belongs to (the FEED_BY_FOLDED comment says what
     a per-field partial sum gave away, and FEED_COMPOSITION_RESIDUALS what the card figures still say).
     tests/test_feed_composition.py walks the
@@ -55026,7 +55035,8 @@ class _FeedComposition:
         self.said = False
         self.life = {k: 0 for k in self.SUMS}
         self.life["by"] = {}
-        self.life["apps"] = {app: {"today": 0, "projected": 0} for app in (*FEED_APP_FIELDS, *FEED_PROJECTIONS)}
+        self.life["apps"] = {app: dict({"today": 0, "projected": 0}, **({"cardFields": 0} if app in _FEED_APP_ASK_FIELDS else {}))
+                             for app in (*FEED_APP_FIELDS, *FEED_PROJECTIONS)}
         self.last = None
 
     @staticmethod
@@ -55040,13 +55050,14 @@ class _FeedComposition:
     @staticmethod
     def project(cards_bytes, led_bytes, rest_bytes, by, ask_fields):
         """Per app: the whole frame's bytes (`today`) and the bytes of the fields FEED_APP_FIELDS says it reads
-        (`projected`): the cards whole or by field (ask_fields: the app's _ask_fields_est), the FEED_BY_ROWS fields it
+        (`projected`): the cards whole or by field (ask_fields: the app's _ask_fields_est, published beside the row as
+        its `cardFields` for every app that reads card fields), the FEED_BY_ROWS fields it
         reads by name from `by`, and the folded fields (FEED_BY_FOLDED, the ledgers among them) as ONE atom: an app
         that reads any of them is credited once with the whole folded sum (folded_sum: the `other` row public_by
         publishes), never with a per-field partial sum. A partial sum published beside the frame and the flag rows
         re-derived a folded field's bytes, and a feed row credited with the remainder but not the ledgers re-derived
-        the ledgers as frame - feed.projected - userTodosOn (the FEED_BY_FOLDED comment); with the atom every
-        projected figure is a sum of published rows plus, for the Outline alone, its card-field estimate
+        the ledgers as frame - feed.projected - userTodosOn (the FEED_BY_FOLDED comment); with the atom, and the
+        estimate published as the row's `cardFields`, every projected figure is a sum of published rows
         (FEED_COMPOSITION_INVARIANT), and the over-count against the fields the app reads is bounded by `other`.
         Then per projection (FEED_PROJECTIONS) the whole frame beside its estimate, which rode
         `ask_fields` under the projection's name."""
@@ -55068,6 +55079,8 @@ class _FeedComposition:
                 else:
                     p += by.get(f, 0)
             apps[app] = {"today": frame, "projected": p}
+            if app in _FEED_APP_ASK_FIELDS:                     # the estimate as a row of its own (FEED_COMPOSITION_INVARIANT)
+                apps[app]["cardFields"] = ask_fields.get(app, 0)
         for name in FEED_PROJECTIONS:
             apps[name] = {"today": frame, "projected": ask_fields.get(name, 0)}
         return frame, apps
@@ -55088,6 +55101,8 @@ class _FeedComposition:
                 la = life["apps"][app]
                 la["today"] += row["today"]
                 la["projected"] += row["projected"]
+                if "cardFields" in row:
+                    la["cardFields"] += row["cardFields"]
             self.last = last
 
     @staticmethod

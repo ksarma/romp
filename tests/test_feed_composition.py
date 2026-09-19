@@ -38,9 +38,10 @@ table; the lifetime table is stored and NOT published (the third round's re-chec
 first push counts the cards-first frame without ledgers and then the send stage's refill of the same build with
 them, so with passes at two twice last.rest minus lifetime.rest was the ledgers, and the cold sequence is driven on
 the real pusher here); the per-app projections read the stored tables but count the folded set as ONE atom (an app that reads any
-folded field is credited with all of `other`, the ledgers included), so the invariant holds in the scoped form the
-kernel's FEED_COMPOSITION_INVARIANT states (every published number but the Outline's row is a sum of published rows,
-and no published number or difference says which folded field a byte belongs to): a one-character step in any
+folded field is credited with all of `other`, the ledgers included) and the Outline's card-field estimate is
+published as its row's `cardFields`, so the invariant holds in the universal form the kernel's
+FEED_COMPOSITION_INVARIANT states (every published number is a published row or a sum of published rows, and no
+published number or difference says which folded field a byte belongs to), held in one assertion: a one-character step in any
 folded field, a ledger's text among them, moves the same leaves by the same amounts, and on a one-session board with
 a ledger attached no published number or difference of two is that ledger row's length; a key outside the checked-in
 names is counted under `other` at build time; the stored tables keep the counts and the ledgers apart; the reference
@@ -223,10 +224,12 @@ def _assert_shape(tc, block, after_pass, wire_went):
     keys (no lifetime table: fails before, it was published, and at two passes on one build a subtraction away from
     the folded ledgers); last as the PUBLISHED sums (frame, cards, rest: the ledgers folded, the two counts withheld)
     plus ledgersAttached, by and apps once a pass ran, else {}; wire as bytes and exact once a frame is held, else {};
-    apps one row per reader and per projection, each today and projected. After a pass no sub-block is empty and the
-    table holds only the published names."""
+    apps one row per reader and per projection, each today and projected, plus cardFields for an app that reads card
+    fields (the Outline: its estimate as a row). After a pass no sub-block is empty and the table holds only the
+    published names."""
     sums = set(km._FeedComposition.PUBLISHED)
     apps = set(km.FEED_APP_FIELDS) | set(km.FEED_PROJECTIONS)
+    row_keys = lambda app: {"today", "projected"} | ({"cardFields"} if app in km._FEED_APP_ASK_FIELDS else set())
     tc.assertEqual(set(block), {"passes", "failed", "last", "wire"})
     tc.assertNotIn("lifetime", block)
     for k in ("cardCount", "ledgerCount", "ledgers"):        # fails before: the counts and the ledgers were published
@@ -235,7 +238,7 @@ def _assert_shape(tc, block, after_pass, wire_went):
         tc.assertEqual(set(block["last"]), sums | {"ledgersAttached", "by", "apps"})
         tc.assertEqual(set(block["last"]["apps"]), apps)
         for app, row in block["last"]["apps"].items():
-            tc.assertEqual(set(row), {"today", "projected"}, app)
+            tc.assertEqual(set(row), row_keys(app), app)
         tc.assertIn("other", block["last"]["by"])
         tc.assertLessEqual(set(block["last"]["by"]), PUBLIC_NAMES)
     else:
@@ -541,8 +544,8 @@ class ServedBlock(unittest.TestCase):
             self.assertLess(last["apps"]["phoneFace"]["projected"], last["apps"]["fleet"]["projected"])
             self.assertLess(last["apps"]["waiting"]["projected"], last["rest"],
                             "the Waiting-on-you row is `other` plus the switch, under the remainder by the count and flag rows")
-            # every projected figure but the Outline's is a sum of the published rows, and the Outline's is one plus its
-            # card-field estimate (fails before: the feed row was the frame minus the
+            # every projected figure is a sum of the published rows, the Outline's of its own `cardFields` row, the
+            # estimate (fails before: the feed row was the frame minus the
             # ledgers minus the two fields the pane never reads, one of them folded, so the difference published that
             # field's bytes; and, before the third round, the frame minus the ledgers minus the switch, so the
             # difference published the ledgers): the feed row is the cards, `other` and the flag rows the pane reads,
@@ -554,7 +557,9 @@ class ServedBlock(unittest.TestCase):
             self.assertEqual(last["apps"]["feed"]["projected"], last["frame"] - pub["userTodosOn"])
             self.assertEqual(last["apps"]["waiting"]["projected"], pub["other"] + pub["userTodosOn"])
             est = km._ask_fields_est(frame["asks"], km._FEED_APP_ASK_FIELDS["fleet"])
-            self.assertEqual(last["apps"]["fleet"]["projected"], est + pub["other"] + pub.get("off", 0))
+            self.assertEqual(last["apps"]["fleet"]["cardFields"], est, "the estimate is a row (fails before: no such key)")
+            self.assertEqual(last["apps"]["fleet"]["projected"], last["apps"]["fleet"]["cardFields"] + pub["other"] + pub.get("off", 0))
+            self.assertNotIn("cardFields", last["apps"]["feed"], "the feed pane reads whole cards: no estimate row")
             # no published number and no difference of two is the ledgers' bytes (fails before: last.ledgers was, and
             # frame - cards - rest, and frame - feed.projected - userTodosOn)
             ints = [(p, v) for p, v in _leaves({"last": last, "wire": block["wire"]})
@@ -835,6 +840,9 @@ class SyntheticBuild(unittest.TestCase):
                          "the Outline reads the ledgers, a few fields of each card and three folded fields (the views, "
                          "the session list, the viewer's foreign clears), the ledgers and the three credited as the "
                          "whole of `other`; no `off` here")
+        self.assertEqual(apps["fleet"], {"today": last["frame"], "projected": other + est, "cardFields": est},
+                         "the estimate is the row's own `cardFields` (fails before: no such key)")
+        self.assertEqual(set(apps["feed"]), {"today", "projected"}, "no estimate row for an app that reads whole cards")
         # every projected figure but the Outline's is a sum of published rows, and the Outline's is one plus its
         # card-field estimate (fails before: the projections were exact per-field sums
         # over the stored table, so frame - ledgers - feed.projected - userTodosOn was the userTodoRows row, and
@@ -920,6 +928,8 @@ class SyntheticBuild(unittest.TestCase):
             self.assertEqual(life["apps"][app]["today"] - life0["apps"][app]["today"], last["frame"] + last2["frame"], app)
             self.assertEqual(life["apps"][app]["projected"] - life0["apps"][app]["projected"],
                              apps[app]["projected"] + last2["apps"][app]["projected"], app)
+        self.assertEqual(life["apps"]["fleet"]["cardFields"] - life0["apps"]["fleet"]["cardFields"], 2 * est,
+                         "the stored lifetime row sums the estimate too")
         # a build with no ledgers attached (a feed-only push): zero, said so, and no ledger bytes in any projection
         bare = _feed(n=3, build_id=3)
         del bare["ledgers"]
@@ -942,7 +952,9 @@ class SyntheticBuild(unittest.TestCase):
         self.assertNotIn("lifetime", rep, "stored, never published")
         self.assertEqual(fresh.life["by"], {})
         self.assertEqual(fresh.life["apps"],
-                         {a: {"today": 0, "projected": 0} for a in (*km.FEED_APP_FIELDS, *km.FEED_PROJECTIONS)})
+                         {a: dict({"today": 0, "projected": 0}, **({"cardFields": 0} if a in km._FEED_APP_ASK_FIELDS else {}))
+                          for a in (*km.FEED_APP_FIELDS, *km.FEED_PROJECTIONS)})
+        self.assertEqual(set(km._FEED_APP_ASK_FIELDS), {"fleet"}, "the Outline is the one app that reads card fields")
         self.assertEqual({k: fresh.life[k] for k in km._FeedComposition.SUMS}, {k: 0 for k in km._FeedComposition.SUMS})
         for path, leaf in _leaves(rep):
             self.assertIsInstance(leaf, int, path)
@@ -1056,7 +1068,7 @@ class SyntheticBuild(unittest.TestCase):
         # export whole. A name added to _FEED_FRAME_LISTS that the export drops or coarsens fails here.
         names = (set(km._FeedComposition.SUMS) | set(km._FeedComposition.PUBLISHED)
                  | {"passes", "failed", "last", "wire", "bytes", "exact",
-                                                   "ledgersAttached", "by", "apps", "today", "projected", "other"}
+                                                   "ledgersAttached", "by", "apps", "today", "projected", "cardFields", "other"}
                  | set(km.FEED_FRAME_FIELDS) | set(km._FEED_FRAME_LISTS) | set(km.FEED_BY_ROWS) | PUBLIC_NAMES
                  | set(km.FEED_APP_FIELDS) | set(km.FEED_PROJECTIONS))
         for name in sorted(names):
@@ -1282,9 +1294,10 @@ class PublishedTable(unittest.TestCase):
     The projections read the stored table and count the folded set as ONE atom (an app that reads any folded field is
     credited with all of `other`): with per-field partial sums published beside the frame, the ledgers and the flag
     rows, the userTodoRows and sessions rows were re-derivable by subtraction on every board. So every published
-    number but the Outline's row is a sum of published rows, and a one-character step in any folded field moves the
-    same published leaves by the same amounts, whichever field took it: the perturbation below checks every integer
-    leaf of the report, and the invariant's wording is pinned in its scoped form (FEED_COMPOSITION_INVARIANT).
+    number is a published row or a sum of published rows (the Outline's card-field estimate is its row's
+    `cardFields` since the third round), and a one-character step in any folded field moves the same published
+    leaves by the same amounts, whichever field took it: the perturbation below checks every integer leaf of the
+    report, and the invariant's wording is pinned in its universal form (FEED_COMPOSITION_INVARIANT).
     The third round (2026-09-19) put the ledgers in the fold and withheld the two counts: `ledgers` beside
     `ledgerCount` was one session's whole ledger row on a one-session board, and the ledger count is the chat tab
     count, which /perf publishes elsewhere, so the sum was never an aggregate from the reader's side; a ledger's text
@@ -1453,6 +1466,7 @@ class PublishedTable(unittest.TestCase):
         self.assertEqual(last["apps"]["waiting"]["projected"], pub["other"] + pub["userTodosOn"])
         self.assertEqual(last["apps"]["feed"]["projected"], pub["other"] + flags)
         self.assertEqual(last["apps"]["fleet"]["projected"], pub["other"], "no card, no `off`: `other` alone, the ledger in it")
+        self.assertEqual(last["apps"]["fleet"]["cardFields"], 0, "no card: the estimate row is zero")
         self.assertEqual(last["apps"]["phoneFace"]["projected"], 0)
         # the re-derivation's two steps, on the published numbers: neither is a folded row any more
         d1 = last["frame"] - last["apps"]["feed"]["projected"] - pub["userTodosOn"]
@@ -1711,6 +1725,7 @@ class PublishedTable(unittest.TestCase):
             self.assertEqual(t["apps"]["waiting"]["projected"], t["by"]["other"] + t["by"]["userTodosOn"], name)
             self.assertEqual(t["apps"]["fleet"]["projected"],
                              km._ask_fields_est(asks, km._FEED_APP_ASK_FIELDS["fleet"]) + t["by"]["other"], name)
+            self.assertEqual(t["apps"]["fleet"]["cardFields"], km._ask_fields_est(asks, km._FEED_APP_ASK_FIELDS["fleet"]), name)
             self.assertEqual(t["apps"]["phoneFace"]["projected"], km._phone_face_est(asks), name)
         self.assertEqual((comp.last["cardCount"], comp.last["ledgerCount"], comp.last["ledgers"], comp.last["rest"]),
                          (6, 2, leds, sum(by.values())), "the stored pass")
@@ -1729,18 +1744,19 @@ class PublishedTable(unittest.TestCase):
         self.assertEqual(rep["last"]["apps"]["feed"]["projected"] - rep2["last"]["apps"]["feed"]["projected"], leds)
         self.assertEqual(rep["last"]["apps"]["phoneFace"]["projected"], rep2["last"]["apps"]["phoneFace"]["projected"])
 
-    def test_the_invariant_is_stated_in_its_scoped_form_everywhere_and_holds_by_execution(self):
-        """The invariant the block's safety is read from (fresh-1 of the second round): the universal claim, every
-        published number is a sum of published rows, is false for the Outline's row, which adds its card-field
-        estimate, a figure published nowhere else and not publishable as a row (on a one-card board it is that card's
-        field lengths). So the claim is stated in its scoped form, FEED_COMPOSITION_INVARIANT, verbatim in the
-        reference and the ledger entry, and no document, the kernel's source included, states the universal form
-        without the exception (fails before: all three did). By execution, on the populated fixture and on the
-        one-card board: frame, rest, every `today`, the feed row and the Waiting-on-you row are each a sum of other
-        published integer leaves, and the Outline's row minus `other` and `off` is the card-field estimate and no
-        published leaf."""
+    def test_the_invariant_is_stated_in_its_universal_form_everywhere_and_holds_in_one_assertion(self):
+        """The invariant the block's safety is read from (fresh-1 of the second round, ruled again in the third). The
+        round before scoped it to every published number but the Outline's row, on the ground that the Outline's
+        card-field estimate could not be a row because on a one-card board it is that card's field lengths; but the
+        Outline's row minus `other` and `off` gave that number on every board, so the ground was false and a row
+        disclosed nothing new. The estimate is published as the row's `cardFields` now (fails before: no such key),
+        the claim is universal, stated in FEED_COMPOSITION_INVARIANT verbatim in the reference and the ledger entry,
+        and no document, the kernel's source included, carries the scoped form. By execution, in ONE assertion per
+        board (the populated fixture and a one-card board): the published integer leaves of the last table are
+        exactly the rows (`cards`, the Outline's `cardFields`, the `phoneFace` row, the `by` rows, ledgersAttached)
+        plus the sums the invariant names, each sum checked against its terms."""
         inv = km.FEED_COMPOSITION_INVARIANT
-        self.assertTrue(inv.startswith("Every published number is a sum of published rows, except the Outline's row"))
+        self.assertTrue(inv.startswith("Every published number is a published row or a sum of published rows"))
         ref = open(os.path.join(ROOT, "docs", "reference.md"), encoding="utf-8").read()
         para = ref[ref.index("  `feedComposition` says what the feed frame is made of"):]
         para = para[:para.index("\n- `judge`:")]
@@ -1751,26 +1767,24 @@ class PublishedTable(unittest.TestCase):
             flat = " ".join(text.split())
             if name != "the kernel":
                 self.assertEqual(flat.count(inv), 1, "%s states the invariant in the kernel's words, once" % name)
-            loose = [m.start() for m in re.finditer(r"sum of published rows(?!, except the Outline's row)", flat)]
-            loose = [i for i in loose if not re.search(r"(but the Outline's row|plus, for the Outline|the Outline's plus its card-field estimate)",
-                                                        flat[max(0, i - 80):i + 130])]
-            self.assertEqual(loose, [], "%s: the universal claim without its exception at %r"
-                             % (name, [flat[max(0, i - 60):i + 60] for i in loose]))
+            for stale in ("except the Outline's row", "scoped form", "published nowhere as a row", "cannot be a row",
+                          "card-field estimate plus `other`", "a figure published nowhere else"):
+                self.assertNotIn(stale, flat, "%s: the scoped form's wording (%r)" % (name, stale))
         for frame in (_populated(), _feed(n=1, asks=[_card(0)], ledgers=[_ledger(tops=1)])):
-            rep = _report(_fresh_pass(frame))
-            for t in (rep["last"],):
-                pub, apps = t["by"], t["apps"]
-                flags = sum(pub[f] for f in ("dismissedCount", "showDismissed", "canUndoClear", "off") if f in pub)
-                self.assertEqual(t["frame"], t["cards"] + t["rest"])
-                self.assertEqual(t["rest"], sum(pub.values()))
-                self.assertEqual(apps["feed"]["projected"], t["cards"] + pub["other"] + flags)
-                self.assertEqual(apps["waiting"]["projected"], pub["other"] + pub["userTodosOn"])
-                self.assertTrue(all(row["today"] == t["frame"] for row in apps.values()))
-                est = apps["fleet"]["projected"] - pub["other"] - pub.get("off", 0)
-                self.assertEqual(est, km._ask_fields_est(frame["asks"], km._FEED_APP_ASK_FIELDS["fleet"]))
-                leaves = {v for p, v in _leaves(t) if isinstance(v, int) and not p.endswith("apps.fleet.projected")}
-                self.assertNotIn(est, leaves, "the Outline's estimate is no published leaf: the one exception")
-                self.assertNotIn(est, {a - b for a in leaves for b in leaves}, "nor a difference of two")
+            t = _report(_fresh_pass(frame))["last"]
+            pub, apps = t["by"], t["apps"]
+            flags = sum(pub[f] for f in ("dismissedCount", "showDismissed", "canUndoClear", "off") if f in pub)
+            est = km._ask_fields_est(frame["asks"], km._FEED_APP_ASK_FIELDS["fleet"])
+            rows = {".cards": t["cards"], ".apps.fleet.cardFields": est, ".ledgersAttached": 1,
+                    ".apps.phoneFace.projected": km._phone_face_est(frame["asks"])}
+            rows.update((".by." + k, v) for k, v in pub.items())
+            sums = {".frame": t["cards"] + t["rest"], ".rest": sum(pub.values()),
+                    ".apps.feed.projected": t["cards"] + pub["other"] + flags,
+                    ".apps.fleet.projected": apps["fleet"]["cardFields"] + pub["other"] + pub.get("off", 0),
+                    ".apps.waiting.projected": pub["other"] + pub["userTodosOn"]}
+            sums.update((".apps.%s.today" % app, t["frame"]) for app in apps)
+            self.assertEqual({p: v for p, v in _leaves(t) if isinstance(v, int)}, {**rows, **sums},
+                             "every published number is a row or one of the named sums (%d cards)" % len(frame["asks"]))
 
     def test_the_reference_and_the_ledger_state_the_published_shape_and_the_residuals(self):
         """docs/reference.md's memos.feedComposition entry and the ledger entry describe the block the kernel publishes:
@@ -1798,7 +1812,7 @@ class PublishedTable(unittest.TestCase):
             for needle in ("the folded fields as one", "credited with all of `other`", "report",
                            "difference of published numbers", "hostname", "`phoneFace`", "title",
                            "withheld", "single-object case", "chat tab count", "builtChat.tabs", "Two residuals remain",
-                           "lifetime", "sharing a build"):
+                           "lifetime", "sharing a build", "`cardFields`"):
                 self.assertIn(needle, flat, "%s: %r" % (text, needle))
             for stale in ("tells the reader nothing", "forty percent under", "`cardCount`", "`ledgerCount`",
                           "three parts", "Two residuals.", "Three residuals", "minus `ledgers`",
@@ -1838,7 +1852,7 @@ class PublishedTable(unittest.TestCase):
         rep = _report(_fresh_pass(_feed(n=2)))
         for key in rep["last"]:
             self.assertIn(key, row, "%s: a key of `last` the row does not name" % key)
-        for key in ("passes", "failed", "lifetime", "last", "wire", "bytes", "exact", "today", "projected"):
+        for key in ("passes", "failed", "lifetime", "last", "wire", "bytes", "exact", "today", "projected", "cardFields"):
             self.assertIn(key, row, key)
         self.assertIn("FEED_BY_ROWS", row, "the row names the published rows' list")
         self.assertIn("other", row)
