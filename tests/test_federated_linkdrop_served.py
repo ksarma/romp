@@ -131,7 +131,6 @@ OLD_HUB_SHA = "01d4fbe43eed1226a1a3615c74f8d2ece79e5252"
 NOTICE_GAP_S = 1.0
 HUB_DOWN_S = 3.0             # the hub stays down this long before its respawn: past the relay's 2 s onclose retry, so that
 #                              retry runs under the shim's local-down word (a boot faster than the retry would dial straight)
-PHASES = ("A", "B", "C")
 # a hub's client-diag rows that say a frame reached a pane raw or a delta found no base (the corners lab's list, plus the
 # federation layer's own delta breadcrumbs by ev)
 BAD_ROWS = _corners.BAD_ROWS
