@@ -418,7 +418,8 @@ class FlagSettingsWriter(unittest.TestCase):
     and extra6-1: O_TRUNC in its place left every suite green), the finally that removes only what this call created
     (kernel-2 and extra6-2: it removed a file the refused call had not created), the sid cut on the link and the
     unwritable rows and the class-name cut (tests-2: driven for the sid row alone), and FLAG_SETTINGS_KEYS against
-    the keys the writer writes (extra5-1)."""
+    the keys the writer writes (extra5-1). Review round 5's mutation pass (2026-09-19) pinned the lock's re-entrancy by
+    execution on the lock itself (RLock replaced by Lock had left every suite green)."""
 
     def setUp(self):
         self.root = tempfile.mkdtemp()
@@ -726,6 +727,43 @@ class FlagSettingsWriter(unittest.TestCase):
         self.assertFalse(t.is_alive(), "released, the second writer runs")
         self.assertEqual(out, [path])
         self.assertEqual(json.loads(Path(path).read_text())["env"], ENV)
+
+    def test_the_lock_is_re_entrant(self):
+        """The lock's comment says it is re-entrant, as round 2 made it (review round 5's mutation pass, 2026-09-19: an
+        RLock replaced by a Lock left every suite green; the population of statements is that one clause and the
+        assignment, and nothing in tests/, docs/ or the ledger entry repeats it). No path nests the lock at this head,
+        since the census (EnvRowsPopulation) holds one `with` and no bare acquire, so the property cannot be shown
+        through the writer without a hang under the mutation; it is executed on the lock itself, non-blocking
+        throughout: the thread holding it takes it again at once, another thread cannot take it while either hold
+        stands, and it is free once both are released. The binding read is the module's, the one the writer's `with`
+        resolves at call time."""
+        lock = sb._flag_settings_lock
+        tried = []
+
+        def other_thread_tries():
+            taken = lock.acquire(blocking=False)
+            if taken:
+                lock.release()
+            tried.append(taken)
+
+        def another_thread_can_take_it():
+            t = threading.Thread(target=other_thread_tries, daemon=True)
+            t.start()
+            t.join(30)
+            self.assertFalse(t.is_alive(), "the non-blocking try returned")
+            return tried.pop()
+
+        self.assertTrue(lock.acquire(blocking=False), "free at the start: the first hold")
+        try:
+            self.assertTrue(lock.acquire(blocking=False), "re-entrant: the holder takes it again without waiting")
+            try:
+                self.assertIs(another_thread_can_take_it(), False, "held twice by this thread: another thread cannot take it")
+            finally:
+                lock.release()
+            self.assertIs(another_thread_can_take_it(), False, "one release of two: still held")
+        finally:
+            lock.release()
+        self.assertIs(another_thread_can_take_it(), True, "both released: free for another thread")
 
     def test_every_writer_rows_worst_case_is_computed_from_its_format_and_fits_the_cap(self):
         """correctness-3 / kernel-2 (review round 3, 2026-09-19): the class, not the instance. Each row's worst case,
