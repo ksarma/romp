@@ -185,8 +185,11 @@ const install = (opts) => {
     } });
   }
   // the chat pane's session fulls, as delivered (review round 3, extra9-1): per id the event count of the last `session` frame, so a
-  // leg can say whether a tab's full was heavy (render.ts defers a build with events to a rAF) or empty
-  if (location.pathname === "/chat" && w.__rompFed === undefined && !w.__labChatHook) {
+  // leg can say whether a tab's full was heavy (render.ts defers a build with events to a rAF) or empty. Keyed on the frame ELEMENT, not
+  // the document path: the chat iframe is parser-created (src in the served markup) and in Firefox the init script runs only in its
+  // initial about:blank document, whose Window the /chat document keeps, so a path guard never matched there and the count read None
+  // (the feed is promoted by script, so its document gets an init run of its own and the path guard above serves it)
+  if (((w.frameElement && w.frameElement.id) === "f-chat" || location.pathname === "/chat") && w.__rompFed === undefined && !w.__labChatHook) {
     w.__labChatHook = true; w.__labChat = { sessions: {} };
     let realC;
     Object.defineProperty(w, "__rompFed", { configurable: true, get: () => realC, set: (v) => {
