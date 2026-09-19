@@ -164,13 +164,13 @@ def _state_root():
     return xdg, state
 
 
-def _export(xdg, state, usage=False, commit=None):
-    """An export the export verb wrote from the planted snapshot, under the same synthetic machine strings the
-    upload child will scan with; returns its path. `usage` passes --usage; `commit` puts a kernel_sha on the snapshot,
-    which the export lifts into the envelope as kernel_commit."""
+def _export(xdg, state, usage=False, commit=None, snap=None, name="export.json"):
+    """An export the export verb wrote from the planted snapshot (or `snap`), under the same synthetic machine strings
+    the upload child will scan with; returns its path (<xdg>/<name>). `usage` passes --usage; `commit` puts a kernel_sha
+    on the snapshot, which the export lifts into the envelope as kernel_commit."""
     src = os.path.join(xdg, "snap.json")
-    out = os.path.join(xdg, "export.json")
-    snap = planted_snapshot()
+    out = os.path.join(xdg, name)
+    snap = planted_snapshot() if snap is None else snap
     if commit:
         snap["kernel_sha"] = commit
     with open(src, "w") as fh:
@@ -626,7 +626,10 @@ class Cli(unittest.TestCase):
     def test_the_guide_says_no_receiver_ships_and_the_code_carries_none(self):
         """docs/guide.md says the upload is something the user runs, what it sends, and that the receiver is one the user
         configures, none shipping, so nothing can be sent until one is set (fresh-2, 2026-09-18; the guide ranks the upload
-        against nothing else, and only its receiver sentence is pinned here). The
+        against nothing else: its receiver sentence is pinned present, and since the closing check at the re-run's head the
+        ranking phrases the second round's sentence carried, "the one exception" to the guide's local-only clause and "the
+        only other traffic", are pinned ABSENT from the guide and from the reference's upload section, since a rewrite that
+        restored them stayed green before). The
         sentence is pinned flattened, so a rewrap survives, and cross-checked against the code by execution and by text:
         with no flag, no variable and an empty HOME the setting resolves to nothing (the verb then refuses naming the three
         settings, the case above), and no string constant in the module, docstrings included, spells a URL, so no default
@@ -635,6 +638,13 @@ class Cli(unittest.TestCase):
             guide = " ".join(fh.read().split())
         self.assertIn("to a receiver you configure yourself (none ships, so nothing can be sent until you set one), "
                       "and only after you confirm it", guide)
+        with open(os.path.join(ROOT, "docs", "reference.md"), encoding="utf-8") as fh:
+            reference = " ".join(fh.read().split())
+        section = reference[reference.index("`romp perf upload <file>` sends one such export"):
+                            reference.index("An operator writing a receiver implements this contract")]   # the reference uses
+        for words in ("the one exception", "the only other traffic"):     # "the one exception" of an unrelated leaf elsewhere
+            self.assertFalse(words in guide, "the guide ranks the upload against other traffic again: %r" % words)         # by boolean:
+            self.assertFalse(words in section, "the reference's upload section ranks the upload against other traffic: %r" % words)   # never the page
         with mock.patch.dict(os.environ, {"HOME": self.home}):
             self.assertEqual(pu.receiver_setting(None, env={}), (None, None), "nothing configured resolves to no receiver")
         with open(os.path.join(ROOT, "cli", "perf_upload.py"), encoding="utf-8") as fh:
@@ -1154,6 +1164,196 @@ class Cli(unittest.TestCase):
         r = self._refused(_run([self.file, "--receiver", base], self.state), 2, "pass --yes")
         self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (self.file, len(self.data), base), "shown before the prompt, so a refusal to answer is informed")
         self.assertEqual(len(self.fake.requests), 1)
+
+    def test_an_integer_a_double_cannot_hold_is_refused_at_the_parse_under_every_key_class_in_one_line_and_never_a_traceback(self):
+        """HIGH 2 of the closing check (2026-09-19): json hands the checks unbounded ints, and every float-domain function
+        downstream is a raise waiting for one. Driven then on this road: a 401-digit uptime_s answered with a thirty-line
+        traceback out of pp.public_uptime (math.isfinite over an int float() cannot hold), reached through pe.check_document
+        and pp.denylist_problems, where the verb promises one refusal line; the same digits under a BOUND_KEYS name raised in
+        pp.public_bound; under an ordinary counter they passed every check and REACHED THE POST, 401 digits wide. The class,
+        a float-domain function meeting an integer json handed on unbounded, is closed at the parse: strict_loads' parse_int
+        (pu._bounded_int) refuses every integer literal no double can hold with the line the overflowing float already has, so
+        no site on this road, present or future, sees one. Pinned over the verb as a child for each of 10**400, -10**400 and
+        10**5000 (the last past the interpreter's int() digit limit, 4300 by default, so without the length pre-check its
+        refusal would be the interpreter's bare strict-JSON line and not the verb's reason) at every site class the audit
+        named: uptime_s (the first raise then), each BOUND_KEYS name (capBytes at heap/hydrated, the path a real export carries
+        it at, and budgetBytes, cap, bound and stageRingMax under a planted block), an ordinary counter (process/rss_kb, the one that
+        was sent), an http row's count, a list element, a usage leaf in a --usage export, and a bound inside a subtree whose
+        key the fold merges (perf/'a b'/bound, where pp._merge coarsens again after the sum). The file TEXT is written with
+        the literal spliced in, since json.dump cannot write a 5001-digit int under the limit. Each: exit 1, exactly the
+        NonFinite refusal line naming the file, nothing on stdout, nothing dialled, no traceback and no run of forty zeros
+        anywhere in the output. The positive controls draw the edge where float() draws it and not at a digit count:
+        int(sys.float_info.max) (309 digits), 2**1024 - 2**970 - 1 (309 digits) and 10**307 are sent, the digits in the body
+        the recorder saw; 2**1024 - 2**970 (309 digits, the first int float() refuses) and its negative are refused. Fails
+        without parse_int=_bounded_int (the uptime and bound plants meet the denylist lines, since the two coarsenings are
+        total over ints; the counter, http-count, list and usage plants meet the fold belt, since the fold nulls the value;
+        the 5001-digit plants meet the bare strict-JSON line), fails with the length pre-check dropped (the 10**5000 plants
+        get the bare line) and fails with the pre-check at 100 digits (the 309-digit controls are refused)."""
+        base = ["--yes", "--receiver", self.fake.url]
+        with open(_export(self.xdg, self.state, usage=True, name="usage-export.json"), "rb") as fh:
+            usage_data = fh.read()
+        self.assertEqual(json.loads(usage_data)["usage"]["actions"], {"send": 7}, "the usage leaf the case plants over")
+        mark = "@@INTEGER-LITERAL@@"
+        edited = os.path.join(self.xdg, "edited.json")
+
+        def probe(d, **leaf):
+            d["perf"]["probe"] = leaf
+
+        sites = (
+            ("perf/uptime_s", self.data, lambda d: d["perf"].__setitem__("uptime_s", mark)),
+            ("perf/heap/hydrated/capBytes", self.data, lambda d: d["perf"]["heap"].__setitem__("hydrated", {"entries": 12, "bytes": 5000, "capBytes": mark})),
+            ("perf/probe/budgetBytes", self.data, lambda d: probe(d, budgetBytes=mark)),
+            ("perf/probe/cap", self.data, lambda d: probe(d, cap=mark)),
+            ("perf/probe/bound", self.data, lambda d: probe(d, bound=mark)),
+            ("perf/probe/stageRingMax", self.data, lambda d: probe(d, stageRingMax=mark)),
+            ("perf/process/rss_kb", self.data, lambda d: d["perf"]["process"].__setitem__("rss_kb", mark)),
+            ("perf/http/GET /feed/count", self.data, lambda d: d["perf"]["http"].__setitem__("GET /feed", {"count": mark, "ms": 1.0})),
+            ("perf/probe/ring/0", self.data, lambda d: probe(d, ring=[mark])),
+            ("usage/actions/send", usage_data, lambda d: d["usage"]["actions"].__setitem__("send", mark)),
+            ("perf/a b/bound", self.data, lambda d: d["perf"].__setitem__("a b", {"bound": mark})),
+        )
+        self.assertEqual({s[0].split("/")[-1] for s in sites[1:6]}, set(pp.BOUND_KEYS), "every BOUND_KEYS name is a site")
+
+        def write(data, plant, literal):
+            doc = json.loads(data)
+            plant(doc)
+            text = json.dumps(doc)
+            self.assertEqual(text.count(json.dumps(mark)), 1)
+            with open(edited, "w") as fh:
+                fh.write(text.replace(json.dumps(mark), literal))
+
+        refusal = "romp perf upload: refused: %s is not strict JSON (a number is outside the finite range); nothing sent\n" % edited
+        literals = (("10**400", "1" + "0" * 400), ("-10**400", "-1" + "0" * 400), ("10**5000", "1" + "0" * 5000))
+        for where, data, plant in sites:
+            for name, literal in literals:
+                write(data, plant, literal)
+                r = _run([edited] + base, self.state)
+                label = "%s at %s" % (name, where)
+                self.assertEqual(r.returncode, 1, label + "\n" + r.stderr[-800:])
+                self.assertEqual(r.stderr, refusal, label)
+                self.assertEqual(r.stdout, "", label)
+                self.assertNotIn("Traceback", r.stdout + r.stderr, label)
+                self.assertNotRegex(r.stdout + r.stderr, r"0{40}", label)
+        self.assertEqual(self.fake.requests, [], "no plant was sent")
+        # the positive controls, each under the ordinary counter: the edge is float()'s, not a digit count
+        fmax, edge = int(sys.float_info.max), 2 ** 1024 - 2 ** 970
+        self.assertEqual((len(str(fmax)), len(str(edge)), len(str(edge - 1))), (309, 309, 309))
+        counter = sites[6][2]
+        for name, value, sent in (("int(sys.float_info.max)", fmax, True), ("2**1024 - 2**970 - 1", edge - 1, True), ("10**307", 10 ** 307, True),
+                                  ("2**1024 - 2**970", edge, False), ("-(2**1024 - 2**970)", -edge, False)):
+            write(self.data, counter, str(value))
+            r = _run([edited] + base, self.state)
+            if sent:
+                self.assertEqual(r.returncode, 0, name + "\n" + r.stderr[-800:])
+                self.assertEqual(r.stderr, "", name)
+                self.assertEqual(len(self.fake.requests), 1, name)
+                body = self.fake.requests[0][2]
+                self.assertEqual(json.loads(body)["perf"]["process"]["rss_kb"], value, name)
+                self.assertIn(str(value).encode("utf-8"), body, name + ": the digits are in the body")
+                self.fake.requests.clear()
+            else:
+                self.assertEqual(r.returncode, 1, name + "\n" + r.stderr[-800:])
+                self.assertEqual(r.stderr, refusal, name)
+                self.assertEqual(r.stdout, "", name)
+                self.assertEqual(self.fake.requests, [], name)
+
+    def test_the_exports_own_output_for_a_bound_at_the_largest_double_is_sent_since_the_fold_nulls_what_its_coarsening_made(self):
+        """The fold's rule over what it MAKES (the closing check at the re-run's head, its verification, 2026-09-19): a saved
+        snapshot carrying int(sys.float_info.max), a number a double holds, under heap.hydrated.capBytes made the export child
+        write 2**1024 (public_bound rounds up), and two such values under keys the fold merges made it write 2 * fmax; each is
+        a number no double holds, and this verb refused the export's own file as not strict JSON. Driven on the road: the
+        export child writes the file from that snapshot, the two leaves are null in it (pp.held_number over each coarsening's
+        and each sum's result), and the upload child sends it, exit 0, one request, the nulls in the body and no run of forty
+        zeros anywhere. Fails with held_number dropped from fold or from _merge (the export writes 2**1024 and 2 * fmax and
+        the upload refuses the file)."""
+        fmax = int(sys.float_info.max)
+        snap = planted_snapshot()
+        snap["heap"]["hydrated"] = {"entries": 12, "bytes": 5000, "capBytes": fmax}
+        snap["a b"] = {"n": fmax}
+        snap["a c"] = {"n": fmax}
+        path = _export(self.xdg, self.state, snap=snap, name="held.json")
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertNotRegex(text, r"0{40}", "the export wrote no number no double holds")
+        self.assertNotIn("Infinity", text)
+        doc = json.loads(text)
+        self.assertIsNone(doc["perf"]["heap"]["hydrated"]["capBytes"])
+        self.assertEqual(doc["perf"]["heap"]["hydrated"]["bytes"], 5000, "the occupancy beside the null bound")
+        self.assertIsNone(doc["perf"]["other"]["n"], "the merged sum")
+        r = _run([path, "--yes", "--receiver", self.fake.url], self.state)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stderr, "")
+        self.assertEqual(len(self.fake.requests), 1, "the export's own output is sent")
+        body = json.loads(self.fake.requests[0][2])
+        self.assertIsNone(body["perf"]["heap"]["hydrated"]["capBytes"])
+        self.assertIsNone(body["perf"]["other"]["n"])
+        self.assertNotRegex(self.fake.requests[0][2].decode("utf-8"), r"0{40}")
+
+    def test_a_plain_export_sends_the_http_table_with_a_count_and_ms_per_route_served_and_no_usage_block_which_is_those_counts_relabelled(self):
+        """HIGH 1 of the closing check (2026-09-19): the disclosure paragraph conditioned the 53 action counts and the 15 pane
+        counts on --usage, and every one of them is on the wire in a plain export's perf.http table, identical: the usage
+        block's actions and views are the http counts relabelled, its session counts copies of leaves that travel, its uptime
+        bucket a bucket of an uptime that travels. The paragraph is what a user reads before typing yes, so a clause saying
+        data travels only with a flag when it always travels misinforms them in the dangerous direction; the fix names the
+        http table as travelling in every export and reduces the --usage clause to the packaging it does. The conditioning is
+        pinned here on the ROAD, as documents: the export child writes a plain export from a snapshot that served action and
+        pane routes and the upload child sends it, and the body the recorder saw has no top-level usage key and carries, for
+        every route the snapshot served, one http row with exactly the keys count and ms (the glossary and remote families
+        collapsed to one row each as the kernel collapses them, the off-register key as `other`, the counts summed under the
+        collapsed key); the same snapshot exported with --usage and sent carries the usage block, whose actions and views
+        equal the http rows' counts under the feature names, whose one session count is the length of a list the plain body
+        carries and whose uptime bucket is the bucket of the uptime it carries, so the block adds no number the plain body
+        lacks. This planted snapshot is the OLD shape (parses.bySid and no perSession, what a kernel before 2026-09-18 saved),
+        so the block has no parsed count: the per-sid table is one the plain export drops, and a count of it was the one
+        number the flag added that no leaf of the plain body gave (the verification of the closing check at the re-run's head
+        drove it; usage_block no longer counts that table). The whole block's derivation, leaf by leaf, over both snapshot
+        shapes, is pinned in tests/test_perf_stats.py (Disclosed); this is the wire's side of it, and the reference's wording
+        is pinned in Docs below. Fails with export_document writing usage unconditionally (the plain body carries the block)
+        and with usage_block counting the per-sid table again (a parsed count no plain leaf gives)."""
+        base = ["--yes", "--receiver", self.fake.url]
+        snap = planted_snapshot()
+        snap["http"].update({"GET /feed": {"count": 3, "ms": 30.0}, "GET /timeline": {"count": 2, "ms": 1.0},
+                             "POST /new": {"count": 2, "ms": 4.0}, "GET /dist/render.js": {"count": 9, "ms": 1.0}})
+        served = {}
+        for key, row in snap["http"].items():
+            public = pp.http_public_key(key)
+            served[public] = served.get(public, 0) + row["count"]
+        self.assertEqual(set(served), {"GET /perf", "POST /send", "POST /new", "GET /feed", "GET /timeline", "GET /glossary/*",
+                                       "GET /remote/*/sessions", "GET /dist/*", "other"}, "the routes the snapshot served, as the kernel keys them")
+        bodies = {}
+        for usage in (False, True):
+            path = _export(self.xdg, self.state, usage=usage, snap=snap, name="road-%s.json" % ("usage" if usage else "plain"))
+            r = _run([path] + base, self.state)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(len(self.fake.requests), 1)
+            bodies[usage] = json.loads(self.fake.requests[0][2])
+            self.fake.requests.clear()
+        plain, withu = bodies[False], bodies[True]
+        self.assertNotIn("usage", plain, "a plain export sends no usage block")
+        self.assertEqual(set(plain), {"schema", "exported_at", "perf"})
+        self.assertEqual(set(withu), {"schema", "exported_at", "perf", "usage"})
+        http = plain["perf"]["http"]
+        self.assertEqual(set(http), set(served), "one row per route served, whatever made the requests")
+        for key, row in http.items():
+            self.assertEqual(set(row), {"count", "ms"}, key)
+            self.assertEqual(row["count"], served[key], key)
+            self.assertIsInstance(row["ms"], float, key)
+        self.assertEqual(withu["perf"], plain["perf"], "the perf block is the same with and without the flag")
+        actions = {pu.pe._feature_name(k.partition(" ")[2]): row["count"] for k, row in http.items()
+                   if k.startswith("POST ") and k.partition(" ")[2] not in pu.pe.ACTION_SKIP}
+        views = {pu.pe._feature_name(k.partition(" ")[2]): row["count"] for k, row in http.items()
+                 if k.startswith("GET ") and k.partition(" ")[2] in pu.pe.VIEW_ROUTES}
+        self.assertEqual((actions, views), ({"send": 7, "new": 2}, {"feed": 3, "timeline": 2}))
+        self.assertEqual(withu["usage"]["actions"], actions, "an action count is the http row's count under the route's name")
+        self.assertEqual(withu["usage"]["views"], views, "a view count is the http row's count under the route's name")
+        # the rest of the block, each leaf from a leaf of the plain body: the old-shape snapshot's per-sid table is dropped
+        # from the plain body and gives no parsed count, and the block's leaves are exactly the four the paragraph names
+        self.assertFalse("bySid" in plain["perf"]["parses"], "the per-sid table is one the plain export drops: %s" % sorted(plain["perf"]["parses"]))
+        self.assertEqual(withu["usage"]["sessions"], {"chatBuilt": len(plain["perf"]["builds"]["chat"]["bySession"])},
+                         "a count of a list the plain body carries, and no parsed count from the dropped table")
+        self.assertEqual(withu["usage"]["sessions"], {"chatBuilt": 1})
+        self.assertEqual(withu["usage"]["kernelUptime"], next(name for bound, name in pu.pe.UPTIME_BUCKETS if plain["perf"]["uptime_s"] < bound))
+        self.assertEqual(set(withu["usage"]), {"actions", "views", "sessions", "kernelUptime"}, "every leaf of the block accounted for")
 
     def test_a_file_that_repeats_a_key_is_refused_before_the_scan_since_the_reader_must_not_choose_a_copy(self):
         """A key spelled twice in one object is refused as not strict JSON, at any depth and whatever the values. The reason
@@ -2480,9 +2680,13 @@ class Docs(unittest.TestCase):
         peak resident size, which the kernel writes on darwin alone and which reaches the wire like every other measurement;
         the closing check found the paragraph false on a Mac), says the four malloc leaves are null where the C library has
         no mallinfo2 (the closing re-run found the disclosure pin red wherever that is, glibc before 2.33, musl and macOS,
-        with the leaves disclosed as travelling), and says every leaf under usage travels only with --usage, the session
-        counts and one count per action and pane route beside the uptime bucket (the re-run found the paragraph naming one
-        leaf of eleven there). WHAT IS
+        with the leaves disclosed as travelling), and says the usage block is written only with --usage and adds no number a
+        plain export lacks, the http table travelling in every export (the closing check of 2026-09-19, HIGH 1: the clause
+        conditioned the 53 action counts and the 15 pane counts on the flag, and every one of them is in a plain export's
+        perf.http table, identical, so the flag read as consent for data that always travels; the re-run before it found
+        the paragraph naming one leaf of eleven there; the same rewrite dropped two provenance claims the code contradicts,
+        the counts as the user's own actions and one count per pane opened, since a hook, a relaying kernel or a peer's poll
+        posts the same routes). WHAT IS
         PINNED WHERE: this case pins the WORDING and the macOS clause's PLACEMENT (the process parenthetical is one needle
         and the clause is another that must follow it OUTSIDE the closing parenthesis, so the parenthetical the reader has
         already scanned is not silently widened); the LEAF POPULATION is pinned live in tests/test_perf_stats.py (Disclosed),
@@ -2505,8 +2709,14 @@ class Docs(unittest.TestCase):
                       "paste-safe, not unlinkable:",
                       process, darwin, process + darwin,        # the clause follows the parenthetical, outside it
                       "the ten memory-fraction bounds coarsened to a power of two",
-                      "the uptime rounded down to the minute and, only when `--usage` was given, every leaf under `usage` (the uptime's bucket "
-                      "`kernelUptime`, the `sessions` block's `parsed`, `chatBuilt` and `stamped`",       # the clause's prefix; its population is Disclosed's
+                      # HIGH 1 of the closing check: the http table is named as travelling in EVERY export, before the usage clause
+                      "the uptime rounded down to the minute, the `http` table in every export, with or without `--usage`: one row per route "
+                      "the kernel has served since it started",
+                      # and the usage clause is packaging: its head says the block adds no number a plain export lacks (the clause's
+                      # prefix; its population is Disclosed's)
+                      "and, only when `--usage` was given, the `usage` block, which adds no number a plain export lacks: every leaf under "
+                      "`usage` (the uptime's bucket `kernelUptime`, the `sessions` block's `parsed`, `chatBuilt` and `stamped`, each a copy or "
+                      "a count of a leaf under perf that travels anyway",
                       "the kernel commit",
                       "so two uploads from one kernel remain linkable by design",
                       # the closing re-run's finding 3, as its verification corrected it: the round's first replacement said an
@@ -2522,6 +2732,11 @@ class Docs(unittest.TestCase):
                       "double's range, such as 1e999 or an integer past about 1.8e308, which a double reader makes an infinity; no key "
                       "repeated within an object)"):
             self.assertTrue(words in text, "not in the reference: " + words)
+        # the closing check's HIGH 1 and its finding 3: the old conditioning ("only when --usage was given, every leaf under usage",
+        # which read as consent for counts a plain export sends identically) and the two provenance claims the code contradicts
+        # (a hook, a relaying kernel and a peer's poll post the same routes) are pinned absent; asserted by boolean, as above
+        for clause in ("the user's own actions", "one count per pane opened", "only when `--usage` was given, every leaf under `usage`"):
+            self.assertFalse(clause in text, "the falsified usage clause is back in the reference: " + clause)
         # the closing re-run's finding 3: the clause saying an entry outside the number alphabet "is a substring of no number"
         # was false by execution ((1234567), _1234567 and 1234567/ each refuse the number 1234567 by its digit groups); deleted.
         # Asserted by boolean like the needles above: assertNotIn on failure prints the whole flattened page (about 400 KB)

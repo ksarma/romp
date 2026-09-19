@@ -42,9 +42,11 @@ as a path spelling the key, and a machine string beneath a key the walk refuses 
 that key's rule and its dict, not as a path spelling the token. The refusal is built from the finding's fields
 (the kind of string or rule, and the key path: a value's own path, or the path of the dict holding a key), never
 from a line that carries the flagged text, so a key or value containing " at " cannot put a fragment of itself
-into the refusal. `--usage` adds a `usage` block, off by default: the session counts, the feature counts (the
-user's own actions and the panes opened, from the http table's route counts) and the kernel's uptime bucket, all
-from keys the snapshot already carries and folded the same way.
+into the refusal. `--usage` adds a `usage` block, off by default: the session counts, one count per action route
+served and one per pane route served, the http table's count for that route under the route's name, whoever made
+the requests, and the kernel's uptime bucket, all from keys the snapshot already carries and folded the same way; the
+`http` table itself, one row per route served with its request count and millisecond total, is in every export, so
+the block adds packaging and no number a plain export lacks (the closing check of 2026-09-19, HIGH 1).
 
 The file lands under the state directory as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json`, mode 0600, or at
 --out (a write that fails partway removes the file rather than leave a truncated one); the path and the byte
@@ -225,19 +227,21 @@ def _feature_name(path: str) -> str:
 
 
 def usage_block(snap: dict) -> dict:
-    """Usage counts from keys the snapshot already carries. Sessions: the sessions the kernel parsed
-    (`parses.perSession.sessions`, or the size of an older kernel's per-sid table), the sessions with a chat
-    build (`builds.chat.bySession`), the sessions stamped (`caches.session_stamp.entries`). Features: each
-    POST route's count as an action (the kernel's own housekeeping posts left out) and each pane route's GET
-    count as a view. Lifetime: the kernel's own uptime bucket. Per-session lifetimes are not in /perf (they are
-    the sessions listing's), so the block has none."""
+    """Usage counts from keys the snapshot already carries, and from no other: every leaf is a copy or a count of a leaf
+    the PLAIN export writes, so the block adds no number a plain export lacks (the disclosure paragraph's claim, pinned by
+    recomputing the block from a plain export in tests/test_perf_stats.py, Disclosed). Sessions: the sessions the kernel
+    parsed (`parses.perSession.sessions`; a snapshot saved by a kernel before it wrote perSession has NO parsed count
+    here, since its per-sid table is one the plain export drops, pp.DENY_KEYS, and until the closing check at the re-run's
+    head, 2026-09-19, this block wrote that table's size, the one number --usage added that no leaf of the plain body
+    gave), the sessions with a chat build (`builds.chat.bySession`), the sessions stamped
+    (`caches.session_stamp.entries`). Features: each POST route's count as an action (the kernel's own housekeeping posts
+    left out) and each pane route's GET count as a view. Lifetime: the kernel's own uptime bucket. Per-session lifetimes
+    are not in /perf (they are the sessions listing's), so the block has none."""
     out = {"sessions": {}, "actions": {}, "views": {}}
     parses = snap.get("parses") if isinstance(snap.get("parses"), dict) else {}
     per = parses.get("perSession")
     if isinstance(per, dict) and _num(per.get("sessions")) is not None:
-        out["sessions"]["parsed"] = per["sessions"]
-    elif isinstance(parses.get("bySid"), dict):
-        out["sessions"]["parsed"] = len(parses["bySid"])
+        out["sessions"]["parsed"] = per["sessions"]        # never len(parses.bySid): a table the plain export drops (the docstring)
     builds = snap.get("builds") if isinstance(snap.get("builds"), dict) else {}
     chat = builds.get("chat") if isinstance(builds.get("chat"), dict) else {}
     if isinstance(chat.get("bySession"), list):

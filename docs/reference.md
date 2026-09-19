@@ -4015,30 +4015,37 @@ the `gc` block's `enabled`, `counts`, `thresholds` and, per generation under
 `gc` (`hooked`, `frozen`, `errors`, `counts`, `thresholds` and, per generation
 under `gen`, `collections`, `collectedLast`, `msLast`, `msMax` and `msSum`),
 the ten memory-fraction bounds coarsened to a power of two (`hydrated.capBytes`
-among them), the uptime rounded down to the minute and, only when `--usage` was
-given, every leaf under `usage` (the uptime's bucket `kernelUptime`, the `sessions` block's
-`parsed`, `chatBuilt` and `stamped`, the `actions` block's one count per request
-served on an action route, named for the route (the user's own actions from the
-dashboard or the CLI; `push.relay`, `restart` and `tunnels.pull` can be an
-attached kernel's post, `redial` a failed send's retry), `color`, `compact`,
-`down`, `emoji`, `end`,
-`flag`, `fleet-restart`, `fork`, `fork-comment`, `fork-promote`, `group`,
-`interrupt`, `judge-settings`, `logins`, `mesh-settings`, `move`, `new`,
-`notify-all`, `notify-turns`, `order`, `pinnote`, `push.relay`,
-`push.subscribe`, `push.test`, `push.unsubscribe`, `redial`, `rename`,
-`restart`, `reveal`, `send`, `tag`, `tunnels`, `tunnels.askpull`,
-`tunnels.autoupdate`, `tunnels.checkin`, `tunnels.detach`, `tunnels.forget`,
-`tunnels.pull`, `tunnels.start`, `tunnels.trust`, `tunnels.trust-mirror`,
-`tunnels.trust-remote`, `tunnels.update`, `unpinnote`, `update`,
-`update-dismiss`, `usertodo`, `usertodo.context`, `usertodo.withdraw`, `views`,
-`walk-root`, `watch` and `watch-pr`, and the `views` block's one count per pane
-opened, `chat`, `feed`, `timeline`, `fleet`, `waiting`, `analytics`, `files`,
-`file`, `usage`, `usage.fleet`, `spend.detail`, `session-events`, `handoff`,
-`views` and `tunnels`; a count is present only for a route the kernel has
-served since it started), and the kernel commit (the list is every leaf of
-those four blocks in a fresh Linux export of 2026-09-19, with the one leaf
-macOS adds and the usage counts from a kernel that served every route), so two
-uploads from one kernel remain linkable by design. The
+among them), the uptime rounded down to the minute, the `http` table in every
+export, with or without `--usage`: one row per route the kernel has served since
+it started (`METHOD /path` over the kernel's route register, the bundle, media,
+glossary and remote families collapsed to one row each, and one `other` row for
+whatever is off the register or past the table's cap), each row that route's
+request `count` and millisecond total `ms`, whoever made the requests (the
+counter records the route and the time and nothing about the client), and,
+only when `--usage` was given, the `usage` block, which adds no number a
+plain export lacks: every leaf under `usage` (the uptime's bucket
+`kernelUptime`, the `sessions` block's `parsed`, `chatBuilt` and `stamped`,
+each a copy or a count of a leaf under perf that travels anyway, the
+`actions` block's one count per
+action route served, the http row's count under the route's name, `color`,
+`compact`, `down`, `emoji`, `end`, `flag`, `fleet-restart`, `fork`,
+`fork-comment`, `fork-promote`, `group`, `interrupt`, `judge-settings`,
+`logins`, `mesh-settings`, `move`, `new`, `notify-all`, `notify-turns`, `order`,
+`pinnote`, `push.relay`, `push.subscribe`, `push.test`, `push.unsubscribe`,
+`redial`, `rename`, `restart`, `reveal`, `send`, `tag`, `tunnels`,
+`tunnels.askpull`, `tunnels.autoupdate`, `tunnels.checkin`, `tunnels.detach`,
+`tunnels.forget`, `tunnels.pull`, `tunnels.start`, `tunnels.trust`,
+`tunnels.trust-mirror`, `tunnels.trust-remote`, `tunnels.update`, `unpinnote`,
+`update`, `update-dismiss`, `usertodo`, `usertodo.context`, `usertodo.withdraw`,
+`views`, `walk-root`, `watch` and `watch-pr`, and the `views` block's one count
+per pane route served, the http row's count under the route's name, `chat`,
+`feed`, `timeline`, `fleet`, `waiting`, `analytics`, `files`, `file`, `usage`,
+`usage.fleet`, `spend.detail`, `session-events`, `handoff`, `views` and
+`tunnels`; a count is present only for a route the kernel has served since it
+started), and the kernel commit when the export carried one (the list is every
+leaf of those four blocks in a fresh Linux export of 2026-09-19, with the one
+leaf macOS adds and the usage counts from a kernel that served every route), so
+two uploads from one kernel remain linkable by design. The
 one answer accepted is `201` with
 a JSON body of exactly `{"receipt": <uuid4>, "retention_days": <integer>,
 "av": "ok"|"skipped"}`, printed as `uploaded: receipt <uuid> (kept <N> days;

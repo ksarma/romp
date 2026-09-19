@@ -1307,7 +1307,10 @@ class Usage(unittest.TestCase):
 
     def test_session_counts_actions_views_and_the_uptime_bucket(self):
         u = pe.usage_block(leak_snapshot())
-        self.assertEqual(u["sessions"], {"parsed": 2, "chatBuilt": 2, "stamped": 31}, "an old kernel's per-sid table is a count")
+        self.assertEqual(u["sessions"], {"chatBuilt": 2, "stamped": 31},
+                         "an old kernel's per-sid table is one the plain export drops, so it gives no parsed count (the closing check at "
+                         "the re-run's head, 2026-09-19: the block adds no number a plain export lacks)")
+        self.assertEqual(pe.usage_block({"parses": {"bySid": {SID: 3}}})["sessions"], {}, "len(bySid) is never written")
         self.assertEqual(u["actions"], {"send": 7, "new": 2}, "POST routes the user drives; /tick is the browser's clock")
         self.assertEqual(u["views"], {"feed": 3})
         self.assertEqual(u["kernelUptime"], "lt1h")
@@ -1399,7 +1402,7 @@ class Cli(unittest.TestCase):
         with open(out, encoding="utf-8") as fh:
             doc = json.load(fh)
         self.assertEqual(doc["usage"]["actions"], {"send": 7, "new": 2})
-        self.assertEqual(doc["usage"]["sessions"]["parsed"], 2)
+        self.assertEqual(doc["usage"]["sessions"], {"chatBuilt": 2, "stamped": 31}, "no parsed count from the fixture's per-sid table")
         self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), "--out means no default file")
 
     def test_a_snapshot_with_a_nan_uptime_exports_under_usage_with_no_traceback(self):
