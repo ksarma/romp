@@ -75,6 +75,12 @@ SCRATCH_HEAD = textwrap.dedent('''\
     os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
     os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
     os.environ.pop("ROMP_STATE_DIR", None)
+    # This module's own state root, hosts off: per-session hosts are on by default, and a backend built over a root with
+    # no session-hosts file starts a real bin/romp-session-host for any session it connects (CLAUDE.md, Testing). The
+    # runner's conftest floors the run root it minted and only that one; the lazy first builds below (A.a and every case
+    # that builds over this root) build over THIS one, so the switch is written here, before any build, as sandbox() does.
+    os.makedirs(os.path.join(os.environ["XDG_STATE_HOME"], "romp"))
+    Path(os.environ["XDG_STATE_HOME"], "romp", "session-hosts").write_text("off\\n")
     KERNEL = os.path.join(os.environ["ROMP_RATCHET_BIN"], "romp-kernel")
     km = load_source("romp_kernel", KERNEL)
     jd = km.jd
@@ -99,6 +105,7 @@ SCRATCH_A = SCRATCH_HEAD + textwrap.dedent('''\
             assert km._sdk_backend is None
             be = km._sdk()
             assert be is not None and be.state_dir == jd.STATE and jd.STATE.is_dir()
+            assert not be.session_hosts_on()       # the module's root carries the off switch (CLAUDE.md, Testing)
 
         def test_b_a_saved_and_restored_singleton_passes(self):
             saved = (jd.STATE, km._sdk_backend)
