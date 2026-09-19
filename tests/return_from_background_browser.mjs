@@ -92,14 +92,17 @@ const wire = (ws, d) => {
   const server = ws.connectToServer();
   d.connectedT = now();
   server.onMessage((m) => { if (!d.firstServerMsgT) d.firstServerMsgT = now(); d.serverFrames = (d.serverFrames || 0) + 1; ws.send(m); });
-  ws.onMessage((m) => { d.pageFrames = (d.pageFrames || 0) + 1; server.send(m); });
+  ws.onMessage((m) => { d.pageFrames = (d.pageFrames || 0) + 1; server.send(m);
+    // the chat pane's asks for a full session frame (needFull, with its why): the idle prefetch's `prefetch`, the tap's `skeleton-click`
+    try { if (typeof m === "string" && m.indexOf('"needFull"') >= 0) { const o = JSON.parse(m); if (o && o.type === "needFull") (d.needFull = d.needFull || []).push(String(o.why || "")); } } catch (e) { /* not JSON */ }
+  });
   server.onClose((code, reason) => { d.serverClosedT = now(); d.serverCloseCode = code; live.delete(ws); try { ws.close({ code: code || 1000, reason: reason || "" }); } catch (e) { /* closed */ } });
   ws.onClose((code) => { d.pageClosedT = now(); d.pageCloseCode = code; live.delete(ws); try { server.close(); } catch (e) { /* closed */ } });
   live.add(ws);
 };
 await page.routeWebSocket((u) => /\/ws(\?|$)/.test(u.pathname + (u.search || "")), async (ws) => {
   const url = ws.url();
-  const d = { n: out.dials.length, app: appOf(url), relay: relayOf(url), reconnect: /[?&]reconnect=1/.test(url), t: now(), phase: state.phase };
+  const d = { n: out.dials.length, app: appOf(url), relay: relayOf(url), reconnect: /[?&]reconnect=1/.test(url), skeleton: /[?&]skeleton=1/.test(url), t: now(), phase: state.phase };   // skeleton: the diet's term (the phone's first chat dial, stage 0)
   out.dials.push(d);
   try {
     if (!state.outage) { d.verdict = "passed"; wire(ws, d); return; }
@@ -153,6 +156,11 @@ const install = (opts) => {
   }, true);
   if (w === w.top && !w.__labTopInit) {
     w.__labTopInit = true;   // once per window: the shell's document is never replaced
+    if (opts.bootTab) { try { localStorage.setItem("romp-mobile-tab", opts.bootTab); } catch (e) { /* no storage */ } }   // the tab the phone was left on (stage 0: the boot tab decides which panes load at boot)
+    // the chat pane's persisted state blob (the shim's SK for the main column), with the session the phone was looking at: the dial's
+    // active= hint. Without it the kernel keeps its fail-safe whole push for a page with no hint (no skeleton set, nothing to prefetch),
+    // which is a first-ever open, not the measured phone's; a lab session id, synthetic
+    if (opts.activeSid) { try { localStorage.setItem("romp-vscode-state-chat", JSON.stringify({ activeId: opts.activeSid })); } catch (e) { /* no storage */ } }
     w.__labWs = [];        // every {romp:'wsState',app,state} word a pane posted to the shell, stamped
     w.__labWsNow = {};     // the latest state per app
     w.addEventListener("message", (e) => {
@@ -169,7 +177,7 @@ const install = (opts) => {
   }
   return true;
 };
-const installOpts = { perfShare: !!cfg.perfShare };
+const installOpts = { perfShare: !!cfg.perfShare, bootTab: cfg.bootTab || "", activeSid: cfg.activeSid || "" };
 await page.addInitScript(install, installOpts);
 // the frames the init script missed, installed late (before the suspend); recorded so the note knows which engine needed it
 const ensureInstalled = async () => {
@@ -228,6 +236,7 @@ try {
   // the TAB-TAP leg (stage 0): tap a lazy pane's tab, wait for its socket (its document loads on the tap), then go back to the chat,
   // so the return below finds a tapped pane off screen: the parked-pane contract (D2) exercised on a pane that did not exist at boot
   if (cfg.tapPane) {
+    const prefetchBeforeTap = out.dials.filter((d) => d.app === "chat").reduce((n, d) => n + (d.needFull || []).filter((w) => w === "prefetch").length, 0);
     out.t.tap = now();
     await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");
     const tapDeadline = now() + (cfg.bootTimeoutMs || 30000);
@@ -243,6 +252,15 @@ try {
     await page.click("#mtabs button[data-pane=chat]");
     await sleep(Math.max(300, (cfg.settleMs || 1500) / 2));
     out.tapped = cfg.tapPane;
+    // the chat pane's idle prefetch (stage 0, review round 1): a phone opened on another tab holds the chain while the chat is
+    // display:none; the Chat tab's show re-arms it. Counted from the chat socket's needFull asks: none before the tap, one after
+    if (cfg.expectPrefetchAfterChatTap) {
+      const prefetchAsks = () => out.dials.filter((d) => d.app === "chat").reduce((n, d) => n + (d.needFull || []).filter((w) => w === "prefetch").length, 0);
+      out.prefetchBeforeTap = prefetchBeforeTap;
+      const pfDeadline = now() + (cfg.bootTimeoutMs || 30000);
+      while (now() < pfDeadline && prefetchAsks() <= prefetchBeforeTap) await sleep(100);
+      out.prefetchAfterChatTapMs = prefetchAsks() > prefetchBeforeTap ? now() - out.t.tap : -1;
+    }
     out.framesAtBoot = out.frames;
     out.frames = page.frames().map((f) => { try { return new URL(f.url()).pathname; } catch (e) { return f.url(); } });   // the frames the page holds at the suspend: the tapped pane's document is one now
   }

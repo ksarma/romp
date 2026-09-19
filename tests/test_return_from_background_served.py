@@ -338,17 +338,19 @@ class ReturnFromBackground(unittest.TestCase):
             shutil.rmtree(cls.lab, ignore_errors=True)
 
     # ---- the driver ----
-    def _drive(self, shell, regime, outage_s, engine="chromium", tap=None):
+    def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
         if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
-        name = "%s-%s-%s-%ds%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "")
+        name = "%s-%s-%s-%ds%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-boot-" + boot_tab if boot_tab else "")
         eager = _eager(shell, tap)
         cfg = {"engine": engine, "shell": shell, "regime": regime, "outageMs": outage_s * 1000, "hiddenDwellMs": 400,
                "url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token),
                "healthz": "http://127.0.0.1:%d/healthz" % self.port, "diag": self.diag, "apps": list(APPS),
                "eagerApps": list(_eager(shell)), "freshApps": [a for a in eager if a in FRESH_APPS], "tapPane": tap,   # the boot wait is the eager panes' (a lazy pane has no shim to say up); the fresh wait includes a tapped pane
                "perfShare": True, "bootTimeoutMs": 30000, "freshTimeoutMs": 25000, "settleMs": 1500,
+               "bootTab": boot_tab or "", "expectPrefetchAfterChatTap": bool(boot_tab and tap == "chat"),   # stage 0, review round 1: a phone left on another tab, then the Chat tab shown, arms the idle chain
+               "activeSid": SESSIONS[0][0] if boot_tab else "",   # the chat blob's active tab (the dial's hint): with none the kernel serves the whole board and there is no skeleton set to prefetch
                "shots": os.path.join(self.lab, "return-harness-" + name) if os.environ.get("RETURN_HARNESS_SHOTS") else ""}
         cfg["resultPath"] = os.path.join(self.lab, "result-%s.json" % name)   # the full result; the RESULT: line is a compact copy
         cfg_path = os.path.join(self.lab, "cfg-%s.json" % name)
@@ -373,8 +375,8 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertEqual(len(full.get("dials") or []), r.get("dialsN"), "the full result carries every dial the compact line counted")
         return name, full
 
-    def _leg(self, shell, regime, outage_s, engine="chromium", tap=None):
-        name, r = self._drive(shell, regime, outage_s, engine, tap)
+    def _leg(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None):
+        name, r = self._drive(shell, regime, outage_s, engine, tap, boot_tab)
         m = measure(_rows(self.diag), r)
         art = os.path.join(self.lab, "return-harness-%s.json" % name)
         Path(art).write_text(json.dumps(m, indent=1, sort_keys=True))
@@ -382,7 +384,24 @@ class ReturnFromBackground(unittest.TestCase):
         self._shapes(name, r, m, regime)
         self._parked(name, r, m)
         self._lazy(name, r, m, tap)
+        self._dial(name, r, boot_tab, tap)
         return m
+
+    # ---- stage 0's dial pins (review round 1, 2026-09-19): the phone's first chat dial takes the diet; the chain waits for the chat pane's show ----
+    def _dial(self, name, r, boot_tab, tap):
+        """The phone's first chat dial carries skeleton=1 (the kernel serves one full plus statuses), the desktop's does not (F5's rule end to
+        end); and on a phone opened on another tab the chat pane's idle prefetch asks for nothing while the chat is display:none and asks
+        for its first background full once the Chat tab is shown (F1: the visibility publisher's show hook and the panes word's belt)."""
+        where = name + ": "
+        boot_chat = [d for d in (r.get("dials") or []) if d.get("app") == "chat" and d.get("phase") == "boot"]
+        self.assertTrue(boot_chat, where + "the chat pane dialed at boot")
+        if r.get("shell") == "phone":
+            self.assertTrue(boot_chat[0].get("skeleton"), where + "the phone's first chat dial carries skeleton=1: %r" % (boot_chat[0],))
+        else:
+            self.assertFalse(any(d.get("skeleton") for d in boot_chat), where + "the desktop's chat dials whole, as before: %r" % (boot_chat,))
+        if boot_tab and tap == "chat":
+            self.assertEqual(r.get("prefetchBeforeTap"), 0, where + "no background full left while the chat pane was display:none behind the %s tab" % boot_tab)
+            self.assertGreaterEqual(r.get("prefetchAfterChatTapMs", -1), 0, where + "the Chat tab's show re-armed the idle chain: a prefetch ask left the chat socket (ms after the tap: %r)" % r.get("prefetchAfterChatTapMs"))
 
     # ---- stage 0's count pin (2026-09-18): the lazy panes' cold-open counts, and the tab-tap leg ----
     def _lazy(self, name, r, m, tap):
@@ -414,7 +433,7 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertEqual(m["wsopenBoot"].get(tap), 1, where + "one socket from it, after the tap: %r" % (m["wsopenBoot"],))
             la = r.get("loadingAfterTap") or {}
             self.assertIn("panes", la, where + "the loading state was read after the tap: %r" % (la,))
-            self.assertNotIn(tap + "-pane", la.get("panes") or [], where + "its document had loaded by the time its socket was up, so its .pane no longer wears loading: %r" % (la,))
+            self.assertNotIn(tap + "-pane", la.get("panes") or [], where + "its document had loaded by the time its socket was up, so its .pane no longer carries the loading class: %r" % (la,))
             self.assertFalse(la.get("body"), where + "…and the shell's loader is down: %r" % (la,))
 
     # ---- D2's count pin (2026-09-18): which panes parked, through the wsState words the driver recorded ----
@@ -531,6 +550,9 @@ class ReturnFromBackground(unittest.TestCase):
 
     def test_phone_hung_12s_tab_tap(self):
         self._leg("phone", "hung", 12, tap="fleet")   # stage 0: a lazy pane tapped before the suspend loads on the tap and parks at the return
+
+    def test_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown(self):
+        self._leg("phone", "hung", 12, tap="chat", boot_tab="feed")   # stage 0, review round 1 (F1): the chat display:none at boot asks nothing; its show arms the idle prefetch
 
     def test_phone_refused_30s_slow(self):
         self._leg("phone", "refused", 30)
