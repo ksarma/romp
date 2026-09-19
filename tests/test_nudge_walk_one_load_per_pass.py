@@ -757,8 +757,9 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
         witness that the fallback went through load_goals exactly as the door's own hand-off and the record was inert past it."""
         self.assertEqual(p["sweep"], {SID_C: 1},
                          "%s: the sweep takes exactly one shared load for the one record it owns, and none for the walk's sids" % name)
-        self.assertEqual([(c, f) for _s, c, f, _ln in p["calls"] if c in SWEEP], [("_awaiting_wake_outcomes", KERNEL_FILE)],
-                         "%s: the sweep's read is recorded as _awaiting_wake_outcomes's, in the kernel's real file" % name)
+        self.assertEqual([f for _s, c, f, _ln in p["calls"] if c in SWEEP], [KERNEL_FILE],
+                         "%s: the sweep's read is recorded in the kernel's real file (the function is the filter's own, held by _pass's caller "
+                         "assertion, and the count by the line above, so the file is the one element that can fail here)" % name)
         self.assertEqual(p["writerLoads"], handoffs,
                          "%s: the shared door's fallback into load_goals is the shared door's own read, counted once under goal_io loads as a "
                          "hand-off and never as a writer call; %d hand-off(s) expected this pass, and the record is inert past the read" % (name, handoffs))
@@ -818,8 +819,9 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
                              "stays (condition 7, both bounds)" % name)
             self.assertEqual(p["sweep"], {SID_A: 1}, "%s: the sweep takes exactly one shared load for the wedge-held record of an alive sid "
                                                        "the walk visited, and none for SID_B, which owns no record" % name)
-            self.assertEqual([(c, f) for _s, c, f, _ln in p["calls"] if c in SWEEP], [("_awaiting_wake_outcomes", KERNEL_FILE)],
-                             "%s: the sweep's read is recorded as _awaiting_wake_outcomes's, in the kernel's real file" % name)
+            self.assertEqual([f for _s, c, f, _ln in p["calls"] if c in SWEEP], [KERNEL_FILE],
+                             "%s: the sweep's read is recorded in the kernel's real file (the function is the filter's own, held by _pass's caller "
+                             "assertion, and the count by the line above, so the file is the one element that can fail here)" % name)
             self.assertEqual(p["writerLoads"], 0, "%s: the stamp is a recorder here and the sweep's read fills or hits, so the writer door's "
                                                   "counter stays: no writer load, no hand-off" % name)
             self.assertEqual(p["parsedSids"], [SID_A], "%s: the sweep parses the record's session once past its read" % name)
