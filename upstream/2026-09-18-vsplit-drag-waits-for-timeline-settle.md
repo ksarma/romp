@@ -36,4 +36,4 @@ goes after the bottom tab is found and draggable and immediately before the pane
 out.settled = await settled() as the last line before it.
 
 
-2026-09-19: approved for offer by the user (his answer, about 07:03Z, to the consolidated ask that named this entry with the two other test fixes outside the 2026-09-18 plan's batches: yes). Offered on its own branch from the project's tip, not stacked, since no open offer touches this file; publish waits for a slot under the open-offer throttle.
+2026-09-19: approved for offer by the user (his answer at 07:02Z on todo ut-1acd8aae, the consolidated ask that named this entry with the two other test fixes outside the 2026-09-18 plan's batches: yes). Offered on its own branch from the project's tip, not stacked, since no open offer touches this file; publish waits for a slot under the open-offer throttle.
