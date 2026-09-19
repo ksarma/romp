@@ -5,13 +5,9 @@ gate's currency check, each on its own. The WALK takes at most one shared goal-s
 exactly one when its look reaches the store, zero when the look is skipped or ends at a state gate before the store read.
 The PLACEMENT GATE's post-derivation currency check is a SEPARATE load, at most one per DERIVED session, counted apart. Two
 bounds, each attributable to its caller. Other readers of the same store run on the same pass under their own rules and
-outside both bounds, among them the dead-man's fresh re-read inside the look (`_wake_goal`, the writer's loader, under
-`goals.loads`, at most one per stamped top whose dead-man is due, per look), the writers' own loads at their write moments
-(`_mark_nudge_failed`, `_file_wake_answer` and `_dead_wait_block`, each a `load_goals` under `goals.loads`, reached from
-the look's wake legs and from the sweep) and the wake sweep after the per-session loop (`_awaiting_wake_outcomes`, called
-outside the toggle guard, one shared load per wake record it owns that `memos.nudgeWalk.loads` does not count), which runs
-after the walk in the same pass, not on it (review round 2 executed the writers' loads: two per failure stamp, one per
-answered wake, one per due dead-man; the dormant branch's block by code). The rule was first written as one call count;
+outside both bounds; the reference's `jobs` block (docs/reference.md) names them with their bounds and their callers on the
+toggle-off pass, and the Docs case pins that text and this pointer (one home for the clause: review round 2 found it in four
+hand-kept copies, two of them pinned by nothing). The rule was first written as one call count;
 a total is falsified by any new legitimate reader of the store, where a
 named mechanism adds a clause, so the counts below never sum the two. Stage 1 made the wake-only look record a memo row and skip on the
 ten-file key, and the first wording of its amendment kept the walk's ceiling (at most one) and dropped the floor; the ruling
@@ -200,7 +196,7 @@ KERNEL_FILE = os.path.basename(os.path.realpath(km.__file__))   # the kernel's r
 # fixture turns, both ended, as not working, the answer the stub gave), and the state-gate case replaces it for its own world.
 # CASE_KM: names a CASE may replace after setUp for its own world, saved with the rest and restored by the cleanup; setUp
 # leaves them real (the agreement check there). The two writers are the wedge-gate sweep case's: their real bodies load
-# through the writer door at their write moments by design (the module docstring names them among the store's other
+# through the writer door at their write moments by design (the reference's jobs block names them among the store's other
 # readers), so the census has nothing to say about them.
 CASE_KM = ("_session_working", "_mark_nudge_failed", "_file_wake_answer")
 REPLACED_KM = ("_alive_sessions", "_wait_for_graph", "_session_flag", "_compacting_now", "_api_error",
@@ -751,8 +747,8 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
         door twice at its write moment and stamps the record failed, which the sweep then no longer owns; so this case
         replaces it, and _file_wake_answer (the answered leg's writer), with recorders (CASE_KM, restored by the cleanup),
         asserts the stamp was reached for the record with wake=True on each pass, and the record stays live so the sweep
-        reads it again on the second pass. The two writers are the module docstring's named readers, loading by design at
-        their write moments; the census is about helpers that should read nothing."""
+        reads it again on the second pass. The two writers are among the store's other readers the reference's jobs block
+        names, loading by design at their write moments; the census is about helpers that should read nothing."""
         km._api_error = lambda path: "API Error: 529 overloaded"
         reached = []
         km._mark_nudge_failed = lambda gid, ev_t=None, wake=False: reached.append(("failed", gid, wake)) or None
@@ -902,6 +898,13 @@ class TheCountersOneSite(unittest.TestCase):
 
 class Docs(unittest.TestCase):
     def test_the_reference_states_condition_7_in_the_jobs_paragraph_and_names_the_counter(self):
+        """The reference's `jobs` block is the one home of the other-readers clause (review round 2, regression-2 and fresh-4:
+        the clause stood in four hand-kept copies, two of them pinned by nothing, and said the three writers are reached from
+        the look's wake legs and from the sweep, which is false of _dead_wait_block on the toggle-off pass). This case pins the
+        home's wording, with each writer's callers, and the two pointers a test can read: the memos.nudgeWalk entry's and this
+        module's own docstring's. The ledger entry (upstream/) carries the same pointer by hand and is not read here: the
+        directory is fork-only infrastructure and this module is part of the offer the entry records, so a read of it would red
+        upstream or need a skip, and a skipping pin pins nothing."""
         doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
         jobs = doc[doc.index("- `jobs`: the jobs thread"):]
         jobs = " ".join(jobs[:jobs.index("\n- `caches`:")].split())   # the paragraph is wrapped: one space between words
@@ -915,24 +918,23 @@ class Docs(unittest.TestCase):
                       "readers of the same store run on the same pass under their own rules and outside both bounds, among them",
                       "`_wake_goal`", "at most one per stamped top whose dead-man is due, per look",
                       "the writers' own loads at their write moments", "`_mark_nudge_failed`", "`_file_wake_answer`", "`_dead_wait_block`",
-                      "reached from the look's wake legs and from the sweep",
+                      "the first two reached from the look's wake legs and from the wake sweep", "from the look's dormant-owner branch",
+                      "only with the toggle on",
                       "`_awaiting_wake_outcomes`", "runs after the walk in the same pass, not on it"):
             self.assertIn(words, jobs, "the jobs paragraph states condition 7 per mechanism, scoped to the two loaders it bounds, names "
-                                       "the store's other readers on the pass as a class with its members and their bounds, the counter "
-                                       "and this test: %r" % words)
+                                       "the store's other readers on the pass as a class with its members, their bounds and each writer's "
+                                       "callers on the toggle-off pass, the counter and this test: %r" % words)
         walk = " ".join(doc[doc.index("`nudgeWalk` is the auto-nudge walk's"):].split())   # wrapped: normalise before slicing
         walk = walk[:walk.index("a memo row is the ten files' stat")]
         self.assertIn("`loads`", walk, "memos.nudgeWalk.loads is named in the walk's entry")
         self.assertIn("bounds two loaders", walk, "and the entry scopes the condition to the two loaders it bounds")
         self.assertIn("a second loader with a bound of its own", walk, "and the entry names the gate's check as the second loader")
         self.assertIn("counted by the test and by no served counter", walk, "and says what counts it")
-        for words in ("readers of the same store run on the same pass under their own rules and outside both bounds, among them",
-                      "`_wake_goal`", "at most one per stamped top whose dead-man is due, per look",
-                      "the writers' own loads at their write moments", "`_mark_nudge_failed`", "`_file_wake_answer`", "`_dead_wait_block`",
-                      "reached from the look's wake legs and from the sweep",
-                      "`_awaiting_wake_outcomes`", "runs after the walk in the same pass, not on it"):
-            self.assertIn(words, walk, "and the entry names the store's other readers on the pass as a class with its members and their "
-                                       "bounds, the sweep after the walk: %r" % words)
+        self.assertIn("the store's other readers on the pass are named with their bounds in the `jobs` block above", walk,
+                      "and the entry points at the jobs block for the store's other readers instead of carrying a copy of the clause")
+        mine = " ".join(sys.modules[__name__].__doc__.split())
+        self.assertIn("the reference's `jobs` block (docs/reference.md) names them with their bounds and their callers on the toggle-off pass",
+                      mine, "this module's own docstring points at the jobs block for the store's other readers instead of carrying a copy")
         gloss = km._PerfStats.__doc__
         field = gloss[gloss.index("nudgeWalk (the auto-nudge walk's"):]
         field = " ".join(field[:field.index("nudgeGate")].split())   # wrapped too

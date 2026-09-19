@@ -2634,8 +2634,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the writer's loader, under `goals.loads`, at most one per stamped top whose
   dead-man is due, per look), the writers' own loads at their write moments
   (`_mark_nudge_failed`, `_file_wake_answer` and `_dead_wait_block`, each a
-  `load_goals` under `goals.loads`, reached from the look's wake legs and from
-  the sweep) and the wake sweep after the per-session loop
+  `load_goals` under `goals.loads`; the first two reached from the look's wake
+  legs and from the wake sweep, `_dead_wait_block` from the look's dormant-owner
+  branch in `_wake_goal`, since its other caller, `_dead_wait_sweep`, runs only
+  with the toggle on) and the wake sweep after the per-session loop
   (`_awaiting_wake_outcomes`, called outside the toggle guard, one shared load
   per wake record it owns that `memos.nudgeWalk.loads` does not count), which
   runs after the walk in the same pass, not on it.
@@ -3391,16 +3393,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the condition bounds two loaders, this one and the placement gate's
   post-derivation currency check, a second loader with a bound of its own,
   at most one load per derived session, counted by the test and by no served
-  counter, `nudgeGate.derived` counting the derives that bound it; other readers
-  of the same store run on the same pass under their own rules and outside both
-  bounds, among them the dead-man's fresh re-read inside the look (`_wake_goal`,
-  the writer's loader, under `goals.loads`, at most one per stamped top whose
-  dead-man is due, per look), the writers' own loads at their write moments
-  (`_mark_nudge_failed`, `_file_wake_answer` and `_dead_wait_block`, each a
-  `load_goals` under `goals.loads`, reached from the look's wake legs and from
-  the sweep) and the wake sweep after the per-session loop
-  (`_awaiting_wake_outcomes`, one shared load per wake record it owns, not
-  counted here), which runs after the walk in the same pass, not on it); a memo
+  counter, `nudgeGate.derived` counting the derives that bound it; the store's
+  other readers on the pass are named with their bounds in the `jobs` block
+  above); a memo
   row is the ten files' stat, the look's mode tag
   (`full`, `wake`, or `wake+reminders` for tracking off with nudges on), the
   earliest flip and the verdict, and a row serves a look of the same mode
