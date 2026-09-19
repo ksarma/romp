@@ -1153,7 +1153,11 @@ class StoredLoginPick(_Backend):
         self.assertIn("the Work login, no longer seeds a new session", rows[0]["text"])
         self.assertIn("bills the machine's own login", rows[0]["text"])
         row = sb.parse_problem_row([m for m in lines if sb.PROBLEM_ROW_MARK in m and "Work" in m][0])
-        self.assertEqual((row["pick"], row["bills"]), ("login:" + rec["id"], "login"))
+        self.assertEqual((row["kind"], row["sid"], row["name"], row["pick"], row["bills"]),
+                         ("auth.pick-not-seeded", sid, "n", "login:" + rec["id"], "login"))
+        self.assertNotIn("why", row, "a usable stored login is billable: the account moves, the pick is not unbillable")
+        self.assertEqual([r for r in self._events() if r["kind"] == "auth.pick-not-seeded"], [row], "the ledger row is on the session")
+        self.assertNotIn(self.tok, rows[0]["text"]); self.assertNotIn(self.tok, json.dumps(row))
 
     def test_a_stored_login_pick_with_no_helper_and_no_login_moves_to_no_credential_and_says_so(self):
         """The worst cell (the reviewer's second correction, 2026-09-19): a working stored account before, no credential of
@@ -1171,6 +1175,15 @@ class StoredLoginPick(_Backend):
         self.assertIn("the Work login, no longer seeds a new session", text)
         self.assertIn("bills whatever the CLI resolves on its own (%s, and no apiKeyHelper is configured), which may be no "
                       "credential at all" % sb._cred.WHY_NO_LOGIN, text)
+        # all three surfaces (round 1 addendum): the kernel-log line with its parseable tail, and the ledger row on the session
+        marked = [m for m in lines if sb.PROBLEM_ROW_MARK in m and "Work" in m]
+        self.assertEqual(len(marked), 1, lines)
+        row = sb.parse_problem_row(marked[0])
+        self.assertEqual((row["kind"], row["sid"], row["name"], row["pick"], row["bills"]),
+                         ("auth.pick-not-seeded", sid, "n", "login:" + rec["id"], "login"))
+        self.assertNotIn("why", row, "the stored login itself is usable: the account moves, the pick is not unbillable")
+        self.assertEqual([r for r in self._events() if r["kind"] == "auth.pick-not-seeded"], [row], "the ledger row is on the session")
+        self.assertNotIn(self.tok, text); self.assertNotIn(self.tok, json.dumps(row))
 
     def test_a_refused_stored_login_pick_is_said_as_unbillable(self):
         rec = _rec(self.be.state_dir, "Work")
@@ -1185,6 +1198,10 @@ class StoredLoginPick(_Backend):
         self.assertIn("once that login is usable again", text)
         row = sb.parse_problem_row([m for m in lines if sb.PROBLEM_ROW_MARK in m and "Work" in m][0])
         self.assertTrue(row["why"])
+        self.assertEqual((row["kind"], row["sid"], row["name"], row["pick"], row["bills"]),
+                         ("auth.pick-not-seeded", sid, "n", "login:" + rec["id"], "key"))
+        self.assertEqual([r for r in self._events() if r["kind"] == "auth.pick-not-seeded"], [row], "the ledger row is on the session")
+        self.assertNotIn(self.tok, text); self.assertNotIn(self.tok, json.dumps(row))
 
     def test_spend_folds_by_login(self):
         rec = _rec(self.be.state_dir, "Work")

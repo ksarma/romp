@@ -857,7 +857,9 @@ class PickNotSeededSaysSo(_OptionsHarness):
         self.assertIn("after configuring apiKeyHelper in %s" % os.path.join(self.cfg, "settings.json"), text)
         self.assertIn("Set default billing", text)
         row = sb.parse_problem_row([m for m in lines if sb.PROBLEM_ROW_MARK in m and self.NEEDLE in m][0])
+        self.assertEqual((row["kind"], row["sid"], row["name"]), ("auth.pick-not-seeded", sid, "n"))
         self.assertEqual((row["pick"], row["bills"], row["why"]), ("key", "login", sb._cred.WHY_NO_HELPER))
+        self.assertEqual([r for r in self._events() if r["kind"] == "auth.pick-not-seeded"], [row], "the ledger row is on the session")
 
     def test_a_plain_login_pick_on_a_helper_less_box_with_a_login_is_silent(self):
         self._no_helper()
@@ -882,6 +884,13 @@ class PickNotSeededSaysSo(_OptionsHarness):
         self.assertIn("bills whatever the CLI resolves on its own", text)
         self.assertIn("which may be no credential at all", text)
         self.assertIn("after signing in (claude /login)", text)
+        # all three surfaces (round 1 addendum: every say-so cell pins the ledger row and the kernel-log line, not the ring alone)
+        marked = [m for m in lines if sb.PROBLEM_ROW_MARK in m and self.NEEDLE in m]
+        self.assertEqual(len(marked), 1, lines)
+        row = sb.parse_problem_row(marked[0])
+        self.assertEqual((row["kind"], row["sid"], row["name"], row["pick"], row["bills"], row["why"]),
+                         ("auth.pick-not-seeded", sid, "n", "login", "login", sb._cred.WHY_NO_LOGIN))
+        self.assertEqual([r for r in self._events() if r["kind"] == "auth.pick-not-seeded"], [row], "the ledger row is on the session")
 
     def test_no_pick_and_an_explicit_default_are_silent_on_this_road(self):
         sid, reg, lines, added = self._spawn_unpicked("n")
