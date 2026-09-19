@@ -9,7 +9,9 @@ socket, so the remote is served the way the local pane is.
 
 Red first at the base (the bare dial), green with the terms, on three observables:
   1. the relay dial URL (window.__dials) carries skeleton=1, delta=1, the watched tab's BARE sid as
-     active=, and an iid namespaced by the hub's wid;
+     active=, and an iid namespaced by the hub's wid; since 2026-09-19 its caps term is federation's decoder
+     word joined with the page's own caps less readyGate (assert_relay_dials below, the helper the corners lab
+     calls too: the expectation is derived from the page's LOCAL dial, which the hook records beside the relay's);
   2. the REMOTE kernel's /perf builds.chat.coldSkipped is >0 (it dieted the cold tab for the hub's
      skeleton client), 0 at the base;
   3. the REMOTE kernel's client-diag.jsonl carries a wsopen row of kind "relay" whose iid presence flag is
@@ -58,6 +60,53 @@ def _free_port():
     p = s.getsockname()[1]
     s.close()
     return p
+
+
+# ── the relay dial's caps term, per app (2026-09-19) ──
+# A page announces its caps on its LOCAL socket (the shim's CAPS, kernel.py _shim: READY_GATE_CAP on every kernel-served
+# pane, FEED_DELTA_CAP too on the feed-riding pages). Each relay dial carries federation.ts's own decoder word joined with
+# those: REMOTE_DIAL_CAPS first, then the page's words in the shim's order, READY_GATE_CAP and repeats dropped
+# (federation.ts remoteDialCaps). The rule is restated here and applied to the page's OWN local dial, which every lab
+# driver's socket hook records beside the relay dials (window.__dials), so the expectation is derived from what the page
+# announced and guarded present, never typed per app. Today every app's joined term is "feedDelta".
+REMOTE_DIAL_CAPS = "feedDelta"
+READY_GATE_CAP = "readyGate"
+
+
+def local_dial(dials):
+    """The page's own /ws dial among `dials` (the shim's; never a /remote/ relay); the first, when the shim redialed."""
+    own = [u for u in dials if "/remote/" not in u and "/ws?" in u]
+    if not own:
+        raise AssertionError("the page dialed no local /ws socket: %r" % (dials,))
+    return own[0]
+
+
+def expected_relay_caps(dials):
+    """The caps term every relay dial from this page carries, derived from the page's local dial's caps term by the join
+    rule above. Guarded: the local dial announces at least one cap (every kernel-served pane announces readyGate), so the
+    derivation never runs on nothing."""
+    q = parse_qs(urlsplit(local_dial(dials)).query)
+    page = [w for w in (q.get("caps") or [""])[0].split(",") if w]
+    if not page:
+        raise AssertionError("the page's local dial announces no caps, so no relay expectation can be derived from it: %r" % (local_dial(dials),))
+    words = [REMOTE_DIAL_CAPS] + [w for w in page if w != READY_GATE_CAP and w != REMOTE_DIAL_CAPS]
+    return ",".join(words)
+
+
+def assert_relay_dials(tc, dials_by_app, expected_by_app):
+    """Every relay dial each app's page made carries the app, delta=1 and the caps term `expected_by_app[app]`: a string
+    (expected_relay_caps), or None where the page stripped the term (the corners lab's caps-ignoring stand-in)."""
+    for app, dials in dials_by_app.items():
+        relay = [u for u in dials if "/remote/" in u]
+        tc.assertTrue(relay, "the hub's %s page dialed a remote's relay socket: %r" % (app, dials))
+        for u in relay:
+            qs = parse_qs(urlsplit(u).query)
+            tc.assertEqual(qs.get("app"), [app], "the pane's app on the %s relay dial: %r" % (app, u))
+            tc.assertEqual(qs.get("delta"), ["1"], "the page's delta term rides the %s relay dial (since 2026-09-15): %r" % (app, u))
+            expected = expected_by_app[app]
+            tc.assertEqual(qs.get("caps"), ([expected] if expected else None),
+                           "the %s relay dial's caps term (federation's decoder word joined with the page's caps less readyGate, "
+                           "or none where the page strips it): %r" % (app, u))
 
 
 SEED_PAIRS = 6         # closed pairs per seed transcript: one bar each on the timeline
@@ -379,6 +428,15 @@ class FederatedDialTerms(unittest.TestCase):
         self.assertEqual(qs.get("delta"), ["1"], "delta rides every dial, as the local pane's does")
         self.assertEqual(qs.get("skeleton"), ["1"], "the page's skeleton posture rode the remote dial")
         self.assertEqual(qs.get("active"), [SID_R0], "the watched remote tab, stripped to its bare sid")
+
+    def test_the_remote_dial_caps_term_is_the_decoder_word_joined_with_the_pages_caps_less_the_hold(self):
+        # the chat page announces readyGate alone on its local dial (kernel.py _shim("chat", caps=READY_GATE_CAP)), so the
+        # joined term is the decoder word alone; derived from the recorded local dial, never typed
+        self._driver_ran()
+        dials = self.result["dials"]
+        expected = expected_relay_caps(dials)
+        self.assertEqual(expected, "feedDelta", "the chat's own caps add no word today: %r" % (local_dial(dials),))
+        assert_relay_dials(self, {"chat": dials}, {"chat": expected})
 
     def test_the_remote_iid_is_namespaced_by_the_hub_wid(self):
         qs = parse_qs(urlsplit(self._relay_dial()).query)

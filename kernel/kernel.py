@@ -3494,8 +3494,9 @@ def _client_diag_append(fp, line):
 # identifier, since federation.ts times a frame as `fed:` plus its classified type), each with a 14-bucket histogram,
 # 16.5 KB at six-digit counts; MAX_TOP long-frame keys at the string cut, the free sample, the slow counts and the
 # envelope add about 1.4 KB (17.9 KB share off); the shared fields (MAX_RES named resources and the fold, nav, marks,
-# env, vis, wsBytes, rafGap) add about 3.4 KB (21.3 KB share on). 24 KiB holds both with margin (today's minute rows run
-# to 2.5 KB); above it the shed and the marker are the backstops for a row no collector builds. The table lists the
+# env, vis, wsBytes, wsBytesByHost at its widest, MAX_HOSTS positions and the hmore fold at nine digits each, 107 bytes,
+# and rafGap) add about 3.5 KB (21.4 KB share on). 24 KiB holds both with margin (today's minute rows run to 2.5 KB);
+# above it the shed and the marker are the backstops for a row no collector builds. The table lists the
 # keys as the posters build them: perf-telemetry.ts (minute, slowframe), the pane shim (staleDiag, the return rows,
 # wsclose, wsconnfail, page-load), the reload core's held row, the shell scripts, federation.ts, render.ts and
 # scroll-write.ts, strip.ts, feed.ts, fleet.ts, waiting.ts. The kernel's own rows (surface kernel: _note_ws_open and
@@ -3503,7 +3504,7 @@ def _client_diag_append(fp, line):
 # (said once per what), so a forged wsopen cannot land beside the kernel's; the entry names the kernel's own keys. A
 # surface not in the table keeps no key at all, and a data that is not an object is stored as null.
 CLIENT_DIAG_STR_MAX = 64
-CLIENT_DIAG_ROW_MAX = 24 * 1024   # above the collector's worst case with share on (21.3 KB; the derivation above)
+CLIENT_DIAG_ROW_MAX = 24 * 1024   # above the collector's worst case with share on (21.4 KB; the derivation above)
 CLIENT_DIAG_DEPTH_MAX = 8      # nesting past this reads null: the rows are flat or two deep
 CLIENT_DIAG_SAID_MAX = 512     # (surface, key) pairs the stderr latch holds; at the bound one more line says so and nothing else is said
 CLIENT_DIAG_ROW_SAY_MAX = 8    # foreign keys of ONE row said by name; the rest are one counting line, so a row spends at most this many latch entries and one
@@ -3513,7 +3514,14 @@ CLIENT_DIAG_MINUTE_SHED = ("frames", "loaf", "free", "slow")
 CLIENT_DIAG_KEYS = {
     "perf": frozenset(("app", "since", "span_ms", "frames", "free", "loaf", "slow", "dom", "visible", "hidden_pane", "ua", "heap_mb",   # minute
                        "type", "ms",                                                # slowframe (app, dom, loaf as above)
-                       "nav", "res", "marks", "env", "vis", "wsBytes", "rafGap")),  # the shared fields, on when the gear says so
+                       "nav", "res", "marks", "env", "vis", "wsBytes", "rafGap",     # the shared fields, on when the gear says so
+                       "wsBytesByHost")),   # the shared field the user approved on 2026-09-19 (the bytes each attached host sent, one number per host, no
+                                            # content): {h1..h4: int, hmore?: int}, the text-frame characters each REMOTE host's sockets delivered in the
+                                            # minute (wsBytes's unit; the two are disjoint), keyed by the host's POSITION on the page, h1 the first remote
+                                            # host the page attached, per page life. Positions, never names: this row carries no host name. The file's
+                                            # federation and shell surfaces carry host names already (their `host` key above and below, an earlier
+                                            # approval), so a reader holding both surfaces can map a position to a name within one page life; this
+                                            # entry says that and no more.
     "pane-shim": frozenset(("app", "why", "ready", "quietMs", "hidden",                                         # staleDiag rows
                             "decision", "resumed", "hiddenMs", "frozenMs", "quietAtResumeMs", "resent",         # return
                             "ms", "bytesSince", "redialed",                                                     # return-fresh
@@ -55835,8 +55843,9 @@ def _send_chat(c, m, ms, change_from, led_changed):
 # this socket, gets the full {type:"feed"} frame: the legacy path, kept for the consumers that dial without
 # ?delta=1 too (a bundle before the cap, its local socket; a relay dialed by a dashboard bundle before 2026-09-15;
 # the VS Code extension before 2026-09-16), with its 60 s repost of the unchanged frame. Federation's remote
-# sockets announce the cap since 2026-09-18 (federation.ts REMOTE_DIAL_CAPS; the relay forwards the dial's query
-# whole, so the cap is read at accept like a page's). A client that dials ?delta=1 and no cap is served through the
+# sockets announce the cap since 2026-09-18 (federation.ts REMOTE_DIAL_CAPS, joined since 2026-09-19 with the page's
+# own caps less READY_GATE_CAP, remoteDialCaps; the relay forwards the dial's query whole, so the cap is read at accept
+# like a page's). A client that dials ?delta=1 and no cap is served through the
 # view-delta SLOT path instead (_send_slot: a keyed full frame, then patches; a clock-only patch of about 100 bytes
 # on an idle board), not this path or its repost: the VS Code extension's pipes (client=ext&delta=1 since
 # 2026-09-16, reassembled by their own ViewDeltas) and a relay dialed by a dashboard bundle from 2026-09-15 to
@@ -66392,6 +66401,7 @@ window.__rompLocalSend=send;window.__rompApp=APP;
 window.__rompDiag=function(what,data){try{send({type:"clientDiag",surface:"reload-core",what:what,data:data});}catch(e){}};   // the reload core's breadcrumb door: this pane's socket, the serving kernel (the core itself names no send route)   // federation.ts (the multi-kernel manager) routes local sends + knows the app through these
 var SK="romp-vscode-state-%s"+(COL?":"+COL:"");   // persist webview state to localStorage so UI prefs survive a refresh — per chat column (split screen 2026-09-08)
 window.__rompDialTerms=function(){var a="";try{var st=JSON.parse(localStorage.getItem(SK)||"null");a=(st&&st.activeId)||"";}catch(e){}return{app:APP,iid:IID,active:a,col:COL,skeleton:((SKEL||(RESTART_DIET&&!everConnected))?1:0),provrows:(APP==="fleet"?1:0),proto:readyProto,delta:1};};   // the page's live dial terms for federation.ts to carry to each remote socket (2026-09-15): the same terms the local /ws dial above states, read fresh so a remote redial reflects current state; the reader namespaces iid and strips active per host
+(function(){var f=window.__rompDialTerms;window.__rompDialTerms=function(){var t=f();t.caps=CAPS;return t;};})();   // ...and the page's own caps (2026-09-19): the same CAPS the local /ws dial above announces, so federation.ts can carry a page cap to each remote (remoteDialCaps joins it with its own decoder word and drops readyGate, the shim's hold on THIS socket alone). A wrapper and not a field on the line above, which is byte for byte the project's (8fe70da07 is in both trees): the fork inserts around such lines so a fold merges clean
 window.acquireVsCodeApi=function(){return{postMessage:function(m){if(window.__rompFed){window.__rompFed.outbound(m);}else{send(m);}},
 getState:function(){try{return JSON.parse(localStorage.getItem(SK)||"null");}catch(e){return null;}},
 setState:function(s){try{localStorage.setItem(SK,JSON.stringify(s));}catch(e){}}};};connect();
@@ -77516,7 +77526,13 @@ class Handler(BaseHTTPRequestHandler):
         # view-delta slot patches instead (_send_slot): the VS Code extension's pipes (client=ext&delta=1 since
         # 2026-09-16, its Outline pipe among them, reassembled by their own ViewDeltas) and a relay dialed by a
         # dashboard bundle from 2026-09-15 to 2026-09-18. Federation's remote sockets announce it since 2026-09-18
-        # (federation.ts REMOTE_DIAL_CAPS; the relay forwards the dial's query whole, so it is read here like a page's).
+        # (federation.ts REMOTE_DIAL_CAPS; the relay forwards the dial's query whole, so it is read here like a page's),
+        # and since 2026-09-19 the term is that word joined with the PAGE's own caps (the shim's CAPS through
+        # __rompDialTerms, federation.ts remoteDialCaps) less READY_GATE_CAP, which never rides a relay dial: the hold is
+        # the shim's on its own socket, and the federation manager posts its own ready (a relay conn held under it would
+        # be held for its life). Today every page's caps are FEED_DELTA_CAP and/or READY_GATE_CAP, so a relay dial's term
+        # is still FEED_DELTA_CAP alone; a word a page grows reaches here without a federation change. Unknown words are
+        # ignored below (the set is consulted by name), so a newer page costs an older kernel nothing.
         caps = (q.get("caps") or [""])[0]
         reconnect = (q.get("reconnect") or [""])[0] == "1"   # the shim's own statement: this page opened a socket before and its bundle has said ready, with no ready waiting in its queue
         skeleton = (q.get("skeleton") or [""])[0] == "1" and app == "chat"   # the shell's statement (the chat split, 2026-09-11): a later column, a VIEW of the one session its active hint names; a chat socket's alone (round two of PR 1661: the term is meaningless for a feed or a timeline client)

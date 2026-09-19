@@ -162,7 +162,15 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   `top` when any changed — and an unchanged board sends such a client nothing at
   all. A federated dashboard's relay sockets announce it too (`federation.ts`
   `REMOTE_DIAL_CAPS`, since 2026-09-18; the relay forwards the dial's query
-  whole). A consumer that announces nothing and dials no `delta=1` (a bundle
+  whole): since 2026-09-19 a relay dial's `caps` term is that word joined with
+  the page's own caps as the shim states them (`__rompDialTerms.caps`, through
+  `remoteDialCaps`), `readyGate` removed, repeats dropped, the decoder word
+  first, so a capability a page grows reaches the remote kernel without a
+  federation change; `readyGate` never travels, because the hold it names is
+  the shim's on its own socket and the federation manager posts its own
+  `ready`. Every kernel-served page announces `feedDelta` and/or `readyGate`
+  today, so the joined term is `feedDelta` for every app and nothing on the
+  wire has moved. A consumer that announces nothing and dials no `delta=1` (a bundle
   before the cap; a relay dialed by a dashboard bundle before 2026-09-15; the
   VS Code extension before 2026-09-16) stays on the full-frame path, which
   keeps its 60 s repost of the unchanged frame; one that dials `delta=1`

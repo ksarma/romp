@@ -865,19 +865,41 @@ export const REMOTE_REDIAL_MS = 8000;
 // end stays open), and only the kernel's next frame can tell; until one lands the watchdog runs at this bound
 // instead of REMOTE_STALE_MS.
 export const REMOTE_PROVISIONAL_MS = 15000;
-// The capabilities a REMOTE socket announces (its `caps` dial term), this manager's own statement about what it
-// can apply to a frame from that host: feedDelta, because the feedDelta branch below decodes one for any host
-// (kernel.py FEED_DELTA_CAP; the shim announces the same for its local socket on the feed, Outline and Waiting
-// pages). Not the page's caps (readyGate is the shim's hold, and this manager posts its own ready), and not read
-// from the shim's __rompDialTerms: the decoder lives here, so the announcement does too. Without the term a
-// remote kernel served the feed on its view-delta slot path ({type:"delta", slot:"feed"}, which nothing on this
-// side decoded then: the shim's reassembler reads its LOCAL socket alone), so a remote Outline froze after its first
-// full frame, each dropped frame filing a `delta-unapplied` row and a needSlot the LOCAL kernel could not answer
-// (86 rows in 2.4 minutes on the user's phone, 2026-09-18). Each conn now carries a view-delta receiver of its own
-// (Conn.viewDeltas, later that day: the timeline's bars have no other path, and a remote too old to read this term
-// still serves the feed as slot patches), but the feed stays on feedDelta where the remote reads the term: the slot
-// path re-encodes every card per build on the remote (kernel.py memos.wire feed_slot_split).
+// The capability words a REMOTE socket announces (its `caps` dial term) are TWO sets joined (remoteDialCaps, 2026-09-19):
+// this manager's own word, REMOTE_DIAL_CAPS, and the page's own caps as the shim states them (__rompDialTerms.caps, the
+// shim's CAPS: the words its local /ws dial carries), less READY_GATE_CAP, deduped, in a fixed order (the decoder word
+// first, then the page's remaining words in the shim's order). REMOTE_DIAL_CAPS is feedDelta because the feedDelta branch
+// below decodes one for any host (kernel.py FEED_DELTA_CAP; the shim announces the same for its local socket on the feed,
+// Outline and Waiting pages): the decoder lives here, so this word does too, whatever the page says. The page's words
+// ride so a capability a page grows reaches the remote kernel without a change here; today every kernel-served page's
+// caps are feedDelta and/or readyGate, so the joined term is "feedDelta" for every app and nothing on the wire moves.
+// readyGate NEVER travels: it is the shim's hold on its OWN socket (the kernel sends a client that announces it nothing
+// until its bundle's ready), and this manager posts its own ready on a first dial's open and dials a redial as ready from
+// accept (reconnect=1); a relay conn dialed before the page's proto was known would post no ready and be held for its
+// life under the term. Without the decoder word a remote kernel served the feed on its view-delta slot path
+// ({type:"delta", slot:"feed"}, which nothing on this side decoded then: the shim's reassembler reads its LOCAL socket
+// alone), so a remote Outline froze after its first full frame, each dropped frame filing a `delta-unapplied` row and a
+// needSlot the LOCAL kernel could not answer (86 rows in 2.4 minutes on the user's phone, 2026-09-18). Each conn now
+// carries a view-delta receiver of its own (Conn.viewDeltas, later that day: the timeline's bars have no other path, and
+// a remote too old to read this term still serves the feed as slot patches), but the feed stays on feedDelta where the
+// remote reads the term: the slot path re-encodes every card per build on the remote (kernel.py memos.wire
+// feed_slot_split). Exported for its readers as the word this manager itself decodes on a remote frame, to be joined
+// with the page's travelling caps; the wire term is remoteDialCaps().
 export const REMOTE_DIAL_CAPS = "feedDelta";
+// The shim's hold word (kernel.py READY_GATE_CAP): the one page cap a relay dial never carries (see above).
+export const READY_GATE_CAP = "readyGate";
+
+/** The `caps` term for one remote dial: REMOTE_DIAL_CAPS, then the page's own caps (`pageCaps`, the shim's comma-joined
+ *  CAPS as __rompDialTerms returns it; anything but a string reads as none) in their order, READY_GATE_CAP and repeats
+ *  dropped, empty words skipped (the kernel splits the term on commas and drops empty words the same way). Never empty:
+ *  the decoder word is always first. Pure. */
+export function remoteDialCaps(pageCaps: unknown): string {
+  const out = [REMOTE_DIAL_CAPS];
+  if (typeof pageCaps === "string") {
+    for (const w of pageCaps.split(",")) if (w && w !== READY_GATE_CAP && !out.includes(w)) out.push(w);
+  }
+  return out.join(",");
+}
 
 /** What the watchdog should do about ONE remote socket, from its state alone (pure, unit-tested):
  *  "close" — force-close so the onclose→redial chain runs (open but silent past the keepalive bound,
@@ -1003,6 +1025,21 @@ export class FederationManager {
   private perHostTlBars: Record<string, any> = {}; // last timeline {type:"bars"} detail per host
   private tlBarsHeld = false; // a bars emission waited for the LOCAL lanes skeleton: their arrival emits it (emitMergedTimeline)
   private hostSeq: string[] = [LOCAL]; // local first, then attach order — fixes the group order in the strip
+  // wsBytesByHost (2026-09-19; the user approved the field: the bytes each attached host sent, one number per host, no
+  // content). Two PAGE-LIFETIME maps: each remote host's ordinal, assigned the first time the host appears to this page
+  // (openRemote; the first /tunnels answer assigns several at once in the kernel's row order, the order poll() opens
+  // them in), h1 the first REMOTE host (hostSeq[0] is LOCAL, and hostSeq is pruned on detach and re-pushed on re-attach,
+  // so it cannot be the source); and the text-frame characters received on that ordinal's sockets, counted in the conn's
+  // ws.onmessage in the shim's own unit ((ev.data && ev.data.length) || 0: String.length, keepalives and undecodable
+  // frames included). NEITHER is pruned by closeRemote, unlike every per-host map there: the collector
+  // (perf-telemetry.ts) reads the totals as a monotone counter and differences them per minute against a baseline, so a
+  // detach that dropped an ordinal would make the next row's difference wrong or re-key a re-attached host; a re-attached
+  // host keeps its ordinal, so a reader holding a page's rows sees one position per host for the page's life, and a
+  // detached host's position reads 0 from then on. Never reused; a reload starts over, so h1 can name another host after
+  // a reload. Positions, never names: the minute row carries these keys (h1..h4, hmore) and no host name. Read through
+  // window.__rompFed.wsBytesByHost (wsBytesByHost()).
+  private hostOrdinal = new Map<string, number>();
+  private wsBytesByOrdinal = new Map<number, number>();
   // false until the first /tunnels answer is absorbed (poll): before it, hostSeq is the local host alone and says
   // nothing about which remote hosts exist, so a merged frame built then is flagged hostsUnread (T404 round nine)
   private hostsRead = false;
@@ -1091,6 +1128,9 @@ export class FederationManager {
       // this (host-prefix.ts hostDialLive: the socket's CONNECTING state), and romp:hostDial below says
       // when it changes — on the dial, the open and the close, never on a timer
       dialing: (h: string) => { const c = this.conns.get(h); return hostDialLive(this.dialingHosts.has(h), c && c.ws ? c.ws.readyState : null); },
+      // the characters each remote host's sockets delivered over this page's life, by the host's ordinal (the maps
+      // declared beside hostSeq): the collector's reader for the minute row's wsBytesByHost (perf-telemetry.ts)
+      wsBytesByHost: () => this.wsBytesByHost(),
     };
     // A drag in ANY pane rewrites the arrangement; every other pane hears it through `storage` (which fires
     // only in other same-origin contexts) and this one through the writer's own CustomEvent. Both land here,
@@ -1793,6 +1833,28 @@ export class FederationManager {
     if (!this.hostSeq.includes(h)) this.hostSeq.push(h);
   }
 
+  /** The page-lifetime ordinal for `host` (1-based; h1 the first remote host this page saw), assigned on first sight
+   *  and never changed or reused (the maps' declaration beside hostSeq says why). */
+  private ordinalOf(host: string): number {
+    let o = this.hostOrdinal.get(host);
+    if (o === undefined) {
+      o = this.hostOrdinal.size + 1;
+      this.hostOrdinal.set(host, o);
+      this.wsBytesByOrdinal.set(o, 0);
+    }
+    return o;
+  }
+
+  /** The text-frame characters received on each remote host's sockets over this page's life, keyed h<ordinal> in
+   *  ordinal order (window.__rompFed.wsBytesByHost, the collector's reader; the shim's unit, wsBytes's): {} while no
+   *  remote host has ever been attached, so the collector leaves the key off the row. A host that attached and sent
+   *  nothing yet, or one detached since, reads its total so far (0 for the first). */
+  wsBytesByHost(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const [o, n] of [...this.wsBytesByOrdinal].sort((a, b) => a[0] - b[0])) out["h" + o] = n;
+    return out;
+  }
+
   private async poll(): Promise<void> {
     // no /tunnels while the pane's LOCAL socket is down (window.__rompLocalUp false, the shim's netState): the GET
     // goes to the same origin that socket cannot reach, and a failed read would only flip pollFailing. The flag is
@@ -1905,6 +1967,7 @@ export class FederationManager {
                          viewDeltas: this.mintReceiver(host) };   // for the type; connect() below mints the first socket's own
     this.conns.set(host, conn);
     this.ensureHost(host);
+    this.ordinalOf(host);   // the host's page-lifetime position (wsBytesByHost): assigned at first sight, kept across a detach
     this.connect(conn);
   }
 
@@ -1978,12 +2041,14 @@ export class FederationManager {
   // everConnected && bundleReady && readyAcked gate: the remote served this page whole and holds its
   // sessions), so the remote holds what it served this page and skeletons the rest; a socket that opened but
   // never got a ready acked dials as a first dial, holding nothing to reconnect to. `caps` is this manager's
-  // own term, not one of the page's (REMOTE_DIAL_CAPS): it names what THIS side decodes on a frame from that
-  // host, so the remote kernel serves its feed as feedDelta frames, which the feedDelta branch applies per
-  // host, instead of the view-delta slot frames (2026-09-18; the conn's receiver reassembles those too since later
-  // that day, but the slot path costs the remote a re-encode of every card per build). `delta` stays among the
-  // page's terms on purpose: it puts the remote's timeline bars on the view-delta path, where a change costs one
-  // patch instead of the whole bars frame and its 60 s repost (kernel.py _DEDUP_REPOST_S) per remote host.
+  // own word joined with the page's caps less readyGate (remoteDialCaps, its header above): REMOTE_DIAL_CAPS names
+  // what THIS side decodes on a frame from that host, so the remote kernel serves its feed as feedDelta frames,
+  // which the feedDelta branch applies per host, instead of the view-delta slot frames (2026-09-18; the conn's
+  // receiver reassembles those too since later that day, but the slot path costs the remote a re-encode of every
+  // card per build); the page's words ride since 2026-09-19 so a cap a page grows reaches the remote too, and the
+  // shim's hold word stays home. `delta` stays among the page's terms on purpose: it puts the remote's timeline
+  // bars on the view-delta path, where a change costs one patch instead of the whole bars frame and its 60 s
+  // repost (kernel.py _DEDUP_REPOST_S) per remote host.
   private remoteDialUrl(conn: Conn, redial: boolean): string {
     const host = conn.host;
     const proto = location.protocol === "https:" ? "wss://" : "ws://";
@@ -1992,7 +2057,7 @@ export class FederationManager {
     try { const f = (window as any).__rompDialTerms; if (typeof f === "function") t = f(); } catch (e) { /* no terms → the bare dial, the pre-2026-09-15 behaviour */ }
     let url = `${proto}${location.host}/remote/${encodeURIComponent(host)}/ws?app=${encodeURIComponent(this.app)}`
       + (w ? `&wid=${encodeURIComponent(w)}` : "")
-      + `&caps=${encodeURIComponent(REMOTE_DIAL_CAPS)}`;
+      + `&caps=${encodeURIComponent(remoteDialCaps(t && t.caps))}`;   // the decoder word and the page's caps, readyGate never (remoteDialCaps)
     if (t) {
       if (t.delta) url += "&delta=1";
       if (t.iid) url += `&iid=${encodeURIComponent(this.iidNamespace() + ":" + t.iid)}`;
@@ -2128,6 +2193,11 @@ export class FederationManager {
     ws.onmessage = (ev: MessageEvent) => {
       conn.lastRecv = Date.now();   // every frame counts, the keepalive included — that is the heartbeat
       conn.resumeProvisional = 0;   // and any frame, the keepalive included, confirms a resumed keep
+      // wsBytesByHost: the frame's characters onto this host's page-lifetime total, BEFORE the parse, so an undecodable
+      // frame and a keepalive both count, as the shim's own counter counts them on the local socket (kernel.py
+      // PM.wsBytes, the same expression): the same unit as wsBytes, and disjoint from it (this socket is never the shim's)
+      const ord = this.ordinalOf(conn.host);
+      this.wsBytesByOrdinal.set(ord, (this.wsBytesByOrdinal.get(ord) || 0) + ((ev.data && ev.data.length) || 0));
       let msg: any;
       try {
         msg = JSON.parse(ev.data);
@@ -2228,6 +2298,10 @@ export class FederationManager {
     const hadTl = host in this.perHostTl || host in this.perHostTlBars;
     delete this.perHostTl[host];
     delete this.perHostTlBars[host];
+    // NOT hostOrdinal or wsBytesByOrdinal (wsBytesByHost): those are the page's, not this attachment's. The collector
+    // differences the totals per minute against a baseline it took earlier, so dropping the host's total here would
+    // turn the next row's figure for its position into a false 0 or a re-count, and a re-attached host keeps its
+    // position so the rows name one position per host for the page's life (the maps' declaration beside hostSeq).
     this.emitMergedOrder();
     this.emitMergedFeed(); // drop the detached host's feed items so they don't linger
     if (hadTl) { this.emitMergedTimeline(false); this.emitMergedTimeline(true); } // …and its lanes/bars

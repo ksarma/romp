@@ -52,7 +52,10 @@ SHARED = {"nav": {"type": "reload", "responseEnd": 210, "domContentLoaded": 656,
           "res": {"feed.js": {"transferSize": 120000, "encodedBodySize": 119700, "duration": 88}, "other": {"transferSize": 600, "encodedBodySize": 400, "duration": 45}},
           "marks": {"wsOpen": 121, "bundleReady": 300, "firstFrame": 455, "fp": 388, "fcp": 402},
           "env": {"standalone": True, "iosMajor": 17, "touch": True, "vw": 390, "vh": 664, "dpr": 3, "entryTypes": ["paint", "resource", "navigation"], "ric": False, "dv": 1757100000},
-          "vis": {"hiddenN": 1, "visibleN": 1, "hiddenMs": 30000}, "wsBytes": 12345, "rafGap": {"n": 2, "worst": 120}}
+          "vis": {"hiddenN": 1, "visibleN": 1, "hiddenMs": 30000}, "wsBytes": 12345, "rafGap": {"n": 2, "worst": 120},
+          # wsBytesByHost (2026-09-19, the user's approval: the bytes each attached host sent, one number per host, no content):
+          # the same unit per REMOTE host by its position on the page, h1 the first remote host it attached; positions, never names
+          "wsBytesByHost": {"h1": 40123, "h2": 991}}
 
 
 class ClientDiagAllowlistTest(unittest.TestCase):
@@ -431,10 +434,10 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertIsNotNone(m, name)
             return m.group(1)
         max_types = int(const("MAX_FRAME_TYPES")); max_top = int(const("MAX_TOP")); free_ring = int(const("FREE_RING"))
-        slow_rows = int(const("SLOW_ROWS_PER_MINUTE")); max_res = int(const("MAX_RES"))
+        slow_rows = int(const("SLOW_ROWS_PER_MINUTE")); max_res = int(const("MAX_RES")); max_hosts = int(const("MAX_HOSTS"))
         buckets = len(json.loads(const("HIST_EDGES"))) + 1
         ident_cap = int(re.search(r"\^\[A-Za-z0-9_\.:-\]\{1,(\d+)\}\$", src).group(1))    # ident(): a frame type at most this long
-        self.assertEqual((max_types, max_top, free_ring, slow_rows, max_res, buckets, ident_cap), (32, 5, 64, 5, 24, 14, 32), "the constants this derivation was made with")
+        self.assertEqual((max_types, max_top, free_ring, slow_rows, max_res, buckets, ident_cap, max_hosts), (32, 5, 64, 5, 24, 14, 32, 4), "the constants this derivation was made with")
         entry_types = json.loads(re.search(r"^export const ENV_ENTRY_TYPES: readonly string\[\] = (\[[^\]]*\]);", src, re.M).group(1))
         big = 999999                                         # six-digit counts: more than a minute of frames at 60 Hz can hold
         ms = 60000.0                                         # one-decimal ms, a whole minute
@@ -454,10 +457,15 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                   "dom": 9999999, "visible": False, "hidden_pane": False, "ua": "chrome-desktop", "heap_mb": 99999.9}
         res = {"r" * 20 + "%03d.woff2" % i: {"transferSize": 99999999, "encodedBodySize": 99999999, "duration": ms} for i in range(max_res)}
         res["other"] = {"transferSize": 99999999, "encodedBodySize": 99999999, "duration": ms}
+        # wsBytesByHost at its widest (2026-09-19): MAX_HOSTS positions named plus the fold key, each at wsBytes's nine digits
+        by_host = {"h%d" % i: 999999999 for i in range(1, max_hosts + 1)}
+        by_host["hmore"] = 999999999
+        self.assertEqual(len(by_host), max_hosts + 1, "the fold's whole vocabulary: h1..h%d and hmore" % max_hosts)
         shared = {"nav": {"type": "back_forward", "responseEnd": big, "domContentLoaded": big, "loadEventEnd": big}, "res": res,
                   "marks": {"wsOpen": big, "bundleReady": big, "firstFrame": big, "fp": big, "fcp": big},
                   "env": {"standalone": True, "iosMajor": 17, "touch": True, "vw": 99999, "vh": 99999, "dpr": 3.5, "entryTypes": entry_types, "ric": True, "dv": 1757100000000},
-                  "vis": {"hiddenN": big, "visibleN": big, "hiddenMs": 99999999}, "wsBytes": 999999999, "rafGap": {"n": big, "worst": big}}
+                  "vis": {"hiddenN": big, "visibleN": big, "hiddenMs": 99999999}, "wsBytes": 999999999, "rafGap": {"n": big, "worst": big},
+                  "wsBytesByHost": by_host}
         env = {"t": 1700000000, "wid": WID, "surface": "perf", "what": "minute", "reconnect": False}
         off, on = len(json.dumps(dict(env, data=minute))), len(json.dumps(dict(env, data=dict(minute, **shared))))
         self.assertGreater(off, 16 * 1024, "the share-off worst case is over 16 KiB, so the old 8 KiB bound shed its frames")
@@ -468,6 +476,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertEqual(row["data"], data, "stored whole")
             self.assertNotIn("capped", row["data"])
             self.assertEqual(len(row["data"]["frames"]), 2 * (max_types + 1), "every frame type intact")
+        self.assertEqual(self.rows()[-1]["data"]["wsBytesByHost"], by_host, "the per-host map lands whole: the admit filters top-level keys only, the scrub walks it")
 
     def test_one_fixture_row_per_poster_call_site_passes_whole_and_the_table_names_nothing_else(self):
         """The table against the posters: one synthetic row per clientDiag call site in the bundles (render.ts and

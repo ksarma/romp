@@ -116,6 +116,30 @@ class TheSeam(unittest.TestCase):
         self.assertNotIn("%s", core)
 
 
+class TheDialTermsCarryThePagesCaps(unittest.TestCase):
+    """__rompDialTerms carries the page's caps (2026-09-19): the same CAPS the shim's own /ws dial announces, so federation.ts
+    can join them with its decoder word for each remote dial (remoteDialCaps: readyGate dropped there, never here; the shim
+    states what the page announces and the reader decides what travels). Executed, not grepped: the served core runs here
+    with a feed page's caps and the terms object is read back beside the local dial's own term. The field is added by a
+    wrapper line after the __rompDialTerms line, which is byte for byte the project's; the wrapper keeps every other term."""
+
+    def test_the_terms_carry_the_caps_the_local_dial_announces_and_keep_every_other_term(self):
+        r = _run(r"""
+var t=window.__rompDialTerms();
+out({caps:t.caps,app:t.app,delta:t.delta,iid:typeof t.iid,skeleton:t.skeleton,provrows:t.provrows,dial:sock().url.split("?")[1]});""",
+                 app="feed", caps="feedDelta,readyGate")
+        self.assertEqual(r["caps"], "feedDelta,readyGate", "the page's caps, as the shim's CAPS var holds them (readyGate included: the reader drops it)")
+        self.assertIn("caps=feedDelta%2CreadyGate", r["dial"], "…the same term the local dial announces")
+        self.assertEqual((r["app"], r["delta"], r["iid"], r["skeleton"], r["provrows"]), ("feed", 1, "string", 0, 0), "every other term the project's line returns still rides")
+
+    def test_a_page_with_no_caps_states_an_empty_field(self):
+        # the empty string, not an absent field: federation.ts reads "" as no word (its no-caps corner), and a reader can
+        # tell a shim of this vintage from one before the field
+        r = _run(r"""out({caps:window.__rompDialTerms().caps,dial:sock().url.split("?")[1]});""", app="test")
+        self.assertEqual(r["caps"], "")
+        self.assertNotIn("caps=", r["dial"], "the local dial announces no caps term either")
+
+
 class ResumeAwareLiveness(unittest.TestCase):
     """§1.1: `resume` is the event 'lastRecv is stale' was approximating."""
 

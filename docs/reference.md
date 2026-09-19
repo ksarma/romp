@@ -4791,8 +4791,8 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   span_ms, frames: {<type>: {n, ms_sum, ms_max, n16, n100, hist}}, free: {n,
   p50, p90, max} | null, loaf: {n, blocking_ms, worst_ms, top: [{k, ms, n,
   inv}], src}, slow: {sent, suppressed, suppressed_worst_ms}, heap_mb?, dom,
-  visible, hidden_pane, ua, nav?, res?, marks?, env?, vis?, wsBytes?, rafGap?,
-  capped?}}`. `app` is the pane (`chat`, `feed`, `fleet`,
+  visible, hidden_pane, ua, nav?, res?, marks?, env?, vis?, wsBytes?,
+  wsBytesByHost?, rafGap?, capped?}}`. `app` is the pane (`chat`, `feed`, `fleet`,
   `waiting`, `timeline`, `files`), or `shell` for the top-level window; `since`
   is the minute's start on the browser's clock (epoch ms) and `span_ms` its
   length (shorter than a minute when the page was hidden or closed); `hist` is
@@ -4806,7 +4806,7 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   the pane shim's test for a pane the shell has set to `display:none`: its
   zero-viewport probe, or the word the pane published as
   `window.__rompPaneHidden` from its own visibility events; `ua` is
-  `chrome-desktop`, `safari-ios` or `other`. The seven optional fields after
+  `chrome-desktop`, `safari-ios` or `other`. The eight optional fields after
   it are the shared fields, present only while the browser's share switch
   (below) is on, numbers, booleans and fixed-vocabulary identifiers only, a
   Performance API the browser lacks reading as `null`, never a guess. Once per
@@ -4836,11 +4836,27 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   `{hiddenN, visibleN, hiddenMs}`, the visibility transitions and the ms
   hidden since this pane's previous row (an idle or muted minute hands its
   counts on to the row that follows); `wsBytes` is the text-frame characters
-  the shim received on this pane's sockets since the previous row (`null`
-  without a shim: the shell, VS Code); `rafGap` is `{n, worst}`, the
-  animation-frame gaps over 50 ms while the document was visible, from a loop
-  that runs only while share is on and the document visible. `capped` is
-  present only on a row the kernel shed or replaced (the bound above).
+  the shim received on this pane's local socket since the previous row
+  (`null` without a shim: the shell, VS Code); `wsBytesByHost` is the same
+  unit for the pane's remote sockets, one number per attached remote host
+  keyed by the host's position on the page (`h1` the first remote host this
+  page attached, `h2` the next, in the order hosts first appeared to the
+  page, the kernel's `/tunnels` row order when one answer lists several),
+  at most four positions named and every later one summed under `hmore`,
+  since the previous row (an idle or muted minute carries on the same way).
+  The two are disjoint: a remote socket's characters are counted under its
+  position and never in `wsBytes`. Positions are assigned per page life and
+  never reused: a host that detaches keeps its position and reads 0 from
+  then on, a host that re-attaches counts on under its old position, and a
+  reload starts over, so `h1` can mean a different host after a reload. The
+  row carries positions, never host names; the file's federation and shell
+  surfaces carry host names, so a reader holding both surfaces can map a
+  position to a name within one page life. The key is absent, not `null`,
+  on a page that never attached a remote host and on the shell. `rafGap` is
+  `{n, worst}`, the animation-frame gaps over 50 ms while the document was
+  visible, from a loop that runs only while share is on and the document
+  visible. `capped` is present only on a row the kernel shed or replaced
+  (the bound above).
 - `{"t", "wid", "surface": "perf", "what": "slowframe", "data": {app, type, ms,
   dom, loaf?: {ms, blocking_ms, top: [{k, ms, inv}]}}}`. `type` is the frame
   as received on the wire and `ms` its whole synchronous handling, the

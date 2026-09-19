@@ -22,7 +22,12 @@ import {
   HIST_EDGES, HIST_BUCKETS, MAX_FRAME_TYPES, MAX_TOP_KEYS, SLOW_FRAME_MS, SLOW_ROWS_PER_MINUTE, FREE_RING, MAX_RES, RAF_GAP_MS,
   SETTINGS_KEY, SHARE_SETTING, MUTE_SETTING, ENV_ENTRY_TYPES, type PerfDeps, type BeaconSwitches,
 } from "./perf-telemetry";
+import * as pt from "./perf-telemetry";
 import { FederationManager } from "./federation";
+// wsBytesByHost's constant and fold (2026-09-19), read off the module namespace so this file still bundles (and runs red)
+// against a perf-telemetry.ts that predates them, as federation-remote-feed-delta.test.ts reads REMOTE_DIAL_CAPS
+const MAX_HOSTS: number = (pt as any).MAX_HOSTS;
+const bytesByHost: (now: Record<string, unknown> | null, base: Record<string, number>) => Record<string, number> | null = (pt as any).bytesByHost;
 
 const PAGE = "http://h:1/feed";
 /** A window stand-in for the install tests: an EventTarget carrying `members` (performance, navigator, location and the
@@ -62,6 +67,7 @@ function harness(over: Partial<PerfDeps> = {}) {
     switches: () => ({ share: false, mute: false }),
     entries: () => null,
     marks: () => null,
+    fedBytes: () => null,   // no federation: the row carries no wsBytesByHost
     env: () => ({ standalone: false, iosMajor: 0, touch: false, vw: 800, vh: 600, dpr: 1, entryTypes: [], ric: true }),
     ...over,
   };
@@ -1034,7 +1040,7 @@ test("a window stand-in enumerates its primitives alone; parent stays non-enumer
 // ── the beacon extension (2026-09-18): the two gear switches, the shared fields, the hide flush, the gap loop ──
 
 const TODAY_KEYS = ["app", "dom", "frames", "free", "heap_mb", "hidden_pane", "loaf", "since", "slow", "span_ms", "ua", "visible"];
-const SHARED_KEYS = ["env", "marks", "nav", "rafGap", "res", "vis", "wsBytes"];
+const SHARED_KEYS = ["env", "marks", "nav", "rafGap", "res", "vis", "wsBytes", "wsBytesByHost"];
 const ORIGIN = "http://h:1";
 const NAV = [{ type: "reload", responseEnd: 210.4, domContentLoadedEventEnd: 655.6, loadEventEnd: 0 }];
 const PAINTS = [{ name: "first-paint", startTime: 388.2 }, { name: "first-contentful-paint", startTime: 401.7 }];
@@ -1145,13 +1151,16 @@ test("iosMajor, envInfo and orientation: the iPhone's version, the iPad's deskto
   assertIdentifiersOnly(e);
 });
 
-/** a harness whose page has everything the beacon reads, with the switches settable */
+/** federation's page-lifetime totals per remote host position as window.__rompFed.wsBytesByHost returns them: two hosts attached */
+const FED = { h1: 20_000, h2: 5_000 };
+/** a harness whose page has everything the beacon reads, with the switches settable; `fed` is the federation map, mutable */
 function beaconHarness(sw: BeaconSwitches, over: Partial<PerfDeps> = {}) {
   const marks: Record<string, unknown> = { ...MARKS };
+  const fed: Record<string, number> = { ...FED };
   const env = { standalone: true, iosMajor: 17, touch: true, vw: 390, vh: 664, dpr: 3, entryTypes: ["paint", "resource", "navigation"], ric: false };
   const entries = (t: string) => (t === "navigation" ? NAV : t === "resource" ? RES : t === "paint" ? PAINTS : []);
-  const h = harness({ switches: () => ({ ...sw }), entries, marks: () => marks, env: () => ({ ...env }), ...over });
-  return { ...h, sw, marks, env };
+  const h = harness({ switches: () => ({ ...sw }), entries, marks: () => marks, fedBytes: () => fed, env: () => ({ ...env }), ...over });
+  return { ...h, sw, marks, env, fed };
 }
 
 test("share OFF: the minute row's keys are exactly today's, whatever the page could tell", () => {
@@ -1170,6 +1179,7 @@ test("share ON: the first row carries nav, res, marks and env once, every row vi
   h.frame(p, { type: "session" }, 10);
   h.clock.wall += 60_000;
   h.marks.wsBytes = 5000 + 12_345;
+  h.fed.h1 = FED.h1 + 4_321;   // h1's sockets delivered 4321 characters this minute; h2's nothing
   p.tick();
   const d = minuteRows(h.posted)[0].data;
   assert.deepEqual(Object.keys(d).sort(), [...TODAY_KEYS, ...SHARED_KEYS].sort());
@@ -1179,23 +1189,26 @@ test("share ON: the first row carries nav, res, marks and env once, every row vi
   assert.deepEqual(d.env, { standalone: true, iosMajor: 17, touch: true, vw: 390, vh: 664, dpr: 3, entryTypes: ["paint", "resource", "navigation"], ric: false, dv: 1757100000 }, "the dist token rides env from the shim's marks");
   assert.deepEqual(d.vis, { hiddenN: 0, visibleN: 0, hiddenMs: 0 });
   assert.equal(d.wsBytes, 12_345, "the characters the shim counted since the minute began");
+  assert.deepEqual(d.wsBytesByHost, { h1: 4_321, h2: 0 }, "per remote host position, the same unit, since the minute began; a host that sent nothing reads 0");
   assert.deepEqual(d.rafGap, { n: 0, worst: 0 });
   assertIdentifiersOnly(d);
-  // the second minute: the once-per-page fields are gone, the per-minute ones stay, the byte delta is this minute's
+  // the second minute: the once-per-page fields are gone, the per-minute ones stay, the byte deltas are this minute's
   h.frame(p, { type: "session" }, 10);
   h.marks.wsBytes = 5000 + 12_345 + 700;
+  h.fed.h2 = FED.h2 + 88;
   h.clock.wall += 60_000;
   p.tick();
   const e = minuteRows(h.posted)[1].data;
-  assert.deepEqual(Object.keys(e).sort(), [...TODAY_KEYS, "rafGap", "vis", "wsBytes"].sort());
+  assert.deepEqual(Object.keys(e).sort(), [...TODAY_KEYS, "rafGap", "vis", "wsBytes", "wsBytesByHost"].sort());
   assert.equal(e.wsBytes, 700);
+  assert.deepEqual(e.wsBytesByHost, { h1: 0, h2: 88 }, "the baselines moved to the previous row's totals");
   // the pane's aspect flips (a divider drag, a resize, a rotation): env again, nothing else of the once-per-page set
   h.env.vw = 664; h.env.vh = 390;
   h.frame(p, { type: "session" }, 10);
   h.clock.wall += 60_000;
   p.tick();
   const f = minuteRows(h.posted)[2].data;
-  assert.deepEqual(Object.keys(f).sort(), [...TODAY_KEYS, "env", "rafGap", "vis", "wsBytes"].sort());
+  assert.deepEqual(Object.keys(f).sort(), [...TODAY_KEYS, "env", "rafGap", "vis", "wsBytes", "wsBytesByHost"].sort());
   assert.equal(f.env.vw, 664);
   // the same aspect again: no env
   h.frame(p, { type: "session" }, 10);
@@ -1246,6 +1259,7 @@ test("share ON on a page without the APIs: nav and res are null, marks empty, ws
   p.tick();
   const d = minuteRows(h.posted)[0].data;
   assert.equal(d.nav, null); assert.equal(d.res, null); assert.deepEqual(d.marks, {}); assert.equal(d.env, null); assert.equal(d.wsBytes, null);
+  assert.equal("wsBytesByHost" in d, false, "no federation (the shell, VS Code): the key is left off, not written null");
   assert.deepEqual(d.vis, { hiddenN: 0, visibleN: 0, hiddenMs: 0 }); assert.deepEqual(d.rafGap, { n: 0, worst: 0 });
   // a throwing reader reads the same as an absent one
   const g = harness({ switches: () => ({ share: true, mute: false }), raf: null, entries: () => { throw new Error("no"); }, marks: () => { throw new Error("no"); }, env: () => { throw new Error("no"); } });
@@ -1255,6 +1269,82 @@ test("share ON on a page without the APIs: nav and res are null, marks empty, ws
   assert.doesNotThrow(() => q.tick());
   const e = minuteRows(g.posted)[0].data;
   assert.equal(e.nav, null); assert.equal(e.res, null); assert.equal(e.env, null); assert.equal(e.wsBytes, null);
+  assert.equal("wsBytesByHost" in e, false, "a throwing federation reader reads as none");
+});
+
+// ── wsBytesByHost (2026-09-19): the per-position fold and the collector's baselines ──
+
+test("bytesByHost: the minute's characters per remote host position from federation's totals against the minute's baselines; a position with no baseline counts from 0; positions past MAX_HOSTS sum under hmore, present only then; a key off the h<n> pattern or a non-number is ignored; no position reads null", () => {
+  assert.equal(bytesByHost(null, {}), null, "no federation");
+  assert.equal(bytesByHost({}, {}), null, "federation with no remote host ever attached");
+  assert.equal(bytesByHost({ h0: 5, host: 9, hmore: 3, h2x: 1 }, {}), null, "nothing on the pattern: no position");
+  assert.deepEqual(bytesByHost({ h1: 500, h2: 40 }, { h1: 100, h2: 40 }), { h1: 400, h2: 0 });
+  assert.deepEqual(bytesByHost({ h1: 500, h2: 40 }, { h1: 100 }), { h1: 400, h2: 40 }, "a host attached mid-minute (no baseline) counts from 0");
+  assert.deepEqual(bytesByHost({ h1: 90 }, { h1: 100 }), { h1: 0 }, "a total below its baseline (a page that cannot happen, guarded anyway) clamps to 0, never negative");
+  assert.deepEqual(bytesByHost({ h1: 100.6 }, { h1: 0 }), { h1: 101 }, "whole characters");
+  assert.deepEqual(bytesByHost({ h2: 7, h1: 3 }, {}), { h1: 3, h2: 7 }, "positions in numeric order whatever the map's");
+  assert.deepEqual(bytesByHost({ h1: 1, h2: "2" as any, h3: NaN, h4: Infinity }, {}), { h1: 1 }, "a non-number or a non-finite total is ignored");
+  assert.equal(MAX_HOSTS, 4, "the fold's constant (the allowlist's worst-case row is built from it)");
+  const many: Record<string, number> = {}; for (let i = 1; i <= MAX_HOSTS + 3; i++) many["h" + i] = i * 1000;
+  const folded = bytesByHost(many, { h1: 500 });
+  assert.deepEqual(folded, { h1: 500, h2: 2000, h3: 3000, h4: 4000, hmore: 5000 + 6000 + 7000 }, "h1..h4 named, positions 5, 6 and 7 summed under hmore");
+  assert.deepEqual(Object.keys(bytesByHost(many, {})!), ["h1", "h2", "h3", "h4", "hmore"], "hmore last");
+  assert.equal("hmore" in bytesByHost({ h1: 1, h2: 2, h3: 3, h4: 4 }, {})!, false, "exactly MAX_HOSTS positions: no fold key");
+  assertIdentifiersOnly(folded);
+});
+
+test("wsBytesByHost on the collector: the per-position baselines carry across an idle minute and a muted one, a host appearing mid-minute counts from 0 under the next position, the key is absent until a remote host exists and present from then on, and a fifth host folds under hmore", () => {
+  const fed: Record<string, number> = {};   // the page starts with no remote host
+  const h = beaconHarness({ share: true, mute: false }, { raf: null, fedBytes: () => fed });
+  const p = createPerfTelemetry("feed", h.deps);
+  h.frame(p, { type: "feed" }, 10);
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.equal("wsBytesByHost" in minuteRows(h.posted)[0].data, false, "no remote host ever attached: no key");
+  // a host attaches and delivers in the second minute: counted from 0 (no baseline for h1)
+  fed.h1 = 3_000;
+  h.frame(p, { type: "feed" }, 10);
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.deepEqual(minuteRows(h.posted)[1].data.wsBytesByHost, { h1: 3_000 });
+  // an idle minute: the hosts keep delivering (keepalives, frames the pane never handles), no frame is timed, nothing is sent
+  fed.h1 += 250; fed.h2 = 40;   // a second host attached during the idle minute
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.equal(minuteRows(h.posted).length, 2, "an idle minute sends nothing");
+  h.frame(p, { type: "feed" }, 10);
+  fed.h1 += 60; fed.h2 += 5;
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.deepEqual(minuteRows(h.posted)[2].data.wsBytesByHost, { h1: 310, h2: 45 }, "the idle minute's characters ride the row that follows: the baselines carried");
+  // a muted minute: measured, no row built, the baselines carry the same way
+  h.sw.mute = true;
+  h.frame(p, { type: "feed" }, 10);
+  fed.h1 += 500;
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.equal(minuteRows(h.posted).length, 3, "a muted minute sends nothing");
+  h.sw.mute = false;
+  h.frame(p, { type: "feed" }, 10);
+  fed.h1 += 70;
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.deepEqual(minuteRows(h.posted)[3].data.wsBytesByHost, { h1: 570, h2: 0 }, "the muted minute's 500 and this minute's 70; h2 sent nothing and reads 0, never absent once it exists");
+  // more hosts than MAX_HOSTS: the fifth and sixth positions fold
+  fed.h3 = 1; fed.h4 = 2; fed.h5 = 300; fed.h6 = 400;
+  h.frame(p, { type: "feed" }, 10);
+  h.clock.wall += 60_000;
+  p.tick();
+  const r = minuteRows(h.posted)[4].data.wsBytesByHost;
+  assert.deepEqual(r, { h1: 0, h2: 0, h3: 1, h4: 2, hmore: 700 });
+  assert.deepEqual(Object.keys(r), ["h1", "h2", "h3", "h4", "hmore"]);
+  // the fold's baseline is per position too: the next minute's hmore is the fifth and sixth positions' own deltas
+  fed.h5 += 10; fed.h6 += 20;
+  h.frame(p, { type: "feed" }, 10);
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.deepEqual(minuteRows(h.posted)[5].data.wsBytesByHost, { h1: 0, h2: 0, h3: 0, h4: 0, hmore: 30 });
+  assert.equal(slowRows(h.posted).length, 0);
 });
 
 test("vis: the hide counts and flushes, the return counts and adds the hidden stretch; a minute spent hidden reports its own span hidden", () => {
@@ -1401,15 +1491,17 @@ test("a switch flipped in the gear reaches the collector through the storage eve
   assert.equal("env" in minuteRows(h.posted)[0].data, true);
 });
 
-test("installPerfTelemetry reads the page: the gear's store, the timeline entries, the shim's marks object and the environment; a store that throws reads both switches off", () => {
+test("installPerfTelemetry reads the page: the gear's store, the timeline entries, the shim's marks object, federation's per-host totals and the environment; a store that throws reads both switches off", () => {
   const g: any = globalThis;
   let t = 0;
+  const fedLive: Record<string, number> = { h1: 4000 };
   const win = standIn({
     performance: { now: () => t, getEntriesByType: (k: string) => (k === "navigation" ? NAV : k === "resource" ? RES : k === "paint" ? PAINTS : []) },
     navigator: { userAgent: PHONE_UA, maxTouchPoints: 5, standalone: true },
     location: { href: "http://h:1/chat?token=abc&wid=11111111" },
     localStorage: { getItem: (k: string) => (k === SETTINGS_KEY ? JSON.stringify({ perfShare: true, compact: true }) : null) },
     __rompPerfMarks: { wsOpen: 120, bundleReady: 300, firstFrame: 455, wsBytes: 8000, dv: 1757100000 },
+    __rompFed: { wsBytesByHost: () => fedLive },   // federation's getter (federation.ts start()), the page's one remote host at h1
     PerformanceObserver: Object.assign(class { observe() {} disconnect() {} }, { supportedEntryTypes: ["resource", "navigation", "paint", "mark"] }),
   });
   win.innerWidth = 390; win.innerHeight = 664; win.devicePixelRatio = 3;
@@ -1432,6 +1524,7 @@ test("installPerfTelemetry reads the page: the gear's store, the timeline entrie
     assert.equal(rafs.length, 1, "the gap loop armed through the page's requestAnimationFrame");
     a!.timed("session", () => { t += 10; });
     win.__rompPerfMarks.wsBytes = 8000 + 2500;
+    fedLive.h1 = 4000 + 321;
     intervalCb!();
     assert.equal(sent.length, 1);
     const d = sent[0].data;
@@ -1440,6 +1533,7 @@ test("installPerfTelemetry reads the page: the gear's store, the timeline entrie
     assert.deepEqual(d.nav, { type: "reload", responseEnd: 210, domContentLoaded: 656, loadEventEnd: 0 });
     assert.equal(Object.keys(d.res).length, 6);
     assert.equal(d.wsBytes, 2500);
+    assert.deepEqual(d.wsBytesByHost, { h1: 321 }, "read through window.__rompFed.wsBytesByHost, differenced against the install-time total");
     assert.equal(d.ua, "safari-ios");
     assertIdentifiersOnly(d);
   } finally {

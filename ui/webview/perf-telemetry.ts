@@ -55,9 +55,13 @@
 // paint entries); `env` once and again when the pane's own width/height aspect flips (standalone, iOS major version,
 // touch, viewport, pixel ratio, the entry types the browser supports from a fixed list, requestIdleCallback, the dist
 // token); every row `vis` (visibility transitions and hidden time inside the minute), `wsBytes` (text-frame characters
-// the shim received in the minute, from its counter) and `rafGap` (animation-frame gaps over RAF_GAP_MS while visible,
-// from a loop that runs only while the switch is on and the document visible). A Performance API the browser lacks
-// reads as null, never a guess. The pending minute also flushes on visibilitychange to hidden: iOS fires that on an
+// the shim received on the pane's LOCAL socket in the minute, from its counter), `wsBytesByHost` (the same unit, per
+// attached REMOTE host by its position on the page, h1 the first remote host this page attached, at most MAX_HOSTS named
+// and the rest summed under hmore, from federation's page-lifetime totals through window.__rompFed.wsBytesByHost; absent,
+// not null, on a page that never attached a remote host and on the shell; disjoint from wsBytes: a remote socket's
+// characters are counted here and never there; 2026-09-19, the user approved the field as one number per host and no
+// content) and `rafGap` (animation-frame gaps over RAF_GAP_MS while visible, from a loop that runs only while the switch
+// is on and the document visible). A Performance API the browser lacks reads as null, never a guess. The pending minute also flushes on visibilitychange to hidden: iOS fires that on an
 // app switch and then freezes the page, and pagehide, a navigation event, never comes. That flush leaves a held
 // slowframe row for its long-frame report (the timer tick and pagehide stay its backstops) and does not re-arm the
 // slowframe budget.
@@ -80,6 +84,7 @@ export const SHARE_SETTING = "perfShare";      // the store's key for the opt-in
 export const MUTE_SETTING = "perfMute";        // the store's key for the kill switch: `true` alone turns it on
 export const RAF_GAP_MS = 50;                  // an animation-frame gap over this counts (one long frame at 60 Hz is three missed paints)
 export const MAX_RES = 24;                     // named resource entries per page; the rest fold into "other"
+export const MAX_HOSTS = 4;                    // wsBytesByHost: remote host positions named per row (h1..h4); the rest sum under "hmore"
 /** The entry types `env.entryTypes` may name, in this order: what the browser supports of the observers this module
  *  and the phone work could use. Anything else the browser lists is left out. */
 export const ENV_ENTRY_TYPES: readonly string[] = ["longtask", "long-animation-frame", "event", "largest-contentful-paint", "layout-shift", "paint", "resource", "navigation"];
@@ -116,6 +121,7 @@ export interface PerfDeps {
   switches(): BeaconSwitches;        // the gear's two per-browser switches, read from the store (readSwitches)
   entries(type: string): any[] | null;   // performance.getEntriesByType(type); null where the API is absent
   marks(): Record<string, unknown> | null;   // window.__rompPerfMarks: the shim's stamps (wsOpen, bundleReady, firstFrame), its wsBytes counter and the dist token dv; null without a shim
+  fedBytes(): Record<string, unknown> | null;   // window.__rompFed.wsBytesByHost(): federation's page-lifetime characters per remote host position (h<ordinal>); null without federation, or with a federation bundle before the getter
   env(): EnvInfo | null;             // the page's environment, read live (envInfo over the window); null where nothing can be read
 }
 
@@ -347,6 +353,34 @@ export function pageMarks(marks: Record<string, unknown> | null, paints: readonl
 
 /** The iOS major version an iPhone, iPad or iPod user agent states (`OS 17_4`); 0 elsewhere, an iPad with the
  *  desktop Macintosh user agent included (its `touch` tells it apart). */
+/** The minute's characters per remote host position (the row's wsBytesByHost) from federation's page-lifetime totals
+ *  (`now`, keyed h<ordinal>, the getter's shape; a key off that pattern or a non-numeric value is ignored) against the
+ *  minute's baselines (`base`, the same shape, {} where a position had no total when the minute began: a host attached
+ *  mid-minute counts from 0). Positions 1..MAX_HOSTS keep their own keys; every later position sums under `hmore`, present
+ *  only when there is one. Null when `now` names no position (no remote host ever attached), and the caller leaves the
+ *  key off the row. Pure. */
+export function bytesByHost(now: Record<string, unknown> | null, base: Record<string, number>): Record<string, number> | null {
+  if (!now || typeof now !== "object") return null;
+  const ords: number[] = [];
+  for (const k of Object.keys(now)) {
+    const m = /^h([1-9][0-9]*)$/.exec(k);
+    const v = now[k];
+    if (m && typeof v === "number" && isFinite(v)) ords.push(Number(m[1]));
+  }
+  if (!ords.length) return null;
+  ords.sort((a, b) => a - b);
+  const out: Record<string, number> = {};
+  let more = 0, folded = false;
+  for (const o of ords) {
+    const k = "h" + o;
+    const d = Math.max(0, Math.round((now[k] as number) - (base[k] || 0)));
+    if (o <= MAX_HOSTS) out[k] = d;
+    else { more += d; folded = true; }
+  }
+  if (folded) out.hmore = more;
+  return out;
+}
+
 export function iosMajor(ua: string): number {
   if (!/iPhone|iPad|iPod/.test(ua)) return 0;
   const m = /OS (\d+)_/.exec(ua);
@@ -398,6 +432,7 @@ interface Bucket {
   vis: { hiddenN: number; visibleN: number; hiddenMs: number };   // visibility transitions in the minute, and the time hidden inside it
   rafGap: { n: number; worst: number };   // animation-frame gaps over RAF_GAP_MS while visible
   bytes0: number;                      // the shim's wsBytes counter when the minute began
+  fedBytes0: Record<string, number>;   // federation's per-position totals (wsBytesByHost) when the minute began; a position absent here counts from 0
 }
 interface PendingSlow { type: string; ms: number; dom: number | null; t0: number; t1: number }
 interface Open { t0: number; child: number }   // a bracket in progress: its start, and the time its inner brackets took
@@ -621,6 +656,10 @@ export class PerfTelemetry implements RompPerf {
     data.vis = { hiddenN: b.vis.hiddenN, visibleN: b.vis.visibleN, hiddenMs: Math.round(b.vis.hiddenMs) };
     const bytes = marks ? marks.wsBytes : undefined;
     data.wsBytes = typeof bytes === "number" && isFinite(bytes) ? Math.max(0, Math.round(bytes - b.bytes0)) : null;
+    // per remote host position, the same unit, from federation's page-lifetime totals against this minute's baselines;
+    // the key is left off when no remote host was ever attached (bytesByHost returns null), never written as null
+    const byHost = bytesByHost(this.safe(() => this.d.fedBytes(), null), b.fedBytes0);
+    if (byHost) data.wsBytesByHost = byHost;
     data.rafGap = { n: b.rafGap.n, worst: Math.round(b.rafGap.worst) };
   }
 
@@ -629,6 +668,14 @@ export class PerfTelemetry implements RompPerf {
     const m = this.safe(() => this.d.marks(), null);
     const v = m ? m.wsBytes : undefined;
     return typeof v === "number" && isFinite(v) ? v : 0;
+  }
+
+  /** Federation's per-position totals now (the minute's wsBytesByHost baselines), numeric h<ordinal> entries only; {} without federation. */
+  private fedBytesNow(): Record<string, number> {
+    const m = this.safe(() => this.d.fedBytes(), null);
+    const out: Record<string, number> = {};
+    if (m && typeof m === "object") for (const k of Object.keys(m)) { const v = m[k]; if (/^h[1-9][0-9]*$/.test(k) && typeof v === "number" && isFinite(v)) out[k] = v; }
+    return out;
   }
 
   // ── recording ──
@@ -781,14 +828,15 @@ export class PerfTelemetry implements RompPerf {
   // ── rows ──
 
   /** A fresh minute. `carry` is the bucket a flush did not send (idle, or muted): its visibility counts and its byte
-   *  baseline pass on, so `vis` and `wsBytes` read "since this pane's previous row" (a hide that found nothing to send
-   *  still counts in the row that follows); the per-minute figures (`since`, `span_ms`, the frames) start over. */
+   *  baselines (the local socket's and each remote host position's) pass on, so `vis`, `wsBytes` and `wsBytesByHost` read
+   *  "since this pane's previous row" (a hide that found nothing to send still counts in the row that follows); the
+   *  per-minute figures (`since`, `span_ms`, the frames) start over. */
   private newBucket(carry: Bucket | null = null): Bucket {
     return { since: this.d.wallNow(), active: false, frames: new Map(), free: new Ring(FREE_RING),
              loaf: { n: 0, blocking_ms: 0, worst_ms: 0, top: new Map() },
              slowSent: 0, slowSuppressed: 0, slowSuppressedWorst: 0, wireTypes: 0, fedTypes: 0,
              vis: carry ? carry.vis : { hiddenN: 0, visibleN: 0, hiddenMs: 0 }, rafGap: { n: 0, worst: 0 },
-             bytes0: carry ? carry.bytes0 : this.bytesNow() };
+             bytes0: carry ? carry.bytes0 : this.bytesNow(), fedBytes0: carry ? carry.fedBytes0 : this.fedBytesNow() };
   }
 
   private minuteData(b: Bucket): Record<string, unknown> {
@@ -868,6 +916,9 @@ function browserDeps(post: PerfPost | null): PerfDeps | null {
     switches: () => { let st: any = null; try { st = w.localStorage || null; } catch (e) { st = null; } return readSwitches(st); },
     entries: (type) => typeof perf.getEntriesByType === "function" ? perf.getEntriesByType(type) : null,
     marks: () => { const m = w.__rompPerfMarks; return m && typeof m === "object" ? m : null; },
+    // federation's per-host totals (federation.ts wsBytesByHost, published on window.__rompFed): null on a page without
+    // federation (the shell, VS Code) or with a federation bundle that predates the getter, and the row carries no key
+    fedBytes: () => { const f = w.__rompFed; if (!f || typeof f.wsBytesByHost !== "function") return null; const m = f.wsBytesByHost(); return m && typeof m === "object" ? m : null; },
     env: () => envInfo({ standalone: nav.standalone, ua: String(nav.userAgent || ""), maxTouchPoints: Number(nav.maxTouchPoints) || 0,
                          vw: Number(w.innerWidth) || 0, vh: Number(w.innerHeight) || 0, dpr: Number(w.devicePixelRatio) || 0,
                          entryTypes: (PO && Array.isArray(PO.supportedEntryTypes)) ? PO.supportedEntryTypes : [],

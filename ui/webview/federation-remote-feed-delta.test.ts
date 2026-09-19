@@ -17,6 +17,9 @@ import * as fed from "./federation";
 // the manager's announced capability, read off the module namespace so this file still bundles (and runs red) against a
 // federation.ts that predates the export: the wire word is asserted literally below, the export beside it
 const REMOTE_DIAL_CAPS: string | undefined = (fed as any).REMOTE_DIAL_CAPS;
+// the join of that word with the page's caps (2026-09-19), read the same way: the tests below assert the wire term, and
+// the pure function beside it where it exists
+const remoteDialCaps: ((pageCaps: unknown) => string) | undefined = (fed as any).remoteDialCaps;
 
 const HOST = "TESTHOST";
 const SID_A = "11111111-2222-4333-8444-000000000701";   // "api" on TESTHOST
@@ -48,7 +51,8 @@ function terms(): any {
 
 interface Rig { fm: any; emitted: any[]; sent: any[] }
 
-async function withManager(fn: (rig: Rig) => void | Promise<void>): Promise<void> {
+/** `terms` replaces the page's __rompDialTerms (a function, or null for a page without the shim's seam). */
+async function withManager(fn: (rig: Rig) => void | Promise<void>, opts: { terms?: (() => any) | null } = {}): Promise<void> {
   const g: any = globalThis;
   const saved: Record<string, any> = {};
   const set = (k: string, v: any) => { saved[k] = { had: k in g, v: g[k] }; g[k] = v; };
@@ -60,13 +64,14 @@ async function withManager(fn: (rig: Rig) => void | Promise<void>): Promise<void
   set("WebSocket", FakeWS);
   set("location", { protocol: "http:", host: "hub.local:1", search: "?wid=hublab" });
   set("localStorage", { getItem: () => null, setItem: () => {} });
-  set("window", {
+  const win: any = {
     dispatchEvent: (ev: any) => { if (ev && ev.data) emitted.push(ev.data); },
     __rompLocalSend: (m: any) => sent.push(m),
-    __rompDialTerms: () => terms(),
     sessionStorage: { getItem: () => "" },
     parent: { postMessage: () => {} },
-  });
+  };
+  if (opts.terms !== null) win.__rompDialTerms = opts.terms || (() => terms());
+  set("window", win);
   try {
     const fm: any = new FederationManager();
     fm.app = "fleet";
@@ -132,6 +137,89 @@ test("every remote dial announces caps=feedDelta beside the page's terms, the re
     assert.equal(rq.get("reconnect"), "1");
     fm.conns.get(HOST).closed = true;
   });
+});
+
+// The caps term is the decoder word JOINED with the page's own caps less readyGate (remoteDialCaps, 2026-09-19): the shim's
+// __rompDialTerms carries the page's CAPS since that day, so a cap a page grows reaches the remote kernel without a change to
+// federation.ts. Today every kernel-served page announces feedDelta and/or readyGate, so the wire term is "feedDelta" for
+// every app, as before: these pin the filter (readyGate never travels, a repeat is dropped, the decoder word is first), the
+// three no-caps corners (a page without the seam, a seam without the field, an empty field) and a future word riding once.
+const capsOf = (ws: FakeWS) => qOf(ws.url).get("caps");
+/** dial, ack the ready, drop the socket and let the watchdog redial: [the first dial's caps, the redial's] */
+function firstAndRedial(fm: any): [string | null, string | null] {
+  fm.outbound({ type: "ready", proto: 2 });
+  fm.openRemote(HOST, true);
+  const first = last(FakeWS.made);
+  first.open();
+  first.frame({ type: "caps" });
+  first.readyState = 3;
+  clock += REMOTE_REDIAL_MS + 1000;
+  fm.watchdog(clock);
+  const redial = last(FakeWS.made);
+  assert.notEqual(redial, first, "the watchdog dialed again");
+  assert.equal(qOf(redial.url).get("reconnect"), "1");
+  fm.conns.get(HOST).closed = true;
+  return [capsOf(first), capsOf(redial)];
+}
+
+test("the Outline's page caps (feedDelta,readyGate) and the chat's (readyGate) both yield exactly feedDelta on the first dial and the redial: the hold word never travels, the repeat is dropped", async () => {
+  await withManager(({ fm }) => {
+    assert.deepEqual(firstAndRedial(fm), ["feedDelta", "feedDelta"], "the Outline: its feedDelta is the decoder word already, its readyGate stays home");
+  }, { terms: () => ({ ...terms(), caps: "feedDelta,readyGate" }) });
+  await withManager(({ fm }) => {
+    fm.app = "chat";
+    assert.deepEqual(firstAndRedial(fm), ["feedDelta", "feedDelta"], "the chat: readyGate alone yields the decoder word alone");
+  }, { terms: () => ({ app: "chat", iid: PAGE_IID, active: "", col: "", skeleton: 1, provrows: 0, proto: 2, delta: 1, caps: "readyGate" }) });
+  await withManager(({ fm }) => {
+    assert.deepEqual(firstAndRedial(fm), ["feedDelta", "feedDelta"], "a page announcing readyGate alone with the feed's terms: the same");
+  }, { terms: () => ({ ...terms(), caps: "readyGate" }) });
+});
+
+test("the three no-caps corners each yield exactly feedDelta: a page without __rompDialTerms, a seam without the caps field, an empty caps string", async () => {
+  await withManager(({ fm }) => {
+    fm.openRemote(HOST, true);
+    assert.equal(capsOf(last(FakeWS.made)), "feedDelta", "no seam (a page before 2026-09-15): the decoder word alone");
+    assert.equal(qOf(last(FakeWS.made).url).get("delta"), null, "and none of the page's terms, as before");
+    fm.conns.get(HOST).closed = true;
+  }, { terms: null });
+  await withManager(({ fm }) => {
+    fm.openRemote(HOST, true);
+    assert.equal(capsOf(last(FakeWS.made)), "feedDelta", "a seam without the field (a shim before 2026-09-19)");
+    assert.equal(qOf(last(FakeWS.made).url).get("delta"), "1", "the page's other terms ride");
+    fm.conns.get(HOST).closed = true;
+  });
+  await withManager(({ fm }) => {
+    fm.openRemote(HOST, true);
+    assert.equal(capsOf(last(FakeWS.made)), "feedDelta", "an empty field (a page whose shim announces no cap)");
+    fm.conns.get(HOST).closed = true;
+  }, { terms: () => ({ ...terms(), caps: "" }) });
+});
+
+test("a page cap this manager does not know travels once, after the decoder word, in the page's order; readyGate never; a non-string field reads as none", async () => {
+  await withManager(({ fm }) => {
+    fm.openRemote(HOST, true);
+    assert.equal(capsOf(last(FakeWS.made)), "feedDelta,faceLite", "the future word rides once, behind the decoder word; readyGate is dropped");
+    fm.conns.get(HOST).closed = true;
+  }, { terms: () => ({ ...terms(), caps: "feedDelta,readyGate,faceLite" }) });
+  await withManager(({ fm }) => {
+    fm.openRemote(HOST, true);
+    assert.equal(capsOf(last(FakeWS.made)), "feedDelta,faceLite,other", "the page's order is kept behind the decoder word; a repeated word and an empty word are dropped");
+    fm.conns.get(HOST).closed = true;
+  }, { terms: () => ({ ...terms(), caps: "faceLite,,feedDelta,readyGate,faceLite,other" }) });
+  await withManager(({ fm }) => {
+    fm.openRemote(HOST, true);
+    assert.equal(capsOf(last(FakeWS.made)), "feedDelta", "a field that is not a string is no field");
+    fm.conns.get(HOST).closed = true;
+  }, { terms: () => ({ ...terms(), caps: ["faceLite"] }) });
+  // the pure function beside the wire, where the export exists (the wire assertions above hold this file's contract)
+  assert.equal(typeof remoteDialCaps, "function", "federation.ts exports remoteDialCaps");
+  assert.equal(remoteDialCaps!(undefined), "feedDelta");
+  assert.equal(remoteDialCaps!(null), "feedDelta");
+  assert.equal(remoteDialCaps!(""), "feedDelta");
+  assert.equal(remoteDialCaps!("readyGate"), "feedDelta");
+  assert.equal(remoteDialCaps!("feedDelta,readyGate"), "feedDelta");
+  assert.equal(remoteDialCaps!("readyGate,faceLite"), "feedDelta,faceLite");
+  assert.equal(remoteDialCaps!(42), "feedDelta");
 });
 
 test("a remote host's feedDelta applies onto the raw frame held for it: removals by the kernel's bare ids land, and the merge reads the result prefixed whole", async () => {
