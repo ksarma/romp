@@ -291,14 +291,14 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   A return on the phone (the redial that follows a socket the background left
   dead; the owner's decision of 2026-09-19) reloads the visible tab alone: the
   kernel re-skeletons the other tabs on the new socket as before, and each of
-  them loads when tapped. Two rules, decided 2026-09-19. The hold lasts the
-  socket's life: a tap loads the tapped tab alone, and the chain does not
-  resume after the first tap, because the owner's answer was that the other
-  tabs reload only when tapped, each on its own tap. The hold covers every
-  phone redial after the first connection, a kernel restart and a dropped
-  link while the app is in the foreground included, because the phone cannot
-  tell a return's redial from a restart's and a tab that loads when tapped
-  costs nothing on either. The desktop's redial keeps today's chain.
+  them loads when tapped. The hold lasts the socket's life (decided
+  2026-09-19): a tap loads the tapped tab and nothing else, and the chain does
+  not resume after the first tap, because the owner's answer was that the
+  other tabs reload only when tapped. It covers every phone redial after the
+  first connection, a kernel restart and a dropped link while the app is in
+  the foreground included, because the phone cannot tell a return's redial
+  from a restart's, and a tab that loads when tapped costs nothing on either.
+  The desktop's redial keeps today's chain.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire
