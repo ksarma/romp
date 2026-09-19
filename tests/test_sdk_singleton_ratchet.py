@@ -86,6 +86,9 @@ alphabetically, and each case's `before` is what the previous case left):
   C, the first build over a sandbox that stands:
     a. None before and, after, a backend over a kept sandbox, jd.STATE elsewhere: the allowance does not
        cover it either (it asks for jd.STATE, not for any directory that exists).
+    C is run a second time with a module-level DeprecationWarning planted in the scratch, so the child's summary
+    line reads "1 passed, 1 warning, 1 error in": the outer tests read the error count past the warning segment
+    (summary_mismatch, which tolerates any other count between passed and errors and refuses a wrong count by name).
   D, a class teardown that removes the directory under the singleton its tests left:
     One.a builds over a kept sandbox stored on the class and fails as its own; One.b does nothing and passes at
     its own window; tearDownClass removes the sandbox and writes a regular FILE at the path, and the class
@@ -796,6 +799,34 @@ def outcomes(out):
     return seen
 
 
+SUMMARY_LINE = re.compile(r"^=+ (.*? in [\d.]+s(?: \([\d:]+\))?) =+$", re.M)
+
+
+def summary_mismatch(out, errors):
+    """None when the nested run's summary line counts `errors` errors, else a sentence naming the count expected and
+    the summary line found. The line is pytest's last ("6 passed, 3 errors in 0.19s"), read tolerant of any other
+    comma-separated count between passed and errors (a warning, a skip, an xfail: "6 passed, 1 warning, 3 errors in")
+    and strict about the count: every skipped segment ends in a comma and stays on the line, and the count follows a
+    space, so "13 errors" does not stand for 3. With `errors` 0 the line carries no errors segment at all, other counts
+    allowed. The first form asked for "N passed, M errors in" and "N passed in" exactly, so one unrelated warning in
+    the child (an unpinned pytest's deprecation, a conftest filterwarnings entry pytest drops with a config warning)
+    turned "6 passed, 3 errors in" into "6 passed, 1 warning, 3 errors in" and redded every run with a message that
+    named no warning (round 1, 2026-09-19)."""
+    m = SUMMARY_LINE.search(out)
+    if m is None:
+        return "no pytest summary line (\"N passed, M errors in Ns\") in the nested run's output; %d errors expected" % errors
+    line = m.group(1)
+    if errors == 0:
+        ok = re.search(r"\d+ passed(?:, \d+ (?!errors?\b)[a-z]+)* in ", line)
+    else:
+        ok = re.search(r"\d+ passed,(?:[^,\n]+,)* %d errors?[ ,]" % errors, line)
+    if ok:
+        return None
+    found = re.search(r"\d+ errors?\b", line)
+    return "the nested run's summary line counts %s, not %d error%s: %r" % (
+        found.group(0) if found else "no errors", errors, "" if errors == 1 else "s", line)
+
+
 def _split(m):
     """(clause, remedy) from a matched "<who> <clause>. Fix: <remedy>" message, the clause with the ratchet's
     common head stripped so the tests read the part that names the transition."""
@@ -893,10 +924,11 @@ class _NestedRun:
             self.assertNotIn(SHARED_STATE, self.out, "every case puts jd.STATE back; the ratchet's text is the only red")
         if self.ERRORS == 0:
             self.assertEqual(self.rc, 0, self.out)
-            self.assertRegex(self.out, r"\d+ passed in", self.out)
         else:
             self.assertNotEqual(self.rc, 0, self.out)
-            self.assertRegex(self.out, r"\d+ passed, %d errors? in" % self.ERRORS, self.out)
+        problem = summary_mismatch(self.out, self.ERRORS)
+        if problem is not None:
+            self.fail("%s\n%s" % (problem, self.out))
 
 
 class LeakAfterFirstBuild(_NestedRun, unittest.TestCase):
@@ -992,6 +1024,69 @@ class FirstBuildOverAKeptSandbox(_NestedRun, unittest.TestCase):
     def test_the_class_and_module_ends_are_quiet_on_the_named_object(self):
         self.assertIsNone(boundary(self.out, "::Cases"), self.out)     # the one case is the last: see B's note on the count
         self.assertIsNone(boundary(self.out, ""), self.out)
+
+
+SCRATCH_C_WARNED = SCRATCH_C.replace(
+    "import os, shutil, sys, tempfile, unittest\n",
+    "import os, shutil, sys, tempfile, unittest, warnings\n"
+    "warnings.warn(\"a module-level warning, counted on the child's summary line (scratch)\", DeprecationWarning)\n", 1)
+assert SCRATCH_C_WARNED != SCRATCH_C, SCRATCH_C
+
+
+class ASummaryWithAWarningSegment(FirstBuildOverAKeptSandbox):
+    """C's run with one module-level DeprecationWarning planted in the scratch: the child's summary line gains a
+    "1 warning" segment between passed and errors, the outcomes and the ratchet's text are C's (every test of C runs
+    again here over the warned output), and the summary matcher reads the error count past the warning. The first
+    form's regex went red on this output with a message that named no warning."""
+    SCRATCH = SCRATCH_C_WARNED
+
+    def test_the_summary_line_carries_the_warning_segment_between_passed_and_errors(self):
+        m = SUMMARY_LINE.search(self.out)
+        self.assertIsNotNone(m, self.out)
+        self.assertRegex(m.group(1), r"^\d+ passed, 1 warning, 1 error in ", "the warning is counted on the line: %s" % m.group(1))
+        self.assertIsNone(summary_mismatch(self.out, 1), self.out)
+        self.assertIn("DeprecationWarning", self.out, "the warnings summary names it: %s" % self.out)
+
+
+class NestedSummaryMatcher(unittest.TestCase):
+    """summary_mismatch over fabricated summary lines: the shapes the nested runs print today, the ones a warning or a
+    skip in the child adds a segment to, and the wrong counts it must still refuse, naming the count."""
+
+    def test_the_error_count_is_read_past_other_counts(self):
+        for line, errors in (("6 passed, 3 errors in 0.19s", 3),
+                             ("6 passed, 1 warning, 3 errors in 0.19s", 3),
+                             ("6 passed, 2 skipped, 9 warnings, 3 errors in 0.19s", 3),
+                             ("2 passed, 1 error in 0.19s", 1),
+                             ("1 failed, 2 passed, 1 warning, 1 error in 65.20s (0:01:05)", 1)):
+            self.assertIsNone(summary_mismatch("=========== %s ===========\n" % line, errors), line)
+
+    def test_zero_errors_tolerates_other_counts_and_refuses_an_errors_segment(self):
+        for line in ("6 passed in 0.19s", "6 passed, 1 warning in 0.19s", "6 passed, 2 skipped, 1 warning in 0.19s"):
+            self.assertIsNone(summary_mismatch("=== %s ===\n" % line, 0), line)
+        for line in ("6 passed, 3 errors in 0.19s", "6 passed, 1 warning, 1 error in 0.19s"):
+            problem = summary_mismatch("=== %s ===\n" % line, 0)
+            self.assertIsNotNone(problem, line)
+            self.assertIn("not 0 errors", problem)
+
+    def test_a_wrong_count_is_refused_and_the_message_names_both_counts_and_the_line(self):
+        problem = summary_mismatch("=== 6 passed, 1 warning, 3 errors in 0.19s ===\n", 2)
+        self.assertIsNotNone(problem)
+        self.assertIn("counts 3 errors, not 2 errors", problem)
+        self.assertIn("'6 passed, 1 warning, 3 errors in 0.19s'", problem)
+        self.assertIsNotNone(summary_mismatch("=== 6 passed, 13 errors in 0.19s ===\n", 3), "13 errors do not stand for 3")
+        self.assertIsNotNone(summary_mismatch("=== 6 passed, 3 errors in 0.19s ===\n", 1))
+
+    def test_a_segment_never_crosses_a_line(self):
+        out = "=== 6 passed, 3 errors in 0.19s ===\nanother line, with a comma, 2 errors named here\n"
+        self.assertIsNotNone(summary_mismatch(out, 2), "the count is read on the summary line alone")
+        self.assertIsNone(summary_mismatch(out, 3))
+
+    def test_no_summary_line_is_refused_with_the_count_expected(self):
+        for out in ("", "collected 0 items\n", "6 passed, 3 errors in 0.19s\n"):     # the last lacks pytest's rule of equals signs
+            problem = summary_mismatch(out, 3)
+            self.assertIsNotNone(problem, repr(out))
+            self.assertIn("no pytest summary line", problem)
+            self.assertIn("3 errors expected", problem)
 
 
 class ClassTeardownRemovesTheDirectory(_NestedRun, unittest.TestCase):
