@@ -4131,10 +4131,19 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   reopened read-only); `warmBlockedByOutline`,
   the same tab with a plain Sessions pane connected; and `heldBody`, a tab
   some connected chat client holds as a body, the watched tab included.
-  `pushes` counts the pushes that ran the chat tab loop, a connecting page's
-  included, so a per-push figure for every key here is a delta over
-  `pushes`; the `push.chat.sig` rows of `stages_ms` and `stages_cpu_ms`
-  exclude connect pushes, while this table includes them.
+  `pushes` counts the pushes that ran the chat tab loop (the pusher's
+  cycles and the connect pushes of a chat or Sessions page; a feed,
+  timeline or other page's connect push runs no loop and does not count),
+  bumped once where the loop opens. Every key here but two is a delta over
+  `pushes` for a per-push figure: `targetedBuilds` counts a push that runs
+  no loop, and `thread` counts a comments frame's signatures, taken outside
+  any push too, so each has its own denominator. A figure over
+  `pusher.cycles` alone runs high by those connect pushes, largest in the
+  boot window. The `push.chat.sig` rows of `stages_ms` and `stages_cpu_ms`
+  exclude connect pushes (their wall goes to `pusher.connectPush.stagesMs`
+  and they record no CPU row) while this table includes them, so a
+  per-signature wall or CPU divides a pusher-only numerator by a mixed
+  denominator unless the window has no connect push.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the in-process pools' share is

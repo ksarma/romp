@@ -302,6 +302,51 @@ class ChatTabSingleFlight(unittest.TestCase):
         self.assertEqual({f["id"] for f in b["_frames"] if f["type"] == "session"}, {S1, S2}, "the connect client still got both tabs")
         self.assertEqual(km._CHAT_INFLIGHT, {}, "no claim left behind")
 
+    @staticmethod
+    def _sig_rows(d):
+        return {k: v for k, v in (d or {}).items() if k.startswith("push.chat.sig")}
+
+    def test_pushes_counts_the_cycle_push_and_a_chat_pages_connect_push_and_not_a_feed_pages_and_the_seam_rows_split_by_purpose(self):
+        """memos.chatSig.pushes by execution (2026-09-19 review, fresh-2), in both directions: the pusher's cycle push counts
+        one and its signature seam's wall lands on the flat push.chat.sig rows with a CPU row; a chat page's connect push
+        counts one, takes its signatures (the numerator includes it) and its seam wall lands on pusher.connectPush.stagesMs
+        while the flat and CPU rows do not move (the mixed-population sentence: the table includes the push the rows
+        exclude); a FEED page's connect push runs no chat tab loop and counts nothing, pre included. A bump at the top of
+        _push, before the chat-or-Sessions target check, reads 1 on the feed push; a bump inside the tab loop reads 2 on
+        the cycle push; a bump gated to the pusher alone reads 0 on the connect push."""
+        a, b = self._client(active=S1), self._client(active=S1)
+        km._clients[:] = [a, b]
+        ps = km._PERF_STATS
+        cs0, s0 = km._chat_sig_stats_report(), ps.snapshot()
+        ps.cycle_begin()
+        try:
+            km._push([a, b])                                   # the pusher's cycle push: two tabs built
+        finally:
+            ps.cycle(0.001)
+        cs1, s1 = km._chat_sig_stats_report(), ps.snapshot()
+        self.assertEqual(cs1["pushes"] - cs0["pushes"], 1, "one per cycle push that ran the chat loop")
+        self.assertEqual(cs1["pre"] - cs0["pre"], 2, "a pre-build signature per tab")
+        flat0, flat1 = self._sig_rows(s0["stages_ms"]), self._sig_rows(s1["stages_ms"])
+        self.assertGreater(sum(flat1.values()) - sum(flat0.values()), 0.0, "the cycle push's seam wall is on the flat rows: %r" % (flat1,))
+        cpu1 = self._sig_rows(s1["stages_cpu_ms"])
+        if km._RUSAGE_THREAD is not None:
+            self.assertTrue(cpu1, "the cycle push records CPU rows for the seam: %r" % (cpu1,))
+        conn1 = self._sig_rows(s1["pusher"]["connectPush"]["stagesMs"])
+        km._push([b], connect=True)                            # a chat page's connect push: served from the cache, signatures taken
+        cs2, s2 = km._chat_sig_stats_report(), ps.snapshot()
+        self.assertEqual(cs2["pushes"] - cs1["pushes"], 1, "one per connect push that ran the chat loop")
+        self.assertEqual(cs2["pre"] - cs1["pre"], 2, "the connect push took its signatures: the table's numerator includes it")
+        conn2 = self._sig_rows(s2["pusher"]["connectPush"]["stagesMs"])
+        self.assertGreater(sum(conn2.values()) - sum(conn1.values()), 0.0, "the connect push's seam wall went to connectPush.stagesMs: %r" % (conn2,))
+        self.assertEqual(self._sig_rows(s2["stages_ms"]), flat1, "the flat push.chat.sig rows did not move on the connect push")
+        self.assertEqual(self._sig_rows(s2["stages_cpu_ms"]), cpu1, "and the connect push recorded no CPU row for the seam")
+        f = {"app": "feed", "alive": True, "sent": {}, "send": lambda s: None, "ready": True, "proto": 2, "caps": ()}
+        km._clients[:] = [f]
+        with mock.patch.object(km.sys, "stderr", mock.Mock()):   # the harness's feed builder answers None: "no feed build this cycle"
+            km._push([f])                                      # a feed page's push: no chat or Sessions target, no tab loop
+        cs3 = km._chat_sig_stats_report()
+        self.assertEqual((cs3["pushes"] - cs2["pushes"], cs3["pre"] - cs2["pre"]), (0, 0), "a feed-only push runs no chat tab loop and counts nothing")
+
     def test_a_stale_entry_makes_every_pre_flight_read_count_and_a_served_waiter_count_two(self):
         """The compares gloss by execution (2026-09-19 review, kernel-1: the descriptions said a waiter counts three, which no
         served waiter does). The same race over a WARM cache holding a stale tuple for both tabs: every pre-flight read

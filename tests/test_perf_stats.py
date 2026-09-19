@@ -1873,7 +1873,8 @@ class RoutingStatements(unittest.TestCase):
     # the places a routing sentence lives today; a file added here has been read against the measured cells
     PLACES = {"bin/romp", "docs/reference.md", "kernel/kernel.py", "tests/test_first_cycle_stage_split.py",
               "tests/test_jobs_thread_split.py", "tests/test_perf_stats.py", "upstream/2026-09-18-stage-attribution.md",
-              "upstream/2026-09-18-chat-signature-stage1.md"}   # its pushes sentence names connectPush.stagesMs (2026-09-19 review, fresh-2)
+              "upstream/2026-09-18-chat-signature-stage1.md",   # its stages_cpu_ms clause names connectPush.stagesMs (2026-09-19 review, fresh-2)
+              "tests/test_single_flight_builds.py"}             # its pushes test asserts a connect push's seam wall lands on connectPush.stagesMs
 
     def _places(self):
         root = Path(HERE).parent
