@@ -1559,6 +1559,33 @@ class Cli(unittest.TestCase):
                              "a string this machine knows (private string) survives as a key under perf/heap; nothing written")
             self.assertIsNone(pe.check_document(pe.export_document(leak_snapshot()), pe.Path(tempfile.mkdtemp())))
 
+    def test_the_private_list_is_read_to_the_bound_plus_one_byte_and_never_whole(self):
+        """The read bound on the private list, pinned where it is decided (tests-2, the third review round: replacing
+        read(PRIVATE_STRINGS_MAX + 1) with read() left every case green, since the over-the-bound cases assert what the cut
+        left, which is the same whether the bound or the whole file was read). open_regular is replaced by a recording file
+        whose payload is far past the bound; the one read asked for is PRIVATE_STRINGS_MAX + 1 bytes, the over-the-bound line
+        is said, and the entries are the whole lines inside the bound. The mutant reads the whole payload and records -1."""
+        asked = []
+
+        class Recording:
+            payload = b"entry\n" * (pp.PRIVATE_STRINGS_MAX // 2)               # 6-byte lines, three times the bound
+
+            def read(self, n=-1):
+                asked.append(n)
+                return self.payload if n is None or n < 0 else self.payload[:n]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        err = io.StringIO()
+        with mock.patch.object(pp, "open_regular", return_value=Recording()), contextlib.redirect_stderr(err):
+            got = pp.private_strings({"ROMP_PRIVATE_STRINGS": "/no/such/list.txt"})
+        self.assertEqual(asked, [pp.PRIVATE_STRINGS_MAX + 1], "one bounded read, never an unbounded one")
+        self.assertEqual(err.getvalue(), pp.LIST_OVER_BOUND + "\n")
+        self.assertEqual(got, ["entry"] * (pp.PRIVATE_STRINGS_MAX // 6), "the whole lines inside the bound, and no more")
+
     def test_a_short_listed_entry_is_checked_and_the_export_child_refuses_a_document_carrying_it(self):
         """The three-character entry the PROBE_MIN floor dropped is a probe (correctness-2, the third review round, 2026-09-18):
         the export child, with ROMP_PRIVATE_STRINGS naming a list that carries `abc`, refuses a snapshot whose app table

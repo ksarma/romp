@@ -457,6 +457,31 @@ class ReceiverSetting(unittest.TestCase):
                              "a fifo is refused as an address, the file named as its source, and nothing of it is read")
 
 
+    def test_the_setting_file_is_read_to_the_bound_plus_one_byte_and_never_whole(self):
+        """The read bound on the setting file, pinned where it is decided (tests-2, the third review round: replacing
+        read(RECEIVER_FILE_MAX + 1) with read() left every case green, since every case asserted post-read behaviour, which
+        is the same whether the bound or the whole file was read). pp.open_regular is replaced by a recording file whose
+        payload is far past the bound; the one read asked for is RECEIVER_FILE_MAX + 1 bytes, and the outcome is the
+        over-the-bound refusal, the file named and the address on its first line never returned. The mutant reads the
+        whole payload and records -1 here."""
+        asked = []
+
+        class Recording:
+            payload = b"https://r.example\n" + b"x" * (pu.RECEIVER_FILE_MAX * 8)
+
+            def read(self, n=-1):
+                asked.append(n)
+                return self.payload if n is None or n < 0 else self.payload[:n]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        with mock.patch.object(pu.pp, "open_regular", return_value=Recording()), mock.patch.dict(os.environ, {"HOME": self.home}):
+            self.assertEqual(pu.receiver_setting(None, env={}), ("", "~/.config/romp/perf-receiver"), "over the bound: the file named, the address never returned")
+        self.assertEqual(asked, [pu.RECEIVER_FILE_MAX + 1], "one bounded read, never an unbounded one")
+
     def test_a_socket_a_block_device_and_an_unreadable_file_at_the_setting_path_are_refused_naming_the_file_never_as_no_receiver(self):
         """receiver_setting swallowed every OSError from the open into (None, None), so a path that EXISTED but could not be
         opened (a unix socket, ENXIO whatever its mode; a regular file the account cannot read, EACCES; a block device outside
