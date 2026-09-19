@@ -83,7 +83,11 @@ COMMIT_KEYS = ("kernel_sha", "kernel_commit", "commit", "sha")
 # never heard of.
 SNAPSHOT_KEYS = ("uptime_s", "process", "pusher", "http")
 COMMIT = re.compile(r"[0-9a-fA-F]{7,64}")
-# The http routes that count as the user's own actions (POST) and the panes they opened (GET), as feature names.
+# The POST routes counted as actions (every POST route of the register but ACTION_SKIP, the kernel's own housekeeping
+# posts) and the GET routes counted as views (VIEW_ROUTES), as feature names; a count is one request served on the
+# route, whoever made it (the dashboard, the CLI, a relaying kernel, a session's tool call, a hook, a peer's poll): the
+# http table's count relabelled, never a record of who asked (the counter, kernel _PerfStats.http_request, takes the
+# path and the elapsed time and nothing about the client).
 ACTION_SKIP = frozenset({"/tick", "/perf", "/push/ack", "/push/dropped", "/push/landed", "/push/superseded",
                          "/checkin", "/checkin/stop", "/working", "/notice", "/postal-notice", "/deliver"})
 VIEW_ROUTES = ("/chat", "/feed", "/timeline", "/fleet", "/waiting", "/analytics", "/files", "/file", "/usage",

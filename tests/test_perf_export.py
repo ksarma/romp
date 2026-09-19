@@ -2804,6 +2804,54 @@ class Cli(unittest.TestCase):
         self.assertEqual(_hits({"a": "in %s/code/notes-api/x" % HOME}, ids), [("session directory", "the value at a")])
 
 
+class Docs(unittest.TestCase):
+    """The export section's sentence about --usage in docs/reference.md, pinned flattened so a rewrap survives. The closing
+    check (2026-09-19, HIGH 1 and finding 3) found the section calling the action counts "the user's actions and an attached
+    kernel's posts" and the view counts "the panes opened", provenance the code contradicts (kernel.py's _remote_forward_status
+    and _via_forward relay a dashboard's POST to another machine's kernel, hooks/romp-usertodo-context.sh posts
+    /usertodo/context from a SessionStart hook, strip.ts fetches /usage on every page load, a peer kernel polls /views once a
+    minute, the postal bus GETs /tunnels at every start), and the sentence now says what a count is (the http table's count for
+    the route, whoever made the requests) and what the block is (packaging of leaves the plain export already carries). The
+    wire's side is pinned in tests/test_perf_upload.py (the plain export's http rows and the usage block equal to their counts)
+    and the whole block's derivation in tests/test_perf_stats.py (Disclosed); this case holds the WORDING and pins the two
+    provenance claims absent."""
+
+    def test_the_reference_says_the_usage_block_is_packaging_of_leaves_the_plain_export_carries_and_names_no_maker(self):
+        with open(os.path.join(ROOT, "docs", "reference.md"), encoding="utf-8") as fh:
+            text = " ".join(fh.read().split())       # asserted by boolean, so a failure names the words and never dumps the page
+        sentence = ("`--usage` adds a `usage` block, off by default: the session counts, one count per action route served and one per "
+                    "pane route served, each the http table's count for that route under the route's name, whoever made the requests, "
+                    "and the kernel's uptime bucket, all from leaves the plain export already carries, so the block adds packaging and "
+                    "no number.")
+        self.assertTrue(sentence in text, "not in the reference: " + sentence)
+        # the export section's denylist paragraph, narrowed by range with the integer rule (the closing check at the re-run's
+        # head, HIGH 2): an integer a double can hold passes whatever its size, one it cannot hold is null in the export's output
+        integer = ("an integer a double can hold is a byte total or a count, which a long-lived kernel's lifetime totals carry into the "
+                   "window within hours, and passes whatever its size (one a double cannot hold, at about 1.8e308 and above, is null in "
+                   "the export's output, as a NaN is, and refused at the upload's parse)")
+        self.assertTrue(integer in text, "not in the reference: " + integer)
+        for clause in ("the user's actions and an attached kernel's posts", "the panes opened"):
+            self.assertFalse(clause in text, "the provenance claim the code contradicts is back in the reference: " + clause)
+        # the cli README's row says the same in one line: the session counts are copies of perf leaves and the feature counts
+        # the http table's counts relabelled (the closing check at the re-run's head's verification found the row reading as
+        # if the session counts were http counts too)
+        with open(os.path.join(ROOT, "cli", "README.md"), encoding="utf-8") as fh:
+            readme = " ".join(fh.read().split())
+        row = ("`--usage` adds session counts copied from the perf block and feature counts, the http table's route counts relabelled, "
+               "so a plain export carries every number already; the flag is required, there is no raw mode.")
+        self.assertTrue(row in readme, "not in cli/README.md: " + row)
+        # the sentence's own claim about the code, executed: the block's action and view counts are the http table's, relabelled
+        snap = leak_snapshot()
+        plain, withu = pe.export_document(snap), pe.export_document(snap, usage=True)
+        self.assertNotIn("usage", plain)
+        http = plain["perf"]["http"]
+        self.assertEqual(withu["usage"]["actions"], {pe._feature_name(k.partition(" ")[2]): row["count"] for k, row in http.items()
+                                                     if k.startswith("POST ") and k.partition(" ")[2] not in pe.ACTION_SKIP})
+        self.assertEqual(withu["usage"]["views"], {pe._feature_name(k.partition(" ")[2]): row["count"] for k, row in http.items()
+                                                   if k.startswith("GET ") and k.partition(" ")[2] in pe.VIEW_ROUTES})
+        self.assertEqual((withu["usage"]["actions"], withu["usage"]["views"]), ({"send": 7, "new": 2}, {"feed": 3}))
+
+
 class ServedKernel(unittest.TestCase):
     """The export over a kernel this module starts: the real Handler on a loopback port, the module-global
     collector planted through its own writers, the CLI reading GET /perf with the serve token."""

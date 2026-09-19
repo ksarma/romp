@@ -3802,11 +3802,12 @@ same port after `GET /perf`, whose snapshot has no commit of its own, and
 takes its `kernel_sha` (git's short sha, a `-dirty` suffix for a checkout with
 uncommitted edits stripped); a `/version` that does not answer leaves the
 envelope without one, and a saved snapshot carries one only when it was
-written beside it. `--usage` adds a `usage` block, off by
-default, with the session counts, the action routes served (the user's actions
-and an attached kernel's posts) and the panes opened
-(from the http table's route counts) and the kernel's uptime bucket, all from
-keys the snapshot already carries. Before writing, the document is searched,
+written beside it. `--usage` adds a `usage` block, off by default: the session
+counts, one count per action route served and one per pane route served, each
+the http table's count for that route under the route's name, whoever made the
+requests, and the kernel's uptime bucket, all from leaves the plain export
+already carries, so the block adds packaging and no number. Before writing, the
+document is searched,
 every key, string value and number (a number by the spelling the export
 writes and, when that spelling carries an exponent, by its plain decimal
 expansion too, so a listed digit run inside a counter is found however the
