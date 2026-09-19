@@ -591,6 +591,15 @@ visualViewport.height = 422; visualViewport.offsetTop = 200; fire(VV, 'resize');
 out.kbDownZoomed = { appTop: appTop(), appH: appH(), barH: barH() };
 visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 out.zoomBack = { appTop: appTop(), appH: appH(), barH: barH() };
+// round 2 (2026-09-19): the geometric reading's EDGE. The bar is hidden when its box STARTS at or below the visible band's
+// bottom edge (>=): a bar whose top is exactly offsetTop + vv.height has no pixel inside the band. innerHeight 460 with
+// vv.height 460 reads no keyboard by the height difference, so the bar's box alone decides
+global.innerHeight = 460; visualViewport.height = 460; visualViewport.offsetTop = 0; BAR.top = 460; fire(WIN, 'resize'); flush();
+out.barAtTheEdge = { appH: appH(), barH: barH() };
+BAR.top = 459; fire(WIN, 'resize'); flush();   // one pixel inside the band: visible, reserved
+out.barOnePxIn = { appH: appH(), barH: barH() };
+BAR.top = null; global.innerHeight = 844; visualViewport.height = 844; fire(WIN, 'resize'); flush();
+out.barEdgeBack = { appH: appH(), barH: barH() };
 // round 2 (2026-09-19): the writer's other population. fit() publishes a pan only off a coarse pointer; a FINE pointer writes
 // 0px whatever the visual viewport says (no soft keyboard to pan for), so a fine-pointer window the mobile query still
 // matches by width alone (at or under 820 px) takes the fixed body at top 0. From a panned state, the pointer turns fine
@@ -708,6 +717,13 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual(self.out["pinchPanned"], {"appTop": "83px", "appH": "460px", "barH": "0px"}, "the hold, from a pan")
         self.assertEqual(self.out["kbDownZoomed"], {"appTop": "0px", "appH": "844px", "barH": "44px"}, "the clamp")
         self.assertEqual(self.out["zoomBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+
+    def test_a_bar_whose_box_starts_exactly_at_the_bands_bottom_edge_is_hidden(self):
+        # round 2 (2026-09-19): the edge of the geometric reading, held by source text alone before. At exactly offsetTop +
+        # vv.height the bar has no pixel inside the band and reserves nothing; one pixel higher it is visible and keeps its strip.
+        self.assertEqual(self.out["barAtTheEdge"], {"appH": "460px", "barH": "0px"})
+        self.assertEqual(self.out["barOnePxIn"], {"appH": "460px", "barH": "44px"})
+        self.assertEqual(self.out["barEdgeBack"], {"appH": "844px", "barH": "44px"})
 
     def test_a_fine_pointer_writes_no_pan_whatever_the_visual_viewport_says(self):
         # round 2 (2026-09-19): the writer is gated on the pointer and the fixed body on the layout query, two populations. A

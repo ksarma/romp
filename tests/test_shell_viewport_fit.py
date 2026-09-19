@@ -61,6 +61,10 @@ def _served_rules(html):
     return rules
 
 
+# D1's fixed body (the mobile block; tests below)
+_FIXED_BODY_RULE = "body{position:fixed;left:0;right:0;top:var(--app-top,0px);height:var(--app-h,100dvh)}"
+
+
 class OneHeightBasis(unittest.TestCase):
     def setUp(self):
         self.html = km._landing()
@@ -100,9 +104,10 @@ class OneHeightBasis(unittest.TestCase):
         # D1 (2026-09-19): inside the mobile media block, and only there, the body is FIXED at --app-top (the pan fit()
         # publishes) with the same height chain as the flex body rule before it, so under an iOS keyboard pan the body
         # covers exactly the visible band and no bare background shows between the composer and the keyboard. No
-        # transform, filter or contain on the body: the shell's fixed panels keep the viewport as their containing block.
+        # transform, filter or contain on the body, so the shell's fixed panels keep the viewport as their containing block:
+        # test_no_html_or_body_rule_gives_the_fixed_panels_a_new_containing_block, over the served CSS.
         html = self.html
-        rule = "body{position:fixed;left:0;right:0;top:var(--app-top,0px);height:var(--app-h,100dvh)}"
+        rule = _FIXED_BODY_RULE
         self.assertEqual(html.count(rule), 1)
         mobile_at = html.index("@media " + km._MOBILE_MQ + "{")
         self.assertLess(mobile_at, html.index(rule), "the fixed body is a mobile rule")
@@ -115,8 +120,26 @@ class OneHeightBasis(unittest.TestCase):
         # test_kernel_mobile's finePointer scenario, and the populations legs in test_keyboard_gap_served)
         self.assertEqual(html.count("body{position:fixed"), 1)
         self.assertNotIn("--app-top", html[:mobile_at], "no --app-top consumer before the mobile block (the writer is the script after it)")
-        for prop in ("transform", "filter", "contain:", "will-change", "perspective"):
-            self.assertNotIn(prop, rule)
+
+    def test_no_html_or_body_rule_gives_the_fixed_panels_a_new_containing_block(self):
+        # round 2 (2026-09-19): the first cut looped over the test's own literal for these properties, a guard no kernel.py could
+        # fail. The invariant is page-wide: a transform, filter, contain, will-change, perspective or backdrop-filter on html
+        # or body makes THAT box the containing block of every position:fixed descendant, and the shell's fixed panels (the
+        # tab bar glued to the true bottom above all) would move with the fixed body's pan. So the scan reads the served CSS,
+        # every style element and every media block. The population is every rule whose selector has html, body or :root as
+        # its SUBJECT (the last compound: 'body.picker-open iframe.lifted' names body as an ancestor, where a transform is
+        # legitimate, and is out), and a property matches at a declaration boundary (text-transform is not transform).
+        rules = _served_rules(self.html)
+        subject = re.compile(r"^(html|body|:root)(?![\w-])")
+        def subjects(sel):
+            return [re.split(r"[\s>+~]+", c.strip())[-1] for c in sel.split(",") if c.strip()]
+        pop = [(at, sel, decl) for at, sel, decl in rules if any(subject.match(x) for x in subjects(sel))]
+        self.assertGreaterEqual(len(pop), 4, "the html/body population is the base chain, the mobile chain, the flex body and the fixed body at least: %r"
+                                % ([sel for _, sel, _ in pop],))
+        self.assertIn(_FIXED_BODY_RULE, ["%s{%s}" % (sel, decl) for _, sel, decl in pop], "the fixed body rule is in the population")
+        prop = re.compile(r"(^|;)\s*(transform|filter|contain|will-change|perspective|backdrop-filter)\s*:")
+        self.assertEqual([(at, sel, decl) for at, sel, decl in pop if prop.search(decl)], [],
+                         "a containing-block property on html or body moves every fixed panel with the fixed body's pan")
 
     def test_every_fixed_box_sized_by_the_shells_height_sits_at_its_pan(self):
         # D1 round 2 (2026-09-19): the pan gave the shell a second origin, and the first review found the ONE other fixed box
