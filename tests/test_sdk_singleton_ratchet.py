@@ -1375,6 +1375,32 @@ class TheResidualIsWorded(unittest.TestCase):
         self._assert_worded(ledger_entry_body(), "the ledger entry")
 
 
+PROTECT_READS = "The PROTECTION is the structured reads above: none of them counts occurrences"
+PROTECT_VV = "The child also runs -vv, which is NOT a protection"
+RUN_PROTECT_READS = "never by occurrence, and that is the protection"
+RUN_PROTECT_VV = "-vv is not one"
+
+
+class TheProtectionIsWorded(unittest.TestCase):
+    """The wording required at the round-3 preparation head, that the structured reads are the protection against the
+    short summary's shape and -vv only makes a box run and a CI run compare by eye, is pinned in both docstrings that
+    carry it, this module's and nested_run's, each in its own words: the reads named as the protection BEFORE -vv is
+    named as not one, so a later author does not delete a structured read as redundant with -vv. The other three
+    required wordings on this branch (the residual, the private-kernel limit, the error count's limit) each landed with
+    a needle; this one landed without, and could be deleted or reflowed with the module green (round 3, 2026-09-19)."""
+
+    def _assert_worded(self, text, where, reads, vv):
+        for needle in (reads, vv):
+            self.assertTrue(needle in text, "%s does not say: %s" % (where, needle))
+        self.assertLess(text.index(reads), text.index(vv), "%s: the protection is named before what is not one" % where)
+
+    def test_this_modules_docstring_names_the_reads_as_the_protection_and_vv_as_not_one(self):
+        self._assert_worded(re.sub(r"\s+", " ", __doc__), "the module docstring", PROTECT_READS, PROTECT_VV)
+
+    def test_nested_runs_docstring_says_the_same_in_its_own_words(self):
+        self._assert_worded(re.sub(r"\s+", " ", nested_run.__doc__), "nested_run's docstring", RUN_PROTECT_READS, RUN_PROTECT_VV)
+
+
 class ClassTeardownRemovesTheDirectory(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_D
     ERRORS = 2
