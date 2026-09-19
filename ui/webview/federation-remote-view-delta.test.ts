@@ -823,9 +823,9 @@ test("the constructor-throw retry timer landing after the watchdog dialed: the s
 // no key) and never a third through "" (the row keeps the last successful probe's sha while the peer is down: kernel.py
 // _remote_public). A fix followed by a rollback is the design: the key names a state (this conn, this slot, this reason,
 // this build), and a rollback to a build with the same reason returns to a state already said, so no row.
-// The latch itself (sayDeltaOnce filing a row once per event) is pinned by tests 9, 11, 12 and 15 to 17, whose latch-removed
-// mutation reds them; this test pins the BOUND on the over-report and the rollback, and reds under that mutation only on its
-// "no third row" counts (four rows where two).
+// The latch itself (sayDeltaOnce filing a row once per event) is pinned by tests 8, 9, 11, 12 and 15 to 18, which red under
+// the latch-removed mutation (sayDeltaOnce always true, recorded at this head); this test pins the BOUND on the over-report
+// and the rollback, and reds under that mutation only on its "no third row" count (four rows where two).
 test("the stale-sha over-report is bounded to one extra row per conn, slot and reason per deploy: a reason first said on a redialed socket under the old build is said again when the poll lands the new one, and no third (the same reason, a poll re-reading the same sha, a rollback to the old build); another reason is its own row", async () => {
   const row: Record<string, any> = { kernelSha: "aaaaaaaaa" };
   const restore = tunnelsStub(row);
