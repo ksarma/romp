@@ -3807,15 +3807,23 @@ default, with the session counts, the user's actions and the panes opened
 (from the http table's route counts) and the kernel's uptime bucket, all from
 keys the snapshot already carries. Before writing, the document is searched,
 every key, string value and number (a number by the spelling the export
-writes, so a listed digit run inside a counter is found however the file
-spelled it; since 2026-09-19 a listed entry is applied to a number only when
-it carries a digit run of seven or more digits, so a listed run of seven or
-more matching a number's wire spelling refuses the export and the upload,
-while a shorter listed digit run is checked in keys and string values and not
-in numbers, and one stderr line says how many entries that is: on a real
-export a listed run of four digits matched some number by coincidence about
-one time in four, one of seven digits about one time in 7,000, so below
-seven a match said nothing about the private value), for the strings only this machine knows (its hostname, user and home
+writes and, when that spelling carries an exponent, by its plain decimal
+expansion too, so a listed digit run inside a counter is found however the
+file spelled it; since 2026-09-19 a listed entry is applied to a number only
+when it, or the plain decimal spelling of an entry written with an exponent,
+carries seven or more digits, counted across the whole spelling, so 1234.5678
+has eight and a listed 1.5e-05 reaches the floor as 0.000015: such an entry
+matching a number, as a substring of the number's spelling or as its run of
+whole digit groups, refuses the export and the upload, an entry spelled like
+a number with fewer digits in every spelling is checked in keys and string
+values and not in numbers, and one stderr line says how many entries that is
+and what does and does not protect a number; the floor comes from a real
+export, where a listed run of four digits matched some number by coincidence
+about one time in four and a run of seven digits about one time in 7,000, so
+below seven a match said nothing about the private value; an entry carrying a
+character no number is spelled with is not counted by that line, since it is
+a substring of no number, and is applied to a number by its digit groups when
+it carries seven or more digits), for the strings only this machine knows (its hostname, user and home
 directory, the session ids and working directories in the state directory's
 registry, and the lines of `~/.config/romp/private-strings.txt` when that
 file exists, the list the repository's pre-push hook reads, one string per
