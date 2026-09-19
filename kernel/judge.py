@@ -71,12 +71,25 @@ def set_worker_cpu_sink(fn):
     module globals set the same way). Nobody arms it in the serve child (no kernel in its process) or a standalone
     romp-judge run, and no log line marks an unarmed future: in a kernel process the arming precedes every pool future,
     so that state is reachable only in a test.
-    `fn` must not raise: it runs in the future's finally, so a raise there would stand in for the future's own result.
-    Returns the previous sink, so a test can restore it."""
+    `fn` must not raise: it runs in the future's finally, AFTER the worker's stage mark is restored (review round 1,
+    2026-09-19: the accounting used to run first, so a raising sink left the submitter's mark on the pool thread for
+    every later future to inherit), so a raise there costs the worker no mark but stands in for the future's own
+    result and reaches the tier's as_completed loop as that future's error; nothing catches it here, on purpose
+    (a perf path that ate its own errors would publish numbers nobody could trust).
+    Returns the previous sink, so a test can restore it. worker_cpu_sink() reads the one installed now."""
     global _WORKER_CPU_SINK
     prev = _WORKER_CPU_SINK
     _WORKER_CPU_SINK = fn
     return prev
+
+
+def worker_cpu_sink():
+    """The sink set_worker_cpu_sink last installed, or None. The kernel's collector asks whether it is that sink
+    (_PerfStats.holds_judge_worker_sink) before it serves or re-creates cpu_ms_workers: a later kernel load in the
+    same process re-executes this module, which clears the hook without telling the collector it displaced, so the
+    collector cannot know from its own state alone (review round 1, 2026-09-19). A plain read of one module global,
+    under no lock; the kernel's collector reads it outside its own lock."""
+    return _WORKER_CPU_SINK
 
 
 def _judge_cpu_add(cpu_s):
@@ -120,8 +133,11 @@ class _TimedPool(ThreadPoolExecutor):
             try:
                 return fn(*args, **kwargs)
             finally:
+                em._set_stage_mark(prev)                  # the worker's previous mark restored on every exit, BEFORE the
+                #                                           accounting: the sink runs kernel code and may raise, and the
+                #                                           restore must not depend on it (review round 1, 2026-09-19; the
+                #                                           order alone keeps a sink failure loud, no try/except here)
                 _judge_cpu_add(time.thread_time() - c0)
-                em._set_stage_mark(prev)                  # the worker's previous mark restored on every exit
         return super().submit(run)
 
 

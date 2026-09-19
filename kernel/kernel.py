@@ -1001,16 +1001,25 @@ class _PerfStats:
                                    judge_worker_cpu as jd.set_worker_cpu_sink's callable), so a
                                    live read of the stats dict and a snapshot() read agree and a
                                    delta may take either; the arming is what creates
-                                   cpu_ms_workers, so a judge block WITHOUT that key is from a
-                                   collector nothing armed and its cpu_ms_sum holds no workers'
-                                   share: the key is absent, never a 0.0 that could pass for a
-                                   measurement (the review ruling on the write-time fold,
-                                   2026-09-18; a kernel serving /perf always arms, so the shape
-                                   is a collector built outside one, or an earlier kernel load
-                                   in a test process after a later load re-armed judge.py, and
-                                   `romp perf` says "workers' share not reported" over such a
-                                   pair); until 2026-09-18 snapshot() added judge.py's module
-                                   counter to its copy at read time and the two disagreed),
+                                   cpu_ms_workers, and the key rides a served block EXACTLY
+                                   while this collector is the sink judge.py holds
+                                   (holds_judge_worker_sink, asked at snapshot time and at
+                                   reset): a judge block WITHOUT that key is from a
+                                   collector nothing armed, or from one a later kernel load in
+                                   the same process displaced (the load re-executes judge.py,
+                                   which clears the hook; only a test process loads twice), and its
+                                   cpu_ms_sum takes no workers' share from then on, so `romp
+                                   perf` says "workers' share not reported" over such a pair
+                                   rather than reading a frozen figure as a measurement; the
+                                   displaced collector's live dict keeps the key at what it
+                                   took while armed, a record, not a report, and reset() keeps
+                                   the key on a collector that holds the sink (the review
+                                   ruling on the write-time fold, 2026-09-18; review round 1,
+                                   2026-09-19, found the invariant broken both ways: a displaced
+                                   collector served the key frozen at 0.0 and an armed one lost
+                                   it at reset); until 2026-09-18 snapshot() added judge.py's
+                                   module counter to its copy at read time and the two
+                                   disagreed),
                                    wakes (every _producer_wake.set() call: the backends' pokes, POST
                                    /tick, the two kernel-internal sites; one SDK turn fires several,
                                    so wakes/s is an upper bound on the poke-episode rate, not the
@@ -1096,6 +1105,10 @@ class _PerfStats:
         self.reset()
 
     def reset(self):
+        armed = self.holds_judge_worker_sink()   # read BEFORE the lock (a jd read never happens under self.lock): a collector that is
+        #                                          judge.py's sink keeps cpu_ms_workers across a reset (review round 1, 2026-09-19: the
+        #                                          literal below omits the key, so an armed collector read "nothing armed me" until
+        #                                          the next pool future); from __init__ this is False, the constructor arms nothing
         with self.lock:
             self.since = time.time()
             self.pusher = {"cycles": 0, "wakes": 0, "wakes_live": 0, "wakes_event": 0, "wakes_backstop": 0,
@@ -1165,7 +1178,8 @@ class _PerfStats:
                           # no cpu_ms_workers yet: arm_judge_worker_sink creates it, at 0.0, when this collector becomes judge.py's
                           # worker-CPU sink, and judge_worker_cpu feeds it as each pool future ends. A collector nothing armed serves
                           # no such key, so its judge block cannot pass a missing workers' share off as a measured zero (the review
-                          # ruling on the write-time fold, 2026-09-18: an unarmed sink must be distinguishable from a genuine zero)
+                          # ruling on the write-time fold, 2026-09-18: an unarmed sink must be distinguishable from a genuine zero);
+                          # `armed` above re-creates it below when this reset is on the collector that holds the sink
                           "wakes": 0, "wakes_event": 0, "wakes_backstop": 0,
                           "tierStarts": 0,                # judge tier threads started (T404: the lab's proof that off starts nothing)
                           "passesLost": 0, "childRestarts": 0, "childFallbacks": 0, "orphansSwept": 0,
@@ -1173,6 +1187,8 @@ class _PerfStats:
             #                                 passes it answered nothing for, its restarts, the falls back to the in-process tiers after
             #                                 consecutive lost spawns, orphans of a dead kernel swept at boot, its workers' CPU (also
             #                                 folded into cpu_ms_sum, as the in-process workers' is) and its last done line
+            if armed:
+                self.judge["cpu_ms_workers"] = 0.0    # still the sink: the key stays, at a genuine zero (review round 1, 2026-09-19)
             # cold event-model parses this kernel ran (T323 stage 1): the kernel's own _parse misses, per session
             # (sid8, kept here; served as a count of sessions and the largest per-session count) and in total, plus the
             # bytes of the files parsed; the judges' misses ride the snapshot from jd.parse_misses(). The acceptance
@@ -1726,6 +1742,17 @@ class _PerfStats:
         with self.lock:
             self.judge["cpu_ms_sum"] += cpu_dt * 1000.0
 
+    def holds_judge_worker_sink(self):
+        """Whether THIS collector is the worker-CPU sink judge.py holds now: jd.worker_cpu_sink() is this collector's
+        judge_worker_cpu (bound-method equality: the same instance and the same function; an instance attribute laid
+        over the method, a test's recording wrapper, compares by identity). The presence of cpu_ms_workers in a served
+        block follows this and nothing else (review round 1, 2026-09-19): False for a collector nothing armed, and
+        False again for one a later kernel load in the same process displaced (the load re-executes judge.py, which
+        clears the hook without telling the previous collector), for one jd.set_worker_cpu_sink(None) cleared, and for
+        one another collector's arming replaced. Read with no lock held: judge.py's global is a plain read, and nothing
+        under self.lock calls into judge.py (the lock-order rule snapshot() keeps)."""
+        return jd.worker_cpu_sink() == self.judge_worker_cpu
+
     def arm_judge_worker_sink(self):
         """Make this collector judge.py's worker-CPU sink (jd.set_worker_cpu_sink(self.judge_worker_cpu)) and open
         cpu_ms_workers in the live dict at 0.0. The kernel calls it once per load, right after _PERF_STATS is built; a
@@ -1733,10 +1760,13 @@ class _PerfStats:
         and the LAST load holds the sink. The key is created HERE and not in the constructor so that a collector nothing
         armed serves no cpu_ms_workers at all: with the workers' share folded at write time, an unarmed collector would
         otherwise read a plausible 0.0 that means nobody told it (the review ruling on the write-time fold, 2026-09-18).
-        Present at 0.0 is a genuine zero: armed, no pool future yet. Returns the previous sink, so a test can restore
-        it. In a kernel process no pool future can run before this call (judge.py is loaded at the kernel's import, the
-        producer starts after it), so an unarmed future in a process that built a collector is a test-only state and no
-        log line marks it."""
+        Present at 0.0 is a genuine zero: armed, no pool future yet. The key then rides a served block exactly while
+        this collector holds the sink (holds_judge_worker_sink, read by snapshot() and reset()): the collector this
+        arming displaces keeps its live key at what it took, frozen, and its snapshot serves none from now on, so a
+        delta over that collector says "workers' share not reported" instead of reading the frozen figure as growth
+        of zero (review round 1, 2026-09-19). Returns the previous sink, so a test can restore it. In a kernel process
+        no pool future can run before this call (judge.py is loaded at the kernel's import, the producer starts after
+        it), so an unarmed future in a process that built a collector is a test-only state and no log line marks it."""
         with self.lock:
             self.judge.setdefault("cpu_ms_workers", 0.0)
         return jd.set_worker_cpu_sink(self.judge_worker_cpu)
@@ -1887,7 +1917,17 @@ class _PerfStats:
         judge["ms_mean"] = (judge["ms_sum"] / judge["passes"]) if judge["passes"] else 0.0
         # cpu_ms_sum and cpu_ms_workers ride the copy as they stand: the pool workers' share landed in the live dict as
         # each future ended (judge_worker_cpu, judge.py's sink), so nothing is added here and a live read agrees; a
-        # collector nothing armed has no cpu_ms_workers and the copy carries none (arm_judge_worker_sink), never a 0.0
+        # collector nothing armed has no cpu_ms_workers and the copy carries none (arm_judge_worker_sink), never a 0.0.
+        # The key's presence follows one question, asked here outside the lock like every other jd read: is this
+        # collector the sink judge.py holds NOW (review round 1, 2026-09-19)? A collector a later kernel load displaced
+        # still has the key in its live dict, frozen at what it took while armed, and until this round served it as a
+        # measurement (0.0 when no future had run); nothing lands in it any more, so the served block drops the key
+        # and `romp perf` says "workers' share not reported" over such a pair. A collector armed by a direct
+        # jd.set_worker_cpu_sink with no arming call serves the key at 0.0 for the same reason: it IS reporting.
+        if self.holds_judge_worker_sink():
+            judge.setdefault("cpu_ms_workers", 0.0)
+        else:
+            judge.pop("cpu_ms_workers", None)
         try:
             judge["tiers"] = jd.tier_stats()               # the evidence gate's per-tier counters
         except Exception:

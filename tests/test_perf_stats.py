@@ -2095,17 +2095,22 @@ class JudgeCpu(unittest.TestCase):
     def _arm(self, stats):
         """Point judge.py's sink at `stats` for this test, recording every delta it is handed. judge.py is one module
         object for every kernel a test process loads and the LAST load holds the sink, so a test that asserts on its
-        own kernel's counters arms them itself; the previous sink comes back at cleanup. The arming goes through the
-        collector's own road (arm_judge_worker_sink, which opens cpu_ms_workers at 0.0 as the kernel's load does) and
-        the recording wrapper is laid over the writer it installed."""
+        own kernel's counters arms them itself; the previous sink comes back at cleanup. The recording wrapper is laid
+        over judge_worker_cpu ON THE INSTANCE (the class method stays, the _HttpWatch shape) BEFORE the arming, so the
+        collector's own road (arm_judge_worker_sink, which opens cpu_ms_workers at 0.0 as the kernel's load does)
+        installs the wrapper itself and holds_judge_worker_sink stays true under the harness: a wrapper installed
+        beside the collector's method would read as a displacement and the served block would drop the key (review
+        round 1, 2026-09-19: presence follows who holds the sink, and a closure over the method is not the method)."""
         jd = km.jd
         received = []
+        real = km._PerfStats.judge_worker_cpu
 
         def sink(ms):
             received.append(ms)
-            stats.judge_worker_cpu(ms)
+            real(stats, ms)
+        stats.judge_worker_cpu = sink
+        self.addCleanup(lambda: stats.__dict__.pop("judge_worker_cpu", None))   # the instance attribute goes; the method shows again
         prev = stats.arm_judge_worker_sink()
-        jd.set_worker_cpu_sink(sink)
         self.addCleanup(jd.set_worker_cpu_sink, prev)
         return received
 
@@ -2213,6 +2218,10 @@ class JudgeCpu(unittest.TestCase):
             self.assertRegex(text, r"collector nothing armed", name)
             self.assertRegex(text, r"workers' share not\s+reported", "%s names the CLI's wording for the absent key" % name)
             self.assertNotRegex(text, r"one source,\s+never\s+one\s+of\s+each", "%s: PR 788's interim sentence is gone" % name)
+            self.assertRegex(text, r"later kernel load[\s\S]{0,60}displaced", "%s names the displaced collector as a keyless shape "
+                             "(review round 1, 2026-09-19: it was listed as one and served the key frozen)" % name)
+            self.assertNotRegex(text, r"earlier kernel load\s+in a test process after a later load re-armed",
+                                "%s: the sentence round 1 found false is gone" % name)
 
     def test_the_kernel_arms_the_sink_at_load(self):
         """A kernel load installs its collector's judge_worker_cpu as judge.py's sink and opens judge.cpu_ms_workers at
@@ -2231,17 +2240,165 @@ class JudgeCpu(unittest.TestCase):
                 "jd = load_source('romp_judge', %r)\n"
                 "assert jd.set_worker_cpu_sink(None) is None, 'no kernel loaded: no sink'\n"
                 "km = load_source('romp_kernel', %r)\n"
-                "sink = jd.set_worker_cpu_sink(None)\n"
+                "sink = jd.set_worker_cpu_sink(None); jd.set_worker_cpu_sink(sink)\n"   # read and put back: a cleared sink drops the key
                 "assert getattr(sink, '__self__', None) is km._PERF_STATS, sink\n"
                 "assert sink.__name__ == 'judge_worker_cpu', sink\n"
                 "snap = km._PERF_STATS.snapshot()['judge']\n"
                 "assert snap.get('cpu_ms_workers') == 0.0, snap.get('cpu_ms_workers')\n"
                 "assert 'cpu_ms_workers' not in km._PerfStats().snapshot()['judge'], 'a collector nothing armed: no key'\n"
+                # a SECOND kernel load in the same process, the test-suite shape (review round 1, 2026-09-19): it re-executes
+                # judge.py and arms its own collector; the first collector is displaced and its served block drops the key,
+                # while its live dict keeps the frozen record; the pool work that follows lands in the second collector only.
+                # The displaced collector's block is asserted first, so a run on the code before this round fails on it.
+                "km2 = load_source('romp_kernel_second_load', %r)\n"
+                "first, second = km._PERF_STATS, km2._PERF_STATS\n"
+                "assert 'cpu_ms_workers' not in first.snapshot()['judge'], 'displaced: no key, never the frozen 0.0: %%r' %% first.snapshot()['judge'].get('cpu_ms_workers')\n"
+                "assert first.judge.get('cpu_ms_workers') == 0.0, 'the live dict keeps the record it took while armed'\n"
+                "assert second.snapshot()['judge']['cpu_ms_workers'] == 0.0\n"
+                "assert jd.worker_cpu_sink() == second.judge_worker_cpu, jd.worker_cpu_sink()\n"
+                "assert second.holds_judge_worker_sink() and not first.holds_judge_worker_sink()\n"
+                "import time\n"
+                "def burn(s):\n"
+                "    t = time.thread_time()\n"
+                "    while time.thread_time() - t < s: pass\n"
+                "with jd.ThreadPoolExecutor(max_workers=1) as ex: ex.submit(burn, 0.005).result()\n"
+                "assert second.snapshot()['judge']['cpu_ms_workers'] >= 4.0, second.snapshot()['judge']\n"
+                "assert 'cpu_ms_workers' not in first.snapshot()['judge'], 'still none on the displaced collector'\n"
+                "assert first.judge.get('cpu_ms_workers') == 0.0, 'nothing lands in a displaced collector'\n"
                 "print('armed')\n"
-                % (HERE, os.path.join(BIN, "romp-event-model"), os.path.join(BIN, "romp-judge"), os.path.join(BIN, "romp-kernel")))
-        r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=180)
+                % (HERE, os.path.join(BIN, "romp-event-model"), os.path.join(BIN, "romp-judge"), os.path.join(BIN, "romp-kernel"),
+                   os.path.join(BIN, "romp-kernel")))
+        r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=300)
         self.assertEqual(r.returncode, 0, "stderr:\n%s" % r.stderr[-3000:])
         self.assertIn("armed", r.stdout)
+
+    def _sink_saved(self):
+        """Restore whatever sink judge.py holds now at cleanup (read by a set-and-put-back, so this also runs on the code
+        before round 1, which had no worker_cpu_sink getter: the behavioral assertion is what goes red there)."""
+        jd = km.jd
+        prev = jd.set_worker_cpu_sink(None)
+        jd.set_worker_cpu_sink(prev)
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+
+    def test_a_collector_a_later_arming_displaced_serves_no_workers_key(self):
+        """The presence invariant, FORWARD (review round 1, 2026-09-19): a collector a later arming displaced (what a later
+        kernel load does through judge.py's re-execution) keeps its live key frozen at what it took, and its served block
+        drops the key, so `romp perf` says "not reported" over such a pair instead of reading the frozen figure as a
+        measurement. Red before on the first assertNotIn: the displaced block carried the key at 0.0."""
+        jd = km.jd
+        self._sink_saved()
+        first = km._PerfStats()
+        first.arm_judge_worker_sink()
+        self.assertEqual(first.snapshot()["judge"]["cpu_ms_workers"], 0.0, "armed, no future yet: present at a genuine zero")
+        second = km._PerfStats()
+        second.arm_judge_worker_sink()                                   # displaces `first`, as a later kernel load does
+        self.assertNotIn("cpu_ms_workers", first.snapshot()["judge"], "displaced: the served block has no key, never the frozen 0.0")
+        self.assertEqual(self._live(first).get("cpu_ms_workers"), 0.0, "the live dict keeps the record it took while armed")
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        self.assertGreaterEqual(second.snapshot()["judge"]["cpu_ms_workers"], 4.0, "the pool work landed in the collector that holds the sink")
+        self.assertNotIn("cpu_ms_workers", first.snapshot()["judge"], "and still none on the displaced one")
+        self.assertEqual(self._live(first)["cpu_ms_workers"], 0.0, "frozen: nothing lands in a displaced collector")
+        first.reset()
+        self.assertNotIn("cpu_ms_workers", self._live(first), "a reset on a displaced collector re-creates nothing")
+        self.assertFalse(first.holds_judge_worker_sink()); self.assertTrue(second.holds_judge_worker_sink())
+
+    def test_a_reset_on_the_collector_that_holds_the_sink_keeps_the_key(self):
+        """The presence invariant, REVERSE (review round 1, 2026-09-19): reset() on the collector that holds the sink keeps
+        cpu_ms_workers, at a genuine zero, and the next future lands in it. Red before on the first assertEqual: the
+        literal reset() rebuilds the dict from omitted the key, so an armed collector read "nothing armed me" while it was
+        the one reporting."""
+        jd = km.jd
+        self._sink_saved()
+        st = km._PerfStats()
+        st.arm_judge_worker_sink()
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        self.assertGreaterEqual(self._live(st)["cpu_ms_workers"], 4.0, "premise: armed and reporting")
+        st.reset()
+        self.assertEqual(self._live(st).get("cpu_ms_workers"), 0.0, "reset on the collector that holds the sink keeps the key at 0.0")
+        self.assertEqual(st.snapshot()["judge"]["cpu_ms_workers"], 0.0)
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        snap = st.snapshot()["judge"]
+        self.assertGreaterEqual(snap["cpu_ms_workers"], 4.0, "and the next future lands in the kept key")
+        self.assertEqual(snap["cpu_ms_sum"], snap["cpu_ms_workers"], "no tier ran: the sum is the workers' share")
+        self.assertTrue(st.holds_judge_worker_sink())
+
+    def test_a_cleared_sink_drops_the_key_from_the_served_block_and_a_bare_sink_serves_it(self):
+        """Two more faces of the one invariant (review round 1, 2026-09-19). A jd.set_worker_cpu_sink(None) leaves nobody
+        holding the sink, so the armed collector's served block drops the key while its live record stands (red before:
+        the block kept serving the frozen figure). And a collector installed by a direct set_worker_cpu_sink with no
+        arming call IS the one reporting, so its served block carries the key at 0.0 though its live dict has none yet."""
+        jd = km.jd
+        self._sink_saved()
+        st = km._PerfStats()
+        st.arm_judge_worker_sink()
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        jd.set_worker_cpu_sink(None)
+        self.assertNotIn("cpu_ms_workers", st.snapshot()["judge"], "a cleared sink: nobody holds it, the key leaves the served block")
+        self.assertGreaterEqual(self._live(st)["cpu_ms_workers"], 4.0, "the live record stands")
+        self.assertFalse(st.holds_judge_worker_sink())
+        bare = km._PerfStats()
+        jd.set_worker_cpu_sink(bare.judge_worker_cpu)                    # no arming call, the sink alone
+        self.assertNotIn("cpu_ms_workers", self._live(bare), "no arming: the live dict has no key yet")
+        self.assertEqual(bare.snapshot()["judge"]["cpu_ms_workers"], 0.0, "but it IS reporting: the served block carries the key at 0.0")
+        self.assertTrue(bare.holds_judge_worker_sink())
+
+    def test_a_raising_sink_still_restores_the_workers_stage_mark_and_its_raise_propagates(self):
+        """_TimedPool's finally restores the worker's previous stage mark BEFORE it runs the accounting, so a sink that
+        raises cannot skip the restore (review round 1, 2026-09-19: the sink ran first, and a raising one left the
+        submitter's mark on the pool thread for every later future to inherit as its own "previous"; red before on the raw
+        read of the worker's mark). The raise still propagates as the future's error: no try/except around the sink, a
+        perf path that ate its own errors would publish numbers nobody could trust. The mark is read RAW on the worker,
+        through the base class's submit, which bypasses the wrapper that would set and restore it."""
+        jd = km.jd
+        em = jd.em                                                          # the module object _TimedPool's wrapper calls into
+        # this kernel's provider pair for the test's duration: a private judge or event-model load by another test module
+        # in the same process re-executes event_model.py and clears both hooks, so the pair cannot be assumed installed
+        saved = (em._SET_STAGE_FN[0], em._READ_STAGE_FN[0])
+        em.set_stage_provider(km._set_stage); em.set_read_stage_provider(km._current_read_stage)
+        self.addCleanup(em.set_stage_provider, saved[0]); self.addCleanup(em.set_read_stage_provider, saved[1])
+
+        def boom(ms):
+            raise RuntimeError("sink died")
+        prev = jd.set_worker_cpu_sink(boom)
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+        raw_submit = concurrent.futures.ThreadPoolExecutor.submit           # the base class's: no mark, no accounting
+        em._set_stage_mark("judge.test")                                    # the submitter's mark, carried into the worker
+        self.addCleanup(em._set_stage_mark, None)
+        self.assertEqual(em._read_stage(), "judge.test", "premise: the stage provider pair is installed")
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(lambda: "the future's own result")
+            with self.assertRaises(RuntimeError, msg="the sink's raise stands in for the future's result: nothing swallows it"):
+                fut.result(10)
+            self.assertIsNone(raw_submit(ex, em._read_stage).result(10),
+                              "the worker's previous mark (none) is restored though the sink raised")
+            em._set_stage_mark(None)
+            self.assertIsNone(raw_submit(ex, em._read_stage).result(10), "and a later future from an unmarked thread leaves it clear")
+
+    def test_a_pool_future_from_a_thread_outside_the_producer_lands_under_cpu_ms_workers(self):
+        """The sink is per future and reads no thread: a future submitted from a plain Thread, the shape of the kernel's
+        boot roads (threading.Thread(target=_rewind_migration_bg), which calls jd.run_rewound_reconcile), lands in the
+        armed collector's cpu_ms_sum and cpu_ms_workers like one from a tier thread under _producer. The boot road submits
+        no pool future today (tests/test_kernel_rewind.py pins that by running the real migration over a discoverable
+        session with a recording sink); this pins what the design does if a later change makes it submit one (review
+        round 1, 2026-09-19: the body's rationale had claimed kernel.py calls no jd.run_* outside _producer)."""
+        jd = km.jd
+        st = km._PerfStats()
+        received = self._arm(st)
+
+        def boot_road():
+            with jd.ThreadPoolExecutor(max_workers=1) as ex:
+                ex.submit(_burn_cpu, 0.005).result()
+        th = threading.Thread(target=boot_road, name="boot-road")
+        th.start(); th.join(30)
+        self.assertFalse(th.is_alive())
+        snap = st.snapshot()["judge"]
+        self.assertGreaterEqual(snap["cpu_ms_workers"], 4.0, "the plain thread's pool future landed: %r" % snap["cpu_ms_workers"])
+        self.assertEqual(snap["cpu_ms_sum"], snap["cpu_ms_workers"], "no tier ran: the sum is the workers' share")
+        self.assertAlmostEqual(sum(received), snap["cpu_ms_workers"], places=6, msg="through the sink, once")
 
     def test_run_tier_accounts_the_tier_threads_cpu(self):
         """The shared tier runner (judge.py _run_tier, stage three round two) lands the thread's own CPU in the pass's
