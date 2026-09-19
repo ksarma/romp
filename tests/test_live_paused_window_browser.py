@@ -48,10 +48,15 @@ DRIVER_HEAD = r"""
 import { createRequire } from "node:module";
 import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
-const { chromium } = require("playwright");
+const playwright = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+// the engine: Chromium unless ROMP_LAB_ENGINE names another Playwright engine (webkit: the phone's engine, which has no scroll
+// anchoring; the compact stream lab runs under both)
+const engineName = process.env.ROMP_LAB_ENGINE || "chromium";
+const engine = playwright[engineName];
+if (!engine) { console.error("unknown ROMP_LAB_ENGINE: " + engineName); process.exit(3); }
 let browser;
-try { browser = await chromium.launch(cfg.launch || {}); }   // a lab may ask for classic scrollbars (the settle lab's drag road): Playwright hides them headless by default
+try { browser = await engine.launch(cfg.launch || {}); }   // a lab may ask for classic scrollbars (the settle lab's drag road): Playwright hides them headless by default
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const page = await browser.newPage({ viewport: { width: 1000, height: 600 } });
 // every frame the page sends its kernel, by type: the window asks, the older asks and the re-attach ask are the evidence
@@ -109,8 +114,14 @@ const older = (k0, k1) => Array.from({ length: k1 - k0 }, (_, i) => k0 + i).flat
 class WindowLab(unittest.TestCase):
     """The boot: a hermetic kernel over a synthetic transcript longer than the wire tail, the real /chat page served
     from a copy of the built bundle. Subclassed by this module's tests and by the landing lab (T386,
-    tests/test_landing_settles_browser.py); carries no tests of its own."""
+    tests/test_landing_settles_browser.py); carries no tests of its own.
+
+    AGENTIC_TAIL_PAIRS (PR E, 2026-09-19): a subclass may end the transcript's LAST turn with that many (Bash tool, assistant
+    text) pairs before its closing text, so the resident tail is one long agentic turn: in compact mode each lone tool between
+    two texts is a unit of its own, and the 80-unit tail window then holds a single user row (the shape the phone showed while a
+    long turn streamed). Zero, the default, leaves the transcript as it was for every other lab."""
     maxDiff = None
+    AGENTIC_TAIL_PAIRS = 0
 
     @classmethod
     def _skip(cls, why):
@@ -182,6 +193,23 @@ class WindowLab(unittest.TestCase):
                              "toolUseResult": {"questions": [{"question": AUQ_QUESTION}], "answers": {AUQ_QUESTION: "upper"}}})
                 pa = AUQ_RESULT_UUID
                 text = "Upper it is: the retry curve keeps its upper bound."
+            if k == TURNS - 1 and cls.AGENTIC_TAIL_PAIRS > 0:
+                # the last turn's long agentic middle: a tool call, its result, a line of text, repeated (PR E; see the class docstring)
+                for i in range(cls.AGENTIC_TAIL_PAIRS):
+                    tu_id = "toolu_tail_%03d" % i
+                    tuu = "77777777-8888-9999-aaaa-%012d" % (10 * k + i)
+                    tru = "88888888-9999-aaaa-bbbb-%012d" % (10 * k + i)
+                    txu = "99999999-aaaa-bbbb-cccc-%012d" % (10 * k + i)
+                    recs.append({"type": "assistant", "uuid": tuu, "parentUuid": pa, "timestamp": ta, "sessionId": SID,
+                                 "message": {"role": "assistant", "model": "claude-fable-5-1", "stop_reason": "tool_use",
+                                             "content": [{"type": "tool_use", "id": tu_id, "name": "Bash", "input": {"command": "true # step %d" % i}}]}})
+                    recs.append({"type": "user", "uuid": tru, "parentUuid": tuu, "timestamp": ta, "sessionId": SID,
+                                 "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tu_id, "content": "ok"}]},
+                                 "toolUseResult": {"stdout": "ok", "stderr": "", "interrupted": False, "isImage": False}})
+                    recs.append({"type": "assistant", "uuid": txu, "parentUuid": tru, "timestamp": ta, "sessionId": SID,
+                                 "message": {"role": "assistant", "model": "claude-fable-5-1", "stop_reason": "end_turn",
+                                             "content": [{"type": "text", "text": "Step %d checked: the handler still reads the note by id." % i}]}})
+                    pa = txu
             recs.append({"type": "assistant", "uuid": a, "parentUuid": pa, "timestamp": ta, "sessionId": SID,
                          "message": {"role": "assistant", "model": "claude-fable-5-1", "stop_reason": "end_turn",
                                      "content": [{"type": "text", "text": text}]}})

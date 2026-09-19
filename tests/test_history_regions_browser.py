@@ -15,11 +15,15 @@ Synthetic fixtures only (placeholder uuids, invented prose); hostname TESTHOST.
 """
 import json
 import os
+import re
 import sys
 import unittest
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from tests.test_live_paused_window_browser import DRIVER_HEAD, TURNS, WindowLab  # noqa: E402
+
+ROOT = Path(__file__).resolve().parent.parent   # the checkout: the stream lab reads the default per-turn constant off chat-regions.ts
 
 DRIVER = DRIVER_HEAD + r"""
 const painted = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))));
@@ -68,9 +72,21 @@ const gesturesAfter = await gestures();
 const fills = await writes("gap-fill");
 // MEDIUM 2 (T386 stage 2): the head gap's drawn height per turn must match the rendered run's measured per-turn height (a turn is a
 // user row plus its reply, so a per-display-unit average drew gaps about half true). Measure the gap element's px/turn and the rendered
-// tail run's px/turn (its user rows are its turns) and compare.
+// run's px/turn and compare. The run's figure is the estimator's own rule since PR E (ui/webview/turn-estimate.ts): the MEDIAN over the
+// turns the window holds WHOLE, a visible user row to the next, each row its border box (offsetHeight); the rows before the first user
+// row and after the last are turns the window does not hold whole and are not counted. (The old rule, every row's height over the count
+// of user rows, read the whole window as one turn when the window held one user row: the phone's 1.43M px gap.)
 const gapPerTurn = await page.evaluate(() => { const g = document.querySelector("#content .tx-gap"); if (!g) return null; const lo = Number(g.dataset.lo), hi = Number(g.dataset.hi); return hi > lo ? g.offsetHeight / (hi - lo) : null; });
-const runPerTurn = await page.evaluate(() => { const c = document.getElementById("content"); let h = 0, turns = 0; for (const t of Array.from(c.querySelectorAll("#content .turn"))) { if (t.classList.contains("tx-spacer") || t.classList.contains("tx-gap")) continue; h += t.offsetHeight; if (t.classList.contains("turn-user")) turns++; } return turns > 0 ? h / turns : null; });
+const runPerTurn = await page.evaluate(() => {
+  const c = document.getElementById("content");
+  const rows = Array.from(c.querySelectorAll("#content .turn")).filter((t) => !t.classList.contains("tx-spacer") && !t.classList.contains("tx-gap"));
+  const isUser = (t) => t.classList.contains("turn-user") && t.style.display !== "none";
+  const turns = []; let open = false, acc = 0;
+  for (const t of rows) { if (isUser(t)) { if (open) turns.push(acc); open = true; acc = t.offsetHeight; continue; } if (open) acc += t.offsetHeight; }
+  if (turns.length < 2) return null;
+  turns.sort((a, b) => a - b); const m = turns.length >> 1;
+  return turns.length % 2 ? turns[m] : (turns[m - 1] + turns[m]) / 2;
+});
 // ROAD 3: a live tail while the reader is up in history: it lands at the tail, nothing pauses
 const k = cfg.turns;
 const tail = { type: "chatTail", id: cfg.sid, afterUuid: regionsFilled ? regionsFilled[regionsFilled.length - 1].last : filled.lastUuid, events: [
@@ -173,11 +189,12 @@ class ServedHistoryRegions(WindowLab):
             self.assertEqual(b["rowAfter"]["uuid"], b["rowBefore"]["uuid"], "the reader's row held through the below-fill: %r → %r" % (b["rowBefore"], b["rowAfter"]))
 
     def test_the_head_gap_is_drawn_at_the_rendered_runs_per_turn_height(self):
-        # MEDIUM 2: a gap's height counts TURNS times px-per-turn, not display units; within ten percent of the rendered run's per-turn height
+        # MEDIUM 2: a gap's height counts TURNS times px-per-turn, not display units; within ten percent of the rendered run's per-turn
+        # height, the median over the turns the window holds whole (the estimator's rule since PR E; the driver recomputes it off the rows)
         r = self._result()
         gpt, rpt = r["gapPerTurn"], r["runPerTurn"]
         self.assertIsNotNone(gpt, "the head gap was measured: %r" % r.get("filled"))
-        self.assertIsNotNone(rpt, "the rendered run's per-turn height was measured")
+        self.assertIsNotNone(rpt, "the rendered run's per-turn height was measured (null when the window holds fewer than two complete turns)")
         self.assertLessEqual(abs(gpt - rpt) / rpt, 0.10, "the gap's px/turn (%r) is within ten percent of the run's (%r)" % (gpt, rpt))
 
     def test_a_live_tail_lands_while_the_reader_is_up_in_history_and_nothing_pauses(self):
@@ -190,6 +207,147 @@ class ServedHistoryRegions(WindowLab):
         self.assertFalse(live["notice"], "no notice for a live tail")
         self.assertEqual(r["rowLive"]["uuid"], r["rowAfter"]["uuid"], "the tail's arrival did not move the reader: the same row under the viewport top: %r → %r" % (r["rowAfter"], r["rowLive"]))
         self.assertLessEqual(abs(r["rowLive"]["y"] - r["rowAfter"]["y"]), 2, "…at its offset (the spacer estimate above may re-size, the row does not move): %r → %r" % (r["rowAfter"], r["rowLive"]))
+
+
+# ── PR E (2026-09-19): compact mode streams by unit, and the head spacer holds under a window with one user row ─────────────
+STREAM_DRIVER = DRIVER_HEAD + r"""
+const painted = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))));
+// the kernel's wire settles first (its one status-only tail after the connect push), as the regions lab waits
+await page.waitForFunction(() => (window.__bootFrames || []).some((f) => f.type === "chatTail" && f.source === "socket"), null, { timeout: 15000 }).catch(() => {});
+await painted();
+// the window's shape: the top spacer's height (its style, the page's own write), the units and rows it holds, its visible user rows
+const shape = () => page.evaluate(() => {
+  const c = document.getElementById("content"); const sp = document.querySelector("#content .tx-spacer-top");
+  const units = Array.from(document.querySelectorAll("#content [data-unit]"));
+  const rows = units.filter((n) => n.classList.contains("turn"));
+  const users = rows.filter((n) => n.classList.contains("turn-user") && n.style.display !== "none").length;
+  return { spacerTop: sp ? (parseFloat(sp.style.height) || 0) : 0, units: new Set(units.map((n) => n.dataset.unit)).size, rows: rows.length, users,
+           atBottom: c.scrollHeight - c.scrollTop - c.clientHeight <= 2, sh: c.scrollHeight, top: c.scrollTop };
+});
+// the geometry the head spacer's bound derives from: the gap's turn span (the regions), the hidden run units above the window (the
+// first rendered unit's index less the gap units), and the tallest row in the window
+const geometry = () => page.evaluate(() => {
+  const rs = (typeof window.__rompRegions === "function" && window.__rompRegions()) || [];
+  const gaps = rs.filter((r) => r.kind === "gap");
+  const units = Array.from(document.querySelectorAll("#content [data-unit]"));
+  const rows = units.filter((n) => n.classList.contains("turn"));
+  return { gapTurns: gaps.reduce((n, g) => n + (g.hi - g.lo), 0), hiddenUnits: units.length ? Number(units[0].dataset.unit) - gaps.length : null,
+           maxRow: rows.reduce((m, n) => Math.max(m, n.offsetHeight), 0) };
+});
+const before = { ...(await shape()), ...(await geometry()) };
+// every node of the window is marked; after a frame's paint the unmarked nodes are the ones the paint put there (the rebuild put them all)
+const mark = () => page.evaluate(() => { for (const n of document.querySelectorAll("#content [data-unit]")) n.__prE = 1; });
+const replaced = () => page.evaluate(() => Array.from(document.querySelectorAll("#content [data-unit]")).filter((n) => !n.__prE).length);
+const spacerRows = () => page.evaluate(() => window.__sent.filter((m) => m.what === "spacer" && m.data && m.data.top).map((m) => m.data.top));
+const rowsBefore = (await spacerRows()).length;
+// the streamed reply follows the tail run's LAST event (its key, as the regions report it: the kernel's own notice rows carry a key, not a
+// uuid), so nothing resident is truncated. The frames carry no status: a status replaces the session's whole status object, and one
+// without the backend name empties the rewind pass's editable set on the next frame, which marks the view stale for a rebuild (the
+// lab's first cut did that and read one rebuild for its own frame's shape).
+const anchor = (await page.evaluate(() => { const rs = (typeof window.__rompRegions === "function" && window.__rompRegions()) || []; const t = rs[rs.length - 1]; return t && t.kind === "run" ? t.last : null; })) || (await state()).lastUuid;
+const frames = [];
+let text = "Streaming reply:";
+for (let f = 0; f < 8; f++) {
+  text += " more words land in the same bubble, frame " + f + ".";
+  await mark();
+  const frame = { type: "chatTail", id: cfg.sid, afterUuid: anchor,
+                  events: [{ uuid: "aaaaaaaa-bbbb-cccc-dddd-000000000001", kind: "assistant", md: text, ts: new Date((cfg.base + 2 * cfg.turns + 5) * 1000).toISOString() }] };
+  await page.evaluate((fr) => { window.postMessage(fr, "*"); }, frame);
+  await painted();
+  frames.push({ f, replaced: await replaced(), ...(await shape()) });
+}
+// a tool call lands after the reply: one unit in at the tail, one evicted at the top; then the reply after it grows again
+await mark();
+await page.evaluate((fr) => { window.postMessage(fr, "*"); }, { type: "chatTail", id: cfg.sid, afterUuid: "aaaaaaaa-bbbb-cccc-dddd-000000000001",
+  events: [{ uuid: "aaaaaaaa-bbbb-cccc-dddd-000000000002", kind: "tool", name: "Bash", desc: "", input: JSON.stringify({ command: "true # a step" }), output: "ok", isError: false, ts: new Date((cfg.base + 2 * cfg.turns + 6) * 1000).toISOString() }] });
+await painted();
+frames.push({ f: "tool", replaced: await replaced(), ...(await shape()), ...(await geometry()) });
+const spacers = await spacerRows();   // EVERY spacer row of the session, the boot build's and the first paint's included: the jump was between those two
+// the window's edges and the frames the page received, for a failing run's message: what the window's first and last rows are, what
+// landed from the socket during the stream (a kernel tail truncating the posted one would show here), the regions' tail run
+const edges = await page.evaluate(() => { const rows = Array.from(document.querySelectorAll("#content [data-unit].turn")); const cls = (n) => n.className + "@" + n.dataset.unit; return { first: rows.slice(0, 3).map(cls), last: rows.slice(-3).map(cls), streamed: document.querySelectorAll('#content [data-uuid="aaaaaaaa-bbbb-cccc-dddd-000000000001"]').length }; });
+const received = await page.evaluate(() => (window.__bootFrames || []).slice(-14));
+const regionsNow = await page.evaluate(() => (typeof window.__rompRegions === "function" ? window.__rompRegions() : null));
+process.stdout.write("RESULT:" + JSON.stringify({ engine: process.env.ROMP_LAB_ENGINE || "chromium", before, frames, spacers, edges, received, regions: regionsNow, pageEvents: pageEvents.slice(-12) }) + "\n");
+await browser.close();
+"""
+
+
+class ServedCompactStream(WindowLab):
+    """PR E (2026-09-19), on the served page in compact mode (the default): the transcript's last turn is one long agentic turn (a
+    tool call, its result, a line of text, thirty-nine times), so the 80-unit tail window holds ONE user row, the shape the phone
+    showed while a long turn streamed. Frames of a growing reply are posted as chatTail frames and two defects are measured:
+
+    - the paint replaces the changed units alone (a growing reply is one unit; a tool landing is one unit in and one evicted at the
+      top), where the compact rebuild replaced every node of the window on every frame;
+    - the head spacer holds its height through the stream: the per-turn figure is the median over the turns the window holds whole,
+      and a window with one user row holds none, so the gap keeps its default; the old figure read the whole window's height as one
+      turn and the spacer grew about thirty-fold on the first streamed paint (24k to 1.43M px on the phone).
+
+    Runs in Chromium; ROMP_LAB_ENGINE=webkit runs the same lab in WebKit, the phone's engine (the driver head reads it).
+    Synthetic fixtures only (placeholder uuids, invented prose); hostname TESTHOST."""
+    AGENTIC_TAIL_PAIRS = 38   # 1 + 38 x 2 + 1 = 78 events in the last turn; with the kernel's closing notice row after it, the 80-unit
+                              # window opens on the previous turn's reply and holds ONE user row (two, should that notice ever go: still no
+                              # second complete turn, which is the premise)
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._r = None
+
+    def _result(self):
+        if self._r is None:
+            type(self)._r = self._drive(STREAM_DRIVER, "stream", extra={"turns": TURNS})
+            print("STREAM:", json.dumps(self._r), file=sys.stderr)
+        return self._r
+
+    def test_the_boot_window_holds_no_complete_turn_at_the_bottom(self):
+        # the premise the two measurements rest on: the tail window is the agentic turn (one visible user row; two at most, should the
+        # kernel's closing notice row go), so it holds no second complete turn, and the reader is at the bottom
+        r = self._result()
+        b = r["before"]
+        self.assertTrue(b["atBottom"], "the page boots at the bottom: %r (page: %r)" % (b, r.get("pageEvents")))
+        self.assertIn(b["users"], (1, 2), "one visible user row in the window (two at most): %r (edges %r)" % (b, r["edges"]))
+        self.assertLess(b["users"] - 1, 2, "fewer than two complete turns: the estimator has no figure here")
+        self.assertGreaterEqual(b["rows"], 60, "a window of many rows, so a rebuild would replace many nodes: %r" % b)
+        self.assertGreater(b["spacerTop"], 0, "the head stands in a top spacer: %r" % b)
+
+    def test_a_streamed_frame_replaces_the_changed_units_alone(self):
+        # fix 1: eight frames of one growing reply replace one node each; a tool landing replaces its own node (the evicted one leaves);
+        # the rebuild replaced every node of the window (about 80) on every frame
+        r = self._result()
+        frames = r["frames"]
+        self.assertEqual(len(frames), 9, "eight reply frames and the tool's: %r" % [f["f"] for f in frames])
+        for f in frames:
+            self.assertGreaterEqual(f["replaced"], 1, "the paint put the changed unit in: %r" % f)
+            self.assertLessEqual(f["replaced"], 3, "…and nothing else (a rebuild replaces the whole window, %r rows): %r (received %r; page %r)" % (r["before"]["rows"], f, r["received"][-10:], r.get("pageEvents")))
+            self.assertTrue(f["atBottom"], "the reader follows the tail through the stream: %r" % f)
+        self.assertEqual(r["edges"]["streamed"], 1, "the streamed reply stands in the window at the end: %r" % r["edges"])
+        self.assertEqual(frames[-1]["units"], r["before"]["units"], "the tool's unit came in at the tail and one left at the top: the span held: %r -> %r" % (r["before"], frames[-1]))
+
+    def test_the_head_spacer_holds_through_the_stream_when_the_window_has_no_complete_turn(self):
+        # fix 2: the per-turn figure is the median over complete turns; this window has none, so the gap keeps its DEFAULT per turn and the
+        # spacer is the gap at that default plus the hidden run units at the rows' average: at least the gap's default, at most the gap's
+        # default plus the hidden units at the window's tallest row. The old figure (the window's height over its one user row) drew the
+        # gap about 30x taller on the first paint after the boot build, which is the spacer row this checks as well: every re-size of the
+        # session's head spacer, the boot's and the first paint's included, at most doubles it.
+        r = self._result()
+        default_px = int(re.search(r"export const DEFAULT_TURN_PX = (\d+);", (ROOT / "ui" / "webview" / "chat-regions.ts").read_text()).group(1))
+        for where in (r["before"], r["frames"][-1]):
+            self.assertGreater(where["gapTurns"], 0, "a head gap stands above the window: %r" % where)
+            self.assertIsNotNone(where["hiddenUnits"]); self.assertGreater(where["maxRow"], 0)
+            lo = where["gapTurns"] * default_px
+            hi = lo + where["hiddenUnits"] * where["maxRow"]
+            self.assertGreaterEqual(where["spacerTop"], lo - 1, "the head spacer is at least the gap at the default per turn: %r" % where)
+            self.assertLessEqual(where["spacerTop"], hi + 1, "…and at most that plus the hidden run units at the tallest row (the gap was not drawn off the window's height per user row): %r" % where)
+        tops = [r["before"]["spacerTop"]] + [f["spacerTop"] for f in r["frames"]]
+        self.assertEqual(len(tops), 10)
+        self.assertTrue(all(t > 0 for t in tops), "a top spacer stood through the stream: %r" % tops)
+        self.assertLessEqual(max(tops) / min(tops), 2.0, "the head spacer's height held within 2x through the stream: %r" % tops)
+        self.assertGreaterEqual(len(r["spacers"]), 1, "the boot build filed its spacer row: %r" % (r["spacers"],))
+        for before, after in r["spacers"]:
+            if before > 0:
+                self.assertLessEqual(after / before, 2.0, "no single spacer re-size doubled it: %r" % (r["spacers"],))
 
 
 if __name__ == "__main__":
