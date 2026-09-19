@@ -3643,10 +3643,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `evict` (roots dropped because no alive session's transcript names them,
   on every jobs pass and, as a belt, after each feed build and from the
   tracking-off frame), `dirStats` (the directory stats both validators
-  paid: the tree validation's lstat per known directory and the agent-file
-  lookup's stat per directory its stamp re-check takes; before 2026-09-19
-  it counted the lstat half alone, so a figure from before that change and
-  one from after are not one series; since then the two loops' own reads
+  paid: the tree validation's lstat per known directory below the root and
+  the agent-file lookup's stat per directory its stamp re-check takes;
+  before 2026-09-19 it counted the lstat half alone, so a figure from
+  before that change and one from after are not one series; since then the
+  two loops' own reads
   pay per cycle or pass about `dirs` less the roots in the common order, a
   tree read before its agent-file lookups, up to twice that when a command
   row's owner lookup re-checks stamps before the tree is read, plus the

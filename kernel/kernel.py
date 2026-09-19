@@ -35217,8 +35217,8 @@ _SUBAGENT_TREES = {}
 _SUBAGENT_TREE_STATS = {"hit": 0, "miss": 0, "evict": 0, "dirStats": 0, "walkMs": 0.0, "validateMs": 0.0}   # /perf memos.subagentTree;
 #                          advisory tallies, incremented without a lock as the neighbouring memos' are (a lost count under a race
 #                          is tolerated; the memo's own writes are single dict stores of immutable tuples). dirStats counts the
-#                          directory stats BOTH validators pay (2026-09-19): _subagent_tree's lstat per known directory and
-#                          _dir_stamp's os.stat per directory an agent-file lookup re-checks; before that day it counted the
+#                          directory stats BOTH validators pay (2026-09-19): _subagent_tree's lstat per known directory below
+#                          the root and _dir_stamp's os.stat per directory an agent-file lookup re-checks; before that day it counted the
 #                          lstat half alone, so the figure across that deploy is not one series
 _SUBAGENT_TREES_GEN = [0]       # moved when a root leaves _SUBAGENT_TREES (_subagent_trees_forget; _subagent_tree's missing or replaced
 #                                 root): a cycle scope opened under an older value empties itself before it serves (_subagent_scope),
@@ -35459,8 +35459,8 @@ def _subagent_trees_forget(alive):
 
 def _subagent_tree_memo_report():
     """/perf memos.subagentTree: hit and miss (trees served by validation against trees walked), evict (roots dropped as
-    unowned), dirStats (the directory stats both validators paid: the tree validation's lstat per known directory and the
-    agent-file lookup's os.stat per directory it re-checks, _dir_stamp; the lstat half alone before 2026-09-19), walkMs and
+    unowned), dirStats (the directory stats both validators paid: the tree validation's lstat per known directory below the
+    root and the agent-file lookup's os.stat per directory it re-checks, _dir_stamp; the lstat half alone before 2026-09-19), walkMs and
     validateMs (the time in each, every thread), and the gauges roots (entries) and dirs (directories held). A validation
     happens at most once per pusher cycle and once per jobs pass since 2026-09-19 (_subagent_scope), plus one re-validation
     per tree per eviction event in the cycle (a session departing), so the two loops' own reads pay per cycle or pass about
@@ -35542,7 +35542,8 @@ def _dir_stamp(sd):
     """(dir, mtime_ns) for one directory, a stat (None when missing). Inside a cycle scope (_subagent_scope, 2026-09-19) the
     stamp is served from the scope when held (indexed from a tree validated this cycle, or taken by an earlier call on this
     thread), else taken once and held; a stat that raises is answered (sd, None) and never held, so the next call stats
-    again. Each os.stat taken counts under memos.subagentTree dirStats beside _subagent_tree's validation lstats."""
+    again. Each os.stat that succeeds counts under memos.subagentTree dirStats beside _subagent_tree's validation lstats (a
+    stat that raises is answered and not counted)."""
     sc = _subagent_scope()
     if sc is not None:
         held = sc["stamps"].get(sd)
@@ -65699,6 +65700,7 @@ def _jobs_cycle():
         _live_scope.paths = {}
         _subagent_scope_open()                  # the pass's subagents-tree scope (_subagent_scope): the nudge look's reads of a
         #                                         tree validate it once per pass, and the interrupt tick's forget moves the gen
+        #                                         when it evicts a root
         _live_scope.sessions = {}
         _live_scope.auth = {}
         _live_scope.msgsum = [_MSGSUM_UNSET]

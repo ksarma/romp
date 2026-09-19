@@ -99,7 +99,8 @@ def _scope():
 class _Spy:
     """os.stat and os.lstat counted per calling thread by what the path is: one of the tree's directories (`dir_stat`,
     `dir_lstat`), a file under the tree (`file_stat`: the agent files and sidecars), or elsewhere (uncounted). The patch
-    is the os module's attribute, which is what the kernel, os.path and pathlib look up at call time."""
+    is the os module's attribute, which is what the kernel and os.path look up at call time (pathlib on 3.10 binds the os
+    functions at import; every path counted here is stat'd through os.stat, os.lstat or os.path)."""
     KEYS = ("dir_stat", "dir_lstat", "file_stat")
 
     def __init__(self, dirset, root):
