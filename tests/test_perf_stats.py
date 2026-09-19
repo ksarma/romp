@@ -1565,6 +1565,22 @@ class RoutingStatements(unittest.TestCase):
     PROBE = 8192                                  # bytes read for the NUL probe: a png, a font, a recording fails it in its header
 
     @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # A plant exists only while its owner holds the exclusive lock, so whatever the glob finds under that lock is a
+        # dead run's leftover (pytest-timeout's os._exit, which CI's --timeout-method=thread uses, a SIGKILL, a scope
+        # stop: none of them reaches the plant test's finally), and the glob matches no tracked file (git grep
+        # routing-sweep-plant finds only this module). Safe ONLY because the lock is one file per checkout (the
+        # previous commit): under a per-process lock this could delete a sibling's live plant.
+        with cls._tree_lock(exclusive=True) as root:
+            cls._remove_stale_plants(root)
+
+    @classmethod
+    def _remove_stale_plants(cls, root):
+        for old in (root / "plans").glob("routing-sweep-plant-*.md"):
+            old.unlink(missing_ok=True)
+
+    @classmethod
     def _lock_path(cls, root):
         # The lock is a property of the CHECKOUT, not of the run: `git rev-parse --absolute-git-dir` is one path for
         # every process over this worktree (an xdist worker, a second pytest run, a run under its own TMPDIR), and in
@@ -1636,7 +1652,9 @@ class RoutingStatements(unittest.TestCase):
     def test_the_file_set_is_read_from_the_tree_not_listed(self):
         """A file planted in plans/, a directory the replaced walk never entered, naming a block and carrying a retired
         wording, is found by the scan and reds both pins; without it both are green. Both states are measured in this one
-        test under the exclusive lock, the plant removed in a finally, its name unique to this process."""
+        test under the exclusive lock, the plant removed in a finally, its name unique to this process. A plant a killed
+        run left behind is removed by setUpClass before any test here scans, so a plant-named file in plans/ is a test
+        artifact, never content."""
         with self._tree_lock(exclusive=True) as root:
             clean = self._scan(root)
             self._pin_swept_set(clean); self._pin_no_retired_wording(clean)                          # green without the plant
@@ -1659,6 +1677,27 @@ class RoutingStatements(unittest.TestCase):
             after = self._scan(root)
             self.assertNotIn(rel, sorted(after), "the plant is gone")
             self._pin_swept_set(after); self._pin_no_retired_wording(after)                          # green again
+
+    def test_a_plant_left_by_a_killed_run_is_removed_before_any_scan(self):
+        """A plant with a pid that is never this process (1), the shape a run killed inside the plant window leaves, is
+        removed by the healer setUpClass runs, and the tree scans green after it. The healer's placement is pinned on
+        setUpClass's source: inside the plant test it would heal only from the second run, since the wording pin sorts
+        first and reads the leftover (round 1's refuters measured '1 failed, 3 passed' there, '4 passed' here)."""
+        with self._tree_lock(exclusive=True) as root:
+            stale = root / "plans" / "routing-sweep-plant-1-stale0000.md"
+            try:
+                stale.write_text("A planted note naming stagesForeign, " + RETIRED_WORDINGS["push-inside-cycle"] + ".\n")
+                self._remove_stale_plants(root)
+                self.assertFalse(stale.exists(), "the healer removes a plant whose owner is not this process")
+                after = self._scan(root)
+                self.assertNotIn("plans/routing-sweep-plant-1-stale0000.md", sorted(after), "and the scan no longer sees it")
+                self._pin_swept_set(after); self._pin_no_retired_wording(after)                      # green once healed
+            finally:
+                stale.unlink(missing_ok=True)
+        source = inspect.getsource(RoutingStatements.setUpClass)
+        self.assertIn("with cls._tree_lock(exclusive=True)", source, "the healer runs under the exclusive lock")
+        self.assertIn("cls._remove_stale_plants(root)", source, "and is called from setUpClass, before any test here scans")
+        #             the call forms, not the names: a comment in setUpClass naming the helper must not satisfy this pin
 
     def test_the_lock_is_one_file_for_every_process_of_this_tree(self):
         """A second process over this checkout with its own TMPDIR and no record of this run's system temp dir (the
