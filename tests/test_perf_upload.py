@@ -1414,6 +1414,47 @@ class Cli(unittest.TestCase):
         self.assertEqual(self.fake.requests[0][2], self.data, "the export's bytes: neither entry's own text is in any number of a fresh export")
         self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (self.file, len(self.data), self.fake.url) + SUCCESS % (RECEIPT, 180))
 
+    def test_a_listed_entry_written_with_an_exponent_is_applied_by_its_plain_spelling_to_keys_and_string_values_too(self):
+        """The closing re-run's finding 1 (2026-09-19), on the upload road: identifier_hits expanded an exponent-spelled entry
+        for the NUMBER arm alone, so a listed 1.5e-05 refused the number 1.5e-05 and SENT the string "0.000015" and the key
+        zz0.000015 (the re-run executed the four sending cases below at rc 0, the digits in the body; not a regression, the
+        base did the same), while docs/reference.md told the operator the entry reaches the floor as 0.000015 with no
+        sentence scoping that to numbers. Every spelling of a non-word probe is now a probe for keys and string values as
+        well (perf_public.identifier_hits, its spelled list): with the list 1.5e-05 the string "0.000015" as a value and the
+        key zz0.000015 are each refused naming the kind, the place and line 1 of the list, the digits in no output, nothing
+        sent; with the list 1e+16 the string "10000000000000000" is refused the same way; and the control, the list 0.000015
+        against the same string, refuses as the base did. stderr is exactly the refusal each time: no entry is under the
+        floor and none is written with an exponent beyond the bound, so no advisory. Fails before: rc 0 and one POST for
+        each of the first three, the digits on the wire."""
+        base = ["--yes", "--receiver", self.fake.url]
+        text = self.data.decode("utf-8")
+        anchor = '"uptime_s": 60'
+        self.assertEqual(text.count(anchor), 1)
+        for digits in ("0.000015", "10000000000000000"):
+            self.assertNotIn(digits, text, "the fresh export carries neither spelling")
+        edited = os.path.join(self.xdg, "edited.json")
+        os.makedirs(os.path.join(self.home, ".config", "romp"))
+        listed = os.path.join(self.home, ".config", "romp", "private-strings.txt")
+        refusal = ("romp perf upload: refused: a string this machine knows (private string) survives as %s; "
+                   "edit line 1 of the private-strings list or that %s; nothing sent\n")
+        for entry, plant, place, what, digits in (
+                ("1.5e-05", ', "zzn": "0.000015"', "the value at perf/zzn", "value", "0.000015"),
+                ("1.5e-05", ', "zz0.000015": 1', "a key under perf", "key", "0.000015"),
+                ("1e+16", ', "zzn": "10000000000000000"', "the value at perf/zzn", "value", "10000000000000000"),
+                ("0.000015", ', "zzn": "0.000015"', "the value at perf/zzn", "value", "0.000015")):     # the control: the base's behaviour
+            with open(listed, "w", encoding="utf-8") as fh:
+                fh.write(entry + "\n")
+            with open(edited, "w", encoding="utf-8") as fh:
+                fh.write(text.replace(anchor, anchor + plant))
+            self.fake.reset()
+            r = _run([edited] + base, self.state, home=self.home)
+            self.assertEqual(r.returncode, 1, "listed %s against %s was not refused: %s" % (entry, plant, r.stdout + r.stderr))
+            self.assertEqual(r.stderr, refusal % (place, what), entry + " against " + plant)
+            self.assertEqual(r.stdout, "", entry)
+            self.assertNotIn(digits, r.stdout + r.stderr, entry)
+            self.assertNotIn(entry, r.stdout + r.stderr, entry)
+            self.assertEqual(self.fake.requests, [], "nothing sent: listed %s against %s" % (entry, plant))
+
     def test_a_listed_entry_carrying_other_characters_is_applied_to_a_number_by_its_token_run_and_refused_before_any_request(self):
         """The alphabet is not asked of the numeric arm (the closing delta, 2026-09-19). A listed (12345678), eight digits inside
         characters no number spells, is applied to a number by its whole-token run (perf_public.probe_in), so an export edited

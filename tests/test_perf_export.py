@@ -1658,6 +1658,57 @@ class Cli(unittest.TestCase):
                          "an overflow was never expanded: no skip line, the floor line alone")
         self.assertEqual(pp.EXPANSION_EXPONENT_MAX, 324, "the constant the edge pins above derive from, last so that a moved bound reds on behaviour first")
 
+    def test_a_key_and_a_string_value_are_scanned_by_every_spelling_of_a_listed_entry_so_an_exponent_written_entry_protects_its_digits_there_too(self):
+        """The closing re-run of 2026-09-19 (finding 1, taken as the fix): identifier_hits built the expanded spellings of a
+        listed entry into the list applied to NUMBERS alone and scanned a key or a string value by the entry's own text, so a
+        listed 1.5e-05 refused the number 1.5e-05 and sent the string 0.000015 and the key zz0.000015 (the report's executed
+        table: rc 0, the digits POSTed), while docs/reference.md already promised the operator that a listed 1.5e-05 reaches the
+        floor as 0.000015 with nothing scoping that to numbers. Now every spelling of a listed entry (pp.number_spellings: its
+        text and its plain expansion) is applied to keys and string values, with no floor, as the entry's text always was: G, a
+        listed 1.5e-05 on line 8, hits the string value 0.000015 at zzn and the key zz0.000015 under the root, each one Hit
+        carrying line 8; H, a listed 1e+16 on line 2, hits the seventeen-digit string and key naming line 2; an expansion with
+        fewer digits than the entry is applied too (a listed 1.0000000e+2 as 100.00000 against the string 100.00000: the key
+        and string scan has no floor, so the expansion is applied on the same terms as the entry itself), and so is an
+        expansion UNDER the floor, which never enters the numeric list (a listed 1e5 as 100000 against the string 100000 and
+        the key zz100000, and not against the number 100000: the discriminating pin, since 100.00000 carries eight digits
+        and is a numeric probe in its own right). Controls: the string
+        x0.00015 is no hit for G (a different fraction), a listed 0.000015 still hits the string 0.000015 (the base's behaviour,
+        unchanged), the number pins stay (G hits the leaf 1.5e-05 and the leaf 0.000015), and a word probe over a key is as
+        before, a whole-token match. THE REVERSE DIRECTION IS NOT PROMISED AND IS PINNED AS THE BOUNDARY: the entry is
+        expanded and never the document's string, so a listed plain 0.000015 refuses the number 1.5e-05 (the leaf is
+        expanded) and not a string value spelled 1.5e-05 nor a key zz1.5e-05 (the re-run's verification executed the sending
+        cases on all three roads; identifier_hits' docstring and docs/reference.md state the boundary where the promise is
+        made). The cost on this machine's own list is nil, 0 of 11 entries gain a spelling (derived by
+        running number_spellings over the list, counting only). Scanning a key or a string by `probes` instead of the spelled
+        list reds the four spelled pins and both export-road pins while the number pins stay green (the hole exactly as
+        filed); appending only the numeric spellings to the spelled list reds the 1e5 pins (and the four-digit entry's own
+        text in the exponent test); dropping the line from the spelled Probe reds the line assertions."""
+        G = pp.Probe(pp.PRIVATE_KIND, "1.5e-05", 8)
+        H = pp.Probe(pp.PRIVATE_KIND, "1e+16", 2)
+        self.assertEqual(pp.identifier_hits({"zzn": "0.000015"}, [G]), [pp.Hit(pp.PRIVATE_KIND, False, "zzn", 1, 8)], "the string value, by the expansion")
+        self.assertEqual(pp.identifier_hits({"zz0.000015": 1}, [G]), [pp.Hit(pp.PRIVATE_KIND, True, "", 0, 8)], "the key, by the expansion")
+        self.assertEqual(pp.identifier_hits({"zzn": "10000000000000000"}, [H]), [pp.Hit(pp.PRIVATE_KIND, False, "zzn", 1, 2)])
+        self.assertEqual(pp.identifier_hits({"zz10000000000000000": 1}, [H]), [pp.Hit(pp.PRIVATE_KIND, True, "", 0, 2)])
+        self.assertEqual(pp.identifier_hits({"zzn": "100.00000"}, [pp.Probe(pp.PRIVATE_KIND, "1.0000000e+2", 3)]), [pp.Hit(pp.PRIVATE_KIND, False, "zzn", 1, 3)],
+                         "an expansion with fewer digits than the entry is applied to a string too: the key and string scan has no floor")
+        short = pp.Probe(pp.PRIVATE_KIND, "1e5", 4)                        # its expansion 100000 has six digits: never a numeric probe, still a spelling
+        self.assertEqual([pp.numeric_probe(s) for s in pp.number_spellings("1e5", pp._number_value("1e5"))], [False, False], "under the floor in both spellings")
+        self.assertEqual(pp.identifier_hits({"zzn": "100000"}, [short]), [pp.Hit(pp.PRIVATE_KIND, False, "zzn", 1, 4)],
+                         "an under-floor expansion is applied to a string: the same protection a listed 100000 has there")
+        self.assertEqual(pp.identifier_hits({"zz100000": 1}, [short]), [pp.Hit(pp.PRIVATE_KIND, True, "", 0, 4)], "and to a key")
+        self.assertEqual(pp.identifier_hits({"zzn": 100000}, [short]), [], "and not to the number: the floor is the numeric arm's alone")
+        self.assertEqual(pp.identifier_hits({"zzn": "x0.00015"}, [G]), [], "a different fraction: no hit")
+        self.assertEqual(pp.identifier_hits({"zzn": "0.000015"}, [pp.Probe(pp.PRIVATE_KIND, "0.000015", 1)]), [pp.Hit(pp.PRIVATE_KIND, False, "zzn", 1, 1)],
+                         "the base's behaviour, unchanged")
+        for value in (1.5e-05, 0.000015):
+            self.assertEqual(pp.identifier_hits({"zzn": value}, [G]), [pp.Hit(pp.PRIVATE_KIND, False, "zzn", 1, 8)], "the number pins stay: %r" % (value,))
+        plain = pp.Probe(pp.PRIVATE_KIND, "0.000015", 1)
+        self.assertEqual(pp.identifier_hits({"zzn": 1.5e-05}, [plain]), [pp.Hit(pp.PRIVATE_KIND, False, "zzn", 1, 1)], "the leaf is expanded: refused")
+        self.assertEqual(pp.identifier_hits({"zzn": "1.5e-05"}, [plain]), [], "the boundary: a string spelled with an exponent is never expanded")
+        self.assertEqual(pp.identifier_hits({"zz1.5e-05": 1}, [plain]), [], "nor is a key")
+        self.assertEqual(_hits({"testhost": 1}, [("hostname", "testhost")]), [("hostname", "a key under the root")], "a word probe over a key is as before")
+        self.assertEqual(_hits({"zztesthost": 1}, [("hostname", "testhost")]), [], "and still a whole-token match")
+
     def test_a_listed_digit_run_under_seven_digits_is_not_applied_to_a_number_and_one_of_seven_is_with_its_list_line(self):
         """THE NUMERIC FLOOR (2026-09-19, the comment at pp.NUMERIC_PROBE_MIN_DIGITS; its predicate corrected by the closing delta
         the same day): identifier_hits applies a listed private string to a number's spellings only through a spelling of the
@@ -2298,6 +2349,36 @@ class Cli(unittest.TestCase):
         self.assertIsNotNone(m, r.stdout)
         self.assertEqual(os.path.dirname(m.group(1)), os.path.join(self.state, "perf-exports"))
         self.assertEqual(os.path.getsize(m.group(1)), int(m.group(2)), "the file is written")
+
+    def test_a_listed_exponent_written_entry_refuses_the_export_when_its_plain_digits_sit_in_a_string_value_or_a_key(self):
+        """The export road of the key and string fix (the closing re-run of 2026-09-19, finding 1): a list of 1.5e-05 alone and
+        a snapshot carrying zzn: "0.000015" as a top-level string (IDENT admits it, so the fold keeps it and the walk passes
+        it, and only the identifier scan can refuse) is refused, rc 1, stderr exactly the refusal naming the value at perf/zzn
+        and line 1 of the list with the remedy, nothing written, nothing on stdout, the digits and the entry's text in no
+        output; then the same digits as the KEY zz0.000015 with a count under it: refused naming a key under perf and line 1.
+        Before the fix both exported with rc 0 (the report's executed table: the string and the key POSTed by the upload,
+        which shares the check). Without the list both export. Scanning keys and strings by the entry's text alone reds both
+        legs with rc 0."""
+        listed = os.path.join(self.xdg, "private-strings.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1.5e-05\n")
+        for plant, spelled in (({"zzn": "0.000015"}, "the value at perf/zzn; edit line 1 of the private-strings list or that value"),
+                               ({"zz0.000015": 1}, "a key under perf; edit line 1 of the private-strings list or that key")):
+            snap = leak_snapshot()
+            snap.update(plant)
+            with open(self.src, "w") as fh:
+                json.dump(snap, fh)
+            r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+            self.assertEqual(r.returncode, 1, repr(plant) + "\n" + r.stdout + r.stderr)
+            self.assertEqual(r.stderr, "romp perf export: refused: a string this machine knows (private string) survives as %s; nothing written\n" % spelled,
+                             repr(plant))
+            self.assertEqual(r.stdout, "", repr(plant))
+            for text in ("0.000015", "1.5e-05"):
+                self.assertNotIn(text, r.stdout + r.stderr, repr(plant))
+            self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), repr(plant))
+            r = _run(["--public", "--from", self.src], state=self.state)
+            self.assertEqual(r.returncode, 0, r.stderr + " (without the list, the digits are an identifier like any other)")
+            shutil.rmtree(os.path.join(self.state, "perf-exports"))
 
     def test_a_fifo_at_the_private_strings_path_is_no_list_said_on_stderr_and_the_export_returns_at_once(self):
         """The private list must be a REGULAR file (pp.open_regular: opened O_NONBLOCK, fstat'ed, S_ISREG required); anything

@@ -3810,7 +3810,12 @@ keys the snapshot already carries. Before writing, the document is searched,
 every key, string value and number (a number by the spelling the export
 writes and, when that spelling carries an exponent, by its plain decimal
 expansion too, so a listed digit run inside a counter is found however the
-file spelled it; since 2026-09-19 a listed entry is applied to a number only
+file spelled it, and a listed entry written with an exponent is applied by
+its plain decimal spelling in keys and string values as well as in numbers,
+so a listed 1.5e-05 refuses the string and the key 0.000015 too (since
+2026-09-19; the entry is expanded and never the document's string, so a listed
+0.000015 refuses the number 1.5e-05 and not a string spelled 1.5e-05); from the
+same day a listed entry is applied to a number only
 when it, or the plain decimal spelling of an entry written with an exponent,
 carries seven or more digits, counted across the whole spelling, so 1234.5678
 has eight and a listed 1.5e-05 reaches the floor as 0.000015, while an entry

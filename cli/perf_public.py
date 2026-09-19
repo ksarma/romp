@@ -1285,6 +1285,19 @@ def identifier_hits(doc, probes, skip=()):
     2026-09-19; the hole was as old as the numeric scan, 431db9a60, and the claim that a listed run is found however
     the file spelled it was false until the expansion). A number yields at most ONE Hit, at the first spelling and
     probe that match, and the Hit never carries a spelling. A bool and null are not scanned (they spell no probe).
+    A KEY and a STRING VALUE are scanned by EVERY spelling of a listed entry, its text and its plain expansion
+    (number_spellings), with no floor, as the entry's own text always was: a listed 1.5e-05 refuses the string 0.000015
+    and the key zz0.000015, a listed 1e+16 the seventeen-digit string, a listed 1.0000000e+2 the string 100.00000, and a
+    listed 1e5 the string 100000 (six digits, under the floor: applied to no number, and to a string on the same terms as
+    a listed 100000). The ENTRY is expanded and never the document's string: a listed 0.000015 refuses the number 1.5e-05,
+    whose leaf is expanded, and not a string value spelled 1.5e-05 nor a key zz1.5e-05, since reading a number out of
+    every string a document carries is a change no document promises and this scan does not make
+    (the closing re-run of 2026-09-19 found the expansion applied to numbers alone, so a listed value written with an
+    exponent protected the number and not the same digits in a key or a string, while docs/reference.md already
+    promised that a listed 1.5e-05 reaches the floor as 0.000015; the cost is what a listed entry's own text already
+    costs there, the key and string scan having no floor, and on the machine's own list no entry gains a spelling, 0 of
+    11 by derived count). Each spelling is a Probe carrying the entry's line, so the refusal names the line whichever
+    spelling was found.
     What this costs: a number spells no path, no uuid, no hostname and no login (a hex id's eight-character prefix
     can be all digits, rarely, and a login can be, and then a counter carrying it is refused naming the kind and the
     path, like a listed word that is romp vocabulary), so the scan over numbers finds a probe that is a digit run
@@ -1308,14 +1321,20 @@ def identifier_hits(doc, probes, skip=()):
     themselves are all scanned, by every spelling; the floor selects the probes."""
     hits = []
     numeric = []                  # the probes applied to a number: a word probe as itself, a listed entry by each spelling at the floor
+    spelled = []                  # the probes applied to a key or a string value: a word probe as itself, a listed entry by every spelling, no floor
     for p in probes:
         kind, text = p
         if kind in WORD_KINDS:
             numeric.append(p)
+            spelled.append(p)
         else:
-            numeric.extend(Probe(kind, s, getattr(p, "line", None)) for s in number_spellings(text, _number_value(text)) if numeric_probe(s))
+            for s in number_spellings(text, _number_value(text)):
+                q = Probe(kind, s, getattr(p, "line", None))
+                spelled.append(q)
+                if numeric_probe(s):
+                    numeric.append(q)
 
-    def scan(s, where, key, applicable=probes):
+    def scan(s, where, key, applicable=spelled):
         for p in applicable:
             kind, probe = p
             if probe_in(kind, probe, s):
@@ -1337,8 +1356,8 @@ def identifier_hits(doc, probes, skip=()):
         elif isinstance(node, str):
             scan(node, where, False)
         elif isinstance(node, (int, float)) and not isinstance(node, bool):
-            for spelled in number_spellings(json.dumps(node), node):   # as the export writes it and the upload sends it, then its plain expansion
-                if scan(spelled, where, False, numeric):               # one Hit per number: the first spelling a floor probe is found in
+            for spelling in number_spellings(json.dumps(node), node):  # as the export writes it and the upload sends it, then its plain expansion
+                if scan(spelling, where, False, numeric):              # one Hit per number: the first spelling a floor probe is found in
                     break
 
     walk(doc, ())

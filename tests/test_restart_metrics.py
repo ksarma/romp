@@ -809,6 +809,63 @@ class PublicForm(unittest.TestCase):
             self.assertNotIn(word, r.stdout + r.stderr, word)
         self.assertIs(json.loads(r.stdout)["public"], True, "and the public document was printed")
 
+    def test_a_listed_exponent_written_entry_refuses_the_public_print_when_its_plain_digits_sit_in_a_key_or_a_string(self):
+        """The third road of the key and string fix (the closing re-run of 2026-09-19, finding 1; its verification found this
+        road unpinned, where the export and upload roads pin theirs and the precedent above says a road that passes by
+        inheritance lets a road-specific change go unseen). An event row whose kind is zz0.000015 survives the fold as the
+        key events/byKind/zz0.000015 (and as the string events/recent/N/kind), and a list of 1.5e-05 alone refuses the print
+        through the entry's plain expansion: rc 1, stdout empty, stderr exactly the refusal naming the kind, a key under
+        events/byKind and line 1 of the list with the remedy, the digits and the entry's text in no output; the control, the
+        same state with the list 1e+16, prints (rc 0, the public document, the key in it). On a second fixture state (the
+        check names one finding, so the string road is not asked beside the key), a cut row whose reason is 0.000015 survives
+        as the string restarts/2/reason (the fixture's two cut rows before it) and is refused the same way naming the value.
+        The child runs as the pointed value case does: a pinned hostname, a synthetic HOME and login, no kernel, under a
+        timeout. Fails before the fix: rc 0 with the key printed (the expansion was applied to numbers alone)."""
+        t1 = D0 + 3600
+        with open(self.state / "session-events.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"t": t1 + 6, "pid": 101, "kind": "zz0.000015", "sid": SID, "name": "web"}) + "\n")
+        xdg = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        listed = os.path.join(xdg, "private-strings.txt")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in ("CLAUDE_CODE_SESSION_ID", "XDG_CONFIG_HOME")}
+        env.update({"XDG_STATE_HOME": xdg, "HOME": "/home/tester", "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1",
+                    "ROMP_PRIVATE_STRINGS": listed})
+        child = ("import runpy, socket, sys; socket.gethostname = lambda: 'TESTHOST.example'; sys.argv = sys.argv[1:]; "
+                 "runpy.run_path(sys.argv[0], run_name='__main__')")
+        argv = [sys.executable, "-c", child, os.path.join(BIN, "romp-restart-metrics"), "--json", "--public", "--anchor", "2026-09-10",
+                "--tz", TZ, "--no-live", "--state", str(self.state)]
+        refusal = ("romp restart-metrics: refused: a string this machine knows (private string) survives as %s; "
+                   "edit line 1 of the private-strings list or that %s; nothing printed\n")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1.5e-05\n")
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(r.returncode, 1, r.stdout[-500:] + r.stderr)
+        self.assertEqual(r.stderr, refusal % ("a key under events/byKind", "key"), "the key, by the entry's plain expansion")
+        self.assertEqual(r.stdout, "", "nothing printed")
+        for text in ("0.000015", "1.5e-05"):
+            self.assertNotIn(text, r.stdout + r.stderr, "the digits and the entry's text reach no output")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1e+16\n")
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(r.returncode, 0, r.stdout[-500:] + r.stderr)
+        self.assertEqual(r.stderr, "", "the control: an unrelated exponent entry says nothing")
+        doc = json.loads(r.stdout)
+        self.assertIs(doc["public"], True, "and the public document was printed")
+        self.assertIn("zz0.000015", doc["events"]["byKind"], "with the key in it")
+        other = Path(tempfile.mkdtemp())                                    # the string road on its own fixture: one finding is named
+        self.addCleanup(shutil.rmtree, other, True)
+        t2 = D0 + 7200
+        _fixture(other)
+        with open(other / "restart-cuts.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"t": t2 + 3000, "pid": 102, "cutTurns": [], "stopped": 1, "unjoined": 0, "reaped": 0,
+                                 "watchesArmed": 1, "reason": "0.000015"}) + "\n")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1.5e-05\n")
+        r = subprocess.run(argv[:-1] + [str(other)], capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(r.returncode, 1, r.stdout[-500:] + r.stderr)
+        self.assertEqual(r.stderr, refusal % ("the value at restarts/2/reason", "value"), "the string value, by the same expansion")
+        self.assertEqual(r.stdout, "", "nothing printed")
+
     def test_public_without_json_is_refused(self):
         err = io.StringIO()
         with mock.patch("sys.stderr", err):
