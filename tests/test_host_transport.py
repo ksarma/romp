@@ -291,9 +291,20 @@ class SpawnSpec(unittest.TestCase):
         self.assertIn("after the lease only the bind, the tightening and the rename run", para, "the interval the lease readers race, stated")
         self.assertIn("each `hosts/<sid>/` when the specification is written and when the host opens its journal", para,
                       "the sibling directory is named with its two creators")
-        self.assertIn("one that is a symlink, that belongs to another user, or that stays loose after the tightening is refused on every one of them: "
-                      "the spawn fails with a launch error naming the directory", para,
+        self.assertIn("one that is a symlink, that belongs to another user, or that stays loose after the tightening is refused on every one of them.", para,
                       "the refusal is stated where the tightening is: a symlinked hosts/ worked before and hard-fails every spawn now")
+        # what the operator SEES is stated per road since round 3 (2026-09-19, correctness-6): through round 2 the paragraph
+        # promised a launch error naming the directory on all four roads, and on the host's two (hosts/ or hosts/<sid>/
+        # re-pointed after the spec is written) the launch error names only the exit; this pin replaces the one that
+        # held the overstatement
+        self.assertIn("When the kernel meets it, writing the specification, the spawn fails with a launch error naming the directory", para,
+                      "the kernel's roads: the error names the directory")
+        self.assertIn("when the host meets it first, the host exits before serving its socket and the launch error names its exit code and where the reason is: "
+                      "`hosts/<sid>/host.log` when the host wrote a row (its `socket-bind-failed` row names the step), `host.stderr` beside the specification "
+                      "when it refused before its first row", para,
+                      "the host's roads: the exit code, and the file that exists for each refusal class (the constructor's leaves no host.log row)")
+        self.assertNotIn("refused on every one of them: the spawn fails with a launch error naming the directory", para,
+                         "the overstatement is gone: the host's roads never named the directory in the launch error")
         self.assertIn("point the state root there, `ROMP_STATE_DIR` or `XDG_STATE_HOME`", para, "and the operator's remedy beside it")
 
     @unittest.skipUnless(SDK, "the SDK is not importable here")

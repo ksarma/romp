@@ -204,9 +204,11 @@ directory as its `dir` — by keyword or position, composed (`f"/tmp/{x}"`,
 `os.path.join("/tmp", x)`) or through a name bound to one — and never point
 `mktemp` (`-p`, `--tmpdir`, a `TMPDIR=` prefix) at a path under `/tmp`: that
 bypasses the redirect, and the hygiene test reads every test file for those
-shapes. The tests that must leave the root — `tests/test_host_transport.py`'s
-AF_UNIX socket paths, which would not fit `sun_path` under a nested root — fall
-back to `ROMP_TESTS_SYSTEM_TMPDIR`, the system temp dir the package recorded
+shapes. The tests that must leave the root (`tests/test_host_transport.py`'s
+AF_UNIX socket paths, which would not fit `sun_path` under a nested root, and
+`tests/test_session_host.py`'s padded socket roots, which `padded_root` builds
+to an exact byte length for the budget cases) fall back to
+`ROMP_TESTS_SYSTEM_TMPDIR`, the system temp dir the package recorded
 once per run before redirecting (an xdist worker inherits the controller's
 record), and remove what they made with an `addCleanup` (a directory outside
 the root is outside the exit sweep's scope, so nothing else removes it; nine

@@ -160,7 +160,9 @@ class OwnerOnlyParity(unittest.TestCase):
     ones, a symlink to a directory, a regular file at the path, a foreign owner, a chmod that does not take and one that
     half takes) and their outcomes must agree: the refusal, or none, the mode read back, and the chmods each made. A
     source-text comparison would go red on a comment and green on a divergence that kept the words; this reds on what
-    the helpers DO. The pin cannot say which side is right when they part, only that they parted."""
+    the helpers DO. The pin cannot say which side is right when they part, only that they parted. The agreement claim
+    holds over shapes planted at an EXISTING parent, every row of the table; on the one axis where the two part by
+    design, a missing parent, the second case asserts the difference itself (review round 3, 2026-09-19)."""
 
     @classmethod
     def setUpClass(cls):
@@ -279,6 +281,33 @@ class OwnerOnlyParity(unittest.TestCase):
         self.assertIn("session_host.py", judge_src, "the judge copy names its twin")
         self.assertIn("owner_only_dir", judge_src)
         self.assertIn("_ensure_judge_scratch", self.sh.owner_only_dir.__doc__, "and the twin names the judge copy")
+
+    def test_the_one_axis_where_the_helpers_part_is_a_missing_parent_and_the_difference_is_pinned(self):
+        """The table above holds the helpers equal over shapes planted at an existing parent; on the one axis where they
+        already differ, a MISSING parent, no equality row can be written, so the difference is asserted instead (review
+        round 3, 2026-09-19, tests-5: without this row the table was green over a real divergence and the docstring's
+        agreement claim was false outside its eleven setups). _ensure_judge_scratch makes the whole chain (os.makedirs:
+        the state root it makes at import has ancestors), so the leaf comes back 0700 with the intermediate at the
+        umask's mode, 0777 under this class's 000; owner_only_dir's default is parents=False (kernel/session_host.py
+        says why: an intermediate directory mkdir creates takes the umask's mode, the very shape it closes, and hosts_dir
+        makes hosts/ before anything below it), so it raises FileNotFoundError and creates nothing; asked for
+        parents=True, hosts_dir's road for the state root, it converges with the judge copy. The default itself is
+        pinned in tests/test_session_host.py HostsDir (a missing parent not made; a state root not yet on disk made on
+        the way); this row keeps the parity table honest about where its agreement stops."""
+        judge_leaf = os.path.join(self.root, "judge-missing", "leaf")
+        got = jd._ensure_judge_scratch(path=judge_leaf)
+        self.assertEqual(os.fspath(got), judge_leaf)
+        self.assertEqual(stat.S_IMODE(os.lstat(judge_leaf).st_mode), 0o700, "the judge copy makes the chain; the leaf is 0700")
+        self.assertEqual(stat.S_IMODE(os.lstat(os.path.dirname(judge_leaf)).st_mode), 0o777, "and the intermediate is at the umask's mode")
+        host_leaf = os.path.join(self.root, "host-missing", "leaf")
+        with self.assertRaises(FileNotFoundError):
+            self.sh.owner_only_dir(host_leaf, "host directory")
+        self.assertFalse(os.path.lexists(os.path.dirname(host_leaf)), "the host copy made nothing: no parent, no leaf")
+        self.assertFalse(os.path.lexists(host_leaf))
+        got = self.sh.owner_only_dir(host_leaf, "host directory", parents=True)
+        self.assertEqual(os.fspath(got), host_leaf)
+        self.assertEqual(stat.S_IMODE(os.lstat(host_leaf).st_mode), 0o700, "asked for parents, it converges with the judge copy")
+        self.assertEqual(stat.S_IMODE(os.lstat(os.path.dirname(host_leaf)).st_mode), 0o777)
 
 
 if __name__ == "__main__":

@@ -12542,7 +12542,7 @@ class SdkBackend:
             deadline = time.time() + ht.SOCKET_WAIT_S
             while not sock.exists():                          # loop-ok: a bounded wait on the socket appearing
                 if proc.poll() is not None:
-                    raise CLIConnectionErrorLike("the session host exited before serving its socket (code %s); see hosts/%s/host.log"
+                    raise CLIConnectionErrorLike("the session host exited before serving its socket (code %s); its reason is in hosts/%s/host.log, or in host.stderr beside it when it exited before writing a row (a hosts/ or hosts/<sid>/ it refused: review round 3 of the socket-mode fix, 2026-09-19)"
                                                  % (proc.returncode, sess.sid))
                 if time.time() > deadline:
                     # a host that never served is ended, or a resend would start a second host and two CLIs

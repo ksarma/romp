@@ -152,7 +152,9 @@ class Journal:
         # shape: a symlink or a foreign directory standing at the path is refused before the first segment is opened
         # (the review of the socket-mode fix, round 2, 2026-09-19: the bare mkdir here followed a planted symlink and
         # wrote the journal through it). A refusal raises out of SessionHost's constructor, so main() never runs a host
-        # over a directory it does not own; the caller sees the OSError and the exit.
+        # over a directory it does not own. What the kernel that launched the host sees is the exit code (1) and the
+        # traceback on the host's captured stderr (hosts/<sid>/host.stderr), not the OSError itself: no host.log row
+        # exists for a refusal here, since the constructor is what opens the directory (round 3, 2026-09-19).
         self.dir = owner_only_dir(directory, "host directory")
         self.segment_bytes = int(segment_bytes)
         self.next_offset = 0
@@ -606,11 +608,13 @@ def hosts_dir(state_dir) -> Path:
     that holds every host's control socket, the temp name each socket is bound at (`_serve_socket`), and the per-session
     `hosts/<sid>/` directories. Both creators go through here (the kernel's write_spawn_spec in kernel/host_transport.py,
     whose mkdir of `hosts/<sid>/` with parents=True used to leave `hosts/` itself at the umask's mode, and the host's own
-    _prepare_socket, before its CLI is spawned), so the mode is set by code, not by the umask of the process that
-    happened to create it (the review of this fix, 2026-09-19: the first cut named the judge precedent and took half of
-    it, a stat through a symlink and a chmod never read back). Loud on every refusal: the host's road logs
-    socket-bind-failed (step hosts-dir) and exits with no CLI started and no lease written, and the kernel's spawn fails
-    before it writes a spec. Pinned by tests/test_host_transport.py
+    constructor, before its journal opens a segment under `hosts/<sid>/` and before host.log or identity.json is written,
+    then again in _prepare_socket on run()'s road, before its CLI is spawned), so the mode is set by code, not by the
+    umask of the process that happened to create it (the review of this fix, 2026-09-19: the first cut named the judge
+    precedent and took half of it, a stat through a symlink and a chmod never read back). Loud on every refusal: the
+    host's constructor raises with nothing written, so the process exits 1 with the traceback on its captured stderr and
+    no host.log row (round 3, kernel-2); the host's prelude logs socket-bind-failed (step hosts-dir) and exits with no CLI
+    started and no lease written; and the kernel's spawn fails before it writes a spec. Pinned by tests/test_host_transport.py
     SpawnSpec.test_hosts_is_owner_only_by_code_and_a_loose_one_is_tightened and
     SpawnSpec.test_a_symlink_at_hosts_or_a_tighten_that_does_not_take_fails_the_spawn (the kernel's road, under a 000
     umask) and tests/test_session_host.py HostsDir, SocketMode.test_hosts_is_owner_only_once_the_host_binds and
@@ -647,6 +651,15 @@ class SessionHost:
         self.dir = self.spec_path.parent
         self.sock_path, self.sock_tmp = (self.state_dir / "hosts" / n for n in sock_names(self.sid))
         self.log_path = self.dir / "host.log"
+        # `hosts/` ours and 0700 BEFORE the journal opens a segment under it and before run() writes host.log and
+        # identity.json (review round 3, 2026-09-19, kernel-2: through round 2 the host's first check of hosts/ ran at the
+        # socket road, after those three files were written through a planted symlink and a real CLI had spawned; the
+        # kernel's write_spawn_spec guards the same directory before its first write, and this makes the host do the
+        # same). A refusal raises out of the constructor: main() never runs a host over a hosts/ that is not ours, the
+        # process exits 1 with the traceback on its captured stderr (hosts/<sid>/host.stderr), and no host.log row exists
+        # for it, which the kernel's spawn-wait message says. _prepare_socket calls hosts_dir again on run()'s road, so a
+        # hosts/ re-pointed between here and the socket road is still refused with a row (step hosts-dir).
+        hosts_dir(self.state_dir)
         self.journal = Journal(self.dir)
         self.parked = Parked(float(self.spec.get("hook_self_answer_s") or HOOK_SELF_ANSWER_S))
         self.grace_s = float(self.spec.get("unattached_grace_s") or UNATTACHED_GRACE_DEFAULT_S)
@@ -720,9 +733,14 @@ class SessionHost:
         """Whether the CLI this host spawned is CONFIRMED gone: its pid no longer names a process with the start time
         recorded at the spawn (lease_api's proc_start, the identity the lease carries and the kernel's lease_state reads;
         a pid the kernel has since reused reads as gone too, by its different start). With no CLI identity recorded
-        there was no CLI and no lease of ours (_write_lease writes none without it). Never the transport's word: see
+        there was no CLI and no lease of ours (_write_lease writes none without it), and the two methods test that
+        identity with the SAME predicate, `is None` on both fields: until review round 3 (2026-09-19) this one read
+        `not self.cli_start`, which agreed with _write_lease's `is None` only because sdk_backend.proc_start never
+        answers an empty string, an invariant stated at neither site; a start of "" now writes a lease AND reads as
+        present here, so the lease-kept arm never removes a lease _write_lease wrote for a CLI whose identity still
+        matches (pinned by tests/test_session_host.py SocketMode's no-identity case). Never the transport's word: see
         run()'s failure arm, the one caller (the review of the socket-mode fix, round 2, 2026-09-19)."""
-        if self.cli_pid is None or not self.cli_start:
+        if self.cli_pid is None or self.cli_start is None:
             return True
         return self.lease_api["proc_start"](self.cli_pid) != self.cli_start
 
@@ -1312,10 +1330,15 @@ def main(argv=None) -> int:
     try:
         return asyncio.run(host.run())
     except Exception as e:
-        # the class and the failing frame, never the text: an OSError's text carries the path it failed on, a spec field
-        # (the state root), and host.log carries no spec field (the review of this fix, 2026-09-19, which found the
-        # bind-failure road writing the root's absolute path here through this row)
-        host.log("host-crashed", error=type(e).__name__, at=SessionHost._where(e))
+        # the class, the errno and the failing frame, never the text: an OSError's text carries the path it failed on, a
+        # spec field (the state root), and host.log carries no spec field (the review of this fix, 2026-09-19, which found
+        # the bind-failure road writing the root's absolute path here through this row). The errno came back in round 3
+        # (fresh-1: the base carried it and the redaction dropped it), guarded twice: the exception must be an OSError and
+        # its errno an int, because a two-argument OSError(path, text) puts the PATH in .errno, and log() passes a str
+        # through, so a typed guard alone would reopen the leak this row closed. A non-OSError's .errno, whatever it
+        # holds, is never read.
+        err_no = e.errno if isinstance(e, OSError) and isinstance(e.errno, int) else None
+        host.log("host-crashed", error=type(e).__name__, errno=err_no, at=SessionHost._where(e))
         return 1
 
 
