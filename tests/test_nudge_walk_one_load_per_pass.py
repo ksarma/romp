@@ -1075,7 +1075,8 @@ class _WalkHarness(unittest.TestCase):
         concurrent fill, so no dup) and writes no goals-archive during a pass (so no refuse), and a bump of either on any pass is a
         counter moved with no road that moves it (review round 4, extra5-1: the sentence here said the two layers cover every pass,
         and a spurious dup or refuse bump beside a genuine fill, up to the fill count, was witnessed by nothing). `calls` carries the
-        shared records (sid, function, file, line) for a case's own assertions."""
+        shared records (sid, function, file, line) for a case's own assertions, and `second` the second keys' delta, so the writerLoads
+        lines that catch the pair beside a fill can print it (review round 4, tests-4)."""
         before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
         gate0 = dict(km._NUDGE_GATE_STATS)
         s0, g0 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
@@ -1161,6 +1162,7 @@ class _WalkHarness(unittest.TestCase):
                          "_archive_key cannot move under a replay (refuse); a bump of either here is a counter moved with no road that moves "
                          "it. A future harness that drives those roads on purpose changes this line with its reason. This pass: second bumps "
                          "%r against %d fill(s); recorded shared calls: %s" % (now, second, fills, "; ".join(records) or "none"))
+        d["second"] = second                              # the second keys' delta, for the writerLoads lines that catch the pair beside a fill
         d["calls"] = list(self.calls)
         writer = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.writer]
         self.assertEqual(writer, [], "zero plain load_goals from any caller during the pass, the whole tick (condition 7 in ruling A's "
@@ -1197,7 +1199,12 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "cached, so each checked once (condition 7, the gate's bound)")
         self.assertEqual(p1["writerLoads"], 0, "no hand-off: every read of this pass hits or fills, so the shared door hands nothing to "
                                                "load_goals and the writer door's own counter, goal_io loads, stays (the writer list itself is "
-                                               "_pass's assertion, empty on every return)")
+                                               "_pass's assertion, empty on every return). This line is also the layer behind _pass's "
+                                               "second-bump bound on a pass with fills: a forged pair, a corrupt or unreadable_journal bump "
+                                               "beside a goal_io loads bump with no call through the door, riding beside each genuine fill "
+                                               "leaves second equal to fills and balances both reconciliations, and reds here as loads with "
+                                               "no hand-off the door made. writerLoads %d; the store's call counters %r, its second bumps %r"
+                                               % (p1["writerLoads"], p1["shared"], p1["second"]))
         self.assertEqual(p1["shared"], {"hit": 2, "miss": 2}, "the store's counters: each walk read fills (a miss), each gate check hits")
         for sid in SIDS:
             self.assertIsNotNone(self._row(sid), "a wake-mode memo row stands for %s" % sid[-4:])
@@ -1338,7 +1345,12 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
                          "assertion, and the count by the line above, so the file is the one element that can fail here)" % name)
         self.assertEqual(p["writerLoads"], handoffs,
                          "%s: the shared door's fallback into load_goals is the shared door's own read, counted once under goal_io loads as a "
-                         "hand-off and never as a writer call; %d hand-off(s) expected this pass, and the record is inert past the read" % (name, handoffs))
+                         "hand-off and never as a writer call; %d hand-off(s) expected this pass, and the record is inert past the read. This "
+                         "line is also the layer behind _pass's second-bump bound on a pass with fills: a forged pair, a corrupt or "
+                         "unreadable_journal bump beside a goal_io loads bump with no call through the door, riding beside each genuine fill "
+                         "leaves second equal to fills and balances both reconciliations, and reds here as loads over the hand-offs the door "
+                         "made. writerLoads %d; the store's call counters %r, its second bumps %r"
+                         % (name, handoffs, p["writerLoads"], p["shared"], p["second"]))
 
     def test_a_store_whose_nodes_lack_the_goal(self):
         self._seed_wake_record(store_file=True)
