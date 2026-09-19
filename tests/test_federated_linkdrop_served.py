@@ -522,6 +522,8 @@ class _LinkDrop(unittest.TestCase):
     old_hub_build = False      # _boot mints hub_root as a private clone checked out at OLD_HUB_SHA under the lab (the old-hub class's second knob)
     old_hub_wt = None          # that checkout's path while it exists: under cls.lab, so the lab's rmtree takes it down
     strip_caps = False
+    caps = True                # the hub bundle dials caps=feedDelta: DECLARED per class, never derived from the roots, so the
+    #                            fails-before lever (an old hub named by ROMP_LINKDROP_HUB_ROOT) turns the new class red instead of adapting it
     changes = ("notice", "todo", "append")
     local_drop = True
     wait_ms = 20000
@@ -980,7 +982,7 @@ class _LinkDrop(unittest.TestCase):
             self.assertEqual(crossed, [], "no feed-family frame crossed the dropped link on the %s page (a frame here is a stray splice past the drop, or the link never went down): %r" % (app, crossed))
             # every down-window dial is a REDIAL (reconnect=1): the conn opened before the drop, so its retry states the term
             for s in down_socks:
-                self._assert_dial_terms(s["url"], app, caps=(not self.strip_caps and self.hub_root is None), redial=True)
+                self._assert_dial_terms(s["url"], app, caps=self.caps, redial=True)
             # bounded: no new relay dial in the quiet tail before resume (the poll read the row down; connect() gates on live)
             tail = [s for s in down_socks if s["dialedAt"] >= m["resume"] - self.quiet_tail_ms]
             self.assertEqual(tail, [], "the %s page kept dialing into the quiet tail before resume (dialing did not cease when the row went down): %r"
@@ -1059,6 +1061,7 @@ class LinkDropBothNew(_LinkDrop):
     hold their bases per conn. The link drops and returns (a redial with reconnect=1, served whole, then feedDeltas onto
     that whole frame), then the hub restarts (the relay dial deferred under the local-down word, one dial at the local
     return, served whole again). Every phase's changes show on every page at the end; no row, no ask."""
+    caps = True
 
     def test_the_link_dropped_and_the_pages_stopped_dialing_while_the_row_was_down(self):
         self._assert_link_dropped_and_the_row_went_down()
@@ -1154,6 +1157,7 @@ class LinkDropOldLocal(_LinkDrop):
     (the rows) is this lab's observable, and the new bundle (LinkDropBothNew) files ZERO of them across the same drive.
     The redial helper runs with exactly=False for that churn."""
     changes = ("notice",)
+    caps = False               # the old bundle dials no caps (read from the dial URL)
 
     # What a skip of this class leaves unexecuted, and what still runs in the same CI job: the skip reasons carry it, so a
     # runner reading "skipped" knows which claim went untested (round 1, tests-4).
