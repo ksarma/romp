@@ -92,6 +92,42 @@ def _doc_row(doc, name):
     return doc[m.start():nxt.start() if nxt else len(doc)]
 
 
+# The microsecond-figure predicate the reference-alone pin reads with (the closing check of 2026-09-19 planted twenty-four
+# spellings of a quarter-microsecond figure into a pinned region and fourteen passed the `<number> us` pattern). Derived
+# over units rather than sampled from spellings: any number before a micro or nano unit in any spelling is a microsecond
+# figure; a number before a milli unit is one when under a millisecond; a number of seconds is one when under a
+# millisecond (the scientific spelling included); and a number WORD before microsecond(s) or nanosecond(s) is one. The
+# number may be decimal, comma-decimal, scientific or a fraction glyph; the separator may be spaces, a hyphen or the
+# literal `&nbsp;` entity; the unit is read case-insensitively and must not run on into a word (`5 sessions` is no figure).
+_TIME_UNITS = (                # (the unit's spellings, the value below which a figure in that unit is a microsecond figure)
+    (r"microseconds?|microsecs?|[uµμ]secs?|[uµμ]s", float("inf")),
+    (r"nanoseconds?|nanosecs?|nsecs?|ns", float("inf")),
+    (r"milliseconds?|millisecs?|msecs?|ms", 1.0),
+    (r"seconds?|secs?|s", 1e-3),
+)
+_TIME_FIGURE = re.compile(r"(?<![\w.])(\d+(?:[.,]\d+)?(?:e[-+]?\d+)?|[¼½¾⅓⅔⅛])(?:\s|-|&nbsp;)*(%s)(?![a-z])"
+                          % "|".join(u for u, _ in _TIME_UNITS), re.I)
+_TIME_WORDS = re.compile(r"\b(?:an?|one|two|three|four|five|six|seven|eight|nine|ten|half|quarter|third|tenth|hundredth|"
+                         r"thousandth|few|several|couple|dozen)\b(?:\s+of)?(?:\s+an?)?\s+(?:micro|nano)seconds?\b", re.I)
+_FRACTION_GLYPHS = {"¼": 0.25, "½": 0.5, "¾": 0.75, "⅓": 1 / 3, "⅔": 2 / 3, "⅛": 0.125}
+
+
+def _microsecond_figures(text):
+    """Every microsecond-scale time figure in `text`, as written (see the comment above for what counts). Callers hand
+    whitespace-normalized text, so a figure split across a line break reads as one."""
+    out = []
+    for m in _TIME_FIGURE.finditer(text):
+        num, unit = m.group(1), m.group(2)
+        val = _FRACTION_GLYPHS.get(num)
+        if val is None:
+            val = float(num.replace(",", "."))
+        limit = next(lim for u, lim in _TIME_UNITS if re.fullmatch(u, unit, re.I))
+        if val < limit:
+            out.append(m.group(0))
+    out.extend(m.group(0) for m in _TIME_WORDS.finditer(text))
+    return out
+
+
 _ONES = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
          "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen")
 _TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
@@ -2550,11 +2586,15 @@ class GoalIoCounters(unittest.TestCase):
         stand in the kernel's stages_cpu_ms block comment (its header line to the `try:` that imports resource), in
         _stat_counting_install's docstring, in the memos.chatSig block comment (its header to class _ChatSigLocal) or in
         the _PerfStats docstring's stages_cpu_ms and memos rows (the chatSig row is inside the latter); the reference's
-        stages_cpu_ms entry carries at least ten and its memos.chatSig paragraph none. A figure is a number followed by
-        us, a micro sign with s, or microsecond(s), with or without a space (the round-3 review pasted `0.25us` and `0.25
-        microseconds` past the first pattern). The figures themselves are not pinned: InstrumentationCostTerms below
-        recomputes them and prints the line the entry is filled from."""
-        us = re.compile(r"\b\d+(\.\d+)?\s*(us|µs|μs|microseconds?)\b")
+        stages_cpu_ms entry carries at least ten and its memos.chatSig paragraph none. A figure is what
+        _microsecond_figures reads (the module comment above it says what counts): a number in any spelling before a
+        micro or nano unit in any spelling, a sub-millisecond number before a milli unit, a sub-millisecond number of
+        seconds, or a number word before microsecond(s). The first pattern read `<number> us` alone (the round-3 review
+        pasted `0.25us` and `0.25 microseconds` past it); the closing check of 2026-09-19 planted twenty-four spellings
+        into _stat_counting_install's docstring and fourteen passed the second (`250 ns`, `0.00025 ms`, `2.5e-7 s`,
+        `a quarter of a microsecond`, `0.25 usec`, `0.25-us`, `0.25 US` and the literal `&nbsp;` entity among them); the
+        test after this one pins every spelling tried. The figures themselves are not pinned: InstrumentationCostTerms
+        below recomputes them and prints the line the entry is filled from."""
         lines = Path(km.__file__).read_text(encoding="utf-8").splitlines()
 
         def block(header, ends):
@@ -2568,17 +2608,38 @@ class GoalIoCounters(unittest.TestCase):
                    ("the _PerfStats docstring's memos row (chatSig inside it)", _doc_row(km._PerfStats.__doc__, "memos")))
         for where, text in regions:
             self.assertGreater(len(text), 200, "premise: %s was found" % where)
-            found = [m.group(0) for m in us.finditer(" ".join(text.split()))]
+            found = _microsecond_figures(" ".join(text.split()))
             self.assertEqual(found, [], "%s states a microsecond figure %r: the stages_cpu_ms entry of docs/reference.md is the only home"
                              % (where, found))
         doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text(encoding="utf-8")
         cpu_entry = " ".join(self._reference_entry(doc, doc.index("- `stages_cpu_ms`:")).split())
-        n = sum(1 for _ in us.finditer(cpu_entry))
+        n = len(_microsecond_figures(cpu_entry))
         self.assertGreaterEqual(n, 10, "the reference's stages_cpu_ms entry carries the cost terms: %d microsecond figures found" % n)
         memos = doc.index("- `memos`:")
         sig_entry = " ".join(self._reference_entry(doc, doc.index("`chatSig`", memos)).split())
-        found = [m.group(0) for m in us.finditer(sig_entry)]
+        found = _microsecond_figures(sig_entry)
         self.assertEqual(found, [], "the reference's memos.chatSig paragraph states a microsecond figure %r" % (found,))
+
+    def test_the_microsecond_predicate_reads_every_spelling_the_closing_check_planted(self):
+        """The corpus behind the pin above (the closing check of 2026-09-19): the twenty-four spellings planted into a pinned
+        region, the ten the `<number> us` pattern caught and the fourteen it passed, each read as a figure once
+        whitespace-normalized the way the pin normalizes; and the legitimate figures the pinned regions and the reference
+        carry (a millisecond count, a seconds backstop, the bare unit word, a version, a plural noun after a digit, the
+        pronoun), each read as none. Dropping a unit from _TIME_UNITS reds the escaped spelling of that unit."""
+        caught = ["0.25us", "0.25 us", "0.25 \u00b5s", "0.25 \u03bcs", "0.25 microseconds", "0.25 microsecond", "0,25 us",
+                  "0.25\u00a0us", "`0.25 us`", "0.25\nus"]
+        escaped = ["250 ns", "250ns", "0.00025 ms", "2.5e-7 s", "a quarter of a microsecond", "0.25&nbsp;us", "\u00bc us",
+                   "0.25 usec", "0.25 \u00b5sec", "250 nanoseconds", "0.25 microsecs", "half a microsecond", "0.25-us", "0.25 US"]
+        self.assertEqual((len(caught), len(escaped)), (10, 14), "the corpus is the closing check's twenty-four spellings")
+        for sp in caught + escaped:
+            text = " ".join(("the wrapper costs about %s per stat." % sp).split())
+            self.assertEqual(len(_microsecond_figures(text)), 1, "not read as one microsecond figure: %r" % sp)
+        for legit in ("157 ms per cycle", "a tick, 1 ms at HZ=1000, or a context switch", "the 0.5 s backstop ran it",
+                      "how the loop's 3 s wait ended", "what each term costs in microseconds is stated once",
+                      "38 tabs and four clients", "Python 3.12, a 30-core (60-thread) dev box", "the count tells us",
+                      "over 300 sub-millisecond spins", "2.9 to 7.1 percent", "since the 1970s", "5 sessions", "12 GB resident",
+                      "a 5-second grace"):
+            self.assertEqual(_microsecond_figures(legit), [], "a legitimate figure read as a microsecond one: %r" % legit)
 
     def test_the_per_push_denominator_rule_lives_in_the_reference_alone_and_the_kernel_copies_point_there(self):
         """correctness-1 (the 2026-09-19 round-2 review): the sentence saying which memos.chatSig keys are a delta over
