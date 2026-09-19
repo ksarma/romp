@@ -3207,43 +3207,34 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   in `tests/test_perf_stats.py` pins it: over 300 sub-millisecond spins some
   mark reads 0, some a whole tick, and the marks' sum tracks the window's
   thread CPU), and only the sum over a window estimates the CPU.
-  The instrumentation's own cost, one run's readings and not a contract,
-  at head 76118986d (2026-09-19, Python 3.12, a 30-core (60-thread) dev
-  box): the per-term microseconds are what `tests/test_perf_stats.py`'s
-  cost-terms test prints (best of five over the loaded kernel; `-rA` shows
-  the line), the per-signature stats and thread CPU what the six-cycle
-  harness's two worlds print in `tests/test_kernel_delta_send.py`, and the
-  counts behind the totals (which operation runs how many times per served
-  tab, per rebuilt tab and per push) are derived in the kernel's
-  `stages_cpu_ms` block comment and pinned by
-  `test_the_per_tab_counts_the_cost_derivation_uses_hold_by_execution`;
-  this paragraph is the only place the figures live, and the kernel's
-  comments point here. A `getrusage` read 0.974 us; the
-  `os.stat` and `os.lstat` counting wrappers add, per stat,
-  0.54 us (2.829 us with a
-  signature open against 2.289 us bare) times the
-  signature's stats (22.7 per signature in the bare
-  harness world, 61.2 in the furnished one, a
-  figure that moves with the temp root's path depth, one lstat per
-  component of the transcript's realpath); the
-  DirEntry door 0.189 to 0.279 us per
-  stat; the signature scope 2.501 us; the per-tab note
-  2.500 us and a re-read's note 2.599
-  us; a count call 0.203 us; the census
-  18.565 us per push at 38 tabs and four clients when the
-  gate walked no tab, 3.817 us when it walked all. From
-  those terms, the bare world's stats per signature and the pinned counts:
-  23.5 us per
-  served tab per cycle, 44.8 us per rebuilt tab
-  and 0.91 ms per push at 38 served tabs, which is
-  0.56 percent of the per-tab signature wall in the
-  chat-signature design note's live window (159.5 ms per cycle over 38 tabs
-  with a dashboard attached, the r60 window of 2026-09-18: a reading
-  outside this repo, not this instrumentation's measurement) and
-  2.9 to 7.1 percent of the
-  signature's thread CPU as the harness reads it
-  (0.331 to 0.817 ms per
-  signature).
+  The instrumentation's own cost, one run's readings and not a contract, at
+  head 76118986d (2026-09-19, Python 3.12, a 30-core (60-thread) dev box):
+  the per-term microseconds are what `tests/test_perf_stats.py`'s cost-terms
+  test prints (best of five over the loaded kernel; `-rA` shows the line),
+  the per-signature stats and thread CPU what the six-cycle harness's two
+  worlds print in `tests/test_kernel_delta_send.py`, and the counts behind
+  the totals (which operation runs how many times per served tab, per
+  rebuilt tab and per push) are derived in the kernel's `stages_cpu_ms`
+  block comment and pinned by
+  `test_the_per_tab_counts_the_cost_derivation_uses_hold_by_execution`; this
+  paragraph is the only place the figures live, and the kernel's comments
+  point here. A `getrusage` read 0.974 us; the `os.stat` and `os.lstat`
+  counting wrappers add, per stat, 0.54 us (2.829 us with a signature open
+  against 2.289 us bare) times the signature's stats (22.7 per signature in
+  the bare harness world, 61.2 in the furnished one, a figure that moves
+  with the temp root's path depth, one lstat per component of the
+  transcript's realpath); the DirEntry door 0.189 to 0.279 us per stat; the
+  signature scope 2.501 us; the per-tab note 2.500 us and a re-read's note
+  2.599 us; a count call 0.203 us; the census 18.565 us per push at 38 tabs
+  and four clients when the gate walked no tab, 3.817 us when it walked all.
+  From those terms, the bare world's stats per signature and the pinned
+  counts: 23.5 us per served tab per cycle, 44.8 us per rebuilt tab and 0.91
+  ms per push at 38 served tabs, which is 0.56 percent of the per-tab
+  signature wall in the chat-signature design note's live window (159.5 ms
+  per cycle over 38 tabs with a dashboard attached, the r60 window of
+  2026-09-18: a reading outside this repo, not this instrumentation's
+  measurement) and 2.9 to 7.1 percent of the signature's thread CPU as the
+  harness reads it (0.331 to 0.817 ms per signature).
   Empty where the platform has no per-thread rusage (macOS): an empty
   block means no clock, not no CPU.
 - `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
