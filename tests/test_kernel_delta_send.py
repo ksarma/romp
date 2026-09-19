@@ -1376,7 +1376,7 @@ class ByteIdenticalFrames(unittest.TestCase):
         wrapper that calls stat answers the target, and the AssertionError names the wrapper, the builtin of its name
         and the kind it answered. What passes both checks is named in the world's docstring: a wrapper that answers as
         the right builtin and beside it calls the other one directly (a builtin counts nothing, so the counted call
-        reads exactly 1), and one that dispatches to the other builtin on a call shape the probes do not make. Deleting
+        reads exactly 1), and one that answers other than its builtin does on a call shape the probes do not make (the other builtin's answer on a bytes path, or a memoised result inside a signature). Deleting
         the name check from _stats_world reds the eight legs of the first two groups here, the wrong-builtin legs on
         their message (the behaviour check refuses that shape in its place) and the chainless legs with no
         AssertionError raised (the world runs to its end and returns); deleting the behaviour check reds the twenty
