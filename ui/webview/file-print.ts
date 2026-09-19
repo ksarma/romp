@@ -26,6 +26,19 @@
 // in the notice bar's dress (.fileview-err, with .fileview-btn.fileview-err-act word buttons: the changed-on-disk bar's
 // shape, file-view.ts raiseDiskBar), so it needs no rule of its own and the print block, which hides every
 // `.fileview > .fileview-err`, leaves it off the paper. No kernel route, no server-side render (P6).
+// The file's KIND switches the flow at the press (P3 and P4; the host's `kind` reads it then, since the kernel's Content-Type
+// decides it when the bytes land, after the bar is built). A rendered note, code, text and a picture opened directly are
+// the page: the wait and window.print() above, and the print block in the sheets fits `img.fileview-img` to the page (the
+// screen rule's 82vh cap, radius and shadow undone). A PDF is a frame at a blob URL (file-view.ts pdfBlock), and a printed
+// frame shows one viewport at most, so the flow prints the document itself: the frame's own window, contentWindow.print(),
+// when the frame holds the PDF (pdfFrameWindow: the window reachable, its document the PDF's, print a function; in
+// Chromium the blob frame's document is the PDF viewer's, content type application/pdf, and the parent may call its print;
+// a browser without a PDF viewer, headless Chromium's shell and headless Firefox among them, downloads the bytes instead
+// and leaves the frame's window at about:blank, whose print is a function too and would print a blank page). When the
+// frame cannot print, the kernel's /file URL opens in a new tab through the host's opener, the modified click's
+// (preview.ts openFileTab), and the line reads "Print from the tab that opened." until the next press or the close; a tab
+// the browser did not open is said the same way. The Comments panel's PDF pages (the pdf.js canvases, up while the panel is
+// open, with no frame in the body) are not printed: Print prints the PDF, through the tab then.
 import { GATE_ACT, loadGatedHost } from "./figure-gate";
 
 /** The wait's deadline: the print runs after this however many pictures are still loading. */
@@ -41,8 +54,11 @@ export type PrintPhase = "resting" | "armed" | "preparing" | "printing";
 /** `gated`: the placeholders counted at the press that armed; `pending`: the pictures still loading when the wait began. */
 export type PrintState = { phase: PrintPhase; gated: number; pending: number };
 export const RESTING: PrintState = { phase: "resting", gated: 0, pending: 0 };
+/** The file's kind at a press: `document` prints the page (a note, code, text, a picture opened directly); `pdf` prints the
+ *  document itself through its frame, or the /file tab. */
+export type PrintKind = "document" | "pdf";
 export type PrintEvent =
-  | { kind: "press"; gated: number; pending: number }   // Print, or the chord: the counts as the body stands
+  | { kind: "press"; gated: number; pending: number; file?: PrintKind }   // Print, or the chord: the counts as the body stands; the kind, a document when absent
   | { kind: "escape" }
   | { kind: "choose"; withGated: boolean }               // one of the armed line's two buttons
   | { kind: "prepare"; pending: number }                 // the driver, after the choice: the pictures still loading
@@ -50,20 +66,23 @@ export type PrintEvent =
   | { kind: "printed" };                                 // afterprint, or print returned
 /** What the driver does for a step: `arm` shows the line with its two buttons, `disarm` and `rest` remove the line and
  *  restore the button, `activate` loads every gated host and then prepares, `skip` prepares over the placeholders as they
- *  stand, `wait` shows the preparing line, `print` calls window.print. */
-export type PrintAct = "none" | "arm" | "disarm" | "activate" | "skip" | "wait" | "print" | "rest";
+ *  stand, `wait` shows the preparing line, `print` calls window.print, `printPdf` prints the PDF itself (the frame's window,
+ *  or the /file tab). */
+export type PrintAct = "none" | "arm" | "disarm" | "activate" | "skip" | "wait" | "print" | "printPdf" | "rest";
 
 const begin = (pending: number): { state: PrintState; act: PrintAct } =>
   pending > 0 ? { state: { phase: "preparing", gated: 0, pending }, act: "wait" } : { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };
 
-/** The next state and the act for it. A press while resting arms over any gated placeholder and otherwise begins the wait
- *  (or prints at once with nothing pending); while armed a press or Escape disarms and a choice activates or skips, the
- *  driver's `prepare` then beginning the wait; `ready` prints; `printed` rests. Every other pairing changes nothing: a
- *  press or an Escape during the wait or the print, an Escape at rest, a late `ready` after a rest. */
+/** The next state and the act for it. A press while resting over a PDF prints the PDF itself (`printPdf`), whatever the
+ *  counts (a frame holds no placeholder and no picture); over a document it arms over any gated placeholder and otherwise
+ *  begins the wait (or prints at once with nothing pending); while armed a press or Escape disarms and a choice activates
+ *  or skips, the driver's `prepare` then beginning the wait; `ready` prints; `printed` rests. Every other pairing changes
+ *  nothing: a press or an Escape during the wait or the print, an Escape at rest, a late `ready` after a rest. */
 export function step(s: PrintState, ev: PrintEvent): { state: PrintState; act: PrintAct } {
   switch (s.phase) {
     case "resting":
       if (ev.kind !== "press") break;
+      if (ev.file === "pdf") return { state: { phase: "printing", gated: 0, pending: 0 }, act: "printPdf" };
       if (ev.gated > 0) return { state: { phase: "armed", gated: ev.gated, pending: 0 }, act: "arm" };
       return begin(ev.pending);
     case "armed":
@@ -91,6 +110,10 @@ export function preparingWords(n: number): string {
 }
 export const WITH_WORDS = "Print with them";
 export const WITHOUT_WORDS = "Print without them";
+/** The PDF flow's line when the frame could not print and the /file URL opened in a new tab. */
+export const TAB_WORDS = "Print from the tab that opened.";
+/** ...and when the browser did not open that tab (a blocked pop-up, or a host that cannot open one). */
+export const NO_TAB_WORDS = "The browser did not open a tab for this PDF.";
 
 /** The print chord: Ctrl+P or Cmd+P, unshifted, without Alt, and not a key repeat (a held chord would arm and disarm on
  *  alternate repeats). The key is read case-insensitively: Caps Lock reports "P" with no Shift. */
@@ -168,6 +191,28 @@ export function settlePictures(pics: Picture[], deadlineMs: number, timers: Time
   return { done, pending: () => waiting.size, cancel: () => end("cancelled") };
 }
 
+// ── the PDF's frame ─────────────────────────────────────────────────────────────────────────────────
+/** What the PDF flow needs of the frame's window: its print. */
+export type FrameWindow = { print: () => void };
+/** The window of the PDF frame in `body` when it holds the PDF and can print it: `iframe.fileview-frame` (file-view.ts
+ *  pdfBlock), its contentWindow reachable, its document the PDF (content type application/pdf, as Chromium's viewer
+ *  document reports, or the window's location the frame's own src with any fragment aside: the blob URL the frame was
+ *  aimed at, `#page=N` included), and print a function. Null otherwise: no frame (the Comments panel's pages are up), a
+ *  window the browser withholds, or a frame that did not load the PDF (a browser without a PDF viewer downloads the bytes
+ *  and leaves the window at about:blank, whose print would print a blank page). */
+export function pdfFrameWindow(body: ParentNode): FrameWindow | null {
+  const frame = body.querySelector("iframe.fileview-frame") as HTMLIFrameElement | null;
+  if (!frame) return null;
+  try {
+    const w = frame.contentWindow;
+    if (!w || typeof w.print !== "function") return null;
+    const bare = (u: string): string => u.replace(/#.*$/, "");
+    const href = bare(w.location.href);
+    const holds = (w.document !== null && w.document.contentType === "application/pdf") || (href !== "about:blank" && href === bare(frame.src));
+    return holds ? w : null;
+  } catch { return null; }                     // a cross-origin window withholds its document and its location
+}
+
 // ── the DOM driver ──────────────────────────────────────────────────────────────────────────────────
 export type PrintHost = {
   /** the card (`.fileview`): the line is a row of it */
@@ -180,6 +225,12 @@ export type PrintHost = {
   typing: () => boolean;
   /** runs `cb` when this open ends (the viewer's close hooks): the listener and the wait leave with the card */
   onClose: (cb: () => void) => void;
+  /** the file's kind as it stands at the press: `pdf` once a PDF's bytes landed (the frame prints itself, or the /file tab
+   *  opens), else `document`; absent, every press is a document's (the URL viewer shows documents alone) */
+  kind?: () => PrintKind;
+  /** for a PDF whose frame cannot print: open the kernel's /file URL in a new tab, the modified click's opener (preview.ts
+   *  openFileTab); true when a tab opened. Absent: no tab, and the line says the browser did not open one */
+  openTab?: () => boolean;
 };
 export const PRINT_LINE_ID = "fileview-print-line";
 export const PRINT_LINE_CLASS = "fileview-print-line";
@@ -195,12 +246,13 @@ export function installFilePrint(host: PrintHost): HTMLButtonElement {
   btn.title = "Print this file with its pictures loaded (Ctrl/Cmd+P)";
   let state: PrintState = RESTING;
   let line: HTMLElement | null = null;
+  let notice = false;                          // the line is the PDF flow's notice (the tab), standing at rest until the next press or the close
   let settle: Settle | null = null;
   let closed = false;
 
   const gates = (): HTMLElement[] => Array.from(host.body.querySelectorAll('[data-act="' + GATE_ACT + '"]')) as HTMLElement[];
   const probe = (url: string): Picture => { const im = new Image(); im.src = url; return im; };
-  const dropLine = (): void => { if (line) { line.remove(); line = null; } };
+  const dropLine = (): void => { if (line) { line.remove(); line = null; } notice = false; };
   const showLine = (words: string): HTMLElement => {
     dropLine();
     const row = doc.createElement("div");
@@ -242,6 +294,16 @@ export function installFilePrint(host: PrintHost): HTMLButtonElement {
     window.addEventListener("afterprint", done);
     try { window.print(); } finally { done(); }   // afterprint, or at once when print returns: the second call finds the state at rest and changes nothing
   };
+  /** The PDF itself: the frame's own print when the frame holds the document, else the /file URL in a new tab and the line
+   *  saying so (or that the browser opened none), shown after the rest so it stands until the next press or the close. */
+  const doPrintPdf = (): void => {
+    const w = pdfFrameWindow(host.body);
+    if (w) { try { w.print(); } finally { feed({ kind: "printed" }); } return; }
+    const opened = host.openTab ? host.openTab() : false;
+    feed({ kind: "printed" });
+    showLine(opened ? TAB_WORDS : NO_TAB_WORDS);
+    notice = true;
+  };
   const feed = (ev: PrintEvent): void => {
     if (closed) return;
     const r = step(state, ev);
@@ -272,12 +334,16 @@ export function installFilePrint(host: PrintHost): HTMLButtonElement {
       case "skip": feed({ kind: "prepare", pending: beginWait() }); return;
       case "wait": showLine(preparingWords(state.pending)); break;
       case "print": dropLine(); syncButton(); doPrint(); return;   // doPrint feeds `printed` itself, which syncs
+      case "printPdf": dropLine(); syncButton(); doPrintPdf(); return;   // doPrintPdf feeds `printed` too
       case "none": break;
     }
     syncButton();
   };
   const press = (): void => {
+    if (notice) dropLine();                    // the last press's notice (a PDF's tab) goes with this press
     if (state.phase !== "resting") { feed({ kind: "press", gated: 0, pending: 0 }); return; }   // armed: the second press disarms; busy: nothing
+    const file: PrintKind = host.kind ? host.kind() : "document";
+    if (file === "pdf") { feed({ kind: "press", gated: 0, pending: 0, file }); return; }   // the PDF prints itself: no placeholder, no picture to wait on
     const n = gates().length;
     feed({ kind: "press", gated: n, pending: n > 0 ? 0 : beginWait() });
   };

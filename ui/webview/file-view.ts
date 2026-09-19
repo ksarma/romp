@@ -2260,8 +2260,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // "Print without them" (Escape or a second press disarms); then the pictures are awaited, 8 s at most; then
   // window.print(). Ctrl/Cmd+P with a file open runs the same flow through the one document keydown listener the driver
   // installs, which leaves with the viewer through the close hooks both exits drain (runCloseHooks). A text field holding
-  // the keyboard leaves the chord to the browser (typingHere).
-  fileGroup.appendChild(installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); } }));
+  // the keyboard leaves the chord to the browser (typingHere). The kind is read at each press (`kind`: the kernel's
+  // Content-Type sets isPdf when the bytes land, after this bar is built): a PDF prints itself through its frame's own
+  // window (pdfBlock's iframe.fileview-frame, when it holds the document), else the kernel's /file URL opens in a new tab
+  // through openFileTab, the opener a modified click on a PDF uses, and the line says to print from there; a picture opened
+  // directly (imgBlock) is a document whose one picture is awaited, and the print block fits it to the page.
+  fileGroup.appendChild(installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); },
+    kind: () => (isPdf ? "pdf" : "document"), openTab: () => openFileTab(path, sid) }));
 
   // ── copy path (a glyph since T367) ── the acknowledgement is a glyph swap with the words in the tooltip and
   // aria-label: the press dims the button in the same tick (click-safe: every press acknowledges), then a check

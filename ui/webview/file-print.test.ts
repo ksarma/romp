@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { step, RESTING, armedWords, preparingWords, isPrintChord, settlePictures, collectPictures, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
-  WITH_WORDS, WITHOUT_WORDS, type PrintState, type Picture, type Timers } from "./file-print";
+  WITH_WORDS, WITHOUT_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, type PrintState, type Picture, type Timers } from "./file-print";
 
 // ── the machine ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -213,4 +213,42 @@ test("collectPictures: every img as itself; a poster and an svg image through a 
   assert.equal(pics.length, 2 + 3, "two imgs and three probes: two posters and one svg image");
   assert.equal(pics[0], img1); assert.equal(pics[1], img2);
   assert.deepEqual(probed, ["http://notes-api.test/clip-poster.png", "https://pics.test/p.png", "http://notes-api.test/diagrams/d.svg"]);
+});
+
+// ── the PDF kind (P4) ───────────────────────────────────────────────────────────────────────────────
+
+test("the PDF kind: a press at rest prints the document itself, whatever the counts; printed rests; a document's press is the flow above; the two lines' words", () => {
+  const r = step(RESTING, { kind: "press", gated: 2, pending: 3, file: "pdf" });
+  assert.equal(r.act, "printPdf");
+  assert.equal(r.state.phase, "printing");
+  assert.equal(step(r.state, { kind: "press", gated: 0, pending: 0, file: "pdf" }).act, "none", "a press during the print changes nothing");
+  const rested = step(r.state, { kind: "printed" });
+  assert.equal(rested.act, "rest");
+  assert.equal(rested.state.phase, "resting");
+  assert.equal(step(RESTING, { kind: "press", gated: 1, pending: 0, file: "document" }).act, "arm", "a document's press arms over a placeholder as before");
+  assert.equal(step(RESTING, { kind: "press", gated: 0, pending: 0 }).act, "print", "a press with no kind is a document's");
+  assert.equal(TAB_WORDS, "Print from the tab that opened.");
+  assert.equal(NO_TAB_WORDS, "The browser did not open a tab for this PDF.");
+});
+
+type FakeWin = { print: unknown; location: { href: string }; document: { contentType: string } | null };
+/** A body stand-in holding one `iframe.fileview-frame`, or none. */
+const frameBody = (frame: { contentWindow: FakeWin | null; src: string } | null): ParentNode =>
+  ({ querySelector: (sel: string) => (sel === "iframe.fileview-frame" ? frame : null) }) as unknown as ParentNode;
+const win = (href: string, type: string | null, print: unknown = () => {}): FakeWin => ({ print, location: { href }, document: type === null ? null : { contentType: type } });
+const BLOB = "blob:http://notes-api.test/11111111-2222-3333-4444-555555555555";
+
+test("pdfFrameWindow: the frame's window when it holds the PDF and can print; null with no frame, a withheld window, a window left at about:blank, a print that is no function, or a window that throws", () => {
+  const viewer = win(BLOB, "application/pdf");
+  assert.equal(pdfFrameWindow(frameBody({ contentWindow: viewer, src: BLOB })), viewer, "Chromium's viewer document reports application/pdf");
+  const paged = win(BLOB + "#page=3", "text/html");
+  assert.equal(pdfFrameWindow(frameBody({ contentWindow: paged, src: BLOB + "#page=3" })), paged, "a window at the frame's own blob URL holds the bytes the frame was aimed at, whatever type its viewer reports; the #page fragment is set aside");
+  const typeless = win(BLOB, null);
+  assert.equal(pdfFrameWindow(frameBody({ contentWindow: typeless, src: BLOB })), typeless, "no document to ask: the location decides");
+  assert.equal(pdfFrameWindow(frameBody(null)), null, "no frame: the Comments panel's pages are up");
+  assert.equal(pdfFrameWindow(frameBody({ contentWindow: null, src: BLOB })), null, "a withheld window");
+  assert.equal(pdfFrameWindow(frameBody({ contentWindow: win("about:blank", "text/html"), src: BLOB })), null, "the frame never loaded the PDF: a browser without a viewer downloaded the bytes and left the window at about:blank, whose print would print a blank page");
+  assert.equal(pdfFrameWindow(frameBody({ contentWindow: win(BLOB, "application/pdf", null), src: BLOB })), null, "print is no function");
+  const throwing: FakeWin = { print: () => {}, get location(): { href: string } { throw new Error("cross-origin"); }, document: null };
+  assert.equal(pdfFrameWindow(frameBody({ contentWindow: throwing, src: BLOB })), null, "a window that withholds its location");
 });
