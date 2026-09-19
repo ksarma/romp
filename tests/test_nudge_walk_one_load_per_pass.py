@@ -912,8 +912,9 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "non-hit gives the walk a new view object, so the gate derives; the two elements restored in review round 4, behind "
                          "_pass's reconciliations and its second-bump bound)")
         # (b) again, by the re-arming: p3's run recorded a fresh memo row for each session under the ledger's moved key (the gate
-        # wrapper records after every look that parsed, a standing row or not) and journaled nothing (these looks end with no
-        # state-gate verdict, so the pass pops no walk gate and writes nothing into the ledger), so every keyed file stands and
+        # wrapper records after every look that parsed and did not fire, a standing row or not; nothing fires here, the toggle is
+        # off) and journaled nothing (these looks end with no state-gate verdict, so the pass pops no walk gate and writes nothing
+        # into the ledger), so every keyed file stands and
         # this pass skips. A look that recorded only when no row stood, or re-recorded under the standing row's key, would run
         # here with the three passes above green: this pass's two lines are what pin the re-record (review round 4's replay check).
         p4 = self._pass(NOW + 15)
