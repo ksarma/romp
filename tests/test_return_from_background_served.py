@@ -352,7 +352,7 @@ class ReturnFromBackground(unittest.TestCase):
             shutil.rmtree(cls.lab, ignore_errors=True)
 
     # ---- the driver ----
-    def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None):
+    def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None, retry_enter=False):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
         if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
@@ -367,6 +367,7 @@ class ReturnFromBackground(unittest.TestCase):
                "healthz": "http://127.0.0.1:%d/healthz" % self.port, "diag": self.diag, "apps": list(APPS),
                "eagerApps": list(_eager(shell)), "freshApps": [a for a in eager if a in FRESH_APPS], "tapPane": tap,   # the boot wait is the eager panes' (a lazy pane has no shim to say up); the fresh wait includes a tapped pane
                "abortPane": tap if (abort or denied) else "",   # HIGH 2 (review round 1): the tapped pane's first document fetch fails; the shell must say so and the re-tap must load it
+               "retryEnter": bool(retry_enter),   # ui-1 (review round 4): after the failed state, Enter on the focused Try again button; the route still fails the fetch, and the driver reads the active element at the re-failure
                "abortMode": "denied" if denied else "abort",   # the failure's input: abort (the route aborts the navigation) or denied (review round 4, kernel-1 and tests-1: the route re-issues the pane's one request credential-less and hands the frame the REAL kernel's 403; not shown as served, the retry road stands)
                "perfShare": True, "bootTimeoutMs": 30000, "freshTimeoutMs": 25000, "settleMs": 1500,
                "bootTab": boot_tab or "", "expectPrefetchAfterChatTap": bool(boot_tab and tap == "chat"),   # stage 0, review round 1: a phone left on another tab, then the Chat tab shown, arms the idle chain
@@ -399,15 +400,15 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertEqual(len(full.get("dials") or []), r.get("dialsN"), "the full result carries every dial the compact line counted")
         return name, full
 
-    def _leg(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None):
-        name, r = self._drive(shell, regime, outage_s, engine, tap, boot_tab, abort, denied, hold_active_full_ms, active_sid)
+    def _leg(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None, retry_enter=False):
+        name, r = self._drive(shell, regime, outage_s, engine, tap, boot_tab, abort, denied, hold_active_full_ms, active_sid, retry_enter)
         rows = _rows(self.diag)
         m = measure(rows, r)
         art = os.path.join(self.lab, "return-harness-%s.json" % name)
         Path(art).write_text(json.dumps(m, indent=1, sort_keys=True))
         type(self).measurements[name] = m
         if abort or denied:
-            self._abort(name, r, rows, tap, engine, "denied" if denied else "abort")   # first on a failure leg: a detector that takes the failed fetch for a load leaves no shim to park or dial, so every later check fails after it, and the red should name the refused input (review round 2 closeout)
+            self._abort(name, r, rows, tap, engine, "denied" if denied else "abort", retry_enter)   # first on a failure leg: a detector that takes the failed fetch for a load leaves no shim to park or dial, so every later check fails after it, and the red should name the refused input (review round 2 closeout)
         if denied:
             self._denied(name, r, rows, tap)   # the denied leg's own checks: the real 403's status, and the page's state over the document it must not show
         self._shapes(name, r, m, regime)
@@ -496,7 +497,7 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertEqual(unmarked, [], where + "no pane-load-unmarked row: the denial was never shown as served: %r" % (unmarked,))
 
     # ---- HIGH 2 (review round 1, 2026-09-19): a lazy pane whose first document fetch fails is re-parked, says so, and loads on the re-tap ----
-    def _abort(self, name, r, rows, tap, engine, mode="abort"):
+    def _abort(self, name, r, rows, tap, engine, mode="abort", retry_enter=False):
         """The tapped pane's document fetch failed at the first tap: aborted by the route (mode abort), or answered by the real kernel's
         403 to a request stripped of its cookie (mode denied, review round 4; _denied below adds its own checks). The shell must paint the failed state where the user looks
         (body.pane-failed keeps #pane-load up at display:flex with the message and the loader down), re-park the pane (no src, the
@@ -525,15 +526,28 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertIsInstance(a.get("tabTrail"), list, where + "the Firefox walk is recorded (its Tab leaves the document): %r" % (a.get("tabTrail"),))
         self.assertEqual((a.get("src"), a.get("lazy")), (None, "/" + tap), where + "the pane is re-parked (no src, the url back under data-lazy-src): %r" % (a,))
         self.assertFalse(a.get("loading"), where + "the loading state is over: %r" % (a,))
+        if retry_enter:
+            # ui-1 (review round 4, 2026-09-19): the keyboard's retry keeps its focus. The driver focused the button and pressed Enter (its click:
+            # the retry); paintLoading hid the button while the retry loaded, which drops focus to the body in every engine; the route failed the
+            # fetch again and the failed paint that shows the button again must have put focus back on it (before: BODY, and no way back to the
+            # button but the Tab walk). The re-failure is the episode's second, so its copy is the second.
+            re_ = a.get("retryEnter") or {}
+            self.assertGreaterEqual(re_.get("ms", -1), 0, where + "Enter on the focused Try again button retried, and the pane failed again within the wait (the second copy painted): %r" % (re_,))
+            self.assertEqual(re_.get("msg"), "Still not loading. Try again, or reload the page.", where + "the episode's second failure's copy: %r" % (re_,))
+            self.assertIs(re_.get("hidden"), False, where + "the button is shown again in the failed state: %r" % (re_,))
+            self.assertEqual(re_.get("active"), "BUTTON#pane-load-retry", where + "…and holds the keyboard focus after the re-failure (the failed paint that shows it again puts focus back on the control that retried): %r" % (re_,))
         wid = r.get("wid") or ""
         mine = [x for x in rows if x.get("wid") == wid and x.get("surface") == "shell" and x.get("what") == "pane-load-failed"]
-        self.assertEqual(len(mine), 1, where + "one pane-load-failed row for the one failure: %r" % (mine,))
+        n_fail = 2 if retry_enter else 1
+        self.assertEqual(len(mine), n_fail, where + "%d pane-load-failed row(s): one per failure (the keyboard retry's re-failure counted when the leg pressed Enter): %r" % (n_fail, mine))
+        self.assertEqual([(x.get("data") or {}).get("n") for x in mine], list(range(1, n_fail + 1)), where + "the rows count the page's failures in order: %r" % (mine,))
         data = mine[0].get("data") or {}
         self.assertEqual((data.get("pane"), data.get("n")), (tap, 1), where + "the row names the pane and the count (the keys survive the allowlist): %r" % (data,))
+        vias = [(x.get("data") or {}).get("via") for x in mine]
         if mode == "denied":
-            self.assertEqual(data.get("via"), "load", where + "the kernel's 403 commits a document (text/plain) and fires load in every engine, so the load listener is the detector on all three: %r" % (data,))
+            self.assertEqual(vias, ["load"] * n_fail, where + "the kernel's 403 commits a document (text/plain) and fires load in every engine, so the load listener is the detector on all three, for every failure: %r" % (mine,))
         else:
-            self.assertEqual(data.get("via"), "load" if engine == "chromium" else "backstop", where + "the detector per engine, as observed under the route's abort: Chromium commits an error page and fires load; Firefox and WebKit fire no load event the shell can act on (the frame keeps about:blank), so the 30 s backstop detects it: %r" % (data,))
+            self.assertEqual(vias, ["load" if engine == "chromium" else "backstop"] * n_fail, where + "the detector per engine, as observed under the route's abort: Chromium commits an error page and fires load; Firefox and WebKit fire no load event the shell can act on (the frame keeps about:blank), so the 30 s backstop detects it: %r" % (mine,))
         la = r.get("loadingAfterTap") or {}
         self.assertFalse(la.get("failed"), where + "the re-tap cleared the failed state: %r" % (la,))
         self.assertIs(la.get("retryHidden"), True, where + "…and the retry button is hidden again after the re-tap's load: %r" % (la,))
@@ -795,7 +809,7 @@ class ReturnFromBackground(unittest.TestCase):
         self._leg("phone", "hung", 12)
 
     def test_phone_hung_12s_tab_tap(self):
-        self._leg("phone", "hung", 12, tap="fleet", abort=True)   # stage 0: a lazy pane tapped before the suspend loads on the tap and parks at the return; its FIRST fetch is aborted (HIGH 2, review round 1): the shell says so and the re-tap loads it
+        self._leg("phone", "hung", 12, tap="fleet", abort=True, retry_enter=True)   # stage 0: a lazy pane tapped before the suspend loads on the tap and parks at the return; its FIRST fetch is aborted (HIGH 2, review round 1): the shell says so and the re-tap loads it; Enter on the focused Try again button keeps its focus across the re-failure (ui-1, review round 4; Chromium's detector is the load listener, so the re-failure is quick)
 
     # extra9-2 (review round 3, 2026-09-19): the two panes whose served markup this change takes lazy (src to data-src) tapped in a real
     # engine, so the first-tap road is witnessed on them and not on the Outline alone (which carried data-src before): the document loads
@@ -812,7 +826,7 @@ class ReturnFromBackground(unittest.TestCase):
     # pane-load-failed row via load and no pane-load-unmarked row, and the re-tap (the cookie flowing again) loads the pane. Round 3's leg fulfilled
     # a stand-in body here. The load listener is the detector in every engine (a 403 commits a document), so the twins pin the same via
     def test_phone_hung_12s_tab_tap_denied_document(self):
-        self._leg("phone", "hung", 12, tap="fleet", denied=True)
+        self._leg("phone", "hung", 12, tap="fleet", denied=True, retry_enter=True)   # + ui-1 (review round 4): the keyboard's retry keeps its focus across the re-failure, on every engine (the 403 fires load everywhere)
 
     def test_the_kernel_stamps_every_200_html_document_at_a_pane_url_and_its_denial_carries_no_stamp(self):
         # review round 4 (kernel-1): the writer's rule, read off the real kernel: every text/html 200 at a pane url (the seven pane routes and the
@@ -839,10 +853,10 @@ class ReturnFromBackground(unittest.TestCase):
                 self.assertFalse(b"data-romp-served" in denial, p + ": ...and carries no stamp (%d bytes)" % (len(denial),))
 
     def test_firefox_phone_hung_12s_tab_tap_denied_document(self):
-        self._leg("phone", "hung", 12, engine="firefox", tap="fleet", denied=True)
+        self._leg("phone", "hung", 12, engine="firefox", tap="fleet", denied=True, retry_enter=True)
 
     def test_webkit_phone_hung_12s_tab_tap_denied_document(self):
-        self._leg("phone", "hung", 12, engine="webkit", tap="fleet", denied=True)
+        self._leg("phone", "hung", 12, engine="webkit", tap="fleet", denied=True, retry_enter=True)
 
     def test_phone_hung_12s_the_start_gate_holds_the_chain_behind_the_active_tabs_full(self):
         self._leg("phone", "hung", 12, hold_active_full_ms=1500)   # fresh-2 (review round 3): the chat on screen, the active tab's full held 1.5 s on the wire: no prefetch inside the hold, one after it

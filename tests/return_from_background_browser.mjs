@@ -414,6 +414,7 @@ try {
         if (failedSeen) break;
         await sleep(200);
       }
+      const abortMs = failedSeen ? now() - out.t.tap : -1;   // to the failed state; the walk and the keyboard retry below are not its wait
       // the keyboard road (ui-1): from the body, Tab until the retry button is the active element (the overlay precedes the pane iframes in the
       // document, and the rail is display:none on the phone); recorded as the presses it took, -1 when twenty did not reach it, with the trail
       // of what each press focused (tag#id). Chromium and WebKit wrap through the document and reach it (10 presses in Chromium); playwright's
@@ -430,7 +431,32 @@ try {
           if (at === "BUTTON#pane-load-retry") { tabsToReach = i; break; }
         }
       }
-      out.abort = { ms: failedSeen ? now() - out.t.tap : -1, mode: cfg.abortMode || "abort", tabsToReach, tabTrail, ...(failedSeen || {}), ...(cfg.abortMode === "denied" ? { denied } : {}) };
+      // ui-1 (review round 4, 2026-09-19): the keyboard's retry keeps its focus across the re-failure. Enter on the focused button runs its
+      // click (the retry); paintLoading hides the button while the retry loads, which drops focus to the body in every engine, and the failed
+      // paint that shows it again must put focus back, or the keyboard road survives one activation (round 3's leg pressed nothing). The route
+      // still fails the fetch, so the second failure comes with the episode's second copy; read then: the active element and the button's
+      // hidden state. Legs whose detector is the load listener (cfg.retryEnter: the Chromium abort leg, the denied legs), so the wait is the load's.
+      let retryEnter = null;
+      if (failedSeen && cfg.retryEnter) {
+        await page.evaluate(() => { document.getElementById("pane-load-retry").focus(); });   // the keyboard's focus on the button (the walk above left it, or never reached it on Firefox)
+        const t0 = now();
+        await page.keyboard.press("Enter");
+        const again = "Still not loading. Try again, or reload the page.";
+        let seen = null;
+        const dl = now() + 45000;
+        while (now() < dl) {
+          seen = await page.evaluate((again) => {
+            const m = document.getElementById("pane-load-msg");
+            if (!document.body.classList.contains("pane-failed") || !m || m.textContent !== again) return null;
+            const a = document.activeElement, b = document.getElementById("pane-load-retry");
+            return { active: a ? a.tagName + "#" + (a.id || "") : "none", hidden: b.hidden, msg: m.textContent };
+          }, again);
+          if (seen) break;
+          await sleep(100);
+        }
+        retryEnter = { ms: seen ? now() - t0 : -1, ...(seen || {}) };
+      }
+      out.abort = { ms: abortMs, mode: cfg.abortMode || "abort", tabsToReach, tabTrail, ...(failedSeen || {}), ...(cfg.abortMode === "denied" ? { denied } : {}), ...(retryEnter ? { retryEnter } : {}) };
       await page.unroute(isAbortUrl, aborter);
       await armDocLoad();   // the re-tap's document is the one whose load is stamped
       out.t.retap = now();

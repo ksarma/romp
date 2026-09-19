@@ -1138,7 +1138,9 @@ _LAZY_HARNESS = r"""
 'use strict';
 const STORE = {}, SETS = {}, LOG = [], POSTED = {}, LOADS = {}, TIMERS = [], MQL = [], MSGS = [], STORAGE = [], SOCKS = [], CLICKS = [];
 const MSG = { textContent: '', role: 'alert' }, LOADEL = { addEventListener: (ev, f) => { if (ev === 'click') CLICKS.push(f); } };   // #pane-load-msg and #pane-load (the failed state's message and its tap-to-retry, review round 1)
-const RETRY = { hidden: true, clicks: [], addEventListener: (ev, f) => { if (ev === 'click') RETRY.clicks.push(f); } };   // #pane-load-retry, the failed state's button (review round 3, ui-1): hidden until the failed paint
+let ACTIVE = 'body';   // document.activeElement's stand-in (review round 4, ui-1): 'retry' once the button's focus() lands on a SHOWN button; back to 'body' when the button is hidden, the way every engine drops focus off a hidden control (the served keyboard witness reads BODY there)
+const RETRY = { _h: true, clicks: [], focus: () => { if (!RETRY._h) ACTIVE = 'retry'; }, get hidden() { return RETRY._h; }, set hidden(v) { RETRY._h = !!v; if (RETRY._h && ACTIVE === 'retry') ACTIVE = 'body'; },
+  addEventListener: (ev, f) => { if (ev === 'click') RETRY.clicks.push(f); } };   // #pane-load-retry, the failed state's button (review round 3, ui-1): hidden until the failed paint
 let MATCHES = __PHONE__;
 const KEYS = __KEYS__;
 const attrsOf = (k) => ((k === 'chat') ? { src: '/' + k } : { 'data-src': '/' + k });   // the served markup: the chat alone ships src
@@ -1593,6 +1595,35 @@ console.log(JSON.stringify(out));
 """
 
 
+# ui-1 (review round 4, 2026-09-19): the keyboard's retry keeps its focus. paintLoading hides the button while the retry loads, which drops focus to the
+# body in every engine (the served leg's witness); the failed paint that shows it again must put focus back, and nothing else may move focus onto it.
+_LAZY_FOCUS_DRIVER = _LAZY_TOOLS + r"""
+SOCKS.forEach((s) => { s.readyState = 1; s.onopen && s.onopen(); });
+shimUp('feed'); (LOADS.feed || []).forEach((f) => f());
+const snap = (k) => ({ tab: TAB, src: src()[k], div: divCls(k), bodyFailed: BODY_CLS.has('pane-failed'), msg: MSG.textContent, retryHidden: RETRY.hidden, active: ACTIVE, rows: diagRows('pane-load-failed').length });
+const fail = (k) => { frames['f-' + k].contentDocument = null; (LOADS[k] || []).forEach((f) => f()); };   // the fetch fails: the error page's load (Chromium's road)
+const pressEnter = () => RETRY.clicks.forEach((f) => f({ stopPropagation() {} }));   // Enter on the focused button: a real <button> runs its click natively
+window.__rompMobileTab('waiting'); fail('waiting');
+RETRY.focus();   // the keyboard walk lands on the button (the served leg's Tab witness)
+out.focused = snap('waiting');
+pressEnter();   // the retry: the button hidden while the retry loads, the focus dropped to the body
+out.retrying = snap('waiting');
+fail('waiting');   // the re-failure: the failed paint shows the button again and puts the focus back on it
+out.refailed = snap('waiting');
+pressEnter(); shimUp('waiting'); (LOADS.waiting || []).forEach((f) => f());   // the retry loads: the button hidden, the load retires the flag
+out.loaded = snap('waiting');
+fail('waiting');   // a later failure of the SAME shown pane, hand-fired (no shipped road re-navigates a loaded pane; the episode case's shape): no tab switch between, so the load alone retired the flag
+out.sameLater = snap('waiting');
+window.__rompMobileTab('fleet'); fail('fleet');   // a later pane's FIRST failure: no gesture on the button, so it takes no focus (the amendment's negative)
+out.laterFirst = snap('fleet');
+CLICKS.forEach((f) => f()); fail('fleet');   // the overlay tap retries too, a pointer gesture: the re-failure focuses nothing
+out.overlayRefail = snap('fleet');
+RETRY.focus(); pressEnter();   // the keyboard's retry again...
+window.__rompMobileTab('chat'); window.__rompMobileTab('fleet');   // ...but the user switches tabs before the verdict (and comes back): the switch retired the flag
+fail('fleet');
+out.switchedRefail = snap('fleet');
+console.log(JSON.stringify(out));
+"""
 def _lazy(seed, driver, phone=True, abort_mobile=False):
     """The three shell scripts in the served order: the desktop promotion (_LANDING_DESKTOP_PANES_JS, review round 1), the mobile
     script, the pane controller. `abort_mobile` wraps the mobile script in a try so the harness's seed can make it throw partway
@@ -1993,6 +2024,33 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(f2["msg"], "Couldn't load this pane.", "a failure after a good load is this episode's FIRST: the first copy (before: the second, from the page-life count)")
         self.assertEqual(f2["rows"], f1["rows"] + [{"pane": "waiting", "via": "load", "n": 2}], "…while the row's n keeps counting the page's failures (FAILS is untouched by the load)")
         self.assertEqual((f2["div"], f2["retryHidden"]), (["failed"], False))
+
+    def test_the_keyboards_retry_keeps_its_focus_across_the_re_failure_and_nothing_else_moves_focus_onto_the_button(self):
+        # ui-1 (review round 4, 2026-09-19): paintLoading hides #pane-load-retry while the retry loads, and hiding the focused button moves focus
+        # to the document body in all three engines with nothing restoring it when the failed state repaints, so round 3's keyboard road survived
+        # exactly one activation. The button's click sets a flag; the failed paint that shows the button again focuses it once on that flag; a
+        # load and a tab switch clear the flag (the refuter's amendment: without that a later pane's first failure stole focus onto the button).
+        # The harness models document.activeElement over the button alone; the served leg reads the real one (test_return_from_background_served.py).
+        o = _lazy(self.seed, _LAZY_FOCUS_DRIVER)
+        self.assertEqual((o["focused"]["retryHidden"], o["focused"]["active"]), (False, "retry"), "the failed state's button, focused by the keyboard walk")
+        self.assertEqual((o["retrying"]["retryHidden"], o["retrying"]["active"], o["retrying"]["div"]), (True, "body", ["loading"]), "Enter retries: the button is hidden while the retry loads and the focus falls to the body, as every engine does")
+        r = o["refailed"]
+        self.assertEqual((r["bodyFailed"], r["retryHidden"], r["msg"], r["active"]), (True, False, "Still not loading. Try again, or reload the page.", "retry"), "the re-failure's paint shows the button again and puts the focus back on it (before: the body, so the keyboard road survived one activation)")
+        self.assertEqual((o["loaded"]["retryHidden"], o["loaded"]["active"]), (True, "body"), "the good load hides the button")
+        sl = o["sameLater"]
+        self.assertEqual((sl["bodyFailed"], sl["retryHidden"], sl["active"]), (True, False, "body"), "a later failure of the same pane after its load, with no tab switch between: the LOAD retired the flag, so the failed paint focuses nothing (the refuter's amendment)")
+        lf = o["laterFirst"]
+        self.assertEqual((lf["tab"], lf["bodyFailed"], lf["retryHidden"], lf["active"]), ("fleet", True, False, "body"), "a later pane's first failure shows the button and takes no focus: no gesture asked for it (the load retired the flag)")
+        self.assertEqual(o["overlayRefail"]["active"], "body", "the overlay tap is a pointer gesture: its re-failure moves no focus")
+        self.assertEqual((o["switchedRefail"]["msg"], o["switchedRefail"]["active"]), ("Still not loading. Try again, or reload the page.", "body"), "a tab switch after the keyboard's retry retires it: the failure that lands after the switch focuses nothing")
+        js = km._LANDING_MOBILE_JS
+        self.assertIn("var rb=document.getElementById('pane-load-retry');if(rb){rb.hidden=!bad;if(bad&&RFOC){RFOC=false;try{rb.focus();}catch(e){}}}", js, "the failed paint restores the focus once, on the flag")
+        self.assertIn("retry();RFOC=true;});", js, "the button's click sets the flag after its retry (whose show() clears it)")
+        self.assertIn("function loaded(k){EPI[k]=0;PEND[k]=0;DEAD[k]=0;RFOC=false;", js, "a load clears it")
+        sw = "\nRFOC=false;   // [fork] review round 4 (2026-09-19, ui-1)"
+        self.assertIn(sw, js, "a tab switch clears it, on a fork line of its own inside show()")
+        self.assertLess(js.index("pw.__rompPaneShown();}catch(e){}"), js.index(sw), "…after the show hook's line")
+        self.assertLess(js.index(sw), js.index("for(var i=0;i<B.length;i++)B[i].classList.toggle('on',B[i].getAttribute('data-pane')===p);"), "…and before the upstream tab-class line, which is untouched")
 
     def test_the_promotion_token_makes_a_stale_listener_and_a_stale_backstop_inert_across_a_retry(self):
         # HIGH 2, review round 2 closeout: the two `if(TOK[k]!==tok)return;` guards were unpinned (the failed-load case above reaches its
