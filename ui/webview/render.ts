@@ -4302,8 +4302,8 @@ function utDisarm(tid: string): void {
   if (node) paintUtDismiss(node, false);
 }
 // OPTIMISTIC REMOVAL (Reply sent / Dismiss confirmed): the client drops the row before any verdict and the next
-// push confirms. The ids awaiting that confirmation gate the warn-frame re-sync (a warn carries no sid or request
-// id, so "this client has a removal pending" is the only gate it has), and a push that no longer lists an id
+// push confirms. The ids awaiting that confirmation gate the warn-frame re-sync (the refusal names its session but
+// no request id, so "this client has a removal pending" is the only gate it has), and a push that no longer lists an id
 // settles it, per session. Keyed request id -> its SESSION id: the warn's re-sync must reach the view that holds
 // the refused row, and the user may have switched sessions inside the round-trip.
 const utPendingRemoval = new Map<string, string>();
@@ -4332,15 +4332,15 @@ function utDropRow(row: Element | null): void {
   if (!row) return;
   const card = row.closest(".todo-list");
   // a row inside the hidden block past the twelfth: the block's toggle counts the rows it hides, so its label
-  // follows the removal too (through utFoldLabel, the render's own), and the last hidden row takes the toggle and
+  // follows the removal too (through utRestLabel, the render's own), and the last hidden row takes the toggle and
   // the empty block with it
   const rest = row.parentElement?.classList.contains("ut-rest") ? row.parentElement : null;
   row.remove();
   if (!card) return;
   if (rest) {
     const m = rest.querySelectorAll(".ut-item").length;
-    const tog = card.querySelector(".ut-fold") as HTMLElement | null;
-    if (m && tog) { tog.dataset.n = String(m); utFoldLabel(tog, rest.classList.contains("todo-open"), m); }
+    const tog = card.querySelector(".ut-rest-toggle") as HTMLElement | null;
+    if (m && tog) { tog.dataset.n = String(m); utRestLabel(tog, rest.classList.contains("todo-open"), m); }
     else { tog?.remove(); rest.remove(); }
   }
   const head = card.querySelector(".ut-head");
@@ -4367,7 +4367,7 @@ function paintUtHint(node: HTMLElement, open: boolean): void {
   node.textContent = h.text; node.title = h.title; node.setAttribute("aria-label", h.title);
 }
 // the label of the toggle for the rows past the twelfth, shared by the render and the delegate's flip
-function utFoldLabel(tog: HTMLElement, open: boolean, n: number): void {
+function utRestLabel(tog: HTMLElement, open: boolean, n: number): void {
   tog.textContent = open ? `hide ${n}` : `+ ${n} more waiting`;
   setTip(tog, open ? "hide the older requests again" : "show the requests past the first twelve");
 }
@@ -4503,14 +4503,14 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
     const inline = uts.slice(0, UT_INLINE_ROWS), rest = uts.slice(UT_INLINE_ROWS);
     for (const t of inline) body.appendChild(utRow(t));
     if (rest.length) {
-      const utFoldKey = "ut-more:" + (renderingSid || "");
+      const utRestKey = "ut-rest:" + (renderingSid || "");
       const box = el("div", "ut-rest");
       for (const t of rest) box.appendChild(utRow(t));
-      applyFold(box, "todo-open", utFoldKey);
-      const tog = el("button", "todo-fold ut-fold") as HTMLButtonElement;
+      applyFold(box, "todo-open", utRestKey);
+      const tog = el("button", "todo-fold ut-rest-toggle") as HTMLButtonElement;
       tog.type = "button";
-      tog.dataset.act = "utfold"; tog.dataset.nkey = utFoldKey; tog.dataset.n = String(rest.length);
-      utFoldLabel(tog, box.classList.contains("todo-open"), rest.length);
+      tog.dataset.act = "utrest"; tog.dataset.nkey = utRestKey; tog.dataset.n = String(rest.length);
+      utRestLabel(tog, box.classList.contains("todo-open"), rest.length);
       body.appendChild(tog);
       body.appendChild(box);
     }
@@ -19236,7 +19236,8 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
   }
   else if (m.type === "warn" && typeof m.text === "string" && m.text) {
     // A warn that names a session (sid) is the kernel's refusal of something sent INTO that session: a slash command
-    // a Codex session cannot take, refused before any backend saw it (2026-09-19). It is never a create's verdict,
+    // a Codex session cannot take, refused before any backend saw it (2026-09-19), or a Reply or Dismiss on one of its
+    // requests that the kernel would not take. It is never a create's verdict,
     // whatever is in flight. When it also names the press (qid) no echo will ever land for that copy, so the
     // optimistic bubble ends on THIS event, the kernel's verdict, and the words go back into an EMPTY composer (the
     // hostIsDown refusal's idiom: a draft is never overwritten); a refusal that names no press (a battery click, a POST
@@ -19266,7 +19267,7 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     // request remove their row optimistically before any verdict. While one of those is pending, re-sync from the
     // events so a refused row returns NOW: the kernel's state did not change on a refusal, so the next push can
     // dedup to nothing and the optimistic removal would otherwise stand until an unrelated repaint. GATED on the
-    // pending set: the frame carries no sid or request id, and a warn about anything else should repaint nothing.
+    // pending set: the frame names its session but no request id; a warn about anything else should repaint nothing.
     // EVERY view holding a pending id goes stale, not only the active one: the user may have switched sessions
     // inside the round-trip; appendActive rebuilds the active one now, a hidden one rebuilds on its next switch.
     if (utPendingRemoval.size) {
@@ -21234,11 +21235,11 @@ setupSettings();
       todoFoldLabel(el, box.classList.contains("todo-open"), Number(el.dataset.n) || 0);
     },
     // the requests past the twelfth on the to-do card (renderTodo): flip the box, keep the state in openFolds, relabel
-    utfold: (elx) => {
+    utrest: (elx) => {
       const box = elx.parentElement?.querySelector(".ut-rest") as HTMLElement | null;
       if (!box) return;
       rememberFold(box, "todo-open", elx.dataset.nkey || undefined);
-      utFoldLabel(elx, box.classList.contains("todo-open"), Number(elx.dataset.n) || 0);
+      utRestLabel(elx, box.classList.contains("todo-open"), Number(elx.dataset.n) || 0);
     },
     // REQUESTS on the to-do card (plans/user-todos.md). All delegated like qx: the transcript tail rebuilds on every
     // push and a per-render listener eats a mid-press click. The detail disclosure keys through utDetailOpen so it

@@ -66,6 +66,7 @@ class _Sandbox(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         self.saved = jd.STATE
+        self.addCleanup(setattr, jd, "STATE", jd.STATE)   # holds even when a later setUp line raises (no tearDown then)
         jd.STATE = Path(self.td.name)
         Path(self.td.name, "session-hosts").write_text("off")
         km._user_todos_cache.clear()
@@ -501,11 +502,13 @@ class OffOnTheDriveOps(_Sandbox):
         self.assertEqual(self.injected, [])
         self.assertEqual(self._warns(), [km._USER_TODOS_OFF_WARN])
         self.assertNotIn("already settled", self._warns()[0])
+        self.assertEqual([m.get("sid") for m in self.sent], [SID], "the refusal names its session: a toast, never a create's verdict")
         self.assertNotIn("resolved", km._user_todos()[SID][0])
 
     def test_dismiss_warns_and_stamps_nothing(self):
         km._drive({"type": "userTodoDismiss", "id": SID, "todoId": self.tid}, self.client)
         self.assertEqual(self._warns(), [km._USER_TODOS_OFF_WARN])
+        self.assertEqual([m.get("sid") for m in self.sent], [SID], "the refusal names its session")
         self.assertNotIn("resolved", km._user_todos()[SID][0])
 
     def test_the_warning_names_the_switch_and_what_did_not_happen(self):
@@ -702,6 +705,35 @@ class UnreadableStoreOnThePayload(_PayloadSandbox):
             self.assertEqual(bad, km._user_todo_fp(SID2), "byte-stable while the file stands")
             km._set_user_todos(False)
             self.assertIsNone(km._user_todo_fp(SID2))
+
+
+class TrackingOffKeepsCardAndFlag(_PayloadSandbox):
+    """Requests ride their OWN switch, independent of task tracking (the gear's note beside the Requests row says so):
+    with task tracking OFF and requests ON, the chat card's rows and the status row's openRequests still ship (the
+    card and the tab flag stay), while the feed's off frame carries no request map and badges nothing (the marker,
+    the badge and the idle hold wait for tracking). test_user_todos.py's ContextRoute pins the resume block's
+    independence the same way; this class pins the card's and the flag's."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(setattr, km, "_task_tracking_on", km._task_tracking_on)
+        km._task_tracking_on = lambda: False
+        km._set_user_todos(True)                    # the fixture stores one row and leaves the switch OFF: this is the ON side
+        self.blocking = km._add_user_todo(SID, "Need the staging port", blocking=True)
+
+    def test_the_card_rows_and_the_flag_count_ship_while_the_off_frame_carries_neither_marker_nor_badge(self):
+        self.assertFalse(km._task_tracking_on(), "the fixture: tracking is off")
+        payload = self.build()
+        self.assertCountEqual([t["id"] for t in payload["userTodos"]], [self.tid, self.blocking], "both rows ship")
+        evs = self._todo_events(payload)
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(len(evs[0]["userTodos"]), 2, "the card renders from the event")
+        self.assertEqual((payload.get("status") or {}).get("openRequests"), 2, "the tab flag's count on the status row")
+        light = km._light_status(SID, str(self.tpath), self.row, NOW)
+        self.assertEqual(light["openRequests"], 2, "the skeleton tab's status row carries it too")
+        off = km._feed_off_frame(NOW, self.live_map)
+        self.assertNotIn("userTodos", off, "the off frame carries no marker map")
+        self.assertEqual(km._needs_you_count(off), 0, "no card exists off tracking, so nothing badges")
 
 
 class OffOnTheBadge(_Sandbox):

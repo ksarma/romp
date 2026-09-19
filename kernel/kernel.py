@@ -20579,18 +20579,20 @@ def _drive(msg, client):
         # sent, and so does an ENDED session (the answer would vanish while the stamp read answered). The
         # switch is checked FIRST: a dashboard can still show a row it was handed before the flip, and the
         # gated read is [] while off, so the settled-row story would be the wrong one; the flagged store
-        # comes next, since the guard's empty read is not a state either.
+        # comes next, since the guard's empty read is not a state either. Every refusal below names the session
+        # (sid), the refused-slash warn's shape: the client only toasts a warn that names a session, and never
+        # reads it as the verdict of a tab it is creating at that moment.
         tid = str(msg["todoId"])
         if not _user_todos_on():
-            client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_OFF_WARN}))
+            client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_OFF_WARN, "sid": sid}))
         elif _user_todos_unreadable():
-            client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_UNREADABLE_WARN}))
+            client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_UNREADABLE_WARN, "sid": sid}))
         else:
             hit = next((x for x in _open_user_todos(sid) if x["id"] == tid), None)
             if hit is None:
-                client["send"](json.dumps({"type": "warn", "text": _USER_TODO_SETTLED_WARN}))
+                client["send"](json.dumps({"type": "warn", "text": _USER_TODO_SETTLED_WARN, "sid": sid}))
             elif _user_todo_session_ended(sid):
-                client["send"](json.dumps({"type": "warn", "text": _USER_TODO_ENDED_WARN}))
+                client["send"](json.dumps({"type": "warn", "text": _USER_TODO_ENDED_WARN, "sid": sid}))
             else:
                 body = _user_todo_answer_body(hit["text"], str(msg["text"]))
                 got = _send_or_park(be, sid, body, user=True, user_todo=tid)
@@ -20605,26 +20607,27 @@ def _drive(msg, client):
                         # never raised: out of _drive it would land in _dispatch_ws's per-message except and
                         # the client would hear nothing about the row that stayed open
                         sys.stderr.write("user-todos: answered stamp for %s failed after delivery: %s\n" % (tid, e))
-                        client["send"](json.dumps({"type": "warn", "text": _USER_TODO_STAMP_FAILED_WARN}))
+                        client["send"](json.dumps({"type": "warn", "text": _USER_TODO_STAMP_FAILED_WARN, "sid": sid}))
                 else:
-                    client["send"](json.dumps({"type": "warn", "text": _USER_TODO_UNDELIVERED_WARN}))
+                    client["send"](json.dumps({"type": "warn", "text": _USER_TODO_UNDELIVERED_WARN, "sid": sid}))
         _push_soon()
     elif t == "userTodoDismiss" and msg.get("todoId"):
         # the user clears a request without a reply, for moot and stale items; nothing reaches the session.
-        # Loud when the id is already settled, for the same stale-row reason as above.
+        # Loud when the id is already settled, for the same stale-row reason as above; every refusal names the
+        # session, like the answer's.
         if not _user_todos_on():
-            client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_OFF_WARN}))
+            client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_OFF_WARN, "sid": sid}))
         elif _user_todos_unreadable():
-            client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_UNREADABLE_WARN}))
+            client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_UNREADABLE_WARN, "sid": sid}))
         else:
             try:
                 if not _resolve_user_todo(sid, str(msg["todoId"]), "dismissed"):
-                    client["send"](json.dumps({"type": "warn", "text": _USER_TODO_DISMISS_SETTLED_WARN}))
+                    client["send"](json.dumps({"type": "warn", "text": _USER_TODO_DISMISS_SETTLED_WARN, "sid": sid}))
             except RuntimeError as e:
                 # the store went bad between the check above and the write (the writer's own refusal): the same
                 # "nothing changed" the check answers, told on the socket, never a raise the client hears nothing of
                 sys.stderr.write("user-todos: dismiss of %s refused: %s\n" % (str(msg["todoId"]), e))
-                client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_UNREADABLE_WARN}))
+                client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_UNREADABLE_WARN, "sid": sid}))
         _push_soon()
     elif t == "dismissEcho" and hasattr(be, "dismiss_echo"):
         # ✕ on a never-delivered bubble (a send whose CLI died holding it — the backend's dropped-echo

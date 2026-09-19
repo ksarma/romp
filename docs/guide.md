@@ -455,11 +455,11 @@ wears a small "blocking" word after the line. Each row has two buttons:
   press Enter. On a phone, Enter starts a new line and **Send** sends. The
   answer reaches the session as a message from you, headed with `Re:` and the
   request's own line, so a short answer such as "session cookies" lands without
-  ambiguity. The row leaves the card once the session has taken the answer. If
-  the answer has to wait first (the session is compacting, or other messages
-  are ahead of it in the queue), the row reads **answer queued** in Reply's
-  place until it goes; the queued bubble's cancel takes the answer back and the
-  row's Reply returns.
+  ambiguity. The row leaves the card as soon as you send. If the answer has to
+  wait first (the session is compacting, or other messages are ahead of it in
+  the queue), the row comes back reading **answer queued** in Reply's place
+  until the answer goes; the queued bubble's cancel takes the answer back and
+  the row's Reply returns.
 - **Dismiss** clears the request without sending anything. Press it twice; the
   first press asks you to confirm. Use it for a request that is moot or stale.
 
@@ -523,13 +523,14 @@ card is silent.
 
 Hiding a session from the feed (right-click its tab, **Hide from feed**) hides
 its cards, their markers and their move to Blocked; its tab keeps the flag,
-because the tab describes the session itself. If a session has ended, its requests stay out of the card
-and off its tab until you revive it; they are hidden, not cleared, and come
-back with the session. A session that is only asleep after a kernel restart is
-still listed, and Reply wakes it with its history intact. An answer that never
-reached the session (its process died holding it, or you cancelled it from the
-queue) puts the request back on the card; an answer the transcript shows the
-session received keeps the request closed.
+because the tab describes the session itself. If a session has ended, its
+requests stay out of the card and off its tab until you revive it; they are
+hidden, not cleared, and come back with the session. A session that is only
+asleep after a kernel restart is still listed, and Reply wakes it with its
+history intact. An answer that never reached the session (its process died
+holding it, or you cancelled it from the queue) puts the request back on the
+card; an answer the transcript shows the session received keeps the request
+closed.
 
 ### Turning it on
 

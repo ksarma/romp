@@ -1,7 +1,7 @@
 # Requests from sessions: what a session needs from you, held until you or it says otherwise
 
 **Status: design settled 2026-08-20/21, re-decided 2026-09-19 (the reviewer's questions and their answers are
-worked into the sections below), and built as five stacked changes (see Build segments at the end): A, the
+worked into the sections below), and built as five stacked changes (see Build segments below): A, the
 send path's contract; B, the store, the two postal tools, the card and the switch; C, the resume block; D,
 the tab flag and the feed marker; E, the idle hold, the nudge and the badge.** The decisions recorded here
 are the plan of record. File and line references describe the tree the design was written against and are

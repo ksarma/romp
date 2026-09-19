@@ -90,7 +90,7 @@ test("reply and dismiss are delegated to the stable root, never per-render liste
   assert.match(RENDER, /utreply: \(elx\) => \{/);
   assert.match(RENDER, /utdismiss: \(elx\) => \{/);
   assert.match(RENDER, /uttoggle: \(elx\) => \{/);
-  assert.match(RENDER, /utfold: \(elx\) => \{/);
+  assert.match(RENDER, /utrest: \(elx\) => \{/);
 });
 
 test("dismiss arms then confirms in place, posts the op, and removes the row optimistically", () => {
@@ -365,13 +365,13 @@ test("executed: past twelve open rows the rest hide behind a keyed toggle; at tw
   const rows = (n: number) => Array.from({ length: n }, (_, i) => ({ id: "u" + (i + 1), text: "request " + (i + 1) }));
   const twelve = todoCard(rows(12));
   assert.equal(twelve.items(), 12);
-  assert.equal(twelve.turn.querySelector('[data-act="utfold"]'), null, "twelve rows: all inline, no toggle");
+  assert.equal(twelve.turn.querySelector('[data-act="utrest"]'), null, "twelve rows: all inline, no toggle");
   const thirteen = todoCard(rows(13));
   assert.equal(thirteen.items(), 13, "every row is rendered (the count stays honest)");
-  const tog = thirteen.turn.querySelector('[data-act="utfold"]')!;
+  const tog = thirteen.turn.querySelector('[data-act="utrest"]')!;
   assert.ok(tog, "the toggle exists");
   assert.equal(tog.textContent, "+ 1 more waiting");
-  assert.equal(tog.dataset.nkey, "ut-more:web", "keyed per session so the state survives re-renders");
+  assert.equal(tog.dataset.nkey, "ut-rest:web", "keyed per session so the state survives re-renders");
   const box = thirteen.turn.querySelector(".ut-rest")!;
   assert.ok(box, "the hidden rows sit in their own block");
   assert.equal(box.querySelectorAll(".ut-item").length, 1, "the thirteenth row is the hidden one");
@@ -380,11 +380,11 @@ test("executed: past twelve open rows the rest hide behind a keyed toggle; at tw
   assert.equal(thirteen.turn.querySelectorAll(".ut-item")[0].querySelector(".ut-text")!.textContent, "request 1", "oldest first");
   thirteen.drop("u13");
   assert.equal(thirteen.head(), "Waiting on you · 12", "a removal inside the hidden block recounts the head");
-  assert.equal(thirteen.turn.querySelector('[data-act="utfold"]'), null, "the last hidden row takes the toggle with it");
+  assert.equal(thirteen.turn.querySelector('[data-act="utrest"]'), null, "the last hidden row takes the toggle with it");
   assert.equal(thirteen.turn.querySelector(".ut-rest"), null, "and the empty block");
   assert.equal(thirteen.items(), 12);
-  const open = todoCard(rows(14), [], { openFolds: ["ut-more:web"] });
-  const openTog = open.turn.querySelector('[data-act="utfold"]')!;
+  const open = todoCard(rows(14), [], { openFolds: ["ut-rest:web"] });
+  const openTog = open.turn.querySelector('[data-act="utrest"]')!;
   assert.equal(openTog.textContent, "hide 2", "an open toggle's label says how many it hides");
   assert.equal(open.turn.querySelector(".ut-rest")!.classList.contains("todo-open"), true, "the keyed state opens it");
   open.drop("u14");
@@ -395,7 +395,7 @@ test("executed: past twelve open rows the rest hide behind a keyed toggle; at tw
   assert.equal(openTog.textContent, "hide 1", "an inline row's removal leaves the toggle alone");
   assert.equal(open.head(), "Waiting on you · 12");
   open.drop("u13");
-  assert.equal(open.turn.querySelector('[data-act="utfold"]'), null, "the open block's last row takes its toggle too");
+  assert.equal(open.turn.querySelector('[data-act="utrest"]'), null, "the open block's last row takes its toggle too");
   assert.equal(open.turn.querySelector(".ut-rest"), null);
   assert.equal(open.head(), "Waiting on you · 11");
 });
@@ -428,13 +428,13 @@ test("executed: the details toggle is keyboard-reachable: the row's text is a fo
 test("the toggle past twelve is delegated and relabels through one helper (the checklist's idiom)", () => {
   assert.match(TODO, /const UT_INLINE_ROWS = 12/);
   assert.match(TODO, /uts\.slice\(0, UT_INLINE_ROWS\)/);
-  assert.match(TODO, /tog\.dataset\.act = "utfold"; tog\.dataset\.nkey = utFoldKey; tog\.dataset\.n = String\(rest\.length\)/);
-  assert.match(TODO, /applyFold\(box, "todo-open", utFoldKey\)/);
-  const helper = RENDER.slice(RENDER.indexOf("function utFoldLabel("), RENDER.indexOf("\n}", RENDER.indexOf("function utFoldLabel(")));
+  assert.match(TODO, /tog\.dataset\.act = "utrest"; tog\.dataset\.nkey = utRestKey; tog\.dataset\.n = String\(rest\.length\)/);
+  assert.match(TODO, /applyFold\(box, "todo-open", utRestKey\)/);
+  const helper = RENDER.slice(RENDER.indexOf("function utRestLabel("), RENDER.indexOf("\n}", RENDER.indexOf("function utRestLabel(")));
   assert.match(helper, /open \? `hide \$\{n\}` : `\+ \$\{n\} more waiting`/);
-  const handler = RENDER.slice(RENDER.indexOf("utfold: (elx) => {"), RENDER.indexOf("uttoggle: (elx) => {"));
+  const handler = RENDER.slice(RENDER.indexOf("utrest: (elx) => {"), RENDER.indexOf("uttoggle: (elx) => {"));
   assert.match(handler, /rememberFold\(box, "todo-open", elx\.dataset\.nkey \|\| undefined\)/);
-  assert.match(handler, /utFoldLabel\(elx, box\.classList\.contains\("todo-open"\), Number\(elx\.dataset\.n\) \|\| 0\)/);
+  assert.match(handler, /utRestLabel\(elx, box\.classList\.contains\("todo-open"\), Number\(elx\.dataset\.n\) \|\| 0\)/);
 });
 
 test("a dismissed session takes its keyed state with it", () => {

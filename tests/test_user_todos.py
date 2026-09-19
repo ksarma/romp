@@ -91,6 +91,7 @@ class _StoreSandbox(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         self.saved = jd.STATE
+        self.addCleanup(setattr, jd, "STATE", jd.STATE)   # holds even when a later setUp line raises (no tearDown then)
         jd.STATE = Path(self.td.name)
         _hosts_off(self.td.name)
         km._user_todos_cache.clear()
@@ -1426,6 +1427,39 @@ class DriveOps(_StoreSandbox):
             for noun in ("store", "stamp", "queue", "todo", "nonce", "mark"):
                 self.assertNotIn(noun, low, "%r names machinery: %s" % (text, noun))
 
+    def test_every_refusal_names_its_session_so_the_client_only_toasts_it(self):
+        # the client reads a warn WITHOUT a sid that arrives while it is creating a session as that create's verdict
+        # and takes the provisional tab down with the request's text in a dialog; a warn that names a session is only
+        # toasted (the refused-slash warn's shape). Every refusal the two ops send names its session: the settled id,
+        # the dismiss of one, the refused send, the ended session, the stamp that fails after a handover, the dismiss
+        # whose write is refused, and the unreadable store on either op (the OFF refusals are pinned with the switch).
+        km._drive({"type": "userTodoAnswer", "id": SID, "todoId": "ut-deadbeef", "text": "too late"}, self.client)
+        km._drive({"type": "userTodoDismiss", "id": SID, "todoId": "ut-deadbeef"}, self.client)
+        tid = km._add_user_todo(SID, "Need the staging port")
+        self.send_result = None
+        km._drive({"type": "userTodoAnswer", "id": SID, "todoId": tid, "text": "8443."}, self.client)
+        self.send_result = False
+        with mock.patch.object(km, "_stamp_user_todo_answered", side_effect=RuntimeError("store went bad")), \
+                contextlib.redirect_stderr(io.StringIO()):
+            km._drive({"type": "userTodoAnswer", "id": SID, "todoId": tid, "text": "8443."}, self.client)
+        with mock.patch.object(km, "_write_user_todos", side_effect=RuntimeError("write refused")), \
+                contextlib.redirect_stderr(io.StringIO()):
+            km._drive({"type": "userTodoDismiss", "id": SID, "todoId": tid}, self.client)
+        (jd.STATE / "sdk").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "sdk" / (SID + ".json")).write_text(json.dumps({"alive": False}))
+        km._drive({"type": "userTodoAnswer", "id": SID, "todoId": tid, "text": "8443."}, self.client)
+        (jd.STATE / "user-todos.json").write_text(json.dumps({"enabled": True, "gt": 1}))   # not a store: unreadable
+        km._user_todos_cache.clear()
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._drive({"type": "userTodoAnswer", "id": SID, "todoId": tid, "text": "8443."}, self.client)
+            km._drive({"type": "userTodoDismiss", "id": SID, "todoId": tid}, self.client)
+        self.assertEqual([m["type"] for m in self.sent], ["warn"] * 8, "eight refusals, nothing else on the socket")
+        self.assertEqual(self._warns(), [km._USER_TODO_SETTLED_WARN, km._USER_TODO_DISMISS_SETTLED_WARN,
+                                         km._USER_TODO_UNDELIVERED_WARN, km._USER_TODO_STAMP_FAILED_WARN,
+                                         km._USER_TODOS_UNREADABLE_WARN, km._USER_TODO_ENDED_WARN,
+                                         km._USER_TODOS_UNREADABLE_WARN, km._USER_TODOS_UNREADABLE_WARN])
+        self.assertEqual([m.get("sid") for m in self.sent], [SID] * 8, "every refusal names its session")
+
 
 class _TodoStr(str):
     """The queue-entry contract the kernel reads back: a plain str for every consumer, with the request id
@@ -2070,6 +2104,9 @@ class NoInferenceWritesTheStore(unittest.TestCase):
         # the boot pass over persisted loss marks, and the housekeeping pass the prune rides
         "_user_todo_loss_boot_pass", "_jobs_pass",
     }
+    # the kernel's card movers, named in the equality pin's message: none of them may become a caller
+    MOVERS = ("_mark_nudge_failed", "_nudge_fire_list", "_record_interrupt_block", "_lift_interrupt_block",
+              "build_feed", "build_session", "_auto_nudge_tick", "_chat_tab_sessions")
 
     @classmethod
     def _callers(cls):
@@ -2109,13 +2146,9 @@ class NoInferenceWritesTheStore(unittest.TestCase):
             self.assertIn(w, defs, "the writer list names a def kernel.py no longer has: %s" % w)
         self.assertEqual(set(found), self.ALLOWED,
                          "store writers are called from defs outside the allow-list (or an allow-listed def no "
-                         "longer calls one: prune it): %s" % sorted(set(found) ^ self.ALLOWED))
-
-    def test_the_kernels_own_card_movers_are_not_callers(self):
-        _defs, found = self._callers()
-        for mover in ("_mark_nudge_failed", "_nudge_fire_list", "_record_interrupt_block",
-                      "_lift_interrupt_block", "build_feed", "build_session", "_auto_nudge_tick", "_chat_tab_sessions"):
-            self.assertNotIn(mover, found)
+                         "longer calls one: prune it); the kernel's own card movers (%s) stay outside it, since a "
+                         "request is the session's word and never an inference: %s"
+                         % (", ".join(self.MOVERS), sorted(set(found) ^ self.ALLOWED)))
 
     def test_the_derivation_sees_the_helpers_calling_each_other(self):
         _defs, found = self._callers()
@@ -2279,6 +2312,8 @@ class ContextRoute(_StoreSandbox):
     def setUp(self):
         super().setUp()
         self._push = (km._push_all, km._push_soon)
+        self.addCleanup(setattr, km, "_push_all", km._push_all)
+        self.addCleanup(setattr, km, "_push_soon", km._push_soon)
         km._push_all = lambda *a, **k: (_ for _ in ()).throw(
             AssertionError("synchronous _push_all on the context read"))
         km._push_soon = lambda: (_ for _ in ()).throw(
@@ -2299,6 +2334,9 @@ class ContextRoute(_StoreSandbox):
     def test_requires_the_serve_token(self):
         code, _ = self._post("/usertodo/context", {"id": SID}, token=False)
         self.assertEqual(code, 403)
+        code, res = self._post("/usertodo/context", {"id": SID})
+        self.assertEqual((code, res.get("ok")), (200, True),
+                         "the same ask with the token is answered, so the 403 gated a route that exists")
 
     def test_refuses_a_bodyless_or_idless_ask(self):
         code, res = self._post("/usertodo/context", {})
@@ -2335,7 +2373,8 @@ class ContextRoute(_StoreSandbox):
         km._add_user_todo(SID, "Need the auth-scheme decision")
         p = jd.STATE / "user-todos.json"
         before = p.read_bytes()
-        self._post("/usertodo/context", {"id": SID})
+        code, res = self._post("/usertodo/context", {"id": SID})
+        self.assertEqual((code, res.get("ok")), (200, True), "the read happened")
         self.assertEqual(p.read_bytes(), before)
 
     def test_an_ended_session_is_still_answered(self):
@@ -3786,10 +3825,6 @@ class BadgeArithmetic(unittest.TestCase):
         self.assertEqual(km._needs_you_count({"asks": []}), 0)
         self.assertEqual(km._needs_you_count({}), 0)
 
-    def test_the_count_reads_no_switch(self):
-        self.assertNotIn("_user_todos_on", inspect.getsource(km._needs_you_count),
-                         "off, no floored card exists (the reader returns []), so the expression is the same on every frame")
-
 
 class NudgeStandsDownForBlockingRequests(_StoreSandbox):
     """The status nudge stands down while a BLOCKING request is open (the request already says what a status check
@@ -3802,6 +3837,7 @@ class NudgeStandsDownForBlockingRequests(_StoreSandbox):
     def setUp(self):
         super().setUp()
         self.saved_goaldir = jd.GOALDIR
+        self.addCleanup(setattr, jd, "GOALDIR", jd.GOALDIR)
         jd.GOALDIR = jd.STATE / "goals"
         jd.GOALDIR.mkdir(parents=True, exist_ok=True)
         km._autonudge_cache.clear()
@@ -3816,6 +3852,7 @@ class NudgeStandsDownForBlockingRequests(_StoreSandbox):
                 return True
 
         self.saved_backend = km.Sessions.backend_for
+        self.addCleanup(setattr, km.Sessions, "backend_for", staticmethod(self.saved_backend))
         km.Sessions.backend_for = staticmethod(lambda sid: _Backend())
         patches = [
             mock.patch.object(km, "_api_error", lambda path: None),
