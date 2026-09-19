@@ -2471,6 +2471,8 @@ class Docs(unittest.TestCase):
                       # exponent's e); the sentence now says which letter a number spells and that the alphabet decides
                       "and an entry outside the number alphabet that carries a letter in a digit group (abc12, zz424242) is not counted; the one "
                       "letter a number spells is an exponent's e, so an entry in the alphabet such as 1e5 is counted by its spelling",
+                      # finding 9: the reference says the advisory's silence is not a claim (the module's copy is pinned in the export module)
+                      "the line reports the digit count only, and an entry it does not count is not thereby matchable in a number",
                       # finding 6: the upload section's strict-JSON parenthetical names the overflow spelling the parser refuses
                       "parses as strict JSON (no `NaN` or `Infinity`, whether spelled as a literal or reached by a number written past the "
                       "double's range, such as 1e999; no key repeated within an object)"):

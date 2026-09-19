@@ -3840,7 +3840,10 @@ check applies such an entry to a number by its digit groups (a listed
 (1234567) refuses the number 1234567) and an entry outside the number alphabet
 that carries a letter in a digit group (abc12, zz424242) is not counted; the one
 letter a number spells is an exponent's e, so an entry in the alphabet such as
-1e5 is counted by its spelling), for the strings only this machine knows (its hostname, user and home
+1e5 is counted by its spelling; the line reports the digit count only,
+and an entry it does not count is not thereby matchable in a number (a listed
+twelve-digit dotted address is armed and matches no number, whose spelling has
+no four digit groups)), for the strings only this machine knows (its hostname, user and home
 directory, the session ids and working directories in the state directory's
 registry, and the lines of `~/.config/romp/private-strings.txt` when that
 file exists, the list the repository's pre-push hook reads, one string per

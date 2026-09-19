@@ -117,7 +117,8 @@ seven digits) whose every spelling has fewer digits is checked in every key and 
 machine_probes says once on stderr, LIST_UNDER_NUMERIC_FLOOR, naming the counted entries by their list lines (never their
 text, never the list's path) and what does protect a number; an entry outside the number alphabet with a letter in a
 token (zz424242, abc12) is not counted, the one letter a number spells being an exponent's e, which the alphabet arm reads,
-so a listed 1e5 or 1.5e-04 is counted by its spelling), and a
+so a listed 1e5 or 1.5e-04 is counted by its spelling, and the line reports the digit-count side only, so its silence is not
+a claim that an entry it does not count matches some number), and a
 hit refuses the write naming
 the key path and the kind of string, never the value; for a listed string the refusal also names the LINE of the list
 the entry is on (Hit.line, carried from the Probe, never the text) and the remedy, editing that line or the value.
@@ -829,6 +830,10 @@ NUMBER_CHARS = frozenset("+-.0123456789e")
 # eight-character prefix, the shortest id probe, is an eight-digit run when it is all digits, above the floor, and with a
 # hex letter in it matches no number spelling (json spells `e` only after one digit or a pointed mantissa and before a
 # signed exponent, and never a, b, c, d or f). So the floor's one effect is on the private list.
+# WHAT THE LINE DOES NOT SAY. The line reports the digit-count side only; an entry it does not count is not thereby matchable
+# in a number: a listed 192.168.100.200 carries twelve digits and is armed, and its four digit groups spell no json number, so
+# it matches none, while 10.0.0.1 beside it is counted (five digits). An entry can be above the floor and match nothing, and
+# the line is silent about it; its silence is not a claim (the closing re-run of 2026-09-19, finding 9).
 NUMERIC_PROBE_MIN_DIGITS = 7
 # THE EXPANSION BOUND (the closing re-run of 2026-09-19). number_spellings spells an exponent-written number out in plain
 # decimal with format(Decimal(text), 'f'), which writes about as many digits as the exponent, so that work is exponential in
@@ -1223,7 +1228,10 @@ def machine_probes(state_dir=None, env=None):
     spells is an exponent's e, which the alphabet arm reads, so a listed 1e5 or 1.5e-04 is counted by its spelling (at
     cd3b4cfab the trigger counted any digit run under the floor, letters or not, and the line fired on every run on
     this box for entries carrying a letter); an entry of seven or more digits (zz4242424, (12345678)) is armed and is
-    not what the line is about. Both numbers in the line run over listed
+    not what the line is about. The line reports the digit-count side only: an entry it does not count is not thereby
+    matchable in a number (a listed 192.168.100.200 carries twelve digits and is armed, and its four digit groups spell
+    no json number, so it matches none, while 10.0.0.1 beside it is counted); its silence is not a claim (the closing
+    re-run of 2026-09-19, finding 9). Both numbers in the line run over listed
     LINES, so a repeated entry is counted once per line while the probes dedupe it to one (a list of 1234.56, 1234.56
     and 424242 says 3 of 3, list lines 1, 2 and 3). BEFORE that line, when a listed entry is written with an exponent
     beyond EXPANSION_EXPONENT_MAX (1e-1000000000: further than any number in an export reaches, and an expansion that

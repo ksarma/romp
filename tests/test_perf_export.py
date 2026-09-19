@@ -1867,7 +1867,7 @@ class Cli(unittest.TestCase):
         self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (1, 2, "list line 1", 7, 7) + "\n",
                          "an IP-shaped entry is inside the alphabet and is counted, by its list line")
 
-    def test_the_stderr_line_counts_an_under_floor_run_of_digit_only_tokens_too_and_not_an_entry_with_a_letter(self):
+    def test_the_stderr_line_counts_an_under_floor_run_of_digit_only_tokens_too_and_not_an_entry_with_a_letter_and_its_silence_is_not_a_claim(self):
         """The widened count (the closing re-run of 2026-09-19, finding 3, ruled as widen): the line counts an under-floor entry
         that COULD MATCH A NUMBER (pp.number_matchable), spelled in the number alphabet (number_shaped) or a run of digit-only
         tokens, since the token-run arm applies such an entry at seven digits ((1234567), _1234567 and 1234567/ each refuse the
@@ -1881,10 +1881,13 @@ class Cli(unittest.TestCase):
         one letter a number spells, an exponent's e, IS counted, 1 of 1, list line 1 (the re-run's verification found the
         round's first wording, that no number's token carries a letter, false by that entry: TOKEN splits 1.5e-05 into 1, 5e
         and 05, and this test's own truth table has number_matchable("1e-5") True); (123456) against the leaf 123456 is no hit
-        (under the floor, which is what the line is for). Reverting the count to number_shaped reds the six-shape pin (2 of 6); an
+        (under the floor, which is what the line is for). Finding 9: the line reports the digit-count side only, so its silence is not a
+        claim that an entry it does not count matches a number: a listed 192.168.100.200 (twelve digits, armed) matches no
+        number, four digit groups spelling no json number, and gets no line while 10.0.0.1 beside it is counted, 1 of 2, list
+        line 1, and machine_probes' docstring says so. Reverting the count to number_shaped reds the six-shape pin (2 of 6); an
         any-digit predicate (cd3b4cfab's trigger) reds the abc12 silence and the truth table; the old template phrase reds the
-        six-shape literal; the clause back in the module reds the source pin; the letter clause re-asserted in the module reds the
-        negative source pin."""
+        six-shape literal; the clause back in the module reds the source pin; the silence sentence deleted reds the __doc__
+        pin; the letter clause re-asserted in the module reds the negative source pin."""
         for text in ("(1234567)", "_1234567", "1234567/", "(123456)", "1 23456", "12-3456", "10.0.0.1", "1.5e-05", "1e-5", "4242424"):
             self.assertTrue(pp.number_matchable(text), text)
         for text in ("zz424242", "abc12", "e", "", "()", "_"):
@@ -1918,6 +1921,16 @@ class Cli(unittest.TestCase):
             pp.machine_probes(None, env=env)
         self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (1, 1, "list line 1", 7, 7) + "\n",
                          "the one letter a number spells, an exponent's e: in the alphabet, six digits as 100000, counted")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("10.0.0.1\n192.168.100.200\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (1, 2, "list line 1", 7, 7) + "\n",
+                         "the long address is armed and not counted, the short one is counted")
+        self.assertEqual(pp.identifier_hits({"a": {"n": 192168100200}}, [pp.Probe(pp.PRIVATE_KIND, "192.168.100.200", 3)]), [],
+                         "armed, and matching no number: four digit groups spell no json number; the line said nothing about it")
+        self.assertIn("silence is not a claim", pp.machine_probes.__doc__)
         with open(pp.__file__, encoding="utf-8") as fh:
             source = fh.read()
         for clause in ("substring of no number", "remedy cannot apply", "since no number's token carries"):
