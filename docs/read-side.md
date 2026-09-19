@@ -232,8 +232,11 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   its socket down and waited for the shell's link-up word, `false` when the
   shell's socket stood and the pane dialed at once. A parked `return` (a pane
   off screen on the phone; the parked paragraph below) carries no `awaitLink`
-  and files no `return-fresh` until its tap. Its `return-fresh` then carries `linkUpMs`, the
-  foreground-to-link-up gap, so the path's own recovery reads apart from the
+  and files no `return-fresh` until its tap. A `return-fresh` in such a
+  dashboard carries `linkUpMs`: for an unparked return the
+  foreground-to-link-up gap; for a parked return the row files at the tap,
+  with `parked: true`, and `linkUpMs` measures from the tap, 0 when the
+  shell's link stood. Either way the path's own recovery reads apart from the
   code-owned wait (`ms` minus `linkUpMs`). The shell's own socket files one
   `return-probe` row (surface `shell`) per return that found it dead or quiet:
   the `decision` (`redial-closed` or `redial-stale`; a standing socket files
