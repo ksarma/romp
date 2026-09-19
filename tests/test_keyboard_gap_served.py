@@ -52,6 +52,11 @@ import test_return_from_background_served as _ret          # noqa: E402  (_seed:
 # kernel_env's roots), but the floor costs two lines and a later edit that adds a load must not write real state.
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+# ...and that root's per-session hosts off (the Testing rule for a test that mints its own state root, 2026-09-11): nothing
+# resolves this root as STATE today (the lab kernel's root is floored by kernel_env), so this is the belt for the load the
+# comment above anticipates, not a fix for anything the module runs now
+os.makedirs(os.path.join(os.environ["XDG_STATE_HOME"], "romp"), exist_ok=True)
+Path(os.environ["XDG_STATE_HOME"], "romp", "session-hosts").write_text("off\n")
 
 DRIVER = os.path.join(HERE, "keyboard_gap_browser.mjs")
 HOST = "TESTHOST"
