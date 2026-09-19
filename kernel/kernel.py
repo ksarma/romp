@@ -610,12 +610,22 @@ _CHAT_SIG_DEPS = ("taskout", "pathlink", "postal")
 # stage() records wall time, so a seam over a stat storm holds the GIL waits and the syscall waits of every other thread
 # with it, and the pusher's stage wall exceeded its own thread CPU by 157 ms per cycle on the second-boot readings with no way
 # to say which stage carried the wait. getrusage(RUSAGE_THREAD) splits the calling thread's CPU into user and system;
-# the chat seams and the push and jobs containers read it at their open and close and hand stage() the delta. The cost
-# is bounded: TWO getrusage calls per mark (one syscall each, about a microsecond), so per tab per cycle the chat loop
-# pays six beside its wall-clock reads (the signature seam's pair, the deps sub-seam's pair inside it, the send
-# seam's pair; a rebuild adds the build seam's pair and the post-build signature's), about 230 clock reads per cycle at
-# 38 tabs. RUSAGE_THREAD is Linux; where the platform lacks it (macOS) _thread_cpu answers None, every stage records
-# its wall alone, and the snapshot serves stages_cpu_ms EMPTY rather than zeros that would read as "no CPU".
+# the chat seams and the push and jobs containers read it at their open and close and hand stage() the delta. The
+# instrumentation's own cost, by regime and term (microbenchmarks over the loaded kernel on 3.12, best of five,
+# 2026-09-19): a getrusage read 0.94 us, six per served tab per cycle (the signature seam's pair, the deps sub-seam's
+# pair inside it, the send seam's pair) and ten on a rebuild (the build seam's pair and the post-build signature's),
+# about 230 reads per cycle at 38 tabs; the os.stat and os.lstat counting wrappers add about half a microsecond per
+# stat (2.96 us wrapped against 2.50 bare) times the signature's stats, about 23 in the bare harness world, so about
+# 11 us per signature, and _entry_stat 0.15 to 0.25 us per DirEntry stat; _chat_sig_scope's enter and exit 2.3 us per
+# signature; _chat_sig_note_pre's lock hold and 40-component zip 2.5 us per tab and _chat_sig_note_compare 2.7 us per
+# re-read; the _chat_sig_count calls 0.24 us each, at most three per signature; the census 18.5 us per push at 38 tabs
+# and four clients when the gate walked no tab, 3.7 us when it walked all. So about 22 us per served tab per cycle,
+# about 41 us per rebuild cycle (two signatures, a claim re-read, ten reads) and about 0.85 ms per push at 38 served
+# tabs: about 0.55 percent of the 4 ms per-tab signature wall read live with a dashboard attached, and 2 to 5 percent
+# of the signature's thread CPU as the harness reads it (0.4 to 1.2 ms per signature over 24 to 71 stats, three runs
+# each; the live CPU share is read once this deploys, since the running kernel carries no CPU rows yet). RUSAGE_THREAD
+# is Linux; where the platform lacks it (macOS) _thread_cpu answers None, every stage records its wall alone, and the
+# snapshot serves stages_cpu_ms EMPTY rather than zeros that would read as "no CPU".
 try:
     import resource
     _RUSAGE_THREAD = getattr(resource, "RUSAGE_THREAD", None)
