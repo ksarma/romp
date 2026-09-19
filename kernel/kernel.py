@@ -2296,7 +2296,9 @@ _PERF_HTTP_ROUTES = {
 }
 _PERF_HTTP_ROUTES["OPTIONS"] = tuple(sorted(                 # a preflight asks about a route of any method
     set(_PERF_HTTP_ROUTES["GET"]) | set(_PERF_HTTP_ROUTES["HEAD"]) | set(_PERF_HTTP_ROUTES["POST"])))
-_PERF_HTTP_FAMILIES = ("/dist/*", "/media/*", "/glossary/*", "/remote/*")   # the collapsed families, keys in their own right
+_PERF_HTTP_FAMILIES = ("/dist/*", "/media/*", "/glossary/*", "/remote/*")   # the families whose variable segment folds to a star,
+#                                                                              keys in their own right; /remote/* keeps the route
+#                                                                              after the host (_perf_http_key)
 _PERF_HTTP_ROUTE_SETS = {m: frozenset(v) for m, v in _PERF_HTTP_ROUTES.items()}
 _PERF_HTTP_ANY = frozenset(_PERF_HTTP_ROUTES["OPTIONS"])
 _PERF_ROUTE_SEGMENTS = frozenset(p.strip("/").split("/", 1)[0]          # the first segments a stage mark may keep (_route_seg,

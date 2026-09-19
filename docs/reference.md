@@ -4386,9 +4386,12 @@ under `gen`, `collections`, `collectedLast`, `msLast`, `msMax` and `msSum`),
 the ten memory-fraction bounds coarsened to a power of two (`hydrated.capBytes`
 among them), the uptime rounded down to the minute, the `http` table in every
 export, with or without `--usage`: one row per route the kernel has served since
-it started (`METHOD /path` over the kernel's route register, the bundle, media,
-glossary and remote families collapsed to one row each, and one `other` row for
-whatever is off the register or past the table's cap), each row that route's
+it started (`METHOD /path` over the kernel's route register; the bundle, media
+and glossary families collapsed to one row each; the remote family collapsed by
+host alone, the host's name replaced by a star and the route kept, so a kernel
+attached to a peer carries one row per remote operation it served there,
+`GET /remote/*/sessions`, say, and no host name in any key; and one `other` row
+for whatever is off the register or past the table's cap), each row that route's
 request `count` and millisecond total `ms`, whoever made the requests (the
 counter records the route and the time and nothing about the client), and,
 only when `--usage` was given, the `usage` block, which adds no number a
