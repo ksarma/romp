@@ -23,16 +23,38 @@ machine's MemTotal, one of them half of it); durations stay, and per-process and
 by design (the boot's stage split under pusher.firstCycle and jobs.firstPass, whole; the lifetime maxima; every
 counter), because they are the data a reader wants, so two exports from one kernel life, or from one machine,
 remain linkable through them. No hostname, path, pid, session id, username or clock stamp is written; the finished document
-is searched for the strings only this machine knows (perf_public.identifier_hits) and walked once more
-(perf_public.paste_problems); either finding refuses the write, and the SHALLOWEST finding across both is the one
-named (check_document), so a walk problem beneath a machine-named key is reported as the machine string, not as
-a path spelling the key, and a machine string beneath a key the walk refuses (a 32-hex token) is reported as
+is searched for the strings only this machine knows (perf_public.identifier_hits: every key, string value and number, a
+number by the spelling document_text writes, so a listed digit run inside a counter is found too; the strings are the
+machine's own and the machine-local private list, which says so on stderr, perf_public.LIST_UNREADABLE, when a path that
+is there yields no list, since a check that turns itself off must say so), walked once more
+(perf_public.paste_problems) and walked for the denylist (perf_public.denylist_problems: a key the fold drops, a key or
+a string value the fold would have written as `other`, an uptime not on whole minutes, a bound not on a power of two, a
+float inside a clock stamp's epoch window under any other key; a fold's own output carries none of the six, except in
+one stated case, two measurement floats merged under one `other` key whose sum lands inside a stamp window, where this
+verb refuses to write (check_document's docstring and pp._merge name it), so here it is a belt, and for `romp perf
+upload`, which runs the same check over a file the user may have edited, it is the check
+that what the export dropped, folded or coarsened does not travel, while the measurements it keeps pass, the export's
+own rule: paste-safe, not unlinkable); any finding refuses
+the write (a finding of a listed private string naming the line of the list its entry is on and the remedy, editing
+that line or the value, never the text), and the SHALLOWEST finding across the three is
+the one named (check_document), so a walk problem beneath a machine-named key is reported as the machine string, not
+as a path spelling the key, and a machine string beneath a key the walk refuses (a 32-hex token) is reported as
 that key's rule and its dict, not as a path spelling the token. The refusal is built from the finding's fields
 (the kind of string or rule, and the key path: a value's own path, or the path of the dict holding a key), never
 from a line that carries the flagged text, so a key or value containing " at " cannot put a fragment of itself
-into the refusal. `--usage` adds a `usage` block, off by default: the session counts, the feature counts (the
-user's own actions and the panes opened, from the http table's route counts) and the kernel's uptime bucket, all
-from keys the snapshot already carries and folded the same way.
+into the refusal. `--usage` adds a `usage` block, off by default: the session counts, one count per action route
+served and one per pane route served, the http table's count for that route under the route's name, whoever made
+the requests, and the kernel's uptime bucket, all from keys the snapshot already carries and folded the same way; the
+`http` table itself, one row per route served with its request count and millisecond total, is in every export, so
+the block adds packaging and no number a plain export lacks (the closing check of 2026-09-19, HIGH 1). A snapshot with no
+number under `parses.perSession.sessions` has no parsed count to copy, and the block says so in place of the count:
+`sessions.parsedUnavailable`, one of two fixed strings, each true of the snapshot that carries it: `predates-parses.perSession`
+when the snapshot has no `parses.perSession` block at all (a kernel from before it wrote one saved it; its per-sid table is one
+the plain export drops), and `perSession.sessions-not-a-number` when the block is there and its `sessions` is not a number (a
+hand-made or edited snapshot's shape: the kernel writes a count there). The leaf is present exactly when the count is absent, so
+a reader of two exports can tell a count this verb could not read from a kernel that parsed nothing (the second closing check,
+2026-09-19), and an old snapshot from a malformed one (the ruling of the same day on the leaf, whose first cut gave both
+causes the first reason, false for the second).
 
 The file lands under the state directory as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json`, mode 0600, or at
 --out (a write that fails partway removes the file rather than leave a truncated one); the path and the byte
@@ -43,7 +65,6 @@ habit: without --public it refuses with one line and exit 2. A reader for the te
 import argparse
 import http.client
 import json
-import math
 import os
 import re
 import sys
@@ -57,6 +78,10 @@ import perf_public as pp  # noqa: E402
 
 PROG = "romp perf export"
 SCHEMA = "romp-perf-export/1"
+# The envelope export_document writes around the folded blocks: the one part of the document that is not a fold's output
+# (the schema line carries a slash by design). `romp perf upload` holds a file's top level to exactly these keys and the
+# two folded blocks, perf and usage (its TOP_LEVEL), and each block to its own fold.
+ENVELOPE_KEYS = ("schema", "exported_at", "kernel_commit")
 TIMEOUT_S = 10          # `romp perf`'s curl -m
 DEFAULT_PORT = 29855
 EXPORT_DIR = "perf-exports"
@@ -66,12 +91,33 @@ COMMIT_KEYS = ("kernel_sha", "kernel_commit", "commit", "sha")
 # never heard of.
 SNAPSHOT_KEYS = ("uptime_s", "process", "pusher", "http")
 COMMIT = re.compile(r"[0-9a-fA-F]{7,64}")
-# The http routes that count as the user's own actions (POST) and the panes they opened (GET), as feature names.
+# The POST routes counted as actions (every POST route of the register but ACTION_SKIP, the kernel's own housekeeping
+# posts) and the GET routes counted as views (VIEW_ROUTES), as feature names; a count is one request served on the
+# route, whoever made it (the dashboard, the CLI, a relaying kernel, a session's tool call, a hook, a peer's poll): the
+# http table's count relabelled, never a record of who asked (the counter, kernel _PerfStats.http_request, takes the
+# path and the elapsed time and nothing about the client).
 ACTION_SKIP = frozenset({"/tick", "/perf", "/push/ack", "/push/dropped", "/push/landed", "/push/superseded",
                          "/checkin", "/checkin/stop", "/working", "/notice", "/postal-notice", "/deliver"})
 VIEW_ROUTES = ("/chat", "/feed", "/timeline", "/fleet", "/waiting", "/analytics", "/files", "/file", "/usage",
                "/usage/fleet", "/spend/detail", "/session-events", "/handoff", "/views", "/tunnels")
 UPTIME_BUCKETS = ((3600, "lt1h"), (86400, "1h-24h"), (7 * 86400, "1d-7d"), (float("inf"), "gt7d"))
+# The one leaf of the usage block that is neither a count nor a bucket: written under `sessions` in place of `parsed`, exactly
+# when the count is absent, and absent when the count is present. Its value is one of two fixed strings, keyed on the SHAPE of
+# the snapshot so that each is true of the snapshot that carries it (the ruling of 2026-09-19 on the leaf: its first cut wrote
+# one reason over two causes, and the reason was false for one of them): PARSED_UNAVAILABLE_REASON when the snapshot has no
+# parses.perSession block at all (a kernel from before it wrote one saved it; its per-sid table is one the plain export drops,
+# pp.DENY_KEYS, so no count of it may travel and none can be read from what does), and PARSED_MALFORMED_REASON when the block is
+# there and its sessions is not a number (absent, a string, a bool, null, or a perSession that is not a block: a hand-made or
+# edited snapshot, since the kernel's collector writes len(by_sid) there). Both values are within the ident grammar (pp.IDENT:
+# one token, at most 32 characters; the second is exactly 32), so the fold writes each as it is, the block equals its own fold,
+# the belt `romp perf upload` holds it to, and the three walks pass it; neither carries a machine fact. The ruling of the second
+# closing check (2026-09-19): a reader that cannot produce a value must say so IN THE DOCUMENT, since a user comparing two
+# uploads cannot otherwise tell a count the tool could not read from a kernel that parsed nothing; the disclosure paragraph in
+# docs/reference.md names the leaf and both values with the condition of each, and tests/test_perf_stats.py (Disclosed) holds
+# the wording and the conditioning over the three snapshot shapes.
+PARSED_UNAVAILABLE = "parsedUnavailable"
+PARSED_UNAVAILABLE_REASON = "predates-parses.perSession"
+PARSED_MALFORMED_REASON = "perSession.sessions-not-a-number"
 
 
 def state_dir() -> Path:
@@ -172,6 +218,11 @@ def read_kernel(state: Path) -> dict:
 
 
 def read_file(path: str) -> dict:
+    """A saved `romp perf --json` snapshot (--from), json.load with no hooks: this road builds its own document, so a
+    number no double can hold is NULLED by the fold like the NaN literal json.load admits (the export writes null, no
+    traceback; usage_block leaves the bucket out), and the file is re-checked by `romp perf upload` before anything
+    leaves. An integer literal past the interpreter's int() digit limit (4300 by default, sys.get_int_max_str_digits)
+    is the interpreter's ValueError, one line here ("is not JSON"), the limit's outcome and not this verb's rule."""
     try:
         with open(path, encoding="utf-8") as fh:
             snap = json.load(fh)
@@ -205,19 +256,31 @@ def _feature_name(path: str) -> str:
 
 
 def usage_block(snap: dict) -> dict:
-    """Usage counts from keys the snapshot already carries. Sessions: the sessions the kernel parsed
-    (`parses.perSession.sessions`, or the size of an older kernel's per-sid table), the sessions with a chat
-    build (`builds.chat.bySession`), the sessions stamped (`caches.session_stamp.entries`). Features: each
-    POST route's count as an action (the kernel's own housekeeping posts left out) and each pane route's GET
-    count as a view. Lifetime: the kernel's own uptime bucket. Per-session lifetimes are not in /perf (they are
-    the sessions listing's), so the block has none."""
+    """Usage counts from keys the snapshot already carries, and from no other: every leaf is a copy or a count of a leaf
+    the PLAIN export writes, so the block adds no number a plain export lacks (the disclosure paragraph's claim, pinned by
+    recomputing the block from a plain export in tests/test_perf_stats.py, Disclosed). Sessions: the sessions the kernel
+    parsed (`parses.perSession.sessions`; a snapshot saved by a kernel before it wrote perSession has NO parsed count
+    here, since its per-sid table is one the plain export drops, pp.DENY_KEYS, and until the closing check at the re-run's
+    head, 2026-09-19, this block wrote that table's size, the one number --usage added that no leaf of the plain body
+    gave; in the count's place the block writes PARSED_UNAVAILABLE, present exactly when the count is absent, so the
+    absence is stated in the document and never reads as a kernel that parsed nothing, the ruling of the second closing
+    check the same day, with the fixed string that is true of the snapshot's shape: PARSED_UNAVAILABLE_REASON when there is
+    no perSession block under parses, PARSED_MALFORMED_REASON when the block is there and carries no number under sessions,
+    the ruling of the same day on the leaf, whose first cut gave both shapes the first reason), the sessions with a chat build
+    (`builds.chat.bySession`), the sessions stamped (`caches.session_stamp.entries`). Features: each POST route's count as an action (the kernel's own housekeeping posts
+    left out) and each pane route's GET count as a view. Lifetime: the kernel's own uptime bucket. Per-session lifetimes
+    are not in /perf (they are the sessions listing's), so the block has none."""
     out = {"sessions": {}, "actions": {}, "views": {}}
     parses = snap.get("parses") if isinstance(snap.get("parses"), dict) else {}
-    per = parses.get("perSession")
-    if isinstance(per, dict) and _num(per.get("sessions")) is not None:
-        out["sessions"]["parsed"] = per["sessions"]
-    elif isinstance(parses.get("bySid"), dict):
-        out["sessions"]["parsed"] = len(parses["bySid"])
+    if "perSession" not in parses:
+        out["sessions"][PARSED_UNAVAILABLE] = PARSED_UNAVAILABLE_REASON   # no block to read, so the snapshot predates it: not a zero, not a gap
+    else:
+        per = parses["perSession"]
+        count = _num(per.get("sessions")) if isinstance(per, dict) else None
+        if count is not None:
+            out["sessions"]["parsed"] = count              # never len(parses.bySid): a table the plain export drops (the docstring)
+        else:
+            out["sessions"][PARSED_UNAVAILABLE] = PARSED_MALFORMED_REASON   # the block is there and carries no number: say that, not that it is old
     builds = snap.get("builds") if isinstance(snap.get("builds"), dict) else {}
     chat = builds.get("chat") if isinstance(builds.get("chat"), dict) else {}
     if isinstance(chat.get("bySession"), list):
@@ -239,8 +302,13 @@ def usage_block(snap: dict) -> dict:
         elif method == "GET" and path in VIEW_ROUTES:
             out["views"][_feature_name(path)] = count
     up = _num(snap.get("uptime_s"))
-    if up is not None and math.isfinite(up):   # a NaN or an infinite uptime (json.load accepts both literals) fits no
-        out["kernelUptime"] = next(name for bound, name in UPTIME_BUCKETS if up < bound)   # bucket: the key is left out
+    if up is not None:
+        # a NaN, an infinite uptime (json.load accepts both literals) or an integer a double cannot hold (2**1024 - 2**970
+        # and above, which json.load parses exactly) fits no bucket: the key is left out for all three. pp.finite_number
+        # is the test, never math.isfinite(up), which raises OverflowError on such an int (the closing check's HIGH 2)
+        up = pp.finite_number(up)
+    if up is not None:
+        out["kernelUptime"] = next(name for bound, name in UPTIME_BUCKETS if up < bound)
     return out
 
 
@@ -263,34 +331,82 @@ def export_document(snap: dict, usage=False, now=None) -> dict:
 def check_document(doc: dict, state: Path, under=("perf",), tail="nothing written"):
     """None when the finished document may be written; else the one-line reason, built from the finding's fields:
     the kind of string or rule and the key path (a value's own path; for a key, the path of the dict holding it),
-    never the key or the value itself. Both mechanisms run, the identifier scan and the walk, and the SHALLOWEST
-    finding is the one named: the fewest path components, a key finding counting the depth of the dict holding it
-    and a value finding its own, the scan's wording when the depths tie.
+    never the key or the value itself. All three mechanisms run, the identifier scan, the walk and the denylist
+    walk (pp.denylist_problems: a key the fold drops, a key the fold would have written as `other` (a trailing newline
+    the walk's anchored match admits, a joined key past the cap), a string value it would have (a token outside the
+    identifier grammar with none of the shapes the walk names), an uptime not on whole minutes, a bound not on a power
+    of two, or a float inside a clock stamp's epoch window, 1.5e9 to 2.0e9 seconds or 1.5e12 to 2.0e12 milliseconds
+    (pp.STAMP_WINDOWS), with no duration key on its path; an integer a double can hold is a byte total or a count (one it
+    cannot hold is null in any fold and refused at the upload's parse, so no walk sees it), a float outside both
+    windows is a measurement the export keeps, the allocator's figures on a long-lived kernel among them, and a float
+    under a duration key, a name carrying the token `ms`, its own or any key above it, is a millisecond total, all of
+    which a long-lived kernel's figures reach, so all pass; none of the six a fold's own
+    output carries (pinned over every fixture and a served export; the one stated exception is the summed-floats case
+    pp._merge names, two measurement floats under a merged `other` key landing inside a stamp window), so for
+    this verb it is a
+    belt; for `romp perf upload`, over a file as it stands, it is what refuses a `t` the user put back, an uptime
+    typed to the second, a bound typed to the byte, a stamp under a new key or a token the fold would have folded, and
+    passes every measurement the export keeps: paste-safe, not unlinkable, the fold's own rule; the three take the same
+    `skip` for the schema line, whose slash is the envelope's by design), and the SHALLOWEST finding is the one named:
+    the fewest path components, a key finding counting the depth of the dict holding it and a value finding its
+    own, the scan's wording when the depths tie, then the walk's.
+
+    A finding of a LISTED private string also names the line of the private-strings list the entry is on and the
+    remedy, editing that line or the key or value found (_survives; since 2026-09-19): the refusal reads "a string this
+    machine knows (private string) survives as the value at perf/pusher/cycles; edit line 4 of the private-strings list
+    or that value; nothing written", and the entry's text is in no output, as before.
 
     The rule this keeps: the refusal never prints a path component that the walk would refuse to write, nor one
-    that spells a string this machine knows. Every component of a printed path is a key of a dict above the
-    finding, and a key either mechanism flags is a finding of its own at a strictly shallower depth, so the
-    shallowest finding cannot sit beneath one. Naming the scan's finding first whatever its depth (round 1) printed
-    a 32-hex token, the class of key the walk refuses, when a hostname sat beneath it; naming the walk's first (the
-    version before) printed a key spelling the hostname when free text sat beneath that.
+    that spells a string this machine knows, nor one the denylist drops. Every component of a printed path is a key
+    of a dict above the finding, and a key any mechanism flags is a finding of its own at a strictly shallower
+    depth, so the shallowest finding cannot sit beneath one. Naming the scan's finding first whatever its depth
+    (round 1) printed a 32-hex token, the class of key the walk refuses, when a hostname sat beneath it; naming the
+    walk's first (the version before) printed a key spelling the hostname when free text sat beneath that.
 
     `under` is the key path the document's blocks sit below (the export's `perf`; the root for the restart
-    document, whose blocks are its top-level keys) and `tail` what the refusal says was not done. `romp
+    document, whose blocks are its top-level keys) and `tail` what the refusal says was not done (this verb's write;
+    `romp perf upload`, which runs the same check over a file as it stands, passes "nothing sent"). `romp
     restart-metrics --json --public` runs this same function over its document (`under=()`, "nothing printed"): it
     ran the scan alone and printed a 32-hex token planted in an event row's nested field, the one place raw ledger
     rows pass through, where this verb refused the same document (the export's closing check, 2026-09-18)."""
-    findings = [(h.depth, 0, "a string this machine knows (%s) survives as %s" % (h.kind, pp.place(h)))
-                for h in pp.identifier_hits(doc, pp.machine_probes(state), skip=("schema",))]
+    findings = [(h.depth, 0, _survives(h)) for h in pp.identifier_hits(doc, pp.machine_probes(state), skip=("schema",))]
     findings += [(p.depth, 1, "the public form still fails the walk (%s, %s)" % (p.kind, pp.place(p)))
                  for p in pp.paste_problems(doc, skip=("schema",), under=under)]
+    findings += [(p.depth, 2, "the public form still fails the denylist (%s, %s)" % (p.kind, pp.place(p)))
+                 for p in pp.denylist_problems(doc, under=under, skip=("schema",))]
     if not findings:
         return None
     return "%s; %s" % (min(findings, key=lambda f: f[:2])[2], tail)    # min is stable: walk order among equals
 
 
+def _survives(hit):
+    """The scan's finding as check_document names it: the kind and the place (pp.place), never the string, and for a
+    listed private string (hit.line, the one-based line of the private-strings list its entry is on) the remedy clause,
+    editing that line or the key or value the finding sits at."""
+    text = "a string this machine knows (%s) survives as %s" % (hit.kind, pp.place(hit))
+    if hit.line is not None:
+        text += "; edit line %d of the private-strings list or that %s" % (hit.line, "key" if hit.is_key else "value")
+    return text
+
+
 def default_path(state: Path, now=None) -> Path:
     now = now or datetime.now(timezone.utc)
     return state / EXPORT_DIR / ("perf-export-%s.json" % now.strftime("%Y%m%dT%H%M"))
+
+
+def document_text(doc) -> str:
+    """The text this verb writes for `doc`, the ONE spelling of an export: json.dumps with one space of indent and
+    sorted keys, and a trailing newline. `romp perf upload` sends the same function's output for the document its
+    checks passed (cli/perf_upload.py, read_export), never a file's own bytes, so what travels is what was checked
+    (the upload's fourth review round, 2026-09-19), and a file as this verb wrote it re-serialises to itself byte for
+    byte (json.dumps round-trips its own output: a float's repr is the shortest spelling that reads back to it, and the
+    keys are sorted both times), pinned in tests/test_perf_upload.py. The sorted keys are what keep a file's own key
+    order off the wire: no check reads key order (strict_loads' repeated-key rule, the three walks, the top-level belt
+    and the fold belt are all order-blind), so a reordered export passes them all, and sort_keys is what makes it
+    re-serialise to the canonical bytes, pinned by the key-reversed case in tests/test_perf_upload.py (the closing
+    check, 2026-09-19, removed sort_keys and every test then in the repo passed). A change here changes what both
+    verbs put on disk and on the wire."""
+    return json.dumps(doc, indent=1, sort_keys=True) + "\n"
 
 
 def write_file(path: Path, text: str) -> int:
@@ -356,7 +472,7 @@ def main(argv=None) -> int:
         return 1
     path = Path(a.out) if a.out else default_path(state, now)
     try:
-        n = write_file(path, json.dumps(doc, indent=1, sort_keys=True) + "\n")
+        n = write_file(path, document_text(doc))
     except OSError as e:
         sys.stderr.write("%s: cannot write %s (%s)\n" % (PROG, path, e.__class__.__name__))
         return 1

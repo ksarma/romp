@@ -40,6 +40,7 @@ import contextlib
 from contextlib import redirect_stderr
 from http.server import ThreadingHTTPServer
 from romp_load import load_source
+from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -55,6 +56,7 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = load_source("romp_kernel_perf", os.path.join(BIN, "romp-kernel"))
 pp = load_source("romp_perf_public", os.path.join(os.path.dirname(HERE), "cli", "perf_public.py"))   # the paste-safe walk
+pe = load_source("romp_perf_export_stats", os.path.join(BIN, "romp-perf-export"))   # the export verb: usage_block and the routes it counts
 
 SID = "11111111-2222-3333-4444-555555555555"
 # A PRIVATE synthetic sid for the goal-store tests: load_goals replays the per-sid override journal,
@@ -5539,6 +5541,659 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
             self.assertFalse(pp.http_key_ok(k), k)
             self.assertEqual(pp.paste_problems({"http": {k: {"count": 1}}}, ident=self.IDENT)[-1].kind,
                              "outside the image of the route register", k)
+
+
+class Disclosed(unittest.TestCase):
+    """The upload's disclosure paragraph in docs/reference.md (the one a user reads before typing yes: what does travel is
+    the file's content, paste-safe, not unlinkable) names every leaf of the process, heap, gc and usage blocks an upload
+    carries, pinned against the LIVE collector through the public fold, never a fixture. The closing check (2026-09-19) added
+    three leaves to a temp copy of the kernel one at a time (process/vm_data_kb, heap/hydrated/evicted, process/malloc/keepcost)
+    and each travelled to a recording receiver over the real export-then-upload road while the reference's fixed-substring
+    pin in tests/test_perf_upload.py stayed at 2 passed: a pin that reads no snapshot cannot see an added leaf. The population
+    cannot come from that module's own export either: its planted_snapshot is an old-kernel document (process cpu_s, rss_kb,
+    threads; heap tracing; no gc), so a pin over it enumerates four names and misses every real gauge. This module already
+    loads the kernel (km), the shared public shape (pp) and, since the closing re-run, the export verb (pe, for the usage
+    block), and owns the process block's shape pins, so the pin lives here. What goes stale when a gauge is added is the
+    DISCLOSURE, not the protection: the recomputing paste-safety walk and the fold protect an added leaf whatever its name
+    (the closing check's probe gauge carrying a path and a uuid folded to `other` and no identifier reached the wire). This
+    pin is what makes the paragraph move with the snapshot.
+
+    FOUR GROUPS since the closing re-run (2026-09-19, its finding 7, the one it ranked highest): the usage block, written only
+    with --usage, which adds no number a plain export lacks (every leaf is the http table's count relabelled or a copy or a
+    count of a perf leaf that travels anyway; the closing check at the re-run's head (2026-09-19) found the paragraph conditioning the 53
+    action counts and 15 pane counts on the flag while a plain export carried every one), is pinned as the fourth, over a
+    snapshot whose http table has served every action route and every pane route once (_served_snapshot), so its clause is
+    held to the WHOLE population the export can write, the three session counts, the uptime bucket, one count per action
+    route the register carries less the kernel's own housekeeping posts and one per pane route (53 action names and 15 view
+    names on 2026-09-19, asserted below), and not to the traffic of one machine: the re-run found the paragraph naming one
+    leaf of the eleven a lightly used kernel's block carried, four of them present with no traffic at all. The bounds
+    sentence is pinned live too (finding 8): the count it spells is recomputed from the BOUND_KEYS-keyed leaves of the same
+    fold, the one constant among them, memos.judgingBand.bound, set aside by the module's classification, never by a path
+    typed here (pp.MEMORY_FRACTION_BOUNDS, the ten fractions of MemTotal, and pp.CONSTANT_BOUNDS, the one literal; the
+    closing check at the re-run's head found, in its finding 4, the earlier set-aside naming the ring length as the one non-fraction and so
+    counting the constant as a fraction, both labels backwards and the errors cancelling to ten, so the mechanism meant to
+    keep the disclosure true could have driven it false at the next constant added under a bound key; the two labels are
+    now checked by execution against the kernel, in the test named for them). And the process clause's allowances are keyed
+    on VALUES, never on a platform list (finding 2): the four malloc leaves are excused exactly when the live malloc value is
+    None, and the clause checks run a second time with the kernel's mallinfo2 handle patched to None, the value the kernel
+    reads on glibc before 2.33, musl and macOS.
+
+    NAMES AND CONDITIONING (the closing check at the re-run's head, 2026-09-19): a name pin holds POPULATIONS, a block's leaves in both
+    directions, and cannot see a clause that ties real data to a condition it is not tied to, which is what the fourth false
+    sentence found in this paragraph was. So a second kind of pin sits beside the four name groups. A CONDITIONING pin holds
+    each "only when Y" and "one per Z" claim of the paragraph by producing a document WITHOUT the condition and asserting the
+    conditioned thing absent, and, where a document with the condition can be produced here, producing it and asserting the
+    thing present, through the machinery the name groups use, km._PerfStats, pp.fold, pe.export_document and pe.usage_block,
+    never a fixture. Every such clause is listed in CONDITIONAL_CLAIMS with the pin that holds it, and the test named for the
+    list holds each listed clause present in the paragraph, so a clause reworded moves the list and the list says where its
+    pin lives; the three wordings that check found false are held absent (DROPPED_WORDINGS). The clause slicing of the name
+    groups is unchanged: the http sentence and the words "the `usage` block, which adds no number a plain export lacks:" sit
+    between the bounds sentence and "every leaf under `usage`", outside every clause, and inside the usage clause http and
+    perf are written without backticks, so the per-clause reverse direction still holds every backticked name to a live key
+    of its block.
+
+    THE THREE SNAPSHOT SHAPES (the second closing check, 2026-09-19, and the ruling of the same day on its leaf): the usage
+    group's population is the union of the block the export writes for the current shape (parses.perSession, the served
+    snapshot), for the older one (parses.bySid, no perSession, what a kernel before 2026-09-18 saved) and for the malformed one
+    (a perSession block whose sessions is not a number, a hand-made snapshot's shape), because the block differs by shape: the
+    current shape carries the `parsed` count and the other two carry, in its place, `parsedUnavailable`, the one leaf of the
+    block that is neither a count nor a bucket, present exactly when the count is absent, with a fixed string that is true of
+    the shape that carries it: `predates-parses.perSession` for the older shape, `perSession.sessions-not-a-number` for the
+    malformed one (the leaf's first cut wrote the first reason for both, and it was false for the malformed shape, whose block is
+    there). So an absent count reads as a count the export could not read and never as a kernel that parsed nothing, and an
+    old snapshot is told from a malformed one. _check walks all three blocks into the name population and holds the
+    conditioning (the count and the leaf never both, never neither; each reason on its shape alone) on all three documents."""
+
+    BLOCKS = ("process", "heap", "gc", "usage")
+    MALLOC_LEAVES = frozenset({"arena", "fordblks", "hblkhd", "uordblks"})
+    SPELLED = {8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve"}   # the counts the bounds sentence could spell
+    STAMP = datetime(2026, 9, 19, 12, 0, tzinfo=timezone.utc)                  # one export minute for a pair of documents compared whole
+    # The paragraph's conditional ("X only when Y") and per-Z ("one per Z") claims, each as its words read in the flattened
+    # paragraph and the pin that holds it by a document without the condition. Two clauses have no needle here: "so two
+    # uploads from one kernel remain linkable by design" is a consequence, not a property of a document, and is the
+    # paragraph's end mark (_paragraph); the request sentence before "What does travel" (no hostname, account or filename
+    # anywhere in the request, and no second file) is pinned over a recording receiver in tests/test_perf_upload.py.
+    CONDITIONAL_CLAIMS = (
+        ("the `malloc` block's `arena`, `fordblks`, `hblkhd` and `uordblks`, null with no leaves under it where the C library has no mallinfo2",
+         "_check with km._MALLINFO2 patched None: the raw and the public malloc are None and none of the four is a process name "
+         "walked; live, where the handle resolved, the block is a dict and all four are walked",
+         ("Disclosed._check", "Disclosed.test_every_leaf_of_process_heap_gc_and_usage_an_upload_carries_is_named_in_its_own_blocks_clause_of_the_references_disclosure")),
+        ("plus, on macOS alone, `rss_peak_kb`",
+         "_check: ('process', 'rss_peak_kb') is walked exactly when sys.platform is darwin; this box's snapshot is the document "
+         "without the condition, and the one with it is producible on darwin alone (the kernel's _process_stats writes it there)",
+         ("Disclosed._check",)),
+        ("per generation under `stats`, `collections`, `collected` and `uncollectable`",
+         "_check: heap.gc.stats has one entry per generation the interpreter reports (len(gc.get_stats())) and each entry exactly "
+         "those three leaves; the name walk skips digit keys as positions, so a table short a generation kept every name pin green",
+         ("Disclosed._check",)),
+        ("per generation under `gen`, `collections`, `collectedLast`, `msLast`, `msMax` and `msSum`",
+         "_check: gc.gen has one row per generation, keyed by its index, and each row exactly those five leaves; the gc block's own "
+         "shape pin (tests/test_perf_gc_block.py, Shape, GEN_KEYS) holds the same at the collector",
+         ("Disclosed._check", "test_perf_gc_block:Shape")),
+        ("memory-fraction bounds coarsened to a power of two (`hydrated.capBytes` among them)",
+         "_check: the fold's bound-keyed leaves classified by pp.MEMORY_FRACTION_BOUNDS and pp.CONSTANT_BOUNDS, the count the "
+         "sentence spells is the fractions', an unclassified leaf red",
+         ("Disclosed._check", "Disclosed.test_the_two_labels_the_earlier_bounds_pin_swapped_are_checked_by_execution_against_the_kernel")),
+        ("the uptime rounded down to the minute",
+         "tests/test_perf_export.py UptimeRounding, and the upload's denylist refusal of an uptime typed to the second",
+         ("test_perf_export:UptimeRounding",
+          "test_perf_upload:Cli.test_an_edited_file_with_the_uptime_to_the_second_is_refused_naming_the_value_path_and_never_the_number")),
+        ("the `http` table in every export, with or without `--usage`: one row per route the kernel has served since it started",
+         "test_the_http_table_travels_in_every_export...: export_document(usage=False) has no usage block and its perf.http is "
+         "the served rows, 68 keys from the served snapshot and {} from a fresh collector",
+         ("Disclosed.test_the_http_table_travels_in_every_export_one_row_per_route_served_with_a_count_and_a_millisecond_total",)),
+        ("the bundle, media, glossary and remote families collapsed to one row each, and one `other` row for whatever is off the register or past the table's cap",
+         "test_the_http_table_travels_in_every_export...: a request off the register folds to `other`; the families' collapse is "
+         "_perf_http_key's and http_public_key's (Collector's fold-to-other test; RouteRegisterCopy in tests/test_perf_export.py) "
+         "and the cap is Collector's http-cap test",
+         ("Disclosed.test_the_http_table_travels_in_every_export_one_row_per_route_served_with_a_count_and_a_millisecond_total",
+          "test_perf_stats:Collector.test_http_keys_outside_the_route_table_fold_to_other",
+          "test_perf_stats:Collector.test_http_keys_are_capped_and_ws_adds_no_time", "test_perf_export:RouteRegisterCopy")),
+        ("each row that route's request `count` and millisecond total `ms`",
+         "test_the_http_table_travels_in_every_export...: every row of the plain export's perf.http has exactly count and ms",
+         ("Disclosed.test_the_http_table_travels_in_every_export_one_row_per_route_served_with_a_count_and_a_millisecond_total",)),
+        ("whoever made the requests (the counter records the route and the time and nothing about the client)",
+         "test_the_http_table_travels_in_every_export...: _PerfStats.http_request takes (path, dt) and no client, the whole executable "
+         "content of the clause; the makers the closing check at the re-run's head read at the call sites were prose no document "
+         "could falsify and left the paragraph at its verification",
+         ("Disclosed.test_the_http_table_travels_in_every_export_one_row_per_route_served_with_a_count_and_a_millisecond_total",)),
+        ("only when `--usage` was given, the `usage` block",
+         "test_the_usage_block_is_written_only_with_the_flag...: export_document(usage=False) writes no usage and its top level "
+         "is within the envelope and perf; usage=True writes pp.fold(pe.usage_block(snap)) and changes nothing else",
+         ("Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",)),
+        ("which adds no number a plain export lacks",
+         "test_the_usage_block_is_written_only_with_the_flag...: the whole block recomputed from the plain export's perf alone "
+         "equals the --usage export's, on planted counts, over the current snapshot shape and the older one (parses.bySid, no "
+         "perSession), where no parsed count is written since the per-sid table is one the plain export drops; the road's side "
+         "in tests/test_perf_upload.py over the older shape",
+         ("Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
+          "test_perf_upload:Cli.test_a_plain_export_sends_the_http_table_with_a_count_and_ms_per_route_served_and_no_usage_block_which_is_those_counts_relabelled")),
+        ("the `sessions` block's `parsed`, `chatBuilt` and `stamped`, each a copy or a count of a leaf under perf that travels anyway",
+         "test_the_usage_block_is_written_only_with_the_flag...: parsed is parses.perSession.sessions, stamped is "
+         "caches.session_stamp.entries, chatBuilt is len(builds.chat.bySession), each read from the plain export; an older "
+         "snapshot's per-sid table travels in no export and gives no parsed count",
+         ("Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",)),
+        ("or, where the snapshot gives no parsed count, `parsedUnavailable` in place of `parsed` with one of two fixed strings, "
+         "predates-parses.perSession for a snapshot saved before the kernel counted parsed sessions (no perSession block under parses)",
+         "_check: the older shape's block (perSession removed, the per-sid table in its place) carries the leaf with that value "
+         "and no parsed, the current shape's carries parsed and no leaf, and all three shapes' blocks are walked into the name "
+         "population; test_the_usage_block_is_written_only_with_the_flag...: the leaf is derived from the plain export's perf "
+         "having no perSession and the recomputation equals the block over the three shapes; the export child over the three "
+         "shapes in tests/test_perf_export.py and the older shape's export read at a recording receiver in tests/test_perf_upload.py",
+         ("Disclosed._check", "Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
+          "test_perf_export:Usage.test_the_parsed_counts_absence_is_stated_in_place_of_the_count_and_only_then",
+          "test_perf_export:Cli.test_a_snapshot_from_before_the_per_session_count_exports_the_absence_leaf_and_a_current_one_the_count",
+          "test_perf_upload:Cli.test_a_plain_export_sends_the_http_table_with_a_count_and_ms_per_route_served_and_no_usage_block_which_is_those_counts_relabelled")),
+        ("and perSession.sessions-not-a-number for a snapshot whose perSession block is there but carries no number under sessions",
+         "_check: the malformed shape's block (the served snapshot's count replaced by a digit string) carries the leaf with that "
+         "value, never the predates reason, and no parsed (the ruling of 2026-09-19 on the leaf: one reason over two causes was "
+         "false for this shape); test_the_usage_block_is_written_only_with_the_flag...: the reason is derived from the plain "
+         "export's perf carrying a perSession whose sessions is not a number, and the recomputation equals the block; every "
+         "corner of the shape in tests/test_perf_export.py (Usage), the export child there (Cli) and the shape's export read at "
+         "a recording receiver in tests/test_perf_upload.py",
+         ("Disclosed._check", "Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
+          "test_perf_export:Usage.test_a_per_session_block_whose_count_is_not_a_number_is_told_so_and_never_that_the_snapshot_is_old",
+          "test_perf_export:Cli.test_a_snapshot_from_before_the_per_session_count_exports_the_absence_leaf_and_a_current_one_the_count",
+          "test_perf_upload:Cli.test_a_plain_export_sends_the_http_table_with_a_count_and_ms_per_route_served_and_no_usage_block_which_is_those_counts_relabelled")),
+        ("the `actions` block's one count per action route served, the http row's count under the route's name",
+         "_check holds the population (53 names); test_the_usage_block_is_written_only_with_the_flag... the values (the http "
+         "rows' counts); test_a_usage_count_is_present_only_for_a_route... one key per route served and none for an unserved one",
+         ("Disclosed._check", "Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
+          "Disclosed.test_a_usage_count_is_present_only_for_a_route_the_kernel_has_served")),
+        ("the `views` block's one count per pane route served, the http row's count under the route's name",
+         "as the actions: _check the 15 names, test_the_usage_block_is_written_only_with_the_flag... the values, "
+         "test_a_usage_count_is_present_only_for_a_route... served routes alone",
+         ("Disclosed._check", "Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
+          "Disclosed.test_a_usage_count_is_present_only_for_a_route_the_kernel_has_served")),
+        ("a count is present only for a route the kernel has served since it started",
+         "test_a_usage_count_is_present_only_for_a_route...: a fresh collector's usage_block has actions {} and views {}; one "
+         "POST /send and two GET /feed give {'send': 1} and {'feed': 2}",
+         ("Disclosed.test_a_usage_count_is_present_only_for_a_route_the_kernel_has_served",)),
+        ("and the kernel commit when the export carried one",
+         "test_the_kernel_commit_travels_only_when...: a snapshot with every COMMIT_KEYS key removed exports no kernel_commit; "
+         "kernel_sha 'abcdef1234567' exports 'abcdef123456'",
+         ("Disclosed.test_the_kernel_commit_travels_only_when_the_export_carried_one",)),
+        ("the list is every leaf of those four blocks in a fresh Linux export of 2026-09-19, with the one leaf macOS adds and the usage counts from a kernel that served every route",
+         "_check: BLOCKS has four, and the register's 53 action names and 15 pane names are asserted",
+         ("Disclosed._check",)),
+    )
+    # The three wordings the closing check at the re-run's head found false and the paragraph dropped: two provenance claims (the code
+    # posts action routes from a relaying kernel, a session's hook and a failed send's retry, and polls pane routes from a
+    # peer kernel and a bus start, so neither "the user's own actions" nor "one count per pane opened" is what the counts
+    # mean) and the head that conditioned every usage leaf on the flag while a plain export carried the same numbers.
+    DROPPED_WORDINGS = ("the user's own actions", "one count per pane opened", "only when `--usage` was given, every leaf under `usage`")
+
+    @classmethod
+    def _check_exists(cls, check):
+        """Does the check a clause names exist: `Disclosed.<name>` is an attribute of this class; `<module>:<Class>` is a
+        class defined in tests/<module>.py and `<module>:<Class>.<method>` a method there (a scan of the source, so the
+        module is not imported into this one). What makes the "exists" half of the closing check's question executable: a
+        pin renamed or deleted leaves the clause listed with a check that is not there, and this reds."""
+        if check.startswith("Disclosed."):
+            return hasattr(cls, check[len("Disclosed."):])
+        module, _, where = check.partition(":")
+        path = Path(HERE).joinpath(module + ".py")
+        if not path.is_file():
+            return False
+        src = path.read_text(encoding="utf-8")
+        klass, _, method = where.partition(".")
+        if not re.search(r"^class %s\(" % re.escape(klass), src, re.M):
+            return False
+        return not method or re.search(r"^    def %s\(" % re.escape(method), src, re.M) is not None
+
+    @staticmethod
+    def _paragraph():
+        """The disclosure paragraph, flattened to single spaces so a rewrap changes nothing."""
+        text = " ".join(Path(HERE).parent.joinpath("docs", "reference.md").read_text(encoding="utf-8").split())
+        start = text.index("What does travel is the file's content")
+        return text[start:text.index("so two uploads from one kernel remain linkable by design", start)]
+
+    @staticmethod
+    def _served_collector():
+        """A fresh collector whose http table has served every route the usage block counts once: every POST route of the
+        register (pp.HTTP_ROUTES, the kernel's own) that is not the kernel's housekeeping (pe.ACTION_SKIP) and every pane
+        route (pe.VIEW_ROUTES), each key spelled by the kernel's own _perf_http_key, the road a request takes, so http_key_ok
+        admits it and usage_block counts it; 68 rows on 2026-09-19, under the collector's HTTP_PATHS cap, so none folds to
+        `other`."""
+        st = km._PerfStats()
+        for route in pp.HTTP_ROUTES["POST"]:
+            if route not in pe.ACTION_SKIP:
+                st.http_request(km._perf_http_key("POST", route), 0.001)
+        for route in pe.VIEW_ROUTES:
+            st.http_request(km._perf_http_key("GET", route), 0.001)
+        return st
+
+    @classmethod
+    def _served_snapshot(cls):
+        """The served collector's snapshot: one request per counted route, every other counter at its fresh value."""
+        return cls._served_collector().snapshot()
+
+    @classmethod
+    def _planted_snapshot(cls):
+        """The served collector with counts planted so a derivation from the document is not trivial (one equals one too
+        easily): POST /send served twice more and GET /feed three times more through the counter, two per-session chat
+        builds through the collector (two real bySession rows), and on the snapshot nine parsed sessions, seventeen stamped
+        sessions and an uptime of 100.5 s (rounded to 60 on the wire; bucket lt1h)."""
+        st = cls._served_collector()
+        for _ in range(2):
+            st.http_request(km._perf_http_key("POST", "/send"), 0.002)
+        for _ in range(3):
+            st.http_request(km._perf_http_key("GET", "/feed"), 0.003)
+        st.build_chat(False, 0.100, sid=SID, nbytes=10)
+        st.build_chat(False, 0.300, sid="22222222-3333-4444-5555-666666666666", nbytes=20)
+        snap = st.snapshot()
+        snap["parses"]["perSession"]["sessions"] = 9
+        snap["caches"]["session_stamp"]["entries"] = 17
+        snap["uptime_s"] = 100.5
+        return snap
+
+    def _check(self, snap, mallinfo2):
+        """The clause checks over one snapshot `snap`, both directions, all four groups; called once over the live
+        collector and once with the kernel's mallinfo2 handle patched to None. `mallinfo2` is the handle the kernel read
+        when `snap` was taken (km._MALLINFO2 at that moment): None is the document without the malloc clause's condition,
+        anything else the document with it. Returns the public fold."""
+        para = self._paragraph()
+        public = pp.fold(snap)                                   # the projection on the wire (perf_export.export_document)
+        usage = pp.fold(pe.usage_block(snap))                    # the fourth group, as the export writes it under --usage
+        # the same block for the OLDER snapshot shape (the second closing check, 2026-09-19): perSession removed and the per-sid
+        # table in its place, what a kernel before 2026-09-18 saved; and for the MALFORMED shape (the ruling of the same day on
+        # the leaf): the count replaced by a digit string, a hand-made snapshot's shape. The block differs by shape in one leaf,
+        # so the name population is the union of the three, and the conditioning is held here on all three documents: the
+        # current shape's block has the parsed count and no absence leaf, the other two the absence leaf and no count, each
+        # with the fixed value that is true of its shape and never the other's
+        old = copy.deepcopy(snap)
+        self.assertEqual(set(old["parses"]["perSession"]), {"sessions", "max"}, "the served snapshot is the current shape")
+        del old["parses"]["perSession"]
+        old["parses"]["bySid"] = {SID: 1}
+        usage_old = pp.fold(pe.usage_block(old))
+        bad = copy.deepcopy(snap)
+        bad["parses"]["perSession"]["sessions"] = "1"
+        usage_bad = pp.fold(pe.usage_block(bad))
+        self.assertIn("parsed", usage["sessions"], sorted(usage["sessions"]))
+        self.assertNotIn("parsedUnavailable", usage["sessions"], "the count present: no absence leaf")
+        self.assertEqual(usage_old["sessions"].get("parsedUnavailable"), "predates-parses.perSession", sorted(usage_old["sessions"]))
+        self.assertNotIn("parsed", usage_old["sessions"], "the absence leaf present: no count")
+        self.assertEqual(usage_bad["sessions"].get("parsedUnavailable"), "perSession.sessions-not-a-number", sorted(usage_bad["sessions"]))
+        self.assertNotIn("parsed", usage_bad["sessions"], "the absence leaf present: no count")
+        for other in (usage_old, usage_bad):
+            self.assertEqual({k: v for k, v in other.items() if k != "sessions"}, {k: v for k, v in usage.items() if k != "sessions"},
+                             "the shapes differ under sessions alone")
+        self.assertIn("pid", snap["process"], "the raw snapshot carries the pid the fold drops")
+        # finding 8 of the closing re-run: the count the bounds sentence spells is the fold's own, recomputed from every leaf
+        # under a BOUND_KEYS name. Finding 4 of the closing check at the re-run's head (2026-09-19): WHICH leaf is set aside is the
+        # module's classification (pp.MEMORY_FRACTION_BOUNDS, the ten fractions of MemTotal; pp.CONSTANT_BOUNDS, the one
+        # literal, memos.judgingBand.bound), never a path typed here. The set-aside before this named pusher.stageRingMax as
+        # the one non-fraction, a ring length, and so counted the constant as a fraction: both labels backwards, the errors
+        # cancelling to ten, and the next constant added under a bound key would have moved the paragraph to eleven while
+        # ten stayed true. The two labels are checked by execution against the kernel in the test named for them.
+        bounds = set()
+
+        def leaves(node, where):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    leaves(v, where + (k,))
+            elif isinstance(node, list):
+                for i, v in enumerate(node):
+                    leaves(v, where + (i,))
+            elif where and where[-1] in pp.BOUND_KEYS:
+                bounds.add(where)
+        leaves(public, ())
+        classified = {p[2:] if p[:2] == ("judge", "child") else p for p in bounds}   # the judge child's copies of its tables carry the same keys
+        unknown = classified - pp.MEMORY_FRACTION_BOUNDS - pp.CONSTANT_BOUNDS
+        self.assertEqual(unknown, set(), "a bound-keyed leaf that cli/perf_public.py classifies as neither a memory fraction nor a "
+                         "constant; classify it there and, if it is a fraction, move the disclosure's count: %s" % sorted(unknown, key=repr))
+        fractions = classified & pp.MEMORY_FRACTION_BOUNDS
+        self.assertEqual(fractions, pp.MEMORY_FRACTION_BOUNDS,
+                         "a listed fraction not on the wire: %s" % sorted(pp.MEMORY_FRACTION_BOUNDS - fractions, key=repr))
+        constants = classified & pp.CONSTANT_BOUNDS
+        self.assertEqual(constants, pp.CONSTANT_BOUNDS,
+                         "a listed constant not on the wire: %s" % sorted(pp.CONSTANT_BOUNDS - constants, key=repr))
+        self.assertIn(("heap", "hydrated", "capBytes"), fractions, "the paragraph names hydrated.capBytes as one of the bounds")
+        self.assertIn(len(fractions), self.SPELLED, "a count the sentence cannot spell: %s" % sorted(fractions, key=repr))
+        bounds_sentence = ("the %s memory-fraction bounds coarsened to a power of two (`hydrated.capBytes` among them)"
+                           % self.SPELLED[len(fractions)])
+        self.assertIn(bounds_sentence, para, "the count the paragraph spells is not the fold's %d: %s" % (len(fractions), sorted(fractions, key=repr)))
+        self.assertEqual(len(bounds), 11, "ten memory fractions and one constant on 2026-09-19: %s" % sorted(bounds, key=repr))
+        # the four clauses, each from its "every leaf under" marker to an EXPLICIT end: process ends at heap's start, heap at
+        # gc's, gc at the bounds sentence (so it and `hydrated.capBytes` sit outside every clause), usage at the kernel commit;
+        # the http sentence and the usage block's head sit in the gap between the bounds sentence and the usage clause
+        for block in self.BLOCKS:
+            self.assertIn("every leaf under `%s`" % block, para, "the paragraph has no `%s` clause" % block)
+        starts = [para.index("every leaf under `%s`" % b) for b in self.BLOCKS]
+        self.assertEqual(starts, sorted(starts), "the four clauses come in the blocks' order: process, heap, gc, usage")
+        self.assertIn(", and the kernel commit", para[starts[3]:], "the usage clause ends at the kernel commit")
+        ends = [starts[1], starts[2], para.index(bounds_sentence), para.index(", and the kernel commit", starts[3])]
+        self.assertTrue(starts[2] < ends[2] <= starts[3], "the bounds sentence sits between the gc clause and the usage clause")
+        clause = {b: para[i:j] for b, i, j in zip(self.BLOCKS, starts, ends)}
+        # the population of the fourth group, asserted before the clause checks so the pin is over the full block
+        actions = {pe._feature_name(r) for r in pp.HTTP_ROUTES["POST"] if r not in pe.ACTION_SKIP}
+        views = {pe._feature_name(r) for r in pe.VIEW_ROUTES}
+        self.assertEqual(set(usage["actions"]), actions, "one count per action route the register carries, less the housekeeping posts")
+        self.assertEqual(set(usage["views"]), views, "one count per pane route")
+        self.assertLessEqual({"parsed", "chatBuilt", "stamped"}, set(usage["sessions"]), sorted(usage["sessions"]))
+        self.assertIn("kernelUptime", usage, sorted(usage))
+        # the two per-generation clauses (the closing check at the re-run's head, its verification, 2026-09-19): heap.gc.stats is
+        # one entry per generation the interpreter reports (the kernel copies gc.get_stats()) and gc.gen one row per generation
+        # the collector tallies, keyed by the generation's index, each with exactly the leaves its clause names. The name walk
+        # below cannot see a table short a generation or a row short a leaf: it skips digit keys as positions and matches
+        # names per block, so a gen table carrying the five leaves under one generation alone kept every pin green
+        stats, gen = public["heap"]["gc"]["stats"], public["gc"]["gen"]
+        self.assertIsInstance(stats, list, "heap.gc.stats is gc.get_stats()'s list, one entry per generation")
+        self.assertEqual(len(stats), len(gc.get_stats()), "one stats entry per generation the interpreter reports")
+        self.assertEqual(set(gen), {str(g) for g in range(len(gc.get_stats()))}, "one gen row per generation, keyed by its index")
+        for i, entry in enumerate(stats):
+            self.assertEqual(set(entry), {"collections", "collected", "uncollectable"}, "heap.gc.stats[%d]" % i)
+        for g, row in gen.items():
+            self.assertEqual(set(row), {"collections", "collectedLast", "msLast", "msMax", "msSum"}, "gc.gen[%s]" % g)
+        keys = set()                                             # (block, key) for every leaf and every block the walk descends through
+
+        def walk(block, node):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if not k.isdigit():                          # a generation index is a position, not a name
+                        keys.add((block, k))
+                    walk(block, v)
+            elif isinstance(node, list):
+                for x in node:
+                    walk(block, x)
+        groups = {"process": public["process"], "heap": public["heap"], "gc": public["gc"], "usage": usage}
+        for block in self.BLOCKS:
+            self.assertIsInstance(groups[block], dict, block)
+            walk(block, groups[block])
+        walk("usage", usage_old)                                 # the older shape's block: its absence leaf joins the population
+        walk("usage", usage_bad)                                 # and the malformed shape's, the same leaf with its own value
+        self.assertIn(("usage", "parsedUnavailable"), keys, "the absence leaf is in the population the clause is held to")
+        self.assertGreaterEqual(len(keys), 40, sorted(keys))       # the three blocks of 2026-09-19 carry far more than the fixture's four
+        # the malloc clause's CONDITIONING pin (the closing check at the re-run's head, 2026-09-19): "null with no leaves under it where the
+        # C library has no mallinfo2" is held by the document without the condition, the run with the handle patched to None,
+        # asserting the four leaves ABSENT, and by the live document where the handle resolved (glibc 2.33 and later; this
+        # box), asserting them PRESENT; the allowance further down excuses the names in the clause, this holds the wire
+        process_names = {name for b, name in keys if b == "process"}
+        if mallinfo2 is None:
+            self.assertIsNone(snap["process"]["malloc"], "the simulation took: _malloc_stats returns None where _MALLINFO2 is None")
+            self.assertIsNone(public["process"]["malloc"], "and the fold keeps the null")
+            self.assertEqual(self.MALLOC_LEAVES & process_names, set(), "no leaf under malloc travels where the C library has no mallinfo2")
+        else:
+            self.assertIsInstance(public["process"]["malloc"], dict, "where the handle resolved the block is served as a dict")
+            self.assertLessEqual(self.MALLOC_LEAVES, process_names, "and all four leaves travel: %s" % sorted(process_names))
+        for block, name in sorted(keys):
+            self.assertTrue(re.search(r"`%s`" % re.escape(name), clause[block]),
+                            "an upload carries `%s` under `%s` and the `%s` clause of the disclosure paragraph in docs/reference.md "
+                            "does not name it" % (name, block, block))
+        for block in self.BLOCKS:
+            live = {name for b, name in keys if b == block} | {block}
+            if block == "process":
+                if "rss_peak_kb" not in public["process"]:
+                    # excused exactly when the fold carries no such leaf: the darwin-only leaf is named with its platform in
+                    # so many words, the kernel writes it on darwin alone (_process_stats), and the assertion after the clause
+                    # checks holds the paragraph's words against that rule. Keyed on the VALUE, like the malloc allowance
+                    # below: the re-run's verification found this one still keyed on sys.platform under a docstring saying
+                    # the process clause's allowances were keyed on values
+                    live.add("rss_peak_kb")
+                if public["process"].get("malloc") is None:
+                    # named for the libc that has them; where the kernel's _MALLINFO2 is None (glibc before 2.33, musl,
+                    # macOS) _malloc_stats returns None, the fold keeps "malloc": null and the four leaves do not travel.
+                    # Keyed on the VALUE the fold carries, never on sys.platform: a platform list goes stale at the fifth libc
+                    live |= self.MALLOC_LEAVES
+            for name in re.findall(r"`([^`]+)`", clause[block]):
+                self.assertIn(name, live, "the `%s` clause names `%s`, which no upload from this kernel carries there" % (block, name))
+        self.assertNotIn(("process", "pid"), keys, "the fold drops pid; the paragraph describes the wire")
+        self.assertIn("on macOS alone, `rss_peak_kb`", clause["process"], "the darwin-only leaf is named with its platform, in its block's clause")
+        # the paragraph's words, "on macOS alone", held against the kernel's own platform rule (kernel/kernel.py _process_stats
+        # writes the leaf under darwin alone; Collector's shape pin holds the same): not an allowance, and the one place this
+        # test names a platform, since the paragraph's words do. This is also the clause's CONDITIONING pin: this box's
+        # snapshot is the document without the condition and holds the leaf absent; the document with it is producible on
+        # darwin alone, where the same line holds it present
+        self.assertEqual(("process", "rss_peak_kb") in keys, sys.platform == "darwin", sorted(keys))
+        # after both directions, so a route added to the register is first named by the forward direction as the leaf the
+        # usage clause does not carry, and then moves this count and the class docstring's figures
+        self.assertEqual((len(actions), len(views)), (53, 15), "the register on 2026-09-19; a route added moves this and the clause")
+        return public
+
+    def test_every_leaf_of_process_heap_gc_and_usage_an_upload_carries_is_named_in_its_own_blocks_clause_of_the_references_disclosure(self):
+        """Every key under process, heap and gc of a live snapshot's public form (pp.fold, the projection the export writes
+        and the upload sends: it drops pid, so the paragraph need not name it), and every key of the usage block the export
+        writes under --usage (pp.fold over pe.usage_block, from a snapshot that served every action and pane route), the
+        leaves AND the blocks the walk descends through (malloc, builtChat, hydrated, imgCache, heap's gc and its stats, gc's
+        gen, usage's sessions, actions and views; the generation indexes, digit strings, excepted), is named in backticks
+        INSIDE ITS OWN BLOCK'S CLAUSE of the paragraph, the text from "every leaf under `process`" to "every leaf under
+        `heap`", from there to "every leaf under `gc`", from there to the bounds sentence, and from "every leaf under `usage`"
+        to the kernel commit. Per block and not anywhere in the paragraph, because the paragraph names `bytes` and `entries`
+        for two heap blocks and they are the commonest gauge names in the whole fold (caches, recordCache, chatPages,
+        fileSlice), so a process-level `bytes` or a new process/cache block with `entries` would have passed a paragraph-wide
+        match with the suite green (the closing delta's verifier planted both: process/bytes = 4242 and process/cache/entries
+        = 7 travelled and the paragraph-wide pin stayed at 1 passed). Naming the blocks too is what makes a new block red by
+        its own name before its leaves are asked for. AND THE OTHER DIRECTION: every backticked name inside a clause is a
+        live key of that block, or the block's own name, or one of two value-keyed allowances in the process clause:
+        `rss_peak_kb` when the fold carries no such leaf (the darwin-only leaf is named with its platform in so many words;
+        the kernel writes it on darwin alone, which Collector's shape pin and the assertion after the clause checks hold, the
+        one place this test names a platform, since the paragraph's words do), and the four malloc leaves when the live
+        malloc value is None (mallinfo2 absent: glibc before 2.33, musl, macOS), so the pin holds wherever the kernel runs,
+        keyed on the value it reads and never on a list of platforms, and a leaf the kernel stops writing cannot stay
+        disclosed as travelling, except the excused names: the four malloc leaves stay disclosed as conditional when the
+        kernel never reads mallinfo2 (a kernel whose _malloc_stats returned None unconditionally would leave this pin green),
+        and Collector's shape pin, malloc must read where _MALLINFO2 resolved, is what catches that. The clause checks run twice: over
+        the live collector, and with km._MALLINFO2 patched to None (the value simulation the closing re-run accepted for the
+        branch the kernel attributes to those libcs; _check asserts it took, the snapshot's malloc None and the fold keeping
+        the null, and that none of the four leaves is walked, the malloc clause's conditioning pin), so the allowance's branch
+        is exercised on every platform. THE MATCH IS PER BLOCK, NOT PER PARENT: a name
+        REUSED inside one block for a second sub-block passes (heap/bytes at the top level would pass on the `hydrated`
+        block's `bytes`; the walk keys on block and name, not on the parent), while a name crossing blocks reds (process/bytes
+        did, the case the paragraph-wide match let through); the per-parent span is the queued road. Fails on: a gauge added
+        to the kernel and not to its block's clause, naming the block and the gauge; a route added to the register and not to
+        the usage clause; a block added to the kernel and not to the paragraph; a name kept in a clause after its gauge went;
+        the macOS clause removed; the malloc allowance keyed on the platform (the patched run reds on Linux); the bounds count
+        the paragraph spells off the fold's; a bound-keyed leaf cli/perf_public.py does not classify; the fold replaced by the
+        raw snapshot (pid would then be demanded of a paragraph that describes the wire, which never carries it). NOT this
+        test's to catch: a clause that conditions real data on a flag it is not tied to, or says where a count came from; a
+        name pin holds populations, and those claims are the conditioning pins' (CONDITIONAL_CLAIMS and the tests it names)."""
+        self._check(self._served_snapshot(), mallinfo2=km._MALLINFO2)
+        with mock.patch.object(km, "_MALLINFO2", None):          # the value the kernel reads where mallinfo2 is absent
+            self._check(self._served_snapshot(), mallinfo2=None)
+
+    def test_the_two_labels_the_earlier_bounds_pin_swapped_are_checked_by_execution_against_the_kernel(self):
+        """Finding 4 of the closing check at the re-run's head (2026-09-19): the bounds-count pin set aside pusher.stageRingMax as "a ring
+        length, not a memory fraction" and so counted memos.judgingBand.bound, the constant, as a fraction; both labels were
+        backwards and the errors cancelled to ten. The classification now lives in cli/perf_public.py (MEMORY_FRACTION_BOUNDS,
+        CONSTANT_BOUNDS) and _check derives the count from it; this test holds the two labels the old pin swapped against the
+        kernel BY EXECUTION, not by reading a comment: the ring length scales with the machine's memory (_stage_ring_len with
+        mem_total 64 GiB is 256 and with 16 GiB is 64, one per 256 MiB, and the served stageRingMax is that function's
+        value), so it is a fraction and must be classified as one; the judging band's bound is the kernel's row cap, a module
+        literal of 20000 the same on every machine, so it is a constant and must be classified as one. Fails on: the ring
+        moved to the constants (nine fractions against the paragraph's ten in _check, and this test's classification line);
+        the constant dropped from the classification (an unclassified leaf in _check, and this test); the row cap made a
+        fraction of memory in the kernel (the literal line here)."""
+        snap = self._served_snapshot()
+        ring = km._stage_ring_len
+        self.assertEqual((ring(mem_total=64 << 30), ring(mem_total=16 << 30)), (256, 64),
+                         "one ring slot per 256 MiB of the machine's memory: the ring length scales with MemTotal, a memory fraction")
+        self.assertEqual(snap["pusher"]["stageRingMax"], ring(), "the wire's stageRingMax is _stage_ring_len's value")
+        self.assertIn(("pusher", "stageRingMax"), pp.MEMORY_FRACTION_BOUNDS, "a bound that scales with the machine's memory is classified as a fraction")
+        self.assertNotIn(("pusher", "stageRingMax"), pp.CONSTANT_BOUNDS, "and not as a constant")
+        self.assertEqual(snap["memos"]["judgingBand"]["bound"], km._JUDGING_ROW_CAP, "the wire's judging-band bound is the kernel's row cap")
+        self.assertEqual(km._JUDGING_ROW_CAP, 20000, "a literal in kernel/kernel.py, the same on every machine: a constant, not a fraction")
+        self.assertIn(("memos", "judgingBand", "bound"), pp.CONSTANT_BOUNDS, "a bound that is a module literal is classified as a constant")
+        self.assertNotIn(("memos", "judgingBand", "bound"), pp.MEMORY_FRACTION_BOUNDS, "and not as a fraction")
+        self.assertEqual(pp.MEMORY_FRACTION_BOUNDS & pp.CONSTANT_BOUNDS, frozenset(), "a leaf is one or the other")
+        self.assertEqual(len(pp.MEMORY_FRACTION_BOUNDS), 10, "the ten the BOUND_KEYS comment and the paragraph count")
+
+    def test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export(self):
+        """The paragraph's "only when `--usage` was given, the `usage` block, which adds no number a plain export lacks", held
+        by two documents from one planted snapshot (_planted_snapshot: POST /send three times, GET /feed four times, two chat
+        rows, nine parsed and seventeen stamped sessions, 100.5 s of uptime). WITHOUT the flag: no `usage` key, and the top
+        level within the envelope and `perf`. WITH it: the block is pp.fold(pe.usage_block(snap)) and nothing else in the
+        document changes. And the executable form of "adds no number": the WHOLE block is recomputed here from the plain
+        export's `perf` alone, the actions from the POST rows of the http table that are action routes, the views from the
+        GET rows that are pane routes, parsed from parses.perSession.sessions, stamped from caches.session_stamp.entries,
+        chatBuilt from the length of builds.chat.bySession and kernelUptime from the bucket of the rounded uptime, and must
+        equal the --usage export's block exactly, over BOTH snapshot shapes the export reads: the kernel of today's (parses
+        with perSession) and the OLDER one (parses with bySid and no perSession, what a kernel before 2026-09-18 saved and the
+        shape this suite's fixtures carry), where the block has no parsed count, since the per-sid table is one the plain
+        export drops. The closing check at the re-run's head (2026-09-19) found the paragraph presenting the 53 action counts
+        and the 15 pane counts as opt-in while a plain export carried every one of them in perf.http, and the name pins
+        (populations per block) could not see it; its verification then found usage_block writing len(bySid) for the older
+        shape, the one number the flag added that no leaf of the plain body gave, which this derivation, run over the
+        current shape alone, could not see either. Fails on: the block written without the flag; a usage leaf computed from
+        a table the fold drops (len(bySid) again) or from a number the plain export does not carry (a future leaf, or a count
+        written as count + 1: the population pins stay green on that, which is why this one exists); the absence leaf dropped,
+        written for the current shape too, or reworded (the second closing check, 2026-09-19: the older shape's block states
+        the absence, parsedUnavailable with the fixed string predates-parses.perSession, which the derivation writes exactly when
+        the plain export's perf has no perSession); the malformed shape (a perSession whose sessions is not a number, the third
+        document here) given the predates reason instead of its own, perSession.sessions-not-a-number, which the derivation
+        writes exactly when the plain export's perf carries a perSession with no number under sessions (the ruling of the same
+        day on the leaf: one reason over two causes was false for this shape)."""
+        snap = self._planted_snapshot()
+        plain = pe.export_document(snap, usage=False, now=self.STAMP)
+        self.assertFalse("usage" in plain, "no usage block without the flag; the keys: %s" % sorted(plain))   # by boolean: never dumps the document
+        self.assertLessEqual(set(plain), {"schema", "exported_at", "perf", "kernel_commit"}, sorted(plain))
+        withu = pe.export_document(snap, usage=True, now=self.STAMP)
+        self.assertEqual(withu["usage"], pp.fold(pe.usage_block(snap)), "with the flag, the block as usage_block builds it, folded")
+        self.assertEqual({k: v for k, v in withu.items() if k != "usage"}, plain, "the flag adds the block and changes nothing else")
+        usage = withu["usage"]
+        self.assertEqual((usage["actions"]["send"], usage["views"]["feed"]), (3, 4), "the planted counts, not one")
+        self.assertEqual(usage["sessions"], {"parsed": 9, "chatBuilt": 2, "stamped": 17})
+        self.assertEqual(usage["kernelUptime"], "lt1h")
+        perf = plain["perf"]
+        self.assertEqual(perf["uptime_s"], 60, "100.5 s rounded down to the minute on the wire")
+
+        def derived(perf):
+            """The usage block from a plain export's perf alone; parsed only where perSession travels with a number under
+            sessions (an older snapshot's per-sid table does not travel, so no count of it can be derived, and none may be
+            written), and where it does not, the absence stated by a fixed string in the count's place (the second closing
+            check, 2026-09-19): a constant, not a number, derived from the plain export's SHAPE, which is the fact each states
+            (the ruling of the same day on the leaf): no perSession under parses is the predates reason; a perSession there
+            with no number under sessions is the malformed reason."""
+            http = perf["http"]
+            sessions = {"chatBuilt": len(perf["builds"]["chat"]["bySession"]), "stamped": perf["caches"]["session_stamp"]["entries"]}
+            per = perf["parses"].get("perSession")
+            if per is None:
+                sessions["parsedUnavailable"] = "predates-parses.perSession"
+            elif isinstance(per.get("sessions"), (int, float)) and not isinstance(per.get("sessions"), bool):
+                sessions["parsed"] = per["sessions"]
+            else:
+                sessions["parsedUnavailable"] = "perSession.sessions-not-a-number"
+            return {
+                "sessions": sessions,
+                "actions": {pe._feature_name(k[len("POST "):]): row["count"] for k, row in http.items()
+                            if k.startswith("POST ") and k[len("POST "):] in pp.HTTP_ROUTES["POST"] and k[len("POST "):] not in pe.ACTION_SKIP},
+                "views": {pe._feature_name(k[len("GET "):]): row["count"] for k, row in http.items()
+                          if k.startswith("GET ") and k[len("GET "):] in pe.VIEW_ROUTES},
+                "kernelUptime": next(name for bound, name in pe.UPTIME_BUCKETS if perf["uptime_s"] < bound),
+            }
+        self.assertEqual(derived(perf), usage, "a leaf under usage that the plain export's perf cannot give: the flag adds a number")
+        # the older shape: the same planted counts with the per-sid table in place of perSession
+        old = self._planted_snapshot()
+        del old["parses"]["perSession"]
+        old["parses"]["bySid"] = {SID: 3, "22222222-3333-4444-5555-666666666666": 1, "33333333-4444-5555-6666-777777777777": 5}
+        self.assertIn("bySid", pp.DENY_KEYS, "the per-sid table is one the fold drops")
+        plain_old = pe.export_document(old, usage=False, now=self.STAMP)
+        withu_old = pe.export_document(old, usage=True, now=self.STAMP)
+        self.assertFalse("bySid" in plain_old["perf"]["parses"], sorted(plain_old["perf"]["parses"]))
+        self.assertFalse("perSession" in plain_old["perf"]["parses"], sorted(plain_old["perf"]["parses"]))
+        self.assertEqual(withu_old["usage"]["sessions"], {"chatBuilt": 2, "stamped": 17, "parsedUnavailable": "predates-parses.perSession"},
+                         "no parsed count from a table the plain export drops; the two counts the plain body gives, and the absence stated")
+        self.assertEqual(derived(plain_old["perf"]), withu_old["usage"], "the older shape: a leaf the plain export's perf cannot give")
+        self.assertEqual({k: v for k, v in withu_old.items() if k != "usage"}, plain_old)
+        # the malformed shape: the same planted counts with the count replaced by a digit string, which the fold keeps (one
+        # ident token), so the plain export's perf carries the very shape the reason names
+        bad = self._planted_snapshot()
+        bad["parses"]["perSession"]["sessions"] = "9"
+        plain_bad = pe.export_document(bad, usage=False, now=self.STAMP)
+        withu_bad = pe.export_document(bad, usage=True, now=self.STAMP)
+        self.assertEqual(plain_bad["perf"]["parses"]["perSession"], {"sessions": "9", "max": bad["parses"]["perSession"]["max"]},
+                         "the garbage travels as it is: the fact the reason states")
+        self.assertEqual(withu_bad["usage"]["sessions"], {"chatBuilt": 2, "stamped": 17, "parsedUnavailable": "perSession.sessions-not-a-number"},
+                         "no count from a string; the two counts the plain body gives, and what is wrong with the snapshot stated")
+        self.assertEqual(derived(plain_bad["perf"]), withu_bad["usage"], "the malformed shape: the reason from the plain export's shape")
+        self.assertEqual({k: v for k, v in withu_bad.items() if k != "usage"}, plain_bad)
+
+    def test_the_http_table_travels_in_every_export_one_row_per_route_served_with_a_count_and_a_millisecond_total(self):
+        """The http sentence the closing check at the re-run's head (2026-09-19) had the paragraph gain: the `http` table is in every
+        export, with or without --usage, one row per route the kernel has served since it started, each row a request
+        `count` and a millisecond total `ms`, an off-register request one `other` row, whoever made the requests. Held by
+        documents: a plain export of the served snapshot has exactly the 68 served keys (53 action routes and 15 pane routes,
+        METHOD /path) and every row is {count, ms} (one request of 0.001 s: 1 and 1.0); a fresh collector's fold and plain
+        export have an EMPTY table (a row is per route served, never per route registered); a request whose path is off the
+        register, through the kernel's own _perf_http_key and through the fold's own collapse of an older kernel's raw
+        path, is the one `other` row; and the counter's signature is (path, dt), so no client reaches it, which is what the
+        paragraph's parenthetical says (the counter records the route and the time and nothing about the client) and the
+        whole executable content of "whoever made the requests": the makers the closing check at the re-run's head read at
+        the call sites (the dashboard, the CLI, a relaying kernel, a session's tool call, a hook, a peer's poll) were prose
+        no document could falsify and left the paragraph at its verification. The families' collapse
+        and the cap are Collector's (the fold-to-other test, the http-cap test) and RouteRegisterCopy's in
+        tests/test_perf_export.py. Fails on: the table dropped from a plain export or written only with --usage; a row
+        gaining or losing a field; a zero row for an unserved route; a client name reaching the counter."""
+        served = self._served_snapshot()
+        plain = pe.export_document(served, usage=False, now=self.STAMP)
+        expect = {"POST " + r for r in pp.HTTP_ROUTES["POST"] if r not in pe.ACTION_SKIP} | {"GET " + r for r in pe.VIEW_ROUTES}
+        self.assertEqual(len(expect), 68, "53 action routes and 15 pane routes on 2026-09-19")
+        self.assertEqual(set(plain["perf"]["http"]), expect, "one row per route served, under the route's METHOD /path")
+        for key, row in plain["perf"]["http"].items():
+            self.assertEqual(set(row), {"count", "ms"}, key)
+            self.assertEqual((row["count"], row["ms"]), (1, 1.0), "one request of 0.001 s: a count and a millisecond total (%s)" % key)
+        self.assertEqual(pp.fold(km._PerfStats().snapshot())["http"], {}, "a kernel that served nothing has no row")
+        self.assertEqual(pe.export_document(km._PerfStats().snapshot(), now=self.STAMP)["perf"]["http"], {}, "and its plain export none")
+        st = km._PerfStats()
+        st.http_request(km._perf_http_key("GET", "/nope"), 0.001)     # the kernel's own fold of a path off the register
+        self.assertEqual(pp.fold(st.snapshot())["http"], {"other": {"count": 1, "ms": 1.0}}, "one `other` row, never the path")
+        st = km._PerfStats()
+        st.http_request("GET /nope", 0.001)                           # a saved snapshot from a kernel before the register: the fold's own collapse
+        self.assertEqual(pp.fold(st.snapshot())["http"], {"other": {"count": 1, "ms": 1.0}})
+        self.assertEqual(list(inspect.signature(km._PerfStats.http_request).parameters), ["self", "path", "dt"],
+                         "the counter takes the key and the duration and knows no client")
+
+    def test_a_usage_count_is_present_only_for_a_route_the_kernel_has_served(self):
+        """The paragraph's "a count is present only for a route the kernel has served since it started" and "one count per
+        action route served" and "one count per pane route served", held by the document without the condition: a fresh
+        collector's usage block has no action and no view (an unserved route has no key, not a zero), and one POST /send with
+        two GET /feed give exactly {'send': 1} and {'feed': 2}, through usage_block and through the --usage export. Fails on:
+        a zero written for every registered route (the population pin over the served snapshot stays green on that)."""
+        fresh = pe.usage_block(km._PerfStats().snapshot())
+        self.assertEqual((fresh["actions"], fresh["views"]), ({}, {}), "no request, no count")
+        st = km._PerfStats()
+        st.http_request(km._perf_http_key("POST", "/send"), 0.001)
+        st.http_request(km._perf_http_key("GET", "/feed"), 0.001)
+        st.http_request(km._perf_http_key("GET", "/feed"), 0.001)
+        u = pe.usage_block(st.snapshot())
+        self.assertEqual((u["actions"], u["views"]), ({"send": 1}, {"feed": 2}), "the routes served and their counts, no other key")
+        doc = pe.export_document(st.snapshot(), usage=True, now=self.STAMP)
+        self.assertEqual((doc["usage"]["actions"], doc["usage"]["views"]), ({"send": 1}, {"feed": 2}), "and through the export")
+
+    def test_the_kernel_commit_travels_only_when_the_export_carried_one(self):
+        """The paragraph's "and the kernel commit when the export carried one", held by the document without the condition
+        (a served snapshot with every COMMIT_KEYS key removed exports no `kernel_commit`) and with it (kernel_sha
+        'abcdef1234567' exports 'abcdef123456', twelve characters, in the envelope and not under perf). The export road's
+        own pins are tests/test_perf_export.py's (the envelope test; PlainServer's /version cases); this is the paragraph's
+        clause pin, beside the others."""
+        snap = self._served_snapshot()
+        for k in pe.COMMIT_KEYS:
+            snap.pop(k, None)
+        doc = pe.export_document(snap, now=self.STAMP)
+        self.assertFalse("kernel_commit" in doc, "no commit on the snapshot, none in the envelope; the keys: %s" % sorted(doc))   # by boolean: never dumps the document
+        snap["kernel_sha"] = "abcdef1234567"
+        doc = pe.export_document(snap, now=self.STAMP)
+        self.assertEqual(doc["kernel_commit"], "abcdef123456", "twelve characters of the sha the snapshot carried")
+        self.assertFalse("kernel_sha" in doc["perf"], "lifted into the envelope, not a counter")
+
+    def test_every_conditional_claim_of_the_paragraph_is_listed_with_its_pin_and_the_falsified_wordings_are_gone(self):
+        """Each clause in CONDITIONAL_CLAIMS is in the paragraph as listed, so a clause reworded or removed moves the list and
+        the list names the pin that holds it (the question the closing check at the re-run's head asked, 2026-09-19: for each clause, the executable
+        check that would falsify it, and whether it exists). And the three wordings that check found false are absent: "the
+        user's own actions" (a relaying kernel, a session's hook and a failed send's retry post action routes too), "one count
+        per pane opened" (a peer kernel's poll and a bus start read pane routes too) and the head "only when `--usage` was
+        given, every leaf under `usage`" (a plain export carries the same numbers in perf.http). Fails on: a needle reworded;
+        a dropped wording restored."""
+        para = self._paragraph()
+        for words in self.DROPPED_WORDINGS:                      # first, so a restored wording is named as such; by boolean, so a
+            self.assertFalse(words in para, "a wording the closing check at the re-run's head found false is back in the paragraph: %r" % words)   # failure never dumps the page
+        for words, pin, checks in self.CONDITIONAL_CLAIMS:
+            self.assertTrue(words in para, "a conditional clause of the disclosure paragraph was reworded or removed: %r; its pin: %s" % (words, pin))
+            self.assertTrue(checks, "a listed clause names no check: %r" % words)
+            for check in checks:
+                self.assertTrue(self._check_exists(check), "the check named for a clause is gone, so the clause stands without it: %r -> %s" % (words, check))
+        self.assertFalse(self._check_exists("Disclosed.test_no_such_pin"), "the resolver reds on a name that is not there")
+        self.assertFalse(self._check_exists("test_perf_export:NoSuchClass"))
+        self.assertFalse(self._check_exists("test_perf_export:UptimeRounding.test_no_such_case"))
 
 if __name__ == "__main__":
     unittest.main()

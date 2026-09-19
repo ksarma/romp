@@ -1009,7 +1009,12 @@ The kernel is the program that runs your agents, watches their work, and serves
 the user interface at `127.0.0.1:29855`. You run it on your own machine, with no
 hosted service in between. Everything Romp stores stays local; the only traffic
 that leaves your machine is `claude` itself, both the agents' own model calls and
-the LLM calls in Romp's judge pipeline.
+the LLM calls in Romp's judge pipeline. `romp perf upload`, which you run
+yourself, sends a paste-safe copy of the kernel's performance counters (the file
+`romp perf export --public` writes, naming no session, path, host or user) to a
+receiver you configure yourself (none ships, so nothing can be sent until you
+set one), and only after you confirm it; see
+[Kernel performance counters](reference.md#kernel-performance-counters).
 
 The kernel runs as a login service, so it is up whenever you are logged in. To
 stop it on purpose, run `romp down`: it gives the agents a few seconds to
