@@ -1525,7 +1525,7 @@ unmarked:shRows('pane-load-unmarked'),failedRows:shRows('pane-load-failed'),list
         self.assertEqual(r["failedRows"], [], "no pane-load-failed row")
         # the belt beside the executed case: the two literals, so a rename that keeps the pair in step still shows up in a diff review
         self.assertIn("window.__rompApp=APP;", km._shim_core_js("waiting"), "the shim's marker line")
-        self.assertIn("typeof w.__rompApp==='string')?'app':'doc'", km._LANDING_MOBILE_JS, "the shell's read of the same name")
+        self.assertIn("if(w&&typeof w.__rompApp==='string')return 'app';", km._LANDING_MOBILE_JS, "the shell's read of the same name (review round 4: the marker is read first, the kernel's 200 stamp tells doc from other after it)")
 
     def test_the_phones_first_chat_dial_carries_skeleton_1_and_a_redial_or_another_layout_does_not(self):
         r = _run_linked(app="chat", pre=_LAZY_PRE, before=_MOBILE_GLUE, scenario=r"""

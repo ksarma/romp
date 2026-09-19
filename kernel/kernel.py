@@ -68431,22 +68431,25 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // the hand-over is not visible.
 // A FAILED load (review round 1, 2026-09-19, HIGH 2): a src is never reassigned, and promote()'s first guard reads it, so a
 // document fetch that failed at the first tap left the pane blank for the life of the page, the backstop clearing the loader
-// over nothing. The detector is docState(): what the frame holds, in four answers. `none`: no readable document, the cross-origin
+// over nothing. The detector is docState(): what the frame holds, in five answers. `none`: no readable document, the cross-origin
 // error page Chromium commits for a failed navigation (a failure). `blank`: about:blank, the frame's initial document, kept by
 // Firefox and WebKit through a failed navigation (no load event follows) and by every engine until the fetch commits (still
 // loading). `app`: the pane's OWN document, same-origin at its url with the pane shim run in its window (window.__rompApp, set as
-// the shim parses, ahead of the bundle and the load event). `doc`: any other same-origin document at a url: one the origin SERVED
-// and this reader cannot classify (the kernel's own "needs the ui/ modules" fallback page, its 403 line for a token-gated route
-// once the cookie is stale, a proxy's 502 body while the kernel restarts). THE RULE (review round 3, 2026-09-19, family two): a
-// reader that cannot classify must not report absent. What the origin served at the pane's url is what a plain tab would show;
-// before this it was called a failure because it carried no shim, so the fallback pages were re-parked behind the failure overlay
-// with no tap able to clear it, and on the phone every lazy tap under a stale cookie painted the generic overlay over the one text
-// saying the user is signed out. So `doc` is SHOWN AS SERVED: the loader clears, the src stays, and one shell client-diag row says
-// what was seen (`pane-load-unmarked` {pane, via}), never silence. The trade: a proxy's 502 body shows too, with no retry road but
-// a reload (its exact retry event would be the shell socket's restart reopen, T265 shellOpened: queued, not taken here). The
-// iframe's `error` event never fires for a failed navigation in any engine; the load listener reads docState() on every load
-// but the initial about:blank's own, and the 30 s backstop reads it for a frame still loading then (`blank` or `none` is a
-// failure by the backstop, WebKit's road; `app` is a slow load, the loader clears as before; `doc` is shown and said).
+// the shim parses, ahead of the bundle and the load event). `doc`: a same-origin document at the url with no shim that carries the
+// kernel's stamp of a 200 (data-romp-served=200 on its <html> tag, written by Handler._send on every text/html 200 this kernel
+// serves, _stamp_served_html: a rule over the writer, not a list of pages), so a 200 the kernel served that this reader cannot
+// classify: the kernel's own "needs the ui/ modules" fallback page. `other`: a same-origin document at the url with neither the
+// marker nor the stamp, so what the kernel did not serve as a 200 (its 403 line for a token-gated route once the cookie is stale,
+// its 500 page, a proxy's 502 body while it restarts). THE RULE (review round 2's family two, narrowed in review round 4,
+// 2026-09-19, kernel-1 and tests-1): a 200 the kernel served at the pane's url is not a failure just because this reader cannot
+// recognise it, so `doc` is SHOWN AS SERVED (the loader clears, the src stays, one shell client-diag row `pane-load-unmarked`
+// {pane, via} says what was seen, never silence); every other status is NOT shown as served: `other` is a failure like `none`,
+// re-parked with the failed state and its retry road (a re-tap, the overlay tap, the Try again button). Round 3 had shown every
+// same-origin document as served, which put the kernel's 403 line, whose body names the serve-token file's path, on the phone's
+// screen with no retry road for the page's life; the stamp is what a 403, a 500 or a 502 body cannot carry. The iframe's `error`
+// event never fires for a failed navigation in any engine; the load listener reads docState() on every load but the initial
+// about:blank's own, and the 30 s backstop reads it for a frame still loading then (`blank` or `none` is a failure by the
+// backstop, WebKit's road; `app` is a slow load, the loader clears as before; `doc` is shown and said; `other` fails).
 // failed() reads the LAYOUT at fire time (review round 3, 2026-09-19, family one: a promotion armed on the phone keeps judging after a
 // flip to the desktop, where the failed state is not painted at all, and before this it re-parked under data-lazy-src whatever the
 // layout, leaving a desktop column with neither src nor data-src and no road to promote it again). On the phone it re-parks the pane
@@ -68471,8 +68474,8 @@ var bad=!!(d&&d.classList.contains('failed'));document.body.classList.toggle('pa
 var msg=document.getElementById('pane-load-msg');if(msg)msg.textContent=bad?((EPI[k]||0)>=2?MSG_FAILED_AGAIN:MSG_FAILED):'';   // the copy by this episode's count (EPI), not the page-life count (FAILS)
 var rb=document.getElementById('pane-load-retry');if(rb)rb.hidden=!bad;}catch(e){}}   // the retry button exists for the failed state alone: a focusable control under the loader would be wrong
 function loaded(k){EPI[k]=0;try{var d=paneDiv(F[k]);if(d){d.classList.remove('loading');d.classList.remove('failed');}}catch(e){}paintLoading();}   // a load ends the episode: the next failure's copy is a first failure's
-function docState(f){try{var d=f.contentDocument;if(!d)return 'none';var u=d.URL;if(!u||u==='about:blank')return 'blank';var w=f.contentWindow;return (w&&typeof w.__rompApp==='string')?'app':'doc';}catch(e){return 'none';}}   // the frame's document, classified (the comment above): none (a cross-origin error page), blank (the initial document, never committed), app (the pane's own, its shim run: window.__rompApp), doc (a same-origin document the origin served that this reader cannot classify: shown as served, said)
-function unmarked(k,via){loaded(k);try{shellDiag('pane-load-unmarked',{pane:k,via:via});}catch(e){}}   // a served document with no pane shim (a fallback page, the kernel's 403 line, a proxy's 502 body): shown as served, the loading state ended and the src kept, and said once (review round 3)
+function docState(f){try{var d=f.contentDocument;if(!d)return 'none';var u=d.URL;if(!u||u==='about:blank')return 'blank';var w=f.contentWindow;if(w&&typeof w.__rompApp==='string')return 'app';var h=d.documentElement;return (h&&h.getAttribute&&h.getAttribute('data-romp-served')==='200')?'doc':'other';}catch(e){return 'none';}}   // the frame's document, classified (the comment above): none (a cross-origin error page), blank (the initial document, never committed), app (the pane's own, its shim run: window.__rompApp), doc (a 200 the kernel served, its stamp on the <html> tag, that this reader cannot classify: shown as served, said), other (a document at the url with neither: not a 200 of this kernel's, a failure)
+function unmarked(k,via){loaded(k);try{shellDiag('pane-load-unmarked',{pane:k,via:via});}catch(e){}}   // a 200 the kernel served with no pane shim (its "needs the ui/ modules" fallback page): shown as served, the loading state ended and the src kept, and said once (review round 3; a 200 alone since review round 4, the stamp)
 function failed(k,via){var f=F[k];if(!f)return;var mob=mobileOn();try{f.removeAttribute('src');}catch(e){}try{if(URLS[k])f.setAttribute(mob?LAZY:'data-src',URLS[k]);}catch(e){}   // re-parked under the attribute THIS layout reads: promote()'s src guard reads nothing, the url is back where a first tap (the phone) or the grid's promotion below (the desktop) finds it
 try{var d=paneDiv(f);if(d){d.classList.remove('loading');if(mob)d.classList.add('failed');else d.classList.remove('failed');}}catch(e){}   // the failed state is the phone's; the desktop path never leaves one for a later rotation to paint
 FAILS[k]=(FAILS[k]||0)+1;EPI[k]=(EPI[k]||0)+1;try{shellDiag('pane-load-failed',{pane:k,via:via,n:FAILS[k]});}catch(e){}paintLoading();   // FAILS: the page-life count the row carries (docs/read-side.md); EPI: this episode's, for the copy
@@ -68485,8 +68488,8 @@ try{f.removeAttribute(LAZY);}catch(e){}
 URLS[k]=u;var tok=TOK[k]=(TOK[k]||0)+1;   // tok: this promotion's, minted on EVERY promotion (the desktop's too, review round 3): a listener or backstop of an earlier promotion (a retry after a failure; a phone-armed one over the desktop's re-promotion after a flip) is inert
 try{var d0=paneDiv(f);if(d0)d0.classList.remove('failed');}catch(e){}   // any promotion clears a standing failed state (a flip to the desktop re-promotes a pane the phone failed; a stale `failed` would paint over it on the flip back)
 if(mobileOn()){try{var d=paneDiv(f);if(d)d.classList.add('loading');}catch(e){}   // the loading state and its two detectors are the phone's (the grid paints no loader and shows the browser's own page for a failure)
-f.addEventListener('load',function(){if(TOK[k]!==tok)return;var s=docState(f);if(s==='blank')return;if(s==='app')loaded(k);else if(s==='doc')unmarked(k,'load');else failed(k,'load');});   // the initial about:blank's own load is not the page's (the gear opener's guard); the pane's own document loaded; a document the origin served with no shim is shown as served and said; an error page (no document) is a failure
-setTimeout(function(){if(TOK[k]!==tok)return;var dd=paneDiv(f);if(!dd||!dd.classList.contains('loading'))return;var s=docState(f);if(s==='app')loaded(k);else if(s==='doc')unmarked(k,'backstop');else failed(k,'backstop');},LOAD_MS);}   // still loading at the backstop: the pane's own document is a slow load (the loader clears, as before); a served document with no shim is shown and said; no document, or one never committed, is a failure (WebKit's road)
+f.addEventListener('load',function(){if(TOK[k]!==tok)return;var s=docState(f);if(s==='blank')return;if(s==='app')loaded(k);else if(s==='doc')unmarked(k,'load');else failed(k,'load');});   // the initial about:blank's own load is not the page's (the gear opener's guard); the pane's own document loaded; a stamped 200 with no shim is shown as served and said; an error page (no document), or a document the kernel did not serve as a 200, is a failure
+setTimeout(function(){if(TOK[k]!==tok)return;var dd=paneDiv(f);if(!dd||!dd.classList.contains('loading'))return;var s=docState(f);if(s==='app')loaded(k);else if(s==='doc')unmarked(k,'backstop');else failed(k,'backstop');},LOAD_MS);}   // still loading at the backstop: the pane's own document is a slow load (the loader clears, as before); a stamped 200 with no shim is shown and said; no document, one never committed (WebKit's road), or one the kernel did not serve as a 200, is a failure
 f.setAttribute('src',u);paintLoading();return true;}
 try{var pl=document.getElementById('pane-load'),prb=document.getElementById('pane-load-retry');
 var retry=function(){try{var k=document.body.getAttribute('data-tab');if(k&&paneDiv(F[k])&&paneDiv(F[k]).classList.contains('failed'))show(k);}catch(e){}};   // the failed state's retry: the shown tab's pane again (show() promotes a re-parked pane as a first tap would)
@@ -71677,6 +71680,29 @@ def _state_write_route(path, b):
     return 404, {"ok": False, "error": "no such route"}
 
 
+_STAMP_HTML_TAG = re.compile(r"(<html)(?=[\s>])", re.I)
+_STAMP_HTML_TAG_B = re.compile(rb"(<html)(?=[\s>])", re.I)
+
+
+def _stamp_served_html(code, body, ctype):
+    """[fork] The lazy panes' proof of a 200 (review round 4 of the lazy panes, 2026-09-19, kernel-1): every text/html document this
+    kernel serves with a 200 carries `data-romp-served=200` on its <html> tag, written at the one place every response leaves
+    (Handler._send), so it is a rule over the writer and no list of pages. The phone shell's docState (_LANDING_MOBILE_JS) reads it
+    off a pane frame's same-origin document: one with the pane shim's marker is the pane's own; one with this stamp and no marker
+    is a 200 the kernel served that the shell cannot classify (its "needs the ui/ modules" page), shown as served; one with neither
+    is not a 200 of this kernel's (its 403 line under a stale cookie, its 500 page, a proxy's 502 body while it restarts) and is a
+    failure with the retry road. The 403 and the 500 are text/plain and a proxy's page is not this kernel's, so none can carry it:
+    that is the point. The first <html tag alone; a body with none is returned as it came, bytes or str alike; any other status
+    or type passes through untouched."""
+    if code != 200 or not isinstance(ctype, str) or not ctype.lower().startswith("text/html"):
+        return body
+    if isinstance(body, bytes):
+        return _STAMP_HTML_TAG_B.sub(rb"\1 data-romp-served=200", body, count=1)
+    if isinstance(body, str):
+        return _STAMP_HTML_TAG.sub(r"\1 data-romp-served=200", body, count=1)
+    return body
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -71684,6 +71710,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _send(self, code, body, ctype, cache=None, headers=None):
+        body = _stamp_served_html(code, body, ctype)   # [fork] every text/html 200 carries the kernel's stamp (the lazy panes' proof of a 200; the function's docstring)
         body = body.encode("utf-8") if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", ctype)

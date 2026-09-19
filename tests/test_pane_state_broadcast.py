@@ -20,11 +20,13 @@ keeps; that arm's Files-pane branch, a browseFiles with pane:'pane', runs in tes
 BrowseRelay).
 Synthetic only: placeholder sids, the notes-api demo world, TESTHOST.
 """
+import inspect
 import json
 import os
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 from romp_load import load_source
 
@@ -1135,7 +1137,9 @@ const words = (k) => (POSTED[k] || []).map((m) => m.on && m.on[k]);
 const divCls = (k) => Array.from(DIVS[k].cls).filter((c) => c !== 'pane').sort();
 const diagRows = (what) => SOCKS.flatMap((s) => s.sent.map((x) => JSON.parse(x))).filter((m) => m.type === 'clientDiag' && m.surface === 'shell' && m.what === what).map((m) => m.data);
 const backstops = () => TIMERS.filter((t) => t.ms === 30000).forEach((t) => t.f());   // every 30 s backstop armed so far (a stale promotion's is inert on its token)
-const shimUp = (k, url) => { frames['f-' + k].contentDocument = { URL: url || ('http://TESTHOST:1/' + k) }; frames['f-' + k].contentWindow.__rompApp = k; };   // the pane's OWN document: committed at its url with the pane shim run in its window (window.__rompApp, as the served shim sets it while parsing); docState's 'app' (a document without the marker is 'doc': shown as served and said, review round 3)
+const shimUp = (k, url) => { frames['f-' + k].contentDocument = { URL: url || ('http://TESTHOST:1/' + k) }; frames['f-' + k].contentWindow.__rompApp = k; };   // the pane's OWN document: committed at its url with the pane shim run in its window (window.__rompApp, as the served shim sets it while parsing); docState's 'app'
+const servedDoc = (k) => { frames['f-' + k].contentDocument = { URL: 'http://TESTHOST:1/' + k, documentElement: { getAttribute: (a) => (a === 'data-romp-served' ? '200' : null) } }; };   // a 200 the kernel served at the pane's url with NO shim (its "needs the ui/ modules" page): the stamp Handler._send writes on every text/html 200 (data-romp-served=200 on <html>); docState's 'doc', shown as served and said (review round 4 narrowed the shown-as-served rule to this)
+const otherDoc = (k) => { frames['f-' + k].contentDocument = { URL: 'http://TESTHOST:1/' + k, documentElement: { getAttribute: () => null } }; };   // a same-origin document at the pane's url with neither the marker nor the stamp: what the kernel did not serve as a 200 (its 403 line under a stale cookie, a text/plain body the browser wraps in a bare <html>; its 500 page; a proxy's 502 body); docState's 'other', a failure (review round 4, kernel-1)
 const out = {};
 const origTell = window.__rompPanesTell; window.__rompPanesTell = () => { LOG.push('tell'); origTell(); };
 """
@@ -1278,33 +1282,73 @@ out.again = snap();
 out.feed = { src: src().feed, div: divCls('feed') };
 console.log(JSON.stringify(out));
 """
-# Family two (review round 3, 2026-09-19; supersedes the round-2 closeout's error-body rule): docState() classifies the frame's document,
-# and a same-origin document at the pane's url with NO pane shim (`doc`: the kernel's own fallback page, its 403 line under a stale cookie,
-# a proxy's 502 body) is a document the origin served that this reader cannot classify. It is shown as served (the loading state ends,
-# the src stays, no failed state, no re-park) and said once (one shell client-diag row `pane-load-unmarked` {pane, via}); a reader that
-# cannot classify never reports absent. Round 2 called it a failure, which re-parked the kernel's own diagnostic behind an overlay no tap
-# could clear. The refused inputs stay refused: no document (an error page) fails via load; a frame never committed fails via the backstop.
+# Family two (review round 3, 2026-09-19; narrowed in review round 4, kernel-1 and tests-1): docState() classifies the frame's document,
+# and a same-origin document at the pane's url with NO pane shim that carries the kernel's stamp of a 200 (`doc`: the kernel's own
+# "needs the ui/ modules" fallback page; the stamp is data-romp-served=200 on its <html> tag, written by Handler._send on every text/html
+# 200) is a 200 the kernel served that this reader cannot classify. It is shown as served (the loading state ends, the src stays, no failed
+# state, no re-park) and said once (one shell client-diag row `pane-load-unmarked` {pane, via}); a reader that cannot classify a 200 never
+# reports absent. Round 2 called it a failure, which re-parked the kernel's own diagnostic behind an overlay no tap could clear; round 3
+# then showed EVERY same-origin document as served, the kernel's 403 line (its body naming the serve-token file's path) included, with no
+# retry road: the round-4 rule is "a 200 the kernel served", read off the stamp. The refused inputs stay refused: no document (an error
+# page) fails via load; a frame never committed fails via the backstop; a document with neither marker nor stamp fails (the driver below).
 _LAZY_UNMARKED_DRIVER = _LAZY_TOOLS + r"""
 SOCKS.forEach((s) => { s.readyState = 1; s.onopen && s.onopen(); });
 shimUp('feed'); (LOADS.feed || []).forEach((f) => f());
 const snapK = (k) => ({ src: src()[k], lazy: lazy()[k], div: divCls(k), bodyLoading: BODY_CLS.has('pane-loading'), bodyFailed: BODY_CLS.has('pane-failed'), msg: MSG.textContent, sets: Object.assign({}, SETS), unmarked: diagRows('pane-load-unmarked'), failed: diagRows('pane-load-failed') });
 window.__rompMobileTab('waiting');
 out.tap = snapK('waiting');
-frames['f-waiting'].contentDocument = { URL: 'http://TESTHOST:1/waiting' };   // a served document AT the pane's url with no shim run in its window (the 403 line: text/plain 'forbidden: ...'; a fallback page; a 502 body)
-out.unmarkedDoc = { url: frames['f-waiting'].contentDocument.URL, shim: typeof frames['f-waiting'].contentWindow.__rompApp };   // the input the reader cannot classify
+servedDoc('waiting');   // a 200 the kernel served AT the pane's url with no shim run in its window (its "needs the ui/ modules" page), the stamp on its <html> tag
+out.unmarkedDoc = { url: frames['f-waiting'].contentDocument.URL, shim: typeof frames['f-waiting'].contentWindow.__rompApp, stamp: frames['f-waiting'].contentDocument.documentElement.getAttribute('data-romp-served') };   // the input the reader cannot classify by the marker, and the stamp that says the kernel served it as a 200
 (LOADS.waiting || []).forEach((f) => f());   // ...and its load fired, as every engine does for a committed response
 out.unmarkedLoad = snapK('waiting');
 window.__rompMobileTab('chat'); window.__rompMobileTab('waiting');   // the tab again: the src stands, nothing promotes twice, no loader
 out.retap = snapK('waiting');
 backstops();   // the backstop over the shown document: nothing moves (no loading state to end)
 out.backstopAfter = snapK('waiting');
-window.__rompMobileTab('fleet');   // the same document with NO load event by the backstop (a slow parser-blocking sheet): shown and said via the backstop, not a failure
-frames['f-fleet'].contentDocument = { URL: 'http://TESTHOST:1/fleet' };
+window.__rompMobileTab('fleet');   // the same stamped 200 with NO load event by the backstop (a slow parser-blocking sheet): shown and said via the backstop, not a failure
+servedDoc('fleet');
 backstops();
 out.unmarkedBackstop = snapK('fleet');
 window.__rompMobileTab('timeline');   // the refused input still refused: no document at all (Chromium's error page) fails via load
 frames['f-timeline'].contentDocument = null; (LOADS.timeline || []).forEach((f) => f());
 out.noneLoad = snapK('timeline');
+console.log(JSON.stringify(out));
+"""
+# Review round 4 (2026-09-19, kernel-1 and tests-1): a same-origin document at the pane's url with neither the pane shim's marker nor the
+# kernel's 200 stamp is NOT shown as served: the kernel's 403 line for a token-gated route once the cookie is stale (text/plain: the browser
+# wraps it in a bare <html> the kernel never wrote, so no stamp), its 500 page, a proxy's 502 body while it restarts. Round 3 showed every
+# such document as served, which put the 403 body (it names the serve-token file's path) on the phone's screen with no retry road for the
+# page's life. Now it is a failure like an error page, on both detectors: the load listener (the 403 and the 500 commit a document and fire
+# load in every engine) and the 30 s backstop (a document with no load event); re-parked under data-lazy-src, the failed state painted, one
+# pane-load-failed row and no pane-load-unmarked row; and every retry road promotes it again: the tab's re-tap, the overlay tap
+# (#pane-load) and the Try again button (#pane-load-retry), the last ending in a good load.
+_LAZY_OTHER_DRIVER = _LAZY_TOOLS + r"""
+SOCKS.forEach((s) => { s.readyState = 1; s.onopen && s.onopen(); });
+shimUp('feed'); (LOADS.feed || []).forEach((f) => f());
+const snapK = (k) => ({ src: src()[k], lazy: lazy()[k], div: divCls(k), bodyLoading: BODY_CLS.has('pane-loading'), bodyFailed: BODY_CLS.has('pane-failed'), msg: MSG.textContent, retryHidden: RETRY.hidden, sets: Object.assign({}, SETS), unmarked: diagRows('pane-load-unmarked'), failed: diagRows('pane-load-failed') });
+window.__rompMobileTab('waiting');
+otherDoc('waiting');   // the 403 line at the pane's url: same-origin, no marker, no stamp
+out.otherDoc = { url: frames['f-waiting'].contentDocument.URL, shim: typeof frames['f-waiting'].contentWindow.__rompApp, stamp: frames['f-waiting'].contentDocument.documentElement.getAttribute('data-romp-served') };
+(LOADS.waiting || []).forEach((f) => f());   // its load fired (a committed document fires load in every engine)
+out.otherLoad = snapK('waiting');
+CLICKS.forEach((f) => f());   // the overlay tap: the retry road (a tap anywhere on #pane-load)
+out.overlayTap = snapK('waiting');
+otherDoc('waiting');   // the retry's document: the same denial, this time with no load event by the backstop (WebKit's road for a slow commit)
+backstops();
+out.otherBackstop = snapK('waiting');
+RETRY.clicks.forEach((f) => f({ stopPropagation() {} }));   // the Try again button: the retry road
+out.buttonTap = snapK('waiting');
+frames['f-waiting'].contentDocument = { URL: 'about:blank' };   // still loading...
+out.loadingAgain = snapK('waiting');
+shimUp('waiting'); (LOADS.waiting || []).forEach((f) => f());   // ...and the good load (the cookie fresh again): the episode ends
+out.goodLoad = snapK('waiting');
+window.__rompMobileTab('fleet');   // the tab's re-tap road, on a second pane: fail via load, re-tap, load
+otherDoc('fleet'); (LOADS.fleet || []).forEach((f) => f());
+out.secondPaneOther = snapK('fleet');
+window.__rompMobileTab('chat'); window.__rompMobileTab('fleet');   // the tab again: promoted again as a first tap would
+out.secondPaneRetap = snapK('fleet');
+shimUp('fleet'); (LOADS.fleet || []).forEach((f) => f());
+out.secondPaneLoaded = snapK('fleet');
 console.log(JSON.stringify(out));
 """
 # Family one (review round 3, 2026-09-19: regression-1, extra7-2, kernel-2): a promotion armed on the phone keeps judging after a flip to the
@@ -1572,16 +1616,17 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(o["feed"], {"src": "/feed", "div": []}, "the feed's document, committed at boot, is untouched throughout")
 
     def test_a_document_the_origin_served_with_no_shim_is_shown_as_served_and_said_never_a_failure(self):
-        # Family two (review round 3, 2026-09-19): the detector must not claim failure for a page it cannot classify. A same-origin document at
-        # the pane's url with no pane shim (the kernel's own "needs the ui/ modules" page, its 403 line for a token-gated route once the cookie
-        # is stale, a proxy's 502 body) is what the origin served, so the loading state ends, the src stays, no failed state paints and one
-        # pane-load-unmarked row says what was seen. Round 2 called this a failure and re-parked the kernel's own diagnostic behind an
-        # overlay no tap could clear (the 403 being the common member: every lazy tap on the phone painted it). The input is recorded
-        # beside the verdict; the refused inputs (no document; a frame never committed by the backstop) stay refused in the failed-load case.
+        # Family two (review round 3, 2026-09-19; narrowed in round 4, kernel-1): the detector must not claim failure for a 200 the kernel served
+        # that it cannot classify. A same-origin document at the pane's url with no pane shim that carries the kernel's 200 stamp (its own
+        # "needs the ui/ modules" page: data-romp-served=200 on the <html> tag, Handler._send's mark on every text/html 200) is what the
+        # kernel served, so the loading state ends, the src stays, no failed state paints and one pane-load-unmarked row says what was seen.
+        # Round 2 called this a failure and re-parked the kernel's own diagnostic behind an overlay no tap could clear. The input is recorded
+        # beside the verdict; the refused inputs (no document; a frame never committed by the backstop; a document with neither marker nor
+        # stamp, the case below) stay refused.
         o = _lazy(self.seed, _LAZY_UNMARKED_DRIVER)
         t = o["tap"]
         self.assertEqual((t["src"], t["div"], t["bodyLoading"], t["unmarked"]), ("/waiting", ["loading"], True, []), "the first tap: loading")
-        self.assertEqual(o["unmarkedDoc"], {"url": "http://TESTHOST:1/waiting", "shim": "undefined"}, "the input: a same-origin document at the pane's own url with no shim in its window")
+        self.assertEqual(o["unmarkedDoc"], {"url": "http://TESTHOST:1/waiting", "shim": "undefined", "stamp": "200"}, "the input: a same-origin document at the pane's own url with no shim in its window and the kernel's 200 stamp on its <html> tag")
         u = o["unmarkedLoad"]
         self.assertEqual((u["src"], u["lazy"], u["div"], u["bodyLoading"], u["bodyFailed"], u["msg"]), ("/waiting", None, [], False, False, ""), "its load: shown as served (the loader clears, the src stays, no failed state, no re-park)")
         self.assertEqual(u["unmarked"], [{"pane": "waiting", "via": "load"}], "…and said once: the reader reports what it saw, never absent")
@@ -1590,16 +1635,78 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual((r["src"], r["div"], r["sets"]["waiting"], r["bodyLoading"]), ("/waiting", [], 1, False), "the tab again: one src set for the page's life, no loader (the document stands as served; a reload is the retry road)")
         self.assertEqual(o["backstopAfter"], r, "the backstop over the shown document moves nothing and says nothing more")
         b = o["unmarkedBackstop"]
-        self.assertEqual((b["src"], b["div"], b["bodyFailed"]), ("/fleet", [], False), "the same document with no load event by the 30 s backstop: shown, not the failed road")
+        self.assertEqual((b["src"], b["div"], b["bodyFailed"]), ("/fleet", [], False), "the same stamped 200 with no load event by the 30 s backstop: shown, not the failed road")
         self.assertEqual(b["unmarked"], [{"pane": "waiting", "via": "load"}, {"pane": "fleet", "via": "backstop"}], "…and said via the backstop")
         n = o["noneLoad"]
         self.assertEqual((n["src"], n["lazy"], n["div"], n["bodyFailed"]), (None, "/timeline", ["failed"], True), "the refused input stays refused: no document (an error page) fails via load and re-parks")
         self.assertEqual(n["failed"], [{"pane": "timeline", "via": "load", "n": 1}])
         self.assertEqual(n["unmarked"], b["unmarked"], "a failure files no unmarked row")
         js = km._LANDING_MOBILE_JS
-        self.assertIn("function docState(f){try{var d=f.contentDocument;if(!d)return 'none';var u=d.URL;if(!u||u==='about:blank')return 'blank';var w=f.contentWindow;return (w&&typeof w.__rompApp==='string')?'app':'doc';}catch(e){return 'none';}}", js, "the classifier's four answers")
-        self.assertNotIn("function committed(", js, "the one-marker boolean is gone: no failure claim for a page the reader cannot classify")
+        self.assertIn("function docState(f){try{var d=f.contentDocument;if(!d)return 'none';var u=d.URL;if(!u||u==='about:blank')return 'blank';var w=f.contentWindow;if(w&&typeof w.__rompApp==='string')return 'app';var h=d.documentElement;return (h&&h.getAttribute&&h.getAttribute('data-romp-served')==='200')?'doc':'other';}catch(e){return 'none';}}", js, "the classifier's five answers: the stamp read off the <html> tag tells a 200 the kernel served (doc) from what it did not (other)")
+        self.assertNotIn("function committed(", js, "the one-marker boolean is gone: no failure claim for a 200 the reader cannot classify")
+        self.assertIn("if(s==='app')loaded(k);else if(s==='doc')unmarked(k,'load');else failed(k,'load');", js, "the load listener: doc alone is shown as served; other fails like none")
+        self.assertIn("if(s==='app')loaded(k);else if(s==='doc')unmarked(k,'backstop');else failed(k,'backstop');", js, "the backstop: the same")
         self.assertTrue({"pane", "via"} <= set(km.CLIENT_DIAG_KEYS["shell"]), "the row's keys survive the shell allowlist (its fixture row is test_client_diag_allowlist's)")
+
+    def test_a_document_the_kernel_did_not_serve_as_a_200_is_a_failure_with_the_retry_road_never_shown_as_served(self):
+        # Review round 4 (2026-09-19, kernel-1 and tests-1): round 3's inversion showed ANY same-origin document as served, the kernel's 403
+        # line included (its body names the serve-token file's path), with no retry road for the page's life; the round-2 ruling it rested on
+        # is scoped to a 200 the kernel served. A document with neither the marker nor the kernel's 200 stamp (the 403 line, a 500 page, a
+        # proxy's 502 body: none can carry the stamp) is a failure on both detectors, and the three retry roads promote it again.
+        o = _lazy(self.seed, _LAZY_OTHER_DRIVER)
+        self.assertEqual(o["otherDoc"], {"url": "http://TESTHOST:1/waiting", "shim": "undefined", "stamp": None}, "the input: same-origin at the pane's url, no shim, no stamp")
+        f = o["otherLoad"]
+        self.assertEqual((f["src"], f["lazy"], f["div"], f["bodyLoading"], f["bodyFailed"], f["retryHidden"]), (None, "/waiting", ["failed"], False, True, False), "its load: a failure, not a served document: re-parked under data-lazy-src, the failed state painted, the button shown")
+        self.assertEqual(f["msg"], "Couldn't load this pane.", "the first failure's copy (the denial's own text is NOT on show)")
+        self.assertEqual(f["failed"], [{"pane": "waiting", "via": "load", "n": 1}], "one pane-load-failed row via load")
+        self.assertEqual(f["unmarked"], [], "no pane-load-unmarked row: nothing was shown as served")
+        ot = o["overlayTap"]
+        self.assertEqual((ot["src"], ot["lazy"], ot["div"], ot["sets"]["waiting"]), ("/waiting", None, ["loading"], 2), "the overlay tap retries: a second promotion")
+        b = o["otherBackstop"]
+        self.assertEqual((b["src"], b["lazy"], b["div"], b["bodyFailed"]), (None, "/waiting", ["failed"], True), "the same denial with no load event by the 30 s backstop: a failure via the backstop, not shown")
+        self.assertEqual(b["failed"], [{"pane": "waiting", "via": "load", "n": 1}, {"pane": "waiting", "via": "backstop", "n": 2}])
+        self.assertEqual(b["msg"], "Still not loading. Try again, or reload the page.", "the episode's second failure offers the reload")
+        bt = o["buttonTap"]
+        self.assertEqual((bt["src"], bt["div"], bt["retryHidden"], bt["sets"]["waiting"]), ("/waiting", ["loading"], True, 3), "the Try again button retries: a third promotion, the button hidden while it loads")
+        self.assertEqual(o["loadingAgain"]["div"], ["loading"], "the backstop's guard: still loading at about:blank is not judged by the load listener")
+        g = o["goodLoad"]
+        self.assertEqual((g["src"], g["div"], g["bodyFailed"], g["bodyLoading"], g["msg"], g["unmarked"]), ("/waiting", [], False, False, "", []), "the good load ends the episode: the pane loaded, no overlay, no message, nothing ever said served")
+        self.assertEqual(g["failed"], b["failed"], "no further row")
+        fo = o["secondPaneOther"]
+        self.assertEqual((fo["src"], fo["lazy"], fo["div"], fo["bodyFailed"]), (None, "/fleet", ["failed"], True), "a second pane, the same denial via load: failed")
+        fr = o["secondPaneRetap"]
+        self.assertEqual((fr["src"], fr["div"], fr["sets"]["fleet"], fr["bodyFailed"]), ("/fleet", ["loading"], 2, False), "the tab's re-tap promotes it again as a first tap would")
+        self.assertEqual((o["secondPaneLoaded"]["src"], o["secondPaneLoaded"]["div"], o["secondPaneLoaded"]["unmarked"]), ("/fleet", [], []), "...and its good load ends it")
+
+    def test_the_kernel_stamps_every_200_html_document_it_writes_and_nothing_else(self):
+        # The writer's side of the round-4 rule (kernel-1): Handler._send marks every text/html 200 with data-romp-served=200 on the <html>
+        # tag (a rule over the writer, so no list of pages can go stale), and nothing else: the seven pane routes' pages, the four fallback
+        # pages a missing ui/ module yields all carry it; a 403 or a 500 text/plain body (what the kernel's denial and its traceback are), a
+        # text/plain 200 and a body with no <html> tag (the paste-the-token page at /, disclosed below) pass through untouched, bytes or str.
+        stamp = km._stamp_served_html
+        pages = {"chat": km._chat_page, "feed": km._feed_page, "timeline": km._timeline_page, "fleet": km._fleet_page, "waiting": km._waiting_page, "files": km._files_page, "settings": km._settings_page}
+        self.assertEqual(sorted(pages), sorted([k for k, _ in km._PANE_ORDER] + ["settings"]), "the census: every pane key of _PANE_ORDER has its page here, plus the gear's")
+        bodies = {k: fn() for k, fn in pages.items()}
+        real_ui = km.UI
+        try:
+            km.UI = Path(tempfile.mkdtemp()) / "absent"   # the fallback branches: the ui/ modules missing
+            fallbacks = {k: pages[k]() for k in ("fleet", "waiting", "files", "timeline")}
+        finally:
+            km.UI = real_ui
+        self.assertTrue(all("needs the ui/ modules" in b for b in fallbacks.values()), "the four fallback pages were produced: %r" % ({k: b[:60] for k, b in fallbacks.items()},))
+        for k, b in list(bodies.items()) + [("fallback-" + k, b) for k, b in fallbacks.items()]:
+            self.assertNotIn("data-romp-served", b, k + ": the page function writes no stamp of its own (the writer does)")
+            out = stamp(200, b, "text/html; charset=utf-8")
+            self.assertEqual(out.count("<html data-romp-served=200"), 1, k + ": one stamp on the <html> tag of a text/html 200")
+            self.assertEqual(len(out), len(b) + len(" data-romp-served=200"), k + ": nothing else changes")
+        self.assertNotIn("<html", km._TOKEN_LOGIN_HTML, "the token-less landing (the paste-the-token page at /) writes no root tag, so it is the one 200 the writer cannot stamp: disclosed here; it is served at / alone, never at a pane url, so no pane frame's reader meets it")
+        self.assertEqual(stamp(200, km._TOKEN_LOGIN_HTML, "text/html"), km._TOKEN_LOGIN_HTML, "...and it passes through as it came")
+        self.assertEqual(stamp(200, b"<!DOCTYPE html><html lang=en><body>x</body></html>", "text/html"), b"<!DOCTYPE html><html data-romp-served=200 lang=en><body>x</body></html>", "a bytes body is stamped the same")
+        self.assertEqual(stamp(200, "<HTML><body>x</body></HTML>", "text/html"), "<HTML data-romp-served=200><body>x</body></HTML>", "the tag's case does not matter")
+        for code, body, ctype in [(403, "forbidden: token required", "text/plain"), (500, "Traceback (most recent call last):\n", "text/plain"), (502, "<html><body>bad gateway</body></html>", "text/html"),
+                                  (200, "forbidden-looking text", "text/plain"), (200, '{"ok": true}', "application/json"), (200, "<!DOCTYPE html>no root tag here", "text/html"), (404, "<html><body>not found</body></html>", "text/html; charset=utf-8")]:
+            self.assertEqual(stamp(code, body, ctype), body, "%d %s: untouched (a stamp on this would call a non-200, a non-document or a rootless body a 200 the kernel served)" % (code, ctype))
+        self.assertIn("body = _stamp_served_html(code, body, ctype)", inspect.getsource(km.Handler._send), "the one call, at the top of the one place every response leaves")
 
     def test_a_failure_judged_after_a_flip_to_the_desktop_re_promotes_there_and_the_phone_armed_detectors_are_inert(self):
         # Family one (review round 3): the layout is read when the failure is JUDGED, not when the promotion was armed, across an actual media-query

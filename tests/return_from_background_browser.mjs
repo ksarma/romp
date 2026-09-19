@@ -347,41 +347,7 @@ try {
   });
   // the TAB-TAP leg (stage 0): tap a lazy pane's tab, wait for its socket (its document loads on the tap), then go back to the chat,
   // so the return below finds a tapped pane off screen: the parked-pane contract (D2) exercised on a pane that did not exist at boot
-  if (cfg.tapPane && cfg.abortMode === "unmarked") {
-    // FAMILY TWO (review round 3, 2026-09-19): the tapped pane's document is a page the ORIGIN served with no pane shim: here the kernel's own
-    // 403 line for a token-gated route once the cookie is stale (text/plain, 'forbidden: ...', the class's common member; the four "needs the
-    // ui/ modules" pages are the others). The shell must not call it a failure: the loader retires on the document's load, the src stays, no
-    // failed state paints, one pane-load-unmarked row (via load) is filed and no pane-load-failed row; the document shows as served (its text
-    // starts 'forbidden'). No shim runs in it, so the pane says nothing on the shell's wire (no wsState, no socket): the tapUp wait is skipped,
-    // and out.tapped stays null so _parked expects nothing parked at the return (there is no shim to park) and _lazy counts a no-tap boot.
-    const path = "/" + cfg.tapPane, isPath = (u) => u.pathname === path;
-    const denial = (route) => route.fulfill({ status: 403, contentType: "text/plain", body: "forbidden: token required (a stale cookie)" });
-    await page.route(isPath, denial);
-    out.t.tap = now();
-    await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");
-    const clearDeadline = now() + 20000;
-    let cleared = false;
-    while (now() < clearDeadline) {
-      cleared = await page.evaluate((p) => { const f = document.getElementById("f-" + p), d = f && f.parentElement; return !document.body.classList.contains("pane-loading") && !!d && !d.classList.contains("loading"); }, cfg.tapPane);
-      if (cleared) break;
-      await sleep(50);
-    }
-    out.loadingClearedMs = cleared ? now() - out.t.tap : -1;
-    out.loaderSeen = await page.evaluate(() => window.__labLoaderSeen || null);
-    out.unmarked = await page.evaluate((p) => {
-      const f = document.getElementById("f-" + p), d = f.parentElement;
-      let url = null, text = null;
-      try { url = f.contentDocument ? f.contentDocument.URL : null; text = f.contentDocument && f.contentDocument.body ? f.contentDocument.body.textContent : null; } catch (e) { url = "ERR:" + String(e).slice(0, 60); }
-      return { src: f.getAttribute("src"), lazy: f.getAttribute("data-lazy-src"), bodyFailed: document.body.classList.contains("pane-failed"), bodyLoading: document.body.classList.contains("pane-loading"),
-               divFailed: d.classList.contains("failed"), divLoading: d.classList.contains("loading"), url, text: text === null ? null : text.slice(0, 40), msg: (document.getElementById("pane-load-msg") || {}).textContent || "" };
-    }, cfg.tapPane);
-    await page.unroute(isPath, denial);
-    await page.click("#mtabs button[data-pane=chat]");
-    await sleep(Math.max(300, (cfg.settleMs || 1500) / 2));
-    out.tapped = null;   // no shim in the served document: nothing to park, nothing to dial (the reason above)
-    out.framesAtBoot = out.frames;
-    out.frames = page.frames().map((f) => { try { return new URL(f.url()).pathname; } catch (e) { return f.url(); } });
-  } else if (cfg.tapPane) {
+  if (cfg.tapPane) {
     const prefetchBeforeTap = out.dials.filter((d) => d.app === "chat").reduce((n, d) => n + (d.needFull || []).filter((w) => w === "prefetch").length, 0);
     // THE FIRST TAP'S WITNESS (review round 3, tests-1): the pane DOCUMENT's own load, stamped by a listener armed on the frame element BEFORE
     // the tap (a listener armed after the click can miss a fast origin's load), once the document is not the initial about:blank; re-armed
@@ -411,9 +377,20 @@ try {
       // (body.pane-failed, #pane-load painted with the message, the loader itself down) and load it on the re-tap.
       const abortPath = "/" + cfg.abortPane;
       const isAbortUrl = (u) => u.pathname === abortPath;
-      // (the round-2 error-body mode, a 502 page fulfilled at the url, is gone with round 3's family two: a document the origin served is
-      // shown as served, never a failure; its leg is the unmarked branch above)
-      const aborter = (route) => route.abort();
+      // two failure inputs (cfg.abortMode). "abort": the route aborts the navigation (above). "denied" (review round 4, 2026-09-19, kernel-1 and
+      // tests-1): the REAL kernel's own denial at the pane's url. The route re-issues the pane's own request to the lab kernel through
+      // route.fetch with an EXPLICIT EMPTY Cookie header, which is the one form that keeps the context's stored cookie off the wire in every
+      // engine (probed on all three: route.continue with the header deleted, and route.fetch with it deleted, both had the browser reattach
+      // the stored cookie and the kernel answered 200), and fulfils the frame with that response: the kernel's own status, headers and bytes
+      // (403, text/plain, a body that names the serve-token file's path), as it answers a token-gated route with no credential; the context's
+      // cookie stays for every other request (the shell's socket and the eager panes ride it; round 3's leg fulfilled a hand-written body here
+      // and called it the kernel's, so no test met the real one). The response's STATUS is recorded; its body is never read, printed or kept
+      // by this driver: that path is the reason the shell must not show this document as content. The 403 commits a document and fires
+      // load in every engine, so the load listener is its detector on all three (the abort's is the backstop off Chromium).
+      const denied = { status: null, responses: 0 };
+      const aborter = cfg.abortMode === "denied"
+        ? async (route) => { const resp = await route.fetch({ headers: { ...route.request().headers(), cookie: "" } }); denied.responses++; denied.status = resp.status(); return route.fulfill({ response: resp }); }
+        : (route) => route.abort();
       await page.route(isAbortUrl, aborter);
       await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");
       const failDeadline = now() + 45000;
@@ -422,9 +399,14 @@ try {
         failedSeen = await page.evaluate((pane) => {
           if (!document.body.classList.contains("pane-failed")) return null;
           const el = document.getElementById("pane-load"), f = document.getElementById("f-" + pane), btn = document.getElementById("pane-load-retry"), msgEl = document.getElementById("pane-load-msg");
-          return { display: getComputedStyle(el).display, loaderDisplay: getComputedStyle(el.querySelector(".rl-in")).display,
+          const er = el.getBoundingClientRect(), fr = f.getBoundingClientRect(), es = getComputedStyle(el);
+          return { display: es.display, loaderDisplay: getComputedStyle(el.querySelector(".rl-in")).display,
                    msg: (msgEl || {}).textContent || "", src: f.getAttribute("src"), lazy: f.getAttribute("data-lazy-src"),
                    loading: document.body.classList.contains("pane-loading"),
+                   // the overlay's paint over the pane (review round 4, the denied mode): its box, backdrop and stacking, and the frame's box under it,
+                   // so the served test can say the pane's document is covered (never read: the geometry is the witness, not the text)
+                   overlay: { bg: es.backgroundColor, position: es.position, zIndex: es.zIndex, top: er.top, bottom: er.bottom, left: er.left, right: er.right },
+                   frame: { display: getComputedStyle(f).display, top: fr.top, bottom: fr.bottom, left: fr.left, right: fr.right },
                    // ui-1 (review round 3): the retry button in the failed state: painted, named, in the tab order; the message announced
                    retry: btn ? { display: getComputedStyle(btn).display, tabIndex: btn.tabIndex, hidden: btn.hidden, text: btn.textContent, role: msgEl ? msgEl.getAttribute("role") : null,
                                   focusable: (function () { try { btn.focus(); return document.activeElement === btn; } catch (e) { return false; } })() } : null };   // focusable: the element takes keyboard focus (focus() lands it), the witness every engine gives
@@ -448,7 +430,7 @@ try {
           if (at === "BUTTON#pane-load-retry") { tabsToReach = i; break; }
         }
       }
-      out.abort = { ms: failedSeen ? now() - out.t.tap : -1, mode: "abort", tabsToReach, tabTrail, ...(failedSeen || {}) };
+      out.abort = { ms: failedSeen ? now() - out.t.tap : -1, mode: cfg.abortMode || "abort", tabsToReach, tabTrail, ...(failedSeen || {}), ...(cfg.abortMode === "denied" ? { denied } : {}) };
       await page.unroute(isAbortUrl, aborter);
       await armDocLoad();   // the re-tap's document is the one whose load is stamped
       out.t.retap = now();

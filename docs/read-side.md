@@ -265,13 +265,18 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   no committed document by the 30 s backstop) is put back where a tap finds
   it, says so over the pane area with a control to retry, and files one
   `pane-load-failed` row (surface `shell`: `pane`, `via` `load` or `backstop`,
-  `n` the failures for that pane on this page). A document the origin SERVED
-  at the pane's url that carries no pane shim (the kernel's own "needs the
-  ui/ modules" page, its 403 line under a stale cookie, a proxy's 502 body) is
-  not a failure: the shell cannot classify it, so it is shown as served (the
-  loader clears, the src stays) and one `pane-load-unmarked` row (surface
-  `shell`: `pane`, `via`) says what was seen; a reader that cannot classify
-  never reports absent (since 2026-09-19).
+  `n` the failures for that pane on this page). A 200 the kernel served at the
+  pane's url that carries no pane shim (its own "needs the ui/ modules" page;
+  the kernel stamps every text/html 200 it writes with `data-romp-served=200`
+  on the `<html>` tag, and the shell reads that stamp) is not a failure: the
+  shell cannot classify it, so it is shown as served (the loader clears, the
+  src stays) and one `pane-load-unmarked` row (surface `shell`: `pane`, `via`)
+  says what was seen; a reader that cannot classify a 200 never reports
+  absent. A document at the url with neither the shim nor the stamp (the
+  kernel's 403 line under a stale cookie, its 500 page, a proxy's 502 body) is
+  a failure like an error page: re-parked with the retry control and one
+  `pane-load-failed` row (since 2026-09-19; the 200 scope since review round 4
+  the same day).
   A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's
   caps frame has answered the bundle's ready; before that, with the ready still
   queued, or after a socket that died before the caps frame came back, it dials
