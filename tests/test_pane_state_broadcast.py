@@ -689,7 +689,8 @@ let MOBILE = false, TAB = 'chat', FILES_READY = 'complete', FILES_LOADS = [], SE
 const ATTRS = { 'f-settings': { 'data-src': '/settings' } };
 let SETTINGS_URL = 'about:blank', FILES_URL = 'http://TESTHOST:1/files';   // FILES_URL: about:blank while the Files pane is a just-promoted lazy iframe (stage 0)
 let SETTINGS_DEAD = false, SETTINGS_SETS = 0;   // SETTINGS_DEAD: the gear's frame committed an error page (contentDocument null, Chromium's failed fetch); SETTINGS_SETS: src assignments on the gear's iframe (review round 3, kernel-3)
-const frame = (id) => ({ contentWindow: { postMessage: (m) => POSTED[id].push(JSON.parse(JSON.stringify(m))), focus: () => FOCUSED.push(id) },
+let SETTINGS_APP;   // the settings page's shim marker (window.__rompApp, 'settings' once the real page has parsed; undefined for an error body the origin served at the url, review round 4, kernel-2)
+const frame = (id) => ({ contentWindow: { postMessage: (m) => POSTED[id].push(JSON.parse(JSON.stringify(m))), focus: () => FOCUSED.push(id), get __rompApp() { return id === 'f-settings' ? SETTINGS_APP : id.slice(2); } },
   contentDocument: (id === 'f-settings' && SETTINGS_DEAD) ? null : { get readyState() { return id === 'f-files' ? FILES_READY : 'complete'; }, get URL() { return id === 'f-settings' ? SETTINGS_URL : id === 'f-files' ? FILES_URL : 'http://TESTHOST:1/' + id.slice(2); } },
   getAttribute: (a) => (ATTRS[id] && a in ATTRS[id] ? ATTRS[id][a] : null),
   setAttribute: (a, v) => { (ATTRS[id] = ATTRS[id] || {})[a] = v; if (id === 'f-settings' && a === 'src') SETTINGS_SETS++; },
@@ -782,7 +783,7 @@ window.__rompOpenSettings();
 out.gearAskAgain = Object.assign(snap(), { src: ATTRS['f-settings'].src, waiting: SETTINGS_LOADS.length }); reset();
 SETTINGS_LOADS.slice().forEach((f) => f());   // the empty document's own load, if it comes late: not the page's
 out.gearBlankLoad = snap(); reset();
-SETTINGS_URL = 'http://TESTHOST:1/settings'; SETTINGS_LOADS.slice().forEach((f) => f());
+SETTINGS_URL = 'http://TESTHOST:1/settings'; SETTINGS_APP = 'settings'; SETTINGS_LOADS.slice().forEach((f) => f());   // the page loads: committed at its url, its shim's marker set (window.__rompApp, the read the tap-time check makes since review round 4)
 out.gearLoaded = snap(); reset();
 window.__rompOpenSettings();
 out.gearOpen = Object.assign(snap(), { src: ATTRS['f-settings'].src }); reset();
@@ -796,15 +797,25 @@ out.gearReloaded = snap(); reset();
 SETTINGS_DEAD = true; const setsBefore = SETTINGS_SETS;
 window.__rompOpenSettings();
 out.gearDeadTap = Object.assign(snap(), { src: ATTRS['f-settings'].src, sets: SETTINGS_SETS - setsBefore, waiting: SETTINGS_LOADS.length });
-SETTINGS_DEAD = false; SETTINGS_URL = 'http://TESTHOST:1/settings'; SETTINGS_LOADS.slice().forEach((f) => f());   // the re-fetched page loads
+SETTINGS_DEAD = false; SETTINGS_URL = 'http://TESTHOST:1/settings'; SETTINGS_APP = 'settings'; SETTINGS_LOADS.slice().forEach((f) => f());   // the re-fetched page loads (its shim's marker set)
 out.gearDeadLoaded = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
-SETTINGS_URL = 'about:blank';   // (b) the never-committed frame (a failed navigation on Firefox or WebKit: no load event came)
+SETTINGS_URL = 'about:blank'; SETTINGS_APP = undefined;   // (b) the never-committed frame (a failed navigation on Firefox or WebKit: no load event came)
 window.__rompOpenSettings();
 out.gearBlankTap = Object.assign(snap(), { src: ATTRS['f-settings'].src, sets: SETTINGS_SETS - setsBefore, waiting: SETTINGS_LOADS.length });
-SETTINGS_URL = 'http://TESTHOST:1/settings'; SETTINGS_LOADS.slice().forEach((f) => f());
+SETTINGS_URL = 'http://TESTHOST:1/settings'; SETTINGS_APP = 'settings'; SETTINGS_LOADS.slice().forEach((f) => f());
 out.gearBlankLoaded = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
-window.__rompOpenSettings();   // (c) the mirror: a committed document is not re-fetched
+window.__rompOpenSettings();   // (c) the mirror: a committed document with the marker (the settings page) is not re-fetched
 out.gearLiveTap = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
+// (d) review round 4 (kernel-2): a same-origin document AT /settings with no marker, what the origin served in place of the page (the kernel's
+// own 403 line under a stale cookie, a proxy's 502 body): not the page, so the tap drops the src and fetches again; the page's load delivers
+// the open once its shim has set the marker. Before this the url alone read as live and the gear stayed dead across every tap.
+ATTRS['f-settings'].src = '/settings'; SETTINGS_URL = 'http://TESTHOST:1/settings'; SETTINGS_APP = undefined;
+window.__rompOpenSettings();
+out.gearErrorBodyTap = Object.assign(snap(), { src: ATTRS['f-settings'].src, sets: SETTINGS_SETS - setsBefore, waiting: SETTINGS_LOADS.length });
+SETTINGS_APP = 'settings'; SETTINGS_LOADS.slice().forEach((f) => f());   // the re-fetched page loads, marker set
+out.gearErrorBodyLoaded = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
+window.__rompOpenSettings();   // the mirror again over the marked page
+out.gearErrorBodyMirror = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
 // the Feed pane off in this browser (the gear's Panes section): a browse ask naming no pane takes the Files pane's
 // arm (the feed cannot be lifted), a browseClosed puts nothing back, and a phone gets the Files tab, not the feed's
 FEED_OFF = true;
@@ -964,9 +975,16 @@ class RelayArms(unittest.TestCase):
         self.assertEqual((b["src"], b["sets"], b["settings"]), ("/settings", 2, []), "the frame at about:blank (Firefox's and WebKit's failed navigation: no load event ever came): the same re-fetch")
         self.assertEqual(self.out["gearBlankLoaded"]["settings"], [{"romp": "openSettings"}], "…and its load delivers the open")
         m = self.out["gearLiveTap"]
-        self.assertEqual((m["sets"], m["settings"]), (2, [{"romp": "openSettings"}]), "the mirror: a committed document at /settings is not re-fetched, the ask posts at once")
+        self.assertEqual((m["sets"], m["settings"]), (2, [{"romp": "openSettings"}]), "the mirror: a committed document at /settings with the shim's marker (the settings page) is not re-fetched, the ask posts at once")
+        # review round 4 (kernel-2): the tap-time check reads the marker too, the read committed()/docState make: a same-origin document at
+        # /settings with no marker (an error body the origin served: the kernel's 403 line, a proxy's 502) is not the page and is re-fetched;
+        # before this the url alone read as live and the gear stayed dead across every tap while the body stood
+        e = self.out["gearErrorBodyTap"]
+        self.assertEqual((e["src"], e["sets"], e["settings"], e["waiting"]), ("/settings", 3, [], 1), "a same-origin document at /settings without the marker at the tap: the src is dropped and set again (one more assignment), nothing posted into it, still one load listener")
+        self.assertEqual((self.out["gearErrorBodyLoaded"]["settings"], self.out["gearErrorBodyLoaded"]["sets"]), ([{"romp": "openSettings"}], 3), "the re-fetched page's load, its marker set, delivers the open once")
+        self.assertEqual((self.out["gearErrorBodyMirror"]["sets"], self.out["gearErrorBodyMirror"]["settings"]), (3, [{"romp": "openSettings"}]), "the marked page is not re-fetched")
         js = km._LANDING_SETTINGS_JS
-        self.assertIn("if(f.getAttribute('src')){var live=false;try{var sd=f.contentDocument;live=!!(sd&&sd.URL&&sd.URL!=='about:blank');}catch(e){}", js, "the tap-time read, before the promotion branch")
+        self.assertIn("if(f.getAttribute('src')){var live=false;try{var sd=f.contentDocument;live=!!(sd&&sd.URL&&sd.URL!=='about:blank'&&f.contentWindow&&typeof f.contentWindow.__rompApp==='string');}catch(e){}", js, "the tap-time read, before the promotion branch: the url and the marker")
         self.assertIn("if(!live){try{f.removeAttribute('src');}catch(e){}sPend=false;}}", js)
         self.assertLess(js.index("var live=false;"), js.index("if(!f.getAttribute('src')){var u=f.getAttribute('data-src');"), "…so the promotion below re-fetches in the same tap")
 

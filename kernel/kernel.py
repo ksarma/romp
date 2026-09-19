@@ -67443,11 +67443,15 @@ var open=function(){try{f.contentWindow&&f.contentWindow.postMessage(msg,'*');}c
 // page, contentDocument null; Firefox and WebKit keep the frame's initial about:blank and fire no load event), and before this it left
 // the gear unopenable for the page's life: every later tap returned at sPend or posted into a dead document. Read at TAP time (no load
 // event comes on two engines, and no timer: the next tap is the event): no document, or about:blank, drops the src and the pending flag
-// and falls through to the promotion below, which fetches again and posts the open on the load. A same-origin document at /settings is
-// never a failure here, marked or not (the lazy panes' rule, _LANDING_MOBILE_JS docState: a document the origin served is what it served).
+// and falls through to the promotion below, which fetches again and posts the open on the load. Live means the settings PAGE: a
+// same-origin document at a url with the pane shim's marker in its window (window.__rompApp, set as the shim parses, the read
+// committed()/docState make in _LANDING_MOBILE_JS; review round 4, 2026-09-19, kernel-2). A document without it (the kernel's 403 line
+// under a stale cookie, a proxy's 502 body) is not the page: it cannot hear the ask, and this frame is display:none until the page
+// speaks, so the lazy panes' shown-as-served rule has no bearing here; before this a same-origin error body left the gear dead for the
+// page's life, every tap posting into it. A body that stays an error leaves the gear silently unopenable still (a disclosed residual).
 // A tap while the first fetch is still in flight reads about:blank too and restarts it (one open still, at that load; the earlier "not
 // queued" rule kept a second tap from toggling the page twice, and the restart keeps that); the gear paints no failure state, a second tap is the recovery.
-if(f.getAttribute('src')){var live=false;try{var sd=f.contentDocument;live=!!(sd&&sd.URL&&sd.URL!=='about:blank');}catch(e){}
+if(f.getAttribute('src')){var live=false;try{var sd=f.contentDocument;live=!!(sd&&sd.URL&&sd.URL!=='about:blank'&&f.contentWindow&&typeof f.contentWindow.__rompApp==='string');}catch(e){}
   if(!live){try{f.removeAttribute('src');}catch(e){}sPend=false;}}
 if(!f.getAttribute('src')){var u=f.getAttribute('data-src');if(!u)return;sPend=true;f.setAttribute('src',u);
   if(!sArmed){sArmed=true;f.addEventListener('load',function(){try{if(f.contentDocument&&f.contentDocument.URL==='about:blank')return;}catch(e){}   // the empty document's own load, not the page's; ONE listener for the element's life (a re-fetch after a failed one reuses it: review round 3)
