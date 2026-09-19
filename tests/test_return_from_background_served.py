@@ -392,9 +392,29 @@ class ReturnFromBackground(unittest.TestCase):
         self._lazy(name, r, m, tap)
         self._dial(name, r, boot_tab, tap)
         self._feed_paint(name, r, boot_tab)
+        self._return_chain(name, r, rows)
         if abort:
             self._abort(name, r, rows, tap, engine)
         return m
+
+    # ---- the return's chain (the owner's decision, 2026-09-19): on the phone the redial reloads the visible tab alone ----
+    def _return_chain(self, name, r, rows):
+        """After the return the chat redials with reconnect=1 and the kernel re-skeletons every other tab on the new socket (the chat's
+        own `skeleton` client-diag row, filed once per socket that produced a set, is the witness that there WAS something to fetch).
+        On the phone the chain asks for none of them (needFull why=prefetch: zero from the return on); the other tabs load when
+        tapped. On the desktop the chain runs as before and re-downloads them (at least one prefetch ask after the return)."""
+        where = name + ": "
+        wid = r.get("wid") or ""
+        t_return_s = int((r.get("t") or {}).get("return", 0) // 1000) - 1
+        skel = [x for x in rows if x.get("wid") == wid and x.get("surface") == "chat" and x.get("what") == "skeleton" and x.get("t", 0) >= t_return_s]
+        self.assertTrue(skel, where + "the redial produced a skeleton set (the chat's skeleton row after the return): without one a zero prefetch count would witness nothing")
+        self.assertGreater(max((x.get("data") or {}).get("n", 0) for x in skel), 0, where + "…with at least one tab withheld: %r" % ([x.get("data") for x in skel],))
+        n = r.get("prefetchAfterReturn")
+        self.assertIsInstance(n, int, where + "the driver counted the chain's asks after the return: %r" % (n,))
+        if r.get("shell") == "phone":
+            self.assertEqual(n, 0, where + "on the phone the redial reloads the visible tab alone: no background full was asked for after the return (the other tabs load when tapped)")
+        else:
+            self.assertGreater(n, 0, where + "on the desktop the chain re-downloads the other tabs after the return, as before")
 
     # ---- the feed's first paint (review round 1, regression-3; 2026-09-19): the change's central paint decision, in a real engine ----
     def _feed_paint(self, name, r, boot_tab):

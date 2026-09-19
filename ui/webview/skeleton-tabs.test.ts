@@ -232,19 +232,42 @@ test("T5, ended-active: the strip lists no tab as active, so the gate opens on t
   assert.equal(gateOnStrip(st3, [], A), true, "an empty local strip (a kernel with no sessions): nothing is coming");
 });
 
-test("T6: a return on the phone: the new socket closes the gate, the redial's strip lists the active tab, its full re-opens it and the chain runs again (today's default, pinned for the owner's later narrowing)", () => {
+test("T6: a return on the phone (the owner's decision, 2026-09-19): the redial reloads the visible tab alone; the other tabs reload only when tapped, for the socket's life; the desktop keeps its chain", () => {
   const st = newSkeletonState();
   applyTabOrderSkeleton(st, [B, C], [A, B, C]);
   gateOnFrame(st, A, [A]);
   onFull(st, B); onFull(st, C);   // the first chain finished: every tab loaded on this socket
   assert.equal(nextPrefetch(st, A, none, false, all), null, "nothing left");
-  onSocketUp(st);   // the return's redial (reconnect=1): the kernel re-skeletons every non-active tab on the new socket
+  onSocketUp(st, true);   // the return's redial (reconnect=1) on the phone layout: the kernel re-skeletons every non-active tab on the new socket
   assert.equal(st.gate, false, "a new socket closes the gate: the visible tab's full comes first again");
+  assert.equal(st.returnHold, true, "…and on the phone the chain is held for this socket's life");
   assert.equal(applyTabOrderSkeleton(st, [B, C], [A, B, C]), true, "the redial's strip re-lists B and C (the loaded record was cleared with the socket)");
-  assert.equal(gateOnStrip(st, [A, B, C], A), false, "the strip lists A: the gate waits for A's frame");
+  assert.equal(gateOnStrip(st, [A, B, C], A), false, "the strip opens nothing");
+  assert.equal(gateOnStrip(st, [B, C], A), false, "…not even a strip that lists no local want (an ended stored tab): the hold outranks the strip's opening");
   assert.equal(nextPrefetch(st, A, none, false, all), null, "no background ask on the redial before A's full");
-  assert.equal(gateOnFrame(st, A, [A]), true, "A's full applied on the new socket");
-  assert.equal(nextPrefetch(st, A, none, false, all), B, "and the chain re-downloads the other tabs (the owner's decision on returns is pending; this pins today's default)");
+  assert.equal(gateOnFrame(st, A, [A]), false, "A's full applied on the new socket: the visible tab alone reloads, the gate stays closed");
+  assert.equal(nextPrefetch(st, A, none, false, all), null, "the chain does not re-download B and C (17 to 22 MB on the owner's board, for tabs nobody asked for)");
+  // the user taps B: the click road asks for its full at once (render.ts showActive's skeleton-click, never gated), B loads
+  onFull(st, B);
+  assert.equal(gateOnShow(st, B), false, "the tap onto the now-whole B opens nothing either");
+  assert.equal(nextPrefetch(st, B, none, false, all), null, "C stays a skeleton until its own tap: reloaded only when tapped");
+  assert.deepEqual([...st.ids], [C]);
+  // the desktop keeps today's chain: the redial's active full reopens the gate and the other tabs re-download in order
+  const st2 = newSkeletonState();
+  applyTabOrderSkeleton(st2, [B, C], [A, B, C]);
+  gateOnFrame(st2, A, [A]); onFull(st2, B); onFull(st2, C);
+  onSocketUp(st2, false);
+  assert.equal(st2.returnHold, false, "the desktop passes false: no hold");
+  applyTabOrderSkeleton(st2, [B, C], [A, B, C]);
+  assert.equal(gateOnStrip(st2, [A, B, C], A), false, "the strip lists A: the gate waits for A's frame");
+  assert.equal(nextPrefetch(st2, A, none, false, all), null, "no background ask on the redial before A's full");
+  assert.equal(gateOnFrame(st2, A, [A]), true, "A's full applied on the new socket");
+  assert.equal(nextPrefetch(st2, A, none, false, all), B, "and the chain re-downloads the other tabs, as before");
+  // a call without the layout (an older caller, a standalone page's stand-in) is the desktop's
+  const st3 = newSkeletonState();
+  onSocketUp(st3);
+  assert.equal(st3.returnHold, false);
+  assert.equal(newSkeletonState().returnHold, false, "a fresh state holds nothing: the boot dial sends no wsup, so a cold open's chain is untouched");
 });
 
 test("F4 and F7 (review round 1, 2026-09-19): a want on another host is not this chain's to wait for; the local strip opens the gate, on the boot dial and after a local-only redial", () => {

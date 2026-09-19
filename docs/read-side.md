@@ -286,6 +286,11 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   is another host's, whose full arrives on that host's relay socket and is not
   waited for (as before). On the phone the chain also waits for the chat pane to
   be on screen: a phone opened on another tab arms it when the Chat tab is shown.
+  A return on the phone (the redial that follows a socket the background left
+  dead; the owner's decision of 2026-09-19) reloads the visible tab alone: the
+  kernel re-skeletons the other tabs on the new socket as before, and each of
+  them loads when tapped, for that socket's life, never in the background. The
+  desktop's return keeps today's chain.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire

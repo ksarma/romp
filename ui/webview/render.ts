@@ -14196,6 +14196,14 @@ function cancelPrebuild(): void {
 function paneHidden(): boolean {
   try { return (window.parent !== window && (window.innerWidth === 0 || window.innerHeight === 0)) || (window as PaneHiddenHost).__rompPaneHidden === true; } catch { return false; }
 }
+// The shell's LAYOUT, read once per redial at the wsup arm (the owner's decision of 2026-09-19: after a return on the phone the
+// other chat tabs reload only when tapped, so the redial's chain is held there; skeleton-tabs.ts onSocketUp's returnHold). The
+// shell publishes window.__rompMobileOn in its head, read off window.parent the way paneHidden reads the shell's hidden word
+// above; a standalone page or the VS Code webview has no shell and reads false (the desktop's chain). The start gate itself
+// reads no layout: this is the return's one read.
+function phoneShell(): boolean {
+  try { const p = window.parent as unknown as { __rompMobileOn?: unknown }; return window.parent !== window && typeof p.__rompMobileOn === "function" && !!(p.__rompMobileOn as () => unknown)(); } catch { return false; }
+}
 // The prefetch never runs while the browser tab is hidden (nextPrefetch); coming back is the event that re-arms
 // it. (A display:none pane has no event for its CSS flip — it re-arms on the next upsert / click instead.)
 document.addEventListener("visibilitychange", () => { if (!document.hidden) schedulePrebuild(); });
@@ -20290,7 +20298,7 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
   else if (m.type === "chatEpisode") chatEpisode(m);
   else if (m.type === "subagent") applySubagentFrame(m);
   else if (m.type === "update") update(m);
-  else if (m.type === "wsup") { onSocketUp(skeletonTabs); skeletonDiagArmed = true; }   // the shim's socket-flip marker, in FRAME order: the dead socket's frames may still be draining from the FIFO when onopen fires (review find 2026-09-07)
+  else if (m.type === "wsup") { onSocketUp(skeletonTabs, phoneShell()); skeletonDiagArmed = true; }   // the shim's socket-flip marker, in FRAME order: the dead socket's frames may still be draining from the FIFO when onopen fires (review find 2026-09-07); on the phone the redial holds the chain (the owner's decision, 2026-09-19)
   else if (m.type === "status") statusOnly(m);
   else if (m.type === "glossary" && typeof m.id === "string") {   // the session's glossary index (T351 stage 2): a new one re-links the view
     glossaries.set(m.id, m as GlossaryIndex);

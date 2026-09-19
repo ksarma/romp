@@ -34,17 +34,24 @@ export interface SkeletonState {
   // from the strip's first paint, which the kernel sends before it builds anything, so the first background full could leave
   // ahead of the visible tab's, and on a phone link the visible session waited behind a tab nobody was looking at.
   gate: boolean;
+  // THE RETURN HOLD (the owner's decision, 2026-09-19): on the phone a redial reloads the VISIBLE tab alone, and the other chat
+  // tabs reload only when tapped (the click road, which no gate touches), for the socket's life. A return from the background
+  // redials with reconnect=1 and the kernel re-skeletons every other tab; before this the chain then re-downloaded them all (17 to
+  // 22 MB on the owner's board) for tabs nobody had asked for. Set by onSocketUp when the pane's shell is the phone layout (the one
+  // layout read, at render.ts's wsup arm, the redial's frame); while it stands no opener (gateOnFrame, gateOnStrip, gateOnShow) opens
+  // the gate. The boot dial sends no wsup, so a cold open's chain is untouched; the desktop passes false and keeps its chain.
+  returnHold: boolean;
 }
 
 export function newSkeletonState(): SkeletonState {
-  return { ids: new Set(), order: [], status: new Map(), loaded: new Set(), gate: false };
+  return { ids: new Set(), order: [], status: new Map(), loaded: new Set(), gate: false, returnHold: false };
 }
 
 /** A full `session` frame applied (render.ts upsert). Opens the gate when `id` is one of `wants`, the tab the strip shows as
  *  active (render.ts passes the active tab and the tab awaited after a reload, read before the frame's own adoption moved
  *  them). Returns whether it opened NOW, so a caller can arm the chain on the event; an open gate stays open. */
 export function gateOnFrame(st: SkeletonState, id: string, wants: ReadonlyArray<string | null | undefined>): boolean {
-  if (st.gate || !id) return false;
+  if (st.gate || st.returnHold || !id) return false;
   if (!wants.some((w) => w === id)) return false;
   st.gate = true;
   return true;
@@ -56,7 +63,7 @@ export function gateOnFrame(st: SkeletonState, id: string, wants: ReadonlyArray<
  *  gate opens here and the chain loads the tabs in the kernel's order. A strip that does list a local want leaves the gate to
  *  the frame. Returns whether it opened NOW. */
 export function gateOnStrip(st: SkeletonState, order: readonly string[], want: string | null | undefined): boolean {
-  if (st.gate) return false;
+  if (st.gate || st.returnHold) return false;
   if (want && !hostOf(want) && order.includes(want)) return false;
   st.gate = true;
   return true;
@@ -67,7 +74,7 @@ export function gateOnStrip(st: SkeletonState, order: readonly string[], want: s
  *  transcript-less session is never a skeleton) would otherwise leave the gate to that full's re-post. Never keyed on the
  *  session map, which after a redial holds stale copies of every tab. Returns whether it opened NOW. */
 export function gateOnShow(st: SkeletonState, id: string): boolean {
-  if (st.gate || !st.loaded.has(id)) return false;
+  if (st.gate || st.returnHold || !st.loaded.has(id)) return false;
   st.gate = true;
   return true;
 }
@@ -159,10 +166,12 @@ export function onDismiss(st: SkeletonState, id: string): void {
 }
 
 /** A new socket opened: every earlier full was delivered on a socket that is gone, so the next list the
- *  kernel sends may legitimately re-list those tabs (they are stale after the outage). */
-export function onSocketUp(st: SkeletonState): void {
+ *  kernel sends may legitimately re-list those tabs (they are stale after the outage). `phone`: the pane's shell is the
+ *  phone layout (render.ts reads it at the wsup arm), so the redial holds the chain for the socket's life (returnHold). */
+export function onSocketUp(st: SkeletonState, phone?: boolean): void {
   st.loaded.clear();
   st.gate = false;   // …and the chain waits again for the active tab's first frame on the new socket (stage 0): a redial re-skeletons every other tab, and the visible one's full comes first
+  st.returnHold = phone === true;   // …and on the phone it does not run again on this socket: the other tabs reload when tapped (the owner's decision, 2026-09-19)
 }
 
 /** The one skeleton to fetch in this idle callback, or null. Null while the page is hidden (bytes and work
