@@ -10,7 +10,13 @@
 // marked run through the rule for the two tags the record names) and holds the Tests bullet's inventory both ways, as the
 // sidecar-records pin does for decisions 49 and 50: every module the bullet names is in the tree, and every test module
 // under tools/, ui/webview/ or tests/ that cites decision 52 or 53 and this plan is named in the bullet or in one of the two
-// records. Synthetic: the repo's own text only. Run: node --test tools/file-review-plan-inlinetag-records.test.mjs
+// records. The review of the slice's PR (round 1, 2026-09-19) corrected the record again and this module follows: the `open`
+// array's occupants (an unclosed `<image>` in HTML content, a start tag inside an html comment) and the SELF-CLOSING spelling,
+// which the rule leaves HTML and the parser opens (`<b/>`, `<div/>`, `<table/>`, `<title/>`), so the Block.leaves fix shape is
+// not moot; the fragment target a converted tag's own id or name loses, left beside the heading slug for the user's call; the
+// math breakout class widened from one shape to the class the browser suite records; the loss before the rule told apart for
+// `<template>` and `<textarea>`; and the twin `ui/webview/guide-own-html-block-tag.test.ts` named in the bullet and the record.
+// Synthetic: the repo's own text only. Run: node --test tools/file-review-plan-inlinetag-records.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -125,13 +131,105 @@ test('the installed marked, run through the rule, does what the record says for 
 
 // ── the map's open array ────────────────────────────────────────────
 
-test('decision 52 no longer calls blockEnds\' open array always empty: an unclosed <image> can land in it, the map passes a fresh array and reads it nowhere', () => {
+test('decision 52 no longer calls blockEnds\' open array always empty or the Block.leaves shape moot: its occupants are an unclosed <image> in HTML content and a start tag inside an html comment, the self-closing spelling still opens the wrapper, and the map passes a fresh array and reads it nowhere', () => {
   assert.ok(!d52.includes('is therefore always empty'), 'the overstatement is gone');
-  assert.ok(d52.includes('can therefore hold nothing but an unclosed `image` start tag, the one start tag the rule leaves HTML that the scan\'s void set lacks, and that tag opens no element (the parser rewrites it to the void `img`), so that shape is moot; the map passes the scan a fresh array and reads it nowhere.'));
+  assert.ok(!d52.includes('so that shape is moot'), 'the moot verdict is gone (the PR review\'s round 1)');
+  assert.ok(d52.includes('can therefore hold nothing but an unclosed `image` start tag, the one start tag the rule leaves HTML that the scan\'s void set lacks, which opens no element in HTML content (the parser rewrites it to the void `img`; inside an inline `<svg>` the `image` element is closed by `</svg>` and every block still maps), or a start tag written inside an html comment (`<!-- an aside <b> -->`: the scan\'s `TAG_RE` reads the comment\'s raw, the rule\'s scan does not), which the parser reads as part of the comment; neither opens an element around the later blocks.'));
+  assert.ok(d52.includes('The SELF-CLOSING spelling of such a tag still does: the rule leaves it HTML (`isSelfClosingTag`) and the scan reads it as a leaf, but the parser ignores the flag on an HTML element and opens it, so `<b/>` in prose is a wrapper around every later block (the tag\'s paragraph maps and every later block is refused with the mismatch sentence), `<div/>` a div holding them, `<table/>` one paragraph holding them, and `<title/>` takes the rest of the note as its text, which the sanitizer drops'));
+  assert.ok(d52.includes('the pairing does not model that wrapper, so the fix shape recorded for it, `Block.leaves`, is NOT moot: before this decision the bare `<b>` with no closer made the same wrapper, and the rule removed it for that spelling alone'));
+  assert.ok(d52.includes('The map passes the scan a fresh array and reads it nowhere.'));
   const scan = map.slice(map.indexOf('function blockEnds('), map.indexOf('\n}\n', map.indexOf('function blockEnds(')));
-  assert.ok(scan.includes('else if (!VOID_TAGS.has(name) && !m[3]) open.push(name);'), 'the scan pushes every non-void start tag without the flag, the alias among them');
+  assert.ok(scan.includes('else if (!VOID_TAGS.has(name) && !m[3]) open.push(name);'), 'the scan pushes every non-void start tag without the flag, the alias among them, and reads one with the flag as a leaf');
+  assert.ok(map.includes('const TAG_RE = /<(\\/?)([a-zA-Z][a-zA-Z0-9:_-]*)'), 'TAG_RE reads any tag in an html token\'s raw, a comment\'s included');
   const calls = Array.from(map.matchAll(/blockEnds\(([^;]*)\);/g), (m) => m[1]).filter((args) => !args.includes(', open, '));
   assert.deepEqual(calls, ['[t], t.type === "text", [], ends'], 'the one call outside the scan\'s own recursion passes a fresh array, which nothing holds a name for');
+  // the comment at that call says the same, and the two suites the record names carry the shapes it describes
+  const comment = flat(read('ui', 'webview', 'anchor-map.ts').split('// the `open` array (the start tags the block\'s inline html leaves open) is discarded')[1].split('if (!isHtml) blockEnds(')[0].replace(/^\s*\/\/ ?/gm, ''));
+  assert.ok(comment.includes('The SELF-CLOSING spelling of such a tag still does') && comment.includes('Block.leaves, is NOT moot'), 'the walkedBlocks comment mirrors the record');
+  const browser = read('ui', 'webview', 'anchor-map-literal-tags-browser.test.ts');
+  for (const shape of ['{ tag: "<b/>", shape: "H1 P[B] B[H2,P,P]"', '{ tag: "<div/>", shape: "H1 P DIV[P,H2,P,P]"', '{ tag: "(<table/>__widths.csv)", shape: "H1 P[P,H2,P,P,TABLE]"', '{ tag: "<title/>", shape: "H1 P"', '{ tag: "<x/>", shape: "H1 P H2 P P"']) assert.ok(browser.includes(shape), 'the browser leg records ' + shape);
+  const standIn = read('ui', 'webview', 'anchor-map-literal-tags.test.ts');
+  for (const shape of ['["Lead <div/> rest of the line t1.", "P DIV[P,H2,P,P]", mismatches]', '["Lead (<table/>__widths.csv) rest of the line t1.", "P[P,H2,P,P,TABLE]", mismatches]', '["Lead <title/> rest of the line t1.", "P", absent]']) assert.ok(standIn.includes(shape), 'the stand-in suite records ' + shape);
+  assert.ok(standIn.includes('`<b/>` is recorded in the browser leg alone'), 'and says the stand-in does not model the `<b/>` wrapper');
+});
+
+test('the self-closing spelling and the html comment, run through the installed marked and the rule: the token stays html with the flag read, the comment stays one html token whose raw TAG_RE reads a start tag from, the bare spelling is text', { skip: SKIP }, async () => {
+  const { Lexer } = await import(pathToFileURL(MARKED).href);
+  const { literalizeUnclosedTags, isSelfClosingTag } = await loadRule();
+  const inline = (src) => { const tokens = Lexer.lex(src); literalizeUnclosedTags(tokens); return tokens[0].tokens.map((t) => `${t.type}:${t.raw}`); };
+  for (const tag of ['<b/>', '<div/>', '<table/>', '<title/>']) {
+    assert.deepEqual(inline(`Intro ${tag} tail.\n`), ['text:Intro ', `html:${tag}`, 'text: tail.'], `${tag} stays an html token`);
+    assert.equal(isSelfClosingTag(tag), true, `${tag} carries the flag`);
+  }
+  assert.deepEqual(inline('Intro <b> tail.\n'), ['text:Intro ', 'text:<b>', 'text: tail.'], 'the bare spelling is text');
+  assert.deepEqual(inline('Note <!-- an aside <b> --> here.\n'), ['text:Note ', 'html:<!-- an aside <b> -->', 'text: here.'], 'the comment is one html token the rule leaves');
+  const tagRe = map.match(/^const TAG_RE = \/(.*)\/g;$/m);
+  assert.ok(tagRe, 'TAG_RE is one regex literal with the g flag');
+  assert.deepEqual(Array.from('<!-- an aside <b> -->'.matchAll(new RegExp(tagRe[1], 'g')), (m) => [m[1], m[2], m[3]]), [['', 'b', '']], 'the scan\'s regex reads a start tag inside the comment\'s raw, which is how a `<b>` lands in `open` there');
+});
+
+// ── the PR review's round 1: the fragment target, the breakout class, the loss before the rule ──
+
+test('decision 52 records the fragment target a converted tag loses as left, beside the heading slug and phrased for the user\'s call, with the untouched shapes; file-view-links.ts dresses a fragment link with no target dead with the title the record quotes', () => {
+  assert.ok(d52.includes('holds the shape and the slug). Left too, found in the review of the slice\'s PR (round 1, 2026-09-19): a converted tag\'s own id or name is no longer a fragment target, since the tag is text and no element.'), 'the entry stands right after the heading-slug entry');
+  assert.ok(d52.includes('An unclosed `<a name="spot">` or `<span id="sid">` written mid-prose reached the DOM before as an element under the sanitizer\'s `user-content-` prefix, so the note\'s own `[jump](#spot)` landed on it (the link\'s title `Go to spot`); it is characters now, so that link is dead, with the title `No heading or anchor named \u201cspot\u201d in this document` (`linkMarkdownAnchors` in file-view-links.ts finds no target)'));
+  assert.ok(d52.includes('Untouched, landing before and after: a closed tag (`<a name="x"></a>`, the README idiom, mid-prose or on its own line) and a tag alone on its line (`<a name="line">`), which is an HTML block the rule does not read.'));
+  assert.ok(d52.includes('the user decides whether it is worth one, as for the slug'));
+  const links = read('ui', 'webview', 'file-view-links.ts');
+  assert.ok(links.includes('export const noSectionTitle = (id: string): string => "No heading or anchor named \\u201c" + id + "\\u201d in this document";'), 'the dead title');
+  assert.ok(links.includes('if (hit) { a.dataset.frag = id; a.setAttribute("title", "Go to " + id); }') && links.includes('else { withClass(a, DEAD_LINK_CLASS); a.setAttribute("title", noSectionTitle(id)); }'), 'a fragment link lands on a target or is dressed dead with that title');
+  assert.ok(read('ui', 'webview', 'md-sanitize.ts').includes('export const USER_CONTENT_PREFIX = "user-content-";'), 'the prefix an author\'s id or name reaches the DOM under');
+});
+
+test('the rule over the installed marked makes the mid-prose id or name tag text, so no element carries the id or the name, and leaves the closed tag and the tag alone on its line html', { skip: SKIP }, async () => {
+  const { Lexer, Parser } = await import(pathToFileURL(MARKED).href);
+  const { literalizeUnclosedTags } = await loadRule();
+  const run = (src) => { const tokens = Lexer.lex(src); literalizeUnclosedTags(tokens); return tokens; };
+  const prose = run('See <a name="spot"> here in prose.\n');
+  assert.deepEqual(prose[0].tokens.map((t) => `${t.type}:${t.raw}`), ['text:See ', 'text:<a name="spot">', 'text: here in prose.'], 'the unclosed `<a name>` is text');
+  assert.equal(Parser.parse(prose), '<p>See &lt;a name=&quot;spot&quot;&gt; here in prose.</p>\n', 'and renders as its characters (the quotes escaped too, as the record says), no element');
+  const span = run('Mark <span id="sid"> mid prose.\n');
+  assert.deepEqual(span[0].tokens.map((t) => `${t.type}:${t.raw}`)[1], 'text:<span id="sid">', 'the unclosed `<span id>` the same');
+  const closed = run('Closed <a name="closed"></a> here.\n');
+  assert.deepEqual(closed[0].tokens.filter((t) => t.type === 'html').map((t) => t.raw), ['<a name="closed">', '</a>'], 'the closed tag stays html');
+  const line = run('<a name="line">\n\nJump [jump](#line).\n');
+  assert.equal(line[0].type, 'html', 'the tag alone on its line is a block html token');
+  assert.ok(line[0].raw.startsWith('<a name="line">'), 'left as lexed');
+});
+
+test('decision 52 records the math breakout class the rule opened, bounded to an inline math and a closed element on the parser\'s breakout list, RECORDED and not modelled; the browser suite carries the class sentence and the two representatives, the rules suite the reader\'s side of ma5, and the Slice 5 note the record cites says not modelled', () => {
+  assert.ok(!d52.includes('one shape moved into the breakout class'), 'the one-shape wording is gone');
+  assert.ok(d52.includes('an integration point of an INLINE `<math>` left open (`<mtext>`, `<mi>`, `<mo>`, `<mn>` or `<ms>`, or an `<annotation-xml>` with the html or the xhtml encoding) is literal text now, so a CLOSED HTML element after it whose start tag is on the parser\'s foreign-content breakout list stands in the math\'s foreign content with no integration point around it: the parser breaks out of the math at it and shows its text, and the reader drops the math whole.'));
+  assert.ok(d52.includes('In Chromium `ma7 <math><mtext><b>x</b></math> y7` shows `ma7 x y7` where the reader reads `ma7 y7`'));
+  assert.ok(d52.includes('`ma5 <math><mtext><p>a<p>b</p></math> y5` shows `ma5 b y5` against `ma5 y5`, no paint mark on either; before this decision both sides read `ma7 y7` and `ma5 y5`.'));
+  assert.ok(d52.includes('Not in the class, agreeing on both sides: a closed element whose start tag is not on that list (`<kbd>`, `<a>`), which goes with the dropped math; the same shape inside an inline `<svg>`, which the sanitizer keeps, so both sides read `sv1 <title>x y1`; and a `<math>` inside an html block, whose tags the rule does not read.'));
+  assert.ok(d52.includes('records it as not modelled and pre-existing), so the class is RECORDED in that suite with two representatives, `ma5` and `ma7`, and not modelled; `ui/webview/anchor-map-html-rules.test.ts` pins the reader\'s side of `ma5`.'));
+  const browser = read('ui', 'webview', 'anchor-map-html-text-browser.test.ts');
+  assert.ok(browser.includes('an integration point of an INLINE `<math>` left'), 'the class sentence in the browser suite');
+  assert.ok(browser.includes('src: "ma5 <math><mtext><p>a<p>b</p></math> y5\\n", dom: "ma5 b y5", reader: "ma5 y5"'), 'the ma5 representative recorded');
+  assert.ok(browser.includes('src: "ma7 <math><mtext><b>x</b></math> y7\\n", dom: "ma7 x y7", reader: "ma7 y7"'), 'the ma7 representative recorded');
+  const rules = read('ui', 'webview', 'anchor-map-html-rules.test.ts');
+  assert.ok(rules.includes('assert.equal(shown("ma5 <math><mtext><p>a<p>b</p></math> y5\\n"), "ma5 y5", "the reader\'s text alone'), 'the rules suite pins the reader\'s side');
+  assert.ok(flat(read('plans', 'markdown-viewer.md')).includes('a start tag that breaks out of foreign content, a `<b>` inside `<math><mrow>` or an annotation-xml with no HTML encoding, is not modelled, pre-existing and identical on main, recorded'), 'the Slice 5 note the record cites');
+});
+
+test('decision 52\'s account of the loss before the rule names the six names the sanitizer dropped whole and tells the template and the textarea apart; the sanitizer forbids textarea and not template', () => {
+  assert.ok(d52.includes('after an inline `<title>`, `<script>`, `<style>`, `<xmp>`, `<iframe>` or `<plaintext>` start tag in prose, the parser took the rest of the note as the element\'s text and the sanitizer dropped it; after a `<template>` the parser put the rest into the template\'s content, which the browser renders nowhere (the sanitizer keeps the element); after a `<textarea>` the rest showed as unformatted characters, the element dropped and its text kept'));
+  assert.ok(!d52.includes('`<style>`, `<textarea>`, `<xmp>`'), 'the textarea is no longer listed among the names dropped whole');
+  const forbid = read('ui', 'webview', 'md-sanitize.ts').match(/^export const MD_FORBID_TAGS: readonly string\[\] = \[([\s\S]*?)\];$/m);
+  assert.ok(forbid, 'the forbidden tags');
+  assert.ok(forbid[1].includes('"textarea"'), 'textarea is forbidden (its text kept, KEEP_CONTENT)');
+  assert.ok(!forbid[1].includes('"template"'), 'template is not');
+});
+
+test('decision 52\'s Tests paragraph and the Docs sentence follow the guide fixer\'s sentences: the twin, the loss sentence and the python pin named', () => {
+  assert.ok(d52.includes('since the review of the slice\'s PR (round 1, 2026-09-19) it holds the guide\'s sentence on the tags that take the rest of the file when they stay HTML too, `<title>`, `<script>`, `<style>` and `<iframe>` first on their line (block `html` tokens) or written with the slash mid-sentence (inline `html` tokens the rule leaves), `<textarea>` beside them.'));
+  assert.ok(d52.includes('so `ui/webview/guide-own-html-block-tag.test.ts` (the same round) runs them through both callers\' lexes under the viewer\'s configuration inside the extension job\'s `npm test`'));
+  const twin = read('ui', 'webview', 'guide-own-html-block-tag.test.ts');
+  assert.ok(twin.includes('const LEXES: Array<[string, Lex]> = [["mdBlock\'s lex", viewerLex], ["placeTokens\' lex", mapLex]];'), 'the twin lexes both ways');
+  const tools = read('tools', 'guide-own-html-block-tag.test.mjs');
+  assert.ok(tools.includes('const LOSS = \'A `<title>`, `<script>`, `<style>` or `<iframe>` that stays HTML takes everything after it out of the Rendered view'), 'the tools module pins the loss sentence');
+  assert.ok(tools.includes('for (const name of [\'title\', \'script\', \'style\', \'iframe\', \'textarea\'])'), 'and lexes the five names');
 });
 
 // ── the comments and messages the consolidation pass brought in line with the record (2026-09-18) ──
@@ -168,15 +266,17 @@ test('decision 52 records the heading id a converted tag changes as left, with t
   assert.ok(pin.includes('viewerHtml("## Results <b>\\n"), "<h2>Results &lt;b&gt;</h2>\\n"') && pin.includes('assert.equal(headingSlug(shown), "results-b");'), 'the test module holds the shape and the slug');
 });
 
-test('the anchor-map stand-in suites render through the viewer\'s recipe: each imports the rule and defines viewerHtml with it between marked\'s lexer and its parser, no buildRendered parses with marked.parse alone, and the cells suite holds a converted tag against the recipe', () => {
+test('the anchor-map stand-in suites render through the viewer\'s recipe: each imports viewerHtml from file-view.ts, the export mdBlock parses through, holds no copy of it, and no buildRendered parses with marked.parse alone; the cells suite holds a converted tag against the recipe', () => {
+  const view = read('ui', 'webview', 'file-view.ts');
+  assert.ok(view.includes('export function viewerHtml(text: string, walk?: (token: Token) => void): string {') && view.includes('\n  const dirty = viewerHtml(text, (t) => {\n'), 'file-view.ts exports the recipe and mdBlock parses through it');
   for (const f of ['anchor-map.test.ts', 'anchor-map-cells.test.ts', 'anchor-map-cells-formulas.test.ts', 'anchor-map-code-lines.test.ts', 'anchor-map-wrappers.test.ts', 'anchor-map-obsidian.test.ts']) {
     const src = read('ui', 'webview', f);
-    assert.match(src, /^import \{ literalizeUnclosedTags \} from "\.\/md-literal-tags";/m, `${f} imports the rule`);
-    assert.match(src, /\nfunction viewerHtml\(text: string\): string \{\n  const opts = \{ \.\.\.marked\.defaults \};\n  const tokens = marked\.lexer\(text, opts\);\n  literalizeUnclosedTags\(tokens\);\n/, `${f}: the recipe, the rule right after the lexer`);
+    assert.match(src, /^import \{ viewerHtml \} from "\.\/file-view";/m, `${f} imports the viewer's recipe`);
+    assert.ok(!/\nfunction viewerHtml\(/.test(src) && !src.includes('marked.parser('), `${f}: no copy of the recipe`);
     const at = src.indexOf('\nfunction buildRendered(');
     assert.ok(at >= 0, `${f} builds the rendered stand-in`);
     const body = src.slice(at, src.indexOf('\n}\n', at));
-    assert.ok(body.includes('viewerHtml(text)') && !body.includes('marked.parse('), `${f}: buildRendered parses through the recipe`);
+    assert.ok(body.includes('viewerHtml(text') && !body.includes('marked.parse('), `${f}: buildRendered parses through the recipe`);
   }
   const am = read('ui', 'webview', 'anchor-map.test.ts');
   assert.ok(am.includes('parseHTML(box.ownerDocument, viewerHtml(B))') && !am.includes('marked.parse(B)'), 'the re-filled box in anchor-map.test.ts too');
@@ -197,6 +297,8 @@ const citing = (dir, re) => fs.readdirSync(path.join(REPO, ...dir)).filter((f) =
   .map((f) => path.posix.join(...dir, f));
 // The three modules the first round added and named nowhere; the scan below reaches each (their headers cite the decision).
 const UNRECORDED = ['ui/webview/md-literal-tags-tag-syntax.test.ts', 'tests/test_guide_files_own_html_foreign_tag.py', 'tools/markdown-viewer-plan-decision52-pointers.test.mjs'];
+// The twin the PR review's round 1 added (the lexer legs of tools/guide-own-html-block-tag.test.mjs under the viewer's configuration).
+const ROUND1 = ['ui/webview/guide-own-html-block-tag.test.ts'];
 
 test('every module the Tests bullet, decision 52 or decision 53 names is in the tree, and every test module citing decision 52 or 53 is named in one of them', () => {
   const inBullet = new Set(testFiles(bullet));
@@ -208,7 +310,8 @@ test('every module the Tests bullet, decision 52 or decision 53 names is in the 
   assert.ok(all.includes(SELF), 'and this module');
   assert.ok(all.length >= 15, 'the scan reaches the family: ' + all.length);
   for (const f of all) assert.ok(named.has(f), `${f} cites decision 52 or 53 but neither the Tests bullet nor the two records name it`);
-  for (const m of [...UNRECORDED, SELF]) {
+  for (const m of ROUND1) assert.ok(all.includes(m), `the scan reaches ${m}`);
+  for (const m of [...UNRECORDED, ...ROUND1, SELF]) {
     assert.ok(inBullet.has(m), `the bullet names ${m}`);
     assert.ok(d52.includes(`\`${m}\``), `decision 52 names ${m}`);
   }

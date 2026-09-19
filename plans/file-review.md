@@ -3202,12 +3202,23 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   (the four in-place pointers at decision 52 in the Slice 5 section of plans/markdown-viewer.md).
   `tools/guide-own-html-block-tag.test.mjs` (the second round: where the guide says the rule stops, a tag first on
   its line that markdown reads as an HTML block, each clause held to the installed marked's block html rule, to the
-  rule's walk, which reads inline runs alone, and to the map's refusal of an html block).
+  rule's walk, which reads inline runs alone, and to the map's refusal of an html block; since the review of the
+  slice's PR, round 1, the guide's sentence on the tags that take the rest of the file when they stay HTML, at the
+  lexer). `ui/webview/guide-own-html-block-tag.test.ts` (the same round: that module's lexer legs, the loss
+  sentence's included, through both callers' lexes under the viewer's configuration, run by the extension job's
+  `npm test` where the tools module's lexer legs skip).
   `tools/file-review-plan-inlinetag-records.test.mjs` holds decision 52's account of the first round to the code
-  (the stacks per name, `IMG_ALIAS`, `isSelfClosingTag`, the `open` array) and this bullet's inventory to the tree
+  (the stacks per name, `IMG_ALIAS`, `isSelfClosingTag`, the `open` array and the self-closing spelling's wrapper,
+  the fragment target a converted tag loses, the math breakout class) and this bullet's inventory to the tree
   both ways: every module it names is in the tree, and every test module under `tools/`, `ui/webview/` or `tests/`
   that cites decision 52 or 53 is named here or in one of the two records, so a later round's module cannot land
-  unrecorded.
+  unrecorded. Since the review of the slice's PR (round 1, 2026-09-19) mdBlock's three steps are one exported
+  function, `viewerHtml` in file-view.ts, which mdBlock calls with the walk it ran before, and
+  `tools/file-review-viewer-recipe.test.mjs` holds that function to the source (its five statements in order,
+  mdBlock's call and walk) and holds every test module under `ui/webview/` that stands a Rendered body in for the
+  viewer's to it by grep: none calls marked's parser itself, none fills a node stand-in from `marked.parse` alone
+  but the one contrast `ui/webview/anchor-map-cells-formulas.test.ts` draws with the tree the viewer built before
+  the rule, and every module that calls `viewerHtml` imports it from file-view.ts.
 
 ## Docs
 
@@ -3257,10 +3268,16 @@ code block can be commented from the Rendered view like any passage, that a comm
 between them as the file holds them, and that a formula is what cannot be mapped from the Rendered view
 (`tests/test_guide_files_cells_and_code_lines.py` holds the sentences to the map's source), and, in the paragraph on a
 file's own HTML, that a tag opened in a line of prose and not closed in the same block is shown as the characters
-typed rather than read as HTML, a tag closed in the same block or a void tag staying HTML, a chat message not read
-this way (`tools/file-review-plan-inlinetag.test.mjs` holds the sentence to the guide and the module), and that a
-tag first on its line, which markdown reads as an HTML block, is HTML as before, the same placeholder included
-(`tools/guide-own-html-block-tag.test.mjs` holds those clauses to the guide, the installed marked's lexer and the map).
+typed rather than read as HTML, a tag closed in the same block, a void tag and a tag written with a slash before its
+`>` (`<x/>`) staying HTML, a chat message not read this way (`tools/file-review-plan-inlinetag.test.mjs` holds the
+sentence to the guide and the module), that a tag first on its line, which markdown reads as an HTML block, is HTML
+as before, the same placeholder included, and that a `<title>`, `<script>`, `<style>` or `<iframe>` that stays HTML,
+written with the slash mid-sentence or first on its line, takes everything after it out of the Rendered view up to
+an end tag of its name or the end of the file, a `<textarea>` so placed showing that stretch as unformatted
+characters (`tools/guide-own-html-block-tag.test.mjs` holds those clauses to the guide, the installed marked's lexer
+and the map, `ui/webview/guide-own-html-block-tag.test.ts` the lexer legs under the viewer's configuration in CI, and
+`tests/test_guide_files_own_html_foreign_tag.py` the paragraph's sentences in their order and the rule's two
+exclusions at the source).
 `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
@@ -3889,8 +3906,11 @@ document stands on its own, each with the reasoning it was given.
     as not matching the file and every later block met the element three places on: 150 of the note's 189 blocks
     refused, identically on every main head since the map's first release (the fork's PR 277), so a long-standing
     gap and not a regression. The same shape lost content silently: after an inline `<title>`, `<script>`,
-    `<style>`, `<textarea>`, `<xmp>`, `<iframe>`, `<plaintext>` or `<template>` start tag in prose, the parser took
-    the rest of the note as the element's text and the sanitizer dropped it. The user took the assessment's first
+    `<style>`, `<xmp>`, `<iframe>` or `<plaintext>` start tag in prose, the parser took the rest of the note as the
+    element's text and the sanitizer dropped it; after a `<template>` the parser put the rest into the template's
+    content, which the browser renders nowhere (the sanitizer keeps the element); after a `<textarea>` the rest
+    showed as unformatted characters, the element dropped and its text kept (each shape run over the base tree in
+    the review of the slice's PR, round 1). The user took the assessment's first
     option on its recommendation: such a tag renders as its own characters, and the map predicts them.
     The rule: an inline `html` token that is a START tag of a non-void element, with no matching end tag later in
     the SAME block's inline tokens, becomes a `text` token in place, its raw kept and its text the raw escaped as
@@ -3944,8 +3964,20 @@ document stands on its own, each with the reasoning it was given.
     formatting tags a paragraph left open, whose wrapper element the pairing did not model, recorded under Slice 5
     of plans/markdown-viewer.md with the `Block.leaves` fix shape and routed to Slice 8, which did not build it) can
     therefore hold nothing but an unclosed `image` start tag, the one start tag the rule leaves HTML that the scan's
-    void set lacks, and that tag opens no element (the parser rewrites it to the void `img`), so that shape is moot;
-    the map passes the scan a fresh array and reads it nowhere.
+    void set lacks, which opens no element in HTML content (the parser rewrites it to the void `img`; inside an inline
+    `<svg>` the `image` element is closed by `</svg>` and every block still maps), or a start tag written inside an
+    html comment (`<!-- an aside <b> -->`: the scan's `TAG_RE` reads the comment's raw, the rule's scan does not), which
+    the parser reads as part of the comment; neither opens an element around the later blocks. The SELF-CLOSING
+    spelling of such a tag still does: the rule leaves it HTML (`isSelfClosingTag`) and the scan reads it as a leaf,
+    but the parser ignores the flag on an HTML element and opens it, so `<b/>` in prose is a wrapper around every
+    later block (the tag's paragraph maps and every later block is refused with the mismatch sentence), `<div/>` a div
+    holding them, `<table/>` one paragraph holding them, and `<title/>` takes the rest of the note as its text, which
+    the sanitizer drops (`ui/webview/anchor-map-literal-tags-browser.test.ts` records each in the real pane, the same
+    shapes and verdicts over the base tree; `ui/webview/anchor-map-literal-tags.test.ts` records `<div/>`, `<table/>`
+    and `<title/>` over its stand-in, which does not model the `<b/>` wrapper); the pairing does not model that
+    wrapper, so the fix shape recorded for it, `Block.leaves`, is NOT moot: before this decision the bare `<b>` with no
+    closer made the same wrapper, and the rule removed it for that spelling alone (the review of the slice's PR, round
+    1, 2026-09-19). The map passes the scan a fresh array and reads it nowhere.
     Deliberately left, recorded here: `<hr>` inline is void, stays HTML and still splits its paragraph in the
     parser; a start tag whose end tag stands in a LATER block renders as text now, and the later block's end tag is
     a stray, where the parser used to wrap the blocks between in its element; a block-level element closed within
@@ -3966,17 +3998,42 @@ document stands on its own, each with the reasoning it was given.
     themselves, still lands). Before the rule the same heading was slugged `results` and its open `<b>` bolded the
     rest of the note. A fix would slug the heading's inline tokens with the converted ones skipped, a second slug path
     for a heading that holds an unclosed tag and is a link's target at once; the user decides whether it is worth one
-    (`ui/webview/md-literal-tags.test.ts` holds the shape and the slug). Two consequences the build found and kept: inside an inline `<svg>` or
+    (`ui/webview/md-literal-tags.test.ts` holds the shape and the slug). Left too, found in the review of the slice's
+    PR (round 1, 2026-09-19): a converted tag's own id or name is no longer a fragment target, since the tag is text
+    and no element. An unclosed `<a name="spot">` or `<span id="sid">` written mid-prose reached the DOM before as an
+    element under the sanitizer's `user-content-` prefix, so the note's own `[jump](#spot)` landed on it (the link's
+    title `Go to spot`); it is characters now, so that link is dead, with the title `No heading or anchor named
+    “spot” in this document` (`linkMarkdownAnchors` in file-view-links.ts finds no target), where the open `<a>` before
+    also wrapped every later block, so a selection in the last paragraph could not be matched to the file, the shape
+    the rule exists to stop. Untouched, landing before and after: a closed tag (`<a name="x"></a>`, the README idiom,
+    mid-prose or on its own line) and a tag alone on its line (`<a name="line">`), which is an HTML block the rule
+    does not read. A fix would give the converted token's id or name an element to land on, a second reading of a tag
+    the rule made text; the user decides whether it is worth one, as for the slug
+    (`tools/file-review-plan-inlinetag-records.test.mjs` holds this clause, and runs the rule over both spellings
+    where marked is installed). Two consequences the build found and kept: inside an inline `<svg>` or
     `<math>` the rule applies by name, so a child written without its own end tag (`<svg><title>icon</svg>`,
     `<svg><foreignObject><b>x</svg>`,
     `<math><annotation-xml encoding="text/html"><b>x</math>`) is text too and the root's own end tag closes the root
     (in the DOM those characters are svg text, present in the textContent the map and the reader match and drawn
     nowhere, or go with a dropped `<math>`; the alternative, `</svg>` and `</math>` closing every tag opened after
     their root as the HTML parser does, would have kept `<svg><title>icon</svg>` an element, and was not taken); and
-    one shape moved into the breakout class anchor-map-html-text-browser.test.ts already recorded, `ma6
-    <math><annotation-xml encoding="text/html"><b>x</b></math> y6`, whose closed `<b>` now stands in the math's
-    foreign content with no integration point around it, so Chromium breaks out of the math at it (the DOM shows
-    `ma6 x y6`, the reader `ma6 y6`; recorded there with its reason). Two divergences the Slice 5 build note of
+    a class of shapes moved into the breakout class anchor-map-html-text-browser.test.ts already recorded, widened
+    from the one shape first recorded there (`ma6 <math><annotation-xml encoding="text/html"><b>x</b></math> y6`) by
+    the review of the slice's PR (round 1, 2026-09-19): an integration point of an INLINE `<math>` left open
+    (`<mtext>`, `<mi>`, `<mo>`, `<mn>` or `<ms>`, or an `<annotation-xml>` with the html or the xhtml encoding) is
+    literal text now, so a CLOSED HTML element after it whose start tag is on the parser's foreign-content breakout
+    list stands in the math's foreign content with no integration point around it: the parser breaks out of the math
+    at it and shows its text, and the reader drops the math whole. In Chromium `ma7 <math><mtext><b>x</b></math> y7`
+    shows `ma7 x y7` where the reader reads `ma7 y7`, the same for `<mi>`, `<mo>`, `<mn>`, `<ms>` and the xhtml
+    encoding in place of the `<mtext>` and for a closed `<div>` or `<p>` in place of the `<b>`, and `ma5
+    <math><mtext><p>a<p>b</p></math> y5` shows `ma5 b y5` against `ma5 y5`, no paint mark on either; before this
+    decision both sides read `ma7 y7` and `ma5 y5`. Not in the class, agreeing on both sides: a closed element whose
+    start tag is not on that list (`<kbd>`, `<a>`), which goes with the dropped math; the same shape inside an inline
+    `<svg>`, which the sanitizer keeps, so both sides read `sv1 <title>x y1`; and a `<math>` inside an html block,
+    whose tags the rule does not read. The reader does not model the parser's breakout from foreign content (the
+    Slice 5 build note of plans/markdown-viewer.md records it as not modelled and pre-existing), so the class is
+    RECORDED in that suite with two representatives, `ma5` and `ma7`, and not modelled;
+    `ui/webview/anchor-map-html-rules.test.ts` pins the reader's side of `ma5`. Two divergences the Slice 5 build note of
     plans/markdown-viewer.md recorded (item 4) are agreements now: an inline `<textarea>` left open, and an
     `<annotation-xml>` whose encoding value carries a blank with a `<b>` left open inside it; the `/>` forms keep
     the divergence, since the self-closing syntax stays HTML. The assessment counted other placeholder tags in the
@@ -3992,12 +4049,16 @@ document stands on its own, each with the reasoning it was given.
     `ui/webview/anchor-map-literal-tags.test.ts` (the map over a DOM stand-in that models the quirks-mode table
     nesting, foster parenting, the RCDATA elements and the sanitizer's drops; two FAILS-BEFORE cases, red over the
     base at the mismatch sentence for four passages and at the blocks lost after an unclosed `<title>`; the closed,
-    void, self-closing, matching, heading, list item, cell, offsets and untouched-shape cases);
-    `ui/webview/anchor-map-literal-tags-browser.test.ts` (the real pane and panel in Chromium: one top-level element
-    per block, every passage mapped through a real Selection, a comment on the literal `<table>` painted through the
-    panel and a change through the painter, the Raw view's range equal). The suites whose pins the rule changed
+    void, self-closing, matching, heading, list item, cell, offsets and untouched-shape cases; and the RECORDED
+    self-closing spelling of a known name, `<div/>`, `<table/>` and `<title/>` over the stand-in, the bare spelling of
+    each mapping); `ui/webview/anchor-map-literal-tags-browser.test.ts` (the real pane and panel in Chromium: one
+    top-level element per block, every passage mapped through a real Selection, a comment on the literal `<table>`
+    painted through the panel and a change through the painter, the Raw view's range equal; and the RECORDED
+    self-closing spelling in the real pane, `<b/>`, `<div/>`, `<table/>` and `<title/>` with `<x/>` as the control,
+    each shape and verdict the same over the base tree). The suites whose pins the rule changed
     follow it: `ui/webview/anchor-map-html-rules.test.ts`, `ui/webview/anchor-map-html-text.test.ts` and
-    `ui/webview/anchor-map-html-text-browser.test.ts` (the foreign-content shapes above),
+    `ui/webview/anchor-map-html-text-browser.test.ts` (the foreign-content shapes above, the breakout class RECORDED
+    with its two representatives),
     `ui/webview/anchor-map-fallback-markup.test.ts` and `ui/webview/md-config-merged-paragraph.test.ts` (their
     mdBlock replicas render through the rule), and the source pins over mdBlock's parse in
     `ui/webview/file-view.test.ts`, `ui/webview/file-view-links.test.ts`, `ui/webview/render-sanitize.test.ts` and
@@ -4019,10 +4080,19 @@ document stands on its own, each with the reasoning it was given.
     pointers at this decision, held to the sentence above and to the browser suite's shapes).
     `tools/guide-own-html-block-tag.test.mjs` (the second round) holds the guide's account of where the rule stops, a
     tag first on its line that markdown lexes as a block `html` token, to the installed marked, to the rule's walk
-    and to the map's refusal of an html block. `tools/file-review-plan-inlinetag-records.test.mjs` (the second
+    and to the map's refusal of an html block; since the review of the slice's PR (round 1, 2026-09-19) it holds the
+    guide's sentence on the tags that take the rest of the file when they stay HTML too, `<title>`, `<script>`,
+    `<style>` and `<iframe>` first on their line (block `html` tokens) or written with the slash mid-sentence (inline
+    `html` tokens the rule leaves), `<textarea>` beside them. Its lexer legs skip where marked is not installed, which
+    is every run of CI's shell job, so `ui/webview/guide-own-html-block-tag.test.ts` (the same round) runs them
+    through both callers' lexes under the viewer's configuration inside the extension job's `npm test`, and
+    `tests/test_guide_files_own_html_foreign_tag.py` holds that sentence in its place in the paragraph and the rule's
+    two exclusions at the source. `tools/file-review-plan-inlinetag-records.test.mjs` (the second
     round) holds this record's account of the first round to the code: the stacks per name, `IMG_ALIAS` outside the
     void set, `isSelfClosingTag` and the two tags named above run through the installed marked and the rule, the
-    `open` array's one remaining occupant; and holds the Tests bullet's inventory both ways, every test module under
+    `open` array's occupants and the self-closing spelling that still opens a wrapper, the fragment target a converted
+    tag loses, the math breakout class and the loss before the rule after each raw-text name (the PR review's round
+    1); and holds the Tests bullet's inventory both ways, every test module under
     `tools/`, `ui/webview/` or `tests/` that cites decision 52 or 53 named in the bullet or in one of the two
     records, so a later round's module cannot land unrecorded again.
 53. **A selection across several cells of one table anchors to its span** (2026-09-18). Slice 8 of
