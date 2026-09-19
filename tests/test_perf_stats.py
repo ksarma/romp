@@ -2582,7 +2582,7 @@ class GoalIoCounters(unittest.TestCase):
         """The instrumentation's measured cost is stated in ONE place, the stages_cpu_ms entry of docs/reference.md, and the
         kernel's copies point there (the 2026-09-19 round-2 rulings on rules-2, tests-4, extra5-3, extra8-2 and extra8-7:
         three hand-kept copies of one benchmark disagreed on two terms, so reduce the copies rather than reconcile them;
-        1a8b635c1 made the reduction and this pin refuses the next copy). A microsecond figure is `<number> us`; none may
+        the round-3 fix made the reduction and this pin refuses the next copy). A microsecond figure is `<number> us`; none may
         stand in the kernel's stages_cpu_ms block comment (its header line to the `try:` that imports resource), in
         _stat_counting_install's docstring, in the memos.chatSig block comment (its header to class _ChatSigLocal) or in
         the _PerfStats docstring's stages_cpu_ms and memos rows (the chatSig row is inside the latter); the reference's
@@ -2609,8 +2609,11 @@ class GoalIoCounters(unittest.TestCase):
         for where, text in regions:
             self.assertGreater(len(text), 200, "premise: %s was found" % where)
             found = _microsecond_figures(" ".join(text.split()))
-            self.assertEqual(found, [], "%s states a microsecond figure %r: the stages_cpu_ms entry of docs/reference.md is the only home"
-                             % (where, found))
+            self.assertEqual(found, [], "%s states a microsecond figure %r. The stages_cpu_ms entry of docs/reference.md is the "
+                             "only home for a measured cost: to pass, state the figure there and point at it from here, or "
+                             "write the sentence without a sub-millisecond time figure (a figure of a millisecond or more, "
+                             "or a unit word with no number, reads as none). The reader is _microsecond_figures in "
+                             "tests/test_perf_stats.py; the comment above it says what counts." % (where, found))
         doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text(encoding="utf-8")
         cpu_entry = " ".join(self._reference_entry(doc, doc.index("- `stages_cpu_ms`:")).split())
         n = len(_microsecond_figures(cpu_entry))
@@ -2623,9 +2626,12 @@ class GoalIoCounters(unittest.TestCase):
     def test_the_microsecond_predicate_reads_every_spelling_the_closing_check_planted(self):
         """The corpus behind the pin above (the closing check of 2026-09-19): the twenty-four spellings planted into a pinned
         region, the ten the `<number> us` pattern caught and the fourteen it passed, each read as a figure once
-        whitespace-normalized the way the pin normalizes; and the legitimate figures the pinned regions and the reference
-        carry (a millisecond count, a seconds backstop, the bare unit word, a version, a plural noun after a digit, the
-        pronoun), each read as none. Dropping a unit from _TIME_UNITS reds the escaped spelling of that unit."""
+        whitespace-normalized the way the pin normalizes; and a SAMPLE of the legitimate figures the pinned regions and the
+        reference carry (a millisecond count, a seconds backstop, the bare unit word, a version, a plural noun after a
+        digit, the pronoun), each read as none. The sample is not the population: the population is every sentence
+        written in those regions from now on, so the pin's failure message names the remedy (state the cost in the
+        reference, or write the sentence without a sub-millisecond figure) rather than this list growing by one each time
+        innocent prose trips it. Dropping a unit from _TIME_UNITS reds the escaped spelling of that unit."""
         caught = ["0.25us", "0.25 us", "0.25 \u00b5s", "0.25 \u03bcs", "0.25 microseconds", "0.25 microsecond", "0,25 us",
                   "0.25\u00a0us", "`0.25 us`", "0.25\nus"]
         escaped = ["250 ns", "250ns", "0.00025 ms", "2.5e-7 s", "a quarter of a microsecond", "0.25&nbsp;us", "\u00bc us",
@@ -2634,11 +2640,12 @@ class GoalIoCounters(unittest.TestCase):
         for sp in caught + escaped:
             text = " ".join(("the wrapper costs about %s per stat." % sp).split())
             self.assertEqual(len(_microsecond_figures(text)), 1, "not read as one microsecond figure: %r" % sp)
-        for legit in ("157 ms per cycle", "a tick, 1 ms at HZ=1000, or a context switch", "the 0.5 s backstop ran it",
+        legitimate_sample = ("157 ms per cycle", "a tick, 1 ms at HZ=1000, or a context switch", "the 0.5 s backstop ran it",
                       "how the loop's 3 s wait ended", "what each term costs in microseconds is stated once",
                       "38 tabs and four clients", "Python 3.12, a 30-core (60-thread) dev box", "the count tells us",
                       "over 300 sub-millisecond spins", "2.9 to 7.1 percent", "since the 1970s", "5 sessions", "12 GB resident",
-                      "a 5-second grace"):
+                      "a 5-second grace")
+        for legit in legitimate_sample:
             self.assertEqual(_microsecond_figures(legit), [], "a legitimate figure read as a microsecond one: %r" % legit)
 
     def test_the_per_push_denominator_rule_lives_in_the_reference_alone_and_the_kernel_copies_point_there(self):
