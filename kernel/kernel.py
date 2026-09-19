@@ -54589,6 +54589,8 @@ def _delta_keyer(kind):
             if not isinstance(it, dict):
                 return None
             v = it.get(field)
+            if v is not None and not isinstance(v, str):   # a key field the two languages spell apart (str(1.0) "1.0", String(1.0) "1"): refused at the source, so _delta_parts sends the slot whole for every receiver (2026-09-19)
+                raise ValueError("%s key field %r is a %s, not a str" % (kind, field, type(v).__name__))
             return None if v is None or v == "" else prefix + str(v)   # "" would spell a lane's bare-prefix marker
         return key
     if kind.startswith("bykeys:"):

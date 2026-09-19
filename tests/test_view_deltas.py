@@ -1234,15 +1234,26 @@ class KeyerParsesTheKindOnce(unittest.TestCase):
     def test_delta_key_and_the_keyer_agree_on_every_kind_and_shape(self):
         items = [{"id": "a"}, {"id": ""}, {"id": None}, {"id": 1.0}, {"id": "#1"}, {"itemId": "x:g1"}, {"itemId": ""},
                  {"sid": S1, "t": 1, "judge": "closer", "t1": None}, {"sid": S1}, "not a dict", 7, None, {}]
+
+        def outcome(fn):   # the key, or the refusal: both forms must agree on which (NonStrKeyFieldIsRefusedAtTheSource)
+            try:
+                return fn()
+            except ValueError as e:
+                return ("ValueError", str(e))
+        refused = 0
         for kind in ("byid", "byid:itemId", "dictlist:id", "bykeys:sid,t,judge,t1", "dict", "weird"):
             keyer = km._delta_keyer(kind)
             for it in items:
                 for prefix in ("", "lane" + SEP):
-                    self.assertEqual(keyer(it, prefix), km._delta_key(kind, it, prefix), (kind, it, prefix))
+                    got = outcome(lambda: keyer(it, prefix))
+                    self.assertEqual(got, outcome(lambda: km._delta_key(kind, it, prefix)), (kind, it, prefix))
+                    refused += isinstance(got, tuple)
+        self.assertEqual(refused, 4, "the float id under byid and dictlist:id, with and without a prefix, is the refusal both forms make")
         self.assertEqual(km._delta_keyer("bykeys:sid,t,judge,t1")({"sid": S1, "t": 1, "judge": "closer", "t1": None}),
                          S1 + SEP + "1" + SEP + "closer" + SEP + "None")
         self.assertEqual(km._delta_keyer("bykeys:sid,t,judge,t1")({"sid": S1}, "p"), "p" + S1 + SEP + "None" + SEP + "None" + SEP + "None")
-        self.assertEqual(km._delta_keyer("byid:itemId")({"itemId": 1.0}, "p"), "p1.0")
+        with self.assertRaises(ValueError):
+            km._delta_keyer("byid:itemId")({"itemId": 1.0}, "p")   # a non-str key field is refused, never spelled (it read "p1.0" before 2026-09-19)
         self.assertIsNone(km._delta_keyer("byid")({"id": ""}), "an empty id would spell the bare-prefix marker")
         self.assertIsNone(km._delta_keyer("dict")({"id": "a"}))
 
@@ -1280,6 +1291,53 @@ class KeyerParsesTheKindOnce(unittest.TestCase):
         self.assertEqual(len(order), 100); self.assertEqual(len(ents), 100)
         self.assertEqual(calls, ["dictlist:id"], "the kind is parsed once per split, not once per item")
 
+
+
+class NonStrKeyFieldIsRefusedAtTheSource(unittest.TestCase):
+    """A key field that is not a str is refused by the keyer (_delta_keyer), so _delta_split raises, _delta_parts returns None
+    and the slot goes WHOLE on every push, for every receiver at once (review round 6 of PR 815, 2026-09-19). The two
+    languages spell such a field apart: Python str(1.0) is "1.0" and JavaScript String(1.0) is "1" (True against "true"), so
+    a receiver that keyed the whole frame itself (T278c: no full carries a key list) and then applied a patch the kernel
+    spelled would hold the entry twice, the patched copy beside the seeded one, and no resync would ever ask. Three
+    receivers key by the one rule (ui/webview/view-deltas.ts, the inline shim in kernel.py, _py_maps here); refusing at the
+    source removes the case instead of teaching each reader the other language's spelling, and lands on the unkeyable road
+    CatchUpRoadsOfAWholeFrameClient test_g measures. No producer ships a non-str key field (by read of kernel.py: a turn's id
+    is the segment's string id, a message's id the postal id, judging's k a kernel-minted string, a card's itemId a string),
+    so the cost is nothing today. tests/extension_delta_fixture.py replays the same payload through both JavaScript receivers
+    (vscode-extension/src/pipe-view-deltas.test.ts). The bykeys composite is untouched: unused since T278c, it spells every
+    field with str() as before and carried a key list for that reason."""
+
+    def setUp(self):
+        km._delta_parts_cache.clear(); km._delta_unkeyable_said.clear()
+
+    def test_a_the_keyer_and_the_split_refuse_a_float_a_bool_and_an_int_key_field(self):
+        for kind, it in (("byid", {"id": 1.0}), ("byid", {"id": True}), ("byid:itemId", {"itemId": 7}), ("dictlist:id", {"id": 2.0})):
+            field = "id" if kind == "byid" else kind.split(":", 1)[1]
+            with self.assertRaises(ValueError, msg=(kind, it)) as cm:
+                km._delta_keyer(kind)(it, "p")
+            self.assertEqual(str(cm.exception), "%s key field %r is a %s, not a str" % (kind, field, type(it[field]).__name__))
+            with self.assertRaises(ValueError):
+                km._delta_key(kind, it, "p")
+        with self.assertRaises(ValueError):
+            km._delta_split("byid", [{"id": "a"}, {"id": True}])
+        with self.assertRaises(ValueError):
+            km._delta_split("dictlist:id", {S1: [{"id": 2.0}]})
+        self.assertEqual(km._delta_split("byid", [{"id": "1.0"}])[1], ["1.0"], "a str that spells a number is a str: keyed as before")
+        self.assertEqual(km._delta_keyer("bykeys:sid,t")({"sid": S1, "t": 1.0}), S1 + SEP + "1.0", "the bykeys composite spells with str() as before")
+
+    def test_b_a_bars_payload_with_a_float_message_id_goes_whole_on_every_push_and_is_said_once(self):
+        a = _bars({S1: [{"id": "web-0", "t": 1000, "end": 1030}]}, [], [{"id": 1.0, "text": "synthetic message"}], now=1055)
+        b = json.loads(json.dumps(a)); b["messages"][0]["text"] = "synthetic message, edited"; b["now"] = 1060
+        self.assertIsInstance(b["messages"][0]["id"], float, "the round trip keeps the float")
+        st = _Stream("bars")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual([f["type"] for f in st.push(a)], ["bars"])
+            self.assertEqual([f["type"] for f in st.push(b)], ["bars"], "the change goes whole too: the kernel holds no base for a slot it cannot key")
+        self.assertNotIn("bars", st.c.get("dstate", {}), "nothing held")
+        self.assertEqual(err.getvalue().count("cannot be keyed"), 1, "said once")
+        self.assertIn("view-delta bars: payload cannot be keyed (messages: byid key field 'id' is a float, not a str); sending whole frames", err.getvalue())
+        self.assertEqual(st.held["messages"], b["messages"], "the whole-frame client keys the frame itself and holds one copy")
 
 
 class CatchUpRoadsOfAWholeFrameClient(unittest.TestCase):

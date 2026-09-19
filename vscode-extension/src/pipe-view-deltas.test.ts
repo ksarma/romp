@@ -261,6 +261,13 @@ test("kernel-produced frames reassemble to every expected full in both receivers
   const receiver = new module.ViewDeltas(() => assert.fail("the real encoder stream must not request recovery"));
   assert.ok(fixture.steps.some((s: any) => s.wire.coll?.messages?.order), "numeric-id order must cross the wire");
   assert.ok(fixture.steps.some((s: any) => s.wire.restAll === 1), "use the actual sender remainder flag");
+  // a non-string key field (a float message id, a stream of its own at the fixture's end, pushed twice): the kernel sends
+  // WHOLE both times (kernel.py _delta_keyer refuses the field, 2026-09-19), since the two languages spell the key apart
+  // (Python str(1.0) is "1.0", String(1.0) is "1") and a patch spelled by the kernel would double the entry on a base either
+  // receiver keyed itself; the reassembly below then holds one copy on both
+  const nonStr = fixture.steps.filter((s: any) => s.full.type === "bars" && (s.full.messages || []).some((m: any) => typeof m.id === "number"));
+  assert.ok(nonStr.length >= 2, "the fixture carries a stream with a non-string key field, pushed at least twice");
+  for (const s of nonStr) assert.notEqual(s.wire.type, "delta", "a non-string key field: the kernel sends whole");
   for (const { wire, full } of fixture.steps) {
     const m = normalize(wire);
     let expected;
