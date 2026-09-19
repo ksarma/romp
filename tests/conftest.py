@@ -605,11 +605,26 @@ def restore_env(name, prior):
 # reference (the scope's own setUpClass moved jd.STATE, a test built under it, allowed at its own window
 # because it inherited that root, and the scope did not put the singleton back: the scope is the author);
 # and E different from both S and L is the teardown itself installing a value, judged the same way.
-# The module end runs after the class end, so a class-end verdict names the object and the module end is
+# Before that S -> E judgment the boundary yields to the tests' own windows: the function fixture records
+# every test window that changed the slot (_SDK_WINDOWS: the before and after values and the reference the
+# window was judged against; cleared at each module end, since no later scope starts before that read),
+# and when the first such window inside the scope started from the value S found, the last left the value
+# E holds, and that last window's reference is S's jd.STATE, every step from S to E was a test's, judged
+# where it happened, and the boundary returns None. Without it a test's accused reset to None or False (a
+# value _sdk_name skips, so the named rule cannot cover it) or an allowed lazy rebuild after an accused
+# reset was re-attributed to the class and module boundary, sending the reader to a tearDownClass or
+# tearDownModule that does not exist; in the rebuild shape the boundary's verdict landed as an ERROR on
+# the innocent test that made the allowed rebuild (2026-09-19). K.One is the counter-case: its build's
+# reference is the class root setUpClass moved jd.STATE to, not S's, so the class stays the author. The
+# module end runs after the class end, so a class-end verdict names the object and the module end is
 # quiet on it. Cost: two dict reads, two getattr and one isdir per read; five reads per test at most (the
-# test's two, and the scope reads spread over a class and a module).
+# test's two, and the scope reads spread over a class and a module), plus one list scan per boundary over
+# the module's changing windows (a handful in any module: net changes of the slot are rare).
 _SdkRead = collections.namedtuple("_SdkRead", "be marker sd isdir jd_state")
+_SdkWindow = collections.namedtuple("_SdkWindow", "seq before after ref")
 _SDK_LAST = _SdkRead(None, None, None, None, None)     # the last read anywhere in this worker (the boundary's L)
+_SDK_READS = 0                                         # reads so far in this worker; a scope keeps the count at its start read
+_SDK_WINDOWS = []                                      # the test windows that changed the slot since the module started
 _SDK_NAMED = []                                        # strong references to every object a verdict named
 _SDK_REAL = ("romp_sdk_backend", "SdkBackend")
 _SDK_GONE = ", whose state_dir is no longer a directory"
@@ -626,7 +641,7 @@ def _sdk_read():
     """One read of the kernel's backend singleton under its shared name: (value, marker, state_dir text, isdir,
     jd.STATE text), every field None when the kernel is not loaded as romp_kernel; recorded as the worker's last
     read."""
-    global _SDK_LAST
+    global _SDK_LAST, _SDK_READS
     km = sys.modules.get("romp_kernel")
     if km is None:
         rec = _SdkRead(None, None, None, None, None)
@@ -640,6 +655,7 @@ def _sdk_read():
         jd_state = getattr(d.get("jd"), "STATE", None)
         rec = _SdkRead(be, d.get("_sdk_locked"), sd, None if sd is None else os.path.isdir(sd),
                        None if jd_state is None else str(jd_state))
+    _SDK_READS += 1
     _SDK_LAST = rec
     return rec
 
@@ -732,14 +748,17 @@ def _sdk_judge_reload(before, after):
             % (_sdk_singleton_text(be1), ref, _SDK_GONE if after.isdir is False else ""), _SDK_REMEDY_A)
 
 
-def _sdk_judge_scope(start, last, end):
-    """The class or module boundary's verdict from its start read, the last read before its end, and its end read."""
+def _sdk_judge_scope(start, last, end, windows):
+    """The class or module boundary's verdict from its start read, the last read before its end, its end read, and the
+    test windows inside the scope that changed the slot (oldest first)."""
     if end.be is last.be:
         if last.isdir and end.isdir is False:
             return ("left the kernel's backend singleton (km._sdk_backend) over a directory it removed: %s%s"
                     % (_sdk_singleton_text(end.be), _SDK_GONE), _sdk_remedy(end, start.jd_state))
         if end.be is start.be or _sdk_named(end.be):
             return None
+        if windows and windows[0].before is start.be and windows[-1].after is end.be and windows[-1].ref == start.jd_state:
+            return None                    # the tests made the change, each judged at its own window: the boundary did nothing
         return _sdk_judge(start, end, start.jd_state)
     if end.be is start.be:
         if start.isdir and end.isdir is False:
@@ -762,16 +781,20 @@ def _sdk_singleton_restored(request):
     yield
     after = _sdk_read()
     verdict = _sdk_judge(before, after, before.jd_state)     # the root the test inherited: the one value it could not have made
+    if after.be is not before.be:
+        _SDK_WINDOWS.append(_SdkWindow(_SDK_READS, before.be, after.be,
+                                       after.jd_state if after.marker is not before.marker else before.jd_state))
     if verdict is None:
         return
     _sdk_name(after.be)
     pytest.fail("%s %s. Fix: %s" % (request.node.nodeid, verdict[0], verdict[1]), pytrace=False)
 
 
-def _sdk_boundary(request, start):
+def _sdk_boundary(request, start, reads_at_start):
     last = _SDK_LAST
     end = _sdk_read()
-    verdict = _sdk_judge_scope(start, last, end)
+    windows = [w for w in _SDK_WINDOWS if w.seq > reads_at_start]
+    verdict = _sdk_judge_scope(start, last, end, windows)
     if verdict is None:
         return
     _sdk_name(end.be)
@@ -782,15 +805,20 @@ def _sdk_boundary(request, start):
 @pytest.fixture(autouse=True, scope="class")
 def _sdk_singleton_class_boundary(request):
     start = _sdk_read()
+    reads_at_start = _SDK_READS
     yield
-    _sdk_boundary(request, start)
+    _sdk_boundary(request, start, reads_at_start)
 
 
 @pytest.fixture(autouse=True, scope="module")
 def _sdk_singleton_module_boundary(request):
     start = _sdk_read()
+    reads_at_start = _SDK_READS
     yield
-    _sdk_boundary(request, start)
+    try:
+        _sdk_boundary(request, start, reads_at_start)
+    finally:
+        del _SDK_WINDOWS[:]                # no later scope starts before this read, so no boundary selects these again
 
 
 # No test report may carry a process-environment VALUE, or a credential-shaped token (2026-09-05). A

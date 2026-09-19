@@ -479,26 +479,77 @@ SCRATCH_J = SCRATCH_HEAD + textwrap.dedent('''\
             assert km._sdk().state_dir == jd.STATE
 ''')
 
+SCRATCH_N = SCRATCH_HEAD + textwrap.dedent("""\
 
-def nested_run(text):
+    class One(unittest.TestCase):
+        def test_a_the_lazy_first_build(self):
+            assert km._sdk_backend is None
+            assert km._sdk().state_dir == jd.STATE
+
+    class Two(unittest.TestCase):
+        def test_a_leaves_none(self):
+            km._sdk_backend = None                    # accused at its own window
+
+        def test_b_the_lazy_rebuild_over_the_run_root_after_the_accused_reset(self):
+            assert km._sdk_backend is None
+            assert km._sdk().state_dir == jd.STATE   # allowed at its own window; the class end has nothing to add
+
+    class Three(unittest.TestCase):
+        def test_a_leaves_none_as_the_last_test_of_a_class_that_started_on_a_real_backend(self):
+            km._sdk_backend = None
+
+    class Four(unittest.TestCase):
+        def test_a_the_lazy_rebuild(self):
+            assert km._sdk_backend is None
+            assert km._sdk().state_dir == jd.STATE
+
+        def test_b_leaves_false_as_the_last_test(self):
+            km._sdk_backend = False
+
+    class Five(unittest.TestCase):
+        def test_a_none_in_place_of_false(self):
+            assert km._sdk_backend is False
+            km._sdk_backend = None
+
+        def test_b_the_lazy_rebuild_the_next_module_inherits(self):
+            assert km._sdk().state_dir == jd.STATE
+""")
+
+SCRATCH_N2 = textwrap.dedent("""\
+    import sys, unittest
+    km = sys.modules["romp_kernel"]                   # the kernel the first module loaded: no re-execution here
+    jd = km.jd
+
+    class Follow(unittest.TestCase):
+        def test_a_leaves_none_as_the_last_test_of_the_module(self):
+            assert km._sdk_backend is not None
+            km._sdk_backend = None
+""")
+
+
+def nested_run(text, follower=None):
     """pytest in a child over one scratch module written to a fresh directory, under this checkout's conftest
     (loaded as a plugin: the module sits outside tests/, where no conftest is discovered), verbose and with the
     all-outcomes summary, so the outer test reads each case's outcome and the ratchet's text. The child's
     environment is the precedent's (tests/test_tempdir_hygiene.py, RunLeavesNothing): a fresh TMPDIR, the
     parent's pytest variables dropped so the child records its own run, and the bin directory the scratch
-    module loads the kernel from. Returns (returncode, stdout and stderr)."""
+    module loads the kernel from. `follower` is the text of a second module written beside the first. Returns
+    (returncode, stdout and stderr)."""
     fresh = tempfile.mkdtemp()
     case = os.path.join(fresh, "case")
     os.makedirs(case)
     path = os.path.join(case, "test_scratch.py")
     with open(path, "w") as f:
         f.write(text)
+    if follower is not None:                # a second module, collected after the first (pytest keeps the directory order)
+        with open(os.path.join(case, "test_scratch2.py"), "w") as f:
+            f.write(follower)
     env = dict(os.environ, TMPDIR=fresh, PYTHONDONTWRITEBYTECODE="1", ROMP_RATCHET_BIN=BIN)
     for var in ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "PYTEST_CURRENT_TEST",
                 "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT", "ROMP_TESTS_SYSTEM_TMPDIR"):
         env.pop(var, None)
     r = subprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider",
-                        "-v", "-rA", "--tb=short", path],
+                        "-v", "-rA", "--tb=short", case],
                        cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
     return r.returncode, r.stdout + r.stderr
 
@@ -508,7 +559,7 @@ def outcomes(out):
     ratchet fails at its teardown shows PASSED for its call and ERROR for its teardown; one it reports at setup
     shows ERROR alone."""
     seen = {}
-    for cls, m, o in re.findall(r"test_scratch\.py::(\w+)::(test_\w+) (PASSED|FAILED|ERROR)\b", out):
+    for cls, m, o in re.findall(r"test_scratch2?\.py::(\w+)::(test_\w+) (PASSED|FAILED|ERROR)\b", out):
         seen.setdefault("%s.%s" % (cls, m), set()).add(o)
     return seen
 
@@ -536,21 +587,22 @@ def inherited(out, cls, method):
     return m.group(1) if m else None
 
 
-def boundary(out, scope):
+def boundary(out, scope, module="test_scratch.py"):
     """The boundary verdict for `scope` ("::One" for a class, "" for the module) as (clause, remedy), or None."""
-    m = re.search(r"test_scratch\.py%s%s ([^\n]*?)\. Fix: ([^\n]*)" % (re.escape(scope), re.escape(BOUNDARY)), out)
+    m = re.search(r"%s%s%s ([^\n]*?)\. Fix: ([^\n]*)" % (re.escape(module), re.escape(scope), re.escape(BOUNDARY)), out)
     return _split(m) if m else None
 
 
 class _NestedRun:
     """The shared half of a scratch run's tests; a mixin, so the runner collects only the runs below."""
     SCRATCH = ""
+    FOLLOWER = None        # a second module's text, collected after the first, for the runs that need a module pair
     ERRORS = 0
     JUDGE_RED = False      # whether the judge fixture (_shared_state_restored) is expected to fail in the run too
 
     @classmethod
     def setUpClass(cls):
-        cls.rc, cls.out = nested_run(cls.SCRATCH)
+        cls.rc, cls.out = nested_run(cls.SCRATCH, cls.FOLLOWER)
 
     def assertRatchetPassed(self, cls, method):
         self.assertEqual(outcomes(self.out).get("%s.%s" % (cls, method)), {"PASSED"}, self.out)
@@ -865,6 +917,36 @@ class FirstBuildWithJdStateLeftAtTheSandbox(_NestedRun, unittest.TestCase):
         self.assertIsNone(boundary(self.out, "::Cases"), self.out)
         self.assertIsNone(boundary(self.out, ""), self.out)
 
+
+class BoundaryYieldsToTheTestsOwnWindows(_NestedRun, unittest.TestCase):
+    SCRATCH = SCRATCH_N
+    FOLLOWER = SCRATCH_N2
+    ERRORS = 5
+
+    def test_each_accused_test_is_named_once_on_the_object_road(self):
+        for cls, method, after in (("Two", "test_a_leaves_none", ", after None (not built)"),
+                                   ("Three", "test_a_leaves_none_as_the_last_test_of_a_class_that_started_on_a_real_backend",
+                                    ", after None (not built)"),
+                                   ("Four", "test_b_leaves_false_as_the_last_test", ", after False (the build failed)"),
+                                   ("Follow", "test_a_leaves_none_as_the_last_test_of_the_module", ", after None (not built)")):
+            text = self.assertObjectRoad(cls, method)
+            self.assertTrue(text.startswith("changed after its teardown: before SdkBackend over "), text)
+            self.assertTrue(text.endswith(after), text)
+        text = self.assertObjectRoad("Five", "test_a_none_in_place_of_false")
+        self.assertTrue(text.startswith("changed after its teardown: before False (the build failed), after None"), text)
+
+    def test_the_allowed_rebuild_after_an_accused_reset_passes_alone(self):
+        self.assertRatchetPassed("Two", "test_b_the_lazy_rebuild_over_the_run_root_after_the_accused_reset")
+        self.assertRatchetPassed("Four", "test_a_the_lazy_rebuild")
+        self.assertRatchetPassed("Five", "test_b_the_lazy_rebuild_the_next_module_inherits")
+
+    def test_no_class_or_module_boundary_is_accused_of_what_its_tests_did(self):
+        for scope in ("::One", "::Two", "::Three", "::Four", "::Five", ""):
+            self.assertIsNone(boundary(self.out, scope), "a boundary that did nothing is accused: %s" % self.out)
+        self.assertIsNone(boundary(self.out, "::Follow", module="test_scratch2.py"), self.out)
+        self.assertIsNone(boundary(self.out, "", module="test_scratch2.py"), self.out)
+        self.assertNotIn(BOUNDARY, self.out, "no boundary text anywhere in the run: %s" % self.out)
+        self.assertNotIn("sub-exceptions", self.out, "no verdict folds into another's teardown report: %s" % self.out)
 
 if __name__ == "__main__":
     unittest.main()
