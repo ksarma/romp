@@ -277,6 +277,11 @@ try {
     out.gate = { held: bootChat ? bootChat.held || null : null, heldRelease: bootChat ? bootChat.heldRelease || null : null,
                  prefetchAfterReleaseMs: after().length && bootChat.heldRelease ? after()[0].t - bootChat.heldRelease.t : -1 };
   }
+  // the chat strip after the settle (review round 3, extra9-1): which tab is active and which tabs are skeletons, read off the pane's DOM
+  // (display:none behind another tab or not); the leg's stored tab is echoed so the check can compare
+  out.activeSid = cfg.activeSid || "";
+  out.chatStrip = await (async () => { const f = page.frames().find((fr) => { try { return new URL(fr.url()).pathname === "/chat"; } catch (e) { return false; } }); if (!f) return null;
+    try { return await f.evaluate(() => Array.from(document.querySelectorAll("#tabs .tab[data-id]")).map((t) => ({ id: t.dataset.id, skeleton: t.classList.contains("tab-skeleton"), active: t.classList.contains("active") }))); } catch (e) { return null; } })();
   // the iframes' src after the settle: the lazy contract read off the DOM (a lazy pane has none until its tap; every eager pane has its page)
   out.srcAtBoot = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("iframe[id^=f-]")).map((f) => [f.id.slice(2), f.getAttribute("src")])));
   out.wsWordsAtBoot = await page.evaluate(() => (window.__labWs || []).map((w) => w.app));   // every pane that said anything before the tap or the suspend

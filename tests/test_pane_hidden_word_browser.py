@@ -113,6 +113,19 @@ class PaneHiddenWordInBrowsers(unittest.TestCase):
             again = s["reshown"]
             self.assertIs(again["shim"], False, where + "shown again: the shim raises again if genuinely stale")
             self.assertTrue(again["iw"] > 0 and again["ih"] > 0, where + "a re-shown frame has a viewport")
+            # the show hook (stage 0's onShown; review round 3, extra9-1): render.ts hands it schedulePrebuild, so the chat pane's idle
+            # chain re-arms on the published word's flip from hidden to shown. It runs where the observer SPOKE while the frame was
+            # hidden (the word went true, then false on the re-show): Chromium and WebKit. Firefox zeroes the hidden iframe's viewport
+            # and its observer does not fire for the hide (the probe carried the verdict above), so the word never went true and the
+            # re-show is no flip: the hook is inert there and the panes-word belt in render.ts is the phone's re-arm on Firefox (the
+            # served Firefox leg of tests/test_return_from_background_served.py pins that belt). Asserted per engine to what the
+            # engines do, not to what would be convenient.
+            self.assertEqual(shown["shown"], 0, where + "the first word (on screen) runs no hook")
+            self.assertEqual(hid["shown"], 0, where + "a flip to hidden runs no hook")
+            if hid["word"] is True:
+                self.assertEqual(again["shown"], 1, where + "the word went hidden and came back: the re-show ran the hook once: " + json.dumps(again))
+            else:
+                self.assertEqual(again["shown"], 0, where + "the observer never said hidden (the probe carried it), so the re-show is no flip and the hook is inert: " + json.dumps(again))
             never = s["neverShown"]
             self.assertIs(never["shim"], True, where + "hidden since load reads hidden")
             self.assertIs(never["probe"], True, where + "a never-shown iframe has a zero viewport: the probe is right at boot, "

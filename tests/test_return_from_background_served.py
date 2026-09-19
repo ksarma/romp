@@ -24,8 +24,8 @@ excepted), and the tab-tap leg exercises the parked contract on a pane that did 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), with ROMP_WS_KEEPALIVE=2 (WS_DEAD_S 6 s, a floor for a socket the
 driver's close at the suspend misses; the records show none does, see the limits below); a private dist
-(lab_dist.copy_dist); three synthetic sessions (`web`, `api`, `tests` of the notes-api demo, placeholder uuids, host
-TESTHOST). The driver (tests/return_from_background_browser.mjs) opens the served shell, waits for every pane socket's
+(lab_dist.copy_dist); four synthetic sessions (`web`, `api`, `tests` of the notes-api demo with closed-turn transcripts,
+and a transcript-less `docs`; placeholder uuids, host TESTHOST). The driver (tests/return_from_background_browser.mjs) opens the served shell, waits for every pane socket's
 `wsState up` word, emulates the suspend (visibilityState hidden in every document, the held sockets closed with 1001),
 holds the outage on new dials for the interval after the return, then reads the rows. Two shells (a phone: an iPhone
 descriptor at 390 x 844, under _MOBILE_MQ, six pane iframes with one .m-on; a desktop window at 1600 x 760), two outage
@@ -112,7 +112,9 @@ VISIBLE = "chat"                                                  # the phone's 
 HOST = "TESTHOST"
 SESSIONS = (("11111111-2222-4333-8444-000000000101", "web", "w"),
             ("11111111-2222-4333-8444-000000000102", "api", "a"),
-            ("11111111-2222-4333-8444-000000000103", "tests", "t"))
+            ("11111111-2222-4333-8444-000000000103", "tests", "t"),
+            ("11111111-2222-4333-8444-000000000104", "docs", ""))   # transcript-less (no .jsonl): never a skeleton, its full carries no events; the boot-on-Feed legs' active tab (extra9-1)
+TRANSCRIPT_SESSIONS = tuple(s for s in SESSIONS if s[2])   # the three with a transcript: the skeletons the chain fetches, the feed's cards
 DECISIONS = {"keep", "redial-closed", "redial-stale"}
 FULL = os.environ.get("RETURN_HARNESS_FULL") == "1"
 OUT_DIR = os.environ.get("RETURN_HARNESS_OUT", "")
@@ -157,7 +159,8 @@ def _seed(lab):
         Path(state, "names", sid).write_text("%s\t%s\t\t\n" % (sname, cwd))
         Path(state, "sdk", sid + ".json").write_text(json.dumps(
             {"sid": sid, "name": sname, "cwd": cwd, "mode": "auto", "effort": "high", "lastSid": sid, "alive": True}))
-        Path(proj, sid + ".jsonl").write_text(_transcript(sid, tag, cwd, 6))
+        if tag:   # the transcript-less `docs` session has a name and a live registration and no .jsonl (a session created and not yet spoken to)
+            Path(proj, sid + ".jsonl").write_text(_transcript(sid, tag, cwd, 6))
     return state, claude
 
 
@@ -516,6 +519,20 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertTrue(boot_chat[0].get("skeleton"), where + "the phone's first chat dial carries skeleton=1: %r" % (boot_chat[0],))
         else:
             self.assertFalse(any(d.get("skeleton") for d in boot_chat), where + "the desktop's chat dials whole, as before: %r" % (boot_chat,))
+        if r.get("activeSid"):
+            # the stored tab after the boot (review round 3, extra9-1): active and whole (the diet's one full; a transcript-less tab is never a
+            # skeleton), the four lab sessions on the strip; behind another tab the chain has not run, so the skeletons at the settle are
+            # exactly the other transcript-bearing tabs (the strip read is the witness that the `docs` full arrived and was applied)
+            strip = r.get("chatStrip") or []
+            self.assertTrue(strip, where + "the chat strip was read after the settle")
+            self.assertEqual(sorted(t["id"] for t in strip), sorted(x[0] for x in SESSIONS), where + "the lab's sessions are on the strip: %r" % (strip,))
+            act = [t for t in strip if t.get("active")]
+            self.assertEqual([t["id"] for t in act], [r["activeSid"]], where + "the stored tab is the active one: %r" % (strip,))
+            self.assertFalse(act[0].get("skeleton"), where + "…and whole, not a skeleton: %r" % (act,))
+            if boot_tab:
+                want = sorted(x[0] for x in TRANSCRIPT_SESSIONS if x[0] != r["activeSid"])
+                self.assertTrue(want, where + "the transcript-bearing others are not an empty set")
+                self.assertEqual(sorted(t["id"] for t in strip if t.get("skeleton")), want, where + "behind the %s tab the chain has not run: every other transcript-bearing tab is still a skeleton at the settle: %r" % (boot_tab, strip))
         if boot_tab and tap == "chat":
             # carried by paneHidden() (nextPrefetch's `hidden` term), not by the start gate: the chat is display:none here, so this reads 0 with
             # the gate term removed too (the refuters' converse mutation, review round 1); the gate's own witness is _gate, the held-full leg
@@ -705,14 +722,24 @@ class ReturnFromBackground(unittest.TestCase):
     def test_phone_hung_12s_the_start_gate_holds_the_chain_behind_the_active_tabs_full(self):
         self._leg("phone", "hung", 12, hold_active_full_ms=1500)   # fresh-2 (review round 3): the chat on screen, the active tab's full held 1.5 s on the wire: no prefetch inside the hold, one after it
 
+    # The F1 legs (stage 0, review round 1): a phone opened on the Feed tab holds the chat's idle chain while the chat is display:none
+    # (paneHidden) and the Chat tab's show re-arms it, by one of two roads in render.ts: the chat-visibility hook (onShown, the published
+    # word's flip from hidden to shown) and the panes-word belt (the shell's word saying the chat is on). The ACTIVE tab is the
+    # transcript-less `docs` (review round 3, extra9-1): with `web` active its full was heavy (events, no DOM) and render.ts deferred
+    # the build to a rAF; Firefox runs no rAF in a display:none iframe, so the idle pass's mid-build yield re-armed itself every pass
+    # until the show and then issued the prefetch on its own, and the Firefox leg stayed green with BOTH roads removed (the round-1
+    # refuters' finding). A full with no events builds synchronously, no rAF is pending, and the two roads are the only re-arm.
     def test_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown(self):
-        self._leg("phone", "hung", 12, tap="chat", boot_tab="feed")   # stage 0, review round 1 (F1): the chat display:none at boot asks nothing; its show arms the idle prefetch
+        self._leg("phone", "hung", 12, tap="chat", boot_tab="feed", active_sid=SESSIONS[3][0])   # Chromium: the observer speaks for the hidden-since-load frame, so the hook runs at the show; the belt runs too
 
     def test_firefox_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown(self):
-        self._leg("phone", "hung", 12, engine="firefox", tap="chat", boot_tab="feed")   # the F1 arm off Chromium: Firefox's observer over an iframe hidden since load, and the panes-word belt (review round 2)
+        # THE BELT'S WITNESS: Firefox's observer does not speak for a chat frame hidden since load, so at the show its first word is the
+        # shown one and the hook (onShown: hidden, then shown) never runs; the panes-word belt is the only re-arm here, and this leg
+        # reds when the belt goes (the round-3 record). The hook's own real-browser witness is tests/test_pane_hidden_word_browser.py.
+        self._leg("phone", "hung", 12, engine="firefox", tap="chat", boot_tab="feed", active_sid=SESSIONS[3][0])
 
     def test_webkit_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown(self):
-        self._leg("phone", "hung", 12, engine="webkit", tap="chat", boot_tab="feed")   # …and Safari's engine, where requestIdleCallback is absent and the chain runs on the 16 ms fallback
+        self._leg("phone", "hung", 12, engine="webkit", tap="chat", boot_tab="feed", active_sid=SESSIONS[3][0])   # Safari's engine: requestIdleCallback is absent and the chain runs on the 16 ms fallback; its observer speaks while hidden, so the hook and the belt both run
 
     def test_phone_refused_30s_slow(self):
         self._leg("phone", "refused", 30)
