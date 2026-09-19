@@ -539,6 +539,52 @@ class EveryInputMovesItsSessionOnly(_Board):
         self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (0, 3, {}), "a text edit moves no key: %r" % d)
         self.assertEqual(f["userTodos"], {API: 1})
 
+    def test_a_users_parked_message_re_derives_its_session_under_queued_and_a_machine_one_derives_nothing(self):
+        """The floor's queued-intent input (plans/user-todos.md, the idle endgame): a parked op the USER authored (the fifth
+        slot, _op_user) moves the owning session's key under `queued` and no other; a machine op (a nudge, a watch notice, a
+        re-delivery) moves nothing."""
+        self.addCleanup(km._pending_ops.pop, WEB, None)
+        self._build()
+        km._pending_ops[WEB] = [("send", "a watch notice", None)]
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (0, 3, {}), "a machine op moves no key: %r" % d)
+        km._pending_ops[WEB] = [("send", "a watch notice", None), ("send", "use the cookie", None, "q-1", True)]
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (1, 2, {"queued": 1}), d)
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (0, 3), "the parked op stands: a hit")
+        km._pending_ops.pop(WEB, None)
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["miss_by"]), (1, {"queued": 1}), "the drain moves it back once")
+
+    def test_the_floors_arm_record_re_derives_its_session_once_under_utarm(self):
+        """The arm record is the one side effect the body writes: a record appearing for web re-derives web alone under
+        `utarm`; the derivation (no blocking request here) spends it, the deps re-evaluation stores the spent record, and
+        the next build hits."""
+        self.addCleanup(km._UT_FLOOR_ARM.clear)
+        self._build()
+        with km._UT_FLOOR_ARM_LOCK:
+            km._UT_FLOOR_ARM[WEB] = (frozenset({"ut-11111111"}), NOW - 30)
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (1, 2, {"utarm": 1}), d)
+        self.assertNotIn(WEB, km._UT_FLOOR_ARM, "no blocking request behind it: the body disarmed the record")
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (0, 3, {}), "the disarm was re-keyed by the same derivation: %r" % d)
+
+    def test_the_compaction_bracket_re_derives_its_session_under_compacting(self):
+        """The compaction bracket's boolean is computed in the key like interrupting: its flip for api re-derives api alone
+        under `compacting` and nothing else; the same value again hits."""
+        self._build()
+        flag = {API: True}
+        with mock.patch.object(km, "_compacting_now", lambda sid, tm=None, path=None: bool(flag.get(str(sid)))):
+            d, _ = self._delta(self._build)
+            self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (1, 2, {"compacting": 1}), d)
+            d, _ = self._delta(self._build)
+            self.assertEqual((d["derived"], d["hit"]), (0, 3), "the bracket stands: a hit")
+            flag.clear()
+            d, _ = self._delta(self._build)
+            self.assertEqual((d["derived"], d["miss_by"]), (1, {"compacting": 1}), "the bracket's end moves it back once")
+
     def test_a_background_agents_tool_call_moves_no_key(self):
         """A background agent's every tool call rewrites its task row's lastTool; no card reads it, so the key holds
         and the session is served (2026-09-18). Under the whole-row fold the field rode the key and the session was

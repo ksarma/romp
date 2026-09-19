@@ -62,7 +62,8 @@ test("the ⏸ blocked (permission/picker) badge is a rounded-rect pill outlined 
 test("the ⏸ picker/approval chip jumps to the LIVE prompt in the chat (openSession + live, the user 2026-07-08)", () => {
   // the prompt is the session's live bottom, so the chip posts `live: true` → the chat lands right on it
   assert.match(FEED, /vscodeApi\?\.postMessage\(\{ type: "openSession", id: it\.sid, live: true \}\);/);
-  assert.match(FEED, /setTip\(a\._blocked as HTMLElement, it\.blocked\.what \+ " — click to jump to the prompt in the chat"\);/);
+  assert.match(FEED, /const blkSuffix = isUtFloor\s*\n\s*\? " \(click to open its chat and reply\)"\s*\n\s*: " [^"]*click to jump to the prompt in the chat";\s*\n\s*setTip\(a\._blocked as HTMLElement, it\.blocked\.what \+ blkSuffix\);/,
+    "the picker and approval chips keep the jump-to-the-prompt suffix; the request chip (the idle floor's) says where its click lands");
 });
 
 test("courier handoff: the '↪ from <sender>' origin marker is wired and styled", () => {

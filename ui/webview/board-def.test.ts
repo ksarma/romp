@@ -62,7 +62,8 @@ test("the sort, the grouping and the notification set equal the sources' literal
   assert.match(feedTable, /"needsYou": "needs_input"/);
   assert.equal(FEED_BOARD.needsYou, "needs_input");
   assert.match(KERNEL, /_NOTIFY_COLUMNS = tuple\(_CODE_BOARDS\["feed"\]\["notify"\]\)/, "the feed's notify set is read from the table");
-  assert.match(KERNEL, /if not a\.get\("provisional"\) and _card_needs_you\(a\)\)/, "_needs_you_count reads the one predicate (the 1861 read)");
+  assert.match(KERNEL, /elif not a\.get\("provisional"\) and _card_needs_you\(a\):/, "_needs_you_count reads the one predicate (the 1861 read)");
+  assert.match(KERNEL, /return _card_needs_you\(a\) and \(a\.get\("blocked"\) or \{\}\)\.get\("state"\) == "userTodos"/, "...and its request-floored arm (_ut_floored) reads the same predicate before it counts the blocking requests");
   assert.match(KERNEL, /return nb is not None and a\.get\("category", a\.get\("column"\)\) == nb/, "the predicate: the card's own board's badge category, the column from an older card");
   assert.match(KERNEL, /if _card_needs_you\(a\) and a\.get\("sid"\)\)/, "the ring's sids read the same predicate");
   assert.deepEqual([...FEED_BOARD.kinds], [...KIND_IDS]);

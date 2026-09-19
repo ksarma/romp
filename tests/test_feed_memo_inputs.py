@@ -192,6 +192,12 @@ HELPERS = {
     "_awaiting_peer_items": ("pure", "over the peer identities _session_awaiting resolved (peers), nothing else"),
     "_login_refusal_label": ("sig", ("row", "transcript")),           # the live row's authLogin, authLoginLive and authLabel, and the api error: a stored login the session's API error refused, by label (T346)
     "lg.mark_refused": ("pure", "a WRITE, not a read: the login registry's refused mark for the login the api error named (idempotent); its return enters nothing, and the label the card shows is the row's (T346)"),
+    # the idle floor on a blocking request (plans/user-todos.md, the idle endgame): the predicate's reads are the arm
+    # record (utarm), the blocking rows (usertodos), _last_state and the interrupt gate over the states log, the tail walk
+    # over the parse and the peer edge (wait)
+    "_user_todo_idle": ("sig", ("utarm", "usertodos", "states", "transcript", "wait", "parse")),
+    "_user_todo_placeholder": ("pure", "over the blocking rows the usertodos component carries and the session facts; carries _ageT, no clock"),
+    "_ut_floor_disarm": ("pure", "a WRITE of the arm record, re-read by the key (utarm, a deps component); its return enters nothing"),
 }
 
 # ── the module-scope names the body reads without calling, name -> (kind, labels or note) ─────────────────
@@ -203,6 +209,7 @@ MODULE_READS = {
     "jd.CITE_MIN_CHARS": ("const", "the judge module's citation floor, an int bound once"),
     "jd.WHY_IN_FLIGHT": ("const", "the in-flight-class stall reasons, a tuple of the judge module's constant strings"),
     "jd.STATE": ("const", "the state root, a Path bound once at import (handed to the registry write above; the tests rebind it whole)"),
+    "_USER_TODO_BLOCK_WHAT": ("const", "the floored card's one-line story, a string bound once"),
 }
 
 # ── the context fields the body reads, field -> (kind, labels or note) ────────────────────────────────────
@@ -223,7 +230,10 @@ CTX = {
     "store": ("sig", ("store",)),                      # _feed_goals_keyed(fsid), read once in the key
     "closer": ("sig", ("closer", "jactive")),          # the settle gap under the body's gate
     "usertodos": ("sig", ("usertodos",)),              # the session's open request rows (_open_user_todos, read once in the key):
-    #                                                    the entry's userTodos count, the feed frame's marker map
+    #                                                    the entry's userTodos count, the feed frame's marker map, the floor's
+    #                                                    blocking rows
+    "queued": ("sig", ("queued",)),                    # a message the USER authored parked or queued, or a bare rollback armed
+    "compacting": ("sig", ("compacting",)),            # the compaction bracket's boolean, computed in the key like interrupting
 }
 
 # closures defined inside the body: pure over its locals, no component

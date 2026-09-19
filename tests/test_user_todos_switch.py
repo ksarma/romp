@@ -704,6 +704,38 @@ class UnreadableStoreOnThePayload(_PayloadSandbox):
             self.assertIsNone(km._user_todo_fp(SID2))
 
 
+class OffOnTheBadge(_Sandbox):
+    """The badge (_needs_you_count) reads no switch: with requests OFF the store reader returns [] for every sid, so no
+    request-floored card can be built and the number is the per-card rule's, unchanged from before requests existed; with
+    the switch ON a floored card contributes its blocking count. The same feed dict yields the same number either way,
+    because the switch decides which cards EXIST, not how they count."""
+
+    FLOORED = {"asks": [{"itemId": "g1", "sid": SID, "column": "needs_input", "board": "feed", "category": "needs_input",
+                         "blocked": {"state": "userTodos", "count": 3, "open": 3, "what": "stopped"}}]}
+    HARD = {"asks": [{"itemId": "g1", "sid": SID, "column": "needs_input", "board": "feed", "category": "needs_input",
+                      "blocked": {"state": "permission", "what": "stopped"}}]}
+
+    def test_the_count_has_no_switch_read(self):
+        self.assertNotIn("_user_todos_on", inspect.getsource(km._needs_you_count))
+        self.assertNotIn('feed.get("userTodos")', inspect.getsource(km._needs_you_count),
+                         "the frame's marker map is not the badge's source: the floored card is")
+
+    def test_off_no_floored_card_can_exist_so_the_number_is_the_per_card_rule(self):
+        # a blocking row stored behind the off switch: the reader hides it, so nothing floors and nothing counts it
+        km._set_user_todos(True)
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        km._set_user_todos(False)
+        self.assertEqual(km._open_user_todos(SID), [], "off: the floor's reader sees no blocking request")
+        self.assertEqual(km._blocking_user_todos(SID), [])
+        self.assertEqual(km._needs_you_count(self.HARD), 1, "a hard stop counts once, as ever")
+
+    def test_on_a_floored_card_contributes_its_blocking_count(self):
+        km._set_user_todos(True)
+        self.assertEqual(km._needs_you_count(self.FLOORED), 3)
+        km._set_user_todos(False)
+        self.assertEqual(km._needs_you_count(self.FLOORED), 3, "the same dict, the same number: the switch decides which cards exist")
+
+
 class RegisterForward(_Sandbox):
     """POST /usertodo for a sid another kernel owns: the forward keeps the remote's status."""
 

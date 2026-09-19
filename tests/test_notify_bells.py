@@ -213,6 +213,31 @@ class FeedNotifications(unittest.TestCase):
             _feed(_card("TESTSID:g1", "TESTSID", "needs_input", provisional=True)))
         self.assertEqual(out, [], "placeholder churn is not a stable card")
 
+    def test_a_request_floored_card_re_entering_with_the_same_blocking_set_is_silent_and_a_new_id_fires(self):
+        # the idle floor (plans/user-todos.md): a card floored by its session's blocking requests dips to Working on
+        # the events the floor stands down on and returns at the next settle; the news test for its push is the floored
+        # blocking SET, not the column transition, so the same set re-entering is silent and a blocking id joining fires
+        sid = "5a5a5a5a-1111-4222-8333-944444444421"
+        km._NOTIFY_UT_FIRED[0].clear()
+        self.addCleanup(km._NOTIFY_UT_FIRED[0].clear)
+        km._user_todos_cache.clear(); km._user_todos_switch_cache.clear()
+        self.addCleanup(km._user_todos_cache.clear)
+        self.addCleanup(km._user_todos_switch_cache.clear)
+        km._set_user_todos(True)
+        km._add_user_todo(sid, "Need the auth-scheme decision to wire login", blocking=True)
+        km._set_session_flag(sid, "notify", True)
+
+        def floored(on):
+            blocked = {"state": "userTodos", "count": 1, "open": 1, "what": "stopped"} if on else None
+            return _feed(_card(sid + ":g1", sid, "needs_input" if on else "working", board="feed",
+                               category="needs_input" if on else "working", blocked=blocked))
+        km._feed_notifications(floored(False))
+        self.assertEqual(len(km._feed_notifications(floored(True))), 1, "the first floor announces")
+        km._feed_notifications(floored(False))
+        self.assertEqual(km._feed_notifications(floored(True)), [], "the same blocking set re-entering is not news")
+        km._add_user_todo(sid, "Need the staging port", blocking=True)
+        self.assertEqual(len(km._feed_notifications(floored(True))), 1, "a blocking id joining the floored set fires")
+
     def test_an_armed_card_leaving_the_feed_is_pruned(self):
         km._set_notify_card("TESTSID:g1", True)
         km._feed_notifications(_feed(_card("TESTSID:g1", "TESTSID", "working")))

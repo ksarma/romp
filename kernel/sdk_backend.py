@@ -5151,8 +5151,9 @@ def _enqueue_with_id(s, text: str, uuid_, t, todo: str = ""):
 def queue_meta_from_reg(reg: dict) -> list:
     """The per-copy identities the registry mirror carries for reg['queue'], ALIGNED with it (one entry per text,
     None for a copy without one). reg['queueMeta'] lists {"text", "qid", "qts"} for each identified copy in queue
-    order (_persist_queue), text alone for an id-less one, and "todo", the id of the user request the copy ANSWERS,
-    on an entry that carries one. The run is aligned as one BLOCK of the queue, wherever
+    order (_persist_queue), text alone for an id-less one, "todo", the id of the user request the copy ANSWERS,
+    on an entry that carries one, and "user", true on a copy the USER sent (SdkBackend.send's `user`; the kernel's
+    idle floor reads it as queued intent). The run is aligned as one BLOCK of the queue, wherever
     the reg-level edits that know texts only (a boot notice prepended, a re-delivered send appended, the
     crash-resume nudge) have shifted it; only a run no block of the queue matches falls to first-in-first-out by
     text over the identified entries. An older kernel's mirror, which has no queueMeta, restores id-less copies
@@ -5173,6 +5174,8 @@ def queue_meta_from_reg(reg: dict) -> list:
             out["paths"] = [str(x) for x in m["paths"] if isinstance(x, str)]   # the attachment list survives a restart with the copy (T373 fold)
         if todo:
             out["todo"] = todo
+        if m.get("user") is True:
+            out["user"] = True                        # the author bit survives a restart with the copy
         return out
 
     # the mirror lists EVERY position (text alone for an id-less copy): align the mirrored run as one block of the
@@ -5690,7 +5693,9 @@ class SdkSession:
         with self._lock:
             if len(self._pending_meta) != len(self._pending):
                 return None
-            return [{"md": t, "qid": (m or {}).get("qid"), "qts": (m or {}).get("qts"), **({"paths": m["paths"]} if isinstance(m, dict) and m.get("paths") else {})}
+            return [{"md": t, "qid": (m or {}).get("qid"), "qts": (m or {}).get("qts"),
+                     **({"paths": m["paths"]} if isinstance(m, dict) and m.get("paths") else {}),
+                     **({"user": True} if isinstance(m, dict) and m.get("user") is True else {})}
                     for t, m in zip(self._pending, self._pending_meta)]
 
     def qids_for_landing(self, uuid_: str, texts, t=None):
@@ -5744,14 +5749,17 @@ class SdkSession:
             self._fed_meta = [f for f in self._fed_meta if f.get("qid") != qid]
 
     def enqueue(self, text: str, qid: str | None = None, qts: int | None = None, paths: list | None = None,
-                todo: str = ""):
+                todo: str = "", user: bool = False):
         """Deliver a user turn (called from the kernel thread). Held in self._pending —
         VISIBLE to pending_queued — until the input generator releases it at turn end. Works
         before the loop is ready too (the generator drains _pending on its first pass). `qid`/`qts`:
         the copy's identity (send() mints them; a caller without one queues an id-less copy). `todo`: the id
         of the user request this text ANSWERS (SdkBackend.send's user_todo), riding the entry itself
         (_TodoText) and the mirror beside the copy's identity, so a recall reads it off the entry it removes
-        and never off a kernel-side table a restart empties. The meta dict is as before: qid, qts, paths."""
+        and never off a kernel-side table a restart empties. `user`: the text is a message the USER sent (send's own
+        `user`), recorded as `user: true` beside the copy's identity (the meta, the mirror, pending_meta) so the kernel's
+        idle floor can tell the user's queued message from a machine one; an id-less copy records nothing, as for paths,
+        and a machine send leaves the meta as before. The meta dict is otherwise as before: qid, qts, paths."""
         if todo:
             text = _TodoText(text, todo)
         with self._lock:
@@ -5760,6 +5768,8 @@ class SdkSession:
             meta = {"qid": qid, "qts": qts} if qid else None
             if meta is not None and paths:
                 meta["paths"] = [str(x) for x in paths if isinstance(x, str) and x]   # the attachments the send carried, beside its id (T373 fold)
+            if meta is not None and user:
+                meta["user"] = True                   # the author bit, beside the identity
             self._q_append(text, meta)
             loop, wake = self.loop, self._input_wake
         self._persist_queue()
@@ -5852,7 +5862,8 @@ class SdkSession:
         with self._lock:
             snap = list(self._pending)
             metas = list(self._pending_meta)
-        qmeta = [{"text": t, "qid": m["qid"], "qts": m.get("qts"), **({"paths": m["paths"]} if m.get("paths") else {})} if isinstance(m, dict) and m.get("qid") else {"text": t}
+        qmeta = [{"text": t, "qid": m["qid"], "qts": m.get("qts"), **({"paths": m["paths"]} if m.get("paths") else {}),
+                  **({"user": True} if m.get("user") is True else {})} if isinstance(m, dict) and m.get("qid") else {"text": t}
                  for t, m in zip(snap, metas)]        # every position, so the restore aligns the run as a block
         for t, e in zip(snap, qmeta):
             if getattr(t, "todo", ""):
@@ -13515,7 +13526,9 @@ class SdkBackend:
             return s.pending_meta()
         reg = read_reg(self.state_dir, sid) or {}
         texts = [t for t in (reg.get("queue") or []) if isinstance(t, str) and t]
-        return [{"md": t, "qid": (m or {}).get("qid"), "qts": (m or {}).get("qts"), **({"paths": m["paths"]} if isinstance(m, dict) and m.get("paths") else {})}
+        return [{"md": t, "qid": (m or {}).get("qid"), "qts": (m or {}).get("qts"),
+                 **({"paths": m["paths"]} if isinstance(m, dict) and m.get("paths") else {}),
+                 **({"user": True} if isinstance(m, dict) and m.get("user") is True else {})}
                 for t, m in zip(texts, queue_meta_from_reg(reg))]
 
     def qid_for_landing(self, sid: str, uuid_: str, text: str, t=None):
@@ -13633,7 +13646,9 @@ class SdkBackend:
 
         `user_todo`: the id of the user request the text ANSWERS, None for every other message. It rides the queue
         entry (SdkSession.enqueue's `todo`, a _TodoText the mirror carries beside the copy's identity) and the echo
-        (`_todo`, mirrored as `todo`), so a recall or a loss detected later can name the request. The stand-down
+        (`_todo`, mirrored as `todo`), so a recall or a loss detected later can name the request. `user` also rides the
+        queue entry's meta (`user: true`, mirrored beside the identity), so the kernel's idle floor can tell a message
+        the user queued from a machine one (plans/user-todos.md, the idle endgame). The stand-down
         arm below runs for automatic messages (`user=False`) only; its mirror entry carries no id and writes no
         echo, so an answer sent that way into a stood-down session loses the id there."""
         if user:
@@ -13670,11 +13685,13 @@ class SdkBackend:
         # in the id it minted at park time. Synthetic uuid; the echo is pruned by text once the transcript
         # writes the real user atom.
         key = qid or "echo:" + uuid.uuid4().hex
+        kw = {"qid": key, "qts": int(time.time() * 1000), "paths": paths or None}
+        if user_todo:
+            kw["todo"] = str(user_todo)                      # an answer's id rides the entry (_TodoText)
+        if user:
+            kw["user"] = True                                # the author bit rides the entry's meta (the kernel's idle floor reads it)
         try:
-            if user_todo:
-                s.enqueue(text, qid=key, qts=int(time.time() * 1000), paths=paths or None, todo=str(user_todo))   # an answer's id rides the entry (_TodoText)
-            else:
-                s.enqueue(text, qid=key, qts=int(time.time() * 1000), paths=paths or None)
+            s.enqueue(text, **kw)
         except TypeError:                                    # a stand-in session that takes the text alone: an id-less copy
             s.enqueue(text)
         # optimistic input echo: show the user's own message INSTANTLY (neither the transcript nor the

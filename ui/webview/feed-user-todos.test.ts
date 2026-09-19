@@ -30,7 +30,7 @@ test("the marker is a hidden BUTTON minted with the card, kept on it, and painte
   assert.match(FEED, /row2\.append\(utMark\);/, "a direct row2 child in its own append");
   assert.match(FEED, /a\._utMark = utMark;/);
   assert.ok(PAINT.length > 0, "the paint block sits in updateAskCard");
-  assert.match(PAINT, /if \(utn > 0\) \{/, "shown while the session has an open request");
+  assert.match(PAINT, /if \(utn > 0 && !isUtFloor\) \{/, "shown while the session has an open request, on every card but the floored one (its chip carries the story)");
   assert.match(PAINT, /utMark\.textContent = utn > 1 \? "⚑ " \+ utn \+ " requests" : "⚑ request";/, "the count only past one");
   assert.match(PAINT, /setTip\(utMark, /, "a styled tip, like the row's other badges");
   assert.match(PAINT, /utMark\.onclick = \(ev: Event\) => \{ ev\.stopPropagation\(\); vscodeApi\?\.postMessage\(\{ type: "openSession", id: it\.sid, live: true \}\); \};/,
@@ -57,10 +57,20 @@ test("the count is a paint input of the card gate: the env member reads the map,
   assert.match(GATE, /String\(env\.userTodos\(it\.sid\) \|\| ""\),/, "in the key, empty for none so a request-less card's key is unchanged");
 });
 
-test("GUARD: the floor's state does not exist yet: no badge text and no marker yield for blocked.state === \"userTodos\"; the blocked tip's suffix stands", () => {
-  assert.ok(!FEED.includes('blocked.state === "userTodos"'), "the escalation is a later change's, in one place with its state");
-  assert.ok(!FEED.includes('"⚑ waiting on you"'));
-  assert.match(FEED, /setTip\(a\._blocked as HTMLElement, it\.blocked\.what \+ "[^"]*click to jump to the prompt in the chat"\);/);
+test("the idle floor's card (blocked.state userTodos, plans/user-todos.md) wears a request chip with its blocking count, never the picker fallthrough, tipped with the kernel's story, and its marker stands down", () => {
+  const CHIP = FEED.slice(FEED.indexOf('const isUtFloor = it.blocked?.state === "userTodos";'), FEED.indexOf("const utn = userTodosMap[it.sid] || 0;"));
+  assert.ok(CHIP.length > 0, "the chip block sits before the marker's paint");
+  assert.match(CHIP, /: isUtFloor \? \(utCount > 1 \? "⏸ " \+ utCount \+ " requests" : "⏸ request"\)\s*\n\s*: "⏸ picker";/, "the request chip in the ⏸ family, the count past one, before the picker fallthrough");
+  assert.match(CHIP, /const utCount = isUtFloor \? Number\(it\.blocked\.count \|\| 0\) : 0;/, "the count is the kernel's blocked.count, guarded");
+  assert.match(CHIP, /const blkSuffix = isUtFloor\s*\n\s*\? " \(click to open its chat and reply\)"\s*\n\s*: " [^"]*click to jump to the prompt in the chat";\s*\n\s*setTip\(a\._blocked as HTMLElement, it\.blocked\.what \+ blkSuffix\);/, "the story is the kernel's; the suffix says where the click lands");
+  assert.match(CHIP, /a\._blocked\.setAttribute\("aria-label", it\.blocked\.what \+ blkSuffix\);/, "setTip drops the native title: the story is the chip's accessible name too");
+  assert.match(PAINT, /if \(utn > 0 && !isUtFloor\) \{/, "the floored card's marker stands down: the chip is the story");
+  const strings = [...CHIP.matchAll(/"([^"\n]*)"/g)].map((m) => m[1]).filter((s) => /[a-z]{3}/.test(s) && !/^(openSession|userTodos|permission|none)$/.test(s));
+  for (const s of strings) {
+    assert.doesNotMatch(s, /todo/i, s);
+    assert.doesNotMatch(s, /waiting on you/i, s);
+  }
+  assert.match(FEED, /count\?: number; open\?: number;\s+\/\/ userTodos/, "the AskItem type names the two fields the kernel's floored card carries");
 });
 
 test("the marker's rule: dim by default (a marker, never an alarm), theme tokens for its border and hover, the button resets, a focus-visible arm, no hardcoded white", () => {

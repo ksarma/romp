@@ -221,31 +221,87 @@ mechanisms carry the load instead:
 
 While the session still works, an open request changes no card's column: the session is not waiting on the
 user, it told them so. The one earned move: **when the session goes idle with an open BLOCKING request and
-nothing else dispatched (no open turn, no background work awaited), the request IS the session's frontier**,
-and its card escalates to Blocked (needs-input). A non-blocking request never floors a card.
+nothing else dispatched, the request IS the session's frontier**, and its focus card escalates to Blocked
+(needs-input). A non-blocking request never floors a card and never stands the nudge down: it is information the
+card already shows, not a stop. The flag's default (false) keeps every request filed before the flag existed
+from flooring until an agent says otherwise.
 
-Mechanically this is a read-side floor in the `perm_top` family, NOT a judge verdict: a verdict would land in
-the diary the unblocker examines and could be lifted like any other block. A session with no open card gets
-a needs-input placeholder, the same way a goal-less permission prompt does. Both directions are event-keyed,
-per the card-move rule: the floor arms on the turn-end or await-drain that empties the frontier while a
-blocking request stands, and stands down when the request clears or the session starts new work (a message
-arrived, the user acted), each a real event, never a per-build re-derivation from a flapping proxy.
+**A read-side floor inside the memoized feed entry.** The floor lives in `_feed_session_entry`, the `perm_top`
+family, never a judge verdict: a verdict would land in the diary the unblocker examines and could be lifted like
+any other block. The feed serves a session's cards from a per-session memo while the key of its inputs stands,
+so every input the floor reads is a key component: the blocking rows (`usertodos`, the sorted open ids), the arm
+record (`utarm`), the queued-intent triple (`queued`), the compaction bracket (`compacting`), the states log, the
+parse and the peer edge (`wait`). Three labels rather than one, so a miss is attributed to the input that moved.
+The arm record is the one side effect the body writes; its component is re-evaluated after the derivation
+(`_feed_key_with_deps`), so a record change costs exactly the derivation that made it and the next unchanged
+build hits.
 
-**The status nudge stands down for a session whose idle is already explained by open requests**, the same
-reasoning as the no-check-ins call: the request already says what a nudge would fish for, and the escalated
-card, not a manufactured turn, is the surface. Scoped to the status-nudge branch ALONE: the awaiting WAKE flows
-past an open request, because it is the lost-wakeup backstop for dispatched background work, not a status
-ask; and the DEBT machinery flows past too, because it is the one mechanism that unparks a peer silently
-waiting on this session's answer, and a request says nothing about what a peer needs. The stand-down lifts the
-moment the last request clears: answer, dismiss or withdraw, each a real event the gate's store read sees
-live.
+**The events behind the move (`_user_todo_idle`).** Working to Blocked on the settle: the parsed turn's end with
+the states log's newest record not progressing at or after it (the status nudge's genuine-stop discriminator,
+two transcript times, so a mid-turn lull never arms), a blocking request open, no live story, no peer edge, no
+human intent queued. The settle is recorded (`_UT_FLOOR_ARM`: the blocking set and the settled turn's end), and
+the record holds the floor through a turn the user did not open: a peer's mail, a reminder, a harness
+notification, a monitor wake. Blocked to Working on the events that are news, each spending the record: the
+blocking set changing (an answer, a dismiss, a withdraw, a new blocking request), the human speaking to the
+session (an author-human atom after the arm, wherever it sits, found by a bounded walk over the turns after the
+settled one), a message the user queued or parked, a user interrupt, a peer owing the session a reply (the
+`_wait_for_graph` edge), or the session leaving the live map. A live permission or judge-auth prompt, an API
+error and a compaction outrank the floor for their duration and leave the record alone: none is the user acting,
+and the floor returns with the record at the next settle without a fresh push. The answer to a permission or
+judge-auth prompt is not a stand-down event (it leaves no human atom in the transcript): after an approval on a
+held turn the card wears the floor until the next settle re-derives it, an open call.
+
+**Queued intent is keyed on authorship at the source that knows it.** A parked op the user sent carries the
+fifth slot (`_op_user`); an SDK queue entry the user sent carries `user: true` on its meta, recorded by
+`SdkBackend.send`, mirrored in the registry beside the copy's identity, restored by the seed and exposed by
+`pending_queued_meta` on the live and the dead arm. A machine entry (a nudge, a reminder, a peer delivery, a
+watch notice) moves nothing. A backend that cannot say who queued (Codex today) reads no human intent, which
+holds the floor; the user's message spends the record when its atom lands in the transcript, one queue wait
+later. The floor never reads the text-shape filter the nudge's own queued-input gate uses.
+
+**A goal-less session gets a placeholder** in the goal-less permission prompt's shape (`_user_todo_placeholder`):
+the oldest blocking request titles it with the count of the other blocking ones, the newest blocking request's
+time is its time, and it is provisional. The notification diff skips provisional cards, so a goal-less floored
+session never pushes, as the permission twin never does, while the badge counts its blocking requests. That is
+segment E's own call, recorded here; a non-provisional placeholder is a one-flag change, and the bell's dedup
+would then ride the column rule. One session shows one interrupt presentation at a time: the placeholder yields
+to any card already in Blocked, and the provisional working placeholder is not painted beside a floored card.
+
+**The status nudge stands down for a session whose idle a blocking request explains**, the same reasoning as
+the no-check-ins call: the request already says what a nudge would fish for, and the escalated card, not a
+manufactured turn, is the surface. Scoped to the status-nudge branch ALONE: the awaiting WAKE flows past a
+blocking request, because it is the lost-wakeup backstop for dispatched background work, not a status ask; and
+the DEBT machinery flows past too, because it is the one mechanism that unparks a peer silently waiting on this
+session's answer, and a request says nothing about what a peer needs. The stand-down lifts the moment the last
+blocking request clears: answer, dismiss or withdraw, each a real event the gate's store read sees live.
+
+**The badge (`_needs_you_count`)** keeps the per-card, board-aware rule and adds one thing: a request-floored
+presentation counts its blocking requests instead of itself, provisional or not. A session hard-stopped for
+another reason while it holds requests counts once, as the stop: the permission, API and judge-auth floors win
+the card. No switch branch: with the switch off no floored card exists, since the store reader returns nothing,
+and the number is what it was before requests existed.
+
+**The notification latch (`_NOTIFY_UT_FIRED`).** The floored card dips to Working on the stand-down events and
+returns at the next settle, a designed move, and the column diff would read each re-entry as news. The news test
+for a floored card is its floored blocking set: the push fires on the first arm and when a blocking id joins
+the set; an identical set re-entering is silent. The latch is seeded from the floored world on the first build
+of a kernel life (that state is already told), un-latched for one id at a corroborated answer loss
+(`_user_todo_answer_lost`, so the re-floor's push says the answer never arrived) and never at the user's own
+recall.
+
+**The tracking switch.** With task tracking off, `build_feed` never runs (the off frame replaces it), so the
+floor, the widened badge and the latch vanish by construction while the card by the composer and the tab flag
+stay; the requests switch off empties the store reader every one of them reads.
 
 **The peer-wait stand-down is local-host only, a known limitation, documented not fixed.** The floor reads
 its peer-wait input from `_wait_for_graph`, which keeps an edge only when the awaited peer is in THIS kernel's
 alive set: an unanswered ask to a federated peer makes no edge, so a session idle on a cross-host reply still
 floors as needs-you. The waitingOn chip and the auto-nudge tick's skip inherit the exact same scope, all three
-read the same graph, deliberately. Widening `_wait_for_graph` lifts every surface at once. Segment E builds the
-floor, the placeholder, the stand-down, the badge and the notification latch.
+read the same graph, deliberately. Widening `_wait_for_graph` lifts every surface at once.
+
+**The housekeeping prune** (`_prune_user_todos`, the `pruneUserTodos` stage of the jobs pass, after the death
+record is stamped) also spends the arm record of a session whose death is corroborated, on the evidence the row
+prune reads, and returns before any death read when the store is empty.
 
 ### Surfaces
 
@@ -276,11 +332,11 @@ The flag says "something here waits on you", the card says what. Segment D.
 are session-scoped, not card-scoped). **No feed strip in v1**: the feed's banner slot stays single-purpose.
 Segment D.
 
-**(d) The app badge.** `_needs_you_count` widens to one number for "things only the user can move": open
-requests (of non-ended sessions) plus hard-stopped needs-input sessions (the permission-prompt class stays in;
-the author confirmed, 2026-08-20). Dedup rule: the escalation floor is a presentation of requests the count
-already includes, so an idle session escalated by its requests adds nothing extra; a session hard-stopped for
-another reason counts once as itself. Per-item decision cards count per CARD, not per session. Segment E.
+**(d) The app badge.** `_needs_you_count` keeps its per-card, board-aware rule and adds one thing: a card the
+idle floor moved to Blocked counts its session's blocking requests in its place (the provisional placeholder
+included), since the requests are the things to move and the card is their presentation. Every other card that
+needs the user counts once, as itself; a session hard-stopped for another reason while it holds requests counts
+once, as the stop. Per-item decision cards count per card, as before. Segment E.
 
 **Muted sessions, a deliberate asymmetry.** A `hideFromFeed` mute quiets the feed and every aggregate built
 from it (the card marker, the idle-escalation floor and the badge), because mute means "stop interrupting me

@@ -31,7 +31,12 @@ Covered here, kernel side:
   back (_user_todo_context_block: the agent's own notes, newest first, cut at the card's twelve, a pure
   read), its read-only route POST /usertodo/context over the same harness (token, the 400 shapes, `enabled`,
   never a forward, never a push), and the hook's wiring (the switch file's name, install.sh's link and sync
-  SessionStart entry, bin/romp-uninstall's removal, the executable bit).
+  SessionStart entry, bin/romp-uninstall's removal, the executable bit);
+- the idle endgame (segment E): the floor's arming read (_user_todo_idle: the settle on blocking ids alone, the arm
+  record and the events that spend it, the bounded tail walk), its wiring through the real build_feed (the yield to
+  every live floor, the focus card's field pair and story, the goal-less placeholder, the memo components that key
+  every input the floor reads, one interrupt presentation per session), the push latch on the floored blocking set,
+  the badge's per-card rule over a floored card, the status nudge's stand-down, and the prune's arm records.
 
 Synthetic fixtures only: private placeholder uuids, the notes-api demo world.
 """
@@ -2655,6 +2660,1303 @@ class HookWiring(unittest.TestCase):
         p = self.ROOT / "hooks" / "romp-usertodo-context.sh"
         self.assertTrue(p.exists(), "no hook file")
         self.assertTrue(p.stat().st_mode & stat.S_IXUSR, "the execute bit is off: Claude Code cannot run it")
+
+
+# ── segment E: the idle floor, the nudge stand-down, the badge and the latch ───────────────────────────────────────
+
+class EscalationFloorPredicate(_StoreSandbox):
+    """The floor's ARMING read (_user_todo_idle): True only when the session has SETTLED idle with a BLOCKING request
+    open and nothing else in motion (no open turn, nothing dispatched, no live prompt, no compaction, no human message on
+    its way in, no peer owing it a reply), the exact idle the status nudge requires. The queued-intent bit and the
+    compaction bit are ARGUMENTS the key computes (both values driven here); the states log and the interrupt gate are
+    read through their own helpers. Every stand-down is a real event; a mid-turn lull never arms; a settled record holds
+    the floor through a turn the user did not open. Synthetic turns and a private state root."""
+
+    PS = {"turns": [{"id": "t1", "t": NOW - 60, "end": NOW - 30, "ended": True, "atoms": []}]}
+    BLOCKING = ["ut-11111111"]
+
+    def setUp(self):
+        super().setUp()
+        km._UT_FLOOR_ARM.clear()
+        self.addCleanup(km._UT_FLOOR_ARM.clear)
+
+    def _idle(self, sid=SID, ps=None, who_working=False, awaiting=None, perm_state=None, aerr=None,
+              last_state=("waiting", NOW - 20), queued=False, compacting=False, interrupted=False,
+              peer_wait=None, blocking=None):
+        patches = [
+            mock.patch.object(km, "_last_state", lambda s: last_state),
+            mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, s="", **k: interrupted),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        return km._user_todo_idle(sid, self.PS if ps is None else ps, who_working, awaiting, perm_state, aerr,
+                                  peer_wait, queued, compacting, self.BLOCKING if blocking is None else blocking)
+
+    def test_a_settled_idle_session_with_a_blocking_request_arms(self):
+        self.assertTrue(self._idle())
+        self.assertEqual(km._UT_FLOOR_ARM.get(SID), (frozenset(self.BLOCKING), NOW - 30),
+                         "the record: the blocking set and the settled turn's end")
+        self.assertEqual(km._ut_floor_record(SID), (("ut-11111111",), NOW - 30), "the key's view of it, sorted")
+
+    def test_only_non_blocking_requests_never_arm(self):
+        self.assertFalse(self._idle(blocking=[]), "a non-blocking request is information the card shows, not a stop")
+        self.assertNotIn(SID, km._UT_FLOOR_ARM)
+        self.assertIsNone(km._ut_floor_record(SID))
+
+    def test_an_open_turn_never_arms(self):
+        self.assertFalse(self._idle(who_working=True))
+        self.assertNotIn(SID, km._UT_FLOOR_ARM)
+
+    def test_dispatched_background_work_never_arms(self):
+        self.assertFalse(self._idle(awaiting="waiting on 2 agents"))
+
+    def test_a_live_prompt_or_the_compaction_bit_never_arms(self):
+        self.assertFalse(self._idle(perm_state="permission"))
+        self.assertFalse(self._idle(perm_state="picker"))
+        self.assertFalse(self._idle(perm_state="compacting"))
+        self.assertFalse(self._idle(compacting=True), "the bit is the argument; the predicate reads no clock")
+        self.assertNotIn(SID, km._UT_FLOOR_ARM)
+
+    def test_an_api_error_wins(self):
+        self.assertFalse(self._idle(aerr={"status": 529, "text": "overloaded"}))
+
+    def test_a_human_message_on_its_way_in_spends_the_record_and_a_machine_entry_holds_it(self):
+        self.assertTrue(self._idle(), "armed at the settle")
+        self.assertTrue(self._idle(who_working=True, queued=False),
+                        "a turn the user did not open, nothing of theirs queued: the record holds the floor")
+        self.assertFalse(self._idle(who_working=True, queued=True), "the user's message is queued: their move")
+        self.assertNotIn(SID, km._UT_FLOOR_ARM, "spent, not suppressed")
+        self.assertFalse(self._idle(who_working=True), "no record: an open turn is not idle")
+        self.assertFalse(self._idle(queued=True), "and a settle under queued intent does not arm either")
+
+    def test_a_user_interrupt_spends_it(self):
+        self.assertTrue(self._idle())
+        self.assertFalse(self._idle(interrupted=True))
+        self.assertNotIn(SID, km._UT_FLOOR_ARM)
+
+    def test_an_unreadable_interrupt_gate_reads_unknown_never_idle(self):
+        seen = []
+
+        def boom(turns, sid="", **k):
+            seen.append((len(turns), sid))
+            raise RuntimeError("unreadable")
+        self.assertTrue(self._idle(), "armed first")
+        with mock.patch.object(km, "_last_state", lambda s: ("waiting", NOW - 20)), \
+             mock.patch.object(km, "_interrupt_suppresses_nudge", boom):
+            self.assertFalse(km._user_todo_idle(SID, self.PS, False, None, None, None, None, False, False,
+                                                self.BLOCKING))
+        self.assertEqual(seen, [(1, SID)], "asked once, with the turns and the sid")
+        self.assertIn(SID, km._UT_FLOOR_ARM, "unknown touches nothing: the record stands")
+
+    def test_waiting_on_a_live_peer_never_floors_and_the_edge_lifting_lets_it_arm(self):
+        edge = {"peerSid": SID2, "name": "api", "color": None, "inCycle": False, "since": NOW - 900, "kind": "question"}
+        self.assertFalse(self._idle(peer_wait=edge), "the idle is the peer's to explain")
+        self.assertNotIn(SID, km._UT_FLOOR_ARM)
+        self.assertTrue(self._idle(peer_wait=None), "the peer's reply drops the edge: the floor may claim the idle")
+        self.assertFalse(self._idle(peer_wait=edge), "a new ask to a live peer spends the record")
+        self.assertNotIn(SID, km._UT_FLOOR_ARM)
+
+    def test_no_parse_or_no_turns_reads_unknown_never_idle(self):
+        self.assertFalse(self._idle(ps={}))
+        self.assertFalse(self._idle(ps={"turns": []}))
+        self.assertFalse(km._user_todo_idle(SID, None, False, None, None, None, None, False, False, self.BLOCKING))
+        self.assertNotIn(SID, km._UT_FLOOR_ARM)
+
+    def test_a_mid_turn_lull_never_arms(self):
+        # the states log progressing AT or AFTER the parsed turn's end: the stop is not real (the nudge's own discriminator)
+        self.assertFalse(self._idle(last_state=("working", NOW - 10)))
+        self.assertFalse(self._idle(last_state=("working", NOW - 30)))
+        self.assertNotIn(SID, km._UT_FLOOR_ARM)
+
+    def test_a_stale_progressing_record_before_the_turn_end_does_not_wedge(self):
+        self.assertTrue(self._idle(last_state=("working", NOW - 40)), "a lost post-turn write must not pin the floor off")
+
+    def test_the_deciding_events_re_derive_it_cleanly(self):
+        def opened_by(author, text="a word from someone"):
+            settled = dict(self.PS["turns"][0])
+            atom = {"uuid": "u2", "type": "user", "author": author, "t": NOW - 10,
+                    "message": {"role": "user", "content": text}}
+            return {"turns": [settled, {"id": "t2", "t": NOW - 10, "trigger": {"uuid": "u2"}, "atoms": [atom]}]}
+
+        def absorbed(author):
+            held = dict(self.PS["turns"][0])
+            held.pop("end", None)
+            held.pop("ended", None)
+            held["atoms"] = [{"uuid": "u2", "type": "user", "author": author, "t": NOW - 10,
+                              "message": {"role": "user", "content": "a word from someone"}}]
+            return {"turns": [held]}
+        peer = {"peer": SID2, "mid": "m-11111111", "kind": "coordinate"}
+        self.assertFalse(self._idle(who_working=True), "nothing armed: an open turn is not idle")
+        self.assertTrue(self._idle(), "the settle arms the record")
+        self.assertTrue(self._idle(ps=opened_by(peer), who_working=True), "a peer-opened turn holds the floor")
+        self.assertTrue(self._idle(ps=opened_by("romp"), who_working=True), "a romp reminder holds it")
+        self.assertTrue(self._idle(ps=absorbed("system"), who_working=True), "a harness notification absorbed into the settled turn holds it")
+        self.assertFalse(self._idle(ps=absorbed("human"), who_working=True), "the human's message absorbed into a turn they did not open stands it down")
+        self.assertTrue(self._idle(), "the next settle re-arms it")
+        self.assertFalse(self._idle(ps=opened_by("human"), who_working=True), "the human opening a turn stands it down")
+        self.assertFalse(self._idle(ps=opened_by(peer), who_working=True), "and spends the record: the next peer turn finds nothing to hold")
+        self.assertTrue(self._idle(), "the next settle re-arms it")
+        self.assertTrue(self._idle(blocking=["ut-11111111", "ut-22222222"]),
+                        "the blocking set changing spends the old record; settled idle under the new set, the same read re-arms on it")
+        self.assertEqual(km._UT_FLOOR_ARM.get(SID), (frozenset({"ut-11111111", "ut-22222222"}), NOW - 30),
+                         "the new set is the record")
+        self.assertFalse(self._idle(ps=opened_by(peer), who_working=True, blocking=["ut-11111111"]),
+                         "under an open turn the set changing stands the floor down: the record is spent and nothing holds")
+
+    def test_a_same_count_swap_of_the_blocking_set_is_a_set_change(self):
+        # the record is the blocking IDS, never their count: one withdrawn and another filed in one step spends it
+        self.assertTrue(self._idle(blocking=["ut-11111111"]))
+        self.assertFalse(self._idle(who_working=True, blocking=["ut-22222222"]),
+                         "under an open turn the swapped set stands the floor down: the record is spent and nothing holds")
+        self.assertNotIn(SID, km._UT_FLOOR_ARM)
+        self.assertTrue(self._idle(blocking=["ut-22222222"]), "the settle re-arms on the new id")
+        self.assertEqual(km._UT_FLOOR_ARM.get(SID), (frozenset({"ut-22222222"}), NOW - 30))
+
+    def test_the_stand_down_read_is_a_bounded_tail_walk(self):
+        # 400 ended turns before the arm, then a turn a peer opened: the walk scans the atoms of the turns after the
+        # settled one alone and stops at the first turn that closed at or before the record's end, so a re-derivation
+        # of a long session costs the tail, not the transcript. The earlier turns' atom lists count their iterations
+        reads = []
+
+        class Counted(list):
+            def __iter__(self):
+                reads.append(len(self))
+                return super().__iter__()
+        turns = []
+        for i in range(400):
+            t = NOW - 100000 + i * 100
+            turns.append({"id": "t%d" % i, "t": t, "end": t + 30, "ended": True, "trigger": {"uuid": "u%d" % i},
+                          "atoms": Counted([{"uuid": "u%d" % i, "type": "user", "author": "human", "t": t,
+                                             "message": {"role": "user", "content": "step %d" % i}}])})
+        settled_end = turns[-1]["end"]
+        self.assertTrue(self._idle(ps={"turns": list(turns)}))
+        self.assertEqual(km._UT_FLOOR_ARM[SID][1], settled_end)
+        peer = {"peer": SID2, "mid": "m-11111111", "kind": "coordinate"}
+        held = {"id": "t400", "t": NOW - 10, "trigger": {"uuid": "u400"},
+                "atoms": [{"uuid": "u400", "type": "user", "author": peer, "t": NOW - 10,
+                           "message": {"role": "user", "content": "a word from a peer"}}]}
+        self.assertTrue(self._idle(ps={"turns": turns + [held]}, who_working=True), "a peer-opened turn: held")
+        self.assertEqual(reads, [], "no atom of the 400 earlier turns was read: the walk stopped at the settled turn")
+        self.assertIn(SID, km._UT_FLOOR_ARM, "the record stands")
+        # the bound is the TURN's end, not the atom's stamp: an atom stamped after the arm inside a turn that closed at
+        # or before it is never reached (the walk stops before that turn), where a walk over every turn would read it
+        planted = dict(turns[-1], atoms=[dict(turns[-1]["atoms"][0], uuid="u399-late", t=settled_end + 5)])
+        self.assertFalse(km._human_atom_since(turns[:-1] + [planted, held], settled_end))
+        self.assertEqual(reads, [])
+        # the human speaking in the tail is found with one read, the tail's own
+        after = dict(held, atoms=[{"uuid": "u400", "type": "user", "author": "human", "t": NOW - 10,
+                                   "message": {"role": "user", "content": "the cookie, for now"}}])
+        seen = []
+        real = km.em.is_interrupt_record
+
+        def counting(a):
+            seen.append(a.get("uuid"))
+            return real(a)
+        with mock.patch.object(km.em, "is_interrupt_record", counting):
+            self.assertFalse(self._idle(ps={"turns": turns + [after]}, who_working=True), "the human spoke: spent")
+        self.assertEqual(seen, ["u400"], "one atom read: the turn after the arm, never the 400 before it")
+        self.assertEqual(reads, [], "and still none of the earlier turns' atoms")
+        self.assertNotIn(SID, km._UT_FLOOR_ARM)
+
+    def test_the_tail_walk_reads_the_resumed_last_turn_whole(self):
+        # an idle-led turn that resumed keeps the new prompt in the SAME last turn: the last turn is scanned whole even
+        # when its own time is before the record's end
+        held = dict(self.PS["turns"][0])
+        held.pop("end", None)
+        held.pop("ended", None)
+        held["atoms"] = [{"uuid": "u0", "type": "user", "author": "human", "t": NOW - 60,
+                          "message": {"role": "user", "content": "wire the login routes"}}]
+        self.assertTrue(km._human_atom_since({"turns": [held]}["turns"], NOW - 30) is False,
+                        "the arm's own human atom is at or before the settle: not news")
+        held["atoms"].append({"uuid": "u1", "type": "user", "author": "human", "t": NOW - 5,
+                              "message": {"role": "user", "content": "use the cookie"}})
+        self.assertTrue(km._human_atom_since([held], NOW - 30), "the resumed turn's new human atom is news")
+        rec = {"uuid": "u2", "type": "user", "author": "human", "t": NOW - 4,
+               "message": {"role": "user", "content": [{"type": "text", "text": "[Request interrupted by user]"}]}}
+        self.assertFalse(km._human_atom_since([dict(held, atoms=[held["atoms"][0], rec])], NOW - 30),
+                         "an interrupt record authors human and is excluded (the interrupt gate owns it)")
+
+
+class _FloorWorld(unittest.TestCase):
+    """FeedSeamUserTodos' world (two live sessions, real transcripts, the real build_feed over the live map, the memo
+    reset per case) with the parse, the peer-wait graph and the judge-auth latch under the test's hand, a raw goal
+    store per session and the states log written under STATE. Borrows the seam class's setUp and tearDown as functions,
+    so D's cases run once and not under every class here."""
+    WEB, API = FeedSeamUserTodos.WEB, FeedSeamUserTodos.API
+    _row = staticmethod(FeedSeamUserTodos._row)
+    _feed = FeedSeamUserTodos._feed
+    _delta = FeedSeamUserTodos._delta
+    PEER = {"peer": FeedSeamUserTodos.API, "mid": "m-11111111", "kind": "coordinate"}
+
+    def setUp(self):
+        FeedSeamUserTodos.setUp(self)
+        self._by_path = {str(p): sid for sid, p in self.tpath.items()}
+        self._ps = {}
+        self.wmap = {}
+        self.jauth = {}
+        patches = [
+            mock.patch.object(km, "_parse_cached", lambda path: self._ps.get(self._by_path.get(str(path)))),
+            mock.patch.object(km, "_merge_live_atoms", lambda ps, sid: ps),
+            mock.patch.object(km, "_wait_for_graph", lambda now, sids: dict(self.wmap)),
+            mock.patch.object(jd, "_auth_down_map", lambda: dict(self.jauth)),
+            mock.patch.object(km, "_provisional_card", lambda *a, **k: None),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        jd.GOALDIR.mkdir(parents=True, exist_ok=True)
+        km._UT_FLOOR_ARM.clear()
+        km._last_state_cache.clear()
+        self.addCleanup(km._UT_FLOOR_ARM.clear)
+        self.addCleanup(km._last_state_cache.clear)
+
+    def tearDown(self):
+        FeedSeamUserTodos.tearDown(self)
+
+    # ── the world's writers ──
+    @staticmethod
+    def _turn(tid, t, author, ended=True, text="wire the login routes"):
+        """One parsed turn whose trigger atom carries `author`: 'human', 'romp' or a peer's postal author dict. An ended
+        turn ends 30 s after it opens; an open one has no end and no idle tail, what _session_working reads as open."""
+        atom = {"uuid": tid + "-u", "type": "user", "author": author, "t": t, "message": {"role": "user", "content": text}}
+        turn = {"id": tid, "t": t, "trigger": {"uuid": tid + "-u"}, "atoms": [atom]}
+        if ended:
+            turn["end"] = t + 30
+            turn["ended"] = True
+        return turn
+
+    def _set_turns(self, sid, turns):
+        self._ps[sid] = {"turns": list(turns)}
+
+    def _states(self, sid, *rows):
+        d = jd.STATE / "states"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / (sid + ".jsonl")).write_text("".join(json.dumps({"t": t, "state": v}) + "\n" for v, t in rows))
+        km._last_state_cache.clear()
+
+    def _store(self, sid, nodes, status, last, confirming=()):
+        full = {}
+        for gid, nd in nodes.items():
+            full[gid] = dict({"id": gid, "parentId": None, "t": NOW - 500, "mt": NOW - 500, "nodeComplete": False,
+                              "blocked": False, "cleared": False, "trail": ["s1"], "log": []}, **nd)
+        store = {"rompUuid": sid, "seq": 1, "rev": 1, "placementsV": jd.PLACEMENTS_V, "placements": {},
+                 "nodes": full, "status": dict(status), "lastNode": last, "confirming": list(confirming)}
+        p = jd.GOALDIR / (sid + ".json")
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(store))
+        os.replace(tmp, p)
+
+    def _one_goal(self, sid, text="wire the login flow"):
+        self._store(sid, {"g1": {"text": text}}, {"g1": "working"}, "g1")
+
+    def _settle(self, sid):
+        """The arming shape: one human turn ended at NOW-30 and the post-turn 'waiting' row after it."""
+        self._set_turns(sid, [self._turn("t1", NOW - 60, "human")])
+        self._states(sid, ("working", NOW - 55), ("waiting", NOW - 25))
+
+    # ── the backend's queue read ──
+    _NO_META = object()                                # the shape of a backend without pending_queued_meta (Codex)
+
+    def _queue_meta(self, meta):
+        """km.Sessions.backend_for answers a stand-in over the backend the world resolves, whose pending_queued_meta(sid)
+        reads self._qmeta[sid] at call time: a list of entry metas, None for identities the backend cannot vouch for, an
+        exception instance to raise, [] for a sid absent from it; self._qmeta set to _NO_META leaves the method off the
+        stand-in altogether. Every other attribute is the resolved backend's own. Restored at cleanup."""
+        self._qmeta = meta
+        real = km.Sessions.backend_for
+        world = self
+
+        class Stub:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def __getattr__(self, name):
+                if name == "pending_queued_meta":
+                    if world._qmeta is _FloorWorld._NO_META:
+                        raise AttributeError(name)
+
+                    def read(sid):
+                        v = world._qmeta.get(str(sid), [])
+                        if isinstance(v, BaseException):
+                            raise v
+                        return v
+                    return read
+                return getattr(self._inner, name)
+        p = mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: Stub(real(sid))))
+        p.start()
+        self.addCleanup(p.stop)
+
+    # ── the reads ──
+    @staticmethod
+    def _card(feed, iid):
+        return next(a for a in feed["asks"] if a["itemId"] == iid)
+
+    @staticmethod
+    def _mine(feed, sid):
+        return [a for a in feed["asks"] if str(a.get("sid")) == sid]
+
+    def _column(self, sid=None, iid="g1"):
+        return self._card(self._feed(), iid)["column"]
+
+
+class EscalationFloorWiring(_FloorWorld):
+    """The floor through the REAL build_feed: it yields to every live interrupt, files the focus card under needs_input
+    with the board's field pair and the story, gives a goal-less session the placeholder (its `_ageT` in the memoized
+    entry, its trgb stamped on the wire), treats a floored card as working-equivalent in the provisional chain, and
+    stands down on the peer-wait edge."""
+
+    def setUp(self):
+        super().setUp()
+        self.tid = km._add_user_todo(self.WEB, "Need the auth-scheme decision to wire login", blocking=True)
+        self._one_goal(self.WEB)
+        self._settle(self.WEB)
+
+    def test_a_settled_idle_session_floors_the_focus_card_with_the_story(self):
+        feed = self._feed()
+        g1 = self._card(feed, "g1")
+        self.assertEqual((g1["column"], g1["board"], g1["category"]), ("needs_input", "feed", "needs_input"))
+        self.assertEqual(g1["blocked"], {"state": "userTodos", "count": 1, "open": 1, "what": km._USER_TODO_BLOCK_WHAT})
+        self.assertEqual(g1["distillState"], "blocked", "the brief keys on the genuine block")
+        self.assertNotIn("usertodo:" + self.WEB, [a["itemId"] for a in feed["asks"]], "the focus card carries the story: no placeholder beside it")
+        self.assertEqual(feed["userTodos"], {self.WEB: 1}, "the marker's map still rides")
+        self.assertEqual(km._UT_FLOOR_ARM.get(self.WEB), (frozenset({self.tid}), NOW - 30), "armed at the settle")
+
+    def test_the_count_is_the_blocking_count_and_open_is_every_open_row(self):
+        km._add_user_todo(self.WEB, "Need a staging credential for the tests")   # not blocking
+        km._add_user_todo(self.WEB, "Need the staging port", blocking=True)
+        g1 = self._card(self._feed(), "g1")
+        self.assertEqual((g1["blocked"]["count"], g1["blocked"]["open"]), (2, 3))
+
+    def test_a_non_blocking_request_alone_never_floors(self):
+        km._withdraw_user_todo(self.WEB, self.tid)
+        km._add_user_todo(self.WEB, "Need your opinion on the route names")
+        feed = self._feed()
+        g1 = self._card(feed, "g1")
+        self.assertEqual(g1["column"], "working")
+        self.assertIsNone(g1.get("blocked"))
+        self.assertEqual(feed["userTodos"], {self.WEB: 1}, "the marker shows it; no card moves")
+        self.assertNotIn(self.WEB, km._UT_FLOOR_ARM)
+
+    def test_the_floor_yields_to_every_live_interrupt(self):
+        # a live permission prompt: the perm floor takes the card in the same column, wearing its own story
+        self.live[self.WEB]["state"] = "permission"
+        g1 = self._card(self._feed(), "g1")
+        self.assertEqual((g1["column"], g1["blocked"]["state"]), ("needs_input", "permission"))
+        self.live[self.WEB]["state"] = "idle"
+        # the judges' credential refused: the judge-auth floor wins
+        self.jauth = {self.WEB: {"mode": "key", "t": NOW - 100}}
+        g1 = self._card(self._feed(), "g1")
+        self.assertEqual((g1["column"], g1["blocked"]["state"]), ("needs_input", "judgeAuth"))
+        self.jauth = {}
+        # an API error on the transcript's tail that is on the user (the prompt too long): the api floor wins. The
+        # patched read is not a keyed input (the real error sits in the transcript the key reads), so the memo is
+        # reset between these phases, the way the memo tests reset it
+        _ut_memo_reset()
+        with mock.patch.object(km, "_api_error", lambda path: {"status": 400, "text": "prompt is too long", "tooLong": True, "t": NOW - 20}):
+            g1 = self._card(self._feed(), "g1")
+        self.assertEqual((g1["column"], g1["blocked"]["state"]), ("needs_input", "apiError"))
+        # a transient API error keeps the api floor's own Working-with-badge shape, and the request floor still yields to it
+        _ut_memo_reset()
+        with mock.patch.object(km, "_api_error", lambda path: {"status": 529, "text": "overloaded", "t": NOW - 20}):
+            g1 = self._card(self._feed(), "g1")
+        self.assertEqual((g1["column"], g1["blocked"]["state"]), ("working", "apiError"))
+        _ut_memo_reset()
+        g1 = self._card(self._feed(), "g1")
+        self.assertEqual(g1["blocked"]["state"], "userTodos", "the present event gone, the floor returns at the same settle")
+
+    def test_a_goal_less_session_gets_the_placeholder_with_age_in_the_entry_and_tint_on_the_wire(self):
+        self._store(self.WEB, {}, {}, None)
+        feed = self._feed()
+        mine = self._mine(feed, self.WEB)
+        self.assertEqual([a["itemId"] for a in mine], ["usertodo:" + self.WEB])
+        ph = mine[0]
+        self.assertTrue(ph["provisional"])
+        self.assertEqual((ph["column"], ph["board"], ph["category"]), ("needs_input", "feed", "needs_input"))
+        self.assertEqual(ph["blocked"], {"state": "userTodos", "count": 1, "open": 1, "what": km._USER_TODO_BLOCK_WHAT})
+        self.assertEqual(ph["text"], "Need the auth-scheme decision to wire login", "the oldest blocking request titles it")
+        self.assertEqual(ph["tree"], [])
+        self.assertIn("trgb", ph, "_feed_fold_card stamps the tint on the wire")
+        self.assertNotIn("_ageT", ph)
+        ent = json.loads(km._feed_memo_get(self.WEB)[1])
+        held = ent["asks"][0]
+        self.assertIn("_ageT", held, "the memoized entry holds the epoch, never the tint")
+        self.assertNotIn("trgb", held)
+        self.assertEqual(held["t"], held["_ageT"], "the newest blocking request's time")
+        self.assertEqual(feed["userTodos"], {self.WEB: 1})
+
+    def test_the_placeholder_titles_the_oldest_blocking_request_and_counts_the_other_blocking_ones(self):
+        km._add_user_todo(self.WEB, "Need your opinion on the route names")               # not blocking: not in the title
+        km._add_user_todo(self.WEB, "Need the staging port", blocking=True)
+        with km._user_todos_lock:                              # date the rows: minted in one second, the store's sort would tie on id
+            cur = dict(km._user_todos())
+            rows = [dict(t) for t in cur.get(self.WEB) or []]
+            for t in rows:
+                t["createdT"] = NOW - 300 if t["id"] == self.tid else NOW - 100
+            cur[self.WEB] = rows
+            km._write_user_todos(cur)
+        self._store(self.WEB, {}, {}, None)
+        ph = self._mine(self._feed(), self.WEB)[0]
+        self.assertEqual(ph["text"], "Need the auth-scheme decision to wire login  (+1 more)")
+        self.assertEqual((ph["blocked"]["count"], ph["blocked"]["open"]), (2, 3))
+
+    def test_the_provisional_chain_treats_a_floored_card_as_working(self):
+        dummy = {"itemId": "provisional:" + self.WEB, "sid": self.WEB, "name": "web", "color": None,
+                 "text": "Analyzing: wire the login flow", "t": NOW, "live": True, "_ageT": None,
+                 "turnId": None, "origin": None, "followupPending": None, "summary": None, "blockSummary": None,
+                 "background": None, "blocked": None, "column": "working", "board": "feed", "category": "working",
+                 "provisional": True, "tree": []}
+        with mock.patch.object(km, "_provisional_card", lambda *a, **k: dict(dummy)):
+            feed = self._feed()
+        ids = [a["itemId"] for a in self._mine(feed, self.WEB)]
+        self.assertEqual(ids, ["g1"], "no Analyzing placeholder beside the floored card: %r" % ids)
+        self.assertEqual(self._card(feed, "g1")["blocked"]["state"], "userTodos")
+
+    def test_the_floor_is_not_a_judge_verdict(self):
+        # the store file is untouched by the move (NoInferenceWritesTheStore holds the writer allow-list; here the
+        # goal store): the column is derived, never filed
+        p = jd.GOALDIR / (self.WEB + ".json")
+        before = p.read_bytes()
+        self.assertEqual(self._column(), "needs_input")
+        self.assertEqual(p.read_bytes(), before, "the goal store is read, never written, by the floor")
+        self.assertNotIn("resolved", km._user_todos()[self.WEB][0], "and the request store is untouched")
+
+    def test_the_peer_wait_edge_stands_it_down(self):
+        self.assertEqual(self._column(), "needs_input")
+        self.wmap = {self.WEB: {"peerSid": self.API, "name": "api", "color": None, "inCycle": False,
+                                "since": NOW - 5, "kind": "question"}}
+        g1 = self._card(self._feed(), "g1")
+        self.assertEqual(g1["column"], "working", "a live peer owes this session a reply: the idle is the peer's")
+        self.assertNotIn(self.WEB, km._UT_FLOOR_ARM, "spent")
+
+
+class EscalationFloorLive(_FloorWorld):
+    """The stand-down stories through the real build: the events that move the card (the human speaking, a
+    human-authored parked message, a set change, a peer wait) and the events that hold it (a peer-opened turn, a romp
+    reminder, a harness notification, a lull, a machine parked message)."""
+
+    def setUp(self):
+        super().setUp()
+        self.tid = km._add_user_todo(self.WEB, "Need the auth-scheme decision to wire login", blocking=True)
+        self._one_goal(self.WEB)
+
+    def _turns(self, *turns):
+        self._set_turns(self.WEB, list(turns))
+
+    def test_an_open_turn_with_no_record_keeps_the_card_working(self):
+        self._turns(self._turn("t1", NOW - 60, "human", ended=False))
+        self._states(self.WEB, ("working", NOW - 55))
+        g1 = self._card(self._feed(), "g1")
+        self.assertEqual(g1["column"], "working")
+        self.assertIsNone(g1.get("blocked"))
+
+    def test_a_progressing_state_after_the_turn_end_is_a_lull_not_a_stop(self):
+        self._turns(self._turn("t1", NOW - 60, "human"))
+        self._states(self.WEB, ("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 20))
+        self.assertEqual(self._column(), "working")
+        self.assertNotIn(self.WEB, km._UT_FLOOR_ARM)
+
+    def test_a_withdraw_stands_the_floor_down(self):
+        self._settle(self.WEB)
+        self.assertEqual(self._column(), "needs_input")
+        km._withdraw_user_todo(self.WEB, self.tid)
+        feed = self._feed()
+        self.assertEqual(self._card(feed, "g1")["column"], "working")
+        self.assertEqual(feed["userTodos"], {})
+        self.assertNotIn(self.WEB, km._UT_FLOOR_ARM, "the request's own resolution spends the record")
+
+    def test_a_turn_the_human_did_not_open_holds_the_floor(self):
+        self._settle(self.WEB)
+        self.assertEqual(self._column(), "needs_input")
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 10, self.PEER, ended=False))
+        self._states(self.WEB, ("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10))
+        g1 = self._card(self._feed(), "g1")
+        self.assertEqual(g1["column"], "needs_input", "a peer-opened turn is not the user acting")
+        self.assertEqual(g1["blocked"]["state"], "userTodos")
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 10, self.PEER))
+        self.assertEqual(self._column(), "needs_input", "a lull inside the held turn is not news either")
+        self._states(self.WEB, ("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10), ("waiting", NOW - 8))
+        self.assertEqual(self._column(), "needs_input", "the peer turn settled: still Blocked, no move")
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 10, self.PEER),
+                    self._turn("t3", NOW - 6, "romp", ended=False))
+        self.assertEqual(self._column(), "needs_input", "a romp reminder holds it")
+
+    def test_a_turn_the_human_opened_stands_it_down_and_the_next_settle_re_arms(self):
+        self._settle(self.WEB)
+        self.assertEqual(self._column(), "needs_input")
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 10, "human", ended=False))
+        self._states(self.WEB, ("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10))
+        self.assertEqual(self._column(), "working", "the user spoke to the session: their move")
+        self.assertNotIn(self.WEB, km._UT_FLOOR_ARM, "spent, not suppressed")
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 10, "human"))
+        self._states(self.WEB, ("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10), ("waiting", NOW + 21))
+        self.assertEqual(self._column(), "needs_input", "the exchange settled with the request still open")
+
+    def test_a_card_reply_is_the_human_acting_too(self):
+        self._settle(self.WEB)
+        self.assertEqual(self._column(), "needs_input")
+        self._turns(self._turn("t1", NOW - 60, "human"),
+                    self._turn("t2", NOW - 10, "human", ended=False, text="the cookie, for now <!-- romp-goal-id: g1 -->"))
+        self.assertEqual(self._column(), "working")
+
+    def test_a_human_turn_in_the_history_spends_the_record_under_a_later_peer_turn(self):
+        self._settle(self.WEB)
+        self.assertEqual(self._column(), "needs_input")
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 20, "human"),
+                    self._turn("t3", NOW - 5, self.PEER, ended=False))
+        self.assertEqual(self._column(), "working")
+        self._turns(self._turn("t1", NOW - 60, "human"),
+                    self._turn("t2", NOW - 20, "human", text="the cookie, for now <!-- romp-goal-id: g1 -->"),
+                    self._turn("t3", NOW - 5, self.PEER, ended=False))
+        self.assertEqual(self._column(), "working", "a card reply in the history likewise")
+
+    def test_a_message_absorbed_into_a_turn_the_human_did_not_open_stands_it_down(self):
+        self._settle(self.WEB)
+        self.assertEqual(self._column(), "needs_input")
+        t2 = self._turn("t2", NOW - 10, self.PEER, ended=False)
+        t2["atoms"].append({"uuid": "t2-h", "type": "user", "author": "human", "t": NOW - 5,
+                            "message": {"role": "user", "content": "use the cookie for now"}})
+        self._turns(self._turn("t1", NOW - 60, "human"), t2)
+        self._states(self.WEB, ("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10))
+        self.assertEqual(self._column(), "working")
+        self.assertNotIn(self.WEB, km._UT_FLOOR_ARM)
+
+    def test_a_harness_notification_absorbed_into_the_settled_turn_holds_the_floor(self):
+        self._settle(self.WEB)
+        self.assertEqual(self._column(), "needs_input")
+        held = self._turn("t1", NOW - 60, "human")
+        held.pop("end"); held.pop("ended")
+        held["atoms"].append({"uuid": "t1-sys", "type": "user", "author": "system", "t": NOW - 10,
+                              "message": {"role": "user", "content": "<task-notification>the build finished</task-notification>"}})
+        self._turns(held)
+        self._states(self.WEB, ("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10))
+        self.assertEqual(self._column(), "needs_input", "a harness notification is not the user acting")
+        self.assertEqual(km._UT_FLOOR_ARM.get(self.WEB), (frozenset({self.tid}), NOW - 30), "the record stands")
+
+    def test_a_human_parked_message_spends_the_record_and_a_machine_one_holds_it(self):
+        self._settle(self.WEB)
+        self.assertEqual(self._column(), "needs_input")
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 10, self.PEER, ended=False))
+        km._pending_ops[self.WEB] = [("send", "a watch notice", None)]              # a machine op: three slots, no author
+        self.assertEqual(self._column(), "needs_input", "a machine entry is not the user acting")
+        km._pending_ops[self.WEB] = [("send", "the cookie", None, "q-1", True)]      # the user's own parked send (_op_user)
+        self.assertEqual(self._column(), "working", "the user's message is on its way in")
+        self.assertNotIn(self.WEB, km._UT_FLOOR_ARM, "spent")
+        km._pending_ops.pop(self.WEB, None)
+        self.assertEqual(self._column(), "working", "spent: the drain alone does not re-floor an open turn")
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 10, self.PEER))
+        self._states(self.WEB, ("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10), ("waiting", NOW + 21))
+        self.assertEqual(self._column(), "needs_input", "the settle does")
+
+    def test_a_queue_entry_the_user_sent_spends_the_record_and_one_the_backend_cannot_vouch_for_holds_it(self):
+        # the second slot of the key's queued triple (_backend_queued_by_user): the `user` bit SdkBackend.send records
+        # on the entry's meta, read through the backend the session resolves to
+        self._settle(self.WEB)
+        meta = {}
+        self._queue_meta(meta)
+        self.assertEqual(self._column(), "needs_input")
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 10, self.PEER, ended=False))
+        self._states(self.WEB, ("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10))
+        meta[self.WEB] = [{"md": "a watch notice", "qid": "q-0", "qts": 1}]         # a machine entry: no author bit
+        self.assertEqual(self._column(), "needs_input", "a machine entry is not the user acting")
+        meta[self.WEB] = None                                                        # identities the backend cannot vouch for
+        self.assertEqual(self._column(), "needs_input", "an unknown author holds the floor")
+        meta[self.WEB] = RuntimeError("the queue read failed")
+        self.assertEqual(self._column(), "needs_input", "a backend hiccup reads no human intent")
+        self._qmeta = self._NO_META                                                  # a backend without the read (Codex)
+        self.assertEqual(self._column(), "needs_input", "a backend that cannot say who queued holds it too")
+        self.assertEqual(km._UT_FLOOR_ARM.get(self.WEB), (frozenset({self.tid}), NOW - 30), "the record stands through all four")
+        self._qmeta = meta
+        meta[self.WEB] = [{"md": "a watch notice", "qid": "q-0", "qts": 1},
+                          {"md": "use the cookie", "qid": "q-1", "qts": 2, "user": True}]   # the user's own send, queued behind it
+        self.assertEqual(self._column(), "working", "the user's message is on its way in")
+        self.assertNotIn(self.WEB, km._UT_FLOOR_ARM, "spent")
+        meta[self.WEB] = []                                                          # the queue drained into the turn
+        self.assertEqual(self._column(), "working", "spent: the drain alone does not re-floor an open turn")
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 10, self.PEER))
+        self._states(self.WEB, ("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10), ("waiting", NOW + 21))
+        self.assertEqual(self._column(), "needs_input", "the settle does")
+
+    def test_a_same_count_swap_under_a_peer_turn_stands_it_down_and_the_settle_re_arms_on_the_new_id(self):
+        # the record is the blocking IDS, never their count: one withdrawn and another filed in the same step is news
+        self._settle(self.WEB)
+        self.assertEqual(self._column(), "needs_input")
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 10, self.PEER, ended=False))
+        self._states(self.WEB, ("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10))
+        self.assertEqual(self._column(), "needs_input", "held through the peer's turn")
+        km._withdraw_user_todo(self.WEB, self.tid)
+        new = km._add_user_todo(self.WEB, "Need the staging port", blocking=True)
+        feed = self._feed()
+        g1 = self._card(feed, "g1")
+        self.assertEqual(g1["column"], "working", "the blocking set changed with its count unchanged: news")
+        self.assertIsNone(g1.get("blocked"))
+        self.assertEqual(feed["userTodos"], {self.WEB: 1})
+        self.assertNotIn(self.WEB, km._UT_FLOOR_ARM, "spent")
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 10, self.PEER))
+        self._states(self.WEB, ("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10), ("waiting", NOW + 21))
+        g1 = self._card(self._feed(), "g1")
+        self.assertEqual((g1["column"], g1["blocked"]["count"]), ("needs_input", 1), "the same count, floored on the new id")
+        self.assertEqual(km._UT_FLOOR_ARM.get(self.WEB), (frozenset({new}), NOW + 20), "armed on the new id at the settle")
+
+    def test_a_set_change_under_a_peer_turn_stands_it_down_and_the_settle_returns_the_new_count(self):
+        self._settle(self.WEB)
+        self.assertEqual(self._column(), "needs_input")
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 10, self.PEER, ended=False))
+        km._add_user_todo(self.WEB, "Need the staging port", blocking=True)
+        feed = self._feed()
+        self.assertEqual(self._card(feed, "g1")["column"], "working", "the blocking set changed: news")
+        self.assertEqual(feed["userTodos"], {self.WEB: 2})
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 10, self.PEER))
+        self._states(self.WEB, ("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10), ("waiting", NOW + 21))
+        g1 = self._card(self._feed(), "g1")
+        self.assertEqual((g1["column"], g1["blocked"]["count"]), ("needs_input", 2))
+
+    def test_a_non_blocking_add_under_a_peer_turn_moves_no_record(self):
+        self._settle(self.WEB)
+        self.assertEqual(self._column(), "needs_input")
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 10, self.PEER, ended=False))
+        km._add_user_todo(self.WEB, "Need your opinion on the route names")
+        g1 = self._card(self._feed(), "g1")
+        self.assertEqual((g1["column"], g1["blocked"]["count"], g1["blocked"]["open"]), ("needs_input", 1, 2),
+                         "the record holds the blocking set; a non-blocking add is not a stop")
+
+    def test_a_peer_wait_spends_the_record(self):
+        self._settle(self.WEB)
+        self.assertEqual(self._column(), "needs_input")
+        self.wmap = {self.WEB: {"peerSid": self.API, "name": "api", "color": None, "inCycle": False, "since": NOW - 5, "kind": "question"}}
+        self.assertEqual(self._column(), "working")
+        self.assertNotIn(self.WEB, km._UT_FLOOR_ARM)
+        self.wmap = {}
+        self._turns(self._turn("t1", NOW - 60, "human"), self._turn("t2", NOW - 3, self.PEER, ended=False))
+        self.assertEqual(self._column(), "working", "no record to hold: the reply's turn is a plain turn")
+
+
+class MemoRehome(_FloorWorld):
+    """Every input the floor reads is a key component, so a floored card never serves stale (the memo's counters
+    through _feed_memo_report, as the seam tests read them): an unchanged rebuild after a floored build derives nothing
+    (the arm's own write is re-keyed by the deps re-evaluation), the answer stamp moves the session under usertodos, a
+    human-authored parked message under queued and a machine one not at all, the compaction bracket under compacting,
+    and a peer session's request write moves nothing of this session."""
+
+    def setUp(self):
+        super().setUp()
+        self.tid = km._add_user_todo(self.WEB, "Need the auth-scheme decision to wire login", blocking=True)
+        self._one_goal(self.WEB)
+        self._one_goal(self.API, "add the notes-api list endpoint")
+        self._settle(self.WEB)
+
+    def test_the_arms_own_write_costs_exactly_the_derivation_that_made_it(self):
+        d, feed = self._delta(self._feed)
+        self.assertEqual(d["derived"], 2, "cold: both sessions")
+        self.assertEqual(self._card(feed, "g1")["column"], "needs_input")
+        self.assertIn(self.WEB, km._UT_FLOOR_ARM, "the derivation armed the record")
+        d, feed = self._delta(self._feed)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (0, 2, {}),
+                         "the stored key carries the record the derivation left: an unchanged rebuild hits (%r)" % d)
+        self.assertEqual(self._card(feed, "g1")["column"], "needs_input")
+
+    def test_the_answer_stamp_moves_the_session_under_usertodos_and_the_card_leaves_blocked(self):
+        self._feed()
+        self.assertTrue(km._resolve_user_todo(self.WEB, self.tid, "answered"))
+        d, feed = self._delta(self._feed)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (1, 1, {"usertodos": 1}), d)
+        self.assertEqual(self._card(feed, "g1")["column"], "working")
+        self.assertNotIn(self.WEB, km._UT_FLOOR_ARM)
+        d, _ = self._delta(self._feed)
+        self.assertEqual((d["derived"], d["hit"]), (0, 2), "and stands")
+
+    def test_a_human_parked_message_moves_the_session_under_queued_and_a_machine_one_moves_nothing(self):
+        self._feed()
+        km._pending_ops[self.WEB] = [("send", "a watch notice", None)]
+        d, feed = self._delta(self._feed)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (0, 2, {}), "a machine entry moves no key: %r" % d)
+        self.assertEqual(self._card(feed, "g1")["column"], "needs_input")
+        km._pending_ops[self.WEB] = [("send", "a watch notice", None), ("send", "the cookie", None, "q-1", True)]
+        d, feed = self._delta(self._feed)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (1, 1, {"queued": 1}), d)
+        self.assertEqual(self._card(feed, "g1")["column"], "working")
+        d, _ = self._delta(self._feed)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (0, 2, {}), "the spent record is re-keyed by the same derivation: %r" % d)
+
+    def test_a_queue_entry_the_user_sent_moves_the_session_under_queued_and_a_machine_one_moves_nothing(self):
+        meta = {}
+        self._queue_meta(meta)
+        self._feed()
+        meta[self.WEB] = [{"md": "a watch notice", "qid": "q-0", "qts": 1}]
+        d, feed = self._delta(self._feed)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (0, 2, {}), "a machine entry moves no key: %r" % d)
+        self.assertEqual(self._card(feed, "g1")["column"], "needs_input")
+        meta[self.WEB] = meta[self.WEB] + [{"md": "use the cookie", "qid": "q-1", "qts": 2, "user": True}]
+        d, feed = self._delta(self._feed)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (1, 1, {"queued": 1}), d)
+        self.assertEqual(self._card(feed, "g1")["column"], "working")
+        self.assertNotIn(self.WEB, km._UT_FLOOR_ARM)
+        d, _ = self._delta(self._feed)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (0, 2, {}), "the spent record is re-keyed by the same derivation: %r" % d)
+
+    def test_a_same_count_swap_moves_the_session_under_usertodos_and_re_arms_the_record_on_the_new_id(self):
+        # the component is the sorted open IDS, never their count
+        self._feed()
+        self.assertEqual(km._UT_FLOOR_ARM.get(self.WEB), (frozenset({self.tid}), NOW - 30))
+        km._withdraw_user_todo(self.WEB, self.tid)
+        new = km._add_user_todo(self.WEB, "Need the staging port", blocking=True)
+        d, feed = self._delta(self._feed)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (1, 1, {"usertodos": 1}), d)
+        g1 = self._card(feed, "g1")
+        self.assertEqual((g1["column"], g1["blocked"]["count"]), ("needs_input", 1),
+                         "settled idle under the new set: the old record spent and the new one armed in the same derivation")
+        self.assertEqual(km._UT_FLOOR_ARM.get(self.WEB), (frozenset({new}), NOW - 30))
+        d, _ = self._delta(self._feed)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (0, 2, {}), "and stands")
+
+    def test_the_compaction_brackets_flip_moves_the_session_under_compacting(self):
+        self._feed()
+        flag = {self.WEB: True}
+        with mock.patch.object(km, "_compacting_now", lambda sid, tm=None, path=None: bool(flag.get(str(sid)))):
+            d, feed = self._delta(self._feed)
+            self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (1, 1, {"compacting": 1}), d)
+            self.assertEqual(self._card(feed, "g1")["column"], "working", "a live story outranks the floor")
+            self.assertIn(self.WEB, km._UT_FLOOR_ARM, "and leaves the record: none of it is the user acting")
+            flag.clear()
+            d, feed = self._delta(self._feed)
+            self.assertEqual((d["derived"], d["miss_by"]), (1, {"compacting": 1}), d)
+            self.assertEqual(self._card(feed, "g1")["column"], "needs_input", "the floor returns with the record")
+
+    def test_a_peer_sessions_request_write_moves_nothing_of_this_session(self):
+        self._feed()
+        km._add_user_todo(self.API, "Need a test credential for the api session", blocking=True)
+        d, feed = self._delta(self._feed)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (1, 1, {"usertodos": 1}), d)
+        self.assertEqual(self._card(feed, "g1")["column"], "needs_input", "web's card is served, unchanged")
+        self.assertEqual(feed["userTodos"], {self.WEB: 1, self.API: 1})
+
+
+class OneInterruptStory(_FloorWorld):
+    """A session shows ONE interrupt presentation at a time: the judge-auth floor stands alone, a floored card gets no
+    working placeholder beside it, a completed focus falls back to the working top, the fallback yields to the live
+    floors and skips a done-confirming top, and a goal-less idle session gets the placeholder once. The predicate is
+    force-armed here: these shapes exercise the guards, not the arming (EscalationFloorPredicate)."""
+
+    def setUp(self):
+        super().setUp()
+        km._add_user_todo(self.WEB, "Need the auth-scheme decision to wire login", blocking=True)
+        self._set_turns(self.WEB, [{"id": "t1", "t": NOW - 60, "end": NOW - 30, "ended": True, "atoms": []}])
+        p = mock.patch.object(km, "_user_todo_idle", lambda *a, **k: True)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _needs_input(self, feed):
+        return [a for a in self._mine(feed, self.WEB) if a.get("column") == "needs_input"]
+
+    def test_the_jauth_floor_stands_alone(self):
+        self._one_goal(self.WEB)
+        self.jauth = {self.WEB: {"mode": "key", "t": NOW - 100}}
+        ni = self._needs_input(self._feed())
+        self.assertEqual([(a["itemId"], a["blocked"]["state"]) for a in ni], [("g1", "judgeAuth")])
+
+    def test_the_floored_card_wears_count_and_story_and_no_working_placeholder_beside_it(self):
+        km._add_user_todo(self.WEB, "Need a staging credential for the tests", blocking=True)
+        self._one_goal(self.WEB)
+        dummy = {"itemId": "provisional:" + self.WEB, "sid": self.WEB, "name": "web", "color": None,
+                 "text": "Analyzing: wire the login flow", "t": NOW, "live": True, "_ageT": None,
+                 "turnId": None, "origin": None, "followupPending": None, "summary": None, "blockSummary": None,
+                 "background": None, "blocked": None, "column": "working", "board": "feed", "category": "working",
+                 "provisional": True, "tree": []}
+        with mock.patch.object(km, "_provisional_card", lambda *a, **k: dict(dummy)):
+            feed = self._feed()
+        self.assertEqual([a["itemId"] for a in self._mine(feed, self.WEB)], ["g1"])
+        self.assertEqual(self._card(feed, "g1")["blocked"], {"state": "userTodos", "count": 2, "open": 2, "what": km._USER_TODO_BLOCK_WHAT})
+
+    def test_a_completed_focus_falls_back_to_the_working_top(self):
+        self._store(self.WEB, {"g1": {"text": "ship the fixtures", "t": NOW - 900}, "g2": {"text": "wire the login flow"}},
+                    {"g1": "completed", "g2": "working"}, "g1")
+        feed = self._feed()
+        ni = self._needs_input(feed)
+        self.assertEqual([a["itemId"] for a in ni], ["g2"], "the still-working top takes the floor when the focus walk dead-ends")
+        self.assertEqual(ni[0]["blocked"]["state"], "userTodos")
+        self.assertNotIn("usertodo:" + self.WEB, [a["itemId"] for a in feed["asks"]])
+
+    def test_the_fallback_still_yields_to_jauth(self):
+        self._store(self.WEB, {"g1": {"text": "ship the fixtures", "t": NOW - 900}, "g2": {"text": "wire the login flow"}},
+                    {"g1": "working", "g2": "working"}, "g1")
+        self.jauth = {self.WEB: {"mode": "key", "t": NOW - 100}}
+        ni = self._needs_input(self._feed())
+        self.assertEqual(len(ni), 1)
+        self.assertEqual(ni[0]["blocked"]["state"], "judgeAuth")
+
+    def test_a_done_confirming_focus_is_never_floored_and_the_fallback_skips_a_confirming_top(self):
+        self._store(self.WEB, {"g1": {"text": "ship the fixtures", "t": NOW - 900}, "g2": {"text": "wire the login flow"}},
+                    {"g1": "working", "g2": "working"}, "g1", confirming=["g1"])
+        feed = self._feed()
+        self.assertEqual([a["itemId"] for a in self._needs_input(feed)], ["g2"], "the confirming focus belongs to the settle gate")
+        self.assertTrue(self._card(feed, "g1").get("doneConfirming"))
+        self._store(self.WEB, {"g1": {"text": "ship the fixtures", "t": NOW - 900}, "g2": {"text": "wire the login flow"}},
+                    {"g1": "completed", "g2": "working"}, "g1", confirming=["g2"])
+        feed = self._feed()
+        self.assertEqual(self._needs_input(feed), [], "no floor while the only candidate is done-confirming")
+        self.assertEqual(self._card(feed, "g2")["column"], "working")
+
+    def test_a_goal_less_idle_session_gets_the_placeholder_once(self):
+        self._store(self.WEB, {}, {}, None)
+        feed = self._feed()
+        mine = self._mine(feed, self.WEB)
+        self.assertEqual([a["itemId"] for a in mine], ["usertodo:" + self.WEB])
+        self.assertTrue(mine[0]["provisional"])
+        self.assertEqual(mine[0]["blocked"]["state"], "userTodos")
+
+    def test_the_floor_takes_a_plain_working_focus_only(self):
+        # the awaiting flavor rides Working and a judge's block is its own latch: neither wears the request story while
+        # the predicate reads idle (the `col == "working"` guard on _todo_block), and a focus card exists, so nothing floors
+        self._store(self.WEB, {"g1": {"text": "run the fixture pass", "awaitingWhy": "the pass it dispatched; reports when done",
+                                      "awaitingAt": NOW - 400}}, {"g1": "working"}, "g1")
+        feed = self._feed()
+        g1 = self._card(feed, "g1")
+        self.assertEqual(self._needs_input(feed), [])
+        self.assertEqual((g1["column"], g1.get("blocked"), g1["distillState"]), ("working", None, None))
+        self.assertEqual((g1["awaiting"] or {}).get("why"), "the pass it dispatched; reports when done", "the awaiting flavor stands")
+        self._store(self.WEB, {"g1": {"text": "wire the login flow", "blocked": True}}, {"g1": "blocked"}, "g1")
+        feed = self._feed()
+        g1 = self._card(feed, "g1")
+        self.assertEqual((g1["column"], g1["distillState"]), ("needs_input", "blocked"), "the judges' block files the card")
+        self.assertIsNone(g1.get("blocked"), "with its own story: no request chip over a judge's block")
+        self.assertEqual([a["itemId"] for a in self._mine(feed, self.WEB)], ["g1"], "and no placeholder beside it")
+
+    def test_a_working_session_floors_nothing(self):
+        self._one_goal(self.WEB)
+        with mock.patch.object(km, "_user_todo_idle", lambda *a, **k: False):
+            feed = self._feed()
+        self.assertEqual(self._needs_input(feed), [])
+        g1 = self._card(feed, "g1")
+        self.assertEqual(g1["column"], "working")
+        self.assertIsNone(g1.get("blocked"))
+        self.assertEqual(feed["userTodos"], {self.WEB: 1}, "the marker's data still rides")
+
+
+class PeerWaitScopeIsLocalOnly(_StoreSandbox):
+    """The peer-wait stand-down is local-host only, a documented limitation: _wait_for_graph keeps an edge only when
+    the awaited peer is in THIS kernel's alive set, so an unanswered ask to a federated peer makes no edge and the
+    floor still fires over an idle a remote peer explains. The chip and the nudge's skip read the same graph, so
+    widening it there lifts every surface at once. If these fail because the graph learned federated edges, move the
+    floor's expectation with the chip's."""
+
+    def setUp(self):
+        super().setUp()
+        self.mfile = Path(self.td.name) / "timeline" / "messages.jsonl"
+        self._saved_messages = jd.MESSAGES
+        jd.MESSAGES = self.mfile
+        self._saved_cache = list(km._POSTAL_WAIT_CACHE)
+        km._POSTAL_WAIT_CACHE[:] = [None, None]
+
+    def tearDown(self):
+        jd.MESSAGES = self._saved_messages
+        km._POSTAL_WAIT_CACHE[:] = self._saved_cache
+        super().tearDown()
+
+    def _rows(self, rows):
+        self.mfile.parent.mkdir(parents=True, exist_ok=True)
+        self.mfile.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+        km._POSTAL_WAIT_CACHE[:] = [None, None]
+
+    def test_a_local_alive_peer_makes_the_edge(self):
+        self._rows([{"from_id": SID, "to_id": SID2, "t": NOW - 300, "kind": "question", "body": "Which port does staging use?"}])
+        wmap = km._wait_for_graph(NOW, {SID, SID2})
+        self.assertEqual(wmap[SID]["peerSid"], SID2)
+
+    def test_a_relay_addressed_ask_makes_no_edge_so_the_floor_still_fires(self):
+        self._rows([{"from_id": SID, "to_id": "peer:TESTHOST", "toName": "TESTHOST:api", "t": NOW - 300,
+                     "kind": "question", "body": "Which port does staging use?"}])
+        self.assertNotIn(SID, km._wait_for_graph(NOW, {SID}), "no edge to a federated peer: the graph is local-host scope")
+
+    def test_even_a_resolved_remote_sid_makes_no_edge(self):
+        self._rows([
+            {"from_id": SID2, "from": "api", "from_host": "TESTHOST", "to_id": SID, "t": NOW - 900, "kind": "coordinate",
+             "body": "Staging is rebuilt nightly."},
+            {"from_id": SID, "to_id": "peer:TESTHOST", "toName": "TESTHOST:api", "t": NOW - 300, "kind": "question",
+             "body": "Which port does staging use?"},
+        ])
+        self.assertNotIn(SID, km._wait_for_graph(NOW, {SID}), "a resolvable but non-local peer still makes no edge")
+
+
+class FloorNotificationDedup(_StoreSandbox):
+    """The push for a request-floored card is latched on the FLOORED BLOCKING SET (the REAL _feed_notifications under a
+    private state root): the card's designed dips and re-entries are not news, a blocking id joining is, the first
+    build of a kernel life seeds the latch from the floored world, a corroborated answer loss un-latches its id, the
+    user's own recall does not, and the two writers share one lock."""
+
+    def setUp(self):
+        super().setUp()
+        km._NOTIFY_PREV[0] = None
+        km._NOTIFY_UT_FIRED[0].clear()
+        km._notify_cards_cache.clear()
+        km._flags_cache.clear()
+        patches = [
+            mock.patch.object(km, "_notify_card_effective", lambda cards, iid, sid: True),
+            mock.patch.object(km, "_prune_notify_cards", lambda live: None),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tearDown(self):
+        km._NOTIFY_PREV[0] = None
+        km._NOTIFY_UT_FIRED[0].clear()
+        super().tearDown()
+
+    @staticmethod
+    def _card(floored, state="userTodos", sid=SID):
+        blocked = {"state": state, "count": 1, "what": "stopped"} if floored else None
+        col = "needs_input" if floored else "working"
+        return {"asks": [{"itemId": sid + ":g1", "sid": sid, "name": "web", "text": "wire the login flow",
+                          "column": col, "board": "feed", "category": col, "blocked": blocked}]}
+
+    def test_a_dip_and_re_entry_with_the_same_set_is_not_news(self):
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        km._feed_notifications(self._card(False))                        # the baseline build
+        fired = len(km._feed_notifications(self._card(True)))
+        self.assertEqual(fired, 1, "the first floor: the one push")
+        for _cycle in range(3):
+            self.assertEqual(km._feed_notifications(self._card(False)), [])
+            fired += len(km._feed_notifications(self._card(True)))
+        self.assertEqual(fired, 1, "re-entry with an identical blocking set is not news")
+
+    def test_a_new_blocking_request_re_arms_the_push_and_a_non_blocking_one_does_not(self):
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        km._feed_notifications(self._card(False))
+        self.assertEqual(len(km._feed_notifications(self._card(True))), 1)
+        km._feed_notifications(self._card(False))
+        km._add_user_todo(SID, "Need your opinion on the route names")
+        self.assertEqual(km._feed_notifications(self._card(True)), [], "a non-blocking request joins no floored set")
+        km._feed_notifications(self._card(False))
+        km._add_user_todo(SID, "Need a staging credential for the tests", blocking=True)
+        self.assertEqual(len(km._feed_notifications(self._card(True))), 1, "a blocking id joining the floored set IS news")
+
+    def test_the_dedup_is_scoped_to_the_floor(self):
+        km._feed_notifications(self._card(False))
+        self.assertEqual(len(km._feed_notifications(self._card(True, state="permission"))), 1)
+        km._feed_notifications(self._card(False))
+        self.assertEqual(km._feed_notifications(self._card(True, state="permission")), [],
+                         "a permission card keeps the announced rule: told already, silent")
+        self.assertEqual(km._NOTIFY_UT_FIRED[0], {}, "the latch never saw the permission card")
+
+    def test_a_restart_baseline_seeds_the_latch_from_the_floored_world(self):
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        km._feed_notifications(self._card(False))
+        self.assertEqual(len(km._feed_notifications(self._card(True))), 1)
+        km._NOTIFY_PREV[0] = None                                        # a kernel restart: both in-memory latches re-baseline
+        km._NOTIFY_UT_FIRED[0].clear()
+        self.assertEqual(km._feed_notifications(self._card(True)), [], "the first build is status, not news")
+        self.assertEqual(km._feed_notifications(self._card(False)), [])
+        self.assertEqual(km._feed_notifications(self._card(True)), [], "the routine dip and re-entry after a restart is not news")
+
+    def test_the_seed_suppresses_only_what_was_floored(self):
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        self.assertEqual(km._feed_notifications(self._card(True)), [], "floored at boot: silent, and the latch seeded")
+        km._add_user_todo(SID, "Need a staging credential for the tests", blocking=True)
+        self.assertEqual(km._feed_notifications(self._card(False)), [])
+        self.assertEqual(len(km._feed_notifications(self._card(True))), 1, "the id that joined after the seed is news")
+
+    def test_an_id_joining_while_floored_pushes_with_no_observed_dip(self):
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        km._feed_notifications(self._card(False))
+        self.assertEqual(len(km._feed_notifications(self._card(True))), 1)
+        km._add_user_todo(SID, "Need a staging credential for the tests", blocking=True)
+        self.assertEqual(len(km._feed_notifications(self._card(True))), 1, "news with no column transition")
+        self.assertEqual(km._feed_notifications(self._card(True)), [], "and exactly once")
+
+    def test_a_same_count_swap_while_floored_is_news_once(self):
+        # the latch is the floored SET, never its size: one blocking request answered and another filed reads as the new id
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        km._feed_notifications(self._card(False))
+        self.assertEqual(len(km._feed_notifications(self._card(True))), 1)
+        self.assertTrue(km._resolve_user_todo(SID, tid, "answered"))
+        km._add_user_todo(SID, "Need the staging port", blocking=True)
+        self.assertEqual(len(km._feed_notifications(self._card(True))), 1, "one id for one: the set changed, the count did not")
+        self.assertEqual(km._feed_notifications(self._card(True)), [], "and exactly once")
+
+    def test_a_lost_answers_reopen_re_arms_the_push(self):
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        km._feed_notifications(self._card(False))
+        self.assertEqual(len(km._feed_notifications(self._card(True))), 1)
+        self.assertTrue(km._resolve_user_todo(SID, tid, "answered"))
+        self.assertEqual(km._feed_notifications(self._card(False)), [])
+        with mock.patch.object(km, "_sessions", lambda now, window=None, forks=True: [{"sid": SID, "path": "/dev/null"}]), \
+             mock.patch.object(km, "_parse", lambda path, sid, now: {"turns": []}), \
+             contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(km._user_todo_answer_lost(SID, tid, "Re: the decision. Cookie.", wait=True), "reopened")
+        self.assertEqual(len(km._feed_notifications(self._card(True))), 1, "the re-floor after a lost answer pushes")
+
+    def test_the_users_own_recall_stays_silent(self):
+        be = _FakeBackend()
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        km._feed_notifications(self._card(False))
+        self.assertEqual(len(km._feed_notifications(self._card(True))), 1)
+        body = km._user_todo_answer_body("Need the auth-scheme decision to wire login", "Go with the session cookie.")
+        with mock.patch.object(km, "_compacting_now", lambda sid, **k: False), \
+             mock.patch.object(km, "_working_now", lambda sid: False), \
+             mock.patch.object(km, "_limit_hold", lambda sid: False), \
+             mock.patch.dict(km._pending_ops, {}, clear=True):
+            self.assertIs(km._send_or_park(be, SID, body, user=True, user_todo=tid), False, "handed over now")
+            km._stamp_user_todo_answered(SID, tid)
+            self.assertEqual(km._feed_notifications(self._card(False)), [])
+            self.assertIsNone(km._cancel_backend_queued(be, SID, 0, km._split_followup(body)[1]))
+        self.assertNotIn("resolved", km._user_todos()[SID][0], "the recall reopened the request")
+        self.assertEqual(km._feed_notifications(self._card(True)), [], "the user pulled the answer back themselves: no push")
+
+    def test_the_unlatch_touches_one_id_of_one_session(self):
+        km._NOTIFY_UT_FIRED[0][SID] = frozenset({"ut-aaaaaaaa", "ut-bbbbbbbb"})
+        km._NOTIFY_UT_FIRED[0][SID2] = frozenset({"ut-cccccccc"})
+        km._notify_ut_unlatch(SID, "ut-aaaaaaaa")
+        self.assertEqual(km._NOTIFY_UT_FIRED[0][SID], frozenset({"ut-bbbbbbbb"}))
+        self.assertEqual(km._NOTIFY_UT_FIRED[0][SID2], frozenset({"ut-cccccccc"}))
+        km._notify_ut_unlatch(SID, "ut-not-there")
+        km._notify_ut_unlatch("33333333-4444-5555-6666-777777777777", "ut-aaaaaaaa")
+        self.assertEqual(set(km._NOTIFY_UT_FIRED[0]), {SID, SID2}, "no entry minted for a stranger")
+
+    def test_the_two_writers_share_one_lock(self):
+        for fn in (km._feed_notifications_diff, km._notify_ut_unlatch):
+            self.assertIn("with _NOTIFY_UT_LOCK", inspect.getsource(fn), fn.__name__)
+
+    def test_a_goal_less_floored_sessions_placeholder_stays_silent(self):
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        km._feed_notifications(self._card(False))
+        ph = {"asks": [{"itemId": "usertodo:" + SID, "sid": SID, "name": "web", "text": "Need the auth-scheme decision",
+                        "column": "needs_input", "board": "feed", "category": "needs_input", "provisional": True,
+                        "blocked": {"state": "userTodos", "count": 1, "open": 1, "what": "stopped"}}]}
+        self.assertEqual(km._feed_notifications(ph), [], "provisional, like the permission twin: the diff skips it")
+
+
+class BadgeArithmetic(unittest.TestCase):
+    """_needs_you_count keeps the per-card, board-aware rule and adds one thing: a request-floored presentation counts its
+    BLOCKING requests instead of itself, provisional or not. Feed dicts in the card shape the constructors set."""
+
+    @staticmethod
+    def _floored(sid, count, iid="g1", provisional=False):
+        c = {"itemId": sid + ":" + iid, "sid": sid, "column": "needs_input", "board": "feed", "category": "needs_input",
+             "blocked": {"state": "userTodos", "count": count, "open": count, "what": "stopped"}}
+        if provisional:
+            c["provisional"] = True
+        return c
+
+    @staticmethod
+    def _hard(sid, iid, state="permission"):
+        return {"itemId": sid + ":" + iid, "sid": sid, "column": "needs_input", "board": "feed", "category": "needs_input",
+                "blocked": {"state": state, "what": "stopped"}}
+
+    def test_a_floored_card_badges_its_blocking_count_not_one(self):
+        self.assertEqual(km._needs_you_count({"asks": [self._floored("S1", 3)]}), 3)
+
+    def test_a_floored_placeholder_badges_its_count_though_provisional(self):
+        self.assertEqual(km._needs_you_count({"asks": [self._floored("S1", 2, iid="ph", provisional=True)]}), 2)
+
+    def test_hard_stops_count_per_card(self):
+        self.assertEqual(km._needs_you_count({"asks": [self._hard("S1", "a"), self._hard("S1", "b")]}), 2)
+
+    def test_a_session_hard_stopped_on_a_prompt_while_it_holds_requests_badges_once(self):
+        # the perm floor won the card: no floored presentation exists, and the requests ride the marker alone
+        self.assertEqual(km._needs_you_count({"asks": [self._hard("S1", "a")], "userTodos": {"S1": 2}}), 1)
+
+    def test_a_notice_card_that_needs_you_counts_once(self):
+        c = {"itemId": "notice:S1:k:1", "sid": "S1", "column": "needs_input", "board": "feed", "category": "needs_input",
+             "blocked": None, "notice": {"producer": "x", "key": "k", "rev": 1, "body": ""}}
+        self.assertEqual(km._needs_you_count({"asks": [c]}), 1)
+
+    def test_a_provisional_non_floored_card_stays_out(self):
+        c = dict(self._hard("S1", "a"), provisional=True)
+        self.assertEqual(km._needs_you_count({"asks": [c, {"itemId": "b", "sid": "S2", "column": "working", "board": "feed", "category": "working"}]}), 0)
+
+    def test_a_sid_less_card_counts(self):
+        self.assertEqual(km._needs_you_count({"asks": [{"itemId": "q1", "column": "needs_input"}, {"itemId": "q2", "column": "needs_input"}]}), 2)
+
+    def test_a_floored_card_with_a_malformed_blocked_field_contributes_nothing_and_raises_nothing(self):
+        c = self._floored("S1", 2)
+        c["blocked"] = {"state": "userTodos", "count": "many"}
+        self.assertEqual(km._needs_you_count({"asks": [c]}), 0)
+        c["blocked"] = {"state": "userTodos"}
+        self.assertEqual(km._needs_you_count({"asks": [c]}), 0)
+        c["blocked"] = {"state": "userTodos", "count": None}
+        self.assertEqual(km._needs_you_count({"asks": [c, self._hard("S2", "a")]}), 1)
+
+    def test_a_board_that_never_badges_keeps_its_floored_card_out(self):
+        c = dict(self._floored("S1", 2), board="no-such-board", category="needs_input")
+        self.assertEqual(km._needs_you_count({"asks": [c]}), 2, "an unknown board reads as the feed's")
+        with mock.patch.object(km, "_board_needs_you", lambda board: None):
+            self.assertEqual(km._needs_you_count({"asks": [c]}), 0)
+
+    def test_an_empty_feed_is_zero(self):
+        self.assertEqual(km._needs_you_count({"asks": []}), 0)
+        self.assertEqual(km._needs_you_count({}), 0)
+
+    def test_the_count_reads_no_switch(self):
+        self.assertNotIn("_user_todos_on", inspect.getsource(km._needs_you_count),
+                         "off, no floored card exists (the reader returns []), so the expression is the same on every frame")
+
+
+class NudgeStandsDownForBlockingRequests(_StoreSandbox):
+    """The status nudge stands down while a BLOCKING request is open (the request already says what a status check
+    would fish for); a non-blocking request does not stand it down; the gate lifts when the last blocking request
+    clears; the awaiting WAKE and the DEBT reminder flow past it. Synthetic fixtures, the notes-api world."""
+
+    S = {"sid": SID, "name": "web", "path": "/nonexistent/%s.jsonl" % SID, "anchor": 0, "mtime": 0}
+    TURNS = [{"id": "t1", "t": NOW - 600, "end": NOW - 500, "ended": True, "trigger": None, "atoms": []}]
+
+    def setUp(self):
+        super().setUp()
+        self.saved_goaldir = jd.GOALDIR
+        jd.GOALDIR = jd.STATE / "goals"
+        jd.GOALDIR.mkdir(parents=True, exist_ok=True)
+        km._autonudge_cache.clear()
+        km._SESSION_STAMP_CACHE.clear()
+        km._flags_cache.clear()
+        self.sent = []
+        rec = self
+
+        class _Backend:
+            def send(self, sid, body, **kw):
+                rec.sent.append((sid, body))
+                return True
+
+        self.saved_backend = km.Sessions.backend_for
+        km.Sessions.backend_for = staticmethod(lambda sid: _Backend())
+        patches = [
+            mock.patch.object(km, "_api_error", lambda path: None),
+            mock.patch.object(jd, "parsed_session", lambda sid, paths, now: {"turns": list(self.TURNS)}),
+            mock.patch.object(km, "_session_working", lambda turns: False),
+            mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, s="", **k: False),
+            mock.patch.object(km, "_backend_queued", lambda s: False),
+            mock.patch.object(km, "_backend_rewind_pending", lambda s: False),
+            mock.patch.object(km, "_compacting_now", lambda s, **k: False),
+            mock.patch.object(km, "_last_state", lambda s: ("waiting", 0)),
+            mock.patch.object(km, "_session_awaiting", lambda sid, path, idle, stamp=False: None),
+            mock.patch.object(km, "_closer_settled", lambda *a, **k: True),
+            mock.patch.object(jd, "plan_units", lambda ps, store: []),
+            mock.patch.object(km, "_revivers_pending", lambda *a, **k: ""),
+            mock.patch.object(km, "_peer_answered_at", lambda sid: 0),
+            mock.patch.object(km, "_log_nudge_event", lambda *a, **k: None),
+            mock.patch.dict(km._pending_ops, {}, clear=True),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tearDown(self):
+        jd.GOALDIR = self.saved_goaldir
+        km.Sessions.backend_for = self.saved_backend
+        km._autonudge_cache.clear()
+        km._SESSION_STAMP_CACHE.clear()
+        super().tearDown()
+
+    def _seed_goals(self, nodes, status=None):
+        (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(
+            {"rompUuid": SID, "seq": 1, "placements": {}, "status": status or {}, "nodes": nodes}))
+
+    def _plain_top(self):
+        return {"g1": {"id": "g1", "text": "wire the login flow", "parentId": None, "t": NOW - 900, "mt": NOW - 900,
+                       "nodeComplete": False, "blocked": False, "cleared": False, "trail": []}}
+
+    def _stamped_top(self, at):
+        return {"g1": {"id": "g1", "text": "run the fixture pass", "parentId": None, "t": NOW - 90000, "mt": NOW - 90000,
+                       "nodeComplete": False, "blocked": False, "cleared": False, "trail": [],
+                       "awaitingWhy": "the pass it dispatched; reports when done", "awaitingAt": at,
+                       "log": [{"ev_t": at, "src": "closer", "kind": "awaiting",
+                                "why": "the pass it dispatched; reports when done", "at": at + 5}]}}
+
+    def _run(self, alive_ids=None):
+        km._autonudge_cache.clear()
+        km._SESSION_STAMP_CACHE.clear()
+        return km._auto_nudge_session(self.S, NOW, {SID: {"state": ""}}, {}, {}, alive_ids=alive_ids)
+
+    def test_the_status_nudge_stands_down_while_a_blocking_request_is_open(self):
+        self._seed_goals(self._plain_top(), status={"g1": "working"})
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        self.assertFalse(self._run())
+        self.assertEqual(self.sent, [], "the request already names what a status check would ask")
+        self.assertEqual(km._auto_nudge_data().get("nudged", {}), {}, "no record armed either")
+
+    def test_a_non_blocking_request_does_not_stand_it_down(self):
+        self._seed_goals(self._plain_top(), status={"g1": "working"})
+        km._add_user_todo(SID, "Need your opinion on the route names")
+        self.assertTrue(self._run(), "a non-blocking request is information, not a stop: the status nudge proceeds")
+        self.assertEqual(len(self.sent), 1)
+
+    def test_the_gate_lifts_the_moment_the_last_blocking_request_clears(self):
+        self._seed_goals(self._plain_top(), status={"g1": "working"})
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        km._resolve_user_todo(SID, tid, "dismissed")
+        self.assertTrue(self._run())
+        self.assertEqual(len(self.sent), 1)
+
+    def test_the_awaiting_wake_flows_past_a_blocking_request(self):
+        self._seed_goals(self._stamped_top(at=NOW - 7 * 3600), status={"g1": "working"})
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        self.assertTrue(self._run(), "the wake fired despite the open request")
+        self.assertEqual(len(self.sent), 1)
+        self.assertTrue(km._auto_nudge_data()["nudged"]["g1"].get("wake"), "the WAKE's record, not a status nudge's")
+
+    def test_the_debt_reminder_flows_past_a_blocking_request(self):
+        self._seed_goals({}, status={})
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        (jd.STATE / "sdk").mkdir(parents=True, exist_ok=True)      # the asker's registry row, alive: the debt reader keys on it
+        (jd.STATE / "sdk" / (SID2 + ".json")).write_text(json.dumps({"sid": SID2, "alive": True}))
+        t_ask = NOW - 1800
+        maps = ({(SID2, SID): t_ask}, {(SID2, SID): (t_ask, "question", "Which port should the staging server use?")}, {})
+        patches = [
+            mock.patch.object(km, "_postal_wait_maps", lambda: maps),
+            mock.patch.object(km, "_name_of", lambda sid: {SID2: "api", SID: "web"}.get(sid)),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.assertTrue(self._run(alive_ids={SID, SID2}), "the reminder fired despite the request")
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("api asked you", self.sent[0][1])
+
+    def test_the_gate_sits_after_the_re_arm_block_and_before_the_last_resort_gate(self):
+        src = inspect.getsource(km._auto_nudge_session)
+        i_park = src.index("# PARK GATE")
+        i_gate = src.index("if _req_standdown:")
+        i_last = src.index("# LAST-RESORT GATE")
+        i_fire = src.index("to_fire.append(")
+        self.assertLess(i_park, i_gate)
+        self.assertLess(i_gate, i_last)
+        self.assertLess(i_last, i_fire)
+        self.assertEqual(src.count("if _req_standdown:"), 1, "one gate, on the goal walk alone")
+
+
+class PruneArmRecords(_StoreSandbox):
+    """The housekeeping prune also spends the floor's arm record of a session whose death is corroborated (the same
+    evidence the row prune reads), keeps a live session's, and returns before any death read when the store is empty."""
+
+    def _mark_dead(self, sid, t=NOW):
+        (jd.STATE / "gone").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "gone" / (sid + ".json")).write_text(json.dumps({"t": t, "by": "gone"}))
+
+    def setUp(self):
+        super().setUp()
+        km._UT_FLOOR_ARM.clear()
+        self.addCleanup(km._UT_FLOOR_ARM.clear)
+
+    def test_the_prune_drops_a_dead_sids_record_and_keeps_a_live_ones(self):
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        km._add_user_todo(SID2, "Need a test credential for the api session", blocking=True)
+        km._UT_FLOOR_ARM[SID] = (frozenset({"ut-11111111"}), NOW - 30)
+        km._UT_FLOOR_ARM[SID2] = (frozenset({"ut-22222222"}), NOW - 30)
+        self._mark_dead(SID)
+        km._prune_user_todos()
+        self.assertEqual(set(km._UT_FLOOR_ARM), {SID2}, "the dead session's record leaves; the live one stands")
+        self.assertEqual(len(km._open_user_todos(SID2)), 1, "open rows never leave")
+
+    def test_an_empty_store_returns_before_any_death_read(self):
+        seen = []
+        km._UT_FLOOR_ARM[SID] = (frozenset({"ut-11111111"}), NOW - 30)   # a record with no rows behind it: stale
+        with mock.patch.object(km, "_user_todo_session_ended", lambda sid: seen.append(sid) or True):
+            km._prune_user_todos()
+        self.assertEqual(seen, [], "no rows, no death read")
+        self.assertEqual(km._UT_FLOOR_ARM, {}, "a record no row backs is dropped: the body disarms such a sid anyway")
+
+    def test_the_prune_is_the_housekeeping_stage_and_no_build_calls_it(self):
+        self.assertIn("_job_stage('pruneUserTodos', lambda: _prune_user_todos())", inspect.getsource(km._jobs_pass))
+        for fn in (km._chat_tab_sessions, km._pusher_cycle_jobs, km.build_feed, km._feed_session_entry):
+            self.assertNotIn("_prune_user_todos", inspect.getsource(fn), fn.__name__)
 
 
 if __name__ == "__main__":

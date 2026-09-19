@@ -1525,3 +1525,36 @@ test("a notice card on a data-defined board is not on the feed: its own board's 
   assert.equal(card("notice:" + WEB + ":lost:1")._nProd.textContent, "via figure · on an unknown board (gone)", "and says so beside the producer, never a silent drop");
   await dispatch(frame([g1, g2, g3]));
 });
+
+test("the idle floor's card (plans/user-todos.md): a card carrying blocked.state userTodos files under Blocked with a request chip counting its blocking requests and the kernel's story as its tip; its marker stands down; the floor lifting restores the marker", async () => {
+  const floored = { ...g2, column: "needs_input", category: "needs_input", board: "feed",
+    blocked: { state: "userTodos", count: 2, open: 3, what: "this session has run out of work it can do alone; what is left waits on what it asked you for" } };
+  await dispatch(frame([g1, floored, g3], { working: ["web"], userTodos: { [API]: 3 } }));
+  const c = card("g2");
+  assert.equal(colOf("g2"), "col-needsInput-list", "filed under Blocked by its column");
+  assert.equal(c._blocked.style.display, "", "the block chip shows");
+  assert.equal(c._blocked.textContent, "⏸ 2 requests", "the blocking count, in the request vocabulary; never the picker fallthrough");
+  assert.match(c._blocked._tipText, /run out of work it can do alone/, "the kernel's story is the tip");
+  assert.match(c._blocked._tipText, /click to open its chat and reply/);
+  assert.equal(c._blocked.tabIndex, 0, "the chip is in the tab order: the marker it stands in for is a button");
+  assert.equal(c._blocked.getAttribute("role"), "button");
+  assert.match(c._blocked.getAttribute("aria-label"), /run out of work it can do alone/, "setTip drops the native title: the story is the chip's accessible name");
+  assert.equal(c._utMark.style.display, "none", "the floored card's marker stands down: the chip carries the story");
+  const sent = posted.length;
+  c._blocked.onclick(ev);
+  assert.deepEqual(posted.slice(sent), [{ type: "openSession", id: API, live: true }], "the chip opens the session's chat at its live bottom, where Reply is");
+  const keyed = posted.length;
+  c._blocked.onkeydown({ key: "Enter", ...ev });
+  c._blocked.onkeydown({ key: "a", ...ev });
+  assert.deepEqual(posted.slice(keyed), [{ type: "openSession", id: API, live: true }], "Enter on the focused chip is the click; another key is not");
+  const one = { ...floored, blocked: { ...floored.blocked, count: 1 } };
+  await dispatch(frame([g1, one, g3], { working: ["web"], userTodos: { [API]: 3 } }));
+  assert.equal(card("g2")._blocked.textContent, "⏸ request", "one blocking request: no count");
+  await dispatch(frame([g1, g2, g3], { working: ["web"], userTodos: { [API]: 3 } }));   // the floor lifted: the session's plain card again
+  assert.equal(colOf("g2"), "col-asks-list");
+  assert.equal(card("g2")._blocked.style.display, "none");
+  assert.equal(card("g2")._utMark.style.display, "", "the marker is back on the unfloored card");
+  assert.equal(card("g2")._utMark.textContent, "⚑ 3 requests");
+  await dispatch(frame([g1, card("g2")._it, g3], { working: ["web"] }));   // the requests closed
+  assert.equal(card("g2")._utMark.style.display, "none");
+});

@@ -8337,6 +8337,13 @@ def _reopen_user_todo(sid, tid):
     return True
 
 
+def _blocking_user_todos(sid):
+    """The open requests the agent marked BLOCKING, oldest first: the rows the idle floor and the status nudge's
+    stand-down read (plans/user-todos.md, the idle endgame). A non-blocking request, the tool's default, is information
+    the card already shows, never a stop. The switch rides the reader inside: off reads []."""
+    return [t for t in _open_user_todos(sid) if t.get("blocking")]
+
+
 def _open_user_todos(sid):
     """The still-open requests for one session, oldest first: the exact shape the chat payload ships (id,
     text, createdT, optional detail, `blocking` when true). STORE VALUES ONLY: this rides the
@@ -8410,7 +8417,16 @@ def _prune_user_todos():
     thread of its own, so the next housekeeping pass could otherwise delete the very row the seam is about to
     reopen, and the seam would then find nothing to lift (its "stale" arm, a stderr line as the request's only
     trace). A reopened row is open, and open rows never leave; a landed answer keeps its stamp and its hold,
-    bounded like every stamped row by the resolved-history cap."""
+    bounded like every stamped row by the resolved-history cap.
+
+    The idle floor's ARM RECORD rides the same pass (_UT_FLOOR_ARM): build_feed disarms a session only while it is in
+    the live map, so a session that died holding a blocking request kept its record until a restart. It is spent here
+    on the same corroborated death evidence, never on a listing miss. An EMPTY store returns before any death read (the
+    switch-off install pays one cached dict check per pass); a record no row backs is stale then, and is dropped."""
+    if not _user_todos():
+        with _UT_FLOOR_ARM_LOCK:
+            _UT_FLOOR_ARM.clear()
+        return
     with _user_todos_lock:
         cur = _user_todos()
         out = {}
@@ -8430,6 +8446,139 @@ def _prune_user_todos():
                 out[s] = rows
         if changed:
             _write_user_todos(out)
+    with _UT_FLOOR_ARM_LOCK:
+        armed = list(_UT_FLOOR_ARM)
+    for s in armed:
+        if _user_todo_session_ended(s):
+            _ut_floor_disarm(s)                      # the record leaves with its dead session
+
+
+# The idle floor's ARM RECORD (plans/user-todos.md, the idle endgame): sid -> (the frozenset of BLOCKING request ids the
+# floor armed on, the settled turn's end). The stand-down is author-aware: _session_working reads any open turn, so a
+# floor keyed on it alone dipped Blocked to Working and back on every turn the user did not open (a peer's mail, a
+# reminder, a harness notification, a monitor wake), the flap the cards rule forbids. The settle that arms the floor is
+# recorded, and the record holds the floor through such turns until an event that is news spends it (_user_todo_idle).
+# In memory, like the notification latch: a restart re-arms at the next settle. Every read-modify-write holds the lock:
+# the pusher's build, a route's build and the housekeeping prune can overlap.
+_UT_FLOOR_ARM = {}
+_UT_FLOOR_ARM_LOCK = threading.Lock()
+
+
+def _ut_floor_disarm(sid):
+    """Spend the floor's arm record for one session: the stand-down events call this (the human speaking to the
+    session, a message they queued or parked, an interrupt, the blocking set changing, a peer owing the session a
+    reply), and the housekeeping prune for a corroborated death."""
+    with _UT_FLOOR_ARM_LOCK:
+        _UT_FLOOR_ARM.pop(str(sid), None)
+
+
+def _ut_floor_record(sid):
+    """The arm record as the feed memo key carries it: (the blocking ids, sorted, the settled turn's end), or None."""
+    with _UT_FLOOR_ARM_LOCK:
+        rec = _UT_FLOOR_ARM.get(str(sid))
+    return (tuple(sorted(rec[0])), rec[1]) if rec is not None else None
+
+
+def _human_atom_since(turns, t0):
+    """Whether the HUMAN spoke to the session after `t0` (the arm record's settled turn end): an author-'human' user
+    atom with t > t0 that is not an interrupt record, wherever it sits (a plain prompt, a typed card reply, a message
+    absorbed into a turn someone else opened). A romp injection, a peer delivery and a harness notification are other
+    authors and do not count; the interrupt gate owns the interrupt record. A BOUNDED TAIL WALK: turns are read from
+    the last backwards, a turn's atoms scanned only while its end (its `t` when open) is after t0 or it is the last
+    turn (an idle-led turn that resumed keeps the new prompt in the same last turn), and the walk stops at the first
+    earlier turn, so every re-derivation of a long session pays the tail, not the transcript. Both stamps are transcript
+    times, never the clock."""
+    n = len(turns)
+    for i in range(n - 1, -1, -1):
+        turn = turns[i]
+        if i != n - 1 and (turn.get("end", turn.get("t", 0)) or 0) <= t0:
+            break
+        for a in turn.get("atoms") or []:
+            if (a.get("type") == "user" and a.get("author") == "human" and (a.get("t") or 0) > t0
+                    and not em.is_interrupt_record(a)):
+                return True
+    return False
+
+
+def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, peer_wait, queued, compacting,
+                    blocking_ids):
+    """The idle floor's ARMING read (plans/user-todos.md, the idle endgame): True only when this session has SETTLED
+    idle with a BLOCKING request open and nothing else in motion, so the request IS its frontier and the focus card may
+    floor to needs-input. Read-side and re-derived per build inside the memoized entry (never a verdict: nothing
+    diary-shaped touches the authority tier), and every input is an event or a key component, never a per-build proxy:
+
+    - who_working (the event model's open turn) and sess_awaiting_why (dispatched agents, the overlay) say the frontier
+      is not empty; a live prompt, a compaction and an API error are live stories that outrank this one (one interrupt
+      at a time, the perm floor's own rule); each leaves the record alone, since none is the user acting, and the floor
+      returns with the record at the next settle without a fresh push;
+    - peer_wait (the caller's _wait_for_graph edge, the event the waitingOn chip and the nudge's skip read): a live peer
+      owes the session a reply, so this idle is the peer's to explain; waiting on a peer is not needs-you. Spends the
+      record;
+    - queued (the key's triple: a parked op the USER authored, a backend queue entry the user sent, a bare rollback
+      armed; a machine entry moves nothing) means the user's message is on its way in: spends the record. A backend that
+      cannot say who queued reads no human intent, which HOLDS the floor, and the message spends the record when its
+      human atom lands in the transcript, one queue wait later; a user interrupt (the interrupt gate) spends it too;
+    - compacting is the optimistic compaction bracket's boolean, computed in the key like interrupting, so the 180 s
+      cap's crossing re-derives the session once;
+    - THE NO-FLAP GUARD: the event model reads "no open turn" during mid-turn lulls, so the states log showing a
+      PROGRESSING state at or after the parsed turn's end means the stop is not real (the nudge's genuine-stop
+      discriminator, two transcript times); a progressing record from BEFORE the turn end is a lost post-turn write and
+      must not wedge the floor off.
+
+    THE ARM RECORD (_UT_FLOOR_ARM): the settle arms on the BLOCKING set at the settled turn's end. Spent by the human
+    speaking to the session after the arm (_human_atom_since: a plain prompt, a typed card reply, a message absorbed
+    into a turn someone else opened), a human-authored queued or parked message, a user interrupt, the blocking set
+    changing (an answer, a dismiss, a withdraw, a new blocking request; a non-blocking add or resolve moves no record),
+    a peer owing the session a reply. Held through a peer-opened turn, a romp reminder, a harness notification, a monitor
+    wake, a mid-turn lull. The answer to a permission or judge-auth prompt is not a stand-down event: it is the user
+    gesturing at the agent's question, not at the request, and it leaves no human atom for this read to see; after an
+    approval on a held turn the card wears the floor while the approved action runs, until the next settle re-derives it
+    (an open call, documented). ps None or no turns reads UNKNOWN, never idle, and touches nothing; the interrupt gate
+    raising reads unknown too. Only blocking ids arm: a session whose open requests are all non-blocking never arms."""
+    key = str(sid)
+    if ps is None:
+        return False                                 # unknown, never idle: the record is not touched
+    open_ids = frozenset(str(i) for i in (blocking_ids or ()))
+    if not open_ids:
+        _ut_floor_disarm(key)                        # nothing blocking: no floor, and a stale record leaves
+        return False
+    with _UT_FLOOR_ARM_LOCK:
+        rec = _UT_FLOOR_ARM.get(key)
+    if rec is None and (who_working or sess_awaiting_why or aerr or peer_wait):
+        return False                                 # nothing armed: the frontier is not empty
+    if peer_wait:
+        _ut_floor_disarm(key)                        # the idle is the peer's to explain: spent
+        return False
+    if perm_state in _NEEDS_INPUT_STATES or perm_state == "compacting" or compacting:
+        return False                                 # a live story outranks; the record stands for the settle
+    if queued:
+        _ut_floor_disarm(key)                        # the user's message is on its way in: their move
+        return False
+    turns = ps.get("turns") or []
+    if not turns:
+        return False
+    try:
+        if _interrupt_suppresses_nudge(turns, sid):
+            _ut_floor_disarm(key)                    # the user stopped the agent: their move
+            return False
+    except Exception:
+        return False                                 # an unreadable gate reads unknown, never idle
+    lt = turns[-1]
+    if rec is not None and (rec[0] != open_ids or _human_atom_since(turns, rec[1])):
+        _ut_floor_disarm(key)                        # the blocking set changed, or the human spoke since the arm
+        rec = None
+    if sess_awaiting_why or aerr:
+        return False                                 # a live story outranks; the record stands for the settle
+    if who_working:
+        return rec is not None                       # an open turn: held by the record, or not idle
+    lt_end = lt.get("end", lt.get("t", 0)) or 0
+    ls_val, ls_t = _last_state(sid)
+    if ls_val in _PROGRESSING_STATES and ls_t >= lt_end:
+        return rec is not None                       # a lull never ARMS; a standing record holds through it
+    if rec is None:
+        with _UT_FLOOR_ARM_LOCK:
+            _UT_FLOOR_ARM[key] = (open_ids, lt_end)  # the settle: arm on this set, at this turn's end
+    return True
 
 
 def _user_todo_fp(sid):
@@ -8593,6 +8742,7 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
         # wake the pusher, so the reopened row ships now rather than on the next scheduled cycle
         sys.stderr.write("user-todos: %s's answer for %s died with its holder; the request is reopened and "
                          "waiting on the user again\n" % (sid[:8], tid))
+        _notify_ut_unlatch(sid, tid)                 # the loss is the event the re-floor's push must not be quiet about
         _mark_views_dirty()
     elif verdict == "open":
         sys.stderr.write("user-todos: %s's answer for %s was lost while its row is still open; no stamp to "
@@ -15124,6 +15274,21 @@ def _backend_queued(sid):
         return False
 
 
+def _backend_queued_by_user(sid):
+    """True when the session's backend holds a queued entry the USER sent (the `user` bit SdkBackend.send records on the
+    entry's meta, mirrored across a restart): the idle floor's queued-intent read. False for a backend without
+    pending_queued_meta (Codex), for identities the backend cannot vouch for (None) and on any exception, the posture
+    of _backend_queued: an unknown author HOLDS the floor, and the user's message spends the record when its human
+    atom lands in the transcript, so the bit only advances the drop by the queue wait."""
+    try:
+        be = Sessions.backend_for(str(sid))
+        fn = getattr(be, "pending_queued_meta", None) if be is not None else None
+        rows = fn(str(sid)) if fn else None
+        return bool(rows) and any(isinstance(m, dict) and m.get("user") is True for m in rows)
+    except Exception:
+        return False
+
+
 def _backend_rewind_pending(sid):
     """True while the session's backend holds an ARMED, unconsumed bare rollback (SDK pending_cut):
     the user deleted a message and nothing has landed on the new branch yet. Backends without the
@@ -15877,6 +16042,13 @@ def _auto_nudge_session(s, now, live_map, nudged, waitfor, alive_ids=None, wake_
         return "planner-queue"
     nodes, status = store.get("nodes", {}), store.get("status", {})
     cleared = _cleared_ids() if cleared is None else cleared   # the pass hands every session the one parsed set
+    # THE STATUS NUDGE STANDS DOWN FOR A BLOCKING REQUEST (plans/user-todos.md, the idle endgame): the request already
+    # says what a status check would fish for, and the floored card, not a manufactured turn, is the surface. Scoped to
+    # the status branch alone (the `continue` below): the awaiting WAKE is the lost-wakeup backstop for dispatched
+    # work and flows past, and the DEBT reminder is the one mechanism that unparks a peer silently waiting on this
+    # session and flows past too. Lifts the moment the last blocking request clears (answer, dismiss, withdraw), each a
+    # real event this store read sees live; a non-blocking request stands nothing down; the switch off reads [].
+    _req_standdown = bool(_blocking_user_todos(sid))
     _kids = {}                                       # child map for the FORK-stalled check below
     for _nid, _nd in nodes.items():
         _kids.setdefault(_nd.get("parentId"), []).append(_nid)
@@ -15968,6 +16140,11 @@ def _auto_nudge_session(s, now, live_map, nudged, waitfor, alive_ids=None, wake_
                                  ev_t=_cur_ts, parked_s=(now - _panch) if _panch else None)
                 nudged[gid] = dict(_prec, rearmEvT=_cur_ts, rearmSettleT=_cur_st)
                 _put_nudged(gid, nudged[gid])
+        if _req_standdown:
+            continue                                 # a blocking request explains the idle: no status nudge, and no
+            #                                          nudge-failed stamp filing a second needs-you story beside the
+            #                                          floored card. Below the park gate on purpose (a park lift still
+            #                                          logs its one re-armed row); above the last-resort gate and the fire.
         # LAST-RESORT GATE (the user 2026-07-22): every OTHER mechanism that could still move this card
         # off 'working' must be exhausted first. This is what the 2026-07-22 false interrupt needed: the
         # card's 'working' came from a STALE agent-to-do mirror, and the nudge fired before the sync that
@@ -41775,6 +41952,34 @@ def _blocked_placeholder(s, name, color, fsid, live, now, perm_state, since):
             "provisional": True, "tree": []}
 
 
+# The floored card's one-line story (plans/user-todos.md, the idle endgame): why the column moved. Parallel to the perm
+# floor's "stopped awaiting your approval"; shared by the floored focus card and the goal-less placeholder.
+_USER_TODO_BLOCK_WHAT = "this session has run out of work it can do alone; what is left waits on what it asked you for"
+
+
+def _user_todo_placeholder(s, name, color, fsid, live, blocking, open_reqs):
+    """A NEEDS-INPUT placeholder for a session idle on BLOCKING requests with NO goal to floor (every goal completed or
+    cleared, or none minted yet): the goal-less permission prompt's shape (_blocked_placeholder), without it the floor
+    would be invisible exactly when the requests are all that is left of the session's frontier. The oldest blocking
+    request titles the card, with the count of the other blocking ones; the newest blocking request's time is the
+    card's time and its `_ageT` (_feed_fold_card stamps the tint per build; nothing here is clock-derived, so no `now`).
+    PROVISIONAL like the permission twin: the diff's provisional skip keeps its push silent (plans/user-todos.md records
+    the call), while the badge counts its blocking requests (_needs_you_count reads the floored presentation).
+    Appears and leaves on the floor's own events, never on a timer. `s` is the placeholders' shared shape."""
+    newest = max([int(t.get("createdT") or 0) for t in blocking] or [0]) or None
+    text = str(blocking[0].get("text") or "Waiting on your answer")
+    if len(blocking) > 1:
+        text += "  (+%d more)" % (len(blocking) - 1)
+    return {"itemId": "usertodo:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
+            "t": newest, "live": live, "_ageT": newest,   # trgb is stamped per build by _feed_fold_card
+            "turnId": None, "origin": None, "followupPending": None,
+            "summary": None, "blockSummary": None, "background": None,
+            "blocked": {"state": "userTodos", "count": len(blocking), "open": len(open_reqs),
+                        "what": _USER_TODO_BLOCK_WHAT},
+            "column": "needs_input", "board": "feed", "category": "needs_input",
+            "provisional": True, "tree": []}
+
+
 # LEGACY question-intent tell for postal rows that predate the schema `kind` field (QUESTION/ASK/Q lead
 # word). Rows that CARRY a kind use it directly — the sender's declared intent is the designed source; the
 # body regex is only the fallback for old log rows (the user 2026-06-22 / the 2026-07-22 unification).
@@ -42274,8 +42479,8 @@ def _state_unknown_names(alive, live_map, working, awaiting):
 _FEED_MEMO_LABELS = ("transcript", "parse", "cut", "states", "names", "captions", "store", "anchors", "reg",
                      "cleared", "row", "ask", "live", "bg", "wait", "postal", "stalls", "nudge", "jauth", "jactive",
                      "hide", "watch", "subagents", "usage", "offer", "auth", "downtime", "debug", "interrupting",
-                     "closer", "usertodos", "peers")
-_FEED_MEMO_DEPS = ("usage", "offer", "peers", "nudge", "stalls")    # components evaluated over the previous entry's read record
+                     "closer", "usertodos", "utarm", "queued", "compacting", "peers")
+_FEED_MEMO_DEPS = ("usage", "offer", "peers", "nudge", "stalls", "utarm")    # components evaluated over the previous entry's read record
 _FEED_NUDGE_FIELDS = ("count", "failed", "failedAt")  # the fields the card reads; pinned by the input census
 # The `row` component's positions and the live-row fields each folds (2026-09-18): _feed_row_key reads them by name,
 # the input census (tests/test_feed_memo_inputs.py RowFieldCensus) pins them to the readers' constant reads, and a
@@ -42648,7 +42853,7 @@ def _feed_session_key(s, tm, ctx, prev_entry):
     an old key with new content, which the next build's stat sees and re-derives; the other order could pair a new
     key with old content and never heal). The clock is not a component; the two booleans it decides are. The
     per-session facts the body needs and this function already computed are handed over in `ctx` (`ps`,
-    `who_working`, `interrupting`, `store`, `closer`, `hide`, `usertodos`), so a build reads each once, hit or miss, and their
+    `who_working`, `interrupting`, `store`, `closer`, `hide`, `usertodos`, `queued`, `compacting`), so a build reads each once, hit or miss, and their
     side effects (the live merge's prune/settle, the interrupt stamp's pop, the snapshot punch) run every build as
     they did before the memo. `prev_entry` is the session's previous decoded entry (None when cold): its `peers` and
     `reads` records drive the dependency components (_FEED_MEMO_DEPS), which _feed_key_with_deps re-evaluates over the NEW entry
@@ -42770,7 +42975,19 @@ def _feed_session_key(s, tm, ctx, prev_entry):
         the key's ids come from ONE read. A row registered, answered, dismissed or withdrawn moves it; a text edit does
         not, and no ambient surface reads the text. The entry's `userTodos` count (the feed frame's per-card marker
         map) reads it; a hidden session reads none. The ended gate is the live map alone: a session build_feed's loop
-        never visits (not alive) yields no entry, so its rows stay out of the frame until a revival puts it back.
+        never visits (not alive) yields no entry, so its rows stay out of the frame until a revival puts it back. The
+        idle floor reads the BLOCKING rows off the same read (_user_todo_idle, plans/user-todos.md).
+      utarm: _ut_floor_record(fsid), the idle floor's arm record for this sid (the blocking ids it armed on, sorted, and
+        the settled turn's end), or None. The one side effect the body writes (the settle arms it, the stand-down events
+        spend it), so it is re-evaluated over the post-derivation record in _feed_key_with_deps: a record change costs
+        exactly the derivation that made it, and the next unchanged build hits. A deps component.
+      queued: (a parked op the USER authored (_op_user over _pending_ops[fsid]), a backend queue entry the user sent
+        (_backend_queued_by_user: the `user` bit on the entry's meta), a bare rollback armed (_backend_rewind_pending)),
+        three booleans. The floor's queued-intent read: a machine entry (a nudge, a reminder, a peer delivery, a watch
+        notice) moves nothing. Taken in the in-memory reads.
+      compacting: bool(_compacting_now(fsid, tm, path)), the optimistic compaction bracket's boolean, a clock-decided
+        input computed here like interrupting so the 180 s cap's crossing re-derives the session once; the floor reads
+        it through ctx. A hidden session reads False.
       peers: ((peer sid, _feed_peer_facts(peer)) ...) for every peer the previous derivation read (origin senders
         via jd.load_goals_shared_or_fault / _name_of / _name_color, handoff rows' _ho_sid, the identities
         _handoff_peer_identities, _peer_identity and _handoff_card_fields resolved, the awaiting arm's peers);
@@ -42795,6 +43012,7 @@ def _feed_session_key(s, tm, ctx, prev_entry):
     _hold = _rewind_hold_get(fsid)
     hold = (_hold.get("cutT"), _hold.get("leaf"), _hold.get("at")) if _hold else None
     anchors = _node_anchor_rev.get(fsid, 0)
+    utarm = _ut_floor_record(fsid)                   # the idle floor's arm record, BEFORE the reads (the body may spend it)
     reg = (_feed_reg_sig(fsid), _chat_ident(jd.GONEDIR / (fsid + ".json")))
     cl = board["cleared_by_sid"].get(fsid, ())
     row = _feed_row_key(tm)                          # the read fields by position, None when not live (2026-09-18)
@@ -42812,12 +43030,16 @@ def _feed_session_key(s, tm, ctx, prev_entry):
     debug = board["debug"]
     facts = {p: _feed_peer_facts(p, board["cleared_by_sid"]) for p in ((prev_entry or {}).get("peers") or ())}
     ctx["peer_facts"] = facts                        # pre-derivation facts: _feed_key_with_deps keeps these for the peers
+    ctx["fsid"] = fsid                               # ...and re-reads this session's arm record after the derivation
     peers = tuple((p, facts[p]) for p in sorted(facts)) if prev_entry is not None else None   # the new entry names again
     # ── the in-memory reads ──
     be = Sessions.backend_for(fsid)
     _be = _sdk()
     cut = _be.pending_cut(fsid) if _be else ""
     live_rev = Sessions.live_rev(fsid, be)
+    queued = (any(_op_user(op) for op in list(_pending_ops.get(fsid) or ())),   # the user's parked send or command
+              _backend_queued_by_user(fsid),        # a queue entry the user sent (the `user` bit on its meta)
+              _backend_rewind_pending(fsid))        # a bare rollback armed: the tail is about to be rewritten
     watch = json.dumps(_watch_awaiting(fsid), sort_keys=True, default=str)
     ask = None
     if (tm or {}).get("state") in _NEEDS_INPUT_STATES:
@@ -42830,6 +43052,7 @@ def _feed_session_key(s, tm, ctx, prev_entry):
     #    exactly as the loop's `continue` skipped them) ──
     ps, st, who_working, interrupting, closer, snap_key = None, None, False, False, False, None
     ut_rows = []                                     # the session's open requests: none for a hidden session
+    compacting = False                               # the compaction bracket: a hidden session reads none
     if not hide:
         ps = _parse_cached(s["path"]) if path else None   # CACHE-ONLY: the cards paint at once on a cold kernel (the user 2026-06-26)
         if ps is None and path:
@@ -42870,6 +43093,7 @@ def _feed_session_key(s, tm, ctx, prev_entry):
             who_working = False
         sess_interrupting = _interrupting(fsid, ps or {}, now, tm)   # pops its stamp on the settled path, once per build
         interrupting = sess_interrupting
+        compacting = bool(_compacting_now(fsid, tm=tm, path=path))   # the bracket's boolean, decided here like interrupting
         st, snap_key = _feed_goals_keyed(fsid)       # the store the body renders (None: the read faulted) and the
         #                                              snapshot key it was served from (None: the live file)
         closer = bool(live and ps and not who_working and not jactive
@@ -42878,7 +43102,7 @@ def _feed_session_key(s, tm, ctx, prev_entry):
         #                                              switch inside the reader: off reads []); the key's component and the
         #                                              body's count come from this one read, so they cannot disagree
     ctx.update(ps=ps, who_working=who_working, interrupting=interrupting, store=st, closer=closer, hide=hide,
-               usertodos=ut_rows)
+               usertodos=ut_rows, queued=queued, compacting=compacting)
     # the store component closes on the READ's outcome (st is None: the read faulted, jd.load_goals_shared_or_fault filed it):
     # an EIO or a permissions fault moves no stat, so without the bit a faulted derivation (no cards) would serve
     # on after the fault cleared, and a pre-fault entry would serve through it (tests/test_goal_store_fault_boundary)
@@ -42902,7 +43126,7 @@ def _feed_session_key(s, tm, ctx, prev_entry):
     #                                                                 it; a text edit does not (no ambient surface reads the text)
     return (transcript, parse, cut, states, names, captions, store, anchors, reg, cl, row, ask, live_rev,
             bg, wait, postal, stalls, nudge, jauth, jactive, hide, watch, subagents, usage, offer, auth, downtime,
-            debug, interrupting, closer, usertodos, peers)
+            debug, interrupting, closer, usertodos, utarm, queued, compacting, peers)
 
 
 _FEED_PARSE_IDX = _FEED_MEMO_LABELS.index("parse")
@@ -42923,7 +43147,9 @@ _FEED_PEERS_UNSETTLED = ("unsettled",)           # a `peers` component no build'
 def _feed_key_with_deps(key, ctx, entry):
     """The key with its dependency components re-evaluated over the entry a derivation just produced: `usage` and
     `offer` from the entry's `reads`, `nudge` and `stalls` from its exact read node ids and the build's snapshots,
-    `peers` from the entry's `peers`, each peer's facts the PRE-derivation ones the key
+    `utarm` from the idle floor's arm record as the derivation left it (the settle arms it, a stand-down spends it:
+    the one side effect the body writes, so the stored key carries the record the next build will read and an
+    unchanged build hits), `peers` from the entry's `peers`, each peer's facts the PRE-derivation ones the key
     took when the previous entry already named that peer. A peer this derivation read for the FIRST time has no
     pre-derivation facts, and facts taken now could pair a new key with old content (the peer's store moving while
     the body read it, the order stat-then-read forbids), so the stored key carries _FEED_PEERS_UNSETTLED instead:
@@ -42935,6 +43161,7 @@ def _feed_key_with_deps(key, ctx, entry):
     k[_FEED_MEMO_LABELS.index("offer")] = ctx.get("cap_open") if reads.get("usage") else None
     k[_FEED_MEMO_LABELS.index("nudge")] = _feed_nudge_key(ctx, entry)
     k[_FEED_MEMO_LABELS.index("stalls")] = _feed_stalls_key(ctx, entry)
+    k[_FEED_MEMO_LABELS.index("utarm")] = _ut_floor_record(ctx["fsid"])
     if entry is None:
         peers = None
     else:
@@ -42956,7 +43183,10 @@ def _feed_session_entry(s, ctx):
       awaiting      the session's name when it is idle and awaiting (the await-green dot list), else None
       bgServices    the live judge-classified SERVICE descriptions for the session chip, else None
       userTodos     the session's OPEN request count (ctx["usertodos"], the rows the key read; plans/user-todos.md),
-                    None when none: the feed frame's per-card marker map (build_feed's userTodos). Store values only
+                    None when none: the feed frame's per-card marker map (build_feed's userTodos). Store values only.
+                    The idle floor reads the BLOCKING rows off the same list: an idle session floors its focus card, or
+                    gets the goal-less placeholder, on them (_user_todo_idle, _user_todo_placeholder), and the floor's
+                    arm record (_UT_FLOOR_ARM) is the one side effect this body writes; the key re-reads it
       servingFolds  [{"tracker", "card"}]: worker mirror cards awaiting the post-loop fold under the sender's row
       heal, hidden  the session-started tops nested / hidden this derivation (T319 / T333 counts)
       cold          True when the session is living, unparsed and worth warming (_warm_fleet_bg)
@@ -42965,7 +43195,7 @@ def _feed_session_entry(s, ctx):
       reads         usage=True for a cap offer, nudges=[node ids] for the nudge facts read by this entry
     `ctx` carries the build's cross-session reads (now, live_map, cleared, dbg_rows, wmap, stalls, jauth_map,
     jactive) and the per-session facts the key already computed (ps, who_working, interrupting, store, closer,
-    usertodos): the body reads those from ctx and nothing twice. Every helper this body calls is covered by a component of
+    usertodos, queued, compacting): the body reads those from ctx and nothing twice. Every helper this body calls is covered by a component of
     _feed_session_key (its docstring maps them); tests/test_feed_memo_inputs.py pins that mapping against this
     function's source."""
     now, live_map, cleared, dbg_rows = ctx["now"], ctx["live_map"], ctx["cleared"], ctx["dbg_rows"]
@@ -43454,8 +43684,48 @@ def _feed_session_entry(s, ctx):
             f = nodes[f]["parentId"]
         if f in nodes and status.get(f) not in ("completed", "cleared"):
             jauth_top = f
+    # THE IDLE FLOOR (plans/user-todos.md, the idle endgame): when the session has settled idle with a BLOCKING request
+    # open and nothing else dispatched, the request IS its frontier and the focus card floors to needs-input, the perm
+    # floor's own family. A read-side floor, never a judge verdict (the authority tier bars the diary), re-derived per
+    # build inside this memoized entry: every input it reads is a key component (the blocking rows under usertodos, the
+    # arm record under utarm, the queued-intent triple under queued, the compaction bracket under compacting, the states
+    # log, the parse, the peer edge under wait), so the floored card never serves stale. THE EVENTS BEHIND THE MOVE
+    # (the cards rule): Working to Blocked on the settle (the parsed turn's end with the states log's newest record not
+    # progressing at or after it, a blocking request open, no live story, no peer edge, no human intent queued); Blocked
+    # to Working on the blocking set changing (an answer, a dismiss, a withdraw), on the human speaking to the session
+    # (a human atom after the arm, a human-authored parked or queued message, a user interrupt), on a peer owing the
+    # session a reply, or on the session leaving the live map. Held, not moved: a peer-opened turn, a romp reminder, a
+    # harness notification, a monitor wake, a mid-turn lull (the arm record, _user_todo_idle); a permission, API or
+    # judge-auth story takes the card in the same column and the floor returns at the next settle. The peer-wait edge is
+    # local-host scope, the graph's own (a cross-host ask makes no edge: widening _wait_for_graph lifts every reader).
+    open_reqs = ctx["usertodos"]                     # the open rows the key read: the marker's count and the floor's rows
+    blocking = [t for t in open_reqs if t.get("blocking")]
+    if not blocking:
+        _ut_floor_disarm(fsid)                       # nothing blocking (answered, withdrawn, none): the record is spent
+    todo_idle = bool(blocking) and _user_todo_idle(fsid, ps, who_working, sess_awaiting_why, perm_state, aerr,
+                                                   wmap.get(fsid), any(ctx["queued"]), ctx["compacting"],
+                                                   [t["id"] for t in blocking])
+    todo_top = None
+    if todo_idle and api_top is None and perm_top is None and jauth_top is None:   # one interrupt at a time: the present event first
+        f = store.get("lastNode")
+        while f and nodes.get(f, {}).get("parentId") is not None:
+            f = nodes[f]["parentId"]
+        # never a completed or cleared top, and never a done-CONFIRMING one (the rollup's export: its done verdict is
+        # filed with only the settle pending, its col still reads working; flooring it flapped working, needs-you,
+        # completed with no new information; the settle's own cue covers it)
+        if f in nodes and status.get(f) not in ("completed", "cleared") and f not in confirming:
+            todo_top = f
+        if todo_top is None or _pure_delegation_top(nodes, todo_top, sid=fsid, path=s["path"]):
+            # FOCUS-CHAIN MISS: lastNode can point into a completed top while another top still reads working; on an
+            # idle session the request is the frontier whichever top holds focus, so fall back to the first top that
+            # makes a plain-working card (the goal loop's own skips: cleared, pure delegation, confirming), in store
+            # order so the entry is byte-stable across builds
+            todo_top = next((g for g in children.get(None, [])
+                             if status.get(g, "working") == "working" and g not in cleared
+                             and not nodes[g].get("cleared") and g not in confirming
+                             and not _pure_delegation_top(nodes, g, sid=fsid, path=s["path"])), None)
     _unnested = False
-    for _f in (perm_top, api_top, jauth_top):    # T319: a floor that RESOLVES to a healed top un-nests exactly that top:
+    for _f in (perm_top, api_top, jauth_top, todo_top):    # T319: a floor that RESOLVES to a healed top un-nests exactly that top:
         _h = healed.get(_f) if _f else None      #   it keeps its card (the floor keys the card on it) and its face; the
         if _h and _h[0] and _f in children.get(_h[0], []):   #   host's other rows are untouched
             children[_h[0]].remove(_f)
@@ -43475,6 +43745,7 @@ def _feed_session_entry(s, ctx):
     plain_user_t = _last_plain_user_turn_t(ps["turns"]) if ps else 0   # re-check: a plain reply after a soft block de-urgents it
     had_working = False                          # does this session show ANY working card? → drives the provisional placeholder
     had_awaiting = False                         # …and does any of them read AWAITING? → the session's await-green dot (below)
+    had_needs_input = False                      # …and does any card already interrupt? → the goal-less request placeholder yields
     # The live background-task set, once per session: OWNERSHIP for the blocked-yield below (any live
     # task counts there — the yield keys on the dispatch event, not on classification), and the
     # judge-classified SERVICES for the neutral per-session chip (the user 2026-07-24). Idle-gated
@@ -43799,10 +44070,13 @@ def _feed_session_entry(s, ctx):
         # the truth: build_feed said working while the card showed under Blocked, and the distiller line,
         # keyed on it.column, then stayed hidden). Now it.column is authoritative: the card IS blocked, the
         # client files by it.column, and the distiller line shows (the user 2026-06-29).
-        column = ("needs_input" if (api_block or nid == jauth_top or nid == perm_top or _stall_block
+        # the idle floor takes a plain-WORKING focus card only: an awaiting, blocked or re-checking move is its own latch
+        _todo_block = bool(nid == todo_top and col == "working")
+        column = ("needs_input" if (api_block or nid == jauth_top or nid == perm_top or _stall_block or _todo_block
                                     or (col == "blocked" and not recheck and not rejudging))
                   else "completed" if col == "completed" else "working")
         had_working = had_working or column == "working"
+        had_needs_input = had_needs_input or column == "needs_input"
         had_awaiting = had_awaiting or col == "awaiting"   # the FLAVOR, not the column: awaiting rides Working
         # distillState (the user 2026-07-21): which distilled line the CARD should show — keyed on the
         # GENUINE resolution state, NOT the transient `column`. recheck/rejudging drop a still-blocked
@@ -43812,7 +44086,7 @@ def _feed_session_entry(s, ctx):
         # perm_top / col=="blocked"), so the brief/takeaway stays put through the re-judge window; the
         # column still moves for placement. Completed is stable (never recheck/rejudged), so it matches.
         distill_state = ("completed" if col == "completed"
-                         else "blocked" if (api_block or nid == jauth_top or nid == perm_top
+                         else "blocked" if (api_block or nid == jauth_top or nid == perm_top or _todo_block
                                             or col == "blocked")
                          else None)
         # summaryAnchorUuid: where a click on the distilled summary line lands.
@@ -43946,6 +44220,10 @@ def _feed_session_entry(s, ctx):
                         else {"state": perm_state,
                               "what": ("this session is stopped awaiting your input" if perm_state == "picker"
                                        else "this session is stopped awaiting your approval")} if nid == perm_top
+                        # the idle floor's story (plans/user-todos.md): the blocking count (the badge counts it in the
+                        # card's place), every open row, and the one-line why
+                        else {"state": "userTodos", "count": len(blocking), "open": len(open_reqs),
+                              "what": _USER_TODO_BLOCK_WHAT} if _todo_block
                         else None),
             "retrying": (sess_retrying if column == "working" else None),   # api-retry storm in the OPEN turn → "retrying since HH:MM" chip on the working card; chip only, no column move (the user 2026-07-09)
             "nudgeFailed": nudge_failed,         # the one auto-nudge didn't resolve the stall → "nudge failed" chip; never re-nudged (plans/stalled-open-todos-nudge.md)
@@ -44004,10 +44282,12 @@ def _feed_session_entry(s, ctx):
     # verdicts, so no sibling card is floored by it (what the session-wide _await_ok would have done).
     if had_awaiting and not who_working and ent_awaiting is None:
         ent_awaiting = name
-    if not had_working and perm_top is None and ps:   # cache-only: the live-prompt placeholder needs the parse → after the warm
+    if not had_working and perm_top is None and todo_top is None and ps:   # cache-only: the live-prompt placeholder needs the parse → after the warm
         # perm_top excluded: a live-blocked focus card no longer counts as "working" (it reports needs_input
         # now), so without this guard a session whose ONLY card is the picker-blocked one would ALSO get a
         # provisional working placeholder — a duplicate. A floored perm_top already covers the live prompt.
+        # todo_top excluded for the same reason: the request-floored focus card reports needs_input too, and during
+        # judge latency this chain painted a provisional Working placeholder beside it.
         # store_faulted excluded: "the planner has not placed this yet" is an inference from placements we
         # could not read, so a session whose store faulted gets no provisional card (its row says why).
         pc = _provisional_card(s, name, color, fsid, live, now, store) if not store_faulted else None
@@ -44020,6 +44300,11 @@ def _feed_session_entry(s, ctx):
             # by the real card once the planner places the answered work.
             ent_asks.append(_blocked_placeholder(s, name, color, fsid, live, now, perm_state,
                                                  tm.get("since") if tm else None))
+        elif todo_idle and blocking and todo_top is None and not had_needs_input:
+            # idle on BLOCKING requests with no goal to floor (everything completed or cleared, or none minted yet):
+            # the goal-less permission prompt's shape (plans/user-todos.md). had_needs_input excluded: todo_top None
+            # also means "yielded to a live floor", and one session shows ONE interrupt presentation at a time
+            ent_asks.append(_user_todo_placeholder(s, name, color, fsid, live, blocking, open_reqs))
         elif sess_awaiting_why:
             # AWAITING a dispatched background task with NO goal to floor (the user 2026-07-13): the
             # session's work is all placed/done, but a background task it dispatched is still running
@@ -44029,9 +44314,8 @@ def _feed_session_entry(s, ctx):
             ent_asks.append(_awaiting_card(s, name, color, fsid, live, now, sess_awaiting_why,
                                            kind=sess_awaiting_kind, since=sess_awaiting_since,
                                            count=sess_awaiting_count, items=sess_awaiting_items))
-    ut_rows = ctx["usertodos"]                       # the open requests the key read (the store's idiom): the marker's count
     return {"asks": ent_asks, "working": ent_working, "awaiting": ent_awaiting, "bgServices": ent_bg,
-            "userTodos": len(ut_rows) or None,
+            "userTodos": len(open_reqs) or None,     # the open requests the key read (the store's idiom): the marker's count
             "servingFolds": ent_folds, "heal": heal_total, "hidden": hidden_total, "cold": cold_parse,
             "peers": sorted(peers_read), "reads": reads,
             "faults": _SUMMARY_ANCHOR_STATS["fault"] - _faults0}
@@ -56762,6 +57046,16 @@ _NOTIFY_COLUMNS = tuple(_CODE_BOARDS["feed"]["notify"])   # the feed board's not
 # store holds a card while it is in a notified column or carries an announced mark. None = this life's
 # first build pending.
 _NOTIFY_PREV = [None]
+# THE FLOOR-PUSH LATCH (plans/user-todos.md, the idle endgame): sid -> the frozenset of BLOCKING request ids the floored
+# card last PUSHED for. The idle floor's card dips to Working on the events the floor stands down on and returns at the
+# next settle, a designed move the cards rule allows, but the column diff below read each re-entry as news: an OS push
+# per exchange for the same deferred request. The news test for a floored card is its floored set: it fires on the
+# first arm and when a blocking id joins the set; an identical set re-entering is not news. Seeded from the floored
+# world on the first build of a kernel life (that state is already told), un-latched for one id at a corroborated
+# answer loss (_notify_ut_unlatch) and never at the user's own recall. The latch has a THREADED writer (the loss seam's
+# thread) beside the build-serial read-modify-writes, so every RMW holds _NOTIFY_UT_LOCK.
+_NOTIFY_UT_FIRED = [{}]
+_NOTIFY_UT_LOCK = threading.Lock()
 _NOTIFY_PREV_DISK = [None]    # what notify-prev.json last held: a write happens only when the snapshot changes
 _NOTIFY_PREV_WRITE_FAULT = [None]   # the last write failure's text — said once per episode; a landed write clears it
 # The snapshot has two writers since the sweep's bound: the pusher's build (_feed_notifications, read to
@@ -56944,6 +57238,34 @@ def _system_notify(title, body):
         pass
 
 
+def _notify_ut_open_ids(sid):
+    """The floored blocking set for the latch, read from the store the floor derived the card from, so a count-preserving
+    change (one answered, one added) still reads as the new id it is. Best-effort empty: a store hiccup must never break
+    the push path."""
+    try:
+        return frozenset(str(t["id"]) for t in _blocking_user_todos(str(sid)))
+    except Exception:
+        return frozenset()
+
+
+def _ut_floored(a):
+    """Is this card the idle floor's presentation (needs-you on its board, blocked.state userTodos)? Its news test in the
+    notifications diff is its floored set, and the badge counts its blocking requests in its place."""
+    return _card_needs_you(a) and (a.get("blocked") or {}).get("state") == "userTodos"
+
+
+def _notify_ut_unlatch(sid, tid):
+    """Clear ONE request id from the floor-push latch: the answer LOSS seam's re-arm (_user_todo_answer_lost). The reopen
+    restores the very id the latch holds, so the set dedup would suppress the re-floor's push, and that push is the one
+    signal the user's answer never arrived. Keyed at the loss event, never on the reopen itself: the user's own recall
+    (_cancel_backend_queued) reopens the same way and rightly stays silent. Runs on the loss seam's thread, hence the
+    lock; an id or a session the latch does not hold is a no-op."""
+    with _NOTIFY_UT_LOCK:
+        fired = _NOTIFY_UT_FIRED[0].get(str(sid))
+        if fired and tid in fired:
+            _NOTIFY_UT_FIRED[0][str(sid)] = fired - {tid}
+
+
 def _feed_notifications(feed):
     """Diff this feed build against the remembered snapshot; return [(title, body, sid, itemId)] for
     every ARMED card that newly entered needs_input or completed — including a card appearing already
@@ -56963,6 +57285,7 @@ def _feed_notifications_diff(feed):
     """The diff itself, under the snapshot's lock (see _notify_prev_lock)."""
     prev = _NOTIFY_PREV[0]
     first_boot = False
+    first_build = prev is None                       # this kernel life's first build, with or without a snapshot on disk
     if prev is None:                                 # the first build of this kernel life
         prev = _notify_prev_load()
         first_boot = prev is None
@@ -56984,6 +57307,16 @@ def _feed_notifications_diff(feed):
     #                                                until the sweep finds the session gone for good (_notify_prev_forget_gone)
     now_t = int(feed.get("now") or time.time())   # the build's own moment: wall clock, like the journal's t
     entered = []                                     # (itemId, card, column, entry): the cards that ENTERED a column
+    if first_build:
+        # the first build of this kernel life SEEDS the floor-push latch from the cards already floored: the latch is in
+        # memory, so a restart re-baselined it empty and the first routine dip and re-entry after every restart re-pushed
+        # a request the user had already seen. A card floored at this build either fired before the restart or is
+        # status this very build declines to push; its floored set IS the already-told state
+        for iid, a in cur.items():
+            if _ut_floored(a):
+                _usid = str(a.get("sid") or "")
+                with _NOTIFY_UT_LOCK:
+                    _NOTIFY_UT_FIRED[0][_usid] = _notify_ut_open_ids(_usid)
     for iid, a in cur.items():
         col, sid, ent = a.get("category", a.get("column")), str(a.get("sid") or ""), prev.get(iid)   # the board's category; the column from an older card
         board = a.get("board") or "feed"
@@ -56994,8 +57327,8 @@ def _feed_notifications_diff(feed):
             nxt[iid] = e
             if first_boot:
                 e["announced"], e["announcedAt"] = col, now_t     # the seed counts as told: the user has the board
-            elif ent is None or ent.get("column") != col:
-                entered.append((iid, a, col, e))
+            elif ent is None or ent.get("column") != col or _ut_floored(a):
+                entered.append((iid, a, col, e))     # a floored card is a candidate on EVERY build: its set is the test
         elif ent is not None and ent.get("announced"):
             # in working now, but announced before: the mark is what keeps a return to that column silent
             nxt[iid] = {"sid": sid, "board": board, "column": None, "announced": ent["announced"], "announcedAt": ent.get("announcedAt")}
@@ -57005,7 +57338,19 @@ def _feed_notifications_diff(feed):
         for iid, a, col, e in entered:
             if not _notify_card_effective(cards, iid, e["sid"]):
                 continue
-            if e["announced"] == col and not _notify_user_acted_since(e["sid"], iid, e["announcedAt"]):
+            if _ut_floored(a):
+                # the floor-push latch (_NOTIFY_UT_FIRED): the card move stands as built; the push is keyed on the
+                # floored blocking set, evaluated on every build the card is floored, independent of the column diff and
+                # the announced mark (a request can register in a turn too quick for any build to observe the dip, and
+                # the joining id is news either way). The latch advances only when a push FIRES: a suppressed build must
+                # not narrow it, or an id answered while floored and then recalled would read as news
+                _uids = _notify_ut_open_ids(e["sid"])
+                with _NOTIFY_UT_LOCK:
+                    _prev_ids = _NOTIFY_UT_FIRED[0].get(e["sid"])
+                    if _prev_ids is not None and not (_uids - _prev_ids):
+                        continue                     # floored with no new blocking request: not news
+                    _NOTIFY_UT_FIRED[0][e["sid"]] = _uids
+            elif e["announced"] == col and not _notify_user_acted_since(e["sid"], iid, e["announcedAt"]):
                 continue                             # the same (card, column), told already, nothing of the user's since
             e["announced"], e["announcedAt"] = col, now_t
             needs_you = col == _board_needs_you(a.get("board"))   # the board's badge category: the authoritative state, not the words (the same read as _needs_you_count)
@@ -57023,9 +57368,25 @@ def _feed_notifications_diff(feed):
 
 
 def _needs_you_count(feed):
-    """How many real (non-provisional) cards sit in needs_input — the number the app icon wears.
-    Counted from the same feed build the notifications diff, so badge and bell can never disagree."""
-    return sum(1 for a in (feed.get("asks") or []) if not a.get("provisional") and _card_needs_you(a))   # the one rule, board-aware
+    """The number the app icon wears: the things only the user can move, from the same feed build the notifications diff
+    reads. The per-card, board-aware rule (_card_needs_you) with one addition (plans/user-todos.md, the idle endgame):
+    a REQUEST-FLOORED presentation (blocked.state userTodos, the idle floor's card or its goal-less placeholder) counts
+    its BLOCKING requests instead of itself, provisional or not, since the requests are the things to move and the card
+    is their presentation; every other needs-you card counts once, as itself, a provisional placeholder skipped as
+    before (a session hard-stopped for another reason while it holds requests counts once, as the stop: the permission,
+    API and judge-auth floors win the card). So the badge can count a card the bell skips (the floored placeholder is
+    provisional) and both still read one build. No switch read: with requests off no floored card exists (the reader
+    returns []), and the number is what it was before requests existed. A malformed count contributes nothing."""
+    n = 0
+    for a in (feed.get("asks") or []):
+        if _ut_floored(a):
+            try:
+                n += int((a.get("blocked") or {}).get("count") or 0)
+            except (TypeError, ValueError):
+                pass
+        elif not a.get("provisional") and _card_needs_you(a):
+            n += 1
+    return n
 
 
 # The count the shell clients last heard (None = nothing sent since boot). The badge moves on feed

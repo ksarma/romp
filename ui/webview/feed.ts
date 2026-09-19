@@ -124,6 +124,7 @@ interface AskItem {
               refusal?: boolean;   // apiError: the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — deterministic on the same input, the user 2026-08-15)
               mode?: string; login?: string; since?: number;   // judgeAuth adds these: which billing its judges ride ('key'|'login') + the first refusal time — romp can't analyze the session until the credential is fixed (the user 2026-08-12)
               capOffer?: { resetsAt: number; window?: string };   // apiError: login-billed session dead on the account's cap + a key on hand → the explicit switch OFFER; the pick is yours alone, both directions (2026-08-30)
+              count?: number; open?: number;      // userTodos (the idle floor, plans/user-todos.md): the blocking requests the floored card presents (the badge counts them in its place), and every open one
               toName?: string; toSid?: string };  // parkedHandoff adds to* (the held-mail flavour left 2026-09-19: a notice card now)
   // a NOTICE CARD (T370, plans/notice-cards.md): a producer's card the kernel made without a judge; the flavour object
   // discriminates the family the way blocked.state does the kernel-made ones. The face shows the title (text), the producer
@@ -1194,6 +1195,11 @@ function makeAskCard(it: AskItem): HTMLElement {
   };
   const waitOnBadge = el("span", "fask-waiton"); waitOnBadge.style.display = "none";   // "Awaiting <peer>" / "Deadlock <peer>", peer name in native colour (the user 2026-06-22)
   const blkBadge = el("a", "fask-blocked"); blkBadge.style.display = "none";   // ⏸ live permission/picker block → click opens the session
+  // in the tab order like its button siblings (the request marker a floored card trades for it is one): an anchor
+  // without an href takes no focus and Enter does nothing on it, so the chip takes a slot, a button's role and the two
+  // activation keys, which run whatever click the paint below wired onto it
+  blkBadge.tabIndex = 0; blkBadge.setAttribute("role", "button");
+  blkBadge.onkeydown = (ev: KeyboardEvent) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); blkBadge.onclick?.call(blkBadge, ev as unknown as PointerEvent); } };
   const apiBadge = el("span", "fask-apierror"); apiBadge.textContent = "⚠ API error"; apiBadge.style.display = "none";   // red: session stopped on an API error
   // filled red (a new chip, deliberately distinct from the outlined api-trouble family): romp's OWN
   // analysis of this session is refused on its credential — the session may be fine; the judges are
@@ -2412,24 +2418,34 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   // (which only speaks permission/picker) would just misread — suppress it there (the user 2026-07-21).
   const showBlk = !!it.blocked && !isApiErr && !isJudgeAuth;
   a._blocked.style.display = showBlk ? "" : "none";
+  const isUtFloor = it.blocked?.state === "userTodos";
   if (showBlk && it.blocked) {
     // live prompts only — the paused-stall badge retired with the floor (2026-07-07; a failed nudge now
-    // records a real block and the follow-up-failed CHIP carries that story)
+    // records a real block and the follow-up-failed CHIP carries that story). "userTodos" is the idle floor
+    // (plans/user-todos.md): the session ran out of work it can do alone and its blocking requests are the
+    // frontier; the chip says so with the blocking count, in the request vocabulary, never the picker fallthrough
+    const utCount = isUtFloor ? Number(it.blocked.count || 0) : 0;
     a._blocked.textContent = it.blocked.state === "permission" ? "⏸ approval"
+      : isUtFloor ? (utCount > 1 ? "⏸ " + utCount + " requests" : "⏸ request")
       : "⏸ picker";
-    setTip(a._blocked as HTMLElement, it.blocked.what + " — click to jump to the prompt in the chat");
-    // the prompt (a picker / permission approval) is the session's LIVE bottom → `live` lands the chat right
-    // on it, not wherever it was last scrolled (the user 2026-07-08).
+    const blkSuffix = isUtFloor
+      ? " (click to open its chat and reply)"
+      : " — click to jump to the prompt in the chat";
+    setTip(a._blocked as HTMLElement, it.blocked.what + blkSuffix);
+    a._blocked.setAttribute("aria-label", it.blocked.what + blkSuffix);   // setTip drops the native title; the label is the chip's accessible name
+    // the prompt (a picker / permission approval, or the card by the composer where Reply is) is the session's
+    // LIVE bottom → `live` lands the chat right on it, not wherever it was last scrolled (the user 2026-07-08).
     a._blocked.onclick = (ev: Event) => { ev.stopPropagation(); vscodeApi?.postMessage({ type: "openSession", id: it.sid, live: true }); };
   }
   // the quiet REQUEST marker (plans/user-todos.md, the ambient surfaces): the owning session has an open request for you.
   // Every card of that session wears it (requests are session-scoped), dim by default: a marker, never an alarm. The count
   // is a board-level input off the frame's map, in the card gate's key (feed-card-gate.ts), so a request registered or
   // closed reaches an unchanged card; rewired per repaint on the card's kept element (click-safe). Nothing here moves a
-  // card, and the blocked badge above says nothing about requests.
+  // card; the one card whose blocked chip above IS the request story (the idle floor's) wears the chip and not the
+  // marker, so a card never says it twice, while the session's other cards keep theirs.
   const utn = userTodosMap[it.sid] || 0;
   const utMark = a._utMark as HTMLButtonElement;
-  if (utn > 0) {
+  if (utn > 0 && !isUtFloor) {
     utMark.style.display = "";
     utMark.textContent = utn > 1 ? "⚑ " + utn + " requests" : "⚑ request";
     const utTip = utn > 1 ? "this session has " + utn + " requests for you: click to open its chat and answer them"

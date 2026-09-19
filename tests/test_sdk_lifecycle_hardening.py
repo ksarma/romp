@@ -644,6 +644,68 @@ class QueuePersistence(unittest.TestCase):
                          "restores strings only — junk entries never wedge delivery")
 
 
+class QueueEntryAuthorBit(unittest.TestCase):
+    """A queue entry records whether the USER sent it (SdkBackend.send's `user`, the word that retries a stood-down attach):
+    `user: true` beside the copy's identity in the mirror (reg['queueMeta']), restored onto the entry by the seed, exposed
+    by pending_queued_meta on the live and the dead arm. A machine send (a nudge, a reminder, a notice) records nothing,
+    so its mirror entry is byte-identical to what it was. The feed's idle floor reads the bit (a human message on its way
+    in spends the floor's arm record; a machine entry holds it)."""
+
+    SID = "11111111-2222-3333-4444-999999999999"
+
+    def _world(self):
+        d = tempfile.mkdtemp()
+        open(os.path.join(d, "session-hosts"), "w").write("off")   # nothing here may start a session host
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        reg = _reg(d, self.SID)
+        s = sb.SdkSession(be, reg)                                    # never started: pure kernel-thread surface
+        with be._lock:
+            be.sessions[self.SID] = s
+        be._ensure = lambda sid, **k: s
+        return d, be, s
+
+    def test_a_user_send_writes_the_bit_and_a_machine_send_writes_none(self):
+        d, be, s = self._world()
+        self.assertTrue(be.send(self.SID, "use the cookie", user=True))
+        self.assertTrue(be.send(self.SID, "Where does each of these stand?"))
+        metas = sb.read_reg(Path(d), self.SID).get("queueMeta")
+        self.assertEqual([m["text"] for m in metas], ["use the cookie", "Where does each of these stand?"])
+        self.assertIs(metas[0].get("user"), True)
+        self.assertNotIn("user", metas[1], "a machine entry carries no author key at all")
+        self.assertEqual(sorted(metas[1]), ["qid", "qts", "text"], "the plain shape, key for key")
+
+    def test_pending_queued_meta_exposes_the_bit_on_the_live_and_the_dead_arm(self):
+        d, be, s = self._world()
+        be.send(self.SID, "use the cookie", user=True)
+        be.send(self.SID, "Where does each of these stand?")
+        live = be.pending_queued_meta(self.SID)
+        self.assertEqual([m.get("user") for m in live], [True, None])
+        self.assertEqual(live[0]["md"], "use the cookie")
+        with be._lock:
+            del be.sessions[self.SID]
+        dead = be.pending_queued_meta(self.SID)
+        self.assertEqual([m.get("user") for m in dead], [True, None], "the mirror answers the same on the dead arm")
+        self.assertEqual([m["md"] for m in dead], ["use the cookie", "Where does each of these stand?"])
+
+    def test_the_seed_restores_the_bit_onto_the_entry(self):
+        d, be, s = self._world()
+        be.send(self.SID, "use the cookie", user=True)
+        be.send(self.SID, "Where does each of these stand?")
+        s2 = sb.SdkSession(be, sb.read_reg(Path(d), self.SID))         # a kernel restart: the seed
+        self.assertEqual([m.get("user") for m in s2.pending_meta()], [True, None])
+        s2._persist_queue()
+        metas = sb.read_reg(Path(d), self.SID).get("queueMeta")
+        self.assertEqual([m.get("user") for m in metas], [True, None], "the round trip keeps it")
+
+    def test_an_older_mirror_without_the_bit_reads_no_author(self):
+        d = tempfile.mkdtemp()
+        open(os.path.join(d, "session-hosts"), "w").write("off")
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        reg = _reg(d, self.SID, queue=["held over"], queueMeta=[{"text": "held over", "qid": "echo:a1", "qts": 1}])
+        self.assertEqual([m.get("user") for m in sb.SdkSession(be, reg).pending_meta()], [None])
+        self.assertEqual([m.get("user") for m in be.pending_queued_meta(self.SID)], [None])
+
+
 class TodoIdsRideTheQueue(unittest.TestCase):
     """A queued message may answer a user request (SdkBackend.send's `user_todo`): the id travels WITH the message,
     on the in-memory entry (_TodoText), through the registry mirror and back through the boot seed, so whatever

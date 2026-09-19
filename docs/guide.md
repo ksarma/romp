@@ -484,9 +484,46 @@ the number of open requests when there is more than one; click it and the
 session's chat opens at the card. The marker moves no card: the session told
 you what it needs and goes on working, so its cards stay where they are.
 
+**Idle on a blocking request.** A request the session marked as blocking is
+one it cannot go on without. When such a request is open and the session goes
+idle with nothing else in progress (no turn running, no background work
+awaited, no reply owed to it by another session on this machine, nothing of
+yours on its way to it), the request is all that is left of its work, and the
+card for its current work moves to Blocked with a "⏸ request" chip in the
+marker's place ("⏸ 2 requests" when more than one is blocking). The session's
+other cards keep their markers. Hover the chip and it says that the session has
+run out of work it can do alone and is waiting on what it asked you for; click
+it and the session's chat opens where Reply is. A session with no card at that
+point gets a placeholder card in Blocked, titled with its oldest blocking
+request. A request the session did not mark as blocking never moves a card.
+
+The card returns to Working when you answer or dismiss the request, when you
+speak to the session (a message you type, a reply on one of its cards, or a
+message you queue while it is busy), when you stop it, or when a session on
+this machine owes it a reply. If a blocking request is still open when the
+session settles again, the card returns to Blocked. Work set off by another
+session's message, a reminder, or a notification does not by itself move the
+card. If the session stops on a permission prompt or an error only you can
+fix, the card keeps its place in Blocked and wears that chip instead; if the
+session sends out agents or compacts, the card reads Working until the session
+settles. Either way it comes back for the request at the next settle. While a
+blocking request is open, romp also stops asking the idle session where its
+work stands: the request already says.
+
+**The badge and the bell.** If you run the dashboard as an installed app, the
+count on its icon is the number of things only you can move. A card moved to
+Blocked by its session's blocking requests counts those requests in its place;
+every other card in Blocked counts once, as before, a session stopped on a
+permission prompt while it holds requests among them. Romp announces the move
+to Blocked the way it announces any other block, once per set of blocking
+requests: a card that returns to Working and comes back for the same requests
+does not announce again, a new blocking request does, and so does a request
+that comes back because your answer never reached the session. The placeholder
+card is silent.
+
 Hiding a session from the feed (right-click its tab, **Hide from feed**) hides
-its cards and their markers; its tab keeps the flag, because the tab describes
-the session itself. If a session has ended, its requests stay out of the card
+its cards, their markers and their move to Blocked; its tab keeps the flag,
+because the tab describes the session itself. If a session has ended, its requests stay out of the card
 and off its tab until you revive it; they are hidden, not cleared, and come
 back with the session. A session that is only asleep after a kernel restart is
 still listed, and Reply wakes it with its history intact. An answer that never
@@ -543,11 +580,18 @@ was asked.
 - Romp never asks a session whether it still needs its open requests. An idle
   session almost always does, and asking would spend a turn per session to learn
   nothing.
+- Waiting on another session is not waiting on you. A session idle on a
+  question it asked another session on this machine stays in Working until that
+  session answers. A question to a session on another machine is not tracked
+  this way, so such a session moves to Blocked for its blocking request while
+  the answer is still coming.
 - A request has no priority, deadline, or edit. To change one, the session
   withdraws it and files another.
-- A request moves no card and rings no bell: it waits on the card at the
-  bottom of the session's transcript, with the flag on the tab and the marker
-  on the session's feed cards pointing there.
+- A request the session did not mark as blocking moves no card and rings no
+  bell: it waits on the card at the bottom of the session's transcript, with
+  the flag on the tab and the marker on the session's feed cards pointing
+  there. A blocking request moves the card only once the session has gone idle
+  on it (above).
 
 ## Inter-agent communication (the Romp Postal Service)
 
