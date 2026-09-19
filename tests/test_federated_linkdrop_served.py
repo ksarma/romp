@@ -30,6 +30,12 @@ Three phases, each ending in the same change bundle on the remote (NOTICES_PER_P
 apart, one user todo, one closed transcript pair appended for "api", so each page has a visible of its own: the card
 on the feed page, the todo's text on the Waiting page, the swap of api's provisional row on the Outline): A before the
 drop (the corners lab's baseline), B on the socket the link's return dialed, C on the socket the hub's restart dialed.
+A fourth bundle, D, is posted WHILE THE LINK IS DOWN, once the hub's row has gone down: the control door reaches the
+remote's real port, not the splice, so a patch is due to every page with nothing to carry it. That is the gate's
+discriminating case (round 1 found the down window otherwise idle, so its zero rows could not tell "the link gates the
+patches" from "no patch was due"): D is absent from every page while the link is down, no frame crosses, no row files,
+the link's return serves each redial ONE whole frame that carries D (no patch between the return and phase B's first
+change), and phase B's patches file rows again on the old bundle.
 Recorded over the whole drive and asserted: the redial's terms (reconnect=1&proto, the page's caps and delta), the new
 socket's first feed-family frame (a whole keyed feed, never a patch or a feedDelta: the remote's client dict is per
 socket, kernel.py's accept), the frames the change crossed as, the hub's client-diag rows by kind and phase (outline
@@ -60,10 +66,11 @@ everything recorded.
 What the old hub showed (2026-09-19, the bundle at 01d4fbe43): the old bundle dials no caps and decodes no patch, so
 its Outline files one delta-unapplied row per remote feed patch, and across the drive those rows ran 3 / 0 / 3 / 3:
 three in phase A with the link up, ZERO while the link was down, three after the link's return and three after the
-local restart. The storm is gated on remote patches arriving, which is gated on the link, and a relay redial does not
-end it but restarts it: each redial's one whole frame catches the old page up once and the next patch freezes it
-again, so on a hub whose link comes and goes the storm pauses and resumes with the link and looks intermittent and
-self-healing when it is neither. That is why the old-hub class stays in this lab: a lab that only proves the fixed
+local restart. The storm is gated on remote patches arriving, which is gated on the link: with phase D due while the
+link was down, no row filed until the link returned, the return's whole frame carried D and filed no row for it, and
+the next patch (phase B's) filed a row again. A relay redial does not end the storm but restarts it: each redial's one
+whole frame catches the old page up once and the next patch freezes it again, so on a hub whose link comes and goes
+the storm pauses and resumes with the link and looks intermittent and self-healing when it is neither. That is why the old-hub class stays in this lab: a lab that only proves the fixed
 behaviour loses the evidence of what was fixed, and a reader in three months must be able to learn that a redial used
 to restart the storm. The new bundle files zero such rows across the same drive, and the three mutations recorded in the report
 (the redial term stripped, the whole-frame base write dropped, the local-down gate dropped) each turn one of its
@@ -451,9 +458,16 @@ try {
   await waitFor(async () => (await tunnelsStatus()) !== "up", 60000, "the hub's row leaves up");
   mark("rowDown");
   out.phases.drop.rowStatus = await tunnelsStatus();
+  // (2b) a change is DUE while the link is down: phase D's bundle goes to the remote's real port through the control door
+  // (not through the splice), so every page is owed a patch and nothing can carry it; the pages must not see it until
+  // the link returns, and the return must carry it in the redial's whole frame, not as a replayed patch
+  mark("D0");
+  const chD = await ctl("change", { phase: "D" });
+  mark("D1");
   await pages.feed.waitForTimeout(cfg.downDwellMs);   // dwell with the row down: dialing ceases once the poll reads it
   mark("settled");
   for (const app of APPS) out.phases.drop[app] = await snap(pages[app]);
+  out.phases.D = { change: chD, seenWhileDown: await visible(chD) };
   // (3) the link returns: the supervisor reads the row up, the pages' polls dial again
   mark("resume");
   await ctl("resume");
@@ -461,8 +475,10 @@ try {
   mark("rowUp");
   await waitFor(() => freshRelayWithFeed("resume"), 90000, "a fresh relay socket per page holds the remote's full frame after the link's return");
   mark("redialed");
+  out.phases.D.seenAfterReturn = await waitVisible(chD, cfg.waitMs);   // the redial's whole frame carries the change made while the link was down
   const chB = await phase("B");
   out.phases.B.seenA = await visible(chA);
+  out.phases.B.seenD = await visible(chD);
   // (5) the LOCAL socket: the hub kernel restarts, the pages' own sockets and every relay splice die together
   if (cfg.localDrop) {
     mark("restart");
@@ -475,6 +491,7 @@ try {
     const chC = await phase("C");
     out.phases.C.seenA = await visible(chA);
     out.phases.C.seenB = await visible(chB);
+    out.phases.C.seenD = await visible(chD);
   }
   mark("end");
   for (const app of APPS) out.pages[app] = await snap(pages[app]);
@@ -960,6 +977,39 @@ class _LinkDrop(unittest.TestCase):
             self.assertEqual(self._sends(app, "relay", "needSlot"), [], "…and the remote for no slot")
             self.assertEqual(self._sends(app, "relay", "needFullFeed") + self._sends(app, "local", "needFullFeed"), [], "…and nobody for a full feed: every feedDelta found its base on the socket it arrived on")
 
+    def _assert_change_due_while_down_crossed_nothing_and_the_return_carried_it_whole(self):
+        """The gate, established rather than exhibited (round 1): phase D's change bundle was posted to the remote's real
+        port after the hub's row went down and before the dwell ended, so a patch was DUE with the link down. While down
+        the change is absent from every page (the card, and on the new bundle the todo and the provisional row), no
+        outline/delta-unapplied row files, and the link's return serves each page ONE whole frame that carries it: the
+        change is visible after the return, no patch of any kind (delta or feedDelta) reaches any page between the
+        return and phase B's first change, and it stays visible after phase B and at the end."""
+        m = self._marks()
+        D = self._phase("D")
+        made = [c for c in self.changes_made if c.get("phase") == "D"]
+        self.assertEqual(len(made), 1, "the control door made phase D's change bundle once: %r" % ([c.get("phase") for c in self.changes_made],))
+        ch = made[0]
+        self.assertEqual(len(ch.get("noticeKeys") or []), NOTICES_PER_PHASE, "phase D posted its notice cards: %r" % (ch,))
+        self.assertGreaterEqual(ch["t0"], m["rowDown"] / 1000.0, "phase D was posted after the hub's row went down (t0 %r, rowDown %r)" % (ch["t0"], m["rowDown"] / 1000.0))
+        self.assertLessEqual(ch["t1"], m["settled"] / 1000.0, "…and finished inside the down dwell (t1 %r, settled %r)" % (ch["t1"], m["settled"] / 1000.0))
+        todo = ("todo" in self.changes) or None
+        prompt = ch.get("prompt") if "append" in self.changes else None
+        self._assert_seen(D["seenWhileDown"], False, todo=(False if todo else None), what="phase D while the link was down (a change due, nothing to carry it)")
+        if prompt is not None:
+            self.assertNotEqual(D["seenWhileDown"].get("prov"), prompt, "api's provisional row did not read phase D's prompt while the link was down: %r" % (D["seenWhileDown"],))
+        down = self._outline_unapplied(self._rows_in("drop", "resume"))
+        self.assertEqual(down, [], "no outline/delta-unapplied row filed while the link was down with phase D due: %r" % (down,))
+        self._assert_seen(D["seenAfterReturn"], True, todo=todo, prompt=prompt, what="phase D after the link's return (the redial's whole frame carried it)")
+        for app in self.apps:
+            socks = self._relay_socks(app)
+            patches = [(s["i"], f["t"], f["slot"], f["at"] - m["resume"]) for s in socks for f in s["frames"] if f["t"] in ("delta", "feedDelta") and m["resume"] <= f["at"] < m["B0"]]
+            self.assertEqual(patches, [], "no patch reached the %s page between the link's return and phase B's first change (the catch-up is one whole frame, never a replayed patch): %r" % (app, patches))
+            wholes = [f for s in socks for f in s["frames"] if f["t"] == "feed" and m["resume"] <= f["at"] < m["B0"]]
+            self.assertTrue(wholes, "…and a whole feed frame did reach the %s page in that window: %r" % (app, [self._kinds(s) for s in self._relay_socks(app, "resume", "B0")]))
+        self._assert_seen(self._phase("B")["seenD"], True, todo=todo, what="phase D's changes after phase B")
+        if self.local_drop:
+            self._assert_seen(self._phase("C")["seenD"], True, todo=todo, what="phase D's changes at the end")
+
 
 class LinkDropBothNew(_LinkDrop):
     """Both new (this checkout on both sides): the remote honours the cap and serves feedDelta frames; the hub's pages
@@ -1009,6 +1059,12 @@ class LinkDropBothNew(_LinkDrop):
         self._assert_nothing_stranded()
         self.assertEqual(self.remote_wire.get("feed_slot_split"), 0, "the remote never re-encoded through the slot path: %r" % (self.remote_wire,))
 
+    def test_a_change_due_while_the_link_was_down_crossed_nothing_and_the_return_carried_it_whole(self):
+        """Phase D (cards, a todo, an appended pair) posted with the row down: absent from every page while down, no row,
+        then the return's whole frame carries all of it (card, todo text, the provisional row's prompt) with no patch of
+        any kind before phase B's first change."""
+        self._assert_change_due_while_down_crossed_nothing_and_the_return_carried_it_whole()
+
     def test_the_local_drop_deferred_the_relay_dial_once_and_the_return_dialed_once(self):
         if not self.local_drop:
             self.skipTest("optional: this class runs no local drop")
@@ -1041,9 +1097,10 @@ class LinkDropOldLocal(_LinkDrop):
     size guard would send a whole frame, catching the old page up and hiding the freeze (the corners lab's docstring).
 
     The delta-unapplied rows are the old bundle's storm. This lab reads it across the mid-session events: it is one
-    row PER remote feed patch, it STOPS while the link is down (no patch arrives, so no row — the storm is gated on the
-    link), and it RESUMES after each redial's whole frame (the whole frame catches the page up once; the next patch
-    freezes again). Recorded on the bundle at 01d4fbe43 (2026-09-19): 3 / 0 / 3 / 3 rows across phase A, the link
+    row PER remote feed patch, it STOPS while the link is down (no patch arrives, so no row: the storm is gated on the
+    link, established by phase D, a change due while the link was down that reached no page, crossed as no frame and
+    filed no row until the return's whole frame carried it), and it RESUMES after each redial's whole frame (the whole
+    frame catches the page up once; the next patch freezes again). Recorded on the bundle at 01d4fbe43 (2026-09-19): 3 / 0 / 3 / 3 rows across phase A, the link
     down, phase B and phase C, one per remote feed patch, ZERO while the link was down. A relay redial does not end the
     storm but restarts it, so with a link that comes and goes the storm looks intermittent and self-healing when it is
     neither; this class keeps that evidence beside the new bundle's zero. Card visibility is NOT asserted here: the old bundle's socket churns and each redial delivers a
@@ -1088,9 +1145,11 @@ class LinkDropOldLocal(_LinkDrop):
 
     def test_the_storm_resumes_after_each_redial_and_is_gated_on_the_link(self):
         """The experiment's verdict: the delta-unapplied storm is one row per remote feed patch; it STOPS while the link
-        is down (no patch arrives, so no row) and RESUMES after each redial's whole frame (the whole frame catches the
-        page up once; the next patch freezes again). So a pause in the storm says no patch arrived, not that the page
-        recovered. The new bundle files ZERO such rows across the same drive."""
+        is down (no patch arrives, so no row; phase D, due while the link was down, is the gate's own leg in
+        test_a_change_due_while_the_link_was_down_crossed_nothing_and_the_return_carried_it_whole) and RESUMES after
+        each redial's whole frame (the whole frame catches the page up once; the next patch freezes again). So a pause
+        in the storm says no patch arrived, not that the page recovered. The new bundle files ZERO such rows across the
+        same drive."""
         self._driver_ran()
         perA = len(self._outline_unapplied(self._rows_in("A0", "A1")))
         down = len(self._outline_unapplied(self._rows_in("drop", "resume")))
@@ -1106,6 +1165,13 @@ class LinkDropOldLocal(_LinkDrop):
         for app in self.apps:
             self.assertEqual(self._sends(app, "relay", "needSlot"), [], "the old bundle has no host to route a needSlot by: nothing asked of the remote on the %s socket" % app)
             self.assertEqual(self._sends(app, "relay", "needFullFeed"), [])
+
+    def test_a_change_due_while_the_link_was_down_crossed_nothing_and_the_return_carried_it_whole(self):
+        """The gate's own leg on the old bundle: phase D's cards, posted with the row down, reach no page and file no row
+        while the link is down; the return's whole frame carries them (visible after the return, no delta frame between
+        the return and phase B's first change), and phase B's patches then file rows again (the storm test's phase B
+        equality). A pause in the storm with a change due is the link, not the page."""
+        self._assert_change_due_while_down_crossed_nothing_and_the_return_carried_it_whole()
 
 
 if __name__ == "__main__":
