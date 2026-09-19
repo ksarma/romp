@@ -2,25 +2,35 @@
 // Slice 3, item 12), counted under a Chromium request intercept over the real viewer through real-viewer-leg.ts. The flow
 // is a privacy surface: a gated placeholder (figure-gate.ts) stands for a picture on a host the gear's list does not name,
 // and a print may fetch from such a host only when the person chose "Print with them", and then only for a placeholder
-// that reaches the paper. The third review of the follow-on (2026-09-19) found one press asking a host hundreds of times
-// for one URL, so this leg does not assert that nothing unwanted leaves; it COUNTS what leaves, road by road, and holds
-// each count exactly. Every request Playwright reports for the page (page.on("request"), installed before the file opens,
-// so the page's own document is not counted) goes into one ledger per page, and each road is the ledger's delta between
-// two marks: a road is an act (a press, a choice, a key, a landing, a release) followed by six animation frames and a
-// 250 ms settle, so a request the act causes has been issued when the delta is read (the remote routes answer after
-// 150 ms, and the request is reported when it is issued, not when it is answered). A request is classed by its URL: LOCAL
-// is the page's origin (a /file request keyed by the picture's path under the root, docs/fig.svg; any other path by its
-// pathname: the viewer's loader glyph and the sheet's font, one request each per page), THIRD-PARTY is any other http or
-// https host, keyed by host and path, and OTHER is any other scheme, keyed by scheme and host (a blob: URL by the origin
-// it belongs to; a chrome-extension: URL by the extension's id). Each road's row (the road,
-// the third-party URLs and their counts, the local URLs and their counts, the other URLs, and what printed: window.print's
-// calls, the PDF frame's print or the /file tab through window.open, all stubbed on the page) is asserted as plain strings
-// and numbers and printed as one diagnostic line of a fixed shape ("egress | road | third-party: ... | local: ... |
-// other: ... | printed: ..."), so the table the report carries is the lines a run prints (grep the run's output for
-// "egress |"). At each page's end a tail read finds nothing after the last road, and the rows' counts sum to the ledger,
-// so every request the page made is in some row. The harness answers the file's own GET and HEAD inside the page (real-viewer-leg.ts replaces window.fetch), so
-// those never reach the intercept and are not rows; in the product they go to the kernel, the page's own origin. The
-// pictures, the probes and the frame go through the browser's network stack and are what the intercept sees.
+// that reaches the paper, restored alone (loadGatedFigure), which grants the host nothing for the page's life; a click on a
+// placeholder, the person's own act, loads its host whole and for the page's life (loadGatedHost, decision 8). The third
+// review of the follow-on (2026-09-19) found one press asking a host hundreds of times for one URL, and its round 2 found
+// that every page of this leg gave each placeholder a host of its own, so no road could tell a fetch PER HOST from one PER
+// PLACEHOLDER; so this leg does not assert that nothing unwanted leaves; it COUNTS what leaves, road by road, per host and
+// per placeholder, and holds each count exactly. Every request Playwright reports for the page (page.on("request"),
+// installed before the file opens, so the page's own document is not counted) goes into one ledger per page, and each
+// road is the ledger's delta between two marks: a road is an act (a press, a choice, a key, a landing, a release) followed
+// by six animation frames and a 250 ms settle, so a request the act causes has been issued when the delta is read (the
+// remote routes answer after 150 ms, and the request is reported when it is issued, not when it is answered). A request is
+// classed by its URL: LOCAL is the page's origin (a /file request keyed by the picture's path under the root, docs/fig.svg;
+// any other path by its pathname: the viewer's loader glyph and the sheet's font, one request each per page), THIRD-PARTY
+// is any other http or https host, keyed by host and path, and OTHER is any other scheme, keyed by scheme and host (a blob:
+// URL by the origin it belongs to; a chrome-extension: URL by the extension's id). Each road's row holds: the third-party
+// HOSTS asked; the requests PER URL; the PLACEHOLDERS whose URL was fetched, split into those that reach the paper and those
+// that do not (each page's placeholders, their URLs and where each stands, in the open body, inside a closed <details> or
+// under `hidden`, are read off the rendered DOM before the roads and asserted, readPlacements, so the split is the page's,
+// not the test's word; a URL no placeholder of the page names is listed apart, and none is expected); the PAGE-LIFE GRANT,
+// read on the roads that land a second note naming the host after a print or a click (landAgain: the host's figure in the
+// landing shows as a placeholder, so the document's loaded set does not hold the host, or as a picture, so it does; "not
+// read" on every other road); what PRINTED (window.print's calls, the PDF frame's print or the /file tab through
+// window.open, all stubbed on the page); and the local and other tallies. The row is asserted as plain strings and numbers
+// and printed as one diagnostic line of a fixed shape ("egress | road | hosts: ... | per-url: ... | placeholders: printable
+// ... / not ... | grant: ... | printed: ... | local: ... | other: ..."), so the table the report carries is the lines a run
+// prints (grep the run's output for "egress |"). At each page's end a tail read finds nothing after the last road, and the
+// rows' counts sum to the ledger, so every request the page made is in some row. The harness answers the file's own GET
+// and HEAD inside the page (real-viewer-leg.ts replaces window.fetch), so those never reach the intercept and are not
+// rows; in the product they go to the kernel, the page's own origin. The pictures, the probes and the frame go through the
+// browser's network stack and are what the intercept sees.
 // The roads: (1) a gated note with five placeholders on five hosts, two in the open body and three that never reach the
 // paper (a typed <details> that is closed, a folded callout, a `hidden` div): the render; a press then Escape; a press then
 // a second press (the chord); a press then "Print without them"; a press then "Print with them", which asks the two
@@ -43,13 +53,35 @@
 // with both routes answering, the per-host and the per-placeholder counts read apart: the host is asked once, for one of
 // its two placeholders; the folded placeholder stands at the print; and a Reload of the same note afterwards shows both
 // placeholders again with nothing asked, since a print grants a host nothing for the page (a click does: decision 8).
-// Before the round-2 review (2026-09-19) "with them" loaded by HOST through the click's road, so on such a page the folded
-// URL was asked too, for a picture the print never shows, and every page in this leg gave each placeholder a host of its
-// own, so no road could see it; the shared-host probe before that found the wait counting the folded picture as well
-// (the line read two, the deadline asked about the folded one, nothing printed until the person answered).
-// The counts this leg holds are the third review's target: one request per URL per press, and none for a host the
-// person did not choose, nor for a placeholder that does not reach the paper. Skips loudly without a browser. Synthetic
-// values only: an invented note, /repo/notes-api paths, invented hosts under .test.
+// (8) ONE host, FOUR placeholders: one in the open body and one each inside a closed typed <details>, inside a folded
+// callout and under `hidden`, every route answering: the render; a press (the line counts the one printable placeholder,
+// the title names the one host) then Escape; a press then the chord; a press then "Print without them" (four placeholders
+// at the print); a press then "Print with them" (the host asked once, for the open placeholder's URL; the three others
+// standing at the print, their URLs never asked); then a second note naming the host landed after the print shows a
+// placeholder and asks nothing (no page-life grant). (9) the same page with the open picture's route parked, the wait's
+// roads: a second note landed during the wait (the host not granted, so its figure lands gated with nothing to wait on, and
+// the print runs at once over the placeholder, as a repaint under the wait does; nothing asked); the deadline into the ask
+// then "Print anyway" (the print with the open picture still incomplete, the three placeholders standing; the parked
+// request still parked; a second note then shows a placeholder); the ask then "Keep waiting" and the route released (no
+// print past the seam's deadline, the print at the release; a second note then shows a placeholder); the ask then a second
+// note landed under it (no print: a repaint is no answer, the question is moot and the flow rests over a placeholder; the
+// next press arms over it and Escape disarms). (10) a printable and a folded placeholder on one host AND a second host
+// with a folded placeholder alone: the four roads of (8), the line counting one and the title naming the first host alone;
+// "Print with them" asks the first host once and the second never; a second note naming both hosts shows two placeholders.
+// (11) two hosts, each with a printable placeholder and one that does not reach the paper (a closed <details>; a `hidden`
+// div): a press arms over two; the first host's body placeholder activated by hand under the armed line loads that host
+// WHOLE, its folded picture's URL asked too (the click's road: by host), and the recount narrows the line and the title to
+// the second host; "Print with them" then asks the second host once, for its open placeholder alone, its hidden one
+// standing; a second note naming both hosts shows the clicked host's figure as a PICTURE, asked once (the click's page-life
+// grant), and the printed host's as a placeholder, asked nothing. Before the round-2 review (2026-09-19) "with them" loaded
+// by HOST through the click's road, so on such a page the folded URL was asked too, for a picture the print never shows,
+// and every page in this leg gave each placeholder a host of its own, so no road could see it; the shared-host probe before
+// that found the wait counting the folded picture as well (the line read two, the deadline asked about the folded one,
+// nothing printed until the person answered). The counts this leg holds are the third review's target: one request per URL
+// per press, none for a host the person did not choose, none for a placeholder that does not reach the paper, and no host
+// granted for the page's life by a print; a click's grant, by host and for the page, is the person's own and is measured
+// beside the press in (11). Skips loudly without a browser. Synthetic values only: an invented note, /repo/notes-api
+// paths, invented hosts under .test.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, frames, requireCjs, REPORT, ROOT, ORIGIN, SID, MT2, type Mode } from "./real-viewer-leg";
@@ -86,10 +118,33 @@ const GATED_SLOW_NOTE = "# Figures\n\nA local picture ![](" + QUICK + ") and a s
 // (4) the probes and the lazy picture
 const MEDIA_NOTE = "# Media\n\nA clip:\n\n<video poster=\"" + POSTER + "\" controls></video>\n\nA diagram:\n\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><image href=\"" + IMAGE + "\" width=\"8\" height=\"8\"/></svg>\n\nLast line.\n";
 const LAZY_NOTE = "# Long\n\n" + Array.from({ length: 300 }, (_, i) => "Paragraph " + (i + 1) + ": lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor lorem ipsum dolor sit amet consectetur adipiscing elit.").join("\n\n") + "\n\n<img loading=\"lazy\" src=\"" + LAZY + "\" alt=\"\">\n\nLast line.\n";
-// (6) a host two placeholders share: one in the open body, one inside a closed <details>, whose picture's route is parked
+// (6) and (7) a host two placeholders share: one in the open body, one inside a closed <details>, whose picture's route is parked in (6)
 const HOST_SHARED = "shared.test";
 const SHARED_OPEN = "/open.svg", SHARED_FOLDED = "/folded.svg";
 const SHARED_NOTE = "# Shared host\n\nOpen ![](https://" + HOST_SHARED + SHARED_OPEN + ")\n\n<details><summary>Fold</summary><img src=\"https://" + HOST_SHARED + SHARED_FOLDED + "\" alt=\"\"></details>\n\nLast line.\n";
+// (8) and (9) one host, four placeholders: the open body, a closed typed <details>, a folded callout, a hidden div
+const HOST_FOUR = "four.test";
+const FOUR_OPEN = "/open.svg", FOUR_TYPED = "/typed.svg", FOUR_CALLOUT = "/callout.svg", FOUR_HIDDEN = "/hidden.svg";
+const FOUR_NOTE = "# One host, four placeholders\n\nOpen ![](https://" + HOST_FOUR + FOUR_OPEN + ")\n\n"
+  + "<details><summary>Typed fold</summary><img src=\"https://" + HOST_FOUR + FOUR_TYPED + "\" alt=\"\"></details>\n\n"
+  + "> [!note]- Folded callout\n> ![](https://" + HOST_FOUR + FOUR_CALLOUT + ")\n\n"
+  + "<div hidden><img src=\"https://" + HOST_FOUR + FOUR_HIDDEN + "\" alt=\"\"></div>\n\nLast line.\n";
+// (10) a printable and a folded placeholder on one host, and a second host with a folded placeholder alone
+const HOST_MIXED = "mixed.test", HOST_LONE = "lone.test";
+const MIXED_OPEN = "/open.svg", MIXED_FOLD = "/fold.svg", LONE_FOLD = "/lone.svg";
+const MIXED_NOTE = "# Two hosts, one printable\n\nOpen ![](https://" + HOST_MIXED + MIXED_OPEN + ")\n\n"
+  + "<details><summary>Fold</summary><img src=\"https://" + HOST_MIXED + MIXED_FOLD + "\" alt=\"\"></details>\n\n"
+  + "> [!note]- Folded callout\n> ![](https://" + HOST_LONE + LONE_FOLD + ")\n\nLast line.\n";
+// (11) two hosts, each with a printable placeholder and one that does not reach the paper; the first is clicked by hand
+const HOST_HAND = "hand.test", HOST_REST = "rest.test";
+const HAND_OPEN = "/open.svg", HAND_FOLD = "/fold.svg", REST_OPEN = "/open.svg", REST_HIDDEN = "/hidden.svg";
+const HAND_NOTE = "# Two hosts, a click\n\nOpen ![](https://" + HOST_HAND + HAND_OPEN + ") and open ![](https://" + HOST_REST + REST_OPEN + ")\n\n"
+  + "<details><summary>Fold</summary><img src=\"https://" + HOST_HAND + HAND_FOLD + "\" alt=\"\"></details>\n\n"
+  + "<div hidden><img src=\"https://" + HOST_REST + REST_HIDDEN + "\" alt=\"\"></div>\n\nLast line.\n";
+// the second note a grant read lands: one picture per named host, in the open body, at a path the first note never used
+const AGAIN = "/again.svg";
+const AGAIN_MARK = "Another 1";
+const againNote = (hosts: string[]): string => "# Again\n\n" + hosts.map((h, i) => "Another " + (i + 1) + " ![](https://" + h + AGAIN + ")").join("\n\n") + "\n\nLast line.\n";
 // (5) the media kinds
 const SHORT = "# A short note\n\nOne paragraph, and that is all.\n";
 const PNG = ROOT + "/docs/figure.png";
@@ -105,6 +160,7 @@ const ARMED_TWO = "2 pictures from other hosts are not loaded.";
 const ARMED_ONE = "1 picture from another host is not loaded.";
 const PREPARING_ONE = "Preparing 1 picture…";
 const STALLED_ONE = "1 picture has not loaded.";
+const titleFor = (hosts: string[]): string => "Load the pictures from " + (hosts.length === 1 ? hosts[0] : hosts.slice(0, -1).join(", ") + " and " + hosts[hosts.length - 1]) + ", then print";
 
 // ── the page's stubs and probes ────────────────────────────────────────────────────────────────────
 type Print = { gates: number; incomplete: string[]; line: boolean; at: number };   // `at`: the page's performance.now() at the stub's call, for a bound on when a road printed
@@ -137,10 +193,21 @@ const waitGates = (page: any, n: number): Promise<unknown> => page.waitForFuncti
 const pause = (page: any, ms: number): Promise<void> => page.evaluate((k: number) => new Promise<void>((r) => setTimeout(r, k)), ms);
 /** Click Print and, in the same task, read what fired before the handler returned. */
 const clickPrint = (page: any): Promise<Counts> => page.evaluate(() => { (document.querySelector("#romp-fileview .fileview-print") as HTMLButtonElement).click(); return (window as any).__counts(); });
+/** The placeholders standing now, each as `<hosts>:<where>` (the open body, a closed or open <details>, under hidden), in document order. */
+const gatesNow = (page: any): Promise<string[]> => page.evaluate(() => Array.from(document.querySelectorAll('#romp-fileview [data-act="fv-load"]')).map((g) => { const d = g.closest("details"); return (g.getAttribute("data-fv-hosts") || "") + ":" + (g.closest("[hidden]") ? "hidden" : d ? (d.hasAttribute("open") ? "open-details" : "closed-details") : "body"); }));
 
 // ── the ledger and its rows ────────────────────────────────────────────────────────────────────────
 type Tally = Record<string, number>;
-type Row = { road: string; third: Tally; local: Tally; other: Tally; printed: string };
+/** The placeholders whose URL a road fetched: those that reach the paper, those that do not, and any URL no placeholder of
+ *  the page names (never expected). */
+type Fetched = { printable: Tally; not: Tally; unlisted: Tally };
+const F = (printable: Tally, not: Tally = {}): Fetched => ({ printable, not, unlisted: {} });
+type Row = { road: string; hosts: string[]; third: Tally; fetched: Fetched; grant: string; local: Tally; other: Tally; printed: string };
+/** The page's placeholders by URL, as readPlacements read them off the DOM: whether each reaches the paper. */
+type Placeholders = Record<string, { printable: boolean }>;
+type Where = "body" | "closed-details" | "open-details" | "hidden";
+type Placement = { host: string; url: string; where: Where };
+const ph = (host: string, path: string, where: Where): Placement => ({ host, url: "https://" + host + path, where });
 /** One request's class and key (the header's rule). */
 function keyOf(url: string): { cls: "local" | "third" | "other"; key: string } {
   if (url.startsWith(ORIGIN)) {
@@ -157,6 +224,21 @@ function tally(urls: string[]): { third: Tally; local: Tally; other: Tally } {
   for (const u of urls) { const { cls, key } = keyOf(u); out[cls][key] = (out[cls][key] || 0) + 1; }
   return out;
 }
+/** The hosts of a third-party tally's keys (host/path), once each, sorted. */
+const hostsIn = (third: Tally): string[] => Array.from(new Set(Object.keys(third).map((k) => k.slice(0, k.indexOf("/"))))).sort();
+/** The third-party requests of a road split by the page's placeholders: each URL under the placeholder's key when a
+ *  placeholder names it (printable or not, as the DOM read said), else apart. */
+function fetchedOf(map: Placeholders, urls: string[]): Fetched {
+  const out = F({});
+  for (const u of urls) {
+    if (keyOf(u).cls !== "third") continue;
+    const p = map[u];
+    const bucket = p ? (p.printable ? out.printable : out.not) : out.unlisted;
+    const k = keyOf(u).key;
+    bucket[k] = (bucket[k] || 0) + 1;
+  }
+  return out;
+}
 /** What printed during a road, from the stubs' counters before and after. */
 function printedWords(before: Counts, after: Counts): string {
   const parts: string[] = [];
@@ -166,29 +248,35 @@ function printedWords(before: Counts, after: Counts): string {
   return parts.length ? parts.join(", ") : "none";
 }
 const tallyWords = (t: Tally): string => { const ks = Object.keys(t).sort(); return ks.length ? ks.map((k) => k + " x" + t[k]).join(", ") : "none"; };
+const fetchedWords = (f: Fetched): string => "printable " + tallyWords(f.printable) + " / not " + tallyWords(f.not) + (Object.keys(f.unlisted).length ? " / unlisted " + tallyWords(f.unlisted) : "");
 /** The row as one diagnostic line, the shape the report's table is read from. */
-const rowLine = (r: Row): string => "egress | " + r.road + " | third-party: " + tallyWords(r.third) + " | local: " + tallyWords(r.local) + " | other: " + tallyWords(r.other) + " | printed: " + r.printed;
+const rowLine = (r: Row): string => "egress | " + r.road + " | hosts: " + (r.hosts.length ? r.hosts.join(", ") : "none") + " | per-url: " + tallyWords(r.third) + " | placeholders: " + fetchedWords(r.fetched) + " | grant: " + r.grant + " | printed: " + r.printed + " | local: " + tallyWords(r.local) + " | other: " + tallyWords(r.other);
 
-type Scene = { page: any; errors: string[]; requests: string[]; rows: Row[]; mark: number; t: any; release: (names?: string[]) => Promise<void>; heldCount: (name?: string) => number };
+type Scene = { page: any; errors: string[]; requests: string[]; rows: Row[]; mark: number; t: any; placeholders: Placeholders; release: (names?: string[]) => Promise<void>; heldCount: (name?: string) => number };
 /** Six frames and a 250 ms settle: the window in which a road's requests are read (the header). */
 async function settle(page: any): Promise<void> { await frames(page, 6); await pause(page, 250); }
+type Want = { third?: Tally; fetched?: Fetched; grant?: string; local?: Tally; other?: Tally; printed: string };
 /** Run `act` as one road: the ledger's delta from the last mark, what printed, the row asserted against `want` (a plain object
  *  of strings and numbers), the row printed as a diagnostic, and the OTHER class's URLs printed in full on a second line when
- *  there are any (the row counts them by scheme). `want.printed` names the stubs' calls; each tally names URLs and counts.
- *  Returns the row. */
-async function road(s: Scene, name: string, want: { third?: Tally; local?: Tally; other?: Tally; printed: string }, act: () => Promise<void>): Promise<Row> {
+ *  there are any (the row counts them by scheme). `want.printed` names the stubs' calls; each tally names URLs and counts;
+ *  `want.fetched` splits the third-party URLs by the page's placeholders (all empty when absent, so a road that asks a host
+ *  must say which placeholders it asked for); `want.grant` is what a grant read returned ("not read" when absent). The hosts
+ *  column is the third-party tally's hosts. `act` returns the grant read's words when it made one, else nothing. Returns the row. */
+async function road(s: Scene, name: string, want: Want, act: () => Promise<void | string>): Promise<Row> {
   const before = await counts(s.page);
-  await act();
+  const read = await act();
   await settle(s.page);
   const after = await counts(s.page);
   const delta = s.requests.slice(s.mark);
   s.mark = s.requests.length;
-  const row: Row = { road: name, ...tally(delta), printed: printedWords(before, after) };
+  const t = tally(delta);
+  const row: Row = { road: name, hosts: hostsIn(t.third), third: t.third, fetched: fetchedOf(s.placeholders, delta), grant: typeof read === "string" ? read : "not read", local: t.local, other: t.other, printed: printedWords(before, after) };
   s.rows.push(row);
   s.t.diagnostic(rowLine(row));
   const others = delta.filter((u) => keyOf(u).cls === "other");
   if (others.length) s.t.diagnostic("egress-other | " + name + " | " + others.slice().sort().join(" "));   // the set the row's count summarizes, in full, sorted (the browser's issue order varies)
-  assert.deepEqual({ third: row.third, local: row.local, other: row.other, printed: row.printed }, { third: want.third || {}, local: want.local || {}, other: want.other || {}, printed: want.printed }, "road: " + name);
+  assert.deepEqual({ hosts: row.hosts, third: row.third, fetched: row.fetched, grant: row.grant, local: row.local, other: row.other, printed: row.printed },
+    { hosts: hostsIn(want.third || {}), third: want.third || {}, fetched: want.fetched || F({}), grant: want.grant || "not read", local: want.local || {}, other: want.other || {}, printed: want.printed }, "road: " + name);
   return row;
 }
 /** The page's end: nothing after the last road, the rows sum to the ledger, no script error, the page closed. */
@@ -203,6 +291,8 @@ async function tail(s: Scene, label: string): Promise<void> {
 }
 /** The hosts the page asked, over its whole life. */
 const hostsAsked = (s: Scene): string[] => Array.from(new Set(s.requests.filter((u) => /^https?:/.test(u) && !u.startsWith(ORIGIN)).map((u) => new URL(u).host))).sort();
+/** How many times the page asked for `url`, over its whole life. */
+const asksFor = (s: Scene, url: string): number => s.requests.filter((u) => u === url).length;
 
 /** The viewer over `note` in `mode`, the ledger installed before the open: the quick picture and the loader glyph answered from
  *  the origin, each of `held` parked (its route held until release()), each of `missing` answered 404, every host under .test
@@ -240,7 +330,7 @@ async function scene(t: any, browser: any, mode: Mode, note: string, opts: { hel
     },
   });
   const s: Scene = {
-    page, errors, requests, rows: [], mark: 0, t,
+    page, errors, requests, rows: [], mark: 0, t, placeholders: {},
     heldCount: (name?: string) => held.filter((h) => !name || h.name === name).length,
     release: async (names?: string[]) => {
       const out = held.filter((h) => !names || names.includes(h.name));
@@ -251,6 +341,22 @@ async function scene(t: any, browser: any, mode: Mode, note: string, opts: { hel
   await road(s, "open: the render", { ...opts.open, printed: "none" }, async () => {});
   return s;
 }
+/** Read the page's placeholders off the rendered DOM, in document order: each one's hosts, the URL its figure's moved `src`,
+ *  `poster` or `href` names (data-fv-gated-*, figure-gate.ts), and where it stands (the open body; inside a closed or an open
+ *  <details>; under `hidden`), asserted equal to `expected`; then registered as the page's placeholders, one in the open body
+ *  or an open <details> reaching the paper, one inside a closed <details> or under hidden not. The rows' "placeholders"
+ *  column is read against this map, so the split is the DOM's, not the test's word. */
+async function readPlacements(s: Scene, expected: Placement[]): Promise<void> {
+  await waitGates(s.page, expected.length);
+  const placed: Placement[] = await s.page.evaluate(() => Array.from(document.querySelectorAll('#romp-fileview [data-act="fv-load"]')).map((g) => {
+    const m = g.firstElementChild;
+    const url = m ? (m.getAttribute("data-fv-gated-src") || m.getAttribute("data-fv-gated-poster") || m.getAttribute("data-fv-gated-href") || "") : "";
+    const d = g.closest("details");
+    return { host: g.getAttribute("data-fv-hosts") || "", url, where: g.closest("[hidden]") ? "hidden" : d ? (d.hasAttribute("open") ? "open-details" : "closed-details") : "body" };
+  }));
+  assert.deepEqual(placed, expected, "the placeholders, the URL each stands for and where each stands");
+  for (const p of placed) s.placeholders[p.url] = { printable: p.where === "body" || p.where === "open-details" };
+}
 /** Change the file on disk and raise the changed-on-disk bar through the viewer's own probe (a window focus runs one HEAD, whose
  *  moved mtime raises the bar), then click its Reload. */
 async function reloadTo(page: any, note: string): Promise<void> {
@@ -259,6 +365,29 @@ async function reloadTo(page: any, note: string): Promise<void> {
   await page.waitForFunction(() => { const b = document.querySelector("#fileview-save-err button") as HTMLButtonElement | null; return !!b && b.textContent === "Reload"; }, null, { timeout: 10000 });
   await page.click("#fileview-save-err button");
 }
+/** The grant read: land a second note naming `hosts` (one picture each, in the open body, at AGAIN) through the changed-on-disk
+ *  bar's Reload, and read what each host's figure landed as: a PLACEHOLDER, so the document's loaded set does not hold the
+ *  host (a print granted it nothing), or a PICTURE, so it does (a click granted it for the page's life, decision 8). Every paint
+ *  reads the loaded set (figure-gate.ts gateRemoteFigures), so the landing is the set read through the product's own road.
+ *  The landing's pictures are registered as printable placeholders of the page first (they stand in the open body), so a
+ *  granted host's fetch of its picture lands in the row's "printable" column under the host's page-life grant. Returns the
+ *  read as words, one host each, sorted. */
+async function landAgain(s: Scene, hosts: string[]): Promise<string> {
+  for (const h of hosts) s.placeholders["https://" + h + AGAIN] = { printable: true };
+  await reloadTo(s.page, againNote(hosts));
+  await s.page.waitForFunction((mark: string) => !document.getElementById("fileview-save-err") && Array.from(document.querySelectorAll("#romp-fileview .fileview-md > p")).some((p) => (p.textContent || "").includes(mark)), AGAIN_MARK, { timeout: 10000 });
+  await frames(s.page, 2);
+  const got: Record<string, string> = await s.page.evaluate((hs: string[]) => {
+    const out: Record<string, string> = {};
+    for (const h of hs) {
+      const placeholder = !!document.querySelector('#romp-fileview .fileview-md [data-act="fv-load"][data-fv-hosts~="' + h + '"]');
+      const picture = (Array.from(document.querySelectorAll("#romp-fileview .fileview-md img")) as HTMLImageElement[]).some((i) => (i.getAttribute("src") || "").startsWith("https://" + h + "/"));
+      out[h] = placeholder && !picture ? "placeholder" : picture && !placeholder ? "picture" : placeholder ? "both" : "neither";
+    }
+    return out;
+  }, hosts);
+  return hosts.slice().sort().map((h) => h + ": " + got[h]).join(", ");
+}
 
 // ── (1) the gated note: Escape, a second press, without them, with them ─────────────────────────────
 
@@ -266,14 +395,12 @@ test("(1) a gated note with five placeholders on five hosts, two printable: the 
   await inBrowser(t, async (browser) => {
     const s = await scene(t, browser, "pane", FOLDS_NOTE, { open: { local: { ["/file docs/" + QUICK]: 1, ...PAGE_LOCAL } } });
     const { page } = s;
-    await waitGates(page, 5);
-    const placed = await page.evaluate(() => Array.from(document.querySelectorAll('#romp-fileview [data-act="fv-load"]')).map((g) => { const d = g.closest("details"); return (g.getAttribute("data-fv-hosts") || "") + ":" + (g.closest("[hidden]") ? "hidden" : d ? (d.hasAttribute("open") ? "open-details" : "closed-details") : "body"); }));
-    assert.deepEqual(placed, [HOST_ONE + ":body", HOST_TWO + ":body", HOST_TYPED + ":closed-details", HOST_CALLOUT + ":closed-details", HOST_HIDDEN + ":hidden"], "five placeholders: two in the open body, two in closed details (the typed fold and the folded callout), one under hidden");
+    await readPlacements(s, [ph(HOST_ONE, "/o1.svg", "body"), ph(HOST_TWO, "/o2.svg", "body"), ph(HOST_TYPED, "/t.svg", "closed-details"), ph(HOST_CALLOUT, "/c.svg", "closed-details"), ph(HOST_HIDDEN, "/h.svg", "hidden")]);
     await road(s, "press over the placeholders, then Escape", { printed: "none" }, async () => {
       await page.click(PRINT_BTN);
       const b = await bar(page);
       assert.equal(b.phase, "armed"); assert.equal(b.line, ARMED_TWO, "the two printable placeholders are counted");
-      assert.deepEqual(b.titles.slice(0, 1), ["Load the pictures from " + HOST_ONE + " and " + HOST_TWO + ", then print"], "the title names the two printable hosts alone");
+      assert.deepEqual(b.titles.slice(0, 1), [titleFor([HOST_ONE, HOST_TWO])], "the title names the two printable hosts alone");
       await page.keyboard.press("Escape");
       await frames(page, 1);
       assert.equal((await bar(page)).phase, null, "Escape disarmed");
@@ -293,7 +420,7 @@ test("(1) a gated note with five placeholders on five hosts, two printable: the 
       const p = await prints(page);
       assert.equal(p[0].gates, 5, "every placeholder kept"); assert.deepEqual(p[0].incomplete, [], "every <img> complete at the print");
     });
-    await road(s, "press, then Print with them", { third: { [HOST_ONE + "/o1.svg"]: 1, [HOST_TWO + "/o2.svg"]: 1 }, printed: "window.print x1" }, async () => {
+    await road(s, "press, then Print with them", { third: { [HOST_ONE + "/o1.svg"]: 1, [HOST_TWO + "/o2.svg"]: 1 }, fetched: F({ [HOST_ONE + "/o1.svg"]: 1, [HOST_TWO + "/o2.svg"]: 1 }), printed: "window.print x1" }, async () => {
       await page.click(PRINT_BTN);
       assert.equal((await bar(page)).line, ARMED_TWO);
       await page.click(WITH_BTN);
@@ -313,19 +440,19 @@ test("(2) two placeholders: a press arms over both; the first activated by hand 
   await inBrowser(t, async (browser) => {
     const s = await scene(t, browser, "chat", TWO_NOTE, { open: { local: { ...PAGE_LOCAL } } });
     const { page } = s;
-    await waitGates(page, 2);
-    await road(s, "press (armed over two), the first placeholder activated by hand, the recount", { third: { [HOST_FIRST + "/a.svg"]: 1 }, printed: "none" }, async () => {
+    await readPlacements(s, [ph(HOST_FIRST, "/a.svg", "body"), ph(HOST_SECOND, "/b.svg", "body")]);
+    await road(s, "press (armed over two), the first placeholder activated by hand, the recount", { third: { [HOST_FIRST + "/a.svg"]: 1 }, fetched: F({ [HOST_FIRST + "/a.svg"]: 1 }), printed: "none" }, async () => {
       await page.click(PRINT_BTN);
       let b = await bar(page);
       assert.equal(b.phase, "armed"); assert.equal(b.line, ARMED_TWO);
-      assert.deepEqual(b.titles.slice(0, 1), ["Load the pictures from " + HOST_FIRST + " and " + HOST_SECOND + ", then print"]);
+      assert.deepEqual(b.titles.slice(0, 1), [titleFor([HOST_FIRST, HOST_SECOND])]);
       await page.click('#romp-fileview [data-act="fv-load"]');
       await waitGates(page, 1);
       b = await bar(page);
       assert.equal(b.phase, "armed", "still armed over the one left"); assert.equal(b.line, ARMED_ONE, "the recount");
-      assert.deepEqual(b.titles.slice(0, 1), ["Load the pictures from " + HOST_SECOND + ", then print"], "the title names the host left alone");
+      assert.deepEqual(b.titles.slice(0, 1), [titleFor([HOST_SECOND])], "the title names the host left alone");
     });
-    await road(s, "then Print with them over the one left", { third: { [HOST_SECOND + "/b.svg"]: 1 }, printed: "window.print x1" }, async () => {
+    await road(s, "then Print with them over the one left", { third: { [HOST_SECOND + "/b.svg"]: 1 }, fetched: F({ [HOST_SECOND + "/b.svg"]: 1 }), printed: "window.print x1" }, async () => {
       await page.click(WITH_BTN);
       await printsReach(page, 1);
       const p = await prints(page);
@@ -369,7 +496,7 @@ test("(3) the wait. A Reload landing during the wait requests the landing's pict
     // b: the deadline's ask, then Print anyway
     s = await scene(t, browser, "pane", GATED_SLOW_NOTE, { held: [SLOW], open: { local: { ["/file docs/" + QUICK]: 1, ["/file docs/" + SLOW]: 1, ...PAGE_LOCAL } } });
     page = s.page;
-    await waitGates(page, 1);
+    await readPlacements(s, [ph(HOST_GATED, "/o.svg", "body")]);
     await page.evaluate(() => { (window as any).FV.setPrintSettleMs(300); });
     await road(s, "press, Print without them, the deadline into the ask", { printed: "none" }, async () => {
       await page.click(PRINT_BTN);
@@ -391,7 +518,7 @@ test("(3) the wait. A Reload landing during the wait requests the landing's pict
     // c: the ask, then Keep waiting and the release
     s = await scene(t, browser, "pane", GATED_SLOW_NOTE, { held: [SLOW], open: { local: { ["/file docs/" + QUICK]: 1, ["/file docs/" + SLOW]: 1, ...PAGE_LOCAL } } });
     page = s.page;
-    await waitGates(page, 1);
+    await readPlacements(s, [ph(HOST_GATED, "/o.svg", "body")]);
     await page.evaluate(() => { (window as any).FV.setPrintSettleMs(300); });
     await road(s, "press, Print without them, the deadline into the ask (again)", { printed: "none" }, async () => {
       await page.click(PRINT_BTN);
@@ -551,15 +678,13 @@ test("(6) two placeholders on one host, one in the open body and one inside a cl
   await inBrowser(t, async (browser) => {
     const s = await scene(t, browser, "pane", SHARED_NOTE, { heldThird: [SHARED_FOLDED], open: { local: { ...PAGE_LOCAL } } });
     const { page } = s;
-    await waitGates(page, 2);
-    const placed = await page.evaluate(() => Array.from(document.querySelectorAll('#romp-fileview [data-act="fv-load"]')).map((g) => { const d = g.closest("details"); return (g.getAttribute("data-fv-hosts") || "") + ":" + (d ? (d.hasAttribute("open") ? "open-details" : "closed-details") : "body"); }));
-    assert.deepEqual(placed, [HOST_SHARED + ":body", HOST_SHARED + ":closed-details"], "two placeholders naming one host: one in the open body, one inside a closed details");
+    await readPlacements(s, [ph(HOST_SHARED, SHARED_OPEN, "body"), ph(HOST_SHARED, SHARED_FOLDED, "closed-details")]);
     await page.evaluate(() => { (window as any).FV.setPrintSettleMs(2000); });   // a deadline the road can reach: the print is bound to come well before it, and the module before the printable filter asked at it
-    await road(s, "press, then Print with them over the shared host (the folded picture's route parked)", { third: { [HOST_SHARED + SHARED_OPEN]: 1 }, printed: "window.print x1" }, async () => {
+    await road(s, "press, then Print with them over the shared host (the folded picture's route parked)", { third: { [HOST_SHARED + SHARED_OPEN]: 1 }, fetched: F({ [HOST_SHARED + SHARED_OPEN]: 1 }), printed: "window.print x1" }, async () => {
       await page.click(PRINT_BTN);
       const armed = await bar(page);
       assert.equal(armed.phase, "armed"); assert.equal(armed.line, ARMED_ONE, "the open placeholder alone is counted");
-      assert.deepEqual(armed.titles.slice(0, 1), ["Load the pictures from " + HOST_SHARED + ", then print"], "the title names the one host");
+      assert.deepEqual(armed.titles.slice(0, 1), [titleFor([HOST_SHARED])], "the title names the one host");
       const clickAt: number = await page.evaluate(() => performance.now());
       await page.click(WITH_BTN);
       const afterClick = (await bar(page)).line;   // the wait's line as the click left it
@@ -574,7 +699,7 @@ test("(6) two placeholders on one host, one in the open body and one inside a cl
         "FAILS BEFORE: the wait counted the open picture alone and printed at its load under the deadline; the folded placeholder stands at the print (gates 1), its route was never asked (nothing parked), and every <img> in the body is complete");
     });
     assert.deepEqual(hostsAsked(s), [HOST_SHARED], "the one host was asked, once: for the open placeholder's URL");
-    assert.equal(s.requests.filter((u) => u === "https://" + HOST_SHARED + SHARED_FOLDED).length, 0, "the folded placeholder's URL was never asked");
+    assert.equal(asksFor(s, "https://" + HOST_SHARED + SHARED_FOLDED), 0, "the folded placeholder's URL was never asked");
     await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
     assert.equal(await page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the seam restored");
     await tail(s, "(6)");
@@ -585,31 +710,301 @@ test("(7) two placeholders on one host, one in the open body and one inside a cl
   await inBrowser(t, async (browser) => {
     const s = await scene(t, browser, "pane", SHARED_NOTE, { open: { local: { ...PAGE_LOCAL } } });
     const { page } = s;
-    await waitGates(page, 2);
-    const gatesNow = (): Promise<string[]> => page.evaluate(() => Array.from(document.querySelectorAll('#romp-fileview [data-act="fv-load"]')).map((g) => (g.getAttribute("data-fv-hosts") || "") + ":" + (g.closest("details") ? "closed-details" : "body")));
-    assert.deepEqual(await gatesNow(), [HOST_SHARED + ":body", HOST_SHARED + ":closed-details"], "two placeholders naming one host");
-    await road(s, "press, then Print with them over the shared host (both routes answering)", { third: { [HOST_SHARED + SHARED_OPEN]: 1 }, printed: "window.print x1" }, async () => {
+    await readPlacements(s, [ph(HOST_SHARED, SHARED_OPEN, "body"), ph(HOST_SHARED, SHARED_FOLDED, "closed-details")]);
+    await road(s, "press, then Print with them over the shared host (both routes answering)", { third: { [HOST_SHARED + SHARED_OPEN]: 1 }, fetched: F({ [HOST_SHARED + SHARED_OPEN]: 1 }), printed: "window.print x1" }, async () => {
       await page.click(PRINT_BTN);
       const armed = await bar(page);
       assert.equal(armed.line, ARMED_ONE, "the open placeholder alone is counted");
-      assert.deepEqual(armed.titles.slice(0, 1), ["Load the pictures from " + HOST_SHARED + ", then print"]);
+      assert.deepEqual(armed.titles.slice(0, 1), [titleFor([HOST_SHARED])]);
       await page.click(WITH_BTN);
       await printsReach(page, 1);
       const p = await prints(page);
       assert.deepEqual({ gates: p[0].gates, incomplete: p[0].incomplete }, { gates: 1, incomplete: [] }, "FAILS BEFORE: the folded placeholder stands at the print (one of the two restored) and the open picture is complete");
-      assert.deepEqual(await gatesNow(), [HOST_SHARED + ":closed-details"], "per placeholder: the open one restored, the folded one standing");
+      assert.deepEqual(await gatesNow(page), [HOST_SHARED + ":closed-details"], "per placeholder: the open one restored, the folded one standing");
     });
     // per host and per placeholder, read apart over the page so far
     const perHost = { hosts: hostsAsked(s), requests: s.requests.filter((u) => u.startsWith("https://" + HOST_SHARED + "/")).length };
-    const perPlaceholder = { open: s.requests.filter((u) => u === "https://" + HOST_SHARED + SHARED_OPEN).length, folded: s.requests.filter((u) => u === "https://" + HOST_SHARED + SHARED_FOLDED).length };
+    const perPlaceholder = { open: asksFor(s, "https://" + HOST_SHARED + SHARED_OPEN), folded: asksFor(s, "https://" + HOST_SHARED + SHARED_FOLDED) };
     assert.deepEqual(perHost, { hosts: [HOST_SHARED], requests: 1 }, "per host: one host asked, one request");
     assert.deepEqual(perPlaceholder, { open: 1, folded: 0 }, "FAILS BEFORE: per placeholder, the open one's URL once and the folded one's never");
     // a later render of the same host in the same page: no page-life grant, so both figures are gated again and nothing is asked
     await road(s, "a Reload of the same note after the print", { printed: "none" }, async () => {
       await reloadTo(page, SHARED_NOTE);
       await waitGates(page, 2);
-      assert.deepEqual(await gatesNow(), [HOST_SHARED + ":body", HOST_SHARED + ":closed-details"], "FAILS BEFORE: both placeholders are back (the host was granted for the page, and the Reload showed the pictures)");
+      assert.deepEqual(await gatesNow(page), [HOST_SHARED + ":body", HOST_SHARED + ":closed-details"], "FAILS BEFORE: both placeholders are back (the host was granted for the page, and the Reload showed the pictures)");
     });
     await tail(s, "(7)");
+  });
+});
+
+// ── (8) one host, four placeholders: the roads that need no parking, then the grant read ───────────
+
+const FOUR_PLACED = [ph(HOST_FOUR, FOUR_OPEN, "body"), ph(HOST_FOUR, FOUR_TYPED, "closed-details"), ph(HOST_FOUR, FOUR_CALLOUT, "closed-details"), ph(HOST_FOUR, FOUR_HIDDEN, "hidden")];
+const FOUR_STANDING = [HOST_FOUR + ":closed-details", HOST_FOUR + ":closed-details", HOST_FOUR + ":hidden"];   // the three that never reach the paper, as gatesNow reads them after the open one is restored
+const FOUR_URL = (path: string): string => "https://" + HOST_FOUR + path;
+/** The three URLs of the four-placeholder page that never reach the paper were never asked over the page's life. */
+function fourNeverAsked(s: Scene): void {
+  for (const path of [FOUR_TYPED, FOUR_CALLOUT, FOUR_HIDDEN]) assert.equal(asksFor(s, FOUR_URL(path)), 0, FOUR_URL(path) + " was never asked");
+}
+
+test("(8) one host, four placeholders (the open body; a closed typed <details>; a folded callout; a hidden div), every route answering: the render asks the origin alone; a press counts one picture and names the one host, then Escape; a press then the chord; a press then Print without them (four placeholders at the print); a press then Print with them asks the host ONCE, for the open placeholder's URL, the three others standing and never asked; a second note naming the host then lands as a placeholder and asks nothing: no page-life grant", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const s = await scene(t, browser, "pane", FOUR_NOTE, { open: { local: { ...PAGE_LOCAL } } });
+    const { page } = s;
+    await readPlacements(s, FOUR_PLACED);
+    await road(s, "press: the bar arms over the one printable placeholder (nothing fetched), then Escape", { printed: "none" }, async () => {
+      await page.click(PRINT_BTN);
+      const b = await bar(page);
+      assert.equal(b.phase, "armed"); assert.equal(b.line, ARMED_ONE, "one of the four placeholders reaches the paper");
+      assert.deepEqual(b.titles.slice(0, 1), [titleFor([HOST_FOUR])], "the title names the one host");
+      await page.keyboard.press("Escape");
+      await frames(page, 1);
+      assert.equal((await bar(page)).phase, null, "Escape disarmed");
+    });
+    await road(s, "press, then a second press (the chord)", { printed: "none" }, async () => {
+      await page.click(PRINT_BTN);
+      assert.equal((await bar(page)).phase, "armed");
+      await page.keyboard.press("Control+p");
+      await frames(page, 1);
+      const b = await bar(page);
+      assert.equal(b.phase, null, "the second press disarmed"); assert.equal(b.cardUp, true);
+    });
+    await road(s, "press, then Print without them", { printed: "window.print x1" }, async () => {
+      await page.click(PRINT_BTN);
+      await page.click(WITHOUT_BTN);
+      await printsReach(page, 1);
+      const p = await prints(page);
+      assert.equal(p[0].gates, 4, "every placeholder kept"); assert.deepEqual(p[0].incomplete, [], "every <img> complete at the print");
+    });
+    await road(s, "press, then Print with them", { third: { [HOST_FOUR + FOUR_OPEN]: 1 }, fetched: F({ [HOST_FOUR + FOUR_OPEN]: 1 }), printed: "window.print x1" }, async () => {
+      await page.click(PRINT_BTN);
+      assert.equal((await bar(page)).line, ARMED_ONE);
+      await page.click(WITH_BTN);
+      await printsReach(page, 2);
+      const p = await prints(page);
+      assert.equal(p[1].gates, 3, "the three placeholders that never reach the paper still stand"); assert.deepEqual(p[1].incomplete, [], "every <img> complete at the print");
+      assert.deepEqual(await gatesNow(page), FOUR_STANDING, "per placeholder: the open one restored, the typed fold's, the callout's and the hidden one standing");
+    });
+    await road(s, "a second note naming the host landed after the print (the grant read)", { grant: HOST_FOUR + ": placeholder", printed: "none" }, async () => landAgain(s, [HOST_FOUR]));
+    assert.deepEqual(hostsAsked(s), [HOST_FOUR], "over the page's life the one host was asked");
+    assert.equal(asksFor(s, FOUR_URL(FOUR_OPEN)), 1, "once, for the open placeholder's URL");
+    fourNeverAsked(s);
+    await tail(s, "(8)");
+  });
+});
+
+// ── (9) the same page, the open picture's route parked: the wait's roads ───────────────────────────
+
+test("(9) one host, four placeholders, the open picture's route parked. A second note naming the host landed during the wait lands as a placeholder (no grant), so nothing waits and the print runs at once over it, asking nothing; the deadline into the ask then Print anyway prints with the open picture incomplete and the three placeholders standing, the request still parked; the ask then Keep waiting and the route released prints once; the ask then a second note landed under it never prints, the flow rests over the landing's placeholder, and the next press arms over it; every road asks the host once, for the open placeholder's URL, at the with-them click alone, and the second note lands as a placeholder every time", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const parkedScene = async (): Promise<Scene> => {
+      const s = await scene(t, browser, "pane", FOUR_NOTE, { heldThird: [FOUR_OPEN], open: { local: { ...PAGE_LOCAL } } });
+      await readPlacements(s, FOUR_PLACED);
+      return s;
+    };
+    /** Press, then "Print with them": the host asked once for the open URL, the request parked, the wait's line up. */
+    const withThemParked = async (s: Scene): Promise<void> => {
+      await s.page.click(PRINT_BTN);
+      const armed = await bar(s.page);
+      assert.equal(armed.line, ARMED_ONE, "the open placeholder alone is counted"); assert.deepEqual(armed.titles.slice(0, 1), [titleFor([HOST_FOUR])]);
+      await s.page.click(WITH_BTN);
+      assert.equal((await bar(s.page)).line, PREPARING_ONE, "the wait counts the open picture alone");
+      for (let i = 0; i < 120 && s.heldCount(FOUR_OPEN) === 0; i++) await frames(s.page, 1);
+      assert.equal(s.heldCount(FOUR_OPEN), 1, "the open picture's request is parked");
+      assert.deepEqual(await gatesNow(s.page), FOUR_STANDING, "the three others stand");
+    };
+    const WITH_PARKED: Want = { third: { [HOST_FOUR + FOUR_OPEN]: 1 }, fetched: F({ [HOST_FOUR + FOUR_OPEN]: 1 }), printed: "none" };
+    /** The deadline into the ask over the parked picture (the seam at 300 ms). */
+    const toAsk = async (s: Scene): Promise<void> => {
+      await lineReads(s.page, STALLED_ONE);
+      const b = await bar(s.page);
+      assert.equal(b.phase, "stalled"); assert.deepEqual(b.buttons, [ANYWAY_WORDS, KEEP_WORDS]);
+      assert.equal((await prints(s.page)).length, 0, "nothing printed at the deadline");
+    };
+    const restoreSeam = async (s: Scene): Promise<void> => {
+      await s.page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+      assert.equal(await s.page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the seam restored");
+    };
+    /** The page's life: the host asked once, for the open URL; the three others never. */
+    const lifeOnce = (s: Scene): void => {
+      assert.deepEqual(hostsAsked(s), [HOST_FOUR], "the one host was asked");
+      assert.equal(asksFor(s, FOUR_URL(FOUR_OPEN)), 1, "once, for the open placeholder's URL, at the with-them click");
+      fourNeverAsked(s);
+    };
+    // a: a second note landed during the wait
+    let s = await parkedScene();
+    let page = s.page;
+    await road(s, "press, then Print with them: the wait over the open picture (its route parked)", WITH_PARKED, async () => withThemParked(s));
+    await road(s, "a second note naming the host landed during the wait: its figure lands gated, nothing waits, the print runs at once over the placeholder", { grant: HOST_FOUR + ": placeholder", printed: "window.print x1" }, async () => {
+      const read = await landAgain(s, [HOST_FOUR]);
+      await printsReach(page, 1);
+      const p = await prints(page);
+      assert.deepEqual({ gates: p[0].gates, incomplete: p[0].incomplete, line: p[0].line }, { gates: 1, incomplete: [], line: false }, "the landing's placeholder stands at the print, every <img> of the landing complete, the wait's line gone");
+      assert.equal((await bar(page)).phase, null, "the bar rested");
+      return read;
+    });
+    await road(s, "the old body's picture released after the print (detached: nothing)", { printed: "none" }, async () => {
+      await s.release([FOUR_OPEN]);
+      await frames(page, 6);
+      assert.equal((await prints(page)).length, 1, "no second print");
+    });
+    lifeOnce(s);
+    await tail(s, "(9a)");
+    // b: the deadline into the ask, then Print anyway
+    s = await parkedScene();
+    page = s.page;
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(300); });
+    await road(s, "press, Print with them (the open picture's route parked), the deadline into the ask", WITH_PARKED, async () => { await withThemParked(s); await toAsk(s); });
+    await road(s, "Print anyway", { printed: "window.print x1" }, async () => {
+      await page.click(ANYWAY_BTN);
+      const p = await prints(page);
+      assert.equal(p.length, 1, "one print, in the click's own task");
+      assert.deepEqual({ gates: p[0].gates, incomplete: p[0].incomplete }, { gates: 3, incomplete: [FOUR_URL(FOUR_OPEN)] }, "the open picture prints as the browser has it (incomplete), the three placeholders standing");
+      assert.equal(s.heldCount(FOUR_OPEN), 1, "its request is still parked");
+      assert.equal((await bar(page)).phase, null, "the bar rested");
+    });
+    await road(s, "a second note naming the host landed after the print (the grant read)", { grant: HOST_FOUR + ": placeholder", printed: "none" }, async () => landAgain(s, [HOST_FOUR]));
+    await road(s, "the old body's picture released after the landing (detached: nothing)", { printed: "none" }, async () => {
+      await s.release([FOUR_OPEN]);
+      await frames(page, 6);
+      assert.equal((await prints(page)).length, 1, "no second print");
+    });
+    lifeOnce(s);
+    await restoreSeam(s);
+    await tail(s, "(9b)");
+    // c: the ask, then Keep waiting and the release
+    s = await parkedScene();
+    page = s.page;
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(300); });
+    await road(s, "press, Print with them (the open picture's route parked), the deadline into the ask (again)", WITH_PARKED, async () => { await withThemParked(s); await toAsk(s); });
+    await road(s, "Keep waiting, then the parked route released", { printed: "window.print x1" }, async () => {
+      await page.click(KEEP_BTN);
+      let b = await bar(page);
+      assert.equal(b.phase, "preparing"); assert.equal(b.line, PREPARING_ONE);
+      await pause(page, 700);
+      assert.equal((await prints(page)).length, 0, "no print past the seam's deadline: Keep waiting set no timer");
+      await s.release([FOUR_OPEN]);
+      await printsReach(page, 1);
+      const p = await prints(page);
+      assert.deepEqual({ gates: p[0].gates, incomplete: p[0].incomplete }, { gates: 3, incomplete: [] }, "the print at the release, every <img> complete, the three placeholders standing");
+      await frames(page, 1);
+      b = await bar(page);
+      assert.equal(b.phase, null, "the bar rested");
+    });
+    await road(s, "a second note naming the host landed after the print (the grant read)", { grant: HOST_FOUR + ": placeholder", printed: "none" }, async () => landAgain(s, [HOST_FOUR]));
+    lifeOnce(s);
+    await restoreSeam(s);
+    await tail(s, "(9c)");
+    // d: the ask, then a second note landed under it
+    s = await parkedScene();
+    page = s.page;
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(300); });
+    await road(s, "press, Print with them (the open picture's route parked), the deadline into the ask (a third time)", WITH_PARKED, async () => { await withThemParked(s); await toAsk(s); });
+    await road(s, "a second note naming the host landed under the ask: no print, the flow rests over the landing's placeholder (the grant read)", { grant: HOST_FOUR + ": placeholder", printed: "none" }, async () => {
+      const read = await landAgain(s, [HOST_FOUR]);
+      await frames(page, 3);
+      const b = await bar(page);
+      assert.deepEqual({ prints: (await prints(page)).length, phase: b.phase, line: b.line, cardUp: b.cardUp }, { prints: 0, phase: null, line: null, cardUp: true }, "a repaint is no answer to the ask: nothing printed, the question moot, the line gone, the card up");
+      return read;
+    });
+    await road(s, "the next press arms over the landing's placeholder, then Escape", { printed: "none" }, async () => {
+      await page.click(PRINT_BTN);
+      const b = await bar(page);
+      assert.equal(b.phase, "armed"); assert.equal(b.line, ARMED_ONE, "the landing's one placeholder is counted"); assert.deepEqual(b.titles.slice(0, 1), [titleFor([HOST_FOUR])]);
+      await page.keyboard.press("Escape");
+      await frames(page, 1);
+      assert.equal((await bar(page)).phase, null, "Escape disarmed");
+    });
+    await road(s, "the old body's picture released (detached: nothing)", { printed: "none" }, async () => {
+      await s.release([FOUR_OPEN]);
+      await frames(page, 6);
+      assert.equal((await prints(page)).length, 0, "nothing printed on this page");
+    });
+    lifeOnce(s);
+    await restoreSeam(s);
+    await tail(s, "(9d)");
+  });
+});
+
+// ── (10) a shared host beside a host with a folded placeholder alone ───────────────────────────────
+
+test("(10) a printable and a folded placeholder on one host, and a second host with a folded placeholder alone: the render asks the origin alone; a press counts one picture and names the first host alone, then Escape; a press then the chord; a press then Print without them (three placeholders at the print); a press then Print with them asks the first host once, for its open placeholder's URL, and the second host never, the two folded placeholders standing; a second note naming both hosts lands as two placeholders and asks nothing", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const s = await scene(t, browser, "pane", MIXED_NOTE, { open: { local: { ...PAGE_LOCAL } } });
+    const { page } = s;
+    await readPlacements(s, [ph(HOST_MIXED, MIXED_OPEN, "body"), ph(HOST_MIXED, MIXED_FOLD, "closed-details"), ph(HOST_LONE, LONE_FOLD, "closed-details")]);
+    await road(s, "press: the bar arms over the one printable placeholder (nothing fetched), then Escape", { printed: "none" }, async () => {
+      await page.click(PRINT_BTN);
+      const b = await bar(page);
+      assert.equal(b.phase, "armed"); assert.equal(b.line, ARMED_ONE, "one of the three placeholders reaches the paper");
+      assert.deepEqual(b.titles.slice(0, 1), [titleFor([HOST_MIXED])], "the title names the first host alone: the second host's placeholder never reaches the paper");
+      await page.keyboard.press("Escape");
+      await frames(page, 1);
+      assert.equal((await bar(page)).phase, null, "Escape disarmed");
+    });
+    await road(s, "press, then a second press (the chord)", { printed: "none" }, async () => {
+      await page.click(PRINT_BTN);
+      assert.equal((await bar(page)).phase, "armed");
+      await page.keyboard.press("Control+p");
+      await frames(page, 1);
+      const b = await bar(page);
+      assert.equal(b.phase, null, "the second press disarmed"); assert.equal(b.cardUp, true);
+    });
+    await road(s, "press, then Print without them", { printed: "window.print x1" }, async () => {
+      await page.click(PRINT_BTN);
+      await page.click(WITHOUT_BTN);
+      await printsReach(page, 1);
+      const p = await prints(page);
+      assert.equal(p[0].gates, 3, "every placeholder kept"); assert.deepEqual(p[0].incomplete, [], "every <img> complete at the print");
+    });
+    await road(s, "press, then Print with them", { third: { [HOST_MIXED + MIXED_OPEN]: 1 }, fetched: F({ [HOST_MIXED + MIXED_OPEN]: 1 }), printed: "window.print x1" }, async () => {
+      await page.click(PRINT_BTN);
+      assert.equal((await bar(page)).line, ARMED_ONE);
+      await page.click(WITH_BTN);
+      await printsReach(page, 2);
+      const p = await prints(page);
+      assert.equal(p[1].gates, 2, "the two folded placeholders still stand"); assert.deepEqual(p[1].incomplete, [], "every <img> complete at the print");
+      assert.deepEqual(await gatesNow(page), [HOST_MIXED + ":closed-details", HOST_LONE + ":closed-details"], "per placeholder: the open one restored, the first host's fold and the second host's standing");
+    });
+    await road(s, "a second note naming both hosts landed after the print (the grant read)", { grant: HOST_LONE + ": placeholder, " + HOST_MIXED + ": placeholder", printed: "none" }, async () => landAgain(s, [HOST_MIXED, HOST_LONE]));
+    assert.deepEqual(hostsAsked(s), [HOST_MIXED], "over the page's life the first host alone was asked");
+    assert.equal(asksFor(s, "https://" + HOST_MIXED + MIXED_OPEN), 1, "once, for its open placeholder's URL");
+    assert.equal(asksFor(s, "https://" + HOST_MIXED + MIXED_FOLD), 0, "the first host's folded URL was never asked");
+    assert.equal(asksFor(s, "https://" + HOST_LONE + LONE_FOLD), 0, "the second host's folded URL was never asked");
+    await tail(s, "(10)");
+  });
+});
+
+// ── (11) a placeholder activated by hand beside the press: the click's grant, by host and for the page ──
+
+test("(11) two hosts, each with a printable placeholder and one that never reaches the paper: a press arms over two; the first host's body placeholder activated by hand under the armed line loads that host WHOLE (its open and its folded URL asked once each: the click's road, by host) and the recount narrows the line and the title to the second host; Print with them then asks the second host once, for its open placeholder's URL alone, its hidden one standing; a second note naming both hosts lands the clicked host's figure as a PICTURE, asked once (the click's page-life grant), and the printed host's as a placeholder, asked nothing", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const s = await scene(t, browser, "pane", HAND_NOTE, { open: { local: { ...PAGE_LOCAL } } });
+    const { page } = s;
+    await readPlacements(s, [ph(HOST_HAND, HAND_OPEN, "body"), ph(HOST_REST, REST_OPEN, "body"), ph(HOST_HAND, HAND_FOLD, "closed-details"), ph(HOST_REST, REST_HIDDEN, "hidden")]);
+    await road(s, "press (armed over two hosts), the first host's body placeholder activated by hand: the click loads its host whole, the recount", { third: { [HOST_HAND + HAND_OPEN]: 1, [HOST_HAND + HAND_FOLD]: 1 }, fetched: F({ [HOST_HAND + HAND_OPEN]: 1 }, { [HOST_HAND + HAND_FOLD]: 1 }), printed: "none" }, async () => {
+      await page.click(PRINT_BTN);
+      let b = await bar(page);
+      assert.equal(b.phase, "armed"); assert.equal(b.line, ARMED_TWO, "the two body placeholders are counted");
+      assert.deepEqual(b.titles.slice(0, 1), [titleFor([HOST_HAND, HOST_REST])], "the title names the two hosts");
+      await page.locator('#romp-fileview [data-act="fv-load"][data-fv-hosts="' + HOST_HAND + '"]').first().click();   // the first in document order is the body one (readPlacements above)
+      await waitGates(page, 2);
+      assert.deepEqual(await gatesNow(page), [HOST_REST + ":body", HOST_REST + ":hidden"], "the click restored both of its host's placeholders, the folded one too; the second host's two stand");
+      b = await bar(page);
+      assert.equal(b.phase, "armed", "still armed over the one left"); assert.equal(b.line, ARMED_ONE, "the recount");
+      assert.deepEqual(b.titles.slice(0, 1), [titleFor([HOST_REST])], "the title names the host left alone");
+    });
+    await road(s, "then Print with them over the one left", { third: { [HOST_REST + REST_OPEN]: 1 }, fetched: F({ [HOST_REST + REST_OPEN]: 1 }), printed: "window.print x1" }, async () => {
+      await page.click(WITH_BTN);
+      await printsReach(page, 1);
+      const p = await prints(page);
+      assert.deepEqual({ gates: p[0].gates, incomplete: p[0].incomplete }, { gates: 1, incomplete: [] }, "the second host's hidden placeholder stands at the print; every <img> complete");
+      assert.deepEqual(await gatesNow(page), [HOST_REST + ":hidden"], "per placeholder: the second host's open one restored, its hidden one standing");
+    });
+    await road(s, "a second note naming both hosts landed after the print (the grant read): the clicked host's picture, the printed host's placeholder", { third: { [HOST_HAND + AGAIN]: 1 }, fetched: F({ [HOST_HAND + AGAIN]: 1 }), grant: HOST_HAND + ": picture, " + HOST_REST + ": placeholder", printed: "none" }, async () => landAgain(s, [HOST_HAND, HOST_REST]));
+    assert.deepEqual(hostsAsked(s), [HOST_HAND, HOST_REST].sort(), "over the page's life both hosts were asked");
+    assert.deepEqual({ handOpen: asksFor(s, "https://" + HOST_HAND + HAND_OPEN), handFold: asksFor(s, "https://" + HOST_HAND + HAND_FOLD), handAgain: asksFor(s, "https://" + HOST_HAND + AGAIN), restOpen: asksFor(s, "https://" + HOST_REST + REST_OPEN), restHidden: asksFor(s, "https://" + HOST_REST + REST_HIDDEN), restAgain: asksFor(s, "https://" + HOST_REST + AGAIN) },
+      { handOpen: 1, handFold: 1, handAgain: 1, restOpen: 1, restHidden: 0, restAgain: 0 }, "the click's host: every URL once, the landing's too (the grant); the print's host: the open URL once, the hidden and the landing's never");
+    await tail(s, "(11)");
   });
 });
