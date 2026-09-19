@@ -40,8 +40,11 @@ road: the execution witness covers every caller the fixture actually executes; t
 and Sessions.backend_for run as stubs, so a loader inside their real bodies is outside the recorders and is caught by the
 source census in TheCountersOneSite instead, one level deep (the helper's own source); setUp checks that it rebinds
 exactly the listed names, so the census reads the fixture's list and not a hand-kept copy of it, and the check spans the
-whole setUp (its snapshots are setUp's first statements and its comparison the last; a stub installed before setUp, or on a
-judge directory name the rebind also moves, is outside it). The window: each pass, the
+whole setUp: its snapshots are setUp's first statements and its comparison the last, and the judge names the rebind moves are
+the diff across the rebind call alone, read against a second judge snapshot taken at the rebind, so a stub placed before the
+rebind is not filed as the rebind's (review round 3: read against the first snapshot, a judge stub between it and the rebind
+was subtracted and escaped); a stub installed before setUp, or on a judge directory or path name the rebind also moves, is
+outside it. The window: each pass, the
 `_auto_nudge_tick` call (the records are cleared before it and read after it), so a load elsewhere in the process (a
 builder, a handler, the perf snapshot the test reads after its last pass) is outside the window and is not this test's
 claim. By the store's own counters, a witness keyed on the store rather than on a list of doors, one per door. The shared
@@ -328,11 +331,15 @@ class _WalkHarness(unittest.TestCase):
         self.first = ({k: (list(v) if isinstance(v, list) else v) for k, v in km._NUDGE_WALK_FIRST.items()},
                       km._NUDGE_WALK_FIRST_OPEN[0])
         self.addCleanup(self._restore)
-        jd._rebind_state(td)                              # STATE and every dir derived from it, never jd.STATE alone
-        rebound_by_rebind = {k for k, v in vars(jd).items() if before_jd.get(k, _UNSET) is not v}   # the judge's directory and path
-        #                                                   globals the rebind moved (kernel/judge.py, _rebind_state's global list),
-        #                                                   subtracted at the comparison below, so no hand-kept copy of that list exists
-        self._after_rebind()                              # a hook: a pin overrides it to place a stub in the region the check once missed
+        self._before_rebind()                             # a hook: a pin overrides it to place a stub between the first snapshot and the rebind
+        pre_rebind = dict(vars(jd))                       # the judge's globals AT the rebind, so the names it moves are the diff across that
+        jd._rebind_state(td)                              #   one call (STATE and every dir derived from it, never jd.STATE alone) and nothing
+        rebound_by_rebind = {k for k, v in vars(jd).items() if pre_rebind.get(k, _UNSET) is not v}   # rebound before it is filed as the
+        #                                                   rebind's (review round 3: read against the FIRST snapshot, a judge stub placed between
+        #                                                   it and the rebind was subtracted below and escaped). The set is the judge's directory
+        #                                                   and path globals (kernel/judge.py, _rebind_state's global list), subtracted at the
+        #                                                   comparison below, so no hand-kept copy of that list exists
+        self._after_rebind()                              # a hook: a pin overrides it to place a stub right after the rebind
         jd.GOALDIR.mkdir(parents=True)
         jd.EPIDIR.mkdir(parents=True)
         (td / "session-hosts").write_text("off")          # a root this test minted: no session host may start under it
@@ -438,8 +445,11 @@ class _WalkHarness(unittest.TestCase):
         # reds here (a stub without a list entry hides a loader from the execution witness AND from the census that reads the
         # list). Review round 2, correctness-2 and tests-1: the snapshot sat in the middle of setUp, after the cache clears, and
         # a stub above it escaped the check, the census and the execution witness (8 passed with a shared load in the stubbed
-        # helper's real body). Outside the window: a stub installed before setUp, and a jd directory or path name the rebind also
-        # moves (subtracted below, so a later stub on one of those names is not seen either).
+        # helper's real body). Review round 3: the judge names the rebind moves were read against the first snapshot, so a judge
+        # stub between that snapshot and the rebind was filed as the rebind's and subtracted; they are read against a snapshot
+        # taken at the rebind itself now (pre_rebind), so a stub anywhere before or after it stays in this comparison. Outside the
+        # window: a stub installed before setUp, and a jd directory or path name the rebind also moves (subtracted below, so a
+        # later stub on one of those names is not seen either).
         rebound_km = {k for k, v in vars(km).items() if before_km.get(k, _UNSET) is not v}
         self.assertEqual(rebound_km, set(REPLACED_KM), "setUp replaces exactly the kernel names REPLACED_KM lists, the census's targets: a "
                                                         "stub without a list entry hides a loader from the execution witness and the census")
@@ -448,6 +458,11 @@ class _WalkHarness(unittest.TestCase):
                          "and exactly the judge names REPLACED_JD lists plus the two recorded doors (the names jd._rebind_state moves "
                          "subtracted)")
         self.assertIsNot(km.Sessions.backend_for, self.saved_backend, "and Sessions.backend_for, replaced beside them")
+
+    def _before_rebind(self):
+        """A no-op hook, called right before the judge snapshot the rebind's diff is read against: the region between setUp's first
+        snapshot and the rebind, where a judge stub was filed as the rebind's and escaped until review round 3. A pin overrides it
+        to place a stub there and expects setUp to refuse it (TheAgreementCheckSpansSetUp)."""
 
     def _after_rebind(self):
         """A no-op hook, called right after jd._rebind_state: the region the agreement check's first snapshot missed (review round
@@ -854,6 +869,26 @@ class TheAgreementCheckSpansSetUp(unittest.TestCase):
         finally:
             probe.doCleanups()
         self.assertIn("_session_working", str(cm.exception), "the check names the stub placed right after the rebind")
+
+    def test_a_stub_placed_between_the_first_snapshot_and_the_rebind_is_refused(self):
+        """The judge half of the check reads the names jd._rebind_state moves as the diff across that call alone, against a snapshot
+        taken at the rebind (review round 3: read against setUp's first snapshot, a judge stub placed between that snapshot and the
+        rebind was filed as the rebind's, subtracted, and escaped the check with the module green). A throwaway harness subclass
+        places a new-identity pass-through on a judge name outside both lists there, through the _before_rebind hook, restoring the
+        real one by its own cleanup; setUp must raise the agreement check's AssertionError naming it."""
+        class _Probe(_WalkHarness):
+            def _before_rebind(self):
+                real = jd._journal_key
+                self.addCleanup(setattr, jd, "_journal_key", real)
+                jd._journal_key = lambda fsid: real(fsid)
+
+        probe = _Probe(methodName="setUp")
+        try:
+            with self.assertRaises(AssertionError) as cm:
+                probe.setUp()
+        finally:
+            probe.doCleanups()
+        self.assertIn("_journal_key", str(cm.exception), "the check names the stub placed between the first snapshot and the rebind")
 
 
 class TheCountersOneSite(unittest.TestCase):
