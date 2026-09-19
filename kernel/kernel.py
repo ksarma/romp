@@ -1439,6 +1439,7 @@ class _PerfStats:
             st["stages"] = {}
             st["mark"] = None
             st["gc"] = None
+            st["kids"] = {}                               # _container_kids' cache goes with the split it indexed (its docstring says why)
 
     @staticmethod
     def _split(dt, st, gc_now=None):
@@ -1485,6 +1486,7 @@ class _PerfStats:
             st["stages"] = {}
             st["mark"] = None
             st["gc"] = None
+            st["kids"] = {}                               # _container_kids' cache goes with the split it indexed (its docstring says why)
 
     def pass_failed(self):
         """A jobs pass that raised out of its loop and was skipped (the loop's guard), the jobs thread's cycleFailed."""
@@ -1547,7 +1549,11 @@ class _PerfStats:
         only ever added within a cycle, so the row count is the cache's version, and a new row anywhere (a nested
         container's first close changes _through_nested's answers too) rebuilds the list. Without the cache every
         container close walked every row of the split with _through_nested on each, under the collector's lock, and
-        the signature seam closes once per served tab and twice per rebuilt one (2026-09-18 review, low 3)."""
+        the signature seam closes once per served tab and twice per rebuilt one (2026-09-18 review, low 3). The cache
+        is RESET with the split at the in-place closes (cycle, jobs_pass) as well as at cycle_begin, which bounds it
+        to one split: a container closed in the gap between a close and the next begin, when the fresh split's row
+        count reads the same as the cached one, would otherwise sum the previous split's row objects (2026-09-19
+        review)."""
         stages = st["stages"]
         cache = st.setdefault("kids", {})
         ent = cache.get(pfx)
