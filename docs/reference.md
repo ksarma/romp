@@ -3863,12 +3863,13 @@ the kernel's uptime is rounded down to whole minutes; the durations, counts
 and distributions stay, so two documents from one machine remain linkable
 through them).
 
-`romp perf upload <file>` sends one such export to a receiver. It is the only
-way anything romp records leaves the machine, and it happens only when you run
-the verb and confirm it. The receiver's address is configuration, empty by
-default: `--receiver URL`, else the `ROMP_PERF_RECEIVER` environment variable,
-else the file `~/.config/romp/perf-receiver` (one line); with none set the verb
-refuses and names the three, exit 2. The address must be an `https` URL with a
+`romp perf upload <file>` sends one such export to a receiver, and only when
+you run the verb and confirm it. The receiver's address is configuration, empty
+by default: `--receiver URL`, else the `ROMP_PERF_RECEIVER` environment
+variable, else the file `~/.config/romp/perf-receiver` (one line in a regular
+file; a path that is not a regular file, a fifo among them, is refused as an
+address naming the file, and the verb does not wait on it); with none set the
+verb refuses and names the three, exit 2. The address must be an `https` URL with a
 host and no userinfo, query or fragment (`http` only for `127.0.0.1` and
 `localhost`, for tests), and it may carry a path, the base the route below is
 appended to; a refused address is not echoed. The receiver is unauthenticated,
