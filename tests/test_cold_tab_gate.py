@@ -465,7 +465,7 @@ class CensusOncePerPush(_ColdTabFixture):
 class FixtureShape(unittest.TestCase):
     def test_no_class_here_inherits_a_same_file_class_that_carries_tests(self):
         """regression-2 (2026-09-19 round-2 review): CensusOncePerPush subclassed ColdTabGate and so collected and ran its
-        sixteen tests a second time: `pytest --collect-only tests/test_cold_tab_gate.py` at c610f89ab collected 41 tests
+        sixteen tests a second time: `pytest --collect-only tests/test_cold_tab_gate.py` at the round-2 head collected 41 tests
         for 25 distinct, the sixteen twice (the refuters' AST sweep counted 29 same-file instances of the idiom on main,
         untouched by this branch; by the rulings this module alone changes, so this pin reads this module and no other).
         The fixture is the test-less _ColdTabFixture now and both classes inherit it. Pinned by introspection over the

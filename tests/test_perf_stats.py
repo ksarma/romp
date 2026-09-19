@@ -2734,7 +2734,7 @@ class InstrumentationCostTerms(unittest.TestCase):
     shared box moves the values run to run, so nothing here asserts a value. The assertions are sanity (every term above
     zero and under a millisecond) and the counts the instrumentation must land while it runs: the wrapped stat, the
     DirEntry door and the count call each counted exactly the calls made with a signature open. The terms mirror the
-    round-2 microbenchmark (bench.py at 981d9e634), best of five each, in one process over the loaded kernel: one
+    round-2 microbenchmark (bench.py at the round-2 head), best of five each, in one process over the loaded kernel: one
     getrusage read (_thread_cpu), os.stat through the counting wrapper with a signature open against the bare builtin
     (os.stat.__wrapped__) on one existing file, _entry_stat on a cached DirEntry with the signature closed and open, a
     signature scope's enter and exit, the per-tab note over a 40-component hit, a re-read's note, a count call, and the

@@ -845,7 +845,7 @@ class ByteIdenticalFrames(unittest.TestCase):
         reached km._sdk() under it and removed the sandbox leaves one over a removed root, whose fork_children answers
         {} on the OSError and reaches list_regs never: the registry channel would run over nothing, the counter would
         correctly count none of it, and a count assertion would be the first to say so, with a number and no reason
-        (the round-2 review's prefix run at 981d9e634). Premise 2, after the run and before any count: the registry
+        (the round-2 review's prefix run). Premise 2, after the run and before any count: the registry
         channel RAN. A recording spy on romp_sdk_backend.list_regs (fork_children's scan) notes each call's root and
         whether a signature was open on the thread; the calls inside a signature number one per cycle (the reg written
         before each cycle moves sdk/'s mtime, so the pre-build signature's fork_children memo misses and the post-build
@@ -1049,12 +1049,12 @@ class ByteIdenticalFrames(unittest.TestCase):
         forced one more rebuild), which the derivation absorbs: one more build is one more post-build signature, the
         equality and the channel derivations hold over it, and the alternation premise cannot see it, because the
         harness's build returns a shallow copy whose events list is the served frame's own, so the diff meets one object
-        on both sides (probed with such a leftover at c610f89ab, 2026-09-19: one more build, one more post-build signature,
+        on both sides (probed with such a leftover on 2026-09-19: one more build, one more post-build signature,
         green). The counter counts every stat that
         occurs, and the per-channel derivations pin that the world made them: the registry channel's count is a property
         of the world (every reg present at each pre-build signature), not of the counter; a signature whose backend reads
         no registry makes no registry stat and the counter counts none, which is why the world asserts the channel ran
-        (the round-2 review's prefix run at 981d9e634 met exactly that, and the constructed cases below drive it). The
+        (the round-2 review's prefix run met exactly that, and the constructed cases below drive it). The
         [live] line prints the counts the PR body quotes, so no figure there is copied by hand."""
         d, ic, regs_present, n_sigs, sdk, cfg, imports, calls, (b0, b1), rows = self._stats_world()
         self.assertEqual(calls, [False, True, False, True, False, True], "premise: rebuilt, served, alternating")
@@ -1095,7 +1095,7 @@ class ByteIdenticalFrames(unittest.TestCase):
         ViewBuilder, before it restored the singleton with its sandbox) left a backend over a removed root; its
         fork_children answers {} on the OSError and calls list_regs never, so the signature made no registry stat, the
         counter correctly counted none, and the registry derivation was the first assertion to fail, with a count and no
-        reason (the round-2 review's prefix run at 981d9e634). Reproduced in-process: a backend over a directory that is
+        reason (the round-2 review's prefix run). Reproduced in-process: a backend over a directory that is
         then removed is installed as the singleton. The world now refuses to run over it: the failure is an
         AssertionError naming the premise (the singleton is over this world's state root), raised before any signature
         runs, and not a count mismatch. The remedy this replaces bound the singleton to the world's root for the run,

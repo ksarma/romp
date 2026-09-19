@@ -3207,8 +3207,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   in `tests/test_perf_stats.py` pins it: over 300 sub-millisecond spins some
   mark reads 0, some a whole tick, and the marks' sum tracks the window's
   thread CPU), and only the sum over a window estimates the CPU.
-  The instrumentation's own cost, one run's readings and not a contract, at
-  head 76118986d (2026-09-19, Python 3.12, a 30-core (60-thread) dev box):
+  The instrumentation's own cost, one run's readings and not a contract, on
+  2026-09-19 (Python 3.12, a 30-core (60-thread) dev box):
   the per-term microseconds are what `tests/test_perf_stats.py`'s cost-terms
   test prints (best of five over the loaded kernel; `-rA` shows the line),
   the per-signature stats and thread CPU what the six-cycle harness's two
