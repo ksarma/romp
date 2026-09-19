@@ -14,6 +14,7 @@ the SDK backend writes the `states/<sid>.jsonl` rows itself.
 | `romp-postal-context.sh` | SessionStart | Gives a romp session a compact pointer to the postal skill (not the full skill body). |
 | `romp-postal-drain.sh` | Stop | Delivers queued peer mail at turn end, so mail never interleaves with a working turn. |
 | `romp-postal-revive.sh` | SessionStart | On revival with unread mail (a parked handoff), makes the session act on that mail. |
+| `romp-usertodo-context.sh` | SessionStart | On resume, compact or clear, hands a session its open requests to the person it works for back as passive context, so it withdraws the ones that are met or moot after its working memory is wiped; silent unless the requests switch file exists. |
 
 Disable the postal hooks with `~/.claude/romp-postal-off`. Shell tests:
 `tests/*.bats` (`romp-wake-hook.bats`, `romp-postal-context.bats`, …) — keep

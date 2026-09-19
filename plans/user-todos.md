@@ -197,12 +197,24 @@ mechanisms carry the load instead:
 1. **The tool description instructs withdrawal at registration time**: the agent learns the contract in the
    same breath it files the need.
 2. **Open requests ride into the contexts the agent naturally receives.** On SessionStart after a resume, a
-   compaction or a clear (the reviewer's question 8, decided 2026-09-19: all three sources), the session sees
-   its open requests phrased as its own outstanding notes to the person it works for, with ids and an
-   invitation to withdraw any that are met or moot. A passive context block, no forced turn: the kernel
-   renders the words (a read-only route the SessionStart hook fetches), so `tests/test_injected_voice.py`
-   scans exactly what a session receives; newest first, capped at twelve with an "and N more from earlier"
-   tail. Segment C builds the hook, its route and the block.
+   compaction or a clear (the reviewer's question 8, decided 2026-09-19: all three sources; startup and fork
+   stay silent, since a fresh sid or a born fork has no rows), the session sees its open requests phrased as
+   its own outstanding notes to the person it works for, with ids and an invitation to withdraw any that are
+   met or moot. A passive context block, no forced turn. As built (segment C): the hook,
+   `hooks/romp-usertodo-context.sh`, checks that the switch file exists before it reads its payload or costs a
+   process, so an install that never turned requests on pays nothing per resume (the kernel stays the one
+   authority on the file's value, and the route's `enabled` field silences the hook when a present file says
+   off); it then applies the postal hooks' identity gate (the CLI's id must be the sid or the SDK registry's
+   lastSid for it, a clear passing on the registry row's existence), so a `claude -p` a session runs from its
+   Bash tool never takes its parent's requests; then it asks `POST /usertodo/context` (`{"id": <sid>}`,
+   answered `{"ok", "enabled", "block"}`; a read-only route on the session's own host: no pusher wake, no
+   forward, no liveness gate, the SessionStart being the evidence) and emits the block as additionalContext.
+   The kernel renders the words (`_user_todo_context_block`), so `tests/test_injected_voice.py` scans exactly
+   what a session receives: newest first, twelve rows (the kernel constant `_USER_TODO_CONTEXT_CAP`, pinned
+   equal to the card's cut-off by a test) then an "and N more from earlier" tail, and the one instruction that
+   matters, withdraw what is met or moot. The block is
+   the fourth deliberate exception to the injected-voice rule (it speaks as the agent's own notes, not as the
+   person asking) and `CLAUDE.md` says so.
 3. **The user's dismiss covers the rest.**
 
 ### Escalation: the idle endgame
@@ -389,9 +401,11 @@ arms, the loss seam and its boot pass wired through A's constructor keyword, and
 its gear row, off by default and inert while off. A self-contained capability inside romp's existing model:
 it moves no card and calls no judge.
 
-**Segment C: memory across context loss.** The SessionStart hook (sources: resume, compaction and clear),
-its read-only route and the rendered context block, in the agent's-own-notes voice, installed and uninstalled
-with the other hooks; the block's twelve-row cap is the card's cut-off number.
+**Segment C: memory across context loss.** The SessionStart hook (sources: resume, compaction and clear; the
+switch file's existence checked before any round trip, then the postal hooks' identity gate), its read-only
+route and the rendered context block, in the agent's-own-notes voice (the fourth exception to the
+injected-voice rule), installed and uninstalled with the other hooks; the block's cut at twelve is the
+card's cut-off number, a kernel constant a test pins equal to the card's literal.
 
 **Segment D: ambient visibility.** The tab flag, the feed-card marker and the phone tab's flag, all reading the
 fields B ships, all quiet while the switch is off.

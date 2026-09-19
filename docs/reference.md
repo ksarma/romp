@@ -4487,6 +4487,18 @@ requests; null when the store could not be read, with `error` saying so). A requ
 or dismissed is a plain non-error answer to the session, with the time; an id that is unknown or another
 session's is an error.
 
+The third route is a read. `POST /usertodo/context` takes `{"id": <sid>}` and answers `{"ok": true, "enabled":
+<the switch>, "block": <text or "">}`: the session's open requests rendered as its own notes to you, newest first,
+twelve then an "and N more from earlier" line, ending with the instruction to withdraw what is met or moot; an
+unknown session is an empty block, not an error. Its one caller is the SessionStart hook
+`hooks/romp-usertodo-context.sh`, which `install.sh` links and registers (sync, a 5 s timeout) and `romp-uninstall`
+removes: after a resume, a compaction or a clear it hands the block to the session as passive context, so the
+session remembers what it asked you for and withdraws the requests that are met or moot. The hook costs nothing
+while the switch file is absent (it checks for the file before anything else and reads nothing from it), runs
+only for the CLI the session id names (a `claude -p` a session runs from its shell never takes its parent's
+requests), asks the kernel on the session's own machine, and never fails a turn; while the switch is off the route
+answers `enabled: false` with an empty block and the hook adds nothing.
+
 ## The judges' process (stage three)
 
 `~/.local/state/romp/judges-process` reading `on` moves the judges' passes out of the kernel into one long-lived

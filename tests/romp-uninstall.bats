@@ -57,8 +57,8 @@ except (IOError, OSError, ValueError):
     print(0); raise SystemExit
 # mirrors bin/romp-uninstall's OURS: the two retired names (romp-summarize.sh and tmux-status.sh,
 # both gone 2026-09-11 with the tmux backend) stay for one release alongside the hooks the repo ships
-OURS = ("tmux-status.sh", "romp-summarize.sh", "romp-postal-drain.sh",
-        "romp-postal-ensure.sh", "romp-postal-revive.sh", "romp-postal-context.sh", "romp-wake.sh")
+OURS = ("tmux-status.sh", "romp-summarize.sh", "romp-postal-drain.sh", "romp-postal-ensure.sh",
+        "romp-postal-revive.sh", "romp-postal-context.sh", "romp-usertodo-context.sh", "romp-wake.sh")
 n = sum(1 for rules in (s.get("hooks") or {}).values() for r in rules for h in r.get("hooks", [])
         if h.get("command", "").rsplit("/", 1)[-1] in OURS)
 print(n)
@@ -83,6 +83,44 @@ PY
     [ ! -e "$HOME/.claude/skills/romp-postal" ]
     [ ! -e "$HOME/.claude/romp-postal.mcp.json" ]
     [ "$(hook_count)" -eq 0 ]
+}
+
+# One hook per registered name, counted by its exact command string: hook_count adds every romp hook into
+# one number, which cannot tell a name the uninstaller forgot from the ones it removed.
+cmd_count() {   # $1 = hook basename
+    python3 - "$HOME/.claude/settings.json" "$1" <<'PY'
+import json, sys
+try:
+    s = json.load(open(sys.argv[1]))
+except (IOError, OSError, ValueError):
+    print(0); raise SystemExit
+print(sum(1 for rules in (s.get("hooks") or {}).values() for r in rules for h in r.get("hooks", [])
+          if h.get("command", "") == "~/.claude/hooks/" + sys.argv[2]))
+PY
+}
+
+@test "romp-uninstall: the requests SessionStart hook goes with the rest (link and registration)" {
+    # romp-usertodo-context.sh is linked and registered by install.sh (plans/user-todos.md, segment C); the
+    # uninstaller's rm loop and its OURS set must name it too, or an uninstall leaves its ~/.claude/hooks link
+    # and its SessionStart entry behind: a hook pointing into a clone that may be gone, shelled on every
+    # session start until settings.json is edited by hand.
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [ -L "$HOME/.claude/hooks/romp-usertodo-context.sh" ]
+    [ "$(cmd_count romp-usertodo-context.sh)" = "1" ]
+
+    run "$CLONE/bin/romp-uninstall" --yes
+    [ "$status" -eq 0 ]
+    [ ! -e "$HOME/.claude/hooks/romp-usertodo-context.sh" ]
+    [ "$(cmd_count romp-usertodo-context.sh)" = "0" ]
+    # every hook install.sh links or retires has a matching removal: the names are read off install.sh itself
+    # (its symlink loop, WANT and RETIRED), so a hook added there and forgotten here fails this loop
+    names="$(grep -o '"[a-z-]*\.sh"' "$ROMP_DIR/install.sh" | tr -d '"' | sort -u)"
+    [ -n "$names" ]
+    for h in $names; do
+        [ ! -e "$HOME/.claude/hooks/$h" ]
+        [ "$(cmd_count "$h")" = "0" ]
+    done
 }
 
 @test "romp-uninstall: leaves the user's OWN hooks in settings.json untouched" {

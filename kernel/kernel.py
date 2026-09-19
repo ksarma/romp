@@ -8185,6 +8185,13 @@ def _user_todos_unreadable():
 # text and the bus relays it, so no second copy of the numbers exists.
 _USER_TODO_TEXT_CAP = 500
 _USER_TODO_DETAIL_CAP = 4000
+# How many requests the SessionStart block shows before it cuts the rest off (_user_todo_context_block: the
+# twelve newest, then "and N more from earlier"). The card cuts at the same twelve (ui/webview/render.ts,
+# renderTodo's UT_INLINE_ROWS: the twelve oldest stay inline, the rest behind a keyed toggle) from a literal of
+# its own, and tests/test_user_todos.py pins the two equal so the surfaces cannot drift. Twelve is also
+# _open_leaf_bullets' cap for a nudge's open leaves: plenty for any real session, small enough that a runaway
+# store cannot flood a freshly compacted context.
+_USER_TODO_CONTEXT_CAP = 12
 
 
 def _user_todo_check_size(text, detail=""):
@@ -8450,6 +8457,39 @@ def _user_todo_answer_body(todo_text, reply):
     text, so both are marker-neutralized (_neutralize_romp_markers), never trusted to be marker-free."""
     return "Re: %s\n\n%s" % (_neutralize_romp_markers(todo_text).strip(),
                              _neutralize_romp_markers(reply).strip())
+
+
+def _user_todo_context_block(sid):
+    """Memory across context loss (plans/user-todos.md, segment C): the session's OPEN requests rendered as its
+    OWN outstanding notes to the person it works for. The SessionStart hook (hooks/romp-usertodo-context.sh)
+    fetches this over POST /usertodo/context after a resume, a compaction or a clear and hands it to the
+    session as passive additionalContext, no forced turn, so an agent whose working memory was wiped
+    remembers what it asked for and withdraws the ones that are met or moot instead of leaving them for the
+    person's Dismiss. "" when nothing is open: a session with nothing open gets NOTHING, no noise.
+
+    NEWEST first (the store's read sorts oldest first; the reversal is on a copy, never on a cached list) and
+    cut at _USER_TODO_CONTEXT_CAP, the card's cut-off number, with an "and N more from earlier" tail, so the freshest ask
+    leads and a runaway store cannot flood the context. VOICE (tests/test_injected_voice.py renders this): the
+    agent's own notes, the fourth deliberate exception to CLAUDE.md's injected-voice rule, because the content
+    IS the agent's own open requests and phrasing them as the person asking would invert who owes whom; no
+    tracking-system nouns; naming withdraw_user_todo is right, the agent holds that tool. Request text is
+    agent-supplied, so it is marker-neutralized like the answer body's halves; a row with no text renders a
+    placeholder rather than vanishing. The rendered date is fine HERE (one-shot context, never dedup-compared)
+    where it would break the chat payload's serialized-dedup rule. Plain ASCII throughout. A pure read: no
+    store write, no view wake; the hook may fire on every resume, compaction and clear."""
+    rows = list(reversed(_open_user_todos(str(sid))))
+    if not rows:
+        return ""
+    lines = ["Notes you still have open with the person you work for, things you said you needed from them:"]
+    for t in rows[:_USER_TODO_CONTEXT_CAP]:
+        text = _neutralize_romp_markers(str(t.get("text") or "").strip()) or "(untitled)"
+        ct = int(t.get("createdT") or 0)
+        when = (", opened " + time.strftime("%Y-%m-%d", time.localtime(ct))) if ct else ""
+        lines.append("- %s (%s%s)" % (text, t["id"], when))
+    if len(rows) > _USER_TODO_CONTEXT_CAP:
+        lines.append("- and %d more from earlier" % (len(rows) - _USER_TODO_CONTEXT_CAP))
+    lines += ["", "If one is met or moot now, withdraw it (withdraw_user_todo); otherwise leave it standing."]
+    return "\n".join(lines)
 
 
 def _stamp_user_todo_answered(sid, tid):
@@ -68477,6 +68517,30 @@ class Handler(BaseHTTPRequestHandler):
                                       "application/json")
                 _push_soon()                                        # ack-fast: the row leaves the card on the woken cycle
                 return self._send(200, json.dumps(acct), "application/json")
+            if u.path == "/usertodo/context":
+                # The read the SessionStart hook (hooks/romp-usertodo-context.sh) stands on (plans/user-todos.md,
+                # segment C): {"id": <sid>} -> 200 {"ok": true, "enabled": <the switch>, "block": <text or "">},
+                # the session's open requests rendered as its own notes (_user_todo_context_block) for a resumed,
+                # compacted or cleared session. `enabled` rides along so the hook stays silent on the kernel's
+                # word rather than inferring off from an empty block, and a caller can tell off from nothing
+                # open; the block itself goes empty while the switch is off through the store read's own gate
+                # (_open_user_todos), the one gate every surface shares, so no second gate sits here. Three
+                # negatives, each on purpose. NO _push_soon: a read, nothing changed, nothing to
+                # show. NO _host_for_sid or _remote_forward: the only caller is the hook on the session's own
+                # host, which owns that session's store, and a forward from a dashboard host would ask a kernel
+                # with no such SessionStart in flight. NO liveness or death-marker read: the SessionStart IS the
+                # evidence that the session is up, and a marker check here would race the revival's own states
+                # row and eat the block the revival came for. An unknown sid is an empty block, not an error:
+                # nothing open is the common case.
+                body, berr = _json_object_body(raw_body)
+                if berr:
+                    return self._send(400, json.dumps({"ok": False, "error": berr}), "application/json")
+                sid = str(body.get("id") or "")
+                if not sid:
+                    return self._send(400, json.dumps({"ok": False, "error": "id required"}), "application/json")
+                return self._send(200, json.dumps({"ok": True, "enabled": _user_todos_on(),
+                                                   "block": _user_todo_context_block(sid)}),
+                                  "application/json")
             if u.path == "/deliver":
                 # Live-deliver a postal banner to a session — the deliver-time WAKE. The bus drains its maildir
                 # and hands the banner here; the kernel enqueues it on the session's backend

@@ -457,6 +457,21 @@ class OffOnTheRoutes(_Sandbox):
         km._set_user_todos(True)
         self.assertEqual([t["id"] for t in km._open_user_todos(SID)], [tid], "kept on disk the whole time")
 
+    def test_context_answers_enabled_false_and_an_empty_block_despite_open_rows(self):
+        # the SessionStart hook's read (segment C): a read, so OFF is an honest 200 carrying the switch's value
+        # and an empty block, never a 409; the hook stays silent on `enabled: false` whatever else rides along
+        km._set_user_todos(True)
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        code, res = _post("/usertodo/context", {"id": SID})
+        self.assertEqual((code, res["enabled"]), (200, True))
+        self.assertIn("Notes you still have open", res["block"])
+        km._set_user_todos(False)
+        code, res = _post("/usertodo/context", {"id": SID})
+        self.assertEqual(code, 200, "a read: off is an honest 200, not an error")
+        self.assertIs(res["enabled"], False)
+        self.assertEqual(res["block"], "", "the hook injects nothing")
+        self.assertEqual(self.pushed, [], "a read wakes nothing, on or off")
+
 
 class OffOnTheDriveOps(_Sandbox):
     def setUp(self):

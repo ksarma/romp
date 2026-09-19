@@ -82,7 +82,7 @@ mkdir -p "$HOME/.claude/hooks" "$HOME/.claude/skills"
 # The hooks this repo ships. None records a session's state: the kernel's SDK backend writes the
 # states/<sid>.jsonl rows for every Claude Code session itself, from the stream it drives.
 for h in romp-postal-drain.sh romp-postal-ensure.sh \
-         romp-postal-revive.sh romp-postal-context.sh romp-wake.sh; do
+         romp-postal-revive.sh romp-postal-context.sh romp-usertodo-context.sh romp-wake.sh; do
     ln -sf "$ROMP_DIR/hooks/$h" "$HOME/.claude/hooks/$h"
 done
 echo "  Symlinked romp hooks into ~/.claude/hooks/"
@@ -150,7 +150,10 @@ SETTINGS = os.path.expanduser("~/.claude/settings.json")
 WANT = {  # event -> [(hook script, timeout secs, async)]
     "SessionStart":     [("romp-postal-ensure.sh", 5, True),
                          ("romp-postal-revive.sh", 8, False),
-                         ("romp-postal-context.sh", 5, False)],  # romp sessions: load the romp-postal skill
+                         ("romp-postal-context.sh", 5, False),   # romp sessions: load the romp-postal skill
+                         ("romp-usertodo-context.sh", 5, False)],  # resume, compact or clear: the session's open requests
+                                                          # back as context (sync on purpose: additionalContext from an
+                                                          # async hook is not read; 5 s covers its 3 s round trip)
     "UserPromptSubmit": [("romp-wake.sh", 5, True)],     # poke the kernel → judges run NOW, not on the 20s tick
     "Stop":             [("romp-postal-drain.sh", 10, False),
                          ("romp-wake.sh", 5, True)],     # turn ended → wake the producer immediately

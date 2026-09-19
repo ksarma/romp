@@ -82,7 +82,7 @@ echo "==> ~/.claude hook + skill symlinks"
 # install from before that is uninstalled without an upgrade in between is still cleaned up. Drop
 # them from both with the next release.
 for h in romp-summarize.sh tmux-status.sh romp-postal-drain.sh romp-postal-ensure.sh \
-         romp-postal-revive.sh romp-postal-context.sh romp-wake.sh; do
+         romp-postal-revive.sh romp-postal-context.sh romp-usertodo-context.sh romp-wake.sh; do
     rm -f "$HOME/.claude/hooks/$h"
 done
 rm -f "$HOME/.claude/skills/romp" "$HOME/.claude/skills/romp-postal"
@@ -97,8 +97,8 @@ python3 - <<'PYEOF'
 import json, os
 
 SETTINGS = os.path.expanduser("~/.claude/settings.json")
-OURS = {"tmux-status.sh", "romp-summarize.sh", "romp-postal-drain.sh",
-        "romp-postal-ensure.sh", "romp-postal-revive.sh", "romp-postal-context.sh", "romp-wake.sh"}
+OURS = {"tmux-status.sh", "romp-summarize.sh", "romp-postal-drain.sh", "romp-postal-ensure.sh",
+        "romp-postal-revive.sh", "romp-postal-context.sh", "romp-usertodo-context.sh", "romp-wake.sh"}
 
 try:
     with open(SETTINGS) as f:

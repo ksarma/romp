@@ -46,6 +46,20 @@ PY
     [ "$(count_cmd Stop tmux-status.sh)" = "0" ]      # retired the same day, never registered again
     [ "$(count_cmd Stop romp-postal-drain.sh)" = "1" ]
     [ "$(count_cmd SessionStart romp-postal-ensure.sh)" = "1" ]
+    # the requests hook (plans/user-todos.md, segment C): linked, registered once at SessionStart, and SYNC with a
+    # 5 s timeout, read off the registered entry rather than the WANT tuple: additionalContext from an async
+    # SessionStart hook is not read by the CLI, and 5 s covers the hook's 3 s curl plus two python3 starts
+    [ -L "$HOME/.claude/hooks/romp-usertodo-context.sh" ]
+    [[ "$(readlink "$HOME/.claude/hooks/romp-usertodo-context.sh")" == *"/hooks/romp-usertodo-context.sh" ]]
+    [ "$(count_cmd SessionStart romp-usertodo-context.sh)" = "1" ]
+    python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+ents = [h for r in s["hooks"]["SessionStart"] for h in r.get("hooks", [])
+        if h.get("command", "") == "~/.claude/hooks/romp-usertodo-context.sh"]
+assert len(ents) == 1, ents
+assert ents[0].get("timeout") == 5 and ents[0].get("async") is False, ents[0]
+PY
     [ "$(count_cmd UserPromptSubmit romp-wake.sh)" = "1" ]
     # a compaction's END wakes the kernel too: the op parked behind a /compact delivers on this event
     [ "$(count_cmd PostCompact romp-wake.sh)" = "1" ]
@@ -77,6 +91,7 @@ PY
     [ "$status" -eq 0 ]
     [[ "$output" == *"already registered"* ]]
     [ "$(count_cmd Stop romp-wake.sh)" = "1" ]
+    [ "$(count_cmd SessionStart romp-usertodo-context.sh)" = "1" ]
     [ "$(count_cmd UserPromptSubmit romp-summarize.sh)" = "0" ]
     # regression: a re-run used to FOLLOW the existing skill dir-symlink and drop a new link INSIDE
     # the repo (claude/skills/romp-postal/romp-postal → an absolute personal path). ln -sfn replaces

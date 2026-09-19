@@ -20,6 +20,12 @@ Scope note — what is deliberately NOT checked:
 - the session prompt's housekeeping note (claude/romp-session-prompt.md), the ONE place romp is named
   to a session on purpose: it pre-explains the [romp] / <!-- romp-* --> artifacts as an external
   session manager's bookkeeping to ignore (the user 2026-07-25). Pinned by test_session_prompt.py.
+- the SessionStart requests block (_user_todo_context_block, plans/user-todos.md segment C) is NOT exempt:
+  it is rendered below like every injected body. It speaks as the agent's OWN notes to the person it works
+  for rather than as the person asking (CLAUDE.md's fourth exception: its content is the agent's own open
+  requests handed back after a resume, a compaction or a clear, and it names withdraw_user_todo because the
+  agent holds that tool); it still names no romp machinery, and every string it can emit (the header, a
+  bullet, the tail past twelve, the untitled placeholder, the withdraw line) is scanned.
 - sdk_backend's "[romp] The kernel restarted…" notices, which are genuinely ABOUT romp: they tell a
   session why its turn was cut, so naming it is the point (and the housekeeping note gives the
   name meaning). The rename ping (RENAME_NUDGE, 2026-08-24) is the same family — it tells a session
@@ -53,6 +59,8 @@ km = load_source("romp_kernel_voice", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
 
 SID = "11111111-2222-3333-4444-555555555555"
+SID2 = "22222222-3333-4444-5555-666666666666"    # a peer with more open requests than the block shows
+SID3 = "33333333-4444-5555-6666-777777777777"    # a peer whose one request has no text (the placeholder)
 TOP, SUB_OPEN, SUB_BLOCKED, TOP2 = (SID + ":g1", SID + ":g2", SID + ":g3", SID + ":g4")
 T0 = 1781100000
 
@@ -111,6 +119,12 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         km._set_user_todos(True)                     # the switch is OFF by default
         km._add_user_todo(SID, "Need the auth-scheme decision to wire login; building the open routes meanwhile")
         km._add_user_todo(SID, "Need a staging API key before the load test can run")
+        # the SessionStart requests block renders from the same store: the tail past the cut needs more rows
+        # than the cut (twelve, the card's cut-off; fifteen here, and the constant's own pin is test_user_todos.py's)
+        # under a second sid, and the untitled placeholder needs one row with no text under a third
+        for i in range(15):
+            km._add_user_todo(SID2, "Need decision %d" % i)
+        km._add_user_todo(SID3, "")
 
     def tearDown(self):
         jd.GOALDIR, jd.STATE = self.saved_goaldir, self.saved_state
@@ -175,6 +189,12 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             "user-todo answer": km._user_todo_answer_body(
                 "Need the auth-scheme decision to wire login; building the open routes meanwhile",
                 "Go with the session cookie for now."),
+            # the SessionStart requests block (plans/user-todos.md, segment C): the agent's OWN notes to the person
+            # it works for, handed back after a resume, a compaction or a clear (CLAUDE.md's fourth exception);
+            # every string it can emit is rendered: the header and a bullet, the tail past twelve, the untitled placeholder
+            "user-todo context block": km._user_todo_context_block(SID),
+            "user-todo context block (past twelve)": km._user_todo_context_block(SID2),
+            "user-todo context block (untitled row)": km._user_todo_context_block(SID3),
             # the dashboard-edit trace (the user 2026-08-22): the file viewer saved over a file in this
             # session's tree, and the session is told in the person's voice — never edited under silently
             "edit trace": km._edit_trace_body("/TESTDIR/notes-api/README.md"),
@@ -198,6 +218,18 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         self.assertIn("user: start on the exporter", body)
         self.assertIn("(2 tool calls)", body)
         self.assertNotIn("1 of 1 turn.\n", body, "the pre-change header wording is gone from the fixture")
+
+    def test_the_context_block_fixture_is_live(self):
+        # the three block entries render the seeded store, not an empty string the scan would pass vacuously
+        bodies = self._bodies()
+        block = bodies["user-todo context block"]
+        self.assertIn("Need the auth-scheme decision to wire login", block)
+        self.assertIn("Need a staging API key before the load test can run", block)
+        self.assertIn("withdraw_user_todo", block, "the withdraw line names the tool the agent holds")
+        tailed = bodies["user-todo context block (past twelve)"]
+        self.assertIn("more from earlier", tailed, "fifteen rows pass the cut: the tail is rendered and scanned")
+        self.assertIn("- and %d more from earlier" % (15 - km._USER_TODO_CONTEXT_CAP), tailed)
+        self.assertIn("(untitled)", bodies["user-todo context block (untitled row)"])
 
     def test_the_relay_scrub_speaks_this_lists_words(self):
         # the kernel scrubs a relayed question's why by the same vocabulary this file scans for (T334): one list
@@ -317,9 +349,14 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # progress ask: the session is to halt, not to report where things stand
             # ...and a reply to a request from the session is the user's own answer to something the
             # session asked for: the same class as a typed follow-up, never a status ask
+            # ...and the SessionStart requests block is a memory aid in the agent's own voice (its open requests
+            # handed back after context loss, with the one instruction to withdraw what is met or moot), never a
+            # status ask to the user
             if name in ("typed follow-up on a summary",
                         "debt reminder (question)", "debt reminder (handoff)",
                         "debt reminder (several)", "comment thread opener", "user-todo answer", "edit trace",
+                        "user-todo context block", "user-todo context block (past twelve)",
+                        "user-todo context block (untitled row)",
                         "comment-thread merge", "compaction suggestion", "spend ceiling",
                         "relayed question", "relayed question (procedural why)",
                         "relayed question (with the conversation)"):
@@ -523,6 +560,9 @@ class TheRuleIsWrittenDown(unittest.TestCase):
         self.assertIn("SessionStart instruction", md)
         self.assertIn("marker tail", md)
         self.assertIn("housekeeping note", md)
+        # the fourth: the requests block speaks as the agent's own notes, not as the person asking
+        self.assertIn("FOUR deliberate exceptions", md)
+        self.assertIn("SessionStart requests block", md)
 
 
 if __name__ == "__main__":

@@ -282,7 +282,7 @@ something**, in their words:
   clear wrap-up carries the same content in about half the words it started with.
 - Draft this copy with the `jld` skill, the way any user-facing writing is drafted.
 
-THREE deliberate exceptions, all fine, none a licence to widen:
+FOUR deliberate exceptions, all fine, none a licence to widen:
 - **The SessionStart instruction** that asks a session to report what it finished
   and what it is blocked on. That asks for ordinary self-reporting; it names no
   romp machinery and needs none.
@@ -298,6 +298,13 @@ THREE deliberate exceptions, all fine, none a licence to widen:
   ignored beyond any practical information they carry. It explains the ARTIFACTS
   only; cards, boards, goals and the rest of the machinery stay unnamed, and every
   injected message still speaks as the person the agent works for.
+- **The SessionStart requests block** (`_user_todo_context_block`, handed to a
+  resumed, compacted or cleared session by `hooks/romp-usertodo-context.sh` as
+  additionalContext). It speaks as the agent's OWN notes to the person it works
+  for, not as the person asking, because its content is the agent's own open
+  requests handed back after context loss; it names `withdraw_user_todo` because
+  the agent holds that tool. It still names no romp machinery, and
+  `tests/test_injected_voice.py` renders it like every injected body.
 - Also fine: the `[romp] The kernel restarted…` notices in `sdk_backend.py`. Those
   are genuinely ABOUT romp — they tell a session why its turn was cut — so they
   name it (and the housekeeping note above gives the name meaning).
