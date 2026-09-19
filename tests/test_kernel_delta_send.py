@@ -857,12 +857,13 @@ class ByteIdenticalFrames(unittest.TestCase):
         stand until cleanup, the cwd resolved to the worktree, the worktree top, the task store and the postal store
         were read inside a signature, the names and registry reads landed), since a thinner world keeps the equality.
         Premise 4, before the run, in two halves: the kernel's counting wrappers stand on os.stat, os.lstat, posix.stat
-        and posix.lstat (each carries this kernel's thread-local), and each COUNTS (one call on an existing path inside a
-        forced-open signature moves the accumulator by exactly 1). The second half is there because functools.wraps
-        copies the marker with __dict__, so a marker proves only that a wrapper rides on the kernel's, not that it
-        counts: a marker-carrying wrapper that delegates to the builtin, or one that counts twice, passes the marker
-        half and would red the equality with two numbers and no reason (the closing check, 2026-09-19). A peer module
-        that displaced one and never restored it, or restored the builtin, leaves the kernel counting a subset of what
+        and posix.lstat (each carries this kernel's thread-local), and each COUNTS (one call on an existing str path
+        inside a forced-open signature moves the accumulator by exactly 1: one call shape, a sample). The second half is
+        there because functools.wraps copies the marker with __dict__, so a marker proves only that a wrapper rides on
+        the kernel's, not that it counts: a marker-carrying wrapper that delegates to the builtin, or one that counts
+        twice, passes the marker half and would red the equality with two numbers and no reason (the closing check,
+        2026-09-19). A peer module that displaced one and never restored it, or restored the builtin, leaves the kernel
+        counting a subset of what
         the interceptor sees: with os.stat, os.lstat or posix.stat displaced by its builtin the equality would be the
         first to say so, reading the kernel's count short of the interceptor's, two numbers and no reason; with
         posix.lstat displaced the count does not move (observed at the closing check, three repeats), so for it this
@@ -1200,11 +1201,18 @@ class ByteIdenticalFrames(unittest.TestCase):
         detect nothing (its count does not move when it is displaced). The accept case beside them: an equivalent
         wrapper, a wraps copy that delegates to the kernel's wrapper itself, the shape a _StatInterceptor wrapper left
         behind would have, moves the accumulator by exactly 1 and the world runs to its end (the exactness equality is
-        the exactness test's and is not asserted here). Two neighbours are separate premises this test does not build:
-        a wrapper that counts once but stands on the WRONG builtin (os.stat delegating to lstat), and the DirEntry doors
-        (_entry_stat and its twins). Deleting the counted-call assertion from _stats_world reds the twelve refuse legs
-        here with no AssertionError raised (the world runs to its end and returns, since the equality lives in the
-        exactness test) while the four displaced legs and the accept leg stay green."""
+        the exactness test's and is not asserted here). Three neighbours are separate premises this test does not build.
+        A wrapper that counts once but stands on the WRONG builtin (os.stat delegating to lstat; a world built for it
+        must pass follow_symlinks through or drop it, since pathlib hands os.stat that keyword and the builtin lstat
+        refuses it, so the naive world errors inside the run instead of showing the gap). A wrapper that counts
+        CONDITIONALLY, on str paths only or on its first call only: the counted-call half proves one str call and no
+        more, so such a wrapper can pass both halves and red the equality with two numbers and no reason, short by the
+        calls it skipped (os.stat counting str paths alone did, at the follow-up verification of the closing check,
+        2026-09-19; whether the first-call kind reaches the equality depends on which calls the world makes before the
+        probe). And the DirEntry doors (_entry_stat and its twins). Deleting the counted-call assertion from
+        _stats_world reds the twelve refuse legs here with no AssertionError raised (the world runs to its end and
+        returns, since the equality lives in the exactness test) while the four displaced legs and the accept leg stay
+        green."""
         import functools
         tl = km._CHAT_SIG_TL
 
