@@ -163,6 +163,10 @@ alphabetically, and each case's `before` is what the previous case left):
   S6, an import-time build over a sandbox that STANDS (jd.STATE restored): a is the first test to meet it and also
     leaks on its own; its one teardown failure carries the inherited report (the kept-root wording, both roots named,
     no remedy) and its own verdict; b is quiet under a's named object.
+  W, a session-scoped autouse fixture in the case directory's own conftest.py (nested_run's conftest) that builds over
+    a kept root and restores jd.STATE before the module boundary's start read: a is the first test to meet it and
+    carries the kept-root inherited report, its cause clause naming import-time code or a session- or package-scoped
+    fixture; b is quiet, and both ends are quiet (no read brackets a session fixture).
   M, class teardowns that install a value: One.a builds first; Two's tearDownClass builds over a kept sandbox (the
     class boundary names the change from the run root's backend to the sandbox's, sandbox remedy); Three's
     tearDownClass resets the slot to None (object remedy, no sandbox sentence); Four does nothing under the None and
@@ -724,6 +728,38 @@ SCRATCH_S6 = SCRATCH_HEAD + textwrap.dedent("""\
             pass
 """)
 
+CONFTEST_W = textwrap.dedent("""\
+    import sys, tempfile
+    from pathlib import Path
+    import pytest
+
+    # A session-scoped autouse fixture: it sets up before the module boundary's start read, builds the kernel's
+    # singleton over a root of its own (hosts off) and restores jd.STATE, leaving the singleton over the kept root.
+    @pytest.fixture(autouse=True, scope="session")
+    def _installs_the_singleton_before_the_modules_reads():
+        km = sys.modules["romp_kernel"]                 # the kernel the scratch module loaded at collection
+        jd = km.jd
+        root = Path(tempfile.mkdtemp())
+        (root / "session-hosts").write_text("off\\n")
+        saved = jd.STATE
+        jd.STATE = root
+        km._sdk_backend = None
+        km._sdk()
+        jd.STATE = saved
+        yield
+""")
+
+SCRATCH_W = SCRATCH_HEAD + textwrap.dedent("""\
+
+    class Cases(unittest.TestCase):
+        def test_a_is_the_first_to_meet_the_fixtures_install(self):
+            be = km._sdk_backend                      # the session fixture's build (conftest.py beside this module), kept
+            assert be is not None and be.state_dir != jd.STATE and be.state_dir.is_dir(), be
+
+        def test_b_does_nothing(self):
+            pass
+""")
+
 SCRATCH_M = SCRATCH_HEAD + textwrap.dedent("""\
 
     class One(unittest.TestCase):
@@ -841,12 +877,13 @@ SCRATCH_R2 = SCRATCH_HEAD + textwrap.dedent("""\
 """)
 
 
-def nested_run(text, follower=None, sdk_stub=False):
+def nested_run(text, follower=None, sdk_stub=False, conftest=None):
     """pytest in a child over one scratch module written to a fresh directory, under this checkout's conftest
-    (loaded as a plugin: the module sits outside tests/, where no conftest is discovered), verbose and with the
-    all-outcomes summary, so the outer test reads each case's outcome and the ratchet's text. The child's
-    environment is the precedent's (tests/test_tempdir_hygiene.py, RunLeavesNothing): a fresh TMPDIR, the
-    parent's pytest variables dropped so the child records its own run, and the bin directory the scratch
+    (loaded as a plugin: the module sits outside tests/, so tests/conftest.py is not discovered there; the case
+    directory's own conftest.py is, when `conftest` gives its text, the road W's session-scoped fixture takes),
+    verbose and with the all-outcomes summary, so the outer test reads each case's outcome and the ratchet's text.
+    The child's environment is the precedent's (tests/test_tempdir_hygiene.py, RunLeavesNothing): a fresh TMPDIR,
+    the parent's pytest variables dropped so the child records its own run, and the bin directory the scratch
     module loads the kernel from. `follower` is the text of a second module written beside the first. Returns
     (returncode, stdout and stderr).
 
@@ -888,6 +925,9 @@ def nested_run(text, follower=None, sdk_stub=False):
     if follower is not None:                # a second module, collected after the first (pytest keeps the directory order)
         with open(os.path.join(case, "test_scratch2.py"), "w") as f:
             f.write(follower)
+    if conftest is not None:                # the case directory's own conftest.py, discovered for both modules
+        with open(os.path.join(case, "conftest.py"), "w") as f:
+            f.write(conftest)
     env = dict(os.environ, TMPDIR=fresh, PYTHONDONTWRITEBYTECODE="1", ROMP_RATCHET_BIN=BIN)
     if sdk_stub:
         stub = os.path.join(fresh, "sdkstub")
@@ -1004,10 +1044,11 @@ class _NestedRun:
                            # (summary_mismatch, THE COUNT'S LIMIT), so the runs read the boundary text beside the count
     JUDGE_RED = False      # whether the judge fixture (_shared_state_restored) is expected to fail in the run too
     SDK_STUB = False       # the importable road: a stub claude_agent_sdk the child alone can import (nested_run); Q only
+    CONFTEST = None        # the text of a conftest.py written in the case directory (nested_run); W only
 
     @classmethod
     def setUpClass(cls):
-        cls.rc, cls.out = nested_run(cls.SCRATCH, cls.FOLLOWER, sdk_stub=cls.SDK_STUB)
+        cls.rc, cls.out = nested_run(cls.SCRATCH, cls.FOLLOWER, sdk_stub=cls.SDK_STUB, conftest=cls.CONFTEST)
 
     def assertRatchetPassed(self, cls, method):
         self.assertEqual(outcomes(self.out).get("%s.%s" % (cls, method)), {"PASSED"}, self.out)
@@ -1212,7 +1253,7 @@ class AChildStartedUnderAColourForcingEnvironment(FirstBuildOverAKeptSandbox):
     @classmethod
     def setUpClass(cls):
         with mock.patch.dict(os.environ, {"PY_COLORS": "1", "FORCE_COLOR": "1"}):
-            cls.rc, cls.out = nested_run(cls.SCRATCH, cls.FOLLOWER, sdk_stub=cls.SDK_STUB)
+            cls.rc, cls.out = nested_run(cls.SCRATCH, cls.FOLLOWER, sdk_stub=cls.SDK_STUB, conftest=cls.CONFTEST)
 
     def test_the_childs_output_carries_no_escape_sequence(self):
         self.assertNotIn("\x1b[", self.out, "the child prints plain text under a colour-forcing parent: %s" % self.out)
@@ -1655,6 +1696,33 @@ class ImportTimeLeakOverAKeptSandboxIsInheritedOnce(_NestedRun, unittest.TestCas
         self.assertRatchetPassed("Cases", "test_b_does_nothing")
         self.assertIsNone(boundary(self.out, "::Cases"), self.out)
         self.assertIsNone(boundary(self.out, ""), self.out)
+
+
+class SessionScopedFixtureInstallsBeforeTheModulesReads(_NestedRun, unittest.TestCase):
+    """W: a session-scoped autouse fixture in the case directory's own conftest.py builds the singleton over a kept root
+    and restores jd.STATE. It sets up before the module boundary's start read (the order a scratch run showed: the
+    plugin's session fixtures, this conftest's session and package fixtures, the module start read, setUpModule, a
+    module-scoped fixture of the module's own, the class start read, setUpClass, the function before-read), so the
+    start read sees its object, the identity term holds, and the kept-root report on the first test names the cause
+    family: import-time code, or a session- or package-scoped fixture. No read brackets a session fixture, so both
+    boundaries are quiet: the first-window report's stated residual. At the round-3 head the report blamed import-time
+    code alone."""
+    SCRATCH = SCRATCH_W
+    CONFTEST = CONFTEST_W
+    ERRORS = 1
+
+    def test_the_first_test_reports_the_fixtures_install_as_inherited_and_names_the_cause_family(self):
+        text = self.assertInherited("Cases", "test_a_is_the_first_to_meet_the_fixtures_install", head=INHERITED_KEPT)
+        self.assertTrue(text.startswith("SdkBackend over "), text)
+        self.assertIn(", jd.STATE ", text)
+        self.assertIn("a session- or package-scoped fixture", text)
+        self.assertIn("import-time code did", text)
+
+    def test_the_next_test_and_both_ends_are_quiet(self):
+        self.assertRatchetPassed("Cases", "test_b_does_nothing")
+        self.assertIsNone(boundary(self.out, "::Cases"), self.out)
+        self.assertIsNone(boundary(self.out, ""), self.out)
+        self.assertEqual(boundary_scopes(self.out), set(), self.out)
 
 
 class ClassTeardownInstallsAValue(_NestedRun, unittest.TestCase):
