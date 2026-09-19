@@ -344,7 +344,7 @@ mv = getattr(m, "__version__", None)
 if isinstance(mv, str) and mv:
     source = "the module's __version__, from %s" % where
 else:
-    site = str(importlib.metadata.distribution(host.SDK_DIST).locate_file(""))     # the record's own directory
+    site = str(importlib.metadata.distribution(host.SDK_DIST).locate_file(""))     # the site that holds the record, one level above the dist-info
     source = "the package metadata for %s under %s, since the module at %s exports no usable __version__" % (host.SDK_DIST, site, where)
 print("romp-sdk-setup: claude-agent-sdk %s ready (python %s), the version kernel/session_host.py is written against, read as the session host reads it (%s)" % (have, pyver, source))
 try:

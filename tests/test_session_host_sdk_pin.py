@@ -48,6 +48,19 @@ error field, its early return for a host-crashed row after an untested row, its 
 states, the `_process` guard's close before its raise, and host_transport.py's ImportError-only fallback. The exit
 road's drop of hostLogPos is pinned in tests/test_host_transport.py, and the installer's refusal of a version-less
 SDK in the bats file.
+
+Round 4 (2026-09-19) added ONE case, and it pins a KNOWN-WRONG behaviour, not a wanted one (correctness-1 of that
+round): test_the_pinned_residual_a_previous_hosts_unfiled_row_vanishes_after_a_refused_launch, under the round-3
+banner of HostProcess, seeds a previous host's host-started, reader-behind and end-forced rows, refuses one launch and
+asserts that the host that serves in the next kernel life files none of them, with a refusal-free control over the
+same seed that files both. The position a refused launch records is host.log's WHOLE line count at the refusal, so the
+served road skips every line present then, a previous host's unfiled row included, and that row VANISHES with no
+problem row anywhere; the case records that defect so it cannot change unseen. It is green by design at 1f2042164 (no
+fails-before exists: it describes the behaviour that head already had). The wanted behaviour is fixed in the queued
+served-road change, which bounds the served road on the spawn watermark; this case changes with it, so a later red
+here is the pin doing its job. Round 4 also corrected two case comments, prose only: the tests-4 comment states the
+reverse scan the code has (the non-object lines before the last failing row are never reached), and the regression-1
+comment says the recorded count is the whole file's.
 """
 import asyncio
 import contextlib
@@ -501,7 +514,7 @@ class HostProcess(unittest.TestCase):
         self.assertEqual([r["kind"] for r in ht.host_log_rows(d, SID)], ["host-started", "cli-spawn-failed", "host-crashed"],
                          "the row reader returns objects only")
         (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "cli-spawn-failed", "error": "OSError"}) + "\nnull\n")
-        self.assertEqual(ht.host_exit_reason(d, SID), "OSError", "a non-object LAST line, the first the reverse scan meets, is skipped too")
+        self.assertEqual(ht.host_exit_reason(d, SID), "OSError", "a non-object LAST line is skipped by the row reader too")
 
     # The mutation pass after round 3 (2026-09-19): the composer's guard on the error field (`or not row.get("error")`)
     # was held by no case, so with it dropped the suite stayed green. A failing-kind row that carries no error, an

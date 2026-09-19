@@ -1049,8 +1049,11 @@ PY
 # and only the module branch was executed by a case; the metadata branch printed a sentence that contradicted itself,
 # naming the module's file as the source of a version it had just said the module does not carry, and collapsing the
 # clause to the module constant left every case green. The provenance is rendered per branch now, and this leg
-# executes the metadata one: a dist-info at the pin over a module that exports no __version__.
-@test "romp-sdk-setup: over a module with no __version__ the ready line names the package metadata under the venv's site as the source, and the host's reader returns the pin" {
+# executes the metadata one: a dist-info at the pin over a module that exports no __version__. The title says the site
+# that holds the distribution's record, not the venv's site (extra7-1, round 5, 2026-09-19): the printed path is the
+# directory holding the dist-info, which in this fixture is the fake site and not the venv, so the title names what
+# the case asserts rather than what a normal install prints.
+@test "romp-sdk-setup: over a module with no __version__ the ready line names the site that holds the distribution's record as the source, and the host's reader returns the pin" {
     pin="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' "$ROMP_DIR/kernel/session_host.py" | head -1)"
     _fake_sdk_site "$TEST_DIR/metasite" "$pin" NONE                     # the dist-info says the pin; the module says nothing
     [ "$(grep -c '__version__ =' "$TEST_DIR/metasite/claude_agent_sdk/__init__.py")" = "0" ]   # the fixture's own precondition

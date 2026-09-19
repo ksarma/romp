@@ -1745,7 +1745,13 @@ LEDGER_ROTATE_BYTES = 32 * 1024 * 1024   # a ledger past this size is rotated to
 #                                          thousand turns a day, turns.jsonl holds about a month; the reader reads both
 # The `host` a refused launch records in the registry's hostLogPos (SdkBackend._record_refused_launch_position): no
 # host identity, since a host that never served sent no hello, but a position the served road honours for the next
-# host of any identity, so the rows the refusal filed are not filed again (regression-1, round 3, 2026-09-19).
+# host of any identity, so the rows the refusal filed are not filed again (regression-1, round 3, 2026-09-19). The
+# position is host.log's WHOLE line count at the refusal, not the extent of what the refusal filed (correctness-1,
+# round 4, 2026-09-19): after a refused launch the served road, _file_host_log_rows, skips every line present then, a
+# previous host's row that no road had filed included (a reader-behind, an end-forced), so such a row VANISHES, with
+# no problem row anywhere. The queued served-road change, which bounds that road on the spawn watermark
+# (host_transport.host_log_mark), is where that is fixed; until then the drop is pinned as the head's behaviour in
+# tests/test_session_host_sdk_pin.py, and _record_refused_launch_position's docstring states the reach in full.
 HOST_LOG_POS_REFUSED = "refused-launch"
 
 
