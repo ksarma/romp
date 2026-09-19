@@ -37996,10 +37996,7 @@ def _chat_postal_relevant(ev):
 #                        d_type, and the stats made in another process by any git child a signature forks (the set
 #                        is pinned by execution in tests/test_chat_build_sig_inputs.py; a fork's wall lands on the
 #                        row of the part that forked it, its CPU on no row, since RUSAGE_THREAD excludes a child).
-#                        A strace over the harness's signatures (a review probe recorded in a review-round commit,
-#                        2026-09-19, with no command kept) found fd fstats from open(), scandir() and the pipes to git
-#                        children beside the counted path stats, every path stat in the count: a reading, not
-#                        recomputed by a test. Per signature:
+#                        Per signature:
 #                        stats / (pre + post + thread), and the same denominator for the three read counts
 #   namesReads           raw names-registry file reads inside a signature (_sdk_transcript_path, _names_parts
 #                        with no snapshot)
