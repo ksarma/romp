@@ -12,7 +12,18 @@
 // a block holding an inline start tag with no end tag as the viewer does not (`We recommend <b>shipping the cache.` is
 // `<p>We recommend <b>shipping the cache.</b></p>` and a line feed from marked.parse, `<p>We recommend &lt;b&gt;shipping the cache.</p>`
 // and a line feed from the viewer), so a fixture of that shape could pass green over a DOM the viewer cannot build. This module holds the recipe to
-// file-view.ts and every ui/webview test module to the recipe by grep, so a later stand-in cannot drift back: none calls
+// file-view.ts and every ui/webview test module to the recipe by grep. The grep catches what it spells, a call written
+// `marked.parse(` in a ui/webview test module that holds a node stand-in (and `marked.parser(` or `Parser.parse(` in any); it does
+// not see a stand-in filled through a destructured alias (`const { parse } = marked`), a bare `marked(text)`, an `innerHTML`
+// assignment from a bundled `sanitizeMd(marked.parse(s) as string).innerHTML` probe in a browser module's page, or `parseInline`;
+// the first, second and last no module uses at this head, and the third is in nine browser modules: five whose pages fill no
+// `.fileview-md` box with it (md-sanitize-chat-links-browser.test.ts, md-sanitize-chat-schemeless-browser.test.ts,
+// md-sanitize-chat-modified-click-browser.test.ts, md-sanitize-chat-fragment-browser.test.ts and
+// md-config-math-inks-browser.test.ts) and four whose pages fill a `.fileview-md` div, the viewer's box, that way
+// (md-config-mark-classes-browser.test.ts, md-config-feed-callout-tints-browser.test.ts,
+// md-config-callout-title-ink-browser.test.ts and md-config-chat-styles-browser.test.ts), over fixtures with no unclosed inline
+// tag (marked.parse and viewerHtml render each of their six fixtures the same, executed in Chromium at the closing check of the
+// slice's PR review, 2026-09-19). Within that reach: none calls
 // marked's parser itself (`marked.parser(`, the tail of any copy of the steps); no module holding a node stand-in (a
 // `parseHTML(` shim, or an `innerHTML` setter over it) has a `marked.parse(` line but an assert's, the output compared and not
 // filled, or one of two named lines: the contrast anchor-map-cells-formulas.test.ts draws with the tree the viewer built before

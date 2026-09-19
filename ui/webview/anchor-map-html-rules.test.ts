@@ -277,11 +277,13 @@ test("every HTML integration point of a foreign root is read as the `<foreignObj
   // the reader's side alone of a divergence RECORDED in anchor-map-html-text-browser.test.ts: the `<mtext>` and the first `<p>`, with no
   // end tags of their own, are literal text inside the math and the closed `<p>b</p>` goes with the dropped math, `ma5 y5`; the DOM shows
   // `ma5 b y5`, since the closed `<p>` stands in the math's foreign content with no integration point around it and the parser breaks out
-  // of the math at it. The class, recorded there with two representatives: an integration point of an inline `<math>` left open
-  // (`<mtext>`, `<mi>`, `<mo>`, `<mn>` or `<ms>`, or an `<annotation-xml>` with the html or the xhtml encoding), then a closed HTML
+  // of the math at it. The class, recorded there with two text representatives and, since the closing check of PR 804, entries by the
+  // DOM's top-level tags and the map's verdicts: an integration point of an inline `<math>` left open
+  // (`<mtext>`, `<mi>`, `<mo>`, `<mn>` or `<ms>`, or an `<annotation-xml>` with the html or the xhtml encoding), then an HTML
   // element whose start tag is on the parser's foreign-content breakout list (`<b>`, `<i>`, `<em>`, `<strong>`, `<span>`, `<code>`,
-  // `<sub>`, `<sup>`, `<div>`, `<p>`, a heading, a list, a table and the rest of that list); a closed `<kbd>`, `<a>`, `<abbr>`, `<mark>`
-  // or `<q>` is no breakout tag and both sides agree. Before decision 52 the mtext was the parser's element and the ps HTML inside it,
+  // `<sub>`, `<sup>`, `<div>`, `<p>`, a heading, a list, a table and the rest of that list), closed, self-closed or void (`<br>`, `<img>`
+  // and `<hr>` break out with no closing, and `<hr>` closes the paragraph too); a closed `<kbd>`, `<a>`, `<abbr>`, `<mark>`
+  // or `<q>` is no breakout tag and both sides agree in text. Before decision 52 the mtext was the parser's element and the ps HTML inside it,
   // `ma5 y5` on both sides (the line's former message, about the implied ends inside a MathML text element, described that world)
   assert.equal(shown("ma5 <math><mtext><p>a<p>b</p></math> y5\n"), "ma5 y5", "the reader's text alone: the mtext and the first p literal text inside the dropped math, the closed `<p>b</p>` dropped with it (the DOM shows `ma5 b y5`, the closed p breaking out of the math: recorded in anchor-map-html-text-browser.test.ts, RECORDED)");
   // an svg's title and desc: a closed HTML element's text goes with it, the title's own stays; a start tag left open is text

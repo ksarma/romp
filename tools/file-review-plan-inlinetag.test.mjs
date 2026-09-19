@@ -95,6 +95,8 @@ test('decision 52 records the report paraphrased, the rule, the one shared funct
   assert.ok(d52.includes('Deliberately left, recorded here: `<hr>` inline is void, stays HTML and still splits its paragraph in the parser; a start tag whose end tag stands in a LATER block renders as text now'));
   assert.ok(d52.includes('a block-level element closed within its block mid-line (`<div>x</div>`) still splits the paragraph in the parser, a known gap'));
   assert.ok(d52.includes('inside an inline `<svg>` or `<math>` the rule applies by name'), 'the foreign-content consequence is recorded');
+  assert.ok(d52.includes('the parser breaks out of the math at it, whether the tag is closed, self-closed or void, and shows its text'), 'the breakout class is bounded by the start tag\'s name and not its closing (the closing check, 2026-09-19)');
+  assert.ok(d52.includes('the map is what differs for a block-level member, and the browser suite compares text'), 'the svg bound is stated of the map, the text agreeing');
   assert.ok(d52.includes('CONTEXT.md is unchanged, since no term was coined.'));
   const named = modulesNamed(d52);
   assert.ok(named.length >= 12, 'the record names its tests: ' + named.length);

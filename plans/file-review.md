@@ -4038,21 +4038,53 @@ document stands on its own, each with the reasoning it was given.
     their root as the HTML parser does, would have kept `<svg><title>icon</svg>` an element, and was not taken); and
     a class of shapes moved into the breakout class anchor-map-html-text-browser.test.ts already recorded, widened
     from the one shape first recorded there (`ma6 <math><annotation-xml encoding="text/html"><b>x</b></math> y6`) by
-    the review of the slice's PR (round 1, 2026-09-19): an integration point of an INLINE `<math>` left open
-    (`<mtext>`, `<mi>`, `<mo>`, `<mn>` or `<ms>`, or an `<annotation-xml>` with the html or the xhtml encoding) is
-    literal text now, so a CLOSED HTML element after it whose start tag is on the parser's foreign-content breakout
-    list stands in the math's foreign content with no integration point around it: the parser breaks out of the math
-    at it and shows its text, and the reader drops the math whole. In Chromium `ma7 <math><mtext><b>x</b></math> y7`
-    shows `ma7 x y7` where the reader reads `ma7 y7`, the same for `<mi>`, `<mo>`, `<mn>`, `<ms>` and the xhtml
-    encoding in place of the `<mtext>` and for a closed `<div>` or `<p>` in place of the `<b>`, and `ma5
-    <math><mtext><p>a<p>b</p></math> y5` shows `ma5 b y5` against `ma5 y5`, no paint mark on either; before this
-    decision both sides read `ma7 y7` and `ma5 y5`. Not in the class, agreeing on both sides: a closed element whose
-    start tag is not on that list (`<kbd>`, `<a>`), which goes with the dropped math; the same shape inside an inline
-    `<svg>`, which the sanitizer keeps, so both sides read `sv1 <title>x y1`; and a `<math>` inside an html block,
-    whose tags the rule does not read. The reader does not model the parser's breakout from foreign content (the
-    Slice 5 build note of plans/markdown-viewer.md records it as not modelled and pre-existing), so the class is
-    RECORDED in that suite with two representatives, `ma5` and `ma7`, and not modelled;
-    `ui/webview/anchor-map-html-rules.test.ts` pins the reader's side of `ma5`. Two divergences the Slice 5 build note of
+    the review of the slice's PR (round 1, 2026-09-19) and bounded again by its closing check (2026-09-19): an
+    integration point of an INLINE `<math>` left open (`<mtext>`, `<mi>`, `<mo>`, `<mn>` or `<ms>`, or an
+    `<annotation-xml>` with the html or the xhtml encoding) is literal text now, so an HTML element after it whose
+    start tag is on the parser's foreign-content breakout list (the 44 names the HTML standard lists there, and `font`
+    when it carries `color`, `face` or `size`) stands in the math's foreign content with no integration point around
+    it: the parser breaks out of the math at it, whether the tag is closed, self-closed or void, and shows its text,
+    and the reader drops the math whole. In Chromium `ma7 <math><mtext><b>x</b></math> y7` shows `ma7 x y7` where the
+    reader reads `ma7 y7`, the same for `<mi>`, `<mo>`, `<mn>`, `<ms>` and the xhtml encoding in place of the
+    `<mtext>` and for a closed `<div>` or `<p>` in place of the `<b>`, and `ma5 <math><mtext><p>a<p>b</p></math> y5`
+    shows `ma5 b y5` against `ma5 y5`, no paint mark on either; before this decision both sides read `ma7 y7` and `ma5
+    y5`. The `font` bound the same way: `<font color="red">x</font>` after the `<mtext>` breaks out (`P[FONT]`, `x`
+    shown) and `<font>x</font>` goes with the math. What the class changes for the map, executed in Chromium at this
+    head and at the base tree c25a2b319 over a note of the tag's paragraph, a heading and two paragraphs (a paragraph
+    holding an inline `<math>` with text inside it was refused with the mismatch sentence on both trees in every shape
+    run, `Lead <math><mi>x</mi></math> tail t1.` among them, and one holding `<math></math>` mapped, so the verdicts
+    that follow are the later blocks'): the void members break out with no closing, `<br>` and `<img>` inside
+    `<math><mtext>` landing in the paragraph as a line break and a picture (the top-level elements `P[BR] H2 P P` and
+    `P[IMG] H2 P P` against the base tree's `P H2 P P`, the text the same on both sides), the tag's paragraph refused
+    with the mismatch sentence where the base tree mapped it and every later block mapping; `<hr>` closes the
+    paragraph as well (`P HR P H2 P P`), so the paragraph's tail stands in an extra top-level element and every later
+    block is refused with `The selection could not be matched to the file text.`, where the base tree mapped every
+    block, the same after `<mi>` or the xhtml `<annotation-xml>` in place of the `<mtext>`; the self-closed `<b/>`
+    breaks out and opens, a wrapper around every later block (`P[B] B[H2,P,P]`, every passage refused with the
+    mismatch sentence), where the base tree showed `Lead` alone with the rest of the note gone (the `b` the flag does
+    not close stayed open inside the `<mtext>`, the round-7 shape that keeps `</math>` ignored). A closed block-level
+    member splits the paragraph the same way in either root: `<div>x</div>` or `<p>x</p>` after the `<mtext>` (`P DIV
+    P H2 P P`, `P P P H2 P P`, the `ma5` shape's) and inside an inline `<svg>` after a `<title>`, `<desc>` or
+    `<foreignObject>` left open (`P[svg] DIV P H2 P P`, `P[svg] P P H2 P P`; `<hr>` after the `<title>` the same),
+    every later block refused with the could-not-be-matched sentence, where at the base tree the element sat inside
+    the integration point, a scope boundary the parser closes no `<p>` across, and every later block mapped. Inside
+    the `<svg>` the TEXT agrees on both sides for a member, since the sanitizer keeps svg text: `sv1
+    <svg><title><b>x</b></svg> y1` reads `sv1 <title>x y1` on both sides, the `b` broken out into the paragraph
+    (`P[svg,B]`) and every block mapping; the map is what differs for a block-level member, and the browser suite
+    compares text, so the splits are RECORDED there by the DOM's top-level tags and each passage's verdict, not by
+    text alone. Not in the class: a closed element whose start tag is not on that list (`<kbd>`, `<a>`) stays in the
+    foreign content and goes with the dropped math on both sides (`ma7 y7`); inside an inline `<svg>` it stays in the
+    drawing, where the sanitizer keeps an svg name (`<a>`, its text shown and every block mapping) and removes any
+    other with its text, which the reader keeps as the drawing's, so `Lead <svg><foreignObject><kbd>x</kbd></svg> tail
+    t1.` reads `Lead <foreignObject> tail t1.` in the DOM against the reader's `Lead <foreignObject>x tail t1.` (the
+    same after a `<title>`), a text divergence new with this decision, RECORDED in the same suite; and a `<math>`
+    inside an html block, whose tags the rule does not read. The reader does not model the parser's breakout from
+    foreign content (the Slice 5 build note of plans/markdown-viewer.md records it as not modelled and pre-existing),
+    so the class is RECORDED in that suite, the text representatives `ma5` and `ma7` and the closing check's entries
+    for the void members, the self-closed `<b/>`, the `font` member, the block-level splits in both roots and the svg
+    out-of-class drop, and not modelled; `ui/webview/anchor-map-html-rules.test.ts` pins the reader's side of `ma5`.
+    Two divergences the
+    Slice 5 build note of
     plans/markdown-viewer.md recorded (item 4) are agreements now: an inline `<textarea>` left open, and an
     `<annotation-xml>` whose encoding value carries a blank with a `<b>` left open inside it; the `/>` forms keep
     the divergence, since the self-closing syntax stays HTML. The assessment counted other placeholder tags in the
@@ -4079,7 +4111,7 @@ document stands on its own, each with the reasoning it was given.
     the same over the base tree). The suites whose pins the rule changed
     follow it: `ui/webview/anchor-map-html-rules.test.ts`, `ui/webview/anchor-map-html-text.test.ts` and
     `ui/webview/anchor-map-html-text-browser.test.ts` (the foreign-content shapes above, the breakout class RECORDED
-    with its two representatives),
+    with its two text representatives and the closing check's entries by top-level tags and verdicts),
     `ui/webview/anchor-map-fallback-markup.test.ts` and `ui/webview/md-config-merged-paragraph.test.ts` (their
     mdBlock replicas render through the rule), and the source pins over mdBlock's parse in
     `ui/webview/file-view.test.ts`, `ui/webview/file-view-links.test.ts`, `ui/webview/render-sanitize.test.ts` and
