@@ -2445,7 +2445,7 @@ class WrapperDifferential(unittest.TestCase):
         "type": "a Python function, not builtin_function_or_method",
         "signature": "read (path, *a, **kw)",
         "vars and dir": "vars() and dir()",
-        "mutability": "mutable",
+        "mutability": "the wrapper is mutable",      # a phrase: the bare word is a substring of its negation, "immutable"
         "size": "sys.getsizeof",
         "referents": "gc.get_referents",
         "pickling": "pickling by name resolves to posix.stat",
