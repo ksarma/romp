@@ -71,6 +71,15 @@ jd.STATE as the reload re-bound it: None or False pass, the lazy build over the 
 anywhere else is named with the re-execution wording; the kernel's FIRST load inside a test (no marker before) is
 the same road, never an exemption.
 
+The SDK road is forced in every scratch head, never inherited from the interpreter: claude_agent_sdk is absent from
+CI's install and from the test venv here, and present on a box that installed it, and SdkBackend constructs either way
+(the probe at construction, importlib.util.find_spec, only sets _sdk_missing and prints the not-found notices on the
+missing road), so the transition the ratchet judges is the same on both roads. SCRATCH_HEAD sets None in sys.modules
+for the name, which makes find_spec answer None and the import fail, so every run over it takes the missing road
+wherever it runs (A's outer test reads the notices); Q takes the importable road over a head without that line and a
+stub package importable by the child alone (nested_run's sdk_stub), asserts inside the child that the stub is what
+imported and that _sdk_missing is False, and the same lazy first build passes there with neither notice in the output.
+
 The scratch modules, one nested run each, the cases in method order (unittest runs a class's methods
 alphabetically, and each case's `before` is what the previous case left):
   A, the singleton built under the run root first:
@@ -167,6 +176,21 @@ alphabetically, and each case's `before` is what the previous case left):
     (the allowance asks for a directory: the change from None is named with the gone clause and the sandbox remedy),
     and a re-execution, the lazy build, then rmtree(jd.STATE) (the reload road says jd.STATE is no longer a
     directory); the judge fixture names the removed root in the same teardown, one exception group each.
+  Q, the worker's lazy first build on the importable road (the stub head, nested_run's sdk_stub): a asserts the stub is
+    what imported and _sdk_missing is False, builds over jd.STATE and passes; the run exits 0 and neither notice is in
+    its output.
+
+The outer tests read a nested run's output by structure, never by the count of a phrase: the verbose per-phase lines
+(outcomes, a set per case), the verdicts by the test or scope each names (verdict, inherited, boundary: the first
+match, the ERRORS section's; boundary_scopes: the set of scopes named), the final summary line parsed
+(summary_mismatch, and the warned run's read of its warnings segment), and the presence or absence of a text (the
+judge fixture's, the exception group's header, the SDK notices), which the short summary cannot change since it only
+repeats what the ERRORS section already printed. CI's pytest is unpinned (the workflow installs the latest, 9.1.1
+today, the test venv's version here too), and pytest's short summary prints each error's message whole when CI is set
+in the environment or at -vv and trimmed to the terminal width otherwise, so a reader that counted the boundary text's
+occurrences read 1 on a box and 2 on CI for one verdict (the CI red at the round-3 preparation head: red here with
+CI=true alone and under a CI-like install through uv, green at this head both ways). The child runs -vv so both shapes
+are one; the set read is the pin, and this paragraph the explanation beside it.
 
 Mutations of the fixture run against this module, each landed and reverted (2026-09-19; the runner compile-checks the
 mutated conftest and counts a NameError in the outer output as a crash, never as a weakening), listed by what the
@@ -247,6 +271,8 @@ INHERITED_KEPT = ("starts under the kernel's backend singleton (km._sdk_backend)
 PUT_BACK_GONE = "put back the kernel's backend singleton (km._sdk_backend) it found, whose directory is gone: "
 BOUNDARY = "'s class or module boundary (tearDownClass, tearDownModule or a class- or module-scoped fixture)"
 SHARED_STATE = "left shared state changed"     # the judge fixture's text: quiet in every case here, so the ratchet's is the only red
+SDK_NOT_FOUND = "sdk-backend: claude_agent_sdk not found"     # the boot log's line on the missing road (_sdk_import_notice)
+SDK_NOT_IMPORTABLE = "claude_agent_sdk is NOT importable"     # the backend's construction notice on the missing road
 
 SCRATCH_HEAD = textwrap.dedent('''\
     import os, shutil, sys, tempfile, unittest
@@ -262,6 +288,13 @@ SCRATCH_HEAD = textwrap.dedent('''\
     # that builds over this root) build over THIS one, so the switch is written here, before any build, as sandbox() does.
     os.makedirs(os.path.join(os.environ["XDG_STATE_HOME"], "romp"))
     Path(os.environ["XDG_STATE_HOME"], "romp", "session-hosts").write_text("off\\n")
+    # The SDK road is forced, not inherited from the interpreter: CI's install and the test venv have no
+    # claude_agent_sdk, a box that installed it has one, and SdkBackend constructs either way (the probe at construction,
+    # importlib.util.find_spec, only sets _sdk_missing and prints the not-found notice on the missing road). None in
+    # sys.modules for the name makes find_spec answer None and the import fail, so a run over this head with the line
+    # below takes the missing road wherever it runs; Q's head (SCRATCH_HEAD_SDK_STUB) replaces the line with a comment
+    # and takes the importable road with a stub package on the child's path (nested_run's sdk_stub).
+    sys.modules["claude_agent_sdk"] = None
     KERNEL = os.path.join(os.environ["ROMP_RATCHET_BIN"], "romp-kernel")
     km = load_source("romp_kernel", KERNEL)
     jd = km.jd
@@ -495,6 +528,24 @@ SCRATCH_HEAD_LAZY = SCRATCH_HEAD.replace(
     '    km = load_source("romp_kernel", KERNEL)\n'
     '    jd = km.jd\n')
 assert "def load():" in SCRATCH_HEAD_LAZY and "km = jd = None" in SCRATCH_HEAD_LAZY, SCRATCH_HEAD_LAZY
+
+SCRATCH_HEAD_SDK_STUB = SCRATCH_HEAD.replace(
+    'sys.modules["claude_agent_sdk"] = None\n',
+    '# the importable road: the forcing line is replaced by this comment, and the stub package is on the path\n')
+assert 'sys.modules["claude_agent_sdk"]' not in SCRATCH_HEAD_SDK_STUB and SCRATCH_HEAD_SDK_STUB != SCRATCH_HEAD
+
+SCRATCH_Q = SCRATCH_HEAD_SDK_STUB + textwrap.dedent('''\
+
+    class Cases(unittest.TestCase):
+        def test_a_the_lazy_first_build_on_the_importable_road(self):
+            import claude_agent_sdk                                # the stub, importable in this child alone (nested_run)
+            stub = os.environ["ROMP_RATCHET_SDK_STUB"]
+            assert claude_agent_sdk.__file__.startswith(stub + os.sep), claude_agent_sdk.__file__
+            assert km._sdk_backend is None, km._sdk_backend
+            be = km._sdk()
+            assert be is not None and be is not False and be.state_dir == jd.STATE, be
+            assert be._sdk_missing is False, "the probe found the stub, so this build is on the importable road"
+    ''')
 
 SCRATCH_H = SCRATCH_HEAD_LAZY + textwrap.dedent('''\
 
@@ -778,7 +829,7 @@ SCRATCH_R2 = SCRATCH_HEAD + textwrap.dedent("""\
 """)
 
 
-def nested_run(text, follower=None):
+def nested_run(text, follower=None, sdk_stub=False):
     """pytest in a child over one scratch module written to a fresh directory, under this checkout's conftest
     (loaded as a plugin: the module sits outside tests/, where no conftest is discovered), verbose and with the
     all-outcomes summary, so the outer test reads each case's outcome and the ratchet's text. The child's
@@ -793,7 +844,11 @@ def nested_run(text, follower=None):
     -v a box saw every verdict once, in the ERRORS section, and CI saw each twice, so a count of occurrences over the
     output read 1 here and 2 there for the same one boundary verdict (CI red at the round-3 preparation head); the
     outer tests read the verdicts by the scope or test they name (boundary_scopes, boundary, verdict), never by
-    occurrence, and -vv makes a box run see what CI sees."""
+    occurrence, and -vv makes a box run see what CI sees.
+
+    `sdk_stub` puts a stub claude_agent_sdk package, one docstring-only __init__.py written under the fresh directory,
+    on the child's PYTHONPATH and names its directory in ROMP_RATCHET_SDK_STUB, so the child alone imports it: the
+    importable road for SdkBackend's construction probe (Q). Every other run's head forces the missing road."""
     fresh = tempfile.mkdtemp()
     case = os.path.join(fresh, "case")
     os.makedirs(case)
@@ -804,6 +859,13 @@ def nested_run(text, follower=None):
         with open(os.path.join(case, "test_scratch2.py"), "w") as f:
             f.write(follower)
     env = dict(os.environ, TMPDIR=fresh, PYTHONDONTWRITEBYTECODE="1", ROMP_RATCHET_BIN=BIN)
+    if sdk_stub:
+        stub = os.path.join(fresh, "sdkstub")
+        os.makedirs(os.path.join(stub, "claude_agent_sdk"))
+        with open(os.path.join(stub, "claude_agent_sdk", "__init__.py"), "w") as f:
+            f.write('"""A stub for the kernel\'s import probe (find_spec at SdkBackend construction); no session runs here."""\n')
+        env["PYTHONPATH"] = stub + ((os.pathsep + env["PYTHONPATH"]) if env.get("PYTHONPATH") else "")
+        env["ROMP_RATCHET_SDK_STUB"] = stub
     for var in ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "PYTEST_CURRENT_TEST",
                 "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT", "ROMP_TESTS_SYSTEM_TMPDIR"):
         env.pop(var, None)
@@ -906,10 +968,11 @@ class _NestedRun:
                            # item's report; a boundary verdict on a last test that fails on its own is not a second count
                            # (summary_mismatch, THE COUNT'S LIMIT), so the runs read the boundary text beside the count
     JUDGE_RED = False      # whether the judge fixture (_shared_state_restored) is expected to fail in the run too
+    SDK_STUB = False       # the importable road: a stub claude_agent_sdk the child alone can import (nested_run); Q only
 
     @classmethod
     def setUpClass(cls):
-        cls.rc, cls.out = nested_run(cls.SCRATCH, cls.FOLLOWER)
+        cls.rc, cls.out = nested_run(cls.SCRATCH, cls.FOLLOWER, sdk_stub=cls.SDK_STUB)
 
     def assertRatchetPassed(self, cls, method):
         self.assertEqual(outcomes(self.out).get("%s.%s" % (cls, method)), {"PASSED"}, self.out)
@@ -978,6 +1041,12 @@ class _NestedRun:
 class LeakAfterFirstBuild(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_A
     ERRORS = 5
+
+    def test_the_run_takes_the_missing_road_wherever_it_runs(self):
+        # SCRATCH_HEAD forces the road (None in sys.modules for the name), so both notices are in the output on a box
+        # that installed the SDK too; Q is the importable road, with neither (LazyFirstBuildOnTheImportableRoad).
+        self.assertIn(SDK_NOT_FOUND, self.out, "the boot log's not-found line is the missing road's: %s" % self.out)
+        self.assertIn(SDK_NOT_IMPORTABLE, self.out, "the construction notice is the missing road's: %s" % self.out)
 
     def test_the_lazy_first_build_under_the_run_root_passes(self):
         self.assertRatchetPassed("Cases", "test_a_the_lazy_first_build_under_the_run_root_passes")
@@ -1094,6 +1163,26 @@ class ASummaryWithAWarningSegment(FirstBuildOverAKeptSandbox):
         self.assertGreaterEqual(int(seg.group(1)), 1, "the warning is counted on the line: %s" % m.group(1))
         self.assertIsNone(summary_mismatch(self.out, 1), self.out)
         self.assertIn("DeprecationWarning", self.out, "the warnings summary names it: %s" % self.out)
+
+
+class LazyFirstBuildOnTheImportableRoad(_NestedRun, unittest.TestCase):
+    """Q: the worker's lazy first build with claude_agent_sdk importable, a stub package on the child's PYTHONPATH
+    (nested_run's sdk_stub) over the head without the forcing line, the other road from every other run's forced
+    missing one. SdkBackend constructs on both: the probe at construction (find_spec) sets _sdk_missing and, on the
+    missing road, prints the not-found notices, so the transition the ratchet judges (None before, the kernel's class
+    over jd.STATE after) is the same on both roads and passes here too. The case asserts the road inside the child (the
+    stub is what imported, _sdk_missing is False) and the outer test reads the notices' absence beside the pass."""
+    SCRATCH = SCRATCH_Q
+    SDK_STUB = True
+    ERRORS = 0
+
+    def test_the_lazy_first_build_passes_on_the_importable_road(self):
+        self.assertRatchetPassed("Cases", "test_a_the_lazy_first_build_on_the_importable_road")
+        self.assertEqual(self.rc, 0, self.out)
+
+    def test_the_child_took_the_importable_road(self):
+        self.assertNotIn(SDK_NOT_FOUND, self.out, "the boot log's not-found line is the missing road's: %s" % self.out)
+        self.assertNotIn(SDK_NOT_IMPORTABLE, self.out, "the construction notice is the missing road's: %s" % self.out)
 
 
 class NestedSummaryMatcher(unittest.TestCase):
