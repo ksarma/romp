@@ -82,7 +82,8 @@ arm's setattr callback queued behind it, and an enqueue that landed before the l
 arm still False (PR 833's red, 2 writes where the held read expected 1). The sleep hid the missing
 happens-before instead of supplying it, and the fake never sleeps in the code under test, so there is no bare
 sleep left to reach for in this class. The 833 mechanism is a case here now, with the loop parked in the
-settle on purpose, and the record's exit-time promise is pinned by its own case.
+settle on purpose, and the two promises the reads rest on are pinned by their own cases: the record's
+exit-time promise, and the feeder landing its feed inside the step the probe follows.
 """
 import asyncio
 import json
@@ -255,6 +256,9 @@ class OneFedTextAtATime(unittest.TestCase):
         self.s._do_refresh_usage = _noop
         self.be.sessions[SID] = self.s
         self.n = 0
+        self._gates = []            # every gate a case shut to park the loop thread: opened at the top of tearDown
+        self._pushed = []           # every uuid pushed to ANY client this test: _push refuses a repeat (one record per frame)
+        self._arm_waiting = threading.Event()   # published from inside _arm's wait: this thread is waiting for the arm
         # every frame the stream handler FINISHED, by uuid: the event _handled waits on. A class-level wrap
         # (restored by a cleanup, which runs after tearDown joined the session threads), so the session the
         # backend respawns itself in the exit tests records too; the fake's frames all carry a uuid of
@@ -271,6 +275,10 @@ class OneFedTextAtATime(unittest.TestCase):
         self.addCleanup(setattr, sb.SdkSession, "_handle_stream_message", real_handle)
 
     def tearDown(self):
+        for g in self._gates:
+            g.set()          # a case's own stall gate (the record pin's): open it before the join below, for the same
+            #                  reason as the channel gates, and here rather than in the case's cleanup, which runs after
+            #                  this method and so after the join sat out the park (review round 1, 2026-09-19)
         for q in _ControlChannel.instances:
             q.gate.set()     # a gate still shut (a move whose CLI never answered; a subTest that failed between a
             #                  _start_move and its gate.set) parks the loop's executor thread in gate.wait: the join
@@ -307,9 +315,20 @@ class OneFedTextAtATime(unittest.TestCase):
     def _push(self, client, frame):
         """Push a frame into the scripted stream. Returns its uuid, the handle _handled waits on, and records
         it on the client (client.pushed), so _probe can wait for every earlier frame of that client to be
-        handled before it pushes its own."""
-        client.loop.call_soon_threadsafe(client.frames.put_nowait, frame)
+        handled before it pushes its own. A uuid pushed twice in one test, to any client, is refused here,
+        loudly: the record _handled reads is keyed on the uuid, so a repeat would let the first frame's record
+        satisfy a wait for the second while its handler still runs (the vacuity this class exists to remove,
+        back silently). The frame classes' defaults (_AssistantMessage's "a1", _RateLimitEvent's "rl1") are
+        the way a repeat happens without anyone typing one: every pushed frame carries a uuid of _uid()'s
+        minting, and this check is what holds that (review round 1, 2026-09-19)."""
         uid = getattr(frame, "uuid", None)
+        if uid is not None:
+            if uid in self._pushed:
+                self.fail("uuid %r was already pushed in this test (to client %d now): every pushed frame needs a "
+                          "uuid of _uid()'s minting, since the handled record is keyed on it; a frame class's default "
+                          "uuid is the usual way a repeat happens" % (uid, client.no))
+            self._pushed.append(uid)
+        client.loop.call_soon_threadsafe(client.frames.put_nowait, frame)
         if uid is not None:
             client.pushed.append(uid)
         return uid
@@ -325,8 +344,11 @@ class OneFedTextAtATime(unittest.TestCase):
             consumed) only SCHEDULES the feeder's resumption (_input_wake.set() is a call_soon), and the feed
             it would make lands in the client's writes in a later loop step, so a read right after the
             handler returned can see the writes before that step and pass with the kernel broken (the
-            review's mutation, 2026-09-19: a take check that releases on every frame plus 15 ms of loop
-            latency after the handler, and the splice case stayed green);
+            review's mutation, 2026-09-19: a take check that releases on every turn frame plus a BLOCKING
+            15 ms in the receive loop after the handler returned, a time.sleep that holds the loop thread,
+            and the splice case stayed green with a bare _handled; an await of the same length leaves the
+            loop free, the feeder's step runs at once, and the case reds either way, so the form of the
+            injection, not its figure, is what the reproduction needs);
           * the feeder's evaluation of an enqueue made BEFORE the frame was pushed, unless the drain was
             parked at its queue when the frame's put ran: an earlier frame pushed and not yet handled makes
             asyncio.Queue.get() return this frame without yielding, in the same drain step, ahead of the
@@ -376,7 +398,17 @@ class OneFedTextAtATime(unittest.TestCase):
         between the two stood in for a happens-before it could not supply."""
         s = s or self.s
         s.loop.call_soon_threadsafe(setattr, s, "_move_settle_expected", True)
-        self._wait(lambda: s._move_settle_expected, "the move arm is set")
+        waiting = self._arm_waiting
+
+        def visible():
+            # published from INSIDE the wait, by its own predicate: this thread is waiting for the arm to be
+            # visible. The parked case lifts its park on this event, not on how the wait is made (a poll count
+            # was the pin until review round 1, 2026-09-19, and an equally correct non-polling wait deadlocked
+            # against it); inside the predicate so a reversion that drops the read-back cannot leave the
+            # publish behind, which would make that case pass with the arm unread
+            waiting.set()
+            return s._move_settle_expected
+        self._wait(visible, "the move arm is set")
 
     def _uid(self):
         self.n += 1
@@ -493,7 +525,13 @@ class OneFedTextAtATime(unittest.TestCase):
         cannot have run; no timing in that read), and _handled returns once the gate opens."""
         s, c = self.s, self._first_turn()
         entered, gate = threading.Event(), threading.Event()
-        self.addCleanup(gate.set)                        # a failed assertion must not leave the loop parked
+        self._gates.append(gate)                         # opened at the top of tearDown, before its join
+        # The park is bounded by gate.wait's own 10 s, and tearDown's join(timeout=10) would sit out that same
+        # 10 s with the thread alive and rmtree running under it: so the gate is opened on the failure path
+        # BEFORE tearDown, by the finally below, and again at the top of tearDown (self._gates). A cleanup runs
+        # after tearDown, so it can shorten neither; it stays as the backstop for a park that outlives the join
+        # (measured with the park raised to 30 s in review round 1, 2026-09-19), and it protects nothing else.
+        self.addCleanup(gate.set)
         real_on = s._on_message
         frame = _SystemMessage("status", {"task_id": "t-1", "status": "running"}, uuid=self._uid())
 
@@ -503,12 +541,36 @@ class OneFedTextAtATime(unittest.TestCase):
                 gate.wait(10)
             return real_on(msg, *a, **k)
         s._on_message = stalled                          # inside _handle_stream_message, inside the record's wrap
-        self._push(c, frame)
-        self.assertTrue(entered.wait(10), "the handler entered")
-        self.assertNotIn(frame.uuid, self._handled_frames, "not recorded while its handler is still running")
-        gate.set()
+        try:
+            self._push(c, frame)
+            self.assertTrue(entered.wait(10), "the handler entered")
+            self.assertNotIn(frame.uuid, self._handled_frames, "not recorded while its handler is still running")
+        finally:
+            gate.set()                                   # a failed read (or a raise from the push) unparks the loop now
         self._handled(frame.uuid)
         self.assertIn(frame.uuid, self._handled_frames)
+
+    def test_a_feed_from_idle_has_landed_when_the_probe_that_followed_the_enqueue_is_handled(self):
+        """_probe's ordering, pinned at runtime (review round 1, 2026-09-19): the feeder lands its feed in the
+        client's writes INSIDE the loop step the enqueue's wake scheduled (inputs() has no await between its
+        pop and its yield, and the fake's query() appends inside its async for), so a probe pushed after the
+        enqueue is handled only after the feed landed, and every negative read that follows a _probe rests on
+        that. A POSITIVE read: from idle, an enqueue, the probe, and the write is there. A 15 ms await inserted
+        before the yield reds this case and no other in the module: without it the module stays green under
+        that await, and with a hold removed as well the module still reds loudly (11 of 12 cases on the
+        untaken hold, 4 of 5 on the move arm, where the parent's sleep-based reads red 12 and 4), so what the
+        await costs is one negative read per defect passing with the wrong feed present, and this read is the
+        one that names it."""
+        s, c = self.s, self._first_turn()
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0 and s._untaken is None, "idle, nothing held")
+        n = len(c.writes)
+        c.phase = "from-idle"
+        s.enqueue("B from idle")
+        self._probe(c)
+        self.assertEqual(len(c.writes), n + 1, "the feed from idle landed inside the feeder's step the probe follows")
+        self.assertEqual(c.writes[n], ("B from idle", "from-idle"))
 
     def test_two_texts_sent_mid_turn_reach_the_client_one_at_a_time_and_in_order(self):
         """The incident's shape: two texts queued while a turn is open. The first forwards at once (the
@@ -1158,22 +1220,17 @@ class OneFedTextAtATime(unittest.TestCase):
         scheduled from this thread is a callback the loop has not run, and an enqueue that lands while it is
         parked is fed by that wakeup with the arm still False (2 writes where the held read expects 1). The
         loop is parked at _turn_completed, the statement after the wake, until one of two events on this
-        thread: the arm wait has polled its predicate false twice (this thread is waiting, and the arm
-        cannot become visible while the loop is parked: _arm's world), or the enqueue landed in the queue
-        (the world before _arm read the arm back, which fed). The 10 s on the park is the failure path's
-        bound, the same as _wait's, never the proof: the proof is which event lifted the park, and the count
-        the probe then reads."""
+        thread: the arm wait BEGAN (_arm_waiting, published from inside _arm's wait by its own predicate: this
+        thread is waiting for the arm to be visible, and the arm cannot become visible while the loop is
+        parked: _arm's world), or the enqueue landed in the queue (the world before _arm read the arm back,
+        which fed). The lift is the event that _arm is waiting, not the shape of its wait: until review round
+        1 (2026-09-19) the park lifted on _wait having polled false twice, which pinned the poll and deadlocked
+        an equally correct non-polling wait. The 10 s on the park is the failure path's bound, the same as
+        _wait's, never the proof: the proof is which event lifted the park, and the count the probe then
+        reads."""
         s, c = self.s, self._first_turn()
-        polls, lifted = [], []
-        real_wait, real_completed = self._wait, self.be._turn_completed
-
-        def counting_wait(pred, what, timeout=10.0):
-            def counted():
-                r = pred()
-                if not r:
-                    polls.append(what)
-                return r
-            return real_wait(counted, what, timeout)
+        lifted, waiting = [], self._arm_waiting
+        real_completed = self.be._turn_completed
 
         def parked(sid, *a, **k):
             if sid == SID and not lifted:
@@ -1181,8 +1238,8 @@ class OneFedTextAtATime(unittest.TestCase):
                 while time.monotonic() < end:
                     if s.pending():
                         lifted.append("the enqueue landed while the loop was parked"); break
-                    if len(polls) >= 2:
-                        lifted.append("the arm wait polled false twice"); break
+                    if waiting.is_set():
+                        lifted.append("the arm wait began"); break
                     time.sleep(0.005)
                 else:
                     lifted.append("the 10 s bound")
@@ -1191,15 +1248,12 @@ class OneFedTextAtATime(unittest.TestCase):
         c.phase = "after-result-1"
         self._result_frame(c)
         self._wait(lambda: s.inflight == 0, "idle")      # zeroed before the park, in the same settle block
-        self._wait = counting_wait                       # counts the arm wait's polls: installed for _arm alone
-        try:
-            self._arm(s)
-        finally:
-            del self._wait
+        self.assertFalse(waiting.is_set(), "no arm wait yet: the park lifts on this case's, not an earlier one")
+        self._arm(s)
         c.phase = "held-behind-the-arm"
         s.enqueue("A from idle")
         self._probe(c)
-        self.assertEqual(lifted, ["the arm wait polled false twice"],
+        self.assertEqual(lifted, ["the arm wait began"],
                          "the enqueue must not land while the loop is parked in the settle: the arm was not read back")
         self.assertEqual(len(c.writes), 1, "held: a move's settle is expected (round 4)")
         self.assertTrue(s._move_settle_expected, "the arm stands")
